@@ -15,12 +15,9 @@ export const Route = createFileRoute('/app/rules/')({
   ),
 })
 
-type RuleType =
-  | 'instruction'
-  | 'pii_block'
-  | 'pii_redact'
-  | 'keyword_block'
-  | 'keyword_redact'
+// Rules zijn strict guardrails (block / redact). Geen 'instruction' type —
+// prompt-instructies horen bij Templates, niet Rules.
+type RuleType = 'pii_block' | 'pii_redact' | 'keyword_block' | 'keyword_redact'
 
 interface Rule {
   id: number
@@ -52,8 +49,6 @@ const EMPTY_FORM: RuleFormState = {
 
 function getRuleTypeLabel(type: RuleType): string {
   switch (type) {
-    case 'instruction':
-      return m.rules_type_instruction()
     case 'pii_block':
       return m.rules_type_pii_block()
     case 'pii_redact':
@@ -67,10 +62,8 @@ function getRuleTypeLabel(type: RuleType): string {
 
 function getRuleTypeBadgeVariant(
   type: RuleType,
-): 'secondary' | 'destructive' | 'warning' {
+): 'destructive' | 'warning' {
   switch (type) {
-    case 'instruction':
-      return 'secondary'
     case 'pii_block':
     case 'keyword_block':
       return 'destructive'
