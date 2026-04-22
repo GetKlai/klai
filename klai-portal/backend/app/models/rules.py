@@ -21,7 +21,7 @@ class PortalRule(Base):
     slug: Mapped[str] = mapped_column(String(64), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     rule_text: Mapped[str] = mapped_column(Text, nullable=False)
-    rule_type: Mapped[str] = mapped_column(String(32), nullable=False, server_default="instruction")
+    rule_type: Mapped[str] = mapped_column(String(32), nullable=False, server_default="pii_redact")
     scope: Mapped[str] = mapped_column(String(16), nullable=False, server_default="global")
     created_by: Mapped[str] = mapped_column(String(64), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")

@@ -26,11 +26,10 @@ logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/app/rules", tags=["app-rules"])
 
-# Allowed rule_type values. Enforced in the API layer (no DB CHECK), so new
-# types can be added without migrations.
+# Allowed rule_type values. Rules are strictly guardrails — block or redact
+# sensitive content. Prompt instructions live in Templates, not Rules.
 ALLOWED_RULE_TYPES: frozenset[str] = frozenset(
     {
-        "instruction",
         "pii_block",
         "pii_redact",
         "keyword_block",
@@ -47,7 +46,7 @@ class RuleCreate(BaseModel):
     description: str | None = None
     rule_text: str
     scope: str = "global"
-    rule_type: str = "instruction"
+    rule_type: str = "pii_redact"
 
 
 class RulePatch(BaseModel):
