@@ -19,20 +19,51 @@ import { authLogger } from '@/lib/logger'
 
 export { UnauthorizedError } from '@/lib/fetch-errors'
 
+/** One entry from a FastAPI / Pydantic validation error response body. */
+export interface ValidationIssue {
+  loc: (string | number)[]
+  msg: string
+  type: string
+}
+
 /**
  * Non-OK HTTP response from portal-api. Extends FetchError so callers can
  * use the shared transient-vs-permanent classification while still reading
  * the server-supplied `detail` string (typically for 409 Conflict handling).
+ *
+ * For 422 responses (FastAPI validation) the structured issue list is
+ * preserved on `validationIssues`, and `message` is built as a
+ * human-readable "field: reason; field: reason" summary — never the raw
+ * JSON dump the frontend used to show.
  */
 export class ApiError extends FetchError {
   readonly detail: string
+  readonly validationIssues?: ValidationIssue[]
 
-  constructor(status: number, detail: string) {
+  constructor(status: number, detail: string, validationIssues?: ValidationIssue[]) {
     super(status)
     this.name = 'ApiError'
-    this.message = `${status}: ${detail}`
     this.detail = detail
+    this.validationIssues = validationIssues
+    if (validationIssues && validationIssues.length > 0) {
+      this.message = formatValidationIssues(validationIssues)
+    } else {
+      this.message = `${status}: ${detail}`
+    }
   }
+}
+
+/**
+ * Build a human-readable error string from a FastAPI validation response.
+ * Strips the leading `body.` that FastAPI prefixes every location with —
+ * showing "email: ..." instead of "body.email: ..." reads better in forms.
+ */
+export function formatValidationIssues(issues: ValidationIssue[]): string {
+  const parts = issues.map((issue) => {
+    const field = issue.loc.filter((part) => part !== 'body').join('.')
+    return field ? `${field}: ${issue.msg}` : issue.msg
+  })
+  return parts.join('; ')
 }
 
 export interface ApiFetchOptions extends Omit<RequestInit, 'headers'> {
@@ -65,15 +96,20 @@ async function doFetch<T>(path: string, options: ApiFetchOptions): Promise<T> {
   }
   if (!res.ok) {
     let detail = `${res.status}`
+    let validationIssues: ValidationIssue[] | undefined
     try {
-      const body = (await res.json()) as { detail?: string | object[] }
-      if (body.detail) {
-        detail = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail)
+      const body = (await res.json()) as { detail?: string | ValidationIssue[] }
+      if (Array.isArray(body.detail)) {
+        // FastAPI validation: detail is a list of Pydantic issue records.
+        validationIssues = body.detail
+        detail = JSON.stringify(body.detail)
+      } else if (typeof body.detail === 'string') {
+        detail = body.detail
       }
     } catch {
       // no JSON body
     }
-    throw new ApiError(res.status, detail)
+    throw new ApiError(res.status, detail, validationIssues)
   }
 
   if (res.status === 204) return undefined as T
