@@ -73,7 +73,7 @@ groups:
         # `for: 0s` made every grafana recreate self-fire this rule.
         noDataState: OK
         execErrState: Alerting
-        for: 2m
+        for: 5m
         keepFiringFor: 5m
         isPaused: false
         labels:
@@ -81,7 +81,7 @@ groups:
           spec: SPEC-OBS-001
           service_group: infra-containers
         annotations:
-          summary: 'Container {{ $labels.name }} has not been seen for >4 min'
+          summary: 'Container {{ $labels.name }} has not been seen for >7 min'
           runbook_url: 'docs/runbooks/platform-recovery.md#container-down'
           description: |
             cAdvisor stopped seeing {{ $labels.name }} more than 2 minutes ago.
