@@ -6,6 +6,7 @@ on:
     paths:
       - 'klai-knowledge-ingest/**'
       - 'klai-libs/connector-credentials/**'
+      - 'klai-libs/image-storage/**'
       - '.github/workflows/knowledge-ingest.yml'
   workflow_dispatch:
 
