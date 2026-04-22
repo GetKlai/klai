@@ -1,9 +1,10 @@
 ---
 id: SPEC-SEC-024
 version: 0.2.0
-status: draft
+status: completed
 created: 2026-04-21
-updated: 2026-04-21
+updated: 2026-04-22
+completed: 2026-04-22
 author: Mark Vletter
 priority: high
 parent: SPEC-SEC-021
@@ -11,6 +12,48 @@ issue_number: null
 ---
 
 # SPEC-SEC-024: docker-socket-proxy compliance-audit (portal-api + runtime-api)
+
+## Implementation Notes (sync-time, 2026-04-22)
+
+**Status**: alle 9 acceptance criteria groen, end-to-end bewezen op productie.
+**Strategy**: main_direct — geen PR, alle commits direct op main.
+
+**Delivered (10 commits)**:
+
+| Commit | Milestone |
+|---|---|
+| `71dc0201` | M1 audit-tabellen + acceptance.md edge-case alignment |
+| `43616af7` | M2 docker-socket-proxy minimum + forbidden-verbs comment |
+| `5454fd88 → 43dfa3d9` | M3 ast-grep CI guard (pinned to v1.5.0 SHA) |
+| `750f423a` | M4.1 + M4.4 smoke-test script + pitfall rule per-verb rationale |
+| `60471901` | M4.2 Grafana provisioning (alert-rule + dashboard + contact-points) |
+| `84933d61 → 1eca648b` | M4.3 deploy-compose syncs grafana + runs smoke-test (EXEC probe fixed) |
+| `2b0f697f` | Operational fix: `up -d` instead of `restart` for env-var changes |
+| `42407f7b` | Fase 2 — wire Grafana SMTP via klai-mailer creds (+ klai-infra `994b504` for SOPS) |
+| `9df8cb4a` | LogsQL alert query field-scoped to structlog output |
+| `c3ae6b43 → 7aa1dd5a` | M4.5 dry-run + revert (alert chain proven on production 403) |
+| `6c2d406a` | Close-out: DoD ticked + 2 defects logged in plan.md M4.5 |
+
+**Scope changes vs original v0.1.0 plan**:
+- Strategy: van "conservatief droppen na gesprek" naar "agressief droppen na M1-meting" (v0.2.0 sparring decision).
+- Rollback ceremonie geschrapt — fix-forward op main per pre-launch context.
+- Grafana provisioning ontdekte twee aanpalende issues die out-of-scope waren maar wel fix-forward gepatcht zijn:
+  1. **VictoriaLogs basic-auth gat** (Gap A) — Grafana datasource had geen `basicAuth` ondanks dat VictoriaLogs `-httpAuth.username/password` vereist. Alle dashboards waren stuk; gefixt door `VICTORIALOGS_AUTH_USER/PASSWORD` in compose grafana env + `basicAuth: true` in datasources.yaml.
+  2. **Grafana SMTP ongeconfigureerd** (Gap B) — `GF_SMTP_*` ontbrak in compose. Gefixt door `GRAFANA_SMTP_PASSWORD` toegevoegd aan `klai-infra/core-01/.env.sops` (commit `994b504`) en `GF_SMTP_*` env vars op de grafana service in compose.
+
+**Two technical defects discovered + fix-forward**:
+1. **LogsQL field-scoping voor structlog** — unqualified text-search zoekt alleen `_msg`, niet structured fields. Fix in alert query naar `error:Forbidden AND error:docker-socket-proxy`. Zie plan.md M4.5 defect 1.
+2. **`docker compose up -d` is no-op bij mount-only changes** — provisioning files in een bind-mount worden pas bij container restart opnieuw ingelezen. Operational fix-forward via handmatige restart; permanente CI-fix is een follow-up SPEC waardig (3 opties in plan.md M4.5 defect 2).
+
+**Production state na sync**:
+- `docker-socket-proxy` env: `CONTAINERS=1 NETWORKS=1 POST=1 DELETE=1 EXEC=0 BUILD=0` (alle forbidden verbs niet-gezet) ✓
+- Smoke-test script live op `/opt/klai/scripts/smoke-docker-socket-proxy.sh`, draait elke compose-deploy ✓
+- Grafana alert `spec-sec-024-proxy-denials` provisioned, scheduler evalueert elke 1m ✓
+- Dashboard `Security — Proxy Denials` in folder `Security` ✓
+- Email-receiver `klai-dev-alerts-email` actief op `mark.vletter@voys.nl` (Cloud86 SMTP) ✓
+- ast-grep CI-guard actief op elke `klai-portal/backend/**` PR; regressie wordt mechanisch tegengehouden ✓
+
+**No further action required**. Follow-up SPEC voor de `up -d` vs `restart` keuze is optioneel (klein, isolated).
 
 ## HISTORY
 
