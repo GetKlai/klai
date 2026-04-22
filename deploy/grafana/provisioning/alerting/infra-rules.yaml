@@ -64,9 +64,16 @@ groups:
                   operator: { type: and }
                   reducer: { params: [], type: last }
                   type: query
+        # for: 2m absorbs post-recreate transients. cAdvisor's old container
+        # time-series persists until VictoriaMetrics staleness window (~5m)
+        # expires, so a freshly recreated container looks "down" briefly to
+        # any rule scoped by `name=~"..."` (matches both old + new series).
+        # Detection latency is now 2m + 2m = 4m worst case for an actually-
+        # down container, still well within "fast" by ops standards. SPEC's
+        # `for: 0s` made every grafana recreate self-fire this rule.
         noDataState: OK
         execErrState: Alerting
-        for: 0s
+        for: 2m
         keepFiringFor: 5m
         isPaused: false
         labels:
@@ -74,7 +81,7 @@ groups:
           spec: SPEC-OBS-001
           service_group: infra-containers
         annotations:
-          summary: 'Container {{ $labels.name }} has not been seen for >2 min'
+          summary: 'Container {{ $labels.name }} has not been seen for >4 min'
           runbook_url: 'docs/runbooks/platform-recovery.md#container-down'
           description: |
             cAdvisor stopped seeing {{ $labels.name }} more than 2 minutes ago.
