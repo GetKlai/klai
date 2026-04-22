@@ -41,16 +41,25 @@ function LoginPage() {
   useEffect(() => {
     if (!authRequestId) return
 
+    // Safety net: never leave the spinner up for more than 5s. If the fetch
+    // hangs (network blip, stale cookie, browser quirk), fall through to the
+    // manual login form so the user is never stuck.
+    const fallback = setTimeout(() => setCheckingSSO(false), 5000)
+
     // Try to silently complete the auth request using the portal SSO session.
     // The klai_sso cookie (set during portal login) is sent automatically by the browser.
     async function trySSO() {
       try {
+        const controller = new AbortController()
+        const abortTimer = setTimeout(() => controller.abort(), 4000)
         const resp = await fetch(`${API_BASE}/api/auth/sso-complete`, {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ auth_request_id: authRequestId }),
+          signal: controller.signal,
         })
+        clearTimeout(abortTimer)
         if (resp.ok) {
           const { callback_url } = await resp.json()
           window.location.href = callback_url
@@ -73,6 +82,7 @@ function LoginPage() {
     }
 
     void trySSO()
+    return () => clearTimeout(fallback)
   }, [authRequestId, inIframe])
 
   // If Zitadel didn't supply an authRequestId, the user arrived here directly.
