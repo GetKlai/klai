@@ -91,10 +91,12 @@ groups:
             model:
               refId: ratio
               type: math
-              # Guard against /0 when the system is genuinely idle.
-              # max(total_count, 1) means: if no traffic at all, ratio=0
-              # (no fire on quiet periods).
-              expression: '$fivexx_count / max($total_count, 1)'
+              # Grafana SSE math has no max()/min() — use ternary to guard
+              # against /0 on quiet periods. If total_count is 0 (no traffic
+              # at all), ratio=0 → threshold doesn't fire. Without this, 0/0
+              # would yield NaN which propagates as "no result" and 5/0
+              # would yield +Inf which would always fire.
+              expression: '$total_count > 0 ? ($fivexx_count / $total_count) : 0'
           - refId: ratio_threshold
             datasourceUid: __expr__
             relativeTimeRange:
