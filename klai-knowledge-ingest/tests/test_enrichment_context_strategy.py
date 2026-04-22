@@ -14,7 +14,7 @@ def _fake_enrich_chunk_factory(captured: list) -> AsyncMock:
 
     async def _fake(document_text, chunk_text, title, path, *, question_focus="", participant_context="", context_window=None, **kwargs):
         captured.append(context_window)
-        return MagicMock(context_prefix="prefix", content_type="conceptual", questions=["q?"])
+        return MagicMock(context_prefix="prefix", chunk_type="conceptual", questions=["q?"])
 
     return _fake
 
