@@ -23,6 +23,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.models.notebook import Notebook
 from app.models.source import Source
+from app.services import upload_storage
 from app.services.events import emit_event
 from app.services.ingestion import ingest_source
 
@@ -30,7 +31,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1", tags=["sources"])
 
 _ALLOWED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".pptx", ".txt", ".md"}
-_UPLOAD_BASE = Path("/opt/klai/research-uploads")
 
 
 # ── Response models ──────────────────────────────────────────────────────────
@@ -174,12 +174,11 @@ async def add_source_file(
             detail=f"Bestand te groot (max {settings.max_upload_mb} MB)",
         )
 
-    # Save file to disk
-    upload_dir = _UPLOAD_BASE / user.tenant_id / nb_id
-    upload_dir.mkdir(parents=True, exist_ok=True)
+    # Save file to disk via the upload_storage helper. Retention policy
+    # (delete-on-source-removed / delete-on-notebook-removed / delete-on-
+    # tenant-removed) lives there too; do not write directly to UPLOAD_BASE.
     src_id = _src_id()
-    file_path = upload_dir / f"{src_id}{ext}"
-    file_path.write_bytes(raw)
+    file_path = upload_storage.save(user.tenant_id, nb_id, src_id, ext, raw)
 
     source = Source(
         id=src_id,
@@ -329,12 +328,9 @@ async def delete_source(
     await db.execute(delete(Chunk).where(Chunk.source_id == src_id))
     qdrant_store.delete_by_source(src_id)
 
-    # Delete file if present
-    if source.file_path:
-        try:
-            Path(source.file_path).unlink(missing_ok=True)
-        except Exception:
-            logger.warning("Could not delete file: %s", source.file_path)
+    # Trigger 1 of the upload-retention policy: delete file when the
+    # source is removed by the user. See app/services/upload_storage.py.
+    upload_storage.delete_one(source.file_path)
 
     await db.execute(delete(Source).where(Source.id == src_id))
     await db.commit()

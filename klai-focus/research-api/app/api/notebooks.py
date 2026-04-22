@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import CurrentUser, get_current_user
 from app.core.database import get_db
 from app.models.notebook import Notebook
+from app.services import upload_storage
 from app.services.events import emit_event
 
 router = APIRouter(prefix="/v1", tags=["notebooks"])
@@ -285,3 +286,8 @@ async def delete_notebook(
     await db.execute(delete(Source).where(Source.notebook_id == nb_id))
     await db.execute(delete(Notebook).where(Notebook.id == nb_id))
     await db.commit()
+
+    # Trigger 2 of the upload-retention policy: when a notebook is removed,
+    # purge every uploaded file under it. Without this, files orphan on disk
+    # because the Source rows are gone but the underlying PDFs/DOCXs remain.
+    upload_storage.cleanup_notebook(user.tenant_id, nb_id)

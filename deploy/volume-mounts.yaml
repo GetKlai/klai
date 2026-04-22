@@ -354,21 +354,30 @@ mounts:
     host: /opt/klai/research-uploads
     container_path: /opt/klai/research-uploads
     image: ghcr.io/getklai/research-api:latest
-    data_path_source: literal (_UPLOAD_BASE in klai-focus/research-api/app/api/sources.py)
+    data_path_source: literal (UPLOAD_BASE in klai-focus/research-api/app/services/upload_storage.py)
     verified: true
     category: data
     pii: true
     backup: tar
     backup_method: rsync
-    retention: TBD
-    retention_enforced_by: NOT YET IMPLEMENTED — open question in SPEC-INFRA-005 §Open questions
+    retention: event_driven
+    retention_enforced_by: klai-focus/research-api/app/services/upload_storage.py
+    retention_test: klai-focus/research-api/tests/test_upload_retention.py
     notes: |
       User-uploaded source documents in Research notebooks. PII-rich.
-      Retention policy is an open question — candidate rules:
-        - delete_when_source_removed (tie to source record lifecycle)
-        - max_age_days:90 after notebook inactivity
-        - manual (current behaviour, weakest option)
-      Product owner decision required before Phase 3 backup is wired up.
+
+      Retention is event-driven, three triggers (no time-based sweep):
+        1. delete_when_source_removed — when the user removes a source from
+           a notebook, the file is unlinked. Enforced in
+           sources.py::delete_source via upload_storage.delete_one().
+        2. delete_when_notebook_removed — when the user deletes a notebook,
+           all files under it are unlinked + dir removed. Enforced in
+           notebooks.py::delete_notebook via upload_storage.cleanup_notebook().
+        3. delete_when_tenant_removed — when a tenant is decommissioned,
+           the entire /opt/klai/research-uploads/{tenant_id}/ subtree is
+           removed. Enforced in upload_storage.cleanup_tenant(). Today this
+           runs manually via scripts/research_tenant_cleanup.py; portal-api
+           will call it automatically once tenant teardown is implemented.
 
   # ─── CONFIG MOUNTS (source-controlled, no backup) ────────────────────────
 
