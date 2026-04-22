@@ -98,6 +98,46 @@ without the pre-flight audit described in `docs/runbooks/rls-upgrade.md`.**
 Outside the classification: `portal_group_memberships` has no RLS
 policy — membership rows inherit their tenant via the parent group's FK.
 
+## Post-commit db.refresh on RLS tables (HIGH)
+
+`await db.refresh(obj)` after `await db.commit()` opens a fresh implicit transaction
+without the tenant GUC. On a category-D table this trips the RLS guard and raises
+`asyncpg.exceptions.InsufficientPrivilegeError: RLS: app.current_org_id is not set`,
+surfacing as a 500 response while the preceding INSERT/UPDATE+commit already succeeded.
+
+**Why:** `SET LOCAL app.current_org_id` is transaction-scoped. `db.commit()` ends the
+transaction and clears the setting. SQLAlchemy's `db.refresh()` then starts a new
+implicit transaction that hits the category-D strict policy. Any table in
+`RLS_DML_TABLES` (`app/core/rls_guard.py`) is affected.
+
+**Prevention:**
+
+- **UPDATE endpoints** (object already fetched, only attribute assignments mutate it):
+  remove the refresh entirely. `AsyncSessionLocal` uses `expire_on_commit=False`,
+  so fields set in Python before commit persist in memory.
+
+  ```python
+  meeting.status = "joining"
+  meeting.started_at = datetime.now(UTC)
+  await db.commit()
+  # No refresh — all fields already set in memory
+  return await _build_meeting_response(meeting, db)
+  ```
+
+- **CREATE endpoints** (new object relying on `server_default=func.now()` or other
+  DB-side generated columns): move the refresh **before** the commit, so it runs
+  inside the tenant-scoped transaction.
+
+  ```python
+  db.add(group)
+  await db.flush()
+  await db.refresh(group)   # tenant context still active
+  await db.commit()
+  ```
+
+Historical references: AUTH-008-F (b64d70dc — meetings.py), AUTH-008-G (486336a1 +
+ddb6cbc5 — 5 files, 24 sites). Discovered during SEC-021 E2E verification.
+
 ## How to set tenant context
 
 Three patterns, in order of preference:

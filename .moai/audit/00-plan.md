@@ -1,7 +1,7 @@
 # Klai — Security, Code & Dead Code Audit Plan
 
 **Start:** 2026-04-19
-**Laatst bijgewerkt:** 2026-04-21 — 4 post-audit follow-up SPECs gelanded sinds 19 apr: SPEC-SEC-024 (docker-socket-proxy compliance, LIVE) + SPEC-PROV-001 (transactional provisioning, LIVE) + SPEC-OBS-001 (Grafana alerting, draft) + SPEC-INFRA-005 (stateful persistence + volume-audit CI, Phase 1+2 LIVE). Plus major RLS silent-failure hardening (AUTH-008 phase E/F). Alle originele SEC-tickets gesloten behalve SEC-022 (vereist live-ops window). Task #31 (Playwright E2E) nog open.
+**Laatst bijgewerkt:** 2026-04-22 — SEC-021 runtime-api via socat sidecar LIVE op dev + E2E geverifieerd via Playwright. AUTH-008-F (RLS-gap in meetings.py) + AUTH-008-G (sweep 24 post-commit refreshes op category-D RLS tables) LIVE. Alle originele SEC-tickets gesloten behalve SEC-022 (live-ops window vereist).
 **Werklocatie:** `.moai/audit/`
 **Scope:** hele klai-monorepo (13 sub-repos)
 
@@ -42,7 +42,9 @@
 - [x] **SEC-012** JWT audience research-api — LIVE, smoke-tested (401 op bogus bearer). Scribe-deel superseded door SPEC-VEXA-003.
 - [x] **SEC-004** Defense-in-depth AuthGuardMiddleware in research-api + scribe-api — LIVE, smoke-tested (401 zonder header, 200 op /health)
 - [x] **SEC-020** Vexa external repo audit — DONE in `.moai/audit/10-vexa-external-audit.md`. Vexa auth-contract solide (fail-closed, hmac.compare_digest). 1 follow-up: `ALLOW_PRIVATE_CALLBACKS=1` flip.
-- [x] **SEC-021** runtime-api docker-socket-proxy — **IMPLEMENTED in dev 2026-04-22**. Vexa runtime-api kan geen TCP spreken (hardcoded `requests_unixsocket`), dus via `alpine/socat:1.7.3.4-r1` sidecar die Unix socket forwardt naar `docker-socket-proxy:2375`. Hardening verified: EXEC/IMAGES/VOLUMES/SYSTEM geven 403, CONTAINERS/NETWORKS werken. SPEC v0.3.0 in `.moai/specs/SPEC-SEC-021/spec.md`. Portal-api scope eerder al gesloten via SPEC-SEC-024.
+- [x] **SEC-021** runtime-api docker-socket-proxy — **LIVE on dev 2026-04-22** (078cc0f2). Vexa runtime-api kan geen TCP spreken (hardcoded `requests_unixsocket`), dus via `alpine/socat:1.7.3.4-r1` sidecar die Unix socket forwardt naar `docker-socket-proxy:2375`. Hardening verified: EXEC/IMAGES/VOLUMES/SYSTEM geven 403, CONTAINERS/NETWORKS werken. SPEC v0.3.0 in `.moai/specs/SPEC-SEC-021/spec.md`. Portal-api scope eerder al gesloten via SPEC-SEC-024. **End-to-end verified via Playwright** op voys.getklai.com: bot-spawn werkt, meeting-api → runtime-api → socat → proxy → daemon keten gevalideerd.
+- [x] **AUTH-008-F** RLS-gap in `meetings.py` — **LIVE on main 2026-04-22** (b64d70dc). Post-commit `db.refresh` verwijderd in start/stop_meeting. Tenant context is transaction-scoped, refresh opende nieuwe transactie zonder context → 500. Ontdekt tijdens SEC-021 E2E test.
+- [x] **AUTH-008-G** Sweep post-commit refresh op category-D RLS tables — **LIVE on main 2026-04-22** (486336a1 + ddb6cbc5). 5 bestanden / 24 sites. UPDATE endpoints: refresh verwijderd. CREATE endpoints: refresh verplaatst naar vóór commit (server_default kolommen zoals `created_at`). `expert-refactoring` agent voerde de sweep uit met `RLS_DML_TABLES` als source-of-truth.
 - [ ] **SEC-022** vexa-bots network egress — SPEC'd in `.moai/specs/SPEC-SEC-022/spec.md`. Implementation vereist live-ops window.
 - [x] **SEC-024** docker-socket-proxy compliance audit — LIVE. M1 exec_run audit + M2 proxy-pin/forbidden-verbs + M3 ast-grep CI-guard + M4 smoke-test + Grafana alert/dashboard + deploy-compose sync. Zero-tolerance alerting op denial-endpoint.
 - [x] **PROV-001** Transactional tenant provisioning — LIVE (71b9c973). AsyncExitStack rollback + idempotent retry + startup stuck-detector.
