@@ -3,9 +3,9 @@
 from urllib.parse import urlparse
 
 import httpx
+from klai_image_storage import dedupe_image_urls
 
 from app.core.logging import get_logger
-from app.services.image_utils import dedupe_image_urls
 
 logger = get_logger(__name__)
 

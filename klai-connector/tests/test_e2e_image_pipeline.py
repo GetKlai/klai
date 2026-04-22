@@ -8,13 +8,19 @@ import base64
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from klai_image_storage import (
+    ImageStore,
+    ImageUploadResult,
+    extract_markdown_image_urls,
+    resolve_relative_url,
+)
+from klai_image_storage import (
+    download_and_upload_adapter_images as download_and_upload_images,
+)
 
 from app.adapters.base import DocumentRef, ImageRef
 from app.adapters.notion import _extract_image_blocks
 from app.clients.knowledge_ingest import _build_payload
-from app.services.image_utils import extract_markdown_image_urls, resolve_relative_url
-from app.services.s3_storage import ImageStore, ImageUploadResult
-from app.services.sync_images import download_and_upload_images
 
 # ---------------------------------------------------------------------------
 # Helpers

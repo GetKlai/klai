@@ -128,38 +128,36 @@ async def download_and_upload_adapter_images(
             logger.exception("parsed_image_upload_failed")
 
     # Phase 2: Download and upload URL-referenced images.
+    # @MX:NOTE: Broad ``except Exception`` matches pre-SPEC klai-connector
+    #   behaviour exactly (zero-behaviour-change, SPEC-KB-IMAGE-002 REQ-03).
+    #   A single image's failure must never abort the sync.
     for _alt, url in image_urls:
         if remaining <= 0:
             break
         try:
             resp = await http_client.get(url)
-        except httpx.HTTPError as exc:
-            logger.warning("image_download_error", url=url, error=str(exc))
-            continue
+            if resp.status_code != 200:
+                logger.warning(
+                    "image_download_failed", url=url, status=resp.status_code
+                )
+                continue
 
-        if resp.status_code != 200:
-            logger.warning("image_download_failed", url=url, status=resp.status_code)
-            continue
+            data = resp.content
+            if len(data) > MAX_IMAGE_SIZE:
+                logger.warning("image_too_large", url=url, size=len(data))
+                continue
 
-        data = resp.content
-        if len(data) > MAX_IMAGE_SIZE:
-            logger.warning("image_too_large", url=url, size=len(data))
-            continue
+            if not image_store.validate_image(data):
+                logger.warning("image_invalid_content", url=url)
+                continue
 
-        if not image_store.validate_image(data):
-            logger.warning("image_invalid_content", url=url)
-            continue
-
-        try:
             result = await image_store.upload_image(
                 org_id, kb_slug, data, _ext_from_url(url)
             )
+            uploaded_urls.append(result.public_url)
+            remaining -= 1
         except Exception:
-            logger.exception("image_upload_failed", url=url)
-            continue
-
-        uploaded_urls.append(result.public_url)
-        remaining -= 1
+            logger.exception("image_download_upload_failed", url=url)
 
     return uploaded_urls
 

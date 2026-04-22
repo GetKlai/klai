@@ -8,6 +8,10 @@ from typing import Any
 
 import httpx
 from gidgethub import BadRequest
+from klai_image_storage import ImageStore
+from klai_image_storage import (
+    download_and_upload_adapter_images as download_and_upload_images,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -19,8 +23,6 @@ from app.core.logging import get_logger
 from app.models.sync_run import SyncRun
 from app.services.parser import parse_document_with_images
 from app.services.portal_client import PortalClient
-from app.services.s3_storage import ImageStore
-from app.services.sync_images import download_and_upload_images
 
 logger = get_logger(__name__)
 
