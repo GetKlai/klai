@@ -8,14 +8,35 @@ import asyncio
 import hashlib
 import time
 
+import httpx
 import structlog
 
 from knowledge_ingest import pg_store
+from knowledge_ingest.config import settings
 from knowledge_ingest.crawl4ai_client import CrawlResult, crawl_site
 from knowledge_ingest.db import get_pool
 from knowledge_ingest.models import IngestRequest
+from knowledge_ingest.s3_storage import ImageStore
+from knowledge_ingest.sync_images import download_and_upload_crawl_images
 
 logger = structlog.get_logger()
+
+
+def _build_image_store() -> ImageStore | None:
+    """Construct an ImageStore from settings, or None if disabled.
+
+    SPEC-CRAWLER-004 Fase A — empty ``garage_s3_endpoint`` means the image
+    pipeline is turned off (e.g. in dev where Garage is not provisioned).
+    """
+    if not settings.garage_s3_endpoint:
+        return None
+    return ImageStore(
+        endpoint=settings.garage_s3_endpoint,
+        access_key=settings.garage_access_key,
+        secret_key=settings.garage_secret_key,
+        bucket=settings.garage_bucket,
+        region=settings.garage_region,
+    )
 
 _UNSET = object()  # sentinel: stored_hash not yet fetched from DB
 
@@ -200,6 +221,28 @@ async def _ingest_crawl_result(
         extra["incoming_link_count"] = incoming
     except Exception as exc:
         logger.warning("link_graph_query_failed", url=url, error=str(exc))
+
+    # SPEC-CRAWLER-004 Fase A: extract and upload images from crawl4ai
+    # media.images. Skipped silently when garage_s3_endpoint is empty.
+    image_store = _build_image_store()
+    if image_store is not None:
+        media_images = (result.media or {}).get("images") or []
+        if media_images:
+            try:
+                timeout = settings.image_download_timeout
+                async with httpx.AsyncClient(timeout=timeout) as http_client:
+                    image_urls = await download_and_upload_crawl_images(
+                        media_images=media_images,
+                        base_url=url,
+                        org_id=org_id,
+                        kb_slug=kb_slug,
+                        image_store=image_store,
+                        http_client=http_client,
+                    )
+                if image_urls:
+                    extra["image_urls"] = image_urls
+            except Exception as exc:
+                logger.warning("crawl_image_upload_failed", url=url, error=str(exc))
 
     from knowledge_ingest.routes.ingest import ingest_document
 
