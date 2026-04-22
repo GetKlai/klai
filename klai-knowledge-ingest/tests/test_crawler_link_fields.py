@@ -1,8 +1,10 @@
 """
 Tests for link graph field population in crawler adapter (SPEC-CRAWLER-003, TASK-005).
 
-Verifies that _ingest_crawl_result populates extra with link fields,
-and that run_crawl_job calls compute_incoming_counts + update_link_counts.
+Verifies that _ingest_crawl_result populates extra with link fields.
+Note: the post-crawl compute_incoming_counts + update_link_counts calls were
+removed in SPEC-CRAWLER-005 REQ-05.1. See test_crawler_link_fields_complete.py
+for the two-phase pipeline tests.
 """
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -140,10 +142,27 @@ async def test_ingest_crawl_result_graceful_on_link_graph_error():
 
 
 @pytest.mark.asyncio
-async def test_run_crawl_job_calls_compute_and_update_link_counts():
-    """After crawl loop, run_crawl_job calls compute_incoming_counts + update_link_counts."""
+async def test_run_crawl_job_calls_build_link_graph_before_ingest():
+    """
+    run_crawl_job calls _build_link_graph (Phase 1) before per-page ingest.
+
+    SPEC-CRAWLER-005 REQ-01.1: the two-phase pipeline ensures upsert_page_links
+    is called for all pages before any page is ingested, so link graph queries
+    in _ingest_crawl_result always see the full graph.
+    """
     mock_pool = _make_mock_pool()
-    mock_result = _make_crawl_result(links={"internal": []})
+    mock_result = _make_crawl_result(
+        links={"internal": [{"href": "https://example.com/b", "text": "B"}]},
+    )
+
+    call_order: list[str] = []
+
+    async def _fake_upsert_links(**kwargs):  # type: ignore[no-untyped-def]
+        call_order.append("upsert_page_links")
+
+    async def _fake_ingest(req):  # type: ignore[no-untyped-def]
+        call_order.append("ingest_document")
+        return {"chunks": 1}
 
     with (
         patch(
@@ -171,50 +190,28 @@ async def test_run_crawl_job_calls_compute_and_update_link_counts():
             link_graph, "get_incoming_count",
             new_callable=AsyncMock, return_value=0,
         ),
-        patch.object(
-            link_graph, "compute_incoming_counts",
-            new_callable=AsyncMock,
-        ) as mock_compute,
+        patch(
+            "knowledge_ingest.routes.ingest.ingest_document",
+            side_effect=_fake_ingest,
+        ),
     ):
         mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
         mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
         mock_pg.upsert_crawled_page = AsyncMock()
-        mock_pg.upsert_page_links = AsyncMock()
+        mock_pg.upsert_page_links = AsyncMock(side_effect=_fake_upsert_links)
 
-        mock_compute.return_value = {
-            "https://example.com/a": 5,
-            "https://example.com/b": 2,
-        }
+        from knowledge_ingest.adapters.crawler import run_crawl_job
 
-        ingest_patch = patch(
-            "knowledge_ingest.routes.ingest.ingest_document",
-            new_callable=AsyncMock, return_value={"chunks": 1},
+        await run_crawl_job(
+            job_id="job-1",
+            org_id="org-1",
+            kb_slug="docs",
+            start_url="https://example.com/a",
+            max_depth=1,
+            rate_limit=100.0,
         )
-        with ingest_patch:
-            import knowledge_ingest.qdrant_store as qs_mod
-            with patch.object(
-                qs_mod, "update_link_counts", new_callable=AsyncMock,
-            ) as mock_update:
-                from knowledge_ingest.adapters.crawler import (
-                    run_crawl_job,
-                )
 
-                await run_crawl_job(
-                    job_id="job-1",
-                    org_id="org-1",
-                    kb_slug="docs",
-                    start_url="https://example.com/a",
-                    max_depth=1,
-                    rate_limit=100.0,
-                )
-
-                mock_compute.assert_called_once_with(
-                    "org-1", "docs", mock_pool,
-                )
-                mock_update.assert_called_once_with(
-                    "org-1", "docs",
-                    {
-                        "https://example.com/a": 5,
-                        "https://example.com/b": 2,
-                    },
-                )
+    # Phase 1 (upsert_page_links) must happen BEFORE Phase 2 (ingest_document)
+    assert call_order == ["upsert_page_links", "ingest_document"], (
+        f"Expected upsert_page_links before ingest_document, got order: {call_order}"
+    )

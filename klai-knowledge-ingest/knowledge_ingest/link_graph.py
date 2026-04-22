@@ -52,10 +52,20 @@ async def get_incoming_count(
     return int(count or 0)
 
 
+# @MX:WARN: [AUTO] compute_incoming_counts — deprecated post-crawl band-aid
+# @MX:REASON: Deprecated band-aid — re-wiring into the crawl path creates a race
+#   with enrichment. The two-phase pipeline (SPEC-CRAWLER-005) makes
+#   incoming_link_count final at first Qdrant write via get_incoming_count() per-page.
 async def compute_incoming_counts(
     org_id: str, kb_slug: str, pool: asyncpg.Pool
 ) -> dict[str, int]:
-    """Return a dict mapping each to_url to its incoming link count."""
+    """DEPRECATED (SPEC-CRAWLER-005 REQ-05.1): No production caller since the
+    two-phase pipeline makes incoming_link_count final at first Qdrant write.
+    Kept for potential admin-only repair scripts. Do not re-introduce in the
+    crawl path.
+
+    Return a dict mapping each to_url to its incoming link count.
+    """
     rows = await pool.fetch(
         "SELECT to_url, COUNT(*) AS cnt FROM knowledge.page_links "
         "WHERE org_id = $1 AND kb_slug = $2 "

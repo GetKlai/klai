@@ -489,14 +489,22 @@ async def set_entity_graph_data(
 _LINK_COUNT_CONCURRENCY = 20  # max parallel set_payload calls per bulk crawl
 
 
+# @MX:WARN: [AUTO] update_link_counts — deprecated post-crawl band-aid
+# @MX:REASON: Deprecated band-aid — re-wiring into the crawl path creates a race
+#   with enrichment. The two-phase pipeline (SPEC-CRAWLER-005) makes
+#   incoming_link_count correct at first write via get_incoming_count() per-page.
 async def update_link_counts(
     org_id: str,
     kb_slug: str,
     url_to_count: dict[str, int],
 ) -> None:
-    """Update incoming_link_count for all chunks of each URL in the dict.
+    """DEPRECATED (SPEC-CRAWLER-005 REQ-05.1): No production caller. The two-phase
+    crawl pipeline populates incoming_link_count correctly at first write via
+    link_graph.get_incoming_count() per-page. Calling this function after a
+    crawl is now a no-op band-aid with a race-condition risk — do NOT re-wire
+    it into run_crawl_job. Kept for potential admin-only repair scripts.
 
-    Called after a bulk crawl run to refresh the count for all pages in the KB.
+    Update incoming_link_count for all chunks of each URL in the dict.
     Uses set_payload() with a source_url filter -- same pattern as set_entity_graph_data().
     Concurrency bounded by _LINK_COUNT_CONCURRENCY to avoid Qdrant overload.
     """
