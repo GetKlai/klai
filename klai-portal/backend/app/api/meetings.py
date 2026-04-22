@@ -228,7 +228,11 @@ async def start_meeting(
         logger.exception("Vexa bot start failed", meeting_id=str(meeting.id), error=str(exc))
 
     await db.commit()
-    await db.refresh(meeting)
+    # No post-commit refresh: `SET LOCAL app.current_org_id` is transaction-scoped
+    # and gone after commit. A db.refresh() here opens a fresh transaction without
+    # tenant context and trips the category-D RLS guard on vexa_meetings. All
+    # fields (bot_id, status, started_at, error_message) are set above and persist
+    # after commit thanks to AsyncSessionLocal(expire_on_commit=False).
     emit_event("meeting.started", org_id=org.id, user_id=user_id, properties={"platform": ref.platform})
     return await _build_meeting_response(meeting, db)
 
@@ -285,7 +289,8 @@ async def stop_meeting(
     meeting.status = "stopping"
     meeting.ended_at = datetime.now(UTC)
     await db.commit()
-    await db.refresh(meeting)
+    # See start_meeting: no post-commit refresh — RLS tenant context is gone
+    # after commit, and expire_on_commit=False keeps the mutated fields intact.
     return await _build_meeting_response(meeting, db)
 
 
