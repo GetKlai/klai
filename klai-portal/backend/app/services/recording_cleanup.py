@@ -38,9 +38,7 @@ async def delete_recording(recording_id: int, meeting_id: str | None = None) -> 
             logger.warning("Recording deletion failed", recording_id=recording_id, meeting_id=meeting_id)
         return success
     except Exception:
-        logger.warning(
-            "Recording cleanup error", recording_id=recording_id, meeting_id=meeting_id, exc_info=True
-        )
+        logger.warning("Recording cleanup error", recording_id=recording_id, meeting_id=meeting_id, exc_info=True)
         return False
 
 
