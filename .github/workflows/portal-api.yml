@@ -113,7 +113,7 @@ jobs:
           # We do not run alembic here — the smoke test only needs the
           # policy targets to exist, not the full app schema.
           psql -h localhost -U klai -d klai -v ON_ERROR_STOP=1 <<'SQL'
-          CREATE ROLE portal_api;
+          CREATE ROLE portal_api LOGIN PASSWORD 'portal_api_test';
           GRANT CONNECT ON DATABASE klai TO portal_api;
           GRANT USAGE ON SCHEMA public TO portal_api;
 
@@ -213,7 +213,7 @@ jobs:
 
       - name: Run RLS smoke test
         env:
-          PGPASSWORD: klai
+          PGPASSWORD: portal_api_test
         working-directory: klai-portal/backend
         # NOTICE messages go to stderr — capture both streams. set -o pipefail
         # so a psql failure isn't masked by tee's exit code.
