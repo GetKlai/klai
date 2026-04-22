@@ -22,24 +22,34 @@
   actually change (rsync content checksum), so future rule pushes
   auto-deploy without manual intervention.
 - **D**: 3 LogsQL rules (caddy_5xx_count_high, portal_redis_flushall_failed
-  — THE primary gap-closer — and ingest_error_rate_elevated). 3 deferred
-  to `DEFERRED.md` with rationale: R10 latency, R11 traffic-drop, R15
-  librechat health.
+  — THE primary gap-closer — and ingest_error_rate_elevated).
 - **E**: heartbeat infrastructure. Synthetic always-firing rule pushes
-  webhook to Uptime Kuma every 5 min via contact point `heartbeat-kuma`.
+  webhook to Uptime Kuma every ~3 min via contact point `heartbeat-kuma`.
   Uptime Kuma push monitor `Klai alerter heartbeat (OBS-001)` (token
-  ends `...43252a`) listens; on 15-min silence it triggers its own SMTP
-  notification to `mark.vletter@voys.nl` independent of Grafana.
+  ends `...43252a`) listens; on missed heartbeats (5min interval +
+  maxretries=1) it triggers its own SMTP notification to
+  `mark.vletter@voys.nl` independent of Grafana.
+- **F (deferred-rules cleanup)**: previously deferred R10/R11/R15 landed.
+  R10 (caddy_p95_latency_high) via LogsQL `stats quantile(0.95, duration)`
+  + reduce: last + threshold > 2.0s. R11 (caddy_traffic_drop) via two-query
+  ratio with absolute-baseline guard (>600 req/h, avoids quiet-period
+  false-positives without needing tz-aware business-hours filtering).
+  R15 (librechat_health_failed_elevated) via case-insensitive substring
+  match on `_msg` for "health" + "fail" — text-fragile but honest about
+  the unstructured LibreChat log format. DEFERRED.md removed.
 
 **Active alerts at end of rollout**:
 
 | Rule | UID | Severity | Threshold | Routes to |
 |---|---|---|---|---|
 | caddy_5xx_count_high | `obs-001-caddy-5xx-rate-high` | critical | >10 5xx in 5m | klai-ops-alerts-email |
+| caddy_p95_latency_high | `obs-001-caddy-p95-latency-high` | critical | p95 duration >2s for 5m | klai-ops-alerts-email |
+| caddy_traffic_drop | `obs-001-caddy-traffic-drop` | critical | <20% of 1h baseline AND baseline>600 req/h, 10m | klai-ops-alerts-email |
 | container_down | `obs-001-container-down` | critical | >120s gap, sustained 2m | klai-ops-alerts-email |
 | container_restart_loop | `obs-001-container-restart-loop` | critical | >0 restarts in 15m, sustained 15m | klai-ops-alerts-email |
 | core01_disk_usage_high | `obs-001-core01-disk-usage-high` | warning | <15% free, sustained 30m | klai-ops-alerts-email |
 | ingest_error_rate_elevated | `obs-001-ingest-error-rate-elevated` | warning | >10 errors/10m | klai-ops-alerts-email |
+| librechat_health_failed_elevated | `obs-001-librechat-health-failed-elevated` | warning | >5 health-fail mentions in 10m | klai-ops-alerts-email |
 | portal_redis_flushall_failed | `obs-001-portal-redis-flushall-failed` | warning | any FLUSHALL failure | klai-ops-alerts-email |
 | alerter_heartbeat | `obs-001-alerter-heartbeat` | (none) | always firing | heartbeat-kuma |
 

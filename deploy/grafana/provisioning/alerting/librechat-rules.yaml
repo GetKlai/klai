@@ -1,0 +1,105 @@
+# SPEC-OBS-001 R15 — librechat health-fail spike (LogsQL via VictoriaLogs).
+#
+# Routed via spec=SPEC-OBS-001 → klai-ops-alerts-email.
+#
+#   R15  librechat_health_failed_elevated  HIGH  >5 health-fail mentions in 10m
+#
+# SPEC v0.2.1 specified `service:librechat-* AND event:chat.health_failed`
+# (structured field match). LibreChat container logs are unstructured —
+# only `container`, `host`, `_msg` keys, no `service` or `event` fields,
+# no `level` as a structured key (it's embedded in the ANSI-colored text).
+#
+# Adapted: text-substring match on `_msg`. Uses VictoriaLogs LogsQL `i()`
+# case-insensitive substring filter. Fragile to LibreChat log-string
+# changes (any release that renames "health" or "fail" in their format
+# silently breaks this rule). Acceptable as MVP since:
+#   1. There's no better LibreChat-side instrumentation today.
+#   2. The current rule produces a clear signal IF a string match exists.
+#   3. Quarterly review will catch silent breakage by checking fire-count.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: obs-001-librechat
+    folder: Klai
+    interval: 1m
+    rules:
+
+      # ── R15: librechat_health_failed_elevated ───────────────────────────
+      - uid: obs-001-librechat-health-failed-elevated
+        title: librechat_health_failed_elevated
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              # Match any librechat container, message containing both
+              # "health" and "fail" (case-insensitive). Note: this is
+              # text-substring matching on _msg, NOT structured field
+              # access — see DEFERRED.md history for context.
+              expr: '_time:10m container:~".*librechat.*" AND _msg:i("health") AND _msg:i("fail")'
+              queryType: instant
+          - refId: count
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: count
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: count
+              conditions:
+                - evaluator: { params: [5], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 0s
+        keepFiringFor: 30m
+        isPaused: false
+        labels:
+          severity: warning
+          spec: SPEC-OBS-001
+          service_group: librechat
+        annotations:
+          summary: 'librechat: >5 health-fail log lines in last 10 min'
+          runbook_url: 'docs/runbooks/platform-recovery.md#librechat-health-failed-elevated'
+          description: |
+            More than 5 LibreChat container log lines mentioning both "health"
+            and "fail" appeared in the last 10 minutes. Either upstream LLM
+            (LiteLLM, Ollama via vLLM, OpenAI, Mistral) is unavailable, the
+            librechat container has a config issue, or its dependent service
+            (MongoDB, Redis, Meilisearch) is unhealthy.
+
+            Triage:
+              1. Identify the affected tenants — group by container:
+                   _time:10m container:~".*librechat.*" AND _msg:i("health") AND _msg:i("fail") | stats by(container) count() as hits
+              2. For each affected container, look at the most recent failures:
+                   container:{NAME} AND _msg:i("health") | sort by(_time) desc | limit 5
+              3. Test the LibreChat health endpoint directly:
+                   ssh core-01 "docker exec {NAME} curl -sf http://localhost:3080/api/health"
+              4. If unhealthy, look at upstream dependency:
+                   ssh core-01 "docker logs --tail 50 klai-core-litellm-1"
+              5. If a single container is affected: restart that one librechat:
+                   ssh core-01 "docker restart {NAME}"
+                 If many: investigate upstream (LiteLLM, OpenAI/Mistral status page).

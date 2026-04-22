@@ -686,3 +686,186 @@ After fix: Uptime Kuma's monitor `Klai alerter heartbeat (OBS-001)` shows status
 ### Follow-up
 
 If this fires repeatedly without a clear root cause, investigate why core-01 ↔ public-01 connectivity is flaky (Hetzner internal network, firewall, Caddy on public-01 handling the inbound). One follow-up improvement: a SECOND independent SMTP provider for Kuma (currently shares Cloud86 with Grafana — a Cloud86 outage knocks out both paths). See DEFERRED.md.
+
+---
+
+## caddy-p95-latency-high
+
+**Related alert**: SPEC-OBS-001-R10 (`caddy_p95_latency_high`, CRIT)
+
+**Situation**: The 95th percentile of Caddy request durations exceeded 2 seconds over the last 5 minutes. Slow-but-not-erroring requests are often worse than 5xx — users experience timeouts, retries, frustration without a clear error to debug.
+
+**Signal to look for**:
+```
+_time:5m service:caddy | stats quantile(0.95, duration) as p95
+```
+
+### Step 1 — Find the slow upstream
+
+```
+_time:5m service:caddy | stats by(request.host) quantile(0.95, duration) as p95
+```
+
+Sort by p95 descending. The host with the highest p95 is the suspect.
+
+### Step 2 — Check upstream container health
+
+For the slow upstream service:
+```bash
+ssh core-01 "docker stats --no-stream {container_name} --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemPerc}}'"
+```
+
+CPU pinned at 100% or memory near limit → resource exhaustion. Restart loop → see `container-restart-loop`.
+
+### Step 3 — Check downstream dependencies
+
+```bash
+ssh core-01 "docker logs --tail 100 {container_name} | grep -iE 'timeout|slow|connection|pool exhausted'"
+```
+
+Common causes:
+- **DB connection pool exhausted** → upstream waits for a free connection. Check Postgres/MongoDB load.
+- **Upstream API rate-limit** → slow responses from LiteLLM, OpenAI, Mistral. Check their dashboards.
+- **Large synchronous payloads** → file uploads or huge LLM contexts blocking the event loop.
+
+### Step 4 — Decide: tune or fix
+
+- **Sustained slowness in one upstream**: file SPEC for that service to add async/queueing.
+- **Spike from one tenant**: throttle the offender's RPS at Caddy level.
+- **Genuine slowness due to upstream LLM**: tune the threshold (>2s might be too aggressive for LLM endpoints) or exclude `request.host:llm-related` paths from the rule.
+
+### Verify
+
+After fix: p95 drops back below 2s, alert auto-resolves within 1 evaluation cycle plus `for: 5m` debounce.
+
+### Follow-up
+
+If LLM endpoints structurally exceed 2s p95 (which is likely for chat completions): split this rule. One for the static-page hosts (tighter threshold), one for LLM hosts (looser threshold or higher quantile, e.g. p99 > 30s).
+
+---
+
+## caddy-traffic-drop
+
+**Related alert**: SPEC-OBS-001-R11 (`caddy_traffic_drop`, CRIT)
+
+**Situation**: Caddy request rate over the last 5 minutes is less than 20% of the rolling 1-hour baseline, AND the baseline shows meaningful volume (>600 req/h). Either users can't reach Caddy (DNS, certificate, network) OR all upstreams are down OR something on the public-facing path broke.
+
+**Signal to look for**:
+```
+ratio = current_5m / (baseline_1h / 12)
+fire if ratio < 0.2 AND baseline_1h > 600
+```
+
+### Step 1 — Verify Caddy itself is up
+
+```bash
+ssh core-01 "docker ps --filter name=caddy --format '{{.Names}}\t{{.Status}}'"
+ssh core-01 "curl -sf -o /dev/null -w '%{http_code}\n' https://my.getklai.com"
+```
+
+If 200: Caddy is up and serving. The drop is upstream-of-Caddy (DNS, network) or downstream (all backends erroring).
+
+If non-200: Caddy is broken. See container-down + container-restart-loop runbooks.
+
+### Step 2 — Check DNS
+
+```bash
+dig +short my.getklai.com
+dig +short auth.getklai.com
+```
+
+Should return `65.21.174.162`. If empty or different: Hetzner DNS issue.
+
+### Step 3 — Check certificate
+
+```bash
+echo | openssl s_client -servername my.getklai.com -connect my.getklai.com:443 2>/dev/null | openssl x509 -noout -dates
+```
+
+If expired or expires in <7 days: certificate auto-renewal failed. Check Caddy logs for ACME errors.
+
+### Step 4 — Per-host breakdown
+
+```
+_time:1h service:caddy | stats by(request.host) count() as hits | sort by(hits) desc
+_time:5m service:caddy | stats by(request.host) count() as hits | sort by(hits) desc
+```
+
+Compare which hosts dropped. If one host is 0 in 5m but 100 in 1h: that specific upstream is unreachable. If all hosts dropped: front-door issue.
+
+### Step 5 — Hetzner network status
+
+Check https://status.hetzner.com/ — outages on HEL1 datacenter would cut all inbound traffic.
+
+### Verify
+
+After fix: traffic returns, ratio rises above 0.2, alert auto-resolves within 1 evaluation cycle plus `for: 10m` debounce.
+
+### Follow-up
+
+If this fires on weekends/evenings: tune the baseline-floor (currently 600 req/h) upward. The rule's design specifically uses absolute baseline volume to avoid quiet-period false-positives, but the 600 number is a starting guess — use observed traffic patterns to refine.
+
+---
+
+## librechat-health-failed-elevated
+
+**Related alert**: SPEC-OBS-001-R15 (`librechat_health_failed_elevated`, HIGH)
+
+**Situation**: More than 5 LibreChat log lines mentioning both "health" and "fail" appeared in 10 minutes. Either an upstream LLM (LiteLLM, vLLM, OpenAI, Mistral) is unavailable, a librechat container has a config issue, or one of its dependencies (MongoDB, Redis, Meilisearch) is unhealthy.
+
+**Signal to look for**:
+```
+_time:10m container:~".*librechat.*" AND _msg:i("health") AND _msg:i("fail") | stats count() as hits
+```
+
+This is **text-substring matching** on the unstructured `_msg` field. LibreChat doesn't emit structured event fields, so we look for keyword combinations.
+
+### Step 1 — Identify affected tenants
+
+```
+_time:10m container:~".*librechat.*" AND _msg:i("health") AND _msg:i("fail") | stats by(container) count() as hits
+```
+
+### Step 2 — Sample recent failures per container
+
+For each affected `{NAME}`:
+```
+container:{NAME} AND _msg:i("health") | sort by(_time) desc | limit 10
+```
+
+Look for: "ECONNREFUSED", "timeout", "401", "no response", "rate limit". The text often points to the upstream.
+
+### Step 3 — Test the health endpoint directly
+
+```bash
+ssh core-01 "docker exec {NAME} curl -sf -o - http://localhost:3080/api/health"
+```
+
+200 with body `{"ok":true}` = container is healthy, the failures are transient or affect a specific feature. Non-200 or no response = container itself is unhealthy → check container_restart_loop / container_down runbooks.
+
+### Step 4 — Check upstream LLM
+
+```bash
+ssh core-01 "docker logs --tail 50 klai-core-litellm-1 | grep -iE 'error|timeout|429|503'"
+```
+
+If LiteLLM logs errors: upstream model provider is having issues. Check provider status pages (OpenAI, Mistral) before changing anything.
+
+### Step 5 — Restart the affected container if isolated
+
+If only ONE container is affected and the upstream looks healthy:
+```bash
+ssh core-01 "docker restart {NAME}"
+```
+
+For widespread impact across many tenants: don't restart-bomb everything. Investigate upstream first.
+
+### Verify
+
+After fix: health-failure log volume drops, alert auto-resolves within 10m of the last matching log line (rule's `keepFiringFor: 30m` extends visibility).
+
+### Follow-up
+
+If LibreChat ever upgrades and changes the "health" / "fail" text in their log format, this rule silently breaks. Quarterly review: confirm fire-count > 0 for SOME period of last quarter — if always zero, either we're suspiciously healthy (good) or the rule broke (bad).
+
+A long-term fix is to instrument LibreChat with structured-event logging via a sidecar, so we can match `event:health_failed` instead of substring text. Out of OBS-001 scope.
