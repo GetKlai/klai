@@ -224,7 +224,7 @@ function ChatConfigBar() {
   }
 
   return (
-    <div className="flex shrink-0 items-center gap-2 pl-4 pr-4 pt-5 pb-1">
+    <div className="flex shrink-0 items-center gap-2 bg-[var(--color-sidebar)] border-b border-[var(--color-sidebar-border)] pl-4 pr-4 pt-5 pb-4">
       {collOpen && <div className="fixed inset-0 z-40" onClick={() => setCollOpen(false)} />}
 
       <span className="text-[13px] text-gray-400 whitespace-nowrap">Chat met:</span>
