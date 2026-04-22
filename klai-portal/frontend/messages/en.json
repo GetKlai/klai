@@ -1010,6 +1010,11 @@
 
   "admin_groups_products_title": "Products",
   "admin_groups_products_empty": "No products assigned",
+  "admin_groups_products_assign": "Assign product",
+  "admin_groups_products_assign_placeholder": "Choose a product",
+  "admin_groups_products_remove": "Remove",
+  "admin_groups_products_remove_confirm": "Remove {product}?",
+  "admin_groups_products_none_available": "All plan products already assigned",
   "admin_groups_products_assign_success": "Product assigned to group",
   "admin_groups_products_revoke_success": "Product removed from group",
 
