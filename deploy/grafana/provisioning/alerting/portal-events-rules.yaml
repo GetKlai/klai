@@ -1,0 +1,100 @@
+# SPEC-OBS-001 Phase D — portal-api event-based alerts (LogsQL).
+#
+# Routed via spec=SPEC-OBS-001 → klai-ops-alerts-email.
+#
+#   R14  portal_redis_flushall_failed   HIGH   any FLUSHALL failure in last 30s
+#
+# This is THE primary gap-closer of SPEC-OBS-001 — the original incident that
+# triggered the SPEC: a tenant's config didn't activate because portal-api's
+# Redis FLUSHALL silently failed. Was visible in VictoriaLogs but nobody
+# queried until the user complained.
+#
+# Field shape verified against production VictoriaLogs (2026-04-22):
+#   service:portal-api               → klai-core-portal-api-1
+#   event field                      → structured key in structlog output
+#   AND syntax (uppercase)           → required by LogsQL
+#
+# Per SEC-024 M4.5 defect 1: free-text search only scans `_msg`. We must
+# use field:value syntax.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: obs-001-portal-events
+    folder: Klai
+    interval: 30s
+    rules:
+
+      # ── R14: portal_redis_flushall_failed ────────────────────────────────
+      # Fires immediately on the first hit (for: 0s) — the SPEC's success
+      # criterion is "within 60 seconds in the alerts mailbox". evaluation
+      # interval 30s + group_wait 10s + Cloud86 SMTP latency ≈ <60s p95.
+      - uid: obs-001-portal-redis-flushall-failed
+        title: portal_redis_flushall_failed
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 60
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:portal-api AND event:redis_flushall_failed'
+              queryType: instant
+          - refId: count
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 60
+              to: 0
+            model:
+              refId: count
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 60
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: count
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Alerting
+        for: 0s
+        keepFiringFor: 30m
+        isPaused: false
+        labels:
+          severity: warning   # Grafana severity vocabulary; SPEC's HIGH maps to warning per existing SEC-024 convention
+          spec: SPEC-OBS-001
+          service_group: portal-events
+        annotations:
+          summary: 'portal-api Redis FLUSHALL failed — tenant config likely stale'
+          runbook_url: 'docs/runbooks/platform-recovery.md#librechat-stale-config-recovery'
+          description: |
+            One or more `event:redis_flushall_failed` log lines appeared in
+            VictoriaLogs from portal-api in the last 30 seconds. This means
+            a tenant config-regenerate succeeded in writing the new config
+            but failed to clear Redis cache, so LibreChat keeps serving the
+            old config until cache TTL expires.
+
+            Immediate action: see runbook `librechat-stale-config-recovery`
+            (commit aab3848c) — the runbook this SPEC institutionalises.
+
+            Recent log search (Grafana → Explore → VictoriaLogs):
+              service:portal-api AND event:redis_flushall_failed | sort by(_time) desc | limit 10
+
+            Then for each hit: copy the slug field value into the runbook's
+            FLUSHALL recovery procedure (Step 2).
