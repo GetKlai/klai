@@ -1,5 +1,30 @@
-"""One-shot codemod: add `exc_info=True` to logger.warning/error calls
-inside `except Exception` blocks where it's missing.
+"""One-shot codemod — ALREADY RUN ON 2026-04-22. DO NOT RE-RUN BLINDLY.
+============================================================================
+
+This script added `exc_info=True` to every `logger.warning` / `logger.error`
+call inside an `except Exception` block where it was missing. It was run
+once on 2026-04-22, patched 40 callsites across 20 files, and is kept in
+the repo only for historical reference and as an example for the next
+codemod of this shape.
+
+From here on, `tests/test_logger_traceback_audit.py` pins the invariant:
+any new offender fails CI. Fix at the call site, don't re-run this tool.
+
+Known limitations (relevant if you DO want to re-run it):
+  - Multi-line calls with a trailing comma before `)` produce invalid
+    Python (`,\n, exc_info=True)`). Five files tripped this on the
+    original run and were fixed by hand. A re-run would re-introduce
+    those breakages.
+  - The codemod preserves whatever separator comes before the closing
+    `)`, so a call like `logger.warning("x")` (no args to append to)
+    still works, but `logger.warning(\n    "x",\n)` (trailing comma,
+    closing paren on its own line) does not.
+
+If you genuinely need to re-run, first verify the codemod on a small
+sample with `git diff` and run `uv run pytest tests/` before pushing.
+
+============================================================================
+Original docstring:
 
 Strategy:
 1. Walk every .py file in app/.
@@ -7,9 +32,6 @@ Strategy:
    tests/test_logger_traceback_audit.py).
 3. For each offender, do a text edit on the source: insert
    `, exc_info=True` before the closing `)` of the call.
-
-Idempotent: skips calls that already have exc_info=. Run once, then
-the test_logger_traceback_audit pytest pins it.
 """
 
 from __future__ import annotations
@@ -17,6 +39,12 @@ from __future__ import annotations
 import ast
 import sys
 from pathlib import Path
+
+# Safety interlock: require an explicit env flag before making any edits.
+# Prevents accidental re-runs (e.g. tab-completion, rerun of a shell
+# history entry) from re-introducing the multi-line syntax breakages
+# that occurred on the original 2026-04-22 pass.
+_SAFETY_ENV = "I_HAVE_READ_THE_ONE_SHOT_DOCSTRING"
 
 BACKEND_APP = Path(__file__).parent.parent / "app"
 EXCLUDED_PATH_PARTS = (
@@ -116,6 +144,16 @@ def _patch_file(path: Path) -> int:
 
 
 def main() -> int:
+    import os
+
+    if os.environ.get(_SAFETY_ENV) != "1":
+        sys.stderr.write(
+            "REFUSING TO RUN: this is a one-shot codemod that was already\n"
+            "applied on 2026-04-22. See the module docstring for why re-running\n"
+            "is risky (multi-line calls with trailing commas produce invalid\n"
+            f"Python). If you really want to proceed, set {_SAFETY_ENV}=1.\n"
+        )
+        return 2
     total = 0
     files_changed = 0
     for path in BACKEND_APP.rglob("*.py"):
