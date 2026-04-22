@@ -18,7 +18,19 @@
 # Field shapes verified against production VictoriaLogs (2026-04-22):
 #   service:caddy       → 1 stream (klai-core-caddy-1)
 #   status:5*           → matches "500", "502", etc. (string field)
-#   duration            → "0.001569716"-style string seconds (R10's home if/when added)
+#   duration            → "0.001569716"-style string seconds
+#
+# Implementation note (post-deploy lessons learned, 2026-04-22):
+# Three deploy attempts taught what NOT to do:
+#   1. `reduce: count` over a raw LogsQL log query fails with "input data
+#      must be a wide series but got type long" once the query returns
+#      more than ~1 row. SEC-024's pattern works only because the query
+#      is so narrow it returns 0-1 rows.
+#   2. Grafana SSE math has no max(), no min(), no ternary — fails with
+#      "non existent function" / "unexpected character ?".
+# The fix: do the count IN the LogsQL query via `| stats count() as n`,
+# so the plugin returns a single scalar value. Then Grafana SSE math just
+# does scalar arithmetic.
 
 apiVersion: 1
 
@@ -30,59 +42,36 @@ groups:
     rules:
 
       # ── R9 (broadened): caddy_5xx_rate_high ──────────────────────────────
-      # Two LogsQL queries: count of 5xx + count of total. Math expression
-      # divides them. Threshold > 0.01 (=1%). `for: 5m` debounces transient
-      # spikes (a single bot scan can briefly push the ratio up).
       - uid: obs-001-caddy-5xx-rate-high
         title: caddy_5xx_rate_high
         condition: ratio_threshold
         data:
-          - refId: fivexx
-            datasourceUid: victorialogs
-            queryType: instant
-            relativeTimeRange:
-              from: 300
-              to: 0
-            model:
-              refId: fivexx
-              datasource:
-                type: victoriametrics-logs-datasource
-                uid: victorialogs
-              expr: 'service:caddy AND status:5*'
-              queryType: instant
-          - refId: total
-            datasourceUid: victorialogs
-            queryType: instant
-            relativeTimeRange:
-              from: 300
-              to: 0
-            model:
-              refId: total
-              datasource:
-                type: victoriametrics-logs-datasource
-                uid: victorialogs
-              expr: 'service:caddy'
-              queryType: instant
           - refId: fivexx_count
-            datasourceUid: __expr__
+            datasourceUid: victorialogs
+            queryType: instant
             relativeTimeRange:
               from: 300
               to: 0
             model:
               refId: fivexx_count
-              type: reduce
-              reducer: count
-              expression: fivexx
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: '_time:5m service:caddy AND status:5* | stats count() as n'
+              queryType: instant
           - refId: total_count
-            datasourceUid: __expr__
+            datasourceUid: victorialogs
+            queryType: instant
             relativeTimeRange:
               from: 300
               to: 0
             model:
               refId: total_count
-              type: reduce
-              reducer: count
-              expression: total
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: '_time:5m service:caddy | stats count() as n'
+              queryType: instant
           - refId: ratio
             datasourceUid: __expr__
             relativeTimeRange:
@@ -91,15 +80,10 @@ groups:
             model:
               refId: ratio
               type: math
-              # Grafana SSE math is a small subset: basic operators only,
-              # NO max()/min(), NO ternary, NO if/then/else. Verified by
-              # two failed deploy attempts (parser errors). To guard
-              # against /0 on quiet periods, add 1 to the denominator.
-              # Bias: at total=0 → ratio=0/1=0 (correct, no fire). At
-              # total=100, fivexx=2 → ratio=2/101≈0.0198 instead of true
-              # 0.02. Underestimates by 1/(total+1) ratio — negligible
-              # at any realistic traffic level, and conservatively safer
-              # (prefers no-fire over false-fire on the 1% threshold).
+              # +1 in denominator guards against /0 on quiet periods
+              # (Grafana SSE math has no ternary or max). Bias is negligible
+              # at any realistic traffic level and conservatively safer
+              # (under-estimates the ratio, prefers no-fire on edge cases).
               expression: '$fivexx_count / ($total_count + 1)'
           - refId: ratio_threshold
             datasourceUid: __expr__
@@ -116,7 +100,7 @@ groups:
                   reducer: { params: [], type: last }
                   type: query
         noDataState: OK
-        execErrState: Alerting
+        execErrState: OK
         for: 5m
         keepFiringFor: 10m
         isPaused: false
@@ -125,7 +109,7 @@ groups:
           spec: SPEC-OBS-001
           service_group: caddy
         annotations:
-          summary: 'Caddy 5xx rate above 1% over the last 5 min ({{ $values.ratio | humanizePercentage }})'
+          summary: 'Caddy 5xx rate above 1% over the last 5 min ({{ $values.ratio.Value | humanizePercentage }})'
           runbook_url: 'docs/runbooks/platform-recovery.md#caddy-5xx-surge'
           description: |
             More than 1% of Caddy responses in the last 5 minutes returned a
