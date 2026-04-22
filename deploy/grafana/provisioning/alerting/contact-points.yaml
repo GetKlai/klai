@@ -81,5 +81,9 @@ contactPoints:
         type: webhook
         settings:
           url: ${KUMA_HEARTBEAT_URL}
-          httpMethod: GET
+          # Grafana webhook only supports PUT/POST (refuses GET with
+          # "webhook only supports HTTP methods PUT or POST"). Uptime
+          # Kuma push API accepts POST with the same query-string
+          # params already in the URL — body is ignored on push routes.
+          httpMethod: POST
         disableResolveMessage: true
