@@ -10,7 +10,7 @@ from knowledge_ingest.enrichment import EnrichmentError, enrich_chunk, enrich_ch
 
 SAMPLE_RESULT = {
     "context_prefix": "Dit document beschrijft het retourbeleid van Acme.",
-    "content_type": "procedural",
+    "chunk_type": "procedural",
     "questions": [
         "Hoe lang is de retourperiode?",
         "Kan ik een product terugsturen na 30 dagen?",
@@ -117,7 +117,7 @@ async def test_enrich_chunks_semaphore_limits_concurrency():
 
     async def fake_enrich(*args, **kwargs):
         calls.append(1)
-        return MagicMock(context_prefix="prefix", content_type="conceptual", questions=["q?"])
+        return MagicMock(context_prefix="prefix", chunk_type="conceptual", questions=["q?"])
 
     with patch("knowledge_ingest.enrichment.enrich_chunk", side_effect=fake_enrich):
         results = await enrich_chunks("doc", chunks, "title", "path.md")
@@ -134,7 +134,7 @@ async def test_enrich_chunk_source_aware_happy_path():
     """Source fields are accepted and result contains valid content_type."""
     result_data = {
         "context_prefix": "Voys Helpdesk via webscrape (help.voys.nl): uitleg over VoIP.",
-        "content_type": "procedural",
+        "chunk_type": "procedural",
         "questions": ["Hoe werkt VoIP?", "Wat is een SIP trunk?"],
     }
 
@@ -156,17 +156,17 @@ async def test_enrich_chunk_source_aware_happy_path():
         )
 
     assert result is not None
-    assert result.content_type == "procedural"
+    assert result.chunk_type == "procedural"
     assert result.context_prefix == result_data["context_prefix"]
     assert len(result.questions) == 2
 
 
 @pytest.mark.asyncio
-async def test_enrich_chunk_content_type_validation():
-    """Invalid content_type in LLM response raises EnrichmentError."""
+async def test_enrich_chunk_chunk_type_validation():
+    """Invalid chunk_type in LLM response raises EnrichmentError."""
     bad_result = {
         "context_prefix": "Some prefix.",
-        "content_type": "something_invalid",
+        "chunk_type": "something_invalid",
         "questions": ["Q1?"],
     }
 
@@ -200,7 +200,7 @@ async def test_enrich_chunk_backward_compatible_no_source_fields():
     """No source fields (default empty strings) — enrich_chunk still works."""
     result_data = {
         "context_prefix": "Retourbeleid Acme.",
-        "content_type": "reference",
+        "chunk_type": "reference",
         "questions": ["Wat is de retourperiode?"],
     }
 
@@ -220,4 +220,4 @@ async def test_enrich_chunk_backward_compatible_no_source_fields():
         )
 
     assert result is not None
-    assert result.content_type == "reference"
+    assert result.chunk_type == "reference"

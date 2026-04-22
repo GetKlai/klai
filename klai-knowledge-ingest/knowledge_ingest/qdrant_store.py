@@ -82,6 +82,7 @@ async def ensure_collection() -> None:
         "org_id", "kb_slug", "artifact_id", "content_type",
         "user_id", "entity_uuids", "taxonomy_node_id", "source_connector_id",
         "taxonomy_node_ids", "tags", "content_label", "source_label",
+        "chunk_type",
     ):
         if field not in indexed_fields:
             await client.create_payload_index(
@@ -256,18 +257,29 @@ async def upsert_enriched_chunks(
         if sparse_vec is not None:
             vectors["vector_sparse"] = sparse_vec
 
+        # @MX:NOTE: chunk_type (SPEC-KB-021) is the LLM-classified per-chunk
+        #   label (procedural/conceptual/reference/warning/example). Only set
+        #   when the enrichment LLM produced a value — absence means the
+        #   chunk went through the pre-enrichment fast path.
+        # @MX:REASON: Must not collide with base_payload['content_type'] which
+        #   carries the document-level type (kb_article/pdf_document/...) used
+        #   by retrieval_api's evidence_tier scoring.
+        chunk_payload = {
+            **base_payload,
+            "text": ec.original_text,
+            "text_enriched": ec.enriched_text,
+            "context_prefix": ec.context_prefix,
+            "questions": ec.questions,
+            "chunk_index": i,
+        }
+        if getattr(ec, "chunk_type", ""):
+            chunk_payload["chunk_type"] = ec.chunk_type
+
         points.append(
             PointStruct(
                 id=str(uuid.uuid4()),
                 vector=vectors,
-                payload={
-                    **base_payload,
-                    "text": ec.original_text,
-                    "text_enriched": ec.enriched_text,
-                    "context_prefix": ec.context_prefix,
-                    "questions": ec.questions,
-                    "chunk_index": i,
-                },
+                payload=chunk_payload,
             )
         )
 

@@ -90,7 +90,7 @@ async def test_ensure_collection_skips_indexes_when_already_present():
     all_fields = {
         "org_id", "kb_slug", "artifact_id", "content_type", "user_id", "entity_uuids",
         "source_url", "incoming_link_count", "taxonomy_node_id", "source_connector_id",
-        "taxonomy_node_ids", "tags", "content_label",
+        "taxonomy_node_ids", "tags", "content_label", "source_label", "chunk_type",
     }
 
     with patch("knowledge_ingest.qdrant_store.get_client") as mock_get_client:

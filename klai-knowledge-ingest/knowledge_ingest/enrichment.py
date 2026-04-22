@@ -2,11 +2,15 @@
 LLM enrichment service: contextual prefix generation + HyPE question generation.
 
 Each chunk gets a single LLM call (via LiteLLM proxy) returning:
-  {"context_prefix": "...", "content_type": "...", "questions": ["...", ...]}
+  {"context_prefix": "...", "chunk_type": "...", "questions": ["...", ...]}
 
 Enriched chunk text = "{context_prefix}\n\n{original_text}"
 Questions are used for vector_questions (depth 0-1 only) and stored in payload.
-content_type classifies the chunk for downstream retrieval ranking.
+chunk_type (SPEC-KB-021) classifies each chunk as one of
+procedural/conceptual/reference/warning/example for downstream retrieval
+routing and assertion-mode filtering. This is chunk-level and distinct from
+the document-level content_type (kb_article/pdf_document/meeting_transcript/
+web_crawl/...) consumed by retrieval_api.services.evidence_tier.
 """
 import asyncio
 from dataclasses import dataclass
@@ -38,7 +42,7 @@ Pad: {path}
 Genereer een JSON-object met:
 - "context_prefix": een zin van max 120 tokens die deze chunk plaatst binnen het document \
 (welke KB en bronsysteem, welk document/sectie, eventuele domeinspecifieke terminologie).
-- "content_type": classificeer de chunk als exact één van: \
+- "chunk_type": classificeer de chunk als exact één van: \
 "procedural" (stap-voor-stap instructies), "conceptual" (uitleg van begrippen), \
 "reference" (naslag/specificaties), "warning" (waarschuwingen/beperkingen), \
 "example" (voorbeelden/cases).
@@ -46,7 +50,7 @@ Genereer een JSON-object met:
 {question_focus}
 
 Reply with ONLY a JSON object, no markdown, no explanation:
-{{"context_prefix": "<string>", "content_type": "<procedural|conceptual|reference|warning|example>", \
+{{"context_prefix": "<string>", "chunk_type": "<procedural|conceptual|reference|warning|example>", \
 "questions": ["<string>", ...]}}"""
 
 
@@ -56,7 +60,7 @@ class EnrichmentError(Exception):
 
 class EnrichmentResult(BaseModel):
     context_prefix: str
-    content_type: Literal["procedural", "conceptual", "reference", "warning", "example"]
+    chunk_type: Literal["procedural", "conceptual", "reference", "warning", "example"]
     questions: list[str]
 
 
@@ -66,7 +70,11 @@ class EnrichedChunk:
     enriched_text: str       # "{context_prefix}\n\n{original_text}"
     context_prefix: str
     questions: list[str]     # embedded as vector_questions for depth 0-1; stored in payload for all
-    content_type: str = ""   # SPEC-KB-021: LLM-classified chunk type (procedural/conceptual/etc.)
+    # @MX:NOTE: SPEC-KB-021 chunk-level classification (procedural/conceptual/
+    #   reference/warning/example). Distinct from the document-level content_type
+    #   field ("kb_article", "pdf_document", ...) stored on the Qdrant point
+    #   payload and consumed by retrieval_api.services.evidence_tier.
+    chunk_type: str = ""
 
 
 def _truncate_to_tokens(text: str, max_tokens: int) -> str:
@@ -220,7 +228,7 @@ async def enrich_chunks(
             enriched_text=enriched_text,
             context_prefix=result.context_prefix,
             questions=result.questions,
-            content_type=result.content_type,
+            chunk_type=result.chunk_type,
         )
 
     return await asyncio.gather(*[_enrich_one(c, i) for i, c in enumerate(chunks)])
