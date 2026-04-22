@@ -1,9 +1,9 @@
 ---
 id: SPEC-OBS-001
-version: 0.2.0
+version: 0.2.1
 status: draft
 created: 2026-04-19
-updated: 2026-04-21
+updated: 2026-04-22
 author: Mark Vletter
 priority: high
 issue_number: null
@@ -12,6 +12,16 @@ issue_number: null
 # SPEC-OBS-001: Alerting-infrastructuur voor Klai (Grafana Unified Alerting + email)
 
 ## HISTORY
+
+### v0.2.1 (2026-04-22)
+
+Cross-check met SPEC-SEC-024 toonde dat e-mail-infrastructuur al (gedeeltelijk) bestaat. Deze versie integreert daarop in plaats van nieuwe infra te bouwen:
+
+- **Geen nieuw `klai-mailer` endpoint.** SEC-024 heeft Grafana's native SMTP al geconfigureerd (`GF_SMTP_*` env vars, `GRAFANA_SMTP_PASSWORD` in `klai-infra/core-01/.env.sops` commit `994b504`, via Cloud86 SMTP `shared199.cloud86-host.io:587`). Alert-mail gaat rechtstreeks vanuit Grafana via deze bestaande SMTP — niet via een webhook naar klai-mailer.
+- **Contact point strategie**: nieuwe `klai-ops-alerts-email` (type: email), naast de bestaande `klai-dev-alerts-email` van SEC-024. Beide gebruiken dezelfde GF_SMTP. Scheiding zodat ops- en security-ontvangers later onafhankelijk te configureren zijn.
+- **LogsQL field-scoping** (SEC-024 M4.5 defect 1): unqualified text-search doorzoekt alleen `_msg`, niet structured fields. Elke LogsQL-regel in de OBS-catalogus gebruikt expliciete `field:value` syntax (bijv. `event:redis_flushall_failed`), niet free-text search.
+- **Provisioning reload** (SEC-024 operational fix commit `2b0f697f`): bind-mount provisioning-files worden pas bij container-recreate opnieuw ingelezen, `docker compose restart grafana` is onvoldoende — gebruik `docker compose up -d grafana` (recreate). Deploy-compose workflow volgt dit patroon.
+- **Heartbeat-onafhankelijkheid verscherpt**: Uptime Kuma op public-01 gebruikt zijn eigen SMTP-account (niet het Cloud86-credential dat core-01 gebruikt). Als Cloud86 zelf uitvalt, zouden beide paden immers stilvallen — daarom een ander SMTP-account, of in elk geval een andere provider op public-01.
 
 ### v0.2.0 (2026-04-21)
 
@@ -39,9 +49,9 @@ Product-sparring met Mark heeft de volgende beslissingen opgeleverd, die in deze
 Maak operationele infra-fouten zichtbaar binnen minuten, niet "wanneer een gebruiker klaagt". Concreet:
 
 1. **Een alert-engine die LogsQL én PromQL kan evalueren**, geprovisioneerd via git (geen klik-config in Grafana UI).
-2. **Een notificatiekanaal via e-mail** (klai-mailer) dat alerts aflevert bij een centrale ontvangerslijst.
+2. **Een notificatiekanaal via e-mail** via Grafana's native SMTP (al geconfigureerd door SEC-024, Cloud86), met een dedicated contact point `klai-ops-alerts-email` dat alerts aflevert bij een centrale ontvangerslijst.
 3. **Een eerste catalogus van regels** die de concrete gaten uit SEC-021 dicht (FLUSHALL failures, chat health failures, portal-api 5xx, container down) én de industrie-standaard golden signals (latency, traffic, errors, saturation) dekt, uitbreidbaar per PR zonder re-architectuur.
-4. **Alert-on-alert hartslag** zodat een stilvallende alerter zelf ook detecteerbaar is — via een volledig onafhankelijk pad (Uptime Kuma op public-01 + eigen SMTP).
+4. **Alert-on-alert hartslag** zodat een stilvallende alerter zelf ook detecteerbaar is — via een volledig onafhankelijk pad (Uptime Kuma op public-01 met eigen SMTP-account).
 
 Succes = de volgende keer dat `redis_flushall_failed` verschijnt, zit het binnen 60 seconden in de alerts-mailbox met een runbook-link. Niet via een ticket van een gebruiker.
 
@@ -52,8 +62,8 @@ Succes = de volgende keer dat `redis_flushall_failed` verschijnt, zit het binnen
 - Directe observabilitykloof: `redis_flushall_failed` (portal-api, SEC-021) en `chat.health_failed` (LibreChat health probes) verschijnen nu alleen in VictoriaLogs. Niemand bevraagt VictoriaLogs proactief.
 - Bestaande logpijplijn is compleet: alle services → stdout (JSON via structlog) → Alloy → VictoriaLogs, 30 dagen retentie. `request_id` propagatie werkt end-to-end (Caddy → portal-api → downstream). Zie `.claude/rules/klai/infra/observability.md`.
 - Bestaande metrics-pijplijn is compleet: cAdvisor + node-exporter + portal-api `/metrics` + retrieval-api `/metrics` → VictoriaMetrics, 30d retentie. Web-vitals histograms (`webvitals_lcp_seconds` et al.) worden al gescraped.
-- Grafana draait, is OIDC-secured (`grafana_admin` Zitadel rol), en heeft datasources geprovisioneerd (`deploy/grafana/provisioning/datasources/datasources.yaml`). Er is géén `alerting/` subdirectory — dat is precies de gap die deze SPEC dicht.
-- `klai-mailer` draait al op core-01 als Zitadel HTTP notification provider. Een extra endpoint voor alert-mails is een kleine uitbreiding, geen nieuwe service.
+- Grafana draait, is OIDC-secured (`grafana_admin` Zitadel rol), en heeft datasources geprovisioneerd (`deploy/grafana/provisioning/datasources/datasources.yaml`). Er bestaat al een `alerting/` subdirectory via SEC-024 met één contact point (`klai-dev-alerts-email`), één rule (`spec-sec-024-proxy-denials`), en een dashboard (`Security — Proxy Denials`) — deze SPEC breidt die infrastructuur uit.
+- Grafana SMTP is werkend via SEC-024 (Cloud86 `shared199.cloud86-host.io:587`, authenticated via `GRAFANA_SMTP_PASSWORD` in `klai-infra/core-01/.env.sops` commit `994b504`). Alert-mails gaan rechtstreeks vanuit Grafana — geen tussenlaag nodig.
 - Het bouwmateriaal ligt al op de plank. Wat ontbreekt is de instrumentatielaag erbovenop.
 
 ---
@@ -63,10 +73,10 @@ Succes = de volgende keer dat `redis_flushall_failed` verschijnt, zit het binnen
 ### In scope
 
 - Keuze van alert-engine (vmalert vs. Grafana managed alerts), inclusief trade-off rationale en default-aanbeveling.
-- Notificatiepad via `klai-mailer`: nieuwe endpoint `POST /api/alerts/email` die de Grafana webhook payload accepteert en SMTP-mail verstuurt.
+- Nieuw Grafana contact point `klai-ops-alerts-email` (type: email) dat hergebruikt de reeds aanwezige GF_SMTP-configuratie uit SEC-024.
 - Initiële regelcatalogus (CRIT / HIGH / MED), elke regel met runbook-URL, severity-label, en optionele `for:` (debounce).
 - Silencing + acknowledgement workflow via Grafana's eigen UI.
-- Alert-on-alert (hartslag) via Uptime Kuma met **eigen SMTP-configuratie** (niet via klai-mailer) — echt onafhankelijk pad.
+- Alert-on-alert (hartslag) via Uptime Kuma op public-01 met **eigen SMTP-account** (apart van Grafana's Cloud86-credential op core-01) — echt onafhankelijk pad.
 - Update van `docs/runbooks/platform-recovery.md`: elke nieuwe alert krijgt een bijbehorende runbook-sectie conform het `librechat-stale-config-recovery` prototype.
 
 ### Out of scope — expliciet uitgesloten
@@ -86,8 +96,8 @@ Succes = de volgende keer dat `redis_flushall_failed` verschijnt, zit het binnen
 ## Success Criteria
 
 1. **Alert-engine keuze vastgelegd en gedeployed** — compose-change landt op core-01, container runt gezond, regels worden herkend en geëvalueerd. Documented beslissing inclusief rationale in deze SPEC.
-2. **Notificatie werkt end-to-end** — een handmatig getriggerde test-alert arriveert binnen 60 seconden in de `ALERTS_EMAIL_RECIPIENTS` mailbox met payload die severity, service, summary en runbook-URL bevat.
-3. **Geen secrets in git** — audit van het provisioning-pad toont dat alle credentials via env vars worden geïnjecteerd uit SOPS (`klai-infra/config.sops.env`). Grep over `deploy/grafana/provisioning/alerting/` levert geen SMTP-credentials of tokens op.
+2. **Notificatie werkt end-to-end** — een handmatig getriggerde test-alert via het nieuwe `klai-ops-alerts-email` contact point arriveert binnen 60 seconden in de `ALERTS_EMAIL_RECIPIENTS` mailbox met payload die severity, service, summary en runbook-URL bevat.
+3. **Geen secrets in git** — audit van het provisioning-pad toont dat alle credentials (SMTP, tokens) via env vars worden geïnjecteerd uit SOPS. Grep over `deploy/grafana/provisioning/alerting/` levert geen SMTP-wachtwoorden of tokens op.
 4. **Initiële regelcatalogus actief** — alle regels uit §EARS Requirements zijn geprovisioneerd, evaluaten correct tegen echte productie-data.
 5. **Alert-on-alert fires when alerter stops** — simulatie: stop de Grafana container, verifieer dat binnen 15 minuten een "alerter-down" mail arriveert via het Uptime Kuma pad (niet via klai-mailer).
 6. **Runbook-koppeling verplicht** — elke alert-regel heeft een `runbook_url` annotation; CI faalt als een regel die mist.
@@ -137,25 +147,33 @@ vmalert zou voorkeur krijgen als: we meerdere Grafana-tenants zouden draaien (te
 
 ## Notificatiekanalen
 
-### Primair pad: e-mail via klai-mailer
+### Primair pad: Grafana native SMTP (hergebruik SEC-024)
 
-- `klai-mailer` is de bestaande Zitadel HTTP notification provider (`ghcr.io/getklai/klai-mailer:latest`) op core-01.
-- Nieuw endpoint: `POST /api/alerts/email` accepteert de Grafana webhook payload en stuurt een mail via de bestaande SMTP-config.
-- Ontvanger-lijst in env var `ALERTS_EMAIL_RECIPIENTS` (SOPS) — start met één adres, uitbreidbaar zonder provisioning-change.
-- Subject-format: `[KLAI-ALERT-{severity}] {alertname}`. Body bevat severity, service, summary, runbook-URL, en indien aanwezig `request_id` / `slug` / `org_id`.
+- Grafana's ingebouwde SMTP-functionaliteit is al werkend via `GF_SMTP_*` env vars (gezet door SEC-024).
+- SMTP-provider: Cloud86 (`shared199.cloud86-host.io:587`), authenticated via `GRAFANA_SMTP_PASSWORD` (al in `klai-infra/core-01/.env.sops` commit `994b504`).
+- Nieuw contact point voor ops-alerts: `klai-ops-alerts-email` (type: email), met adressen uit `${ALERTS_EMAIL_RECIPIENTS}`.
+- De bestaande `klai-dev-alerts-email` (SEC-024) blijft intact voor security-alerts. Scheiding is puur voor flexibiliteit: beide gebruiken dezelfde SMTP, maar ontvangers kunnen later divergeren zonder een rule-migration.
+- Grafana's eigen template rendert subject `[KLAI-ALERT-{severity}] {alertname}` en body met severity, service, summary, runbook-URL, en relevante labels (`request_id` / `slug` / `org_id` indien aanwezig).
 
-### Alert-on-alert pad: Uptime Kuma met eigen SMTP
+### Alert-on-alert pad: Uptime Kuma met eigen SMTP-account
 
 - Uptime Kuma draait op public-01 — een andere host dan core-01.
 - De heartbeat-monitor in Uptime Kuma verwacht elke 5 min een push vanuit Grafana (`status=up`). Stopt die push gedurende 15 min → Uptime Kuma stuurt een mail via zijn **eigen** SMTP-configuratie naar een aparte ontvangerslijst.
-- **Belangrijk:** dit pad gebruikt **niet** klai-mailer. Als core-01 volledig uitvalt (OS-crash, netwerkprobleem), kan klai-mailer ook niet mailen — maar Uptime Kuma op public-01 wel. Die onafhankelijkheid is de hele reden van de hartslag.
-- SMTP-credentials voor Uptime Kuma in public-01 SOPS-env (`klai-infra/public-01/.env.sops` of equivalent), volledig los van core-01 SOPS.
+- **Belangrijk:** dit pad gebruikt een **apart SMTP-account**, niet dezelfde Cloud86-credential die Grafana op core-01 gebruikt. Redenen: (a) als core-01 volledig uitvalt, kan Uptime Kuma op public-01 alleen mailen als zijn SMTP-pad los staat; (b) als het Cloud86-account zelf uitvalt of onbereikbaar is, moet de dead-man's-switch nog functioneren — dus een ander provider of in elk geval een ander account.
+- SMTP-credentials voor Uptime Kuma in public-01 SOPS-env of direct in Uptime Kuma's eigen config, volledig los van core-01 SOPS.
 
 ### [HARD] Geen inline secrets in alert-config
 
 - **Regel:** SMTP-credentials, tokens en andere geheimen verschijnen **nooit** in `deploy/grafana/provisioning/alerting/*.yaml` als literal. Altijd `${VAR_NAME}` met env-substitution in de provisioning-loader.
-- **Verificatie:** `scripts/audit-alert-secrets.sh` grept `deploy/grafana/provisioning/alerting/` voor bekende secret-patronen (`xoxb-`, `smtp://[^$]`, `-----BEGIN`, literal e-mailadres+wachtwoord-paren); CI faalt op hit.
+- **Verificatie:** `scripts/audit-alert-secrets.sh` grept `deploy/grafana/provisioning/alerting/` voor bekende secret-patronen (`xoxb-`, `smtp://[^$]`, `-----BEGIN`, literal e-mailadres+wachtwoord-paren, alsook `GRAFANA_SMTP_PASSWORD=` waardes); CI faalt op hit.
 - **Rationale:** git staat open in CI-logs, alert-configs worden breed gereviewed, en het kost nul moeite om het goed te doen vanaf dag één.
+
+### [HARD] LogsQL gebruikt altijd field-scoped queries
+
+- **Regel:** LogsQL-regels in deze SPEC gebruiken expliciete `field:value` syntax (bijv. `event:redis_flushall_failed`), nooit unqualified free-text search.
+- **Rationale:** SEC-024 M4.5 defect 1 toonde aan dat unqualified LogsQL-text alleen `_msg` doorzoekt, niet structured fields. Onze structlog-output zet events in structured fields, niet in `_msg`.
+- **Voorbeeld fout:** `portal-api redis_flushall_failed` → matcht niks.
+- **Voorbeeld goed:** `service:portal-api AND event:redis_flushall_failed` → matcht correct.
 
 ---
 
@@ -171,9 +189,9 @@ vmalert zou voorkeur krijgen als: we meerdere Grafana-tenants zouden draaien (te
 
 ### Notification routing
 
-**SPEC-OBS-001-R4** — The alerting-systeem SHALL één contact point `email-primary` definiëren dat via een webhook naar `klai-mailer`'s `POST /api/alerts/email` routeert; het mailer-endpoint gebruikt `${ALERTS_EMAIL_RECIPIENTS}` als ontvanger-lijst en `[KLAI-ALERT-{severity}] {alertname}` als subject-format.
+**SPEC-OBS-001-R4** — The alerting-systeem SHALL één contact point `klai-ops-alerts-email` definiëren van type `email`, dat de bestaande `GF_SMTP_*` configuratie (geprovisioneerd door SEC-024, Cloud86) hergebruikt. De ontvangerslijst SHALL geïnjecteerd worden via `${ALERTS_EMAIL_RECIPIENTS}`; het subject-format SHALL `[KLAI-ALERT-{severity}] {alertname}` zijn. Het contact point SHALL naast de bestaande `klai-dev-alerts-email` (SEC-024) bestaan, niet als vervanging.
 
-**SPEC-OBS-001-R5** — The default notification policy SHALL alle alerts routeren naar `email-primary`, ongeacht severity (severity wordt wel zichtbaar in subject en body, maar bepaalt niet het kanaal — er is er maar één).
+**SPEC-OBS-001-R5** — The default notification policy SHALL alle alerts (uitgezonderd de heartbeat-rule uit R22) routeren naar `klai-ops-alerts-email`, ongeacht severity (severity wordt wel zichtbaar in subject en body, maar bepaalt niet het kanaal — er is er maar één voor ops).
 
 **SPEC-OBS-001-R6** — IF een alert-payload inline een bekend secret-patroon bevat (e.g. `xoxb-`, `-----BEGIN`, of een `Authorization:`-header-waarde), THEN SHALL de template-rendering deze vervangen door `[REDACTED]` voordat verzending plaatsvindt.
 
@@ -221,9 +239,9 @@ De catalogus volgt de SRE golden signals (latency, traffic, errors, saturation) 
 
 **SPEC-OBS-001-R22** — The alerting-systeem SHALL elke 5 minuten een hartslag-push sturen naar Uptime Kuma op public-01 via een `webhook` contact point met `${KUMA_HEARTBEAT_URL}` (bevat push-token).
 
-**SPEC-OBS-001-R23** — IF Uptime Kuma gedurende 15 minuten geen hartslag ontvangt, THEN SHALL Uptime Kuma een mail sturen via zijn **eigen SMTP-configuratie** (niet via klai-mailer) naar `${ALERTS_EMERGENCY_EMAIL_RECIPIENTS}` met subject `[KLAI-ALERTER-DOWN] Grafana alerter heartbeat missing`.
+**SPEC-OBS-001-R23** — IF Uptime Kuma gedurende 15 minuten geen hartslag ontvangt, THEN SHALL Uptime Kuma een mail sturen via zijn **eigen SMTP-account** (apart SMTP-credential, niet het Cloud86-account dat Grafana gebruikt) naar `${ALERTS_EMERGENCY_EMAIL_RECIPIENTS}` met subject `[KLAI-ALERTER-DOWN] Grafana alerter heartbeat missing`.
 
-**SPEC-OBS-001-R24** — The hartslag-pad SHALL bewust **geen gebruik maken van klai-mailer, core-01 infrastructuur, of dezelfde SMTP-credentials** als reguliere alerts, zodat een core-01 uitval of een klai-mailer configuratiefout de hartslag-notificatie niet uitschakelt.
+**SPEC-OBS-001-R24** — The hartslag-pad SHALL bewust **geen gebruik maken van core-01 infrastructuur, van de Cloud86 SMTP-credentials die Grafana gebruikt, of van enig ander gedeeld component** met reguliere alerts, zodat een core-01 uitval, een Cloud86-account-probleem, of een Grafana configuratiefout de hartslag-notificatie niet uitschakelt.
 
 ---
 
@@ -235,7 +253,7 @@ De catalogus volgt de SRE golden signals (latency, traffic, errors, saturation) 
 | **Alerts komen niet aan bij juiste persoon** — mail belandt in spam, één persoon mist het. | `ALERTS_EMAIL_RECIPIENTS` is een lijst, niet een individu. Begin met minimaal twee ontvangers. SPF/DKIM via bestaande mailer-config. Quarterly check: worden mails gelezen? Desnoods forward-rules / filters in de inbox. |
 | **Secret leak via alert payloads** — een structured log met `Authorization: Bearer …` wordt gemaild. | SPEC-OBS-001-R6 (template-redaction op bekende patterns), plus structlog-side rule: services mogen geen Authorization-headers in logs emitteren. Reuse van bestaande Semgrep-regel `python-logger-credential-disclosure` op de portal-api repo om injection te voorkomen. |
 | **Alerter zelf gaat stil** — container crash, netwerkissue, config-fout maakt alle alerts onzichtbaar. | Alert-on-alert hartslag via onafhankelijk pad: Uptime Kuma op public-01 + Uptime Kuma's eigen SMTP. SPEC-OBS-001-R22..R24 beschrijven de scheiding. Dead-man's switch werkt zonder Grafana én zonder klai-mailer. |
-| **klai-mailer uitval** — als klai-mailer zelf crasht of SMTP niet bereikbaar is, komen ook alert-mails niet aan. | De hartslag detecteert dit indirect: als Grafana niet kan mailen, blijft de hartslag naar Uptime Kuma wél werken (want dat is een aparte HTTP-push, geen SMTP). Maar als Grafana zelf fires én ze komen niet aan, zal de hartslag dat niet detecteren. Mitigatie: klai-mailer health in de alert-catalogus opnemen zodra we een geschikte metric hebben (nu: container_down dekt het al als klai-mailer crasht). |
+| **Cloud86 SMTP uitval** — als de SMTP-provider niet bereikbaar is, komen ook alert-mails niet aan. | De hartslag detecteert dit indirect: hartslag-push naar Uptime Kuma is HTTP, geen SMTP, dus blijft werken. Uptime Kuma's alerter-down-mail via **ander SMTP-account** werkt óók nog — daarom is R24 strict over deze scheiding. Als Grafana zelf fires én ze komen niet aan vanwege SMTP, zal de ops-mailbox het niet zien, maar de hartslag-pad blijft ongemoeid. |
 | **Grafana-plugin latency voor VictoriaLogs-queries maakt alert-evaluation onbetrouwbaar.** | Start met 30s evaluatie-interval (comfortabel ruim voor de plugin). Monitor query-latency via Grafana's built-in `grafana_alerting_rule_evaluation_duration_seconds`. Als p95 > 10s: specifieke LogsQL-regel verplaatsen naar vmalert (geen re-architectuur nodig — beide engines kunnen coëxisteren). |
 | **Alert fatigue door te agressieve thresholds** in initiële catalogus. | Alle thresholds in §EARS zijn startwaarden, expliciet tune-baar. Per false-positive een kleine PR. Quarterly review-template in `docs/runbooks/alerting-rollout.md` captures threshold-tuning per kwartaal. |
 | **Grafana config-reload bij provisioning-change veroorzaakt brief downtime.** | Provisioning reload is live-reloadable in recente Grafana-versies; getest voordat `deploy-compose.yml` op `main` landt. Worst case: 30s Grafana downtime acceptabel (geen data-impact, alleen UI). |
@@ -263,8 +281,8 @@ De reeds aanwezige `librechat-stale-config-recovery` sectie blijft onveranderd �
 
 ## Definition of Done
 
-- Grafana Unified Alerting enabled, provisioning directory-structuur aanwezig, alle regels uit SPEC-OBS-001-R9..R17 geprovisioneerd en evaluating.
-- Contact point `email-primary` geprovisioneerd; klai-mailer endpoint `POST /api/alerts/email` live en verstuurt mails naar `ALERTS_EMAIL_RECIPIENTS`.
+- Grafana Unified Alerting enabled, provisioning directory-structuur aanwezig (uitgebreid bovenop SEC-024's setup), alle regels uit SPEC-OBS-001-R9..R17 geprovisioneerd en evaluating.
+- Contact point `klai-ops-alerts-email` (type: email) geprovisioneerd via de bestaande `GF_SMTP_*` configuratie; test-mail arriveert in `ALERTS_EMAIL_RECIPIENTS`.
 - Alle nieuwe alert-rules hebben een `runbook_url` annotation; `scripts/verify-alert-runbooks.sh` passes in CI; `scripts/audit-alert-secrets.sh` passes in CI.
 - Alert-on-alert hartslag draait via Uptime Kuma (public-01) + Uptime Kuma's eigen SMTP, onafhankelijk pad geverifieerd door gesimuleerde alerter-down drill.
 - `docs/runbooks/platform-recovery.md` bijgewerkt met een nieuwe sectie per alert uit §EARS Requirements (8 nieuwe secties).
@@ -287,8 +305,9 @@ De reeds aanwezige `librechat-stale-config-recovery` sectie blijft onveranderd �
 - `klai-portal/backend/app/services/events.py` — bestaande `product_events` pipeline (Postgres), referentie voor event-structuur.
 - `klai-portal/backend/app/api/vitals.py` — bestaande Prometheus histogram-metrics, referentie voor PromQL-targets.
 - `scripts/victorialogs-tunnel.sh` — SSH-tunnel naar VictoriaLogs voor MCP-queries; parallel aan alerting-pad, blijft bestaan voor handmatig debugging.
-- `klai-infra/config.sops.env` — centrale SOPS-encrypted env file waarin `ALERTS_EMAIL_RECIPIENTS`, `KUMA_HEARTBEAT_URL` landen.
-- `klai-infra/public-01/` — losse SOPS-scope voor Uptime Kuma SMTP-credentials (apart van core-01).
+- `klai-infra/core-01/.env.sops` — bevat reeds `GRAFANA_SMTP_PASSWORD` (SEC-024, commit `994b504`); deze SPEC voegt `ALERTS_EMAIL_RECIPIENTS` en `KUMA_HEARTBEAT_URL` toe.
+- `klai-infra/public-01/` — losse SOPS-scope voor Uptime Kuma's eigen SMTP-account (apart van core-01, apart van Cloud86 als dat redelijkerwijs kan).
+- SPEC-SEC-024 (`.moai/specs/SPEC-SEC-024/`) — bron van de bestaande Grafana SMTP, `klai-dev-alerts-email` contact point, eerste alert-rule, en relevante pitfalls (LogsQL field-scoping, provisioning reload).
 
 ### Industrie-referenties (v0.2.0)
 

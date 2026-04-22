@@ -1,9 +1,9 @@
 ---
 id: SPEC-OBS-001
-version: 0.2.0
+version: 0.2.1
 status: draft
 created: 2026-04-19
-updated: 2026-04-21
+updated: 2026-04-22
 author: Mark Vletter
 priority: high
 ---
@@ -12,7 +12,7 @@ priority: high
 
 ## Approach in één paragraaf
 
-We activeren Grafana's Unified Alerting via file-based provisioning. We voegen `deploy/grafana/provisioning/alerting/` toe met vier subdirectories (rules, contact-points, notification-policies, mute-timings), injecteren alle credentials via env-var substitution uit `klai-infra/config.sops.env`, bouwen een initiële regelcatalogus die de golden signals (latency, traffic, errors, saturation) dekt plus de concrete FLUSHALL/container-health gaten, en zetten één notificatiepad op: e-mail via de bestaande `klai-mailer`. Alerts gaan direct live (geen shadow-fase) en worden reactief getuned bij false-positives. Alert-on-alert draait via een volledig onafhankelijk pad: Uptime Kuma op public-01 met zijn eigen SMTP-configuratie, zodat een uitval van core-01 of klai-mailer de dead-man's-switch niet uitschakelt.
+Grafana Unified Alerting is al geactiveerd door SEC-024 (inclusief GF_SMTP via Cloud86, contact point `klai-dev-alerts-email`, eerste rule + dashboard). Deze SPEC **breidt** die infrastructuur uit: nieuw contact point `klai-ops-alerts-email` (type: email, hergebruikt GF_SMTP), een initiële regelcatalogus die de golden signals (latency, traffic, errors, saturation) dekt plus de concrete FLUSHALL/container-health gaten, en een alert-on-alert hartslag via Uptime Kuma op public-01 met een apart SMTP-account (niet Cloud86). Alle credentials via env-var substitution uit `klai-infra/core-01/.env.sops` (reeds aanwezig patroon). Alerts gaan direct live (geen shadow-fase) en worden reactief getuned bij false-positives. LogsQL-regels gebruiken expliciete `field:value` syntax (SEC-024 pitfall). Provisioning-reload via `docker compose up -d grafana` (recreate), niet `restart` (SEC-024 operational fix).
 
 ---
 
@@ -20,24 +20,24 @@ We activeren Grafana's Unified Alerting via file-based provisioning. We voegen `
 
 ### Milestone 1 — Foundations (Priority: High)
 
-**Doel:** alerting-backbone staat, e-mailkanaal werkt end-to-end met een test-alert.
+**Doel:** nieuw `klai-ops-alerts-email` contact point draait op de bestaande GF_SMTP-infrastructuur; test-mail werkt end-to-end.
 
 Deliverables:
-- `deploy/grafana/provisioning/alerting/README.md` — uitleg directory-structuur, secret-conventies, review-checklist.
-- `deploy/grafana/provisioning/alerting/contact-points/email.yaml` — `email-primary` dat via webhook naar `klai-mailer`'s nieuwe `/api/alerts/email` routeert.
-- `deploy/grafana/provisioning/alerting/notification-policies/default.yaml` — alle alerts → `email-primary`.
-- `deploy/grafana/provisioning/alerting/mute-timings/deploys.yaml` — voorgefabriceerde mute-timings voor gangbare onderhoudsvensters (empty file met comments als startpunt).
-- SOPS-updates (`klai-infra/config.sops.env`): `ALERTS_EMAIL_RECIPIENTS`, `KLAI_MAILER_ALERT_WEBHOOK_URL` (intern URL naar `/api/alerts/email`).
-- `klai-mailer` uitgebreid met `POST /api/alerts/email` endpoint (accepteert Grafana webhook payload → SMTP naar `ALERTS_EMAIL_RECIPIENTS`, subject `[KLAI-ALERT-{severity}] {alertname}`).
-- `deploy/docker-compose.yml` update: Grafana environment-block uitgebreid met nieuwe env-vars (let op: Grafana, portal-api en mailer hebben expliciete `environment:` blocks die niet auto-forwarden — zie `.claude/rules/klai/lang/docker.md`).
+- `deploy/grafana/provisioning/alerting/README.md` — uitleg directory-structuur, secret-conventies, review-checklist, SEC-024 cross-ref.
+- `deploy/grafana/provisioning/alerting/contact-points/ops-email.yaml` — `klai-ops-alerts-email` (type: email) met `addresses: ${ALERTS_EMAIL_RECIPIENTS}` en subject-template `[KLAI-ALERT-{severity}] {alertname}`. Naast de reeds aanwezige `klai-dev-alerts-email` (SEC-024), niet als vervanging.
+- `deploy/grafana/provisioning/alerting/notification-policies/default.yaml` — bovenop SEC-024's bestaande policy: OBS-001 rules → `klai-ops-alerts-email`; SEC-024 rules blijven routeren naar `klai-dev-alerts-email` (behoud bestaand gedrag).
+- `deploy/grafana/provisioning/alerting/mute-timings/deploys.yaml` — voorgefabriceerde mute-timings voor gangbare onderhoudsvensters (empty file met comments als startpunt, indien nog niet aanwezig).
+- SOPS-update (`klai-infra/core-01/.env.sops`): `ALERTS_EMAIL_RECIPIENTS` toegevoegd. `GRAFANA_SMTP_PASSWORD` en `GF_SMTP_*` bestaan al (SEC-024 commit `994b504`) — ongemoeid laten.
+- `deploy/docker-compose.yml` update: Grafana environment-block uitgebreid met `ALERTS_EMAIL_RECIPIENTS` (Grafana heeft expliciete `environment:` block dat niet auto-forwardt — zie `.claude/rules/klai/lang/docker.md`).
 
 Exit-criteria:
-- Grafana herkent de alerting-directory na `docker compose up -d grafana`; check via Grafana UI → Alerting → Contact points.
-- Handmatig test-bericht via contact point `email-primary` arriveert binnen 60 seconden in de `ALERTS_EMAIL_RECIPIENTS` mailbox, met nette subject en body.
+- Grafana herkent het nieuwe contact point na `docker compose up -d grafana` (NIET `restart` — SEC-024 defect 2: bind-mount provisioning vereist recreate); check via Grafana UI → Alerting → Contact points.
+- Handmatig test-bericht via contact point `klai-ops-alerts-email` arriveert binnen 60 seconden in de `ALERTS_EMAIL_RECIPIENTS` mailbox, met nette subject en body.
+- Bestaande `klai-dev-alerts-email` contact point van SEC-024 blijft onveranderd werken (regressie-check: trigger een `spec-sec-024-proxy-denials` fire en verifieer dat de mail nog aankomt).
 - `scripts/audit-alert-secrets.sh` draait lokaal en op CI, passes.
 
 Dependencies:
-- SMTP-credentials voor klai-mailer zijn al geconfigureerd (Zitadel gebruikt ze al).
+- SEC-024 M4.5 is afgerond en de Grafana SMTP-infrastructuur draait stabiel.
 
 ### Milestone 2 — Seed alert catalogue (Priority: High)
 
@@ -61,8 +61,8 @@ Exit-criteria:
 - FLUSHALL-drill: handmatig injected event produceert binnen 60s een mail in de alerts-mailbox.
 
 Dependencies:
-- Milestone 1 moet live staan (contact point + klai-mailer endpoint).
-- VictoriaLogs-plugin versie check: plugin ondersteunt nodige LogsQL-features (basic query via `event:` filter werkt; getest in POC).
+- Milestone 1 moet live staan (nieuw contact point werkend).
+- VictoriaLogs-plugin LogsQL-features werken al (SEC-024 verifieerde dat `error:Forbidden AND error:docker-socket-proxy` correct matcht). Onze regels volgen hetzelfde `field:value` patroon.
 - Beschikbaarheidscheck van metrics (`caddy_http_requests_total`, `caddy_http_request_duration_seconds_bucket`, `container_last_seen`, `container_restarts_total`, `node_filesystem_avail_bytes`). Fallback-paden per regel gedocumenteerd in `.claude/rules/klai/infra/observability.md`.
 
 ### Milestone 3 — Runbooks uitbreiden (Priority: High)
@@ -135,84 +135,96 @@ Dependencies:
 
 ### Provisioning directory layout
 
+De directory bestaat al (SEC-024). Deze SPEC voegt bestanden toe, raakt SEC-024's bestanden niet aan.
+
 ```
 deploy/grafana/provisioning/alerting/
 ├── README.md
 ├── contact-points/
-│   ├── email.yaml            # email-primary (webhook naar klai-mailer)
-│   └── heartbeat.yaml        # heartbeat-kuma (push to Uptime Kuma)
+│   ├── dev-alerts.yaml       # [SEC-024] klai-dev-alerts-email (ongemoeid)
+│   ├── ops-email.yaml        # [NIEUW] klai-ops-alerts-email (native email, GF_SMTP)
+│   └── heartbeat.yaml        # [NIEUW] heartbeat-kuma (push to Uptime Kuma)
 ├── notification-policies/
-│   └── default.yaml          # alle alerts → email-primary; heartbeat-rule → heartbeat-kuma
+│   └── default.yaml          # [UITGEBREID] SEC-024 routes + OBS-001 routes
 ├── mute-timings/
 │   └── deploys.yaml          # (empty initially; operator-populated as needed)
 └── rules/
-    ├── portal-api.yaml       # portal_api_5xx_rate_high, portal_api_latency_high, portal_api_traffic_drop
-    ├── infra-containers.yaml # container_down, container_restart_loop
-    ├── portal-events.yaml    # portal_redis_flushall_failed
-    ├── librechat-health.yaml # librechat_health_failed_elevated
-    ├── ingest.yaml           # ingest_error_rate_elevated
-    ├── node.yaml             # core01_disk_usage_high
-    └── heartbeat.yaml        # synthetic always-fires rule (goes to heartbeat-kuma)
+    ├── security.yaml         # [SEC-024] spec-sec-024-proxy-denials (ongemoeid)
+    ├── portal-api.yaml       # [NIEUW] portal_api_5xx_rate_high, portal_api_latency_high, portal_api_traffic_drop
+    ├── infra-containers.yaml # [NIEUW] container_down, container_restart_loop
+    ├── portal-events.yaml    # [NIEUW] portal_redis_flushall_failed
+    ├── librechat-health.yaml # [NIEUW] librechat_health_failed_elevated
+    ├── ingest.yaml           # [NIEUW] ingest_error_rate_elevated
+    ├── node.yaml             # [NIEUW] core01_disk_usage_high
+    └── heartbeat.yaml        # [NIEUW] synthetic always-fires rule (goes to heartbeat-kuma)
 ```
 
-### Secret injection
+### Contact point (native email, hergebruikt GF_SMTP)
 
-Grafana ondersteunt `$__env{VAR_NAME}` binnen provisioning-files (Grafana ≥ 10). Patroon voor e-mail contact point:
+Grafana's native `email` contact-point-type gebruikt de `GF_SMTP_*` configuratie die SEC-024 al heeft gezet. Geen tussenlaag, geen webhook.
 
 ```yaml
-# deploy/grafana/provisioning/alerting/contact-points/email.yaml
+# deploy/grafana/provisioning/alerting/contact-points/ops-email.yaml
 apiVersion: 1
 contactPoints:
   - orgId: 1
-    name: email-primary
+    name: klai-ops-alerts-email
     receivers:
-      - uid: email-primary-1
-        type: webhook
+      - uid: klai-ops-alerts-email-1
+        type: email
         settings:
-          url: ${KLAI_MAILER_ALERT_WEBHOOK_URL}
-          httpMethod: POST
-          # klai-mailer authenticates via internal network trust (same klai-net),
-          # no bearer token needed for internal-to-internal calls
+          addresses: ${ALERTS_EMAIL_RECIPIENTS}
+          singleEmail: false  # one email per alert, easier to triage
+          subject: '[KLAI-ALERT-{{ .CommonLabels.severity | default "info" }}] {{ .CommonLabels.alertname }}'
+          message: |
+            {{ range .Alerts }}
+            Severity: {{ .Labels.severity }}
+            Service: {{ .Labels.service }}
+            Summary: {{ .Annotations.summary }}
+            Runbook: https://github.com/getklai/klai/blob/main/{{ .Annotations.runbook_url }}
+            Started: {{ .StartsAt }}
+            {{ if .Labels.request_id }}request_id: {{ .Labels.request_id }}{{ end }}
+            {{ if .Labels.slug }}slug: {{ .Labels.slug }}{{ end }}
+            {{ end }}
 ```
 
-Docker-compose zorgt dat de env-var in de Grafana-container beschikbaar is:
+Secret injection via env var (`${ALERTS_EMAIL_RECIPIENTS}`). SMTP-credentials (`GRAFANA_SMTP_PASSWORD`) zitten in `GF_SMTP_PASSWORD` env var (al geconfigureerd door SEC-024), niet in deze YAML.
+
+Docker-compose zorgt dat de nieuwe env-var beschikbaar is:
 
 ```yaml
 # deploy/docker-compose.yml (grafana service)
 environment:
-  KLAI_MAILER_ALERT_WEBHOOK_URL: ${KLAI_MAILER_ALERT_WEBHOOK_URL}
+  # Reeds aanwezig (SEC-024):
+  GF_SMTP_ENABLED: "true"
+  GF_SMTP_HOST: ${GRAFANA_SMTP_HOST}
+  GF_SMTP_USER: ${GRAFANA_SMTP_USER}
+  GF_SMTP_PASSWORD: ${GRAFANA_SMTP_PASSWORD}
+  GF_SMTP_FROM_ADDRESS: ${GRAFANA_SMTP_FROM_ADDRESS}
+  # Nieuw (OBS-001):
   ALERTS_EMAIL_RECIPIENTS: ${ALERTS_EMAIL_RECIPIENTS}
   KUMA_HEARTBEAT_URL: ${KUMA_HEARTBEAT_URL}
 ```
 
-De env-vars komen uit `/opt/klai/.env`, beheerd via SOPS in `klai-infra/config.sops.env` (standaard klai-infra patroon).
+De env-vars komen uit `/opt/klai/.env`, beheerd via SOPS in `klai-infra/core-01/.env.sops` (standaard klai-infra patroon).
 
-### klai-mailer alert endpoint
+### Provisioning reload (SEC-024 operational rule)
 
-Nieuw endpoint in `klai-mailer`:
+Bind-mount provisioning-files worden pas bij container-recreate opnieuw ingelezen. `docker compose restart grafana` is **niet** voldoende — Grafana leest de mount niet opnieuw.
 
-```
-POST /api/alerts/email
-Content-Type: application/json
+- **Fout**: `docker compose restart grafana` → oude config blijft actief.
+- **Goed**: `docker compose up -d grafana` → container recreate, mount herlezen, nieuwe config actief.
 
-{
-  "receiver": "email-primary",
-  "status": "firing",
-  "alerts": [
-    {
-      "labels": { "alertname": "portal_redis_flushall_failed", "severity": "high", "service": "portal-api" },
-      "annotations": { "summary": "Redis FLUSHALL failed (slug=acme)", "runbook_url": "docs/runbooks/platform-recovery.md#librechat-stale-config-recovery" },
-      "startsAt": "2026-04-21T14:32:11Z"
-    }
-  ]
-}
-```
+Deploy-compose workflow volgt reeds dit patroon (SEC-024 commit `2b0f697f`).
 
-Mailer logic:
-- Rendert subject: `[KLAI-ALERT-{severity}] {alertname}`.
-- Rendert body als Markdown → HTML met: severity, service, summary, runbook-link (geabsolute tegen `https://github.com/.../blob/main/`), labels-table, firing-since tijdstip.
-- Stuurt via bestaande SMTP-config naar `ALERTS_EMAIL_RECIPIENTS` (comma-separated).
-- Redaction: scanned body voor `xoxb-*`, `-----BEGIN`, bearer-token-patterns → vervang door `[REDACTED]` vóór verzending.
+### LogsQL field-scoping (SEC-024 pitfall)
+
+VictoriaLogs `_msg` is de default search-scope voor unqualified queries. structlog output zet events in **structured fields**, niet in `_msg`. Gevolg: `event:redis_flushall_failed` matcht; een free-text `redis_flushall_failed` matcht niet.
+
+- **Fout**: `expr: 'redis_flushall_failed'` → 0 matches, rule fires nooit.
+- **Goed**: `expr: 'service:portal-api AND event:redis_flushall_failed'` → matcht correct.
+
+Elke LogsQL-regel in de catalogus wordt handmatig gevalideerd via de VictoriaLogs MCP tool vóór hij in een provisioning-file landt.
 
 ### LogsQL rules via VictoriaLogs datasource plugin
 
@@ -466,26 +478,33 @@ jobs:
 
 | Var | Gebruik | SOPS-scope | Toegevoegd in milestone |
 |---|---|---|---|
-| `ALERTS_EMAIL_RECIPIENTS` | Comma-separated ontvangers voor reguliere alerts | `klai-infra/config.sops.env` (core-01) | M1 |
-| `KLAI_MAILER_ALERT_WEBHOOK_URL` | Intern URL naar klai-mailer's `/api/alerts/email` | `klai-infra/config.sops.env` (core-01) | M1 |
-| `KUMA_HEARTBEAT_URL` | Uptime Kuma push-URL (bevat token) | `klai-infra/config.sops.env` (core-01) | M4 |
+| `ALERTS_EMAIL_RECIPIENTS` | Comma-separated ontvangers voor reguliere ops-alerts | `klai-infra/core-01/.env.sops` | M1 |
+| `KUMA_HEARTBEAT_URL` | Uptime Kuma push-URL (bevat token) | `klai-infra/core-01/.env.sops` | M4 |
 | `ALERTS_EMERGENCY_EMAIL_RECIPIENTS` | Ontvangers voor alerter-down mails | public-01 SOPS-scope | M4 |
-| Uptime Kuma SMTP-config | Onafhankelijke SMTP voor hartslag-mails | public-01 SOPS-scope of Uptime Kuma UI | M4 |
+| Uptime Kuma SMTP-account (apart van Cloud86) | Onafhankelijke SMTP voor hartslag-mails | public-01 SOPS-scope of Uptime Kuma UI | M4 |
+
+**Reeds aanwezig (SEC-024)** — niet toevoegen, alleen referen:
+- `GRAFANA_SMTP_PASSWORD`, `GRAFANA_SMTP_HOST`, `GRAFANA_SMTP_USER`, `GRAFANA_SMTP_FROM_ADDRESS` — Cloud86 SMTP, in `klai-infra/core-01/.env.sops` commit `994b504`.
 
 ### Bestaande componenten die uitgebreid worden
 
-- `deploy/docker-compose.yml` — Grafana `environment:` block (env-var forwarding).
-- `klai-mailer` — nieuw endpoint `POST /api/alerts/email`.
+- `deploy/docker-compose.yml` — Grafana `environment:` block krijgt `ALERTS_EMAIL_RECIPIENTS`, `KUMA_HEARTBEAT_URL` erbij.
+- `deploy/grafana/provisioning/alerting/` — bestaande directory (SEC-024) krijgt nieuwe bestanden; SEC-024 bestanden blijven ongemoeid.
 - `docs/runbooks/platform-recovery.md` — acht nieuwe secties plus één voor alerter-down.
 - `.github/workflows/` — nieuwe `alerting-check.yml`.
-- Uptime Kuma (public-01) — nieuwe push-monitor + notification-channel met eigen SMTP.
+- Uptime Kuma (public-01) — nieuwe push-monitor + notification-channel met eigen SMTP-account.
 
 ### Nieuwe componenten
 
-- `deploy/grafana/provisioning/alerting/` — volledig nieuw.
+- `deploy/grafana/provisioning/alerting/contact-points/ops-email.yaml` en rules-bestanden (zie directory-layout).
 - `scripts/audit-alert-secrets.sh`.
 - `scripts/verify-alert-runbooks.sh`.
 - `docs/runbooks/alerting-rollout.md` (bevat initial-rollout-log en quarterly review-entries).
+
+### Niet langer nodig (was in v0.2.0, geschrapt in v0.2.1)
+
+- `klai-mailer` endpoint `POST /api/alerts/email` — vervangen door Grafana native email via bestaande GF_SMTP.
+- `KLAI_MAILER_ALERT_WEBHOOK_URL` env var — niet meer van toepassing.
 
 ---
 
@@ -493,7 +512,7 @@ jobs:
 
 Per milestone onafhankelijk rollbaar:
 
-- **M1:** verwijder `deploy/grafana/provisioning/alerting/` directory en herstart Grafana → alerting uit, oude staat hersteld. Geen impact op dashboards of datasources. klai-mailer endpoint kan blijven bestaan (unused).
+- **M1:** verwijder alleen de nieuwe OBS-001 bestanden uit `deploy/grafana/provisioning/alerting/`; SEC-024 bestanden blijven. `docker compose up -d grafana` → alert-catalogus terug naar SEC-024-only staat. Geen impact op dashboards of datasources.
 - **M2:** `git revert` op de rules-PR. Grafana herleest, alerts verdwijnen.
 - **M3:** runbook-secties blijven staan; zelfs als rules rolled back worden zijn ze nuttig voor manual recovery.
 - **M4:** verwijder heartbeat contact point + notification policy + rule. Uptime Kuma monitor zal na 15 min een valse alerter-down mail produceren — dus schakel óók Kuma-monitor pause. Gedocumenteerd in runbook.
