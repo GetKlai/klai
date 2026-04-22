@@ -65,3 +65,4 @@ SELECT set_config('app.current_org_id', '', false);
 SELECT set_config('app.cross_org_admin', '', false);
 
 SELECT 'RLS smoke test complete — all assertions passed' AS result;
+
