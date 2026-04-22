@@ -6,6 +6,7 @@ on:
     paths:
       - 'klai-connector/**'
       - 'klai-libs/connector-credentials/**'
+      - 'klai-libs/image-storage/**'
       - '.github/workflows/klai-connector.yml'
   workflow_dispatch:
 
