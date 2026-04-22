@@ -200,7 +200,10 @@ function ChatConfigBar() {
 
   function toggleSlug(slug: string) {
     const next = currentSlugs.includes(slug) ? currentSlugs.filter((s) => s !== slug) : [...currentSlugs, slug]
-    mutation.mutate({ kb_slugs_filter: next.length === 0 || next.length === allSlugs.length ? null : next })
+    // null = all on, [] = none, anything else = explicit subset.
+    // DO NOT collapse empty to null — that would flip "turn last off" into
+    // "turn everything back on" and break the user's intent.
+    mutation.mutate({ kb_slugs_filter: next.length === allSlugs.length ? null : next })
   }
 
   const allActive = (pref?.kb_personal_enabled ?? false) && currentSlugs.length === allSlugs.length
