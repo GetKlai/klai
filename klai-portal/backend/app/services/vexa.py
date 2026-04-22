@@ -139,18 +139,34 @@ class VexaClient:
     async def delete_recording(self, recording_id: int) -> bool:
         """Delete a recording by ID. Returns True on success, False on failure.
 
-        Never raises -- logs warnings on failure. This replaces the old
-        Docker exec approach in recording_cleanup.py.
+        404 (already gone) counts as success: nothing to delete and the caller
+        can mark the recording as cleaned up so we do not re-queue it forever.
+        Other errors return False and are logged with traceback. Never raises.
         """
         try:
             resp = await self._http.delete(f"/recordings/{recording_id}", headers={**get_trace_headers()})
             resp.raise_for_status()
             return True
-        except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                logger.info(
+                    "Recording already absent on upstream, marking as deleted",
+                    recording_id=recording_id,
+                    upstream_status=404,
+                )
+                return True
             logger.warning(
                 "Failed to delete recording",
                 recording_id=recording_id,
-                error=str(exc),
+                upstream_status=exc.response.status_code,
+                exc_info=True,
+            )
+            return False
+        except httpx.RequestError:
+            logger.warning(
+                "Failed to delete recording (network error)",
+                recording_id=recording_id,
+                exc_info=True,
             )
             return False
 
