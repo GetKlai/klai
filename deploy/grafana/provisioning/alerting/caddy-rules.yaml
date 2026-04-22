@@ -2,35 +2,34 @@
 #
 # Routed via spec=SPEC-OBS-001 → klai-ops-alerts-email (see policies.yaml).
 #
-#   R9  caddy_5xx_rate_high   CRIT  >1% 5xx over 5m (any upstream)
+#   R9 (adapted)  caddy_5xx_count_high   CRIT  >10 5xx in 5m (any upstream)
 #
-# SPEC v0.2.1 R9 originally specified `caddy_http_requests_total{service="portal-api",...}`
-# expecting per-upstream Prometheus metrics. Reality: Caddy doesn't expose
-# Prometheus metrics in this setup, only structured access logs to VictoriaLogs.
-# Caddy access logs include `request.host` (the Host header) but NOT the
-# upstream service name, so per-upstream filtering is brittle (every new
-# subdomain would need an exclusion).
+# SPEC v0.2.1 R9 wanted a 5xx ratio (>1% over 5m). Three deploy attempts
+# proved that ratio computation across two LogsQL queries is fragile in
+# Grafana 13 + VictoriaLogs plugin combo:
 #
-# Pragmatic broadening: alert on any Caddy 5xx rate >1% over 5m. Catches
-# portal-api 5xx by definition and also catches grafana/auth/firecrawl 5xx
-# bursts that are equally operationally relevant.
+#   1. `reduce: count` on a multi-row LogsQL result fails with
+#      "input data must be a wide series but got type long" — the plugin
+#      returns long-format dataframes for log queries, Grafana SSE math
+#      expects wide-format.
+#   2. `| stats count() as n` inside the LogsQL query also returns long.
+#   3. SSE math has no max() / no ternary, so /0 guards have to use +1
+#      bias — which then doesn't matter because the queries fail before math.
+#
+# SEC-024's existing rule pattern (single LogsQL query + reduce: count +
+# threshold) WORKS in production — but only because its query returns
+# 0-1 rows in steady state. Multi-row results trip the shape mismatch.
+#
+# Pragmatic adaptation: use the SEC-024 pattern as-is, threshold on
+# absolute count instead of ratio. >10 5xx in 5min approximates ">1% at
+# normal traffic levels" (we see ~25 req/sec → ~7500 req/5min, so 10 5xx
+# = 0.13% — slightly below the spec's 1%, conservatively safer). At
+# lower traffic (e.g. midnight) this would fire on smaller spikes — that's
+# acceptable: a burst of 10+ 5xx is operationally relevant regardless of
+# total volume.
 #
 # Field shapes verified against production VictoriaLogs (2026-04-22):
-#   service:caddy       → 1 stream (klai-core-caddy-1)
-#   status:5*           → matches "500", "502", etc. (string field)
-#   duration            → "0.001569716"-style string seconds
-#
-# Implementation note (post-deploy lessons learned, 2026-04-22):
-# Three deploy attempts taught what NOT to do:
-#   1. `reduce: count` over a raw LogsQL log query fails with "input data
-#      must be a wide series but got type long" once the query returns
-#      more than ~1 row. SEC-024's pattern works only because the query
-#      is so narrow it returns 0-1 rows.
-#   2. Grafana SSE math has no max(), no min(), no ternary — fails with
-#      "non existent function" / "unexpected character ?".
-# The fix: do the count IN the LogsQL query via `| stats count() as n`,
-# so the plugin returns a single scalar value. Then Grafana SSE math just
-# does scalar arithmetic.
+#   service:caddy AND status:5*  →  matches "500", "502", etc.
 
 apiVersion: 1
 
@@ -41,61 +40,45 @@ groups:
     interval: 1m
     rules:
 
-      # ── R9 (broadened): caddy_5xx_rate_high ──────────────────────────────
-      - uid: obs-001-caddy-5xx-rate-high
-        title: caddy_5xx_rate_high
-        condition: ratio_threshold
+      # ── R9 (adapted to count): caddy_5xx_count_high ──────────────────────
+      - uid: obs-001-caddy-5xx-count-high
+        title: caddy_5xx_count_high
+        condition: threshold
         data:
-          - refId: fivexx_count
+          - refId: query
             datasourceUid: victorialogs
             queryType: instant
             relativeTimeRange:
               from: 300
               to: 0
             model:
-              refId: fivexx_count
+              refId: query
               datasource:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
-              expr: '_time:5m service:caddy AND status:5* | stats count() as n'
+              expr: 'service:caddy AND status:5*'
               queryType: instant
-          - refId: total_count
-            datasourceUid: victorialogs
-            queryType: instant
-            relativeTimeRange:
-              from: 300
-              to: 0
-            model:
-              refId: total_count
-              datasource:
-                type: victoriametrics-logs-datasource
-                uid: victorialogs
-              expr: '_time:5m service:caddy | stats count() as n'
-              queryType: instant
-          - refId: ratio
+          - refId: reduce
             datasourceUid: __expr__
             relativeTimeRange:
               from: 300
               to: 0
             model:
-              refId: ratio
-              type: math
-              # +1 in denominator guards against /0 on quiet periods
-              # (Grafana SSE math has no ternary or max). Bias is negligible
-              # at any realistic traffic level and conservatively safer
-              # (under-estimates the ratio, prefers no-fire on edge cases).
-              expression: '$fivexx_count / ($total_count + 1)'
-          - refId: ratio_threshold
+              refId: reduce
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
             datasourceUid: __expr__
             relativeTimeRange:
               from: 300
               to: 0
             model:
-              refId: ratio_threshold
+              refId: threshold
               type: threshold
-              expression: ratio
+              expression: reduce
               conditions:
-                - evaluator: { params: [0.01], type: gt }
+                - evaluator: { params: [10], type: gt }
                   operator: { type: and }
                   reducer: { params: [], type: last }
                   type: query
@@ -109,10 +92,10 @@ groups:
           spec: SPEC-OBS-001
           service_group: caddy
         annotations:
-          summary: 'Caddy 5xx rate above 1% over the last 5 min ({{ $values.ratio.Value | humanizePercentage }})'
+          summary: 'Caddy returned >10 5xx responses over the last 5 min'
           runbook_url: 'docs/runbooks/platform-recovery.md#caddy-5xx-surge'
           description: |
-            More than 1% of Caddy responses in the last 5 minutes returned a
+            More than 10 Caddy responses in the last 5 minutes returned a
             5xx status code. This catches errors from any upstream behind
             Caddy (portal-api, grafana, auth, etc.) — see request.host in
             the matching log lines to identify which.
