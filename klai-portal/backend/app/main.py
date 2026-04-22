@@ -7,9 +7,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
 from app.api import me, signup
-from app.api._sec_024_dryrun import (
-    router as sec_024_dryrun_router,  # SPEC-SEC-024 M4.5: DELETE after alert chain validated
-)
 from app.api.admin import router as admin_router
 from app.api.admin_api_keys import router as admin_api_keys_router
 from app.api.admin_widgets import router as admin_widgets_router
@@ -217,7 +214,6 @@ app.include_router(webhooks_router)
 # SEC-023 / F-038 — BFF proxy for internal services (research, scribe, docs)
 app.include_router(proxy_router)
 app.include_router(internal_router)
-app.include_router(sec_024_dryrun_router)  # SPEC-SEC-024 M4.5: DELETE after alert chain validated
 app.include_router(knowledge_bases_router)
 app.include_router(app_account_router)
 app.include_router(app_chat_router)
