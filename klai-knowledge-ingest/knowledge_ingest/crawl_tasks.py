@@ -20,6 +20,7 @@ def register_crawl_tasks(procrastinate_app: Any) -> None:
         exclude_patterns: list[str] | None = None,
         rate_limit: float = 2.0,
         content_selector: str | None = None,
+        login_indicator_selector: str | None = None,
     ) -> None:
         from knowledge_ingest.adapters.crawler import run_crawl_job
         await run_crawl_job(
@@ -33,6 +34,7 @@ def register_crawl_tasks(procrastinate_app: Any) -> None:
             exclude_patterns=exclude_patterns,
             rate_limit=rate_limit,
             content_selector=content_selector,
+            login_indicator_selector=login_indicator_selector,
         )
 
     procrastinate_app.run_crawl = run_crawl  # type: ignore[attr-defined]

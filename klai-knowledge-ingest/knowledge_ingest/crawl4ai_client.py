@@ -73,12 +73,22 @@ class CrawlResult:
 # ---------------------------------------------------------------------------
 
 
-def build_crawl_config(selector: str | None) -> dict[str, Any]:
+def build_crawl_config(
+    selector: str | None,
+    login_indicator_selector: str | None = None,
+) -> dict[str, Any]:
     """Build a CrawlerRunConfig-compatible JSON payload.
 
     Pipeline switching (SPEC-CRAWL-001 / R-1):
     - No selector  → full pipeline (JS chrome removal, excluded_tags, PruningContentFilter)
     - Selector      → trusted pipeline (no JS removal, no excluded_tags, PruningContentFilter)
+
+    Login indicator (SPEC-CRAWLER-004 Fase B / REQ-02.3):
+    - When *login_indicator_selector* is set, the caller's base ``wait_for``
+      is negated with ``&& !document.querySelector('<selector>')``. If the
+      selector matches, the page never satisfies ``wait_for`` and crawl4ai
+      returns ``success=False`` after ``page_timeout``. The caller can then
+      treat that failure as an auth-wall event.
     """
     md_gen: dict[str, Any] = {
         "type": "DefaultMarkdownGenerator",
@@ -91,10 +101,22 @@ def build_crawl_config(selector: str | None) -> dict[str, Any]:
         },
     }
 
+    base_wait = "js:() => document.body.innerText.trim().split(/\\s+/).length > 50"
+    if login_indicator_selector:
+        # Escape quotes/backslashes to prevent JS injection from a stored selector.
+        selector_escaped = login_indicator_selector.replace("\\", "\\\\").replace("'", "\\'")
+        # Negate: page is only "ready" when base condition is met AND the
+        # login indicator is NOT present. When the indicator IS present the
+        # wait_for times out and crawl4ai returns success=False.
+        base_wait = (
+            "js:() => (document.body.innerText.trim().split(/\\s+/).length > 50) "
+            f"&& !document.querySelector('{selector_escaped}')"
+        )
+
     params: dict[str, Any] = {
         "cache_mode": "bypass",
         "word_count_threshold": 10,
-        "wait_for": "js:() => document.body.innerText.trim().split(/\\s+/).length > 50",
+        "wait_for": base_wait,
         "js_code": JS_EXPAND_TOGGLES,
         "remove_consent_popups": True,
         "remove_overlay_elements": True,
@@ -266,6 +288,7 @@ async def crawl_site(
     max_depth: int = 2,
     max_pages: int = 200,
     include_patterns: list[str] | None = None,
+    login_indicator_selector: str | None = None,
 ) -> list[CrawlResult]:
     """Deep-crawl a website using BFS strategy via the Crawl4AI REST API.
 
@@ -276,8 +299,14 @@ async def crawl_site(
 
     Note: exclude_patterns is not supported by Crawl4AI's filter_chain; pass
     include_patterns to restrict crawling to specific URL path prefixes.
+
+    ``login_indicator_selector`` (SPEC-CRAWLER-004 Fase B / REQ-02.3) is
+    injected into the wait_for expression — when it matches on a page,
+    crawl4ai times out and returns ``success=False`` for that result.
+    Callers of ``crawl_site`` can then treat any success=False outcome
+    that fired with a non-None selector as an auth-wall event.
     """
-    config = build_crawl_config(selector)
+    config = build_crawl_config(selector, login_indicator_selector=login_indicator_selector)
 
     # Derive origin domain for post-crawl filtering.
     parsed = urlparse(start_url)
