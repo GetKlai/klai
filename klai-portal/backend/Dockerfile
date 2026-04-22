@@ -1,3 +1,7 @@
+# SPEC-CRAWLER-004 Fase 0: build context is the repo root so the shared
+# `klai-connector-credentials` library (a path dep in pyproject.toml) is
+# reachable from inside the build. Paths below are relative to the repo root.
+
 FROM python:3.13-slim AS builder
 
 # Install uv from the official distroless image
@@ -9,9 +13,13 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 # with "no such file or directory" at exec.
 WORKDIR /app
 
+# Bring in the shared lib FIRST (path dep resolves relative to the service dir
+# in pyproject.toml — we recreate the same sibling layout inside the image).
+COPY klai-libs/connector-credentials /klai-libs/connector-credentials
+
 # Install deps from the lockfile. Copying only pyproject + lockfile first lets
 # Docker cache the dependency layer until deps actually change.
-COPY pyproject.toml uv.lock ./
+COPY klai-portal/backend/pyproject.toml klai-portal/backend/uv.lock ./
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
@@ -32,14 +40,18 @@ RUN apt-get update && apt-get upgrade -y --no-install-recommends \
 # Copy the prebuilt virtualenv from the builder (same path → shebangs stay valid)
 COPY --from=builder /app/.venv /app/.venv
 
+# The venv's editable install of klai-connector-credentials references
+# /klai-libs/connector-credentials — carry the source over so imports resolve.
+COPY --from=builder /klai-libs /klai-libs
+
 # Make the venv the default python on PATH
 ENV PATH="/app/.venv/bin:${PATH}" \
     VIRTUAL_ENV="/app/.venv"
 
 # Copy application code
-COPY app/ app/
-COPY alembic/ alembic/
-COPY alembic.ini .
+COPY klai-portal/backend/app/ app/
+COPY klai-portal/backend/alembic/ alembic/
+COPY klai-portal/backend/alembic.ini .
 
 RUN adduser --disabled-password --gecos "" klai
 
