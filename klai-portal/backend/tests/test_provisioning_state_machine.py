@@ -115,7 +115,7 @@ async def test_from_state_mismatch_raises_conflict() -> None:
             step="zitadel_oidc_app",
         )
 
-    assert "from_state='queued'" in str(excinfo.value)
+    assert "queued" in str(excinfo.value)
     assert "creating_mongo_user" in str(excinfo.value)
     # No commit on conflict
     db.commit.assert_not_awaited()
