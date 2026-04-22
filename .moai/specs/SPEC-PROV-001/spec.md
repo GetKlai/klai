@@ -1,9 +1,9 @@
 ---
 id: SPEC-PROV-001
-version: 0.2.0
-status: draft
+version: 0.3.0
+status: implemented
 created: 2026-04-19
-updated: 2026-04-21
+updated: 2026-04-22
 author: mark.vletter@voys.nl
 priority: HIGH
 issue_number: null
@@ -17,6 +17,7 @@ issue_number: null
 |-------------|--------|-----------------------------------------------------------------|----------------------|
 | 2026-04-19  | 0.1.0  | Initiële draft, opgesteld na SEC-021 refactor (commits `c5653159`, `a3920a75`) | mark.vletter@voys.nl |
 | 2026-04-21  | 0.2.0  | Sparring-review: `AsyncExitStack`-patroon voor rollback, soft-delete + partial unique index voor slug-release, inline Alembic UPDATE i.p.v. los migratiescript, startup stuck-detector toegevoegd. | mark.vletter@voys.nl |
+| 2026-04-22  | 0.3.0  | Post-deploy: implementatie gelanded op productie (commits `71b9c973`, `93bf090e`, `7e18e905`, `15c2ba4a`, `713af9a8`). SPEC status → `implemented`. Gefixte gaps na code-review: (a) entry-guard `_provision` verstrikt naar `ENTRY_STATES = {pending, queued}` + `deleted_at IS NULL`-check, (b) `transition_state.from_state` accepteert nu `str \| Iterable[str] \| None` zodat de initial transitie expliciet `ENTRY_STATES` doorgeeft i.p.v. None, (c) mijn migratie hernoemd naar echt random hex (`32fc0ed3581b`), (d) pre-existing duplicate rev id `a1b2c3d4e5f6` opgelost door `add_user_kb_preference` te hernoemen naar `c160d2b9d885`, (e) CI-enforcement `scripts/validate_alembic.py` wired in `portal-api.yml` quality job — toekomstige duplicate/orphan faalt bij PR. Slug-fix: productie heeft `getklai` (niet `klai`) — migratie UPDATE gecorrigeerd. | mark.vletter@voys.nl |
 
 ## Context en trigger
 

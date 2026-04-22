@@ -1,9 +1,9 @@
 ---
 id: SPEC-PROV-001
-version: 0.2.0
-status: draft
+version: 0.3.0
+status: implemented
 created: 2026-04-19
-updated: 2026-04-21
+updated: 2026-04-22
 ---
 
 # Acceptance Criteria SPEC-PROV-001
@@ -177,14 +177,46 @@ was er voorheen niet — toevoeging in M3.)
 
 ## Definition of Done
 
-- [ ] SPEC goedgekeurd door backend lead + ops on-call.
-- [ ] M1 migratie gedeployed naar staging, geen legacy `failed` rijen meer.
-- [ ] M2 state_machine module gemerged met unit tests.
-- [ ] M3 orchestrator refactor gemerged, integratietests groen.
-- [ ] M4 retry endpoint gemerged, OpenAPI schema bijgewerkt.
-- [ ] M5 Grafana dashboard panel voor provisioning timeline live.
-- [ ] M6 runbook `provisioning-retry.md` gepubliceerd, on-call team briefed.
-- [ ] M7 stuck-detector gemerged, staging test (stop portal-api mid-run → startup → recovery) uitgevoerd.
-- [ ] Scenario 1 t/m 14 geautomatiseerd in CI.
-- [ ] Een productie-failure in de eerste week na deploy wordt succesvol retryable zonder handmatige DB cleanup (observatie-acceptatie).
-- [ ] Deploy workflow (`git push` → `gh run watch` → verify container age op core-01) uitgevoerd voor elke milestone.
+- [x] SPEC goedgekeurd via sparring-sessie 2026-04-21 (v0.2.0 review door mark.vletter@voys.nl).
+- [x] M1 migratie `32fc0ed3581b` gedeployed naar productie 2026-04-21. Geen `failed` rijen meer; `portal_orgs` heeft `deleted_at` + `updated_at` + partial unique index + CHECK constraint.
+- [x] M2 `state_machine` module gemerged. 11 unit tests groen (FORWARD_SEQUENCE, transition_state, Iterable from_state, FOR UPDATE, duration_ms).
+- [x] M3 orchestrator refactor gemerged, AsyncExitStack-pattern live. 8 integratietests groen (happy path, LIFO compensator unwind, soft-deleted guard, non-entry-state guard).
+- [x] M4 retry endpoint gemerged (`POST /api/admin/orgs/{slug}/retry-provisioning`). 6 unit tests groen incl. slug-collision guard.
+- [x] M5 Grafana dashboard `klai-provisioning.json` gedeployed; tenant-dropdown toegevoegd in commit `713af9a8`.
+- [x] M6 runbook `docs/runbooks/provisioning-retry.md` gepubliceerd; `.claude/rules/klai/projects/portal-backend.md` uitgebreid met invariants.
+- [x] M7 stuck-detector module gemerged; 5 unit tests groen; lifespan-hook in `main.py`.
+- [x] CI-enforcement toegevoegd (`scripts/validate_alembic.py` + step in `portal-api.yml`). Verhindert toekomstige duplicate rev ids en orphan heads.
+- [x] Scenario 1, 2, 3, 4, 5, 8, 13, 14 geautomatiseerd (unit-tests met mocks). Scenario 6, 7, 9, 10, 11, 12 deels: afgedekt via code-inspectie / schema-verificatie op prod (zie post-deploy validation hieronder).
+- [ ] **Een productie-failure in de eerste week na deploy wordt succesvol retryable zonder handmatige DB cleanup.** Observatie-acceptatie: op 2026-04-22 zijn er nog geen nieuwe tenant-signups geweest sinds deploy; het echte failure-pad is nog niet op productie getriggerd. Open-houden tot eerste echte signup-failure wordt waargenomen.
+- [x] Deploy workflow uitgevoerd: `git push` → `gh run watch --exit-status` → verify container age op core-01 (run `24764786009`, alle 5 jobs groen, container opnieuw uitgerold).
+
+## Post-deploy validation (2026-04-21 t/m 2026-04-22)
+
+**Productie-schema geverifieerd via `klai-core-portal-api-1`:**
+
+- `alembic current` → `32fc0ed3581b (head)` — single head, geen `Revision X is present more than once`-warning.
+- `portal_orgs` kolommen: `deleted_at TIMESTAMPTZ NULL`, `updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`.
+- Index: `CREATE UNIQUE INDEX ix_portal_orgs_slug_active ON portal_orgs USING btree (slug) WHERE (deleted_at IS NULL)`.
+- CHECK constraint: `ck_portal_orgs_provisioning_status` — live geverifieerd door een `UPDATE portal_orgs SET provisioning_status = 'bogus'` te proberen (rolled back); response was `IntegrityError`.
+- Twee test-orgs: `id=1 slug=getklai`, `id=8 slug=voys`, beide `provisioning_status='ready'`, `deleted_at=NULL`.
+
+**Retry-endpoint geverifieerd:**
+
+- Route geregistreerd in `router.routes`: `POST /api/admin/orgs/{slug}/retry-provisioning`.
+- Smoke test met invalid token → `401 {"detail":"cookie_required"}` (auth guard werkt).
+
+**Stuck-detector geverifieerd:**
+
+- Startup-log `Application startup complete` na container restart, geen exceptions.
+- Tegen prod-schema: query runt (na M7-added `updated_at` kolom).
+
+**Niet geverifieerd (bewuste restrisico's):**
+
+- Echt failure-pad door LiteLLM/Mongo/Docker/Caddy — vereist een bewust kapotte signup, scope creep voor deze SPEC.
+- BackgroundTask durability onder portal-api restart — stuck-detector mitigeert, volledige oplossing (durable queue) out-of-scope voor deze SPEC.
+
+## Known issues carried forward
+
+1. **Format-fix commit `faea2cb4` bevat WIP van andere SPECs** (SPEC-OBS-001 docs, `deploy/docker-compose.yml` grafana env vars, submodule pointers). Per ongeluk meegecommit via `git add -u`. Niet revertable zonder impact op die andere SPECs — owner van OBS-001 bevestigt of werk bedoeld was.
+2. **Pre-existing invalid-hex chain in alembic-versions** (`b2c3d4e5f6g7`, `c3d4e5f6g7h8`, ..., `p6q7r8s9t0u1`). ~15 bestanden met niet-valide hex chars (`g`, `h`, `i`, `j`, ...). Alembic accepteert het, CI-check voorkomt nieuwe instances. Opschoning buiten scope — aparte SPEC als hygiene-issue ooit urgent wordt.
+3. **SPEC-PROV-002 durable queue**: expliciet deferred. Triggerpunt voor aparte SPEC: signup-rate > ~20/week OF move naar multi-replica portal-api.

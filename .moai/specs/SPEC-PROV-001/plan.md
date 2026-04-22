@@ -1,9 +1,9 @@
 ---
 id: SPEC-PROV-001
-version: 0.2.0
-status: draft
+version: 0.3.0
+status: implemented
 created: 2026-04-19
-updated: 2026-04-21
+updated: 2026-04-22
 ---
 
 # Implementatieplan SPEC-PROV-001
