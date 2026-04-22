@@ -490,6 +490,34 @@ wheels = [
 ]
 
 [[package]]
+name = "klai-connector-credentials"
+version = "0.1.0"
+source = { editable = "../../klai-libs/connector-credentials" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cryptography", specifier = ">=44.0" },
+    { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.390" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
+]
+provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pyright", specifier = ">=1.1.390" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "pytest-asyncio", specifier = ">=1" },
+    { name = "ruff", specifier = ">=0.8" },
+]
+
+[[package]]
 name = "klai-portal-api"
 version = "0.1.0"
 source = { virtual = "." }
@@ -501,6 +529,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "icalendar" },
+    { name = "klai-connector-credentials" },
     { name = "motor" },
     { name = "prometheus-client" },
     { name = "pydantic", extra = ["email"] },
@@ -542,6 +571,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28" },
     { name = "icalendar", specifier = ">=6.1.0,<8.0" },
+    { name = "klai-connector-credentials", editable = "../../klai-libs/connector-credentials" },
     { name = "motor", specifier = ">=3.7" },
     { name = "prometheus-client", specifier = ">=0.25,<1.0" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.13" },

@@ -24,7 +24,11 @@ dependencies = [
     "filetype>=1.2.0",
     "msal>=1.31",
     "trafilatura>=2.0,<3.0",
+    "klai-connector-credentials",
 ]
+
+[tool.uv.sources]
+klai-connector-credentials = { path = "../klai-libs/connector-credentials", editable = true }
 
 [project.optional-dependencies]
 dev = [

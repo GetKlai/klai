@@ -1,0 +1,61 @@
+[project]
+name = "klai-connector-credentials"
+version = "0.1.0"
+description = "Shared AES-256-GCM credential encryption for Klai connectors (SPEC-KB-020, SPEC-CRAWLER-004)."
+requires-python = ">=3.12"
+readme = "README.md"
+license = { text = "Proprietary" }
+authors = [{ name = "Klai" }]
+
+# Runtime dependencies only. Every Klai service that embeds this lib already
+# pins its own cryptography + sqlalchemy versions; we express compatible
+# ranges here and let the embedding service resolve exact versions.
+dependencies = [
+    "cryptography>=44.0",
+    "sqlalchemy[asyncio]>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=1",
+    "ruff>=0.8",
+    "pyright>=1.1.390",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=1",
+    "ruff>=0.8",
+    "pyright>=1.1.390",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["connector_credentials"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "S", "RUF", "G", "LOG"]
+ignore = [
+    "S101",  # assert is fine in tests
+    "S105",  # hardcoded passwords false positives (test fixtures)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S106"]  # test fixtures use fake tokens like "test-token-abc"
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
