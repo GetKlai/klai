@@ -1,3 +1,7 @@
+# SPEC-CRAWLER-004 Fase 0: build context is the repo root so the shared
+# `klai-connector-credentials` library (a path dep in pyproject.toml) is
+# reachable from inside the build. Paths below are relative to the repo root.
+
 FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y ca-certificates libpq5 && update-ca-certificates && rm -rf /var/lib/apt/lists/*
@@ -7,11 +11,16 @@ RUN useradd --create-home --uid 1000 --shell /bin/bash app
 
 WORKDIR /app
 
-COPY pyproject.toml uv.lock ./
+# Bring in the shared lib first — the pyproject.toml declares a path dep
+# `../klai-libs/connector-credentials`. We replicate the sibling layout
+# inside the image.
+COPY klai-libs/connector-credentials /klai-libs/connector-credentials
+
+COPY klai-knowledge-ingest/pyproject.toml klai-knowledge-ingest/uv.lock ./
 RUN pip install --no-cache-dir uv && \
     uv pip install --system --no-cache -r pyproject.toml
 
-COPY --chown=app:app knowledge_ingest/ knowledge_ingest/
+COPY --chown=app:app klai-knowledge-ingest/knowledge_ingest/ knowledge_ingest/
 
 # SEC-018: drop root for runtime (application writes nothing inside /app at runtime).
 USER app

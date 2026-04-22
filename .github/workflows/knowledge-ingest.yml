@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'klai-knowledge-ingest/**'
+      - 'klai-libs/connector-credentials/**'
       - '.github/workflows/knowledge-ingest.yml'
   workflow_dispatch:
 
@@ -37,7 +38,10 @@ jobs:
       - name: Build and push knowledge-ingest
         uses: docker/build-push-action@v7
         with:
-          context: ./klai-knowledge-ingest
+          # SPEC-CRAWLER-004 Fase 0: build from repo root so the Dockerfile can
+          # COPY the shared klai-libs/connector-credentials path dep.
+          context: .
+          file: klai-knowledge-ingest/Dockerfile
           push: true
           tags: |
             ghcr.io/getklai/knowledge-ingest:latest

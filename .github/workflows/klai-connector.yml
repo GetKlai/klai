@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'klai-connector/**'
+      - 'klai-libs/connector-credentials/**'
       - '.github/workflows/klai-connector.yml'
   workflow_dispatch:
 
@@ -37,7 +38,10 @@ jobs:
       - name: Build and push klai-connector
         uses: docker/build-push-action@v7
         with:
-          context: ./klai-connector
+          # SPEC-CRAWLER-004 Fase 0: build from repo root so the Dockerfile can
+          # COPY the shared klai-libs/connector-credentials path dep.
+          context: .
+          file: klai-connector/Dockerfile
           push: true
           tags: |
             ghcr.io/getklai/klai-connector:latest
