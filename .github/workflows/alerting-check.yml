@@ -6,6 +6,7 @@ on:
       - 'deploy/grafana/provisioning/alerting/**'
       - 'scripts/audit-alert-secrets.sh'
       - 'scripts/verify-alert-runbooks.sh'
+      - 'scripts/test-alerting-guards.sh'
       - 'docs/runbooks/platform-recovery.md'
       - '.github/workflows/alerting-check.yml'
   push:
@@ -14,6 +15,7 @@ on:
       - 'deploy/grafana/provisioning/alerting/**'
       - 'scripts/audit-alert-secrets.sh'
       - 'scripts/verify-alert-runbooks.sh'
+      - 'scripts/test-alerting-guards.sh'
 
 jobs:
   audit:
@@ -28,3 +30,11 @@ jobs:
 
       - name: Verify runbook_url annotations resolve
         run: bash scripts/verify-alert-runbooks.sh
+
+      - name: Regression tests — both guards catch the CLASS of bug
+        # Deliberately-bad fixtures must fail the audit/verify scripts;
+        # deliberately-good fixtures must pass. Mirrors the SEC-024
+        # pattern from scripts/test-audit-compose.sh. Without this,
+        # a future refactor of either guard script could silently break
+        # detection and land without CI catching it.
+        run: bash scripts/test-alerting-guards.sh
