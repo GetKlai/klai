@@ -194,8 +194,8 @@ async def create_api_key(
             )
         )
 
+    await db.refresh(key_row)  # Pre-commit refresh to load server_default columns while tenant context is still set.
     await db.commit()
-    # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
 
     emit_event(
         "api_key.created",
