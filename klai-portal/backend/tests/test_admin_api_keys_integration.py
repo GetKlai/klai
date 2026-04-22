@@ -54,7 +54,7 @@ def _mock_auth():
 
 @pytest.mark.asyncio
 async def test_create_api_key_returns_plaintext_key():
-    """POST /api/api-keys returns api_key (plaintext) in response."""
+    """POST /api/admin/api-keys returns api_key (plaintext) in response."""
     from app.api.admin_api_keys import CreateApiKeyRequest, create_api_key
 
     db = AsyncMock()
@@ -91,7 +91,7 @@ async def test_create_api_key_returns_plaintext_key():
 
 @pytest.mark.asyncio
 async def test_list_api_keys_returns_org_keys():
-    """GET /api/api-keys returns all keys for the org."""
+    """GET /api/admin/api-keys returns all keys for the org."""
     from app.api.admin_api_keys import list_api_keys
 
     db = AsyncMock()
@@ -118,7 +118,7 @@ async def test_list_api_keys_returns_org_keys():
 
 @pytest.mark.asyncio
 async def test_delete_api_key_calls_db_delete():
-    """DELETE /api/api-keys/{id} executes DELETE on DB."""
+    """DELETE /api/admin/api-keys/{id} executes DELETE on DB."""
     from app.api.admin_api_keys import delete_api_key
 
     key = FakeKeyRow(id="key-1")

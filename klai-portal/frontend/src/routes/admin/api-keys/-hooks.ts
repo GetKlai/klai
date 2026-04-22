@@ -16,7 +16,7 @@ export function useApiKeys() {
 
   return useQuery({
     queryKey: ['admin-api-keys'],
-    queryFn: async () => apiFetch<ApiKeyResponse[]>('/api/api-keys'),
+    queryFn: async () => apiFetch<ApiKeyResponse[]>('/api/admin/api-keys'),
     enabled: auth.isAuthenticated,
   })
 }
@@ -26,7 +26,7 @@ export function useApiKey(id: string) {
 
   return useQuery({
     queryKey: ['admin-api-key', id],
-    queryFn: async () => apiFetch<ApiKeyDetailResponse>(`/api/api-keys/${id}`),
+    queryFn: async () => apiFetch<ApiKeyDetailResponse>(`/api/admin/api-keys/${id}`),
     enabled: auth.isAuthenticated && !!id,
   })
 }
@@ -36,7 +36,7 @@ export function useCreateApiKey() {
 
   return useMutation({
     mutationFn: async (data: CreateApiKeyRequest) =>
-      apiFetch<CreateApiKeyResponse>('/api/api-keys', {
+      apiFetch<CreateApiKeyResponse>('/api/admin/api-keys', {
         method: 'POST',
         body: JSON.stringify(data),
       }),
@@ -51,7 +51,7 @@ export function useUpdateApiKey(id: string) {
 
   return useMutation({
     mutationFn: async (data: UpdateApiKeyRequest) =>
-      apiFetch<ApiKeyDetailResponse>(`/api/api-keys/${id}`, {
+      apiFetch<ApiKeyDetailResponse>(`/api/admin/api-keys/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(data),
       }),
@@ -67,7 +67,7 @@ export function useDeleteApiKey() {
 
   return useMutation({
     mutationFn: async (id: string) =>
-      apiFetch<void>(`/api/api-keys/${id}`, {
+      apiFetch<void>(`/api/admin/api-keys/${id}`, {
         method: 'DELETE',
       }),
     onSuccess: () => {

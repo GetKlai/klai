@@ -19,7 +19,7 @@ def test_module_imports():
         update_api_key,
     )
 
-    assert router.prefix == "/api/api-keys"
+    assert router.prefix == "/api/admin/api-keys"
     assert callable(create_api_key)
     assert callable(list_api_keys)
     assert callable(get_api_key_detail)

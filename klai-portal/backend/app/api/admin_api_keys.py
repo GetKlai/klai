@@ -31,7 +31,7 @@ from app.services.partner_keys import generate_partner_key
 
 logger = structlog.get_logger()
 
-router = APIRouter(prefix="/api/api-keys", tags=["API Keys Admin"])
+router = APIRouter(prefix="/api/admin/api-keys", tags=["API Keys Admin"])
 
 
 # ---------------------------------------------------------------------------

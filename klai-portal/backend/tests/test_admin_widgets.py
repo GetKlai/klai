@@ -19,7 +19,7 @@ def test_module_imports():
         update_widget,
     )
 
-    assert router.prefix == "/api/widgets"
+    assert router.prefix == "/api/admin/widgets"
     assert callable(create_widget)
     assert callable(list_widgets)
     assert callable(get_widget_detail)

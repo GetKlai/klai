@@ -60,7 +60,7 @@ def _mock_auth():
 
 @pytest.mark.asyncio
 async def test_create_widget_returns_wgt_id_no_api_key():
-    """POST /api/widgets returns widget_id (wgt_...) and NO api_key field."""
+    """POST /api/admin/widgets returns widget_id (wgt_...) and NO api_key field."""
     from app.api.admin_widgets import CreateWidgetRequest, WidgetConfig, create_widget
 
     db = AsyncMock()
@@ -101,7 +101,7 @@ async def test_create_widget_returns_wgt_id_no_api_key():
 
 @pytest.mark.asyncio
 async def test_list_widgets_returns_org_widgets():
-    """GET /api/widgets returns all widgets for the org."""
+    """GET /api/admin/widgets returns all widgets for the org."""
     from app.api.admin_widgets import list_widgets
 
     w1 = FakeWidgetRow(id="w-1", name="Bot A")
@@ -128,7 +128,7 @@ async def test_list_widgets_returns_org_widgets():
 
 @pytest.mark.asyncio
 async def test_update_widget_patches_config():
-    """PATCH /api/widgets/{id} updates widget_config."""
+    """PATCH /api/admin/widgets/{id} updates widget_config."""
     from app.api.admin_widgets import UpdateWidgetRequest, WidgetConfig, update_widget
 
     widget = FakeWidgetRow()
@@ -163,7 +163,7 @@ async def test_update_widget_patches_config():
 
 @pytest.mark.asyncio
 async def test_delete_widget_calls_db_delete():
-    """DELETE /api/widgets/{id} executes DELETE on DB."""
+    """DELETE /api/admin/widgets/{id} executes DELETE on DB."""
     from app.api.admin_widgets import delete_widget
 
     widget = FakeWidgetRow()
