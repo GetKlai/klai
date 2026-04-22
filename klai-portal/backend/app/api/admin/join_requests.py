@@ -182,7 +182,7 @@ async def approve_join_request(
             workspace_url=workspace_url,
         )
     except Exception:
-        logger.warning("Approval notification email failed", request_id=request_id)
+        logger.warning("Approval notification email failed", request_id=request_id, exc_info=True)
 
     return ApproveResponse(message="Request approved")
 

@@ -64,5 +64,6 @@ async def remove_github_org_member(github_username: str) -> bool:
             "GitHub org member removal failed for %s: %s",
             github_username,
             exc,
+            exc_info=True,
         )
         return False

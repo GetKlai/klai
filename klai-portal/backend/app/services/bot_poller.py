@@ -87,7 +87,11 @@ async def _fetch_running_keys_safe(active: list[VexaMeeting]) -> set[tuple[str, 
         running_bots = await vexa.get_running_bots()
         return {(b["platform"], b["native_meeting_id"]) for b in running_bots}
     except Exception as exc:
-        logger.warning("Bot status poll failed — skipping end detection this cycle", error=str(exc))
+        logger.warning(
+            "Bot status poll failed — skipping end detection this cycle",
+            error=str(exc),
+            exc_info=True,
+        )
         return None
 
 

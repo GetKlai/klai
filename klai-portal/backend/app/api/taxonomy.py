@@ -849,6 +849,7 @@ async def _fetch_ingest_coverage(org_id: str, kb_slug: str) -> dict | None:
         log.warning(
             "coverage_stats_ingest_fetch_failed",
             extra={"org_id": org_id, "kb_slug": kb_slug},
+            exc_info=True,
         )
         return None
 
@@ -999,6 +1000,7 @@ async def _fetch_ingest_top_tags(org_id: str, kb_slug: str, limit: int, taxonomy
         log.warning(
             "top_tags_ingest_fetch_failed",
             extra={"org_id": org_id, "kb_slug": kb_slug},
+            exc_info=True,
         )
         return None
 

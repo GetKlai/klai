@@ -44,7 +44,11 @@ async def _invalidate_litellm_kb_cache(org_id: int, librechat_user_id: str) -> N
         async with r:
             await r.delete(f"kb_ver:{org_id}:{librechat_user_id}")
     except Exception as exc:
-        logger.warning("KB pref: Redis cache invalidation failed (%s) — hook picks up within 30s", exc)
+        logger.warning(
+            "KB pref: Redis cache invalidation failed (%s) — hook picks up within 30s",
+            exc,
+            exc_info=True,
+        )
 
 
 # -- Pydantic schemas ---------------------------------------------------------

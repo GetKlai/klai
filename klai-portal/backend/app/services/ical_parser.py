@@ -40,7 +40,7 @@ def parse_ics(ics_bytes: bytes) -> ParsedInvite | None:
     try:
         cal = Calendar.from_ical(ics_bytes.decode("utf-8", errors="replace"))
     except Exception:
-        logger.warning("Failed to parse iCalendar data")
+        logger.warning("Failed to parse iCalendar data", exc_info=True)
         return None
 
     # Check METHOD for cancellation

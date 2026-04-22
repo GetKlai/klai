@@ -76,8 +76,167 @@ jobs:
       - name: Test (pytest)
         run: uv run pytest -q --tb=short
 
-  build-push:
+  rls-policy-smoke-test:
+    # Spins up a throwaway PostgreSQL, runs every post_deploy_*.sql
+    # against it, then exercises the strict-RLS policies the way prod
+    # uses them. Catches regressions in either the SQL migrations or
+    # the policy expectations encoded in scripts/rls-smoke-test.sql
+    # BEFORE the change reaches a real database.
     needs: quality
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: klai
+          POSTGRES_PASSWORD: klai
+          POSTGRES_DB: klai
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U klai"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install psql client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      - name: Bootstrap minimal schema
+        env:
+          PGPASSWORD: klai
+        run: |
+          # Minimal schema slice that the smoke test references.
+          # We do not run alembic here — the smoke test only needs the
+          # policy targets to exist, not the full app schema.
+          psql -h localhost -U klai -d klai -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE portal_api;
+          GRANT CONNECT ON DATABASE klai TO portal_api;
+          GRANT USAGE ON SCHEMA public TO portal_api;
+
+          -- Tables referenced by the smoke test. Schemas mirror
+          -- production columns relevant to RLS only.
+          CREATE TABLE portal_users (
+              id SERIAL PRIMARY KEY,
+              org_id INTEGER NOT NULL,
+              zitadel_user_id VARCHAR(64) NOT NULL UNIQUE
+          );
+          CREATE TABLE portal_knowledge_bases (
+              id SERIAL PRIMARY KEY,
+              org_id INTEGER NOT NULL,
+              slug VARCHAR(64) NOT NULL,
+              UNIQUE(org_id, slug)
+          );
+          CREATE TABLE portal_groups (id SERIAL PRIMARY KEY, org_id INTEGER NOT NULL);
+          CREATE TABLE portal_group_products (id SERIAL PRIMARY KEY, org_id INTEGER NOT NULL, group_id INTEGER NOT NULL, product VARCHAR(32) NOT NULL);
+          CREATE TABLE portal_group_kb_access (id SERIAL PRIMARY KEY, kb_id INTEGER NOT NULL);
+          CREATE TABLE portal_kb_tombstones (id SERIAL PRIMARY KEY, org_id INTEGER NOT NULL);
+          CREATE TABLE portal_user_kb_access (id SERIAL PRIMARY KEY, org_id INTEGER NOT NULL, kb_id INTEGER NOT NULL, user_id VARCHAR(64) NOT NULL);
+          CREATE TABLE portal_retrieval_gaps (id SERIAL PRIMARY KEY, org_id INTEGER NOT NULL);
+          CREATE TABLE portal_taxonomy_nodes (id SERIAL PRIMARY KEY, kb_id INTEGER NOT NULL);
+          CREATE TABLE portal_taxonomy_proposals (id SERIAL PRIMARY KEY, kb_id INTEGER NOT NULL);
+          CREATE TABLE portal_user_products (id SERIAL PRIMARY KEY, org_id INTEGER NOT NULL, zitadel_user_id VARCHAR(64) NOT NULL, product VARCHAR(32) NOT NULL);
+          CREATE TABLE portal_connectors (id SERIAL PRIMARY KEY, org_id INTEGER NOT NULL);
+          CREATE TABLE vexa_meetings (id UUID PRIMARY KEY, org_id INTEGER, status VARCHAR(32));
+          CREATE TABLE partner_api_keys (id UUID PRIMARY KEY, org_id INTEGER NOT NULL);
+          CREATE TABLE partner_api_key_kb_access (partner_api_key_id UUID NOT NULL, kb_id INTEGER NOT NULL, PRIMARY KEY (partner_api_key_id, kb_id));
+          CREATE TABLE widgets (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id INTEGER NOT NULL, widget_id VARCHAR(64) NOT NULL);
+          CREATE TABLE widget_kb_access (widget_id UUID NOT NULL, kb_id INTEGER NOT NULL, PRIMARY KEY (widget_id, kb_id));
+
+          -- Enable RLS + grant table access to portal_api (forced so klai
+          -- superuser also obeys, mirroring production setup).
+          DO $$
+          DECLARE t text;
+          BEGIN
+              FOR t IN VALUES
+                  ('portal_users'), ('portal_knowledge_bases'), ('portal_groups'),
+                  ('portal_group_products'), ('portal_group_kb_access'),
+                  ('portal_kb_tombstones'), ('portal_user_kb_access'),
+                  ('portal_retrieval_gaps'), ('portal_taxonomy_nodes'),
+                  ('portal_taxonomy_proposals'), ('portal_user_products'),
+                  ('portal_connectors'), ('vexa_meetings'),
+                  ('partner_api_keys'), ('partner_api_key_kb_access'),
+                  ('widgets'), ('widget_kb_access')
+              LOOP
+                  EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+                  EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
+                  EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON %I TO portal_api', t);
+              END LOOP;
+          END $$;
+
+          -- Seed test data: one row per pure-tenant table, 2 orgs.
+          INSERT INTO portal_knowledge_bases (org_id, slug) VALUES (1, 'org'), (1, 'personal-1'), (8, 'org'), (8, 'personal-2');
+
+          -- Pre-existing legacy ALL policies on the cat-D tables so the
+          -- forward script's DROP POLICY IF EXISTS sees something to
+          -- drop (mirrors prod history).
+          CREATE POLICY tenant_isolation ON portal_knowledge_bases FOR ALL USING (true);
+          CREATE POLICY tenant_isolation ON portal_groups FOR ALL USING (true);
+          CREATE POLICY tenant_isolation ON portal_group_products FOR ALL USING (true);
+          CREATE POLICY tenant_isolation ON portal_group_kb_access FOR ALL USING (true);
+          CREATE POLICY tenant_isolation ON portal_kb_tombstones FOR ALL USING (true);
+          CREATE POLICY tenant_isolation ON portal_user_kb_access FOR ALL USING (true);
+          CREATE POLICY tenant_isolation ON portal_retrieval_gaps FOR ALL USING (true);
+          CREATE POLICY tenant_isolation ON portal_taxonomy_nodes FOR ALL USING (true);
+          CREATE POLICY tenant_isolation ON portal_taxonomy_proposals FOR ALL USING (true);
+          CREATE POLICY tenant_isolation ON portal_user_products FOR ALL USING (true);
+          CREATE POLICY tenant_isolation ON portal_connectors FOR ALL USING (true);
+          CREATE POLICY tenant_read ON vexa_meetings FOR SELECT USING (true);
+          CREATE POLICY tenant_write ON vexa_meetings FOR INSERT WITH CHECK (true);
+          CREATE POLICY tenant_update ON vexa_meetings FOR UPDATE USING (true);
+          CREATE POLICY tenant_delete ON vexa_meetings FOR DELETE USING (true);
+          CREATE POLICY partner_select ON partner_api_keys FOR SELECT USING (true);
+          CREATE POLICY partner_insert ON partner_api_keys FOR INSERT WITH CHECK (true);
+          CREATE POLICY partner_update ON partner_api_keys FOR UPDATE USING (true);
+          CREATE POLICY partner_delete ON partner_api_keys FOR DELETE USING (true);
+          CREATE POLICY kb_access_select ON partner_api_key_kb_access FOR SELECT USING (true);
+          CREATE POLICY kb_access_insert ON partner_api_key_kb_access FOR INSERT WITH CHECK (true);
+          CREATE POLICY kb_access_update ON partner_api_key_kb_access FOR UPDATE USING (true);
+          CREATE POLICY kb_access_delete ON partner_api_key_kb_access FOR DELETE USING (true);
+          CREATE POLICY widgets_select ON widgets FOR SELECT USING (true);
+          CREATE POLICY widgets_insert ON widgets FOR INSERT WITH CHECK (true);
+          CREATE POLICY widgets_update ON widgets FOR UPDATE USING (true);
+          CREATE POLICY widgets_delete ON widgets FOR DELETE USING (true);
+          CREATE POLICY widget_kb_access_select ON widget_kb_access FOR SELECT USING (true);
+          CREATE POLICY widget_kb_access_insert ON widget_kb_access FOR INSERT WITH CHECK (true);
+          CREATE POLICY widget_kb_access_delete ON widget_kb_access FOR DELETE USING (true);
+          SQL
+
+      - name: Apply forward RLS migration
+        env:
+          PGPASSWORD: klai
+        working-directory: klai-portal/backend
+        run: psql -h localhost -U klai -d klai -v ON_ERROR_STOP=1 < alembic/versions/post_deploy_rls_raise_on_missing_context.sql
+
+      - name: Run RLS smoke test
+        env:
+          PGPASSWORD: klai
+        working-directory: klai-portal/backend
+        run: psql -h localhost -U portal_api -d klai -v ON_ERROR_STOP=1 < scripts/rls-smoke-test.sql 2>&1 | tee /tmp/smoke.out
+        # Verify expected NOTICE markers fired (a silently-skipped DO
+        # block would not raise on its own).
+      - name: Verify smoke-test assertions fired
+        run: |
+          set -e
+          for marker in \
+              "portal_knowledge_bases raised insufficient_privilege as expected" \
+              "vexa_meetings UPDATE raised insufficient_privilege as expected" \
+              "RLS smoke test complete"; do
+              grep -Fq "$marker" /tmp/smoke.out || { echo "MISSING marker: $marker"; exit 1; }
+          done
+          echo "✓ All RLS smoke-test assertions fired."
+
+      - name: Apply rollback migration (smoke-test rollback path too)
+        env:
+          PGPASSWORD: klai
+        working-directory: klai-portal/backend
+        run: psql -h localhost -U klai -d klai -v ON_ERROR_STOP=1 < alembic/versions/post_deploy_rls_rollback_to_nullif_pattern.sql
+
+  build-push:
+    needs: [quality, rls-policy-smoke-test]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 

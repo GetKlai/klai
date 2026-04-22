@@ -335,7 +335,7 @@ class SessionService:
             )
             raise _PermanentRefreshFailure from exc
         except Exception as exc:
-            logger.warning("bff_session_refresh_transient_error", sid=record.sid, error=str(exc))
+            logger.warning("bff_session_refresh_transient_error", sid=record.sid, error=str(exc), exc_info=True)
             return None
 
         # Race guard: logout may have revoked the session while we were holding

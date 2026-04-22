@@ -115,7 +115,9 @@ async def rescore_open_gaps(
                     continue
                 chunks = resp.json().get("chunks", [])
             except Exception as exc:
-                logger.warning("gap_rescorer: retrieval API error for query=%r: %s", row.query_text[:60], exc)
+                logger.warning(
+                    "gap_rescorer: retrieval API error for query=%r: %s", row.query_text[:60], exc, exc_info=True
+                )
                 continue
 
             gap_result = classify_gap(chunks)

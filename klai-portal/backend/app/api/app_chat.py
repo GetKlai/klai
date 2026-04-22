@@ -89,7 +89,7 @@ async def get_chat_health(
         _emit_failure(org.id, "container_unreachable")
         return ChatHealthOut(healthy=False, reason="container_unreachable")
     except Exception as exc:
-        logger.warning("chat-health probe unexpected error for %s: %s", org.librechat_container, exc)
+        logger.warning("chat-health probe unexpected error for %s: %s", org.librechat_container, exc, exc_info=True)
         _emit_failure(org.id, "probe_error")
         return ChatHealthOut(healthy=False, reason="probe_error")
 
