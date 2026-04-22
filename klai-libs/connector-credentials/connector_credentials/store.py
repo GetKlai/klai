@@ -167,6 +167,28 @@ class ConnectorCredentialStore:
         plaintext_json = dek_cipher.decrypt(encrypted_credentials)
         return json.loads(plaintext_json)
 
+    def decrypt_credentials_from_blobs(
+        self,
+        encrypted_credentials: bytes,
+        connector_dek_enc: bytes,
+    ) -> dict[str, Any]:
+        """Decrypt a credentials blob given both the encrypted DEK and payload.
+
+        This is the DB-driver-agnostic sibling of :meth:`decrypt_credentials`.
+        The caller fetches both ``portal_orgs.connector_dek_enc`` and
+        ``portal_connectors.encrypted_credentials`` via whatever driver they
+        use (e.g. asyncpg.Pool in knowledge-ingest) and hands the bytes over
+        to this method. No SQLAlchemy session required.
+
+        Raises:
+            cryptography.exceptions.InvalidTag: if either blob was tampered
+                with or encrypted under a different key.
+        """
+        dek_hex = self._kek_cipher.decrypt(connector_dek_enc)
+        dek_cipher = AESGCMCipher(bytes.fromhex(dek_hex))
+        plaintext_json = dek_cipher.decrypt(encrypted_credentials)
+        return json.loads(plaintext_json)
+
     # @MX:WARN: rotate_kek -- wrong invocation = permanent data loss
     # @MX:REASON: Passing the wrong old_kek_hex makes every DEK unreadable under the new KEK.
     async def rotate_kek(

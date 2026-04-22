@@ -289,6 +289,7 @@ async def crawl_site(
     max_pages: int = 200,
     include_patterns: list[str] | None = None,
     login_indicator_selector: str | None = None,
+    cookies: list[dict[str, Any]] | None = None,
 ) -> list[CrawlResult]:
     """Deep-crawl a website using BFS strategy via the Crawl4AI REST API.
 
@@ -325,10 +326,15 @@ async def crawl_site(
         "params": deep_crawl_params,
     }
 
-    payload = {
+    payload: dict[str, Any] = {
         "urls": [start_url],
         "crawler_config": {"type": "CrawlerRunConfig", "params": config},
     }
+    if cookies:
+        # SPEC-CRAWLER-004 Fase C — inject browser cookies via the same
+        # on_page_context_created hook crawl_page() uses. Shared _build_cookie_hooks
+        # keeps the injection identical across single-page and BFS crawls.
+        payload["hooks"] = _build_cookie_hooks(cookies)
 
     async with httpx.AsyncClient(timeout=90.0) as client:
         resp = await client.post(

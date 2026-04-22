@@ -8,7 +8,15 @@ from knowledge_ingest import db, kb_config, org_config, qdrant_store
 from knowledge_ingest.config import settings
 from knowledge_ingest.logging_setup import RequestContextMiddleware, setup_logging
 from knowledge_ingest.middleware.auth import InternalSecretMiddleware
-from knowledge_ingest.routes import crawl, ingest, knowledge, personal, stats, taxonomy
+from knowledge_ingest.routes import (
+    crawl,
+    crawl_sync,
+    ingest,
+    knowledge,
+    personal,
+    stats,
+    taxonomy,
+)
 
 setup_logging("knowledge-ingest")
 logger = structlog.get_logger()
@@ -97,6 +105,7 @@ app.add_middleware(InternalSecretMiddleware)
 app.add_middleware(RequestContextMiddleware)
 app.include_router(ingest.router)
 app.include_router(crawl.router)
+app.include_router(crawl_sync.router)
 app.include_router(personal.router)
 app.include_router(knowledge.router)
 app.include_router(stats.router)
