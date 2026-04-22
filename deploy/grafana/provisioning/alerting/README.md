@@ -1,78 +1,99 @@
-# Grafana Alerting Provisioning (SPEC-SEC-024)
+# Grafana Alerting Provisioning
 
-Alert rules, notification policies, and contact points for Grafana-managed alerting.
+File-based provisioning for Grafana-managed alerting. Each file below lands
+into Grafana at startup or after `docker compose up -d grafana` (recreate).
+
+> `docker compose restart grafana` does NOT re-read bind-mount provisioning
+> files. Always use `up -d` for config changes. (SEC-024 operational fix
+> commit `2b0f697f`.)
 
 ## Files
 
-| File | Purpose | SPEC ref |
+| File | Purpose | SPEC |
 |---|---|---|
-| `rules.yaml` | Alert rule that fires on docker-socket-proxy 403's | R12 |
-| `policies.yaml` | Routes `spec=SPEC-SEC-024` alerts to `klai-dev-alerts-email` | R12 |
-| `contact-points.yaml` | Email contact point definition | R13 |
+| `contact-points.yaml` | Email receivers (`klai-dev-alerts-email`, `klai-ops-alerts-email`) + heartbeat webhook (`heartbeat-kuma`) | SEC-024, OBS-001 |
+| `policies.yaml` | Notification routing: matchers on `spec=...` labels route to the right receiver | SEC-024, INFRA-005, OBS-001 |
+| `rules.yaml` | Permanent zero-tolerance alert on docker-socket-proxy 403's | SEC-024-R12 |
+| `persistence-rules.yaml` | Persistence file staleness + missing alerts | SPEC-INFRA-005 Phase 6 |
+| `portal-api-rules.yaml` | 5xx rate, p95 latency, traffic drop (golden signals) | OBS-001-R9/R10/R11 |
+| `infra-rules.yaml` | Container down, restart loop, core-01 disk saturation | OBS-001-R12/R13/R17 |
+| `portal-events-rules.yaml` | FLUSHALL failure (LogsQL via VictoriaLogs) | OBS-001-R14 |
+| `librechat-rules.yaml` | LibreChat chat.health_failed spike | OBS-001-R15 |
+| `ingest-rules.yaml` | Knowledge-ingest error rate spike | OBS-001-R16 |
+| `heartbeat-rules.yaml` | Synthetic always-fires rule → heartbeat-kuma webhook every 5 min | OBS-001-R22 |
 
-## Deploy flow
+> Rule-file names above marked "OBS-001" are added by SPEC-OBS-001 and land in
+> subsequent commits. SEC-024 and INFRA-005 files are already present.
 
-**There is currently no CI step that rsyncs `deploy/grafana/` to core-01.**
-The compose-sync workflow (`.github/workflows/deploy-compose.yml`) only copies
-`docker-compose.yml` + its override file. This matches how `deploy/caddy/`,
-`deploy/alloy/`, and `deploy/postgres/` work today — their config lives in
-the repo for versioning, but landing on core-01 is a manual rsync or part of
-initial setup (`deploy/setup.sh`).
+## Routing (see `policies.yaml`)
 
-SPEC-SEC-024 M4.3 extends `deploy-compose.yml` to also rsync this directory
-and reload Grafana. Once that commit lands, any change here auto-deploys.
+All rules set a `spec` label so routing is deterministic:
 
-## SMTP pre-requisite (⚠️ required before AC-9 works)
+- `spec=SPEC-SEC-024` → `klai-dev-alerts-email` (security incidents)
+- `spec=SPEC-INFRA-005` → `klai-dev-alerts-email` (persistence concerns)
+- `spec=SPEC-OBS-001` + `alert_type=heartbeat` → `heartbeat-kuma` (5-min push to Uptime Kuma)
+- `spec=SPEC-OBS-001` → `klai-ops-alerts-email` (operational alerts)
+- Default fall-through → `grafana-default-email` (Grafana auto-installed)
 
-`contact-points.yaml` provisions an email receiver, but Grafana needs an
-SMTP relay to actually send mail. Add the following env vars to the
-`grafana:` service in `deploy/docker-compose.yml` and provide the values
-via SOPS:
+## Environment variables
 
-```yaml
-GF_SMTP_ENABLED: "true"
-GF_SMTP_HOST: smtp.example.com:587
-GF_SMTP_USER: ${GRAFANA_SMTP_USER}
-GF_SMTP_PASSWORD: ${GRAFANA_SMTP_PASSWORD}
-GF_SMTP_FROM_ADDRESS: alerts@getklai.com
-GF_SMTP_FROM_NAME: Klai Grafana
-GF_SMTP_STARTTLS_POLICY: MandatoryStartTLS
-```
+All SMTP/URL/recipient secrets are injected via `${VAR}` substitution. Grafana
+reads these from its container environment. Declared in
+`deploy/docker-compose.yml` grafana service; values from SOPS
+(`klai-infra/core-01/.env.sops` → `/opt/klai/.env`):
 
-Options for the SMTP backend (pick one):
+| Var | Used by | Source |
+|---|---|---|
+| `GRAFANA_SMTP_PASSWORD` | GF_SMTP (Cloud86 outbound mail) | SEC-024 commit `994b504` |
+| `ALERTS_EMAIL_RECIPIENTS` | `klai-ops-alerts-email` contact point | OBS-001 |
+| `KUMA_HEARTBEAT_URL` | `heartbeat-kuma` contact point (push URL incl. token) | OBS-001 |
+| `VICTORIALOGS_AUTH_USER` / `_PASSWORD` | VictoriaLogs datasource basic-auth | SEC-024 |
 
-1. **SendGrid / Resend / Amazon SES** — cheapest, widely used. Create a
-   single outbound-only API user, put credentials in SOPS.
-2. **Use the existing Zitadel SMTP** — if Zitadel already has a configured
-   outbound SMTP (see `.claude/rules/klai/platform/zitadel.md` runbooks),
-   share those credentials. Watch out for rate limits and From-address
-   policy if the provider is domain-scoped.
-3. **Self-hosted relay** — adds ops burden; only worth it if we need many
-   more alert destinations later.
+## Guardrails
 
-**Not recommended:** sending directly from Gmail / Outlook personal accounts.
-They rate-limit outbound mail aggressively and flag automated alerts as spam.
+Both gates run in CI on every PR touching this directory via
+`.github/workflows/alerting-check.yml`:
 
-## Verifying the alert works end-to-end (SPEC-SEC-024-R14 / AC-9)
+1. `scripts/audit-alert-secrets.sh` — fails on literal SMTP-credential, token,
+   or PEM-key patterns. Env-var substitution is the only legitimate route.
+2. `scripts/verify-alert-runbooks.sh` — parses every rule's `runbook_url`
+   annotation, verifies the referenced file + anchor exist in the repo.
+   Missing annotation OR dangling anchor blocks the PR.
 
-1. On a branch, add `container.exec_run(["true"])` to a portal-api code
-   path that will execute on next request.
-2. Merge, deploy to main, hit the endpoint that runs the new code.
-3. Within 2 minutes, an email should arrive at the address in
-   `contact-points.yaml`.
-4. Revert the branch. After 30m of silence, Grafana auto-resolves the alert.
+## LogsQL pitfall (SEC-024 M4.5 defect 1)
 
-## Dashboard companion
+VictoriaLogs unqualified text-search only scans `_msg`. Our structlog output
+puts fields in structured keys (`event:`, `error:`, `service:`). Always use
+explicit `field:value` syntax in alert rules:
 
-The `Security — Proxy Denials` dashboard
-(`deploy/grafana/provisioning/dashboards/security-proxy-denials.json`) visualises
-the same signal with deploy annotations.
+- ✅ `service:portal-api AND event:redis_flushall_failed`
+- ❌ `portal-api redis_flushall_failed` (matches nothing)
+
+Validate every new LogsQL rule via the VictoriaLogs MCP (`query`) before
+landing it in a provisioning file.
+
+## Verifying an alert end-to-end
+
+1. Provision the rule on a branch.
+2. After deploy-compose lands on main: `ssh core-01 "docker compose up -d grafana"`.
+3. Grafana UI → Alerting → Rules: rule shows status "Normal" or "Firing" (not "Error").
+4. Trigger the condition (real event, drill, or force via log injection — see
+   the relevant runbook section in `docs/runbooks/platform-recovery.md`).
+5. Within the rule's evaluation interval + policy's `group_wait`: email arrives
+   at the recipient list for the matching `spec` label.
+
+## Companion dashboards
+
+- `Security — Proxy Denials` (`deploy/grafana/provisioning/dashboards/security-proxy-denials.json`) — SEC-024.
+- Future: `Alerting Health` — OBS-001 Milestone 5 (fire rate per rule, eval latency, silence coverage).
 
 ## Troubleshooting
 
 | Symptom | Likely cause |
 |---|---|
-| Alert never fires despite 403's | VictoriaLogs query shape mismatch. Inspect rule in UI → Test. |
-| Alert fires but no email | SMTP not configured (see pre-req above). Check Grafana logs for `smtp` errors. |
-| Alert fires every minute without stopping | Log line keeps repeating; `keepFiringFor: 30m` delays resolve but rule stays firing. Fix the underlying call. |
-| Duplicate emails | `repeat_interval` too low or multiple matching policies. Check `policies.yaml`. |
+| Alert never fires despite matching condition | LogsQL query shape mismatch — see pitfall above. Inspect rule in UI → Test. |
+| Alert fires but no email | SMTP misconfig. Check Grafana logs for `smtp` errors. Verify `GRAFANA_SMTP_PASSWORD` is set on the running container (`docker exec klai-core-grafana-1 printenv GF_SMTP_PASSWORD`). |
+| Email goes to wrong inbox | `spec=` label missing or wrong on the rule — route matcher mismatches and falls through to the default receiver. |
+| Alert fires every minute without stopping | Log line keeps repeating; `keepFiringFor` delays resolve but rule stays firing. Fix the underlying call. |
+| Duplicate emails | `repeat_interval` too low, or multiple overlapping routes without `continue: false`. Check `policies.yaml`. |
+| Provisioning change doesn't take effect | Used `restart` instead of `up -d` — bind-mount is not re-read. Recreate the container. |

@@ -1,10 +1,16 @@
-# SPEC-SEC-024-R12/R13 — routing for proxy-denial alerts.
+# Notification routing for all Grafana-managed alerts.
 #
-# Matches on label spec=SPEC-SEC-024 (set by rules.yaml). Any other alert
-# falls through to the default receiver (which Grafana creates automatically).
+# Fallback: grafana-default-email (Grafana auto-installed).
+# Routes (evaluated in order, first match with continue:false wins):
+#   - spec=SPEC-SEC-024       → klai-dev-alerts-email (SEC-024-R12/R13)
+#   - spec=SPEC-INFRA-005     → klai-dev-alerts-email (SPEC-INFRA-005 persistence)
+#   - spec=SPEC-OBS-001 + alert_type=heartbeat → heartbeat-kuma (OBS-001-R22)
+#   - spec=SPEC-OBS-001       → klai-ops-alerts-email (OBS-001-R4/R5)
 #
-# Grouping + repeat_interval mirror the SPEC: one email per (service, alert)
-# per 24h maximum, so a wedged verb doesn't produce a flood.
+# Grouping + repeat_interval tuning per route:
+#   - SEC/INFRA: repeat 24h — suppress email-floods from a wedged call-path
+#   - OBS heartbeat: repeat 5m — push must arrive every 5 min at Uptime Kuma
+#   - OBS ops: repeat 4h — default Grafana behaviour; per-rule `for:` handles debounce
 
 apiVersion: 1
 
@@ -24,4 +30,39 @@ policies:
         group_wait: 10s
         group_interval: 1m
         repeat_interval: 24h
+        continue: false
+
+      - receiver: klai-dev-alerts-email
+        matchers:
+          - spec = SPEC-INFRA-005
+        group_by:
+          - alertname
+          - service
+        group_wait: 10s
+        group_interval: 1m
+        repeat_interval: 24h
+        continue: false
+
+      # OBS-001 heartbeat — MUST match BEFORE the general OBS-001 route,
+      # otherwise heartbeat notifications would go to the ops mailbox.
+      - receiver: heartbeat-kuma
+        matchers:
+          - spec = SPEC-OBS-001
+          - alert_type = heartbeat
+        group_by:
+          - alertname
+        group_wait: 0s
+        group_interval: 5m
+        repeat_interval: 5m
+        continue: false
+
+      - receiver: klai-ops-alerts-email
+        matchers:
+          - spec = SPEC-OBS-001
+        group_by:
+          - alertname
+          - service
+        group_wait: 10s
+        group_interval: 1m
+        repeat_interval: 4h
         continue: false

@@ -1,10 +1,16 @@
-# SPEC-SEC-024-R13 — dev-alerts email contact point.
+# Contact points for Grafana-managed alerting.
 #
-# ⚠️ PRE-REQUISITE: Grafana's SMTP relay must be configured before this
-# contact point actually sends mail. Current compose (deploy/docker-compose.yml
-# `grafana:` service) does NOT set GF_SMTP_* env vars — see the alerting/
-# README.md for the setup steps. Until SMTP is configured, this contact
-# point is provisioned but delivers nothing.
+# SMTP is configured in deploy/docker-compose.yml grafana service via GF_SMTP_*
+# env vars (Cloud86 shared199.cloud86-host.io:587, from hello@getklai.com).
+# GRAFANA_SMTP_PASSWORD lives in klai-infra/core-01/.env.sops.
+#
+# Defined here:
+#   - klai-dev-alerts-email  — SEC-024-R13: security/dev alerts (proxy denials, etc.)
+#   - klai-ops-alerts-email  — OBS-001-R4:  operational alerts (golden signals, infra)
+#   - heartbeat-kuma         — OBS-001-R22: webhook to Uptime Kuma for dead-man's-switch
+#
+# Both email contacts use the same SMTP backend but separate receivers so the
+# ops and security ontvangerslijsten can later diverge without rule changes.
 
 apiVersion: 1
 
@@ -32,3 +38,41 @@ contactPoints:
             Dashboard: {{ .GeneratorURL }}
             {{- end }}
         disableResolveMessage: false
+
+  - orgId: 1
+    name: klai-ops-alerts-email
+    receivers:
+      - uid: klai-ops-alerts-email-primary
+        type: email
+        settings:
+          addresses: ${ALERTS_EMAIL_RECIPIENTS}
+          singleEmail: false
+          subject: "[KLAI-ALERT-{{ .CommonLabels.severity }}] {{ .CommonLabels.alertname }}"
+          message: |
+            {{ range .Alerts -}}
+            [{{ .Status | toUpper }}] {{ .Labels.alertname }}
+            Service: {{ .Labels.service }}
+            Severity: {{ .Labels.severity }}
+            {{ if .Labels.request_id }}request_id: {{ .Labels.request_id }}{{ end }}
+            {{ if .Labels.slug }}slug: {{ .Labels.slug }}{{ end }}
+            {{ if .Labels.container }}container: {{ .Labels.container }}{{ end }}
+
+            {{ .Annotations.summary }}
+
+            {{ .Annotations.description }}
+
+            Runbook: {{ .Annotations.runbook_url }}
+            Started: {{ .StartsAt }}
+            Dashboard: {{ .GeneratorURL }}
+            {{- end }}
+        disableResolveMessage: false
+
+  - orgId: 1
+    name: heartbeat-kuma
+    receivers:
+      - uid: heartbeat-kuma-push
+        type: webhook
+        settings:
+          url: ${KUMA_HEARTBEAT_URL}
+          httpMethod: GET
+        disableResolveMessage: true
