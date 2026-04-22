@@ -10,11 +10,11 @@ from typing import Any
 import httpx
 import jwt
 from gidgethub.httpx import GitHubAPI
+from klai_image_storage import extract_markdown_image_urls, resolve_relative_url
 
 from app.adapters.base import BaseAdapter, DocumentRef, ImageRef
 from app.core.config import Settings
 from app.core.logging import get_logger
-from app.services.image_utils import extract_markdown_image_urls, resolve_relative_url
 
 logger = get_logger(__name__)
 

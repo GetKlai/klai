@@ -4,8 +4,9 @@ import base64
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
-from app.services.sync_images import download_and_upload_images
+from klai_image_storage import (
+    download_and_upload_adapter_images as download_and_upload_images,
+)
 
 
 class TestDownloadAndUploadImages:
@@ -18,7 +19,7 @@ class TestDownloadAndUploadImages:
         mock_store.validate_image = MagicMock(return_value="image/png")
 
         async def fake_upload(*args, **kwargs):
-            from app.services.s3_storage import ImageUploadResult
+            from klai_image_storage import ImageUploadResult
             return ImageUploadResult(
                 object_key="org/img/hash.png", public_url="/kb-images/org/img/hash.png", deduplicated=False,
             )
@@ -110,7 +111,7 @@ class TestDownloadAndUploadImages:
         mock_store.validate_image = MagicMock(return_value="image/png")
 
         async def fake_upload(*args, **kwargs):
-            from app.services.s3_storage import ImageUploadResult
+            from klai_image_storage import ImageUploadResult
             return ImageUploadResult(object_key="key", public_url="/kb-images/key", deduplicated=False)
 
         mock_store.upload_image = fake_upload
@@ -142,7 +143,7 @@ class TestDownloadAndUploadImages:
         mock_store.validate_image = MagicMock(return_value="image/png")
 
         async def fake_upload(*args, **kwargs):
-            from app.services.s3_storage import ImageUploadResult
+            from klai_image_storage import ImageUploadResult
             return ImageUploadResult(object_key="key", public_url="/kb-images/key", deduplicated=False)
 
         mock_store.upload_image = fake_upload
@@ -180,7 +181,7 @@ class TestUploadImagesIsConnectorAgnostic:
         engine._image_store.validate_image = MagicMock(return_value="image/png")
 
         async def fake_upload(*args, **kwargs):
-            from app.services.s3_storage import ImageUploadResult
+            from klai_image_storage import ImageUploadResult
             return ImageUploadResult(
                 object_key="k", public_url="/kb-images/k", deduplicated=False,
             )

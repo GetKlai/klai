@@ -29,6 +29,7 @@ from qdrant_client.models import (
 
 from retrieval_api.config import settings
 from retrieval_api.models import RetrieveRequest
+from retrieval_api.util.payload import payload_list
 
 logger = structlog.get_logger()
 
@@ -262,8 +263,8 @@ async def _search_knowledge(
             "kb_slug": r.payload.get("kb_slug"),
             "source_label": r.payload.get("source_label"),
             "title": r.payload.get("title"),
-            "image_urls": r.payload.get("image_urls"),
-            "links_to": r.payload.get("links_to", []),
+            "image_urls": payload_list(r.payload, "image_urls"),
+            "links_to": payload_list(r.payload, "links_to"),
             "incoming_link_count": r.payload.get("incoming_link_count", 0),
         }
         for r in result.points
@@ -330,8 +331,8 @@ async def fetch_chunks_by_urls(
             "kb_slug": r.payload.get("kb_slug"),
             "source_label": r.payload.get("source_label"),
             "title": r.payload.get("title"),
-            "image_urls": r.payload.get("image_urls"),
-            "links_to": r.payload.get("links_to", []),
+            "image_urls": payload_list(r.payload, "image_urls"),
+            "links_to": payload_list(r.payload, "links_to"),
             "incoming_link_count": r.payload.get("incoming_link_count", 0),
         }
         for r in result

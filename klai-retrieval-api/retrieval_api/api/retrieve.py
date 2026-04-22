@@ -25,6 +25,7 @@ from retrieval_api.services.diversity import source_aware_select
 from retrieval_api.services.events import emit_event
 from retrieval_api.services.router import fetch_source_catalog, route_to_sources
 from retrieval_api.services.tei import embed_single, embed_sparse
+from retrieval_api.util.payload import payload_list
 
 logger = structlog.get_logger(__name__)
 
@@ -177,7 +178,7 @@ async def retrieve(req: RetrieveRequest, request: Request) -> RetrieveResponse:
             candidate_urls: list[str] = []
             seen_urls: set[str] = set()
             for chunk in seed_chunks:
-                for url in chunk.get("links_to") or []:
+                for url in payload_list(chunk, "links_to"):
                     if url not in seen_urls:
                         seen_urls.add(url)
                         candidate_urls.append(url)
@@ -309,7 +310,7 @@ async def retrieve(req: RetrieveRequest, request: Request) -> RetrieveResponse:
                 kb_slug=r.get("kb_slug"),
                 source_label=r.get("source_label"),
                 title=r.get("title"),
-                image_urls=r.get("image_urls"),
+                image_urls=payload_list(r, "image_urls") or None,
             )
             for r in serving
         ]

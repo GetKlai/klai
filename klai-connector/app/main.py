@@ -102,7 +102,7 @@ def create_app() -> FastAPI:
         # Image storage (Garage S3) — optional, skip if not configured.
         image_store = None
         if settings.garage_s3_endpoint:
-            from app.services.s3_storage import ImageStore
+            from klai_image_storage import ImageStore
 
             image_store = ImageStore(
                 endpoint=settings.garage_s3_endpoint,

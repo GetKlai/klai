@@ -25,10 +25,12 @@ dependencies = [
     "msal>=1.31",
     "trafilatura>=2.0,<3.0",
     "klai-connector-credentials",
+    "klai-image-storage",
 ]
 
 [tool.uv.sources]
 klai-connector-credentials = { path = "../klai-libs/connector-credentials", editable = true }
+klai-image-storage = { path = "../klai-libs/image-storage", editable = true }
 
 [project.optional-dependencies]
 dev = [
