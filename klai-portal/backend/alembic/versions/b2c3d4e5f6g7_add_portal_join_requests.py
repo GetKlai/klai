@@ -1,15 +1,19 @@
 """add portal_join_requests table
 
 Revision ID: b2c3d4e5f6g7
-Revises: a1b2c3d4e5f6
+Revises: 23c5c8b48669
 Create Date: 2026-04-16
+
+2026-04-22: down_revision updated from the legacy hand-typed
+`a1b2c3d4e5f6` to the renamed `23c5c8b48669`
+(add_portal_org_allowed_domains). No functional change to the chain.
 """
 
 from alembic import op
 import sqlalchemy as sa
 
 revision = "b2c3d4e5f6g7"
-down_revision = "a1b2c3d4e5f6"
+down_revision = "23c5c8b48669"
 branch_labels = None
 depends_on = None
 

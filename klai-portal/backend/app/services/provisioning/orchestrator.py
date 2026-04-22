@@ -44,6 +44,7 @@ from app.services.provisioning.infrastructure import (
     _write_tenant_caddyfile,
 )
 from app.services.provisioning.state_machine import (
+    ENTRY_STATES,
     mark_step_start,
     transition_state,
 )
@@ -199,12 +200,30 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
     result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id))
     org = result.scalar_one()
 
-    # EC5: guard against re-provisioning an already-ready tenant.
-    if org.provisioning_status == "ready":
+    # Entry guard — `provision_tenant` must only run on fresh signup rows
+    # (status=`pending`) or on rows the admin retry endpoint has explicitly
+    # reset to `queued`. Any other status means the row is mid-flight,
+    # already terminal, or soft-deleted — re-entering the forward sequence
+    # would either create duplicate external resources or produce an
+    # inconsistent (soft-deleted but `ready`) row. The retry endpoint is
+    # the only legitimate path to resurrect a failed row; it clears
+    # `deleted_at` and resets the status to `queued` before scheduling
+    # this function.
+    if org.provisioning_status not in ENTRY_STATES:
         logger.warning(
-            "provisioning_skipped_already_ready",
+            "provisioning_skipped_invalid_state",
             org_id=org_id,
             slug=org.slug,
+            current_state=org.provisioning_status,
+            expected_states=sorted(ENTRY_STATES),
+        )
+        return
+    if org.deleted_at is not None:
+        logger.warning(
+            "provisioning_skipped_soft_deleted",
+            org_id=org_id,
+            slug=org.slug,
+            deleted_at=org.deleted_at.isoformat() if org.deleted_at else None,
         )
         return
 
@@ -229,8 +248,14 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
     try:
         async with AsyncExitStack() as stack:
             # --- queued: initial checkpoint. Accepts pending OR queued. -----
+            # The entry guard above has already verified the row is in one of
+            # these states; we pass ENTRY_STATES to `transition_state` so the
+            # precondition is re-checked inside the row-level lock — a belt
+            # and braces defence against a concurrent writer that may have
+            # changed the row between the guard's unlocked SELECT and this
+            # lock acquisition.
             mark_step_start(org_id, "begin")
-            await transition_state(db, org_id, from_state=None, to_state="queued", step="begin")
+            await transition_state(db, org_id, from_state=ENTRY_STATES, to_state="queued", step="begin")
             last_state = "queued"
 
             # --- step 1: Zitadel OIDC app ---------------------------------
@@ -503,17 +528,27 @@ async def _finalize_failure(
 ) -> None:
     """Write the terminal failure state after compensators have drained.
 
-    Tries `failed_rollback_complete` (soft-delete the row so the slug is
-    released via the partial unique index). If the state-transition write
-    itself fails (e.g. DB still down), the exception propagates to the
-    caller which logs `failed_status_persist_error`.
+    Transitions the row to ``failed_rollback_complete`` and sets
+    ``deleted_at`` so the slug is released via the partial unique index. If
+    a state-transition write itself fails (e.g. DB still down), the
+    exception propagates to the caller which logs
+    ``failed_status_persist_error``.
+
+    ``last_forward_state`` is ``None`` iff the failure occurred BEFORE the
+    first forward transition committed — in that case the row is still in
+    one of ``ENTRY_STATES`` (``pending``/``queued``) and we accept any of
+    those as the from-state.
     """
-    # First checkpoint the rollback as "pending" so observers see the
-    # intent even if the next step fails.
+    # First checkpoint the rollback as "pending" so observers see the intent
+    # even if the next step fails. Accept either the last forward state
+    # (when we know it) or any entry state (when the failure happened before
+    # we ever transitioned out of `pending`/`queued`).
+    rollback_from: str | frozenset[str]
+    rollback_from = last_forward_state if last_forward_state is not None else ENTRY_STATES
     await transition_state(
         db,
         org_id,
-        from_state=last_forward_state,
+        from_state=rollback_from,
         to_state="failed_rollback_pending",
         step="rollback_start",
     )

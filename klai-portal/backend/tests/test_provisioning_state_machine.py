@@ -122,6 +122,43 @@ async def test_from_state_mismatch_raises_conflict() -> None:
 
 
 @pytest.mark.asyncio
+async def test_from_state_accepts_iterable_of_allowed_states() -> None:
+    """``from_state`` may be a set/frozenset/list — used for the initial
+    transition that accepts either ``pending`` or ``queued``."""
+    from app.services.provisioning.state_machine import (
+        ENTRY_STATES,
+        transition_state,
+    )
+
+    # Current state is 'pending' and allowed set includes 'pending' → OK.
+    db, org = _mock_db_with_org(current_state="pending")
+    with patch("app.services.provisioning.state_machine.emit_event"):
+        await transition_state(db, org_id=1, from_state=ENTRY_STATES, to_state="queued", step="begin")
+    assert org.provisioning_status == "queued"
+
+    # Current state is 'queued' and allowed set includes 'queued' → OK.
+    db2, org2 = _mock_db_with_org(current_state="queued")
+    with patch("app.services.provisioning.state_machine.emit_event"):
+        await transition_state(db2, org_id=1, from_state=ENTRY_STATES, to_state="queued", step="begin")
+    assert org2.provisioning_status == "queued"
+
+
+@pytest.mark.asyncio
+async def test_from_state_iterable_rejects_state_not_in_set() -> None:
+    """Any state outside the allowed iterable raises StateTransitionConflict."""
+    from app.services.provisioning.state_machine import (
+        ENTRY_STATES,
+        StateTransitionConflict,
+        transition_state,
+    )
+
+    db, _ = _mock_db_with_org(current_state="creating_mongo_user")
+    with pytest.raises(StateTransitionConflict):
+        await transition_state(db, org_id=1, from_state=ENTRY_STATES, to_state="queued", step="begin")
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_from_state_none_skips_precondition_check() -> None:
     """The initial transition (pending/queued → first step) passes from_state=None
     so both legacy and new entry values are accepted."""

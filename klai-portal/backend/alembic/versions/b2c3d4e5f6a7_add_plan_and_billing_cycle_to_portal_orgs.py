@@ -1,7 +1,7 @@
 """add plan and billing_cycle to portal_orgs
 
 Revision ID: b2c3d4e5f6a7
-Revises: a1b2c3d4e5f6
+Revises: d64fdcfecf32
 Create Date: 2026-03-07 16:00:00.000000
 
 """

@@ -1,7 +1,7 @@
 """add resolved_at to portal_retrieval_gaps
 
 Revision ID: f8a9b0c1d2e3
-Revises: a1b2c3d4e5f6
+Revises: d7e8f9a0b1c2
 Create Date: 2026-03-27
 """
 

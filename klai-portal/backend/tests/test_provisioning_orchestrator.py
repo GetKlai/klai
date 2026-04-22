@@ -291,6 +291,55 @@ async def test_already_ready_is_skipped(mock_orchestrator_env) -> None:
     assert not mock_orchestrator_env["zitadel"].create_librechat_oidc_app.called
 
 
+@pytest.mark.parametrize(
+    "invalid_state",
+    [
+        "failed_rollback_pending",
+        "failed_rollback_complete",
+        "creating_zitadel_app",
+        "creating_mongo_user",
+        "reloading_caddy",
+    ],
+)
+@pytest.mark.asyncio
+async def test_non_entry_state_is_rejected(mock_orchestrator_env, invalid_state) -> None:
+    """SPEC-PROV-001 — ``provision_tenant`` must refuse any row that is not
+    ``pending`` or ``queued``. Re-entering the forward sequence from an
+    intermediate or terminal state would either create duplicate external
+    resources or produce an inconsistent row.
+    """
+    from app.services.provisioning import orchestrator
+
+    db, org = _make_db_and_org()
+    org.provisioning_status = invalid_state
+
+    await orchestrator._provision(1, db)
+
+    assert not mock_orchestrator_env["zitadel"].create_librechat_oidc_app.called
+    assert org.provisioning_status == invalid_state
+
+
+@pytest.mark.asyncio
+async def test_soft_deleted_org_is_rejected(mock_orchestrator_env) -> None:
+    """Soft-deleted rows (``deleted_at IS NOT NULL``) must NOT re-enter the
+    forward sequence, even if ``provisioning_status`` is legitimately
+    ``queued``. The admin retry endpoint clears ``deleted_at`` before it
+    transitions to ``queued`` so this is defence in depth.
+    """
+    from datetime import UTC, datetime
+
+    from app.services.provisioning import orchestrator
+
+    db, org = _make_db_and_org()
+    org.provisioning_status = "queued"
+    org.deleted_at = datetime.now(UTC)
+
+    await orchestrator._provision(1, db)
+
+    assert not mock_orchestrator_env["zitadel"].create_librechat_oidc_app.called
+    assert org.provisioning_status == "queued"
+
+
 # ---------------------------------------------------------------------------
 # Compensator failures are swallowed (best-effort)
 # ---------------------------------------------------------------------------
