@@ -1,0 +1,222 @@
+# SPEC-OBS-001 Phase C — infrastructure alerts (PromQL via VictoriaMetrics).
+#
+# Three rules, all routed via spec=SPEC-OBS-001 → klai-ops-alerts-email
+# (see policies.yaml).
+#
+#   R12  container_down              CRIT  cAdvisor staleness >2m
+#   R13  container_restart_loop      CRIT  >0 restarts in 15m, sustained 15m
+#   R17  core01_disk_usage_high      MED   <15% free on host root, sustained 30m
+#
+# Metric availability notes (probed 2026-04-22 against production VM):
+#   - cAdvisor scrapes with `name` label (not `container`); `name=~"klai-core-.*"`
+#     covers all klai-managed containers.
+#   - cAdvisor does NOT export `container_restarts_total` (deprecated upstream).
+#     Restarts are detected via `changes(container_start_time_seconds[...])`.
+#   - node-exporter runs containerized via Alloy `integrations/unix`. It does
+#     NOT see the host root mountpoint=`/` directly. Instead it shows the
+#     bind-mounts inside its own container (e.g. `/etc/hostname`), all of
+#     which sit on the same underlying host device `/dev/md2`. Querying any
+#     of those mountpoints with `device="/dev/md2"` gives the host root's
+#     fill ratio. Brittle if the host's RAID layout changes — see follow-up.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: obs-001-infra
+    folder: Klai
+    interval: 1m
+    rules:
+
+      # ── R12: container_down ───────────────────────────────────────────────
+      # cAdvisor updates `container_last_seen` every scrape (15s default).
+      # If a container is gone, the metric goes stale and `time() - last_seen`
+      # grows unbounded. >120s = container hasn't been seen for 2 minutes.
+      - uid: obs-001-container-down
+        title: container_down
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victoriametrics
+            queryType: instant
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: prometheus
+                uid: victoriametrics
+              expr: '(time() - container_last_seen{name=~"klai-core-.*"}) > 120'
+              instant: true
+              queryType: instant
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: query
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Alerting
+        for: 0s
+        keepFiringFor: 5m
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-OBS-001
+          service_group: infra-containers
+        annotations:
+          summary: 'Container {{ $labels.name }} has not been seen for >2 min'
+          runbook_url: 'docs/runbooks/platform-recovery.md#container-down'
+          description: |
+            cAdvisor stopped seeing {{ $labels.name }} more than 2 minutes ago.
+            Either the container has exited, the Docker daemon is unresponsive,
+            or cAdvisor itself has lost scraping connectivity.
+
+            Triage (in order):
+              1. ssh core-01 "docker ps -a --filter name={{ $labels.name }}"
+              2. If status is Exited: docker logs --tail 100 {{ $labels.name }}
+              3. If status is Restarting: see container_restart_loop runbook.
+              4. If container is gone: was this a planned removal? If yes,
+                 update klai-core compose; if no, recreate via `docker compose up -d <service>`.
+
+      # ── R13: container_restart_loop ──────────────────────────────────────
+      # changes(container_start_time_seconds[15m]) counts how many times the
+      # start-time value changed in the last 15min — i.e. restart count.
+      # `for: 15m` means the condition must hold for 15 consecutive minutes,
+      # which excludes single planned deploys (one restart drops out of the
+      # 15m window after 15min).
+      - uid: obs-001-container-restart-loop
+        title: container_restart_loop
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victoriametrics
+            queryType: instant
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: prometheus
+                uid: victoriametrics
+              expr: 'changes(container_start_time_seconds{name=~"klai-core-.*"}[15m]) > 0'
+              instant: true
+              queryType: instant
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: query
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Alerting
+        for: 15m
+        keepFiringFor: 30m
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-OBS-001
+          service_group: infra-containers
+        annotations:
+          summary: 'Container {{ $labels.name }} is in a restart loop ({{ $value }} restarts in 15m, sustained 15m)'
+          runbook_url: 'docs/runbooks/platform-recovery.md#container-restart-loop'
+          description: |
+            {{ $labels.name }} has restarted {{ $value }} times in the last 15
+            minutes, and this has been sustained for at least 15 consecutive
+            minutes. This is a restart loop, not a single planned deploy.
+
+            Triage:
+              1. ssh core-01 "docker logs --tail 200 {{ $labels.name }}"
+                 Look for crash-loop patterns: OOMKilled, panics, missing env vars.
+              2. ssh core-01 "docker inspect {{ $labels.name }} | grep -A3 ExitCode"
+                 Non-zero ExitCode + recent FinishedAt confirms the loop.
+              3. If healthcheck is failing: ssh core-01 "docker inspect {{ $labels.name }} --format '{{`{{.State.Health.Log}}`}}'"
+              4. Pause via Grafana silence while investigating; fix root cause; unpause.
+
+      # ── R17: core01_disk_usage_high ──────────────────────────────────────
+      # node-exporter (containerized via Alloy integrations/unix) does not see
+      # host `/`. We query a bind-mount that exists in the alloy container and
+      # filter by `device="/dev/md2"` — the host root's RAID device. Same
+      # underlying fs, same avail/size values. Brittle if RAID layout changes.
+      - uid: obs-001-core01-disk-usage-high
+        title: core01_disk_usage_high
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victoriametrics
+            queryType: instant
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: prometheus
+                uid: victoriametrics
+              # max() collapses the redundant per-mountpoint series (all on
+              # /dev/md2) into a single value. fstype filter excludes any
+              # accidental tmpfs match.
+              expr: |
+                max(
+                  node_filesystem_avail_bytes{device="/dev/md2",fstype="ext4",mountpoint=~"/etc/.*"}
+                  /
+                  node_filesystem_size_bytes{device="/dev/md2",fstype="ext4",mountpoint=~"/etc/.*"}
+                ) < 0.15
+              instant: true
+              queryType: instant
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: query
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Alerting
+        for: 30m
+        keepFiringFor: 1h
+        isPaused: false
+        labels:
+          severity: warning
+          spec: SPEC-OBS-001
+          service_group: infra-host
+        annotations:
+          summary: 'core-01 root disk under 15% free for >30m'
+          runbook_url: 'docs/runbooks/platform-recovery.md#core01-disk-usage-high'
+          description: |
+            The host root filesystem on core-01 (/dev/md2) has been below 15%
+            free for at least 30 minutes.
+
+            Triage:
+              1. ssh core-01 "df -h /"
+              2. ssh core-01 "sudo du -hx --max-depth=1 /var/lib/docker | sort -h | tail"
+              3. Common culprits: docker images (`docker system df`), VictoriaLogs
+                 retention buildup (/var/lib/docker/volumes/klai-core_victorialogs-data),
+                 portal-api logs.
+              4. Cleanup: `docker system prune -af --volumes` is the nuclear option;
+                 prefer targeted volume cleanup. Confirm with df -h after.

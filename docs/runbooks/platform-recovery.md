@@ -284,3 +284,208 @@ Common causes: container OOM, port conflict, auth mismatch between `/opt/klai/.e
 ### Follow-up
 
 A dedicated SPEC for alerting infra (alertmanager + Grafana alert-provisioning + notification channels) is the right long-term fix so this runbook doesn't have to be triggered by end-user reports. Until then: a weekly manual query of `service:portal-api AND event:redis_flushall_failed` in VictoriaLogs catches stragglers.
+
+---
+
+## container-down
+
+**Related alert**: SPEC-OBS-001-R12 (`container_down`, CRIT)
+
+**Situation**: cAdvisor stopped reporting `container_last_seen` for a klai-core container for more than 2 minutes. The container is either gone, restarting too fast for cAdvisor to catch a stable view, or the Docker daemon itself is unresponsive.
+
+**Signal to look for**:
+```promql
+(time() - container_last_seen{name=~"klai-core-.*"}) > 120
+```
+Or in Grafana → Alerting → Rules → `container_down` → see which `name` label fires.
+
+### Step 1 — Identify the container
+
+```bash
+ssh core-01 "docker ps -a --filter name={NAME} --format 'table {{.Names}}\t{{.Status}}\t{{.CreatedAt}}'"
+```
+
+If the container is missing from `ps -a` entirely, it was removed — go to Step 4.
+
+### Step 2 — Inspect exit reason
+
+```bash
+ssh core-01 "docker inspect {NAME} | grep -E 'ExitCode|Error|FinishedAt' | head -10"
+```
+
+ExitCode 137 = OOMKilled. ExitCode 139 = segfault. Non-zero recent FinishedAt = it died and didn't restart.
+
+### Step 3 — Read its last logs
+
+```bash
+ssh core-01 "docker logs --tail 100 {NAME}"
+```
+
+Look for: panics, missing env vars, "Address already in use", connection failures to dependencies.
+
+### Step 4 — Restart or recreate
+
+Recoverable (transient cause):
+```bash
+ssh core-01 "cd /opt/klai && docker compose up -d {service}"
+```
+
+Container missing entirely (e.g. `docker rm` ran):
+```bash
+ssh core-01 "cd /opt/klai && docker compose up -d {service}"
+```
+
+### Verify
+
+```bash
+ssh core-01 "docker ps --filter name={NAME} --format '{{.Names}}\t{{.Status}}'"
+# Expect: Up X seconds (healthy)
+```
+
+Within 1-2 minutes the alert should auto-resolve once cAdvisor sees the container again.
+
+### Follow-up
+
+If this fired without operator action: investigate root cause via logs. If pattern recurs across containers: check Docker daemon health (`systemctl status docker`), disk space (see `core01-disk-usage-high`), and cAdvisor itself.
+
+---
+
+## container-restart-loop
+
+**Related alert**: SPEC-OBS-001-R13 (`container_restart_loop`, CRIT)
+
+**Situation**: A container has restarted multiple times within a 15-minute window, and the pattern has continued for at least 15 consecutive minutes. This is not a single planned deploy — a deploy produces 1 restart that drops out of the rolling window. A real loop sustains.
+
+**Signal to look for**:
+```promql
+changes(container_start_time_seconds{name=~"klai-core-.*"}[15m]) > 0
+```
+The alert annotation includes the actual restart count from `$value`.
+
+### Step 1 — Confirm the loop and its cadence
+
+```bash
+ssh core-01 "docker inspect {NAME} --format '{{`{{.RestartCount}}\t{{.State.StartedAt}}\t{{.State.FinishedAt}}\t{{.State.ExitCode}}`}}'"
+```
+
+A high `RestartCount` and FinishedAt close to StartedAt confirms rapid restart cycling.
+
+### Step 2 — Find the crash cause
+
+```bash
+ssh core-01 "docker logs --tail 200 {NAME} | tail -50"
+```
+
+Common patterns:
+- `OOMKilled` (exit 137): bump container memory limit
+- Healthcheck timeout: see Step 3
+- Missing env var: check SOPS + recent compose changes
+- DB connection failure: check that the dependency is healthy
+
+### Step 3 — Check the healthcheck
+
+```bash
+ssh core-01 "docker inspect {NAME} --format '{{`{{range .State.Health.Log}}{{.Output}}---{{end}}`}}'"
+```
+
+If healthcheck is the culprit and the container is otherwise OK, the fix is in compose (timeout, retries, or healthcheck command itself).
+
+### Step 4 — Pause and fix
+
+While investigating, silence the alert in Grafana UI → Alerting → Silences → matcher `alertname=container_restart_loop` + `name={NAME}`, comment + 1h expiry. Then deploy fix:
+
+```bash
+ssh core-01 "cd /opt/klai && docker compose up -d {service}"
+```
+
+### Verify
+
+After fix is deployed and the container has been stable for 15 minutes, the alert auto-resolves (firing condition no longer holds).
+
+### Follow-up
+
+If the loop was caused by a recent code/config push, document in commit message + `docs/runbooks/post-mortems/` if user-impacting. If recurring across deploys for one service: that service needs a hardening SPEC.
+
+---
+
+## core01-disk-usage-high
+
+**Related alert**: SPEC-OBS-001-R17 (`core01_disk_usage_high`, MED)
+
+**Situation**: The host root filesystem on core-01 (`/dev/md2`) has been below 15% free for at least 30 minutes. Once core-01's root fills completely, Docker stops accepting writes (image pulls fail, container logs stop), Postgres WAL writes fail, and incremental services degrade silently.
+
+**Signal to look for**:
+```promql
+max(node_filesystem_avail_bytes{device="/dev/md2",fstype="ext4",mountpoint=~"/etc/.*"}
+    / node_filesystem_size_bytes{device="/dev/md2",fstype="ext4",mountpoint=~"/etc/.*"})
+  < 0.15
+```
+
+Or directly on the host:
+```bash
+ssh core-01 "df -h /"
+```
+
+### Step 1 — See what's eating disk
+
+```bash
+ssh core-01 "sudo du -hx --max-depth=1 / 2>/dev/null | sort -h | tail -10"
+ssh core-01 "sudo du -hx --max-depth=1 /var/lib/docker 2>/dev/null | sort -h | tail -10"
+```
+
+Top suspects on klai-core:
+- `/var/lib/docker/volumes/` — VictoriaLogs (30d retention can grow), Postgres data, MongoDB
+- `/var/lib/docker/overlay2/` — image + container layer storage
+- `/opt/klai/logs/` — script logs, push-health.sh output
+
+### Step 2 — Reclaim safely
+
+Safe always:
+```bash
+# Remove stopped containers (can be re-created from compose)
+ssh core-01 "docker container prune -f"
+
+# Remove dangling images (untagged, no container references)
+ssh core-01 "docker image prune -f"
+
+# Remove build cache
+ssh core-01 "docker builder prune -af"
+```
+
+Riskier — read carefully:
+```bash
+# Remove ALL unused images (anything not used by a running container)
+# Risk: loses cached versions; next deploy must re-pull from registry
+ssh core-01 "docker image prune -af"
+
+# Remove unused volumes (NOT used by any container)
+# Risk: loses data if a service is currently down — list first!
+ssh core-01 "docker volume ls -f dangling=true"
+ssh core-01 "docker volume prune -f"
+```
+
+Never on a klai-core production host:
+```bash
+docker system prune -af --volumes   # nuclear option, drops everything not in-use
+```
+
+### Step 3 — Truncate VictoriaLogs / VictoriaMetrics retention
+
+If logs retention is the dominant consumer:
+```bash
+ssh core-01 "docker exec klai-core-victorialogs-1 ls -la /vlogs"
+```
+Reducing retention requires changing the `-retentionPeriod` flag in `deploy/docker-compose.yml` and recreating. Coordinate with monitoring needs first.
+
+### Verify
+
+```bash
+ssh core-01 "df -h /"
+```
+After cleanup, confirm `Use%` is below 80% (= avail above 20%, comfortably above the 15% alert threshold).
+
+Alert auto-resolves once avail-ratio rises above 0.15 and stays there for one evaluation cycle (1 min).
+
+### Follow-up
+
+If disk fills repeatedly (more than once per quarter), this server needs more disk OR a stricter retention policy on logs/volumes. Track in a follow-up SPEC. Don't keep firefighting the same condition.
