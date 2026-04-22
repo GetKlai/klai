@@ -13,6 +13,7 @@ trivial to reason about and to unit test.
 from __future__ import annotations
 
 import time
+from collections.abc import Iterable
 from typing import Final
 
 import structlog

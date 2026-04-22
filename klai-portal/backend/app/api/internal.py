@@ -586,7 +586,12 @@ async def get_knowledge_feature(
             mongo_client = AsyncIOMotorClient(settings.librechat_mongo_root_uri)
             mongo_user = await mongo_client[org.librechat_container]["users"].find_one({"_id": oid})
         except Exception as exc:
-            logger.warning("KB authz: MongoDB lookup failed for %s — fail-closed: %s", librechat_user_id, exc)
+            logger.warning(
+                "KB authz: MongoDB lookup failed for %s — fail-closed: %s",
+                librechat_user_id,
+                exc,
+                exc_info=True,
+            )
             await _audit_internal_call(request, org_id=audit_org_id)
             return KnowledgeFeatureResponse(enabled=False)
         finally:
@@ -979,7 +984,7 @@ async def regenerate_librechat_configs(
             logger.info("Regenerated config for tenant %s", slug)
         except Exception as exc:
             errors.append(f"{slug}: {exc}")
-            logger.warning("Config regeneration failed for %s: %s", slug, exc)
+            logger.warning("Config regeneration failed for %s: %s", slug, exc, exc_info=True)
 
     if not slugs_to_restart:
         # Cross-tenant operation — no resolvable org_id. Use 0 per REQ-2.6.

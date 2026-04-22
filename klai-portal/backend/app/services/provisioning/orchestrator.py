@@ -95,7 +95,7 @@ async def _compensate_zitadel_app(state: _ProvisionState) -> None:
     try:
         await zitadel.delete_librechat_oidc_app(state.zitadel_app_id)
     except Exception as exc:
-        logger.warning("rollback_zitadel_app_failed", slug=state.slug, error=str(exc))
+        logger.warning("rollback_zitadel_app_failed", slug=state.slug, error=str(exc), exc_info=True)
 
 
 async def _compensate_litellm_team(state: _ProvisionState) -> None:
@@ -109,7 +109,7 @@ async def _compensate_litellm_team(state: _ProvisionState) -> None:
         ) as client:
             await client.post("/team/delete", json={"team_ids": [state.litellm_team_id]})
     except Exception as exc:
-        logger.warning("rollback_litellm_team_failed", slug=state.slug, error=str(exc))
+        logger.warning("rollback_litellm_team_failed", slug=state.slug, error=str(exc), exc_info=True)
 
 
 async def _compensate_mongo_user(state: _ProvisionState) -> None:
@@ -119,7 +119,7 @@ async def _compensate_mongo_user(state: _ProvisionState) -> None:
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, _sync_drop_mongodb_tenant_user, state.mongo_user_slug)
     except Exception as exc:
-        logger.warning("rollback_mongodb_user_failed", slug=state.mongo_user_slug, error=str(exc))
+        logger.warning("rollback_mongodb_user_failed", slug=state.mongo_user_slug, error=str(exc), exc_info=True)
 
 
 async def _compensate_env_file(state: _ProvisionState) -> None:
@@ -129,7 +129,7 @@ async def _compensate_env_file(state: _ProvisionState) -> None:
         tenant_dir = Path(state.env_file_path).parent
         shutil.rmtree(str(tenant_dir), ignore_errors=True)
     except Exception as exc:
-        logger.warning("rollback_filesystem_failed", slug=state.slug, error=str(exc))
+        logger.warning("rollback_filesystem_failed", slug=state.slug, error=str(exc), exc_info=True)
 
 
 async def _compensate_container(state: _ProvisionState) -> None:
@@ -139,7 +139,7 @@ async def _compensate_container(state: _ProvisionState) -> None:
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, _sync_remove_container, f"librechat-{state.slug}")
     except Exception as exc:
-        logger.warning("rollback_container_removal_failed", slug=state.slug, error=str(exc))
+        logger.warning("rollback_container_removal_failed", slug=state.slug, error=str(exc), exc_info=True)
 
 
 async def _compensate_caddy(state: _ProvisionState) -> None:
@@ -152,7 +152,7 @@ async def _compensate_caddy(state: _ProvisionState) -> None:
         async with _caddy_lock:
             await loop.run_in_executor(None, _reload_caddy)
     except Exception as exc:
-        logger.warning("rollback_caddy_failed", slug=state.slug, error=str(exc))
+        logger.warning("rollback_caddy_failed", slug=state.slug, error=str(exc), exc_info=True)
 
 
 async def _compensate_personal_kb(state: _ProvisionState) -> None:
@@ -169,7 +169,7 @@ async def _compensate_personal_kb(state: _ProvisionState) -> None:
 
         await docs_api.deprovision_kb(org_slug=state.slug, kb_slug="personal")
     except Exception as exc:
-        logger.warning("rollback_personal_kb_failed", slug=state.slug, error=str(exc))
+        logger.warning("rollback_personal_kb_failed", slug=state.slug, error=str(exc), exc_info=True)
 
 
 # ---------------------------------------------------------------------------

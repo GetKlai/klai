@@ -117,7 +117,7 @@ async def create_join_request(
     try:
         await notify_admin_join_request(email=email, display_name=display_name)
     except Exception:
-        logger.warning("Admin notification failed for join request", request_id=new_request.id)
+        logger.warning("Admin notification failed for join request", request_id=new_request.id, exc_info=True)
 
     return JoinRequestResponse(
         id=new_request.id,

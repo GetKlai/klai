@@ -31,7 +31,7 @@ async def get_graph_stats(org_id: str) -> dict[str, int | None]:
             resp.raise_for_status()
             return resp.json()
     except Exception:
-        logger.warning("Could not fetch graph stats from knowledge-ingest (org=%s)", org_id)
+        logger.warning("Could not fetch graph stats from knowledge-ingest (org=%s)", org_id, exc_info=True)
         return {"entity_count": None, "edge_count": None}
 
 
@@ -50,7 +50,9 @@ async def get_source_count(org_id: str, kb_slug: str) -> int | None:
             resp.raise_for_status()
             return resp.json().get("source_count")
     except Exception:
-        logger.warning("Could not fetch source count from knowledge-ingest (org=%s kb=%s)", org_id, kb_slug)
+        logger.warning(
+            "Could not fetch source count from knowledge-ingest (org=%s kb=%s)", org_id, kb_slug, exc_info=True
+        )
         return None
 
 
@@ -121,7 +123,7 @@ async def preview_crawl(
             resp.raise_for_status()
             return resp.json()  # type: ignore[no-any-return]
     except Exception:
-        logger.warning("preview_crawl failed", extra={"url": url})
+        logger.warning("preview_crawl failed", extra={"url": url}, exc_info=True)
         return {"fit_markdown": "", "word_count": 0, "url": url}
 
 
@@ -237,6 +239,7 @@ async def classify_gap_taxonomy(org_id: str, kb_slug: str, text: str) -> list[in
         logger.warning(
             "classify_gap_taxonomy_failed",
             extra={"org_id": org_id, "kb_slug": kb_slug},
+            exc_info=True,
         )
         return []
 

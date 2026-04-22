@@ -38,7 +38,9 @@ async def delete_recording(recording_id: int, meeting_id: str | None = None) -> 
             logger.warning("Recording deletion failed", recording_id=recording_id, meeting_id=meeting_id)
         return success
     except Exception as exc:
-        logger.warning("Recording cleanup error", recording_id=recording_id, meeting_id=meeting_id, error=str(exc))
+        logger.warning(
+            "Recording cleanup error", recording_id=recording_id, meeting_id=meeting_id, error=str(exc), exc_info=True
+        )
         return False
 
 
@@ -138,7 +140,9 @@ async def recording_cleanup_loop() -> None:
                     try:
                         await cleanup_recording(meeting, db)
                     except Exception as exc:
-                        logger.warning("Recording cleanup loop error", meeting_id=str(meeting.id), error=str(exc))
+                        logger.warning(
+                            "Recording cleanup loop error", meeting_id=str(meeting.id), error=str(exc), exc_info=True
+                        )
 
         except asyncio.CancelledError:
             break

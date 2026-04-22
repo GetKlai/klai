@@ -70,7 +70,7 @@ async def _qdrant_count(filters: dict) -> int:
             return 0
         return resp.json().get("result", {}).get("count", 0) or 0
     except Exception as exc:
-        logger.warning("Could not reach Qdrant for knowledge count: %s", exc)
+        logger.warning("Could not reach Qdrant for knowledge count: %s", exc, exc_info=True)
         return 0
 
 
@@ -101,7 +101,7 @@ async def get_knowledge_stats(
                 user_data = await zitadel.get_user_by_id(user_id)
                 org_id = user_data.get("user", {}).get("details", {}).get("resourceOwner")
             except Exception as mgmt_exc:
-                logger.warning("Could not fetch user org via Management API: %s", mgmt_exc)
+                logger.warning("Could not fetch user org via Management API: %s", mgmt_exc, exc_info=True)
     if not org_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

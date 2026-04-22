@@ -404,7 +404,7 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
                 org_for_mfa = await db.get(PortalOrg, portal_user_for_mfa.org_id)
                 mfa_policy = org_for_mfa.mfa_policy if org_for_mfa else "optional"
         except Exception:
-            logger.warning("MFA policy lookup failed -- defaulting to optional (fail-open)")
+            logger.warning("MFA policy lookup failed -- defaulting to optional (fail-open)", exc_info=True)
 
         if mfa_policy == "required":
             try:
@@ -434,7 +434,7 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
             details={"method": "password"},
         )
     except Exception:
-        logger.warning("Audit log write failed for auth.login (non-fatal)")
+        logger.warning("Audit log write failed for auth.login (non-fatal)", exc_info=True)
 
     # 3. If the user has TOTP, require a code before finalizing
     if has_totp:

@@ -37,7 +37,7 @@ async def notify_admin_join_request(
                 },
             )
     except Exception:
-        logger.warning("klai-mailer notification failed", email=email)
+        logger.warning("klai-mailer notification failed", email=email, exc_info=True)
 
 
 async def notify_user_join_approved(
@@ -66,4 +66,4 @@ async def notify_user_join_approved(
                 },
             )
     except Exception:
-        logger.warning("klai-mailer approval notification failed", email=email)
+        logger.warning("klai-mailer approval notification failed", email=email, exc_info=True)

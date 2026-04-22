@@ -33,7 +33,7 @@ async def _get_caller_org(
     try:
         info = await zitadel.get_userinfo(credentials.credentials)
     except Exception as exc:
-        logger.warning("Admin auth: userinfo fetch failed: %s", exc)
+        logger.warning("Admin auth: userinfo fetch failed: %s", exc, exc_info=True)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
 
     zitadel_user_id = info.get("sub")

@@ -86,3 +86,41 @@ if context.is_offline_mode():
     run_migrations_offline()
 else:
     run_migrations_online()
+
+
+# After alembic finishes, surface any post_deploy_*.sql files that the
+# operator must apply manually as the klai superuser. portal_api (the
+# alembic role) cannot CREATE POLICY / CREATE FUNCTION, so policy and
+# helper-function changes ship as separate scripts. Forgetting to run
+# them was the root cause of the 2026-04-21 RLS production incident.
+def _print_post_deploy_warning() -> None:
+    import sys
+    from pathlib import Path
+
+    versions_dir = Path(__file__).parent / "versions"
+    scripts = sorted(p.name for p in versions_dir.glob("post_deploy_*.sql"))
+    # The rollback script is operator-on-demand only — never part of the
+    # routine deploy.
+    scripts = [s for s in scripts if "_rollback_" not in s]
+    if not scripts:
+        return
+    banner = "=" * 72
+    msg = [
+        "",
+        banner,
+        "POST-DEPLOY SQL: alembic does NOT run these — apply manually as klai:",
+        "",
+        *[f"  - alembic/versions/{name}" for name in scripts],
+        "",
+        "Idempotent helper:",
+        "  ./scripts/apply_post_deploy_sql.sh",
+        "",
+        "Skipping these leaves RLS policies / functions out of sync with code.",
+        banner,
+        "",
+    ]
+    sys.stderr.write("\n".join(msg))
+    sys.stderr.flush()
+
+
+_print_post_deploy_warning()

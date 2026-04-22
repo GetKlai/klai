@@ -278,7 +278,9 @@ async def stop_meeting(
         try:
             await vexa.stop_bot(ref.platform, ref.native_meeting_id)
         except Exception as exc:
-            logger.warning("Vexa stop_bot failed, continuing", meeting_id=str(meeting.id), error=str(exc))
+            logger.warning(
+                "Vexa stop_bot failed, continuing", meeting_id=str(meeting.id), error=str(exc), exc_info=True
+            )
 
     meeting.status = "stopping"
     meeting.ended_at = datetime.now(UTC)
@@ -310,7 +312,12 @@ async def delete_meeting(
         try:
             await vexa.stop_bot(ref.platform, ref.native_meeting_id)
         except Exception as exc:
-            logger.warning("Vexa stop_bot failed during delete, continuing", meeting_id=str(meeting.id), error=str(exc))
+            logger.warning(
+                "Vexa stop_bot failed during delete, continuing",
+                meeting_id=str(meeting.id),
+                error=str(exc),
+                exc_info=True,
+            )
 
     await db.delete(meeting)
     await db.commit()
@@ -560,6 +567,7 @@ async def run_transcription(meeting: VexaMeeting, db: AsyncSession) -> None:
                     attempt=seg_attempt + 1,
                     max_attempts=6,
                     error=str(exc),
+                    exc_info=True,
                 )
                 if seg_attempt < 5:
                     await asyncio.sleep(15)

@@ -121,7 +121,7 @@ async def me(
         try:
             mfa_enrolled = await zitadel.has_any_mfa(zitadel_user_id)
         except Exception as exc:
-            logger.warning("MFA check failed for user %s, skipping: %s", zitadel_user_id, exc)
+            logger.warning("MFA check failed for user %s, skipping: %s", zitadel_user_id, exc, exc_info=True)
 
     # get_effective_products self-heals its own RLS tenant context — no
     # set_tenant needed at this call site.
@@ -275,7 +275,7 @@ async def update_my_language(
             language=body.preferred_language,
         )
     except Exception:
-        logger.warning("Could not sync preferred_language to Zitadel for user %s", zitadel_user_id)
+        logger.warning("Could not sync preferred_language to Zitadel for user %s", zitadel_user_id, exc_info=True)
 
     return MessageResponse(message="Taalvoorkeur opgeslagen.")
 
@@ -323,7 +323,7 @@ async def sar_export(
         zitadel_response = await zitadel.get_user_by_id(user_id)
         zitadel_user_data = zitadel_response.get("user", {})
     except Exception as exc:
-        logger.warning("SAR: Zitadel identity fetch failed for %s: %s", user_id, exc)
+        logger.warning("SAR: Zitadel identity fetch failed for %s: %s", user_id, exc, exc_info=True)
 
     profile = zitadel_user_data.get("human", {}).get("profile", {})
     email_obj = zitadel_user_data.get("human", {}).get("email", {})
@@ -333,7 +333,7 @@ async def sar_export(
     try:
         mfa_enrolled = await zitadel.has_any_mfa(user_id)
     except Exception as exc:
-        logger.warning("SAR: MFA check failed for %s: %s", user_id, exc)
+        logger.warning("SAR: MFA check failed for %s: %s", user_id, exc, exc_info=True)
 
     identity = SarIdentity(
         first_name=profile.get("firstName"),
