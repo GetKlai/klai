@@ -16,7 +16,7 @@ import structlog
 from app.adapters.base import BaseAdapter, DocumentRef, ImageRef
 from app.core.config import Settings
 from app.services.content_fingerprint import compute_content_fingerprint, similarity
-from app.services.image_utils import resolve_relative_url
+from app.services.image_utils import is_valid_image_src, resolve_relative_url
 
 logger = structlog.get_logger(__name__)
 
@@ -557,18 +557,32 @@ class WebCrawlerAdapter(BaseAdapter):
             # Extract images from crawl4ai media field — independent of PruningContentFilter.
             # fit_markdown strips image blocks (score 0.0 against 0.45 threshold), so we
             # cannot rely on ![alt](url) patterns in the markdown text for webcrawler pages.
+            # @MX:NOTE: is_valid_image_src filters srcset debris (e.g. "quality=90",
+            #   "fit=scale-down" from Cloudflare image-resize URLs that contain commas).
+            # @MX:REASON: Naive srcset comma-splitters in HTML parsers turn one URL
+            #   "x.jpg/w=1920,quality=90,fit=scale-down" into three "src" values; the
+            #   two non-URL fragments 404 against base_url and spam logs.
             raw_images = page.get("media", {}).get("images", [])
             images: list[ImageRef] | None = None
             if raw_images:
-                images = [
-                    ImageRef(
-                        url=resolve_relative_url(img["src"], url),
-                        alt=img.get("alt", ""),
-                        source_path="",
+                seen_urls: set[str] = set()
+                deduped: list[ImageRef] = []
+                for img in raw_images:
+                    src = img.get("src")
+                    if not src or not is_valid_image_src(src):
+                        continue
+                    resolved = resolve_relative_url(src, url)
+                    if resolved in seen_urls:
+                        continue
+                    seen_urls.add(resolved)
+                    deduped.append(
+                        ImageRef(
+                            url=resolved,
+                            alt=img.get("alt", ""),
+                            source_path="",
+                        )
                     )
-                    for img in raw_images
-                    if img.get("src")
-                ] or None
+                images = deduped or None
 
             # Layer C prep: compute SimHash fingerprint for post-sync cluster analysis.
             fp = compute_content_fingerprint(markdown)

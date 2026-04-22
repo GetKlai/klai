@@ -1,10 +1,22 @@
 """Async httpx client for the knowledge-ingest /ingest/v1/document endpoint."""
 
+from urllib.parse import urlparse
+
 import httpx
 
 from app.core.logging import get_logger
+from app.services.image_utils import dedupe_image_urls
 
 logger = get_logger(__name__)
+
+
+# @MX:NOTE: Web crawls must declare source_type="crawl" + source_domain so
+#   knowledge-ingest's compute_source_label() labels chunks with the actual
+#   domain (e.g. "help.voys.nl") instead of the connector_type slug.
+# @MX:REASON: source_label drives the Facet API and retrieval source routing
+#   (SPEC-KB-021). Labelling every web_crawler chunk with "web_crawler" makes
+#   per-domain filtering impossible.
+_CRAWL_CONNECTOR_TYPES = {"web_crawler"}
 
 
 def _build_payload(
@@ -21,6 +33,9 @@ def _build_payload(
     connector_type: str = "",
 ) -> dict:
     """Build the JSON payload for the knowledge-ingest endpoint."""
+    is_crawl = connector_type in _CRAWL_CONNECTOR_TYPES
+    source_type = "crawl" if is_crawl else "connector"
+
     payload: dict = {
         "org_id": org_id,
         "kb_slug": kb_slug,
@@ -29,15 +44,19 @@ def _build_payload(
         "source_connector_id": source_connector_id,
         "source_ref": source_ref,
         "content_type": content_type,
-        "source_type": "connector",
+        "source_type": source_type,
     }
     if connector_type:
         payload["connector_type"] = connector_type
+    if is_crawl and source_url:
+        host = urlparse(source_url).hostname
+        if host:
+            payload["source_domain"] = host
     extra: dict[str, object] = {}
     if source_url:
         extra["source_url"] = source_url
     if image_urls:
-        extra["image_urls"] = image_urls
+        extra["image_urls"] = dedupe_image_urls(image_urls)
     if extra:
         payload["extra"] = extra
     return payload
