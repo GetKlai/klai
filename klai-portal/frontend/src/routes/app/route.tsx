@@ -53,17 +53,21 @@ function AppLayout() {
     : filteredProductNav
 
   useEffect(() => {
-    if (isLoading || userLoading) return
+    if (isLoading) return
+    // Check !isAuthenticated BEFORE userLoading — useCurrentUser is disabled
+    // when there's no session, leaving isPending perpetually true. Waiting on
+    // userLoading in the unauthenticated branch kills the redirect to '/'.
     if (!isAuthenticated) {
       void navigate({ to: '/' })
       return
     }
+    if (userLoading) return
     if (user?.requires_2fa_setup) {
       window.location.replace('/setup/2fa')
     }
   }, [isLoading, isAuthenticated, user, userLoading, navigate])
 
-  if (isLoading || userLoading || !isAuthenticated) {
+  if (isLoading || !isAuthenticated || userLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-white">
         <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-900 border-t-transparent" />
