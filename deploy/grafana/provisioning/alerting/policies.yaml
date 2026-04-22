@@ -43,8 +43,10 @@ policies:
         repeat_interval: 24h
         continue: false
 
-      # OBS-001 heartbeat — MUST match BEFORE the general OBS-001 route,
-      # otherwise the heartbeat would route to the ops mailbox.
+      # OBS-001 heartbeat — MUST match BEFORE the general OBS-001 route.
+      # repeat_interval: 2m gives Kuma a fresh push every ~2 min, well
+      # within its 5m+retry window. Earlier 5m repeat aligned poorly
+      # with the rule eval interval and produced 7-10m gaps.
       - receiver: heartbeat-kuma
         matchers:
           - spec = SPEC-OBS-001
@@ -52,8 +54,8 @@ policies:
         group_by:
           - alertname
         group_wait: 0s
-        group_interval: 5m
-        repeat_interval: 5m
+        group_interval: 2m
+        repeat_interval: 2m
         continue: false
 
       - receiver: klai-ops-alerts-email
