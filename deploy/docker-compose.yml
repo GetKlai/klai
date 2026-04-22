@@ -586,6 +586,13 @@ services:
       GF_SMTP_FROM_ADDRESS: hello@getklai.com
       GF_SMTP_FROM_NAME: Klai
       GF_SMTP_STARTTLS_POLICY: MandatoryStartTLS
+      # SPEC-OBS-001 — recipients + heartbeat endpoint referenced by
+      # grafana/provisioning/alerting/contact-points.yaml via $VAR expansion.
+      # ALERTS_EMAIL_RECIPIENTS: comma-separated list for klai-ops-alerts-email.
+      # KUMA_HEARTBEAT_URL: full Uptime Kuma push URL incl. token for the
+      # dead-man's-switch heartbeat (fires every 5 min from the synthetic rule).
+      ALERTS_EMAIL_RECIPIENTS: ${ALERTS_EMAIL_RECIPIENTS}
+      KUMA_HEARTBEAT_URL: ${KUMA_HEARTBEAT_URL}
     depends_on:
       - victoriametrics
       - victorialogs

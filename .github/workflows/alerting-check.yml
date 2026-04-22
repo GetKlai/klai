@@ -1,0 +1,30 @@
+name: Alerting provisioning checks
+
+on:
+  pull_request:
+    paths:
+      - 'deploy/grafana/provisioning/alerting/**'
+      - 'scripts/audit-alert-secrets.sh'
+      - 'scripts/verify-alert-runbooks.sh'
+      - 'docs/runbooks/platform-recovery.md'
+      - '.github/workflows/alerting-check.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/grafana/provisioning/alerting/**'
+      - 'scripts/audit-alert-secrets.sh'
+      - 'scripts/verify-alert-runbooks.sh'
+
+jobs:
+  audit:
+    name: alerting-checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Audit secrets in alerting provisioning
+        run: bash scripts/audit-alert-secrets.sh
+
+      - name: Verify runbook_url annotations resolve
+        run: bash scripts/verify-alert-runbooks.sh
