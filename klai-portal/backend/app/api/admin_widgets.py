@@ -30,7 +30,7 @@ from app.services.events import emit_event
 
 logger = structlog.get_logger()
 
-router = APIRouter(prefix="/api/widgets", tags=["Widgets Admin"])
+router = APIRouter(prefix="/api/admin/widgets", tags=["Widgets Admin"])
 
 
 # ---------------------------------------------------------------------------

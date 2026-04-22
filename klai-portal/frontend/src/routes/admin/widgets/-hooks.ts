@@ -15,7 +15,7 @@ export function useWidgets() {
 
   return useQuery({
     queryKey: ['admin-widgets'],
-    queryFn: async () => apiFetch<WidgetResponse[]>('/api/widgets'),
+    queryFn: async () => apiFetch<WidgetResponse[]>('/api/admin/widgets'),
     enabled: auth.isAuthenticated,
   })
 }
@@ -25,7 +25,7 @@ export function useWidget(id: string) {
 
   return useQuery({
     queryKey: ['admin-widget', id],
-    queryFn: async () => apiFetch<WidgetDetailResponse>(`/api/widgets/${id}`),
+    queryFn: async () => apiFetch<WidgetDetailResponse>(`/api/admin/widgets/${id}`),
     enabled: auth.isAuthenticated && !!id,
   })
 }
@@ -35,7 +35,7 @@ export function useCreateWidget() {
 
   return useMutation({
     mutationFn: async (data: CreateWidgetRequest) =>
-      apiFetch<WidgetDetailResponse>('/api/widgets', {
+      apiFetch<WidgetDetailResponse>('/api/admin/widgets', {
         method: 'POST',
         body: JSON.stringify(data),
       }),
@@ -50,7 +50,7 @@ export function useUpdateWidget(id: string) {
 
   return useMutation({
     mutationFn: async (data: UpdateWidgetRequest) =>
-      apiFetch<WidgetResponse>(`/api/widgets/${id}`, {
+      apiFetch<WidgetResponse>(`/api/admin/widgets/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(data),
       }),
@@ -66,7 +66,7 @@ export function useDeleteWidget() {
 
   return useMutation({
     mutationFn: async (id: string) =>
-      apiFetch<void>(`/api/widgets/${id}`, {
+      apiFetch<void>(`/api/admin/widgets/${id}`, {
         method: 'DELETE',
       }),
     onSuccess: () => {
