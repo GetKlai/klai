@@ -215,7 +215,12 @@ jobs:
         env:
           PGPASSWORD: klai
         working-directory: klai-portal/backend
-        run: psql -h localhost -U portal_api -d klai -v ON_ERROR_STOP=1 < scripts/rls-smoke-test.sql 2>&1 | tee /tmp/smoke.out
+        # NOTICE messages go to stderr — capture both streams. set -o pipefail
+        # so a psql failure isn't masked by tee's exit code.
+        run: |
+          set -o pipefail
+          PGOPTIONS='--client-min-messages=NOTICE' \
+            psql -h localhost -U portal_api -d klai -v ON_ERROR_STOP=1 -f scripts/rls-smoke-test.sql 2>&1 | tee /tmp/smoke.out
         # Verify expected NOTICE markers fired (a silently-skipped DO
         # block would not raise on its own).
       - name: Verify smoke-test assertions fired
