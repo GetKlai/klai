@@ -241,6 +241,7 @@ async def _enrich_document(
             kb_name=kb_name_val,
             connector_type=connector_type_val,
             source_domain=source_domain_val,
+            artifact_id=artifact_id,
         )
         llm_ms = int((time.monotonic() - t0) * 1000)
 
