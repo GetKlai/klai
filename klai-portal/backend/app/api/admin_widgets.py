@@ -180,6 +180,7 @@ async def create_widget(
     for kb_id in body.kb_ids:
         db.add(WidgetKbAccess(widget_id=internal_id, kb_id=kb_id))
 
+    await db.flush()  # Promote widget_row to persistent so refresh() can run.
     await db.refresh(widget_row)  # Pre-commit refresh to load server_default columns while tenant context is still set.
     await db.commit()
 

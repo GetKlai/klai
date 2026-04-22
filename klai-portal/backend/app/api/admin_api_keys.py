@@ -194,6 +194,7 @@ async def create_api_key(
             )
         )
 
+    await db.flush()  # Promote key_row to persistent so refresh() can run.
     await db.refresh(key_row)  # Pre-commit refresh to load server_default columns while tenant context is still set.
     await db.commit()
 
