@@ -212,7 +212,7 @@ groups:
               1. Verify users actually CAN reach Caddy:
                    curl -sf -o /dev/null -w "%{http_code}" https://my.getklai.com/health
               2. Check Caddy container health:
-                   ssh core-01 "docker ps --filter name=caddy --format '{{.Names}}\\t{{.Status}}'"
+                   ssh core-01 "docker ps --filter name=caddy"
               3. Group by request.host to see which upstream(s) lost traffic:
                    _time:1h service:caddy | stats by(request.host) count() as hits
               4. Outage causes to consider: upstream firewall, DNS issue at
