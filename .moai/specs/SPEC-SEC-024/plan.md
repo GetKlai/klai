@@ -167,6 +167,47 @@ Doelen R9, R10, R11, R12, R13, R14.
   te deployen, en te asserteren dat binnen 2 minuten een e-mail binnenkomt.
   Revert daarna de regressie.
 
+  **M4.5 afgerond — 2026-04-21/22**:
+  - Pre-launch besluit: regressie op `main` (geen aparte staging-branch).
+  - Tijdelijke endpoint: `klai-portal/backend/app/api/_sec_024_dryrun.py`
+    onder `/internal/_sec_024_dryrun`, behind `INTERNAL_SECRET` Bearer auth.
+    Allow-listed in `rules/no-exec-run.yml` voor de duur van de validatie.
+    Commit: `c3ae6b43`. Revert: `7aa1dd5a`.
+  - Trigger 3x vanaf core-01 binnen portal-api container:
+    `docker exec klai-core-portal-api-1 python -c '... POST .../_sec_024_dryrun ...'`
+    Response (3x): `HTTP 202 {"status":"expected-403-observed","error":"403 Client Error for http://docker-socket-proxy:2375/v1.53/exec/.../start: Forbidden"}`.
+  - Alert `spec-sec-024-proxy-denials` fired om `2026-04-21T15:14:30Z` na
+    grafana-restart die de fix-forward query oppikte.
+  - Auto-resolve volgt `keepFiringFor: 30m` na het laatste hit-window.
+
+  **Twee defects gevonden tijdens M4.5 — beide al fix-forward gepatcht**:
+
+  1. **LogsQL alert query miste matches op structlog-output** (commit `9df8cb4a`).
+     Klai's Python services schrijven via structlog, dat per veld
+     (`error:`, `exception:`, `event:`) een aparte structured field aanmaakt
+     in VictoriaLogs; `_msg` blijft leeg. De originele query
+     `"Forbidden" AND "docker-socket-proxy"` zoekt unqualified — dus alleen
+     `_msg` — en gaf `count(*)=0` ondanks aanwezige logs.
+     Fix: query naar field-scoping
+     `(error:Forbidden OR exception:Forbidden) AND (error:docker-socket-proxy OR exception:docker-socket-proxy)`.
+     Verificatie: dezelfde query gaf `count(*)=1` voor het dry-run log via
+     `request_id:df8f82df-c79e-4622-9d20-a15aa837e36b`.
+
+  2. **`docker compose up -d grafana` is een no-op bij wijzigingen aan
+     enkel mounted-file content** (operationeel — fix-forward via handmatige
+     restart). Alleen wanneer compose-yaml of image-versie wijzigt herkent
+     compose drift en recreeert hij de container; rsync naar
+     `/opt/klai/grafana/provisioning/` wijzigt enkel mount-content, dus
+     de container bleef draaien met de oude provisioning in geheugen.
+     Fix tijdens deze run: `docker compose --project-directory /opt/klai
+     restart grafana`. Permanente fix in `deploy-compose.yml` is een
+     follow-up — opties:
+     a. `up -d --force-recreate grafana` op elke compose-sync (nu blunt),
+     b. detecteer `deploy/grafana/provisioning/**` diffs apart en
+        `restart grafana` indien gewijzigd,
+     c. Grafana admin API `POST /api/admin/provisioning/{alerting,dashboards}/reload`
+        in plaats van een volledige restart.
+
 **Deliverables M4**: smoke-test script, Grafana provisioning YAML
 (alert-rule + dashboard), CI-hook, rule-file update, screenshot/log van de
 end-to-end alert-dry-run.
