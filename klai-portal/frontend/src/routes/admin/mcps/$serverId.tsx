@@ -186,7 +186,7 @@ function McpEditPage() {
 
   if (isLoading) {
     return (
-      <div className="p-6 max-w-lg">
+      <div className="mx-auto max-w-lg px-6 py-10">
         <p className="text-sm text-gray-400">
           {m.admin_mcps_loading()}
         </p>
@@ -196,7 +196,7 @@ function McpEditPage() {
 
   if (isError || !server) {
     return (
-      <div className="p-6 max-w-lg space-y-4">
+      <div className="mx-auto max-w-lg px-6 py-10 space-y-4">
         <Button type="button" variant="ghost" size="sm" onClick={handleBack}>
           <ArrowLeft className="h-4 w-4 mr-2" />
           {m.admin_mcps_back()}
@@ -215,10 +215,10 @@ function McpEditPage() {
   // --- Form -----------------------------------------------------------------
 
   return (
-    <div className="p-6 max-w-lg">
-      <div className="flex items-start justify-between mb-6">
+    <div className="mx-auto max-w-lg px-6 py-10">
+      <div className="flex items-center justify-between mb-6">
         <div className="space-y-1">
-          <h1 className="page-title text-xl/none font-semibold text-gray-900">
+          <h1 className="text-[26px] font-display-bold text-gray-900">
             {server.display_name || server.id}
           </h1>
           <p className="text-sm text-gray-400">{server.description}</p>

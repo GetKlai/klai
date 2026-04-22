@@ -132,9 +132,9 @@ function ApiKeysPage() {
   })
 
   return (
-    <div className="p-6 space-y-6 max-w-5xl">
-      <div className="flex items-start justify-between">
-        <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+    <div className="mx-auto max-w-3xl px-6 py-10 space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-[26px] font-display-bold text-gray-900">
           {m.admin_api_keys_title()}
         </h1>
         <Button

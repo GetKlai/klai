@@ -126,7 +126,7 @@ function AdminGroupDetail() {
 
   if (groupLoading) {
     return (
-      <div className="p-6">
+      <div className="mx-auto max-w-3xl px-6 py-10">
         <p className="text-sm text-gray-400">
           <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
           Loading...
@@ -137,18 +137,18 @@ function AdminGroupDetail() {
 
   if (!groupData) {
     return (
-      <div className="p-6">
+      <div className="mx-auto max-w-3xl px-6 py-10">
         <p className="text-sm text-[var(--color-destructive)]">Group not found</p>
       </div>
     )
   }
 
   return (
-    <div className="p-6 space-y-6 max-w-2xl">
+    <div className="mx-auto max-w-3xl px-6 py-10 space-y-6">
       {/* Header */}
       <div className="flex items-start justify-between">
         <div className="space-y-2">
-          <h1 className="page-title text-xl/none font-semibold text-gray-900">
+          <h1 className="text-[26px] font-display-bold text-gray-900">
             {groupData.name}
           </h1>
           {groupData.description && (

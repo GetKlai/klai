@@ -38,7 +38,7 @@ function WidgetDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="p-6">
+      <div className="mx-auto max-w-3xl px-6 py-10">
         <p className="py-8 text-sm text-[var(--color-muted-foreground)]">
           <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
           {m.admin_widgets_loading()}
@@ -49,7 +49,7 @@ function WidgetDetailPage() {
 
   if (error) {
     return (
-      <div className="p-6 max-w-lg">
+      <div className="mx-auto max-w-lg px-6 py-10">
         <QueryErrorState
           error={error instanceof Error ? error : new Error(String(error))}
           onRetry={() => void refetch()}
@@ -77,10 +77,10 @@ function WidgetDetailPage() {
   }
 
   return (
-    <div className="p-6 max-w-4xl space-y-8">
+    <div className="mx-auto max-w-3xl px-6 py-10 space-y-8">
       <div className="flex items-start gap-3">
         <div className="flex-1">
-          <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+          <h1 className="text-[26px] font-display-bold text-gray-900">
             {widget.name}
           </h1>
           {widget.description && (

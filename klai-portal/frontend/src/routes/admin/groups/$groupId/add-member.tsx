@@ -94,9 +94,9 @@ function AddMemberPage() {
   }
 
   return (
-    <div className="p-6 max-w-lg">
-      <div className="flex items-start justify-between mb-6">
-        <h1 className="page-title text-xl/none font-semibold text-gray-900">
+    <div className="mx-auto max-w-lg px-6 py-10">
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-[26px] font-display-bold text-gray-900">
           {m.admin_groups_members_add()}
         </h1>
         <Button

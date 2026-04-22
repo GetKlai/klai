@@ -254,9 +254,9 @@ function AdminGroups() {
   })
 
   return (
-    <div className="p-6 space-y-6 max-w-4xl">
-      <div className="flex items-start justify-between">
-        <h1 className="page-title text-xl/none font-semibold text-gray-900">
+    <div className="mx-auto max-w-3xl px-6 py-10 space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-[26px] font-display-bold text-gray-900">
           {m.admin_groups_title()}
         </h1>
         <Button size="sm" onClick={() => void navigate({ to: '/admin/groups/new' })}>

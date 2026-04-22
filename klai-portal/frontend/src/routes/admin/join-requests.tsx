@@ -52,9 +52,9 @@ function AdminJoinRequestsPage() {
   const requests = data?.requests ?? []
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-3xl px-6 py-10 space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">{m.admin_join_requests_title()}</h1>
+        <h1 className="text-[26px] font-display-bold text-gray-900">{m.admin_join_requests_title()}</h1>
       </div>
 
       <Card>

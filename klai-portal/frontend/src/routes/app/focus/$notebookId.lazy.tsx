@@ -284,11 +284,11 @@ function NotebookDetailPage() {
   // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="mx-auto max-w-3xl px-6 py-10 space-y-6">
       {/* Header */}
       <div>
-        <div className="flex items-start justify-between mb-1">
-          <h1 className="text-2xl font-semibold text-gray-900">
+        <div className="flex items-center justify-between mb-1">
+          <h1 className="text-[26px] font-display-bold text-gray-900">
             {notebook?.name ?? m.app_focus_loading()}
           </h1>
           <Button type="button" variant="ghost" size="sm" onClick={() => navigate({ to: '/app/focus' })}>
