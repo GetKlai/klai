@@ -78,23 +78,27 @@ class CrawlSyncStatusResponse(BaseModel):
 async def _load_connector_cookies(
     connector_id: uuid.UUID,
     org_id: str,
-) -> tuple[int, list[dict[str, Any]]]:
+) -> tuple[str, list[dict[str, Any]]]:
     """Fetch cookies for a connector via the shared credentials library.
 
     Raises:
         HTTPException(404): connector_id does not exist.
-        HTTPException(409): org_id mismatch between request and connector row
-            (guards against lateral access via a known connector id).
+        HTTPException(409): zitadel_org_id mismatch between request and connector
+            row (guards against lateral access via a known connector id).
         HTTPException(500): ENCRYPTION_KEY invalid / decryption failed.
 
     Returns:
-        Tuple ``(connector_org_id, cookies)``. An empty list is returned when
-        the connector has no encrypted_credentials (public-web crawl).
+        Tuple ``(connector_zitadel_org_id, cookies)``. An empty list is
+        returned when the connector has no encrypted_credentials
+        (public-web crawl).
     """
     pool = await get_pool()
     row = await pool.fetchrow(
         """
-        SELECT c.id, c.org_id, c.encrypted_credentials, o.connector_dek_enc
+        SELECT c.id,
+               c.encrypted_credentials,
+               o.zitadel_org_id,
+               o.connector_dek_enc
         FROM portal_connectors c
         JOIN portal_orgs o ON o.id = c.org_id
         WHERE c.id = $1
@@ -104,8 +108,8 @@ async def _load_connector_cookies(
     if row is None:
         raise HTTPException(status_code=404, detail="connector_not_found")
 
-    connector_org_id = int(row["org_id"])
-    if str(connector_org_id) != str(org_id):
+    connector_org_id = str(row["zitadel_org_id"])
+    if connector_org_id != str(org_id):
         raise HTTPException(status_code=409, detail="connector_org_mismatch")
 
     encrypted = row["encrypted_credentials"]
