@@ -163,7 +163,10 @@ async def test_enrich_chunk_source_aware_happy_path():
 
 @pytest.mark.asyncio
 async def test_enrich_chunk_chunk_type_validation():
-    """Invalid chunk_type in LLM response raises EnrichmentError."""
+    """Invalid chunk_type in LLM response triggers retry+fallback (SPEC-CRAWLER-005 EC-4).
+    Both LLM calls return an invalid chunk_type. The function must NOT raise EnrichmentError
+    -- instead it falls back to chunk_type="reference" and emits a warning log.
+    """
     bad_result = {
         "context_prefix": "Some prefix.",
         "chunk_type": "something_invalid",
@@ -177,8 +180,11 @@ async def test_enrich_chunk_chunk_type_validation():
         mock_client.post = AsyncMock(return_value=_mock_response(bad_result))
         mock_client_cls.return_value = mock_client
 
-        with pytest.raises(EnrichmentError):
-            await enrich_chunk("doc", "chunk", "title", "path.md")
+        result = await enrich_chunk("doc", "chunk", "title", "path.md")
+
+    valid_chunk_types = {"procedural", "conceptual", "reference", "warning", "example"}
+    assert result.chunk_type in valid_chunk_types
+    assert mock_client.post.call_count == 2
 
 
 @pytest.mark.asyncio

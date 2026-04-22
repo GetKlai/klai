@@ -13,6 +13,7 @@ the document-level content_type (kb_article/pdf_document/meeting_transcript/
 web_crawl/...) consumed by retrieval_api.services.evidence_tier.
 """
 import asyncio
+import json
 from dataclasses import dataclass
 from typing import Literal
 
@@ -52,6 +53,15 @@ Genereer een JSON-object met:
 Reply with ONLY a JSON object, no markdown, no explanation:
 {{"context_prefix": "<string>", "chunk_type": "<procedural|conceptual|reference|warning|example>", \
 "questions": ["<string>", ...]}}"""
+
+# Appended to the prompt on the retry call when chunk_type validation fails.
+# Strengthens the instruction so the LLM picks one of the five valid values.
+# SPEC-CRAWLER-005 REQ-03.2 / EC-4
+_CHUNK_TYPE_RETRY_ADDENDUM = (
+    '\n\nIMPORTANT: "chunk_type" MUST be exactly one of: '
+    '"procedural", "conceptual", "reference", "warning", "example". '
+    "No other value is accepted. Reply with ONLY a JSON object."
+)
 
 
 class EnrichmentError(Exception):
@@ -95,6 +105,72 @@ def _strip_frontmatter(text: str) -> str:
     return text[end + 4:].lstrip()
 
 
+async def _call_llm(prompt: str, path: str) -> dict:
+    """
+    Execute a single LLM chat completion call via LiteLLM proxy.
+    Returns the parsed response dict on success.
+    Raises EnrichmentError for transport/HTTP failures (Procrastinate retries these).
+    """
+    payload = {
+        "model": settings.enrichment_model,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 300,
+    }
+    headers = {"Content-Type": "application/json"}
+    if settings.litellm_api_key:
+        headers["Authorization"] = f"Bearer {settings.litellm_api_key}"
+
+    try:
+        async with httpx.AsyncClient(timeout=settings.enrichment_timeout) as client:
+            resp = await client.post(
+                f"{settings.litellm_url}/v1/chat/completions",
+                json=payload,
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()  # type: ignore[return-value]
+    except httpx.TimeoutException as exc:
+        logger.warning("enrichment_llm_timeout", path=path)
+        raise EnrichmentError(f"LLM timeout enriching {path}") from exc
+    except Exception as exc:
+        logger.warning("enrichment_llm_error", path=path, error=str(exc))
+        raise EnrichmentError(f"LLM error enriching {path}: {exc}") from exc
+
+
+def _extract_content(data: dict) -> str:
+    """
+    Extract and clean the text content from a LiteLLM chat completion response dict.
+    Strips markdown code fences if the LLM wraps the JSON output in them.
+    Raises KeyError/IndexError when the response structure is malformed
+    (caller converts these to EnrichmentError).
+    """
+    content = data["choices"][0]["message"]["content"]
+    content = (content or "").strip()
+    if content.startswith("```"):
+        content = content.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    return content
+
+
+def _try_parse_result(content: str) -> EnrichmentResult | None:
+    """
+    Attempt to parse a JSON string into an EnrichmentResult.
+
+    Returns None when the JSON is structurally valid but chunk_type fails Pydantic
+    Literal validation (the retry/fallback path applies).
+    Raises EnrichmentError for genuine JSON syntax errors (transport problem —
+    Procrastinate should retry the whole job).
+    """
+    try:
+        parsed = json.loads(content)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise EnrichmentError(f"Unparseable JSON in LLM response: {exc}") from exc
+
+    try:
+        return EnrichmentResult.model_validate(parsed)
+    except ValidationError:
+        return None
+
+
 async def enrich_chunk(
     document_text: str,
     chunk_text: str,
@@ -106,11 +182,18 @@ async def enrich_chunk(
     kb_name: str = "",
     connector_type: str = "",
     source_domain: str = "",
+    artifact_id: str = "",
+    chunk_index: int = 0,
 ) -> EnrichmentResult:
     """
     Call LiteLLM proxy to generate contextual prefix + HyPE questions for one chunk.
-    Raises EnrichmentError on any failure (timeout, HTTP error, parse error, invalid
-    content_type). Chunks must NOT be upserted to Qdrant when this raises.
+
+    Transport/HTTP/JSON-parse failures raise EnrichmentError (Procrastinate retries).
+    Invalid chunk_type in the LLM response triggers a single retry with a strengthened
+    prompt addendum (SPEC-CRAWLER-005 REQ-03.2 / EC-4). If the retry also returns an
+    invalid chunk_type, the function falls back to chunk_type="reference" and emits a
+    structured crawl_chunk_type_drop warning log for ops monitoring.
+
     When context_window is provided, it is used as the document context in the prompt
     instead of truncating the full document_text.
     """
@@ -146,42 +229,54 @@ async def enrich_chunk(
         participant_context=participant_context,
     )
 
-    payload = {
-        "model": settings.enrichment_model,
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 300,
-    }
-
-    headers = {"Content-Type": "application/json"}
-    if settings.litellm_api_key:
-        headers["Authorization"] = f"Bearer {settings.litellm_api_key}"
+    # First LLM call
+    data = await _call_llm(prompt, path)
 
     try:
-        async with httpx.AsyncClient(timeout=settings.enrichment_timeout) as client:
-            resp = await client.post(
-                f"{settings.litellm_url}/v1/chat/completions",
-                json=payload,
-                headers=headers,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-    except httpx.TimeoutException as exc:
-        logger.warning("enrichment_llm_timeout", path=path)
-        raise EnrichmentError(f"LLM timeout enriching {path}") from exc
-    except Exception as exc:
-        logger.warning("enrichment_llm_error", path=path, error=str(exc))
-        raise EnrichmentError(f"LLM error enriching {path}: {exc}") from exc
-
-    try:
-        content = data["choices"][0]["message"]["content"]
-        content = (content or "").strip()
-        # Strip markdown code fences if present
-        if content.startswith("```"):
-            content = content.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-        return EnrichmentResult.model_validate_json(content)
-    except (KeyError, IndexError, ValidationError, ValueError) as exc:
+        content = _extract_content(data)
+    except (KeyError, IndexError) as exc:
         logger.warning("enrichment_llm_unparseable", path=path, error=str(exc))
         raise EnrichmentError(f"Unparseable LLM response for {path}: {exc}") from exc
+
+    result = _try_parse_result(content)
+    if result is not None:
+        return result
+
+    # chunk_type validation failed — retry once with a strengthened addendum
+    retry_prompt = prompt + _CHUNK_TYPE_RETRY_ADDENDUM
+    retry_data = await _call_llm(retry_prompt, path)
+
+    try:
+        retry_content = _extract_content(retry_data)
+    except (KeyError, IndexError) as exc:
+        logger.warning("enrichment_llm_unparseable", path=path, error=str(exc))
+        raise EnrichmentError(f"Unparseable LLM response for {path}: {exc}") from exc
+
+    retry_result = _try_parse_result(retry_content)
+    if retry_result is not None:
+        return retry_result
+
+    # Both calls returned invalid chunk_type — fall back to "reference" and log.
+    # Parse what we can from the raw JSON for context_prefix and questions.
+    try:
+        raw_parsed = json.loads(retry_content)
+    except (json.JSONDecodeError, ValueError):
+        raw_parsed = {}
+
+    fallback = EnrichmentResult(
+        context_prefix=raw_parsed.get("context_prefix") or "",
+        chunk_type="reference",
+        questions=raw_parsed.get("questions") or [],
+    )
+    logger.warning(
+        "crawl_chunk_type_drop",
+        artifact_id=artifact_id,
+        chunk_index=chunk_index,
+        raw_llm_response=retry_content[:200],
+        reason="retry_exhausted",
+        path=path,
+    )
+    return fallback
 
 
 async def enrich_chunks(
@@ -196,6 +291,7 @@ async def enrich_chunks(
     kb_name: str = "",
     connector_type: str = "",
     source_domain: str = "",
+    artifact_id: str = "",
 ) -> list[EnrichedChunk]:
     """
     Enrich all chunks with a semaphore limiting concurrent LLM calls.
@@ -206,6 +302,7 @@ async def enrich_chunks(
     context_tokens: max tokens for the extracted context window.
     The strategy is applied per-chunk (with chunk_index) so rolling_window gets correct positioning.
     kb_name, connector_type, source_domain: source-aware enrichment fields (SPEC-KB-021).
+    artifact_id: passed through to enrich_chunk for crawl_chunk_type_drop log correlation.
     """
     semaphore = asyncio.Semaphore(settings.enrichment_max_concurrent)
     strategy_fn = STRATEGIES.get(context_strategy, STRATEGIES["first_n"])
@@ -221,6 +318,8 @@ async def enrich_chunks(
                 kb_name=kb_name,
                 connector_type=connector_type,
                 source_domain=source_domain,
+                artifact_id=artifact_id,
+                chunk_index=chunk_index,
             )
         enriched_text = f"{result.context_prefix}\n\n{chunk_text}"
         return EnrichedChunk(
