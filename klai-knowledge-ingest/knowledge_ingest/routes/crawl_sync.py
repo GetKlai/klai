@@ -23,15 +23,18 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from typing import Any
 
 import structlog
-from connector_credentials import ConnectorCredentialStore
-from cryptography.exceptions import InvalidTag
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from knowledge_ingest.config import settings
+from knowledge_ingest.connector_cookies import (
+    ConnectorDecryptError,
+    ConnectorNotFoundError,
+    ConnectorOrgMismatchError,
+    load_connector_cookies,
+)
 from knowledge_ingest.db import get_pool
 
 logger = structlog.get_logger()
@@ -75,71 +78,51 @@ class CrawlSyncStatusResponse(BaseModel):
     error: str | None
 
 
-async def _load_connector_cookies(
+async def _validate_connector(
     connector_id: uuid.UUID,
     org_id: str,
-) -> tuple[str, list[dict[str, Any]]]:
-    """Fetch cookies for a connector via the shared credentials library.
+) -> None:
+    """Validate connector exists + decryption would succeed, without keeping plaintext.
+
+    SPEC-CRAWLER-004 fix for REQ-05.4: decrypted cookies must never be passed
+    to the Procrastinate task as kwargs (the worker logs args verbatim). So
+    the endpoint only verifies that a decrypt WOULD work and enqueues just
+    the ``connector_id``; the task reloads the cookies at run time via the
+    same helper. Plaintext cookies live only in memory, per-request.
 
     Raises:
-        HTTPException(404): connector_id does not exist.
-        HTTPException(409): zitadel_org_id mismatch between request and connector
-            row (guards against lateral access via a known connector id).
-        HTTPException(500): ENCRYPTION_KEY invalid / decryption failed.
-
-    Returns:
-        Tuple ``(connector_zitadel_org_id, cookies)``. An empty list is
-        returned when the connector has no encrypted_credentials
-        (public-web crawl).
+        HTTPException(404): connector_id not found.
+        HTTPException(409): zitadel_org_id mismatch.
+        HTTPException(500): ENCRYPTION_KEY missing / malformed / decrypt fails.
     """
     pool = await get_pool()
-    row = await pool.fetchrow(
-        """
-        SELECT c.id,
-               c.encrypted_credentials,
-               o.zitadel_org_id,
-               o.connector_dek_enc
-        FROM portal_connectors c
-        JOIN portal_orgs o ON o.id = c.org_id
-        WHERE c.id = $1
-        """,
-        connector_id,
-    )
-    if row is None:
-        raise HTTPException(status_code=404, detail="connector_not_found")
-
-    connector_org_id = str(row["zitadel_org_id"])
-    if connector_org_id != str(org_id):
-        raise HTTPException(status_code=409, detail="connector_org_mismatch")
-
-    encrypted = row["encrypted_credentials"]
-    dek_enc = row["connector_dek_enc"]
-    if not encrypted or not dek_enc:
-        # Public-web crawl; no cookies needed.
-        return connector_org_id, []
-
-    if not settings.encryption_key:
-        raise HTTPException(status_code=500, detail="encryption_key_not_configured")
-
     try:
-        store = ConnectorCredentialStore(settings.encryption_key)
-        payload = store.decrypt_credentials_from_blobs(
-            encrypted_credentials=bytes(encrypted),
-            connector_dek_enc=bytes(dek_enc),
+        await load_connector_cookies(
+            connector_id=connector_id,
+            expected_zitadel_org_id=org_id,
+            pool=pool,
+            kek_hex=settings.encryption_key,
         )
-    except ValueError as exc:  # bad KEK format
-        logger.exception("crawl_sync_bad_kek", connector_id=str(connector_id))
-        raise HTTPException(status_code=500, detail="encryption_key_invalid") from exc
-    except InvalidTag as exc:
+    except ConnectorNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="connector_not_found") from exc
+    except ConnectorOrgMismatchError as exc:
+        raise HTTPException(status_code=409, detail="connector_org_mismatch") from exc
+    except ConnectorDecryptError as exc:
         logger.error(
             "crawl_sync_decrypt_failed",
             connector_id=str(connector_id),
             reason="auth_tag_mismatch",
         )
         raise HTTPException(status_code=500, detail="decrypt_failed") from exc
-
-    cookies = payload.get("cookies") or []
-    return connector_org_id, cookies
+    except ValueError as exc:
+        # Raised by load_connector_cookies when KEK missing/malformed.
+        msg = str(exc)
+        if "not_configured" in msg:
+            raise HTTPException(
+                status_code=500, detail="encryption_key_not_configured",
+            ) from exc
+        logger.exception("crawl_sync_bad_kek", connector_id=str(connector_id))
+        raise HTTPException(status_code=500, detail="encryption_key_invalid") from exc
 
 
 @router.post(
@@ -148,14 +131,14 @@ async def _load_connector_cookies(
     status_code=202,
 )
 async def crawl_sync(req: CrawlSyncRequest) -> CrawlSyncResponse:
-    """Enqueue a bulk web crawl with cookies loaded from portal_connectors."""
-    _org_id_int, cookies = await _load_connector_cookies(req.connector_id, req.org_id)
+    """Enqueue a bulk web crawl; cookies load at task run-time, not enqueue-time."""
+    # Fail fast: confirm the connector exists + cookies would decrypt. Do NOT
+    # persist the plaintext — the task will reload at run time.
+    await _validate_connector(req.connector_id, req.org_id)
 
     job_id = str(uuid.uuid4())
     now = int(time.time())
     config_for_audit = req.model_dump(mode="json")
-    # Never persist cookies into knowledge.crawl_jobs.config — the audit row is
-    # meant for operators and plaintext cookies have no business being there.
     pool = await get_pool()
     await pool.execute(
         """
@@ -187,7 +170,9 @@ async def crawl_sync(req: CrawlSyncRequest) -> CrawlSyncResponse:
         rate_limit=2.0,
         content_selector=req.content_selector,
         login_indicator_selector=req.login_indicator,
-        cookies=cookies,
+        # REQ-05.4: connector_id only — plaintext cookies never enter the
+        # Procrastinate args column or the worker's "Starting job" log.
+        connector_id=str(req.connector_id),
         canary_url=req.canary_url,
         canary_fingerprint=req.canary_fingerprint,
     )
@@ -199,7 +184,6 @@ async def crawl_sync(req: CrawlSyncRequest) -> CrawlSyncResponse:
         org_id=req.org_id,
         kb_slug=req.kb_slug,
         start_url=req.base_url,
-        cookie_count=len(cookies),
     )
     return CrawlSyncResponse(job_id=job_id, status="queued")
 

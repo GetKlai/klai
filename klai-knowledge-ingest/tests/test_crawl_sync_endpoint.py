@@ -181,11 +181,15 @@ class TestCrawlSyncEndpoint:
         assert resp.status_code == 409
         assert resp.json()["detail"] == "connector_org_mismatch"
 
-    def test_happy_path_enqueues_task_with_decrypted_cookies(
+    def test_happy_path_enqueues_task_with_connector_id(
         self,
         payload_with_cookies,
     ) -> None:
-        """AC-03.1: happy path — 202 + job_id + Procrastinate called with cookies."""
+        """AC-03.1: happy path — 202, connector_id passed to task, NO cookies in args.
+
+        REQ-05.4: plaintext cookies must not enter the Procrastinate args log;
+        the task reloads them at execution time.
+        """
         encrypted, dek_enc, expected_cookies = payload_with_cookies
         pool = _make_pool(
             connector_row={
@@ -195,11 +199,12 @@ class TestCrawlSyncEndpoint:
                 "connector_dek_enc": dek_enc,
             },
         )
+        sent_connector_id = str(uuid.uuid4())
         with _client_with_patches(pool) as (client, defer_mock):
             resp = client.post(
                 "/ingest/v1/crawl/sync",
                 json={
-                    "connector_id": str(uuid.uuid4()),
+                    "connector_id": sent_connector_id,
                     "org_id": "42",
                     "kb_slug": "support",
                     "base_url": "https://help.voys.nl",
@@ -225,13 +230,19 @@ class TestCrawlSyncEndpoint:
         assert insert_calls, "expected INSERT into knowledge.crawl_jobs"
         # Never persist plaintext cookies into the audit row.
         config_json = insert_calls[0].args[4]
-        assert "abc123" not in config_json
+        for plaintext in expected_cookies:
+            assert plaintext["value"] not in config_json
         assert "cookies" not in config_json
 
-        # Procrastinate task enqueued with decrypted cookies + config.
+        # Procrastinate defer kwargs: connector_id present, cookies ABSENT.
         defer_mock.assert_awaited_once()
         kwargs = defer_mock.await_args.kwargs
-        assert kwargs["cookies"] == expected_cookies
+        assert kwargs["connector_id"] == sent_connector_id
+        assert "cookies" not in kwargs
+        for plaintext in expected_cookies:
+            # Strong guarantee: the raw cookie value never appears in any kwarg.
+            for value in kwargs.values():
+                assert plaintext["value"] not in str(value)
         assert kwargs["login_indicator_selector"] == "#login-form"
         assert kwargs["canary_url"] == "https://help.voys.nl/index"
         assert kwargs["canary_fingerprint"] == "deadbeef12345678"
@@ -240,8 +251,8 @@ class TestCrawlSyncEndpoint:
         assert kwargs["org_id"] == "42"
         assert kwargs["kb_slug"] == "support"
 
-    def test_public_crawl_without_cookies(self) -> None:
-        """Connector row with no encrypted credentials → cookies=[] forwarded."""
+    def test_public_crawl_still_enqueues(self) -> None:
+        """Connector with no encrypted credentials still enqueues; task gets no cookies."""
         pool = _make_pool(
             connector_row={
                 "id": uuid.UUID(int=1),
@@ -262,7 +273,8 @@ class TestCrawlSyncEndpoint:
             )
         assert resp.status_code == 202, resp.text
         kwargs = defer_mock.await_args.kwargs
-        assert kwargs["cookies"] == []
+        assert "cookies" not in kwargs
+        assert "connector_id" in kwargs
 
 
 class TestCrawlSyncStatusEndpoint:

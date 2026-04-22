@@ -21,10 +21,29 @@ def register_crawl_tasks(procrastinate_app: Any) -> None:
         rate_limit: float = 2.0,
         content_selector: str | None = None,
         login_indicator_selector: str | None = None,
-        cookies: list[dict] | None = None,
+        connector_id: str | None = None,
         canary_url: str | None = None,
         canary_fingerprint: str | None = None,
     ) -> None:
+        # REQ-05.4: decrypt cookies at task run-time, not at enqueue-time,
+        # so Procrastinate's ``procrastinate_jobs.args`` column and the
+        # worker's "Starting job" log line never hold plaintext cookies.
+        import uuid as _uuid
+
+        cookies: list[dict] = []
+        if connector_id:
+            from knowledge_ingest.config import settings
+            from knowledge_ingest.connector_cookies import load_connector_cookies
+            from knowledge_ingest.db import get_pool
+
+            pool = await get_pool()
+            cookies = await load_connector_cookies(
+                connector_id=_uuid.UUID(connector_id),
+                expected_zitadel_org_id=org_id,
+                pool=pool,
+                kek_hex=settings.encryption_key,
+            )
+
         from knowledge_ingest.adapters.crawler import run_crawl_job
         await run_crawl_job(
             job_id=job_id,
