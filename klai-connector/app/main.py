@@ -14,7 +14,6 @@ from app.adapters.github import GitHubAdapter
 from app.adapters.google_drive import GoogleDriveAdapter
 from app.adapters.notion import NotionAdapter
 from app.adapters.registry import AdapterRegistry
-from app.adapters.webcrawler import WebCrawlerAdapter
 from app.clients.knowledge_ingest import KnowledgeIngestClient
 from app.core.config import Settings
 from app.core.database import dispose_engine, init_engine
@@ -75,7 +74,8 @@ def create_app() -> FastAPI:
         # Adapter registry
         registry = AdapterRegistry()
         registry.register("github", GitHubAdapter(settings))
-        registry.register("web_crawler", WebCrawlerAdapter(settings))
+        # SPEC-CRAWLER-004 Fase D: web_crawler is handled by the delegation path
+        # in sync_engine._run_web_crawler_delegation; no local adapter is registered.
         registry.register("notion", NotionAdapter(settings))
         # Google Drive adapter — only registered when OAuth client is configured.
         if settings.google_drive_client_id:

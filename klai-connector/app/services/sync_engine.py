@@ -13,13 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.adapters.base import DocumentRef
 from app.adapters.registry import AdapterRegistry
-from app.adapters.webcrawler import CanaryMismatchError, CrawlJobPendingError
 from app.clients.knowledge_ingest import CrawlSyncClient, KnowledgeIngestClient
 from app.core.enums import SyncStatus
 from app.core.logging import get_logger
 from app.models.sync_run import SyncRun
-from app.services.content_fingerprint import LAYER_C_MIN_PAGES, find_boilerplate_clusters
-from app.services.events import emit_product_event
 from app.services.parser import parse_document_with_images
 from app.services.portal_client import PortalClient
 from app.services.s3_storage import ImageStore
@@ -319,140 +316,14 @@ class SyncEngine:
 
                 await adapter.post_sync(portal_config)
 
-                # Layer C: post-sync boilerplate-ratio check (SPEC-CRAWL-003 REQ-13/14).
-                # Automatic on every sync with ≥ LAYER_C_MIN_PAGES pages.
-                fp_entries = [(r.source_url or r.ref, r.content_fingerprint) for r in refs if r.content_fingerprint]
-                if len(fp_entries) >= LAYER_C_MIN_PAGES:
-                    clusters = find_boilerplate_clusters(fp_entries)
-                    if clusters:
-                        # URL -> fingerprint map for sample_fingerprint lookup in detail logs.
-                        # Clusters themselves are lists of URLs (see find_boilerplate_clusters
-                        # return type), so sample_urls is cluster[:3] directly.
-                        url_to_fp = dict(fp_entries)
-
-                        total_pages = len(fp_entries)
-                        pages_in_clusters = sum(len(c) for c in clusters)
-                        largest_ratio = len(clusters[0]) / total_pages
-
-                        logger.warning(
-                            "Sync quality degraded: boilerplate clusters detected",
-                            extra={
-                                "connector_id": str(connector_id),
-                                "cluster_count": len(clusters),
-                                "pages_in_clusters": pages_in_clusters,
-                                "largest_cluster_ratio": largest_ratio,
-                                "total_pages": total_pages,
-                            },
-                        )
-                        for rank, cluster in enumerate(clusters[:3], start=1):
-                            sample_urls = cluster[:3]
-                            sample_fp = url_to_fp.get(sample_urls[0], "") if sample_urls else ""
-                            logger.warning(
-                                "Boilerplate cluster detail",
-                                extra={
-                                    "connector_id": str(connector_id),
-                                    "cluster_rank": rank,
-                                    "cluster_size": len(cluster),
-                                    "cluster_ratio": len(cluster) / total_pages,
-                                    "sample_fingerprint": sample_fp,
-                                    "sample_urls": sample_urls,
-                                },
-                            )
-
-                        status = SyncStatus.COMPLETED  # backward-compat: status stays COMPLETED
-                        sync_run.quality_status = "degraded"
-                        # SPEC-CRAWL-003 REQ-15: emit product event via direct DB
-                        # write (product_events table is on the shared klai DB).
-                        emit_product_event(
-                            "knowledge.sync_quality_degraded",
-                            zitadel_org_id=portal_config.zitadel_org_id,
-                            properties={
-                                "connector_id": str(connector_id),
-                                "sync_run_id": str(sync_run_id),
-                                "quality_status": "degraded",
-                                "reason": "boilerplate_cluster",
-                                "metric": largest_ratio,
-                            },
-                        )
-
-            except CanaryMismatchError as exc:
-                # @MX:ANCHOR: [AUTO] SPEC-CRAWL-003 REQ-5 — Layer A fail-fast abort.
-                # @MX:REASON: AUTH_ERROR status + structured error_details per REQ-3 + REQ-5.
-                logger.error(
-                    "Sync aborted: canary fingerprint mismatch",
-                    extra={
-                        "connector_id": str(connector_id),
-                        "canary_url": exc.canary_url,
-                        "similarity": exc.similarity,
-                        "expected": exc.expected,
-                        "actual": exc.actual,
-                    },
-                )
-                sync_run.status = SyncStatus.AUTH_ERROR
-                sync_run.quality_status = "failed"
-                sync_run.completed_at = datetime.now(UTC)
-                sync_run.error_details = [
-                    {
-                        "reason": "canary_mismatch",
-                        "canary_url": exc.canary_url,
-                        "expected_fingerprint": exc.expected,
-                        "actual_fingerprint": exc.actual,
-                        "similarity": exc.similarity,
-                    }
-                ]
-                await session.commit()
-                await self._portal_client.report_sync_status(
-                    connector_id=connector_id,
-                    sync_run_id=sync_run_id,
-                    sync_status=SyncStatus.AUTH_ERROR,
-                    completed_at=sync_run.completed_at,
-                    documents_total=0,
-                    documents_ok=0,
-                    documents_failed=0,
-                    bytes_processed=0,
-                    error_details=sync_run.error_details,
-                )
-                emit_product_event(
-                    "knowledge.sync_quality_degraded",
-                    zitadel_org_id=portal_config.zitadel_org_id,
-                    properties={
-                        "connector_id": str(connector_id),
-                        "sync_run_id": str(sync_run_id),
-                        "quality_status": "failed",
-                        "reason": "canary_mismatch",
-                        "metric": exc.similarity,
-                    },
-                )
-                return
-
-            except CrawlJobPendingError as exc:
-                # Async crawl job not finished yet: mark as PENDING so the
-                # next scheduled sync resumes polling.
-                sync_run.status = SyncStatus.PENDING
-                sync_run.completed_at = datetime.now(UTC)
-                sync_run.cursor_state = {
-                    "pending_task_id": exc.task_id,
-                    "job_started_at": exc.job_started_at,
-                    "base_url": portal_config.config.get("base_url", ""),
-                }
-                await session.commit()
-                await self._portal_client.report_sync_status(
-                    connector_id=connector_id,
-                    sync_run_id=sync_run_id,
-                    sync_status=SyncStatus.PENDING,
-                    completed_at=sync_run.completed_at,
-                    documents_total=0,
-                    documents_ok=0,
-                    documents_failed=0,
-                    bytes_processed=0,
-                    error_details=None,
-                )
-                logger.info(
-                    "Crawl job %s still pending for connector %s, will resume next sync",
-                    exc.task_id,
-                    connector_id,
-                )
-                return
+                # @MX:NOTE: Layer C boilerplate detection and CanaryMismatchError /
+                #   CrawlJobPendingError handling were removed in SPEC-CRAWLER-004
+                #   Fase F. Those paths only fired for web_crawler syncs handled by
+                #   the now-deleted WebCrawlerAdapter. Every web_crawler sync goes
+                #   through _run_web_crawler_delegation (Fase D) which enqueues the
+                #   crawl in knowledge-ingest and polls /status; failure surfaces as
+                #   sync_run.status=FAILED via the remote response, and quality
+                #   analysis (if ever desired) happens in knowledge-ingest.
 
             except BadRequest as err:
                 # gidgethub raises BadRequest for 401/403; treat as auth failure
