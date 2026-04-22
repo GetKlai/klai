@@ -199,45 +199,104 @@ async def _get_guardrails(org_id: str, user_id: str, cache) -> dict:
     return result
 
 
-def _guardrail_hit(text: str, detectors: list[dict]) -> tuple[str | None, str]:
-    """Walk detectors. Returns (block_reason_or_None, possibly_redacted_text).
+def _check_block(det: dict, text: str) -> tuple[str, str] | None:
+    """If `det` (action=block) matches `text`, return (rule_name, match_key).
+    Returns None if no match.
+    """
+    rule_name = det.get("rule_name") or "guardrail"
+    for key in det.get("detectors") or []:
+        pattern = _PII_PATTERNS.get(key, (None, None))[0]
+        if pattern is not None and pattern.search(text):
+            return rule_name, key
+    for kw in det.get("keywords") or []:
+        if kw and kw.lower() in text.lower():
+            return rule_name, f"keyword:{kw}"
+    return None
+
+
+def _apply_redact(det: dict, text: str) -> tuple[str, list[str]]:
+    """Apply a single redact detector to `text`. Returns (new_text, matched_keys)."""
+    matched_keys: list[str] = []
+    redacted = text
+    for key in det.get("detectors") or []:
+        entry = _PII_PATTERNS.get(key)
+        if entry is None:
+            continue
+        pattern, placeholder = entry
+        new_redacted = pattern.sub(placeholder, redacted)
+        if new_redacted != redacted:
+            matched_keys.append(key)
+            redacted = new_redacted
+    for kw in det.get("keywords") or []:
+        if not kw:
+            continue
+        new_redacted = re.sub(re.escape(kw), "[REDACTED]", redacted, flags=re.IGNORECASE)
+        if new_redacted != redacted:
+            matched_keys.append(f"keyword:{kw}")
+            redacted = new_redacted
+    return redacted, matched_keys
+
+
+def _guardrail_hit(
+    text: str, detectors: list[dict]
+) -> tuple[str | None, str, list[dict]]:
+    """Walk detectors. Returns (block_reason_or_None, possibly_redacted_text, applied).
 
     - First pass: any 'block' action whose pattern matches aborts immediately
-      with a reason (rule name).
-    - Second pass: apply 'redact' actions to the text.
+      with a reason (rule name). Returns applied=[{rule_name, action, match}].
+    - Second pass: apply 'redact' actions to the text. Returns one entry in
+      `applied` per rule that actually changed the text.
     """
-    # Check blocks first
+    applied: list[dict] = []
+
+    # Block pass — first match wins, short-circuits.
     for det in detectors:
         if det.get("action") != "block":
             continue
-        rule_name = det.get("rule_name") or "guardrail"
-        # PII detector keys
-        for key in det.get("detectors") or []:
-            pattern = _PII_PATTERNS.get(key, (None, None))[0]
-            if pattern is not None and pattern.search(text):
-                return f"{rule_name} ({key})", text
-        # Keyword patterns (case-insensitive substring)
-        for kw in det.get("keywords") or []:
-            if kw and kw.lower() in text.lower():
-                return f"{rule_name} (keyword: {kw!r})", text
+        hit = _check_block(det, text)
+        if hit is not None:
+            rule_name, match_key = hit
+            applied.append({"rule_name": rule_name, "action": "block", "match": match_key})
+            reason = (
+                f"{rule_name} (keyword: {match_key[8:]!r})"
+                if match_key.startswith("keyword:")
+                else f"{rule_name} ({match_key})"
+            )
+            return reason, text, applied
 
-    # Apply redactions
+    # Redact pass — apply all, collect rule-level diffs.
     redacted = text
     for det in detectors:
         if det.get("action") != "redact":
             continue
-        for key in det.get("detectors") or []:
-            entry = _PII_PATTERNS.get(key)
-            if entry is None:
-                continue
-            pattern, placeholder = entry
-            redacted = pattern.sub(placeholder, redacted)
-        for kw in det.get("keywords") or []:
-            if not kw:
-                continue
-            redacted = re.sub(re.escape(kw), "[REDACTED]", redacted, flags=re.IGNORECASE)
+        rule_name = det.get("rule_name") or "guardrail"
+        new_text, matched_keys = _apply_redact(det, redacted)
+        if new_text != redacted:
+            applied.append(
+                {
+                    "rule_name": rule_name,
+                    "action": "redact",
+                    "match": ",".join(matched_keys) or "unknown",
+                }
+            )
+            redacted = new_text
 
-    return None, redacted
+    return None, redacted, applied
+
+
+def _log_applied_rules(applied: list[dict], org_id: str, user_id: str) -> None:
+    """Emit one info log per applied guardrail rule (block or redact)."""
+    for entry in applied:
+        logger.info(
+            "KlaiKnowledgeHook: guardrail applied",
+            extra={
+                "rule_name": entry["rule_name"],
+                "action": entry["action"],
+                "match": entry.get("match"),
+                "org_id": org_id,
+                "user_id": user_id,
+            },
+        )
 
 
 def _replace_last_user_message(messages: list[dict], new_content: str) -> None:
@@ -434,12 +493,9 @@ class KlaiKnowledgeHook(CustomLogger):
         guardrails = await _get_guardrails(org_id, user_id, cache)
         detectors = guardrails.get("detectors") or []
         if detectors:
-            block_reason, redacted_query = _guardrail_hit(query, detectors)
+            block_reason, redacted_query, applied_rules = _guardrail_hit(query, detectors)
+            _log_applied_rules(applied_rules, org_id, user_id)
             if block_reason:
-                logger.info(
-                    "KlaiKnowledgeHook: message blocked by guardrail",
-                    extra={"rule": block_reason, "org_id": org_id, "user_id": user_id},
-                )
                 raise Exception(f"Bericht geblokkeerd door guardrail: {block_reason}")
             if redacted_query != query:
                 _replace_last_user_message(messages, redacted_query)
