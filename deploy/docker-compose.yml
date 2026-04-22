@@ -454,6 +454,12 @@ services:
         limits:
           cpus: '2'
           memory: 4G
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8428/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   victorialogs:
     image: victoriametrics/victoria-logs:v1.50.0
@@ -474,6 +480,19 @@ services:
         limits:
           cpus: '2'
           memory: 2G
+    healthcheck:
+      # Authenticated probe — VictoriaLogs requires basic auth on every path.
+      # BusyBox wget (in this image) does NOT support --user/--password, so
+      # credentials go inline in the URL. The double-$ keeps Compose from
+      # interpolating the variables — they're resolved by the shell inside
+      # the container against its own env at runtime.
+      test:
+        - CMD-SHELL
+        - wget -q --spider "http://$$VICTORIALOGS_AUTH_USER:$$VICTORIALOGS_AUTH_PASSWORD@127.0.0.1:9428/health"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.55.1
@@ -572,6 +591,12 @@ services:
     networks:
       - klai-net
       - monitoring
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   # ─── Research: document Q&A service ─────────────────────────────────────
 
@@ -690,6 +715,12 @@ services:
       postgres:
         condition: service_healthy
     # NOT exposed via Caddy — internal Docker network only
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/api/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   docs-app:
     image: ghcr.io/getklai/klai-docs:latest

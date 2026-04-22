@@ -1,7 +1,7 @@
 ---
 id: SPEC-INFRA-005
-version: 0.5.0
-status: in_progress
+version: 0.6.0
+status: complete
 created: 2026-04-19
 updated: 2026-04-22
 author: Mark Vletter
@@ -11,6 +11,10 @@ priority: high
 # SPEC-INFRA-005: Stateful service persistence, backup, and observability hardening
 
 ## HISTORY
+
+### v0.6.0 (2026-04-22)
+- Phase 4 complete (effectively). gitea, grafana, victoriametrics, victorialogs all gain Docker-native healthchecks. Each verified `(healthy)` in production. Ollama remains the one image without a CMD healthcheck because it ships distroless — covered by the existing Uptime Kuma `push_exec` probe in `push-health.sh`.
+- All seven phases now have a working implementation in production. Open follow-ups: per-service threshold tuning for the Phase 6 staleness rule (need ~2 weeks of real metrics first); product-owner decision on `research-uploads` retention. Status: `complete` for the SPEC's own definition of done; further refinement is operational tuning, not new SPEC scope.
 
 ### v0.5.0 (2026-04-22)
 - Phase 6 complete (core mechanism). Host-side persistence probe runs every 10 min via systemd timer (`klai-persistence-probe.timer`) → writes `klai_persistence_file_age_seconds{service,path}` gauges to node_exporter's textfile collector → Alloy scrapes them → VictoriaMetrics stores them → two Grafana provisioning rules fire on staleness + missing-file conditions. End-to-end verified on core-01: metric reaches VictoriaMetrics, both rules accepted by Grafana alerting.
