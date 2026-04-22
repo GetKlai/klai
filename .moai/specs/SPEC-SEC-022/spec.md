@@ -1,9 +1,9 @@
 ---
 id: SPEC-SEC-022
-version: 0.1.0
-status: draft
+version: 0.2.0
+status: in_progress
 created: 2026-04-19
-updated: 2026-04-19
+updated: 2026-04-22
 author: Mark Vletter
 priority: medium
 ---
@@ -11,6 +11,20 @@ priority: medium
 # SPEC-SEC-022: vexa-bots network egress allowlist
 
 ## HISTORY
+
+### v0.2.0 (2026-04-22)
+- **Phase 1 infrastructure ready.** `scripts/vexa-egress-capture.sh` wraps
+  tcpdump + post-processing (rDNS resolution, per-port distribution, unknown-IP
+  extraction). `deploy/vexa/egress-allowlist.txt` skeleton added with
+  expected provider groupings. `scripts/update-vexa-ipset.sh` skeleton added
+  with a guard that refuses to run on an empty allowlist. Runbook at
+  `docs/runbooks/sec-022-egress-capture.md` documents the operator workflow.
+- **Prerequisites on core-01 confirmed:** `tcpdump`, `iptables`, `dig` are
+  present. `ipset` (required for Phase 3 enforce) is NOT installed yet —
+  flagged in the runbook.
+- **Open:** operator needs to schedule a ≥4-hour capture window with ≥15
+  real meetings spread across Meet / Teams / Zoom. Phase 2 design cannot
+  start until that capture produces real data.
 
 ### v0.1.0 (2026-04-19)
 - Initial draft. Based on audit finding V-008 / F-037 in `.moai/audit/08-vexa.md` plus live verification: `vexa-bots` network has `Internal=false` (bridge driver, gateway 172.27.0.1) — bots currently have unrestricted outbound internet.
