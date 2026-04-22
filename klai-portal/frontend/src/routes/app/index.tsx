@@ -9,8 +9,6 @@ import { useAuth } from '@/lib/auth'
 import { chatKbLogger } from '@/lib/logger'
 import * as m from '@/paraglide/messages'
 
-const LC_AUTH_KEY = 'lc_authed_at'
-const LC_AUTH_TTL_MS = 25 * 24 * 60 * 60 * 1000
 const STUCK_TIMEOUT_MS = 20_000
 
 type Phase = 'health_check' | 'loading_iframe' | 'ready' | 'stuck' | 'error'
@@ -39,9 +37,12 @@ function useChatBaseUrl(): string {
 }
 
 function getIframeSrc(baseUrl: string): string {
-  const stored = localStorage.getItem(LC_AUTH_KEY)
-  const isFresh = stored !== null && Date.now() - parseInt(stored, 10) < LC_AUTH_TTL_MS
-  return isFresh ? baseUrl : `${baseUrl}/oauth/openid`
+  // Always start at /oauth/openid. LibreChat's root renders an empty /login
+  // page if the LC session cookie is missing/expired — which happens after
+  // Mongo resets, container restarts, or cookie expiry. Triggering OIDC
+  // unconditionally lets Zitadel's silent SSO complete in <1s when the user
+  // has a valid portal session, and shows a real login UI otherwise.
+  return `${baseUrl}/oauth/openid`
 }
 
 function getErrorMessage(reason: string | null): string {
@@ -97,7 +98,6 @@ function ChatHome() {
   useEffect(() => { void runHealthCheck(); return clearStuckTimer }, [runHealthCheck, clearStuckTimer])
 
   const handleIframeLoad = useCallback(() => {
-    localStorage.setItem(LC_AUTH_KEY, Date.now().toString())
     clearStuckTimer()
     setPhase('ready')
   }, [clearStuckTimer])
@@ -114,7 +114,6 @@ function ChatHome() {
   }, [clearStuckTimer])
 
   const handleRetry = useCallback(() => {
-    localStorage.removeItem(LC_AUTH_KEY)
     void auth.signinRedirect({ returnTo: '/app' })
   }, [auth])
 
