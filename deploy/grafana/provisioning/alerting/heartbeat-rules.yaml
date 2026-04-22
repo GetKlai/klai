@@ -27,7 +27,12 @@ groups:
   - orgId: 1
     name: obs-001-heartbeat
     folder: Klai
-    interval: 5m
+    # Eval every minute so alertmanager has enough refresh-windows to land
+    # the repeat_interval=5m dispatch reliably. With eval=5m, repeat falls
+    # on alternate cycles (10m gaps), exceeding Kuma's 5m staleness window
+    # → false-positive alerter-down spam. Eval=1m + repeat_interval=5m =
+    # one push every ~5m, well within Kuma's window.
+    interval: 1m
     rules:
       - uid: obs-001-alerter-heartbeat
         title: alerter_heartbeat
