@@ -1,0 +1,35 @@
+# SPEC-SEC-022 — vexa-bots egress allowlist
+#
+# Format:  <hostname-or-cidr>  <port/proto>  <provider>  # comment
+# Applied: scripts/update-vexa-ipset.sh resolves each hostname to IPs and
+#          populates the `vexa_allowlist` ipset atomically.
+#
+# Status:  EMPTY — awaiting Phase 1 capture data.
+#   Run:   sudo /opt/klai/scripts/vexa-egress-capture.sh 14400
+#          during ≥5 meetings per provider (Google Meet / Teams / Zoom).
+#   Then:  import capture summary into this file, grouped by provider.
+#
+# Baseline expectations (do NOT enable until Phase 1 produces real data):
+#
+# [[ google-meet ]]
+#   meet.google.com                      443/tcp
+#   *.google.com                         443/tcp
+#   *.googleusercontent.com              443/tcp
+#   *.googlevideo.com                    443/udp   # WebRTC media
+#
+# [[ teams ]]
+#   teams.microsoft.com                  443/tcp
+#   api.teams.microsoft.com              443/tcp
+#   *.teams.microsoft.com                443/tcp
+#
+# [[ zoom ]]
+#   zoom.us                              443/tcp
+#   *.zoom.us                            443/tcp
+#   *.zoomgov.com                        443/tcp
+#
+# [[ stun-turn ]]
+#   stun.l.google.com                    3478/udp 19302/udp
+#   <provider-specific TURN servers>     443/udp
+#
+# The actual list MUST be derived from the Phase 1 pcap — hard-coded
+# guesses WILL break meetings when CDN endpoints rotate.
