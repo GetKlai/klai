@@ -140,16 +140,16 @@ function BillingPage() {
 
   if (loadingStatus) {
     return (
-      <div className="p-6">
+      <div className="mx-auto max-w-3xl px-6 py-10">
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-900 border-t-transparent" />
       </div>
     )
   }
 
   return (
-    <div className="p-6 space-y-6 max-w-3xl" data-help-id="admin-billing-overview">
+    <div className="mx-auto max-w-3xl px-6 py-10 space-y-6" data-help-id="admin-billing-overview">
       <div className="space-y-1">
-        <h1 className="page-title text-xl/none font-semibold text-gray-900">{m.admin_billing_heading()}</h1>
+        <h1 className="text-[26px] font-display-bold text-gray-900">{m.admin_billing_heading()}</h1>
         <p className="text-sm text-gray-400">
           {m.admin_billing_subtitle()}
         </p>
