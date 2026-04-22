@@ -115,8 +115,15 @@ async def test_page_links_link_text_truncated() -> None:
 
 
 @pytest.mark.asyncio
-async def test_page_links_saved_in_bulk_crawl() -> None:
-    """_ingest_crawl_result calls upsert_page_links with internal links."""
+async def test_page_links_not_saved_in_ingest_crawl_result() -> None:
+    """
+    _ingest_crawl_result does NOT call upsert_page_links directly.
+
+    SPEC-CRAWLER-005 REQ-01.3: link graph building is Phase 1
+    (_build_link_graph), not Phase 2 (_ingest_crawl_result).
+    upsert_page_links is called by _build_link_graph BEFORE the per-page
+    ingest loop runs, ensuring the full graph is available for all pages.
+    """
     from knowledge_ingest.crawl4ai_client import CrawlResult
 
     internal_links = [
@@ -136,6 +143,9 @@ async def test_page_links_saved_in_bulk_crawl() -> None:
     )
 
     mock_upsert_links = AsyncMock()
+    mock_pool = MagicMock()
+    mock_pool.fetch = AsyncMock(return_value=[])
+    mock_pool.fetchval = AsyncMock(return_value=0)
 
     with patch("knowledge_ingest.pg_store.upsert_crawled_page",
                new_callable=AsyncMock), \
@@ -146,10 +156,10 @@ async def test_page_links_saved_in_bulk_crawl() -> None:
         await _ingest_crawl_result(
             result,
             "https://help.example.com/page", "org1", "kb1",
+            pool=mock_pool,
             stored=None,
         )
 
-    mock_upsert_links.assert_called_once()
-    call_kwargs = mock_upsert_links.call_args.kwargs
-    assert call_kwargs["from_url"] == "https://help.example.com/page"
-    assert call_kwargs["links"] == internal_links
+    # Phase 2 (_ingest_crawl_result) must NOT call upsert_page_links.
+    # That is Phase 1 (_build_link_graph)'s responsibility.
+    mock_upsert_links.assert_not_called()
