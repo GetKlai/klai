@@ -1,7 +1,7 @@
 ---
 id: SPEC-CRAWLER-005
-version: "1.0"
-status: draft
+version: "1.1"
+status: implemented
 created: 2026-04-22
 updated: 2026-04-22
 author: Mark Vletter
@@ -14,6 +14,7 @@ issue_number: 110
 | Version | Date | Author | Change |
 |---------|------|--------|--------|
 | 1.0 | 2026-04-22 | Mark Vletter | Initial draft from SPEC-CRAWLER-004 Fase E findings on Voys `support` |
+| 1.1 | 2026-04-22 | Mark Vletter | Implemented. Fase 1-4 + Fase 5 skeleton shipped to `main`. Fase 6 (live Playwright on Voys `support`) is the prod verification — run post-deploy. Fase 7 docs + pitfall entries committed. |
 
 ---
 

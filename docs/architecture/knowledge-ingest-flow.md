@@ -311,6 +311,40 @@ Qdrant payload as `image_urls: ["/kb-images/{org_id}/images/{kb_slug}/{sha256}.{
 The github + notion adapters in klai-connector keep using their own
 `sync_engine._upload_images` path for now — consolidation tracked in SPEC-KB-IMAGE-002.
 
+**Two-phase crawl ordering (SPEC-CRAWLER-005 REQ-01).** `run_crawl_job` splits the bulk
+crawl into two explicit phases so `anchor_texts`, `links_to`, and `incoming_link_count`
+are correct on every Qdrant chunk at first write — no post-crawl `set_payload` band-aid:
+
+```
+crawl_site(...) returns N CrawlResults
+          │
+          ▼
+┌─────────────────────────────────────────────────────┐
+│ Phase 1 — _build_link_graph(results, org, kb, pool) │
+│   upserts knowledge.page_links for every result     │
+│   BEFORE any ingest runs                            │
+└─────────────────────────────────────────────────────┘
+          │
+          ▼
+┌─────────────────────────────────────────────────────┐
+│ Phase 2 — for each result: _ingest_crawl_result(..) │
+│   link_graph.get_{outbound,anchor,incoming}(...)    │
+│   now reads the complete graph, including pages     │
+│   processed later in the loop                       │
+└─────────────────────────────────────────────────────┘
+```
+
+Late pages no longer read an incomplete graph; `link_graph.compute_incoming_counts`
+and `qdrant_store.update_link_counts` are deprecated (kept with docstrings for
+potential admin-only repair scripts).
+
+**Empty-list convention (SPEC-CRAWLER-005 REQ-04).** Qdrant strips empty-list payload
+keys on upsert. A page with no inbound links has `anchor_texts` *absent* from its
+payload, not `[]`. Retrieval-api reads list-shaped keys (`anchor_texts`, `links_to`,
+`image_urls`) through `retrieval_api/util/payload.py::payload_list()` which treats
+key-absent, `None`, and non-list values all as `[]`, so the two shapes are
+interchangeable at the consumer boundary.
+
 Chunking is done by a custom `chunker.py` inside knowledge-ingest:
 1. **Heading split** — the document is first split at H1/H2/H3 headings
    (`^(#{1,3})\s+(.+)$`). Each section keeps its heading prepended so chunks are
