@@ -1,0 +1,162 @@
+# SPEC-INFRA-005 Phase 6 — persistence absence/staleness alerts.
+#
+# Input metric: klai_persistence_file_age_seconds{service,path}
+# Source: node_exporter textfile collector reads .prom files written by
+#         /opt/klai/scripts/persistence-probe.sh (systemd timer, 10 min).
+#
+# Two rules:
+#   A. Staleness — file age exceeds per-service threshold. Default 2h (7200s)
+#      for RDB/AOF/SAVE-based services; Postgres pg_wal is bumped continuously
+#      so we use 1h. Tuned upward if false positives surface.
+#   B. Missing — the probe found `path="missing"` (returns -1). Means the
+#      host-side file we expect to exist simply isn't there. This is the
+#      2026-04-19 signature: cosmetic mount, no writes ever land on host.
+#
+# Both fire to the klai-dev-alerts-email contact point. Label `spec` matches
+# the existing routing policy so email delivery works without new routes.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: persistence-staleness
+    folder: Infra
+    interval: 5m
+    rules:
+
+      # ── A. Staleness ────────────────────────────────────────────────────────
+      - uid: spec-infra-005-persistence-stale
+        title: Persistence file is stale (SPEC-INFRA-005)
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victoriametrics
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: prometheus
+                uid: victoriametrics
+              # PromQL: most-recently-written file on each service's volume.
+              # 24-hour threshold is intentionally loose — this rule is a
+              # "grondig dood"-canary, not a liveness probe. Sharper
+              # detection for the 2026-04-19 class of bug lives in Rule B
+              # (path="missing"). Per-service tuning is a follow-up when
+              # we've seen a cycle of real production values.
+              expr: |
+                max by (service) (klai_persistence_file_age_seconds{path!="missing"}) > 86400
+              instant: true
+              queryType: instant
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: query
+              conditions:
+                - evaluator:
+                    params: [0]
+                    type: gt
+                  operator:
+                    type: and
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+        noDataState: OK
+        execErrState: Alerting
+        for: 10m
+        keepFiringFor: 1h
+        isPaused: false
+        labels:
+          severity: warning
+          spec: SPEC-INFRA-005
+          service_group: persistence
+        annotations:
+          summary: "Persistence data file stale on {{ $labels.service }}"
+          description: |
+            SPEC-INFRA-005 alert. The newest file on {{ $labels.service }}'s
+            host-persistent volume has not been modified within the expected
+            idle-save interval.
+
+            What this means: either the service is writing nowhere (the
+            2026-04-19 FalkorDB class of bug) OR the service is genuinely
+            idle AND its save rules never fire.
+
+            Triage:
+              1. SSH core-01 and run:
+                   sudo /opt/klai/scripts/persistence-smoke.sh {{ $labels.service }}
+              2. If smoke OK, this is benign idle — consider tuning the
+                 threshold for that service.
+              3. If smoke FAIL, the mount is wrong or the service is
+                 writing to the container's ephemeral layer. See
+                 docs/runbooks/post-mortems/2026-04-19-falkordb-graph-loss.md.
+
+      # ── B. Missing file ─────────────────────────────────────────────────────
+      - uid: spec-infra-005-persistence-missing
+        title: Persistence data file is missing (SPEC-INFRA-005)
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victoriametrics
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: prometheus
+                uid: victoriametrics
+              # The probe emits age=-1 when it cannot stat the expected path.
+              # Over a few probe cycles this is a strong signal.
+              expr: klai_persistence_file_age_seconds == -1
+              instant: true
+              queryType: instant
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: query
+              conditions:
+                - evaluator:
+                    params: [0]
+                    type: gt
+                  operator:
+                    type: and
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+        noDataState: OK
+        execErrState: Alerting
+        for: 15m
+        keepFiringFor: 1h
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-INFRA-005
+          service_group: persistence
+        annotations:
+          summary: "Persistence data file missing on host volume ({{ $labels.service }})"
+          description: |
+            The persistence-probe could not stat {{ $labels.service }}'s
+            expected host-side data file for the last 15 minutes. This is
+            the fingerprint of the 2026-04-19 incident: the service runs,
+            but nothing lands on the persistent volume.
+
+            Urgent triage:
+              1. sudo /opt/klai/scripts/persistence-smoke.sh {{ $labels.service }}
+              2. sudo ls -la <expected host path from deploy/volume-mounts.yaml>
+              3. Inspect the image's data path:
+                   docker image inspect <image> --format '{{"{{"}}range .Config.Env{{"}}"}}{{"{{"}}println .{{"}}"}}{{"{{"}}end{{"}}"}}'
+              4. Fix the compose mount OR update volume-mounts.yaml and
+                 let the audit CI enforce the match.

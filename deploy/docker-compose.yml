@@ -503,6 +503,9 @@ services:
     volumes:
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      # SPEC-INFRA-005 Phase 6: textfile collector reads .prom files written
+      # by /opt/klai/scripts/persistence-probe.sh (systemd timer).
+      - /var/lib/node_exporter/textfile_collector:/var/lib/node_exporter/textfile_collector:ro
     command:
       - run
       - --server.http.listen-addr=127.0.0.1:12345

@@ -1,0 +1,15 @@
+[Unit]
+Description=Run klai persistence probe every 10 minutes
+Requires=klai-persistence-probe.service
+
+[Timer]
+# First run 1 minute after boot; then every 10 minutes aligned to the
+# wall-clock minute so metrics land predictably in Grafana panels.
+OnBootSec=1min
+OnUnitActiveSec=10min
+AccuracySec=30s
+Persistent=true
+Unit=klai-persistence-probe.service
+
+[Install]
+WantedBy=timers.target

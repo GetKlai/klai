@@ -1,9 +1,9 @@
 ---
 id: SPEC-INFRA-005
-version: 0.4.0
+version: 0.5.0
 status: in_progress
 created: 2026-04-19
-updated: 2026-04-21
+updated: 2026-04-22
 author: Mark Vletter
 priority: high
 ---
@@ -11,6 +11,10 @@ priority: high
 # SPEC-INFRA-005: Stateful service persistence, backup, and observability hardening
 
 ## HISTORY
+
+### v0.5.0 (2026-04-22)
+- Phase 6 complete (core mechanism). Host-side persistence probe runs every 10 min via systemd timer (`klai-persistence-probe.timer`) → writes `klai_persistence_file_age_seconds{service,path}` gauges to node_exporter's textfile collector → Alloy scrapes them → VictoriaMetrics stores them → two Grafana provisioning rules fire on staleness + missing-file conditions. End-to-end verified on core-01: metric reaches VictoriaMetrics, both rules accepted by Grafana alerting.
+- Per-service threshold tuning is intentionally deferred — the staleness rule starts at 24h (loose, "grondig dood"-canary) and the missing-file rule (`age == -1`) is the sharp 2026-04-19-class detector. After two weeks of real values we'll know what tighter thresholds make sense per service.
 
 ### v0.4.0 (2026-04-21)
 - Phase 3 complete. `deploy/scripts/backup.sh` extended from 6 to 13 data-producing steps. Seven new archives: vexa-redis, Qdrant (per-collection snapshots via API), FalkorDB, Garage meta + data, Firecrawl Postgres, scribe-audio, research-uploads. Live-verified on core-01. Storage Box upload continues to run from the nightly cron as the `klai` user (SSH key is on klai's account, not root — documented in header).

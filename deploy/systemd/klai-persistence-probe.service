@@ -1,0 +1,20 @@
+[Unit]
+Description=Klai persistence probe — export host data-file age as Prometheus metrics (SPEC-INFRA-005 Phase 6)
+Wants=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+# Needs root to read /var/lib/docker/volumes (named-volume mountpoints).
+User=root
+Group=root
+ExecStart=/opt/klai/scripts/persistence-probe.sh
+# Short timeout — this should never take more than a few seconds.
+TimeoutStartSec=60s
+# Don't spam the journal on success.
+StandardOutput=append:/opt/klai/logs/persistence-probe.log
+StandardError=append:/opt/klai/logs/persistence-probe.log
+
+[Install]
+# Not a service that wants to start at boot; triggered by the .timer below.
+WantedBy=multi-user.target
