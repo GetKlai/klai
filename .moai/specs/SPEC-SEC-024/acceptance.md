@@ -176,15 +176,15 @@ handmatige actie.
 
 Alle onderstaande punten zijn AND-gekoppeld:
 
-- [ ] **AC-1** groen — scan bewijst geen `exec_run` in `app/`
-- [ ] **AC-2** groen — non-whitelist API calls geïnventariseerd
-- [ ] **AC-3** groen — elke keep-verb heeft een code-pad rationale
-- [ ] **AC-4** groen — forbidden verbs zijn niet gezet
-- [ ] **AC-5** groen — CI-guard vangt regressie
-- [ ] **AC-6** groen — test-allow-list werkt
-- [ ] **AC-7** groen — smoke-test passeert post-deploy + containers opgeruimd
-- [ ] **AC-8** groen — pitfall-rule bevat "Allowed verbs" sectie
-- [ ] **AC-9** groen — permanente alert-rule + dashboard + e-mail werken end-to-end
+- [x] **AC-1** groen — scan bewijst geen `exec_run` in `app/` (M1 audit, plan.md Tabel A; CI-guard 24729725679 ran ast-grep on `klai-portal/backend/app` and reported zero matches)
+- [x] **AC-2** groen — non-whitelist API calls geïnventariseerd (plan.md Tabel B: 0 hits across `.top/.attach/.export/.diff/.stats/images.build/images.pull/volumes.*` + dynamic dispatch)
+- [x] **AC-3** groen — elke keep-verb heeft een code-pad rationale (plan.md Tabel C: 12 callsites mapped to CONTAINERS/NETWORKS/POST/DELETE)
+- [x] **AC-4** groen — forbidden verbs zijn niet gezet (server-side `docker exec klai-core-docker-socket-proxy-1 env` toonde `EXEC=0 BUILD=0 IMAGES=not-set VOLUMES=not-set SYSTEM=not-set PLUGINS=not-set`)
+- [x] **AC-5** groen — CI-guard vangt regressie (M3 ast-grep step in `.github/workflows/portal-api.yml`, run 24729725679 quality job executed `ast-grep scan -c sgconfig.yml --format github klai-portal/backend/app` and passed)
+- [x] **AC-6** groen — test-allow-list werkt (`rules/no-exec-run.yml` `ignores: klai-portal/backend/tests/**/*.py` — bestaande regressie-guards triggeren CI niet)
+- [x] **AC-7** groen — smoke-test passeert post-deploy + containers opgeruimd (deploy-compose run 24724537783: `[OK] CONTAINERS reachable`, `[OK] NETWORKS reachable`, `[OK] POST reachable`, `[OK] DELETE reachable`, `[OK] EXEC correctly blocked (403)`, `[OK] Throwaway cleanup verified`, `SPEC-SEC-024 smoke-test: PASS`)
+- [x] **AC-8** groen — pitfall-rule bevat "Allowed verbs" sectie (`.claude/rules/klai/platform/docker-socket-proxy.md` "Allowed verbs (per-verb rationale, SPEC-SEC-024)" — 12 keep-rows + forbidden caveat + ast-grep CI-guard cross-reference)
+- [x] **AC-9** groen — permanente alert-rule + dashboard + e-mail werken end-to-end (alert `spec-sec-024-proxy-denials` provisioned, scheduler fired at `2026-04-21T15:14:30Z` op de M4.5 dry-run, alertmanager dispatched naar `klai-dev-alerts-email`, geen "Notify failed" sindsdien — SMTP onafhankelijk geverifieerd via raw `curl smtp://shared199.cloud86-host.io:587` met `235 Authentication successful` + `250 Ok: queued as 0BBE880C17`)
 
 **Schrapt vervangen door fix-forward-strategie**: geen aparte rollback-AC.
 Als een reductie iets breekt, push een nieuwe compose-commit die de verb
