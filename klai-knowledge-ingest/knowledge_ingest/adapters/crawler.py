@@ -15,13 +15,13 @@ if TYPE_CHECKING:
 import httpx
 import structlog
 
+from klai_image_storage import ImageStore, download_and_upload_crawl_images
+
 from knowledge_ingest import pg_store
 from knowledge_ingest.config import settings
 from knowledge_ingest.crawl4ai_client import CrawlResult, crawl_site
 from knowledge_ingest.db import get_pool
 from knowledge_ingest.models import IngestRequest
-from knowledge_ingest.s3_storage import ImageStore
-from knowledge_ingest.sync_images import download_and_upload_crawl_images
 
 logger = structlog.get_logger()
 

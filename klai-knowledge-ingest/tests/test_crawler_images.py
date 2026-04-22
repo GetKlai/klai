@@ -14,8 +14,11 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
-from knowledge_ingest.s3_storage import ImageStore, ImageUploadResult
-from knowledge_ingest.sync_images import download_and_upload_crawl_images
+from klai_image_storage import (
+    ImageStore,
+    ImageUploadResult,
+    download_and_upload_crawl_images,
+)
 
 
 def _png_bytes(payload: bytes = b"one") -> bytes:
