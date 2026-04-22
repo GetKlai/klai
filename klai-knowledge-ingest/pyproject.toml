@@ -19,7 +19,11 @@ dependencies = [
     "structlog>=25.0",
     "scikit-learn>=1.3.0",
     "graphiti-core[falkordb]>=0.28,<0.29",
+    "klai-connector-credentials",
 ]
+
+[tool.uv.sources]
+klai-connector-credentials = { path = "../klai-libs/connector-credentials", editable = true }
 
 [project.optional-dependencies]
 dev = [

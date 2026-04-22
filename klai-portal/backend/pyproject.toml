@@ -21,7 +21,11 @@ dependencies = [
     "structlog>=25.5",
     "redis[hiredis]>=7.4",
     "pyjwt>=2.12",
+    "klai-connector-credentials",
 ]
+
+[tool.uv.sources]
+klai-connector-credentials = { path = "../../klai-libs/connector-credentials", editable = true }
 
 [project.optional-dependencies]
 dev = [

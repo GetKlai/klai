@@ -1,94 +1,117 @@
-"""Tests for ConnectorCredentialStore service.
+"""Re-export smoke tests for connector credential plumbing.
 
-Covers round-trip encrypt/decrypt for each connector type, SENSITIVE_FIELDS
-completeness, DEK generation and reuse, fallback when encrypted_credentials
-is None, invalid key rejection, and tampered ciphertext detection.
+SPEC-CRAWLER-004 Fase 0 moved :class:`ConnectorCredentialStore` and
+:data:`SENSITIVE_FIELDS` into the shared library
+``klai-connector-credentials`` (see ``klai-libs/connector-credentials``). The
+deep lifecycle tests (``SELECT ... FOR UPDATE``, DEK generation, KEK rotation,
+tampered ciphertext) now live in that lib's own pytest suite. This file keeps
+the minimum needed to prove the re-export surface from portal-api stays
+stable:
+
+- The public symbols still resolve via ``app.services.connector_credentials``
+  and ``app.core.security``.
+- The full encrypt/decrypt + stripped-config contract still works for every
+  connector type that portal-api actually writes.
+- ``ConnectorCredentialStore`` still rejects malformed KEKs.
+
+Anything deeper belongs in
+``klai-libs/connector-credentials/tests/test_store.py``.
 """
 
 import os
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from cryptography.exceptions import InvalidTag
 
+from app.core.security import AESGCMCipher
 from app.services.connector_credentials import (
     SENSITIVE_FIELDS,
     ConnectorCredentialStore,
 )
 
-# -- Helpers ------------------------------------------------------------------
-
-# Test-only placeholder values (NOT real credentials)
+# Test-only placeholder values (NOT real credentials).
 FAKE_TOKEN_A = "test-placeholder-token-aaa"
 FAKE_TOKEN_B = "test-placeholder-token-bbb"
 FAKE_TOKEN_C = "test-placeholder-token-ccc"
 
 
-def _make_store(hex_key: str | None = None) -> ConnectorCredentialStore:
-    """Create a ConnectorCredentialStore with a valid or custom key."""
-    if hex_key is None:
-        hex_key = os.urandom(32).hex()
-    return ConnectorCredentialStore(hex_key)
+def _make_store() -> ConnectorCredentialStore:
+    return ConnectorCredentialStore(os.urandom(32).hex())
 
 
-def _make_org_mock(connector_dek_enc: bytes | None = None) -> MagicMock:
-    """Create a mock PortalOrg with optional encrypted DEK."""
-    org = MagicMock()
-    org.connector_dek_enc = connector_dek_enc
-    return org
+class TestReExportWiring:
+    """The shared-lib symbols are reachable via portal-api's historical paths."""
 
+    def test_store_is_shared_lib_class(self) -> None:
+        from connector_credentials.store import (
+            ConnectorCredentialStore as SharedStore,
+        )
 
-# -- SENSITIVE_FIELDS completeness --------------------------------------------
+        assert ConnectorCredentialStore is SharedStore
+
+    def test_cipher_is_shared_lib_class(self) -> None:
+        from connector_credentials.cipher import AESGCMCipher as SharedCipher
+
+        assert AESGCMCipher is SharedCipher
+
+    def test_sensitive_fields_is_shared_lib_mapping(self) -> None:
+        from connector_credentials.store import (
+            SENSITIVE_FIELDS as SHARED_FIELDS,
+        )
+
+        assert SENSITIVE_FIELDS is SHARED_FIELDS
 
 
 class TestSensitiveFieldsMapping:
-    """SENSITIVE_FIELDS covers all connector types with correct field names."""
+    """SENSITIVE_FIELDS covers every connector_type portal-api writes."""
 
     def test_github_fields(self) -> None:
-        assert "access_token" in SENSITIVE_FIELDS["github"]
-        assert "installation_token" in SENSITIVE_FIELDS["github"]
-        assert "app_private_key" in SENSITIVE_FIELDS["github"]
+        assert set(SENSITIVE_FIELDS["github"]) == {
+            "access_token",
+            "installation_token",
+            "app_private_key",
+        }
 
     def test_notion_fields(self) -> None:
-        assert "access_token" in SENSITIVE_FIELDS["notion"]
+        assert SENSITIVE_FIELDS["notion"] == ["access_token"]
 
     def test_google_drive_fields(self) -> None:
-        fields = SENSITIVE_FIELDS["google_drive"]
-        assert "oauth_token" in fields
-        assert "refresh_token" in fields
-        assert "access_token" in fields
+        assert set(SENSITIVE_FIELDS["google_drive"]) == {
+            "oauth_token",
+            "refresh_token",
+            "access_token",
+        }
 
     def test_ms_docs_fields(self) -> None:
-        fields = SENSITIVE_FIELDS["ms_docs"]
-        assert "oauth_token" in fields
-        assert "refresh_token" in fields
-        assert "access_token" in fields
+        assert set(SENSITIVE_FIELDS["ms_docs"]) == {
+            "oauth_token",
+            "refresh_token",
+            "access_token",
+        }
 
     def test_web_crawler_fields(self) -> None:
-        assert "auth_headers" in SENSITIVE_FIELDS["web_crawler"]
-        assert "cookies" in SENSITIVE_FIELDS["web_crawler"]
+        assert set(SENSITIVE_FIELDS["web_crawler"]) == {"auth_headers", "cookies"}
 
     def test_all_connector_types_present(self) -> None:
-        expected_types = {"github", "notion", "google_drive", "ms_docs", "web_crawler"}
-        assert set(SENSITIVE_FIELDS.keys()) == expected_types
-
-
-# -- Round-trip encrypt/decrypt per connector type ----------------------------
+        assert set(SENSITIVE_FIELDS.keys()) == {
+            "github",
+            "notion",
+            "google_drive",
+            "ms_docs",
+            "web_crawler",
+        }
 
 
 class TestEncryptDecryptRoundTrip:
-    """encrypt_credentials + decrypt_credentials round-trip for each type."""
-
-    @pytest.fixture()
-    def store(self) -> ConnectorCredentialStore:
-        return _make_store()
+    """End-to-end round-trip through the portal-api re-export surface."""
 
     @pytest.fixture()
     def db(self) -> AsyncMock:
         return AsyncMock()
 
     @pytest.mark.asyncio()
-    async def test_github_roundtrip(self, store: ConnectorCredentialStore, db: AsyncMock) -> None:
+    async def test_github_roundtrip(self, db: AsyncMock) -> None:
+        store = _make_store()
         config = {
             "repo": "GetKlai/klai",
             "access_token": FAKE_TOKEN_A,
@@ -96,133 +119,68 @@ class TestEncryptDecryptRoundTrip:
             "app_private_key": FAKE_TOKEN_C,
         }
         with patch.object(store, "get_or_create_dek", return_value=os.urandom(32)):
-            encrypted_blob, stripped = await store.encrypt_credentials(
-                org_id=1, connector_type="github", config=config, db=db
-            )
-            # Sensitive fields removed from stripped config
+            blob, stripped = await store.encrypt_credentials(org_id=1, connector_type="github", config=config, db=db)
             assert "access_token" not in stripped
             assert "installation_token" not in stripped
             assert "app_private_key" not in stripped
-            # Non-sensitive fields preserved
             assert stripped["repo"] == "GetKlai/klai"
 
-            # Decrypt round-trip
-            decrypted = await store.decrypt_credentials(org_id=1, encrypted_credentials=encrypted_blob, db=db)
+            assert blob is not None
+            decrypted = await store.decrypt_credentials(org_id=1, encrypted_credentials=blob, db=db)
             assert decrypted["access_token"] == FAKE_TOKEN_A
             assert decrypted["installation_token"] == FAKE_TOKEN_B
             assert decrypted["app_private_key"] == FAKE_TOKEN_C
 
     @pytest.mark.asyncio()
-    async def test_notion_roundtrip(self, store: ConnectorCredentialStore, db: AsyncMock) -> None:
+    async def test_notion_roundtrip(self, db: AsyncMock) -> None:
+        store = _make_store()
         config = {"workspace_id": "ws-123", "access_token": FAKE_TOKEN_A}
         with patch.object(store, "get_or_create_dek", return_value=os.urandom(32)):
-            encrypted_blob, stripped = await store.encrypt_credentials(
-                org_id=1, connector_type="notion", config=config, db=db
-            )
+            blob, stripped = await store.encrypt_credentials(org_id=1, connector_type="notion", config=config, db=db)
             assert "access_token" not in stripped
             assert stripped["workspace_id"] == "ws-123"
-            decrypted = await store.decrypt_credentials(org_id=1, encrypted_credentials=encrypted_blob, db=db)
+            assert blob is not None
+            decrypted = await store.decrypt_credentials(org_id=1, encrypted_credentials=blob, db=db)
             assert decrypted["access_token"] == FAKE_TOKEN_A
 
     @pytest.mark.asyncio()
-    async def test_web_crawler_roundtrip(self, store: ConnectorCredentialStore, db: AsyncMock) -> None:
+    async def test_web_crawler_roundtrip(self, db: AsyncMock) -> None:
+        store = _make_store()
         config = {"url": "https://example.com", "auth_headers": FAKE_TOKEN_A}
         with patch.object(store, "get_or_create_dek", return_value=os.urandom(32)):
-            encrypted_blob, stripped = await store.encrypt_credentials(
+            blob, stripped = await store.encrypt_credentials(
                 org_id=1, connector_type="web_crawler", config=config, db=db
             )
             assert "auth_headers" not in stripped
             assert stripped["url"] == "https://example.com"
-            decrypted = await store.decrypt_credentials(org_id=1, encrypted_credentials=encrypted_blob, db=db)
+            assert blob is not None
+            decrypted = await store.decrypt_credentials(org_id=1, encrypted_credentials=blob, db=db)
             assert decrypted["auth_headers"] == FAKE_TOKEN_A
 
     @pytest.mark.asyncio()
-    async def test_unknown_connector_type_no_sensitive_fields(
-        self, store: ConnectorCredentialStore, db: AsyncMock
-    ) -> None:
-        """Unknown connector type: nothing gets encrypted, blob is empty."""
+    async def test_unknown_connector_type_no_sensitive_fields(self, db: AsyncMock) -> None:
+        """Unknown connector type: nothing gets encrypted, blob is None."""
+        store = _make_store()
         config = {"url": "https://example.com", "key": "value"}
         with patch.object(store, "get_or_create_dek", return_value=os.urandom(32)):
-            encrypted_blob, stripped = await store.encrypt_credentials(
+            blob, stripped = await store.encrypt_credentials(
                 org_id=1, connector_type="unknown_type", config=config, db=db
             )
-            # No sensitive fields for unknown type: nothing encrypted
-            assert encrypted_blob is None
+            assert blob is None
             assert stripped == config
 
 
-# -- DEK generation and reuse -------------------------------------------------
-
-
-class TestDEKLifecycle:
-    """DEK is generated once per org and reused on subsequent calls."""
-
-    @pytest.mark.asyncio()
-    async def test_generates_new_dek_when_none_exists(self) -> None:
-        store = _make_store()
-        org = _make_org_mock(connector_dek_enc=None)
-        db = AsyncMock()
-        # Mock db.execute().scalar_one_or_none() chain (SELECT ... FOR UPDATE)
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = org
-        db.execute = AsyncMock(return_value=mock_result)
-        dek = await store.get_or_create_dek(org_id=1, db=db)
-        assert isinstance(dek, bytes)
-        assert len(dek) == 32
-        # DEK should have been encrypted and stored on org
-        assert org.connector_dek_enc is not None
-
-    @pytest.mark.asyncio()
-    async def test_reuses_existing_dek(self) -> None:
-        store = _make_store()
-        # Pre-encrypt a DEK using the store's own KEK
-        raw_dek = os.urandom(32)
-        encrypted_dek = store._kek_cipher.encrypt(raw_dek.hex())
-        org = _make_org_mock(connector_dek_enc=encrypted_dek)
-        db = AsyncMock()
-        # Mock db.execute().scalar_one_or_none() chain (SELECT ... FOR UPDATE)
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = org
-        db.execute = AsyncMock(return_value=mock_result)
-        dek = await store.get_or_create_dek(org_id=1, db=db)
-        assert dek == raw_dek
-
-
-# -- Invalid key rejection ----------------------------------------------------
-
-
 class TestInvalidKeyRejection:
-    """ConnectorCredentialStore rejects invalid encryption keys."""
+    """ConnectorCredentialStore rejects malformed encryption keys at construction time."""
 
     def test_short_hex_key_rejected(self) -> None:
-        with pytest.raises(ValueError):
-            ConnectorCredentialStore("abcd")  # too short
+        with pytest.raises(ValueError, match="64-character"):
+            ConnectorCredentialStore("abcd")
 
     def test_non_hex_key_rejected(self) -> None:
-        with pytest.raises(ValueError):
-            ConnectorCredentialStore("g" * 64)  # not valid hex
+        with pytest.raises(ValueError, match="hex"):
+            ConnectorCredentialStore("g" * 64)
 
     def test_odd_length_hex_rejected(self) -> None:
-        with pytest.raises(ValueError):
-            ConnectorCredentialStore("a" * 63)  # odd length
-
-
-# -- Tampered ciphertext detection --------------------------------------------
-
-
-class TestTamperedCiphertextDetection:
-    """Tampered encrypted_credentials must raise InvalidTag."""
-
-    @pytest.mark.asyncio()
-    async def test_tampered_blob_raises_invalid_tag(self) -> None:
-        store = _make_store()
-        db = AsyncMock()
-        config = {"access_token": FAKE_TOKEN_A}
-        dek = os.urandom(32)
-        with patch.object(store, "get_or_create_dek", return_value=dek):
-            encrypted_blob, _ = await store.encrypt_credentials(org_id=1, connector_type="github", config=config, db=db)
-            # Tamper with the blob
-            tampered = bytearray(encrypted_blob)
-            tampered[-1] ^= 0xFF
-            with pytest.raises(InvalidTag):
-                await store.decrypt_credentials(org_id=1, encrypted_credentials=bytes(tampered), db=db)
+        with pytest.raises(ValueError, match="64-character"):
+            ConnectorCredentialStore("a" * 63)

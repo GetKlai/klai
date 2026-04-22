@@ -5,11 +5,13 @@ on:
     branches: [main]
     paths:
       - 'klai-portal/backend/**'
+      - 'klai-libs/connector-credentials/**'
       - '.github/workflows/portal-api.yml'
   pull_request:
     branches: [main]
     paths:
       - 'klai-portal/backend/**'
+      - 'klai-libs/connector-credentials/**'
       - '.github/workflows/portal-api.yml'
 
 permissions:
@@ -261,7 +263,10 @@ jobs:
       - name: Build and push portal-api
         uses: docker/build-push-action@v7
         with:
-          context: ./klai-portal/backend
+          # SPEC-CRAWLER-004 Fase 0: build from repo root so the Dockerfile can
+          # COPY the shared klai-libs/connector-credentials path dep.
+          context: .
+          file: klai-portal/backend/Dockerfile
           push: true
           tags: |
             ghcr.io/getklai/portal-api:latest
