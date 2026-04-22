@@ -1,5 +1,77 @@
 # Changelog
 
+## [Unreleased] — 2026-04-22 — SPEC-INFRA-005: Stateful service persistence hardening
+
+Triggered by the 2026-04-19 FalkorDB graph data loss incident
+(`docs/runbooks/post-mortems/2026-04-19-falkordb-graph-loss.md`). Closes the
+class of bug where a stateful service silently writes to its container's
+ephemeral layer because the compose mount target does not match the image's
+actual data path.
+
+### Added
+
+- **`deploy/volume-mounts.yaml`** — single source of truth for every RW bind
+  or named-volume mount in `docker-compose.yml` (28 entries). Each entry
+  carries image, container path, backup method, retention rule, PII flag.
+- **`scripts/audit-compose-volumes.sh`** + GitHub Action — pre-merge guard
+  that fails any PR introducing a mount mismatch or an unregistered volume.
+  Backed by `scripts/test-audit-compose.sh` with 4 scenarios (baseline plus
+  three regression patterns) so the audit cannot itself silently break.
+- **`deploy/scripts/persistence-smoke.sh`** — post-deploy proof that each
+  stateful service's writes actually land on the host volume (not on the
+  container's writable layer). Five services: falkordb, redis, postgres,
+  qdrant, garage. Wired into `docs/runbooks/version-management.md` §3.3
+  step 7 + §3.4 step 6.
+- **`deploy/scripts/persistence-probe.sh`** + systemd timer + Alloy textfile
+  collector — exports `klai_persistence_file_age_seconds{service,path}` to
+  VictoriaMetrics every 10 minutes. Two Grafana alert rules
+  (`persistence-rules.yaml`): "stale" (24h loose default, tighten per-service
+  after baseline emerges) and "missing" (`age == -1`, the sharp 2026-04-19
+  detector — fires when the host file simply isn't there).
+- **`scripts/backup.sh` extension** — went from 6 to 13 data steps.
+  New: vexa-redis, Qdrant per-collection snapshots via API, FalkorDB,
+  Garage meta-snapshot + data-blob rsync, scribe-audio, research-uploads,
+  Firecrawl postgres. All age-encrypted to the existing Hetzner Storage
+  Box rsync target.
+- **Healthchecks** for falkordb, gitea, grafana, victoriametrics, victorialogs.
+  Last few stateful services on the stack without one. Ollama remains
+  distroless; covered by Uptime Kuma `push_exec`.
+- **Stateful service change checklist** — new §11 in `version-management.md`
+  with 7 mandatory checks for any PR touching a stateful service.
+- **Pitfall §7.10 — "Bind mount path must match the image's data path"** —
+  full narrative of the FalkorDB incident with the prevention command.
+
+### Fixed
+
+- **FalkorDB compose mount** — `/opt/klai/falkordb-data:/data` →
+  `/opt/klai/falkordb-data:/var/lib/falkordb/data`. Previous mount was
+  cosmetic; persistence had been a lie since 2026-03-26.
+- **Scribe audio retention** — `delete_when_transcribed` was the stated
+  policy but only the user-initiated DELETE endpoint actually unlinked
+  the file. The success path of POST /v1/transcribe and /retry now calls
+  `audio_storage.finalize_success()`. New helper module
+  `klai-scribe/scribe-api/app/services/audio_storage.py` with 6
+  regression tests. Production orphan from 2026-04-10 cleaned up.
+- **Research-uploads retention** — implemented event-driven policy decided
+  by product owner: file deleted when source is removed, when notebook is
+  removed, OR when tenant is decommissioned. New
+  `klai-focus/research-api/app/services/upload_storage.py` helper centralises
+  all three triggers with path-traversal guards + idempotent semantics. 13
+  regression tests. Closes pre-existing orphan-files bug in `delete_notebook`
+  (Postgres+Qdrant rows were dropped but PDFs remained on disk forever).
+  Manual ops CLI `scripts/research_tenant_cleanup.py` for trigger 3 until
+  portal-api gains automatic tenant teardown.
+
+### Operational notes
+
+- Backup cron continues to run nightly at 02:00 as the `klai` user; manual
+  backup runs MUST also use `sudo -u klai`, not plain `sudo` — root has no
+  Storage Box SSH key (now documented in `backup.sh` header).
+- Phase 6 staleness threshold starts at 24h for every service. Per-service
+  tuning is a follow-up after ~2 weeks of real metric data.
+
+---
+
 ## [Unreleased] — 2026-04-17 — SPEC-WIDGET-002: Split API Keys and Chat Widgets
 
 ### Added — SPEC-WIDGET-002: Independent API keys and Chat widgets domains
