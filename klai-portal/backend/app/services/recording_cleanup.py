@@ -14,7 +14,7 @@ import structlog
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import AsyncSessionLocal, tenant_scoped_session
+from app.core.database import cross_org_session, tenant_scoped_session
 from app.models.meetings import VexaMeeting
 from app.services.vexa import vexa
 
@@ -124,7 +124,13 @@ async def recording_cleanup_loop() -> None:
     await asyncio.sleep(60)  # let the app finish starting
     while True:
         try:
-            async with AsyncSessionLocal() as db:
+            # Cross-org scan: the cleanup loop sees stale recordings across
+            # every tenant in one pass. Uses `cross_org_session` (explicit
+            # app.cross_org_admin bypass) so the SELECT is not blocked by
+            # vexa_meetings' tenant-scoped RLS policy. The per-meeting UPDATE
+            # still runs inside `tenant_scoped_session(meeting.org_id)` (see
+            # cleanup_recording), so isolation is preserved for mutations.
+            async with cross_org_session() as db:
                 cutoff = datetime.now(UTC) - timedelta(minutes=CLEANUP_AGE_MINUTES)
                 result = await db.execute(
                     select(VexaMeeting).where(
