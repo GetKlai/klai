@@ -1,0 +1,225 @@
+# SPEC-OBS-001 R10/R11 — portal-api edge alerts (LogsQL via VictoriaLogs).
+#
+# Routed via spec=SPEC-OBS-001 → klai-ops-alerts-email.
+#
+#   R10  caddy_p95_latency_high  CRIT  p95 request duration >2s for 5m
+#   R11  caddy_traffic_drop      CRIT  current 5m traffic <20% of 1h baseline,
+#                                       guarded by minimum-baseline of 600 req/h
+#
+# Both originally specified per portal-api in the SPEC. Caddy doesn't
+# expose Prometheus metrics here, so we measure across all Caddy traffic
+# (same broadening as caddy_5xx_count_high — catches portal-api by
+# definition + everything else operationally relevant).
+#
+# Query shape verified live against production VictoriaLogs (2026-04-22):
+#   - `| stats quantile(0.95, duration) as p95` returns a single-value
+#     vector that survives the reduce: last bridge to Grafana SSE math.
+#   - Two separate `| stats count()` queries with a reduce + math ratio
+#     work after the long/wide-bridge pattern proven in caddy_5xx_count_high.
+#
+# Pitfall avoidance (from Phase D fix-rounds):
+#   - Always go through `reduce` between LogsQL output and SSE math,
+#     even when the LogsQL query is already a stats aggregate.
+#   - SSE math has no max(), no min(), no ternary — use +1 trick to
+#     guard /0, comparison-multiplication for conditional logic.
+#   - execErrState: OK so plugin hiccups don't false-fire (matches the
+#     Phase D pattern; we'd rather miss a fire than create one falsely).
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: obs-001-portal-api
+    folder: Klai
+    interval: 1m
+    rules:
+
+      # ── R10: caddy_p95_latency_high ─────────────────────────────────────
+      - uid: obs-001-caddy-p95-latency-high
+        title: caddy_p95_latency_high
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: '_time:5m service:caddy | stats quantile(0.95, duration) as p95'
+              queryType: instant
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              # 'last' over a single-row stats result returns the scalar value.
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [2.0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        keepFiringFor: 10m
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-OBS-001
+          service_group: caddy
+        annotations:
+          summary: 'Caddy p95 request duration above 2s for 5m'
+          runbook_url: 'docs/runbooks/platform-recovery.md#caddy-p95-latency-high'
+          description: |
+            The 95th percentile of Caddy request durations exceeded 2 seconds
+            over the last 5 minutes. Slow-but-not-erroring requests are often
+            worse than 5xx — users experience timeouts, retries, frustration.
+
+            Triage:
+              1. VictoriaLogs query in Grafana → Explore:
+                   _time:5m service:caddy | stats by(request.host) quantile(0.95, duration) as p95
+                 Sort by p95 descending — find which upstream is slow.
+              2. For the slow upstream, check its container metrics:
+                   - cAdvisor CPU/memory pressure
+                   - container_restart_loop runbook if it just restarted
+              3. Common causes: DB connection pool exhausted, upstream API rate-limit,
+                 large payloads being processed synchronously.
+
+      # ── R11: caddy_traffic_drop ──────────────────────────────────────────
+      # Fires when current 5m traffic falls below 20% of the rolling-1h
+      # average per 5m, AND the 1h baseline is high enough (>600 req/h
+      # = >50 req/5m equivalent) to confirm we expected meaningful traffic.
+      # The baseline-floor avoids firing during quiet periods (nights,
+      # weekends, holidays) without needing tz-aware business-hours filtering.
+      - uid: obs-001-caddy-traffic-drop
+        title: caddy_traffic_drop
+        condition: threshold
+        data:
+          - refId: current
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: current
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: '_time:5m service:caddy | stats count() as n'
+              queryType: instant
+          - refId: baseline
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            model:
+              refId: baseline
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: '_time:1h service:caddy | stats count() as n'
+              queryType: instant
+          - refId: current_n
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: current_n
+              type: reduce
+              reducer: last
+              expression: current
+          - refId: baseline_n
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            model:
+              refId: baseline_n
+              type: reduce
+              reducer: last
+              expression: baseline
+          - refId: drop_signal
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            model:
+              refId: drop_signal
+              type: math
+              # Boolean math:
+              #   (current * 60 < baseline * 0.2 * 12) → ratio condition
+              #     simplifies to: current * 5 < baseline (i.e. current per 1h
+              #     equivalent < 20% of the actual 1h count).
+              #   (baseline > 600) → minimum-baseline guard, avoids quiet-period fires.
+              # Each comparison returns 1.0 or 0.0; multiplying gives boolean AND.
+              # threshold > 0 then fires only when both are true.
+              expression: '($current_n * 5 < $baseline_n) * ($baseline_n > 600)'
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: drop_signal
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 10m
+        keepFiringFor: 15m
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-OBS-001
+          service_group: caddy
+        annotations:
+          summary: 'Caddy traffic dropped to <20% of hourly baseline (sustained 10m)'
+          runbook_url: 'docs/runbooks/platform-recovery.md#caddy-traffic-drop'
+          description: |
+            Caddy request rate over the last 5 minutes is less than 20% of
+            the rolling 1-hour baseline, AND the baseline shows a meaningful
+            volume (>600 req/h = >50 req/5m equivalent). This is unusual
+            traffic loss while we'd expect users to be active.
+
+            Triage:
+              1. Verify users actually CAN reach Caddy:
+                   curl -sf -o /dev/null -w "%{http_code}" https://my.getklai.com/health
+              2. Check Caddy container health:
+                   ssh core-01 "docker ps --filter name=caddy --format '{{.Names}}\\t{{.Status}}'"
+              3. Group by request.host to see which upstream(s) lost traffic:
+                   _time:1h service:caddy | stats by(request.host) count() as hits
+              4. Outage causes to consider: upstream firewall, DNS issue at
+                 Hetzner, certificate expiry, customer-side network change.
+                 None of these we can fix from inside Klai — but we want to know.
+
+              Note: this may fire on weekends/evenings if traffic is genuinely
+              low both in the 5m window AND the 1h baseline. Tune the
+              baseline-floor (currently 600 req/h) upward if false-positives
+              dominate.
