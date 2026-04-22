@@ -5,6 +5,40 @@ paths:
 ---
 # Knowledge Domain Patterns
 
+## Graph-first, content-second for bulk crawls (HIGH)
+
+When a graph-lookup feeds the payload of a per-row write, build the whole graph BEFORE
+the first row is written. Never interleave graph upserts with per-row ingest when the
+ingest reads from that graph.
+
+**Why:** `run_crawl_job` originally upserted each page's `knowledge.page_links` row
+inside `_ingest_crawl_result`. The first page processed saw an empty graph, so
+`link_graph.get_anchor_texts(P)` returned `[]`, and since Qdrant strips empty-list keys
+on upsert, `anchor_texts` was silently absent for the first N pages. A post-crawl
+`compute_incoming_counts + update_link_counts` pass tried to patch it up with a second
+write, but that races with Procrastinate enrichment (which deletes + re-inserts chunks
+from `extra_payload`) and the repair work gets thrown away. Net result on the Voys
+support smoketest: 0 of 167 crawl chunks had `anchor_texts` or `links_to`. Cost: an
+entire SPEC (SPEC-CRAWLER-005) to untangle.
+
+**Prevention:** Two-phase `run_crawl_job` — `_build_link_graph(results, ...)` first,
+per-page ingest second. Think of graph state as an invariant that must hold before
+any row that reads from it gets processed. See
+`knowledge_ingest/adapters/crawler.py` and
+`docs/architecture/knowledge-ingest-flow.md` § Part 2.
+
+## Qdrant empty-list == absent (MED)
+
+Qdrant strips empty-list payload keys (`[]`) on upsert. A page with no inbound links
+has `anchor_texts` *absent* from its stored payload — not `[]`. Any reader that
+checks `payload["anchor_texts"]` crashes; any reader that reads without a default
+sees `None`. Both shapes mean the same thing.
+
+**Prevention:** Every retrieval-api reader of list-shaped payload keys goes through
+`retrieval_api/util/payload.py::payload_list(payload, key)` which returns `[]` for
+key-absent, `None`, and non-list values. Matches the storage contract. SPEC-CRAWLER-005
+REQ-04.
+
 ## crawl4ai DOM selectors
 - Never use `[class*="sidebar"]` or other substring CSS selectors in JS removal scripts.
 - Use only semantic element selectors (`nav`, `header`, `aside`) and ARIA roles.
