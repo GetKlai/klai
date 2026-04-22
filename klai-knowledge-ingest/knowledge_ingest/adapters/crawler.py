@@ -7,6 +7,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import asyncpg
 
 import httpx
 import structlog
@@ -57,6 +61,43 @@ def _build_image_store() -> ImageStore | None:
         bucket=settings.garage_bucket,
         region=settings.garage_region,
     )
+
+
+# @MX:ANCHOR: [AUTO] _build_link_graph — Phase 1 ordering contract with Phase 2
+# @MX:REASON: page_links rows must exist before per-page link_graph queries run in
+#   _ingest_crawl_result. Any caller that moves or removes this call breaks the
+#   guarantee that get_anchor_texts() and get_incoming_count() return final values.
+# @MX:SPEC: SPEC-CRAWLER-005 REQ-01.2
+async def _build_link_graph(
+    results: list[CrawlResult],
+    org_id: str,
+    kb_slug: str,
+    pool: asyncpg.Pool,
+) -> None:
+    """Phase 1 of the two-phase crawl pipeline: upsert every page's
+    outbound links BEFORE any page is ingested. This guarantees that
+    ``link_graph.get_anchor_texts(P)`` and ``get_incoming_count(P)`` return
+    final values during Phase 2, even for pages processed early.
+
+    SPEC-CRAWLER-005 REQ-01.2.
+
+    Idempotent: pg_store.upsert_page_links uses ON CONFLICT UPSERT.
+    Failed crawl results (success=False) are skipped — they have no
+    trustworthy links.
+    """
+    for result in results:
+        if not result.success:
+            continue
+        internal = (result.links or {}).get("internal") or []
+        if not internal:
+            continue
+        await pg_store.upsert_page_links(
+            org_id=org_id,
+            kb_slug=kb_slug,
+            from_url=result.url,
+            links=internal,
+        )
+
 
 _UNSET = object()  # sentinel: stored_hash not yet fetched from DB
 
@@ -122,6 +163,10 @@ async def run_crawl_job(
             len(results), int(time.time()), job_id,
         )
 
+        # SPEC-CRAWLER-005 Fase 1: build link graph BEFORE per-page ingest so
+        # late pages don't read an empty graph. REQ-01.1.
+        await _build_link_graph(results, org_id, kb_slug, pool)
+
         # Batch-fetch all known content hashes in a single query
         urls = [r.url for r in results]
         known_hashes = await pg_store.get_crawled_page_hashes(org_id, kb_slug, urls)
@@ -154,22 +199,6 @@ async def run_crawl_job(
                 "UPDATE knowledge.crawl_jobs SET pages_done=$1, updated_at=$2 WHERE id=$3",
                 pages_done, int(time.time()), job_id,
             )
-
-        # SPEC-CRAWLER-003 R12: batch-update incoming link counts after full crawl
-        try:
-            from knowledge_ingest import (
-                link_graph,
-                qdrant_store,
-            )
-
-            url_to_count = await link_graph.compute_incoming_counts(org_id, kb_slug, pool)
-            if url_to_count:
-                await qdrant_store.update_link_counts(org_id, kb_slug, url_to_count)
-                logger.info(
-                    "link_counts_updated", job_id=job_id, count=len(url_to_count)
-                )
-        except Exception as exc:
-            logger.warning("link_counts_update_failed", job_id=job_id, error=str(exc))
 
         await _update_job(job_id, status="completed")
         logger.info(
@@ -255,16 +284,6 @@ async def _ingest_crawl_result(
             )
             logger.info("crawl_skipped_html_noise", url=url, org_id=org_id, kb_slug=kb_slug)
             return
-
-    if result.links:
-        internal_links = result.links.get("internal", [])
-        if internal_links:
-            await pg_store.upsert_page_links(
-                org_id=org_id,
-                kb_slug=kb_slug,
-                from_url=url,
-                links=internal_links,
-            )
 
     extra: dict = {"source_url": url, "crawled_at": int(time.time())}
     if is_pdf and front_matter:
