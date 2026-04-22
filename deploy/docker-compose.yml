@@ -7,7 +7,7 @@ networks:
   socket-proxy:
     driver: bridge
     name: klai-socket-proxy
-    internal: true   # portal-api and runtime-api <-> docker-socket-proxy
+    internal: true   # portal-api + runtime-api-socket-proxy (socat) <-> docker-socket-proxy
   inference:
     driver: bridge
     name: klai-inference
@@ -55,6 +55,7 @@ volumes:
   vexa-recordings-data:
   vexa-redis-data:
   scribe-audio-data:
+  runtime-api-docker-socket:   # SPEC-SEC-021 socat bridge socket (runtime-api <-> docker-socket-proxy)
 
 # Default log rotation — prevents unbounded disk growth on json-file driver.
 # Alloy captures logs in real-time via Docker socket, so rotated logs are only
@@ -928,6 +929,32 @@ services:
       retries: 3
       start_period: 60s
 
+  # ─── socat bridge: exposes docker-socket-proxy's TCP as a Unix socket ─────
+  # SPEC-SEC-021 — Vexa runtime-api uses requests_unixsocket and cannot speak
+  # TCP directly. This sidecar bridges the gap: it listens on a Unix socket
+  # (shared via named volume with runtime-api) and forwards every byte to
+  # docker-socket-proxy:2375, which enforces the CONTAINERS/NETWORKS/POST/DELETE
+  # whitelist. Runtime-api never sees the real host docker socket.
+  runtime-api-socket-proxy:
+    image: alpine/socat:1.7.3.4-r1
+    restart: unless-stopped
+    command: >
+      UNIX-LISTEN:/var/run/docker.sock,fork,reuseaddr,unlink-early,mode=0660,user=999,group=999
+      TCP:docker-socket-proxy:2375
+    volumes:
+      - runtime-api-docker-socket:/var/run   # shared with runtime-api
+    depends_on:
+      docker-socket-proxy:
+        condition: service_started
+    networks:
+      - socket-proxy
+    deploy:
+      resources:
+        limits:
+          memory: 32M
+    security_opt:
+      - no-new-privileges:true
+
   # ─── Vexa runtime-api (Docker-socket bot orchestrator) ──────────────────
   runtime-api:
     image: vexaai/runtime-api:0.10.0-260419-1129
@@ -952,21 +979,24 @@ services:
       PROFILES_PATH: /app/profiles.yaml
       ALLOW_PRIVATE_CALLBACKS: "1"
       LOG_LEVEL: INFO
-      DOCKER_HOST: tcp://docker-socket-proxy:2375  # SEC-021: no direct socket mount
+      # SPEC-SEC-021: no direct /var/run/docker.sock mount.
+      # runtime-api's requests_unixsocket cannot speak TCP, so the socat sidecar
+      # (runtime-api-socket-proxy) creates a Unix socket in the shared named
+      # volume that forwards to docker-socket-proxy:2375.
     volumes:
       - ./vexa/profiles.yaml:/app/profiles.yaml:ro
+      - runtime-api-docker-socket:/var/run   # socat-provided docker.sock
     init: true
     depends_on:
       vexa-redis:
         condition: service_healthy
       postgres:
         condition: service_healthy
-      docker-socket-proxy:
+      runtime-api-socket-proxy:
         condition: service_started
     networks:
       - vexa-bots
       - net-postgres
-      - socket-proxy
     deploy:
       resources:
         limits:
