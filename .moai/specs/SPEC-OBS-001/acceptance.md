@@ -1,7 +1,7 @@
 ---
 id: SPEC-OBS-001
-version: 0.2.1
-status: draft
+version: 0.2.2
+status: implemented
 created: 2026-04-19
 updated: 2026-04-22
 author: Mark Vletter

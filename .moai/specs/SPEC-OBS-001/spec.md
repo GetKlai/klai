@@ -1,7 +1,7 @@
 ---
 id: SPEC-OBS-001
-version: 0.2.1
-status: draft
+version: 0.2.2
+status: implemented
 created: 2026-04-19
 updated: 2026-04-22
 author: Mark Vletter
@@ -12,6 +12,46 @@ issue_number: null
 # SPEC-OBS-001: Alerting-infrastructuur voor Klai (Grafana Unified Alerting + email)
 
 ## HISTORY
+
+### v0.2.2 (2026-04-22) — IMPLEMENTED
+
+Status moved from `draft` → `implemented`. All 19 EARS requirements (R1–R24
+modulo R6/R27–R29 deferred in v0.2.0 shadow-rollout schrap) landed in
+production on core-01 across commits:
+
+- `fa978980` Phase A+B — klai-ops-alerts-email contact point, CI guardrails
+- `433410ae` Phase A hot-fix — defer heartbeat-kuma to Phase E
+- `441dfc31` deploy-compose conditional force-recreate on provisioning change
+- `f3e665a1` Phase C — infra alerts (container_down, restart_loop, disk)
+- `db8d1f68` Phase D — LogsQL alerts (caddy 5xx, FLUSHALL, ingest errors)
+- `168d0ca8` / `b23ed6a0` / `7e273c60` / `c93c8762` / `b827af1b` / `adf54a1a` — caddy
+  ratio-to-count pivot after 5 iterations proving Grafana SSE math limits
+- `477a8667` caddy_traffic_drop description template-escape fix
+- `98307f87` / `3be99abc` / `f73fe0c5` / `3f5f25f5` Phase E — heartbeat rule +
+  contact point + Kuma push monitor + SMTP + tuning
+- `20be47cd` Phase F — landed previously-deferred R10 / R11 / R15
+- `e08c983f` Phase G — cleanup (execErrState consistency, container_down
+  for: 2m → 5m, subject template default, orphan rule removal, regression
+  tests, Kuma DR setup, maxretries bump, PEM regex bug-fix)
+
+klai-infra:
+- `218939e` SOPS — ALERTS_EMAIL_RECIPIENTS
+- `6a06fed` SOPS — KUMA_HEARTBEAT_URL
+- `6d8693e` public-01 Kuma setup SQL (DR)
+
+Live state on core-01 (verified `docker exec klai-core-grafana-1 ... /api/prometheus/grafana/api/v1/rules`):
+- 10/10 OBS-001 rules provisioned and `health: ok`
+- CI `Alerting provisioning checks` green (audit + verify + regression-tests)
+- Heartbeat cadence: ~3min push to Uptime Kuma, ~15min tolerance window
+
+Known remaining gap (out-of-scope for this SPEC, follow-up planned):
+
+- **Cloud86 SMTP single point of failure**. Grafana ops-alerts AND Kuma
+  dead-man's-switch both send via the same Cloud86 account. A Cloud86
+  outage knocks out both notification paths. Fixing requires a second
+  SMTP provider — deferred to a follow-up SPEC.
+
+### v0.2.1 (2026-04-22)
 
 ### v0.2.1 (2026-04-22)
 
