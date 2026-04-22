@@ -7,10 +7,14 @@
 # Defined here:
 #   - klai-dev-alerts-email  — SEC-024-R13: security/dev alerts (proxy denials, etc.)
 #   - klai-ops-alerts-email  — OBS-001-R4:  operational alerts (golden signals, infra)
-#   - heartbeat-kuma         — OBS-001-R22: webhook to Uptime Kuma for dead-man's-switch
 #
 # Both email contacts use the same SMTP backend but separate receivers so the
 # ops and security ontvangerslijsten can later diverge without rule changes.
+#
+# heartbeat-kuma (OBS-001-R22) is added in OBS-001 Phase E together with
+# the heartbeat rule + KUMA_HEARTBEAT_URL SOPS value + Uptime Kuma config.
+# Adding it here without the SOPS value puts Grafana in restart-loop
+# (validation: webhook needs non-empty url).
 
 apiVersion: 1
 
@@ -66,13 +70,3 @@ contactPoints:
             Dashboard: {{ .GeneratorURL }}
             {{- end }}
         disableResolveMessage: false
-
-  - orgId: 1
-    name: heartbeat-kuma
-    receivers:
-      - uid: heartbeat-kuma-push
-        type: webhook
-        settings:
-          url: ${KUMA_HEARTBEAT_URL}
-          httpMethod: GET
-        disableResolveMessage: true
