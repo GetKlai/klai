@@ -202,3 +202,52 @@ class TestTriggerSyncItemQuota:
         assert result is fake_sync_run
         # Complete plan skips the count query entirely
         mock_count.assert_not_awaited()
+
+
+class TestConnectorCapabilityGate:
+    """Connector endpoints require kb.connectors capability (R-X2, AC-3).
+
+    Tests that the require_capability("kb.connectors") dependency on the
+    router rejects core-plan users before any business logic runs.
+    """
+
+    @pytest.mark.asyncio
+    async def test_core_user_cannot_list_connectors(self) -> None:
+        """GET /connectors → 403 capability_required for core-plan user."""
+        from app.api.connectors import list_connectors  # type: ignore[attr-defined]
+        from app.api.dependencies import require_capability
+
+        mock_db = AsyncMock()
+        mock_org = MagicMock()
+        mock_org.plan = "core"
+        mock_user = MagicMock()
+        mock_user.role = "member"
+        mock_result = MagicMock()
+        mock_result.one_or_none.return_value = (mock_user, mock_org)
+        mock_db.execute.return_value = mock_result
+
+        dep = require_capability("kb.connectors")
+        with pytest.raises(HTTPException) as exc_info:
+            await dep(user_id="user-core", db=mock_db)
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail["error_code"] == "capability_required"
+        assert exc_info.value.detail["capability"] == "kb.connectors"
+
+    @pytest.mark.asyncio
+    async def test_admin_bypasses_kb_connectors_capability(self) -> None:
+        """Admin users bypass capability checks (always get complete-tier)."""
+        from app.api.dependencies import require_capability
+
+        mock_db = AsyncMock()
+        mock_org = MagicMock()
+        mock_org.plan = "core"
+        mock_user = MagicMock()
+        mock_user.role = "admin"
+        mock_result = MagicMock()
+        mock_result.one_or_none.return_value = (mock_user, mock_org)
+        mock_db.execute.return_value = mock_result
+
+        dep = require_capability("kb.connectors")
+        # Admin on core plan: should NOT raise
+        await dep(user_id="admin-user", db=mock_db)

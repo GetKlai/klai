@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _get_caller_org, bearer
+from app.api.dependencies import _get_caller_org, bearer, require_capability
 from app.core.database import get_db
 from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
@@ -60,6 +60,8 @@ async def _auto_fill_canary_fingerprint(config: dict) -> dict:
 router = APIRouter(
     prefix="/api/app/knowledge-bases/{kb_slug}/connectors",
     tags=["connectors"],
+    # R-X2 / AC-3: all connector endpoints require the kb.connectors capability.
+    dependencies=[Depends(require_capability("kb.connectors"))],
 )
 
 # -- Webcrawler config schema (SPEC-CRAWL-003) --------------------------------

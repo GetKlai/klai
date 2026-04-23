@@ -169,6 +169,112 @@ class TestGetEffectiveCapabilities:
         assert caps == set()
 
 
+class TestRequireCapability:
+    """require_capability dependency raises 403 when caller lacks the capability.
+
+    SPEC-PORTAL-UNIFY-KB-001 R-X2, AC-3.
+    """
+
+    def _make_db_with_user(self, plan: str, role: str = "member") -> AsyncMock:
+        mock_db = _make_db_mock()
+        mock_org = MagicMock()
+        mock_org.plan = plan
+        mock_user = MagicMock()
+        mock_user.role = role
+        mock_user.org_id = 1
+        mock_result = MagicMock()
+        mock_result.one_or_none.return_value = (mock_user, mock_org)
+        mock_db.execute.return_value = mock_result
+        return mock_db
+
+    @pytest.mark.asyncio
+    async def test_core_user_lacks_kb_connectors(self) -> None:
+        """Core-plan user → 403 capability_required for kb.connectors."""
+        from fastapi import HTTPException
+
+        from app.api.dependencies import require_capability
+
+        dep = require_capability("kb.connectors")
+        mock_db = self._make_db_with_user("core")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await dep(user_id="user-core", db=mock_db)
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail["error_code"] == "capability_required"
+        assert exc_info.value.detail["capability"] == "kb.connectors"
+
+    @pytest.mark.asyncio
+    async def test_core_user_lacks_kb_members(self) -> None:
+        """Core-plan user → 403 capability_required for kb.members."""
+        from fastapi import HTTPException
+
+        from app.api.dependencies import require_capability
+
+        dep = require_capability("kb.members")
+        mock_db = self._make_db_with_user("core")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await dep(user_id="user-core", db=mock_db)
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail["capability"] == "kb.members"
+
+    @pytest.mark.asyncio
+    async def test_complete_user_has_kb_connectors(self) -> None:
+        """Complete-plan user → no exception for kb.connectors."""
+        from app.api.dependencies import require_capability
+
+        dep = require_capability("kb.connectors")
+        mock_db = self._make_db_with_user("complete")
+
+        # Should not raise
+        await dep(user_id="user-complete", db=mock_db)
+
+    @pytest.mark.asyncio
+    async def test_admin_on_core_plan_has_all_capabilities(self) -> None:
+        """Admin role bypasses plan restrictions — gets complete-tier capabilities."""
+        from app.api.dependencies import require_capability
+
+        dep = require_capability("kb.connectors")
+        mock_db = self._make_db_with_user("core", role="admin")
+
+        # Admin on core plan should NOT raise
+        await dep(user_id="admin-core", db=mock_db)
+
+    @pytest.mark.asyncio
+    async def test_core_user_lacks_kb_gaps(self) -> None:
+        """Core-plan user → 403 for kb.gaps."""
+        from fastapi import HTTPException
+
+        from app.api.dependencies import require_capability
+
+        dep = require_capability("kb.gaps")
+        mock_db = self._make_db_with_user("core")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await dep(user_id="user-core", db=mock_db)
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail["capability"] == "kb.gaps"
+
+    @pytest.mark.asyncio
+    async def test_core_user_lacks_kb_taxonomy(self) -> None:
+        """Core-plan user → 403 for kb.taxonomy."""
+        from fastapi import HTTPException
+
+        from app.api.dependencies import require_capability
+
+        dep = require_capability("kb.taxonomy")
+        mock_db = self._make_db_with_user("core")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await dep(user_id="user-core", db=mock_db)
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail["capability"] == "kb.taxonomy"
+
+
 class TestUserProductsResponseCapabilities:
     """AC-3: UserProductsResponse includes capabilities field.
 

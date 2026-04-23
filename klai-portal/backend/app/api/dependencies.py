@@ -151,6 +151,37 @@ async def _require_admin_or_group_manager(
         raise _no_access
 
 
+def require_capability(capability: str):
+    """Return a FastAPI dependency callable that raises 403 when the caller lacks a KB capability.
+
+    Usage::
+
+        @router.get("/some-endpoint", dependencies=[Depends(require_capability("kb.connectors"))])
+
+    Rules (SPEC-PORTAL-UNIFY-KB-001 R-X2, AC-3):
+    - Admin users bypass the check (they always have complete-tier capabilities).
+    - complete-plan users have all kb.* capabilities.
+    - core/professional users have no kb.* capabilities.
+    - Unknown users or plans are treated as most restrictive (deny).
+    """
+
+    async def dep(
+        user_id: str = Depends(get_current_user_id),
+        db: AsyncSession = Depends(get_db),
+    ) -> None:
+        caps = await get_effective_capabilities(user_id, db)
+        if capability not in caps:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error_code": "capability_required",
+                    "capability": capability,
+                },
+            )
+
+    return dep
+
+
 async def get_effective_capabilities(user_id: str, db: AsyncSession) -> set[str]:
     """Return the set of KB capabilities for a user based on their org's plan.
 
