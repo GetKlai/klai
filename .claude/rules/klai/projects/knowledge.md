@@ -5,6 +5,48 @@ paths:
 ---
 # Knowledge Domain Patterns
 
+## connector_id must thread through the crawl pipeline (HIGH)
+
+When a pipeline writes both Qdrant chunks and `knowledge.artifacts`, the
+`source_connector_id` field must be set on every write, or connector-delete is
+a silent no-op at the Qdrant + artifact layer.
+
+**Why:** `qdrant_store.delete_connector` + `pg_store.delete_connector_artifacts` both
+filter on `source_connector_id`. In the original `knowledge-ingest` crawl pipeline,
+the `connector_id` arg was accepted by the Procrastinate task (`crawl_tasks.run_crawl`)
+but **not forwarded** to `run_crawl_job` or `_ingest_crawl_result`. Every crawl chunk
+was stored with `source_connector_id=None`. Delete UI clicks looked like they worked
+(portal deleted its row), but 161 Qdrant chunks + 20 artifacts + 20 crawled_pages + 32
+page_links stayed behind. A second sync then short-circuited via content-hash dedup.
+Cost: half a day of SPEC-CRAWLER-005 Fase 6 debugging.
+
+**Prevention:**
+- Any pipeline that writes data scoped to a connector MUST forward `connector_id` from
+  the entry point (Procrastinate task arg or HTTP route) all the way through to the
+  write sites (`extra["source_connector_id"] = connector_id` in ingest.py).
+- Review call chain before touching `delete_connector_*` functions: what populates
+  `source_connector_id`? If anything in the chain drops the arg, the delete will be
+  a silent no-op.
+- SPEC-CRAWLER-005 fix is in `klai-knowledge-ingest/knowledge_ingest/adapters/crawler.py`
+  (run_crawl_job + _ingest_crawl_result now accept `connector_id`) and
+  `klai-knowledge-ingest/knowledge_ingest/crawl_tasks.py` (passes it through).
+
+## Connector-delete cleanup must cover all four layers (HIGH)
+
+Deleting a connector via the portal UI is a cross-service operation. All four data
+layers must be cleaned or the next re-ingest hits dedup and produces zero new work:
+
+| Layer | Cleaned by |
+|---|---|
+| Qdrant chunks | `qdrant_store.delete_connector` (filters on `source_connector_id`) |
+| `knowledge.artifacts` | `pg_store.delete_connector_artifacts` (filters on `extra::jsonb->>'source_connector_id'`) |
+| `knowledge.crawled_pages` + `knowledge.page_links` | `pg_store.delete_connector_artifacts` (scoped via artifact URL set — added post-SPEC-CRAWLER-005) |
+| `connector.sync_runs` | Currently NOT cleaned — tracked in SPEC-CONNECTOR-CLEANUP-001 REQ-04 (FK CASCADE) |
+
+**Prevention:** when adding a new data layer that is connector-scoped, immediately
+wire it into `delete_connector_artifacts` (or the Qdrant equivalent) AND write a
+regression test that does: insert → delete connector → assert rows == 0.
+
 ## Graph-first, content-second for bulk crawls (HIGH)
 
 When a graph-lookup feeds the payload of a per-row write, build the whole graph BEFORE
