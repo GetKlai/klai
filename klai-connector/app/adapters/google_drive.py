@@ -33,7 +33,7 @@ from typing import Any
 
 import httpx
 
-from app.adapters.base import BaseAdapter, DocumentRef
+from app.adapters.base import BaseAdapter, DocumentRef, resolve_connector_id
 from app.adapters.oauth_base import OAuthAdapterBase
 from app.core.config import Settings
 from app.core.logging import get_logger
@@ -125,7 +125,7 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
         """Exchange a refresh_token for a new access_token against Google.
 
         Args:
-            connector: Connector model (unused here — kept for the OAuth base
+            connector: PortalConnectorConfig (unused here — kept for the OAuth base
                 contract so other providers can include tenant context).
             refresh_token: Long-lived refresh token from the encrypted config.
 
@@ -158,7 +158,7 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
         Incremental sync (has cursor) → ``changes.list``.
 
         Args:
-            connector: Connector model with ``id`` and ``config``.
+            connector: PortalConnectorConfig with ``connector_id`` and ``config``.
             cursor_context: Previous sync's cursor_state. ``page_token`` drives
                 incremental mode.
 
@@ -167,7 +167,7 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
             ``config.max_files``.
         """
         cfg = self._extract_config(connector)
-        connector_id = str(connector.id)
+        connector_id = resolve_connector_id(connector)
         max_files: int = cfg["max_files"]
         page_token = (cursor_context or {}).get("page_token") if cursor_context else None
 
@@ -228,7 +228,7 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
 
         Args:
             ref: DocumentRef returned by ``list_documents``.
-            connector: Connector model (for token refresh context).
+            connector: PortalConnectorConfig (for token refresh context).
         """
         if ref.content_type in {"google_doc", "google_sheet", "google_slides"}:
             mime_map = {
@@ -249,7 +249,7 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
         ``startPageToken`` against the Drive API so the NEXT run can use
         incremental mode.
         """
-        connector_id = str(connector.id)
+        connector_id = resolve_connector_id(connector)
         cached = self._latest_page_token.get(connector_id)
         if cached:
             return {"page_token": cached}

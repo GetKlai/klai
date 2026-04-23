@@ -45,7 +45,7 @@ from urllib.parse import quote, urlparse
 
 import httpx
 
-from app.adapters.base import BaseAdapter, DocumentRef
+from app.adapters.base import BaseAdapter, DocumentRef, resolve_connector_id
 from app.adapters.oauth_base import OAuthAdapterBase
 from app.core.config import Settings
 from app.core.logging import get_logger
@@ -177,7 +177,7 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
         returns only items changed since the previous deltaLink.
 
         Args:
-            connector: Connector model with ``id`` and ``config``.
+            connector: PortalConnectorConfig with ``connector_id`` and ``config``.
             cursor_context: Previous sync's cursor_state. ``delta_link`` drives
                 incremental mode.
 
@@ -185,7 +185,7 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
             DocumentRefs for items discovered this run. Adapter-owned metadata
             (sender_email, mentioned_emails) is stored in ``_ref_metadata``.
         """
-        connector_id = str(connector.id)
+        connector_id = resolve_connector_id(connector)
         delta_link = (cursor_context or {}).get("delta_link")
 
         if delta_link:
@@ -228,7 +228,7 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
 
         Args:
             ref: DocumentRef returned by ``list_documents``.
-            connector: Connector model (for token refresh context).
+            connector: PortalConnectorConfig (for token refresh context).
         """
         url = f"{_GRAPH_BASE}/drive/items/{quote(ref.ref, safe='')}/content"
         return await self._graph_get_bytes(url, connector=connector)
@@ -241,7 +241,7 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
         ``GoogleDriveAdapter.get_cursor_state`` which bootstraps via
         ``startPageToken``.
         """
-        connector_id = str(connector.id)
+        connector_id = resolve_connector_id(connector)
         cached = self._latest_delta_link.get(connector_id)
         if cached:
             return {"delta_link": cached}
@@ -295,7 +295,7 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
             missing, 404 site not found) so the sync run's error handler can
             surface a helpful message.
         """
-        connector_id = str(connector.id)
+        connector_id = resolve_connector_id(connector)
         cached = self._resolved_sites.get(connector_id)
         if cached:
             return cached

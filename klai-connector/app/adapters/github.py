@@ -120,7 +120,7 @@ class GitHubAdapter(BaseAdapter):
         Applies the optional ``path_filter`` glob pattern from the connector config.
 
         Args:
-            connector: :class:`Connector` model instance.
+            connector: :class:`PortalConnectorConfig` instance.
         """
         config: dict[str, Any] = connector.config
         installation_id: int = config["installation_id"]
@@ -175,7 +175,7 @@ class GitHubAdapter(BaseAdapter):
 
         Args:
             ref: Document reference with SHA and path.
-            connector: Connector model (provides auth context).
+            connector: PortalConnectorConfig (provides auth context).
 
         Raises:
             ValueError: If the file exceeds 50 MB.
@@ -230,7 +230,7 @@ class GitHubAdapter(BaseAdapter):
         """Return the current tree SHA for incremental sync.
 
         Args:
-            connector: Connector model instance.
+            connector: PortalConnectorConfig instance.
 
         Returns:
             Dictionary with ``tree_sha`` key.
