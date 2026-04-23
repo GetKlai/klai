@@ -153,7 +153,12 @@ async def crawl_sync(req: CrawlSyncRequest) -> CrawlSyncResponse:
         now,
     )
 
-    include_patterns = [req.path_prefix] if req.path_prefix else None
+    # crawl4ai URLPatternFilter classifies '/nl/' as exact-match (fnmatch with no
+    # wildcards) so '/nl/6-bubble' never matches. Appending '/*' makes it a PREFIX
+    # pattern, which is the intended semantics for a path_prefix filter.
+    include_patterns = (
+        [req.path_prefix.rstrip("/") + "/*"] if req.path_prefix else None
+    )
 
     # BFS must enter the graph at a node that links into the allowed subtree.
     # If the root page only links to sibling language paths (e.g. wiki shows

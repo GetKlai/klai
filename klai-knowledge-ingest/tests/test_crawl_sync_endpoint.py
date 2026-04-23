@@ -280,7 +280,10 @@ class TestCrawlSyncEndpoint:
         assert resp.status_code == 202, resp.text
         kwargs = defer_mock.await_args.kwargs
         assert kwargs["start_url"] == "https://wiki.redcactus.cloud/nl/"
-        assert kwargs["include_patterns"] == ["/nl/"]
+        # URLPatternFilter exact-matches glob patterns without wildcards, so
+        # '/nl/' alone would reject '/nl/6-bubble'. The /* suffix makes it a
+        # PREFIX pattern so every URL whose path starts with /nl/ is allowed.
+        assert kwargs["include_patterns"] == ["/nl/*"]
 
     def test_trailing_slash_in_base_url_is_normalised(self) -> None:
         """Avoid building 'https://host//nl/' when base_url already ends with '/'."""
