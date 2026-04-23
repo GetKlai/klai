@@ -94,6 +94,9 @@ async def test_post_scope_personal_as_non_admin_allowed(monkeypatch):
     )
     monkeypatch.setattr(app_templates, "_enforce_rate_limit", AsyncMock())
     monkeypatch.setattr(app_templates, "invalidate_templates", AsyncMock())
+    # Hotfix: create/update re-apply tenant GUC before post-commit refresh.
+    # Mock it out in unit tests since the DB is a MagicMock.
+    monkeypatch.setattr(app_templates, "set_tenant", AsyncMock())
 
     db = MagicMock()
     db.add = MagicMock()
@@ -131,6 +134,9 @@ async def test_post_scope_org_as_admin_triggers_org_wide_invalidate(monkeypatch)
     )
     monkeypatch.setattr(app_templates, "_enforce_rate_limit", AsyncMock())
     monkeypatch.setattr(app_templates, "invalidate_templates", AsyncMock())
+    # Hotfix: create/update re-apply tenant GUC before post-commit refresh.
+    # Mock it out in unit tests since the DB is a MagicMock.
+    monkeypatch.setattr(app_templates, "set_tenant", AsyncMock())
 
     db = MagicMock()
     db.add = MagicMock()
