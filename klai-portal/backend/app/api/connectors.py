@@ -20,6 +20,7 @@ from app.services import knowledge_ingest_client
 from app.services.access import get_user_role_for_kb
 from app.services.connector_credentials import SENSITIVE_FIELDS, credential_store
 from app.services.events import emit_event
+from app.services.kb_quota import assert_can_add_item_to_kb
 from app.services.klai_connector_client import SyncRunData, klai_connector_client
 
 logger = logging.getLogger(__name__)
@@ -449,6 +450,9 @@ async def trigger_sync(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Connector is disabled")
     if connector.last_sync_status == "running":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Sync already running")
+
+    # R-E2: enforce per-KB item quota before triggering ingest.
+    await assert_can_add_item_to_kb(kb=kb, org=org)
 
     try:
         sync_run = await klai_connector_client.trigger_sync(connector_id)

@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.plan_limits import get_plan_limits
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg
+from app.services import knowledge_ingest_client
 
 
 async def assert_can_create_personal_kb(
@@ -57,6 +58,55 @@ async def assert_can_create_personal_kb(
                 "error_code": "kb_quota_personal_kb_exceeded",
                 "plan": org.plan,
                 "limit": limits.max_personal_kbs_per_user,
+                "current": current_count,
+            },
+        )
+
+
+async def assert_can_add_item_to_kb(
+    kb: PortalKnowledgeBase,
+    org: PortalOrg,
+) -> None:
+    """Raise HTTP 403 when adding an item would exceed the plan's item-per-KB quota.
+
+    Checks:
+    - KB is personal (owner_type="user"): apply max_items_per_kb limit.
+    - KB is org-scoped (owner_type="org"): no limit enforced (core users cannot
+      create org KBs, so only complete-plan users see them — they have None limit).
+    - Plan has None limit (complete): skip entirely.
+
+    The current item count is fetched from knowledge-ingest (source of truth for
+    items). If the count cannot be fetched (None), we fail open (allow the ingest)
+    to avoid blocking uploads due to a transient knowledge-ingest outage.
+
+    R-E2: callers MUST route through this function before triggering any ingest.
+    """
+    if kb.owner_type != "user":
+        # Org-scoped KBs are only accessible to complete-plan users.
+        return
+
+    limits = get_plan_limits(org.plan)
+
+    if limits.max_items_per_kb is None:
+        # Unlimited plan — no quota check needed.
+        return
+
+    current_count = await knowledge_ingest_client.get_source_count(
+        org_id=org.zitadel_org_id,
+        kb_slug=kb.slug,
+    )
+
+    if current_count is None:
+        # knowledge-ingest unavailable — fail open to avoid blocking uploads.
+        return
+
+    if current_count >= limits.max_items_per_kb:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error_code": "kb_quota_items_exceeded",
+                "plan": org.plan,
+                "limit": limits.max_items_per_kb,
                 "current": current_count,
             },
         )
