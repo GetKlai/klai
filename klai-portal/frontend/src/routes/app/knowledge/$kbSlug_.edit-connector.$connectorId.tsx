@@ -36,6 +36,20 @@ interface NotionEditConfig {
   new_access_token: string
 }
 
+interface AirtableEditConfig {
+  api_key: string
+  base_id: string
+  table_names: string
+  view_name: string
+}
+
+interface ConfluenceEditConfig {
+  base_url: string
+  email: string
+  api_token: string
+  space_keys: string
+}
+
 type PreviewResult = {
   fit_markdown: string
   word_count: number
@@ -83,6 +97,14 @@ function EditConnectorPage() {
   const [msSiteUrl, setMsSiteUrl] = useState('')
   const [msDriveId, setMsDriveId] = useState('')
   const [msSiteUrlError, setMsSiteUrlError] = useState<string | null>(null)
+  // airtable (SPEC-KB-CONNECTORS-001 R3)
+  const [airtableConfig, setAirtableConfig] = useState<AirtableEditConfig>({
+    api_key: '', base_id: '', table_names: '', view_name: '',
+  })
+  // confluence (SPEC-KB-CONNECTORS-001 R4)
+  const [confluenceConfig, setConfluenceConfig] = useState<ConfluenceEditConfig>({
+    base_url: '', email: '', api_token: '', space_keys: '',
+  })
 
   // Web crawler preview state
   const [showAdvancedSelector, setShowAdvancedSelector] = useState(false)
@@ -178,6 +200,24 @@ function EditConnectorPage() {
       setMsDriveId(cfg.drive_id ?? '')
       setMsSiteUrlError(null)
     }
+    if (connector.connector_type === 'airtable') {
+      const cfg = connector.config as { api_key?: string; base_id?: string; table_names?: string[]; view_name?: string }
+      setAirtableConfig({
+        api_key: String(cfg.api_key ?? ''),
+        base_id: String(cfg.base_id ?? ''),
+        table_names: (cfg.table_names ?? []).join(', '),
+        view_name: String(cfg.view_name ?? ''),
+      })
+    }
+    if (connector.connector_type === 'confluence') {
+      const cfg = connector.config as { base_url?: string; email?: string; api_token?: string; space_keys?: string[] }
+      setConfluenceConfig({
+        base_url: String(cfg.base_url ?? ''),
+        email: String(cfg.email ?? ''),
+        api_token: '',  // never pre-populate secrets
+        space_keys: (cfg.space_keys ?? []).join(', '),
+      })
+    }
   }, [connector?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateMutation = useMutation({
@@ -223,6 +263,20 @@ function EditConnectorPage() {
         setMsSiteUrlError(null)
         if (siteUrl) config.site_url = siteUrl
         if (msDriveId.trim()) config.drive_id = msDriveId.trim()
+      }
+      if (connector.connector_type === 'airtable') {
+        if (airtableConfig.api_key.trim()) config.api_key = airtableConfig.api_key.trim()
+        config.base_id = airtableConfig.base_id
+        config.table_names = airtableConfig.table_names
+          .split(',').map((s) => s.trim()).filter(Boolean)
+        if (airtableConfig.view_name.trim()) config.view_name = airtableConfig.view_name.trim()
+      }
+      if (connector.connector_type === 'confluence') {
+        config.base_url = confluenceConfig.base_url.replace(/\/$/, '')
+        config.email = confluenceConfig.email
+        if (confluenceConfig.api_token.trim()) config.api_token = confluenceConfig.api_token.trim()
+        const keys = confluenceConfig.space_keys.split(',').map((s) => s.trim()).filter(Boolean)
+        if (keys.length > 0) config.space_keys = keys
       }
       await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/${connectorId}`, {
         method: 'PATCH',
@@ -656,8 +710,113 @@ function EditConnectorPage() {
             </form>
           )}
 
+          {/* Google Docs / Sheets / Slides — reuse Google Drive OAuth status */}
+          {connector && ['google_docs', 'google_sheets', 'google_slides'].includes(connector.connector_type) && (
+            <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>
+                <Input id="edit-conn-name" required value={name} onChange={(e) => setName(e.target.value)} />
+              </div>
+              {connector.connector_type === 'google_docs' && (
+                <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_google_docs_subtitle()}</p>
+              )}
+              {connector.connector_type === 'google_sheets' && (
+                <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_google_sheets_subtitle()}</p>
+              )}
+              {connector.connector_type === 'google_slides' && (
+                <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_google_slides_subtitle()}</p>
+              )}
+              <div className="space-y-1.5">
+                <Label>{m.admin_connectors_assertion_modes_label()}</Label>
+                <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
+              </div>
+              {renderError()}
+              <div className="flex gap-2 pt-2">
+                <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={isReconnecting}
+                  onClick={() => { void handleGoogleDriveReconnect() }}
+                >
+                  {m.admin_connectors_google_drive_reconnect()}
+                </Button>
+              </div>
+            </form>
+          )}
+
+          {/* Airtable (SPEC-KB-CONNECTORS-001 R3) */}
+          {connector?.connector_type === 'airtable' && (
+            <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>
+                <Input id="edit-conn-name" required value={name} onChange={(e) => setName(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-at-api-key">{m.admin_connectors_airtable_api_key_label()}</Label>
+                <Input id="edit-at-api-key" type="password" placeholder={m.admin_connectors_airtable_api_key_hint()} value={airtableConfig.api_key} onChange={(e) => setAirtableConfig((p) => ({ ...p, api_key: e.target.value }))} />
+                <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_notion_token_help_update()}</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-at-base-id">{m.admin_connectors_airtable_base_id_label()}</Label>
+                <Input id="edit-at-base-id" required placeholder={m.admin_connectors_airtable_base_id_hint()} value={airtableConfig.base_id} onChange={(e) => setAirtableConfig((p) => ({ ...p, base_id: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-at-tables">{m.admin_connectors_airtable_table_names_label()}</Label>
+                <Input id="edit-at-tables" required placeholder={m.admin_connectors_airtable_table_names_hint()} value={airtableConfig.table_names} onChange={(e) => setAirtableConfig((p) => ({ ...p, table_names: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-at-view">{m.admin_connectors_airtable_view_name_label()}</Label>
+                <Input id="edit-at-view" placeholder={m.admin_connectors_airtable_view_name_hint()} value={airtableConfig.view_name} onChange={(e) => setAirtableConfig((p) => ({ ...p, view_name: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>{m.admin_connectors_assertion_modes_label()}</Label>
+                <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
+              </div>
+              {renderError()}
+              <div className="pt-2">
+                <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
+              </div>
+            </form>
+          )}
+
+          {/* Confluence (SPEC-KB-CONNECTORS-001 R4) */}
+          {connector?.connector_type === 'confluence' && (
+            <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>
+                <Input id="edit-conn-name" required value={name} onChange={(e) => setName(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-cf-base-url">{m.admin_connectors_confluence_base_url_label()}</Label>
+                <Input id="edit-cf-base-url" type="url" required placeholder={m.admin_connectors_confluence_base_url_hint()} value={confluenceConfig.base_url} onChange={(e) => setConfluenceConfig((p) => ({ ...p, base_url: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-cf-email">{m.admin_connectors_confluence_email_label()}</Label>
+                <Input id="edit-cf-email" type="email" required placeholder="you@company.com" value={confluenceConfig.email} onChange={(e) => setConfluenceConfig((p) => ({ ...p, email: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-cf-token">{m.admin_connectors_confluence_api_token_label()}</Label>
+                <Input id="edit-cf-token" type="password" placeholder={m.admin_connectors_notion_token_help_update()} value={confluenceConfig.api_token} onChange={(e) => setConfluenceConfig((p) => ({ ...p, api_token: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-cf-spaces">{m.admin_connectors_confluence_space_keys_label()}</Label>
+                <Input id="edit-cf-spaces" placeholder={m.admin_connectors_confluence_space_keys_hint()} value={confluenceConfig.space_keys} onChange={(e) => setConfluenceConfig((p) => ({ ...p, space_keys: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>{m.admin_connectors_assertion_modes_label()}</Label>
+                <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
+              </div>
+              {renderError()}
+              <div className="pt-2">
+                <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
+              </div>
+            </form>
+          )}
+
           {/* Generic fallback for unsupported connector types */}
-          {connector && !['web_crawler', 'github', 'notion', 'google_drive', 'ms_docs'].includes(connector.connector_type) && (
+          {connector && !['web_crawler', 'github', 'notion', 'google_drive', 'ms_docs', 'airtable', 'confluence', 'google_docs', 'google_sheets', 'google_slides'].includes(connector.connector_type) && (
             <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-3">
               <div className="space-y-1.5">
                 <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>
