@@ -41,6 +41,12 @@ PORTAL_RETRIEVAL_LOG_URL = os.getenv(
 EMBEDDING_MODEL_VERSION = os.getenv("EMBEDDING_MODEL_VERSION", "bge-m3-v1")
 KB_IMAGES_BASE_URL = os.getenv("KB_IMAGES_BASE_URL", "https://getklai.getklai.com")
 
+# SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-HOOK-U2: prompt-template fetch config.
+PORTAL_TEMPLATES_URL = os.getenv(
+    "PORTAL_TEMPLATES_URL", f"{PORTAL_API_URL}/internal/templates/effective"
+)
+TEMPLATES_TIMEOUT = float(os.getenv("TEMPLATES_TIMEOUT", "2.0"))
+
 # Trivial message patterns — skip retrieval (NL + EN)
 _TRIVIAL_PATTERNS = re.compile(
     r"^(ok|okay|oke|oké|ja|nee|yes|no|bedankt|thanks|thank you|"
@@ -281,6 +287,130 @@ def _fire_retrieval_log(
         pass  # No running event loop (test context)
 
 
+# ---------------------------------------------------------------------------
+# SPEC-CHAT-TEMPLATES-001: prompt-template fetch.
+#
+# Fetched from portal-api `/internal/templates/effective` (server-side
+# resolution: org → user → active_template_ids → filtered + ordered).
+# Cached 30s per (org_id, user_id) via LiteLLM's shared cache, same
+# pattern as _get_kb_feature.
+#
+# Fail-open: any timeout / 5xx / 401 / bad secret → empty list + warning.
+# Chat MUST never break because the templates fetch failed.
+#
+# @MX:WARN: This helper is fail-open by design. A silent `templates_degraded`
+# log line is the ONLY signal when portal-api can't be reached. Observability
+# must alert on a sustained non-zero rate of these warnings.
+# @MX:REASON: templates are a convenience feature; blocking a chat call to
+# preserve styling would be a worse user experience than losing the styling.
+# ---------------------------------------------------------------------------
+
+
+async def _get_templates(org_id: str, user_id: str, cache) -> list[dict]:
+    """Return active prompt-template instructions for (org, user).
+
+    Shape: ``[{"source": "template", "name": str, "text": str}, ...]``
+    Empty list when the user has no active templates, the portal-api is
+    unreachable, or PORTAL_INTERNAL_SECRET is unset.
+
+    Cached 30 s per (org_id, user_id) — same TTL as KB feature flag so
+    toggling active_template_ids takes effect in at most 30 s when Redis
+    invalidation misses.
+    """
+    if not PORTAL_INTERNAL_SECRET:
+        # Fail-closed on missing secret: without auth we can't call portal-api.
+        return []
+
+    cache_key = f"templates:{org_id}:{user_id}"
+    cached = await cache.async_get_cache(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        async with httpx.AsyncClient(timeout=TEMPLATES_TIMEOUT) as client:
+            resp = await client.get(
+                PORTAL_TEMPLATES_URL,
+                params={"zitadel_org_id": org_id, "librechat_user_id": user_id},
+                headers={"Authorization": f"Bearer {PORTAL_INTERNAL_SECRET}"},
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+    except httpx.HTTPStatusError as exc:
+        # 401 → config error (bad or missing internal secret); log distinctly.
+        if exc.response is not None and exc.response.status_code == 401:
+            logger.error(
+                "KlaiKnowledgeHook: templates_config_error org=%s user=%s (bad internal secret)",
+                org_id,
+                user_id,
+            )
+        else:
+            logger.warning(
+                "KlaiKnowledgeHook: templates_degraded org=%s user=%s reason=%s",
+                org_id,
+                user_id,
+                exc,
+            )
+        instructions: list[dict] = []
+    except Exception as exc:
+        logger.warning(
+            "KlaiKnowledgeHook: templates_degraded org=%s user=%s reason=%s",
+            org_id,
+            user_id,
+            exc,
+        )
+        instructions = []
+    else:
+        instructions = payload.get("instructions") or []
+
+    # Cache even the empty result: a user with no active templates shouldn't
+    # retry the portal round-trip on every message.
+    await cache.async_set_cache(cache_key, instructions, ttl=30)
+    return instructions
+
+
+def _prepend_system_prefix(messages: list[dict], prefix: str) -> None:
+    """Prepend `prefix` to the system message (or insert one if none exists).
+
+    Mutates `messages` in-place. No-op when `prefix` is empty.
+
+    Separated from the hook body so templates-only and templates+KB paths
+    share the same insertion logic. Unit-testable without a running hook.
+    """
+    if not prefix:
+        return
+    sys_idx = next(
+        (i for i, m in enumerate(messages) if m.get("role") == "system"), None
+    )
+    if sys_idx is not None:
+        existing = messages[sys_idx].get("content", "")
+        messages[sys_idx] = {
+            "role": "system",
+            "content": f"{prefix}\n\n{existing}" if existing else prefix,
+        }
+    else:
+        messages.insert(0, {"role": "system", "content": prefix})
+
+
+def _build_template_instructions_block(instructions: list[dict]) -> str:
+    """Render template list into a single system-prompt prefix block.
+
+    Empty list returns "" — caller MUST check before prepending.
+    Only the template's `name` and `text` appear in the block. Raw
+    template text never goes to logs (REQ-TEMPLATES-HOOK-N2).
+    """
+    if not instructions:
+        return ""
+    parts: list[str] = ["[Klai Templates — pas onderstaande instructies toe bij je antwoord]"]
+    for inst in instructions:
+        name = inst.get("name") or "template"
+        text = (inst.get("text") or "").strip()
+        if not text:
+            continue
+        parts.append(f"[{name}]\n{text}")
+    parts.append("[Einde templates]")
+    return "\n\n".join(parts)
+
+
 class KlaiKnowledgeHook(CustomLogger):
     async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
         if call_type not in ("completion", "acompletion"):
@@ -303,13 +433,26 @@ class KlaiKnowledgeHook(CustomLogger):
         if not user_id:
             return data
 
+        # SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-HOOK: fetch active templates
+        # before the KB path so they apply on EVERY downstream branch —
+        # including early returns when KB retrieval is skipped or fails.
+        # Fail-open: empty list on any portal-api error.
+        template_instructions = await _get_templates(org_id, user_id, cache)
+        templates_block = _build_template_instructions_block(template_instructions)
+
         # Feature gate + KB scope preference (version-based cache, 30s propagation)
         feature = await _get_kb_feature(user_id, org_id, cache)
         if not feature["enabled"]:
-            return data  # no entitlement — fail-closed
+            # No KB entitlement. Templates still apply.
+            _prepend_system_prefix(messages, templates_block)
+            data["messages"] = messages
+            return data
 
         if not feature["kb_retrieval_enabled"]:
-            return data  # user disabled KB retrieval (REQ-E4 pre-step skip)
+            # User disabled KB retrieval. Templates still apply.
+            _prepend_system_prefix(messages, templates_block)
+            data["messages"] = messages
+            return data
 
         # Determine retrieval scope, KB slug filter, and answer mode
         scope = "both" if feature.get("kb_personal_enabled", True) else "org"
@@ -341,12 +484,17 @@ class KlaiKnowledgeHook(CustomLogger):
                 result = resp.json()
         except Exception as exc:
             logger.warning("KlaiKnowledgeHook: retrieval failed (%s) — degrading", exc)
+            # Templates still apply even when KB retrieval fails.
+            _prepend_system_prefix(messages, templates_block)
+            data["messages"] = messages
             return data
 
         retrieval_ms = int((time.monotonic() - t0) * 1000)
 
         # If the retrieval-gate determined no KB context is needed, skip injection
         if result.get("retrieval_bypassed"):
+            _prepend_system_prefix(messages, templates_block)
+            data["messages"] = messages
             data.setdefault("metadata", {})["_klai_kb_meta"] = {
                 "org_id": org_id,
                 "user_id": user_id,
@@ -378,6 +526,9 @@ class KlaiKnowledgeHook(CustomLogger):
             _fire_retrieval_log(org_id, user_id, chunk_ids, reranker_scores, query)
 
         if not chunks:
+            # Zero chunks but templates may still apply.
+            _prepend_system_prefix(messages, templates_block)
+            data["messages"] = messages
             return data
 
         # Build context block with provenance labels per chunk
@@ -444,19 +595,10 @@ class KlaiKnowledgeHook(CustomLogger):
         lines.append("[Einde kennisbank-context]")
         context_block = "\n".join(lines)
 
-        # Prepend to existing system message or insert new one
-        system_idx = next(
-            (i for i, m in enumerate(messages) if m.get("role") == "system"), None
-        )
-        if system_idx is not None:
-            existing = messages[system_idx].get("content", "")
-            messages[system_idx] = {
-                "role": "system",
-                "content": f"{context_block}\n\n{existing}",
-            }
-        else:
-            messages.insert(0, {"role": "system", "content": context_block})
-
+        # SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-HOOK-E1: templates → KB → existing.
+        # Compose blocks in order; empty templates_block is filtered out.
+        prefix = "\n\n".join(b for b in (templates_block, context_block) if b)
+        _prepend_system_prefix(messages, prefix)
         data["messages"] = messages
         # Signal KB injection to downstream hooks (e.g. custom_router, post-call logger)
         # Stored in data["metadata"] so it is never forwarded to the LLM provider.

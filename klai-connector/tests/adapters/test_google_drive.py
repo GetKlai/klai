@@ -342,3 +342,544 @@ async def test_get_cursor_state_returns_page_token(
     state = await gdrive_adapter.get_cursor_state(gdrive_connector)
 
     assert state.get("page_token") == "new-cursor-token"
+
+
+# ===========================================================================
+# SPEC-KB-CONNECTORS-001 Phase 4 — Google Docs/Sheets/Slides split
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# 9. _extract_config — content_types config extraction
+# ---------------------------------------------------------------------------
+
+
+def test_extract_config_no_content_types_by_default(gdrive_adapter: Any) -> None:
+    """connector_type=google_drive with no content_types → content_types absent/None (backward-compat)."""
+    from app.adapters.google_drive import GoogleDriveAdapter
+
+    connector = SimpleNamespace(
+        id="gdrive-conn-001",
+        org_id="org-001",
+        connector_type="google_drive",
+        config={
+            "access_token": "placeholder-access-value",
+            "refresh_token": "placeholder-refresh-value",
+            "folder_id": "fldr-root",
+        },
+    )
+    cfg = GoogleDriveAdapter._extract_config(connector)
+    # Existing behavior: no content_types filter applied
+    assert cfg.get("content_types") is None
+
+
+def test_extract_config_accepts_explicit_content_types_list(gdrive_adapter: Any) -> None:
+    """Explicit content_types list in config is preserved as-is."""
+    from app.adapters.google_drive import GoogleDriveAdapter
+
+    connector = SimpleNamespace(
+        id="gdrive-conn-001",
+        org_id="org-001",
+        connector_type="google_drive",
+        config={
+            "access_token": "placeholder-access-value",
+            "refresh_token": "placeholder-refresh-value",
+            "content_types": ["google_doc", "google_sheet"],
+        },
+    )
+    cfg = GoogleDriveAdapter._extract_config(connector)
+    assert cfg["content_types"] == ["google_doc", "google_sheet"]
+
+
+def test_extract_config_rejects_invalid_content_type(gdrive_adapter: Any) -> None:
+    """config with unknown content_type raises ValueError listing allowed values."""
+    from app.adapters.google_drive import GoogleDriveAdapter
+
+    connector = SimpleNamespace(
+        id="gdrive-conn-001",
+        org_id="org-001",
+        connector_type="google_drive",
+        config={
+            "access_token": "placeholder-access-value",
+            "refresh_token": "placeholder-refresh-value",
+            "content_types": ["google_invalid"],
+        },
+    )
+    with pytest.raises(ValueError, match="google_invalid"):
+        GoogleDriveAdapter._extract_config(connector)
+
+
+def test_extract_config_injects_preset_for_google_docs_connector_type() -> None:
+    """connector_type=google_docs with no explicit content_types → injects ['google_doc']."""
+    from app.adapters.google_drive import GoogleDriveAdapter
+
+    connector = SimpleNamespace(
+        id="gdocs-conn-001",
+        org_id="org-001",
+        connector_type="google_docs",
+        config={
+            "access_token": "placeholder-access-value",
+            "refresh_token": "placeholder-refresh-value",
+        },
+    )
+    cfg = GoogleDriveAdapter._extract_config(connector)
+    assert cfg["content_types"] == ["google_doc"]
+
+
+def test_extract_config_injects_preset_for_google_sheets_connector_type() -> None:
+    """connector_type=google_sheets with no explicit content_types → injects ['google_sheet']."""
+    from app.adapters.google_drive import GoogleDriveAdapter
+
+    connector = SimpleNamespace(
+        id="gsheets-conn-001",
+        org_id="org-001",
+        connector_type="google_sheets",
+        config={
+            "access_token": "placeholder-access-value",
+            "refresh_token": "placeholder-refresh-value",
+        },
+    )
+    cfg = GoogleDriveAdapter._extract_config(connector)
+    assert cfg["content_types"] == ["google_sheet"]
+
+
+def test_extract_config_injects_preset_for_google_slides_connector_type() -> None:
+    """connector_type=google_slides with no explicit content_types → injects ['google_slides']."""
+    from app.adapters.google_drive import GoogleDriveAdapter
+
+    connector = SimpleNamespace(
+        id="gslides-conn-001",
+        org_id="org-001",
+        connector_type="google_slides",
+        config={
+            "access_token": "placeholder-access-value",
+            "refresh_token": "placeholder-refresh-value",
+        },
+    )
+    cfg = GoogleDriveAdapter._extract_config(connector)
+    assert cfg["content_types"] == ["google_slides"]
+
+
+def test_extract_config_explicit_content_types_override_alias_preset() -> None:
+    """Explicit content_types in config wins over connector_type alias preset."""
+    from app.adapters.google_drive import GoogleDriveAdapter
+
+    connector = SimpleNamespace(
+        id="gdocs-conn-001",
+        org_id="org-001",
+        connector_type="google_docs",
+        config={
+            "access_token": "placeholder-access-value",
+            "refresh_token": "placeholder-refresh-value",
+            "content_types": ["google_sheet"],  # explicitly overrides the docs preset
+        },
+    )
+    cfg = GoogleDriveAdapter._extract_config(connector)
+    assert cfg["content_types"] == ["google_sheet"]
+
+
+# ---------------------------------------------------------------------------
+# 10. list_documents — content_types mimeType filter
+# ---------------------------------------------------------------------------
+
+
+def _make_alias_connector(
+    connector_type: str = "google_drive",
+    content_types: list[str] | None = None,
+) -> SimpleNamespace:
+    config: dict[str, Any] = {
+        "access_token": "placeholder-access-value",
+        "refresh_token": "placeholder-refresh-value",
+        "token_expiry": "2030-01-01T00:00:00+00:00",
+    }
+    if content_types is not None:
+        config["content_types"] = content_types
+    return SimpleNamespace(
+        id="gdrive-conn-filter-001",
+        org_id="org-001",
+        connector_type=connector_type,
+        config=config,
+    )
+
+
+async def test_list_documents_no_filter_lists_all_workspace_types(
+    gdrive_adapter: Any,
+) -> None:
+    """Backward-compat: no content_types → all returned files are yielded."""
+    connector = _make_alias_connector(connector_type="google_drive")
+    files_response = _list_response(
+        [
+            {
+                "id": "file-doc-1",
+                "name": "Doc",
+                "mimeType": "application/vnd.google-apps.document",
+                "modifiedTime": "2026-04-10T10:00:00.000Z",
+                "webViewLink": "https://docs.google.com/d/1",
+                "size": None,
+                "owners": [],
+                "permissions": [],
+            },
+            {
+                "id": "file-sheet-1",
+                "name": "Sheet",
+                "mimeType": "application/vnd.google-apps.spreadsheet",
+                "modifiedTime": "2026-04-10T10:00:00.000Z",
+                "webViewLink": "https://sheets.google.com/d/1",
+                "size": None,
+                "owners": [],
+                "permissions": [],
+            },
+        ]
+    )
+
+    with patch.object(gdrive_adapter, "_list_files", AsyncMock(return_value=files_response)):
+        refs = await gdrive_adapter.list_documents(connector, cursor_context=None)
+
+    assert len(refs) == 2
+
+
+async def test_list_documents_google_doc_filter_restricts_to_docs(
+    gdrive_adapter: Any,
+) -> None:
+    """content_types=['google_doc'] → Drive API q includes doc mimeType predicate, no others."""
+    connector = _make_alias_connector(
+        connector_type="google_docs",
+        # connector_type alone injects the preset — no explicit content_types needed
+    )
+    async def fake_list_files(conn: Any, folder_id: Any, **kwargs: Any) -> dict[str, Any]:  # noqa: ARG001
+        return _list_response(
+            [
+                {
+                    "id": "file-doc-1",
+                    "name": "Doc",
+                    "mimeType": "application/vnd.google-apps.document",
+                    "modifiedTime": "2026-04-10T10:00:00.000Z",
+                    "webViewLink": "https://docs.google.com/d/1",
+                    "size": None,
+                    "owners": [{"emailAddress": "owner@example.com"}],
+                    "permissions": [],
+                }
+            ]
+        )
+
+    with patch.object(gdrive_adapter, "_list_files", side_effect=fake_list_files):
+        refs = await gdrive_adapter.list_documents(connector, cursor_context=None)
+
+    assert len(refs) == 1
+    assert refs[0].content_type == "google_doc"
+
+
+async def test_list_documents_google_sheet_filter(gdrive_adapter: Any) -> None:
+    """content_types=['google_sheet'] → only spreadsheets returned."""
+    connector = _make_alias_connector(connector_type="google_sheets")
+
+    mixed_files = _list_response(
+        [
+            {
+                "id": "file-sheet-1",
+                "name": "Sheet",
+                "mimeType": "application/vnd.google-apps.spreadsheet",
+                "modifiedTime": "2026-04-10T10:00:00.000Z",
+                "webViewLink": "https://sheets.google.com/d/1",
+                "size": None,
+                "owners": [],
+                "permissions": [],
+            },
+            {
+                "id": "file-doc-1",
+                "name": "Doc",
+                "mimeType": "application/vnd.google-apps.document",
+                "modifiedTime": "2026-04-10T10:00:00.000Z",
+                "webViewLink": "https://docs.google.com/d/1",
+                "size": None,
+                "owners": [],
+                "permissions": [],
+            },
+        ]
+    )
+
+    with patch.object(gdrive_adapter, "_list_files", AsyncMock(return_value=mixed_files)):
+        refs = await gdrive_adapter.list_documents(connector, cursor_context=None)
+
+    assert len(refs) == 1
+    assert refs[0].content_type == "google_sheet"
+
+
+async def test_list_documents_google_slides_filter(gdrive_adapter: Any) -> None:
+    """content_types=['google_slides'] → only presentations returned."""
+    connector = _make_alias_connector(connector_type="google_slides")
+
+    mixed_files = _list_response(
+        [
+            {
+                "id": "file-slides-1",
+                "name": "Slides",
+                "mimeType": "application/vnd.google-apps.presentation",
+                "modifiedTime": "2026-04-10T10:00:00.000Z",
+                "webViewLink": "https://slides.google.com/d/1",
+                "size": None,
+                "owners": [],
+                "permissions": [],
+            },
+            {
+                "id": "file-doc-1",
+                "name": "Doc",
+                "mimeType": "application/vnd.google-apps.document",
+                "modifiedTime": "2026-04-10T10:00:00.000Z",
+                "webViewLink": "https://docs.google.com/d/1",
+                "size": None,
+                "owners": [],
+                "permissions": [],
+            },
+        ]
+    )
+
+    with patch.object(gdrive_adapter, "_list_files", AsyncMock(return_value=mixed_files)):
+        refs = await gdrive_adapter.list_documents(connector, cursor_context=None)
+
+    assert len(refs) == 1
+    assert refs[0].content_type == "google_slides"
+
+
+async def test_list_documents_multiple_content_types(gdrive_adapter: Any) -> None:
+    """content_types=['google_doc','google_sheet'] → both types returned, presentation excluded."""
+    connector = _make_alias_connector(
+        connector_type="google_drive",
+        content_types=["google_doc", "google_sheet"],
+    )
+
+    mixed_files = _list_response(
+        [
+            {
+                "id": "file-doc-1",
+                "name": "Doc",
+                "mimeType": "application/vnd.google-apps.document",
+                "modifiedTime": "2026-04-10T10:00:00.000Z",
+                "webViewLink": "https://docs.google.com/d/1",
+                "size": None,
+                "owners": [],
+                "permissions": [],
+            },
+            {
+                "id": "file-sheet-1",
+                "name": "Sheet",
+                "mimeType": "application/vnd.google-apps.spreadsheet",
+                "modifiedTime": "2026-04-10T10:00:00.000Z",
+                "webViewLink": "https://sheets.google.com/d/1",
+                "size": None,
+                "owners": [],
+                "permissions": [],
+            },
+            {
+                "id": "file-slides-1",
+                "name": "Slides",
+                "mimeType": "application/vnd.google-apps.presentation",
+                "modifiedTime": "2026-04-10T10:00:00.000Z",
+                "webViewLink": "https://slides.google.com/d/1",
+                "size": None,
+                "owners": [],
+                "permissions": [],
+            },
+        ]
+    )
+
+    with patch.object(gdrive_adapter, "_list_files", AsyncMock(return_value=mixed_files)):
+        refs = await gdrive_adapter.list_documents(connector, cursor_context=None)
+
+    content_types = {r.content_type for r in refs}
+    assert content_types == {"google_doc", "google_sheet"}
+
+
+# ---------------------------------------------------------------------------
+# 11. list_documents — incremental (changes) path with content_types filter
+# ---------------------------------------------------------------------------
+
+
+async def test_list_changes_filters_client_side_if_content_types_set(
+    gdrive_adapter: Any,
+) -> None:
+    """Incremental sync with content_types set → non-matching mimeTypes excluded client-side."""
+    connector = _make_alias_connector(connector_type="google_sheets")
+    cursor = {"page_token": "cursor-abc"}
+
+    changes_response = {
+        "changes": [
+            {
+                "fileId": "file-sheet-1",
+                "file": {
+                    "id": "file-sheet-1",
+                    "name": "Sheet",
+                    "mimeType": "application/vnd.google-apps.spreadsheet",
+                    "modifiedTime": "2026-04-10T10:00:00.000Z",
+                    "webViewLink": "https://sheets.google.com/d/1",
+                    "size": None,
+                    "owners": [],
+                    "permissions": [],
+                },
+            },
+            {
+                "fileId": "file-doc-1",
+                "file": {
+                    "id": "file-doc-1",
+                    "name": "Doc",
+                    "mimeType": "application/vnd.google-apps.document",
+                    "modifiedTime": "2026-04-10T10:00:00.000Z",
+                    "webViewLink": "https://docs.google.com/d/1",
+                    "size": None,
+                    "owners": [],
+                    "permissions": [],
+                },
+            },
+        ],
+        "newStartPageToken": "next-cursor",
+    }
+
+    with patch.object(gdrive_adapter, "_list_changes", AsyncMock(return_value=changes_response)):
+        refs = await gdrive_adapter.list_documents(connector, cursor_context=cursor)
+
+    assert len(refs) == 1
+    assert refs[0].ref == "file-sheet-1"
+    assert refs[0].content_type == "google_sheet"
+
+
+# ---------------------------------------------------------------------------
+# 12. DocumentRef identifier population (SPEC R5.5)
+# ---------------------------------------------------------------------------
+
+
+def _file_payload(
+    file_id: str = "file-1",
+    mime_type: str = "application/vnd.google-apps.document",
+    owners: list[dict[str, Any]] | None = None,
+    permissions: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": file_id,
+        "name": "Test Doc",
+        "mimeType": mime_type,
+        "modifiedTime": "2026-04-10T10:00:00.000Z",
+        "webViewLink": f"https://docs.google.com/d/{file_id}",
+        "size": None,
+        "owners": owners if owners is not None else [],
+        "permissions": permissions if permissions is not None else [],
+    }
+
+
+async def test_document_ref_sender_email_from_owner(gdrive_adapter: Any) -> None:
+    """owners[0].emailAddress → DocumentRef.sender_email."""
+    connector = _make_alias_connector(connector_type="google_drive")
+    payload = _file_payload(owners=[{"emailAddress": "owner@example.com", "displayName": "Owner"}])
+
+    with patch.object(
+        gdrive_adapter, "_list_files", AsyncMock(return_value=_list_response([payload]))
+    ):
+        refs = await gdrive_adapter.list_documents(connector, cursor_context=None)
+
+    assert len(refs) == 1
+    assert refs[0].sender_email == "owner@example.com"
+
+
+async def test_document_ref_sender_email_empty_when_owners_missing(gdrive_adapter: Any) -> None:
+    """Missing owners → sender_email == ''."""
+    connector = _make_alias_connector(connector_type="google_drive")
+    payload = _file_payload(owners=[])
+
+    with patch.object(
+        gdrive_adapter, "_list_files", AsyncMock(return_value=_list_response([payload]))
+    ):
+        refs = await gdrive_adapter.list_documents(connector, cursor_context=None)
+
+    assert refs[0].sender_email == ""
+
+
+async def test_document_ref_mentioned_emails_from_writer_permissions(
+    gdrive_adapter: Any,
+) -> None:
+    """Permissions with role=writer or commenter → included in mentioned_emails."""
+    connector = _make_alias_connector(connector_type="google_drive")
+    payload = _file_payload(
+        owners=[{"emailAddress": "owner@example.com"}],
+        permissions=[
+            {"role": "writer", "emailAddress": "writer@example.com"},
+            {"role": "commenter", "emailAddress": "commenter@example.com"},
+        ],
+    )
+
+    with patch.object(
+        gdrive_adapter, "_list_files", AsyncMock(return_value=_list_response([payload]))
+    ):
+        refs = await gdrive_adapter.list_documents(connector, cursor_context=None)
+
+    assert "writer@example.com" in refs[0].mentioned_emails
+    assert "commenter@example.com" in refs[0].mentioned_emails
+
+
+async def test_document_ref_mentioned_emails_excludes_readers(gdrive_adapter: Any) -> None:
+    """Permissions with role=reader → NOT in mentioned_emails."""
+    connector = _make_alias_connector(connector_type="google_drive")
+    payload = _file_payload(
+        owners=[{"emailAddress": "owner@example.com"}],
+        permissions=[
+            {"role": "reader", "emailAddress": "reader@example.com"},
+        ],
+    )
+
+    with patch.object(
+        gdrive_adapter, "_list_files", AsyncMock(return_value=_list_response([payload]))
+    ):
+        refs = await gdrive_adapter.list_documents(connector, cursor_context=None)
+
+    assert "reader@example.com" not in refs[0].mentioned_emails
+
+
+async def test_document_ref_mentioned_emails_dedupes(gdrive_adapter: Any) -> None:
+    """Duplicate email addresses in permissions → deduplicated in mentioned_emails."""
+    connector = _make_alias_connector(connector_type="google_drive")
+    payload = _file_payload(
+        owners=[{"emailAddress": "owner@example.com"}],
+        permissions=[
+            {"role": "writer", "emailAddress": "writer@example.com"},
+            {"role": "commenter", "emailAddress": "writer@example.com"},  # duplicate
+        ],
+    )
+
+    with patch.object(
+        gdrive_adapter, "_list_files", AsyncMock(return_value=_list_response([payload]))
+    ):
+        refs = await gdrive_adapter.list_documents(connector, cursor_context=None)
+
+    assert refs[0].mentioned_emails.count("writer@example.com") == 1
+
+
+async def test_document_ref_mentioned_emails_excludes_sender(gdrive_adapter: Any) -> None:
+    """Owner email that also appears in permissions is NOT duplicated in mentioned_emails."""
+    connector = _make_alias_connector(connector_type="google_drive")
+    payload = _file_payload(
+        owners=[{"emailAddress": "owner@example.com"}],
+        permissions=[
+            {"role": "owner", "emailAddress": "owner@example.com"},
+            {"role": "writer", "emailAddress": "writer@example.com"},
+        ],
+    )
+
+    with patch.object(
+        gdrive_adapter, "_list_files", AsyncMock(return_value=_list_response([payload]))
+    ):
+        refs = await gdrive_adapter.list_documents(connector, cursor_context=None)
+
+    assert "owner@example.com" not in refs[0].mentioned_emails
+    assert "writer@example.com" in refs[0].mentioned_emails
+
+
+# ---------------------------------------------------------------------------
+# 13. Drive API fields — owners and permissions included in requested fields
+# ---------------------------------------------------------------------------
+
+
+async def test_list_request_includes_owners_and_permissions_fields(
+    gdrive_adapter: Any,
+) -> None:
+    """_LIST_FIELDS constant must include owners(emailAddress) and permissions(role,emailAddress)."""
+    from app.adapters import google_drive as gd_module
+
+    assert "owners" in gd_module._LIST_FIELDS
+    assert "permissions" in gd_module._LIST_FIELDS

@@ -32,13 +32,32 @@ async def _pin_and_reset_on_exit(session: AsyncSession) -> None:
 
 
 async def _reset_tenant_context(session: AsyncSession) -> None:
-    """Clear app.current_org_id on the session's connection.
+    """Clear app.current_org_id and app.cross_org_admin on the session's connection.
 
     Called before the connection returns to the pool so the next request /
     task that picks it up starts with a clean RLS context.
+
+    Rolls back FIRST. If the session is in an aborted-transaction state (e.g.
+    after a 42501 RLS failure from the fail-loud policy), PostgreSQL rejects
+    every subsequent command with "current transaction is aborted" — including
+    our set_config reset. Without the rollback the suppressed exception path
+    would silently leave the leftover tenant context on the pooled connection,
+    and the next request picking up that connection would see it and silently
+    filter rows by the wrong tenant.
+
+    Both GUCs are reset so this helper can be shared between get_db(),
+    tenant_scoped_session() and cross_org_session() without duplicating the
+    pool-leak guard.
     """
+    # Step 1: clear any aborted-transaction state so set_config can run.
+    with contextlib.suppress(Exception):
+        await session.rollback()
+    # Step 2: clear both RLS GUCs. Each in its own suppress so one failure
+    # does not skip the other.
     with contextlib.suppress(Exception):
         await session.execute(text("SELECT set_config('app.current_org_id', '', false)"))
+    with contextlib.suppress(Exception):
+        await session.execute(text("SELECT set_config('app.cross_org_admin', '', false)"))
 
 
 async def get_db() -> AsyncGenerator[AsyncSession]:
@@ -161,6 +180,8 @@ async def cross_org_session() -> AsyncIterator[AsyncSession]:
         try:
             yield session
         finally:
-            with contextlib.suppress(Exception):
-                await session.execute(text("SELECT set_config('app.cross_org_admin', '', false)"))
+            # _reset_tenant_context rolls back first, then clears BOTH
+            # app.current_org_id and app.cross_org_admin in suppressed blocks —
+            # so the pool cannot inherit the cross-org bypass flag from a
+            # session that aborted before reaching this finally.
             await _reset_tenant_context(session)

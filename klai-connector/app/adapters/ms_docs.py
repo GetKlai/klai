@@ -158,7 +158,11 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
             response = await client.post(token_url, data=payload)
             response.raise_for_status()
             data = response.json()
-        return data if isinstance(data, dict) else {}
+        if not isinstance(data, dict):
+            return {}
+        # data is a genuinely untyped JSON dict; the caller treats keys as Any.
+        result: dict[str, Any] = dict(data)  # pyright: ignore[reportUnknownArgumentType]
+        return result
 
     # -- BaseAdapter interface ------------------------------------------------
 
@@ -413,7 +417,11 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
                 response = await client.get(url, headers=headers)
             response.raise_for_status()
             data = response.json()
-        return data if isinstance(data, dict) else {}
+        if not isinstance(data, dict):
+            return {}
+        # data is a genuinely untyped JSON dict; the caller treats keys as Any.
+        result: dict[str, Any] = dict(data)  # pyright: ignore[reportUnknownArgumentType]
+        return result
 
     async def _graph_get_bytes(
         self, url: str, connector: Any | None = None,

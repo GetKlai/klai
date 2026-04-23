@@ -149,15 +149,38 @@ class WebcrawlerConfig(BaseModel):
         return self
 
 
-ConnectorType = Literal["github", "notion", "web_crawler", "google_drive", "ms_docs"]
+# @MX:ANCHOR: ConnectorType Literal — Pydantic validation boundary for connector_type.
+# @MX:REASON: Extended by SPEC-KB-CONNECTORS-001 R6 to include airtable, confluence,
+#   google_docs, google_sheets, google_slides. CHECK constraint in Alembic migration
+#   6e01fa349b6e must stay in sync with this Literal.
+ConnectorType = Literal[
+    "github",
+    "notion",
+    "web_crawler",
+    "google_drive",
+    "ms_docs",
+    "airtable",
+    "confluence",
+    "google_docs",
+    "google_sheets",
+    "google_slides",
+]
 
 # Default content_type per connector_type (SPEC-EVIDENCE-001, R10)
+# SPEC-KB-CONNECTORS-001 R6: new types use "kb_article" as the default since they are
+# all structured knowledge sources (spreadsheets, docs, wikis). This matches the existing
+# convention for github, notion, and ms_docs.
 CONTENT_TYPE_DEFAULTS: dict[str, str] = {
     "web_crawler": "web_crawl",
     "github": "kb_article",
     "notion": "kb_article",
     "google_drive": "pdf_document",
     "ms_docs": "kb_article",
+    "airtable": "kb_article",
+    "confluence": "kb_article",
+    "google_docs": "kb_article",
+    "google_sheets": "kb_article",
+    "google_slides": "kb_article",
 }
 
 
