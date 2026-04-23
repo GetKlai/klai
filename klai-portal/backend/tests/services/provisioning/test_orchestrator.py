@@ -6,7 +6,7 @@ and rollback logic.
 """
 
 import asyncio
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -132,3 +132,57 @@ class TestCompensators:
             await _compensate_caddy(state)
 
         assert not tenant_file.exists()
+
+
+class TestSeedDefaultTemplatesNonFatal:
+    """SPEC-CHAT-TEMPLATES-CLEANUP-001: provisioning step 6b contract.
+
+    REQ-TEMPLATES-SEED-E2: any exception from the seeder must be logged
+    and swallowed, so broader provisioning keeps going.
+    """
+
+    @pytest.mark.asyncio
+    async def test_happy_path_calls_seeder_and_commits(self):
+        from app.services.provisioning.orchestrator import _seed_default_templates_non_fatal
+
+        db = MagicMock()
+        db.commit = AsyncMock()
+
+        with patch(
+            "app.services.default_templates.ensure_default_templates",
+            AsyncMock(return_value=4),
+        ) as seed:
+            await _seed_default_templates_non_fatal(org_id=42, db=db)
+
+        seed.assert_awaited_once_with(42, "system", db)
+        db.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_seeder_raises_are_swallowed_not_propagated(self):
+        """Exception in ensure_default_templates must NOT abort provisioning."""
+        from app.services.provisioning.orchestrator import _seed_default_templates_non_fatal
+
+        db = MagicMock()
+        db.commit = AsyncMock()
+
+        with patch(
+            "app.services.default_templates.ensure_default_templates",
+            AsyncMock(side_effect=RuntimeError("transient db blip")),
+        ):
+            # Must not raise.
+            await _seed_default_templates_non_fatal(org_id=42, db=db)
+
+    @pytest.mark.asyncio
+    async def test_commit_raises_are_swallowed(self):
+        """Commit failure after a successful seed is also non-fatal."""
+        from app.services.provisioning.orchestrator import _seed_default_templates_non_fatal
+
+        db = MagicMock()
+        db.commit = AsyncMock(side_effect=RuntimeError("commit failed"))
+
+        with patch(
+            "app.services.default_templates.ensure_default_templates",
+            AsyncMock(return_value=4),
+        ):
+            # Must not raise.
+            await _seed_default_templates_non_fatal(org_id=42, db=db)
