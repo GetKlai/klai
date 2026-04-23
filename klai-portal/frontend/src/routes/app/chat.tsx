@@ -7,7 +7,7 @@ import { apiFetch } from '@/lib/apiFetch'
 import { chatKbLogger } from '@/lib/logger'
 import * as m from '@/paraglide/messages'
 
-import { KBScopeBar } from './_components/KBScopeBar'
+import { ChatConfigBar } from './_components/ChatConfigBar'
 
 // Threshold: 25 days (conservative — LibreChat refresh tokens are 30d)
 const LC_AUTH_KEY = 'lc_authed_at'
@@ -157,7 +157,7 @@ function ChatPage() {
 
   return (
     <div className="flex h-full w-full flex-col" data-help-id="chat-page">
-      <KBScopeBar />
+      <ChatConfigBar />
       <div className="relative flex-1">
         {/* Loading overlay */}
         {showOverlay && (
