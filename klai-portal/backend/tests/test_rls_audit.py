@@ -73,6 +73,13 @@ _ALLOWLIST: dict[str, str] = {
     "app/services/access.py": (
         "service layer — all callers pass a db session that already has tenant context set via _get_caller_org"
     ),
+    # kb_quota.py is the SPEC-PORTAL-UNIFY-KB-001 Phase A quota-enforcement
+    # service. It is only ever called from within create_knowledge_base /
+    # trigger_sync, both of which call _get_caller_org first (which runs
+    # set_tenant).
+    "app/services/kb_quota.py": (
+        "service layer — all callers pass a db session with tenant context already set via _get_caller_org"
+    ),
 }
 
 
