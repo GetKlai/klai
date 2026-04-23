@@ -107,7 +107,7 @@ function FocusPage() {
     <div className="p-6 space-y-6 max-w-5xl">
       <div className="flex items-start justify-between">
         <div className="space-y-1">
-          <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
             {m.app_tool_focus_title()}
           </h1>
           <p className="text-sm text-[var(--color-muted-foreground)]">
