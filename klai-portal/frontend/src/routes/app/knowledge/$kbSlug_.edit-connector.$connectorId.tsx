@@ -79,6 +79,10 @@ function EditConnectorPage() {
   })
   const [folderId, setFolderId] = useState('')
   const [isReconnecting, setIsReconnecting] = useState(false)
+  // ms_docs (SPEC-KB-MS-DOCS-001 R4.4): optional site_url + drive_id
+  const [msSiteUrl, setMsSiteUrl] = useState('')
+  const [msDriveId, setMsDriveId] = useState('')
+  const [msSiteUrlError, setMsSiteUrlError] = useState<string | null>(null)
 
   // Web crawler preview state
   const [showAdvancedSelector, setShowAdvancedSelector] = useState(false)
@@ -99,6 +103,20 @@ function EditConnectorPage() {
       setIsReconnecting(false)
     }
   }
+
+  // SPEC-KB-MS-DOCS-001 R4.4 — trigger a fresh OAuth flow when refresh_token is invalid.
+  async function handleMsDocsReconnect() {
+    setIsReconnecting(true)
+    try {
+      const { authorize_url } = await apiFetch<{ authorize_url: string }>(`/api/oauth/ms_docs/authorize?kb_slug=${encodeURIComponent(kbSlug)}&connector_id=${encodeURIComponent(connectorId)}`, )
+      window.location.href = authorize_url
+    } finally {
+      setIsReconnecting(false)
+    }
+  }
+
+  // Keep in sync with add-connector.tsx MS_SITE_URL_PATTERN.
+  const MS_SITE_URL_PATTERN = /^https:\/\/[a-z0-9-]+\.sharepoint\.com\/sites\/[^/]+\/?$/
 
   function parseCookies(): unknown[] | undefined {
     const raw = wcCookies.trim()
@@ -154,6 +172,12 @@ function EditConnectorPage() {
       const cfg = connector.config as { folder_id?: string }
       setFolderId(cfg.folder_id ?? '')
     }
+    if (connector.connector_type === 'ms_docs') {
+      const cfg = connector.config as { site_url?: string; drive_id?: string }
+      setMsSiteUrl(cfg.site_url ?? '')
+      setMsDriveId(cfg.drive_id ?? '')
+      setMsSiteUrlError(null)
+    }
   }, [connector?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateMutation = useMutation({
@@ -189,6 +213,16 @@ function EditConnectorPage() {
       }
       if (connector.connector_type === 'google_drive') {
         if (folderId.trim()) config.folder_id = folderId.trim()
+      }
+      if (connector.connector_type === 'ms_docs') {
+        const siteUrl = msSiteUrl.trim()
+        if (siteUrl && !MS_SITE_URL_PATTERN.test(siteUrl)) {
+          setMsSiteUrlError(m.admin_connectors_ms_docs_site_url_invalid())
+          throw new Error('invalid_site_url')
+        }
+        setMsSiteUrlError(null)
+        if (siteUrl) config.site_url = siteUrl
+        if (msDriveId.trim()) config.drive_id = msDriveId.trim()
       }
       await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/${connectorId}`, {
         method: 'PATCH',
@@ -577,8 +611,53 @@ function EditConnectorPage() {
             </form>
           )}
 
+          {/* Microsoft 365 (SPEC-KB-MS-DOCS-001 R4.4) */}
+          {connector?.connector_type === 'ms_docs' && (
+            <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>
+                <Input id="edit-conn-name" required value={name} onChange={(e) => setName(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-ms-site-url">{m.admin_connectors_ms_docs_site_url()}</Label>
+                <Input
+                  id="edit-ms-site-url"
+                  placeholder="https://contoso.sharepoint.com/sites/marketing"
+                  value={msSiteUrl}
+                  onChange={(e) => { setMsSiteUrl(e.target.value); setMsSiteUrlError(null) }}
+                />
+                <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_ms_docs_site_url_help()}</p>
+                {msSiteUrlError && (
+                  <p className="text-xs text-[var(--color-destructive)]">{msSiteUrlError}</p>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-ms-drive-id">{m.admin_connectors_ms_docs_drive_id()}</Label>
+                <Input id="edit-ms-drive-id" placeholder="b!xyz..." value={msDriveId} onChange={(e) => setMsDriveId(e.target.value)} />
+                <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_ms_docs_drive_id_help()}</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label>{m.admin_connectors_assertion_modes_label()}</Label>
+                <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
+              </div>
+              {renderError()}
+              <div className="flex gap-2 pt-2">
+                <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={isReconnecting}
+                  onClick={() => { void handleMsDocsReconnect() }}
+                >
+                  {m.admin_connectors_ms_docs_reconnect()}
+                </Button>
+              </div>
+            </form>
+          )}
+
           {/* Generic fallback for unsupported connector types */}
-          {connector && !['web_crawler', 'github', 'notion', 'google_drive'].includes(connector.connector_type) && (
+          {connector && !['web_crawler', 'github', 'notion', 'google_drive', 'ms_docs'].includes(connector.connector_type) && (
             <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-3">
               <div className="space-y-1.5">
                 <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>
