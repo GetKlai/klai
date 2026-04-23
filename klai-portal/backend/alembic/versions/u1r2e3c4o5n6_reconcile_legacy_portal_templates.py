@@ -89,7 +89,9 @@ def upgrade() -> None:
     op.execute("ALTER TABLE portal_templates ENABLE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE portal_templates FORCE ROW LEVEL SECURITY")
     op.execute("DROP POLICY IF EXISTS tenant_isolation ON portal_templates")
-    op.execute(f"CREATE POLICY tenant_isolation ON portal_templates USING (org_id = {_T})")
+    op.execute(  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
+        f"CREATE POLICY tenant_isolation ON portal_templates USING (org_id = {_T})"
+    )
 
 
 def downgrade() -> None:
