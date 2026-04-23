@@ -297,10 +297,10 @@ function UsersPage() {
   })
 
   return (
-    <div className="p-6 space-y-6 max-w-6xl">
+    <div className="mx-auto max-w-6xl px-6 py-10 space-y-6">
       <div className="flex items-start justify-between">
         <div className="space-y-1">
-          <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
             {m.admin_users_heading()}
           </h1>
           <p className="text-sm text-[var(--color-muted-foreground)]">
