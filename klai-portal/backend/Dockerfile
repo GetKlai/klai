@@ -49,6 +49,8 @@ ENV PATH="/repo/klai-portal/backend/.venv/bin:${PATH}" \
 COPY klai-portal/backend/app app
 COPY klai-portal/backend/alembic alembic
 COPY klai-portal/backend/alembic.ini alembic.ini
+COPY klai-portal/backend/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 RUN adduser --disabled-password --gecos "" klai
 
@@ -56,4 +58,8 @@ EXPOSE 8010
 
 USER klai
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8010"]
+# entrypoint.sh runs `alembic upgrade head` then exec's uvicorn.
+# Fail-loud: any migration error aborts container startup.
+# @MX:ANCHOR SPEC-CHAT-TEMPLATES-CLEANUP-001: removed manual alembic step
+# after first-merge regression (portal-api serving with stale schema).
+ENTRYPOINT ["/entrypoint.sh"]
