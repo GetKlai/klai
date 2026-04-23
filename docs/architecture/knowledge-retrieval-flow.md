@@ -483,14 +483,20 @@ coverage analytics — to see which questions the knowledge base cannot answer.
 
 ---
 
-### Rules and Templates
+### Templates injection (SPEC-CHAT-TEMPLATES-001)
 
-Before the retrieval chunks are formatted, the hook fetches two org-scoped resources and prepends them to the system message:
+Before the retrieval chunks are formatted, the hook fetches the active prompt templates for the calling (org, user) pair and prepends them to the system message.
 
-- **Rules** — strict guardrails (not instructions). Configured per org in `/admin/rules`. The `instruction` type was deliberately removed — rules are guardrails only. Applied to *every* request regardless of consumer class.
-- **Templates** — reusable response scaffolds. Configured per org, optionally scoped per KB. Applied when the active KB matches a template's scope.
+- **Templates** — reusable prompt scaffolds. Configured per org (admin-only) or per user (personal scope). Users pick 0+ active templates via `active_template_ids` on their PortalUser. The hook fetches `/internal/templates/effective?zitadel_org_id=...&librechat_user_id=...` and injects each template's `prompt_text` in the order the user specified.
+- **Cache**: 30 s TTL per `(org, user)` in the LiteLLM in-process cache. Redis DEL from portal-api CRUD + `active_template_ids` PATCH invalidates pre-emptively.
+- **Fail-open**: timeout or 5xx from portal-api → `templates_degraded` warning, chat continues without template injection.
+- **No per-KB scoping in v1**: templates are either org-wide or personal. KB-binding is explicitly deferred.
 
-Ordering in the final system message: rules → templates → KB context (below) → any pre-existing system message. Rules come first because they are the strictest constraint.
+Ordering in the final system message: **templates → KB context (below) → any pre-existing system message.**
+
+### Rules (planned, SPEC-CHAT-GUARDRAILS-001)
+
+Guardrail rules (PII block/redact, keyword block/redact) are a separate layer with a dedicated `klai-pii` microservice (Presidio + GLiNER). They operate on the **user message** (block or redact), not on the system prompt. Tracked in SPEC-CHAT-GUARDRAILS-001 — not yet live. When rules ship, the final-message ordering becomes: rules-applied user message → templates → KB context → pre-existing system.
 
 ### Building the context block
 
@@ -669,5 +675,6 @@ Trailing punctuation and whitespace are ignored. "Ok!" and "Oké." are both triv
 | Widget auth | `klai-portal/backend/app/services/widget_auth.py` | `generate_session_token` — HS256 JWT signed with `WIDGET_JWT_SECRET`, 1h TTL |
 | Widget admin | `klai-portal/backend/app/api/admin_widgets.py` | CRUD on `widgets` table (SPEC-WIDGET-002) |
 | Widget bundle | `klai-widget/src/main.ts` | SolidJS entry point; bootstrap via `/partner/v1/widget-config` |
-| Rules + Templates | `klai-portal/backend/app/api/app_rules.py`, `app_templates.py` | CRUD; resolved in the LiteLLM hook per org/KB |
+| Templates | `klai-portal/backend/app/api/app_templates.py` | CRUD (SPEC-CHAT-TEMPLATES-001); resolved via `/internal/templates/effective` in the LiteLLM hook. |
+| Rules (planned) | klai-pii microservice + `app_rules.py` | SPEC-CHAT-GUARDRAILS-001 — not yet live. |
 | Config | `klai-retrieval-api/retrieval_api/config.py` | All configurable values and defaults |

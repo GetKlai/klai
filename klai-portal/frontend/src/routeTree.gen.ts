@@ -37,6 +37,7 @@ import { Route as AdminDomainsRouteImport } from './routes/admin/domains'
 import { Route as AdminBillingRouteImport } from './routes/admin/billing'
 import { Route as LocaleSignupRouteImport } from './routes/$locale/signup'
 import { Route as AppTranscribeIndexRouteImport } from './routes/app/transcribe/index'
+import { Route as AppTemplatesIndexRouteImport } from './routes/app/templates/index'
 import { Route as AppKnowledgeIndexRouteImport } from './routes/app/knowledge/index'
 import { Route as AppGapsIndexRouteImport } from './routes/app/gaps/index'
 import { Route as AppFocusIndexRouteImport } from './routes/app/focus/index'
@@ -49,6 +50,7 @@ import { Route as AdminApiKeysIndexRouteImport } from './routes/admin/api-keys/i
 import { Route as LocaleSignupIndexRouteImport } from './routes/$locale/signup/index'
 import { Route as AppTranscribeAddRouteImport } from './routes/app/transcribe/add'
 import { Route as AppTranscribeTranscriptionIdRouteImport } from './routes/app/transcribe/$transcriptionId'
+import { Route as AppTemplatesNewRouteImport } from './routes/app/templates/new'
 import { Route as AppMeetingsStartRouteImport } from './routes/app/meetings/start'
 import { Route as AppMeetingsMeetingIdRouteImport } from './routes/app/meetings/$meetingId'
 import { Route as AppKnowledgeNewRouteImport } from './routes/app/knowledge/new'
@@ -70,6 +72,7 @@ import { Route as AppDocsKbSlugRouteRouteImport } from './routes/app/docs/$kbSlu
 import { Route as AppKnowledgeKbSlugIndexRouteImport } from './routes/app/knowledge/$kbSlug/index'
 import { Route as AppDocsKbSlugIndexRouteImport } from './routes/app/docs/$kbSlug/index'
 import { Route as AdminGroupsGroupIdIndexRouteImport } from './routes/admin/groups/$groupId/index'
+import { Route as AppTemplatesSlugEditRouteImport } from './routes/app/templates/$slug.edit'
 import { Route as AppKnowledgeKbSlugAddConnectorRouteImport } from './routes/app/knowledge/$kbSlug_.add-connector'
 import { Route as AppKnowledgeKbSlugTaxonomyRouteImport } from './routes/app/knowledge/$kbSlug/taxonomy'
 import { Route as AppKnowledgeKbSlugSettingsRouteImport } from './routes/app/knowledge/$kbSlug/settings'
@@ -227,6 +230,11 @@ const AppTranscribeIndexRoute = AppTranscribeIndexRouteImport.update({
   path: '/transcribe/',
   getParentRoute: () => AppRouteRoute,
 } as any)
+const AppTemplatesIndexRoute = AppTemplatesIndexRouteImport.update({
+  id: '/templates/',
+  path: '/templates/',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 const AppKnowledgeIndexRoute = AppKnowledgeIndexRouteImport.update({
   id: '/knowledge/',
   path: '/knowledge/',
@@ -288,6 +296,11 @@ const AppTranscribeTranscriptionIdRoute =
     path: '/transcribe/$transcriptionId',
     getParentRoute: () => AppRouteRoute,
   } as any)
+const AppTemplatesNewRoute = AppTemplatesNewRouteImport.update({
+  id: '/templates/new',
+  path: '/templates/new',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 const AppMeetingsStartRoute = AppMeetingsStartRouteImport.update({
   id: '/meetings/start',
   path: '/meetings/start',
@@ -394,6 +407,11 @@ const AdminGroupsGroupIdIndexRoute = AdminGroupsGroupIdIndexRouteImport.update({
   id: '/groups/$groupId/',
   path: '/groups/$groupId/',
   getParentRoute: () => AdminRouteRoute,
+} as any)
+const AppTemplatesSlugEditRoute = AppTemplatesSlugEditRouteImport.update({
+  id: '/templates/$slug/edit',
+  path: '/templates/$slug/edit',
+  getParentRoute: () => AppRouteRoute,
 } as any)
 const AppKnowledgeKbSlugAddConnectorRoute =
   AppKnowledgeKbSlugAddConnectorRouteImport.update({
@@ -534,6 +552,7 @@ export interface FileRoutesByFullPath {
   '/app/knowledge/new': typeof AppKnowledgeNewRoute
   '/app/meetings/$meetingId': typeof AppMeetingsMeetingIdRoute
   '/app/meetings/start': typeof AppMeetingsStartRoute
+  '/app/templates/new': typeof AppTemplatesNewRoute
   '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
   '/$locale/signup/': typeof LocaleSignupIndexRoute
@@ -546,6 +565,7 @@ export interface FileRoutesByFullPath {
   '/app/focus/': typeof AppFocusIndexRoute
   '/app/gaps/': typeof AppGapsIndexRoute
   '/app/knowledge/': typeof AppKnowledgeIndexRoute
+  '/app/templates/': typeof AppTemplatesIndexRoute
   '/app/transcribe/': typeof AppTranscribeIndexRoute
   '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
   '/admin/groups/$groupId/edit': typeof AdminGroupsGroupIdEditRoute
@@ -562,6 +582,7 @@ export interface FileRoutesByFullPath {
   '/app/knowledge/$kbSlug/settings': typeof AppKnowledgeKbSlugSettingsRoute
   '/app/knowledge/$kbSlug/taxonomy': typeof AppKnowledgeKbSlugTaxonomyRoute
   '/app/knowledge/$kbSlug/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
+  '/app/templates/$slug/edit': typeof AppTemplatesSlugEditRoute
   '/admin/groups/$groupId/': typeof AdminGroupsGroupIdIndexRoute
   '/app/docs/$kbSlug/': typeof AppDocsKbSlugIndexRoute
   '/app/knowledge/$kbSlug/': typeof AppKnowledgeKbSlugIndexRoute
@@ -608,6 +629,7 @@ export interface FileRoutesByTo {
   '/app/knowledge/new': typeof AppKnowledgeNewRoute
   '/app/meetings/$meetingId': typeof AppMeetingsMeetingIdRoute
   '/app/meetings/start': typeof AppMeetingsStartRoute
+  '/app/templates/new': typeof AppTemplatesNewRoute
   '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
   '/$locale/signup': typeof LocaleSignupIndexRoute
@@ -620,6 +642,7 @@ export interface FileRoutesByTo {
   '/app/focus': typeof AppFocusIndexRoute
   '/app/gaps': typeof AppGapsIndexRoute
   '/app/knowledge': typeof AppKnowledgeIndexRoute
+  '/app/templates': typeof AppTemplatesIndexRoute
   '/app/transcribe': typeof AppTranscribeIndexRoute
   '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
   '/admin/groups/$groupId/edit': typeof AdminGroupsGroupIdEditRoute
@@ -636,6 +659,7 @@ export interface FileRoutesByTo {
   '/app/knowledge/$kbSlug/settings': typeof AppKnowledgeKbSlugSettingsRoute
   '/app/knowledge/$kbSlug/taxonomy': typeof AppKnowledgeKbSlugTaxonomyRoute
   '/app/knowledge/$kbSlug/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
+  '/app/templates/$slug/edit': typeof AppTemplatesSlugEditRoute
   '/admin/groups/$groupId': typeof AdminGroupsGroupIdIndexRoute
   '/app/docs/$kbSlug': typeof AppDocsKbSlugIndexRoute
   '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugIndexRoute
@@ -688,6 +712,7 @@ export interface FileRoutesById {
   '/app/knowledge/new': typeof AppKnowledgeNewRoute
   '/app/meetings/$meetingId': typeof AppMeetingsMeetingIdRoute
   '/app/meetings/start': typeof AppMeetingsStartRoute
+  '/app/templates/new': typeof AppTemplatesNewRoute
   '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
   '/$locale/signup/': typeof LocaleSignupIndexRoute
@@ -700,6 +725,7 @@ export interface FileRoutesById {
   '/app/focus/': typeof AppFocusIndexRoute
   '/app/gaps/': typeof AppGapsIndexRoute
   '/app/knowledge/': typeof AppKnowledgeIndexRoute
+  '/app/templates/': typeof AppTemplatesIndexRoute
   '/app/transcribe/': typeof AppTranscribeIndexRoute
   '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
   '/admin/groups/$groupId/edit': typeof AdminGroupsGroupIdEditRoute
@@ -716,6 +742,7 @@ export interface FileRoutesById {
   '/app/knowledge/$kbSlug/settings': typeof AppKnowledgeKbSlugSettingsRoute
   '/app/knowledge/$kbSlug/taxonomy': typeof AppKnowledgeKbSlugTaxonomyRoute
   '/app/knowledge/$kbSlug_/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
+  '/app/templates/$slug/edit': typeof AppTemplatesSlugEditRoute
   '/admin/groups/$groupId/': typeof AdminGroupsGroupIdIndexRoute
   '/app/docs/$kbSlug/': typeof AppDocsKbSlugIndexRoute
   '/app/knowledge/$kbSlug/': typeof AppKnowledgeKbSlugIndexRoute
@@ -769,6 +796,7 @@ export interface FileRouteTypes {
     | '/app/knowledge/new'
     | '/app/meetings/$meetingId'
     | '/app/meetings/start'
+    | '/app/templates/new'
     | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
     | '/$locale/signup/'
@@ -781,6 +809,7 @@ export interface FileRouteTypes {
     | '/app/focus/'
     | '/app/gaps/'
     | '/app/knowledge/'
+    | '/app/templates/'
     | '/app/transcribe/'
     | '/admin/groups/$groupId/add-member'
     | '/admin/groups/$groupId/edit'
@@ -797,6 +826,7 @@ export interface FileRouteTypes {
     | '/app/knowledge/$kbSlug/settings'
     | '/app/knowledge/$kbSlug/taxonomy'
     | '/app/knowledge/$kbSlug/add-connector'
+    | '/app/templates/$slug/edit'
     | '/admin/groups/$groupId/'
     | '/app/docs/$kbSlug/'
     | '/app/knowledge/$kbSlug/'
@@ -843,6 +873,7 @@ export interface FileRouteTypes {
     | '/app/knowledge/new'
     | '/app/meetings/$meetingId'
     | '/app/meetings/start'
+    | '/app/templates/new'
     | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
     | '/$locale/signup'
@@ -855,6 +886,7 @@ export interface FileRouteTypes {
     | '/app/focus'
     | '/app/gaps'
     | '/app/knowledge'
+    | '/app/templates'
     | '/app/transcribe'
     | '/admin/groups/$groupId/add-member'
     | '/admin/groups/$groupId/edit'
@@ -871,6 +903,7 @@ export interface FileRouteTypes {
     | '/app/knowledge/$kbSlug/settings'
     | '/app/knowledge/$kbSlug/taxonomy'
     | '/app/knowledge/$kbSlug/add-connector'
+    | '/app/templates/$slug/edit'
     | '/admin/groups/$groupId'
     | '/app/docs/$kbSlug'
     | '/app/knowledge/$kbSlug'
@@ -922,6 +955,7 @@ export interface FileRouteTypes {
     | '/app/knowledge/new'
     | '/app/meetings/$meetingId'
     | '/app/meetings/start'
+    | '/app/templates/new'
     | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
     | '/$locale/signup/'
@@ -934,6 +968,7 @@ export interface FileRouteTypes {
     | '/app/focus/'
     | '/app/gaps/'
     | '/app/knowledge/'
+    | '/app/templates/'
     | '/app/transcribe/'
     | '/admin/groups/$groupId/add-member'
     | '/admin/groups/$groupId/edit'
@@ -950,6 +985,7 @@ export interface FileRouteTypes {
     | '/app/knowledge/$kbSlug/settings'
     | '/app/knowledge/$kbSlug/taxonomy'
     | '/app/knowledge/$kbSlug_/add-connector'
+    | '/app/templates/$slug/edit'
     | '/admin/groups/$groupId/'
     | '/app/docs/$kbSlug/'
     | '/app/knowledge/$kbSlug/'
@@ -1174,6 +1210,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppTranscribeIndexRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/app/templates/': {
+      id: '/app/templates/'
+      path: '/templates'
+      fullPath: '/app/templates/'
+      preLoaderRoute: typeof AppTemplatesIndexRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/app/knowledge/': {
       id: '/app/knowledge/'
       path: '/knowledge'
@@ -1256,6 +1299,13 @@ declare module '@tanstack/react-router' {
       path: '/transcribe/$transcriptionId'
       fullPath: '/app/transcribe/$transcriptionId'
       preLoaderRoute: typeof AppTranscribeTranscriptionIdRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/templates/new': {
+      id: '/app/templates/new'
+      path: '/templates/new'
+      fullPath: '/app/templates/new'
+      preLoaderRoute: typeof AppTemplatesNewRouteImport
       parentRoute: typeof AppRouteRoute
     }
     '/app/meetings/start': {
@@ -1404,6 +1454,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/admin/groups/$groupId/'
       preLoaderRoute: typeof AdminGroupsGroupIdIndexRouteImport
       parentRoute: typeof AdminRouteRoute
+    }
+    '/app/templates/$slug/edit': {
+      id: '/app/templates/$slug/edit'
+      path: '/templates/$slug/edit'
+      fullPath: '/app/templates/$slug/edit'
+      preLoaderRoute: typeof AppTemplatesSlugEditRouteImport
+      parentRoute: typeof AppRouteRoute
     }
     '/app/knowledge/$kbSlug_/add-connector': {
       id: '/app/knowledge/$kbSlug_/add-connector'
@@ -1656,17 +1713,20 @@ interface AppRouteRouteChildren {
   AppKnowledgeNewRoute: typeof AppKnowledgeNewRoute
   AppMeetingsMeetingIdRoute: typeof AppMeetingsMeetingIdRoute
   AppMeetingsStartRoute: typeof AppMeetingsStartRoute
+  AppTemplatesNewRoute: typeof AppTemplatesNewRoute
   AppTranscribeTranscriptionIdRoute: typeof AppTranscribeTranscriptionIdRoute
   AppTranscribeAddRoute: typeof AppTranscribeAddRoute
   AppDocsIndexRoute: typeof AppDocsIndexRoute
   AppFocusIndexRoute: typeof AppFocusIndexRoute
   AppGapsIndexRoute: typeof AppGapsIndexRoute
   AppKnowledgeIndexRoute: typeof AppKnowledgeIndexRoute
+  AppTemplatesIndexRoute: typeof AppTemplatesIndexRoute
   AppTranscribeIndexRoute: typeof AppTranscribeIndexRoute
   AppDocsKbSlugEditRoute: typeof AppDocsKbSlugEditRoute
   AppFocusNotebookIdAddSourceRoute: typeof AppFocusNotebookIdAddSourceRoute
   AppFocusNotebookIdEditRoute: typeof AppFocusNotebookIdEditRoute
   AppKnowledgeKbSlugAddConnectorRoute: typeof AppKnowledgeKbSlugAddConnectorRoute
+  AppTemplatesSlugEditRoute: typeof AppTemplatesSlugEditRoute
   AppKnowledgeKbSlugEditConnectorConnectorIdRoute: typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
 }
 
@@ -1683,17 +1743,20 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppKnowledgeNewRoute: AppKnowledgeNewRoute,
   AppMeetingsMeetingIdRoute: AppMeetingsMeetingIdRoute,
   AppMeetingsStartRoute: AppMeetingsStartRoute,
+  AppTemplatesNewRoute: AppTemplatesNewRoute,
   AppTranscribeTranscriptionIdRoute: AppTranscribeTranscriptionIdRoute,
   AppTranscribeAddRoute: AppTranscribeAddRoute,
   AppDocsIndexRoute: AppDocsIndexRoute,
   AppFocusIndexRoute: AppFocusIndexRoute,
   AppGapsIndexRoute: AppGapsIndexRoute,
   AppKnowledgeIndexRoute: AppKnowledgeIndexRoute,
+  AppTemplatesIndexRoute: AppTemplatesIndexRoute,
   AppTranscribeIndexRoute: AppTranscribeIndexRoute,
   AppDocsKbSlugEditRoute: AppDocsKbSlugEditRoute,
   AppFocusNotebookIdAddSourceRoute: AppFocusNotebookIdAddSourceRoute,
   AppFocusNotebookIdEditRoute: AppFocusNotebookIdEditRoute,
   AppKnowledgeKbSlugAddConnectorRoute: AppKnowledgeKbSlugAddConnectorRoute,
+  AppTemplatesSlugEditRoute: AppTemplatesSlugEditRoute,
   AppKnowledgeKbSlugEditConnectorConnectorIdRoute:
     AppKnowledgeKbSlugEditConnectorConnectorIdRoute,
 }
