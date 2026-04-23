@@ -42,6 +42,8 @@ interface TemplateFormPageProps {
   initialForm: TemplateFormState
   /** When editing, the slug of the existing template (used for PATCH). */
   slug?: string
+  /** Path to navigate back to on success / cancel. Defaults to `/app/templates`. */
+  backPath?: '/app/templates' | '/admin/templates'
 }
 
 interface TemplatePayload {
@@ -75,7 +77,12 @@ function resolveBackendError(status: number, detail: string | undefined): string
   return m.templates_form_error_generic()
 }
 
-export function TemplateFormPage({ mode, initialForm, slug }: TemplateFormPageProps) {
+export function TemplateFormPage({
+  mode,
+  initialForm,
+  slug,
+  backPath = '/app/templates',
+}: TemplateFormPageProps) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { data: currentUser } = useCurrentUser()
@@ -120,7 +127,7 @@ export function TemplateFormPage({ mode, initialForm, slug }: TemplateFormPagePr
     void queryClient.invalidateQueries({ queryKey: ['app-templates'] })
     void queryClient.invalidateQueries({ queryKey: ['app-templates-for-bar'] })
     void queryClient.invalidateQueries({ queryKey: ['kb-preference'] })
-    void navigate({ to: '/app/templates' })
+    void navigate({ to: backPath })
   }
 
   function asErrorMessage(err: unknown): string {
@@ -246,7 +253,7 @@ export function TemplateFormPage({ mode, initialForm, slug }: TemplateFormPagePr
           </button>
           <button
             type="button"
-            onClick={() => void navigate({ to: '/app/templates' })}
+            onClick={() => void navigate({ to: backPath })}
             className="text-sm text-gray-400 hover:text-gray-900 transition-colors"
           >
             {m.templates_form_cancel()}

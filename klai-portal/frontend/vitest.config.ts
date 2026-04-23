@@ -5,10 +5,10 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
-    // Playwright e2e specs live under tests/e2e and are run by a separate
-    // harness (see SPEC-CHAT-TEMPLATES-002 Phase G). Excluded here so vitest
-    // doesn't try to resolve @playwright/test.
-    exclude: ['**/node_modules/**', '**/dist/**', 'tests/e2e/**'],
+    // Playwright e2e specs are run by a separate harness. Excluded here so
+    // vitest doesn't try to resolve @playwright/test. Covers both legacy
+    // `e2e/` root-level specs and the `tests/e2e/` layout.
+    exclude: ['**/node_modules/**', '**/dist/**', '**/e2e/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],
