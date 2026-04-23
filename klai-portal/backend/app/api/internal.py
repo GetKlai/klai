@@ -36,6 +36,7 @@ from redis.exceptions import RedisError
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.dependencies import get_effective_capabilities
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, get_db, set_tenant
 from app.models.connectors import PortalConnector
@@ -309,6 +310,7 @@ async def get_user_language(
 
 class UserProductsResponse(BaseModel):
     products: list[str]
+    capabilities: list[str] = []
 
 
 @router.get("/users/{zitadel_user_id}/products", response_model=UserProductsResponse)
@@ -317,9 +319,15 @@ async def get_user_products(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> UserProductsResponse:
-    """Return enabled products for a user. Called by Zitadel Action for JWT enrichment.
+    """Return enabled products and KB capabilities for a user.
 
+    Called by Zitadel Action for JWT enrichment.
     Returns empty list if user not found (fail-closed behavior for JWT).
+
+    SPEC-PORTAL-UNIFY-KB-001: extended with capabilities field so the frontend
+    can fetch both products and capabilities in a single me-endpoint call.
+    Extending the existing response minimises breaking changes — existing consumers
+    that ignore unknown fields are unaffected.
     """
     await _require_internal_token(request)
 
@@ -330,8 +338,9 @@ async def get_user_products(
         await set_tenant(db, org_id)
 
     products = await get_effective_products(zitadel_user_id, db)
+    capabilities = await get_effective_capabilities(zitadel_user_id, db)
     await _audit_internal_call(request, org_id=org_id or 0)
-    return UserProductsResponse(products=products)
+    return UserProductsResponse(products=products, capabilities=sorted(capabilities))
 
 
 class ConnectorConfigResponse(BaseModel):
