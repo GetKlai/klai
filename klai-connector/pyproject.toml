@@ -27,6 +27,8 @@ dependencies = [
     "klai-connector-credentials",
     "klai-image-storage",
     "pyairtable>=3.3.0",
+    "atlassian-python-api>=4.0.7",
+    "html2text>=2025.4.15",
 ]
 
 [tool.uv.sources]
