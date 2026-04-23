@@ -14,6 +14,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /
 # Repo-mirror layout
 WORKDIR /repo
 COPY klai-libs/connector-credentials klai-libs/connector-credentials
+# SPEC-KB-IMAGE-002 Fase 2: shared image-storage package path-dep
+COPY klai-libs/image-storage klai-libs/image-storage
 COPY klai-connector/pyproject.toml klai-connector/pyproject.toml
 COPY klai-connector/uv.lock klai-connector/uv.lock
 
