@@ -47,6 +47,34 @@ layers must be cleaned or the next re-ingest hits dedup and produces zero new wo
 wire it into `delete_connector_artifacts` (or the Qdrant equivalent) AND write a
 regression test that does: insert → delete connector → assert rows == 0.
 
+## Connector-delete leaves in-flight enrichment jobs behind (HIGH)
+
+`delete_connector_artifacts` + `qdrant_store.delete_connector` only remove rows
+that EXIST at the moment of the call. Any `enrich-bulk` / `graphiti-bulk`
+Procrastinate job that is already enqueued for the same artifact_ids will
+keep running afterwards and silently write NEW rows into Qdrant (and
+knowledge graph) with the same `source_connector_id`. Net result: a freshly
+deleted connector regrows Qdrant chunks for several minutes while the queue
+drains. Observed on Redcactus E2E — post-delete, Qdrant chunk count climbed
+from 15 → 26 → 40+ as ~76 queued enrichment jobs finished.
+
+**Why:** Ingest enqueues enrichment asynchronously; enrichment reads only
+from `extra_payload` so it has no visibility into whether the owning
+artifact still exists.
+
+**Prevention:** A proper fix requires either:
+1. Cancelling in-flight Procrastinate jobs scoped to the deleted artifact_ids
+   at delete time (`cancel_job_by_id` for every queued enrich/graphiti task),
+   or
+2. Adding an existence check at the top of every enrichment task that
+   aborts if the artifact has been deleted since enqueue.
+
+Option 1 is cleaner (no wasted LLM/embedding calls). Until either lands,
+callers should delete → wait for enrich-bulk queue to drain → re-run Qdrant
+`delete_connector` as a second pass. Tracked for follow-up; not
+auto-retriable because procrastinate job cancellation is a separate API
+surface.
+
 ## Graph-first, content-second for bulk crawls (HIGH)
 
 When a graph-lookup feeds the payload of a per-row write, build the whole graph BEFORE

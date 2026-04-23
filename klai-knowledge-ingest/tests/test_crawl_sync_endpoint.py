@@ -280,7 +280,10 @@ class TestCrawlSyncEndpoint:
         assert resp.status_code == 202, resp.text
         kwargs = defer_mock.await_args.kwargs
         assert kwargs["start_url"] == "https://wiki.redcactus.cloud/nl/"
-        assert kwargs["include_patterns"] == ["/nl/"]
+        # URLPatternFilter exact-matches glob patterns without wildcards, so
+        # '/nl/' alone would reject '/nl/6-bubble'. The /* suffix makes it a
+        # PREFIX pattern so every URL whose path starts with /nl/ is allowed.
+        assert kwargs["include_patterns"] == ["/nl/*"]
 
     def test_trailing_slash_in_base_url_is_normalised(self) -> None:
         """Avoid building 'https://host//nl/' when base_url already ends with '/'."""
@@ -306,6 +309,65 @@ class TestCrawlSyncEndpoint:
         assert resp.status_code == 202, resp.text
         kwargs = defer_mock.await_args.kwargs
         assert kwargs["start_url"] == "https://wiki.redcactus.cloud/nl/"
+
+    def test_path_prefix_without_trailing_slash_is_normalised(self) -> None:
+        """path_prefix='/nl' (no trailing /) still yields a valid PREFIX glob."""
+        pool = _make_pool(
+            connector_row={
+                "id": uuid.UUID(int=4),
+                "zitadel_org_id": "42",
+                "encrypted_credentials": None,
+                "connector_dek_enc": None,
+            },
+        )
+        with _client_with_patches(pool) as (client, defer_mock):
+            resp = client.post(
+                "/ingest/v1/crawl/sync",
+                json={
+                    "connector_id": str(uuid.uuid4()),
+                    "org_id": "42",
+                    "kb_slug": "support",
+                    "base_url": "https://wiki.redcactus.cloud",
+                    "path_prefix": "/nl",
+                },
+            )
+        assert resp.status_code == 202, resp.text
+        kwargs = defer_mock.await_args.kwargs
+        # Glob pattern gets the /* suffix after stripping a (non-existent)
+        # trailing slash — same result as when the slash WAS present.
+        assert kwargs["include_patterns"] == ["/nl/*"]
+        # start_url still appends the literal path_prefix, so absence of
+        # trailing slash here means BFS starts on /nl (which the server
+        # typically redirects to /nl/). That is acceptable behaviour for a
+        # user who entered /nl without slash.
+        assert kwargs["start_url"] == "https://wiki.redcactus.cloud/nl"
+
+    def test_path_prefix_with_nested_base_url(self) -> None:
+        """base_url with its own path + path_prefix stacks paths cleanly."""
+        pool = _make_pool(
+            connector_row={
+                "id": uuid.UUID(int=5),
+                "zitadel_org_id": "42",
+                "encrypted_credentials": None,
+                "connector_dek_enc": None,
+            },
+        )
+        with _client_with_patches(pool) as (client, defer_mock):
+            resp = client.post(
+                "/ingest/v1/crawl/sync",
+                json={
+                    "connector_id": str(uuid.uuid4()),
+                    "org_id": "42",
+                    "kb_slug": "support",
+                    "base_url": "https://example.com/wiki/",
+                    "path_prefix": "/nl/",
+                },
+            )
+        assert resp.status_code == 202, resp.text
+        kwargs = defer_mock.await_args.kwargs
+        # Double slash collapses because base_url is rstripped before concat.
+        assert kwargs["start_url"] == "https://example.com/wiki/nl/"
+        assert kwargs["include_patterns"] == ["/nl/*"]
 
     def test_public_crawl_still_enqueues(self) -> None:
         """Connector with no encrypted credentials still enqueues; task gets no cookies."""

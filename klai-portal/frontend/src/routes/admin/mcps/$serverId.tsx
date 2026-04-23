@@ -214,10 +214,10 @@ function McpEditPage() {
   // --- Form -----------------------------------------------------------------
 
   return (
-    <div className="p-6 max-w-lg">
+    <div className="mx-auto max-w-lg px-6 py-10">
       <div className="flex items-start justify-between mb-6">
         <div className="space-y-1">
-          <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
             {server.display_name || server.id}
           </h1>
           <p className="text-sm text-[var(--color-muted-foreground)]">{server.description}</p>

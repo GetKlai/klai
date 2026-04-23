@@ -11,6 +11,7 @@ from sqlalchemy import update
 
 import app.core.database as _db
 from app.adapters.airtable import AirtableAdapter
+from app.adapters.confluence import ConfluenceAdapter
 from app.adapters.github import GitHubAdapter
 from app.adapters.google_drive import GoogleDriveAdapter
 from app.adapters.ms_docs import MsDocsAdapter
@@ -80,11 +81,25 @@ def create_app() -> FastAPI:
         # in sync_engine._run_web_crawler_delegation; no local adapter is registered.
         registry.register("notion", NotionAdapter(settings))
         registry.register("airtable", AirtableAdapter(settings))
+        registry.register("confluence", ConfluenceAdapter(settings))
         # Google Drive adapter — only registered when OAuth client is configured.
         if settings.google_drive_client_id:
             registry.register(
                 "google_drive",
                 GoogleDriveAdapter(settings=settings, portal_client=portal_client),
+            )
+            # SPEC-KB-CONNECTORS-001 R5.x — user-facing split of Google Workspace.
+            # All three aliases reuse the same GoogleDriveAdapter instance; the
+            # adapter's _extract_config injects a content_types preset based on
+            # connector.connector_type.
+            registry.register_alias(
+                "google_docs", "google_drive", {"content_types": ["google_doc"]}
+            )
+            registry.register_alias(
+                "google_sheets", "google_drive", {"content_types": ["google_sheet"]}
+            )
+            registry.register_alias(
+                "google_slides", "google_drive", {"content_types": ["google_slides"]}
             )
         else:
             logger.warning(

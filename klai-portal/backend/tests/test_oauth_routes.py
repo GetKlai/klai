@@ -557,13 +557,19 @@ class TestMsDocsProvider:
         with (
             patch("app.api.oauth.settings") as mock_settings,
             patch("app.api.oauth.credential_store") as mock_store,
-            patch("app.api.oauth.httpx.AsyncClient", _mock_httpx_client(
-                _make_http_response(200, {
-                    "access_token": "placeholder-access-value",
-                    "refresh_token": "placeholder-refresh-value",
-                    "expires_in": 3600,
-                }),
-            )) as mock_httpx_cls,
+            patch(
+                "app.api.oauth.httpx.AsyncClient",
+                _mock_httpx_client(
+                    _make_http_response(
+                        200,
+                        {
+                            "access_token": "placeholder-access-value",
+                            "refresh_token": "placeholder-refresh-value",
+                            "expires_in": 3600,
+                        },
+                    ),
+                ),
+            ) as mock_httpx_cls,
         ):
             mock_settings.ms_docs_client_id = _PLACEHOLDER_CLIENT_ID
             mock_settings.ms_docs_client_secret = _PLACEHOLDER_CLIENT_SECRET

@@ -151,9 +151,9 @@ function BillingPage() {
   }
 
   return (
-    <div className="p-6 space-y-6 max-w-3xl" data-help-id="admin-billing-overview">
+    <div className="mx-auto max-w-3xl px-6 py-10 space-y-6" data-help-id="admin-billing-overview">
       <div className="space-y-1">
-        <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">{m.admin_billing_heading()}</h1>
+        <h1 className="page-title text-[26px] font-display-bold text-gray-900">{m.admin_billing_heading()}</h1>
         <p className="text-sm text-[var(--color-muted-foreground)]">
           {m.admin_billing_subtitle()}
         </p>
