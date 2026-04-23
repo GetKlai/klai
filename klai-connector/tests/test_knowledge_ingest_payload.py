@@ -78,3 +78,43 @@ class TestExtraPassthrough:
     def test_connector_type_preserved(self):
         payload = _build_payload(**_base_kwargs())
         assert payload["connector_type"] == "web_crawler"
+
+
+class TestSenderEmailAndMentionedEmails:
+    """SPEC-KB-CONNECTORS-001 Phase 1, R2.5 — identifier-capture fields."""
+
+    def test_build_payload_includes_sender_email(self):
+        payload = _build_payload(**_base_kwargs(sender_email="x@y.com"))
+        assert payload["extra"]["sender_email"] == "x@y.com"
+
+    def test_build_payload_includes_mentioned_emails(self):
+        payload = _build_payload(**_base_kwargs(mentioned_emails=["a@b.com"]))
+        assert payload["extra"]["mentioned_emails"] == ["a@b.com"]
+
+    def test_build_payload_empty_sender_email_not_in_extra(self):
+        payload = _build_payload(**_base_kwargs(sender_email=""))
+        assert "sender_email" not in payload.get("extra", {})
+
+    def test_build_payload_empty_mentioned_emails_not_in_extra(self):
+        payload = _build_payload(**_base_kwargs(mentioned_emails=None))
+        assert "mentioned_emails" not in payload.get("extra", {})
+
+    def test_build_payload_empty_list_mentioned_emails_not_in_extra(self):
+        payload = _build_payload(**_base_kwargs(mentioned_emails=[]))
+        assert "mentioned_emails" not in payload.get("extra", {})
+
+    def test_build_payload_backward_compatible(self):
+        """Calling _build_payload without sender_email/mentioned_emails still works."""
+        payload = _build_payload(
+            org_id="368884765035593759",
+            kb_slug="support",
+            path="index.md",
+            content="hello",
+            source_connector_id="414d4f82-f702-4ff2-abd4-c5ce38ae7d61",
+            source_ref="https://help.voys.nl/",
+            source_url="https://help.voys.nl/",
+            content_type="kb_article",
+            connector_type="web_crawler",
+        )
+        assert "sender_email" not in payload.get("extra", {})
+        assert "mentioned_emails" not in payload.get("extra", {})

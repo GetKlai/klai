@@ -31,6 +31,8 @@ def _build_payload(
     content_type: str = "unknown",
     image_urls: list[str] | None = None,
     connector_type: str = "",
+    sender_email: str = "",
+    mentioned_emails: list[str] | None = None,
 ) -> dict:
     """Build the JSON payload for the knowledge-ingest endpoint."""
     is_crawl = connector_type in _CRAWL_CONNECTOR_TYPES
@@ -57,6 +59,10 @@ def _build_payload(
         extra["source_url"] = source_url
     if image_urls:
         extra["image_urls"] = dedupe_image_urls(image_urls)
+    if sender_email:
+        extra["sender_email"] = sender_email
+    if mentioned_emails:
+        extra["mentioned_emails"] = mentioned_emails
     if extra:
         payload["extra"] = extra
     return payload
