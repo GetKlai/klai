@@ -48,14 +48,18 @@ async def test_tenant_scoped_session_pins_before_set_tenant(monkeypatch):
         async def connection(self):
             calls.append("pin")
 
+        async def rollback(self):
+            calls.append("rollback")
+
         async def execute(self, stmt, params=None):
             sql = str(stmt)
             if "set_config" in sql:
-                # distinguish set vs reset by the bound value
                 if params and params.get("org_id") == "42":
                     calls.append("set_tenant:42")
-                else:
-                    calls.append("reset_tenant")
+                elif "current_org_id" in sql:
+                    calls.append("reset_current_org_id")
+                elif "cross_org_admin" in sql:
+                    calls.append("reset_cross_org_admin")
             return SimpleNamespace(rowcount=-1)
 
         async def __aenter__(self):
@@ -70,8 +74,20 @@ async def test_tenant_scoped_session_pins_before_set_tenant(monkeypatch):
         assert session is not None
         calls.append("yield")
 
-    # The critical invariant: pin happens before set_tenant, reset happens on exit.
-    assert calls == ["pin", "set_tenant:42", "yield", "reset_tenant"]
+    # Critical invariants:
+    #   1. pin happens before set_tenant (set_config must see pinned connection)
+    #   2. on exit, rollback runs BEFORE set_config resets — otherwise an aborted
+    #      transaction from a 42501 RLS fail-loud would trap the reset and leak
+    #      app.current_org_id to the next pooled request (2026-04-23 incident).
+    #   3. both GUCs are cleared on exit.
+    assert calls == [
+        "pin",
+        "set_tenant:42",
+        "yield",
+        "rollback",
+        "reset_current_org_id",
+        "reset_cross_org_admin",
+    ]
 
 
 @pytest.mark.asyncio
