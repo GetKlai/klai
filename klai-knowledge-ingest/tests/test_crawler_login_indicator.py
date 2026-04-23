@@ -165,6 +165,7 @@ class TestRunCrawlJobAuthWall:
             pool=pool,
             stored=None,
             login_indicator_selector="#login-form",
+            connector_id=None,
         )
 
         # Verify at least one UPDATE marked the job as failed with auth_wall_detected.

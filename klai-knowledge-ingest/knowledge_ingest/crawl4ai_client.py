@@ -317,9 +317,23 @@ async def crawl_site(
         "max_pages": max_pages,
     }
     if include_patterns:
-        deep_crawl_params["filter_chain"] = [
-            {"type": "URLPatternFilter", "params": {"patterns": include_patterns}},
-        ]
+        # Crawl4AI 0.8.6 only reconstructs nested objects when they are wrapped
+        # in {"type": "<ClassName>", "params": {...}} — a bare list stays a list
+        # and BFSDeepCrawlStrategy crashes with
+        # `AttributeError: 'list' object has no attribute 'apply'`
+        # the moment it walks past depth 0.  Pinned by
+        # tests/test_crawl4ai_filter_chain.py.
+        deep_crawl_params["filter_chain"] = {
+            "type": "FilterChain",
+            "params": {
+                "filters": [
+                    {
+                        "type": "URLPatternFilter",
+                        "params": {"patterns": include_patterns},
+                    },
+                ],
+            },
+        }
 
     config["deep_crawl_strategy"] = {
         "type": "BFSDeepCrawlStrategy",
