@@ -11,7 +11,7 @@ Covers:
 
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -73,14 +73,11 @@ class TestGetEffectiveCapabilities:
         from app.api.dependencies import get_effective_capabilities
 
         mock_db = _make_db_mock()
-        mock_result = MagicMock()
         mock_org = MagicMock()
         mock_org.plan = "core"
         mock_user = MagicMock()
         mock_user.role = "member"
         mock_user.org_id = 1
-        # First execute: PortalUser lookup (user + org_id)
-        # Second execute: PortalOrg lookup
         mock_user_result = MagicMock()
         mock_user_result.one_or_none.return_value = (mock_user, mock_org)
         mock_db.execute.return_value = mock_user_result

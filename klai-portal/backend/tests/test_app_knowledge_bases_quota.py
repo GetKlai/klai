@@ -260,7 +260,7 @@ class TestCreateKBOrgQuota:
                 if exc.status_code == 403 and isinstance(exc.detail, dict):
                     if exc.detail.get("error_code", "").startswith("kb_quota_"):
                         raise
-            except Exception:
+            except Exception as exc:
                 # Other errors (e.g. attribute errors on mock KB object) are expected
                 # since we're not fully mocking the SQLAlchemy session lifecycle.
-                pass
+                _ = exc  # acknowledged — not re-raised intentionally

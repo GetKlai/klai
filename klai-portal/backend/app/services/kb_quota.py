@@ -11,9 +11,9 @@ Keeping quota logic here (instead of inline in routes) ensures:
 
 from __future__ import annotations
 
+from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import HTTPException, status
 
 from app.core.plan_limits import get_plan_limits
 from app.models.knowledge_bases import PortalKnowledgeBase
