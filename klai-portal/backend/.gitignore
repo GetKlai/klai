@@ -5,3 +5,6 @@ __pycache__/
 **/*.pyc
 *.egg-info/
 .pytest_cache/
+
+# Runtime scratch directory (should never be committed)
+app/tmp/
