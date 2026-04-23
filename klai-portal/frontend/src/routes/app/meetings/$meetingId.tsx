@@ -228,7 +228,7 @@ function MeetingDetailPage() {
   const hasTranscript = meeting.status === 'done' && !!(meeting.transcript_text || meeting.transcript_segments?.length)
 
   return (
-    <div className="p-6 max-w-3xl">
+    <div className="mx-auto max-w-3xl px-6 py-10">
       <Button
         variant="ghost"
         size="sm"
@@ -273,7 +273,7 @@ function MeetingDetailPage() {
         </Card>
       ) : (
         <div className="flex items-start justify-between">
-          <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
             {meeting.meeting_title ?? meeting.meeting_url}
           </h1>
           <StatusBadge status={meeting.status} />
