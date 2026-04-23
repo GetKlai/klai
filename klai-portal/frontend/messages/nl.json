@@ -1086,7 +1086,7 @@
   "admin_connectors_ms_docs_reconnect": "Microsoft opnieuw verbinden",
   "admin_connectors_ms_docs_site_url": "SharePoint site-URL (optioneel)",
   "admin_connectors_ms_docs_site_url_help": "Laat leeg om je persoonlijke OneDrive te syncen. Voorbeeld: https://contoso.sharepoint.com/sites/marketing",
-  "admin_connectors_ms_docs_site_url_invalid": "Ongeldige SharePoint site-URL. Verwacht formaat: https://<tenant>.sharepoint.com/sites/<site>",
+  "admin_connectors_ms_docs_site_url_invalid": "Ongeldige SharePoint site-URL. Verwacht: https://<tenant>.sharepoint.com/sites/<site>",
   "admin_connectors_ms_docs_drive_id": "Specifiek Drive ID (geavanceerd)",
   "admin_connectors_ms_docs_drive_id_help": "Alleen invullen als je een specifieke Drive-GUID wilt gebruiken (uit Microsoft Graph Explorer).",
   "admin_connectors_ms_docs_oauth_success": "Office 365 succesvol verbonden.",
