@@ -1,6 +1,0 @@
-# DECOMMISSIONED — research-api removed in SPEC-PORTAL-UNIFY-KB-001 (Phase C).
-# This workflow no longer runs. Kept for history.
-# The klai-focus/research-api service is FROZEN — see klai-focus/README.md.
-#
-# Previous workflow: build + push ghcr.io/getklai/research-api, deploy to core-01.
-# Removed triggers: push(main, paths: klai-focus/research-api/**), workflow_dispatch.
