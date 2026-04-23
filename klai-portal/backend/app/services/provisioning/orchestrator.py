@@ -173,6 +173,29 @@ async def _compensate_personal_kb(state: _ProvisionState) -> None:
         logger.warning("rollback_personal_kb_failed", slug=state.slug, error=str(exc), exc_info=True)
 
 
+async def _seed_default_templates_non_fatal(org_id: int, db: AsyncSession) -> None:
+    """Provisioning step 6b: seed default prompt templates, fail-open.
+
+    Calls ``ensure_default_templates(org_id, 'system', db)`` inside a
+    try/except so any seeder failure (transient DB blip, import issue,
+    RLS misconfiguration) does NOT abort the broader provisioning flow.
+
+    The GET list endpoint in ``app_templates`` lazy-seeds as a fallback,
+    so provisioning moving forward without defaults is recoverable.
+
+    Extracted from the inline try/except for unit-test coverage of the
+    contract: "exception here logs a warning and returns cleanly".
+    See SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-SEED-E2.
+    """
+    try:
+        from app.services.default_templates import ensure_default_templates
+
+        await ensure_default_templates(org_id, "system", db)
+        await db.commit()
+    except Exception:
+        logger.warning("default_templates_step_failed", org_id=org_id, exc_info=True)
+
+
 # ---------------------------------------------------------------------------
 # Orchestrator entry point
 # ---------------------------------------------------------------------------
@@ -418,17 +441,7 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
             await ensure_default_knowledge_bases(org.id, first_user_id, db)
 
             # --- step 6b: default prompt templates (non-fatal) -----------
-            # SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-SEED-E2: failure here is
-            # non-fatal — provisioning completes and the list endpoint
-            # lazy-seeds as a fallback.
-            # @MX:NOTE: idempotent via row-count; safe to retry.
-            try:
-                from app.services.default_templates import ensure_default_templates
-
-                await ensure_default_templates(org.id, "system", db)
-                await db.commit()
-            except Exception:
-                logger.warning("default_templates_step_failed", org_id=org.id, exc_info=True)
+            await _seed_default_templates_non_fatal(org.id, db)
 
             # --- step 7: Docker container ---------------------------------
             mark_step_start(org_id, "librechat_container")
