@@ -2,6 +2,9 @@
 
 from datetime import UTC
 
+import pytest
+from pydantic import ValidationError
+
 from app.api.connectors import (
     ConnectorCreateRequest,
     ConnectorOut,
@@ -114,10 +117,24 @@ class TestContentTypeDefaults:
             )
 
     def test_all_connector_types_have_defaults(self):
-        """Every ConnectorType should have a default content_type."""
+        """Every ConnectorType should have a default content_type.
+
+        Updated by SPEC-KB-CONNECTORS-001 R6 to include the five new connector types.
+        """
         from app.api.connectors import CONTENT_TYPE_DEFAULTS
 
-        expected_types = {"github", "notion", "web_crawler", "google_drive", "ms_docs"}
+        expected_types = {
+            "github",
+            "notion",
+            "web_crawler",
+            "google_drive",
+            "ms_docs",
+            "airtable",
+            "confluence",
+            "google_docs",
+            "google_sheets",
+            "google_slides",
+        }
         assert set(CONTENT_TYPE_DEFAULTS.keys()) == expected_types
 
 
@@ -145,3 +162,155 @@ class TestConnectorOutHelper:
 
         out = _connector_out(mock_connector)
         assert out.content_type == "kb_article"
+
+
+# -- ConnectorType Literal extension (SPEC-KB-CONNECTORS-001 R6) ---------------
+
+
+class TestConnectorTypeLiteral:
+    """Regression + acceptance tests for SPEC-KB-CONNECTORS-001 Phase 5.
+
+    RED phase: these tests fail until the Literal is extended to include the
+    five new connector types: airtable, confluence, google_docs, google_sheets,
+    google_slides.
+    """
+
+    # --- New types accepted ---------------------------------------------------
+
+    def test_create_connector_accepts_airtable(self):
+        """ConnectorCreateRequest accepts connector_type='airtable'."""
+        req = ConnectorCreateRequest(
+            name="Airtable connector",
+            connector_type="airtable",
+            config={},
+        )
+        assert req.connector_type == "airtable"
+
+    def test_create_connector_accepts_confluence(self):
+        """ConnectorCreateRequest accepts connector_type='confluence'."""
+        req = ConnectorCreateRequest(
+            name="Confluence connector",
+            connector_type="confluence",
+            config={},
+        )
+        assert req.connector_type == "confluence"
+
+    def test_create_connector_accepts_google_docs(self):
+        """ConnectorCreateRequest accepts connector_type='google_docs'."""
+        req = ConnectorCreateRequest(
+            name="Google Docs connector",
+            connector_type="google_docs",
+            config={},
+        )
+        assert req.connector_type == "google_docs"
+
+    def test_create_connector_accepts_google_sheets(self):
+        """ConnectorCreateRequest accepts connector_type='google_sheets'."""
+        req = ConnectorCreateRequest(
+            name="Google Sheets connector",
+            connector_type="google_sheets",
+            config={},
+        )
+        assert req.connector_type == "google_sheets"
+
+    def test_create_connector_accepts_google_slides(self):
+        """ConnectorCreateRequest accepts connector_type='google_slides'."""
+        req = ConnectorCreateRequest(
+            name="Google Slides connector",
+            connector_type="google_slides",
+            config={},
+        )
+        assert req.connector_type == "google_slides"
+
+    # --- Unknown type rejected ------------------------------------------------
+
+    def test_create_connector_rejects_unknown_type(self):
+        """Pydantic rejects an unrecognised connector_type with a 422-equivalent ValidationError."""
+        with pytest.raises(ValidationError):
+            ConnectorCreateRequest(
+                name="Bad connector",
+                connector_type="invalid_type",
+                config={},
+            )
+
+    # --- Existing types still accepted (regression guard) ---------------------
+
+    def test_create_connector_still_accepts_github(self):
+        """Regression: existing type 'github' still accepted after Literal extension."""
+        req = ConnectorCreateRequest(
+            name="GitHub connector",
+            connector_type="github",
+            config={},
+        )
+        assert req.connector_type == "github"
+
+    def test_create_connector_still_accepts_notion(self):
+        """Regression: existing type 'notion' still accepted after Literal extension."""
+        req = ConnectorCreateRequest(
+            name="Notion connector",
+            connector_type="notion",
+            config={},
+        )
+        assert req.connector_type == "notion"
+
+    def test_create_connector_still_accepts_web_crawler(self):
+        """Regression: existing type 'web_crawler' still accepted after Literal extension."""
+        req = ConnectorCreateRequest(
+            name="Web crawler connector",
+            connector_type="web_crawler",
+            config={},
+        )
+        assert req.connector_type == "web_crawler"
+
+    def test_create_connector_still_accepts_google_drive(self):
+        """Regression: existing type 'google_drive' still accepted after Literal extension."""
+        req = ConnectorCreateRequest(
+            name="Google Drive connector",
+            connector_type="google_drive",
+            config={},
+        )
+        assert req.connector_type == "google_drive"
+
+    def test_create_connector_still_accepts_ms_docs(self):
+        """Regression: existing type 'ms_docs' still accepted after Literal extension."""
+        req = ConnectorCreateRequest(
+            name="MS Docs connector",
+            connector_type="ms_docs",
+            config={},
+        )
+        assert req.connector_type == "ms_docs"
+
+
+# -- CONTENT_TYPE_DEFAULTS coverage for new types (SPEC-KB-CONNECTORS-001 R6) -
+
+
+class TestContentTypeDefaultsExtended:
+    """Verify CONTENT_TYPE_DEFAULTS covers all ConnectorType values including new ones."""
+
+    def test_new_types_have_defaults(self):
+        """All five new connector types have entries in CONTENT_TYPE_DEFAULTS."""
+        from app.api.connectors import CONTENT_TYPE_DEFAULTS
+
+        new_types = {"airtable", "confluence", "google_docs", "google_sheets", "google_slides"}
+        for connector_type in new_types:
+            assert connector_type in CONTENT_TYPE_DEFAULTS, (
+                f"Missing CONTENT_TYPE_DEFAULTS entry for '{connector_type}'"
+            )
+
+    def test_all_connector_types_have_defaults_extended(self):
+        """Every ConnectorType value (old + new) has a default content_type entry."""
+        from app.api.connectors import CONTENT_TYPE_DEFAULTS
+
+        expected_types = {
+            "github",
+            "notion",
+            "web_crawler",
+            "google_drive",
+            "ms_docs",
+            "airtable",
+            "confluence",
+            "google_docs",
+            "google_sheets",
+            "google_slides",
+        }
+        assert expected_types.issubset(set(CONTENT_TYPE_DEFAULTS.keys()))
