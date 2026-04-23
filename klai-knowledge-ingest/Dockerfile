@@ -15,6 +15,8 @@ RUN useradd --create-home --uid 1000 --shell /bin/bash app
 # Repo-mirror layout
 WORKDIR /repo
 COPY --chown=app:app klai-libs/connector-credentials klai-libs/connector-credentials
+# SPEC-KB-IMAGE-002 Fase 3: shared image-storage package path-dep
+COPY --chown=app:app klai-libs/image-storage klai-libs/image-storage
 COPY --chown=app:app klai-knowledge-ingest/pyproject.toml klai-knowledge-ingest/pyproject.toml
 COPY --chown=app:app klai-knowledge-ingest/uv.lock klai-knowledge-ingest/uv.lock
 
