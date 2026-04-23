@@ -68,7 +68,7 @@ const CONNECTOR_TYPES: {
   { type: 'web_crawler',  label: m.admin_connectors_type_website,      available: true,  Icon: Globe },
   { type: 'google_drive', label: m.admin_connectors_type_google_drive, available: true,  Icon: SiGoogledrive },
   { type: 'notion',       label: m.admin_connectors_type_notion,       available: true,  Icon: SiNotion },
-  { type: 'ms_docs',      label: m.admin_connectors_type_ms_docs,      available: false, Icon: FileText },
+  { type: 'ms_docs',      label: m.admin_connectors_type_ms_docs,      available: true,  Icon: FileText },
 ]
 
 const MARKDOWN_PROSE_CLASSES = 'overflow-y-auto max-h-64 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-[var(--color-foreground)] [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-[var(--color-foreground)] [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-[var(--color-foreground)] [&_h3]:mb-1 [&_p]:text-[var(--color-muted-foreground)] [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-[var(--color-muted-foreground)] [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-[var(--color-muted-foreground)] [&_ol]:mb-1.5 [&_strong]:font-semibold [&_strong]:text-[var(--color-foreground)] [&_hr]:border-[var(--color-border)] [&_hr]:my-2'
@@ -100,6 +100,10 @@ function AddConnectorPage() {
   })
   const [notionStep, setNotionStep] = useState<'credentials' | 'settings'>('credentials')
   const [folderId, setFolderId] = useState('')
+  // ms_docs (SPEC-KB-MS-DOCS-001): optional site_url + drive_id — both empty = personal OneDrive
+  const [msSiteUrl, setMsSiteUrl] = useState('')
+  const [msDriveId, setMsDriveId] = useState('')
+  const [msSiteUrlError, setMsSiteUrlError] = useState<string | null>(null)
 
   // Webcrawler wizard state
   const [wcStep, setWcStep] = useState<WcStep>('details')
@@ -210,6 +214,41 @@ function AddConnectorPage() {
     },
   })
 
+  // SPEC-KB-MS-DOCS-001 R4: Microsoft 365 OAuth flow, mirrors Google Drive.
+  // SharePoint site URL format. Keep this in sync with the server-side parse in ms_docs.py.
+  const MS_SITE_URL_PATTERN = /^https:\/\/[a-z0-9-]+\.sharepoint\.com\/sites\/[^/]+\/?$/
+
+  const createMsDocsMutation = useMutation({
+    mutationFn: async () => {
+      // Client-side validation (R4.3) before posting.
+      const siteUrl = msSiteUrl.trim()
+      if (siteUrl && !MS_SITE_URL_PATTERN.test(siteUrl)) {
+        setMsSiteUrlError(m.admin_connectors_ms_docs_site_url_invalid())
+        throw new Error('invalid_site_url')
+      }
+      setMsSiteUrlError(null)
+      const config: Record<string, unknown> = {}
+      if (siteUrl) config.site_url = siteUrl
+      if (msDriveId.trim()) config.drive_id = msDriveId.trim()
+      const result = await apiFetch<{ id: string }>(`/api/app/knowledge-bases/${kbSlug}/connectors/`, {
+        method: 'POST',
+        body: JSON.stringify({
+          name,
+          connector_type: 'ms_docs',
+          config,
+          schedule: null,
+          allowed_assertion_modes: allowedAssertionModes.length > 0 ? allowedAssertionModes : null,
+        }),
+      })
+      const { authorize_url } = await apiFetch<{ authorize_url: string }>(`/api/oauth/ms_docs/authorize?kb_slug=${encodeURIComponent(kbSlug)}&connector_id=${encodeURIComponent(result.id)}`, )
+      return { authorizeUrl: authorize_url }
+    },
+    onSuccess: ({ authorizeUrl }) => {
+      void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
+      window.location.href = authorizeUrl
+    },
+  })
+
   const [previewError, setPreviewError] = useState<string | null>(null)
 
   const previewMutation = useMutation({
@@ -249,7 +288,7 @@ function AddConnectorPage() {
 
       {/* Step indicator — shared component */}
       {(() => {
-        const isSimple = selectedType === 'github' || selectedType === 'notion' || selectedType === 'google_drive'
+        const isSimple = selectedType === 'github' || selectedType === 'notion' || selectedType === 'google_drive' || selectedType === 'ms_docs'
 
         const steps: StepItem[] = isSimple
           ? [
@@ -454,6 +493,56 @@ function AddConnectorPage() {
                 <div className="flex gap-2 pt-1">
                   <Button type="submit" size="sm" disabled={createGoogleDriveMutation.isPending || !name}>
                     {createGoogleDriveMutation.isPending ? m.admin_connectors_google_drive_connecting() : m.admin_connectors_google_drive_connect()}
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setSelectedType(null)}>
+                    {m.admin_connectors_webcrawler_back()}
+                  </Button>
+                </div>
+              </form>
+            )}
+
+            {/* Microsoft 365 OAuth flow (SPEC-KB-MS-DOCS-001 R4) */}
+            {selectedType === 'ms_docs' && (
+              <form onSubmit={(e) => { e.preventDefault(); createMsDocsMutation.mutate() }} className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="ms-name">{m.admin_connectors_field_name()}</Label>
+                  <Input id="ms-name" required placeholder={m.admin_connectors_field_name_placeholder()} value={name} onChange={(e) => setName(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="ms-site-url">{m.admin_connectors_ms_docs_site_url()}</Label>
+                  <Input
+                    id="ms-site-url"
+                    placeholder="https://contoso.sharepoint.com/sites/marketing"
+                    value={msSiteUrl}
+                    onChange={(e) => { setMsSiteUrl(e.target.value); setMsSiteUrlError(null) }}
+                  />
+                  <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_ms_docs_site_url_help()}</p>
+                  {msSiteUrlError && (
+                    <p className="text-xs text-[var(--color-destructive)]">{msSiteUrlError}</p>
+                  )}
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="ms-drive-id">{m.admin_connectors_ms_docs_drive_id()}</Label>
+                  <Input
+                    id="ms-drive-id"
+                    placeholder="b!xyz..."
+                    value={msDriveId}
+                    onChange={(e) => setMsDriveId(e.target.value)}
+                  />
+                  <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_ms_docs_drive_id_help()}</p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>{m.admin_connectors_assertion_modes_label()}</Label>
+                  <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
+                </div>
+                {createMsDocsMutation.error && createMsDocsMutation.error instanceof Error && createMsDocsMutation.error.message !== 'invalid_site_url' && (
+                  <p className="text-sm text-[var(--color-destructive)]">
+                    {createMsDocsMutation.error.message}
+                  </p>
+                )}
+                <div className="flex gap-2 pt-1">
+                  <Button type="submit" size="sm" disabled={createMsDocsMutation.isPending || !name}>
+                    {createMsDocsMutation.isPending ? m.admin_connectors_ms_docs_connecting() : m.admin_connectors_ms_docs_connect()}
                   </Button>
                   <Button type="button" size="sm" variant="ghost" onClick={() => setSelectedType(null)}>
                     {m.admin_connectors_webcrawler_back()}

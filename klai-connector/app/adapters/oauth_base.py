@@ -121,7 +121,8 @@ class OAuthAdapterBase(ABC):
                 )
 
             # @MX:NOTE: [AUTO] Never log refresh_token / access_token values.
-            logger.info(  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
+            logger.info(
                 "Refreshing OAuth token (connector=%s, provider=%s)",
                 connector_id,
                 type(self).__name__,
@@ -140,12 +141,27 @@ class OAuthAdapterBase(ABC):
                 time.monotonic() + float(expires_in),
             )
 
+            # @MX:NOTE: Refresh-token rotation (SPEC-KB-MS-DOCS-001 R9.2).
+            # Microsoft rotates refresh_tokens on every refresh; the old token
+            # is invalidated after a grace window. We must (a) writeback the
+            # new one so it survives restart, and (b) mutate connector.config
+            # so subsequent refreshes within the same process use the new RT.
+            rotated_refresh_token: str | None = payload.get("refresh_token")
+            if rotated_refresh_token is not None and rotated_refresh_token == refresh_token:
+                # Provider echoed the same RT — treat as no-rotation.
+                rotated_refresh_token = None
+            if rotated_refresh_token:
+                if connector.config is None:
+                    connector.config = {}
+                connector.config["refresh_token"] = rotated_refresh_token
+
             token_expiry = (datetime.now(UTC) + timedelta(seconds=expires_in)).isoformat()
             try:
                 await self._portal_client.update_credentials(
                     connector_id=connector_id,
                     access_token=access_token,
                     token_expiry=token_expiry,
+                    refresh_token=rotated_refresh_token,
                 )
             except Exception:
                 # update_credentials is already best-effort; this is a second

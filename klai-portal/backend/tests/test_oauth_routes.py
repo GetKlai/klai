@@ -70,7 +70,7 @@ class TestProvidersEndpoint:
         with patch("app.api.oauth.settings") as mock_settings:
             mock_settings.google_drive_client_id = _PLACEHOLDER_CLIENT_ID
             mock_settings.google_drive_client_secret = _PLACEHOLDER_CLIENT_SECRET
-            mock_settings.sharepoint_client_id = ""
+            mock_settings.ms_docs_client_id = ""
 
             result = await list_providers(user_id="zitadel-user-1")
 
@@ -84,7 +84,7 @@ class TestProvidersEndpoint:
         with patch("app.api.oauth.settings") as mock_settings:
             mock_settings.google_drive_client_id = ""
             mock_settings.google_drive_client_secret = ""
-            mock_settings.sharepoint_client_id = ""
+            mock_settings.ms_docs_client_id = ""
 
             result = await list_providers(user_id="zitadel-user-1")
 
@@ -336,6 +336,117 @@ class TestInternalCredentialsWriteback:
             db.commit.assert_awaited()
 
     @pytest.mark.asyncio
+    async def test_writeback_rotates_refresh_token_when_provided(self) -> None:
+        """SPEC-KB-MS-DOCS-001 R9: refresh_token in body overwrites stored RT."""
+        from app.api.internal import CredentialsUpdate, update_connector_credentials
+
+        db = AsyncMock()
+
+        mock_connector = MagicMock()
+        mock_connector.id = "conn-uuid-ms-r9"
+        mock_connector.org_id = 77
+        mock_connector.connector_type = "ms_docs"
+        mock_connector.config = {}
+        mock_connector.encrypted_credentials = b"OLD_ENCRYPTED"
+
+        request = MagicMock()
+        request.headers = {"Authorization": f"Bearer {_PLACEHOLDER_INTERNAL}"}
+
+        body = CredentialsUpdate(
+            access_token="placeholder-new-access-value",
+            token_expiry="2026-04-23T12:00:00+00:00",
+            refresh_token="placeholder-rotated-refresh-value",
+        )
+
+        with (
+            patch("app.api.internal.settings") as mock_settings,
+            patch("app.api.internal.credential_store") as mock_store,
+        ):
+            mock_settings.internal_secret = _PLACEHOLDER_INTERNAL
+
+            db.get = AsyncMock(return_value=mock_connector)
+            db.commit = AsyncMock()
+
+            mock_store.decrypt_credentials = AsyncMock(
+                return_value={
+                    "access_token": "placeholder-old-access-value",
+                    "refresh_token": "placeholder-old-refresh-value",
+                }
+            )
+            mock_store.encrypt_credentials = AsyncMock(
+                return_value=(b"NEW_ENCRYPTED", {"access_token": "***", "refresh_token": "***"})
+            )
+
+            await update_connector_credentials(
+                connector_id="conn-uuid-ms-r9",
+                body=body,
+                request=request,
+                db=db,
+            )
+
+            call = mock_store.encrypt_credentials.call_args
+            merged = call.kwargs.get("config") or (call.args[2] if len(call.args) >= 3 else None)
+            assert merged is not None
+            assert merged["access_token"] == "placeholder-new-access-value"
+            # The NEW refresh_token replaces the stored one
+            assert merged["refresh_token"] == "placeholder-rotated-refresh-value"
+
+    @pytest.mark.asyncio
+    async def test_writeback_preserves_refresh_token_when_absent(self) -> None:
+        """Backward-compat: no refresh_token in body → stored RT is preserved."""
+        from app.api.internal import CredentialsUpdate, update_connector_credentials
+
+        db = AsyncMock()
+
+        mock_connector = MagicMock()
+        mock_connector.id = "conn-uuid-gdrive"
+        mock_connector.org_id = 77
+        mock_connector.connector_type = "google_drive"
+        mock_connector.config = {}
+        mock_connector.encrypted_credentials = b"OLD_ENCRYPTED"
+
+        request = MagicMock()
+        request.headers = {"Authorization": f"Bearer {_PLACEHOLDER_INTERNAL}"}
+
+        # No refresh_token field → default None
+        body = CredentialsUpdate(
+            access_token="placeholder-new-access-value",
+            token_expiry="2026-04-23T12:00:00+00:00",
+        )
+
+        with (
+            patch("app.api.internal.settings") as mock_settings,
+            patch("app.api.internal.credential_store") as mock_store,
+        ):
+            mock_settings.internal_secret = _PLACEHOLDER_INTERNAL
+
+            db.get = AsyncMock(return_value=mock_connector)
+            db.commit = AsyncMock()
+
+            mock_store.decrypt_credentials = AsyncMock(
+                return_value={
+                    "access_token": "placeholder-old-access-value",
+                    "refresh_token": "placeholder-stored-refresh-value",
+                }
+            )
+            mock_store.encrypt_credentials = AsyncMock(
+                return_value=(b"NEW_ENCRYPTED", {"access_token": "***", "refresh_token": "***"})
+            )
+
+            await update_connector_credentials(
+                connector_id="conn-uuid-gdrive",
+                body=body,
+                request=request,
+                db=db,
+            )
+
+            call = mock_store.encrypt_credentials.call_args
+            merged = call.kwargs.get("config") or (call.args[2] if len(call.args) >= 3 else None)
+            assert merged is not None
+            # Stored RT preserved (no rotation)
+            assert merged["refresh_token"] == "placeholder-stored-refresh-value"
+
+    @pytest.mark.asyncio
     async def test_writeback_rejects_missing_internal_secret(self) -> None:
         """Wrong / missing Authorization header -> 401 Unauthorized."""
         from app.api.internal import CredentialsUpdate, update_connector_credentials
@@ -359,3 +470,149 @@ class TestInternalCredentialsWriteback:
                 )
 
             assert exc_info.value.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# SPEC-KB-MS-DOCS-001 — Microsoft 365 provider
+# ---------------------------------------------------------------------------
+
+
+class TestMsDocsProvider:
+    """ms_docs authorize + callback mirror the google_drive path with Graph endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_providers_endpoint_reflects_enabled_ms_docs(self) -> None:
+        """ms_docs_client_id set -> ms_docs enabled=True in providers listing."""
+        from app.api.oauth import list_providers
+
+        with patch("app.api.oauth.settings") as mock_settings:
+            mock_settings.google_drive_client_id = ""
+            mock_settings.ms_docs_client_id = _PLACEHOLDER_CLIENT_ID
+
+            result = await list_providers(user_id="zitadel-user-1")
+
+            assert result["ms_docs"]["enabled"] is True
+            assert "offline_access" in result["ms_docs"]["scopes"]
+            assert "Files.Read.All" in result["ms_docs"]["scopes"]
+            assert "Sites.Read.All" in result["ms_docs"]["scopes"]
+
+    @pytest.mark.asyncio
+    async def test_authorize_ms_docs_points_to_microsoft(self) -> None:
+        """ms_docs authorize returns a login.microsoftonline.com URL with the expected scopes."""
+        import json
+
+        from app.api.oauth import authorize_provider
+
+        with patch("app.api.oauth.settings") as mock_settings:
+            mock_settings.google_drive_client_id = ""
+            mock_settings.ms_docs_client_id = _PLACEHOLDER_CLIENT_ID
+            mock_settings.ms_docs_client_secret = _PLACEHOLDER_CLIENT_SECRET
+            mock_settings.ms_docs_tenant_id = "common"
+            mock_settings.sso_cookie_key = _PLACEHOLDER_COOKIE_KEY
+            mock_settings.portal_url = "https://my.getklai.com"
+            mock_settings.domain = "getklai.com"
+
+            response = await authorize_provider(
+                provider="ms_docs",
+                kb_slug="main",
+                user_id="zitadel-user-1",
+            )
+
+            assert response.status_code == 200
+            body = json.loads(response.body)
+            url = body["authorize_url"]
+            assert url.startswith("https://login.microsoftonline.com/common/oauth2/v2.0/authorize")
+            assert "scope=offline_access" in url
+            assert "Files.Read.All" in url
+            assert "Sites.Read.All" in url
+            assert "response_type=code" in url
+            assert "prompt=consent" in url
+
+    @pytest.mark.asyncio
+    async def test_authorize_ms_docs_rejects_when_disabled(self) -> None:
+        """Empty ms_docs_client_id -> 404 Not Found."""
+        from app.api.oauth import authorize_provider
+
+        with patch("app.api.oauth.settings") as mock_settings:
+            mock_settings.google_drive_client_id = ""
+            mock_settings.ms_docs_client_id = ""
+            mock_settings.sso_cookie_key = _PLACEHOLDER_COOKIE_KEY
+
+            with pytest.raises(HTTPException) as exc_info:
+                await authorize_provider(
+                    provider="ms_docs",
+                    kb_slug="main",
+                    user_id="zitadel-user-1",
+                )
+
+            assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_callback_ms_docs_exchanges_code_at_microsoft_endpoint(self) -> None:
+        """ms_docs callback POSTs to login.microsoftonline.com/.../token with scope."""
+        from app.api.oauth import _sign_state, callback_provider
+
+        db = AsyncMock()
+
+        with (
+            patch("app.api.oauth.settings") as mock_settings,
+            patch("app.api.oauth.credential_store") as mock_store,
+            patch("app.api.oauth.httpx.AsyncClient", _mock_httpx_client(
+                _make_http_response(200, {
+                    "access_token": "placeholder-access-value",
+                    "refresh_token": "placeholder-refresh-value",
+                    "expires_in": 3600,
+                }),
+            )) as mock_httpx_cls,
+        ):
+            mock_settings.ms_docs_client_id = _PLACEHOLDER_CLIENT_ID
+            mock_settings.ms_docs_client_secret = _PLACEHOLDER_CLIENT_SECRET
+            mock_settings.ms_docs_tenant_id = "common"
+            mock_settings.google_drive_client_id = ""
+            mock_settings.sso_cookie_key = _PLACEHOLDER_COOKIE_KEY
+            mock_settings.portal_url = "https://my.getklai.com"
+            mock_settings.domain = "getklai.com"
+
+            state_token = _sign_state(
+                {
+                    "provider": "ms_docs",
+                    "user_id": "zitadel-user-1",
+                    "kb_slug": "main",
+                    "connector_id": "conn-uuid-ms-1",
+                    "nonce": "nonce",
+                }
+            )
+
+            mock_portal_user = MagicMock()
+            mock_portal_user.org_id = 77
+
+            mock_connector = MagicMock()
+            mock_connector.id = "conn-uuid-ms-1"
+            mock_connector.org_id = 77
+            mock_connector.connector_type = "ms_docs"
+            mock_connector.config = {}
+
+            db.scalar = AsyncMock(return_value=mock_portal_user)
+            db.get = AsyncMock(return_value=mock_connector)
+            db.commit = AsyncMock()
+
+            mock_store.encrypt_credentials = AsyncMock(
+                return_value=(b"ENCRYPTED_BLOB", {"access_token": "***", "refresh_token": "***"})
+            )
+
+            response = await callback_provider(
+                provider="ms_docs",
+                code="auth-code-ms",
+                state=state_token,
+                klai_oauth_state=state_token,
+                user_id="zitadel-user-1",
+                db=db,
+            )
+
+            assert response.status_code in (302, 303, 307)
+            # Token endpoint URL must be the Microsoft one
+            post_call = mock_httpx_cls.return_value.post.call_args
+            assert "login.microsoftonline.com/common/oauth2/v2.0/token" in post_call.args[0]
+            # Scope is forwarded
+            assert post_call.kwargs["data"]["scope"] == "offline_access User.Read Files.Read.All Sites.Read.All"
+            mock_store.encrypt_credentials.assert_called_once()

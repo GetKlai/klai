@@ -139,11 +139,17 @@ class PortalClient:
         connector_id: str,
         access_token: str,
         token_expiry: str | None = None,
+        refresh_token: str | None = None,
     ) -> None:
-        """Write back refreshed access token to portal.
+        """Write back refreshed access token (+ optionally rotated refresh token) to portal.
 
         Called by OAuth adapters after refreshing an access token. Portal
         re-encrypts the payload via ConnectorCredentialStore (SPEC-KB-020).
+
+        ``refresh_token`` is only sent when the provider rotated it
+        (Microsoft rotates on every refresh, SPEC-KB-MS-DOCS-001 R9). For
+        providers that do not rotate (Google Drive typical flow), callers
+        pass ``None`` and the stored refresh_token is left untouched.
 
         Best-effort: logs and swallows errors so sync runs don't fail due
         to callback issues. The next run will refresh again if needed.
@@ -152,12 +158,15 @@ class PortalClient:
             connector_id: Portal connector UUID (string form).
             access_token: Fresh OAuth access token (NEVER logged).
             token_expiry: ISO-8601 UTC timestamp of token expiry (optional).
+            refresh_token: Rotated refresh token (optional; NEVER logged).
         """
-        # @MX:NOTE: [AUTO] Never log access_token value — only metadata is logged.
+        # @MX:NOTE: [AUTO] Never log access_token or refresh_token values.
         try:
             payload: dict[str, Any] = {"access_token": access_token}
             if token_expiry is not None:
                 payload["token_expiry"] = token_expiry
+            if refresh_token is not None:
+                payload["refresh_token"] = refresh_token
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.patch(
                     f"{self._base_url}/internal/connectors/{connector_id}/credentials",
@@ -166,8 +175,11 @@ class PortalClient:
                 )
                 response.raise_for_status()
         except Exception:
-            logger.exception(  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
-                "Failed to write back refreshed credentials to portal for connector %s (has_expiry=%s)",
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
+            logger.exception(
+                "Failed to write back refreshed credentials to portal "
+                "for connector %s (has_expiry=%s, rotated_refresh=%s)",
                 connector_id,
                 token_expiry is not None,
+                refresh_token is not None,
             )

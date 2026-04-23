@@ -448,15 +448,20 @@ async def receive_sync_status(
 
 
 class CredentialsUpdate(BaseModel):
-    """Partial update to a connector's encrypted credentials (SPEC-KB-025).
+    """Partial update to a connector's encrypted credentials (SPEC-KB-025 + SPEC-KB-MS-DOCS-001 R9).
 
     Called by klai-connector after refreshing an OAuth access token. Only the
     fields to be updated are provided; the rest of the encrypted credential
     blob is preserved.
+
+    ``refresh_token`` is optional and only sent when the provider rotated it
+    (Microsoft rotates on every refresh). For providers that do not rotate,
+    it is None/absent and the stored refresh_token is left untouched.
     """
 
     access_token: str
     token_expiry: str | None = None
+    refresh_token: str | None = None
 
 
 # @MX:ANCHOR: [AUTO] Writeback path for refreshed OAuth access tokens.
@@ -501,10 +506,14 @@ async def update_connector_credentials(
     else:
         merged = dict(connector.config or {})
 
-    # Apply the patch — NEVER log access_token value.
+    # Apply the patch — NEVER log access_token / refresh_token values.
     merged["access_token"] = body.access_token
     if body.token_expiry is not None:
         merged["token_expiry"] = body.token_expiry
+    # SPEC-KB-MS-DOCS-001 R9: providers that rotate refresh_tokens send the new
+    # one here so it survives restart. Absent/None = leave the stored RT intact.
+    if body.refresh_token is not None:
+        merged["refresh_token"] = body.refresh_token
 
     encrypted_blob, redacted_config = await credential_store.encrypt_credentials(
         org_id=connector.org_id,

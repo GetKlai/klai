@@ -155,6 +155,15 @@ async def crawl_sync(req: CrawlSyncRequest) -> CrawlSyncResponse:
 
     include_patterns = [req.path_prefix] if req.path_prefix else None
 
+    # BFS must enter the graph at a node that links into the allowed subtree.
+    # If the root page only links to sibling language paths (e.g. wiki shows
+    # /en/ but user asked for /nl/), starting on req.base_url makes the filter
+    # reject every outgoing link and the crawl halts after 1 page. Starting
+    # on base_url + path_prefix gives BFS a seeded entry inside the filter set.
+    start_url = req.base_url
+    if req.path_prefix:
+        start_url = req.base_url.rstrip("/") + req.path_prefix
+
     from knowledge_ingest import enrichment_tasks
 
     proc_app = enrichment_tasks.get_app()
@@ -162,7 +171,7 @@ async def crawl_sync(req: CrawlSyncRequest) -> CrawlSyncResponse:
         job_id=job_id,
         org_id=req.org_id,
         kb_slug=req.kb_slug,
-        start_url=req.base_url,
+        start_url=start_url,
         max_depth=req.max_depth,
         max_pages=req.max_pages,
         include_patterns=include_patterns,
@@ -183,7 +192,7 @@ async def crawl_sync(req: CrawlSyncRequest) -> CrawlSyncResponse:
         connector_id=str(req.connector_id),
         org_id=req.org_id,
         kb_slug=req.kb_slug,
-        start_url=req.base_url,
+        start_url=start_url,
     )
     return CrawlSyncResponse(job_id=job_id, status="queued")
 

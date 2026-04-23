@@ -135,6 +135,13 @@ class Settings(BaseSettings):
     google_drive_client_id: str = ""
     google_drive_client_secret: str = ""
 
+    # Microsoft 365 OAuth (SPEC-KB-MS-DOCS-001) — empty client_id disables the provider.
+    # Azure AD app registered in the Klai-owned M365 tenant as a multi-tenant application
+    # (same ownership model as ZITADEL_IDP_MICROSOFT_ID for social login).
+    ms_docs_client_id: str = ""
+    ms_docs_client_secret: str = ""
+    ms_docs_tenant_id: str = "common"  # multi-tenant default; accepts any M365 tenant
+
     # Mock mode — disables real Moneybird calls for pre-launch testing
     mock_billing: bool = False
     frontend_url: str = ""  # e.g. http://localhost:5174 in dev; empty = same origin as API in prod

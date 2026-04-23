@@ -43,12 +43,18 @@ router = APIRouter(prefix="/api/oauth", tags=["oauth"])
 
 
 # Supported provider identifiers (connector_type values).
-_SUPPORTED_PROVIDERS = {"google_drive"}
+_SUPPORTED_PROVIDERS = {"google_drive", "ms_docs"}
 
 # Google Drive OAuth endpoints (constants -- never secrets).
 _GOOGLE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 _GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 _GOOGLE_SCOPES = "https://www.googleapis.com/auth/drive.readonly"
+
+# Microsoft Graph OAuth endpoints (constants -- never secrets). SPEC-KB-MS-DOCS-001.
+# tenant_id is injected at request time from settings.ms_docs_tenant_id ("common" by default).
+_MS_AUTHORIZE_URL_TMPL = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize"
+_MS_TOKEN_URL_TMPL = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
+_MS_SCOPES = "offline_access User.Read Files.Read.All Sites.Read.All"
 
 _STATE_COOKIE_NAME = "klai_oauth_state"
 _STATE_COOKIE_MAX_AGE = 600  # 10 minutes — state is short-lived
@@ -89,6 +95,8 @@ def _provider_enabled(provider: str) -> bool:
     """True when the provider has a non-empty client_id configured."""
     if provider == "google_drive":
         return bool(settings.google_drive_client_id)
+    if provider == "ms_docs":
+        return bool(settings.ms_docs_client_id)
     return False
 
 
@@ -115,6 +123,10 @@ async def list_providers(
         "google_drive": {
             "enabled": bool(settings.google_drive_client_id),
             "scopes": [_GOOGLE_SCOPES],
+        },
+        "ms_docs": {
+            "enabled": bool(settings.ms_docs_client_id),
+            "scopes": _MS_SCOPES.split(" "),
         },
     }
 
@@ -165,6 +177,18 @@ async def authorize_provider(
             "state": state_token,
         }
         authorize_url = f"{_GOOGLE_AUTHORIZE_URL}?{urlencode(params)}"
+    elif provider == "ms_docs":
+        tenant = settings.ms_docs_tenant_id or "common"
+        params = {
+            "client_id": settings.ms_docs_client_id,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "response_mode": "query",
+            "scope": _MS_SCOPES,  # offline_access guarantees refresh_token
+            "prompt": "consent",  # force consent for predictable refresh_token issuance
+            "state": state_token,
+        }
+        authorize_url = f"{_MS_AUTHORIZE_URL_TMPL.format(tenant=tenant)}?{urlencode(params)}"
     else:  # pragma: no cover -- guarded by _SUPPORTED_PROVIDERS above
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown provider")
 
@@ -235,7 +259,10 @@ async def callback_provider(
     await set_tenant(db, connector.org_id)
 
     # 3. Exchange authorization code for tokens. NEVER log the response body.
+    token_url: str
+    token_payload: dict[str, Any]
     if provider == "google_drive":
+        token_url = _GOOGLE_TOKEN_URL
         token_payload = {
             "code": code,
             "client_id": settings.google_drive_client_id,
@@ -243,22 +270,36 @@ async def callback_provider(
             "redirect_uri": _frontend_redirect_url(f"/api/oauth/{provider}/callback"),
             "grant_type": "authorization_code",
         }
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                token_response = await client.post(_GOOGLE_TOKEN_URL, data=token_payload)
-                token_response.raise_for_status()
-                tokens = token_response.json()
-        except httpx.HTTPStatusError as exc:
-            logger.warning(  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
-                "oauth_callback_token_exchange_failed: status=%s",
-                exc.response.status_code,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="OAuth token exchange failed",
-            ) from exc
+    elif provider == "ms_docs":
+        tenant = settings.ms_docs_tenant_id or "common"
+        token_url = _MS_TOKEN_URL_TMPL.format(tenant=tenant)
+        token_payload = {
+            "code": code,
+            "client_id": settings.ms_docs_client_id,
+            "client_secret": settings.ms_docs_client_secret,
+            "redirect_uri": _frontend_redirect_url(f"/api/oauth/{provider}/callback"),
+            "grant_type": "authorization_code",
+            "scope": _MS_SCOPES,
+        }
     else:  # pragma: no cover -- guarded by _SUPPORTED_PROVIDERS above
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown provider")
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            token_response = await client.post(token_url, data=token_payload)
+            token_response.raise_for_status()
+            tokens = token_response.json()
+    except httpx.HTTPStatusError as exc:
+        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
+        logger.warning(
+            "oauth_callback_token_exchange_failed: provider=%s status=%s",
+            provider,
+            exc.response.status_code,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="OAuth token exchange failed",
+        ) from exc
 
     # 4. Build config payload for encryption. Keys must match SENSITIVE_FIELDS.
     new_config: dict[str, Any] = dict(connector.config or {})
