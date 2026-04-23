@@ -18,11 +18,6 @@ export const appHomeSteps: HelpStep[] = [
     description: () => m.help_home_transcribe_desc(),
   },
   {
-    id: 'home-tool-focus',
-    title: () => m.help_home_focus_title(),
-    description: () => m.help_home_focus_desc(),
-  },
-  {
     id: 'home-tool-knowledge',
     title: () => m.help_home_knowledge_title(),
     description: () => m.help_home_knowledge_desc(),

@@ -13,10 +13,6 @@ const transcribe: HelpPageIntro = {
   title: () => m.help_transcribe_intro_title(),
   description: () => m.help_transcribe_intro_desc(),
 }
-const focus: HelpPageIntro = {
-  title: () => m.help_focus_intro_title(),
-  description: () => m.help_focus_intro_desc(),
-}
 const docs: HelpPageIntro = {
   title: () => m.help_docs_intro_title(),
   description: () => m.help_docs_intro_desc(),
@@ -44,8 +40,6 @@ export const routeIntros: Record<string, HelpPageIntro> = {
   '/app/chat': chat,
   '/app/transcribe': transcribe,
   '/app/transcribe/': transcribe,
-  '/app/focus': focus,
-  '/app/focus/': focus,
   '/app/docs': docs,
   '/app/docs/': docs,
   '/app/account': account,

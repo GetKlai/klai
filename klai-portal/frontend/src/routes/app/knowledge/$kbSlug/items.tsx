@@ -4,9 +4,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { List } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { Tooltip } from '@/components/ui/tooltip'
+import { Button } from '@/components/ui/button'
 import { DeleteConfirmButton } from '@/components/ui/delete-confirm-button'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
+import { useKBQuota } from '@/hooks/useKBQuota'
 import type { PersonalItemsResponse } from './-kb-types'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/items')({
@@ -18,6 +21,7 @@ function ItemsTab() {
   const auth = useAuth()
   const queryClient = useQueryClient()
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const { canAddItem } = useKBQuota(kbSlug)
 
   const { data, isLoading } = useQuery<PersonalItemsResponse>({
     queryKey: ['personal-knowledge', kbSlug],
@@ -52,7 +56,22 @@ function ItemsTab() {
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-4">
+      {/* Item quota indicator — only shown when the limit is reached (D4) */}
+      {!canAddItem && (
+        <div className="flex items-center justify-between">
+          <Tooltip label={m.kb_limit_tooltip_items()}>
+            <span
+              className="inline-flex items-center gap-2 opacity-50 cursor-default select-none"
+              aria-disabled="true"
+            >
+              <Button size="sm" tabIndex={-1} className="pointer-events-none">
+                {m.knowledge_items_add_button()}
+              </Button>
+            </span>
+          </Tooltip>
+        </div>
+      )}
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>

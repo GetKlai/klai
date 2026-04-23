@@ -10,6 +10,8 @@ import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
+import { ProductCapabilityGuard } from '@/components/layout/ProductCapabilityGuard'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
 import type { KBTab, KnowledgeBase, KBStats, MembersResponse, TaxonomyProposal } from './-kb-types'
 
 const VALID_TABS = new Set<KBTab>(['overview', 'connectors', 'members', 'items', 'taxonomy', 'settings', 'advanced'])
@@ -51,9 +53,18 @@ export const Route = createFileRoute('/app/knowledge/$kbSlug')({
   ),
 })
 
+// Capability requirements for KB tabs (SPEC-PORTAL-UNIFY-KB-001).
+const TAB_CAPABILITIES: Partial<Record<KBTab, string>> = {
+  connectors: 'kb.connectors',
+  members: 'kb.members',
+  taxonomy: 'kb.taxonomy',
+  advanced: 'kb.advanced',
+}
+
 function KbLayout() {
   const { kbSlug } = Route.useParams()
   const auth = useAuth()
+  const { user } = useCurrentUser()
   const { data: kb, isLoading, isError } = useQuery<KnowledgeBase>({
     queryKey: ['app-knowledge-base', kbSlug],
     queryFn: async () => {
@@ -155,30 +166,51 @@ function KbLayout() {
       {/* Tab bar */}
       <div className="border-b border-[var(--color-border)]">
         <nav className="-mb-px flex gap-6">
-          {tabEntries.map(({ id, to, icon: TabIcon, label, badge }) => (
-            <Link
-              key={id}
-              to={to}
-              params={{ kbSlug }}
-              activeProps={{
-                className: 'border-[var(--color-accent)] text-[var(--color-foreground)]',
-              }}
-              inactiveProps={{
-                className: 'border-transparent text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
-              }}
-              className="flex items-center gap-1.5 pb-3 text-sm font-medium border-b-2 transition-colors"
-              onClick={(e) => {
-                // Prevent navigation if already on this tab
-                if (window.location.pathname.endsWith(`/${id}`)) {
-                  e.preventDefault()
-                }
-              }}
-            >
-              <TabIcon className="h-4 w-4" />
-              {label}
-              {badge != null && <Badge variant="accent" className="ml-1 text-xs px-1.5 py-0 min-w-[18px]">{String(badge)}</Badge>}
-            </Link>
-          ))}
+          {tabEntries.map(({ id, to, icon: TabIcon, label, badge }) => {
+            const requiredCap = TAB_CAPABILITIES[id]
+            const hasAccess = !requiredCap || user?.hasCapability(requiredCap) !== false
+
+            if (!hasAccess) {
+              // Grayed tab: visible, not clickable, tooltip on hover (D4).
+              return (
+                <ProductCapabilityGuard
+                  key={id}
+                  capability={requiredCap!}
+                  tooltip={m.capability_tooltip_knowledge_only()}
+                >
+                  <span className="flex items-center gap-1.5 pb-3 text-sm font-medium border-b-2 border-transparent text-[var(--color-muted-foreground)]">
+                    <TabIcon className="h-4 w-4" />
+                    {label}
+                  </span>
+                </ProductCapabilityGuard>
+              )
+            }
+
+            return (
+              <Link
+                key={id}
+                to={to}
+                params={{ kbSlug }}
+                activeProps={{
+                  className: 'border-[var(--color-accent)] text-[var(--color-foreground)]',
+                }}
+                inactiveProps={{
+                  className: 'border-transparent text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+                }}
+                className="flex items-center gap-1.5 pb-3 text-sm font-medium border-b-2 transition-colors"
+                onClick={(e) => {
+                  // Prevent navigation if already on this tab
+                  if (window.location.pathname.endsWith(`/${id}`)) {
+                    e.preventDefault()
+                  }
+                }}
+              >
+                <TabIcon className="h-4 w-4" />
+                {label}
+                {badge != null && <Badge variant="accent" className="ml-1 text-xs px-1.5 py-0 min-w-[18px]">{String(badge)}</Badge>}
+              </Link>
+            )
+          })}
         </nav>
       </div>
 
