@@ -5,6 +5,23 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+def resolve_connector_id(connector: Any) -> str:
+    """Return the canonical connector id string from a connector-like object.
+
+    Adapters receive a :class:`app.services.portal_client.PortalConnectorConfig`
+    at runtime (its primary key is exposed as ``connector_id: str``). Some
+    test fixtures still construct ``SimpleNamespace(id=...)`` for backwards
+    compatibility with the legacy ``Connector`` ORM that was removed in
+    SPEC-CONNECTOR-CLEANUP-001 Fase 4. This helper accepts both shapes so
+    adapter code can stay agnostic.
+
+    Returns the empty string if neither attribute is set — caller code
+    should treat that as a fail-safe (avoid crashing inside structured
+    logging / cache-key construction) but it is never expected at runtime.
+    """
+    return str(getattr(connector, "connector_id", "") or getattr(connector, "id", ""))
+
+
 @dataclass
 class ImageRef:
     """Reference to an image discovered in a document.
@@ -85,7 +102,8 @@ class BaseAdapter(ABC):
         """List all documents available for sync from the external source.
 
         Args:
-            connector: Connector model instance.
+            connector: :class:`PortalConnectorConfig` for this connector
+                (fetched by the sync engine via ``PortalClient.get_connector_config``).
             cursor_context: Previous sync run's cursor_state, if any.
         """
         ...

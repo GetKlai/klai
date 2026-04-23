@@ -229,7 +229,7 @@ class NotionAdapter(BaseAdapter):
         reconciliation (new/changed/unchanged/deleted) using last_edited.
 
         Args:
-            connector: Connector model instance with config JSONB.
+            connector: PortalConnectorConfig instance with config JSONB.
             cursor_context: Ignored for Notion (kept for interface compat).
 
         Returns:
@@ -283,7 +283,7 @@ class NotionAdapter(BaseAdapter):
 
         Args:
             ref: DocumentRef with Notion page ID in ref field.
-            connector: Connector model instance.
+            connector: PortalConnectorConfig instance.
 
         Returns:
             UTF-8 encoded plain text of the full page content.
@@ -307,7 +307,7 @@ class NotionAdapter(BaseAdapter):
         """Return cursor state based on max(last_edited_time) of accessible pages.
 
         Args:
-            connector: Connector model instance.
+            connector: PortalConnectorConfig instance.
 
         Returns:
             Dict with last_synced_at as ISO 8601 string.
@@ -352,20 +352,20 @@ def _flatten_block_texts(blocks: list[dict[str, Any]]) -> list[str]:
     # via extract_block_text — useless in a KB chunk.  The Notion API returns
     # them with has_children=False (they are references, not containers), so
     # fetch_blocks_recursive never enters them.  Skip the pointer text.
-    _SKIP_BLOCK_TYPES = {"child_page", "child_database"}
+    _skip_block_types = {"child_page", "child_database"}
     # Media block types whose extract_block_text output is "{type}:{url}".
     # The URLs are Notion-hosted S3 presigned URLs that expire in ~1h and
     # produce garbage when chunked.  Captions are useful; URLs are not.
-    _MEDIA_BLOCK_TYPES = {"image", "video", "file", "pdf"}
+    _media_block_types = {"image", "video", "file", "pdf"}
 
     texts: list[str] = []
     for block in blocks:
         block_type = block.get("type", "")
 
-        if block_type in _SKIP_BLOCK_TYPES:
+        if block_type in _skip_block_types:
             continue
 
-        if block_type in _MEDIA_BLOCK_TYPES:
+        if block_type in _media_block_types:
             # Keep only the caption, not the presigned URL.
             block_data = block.get(block_type, {})
             caption = extract_rich_text(block_data.get("caption", []))

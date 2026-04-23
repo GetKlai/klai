@@ -6,8 +6,11 @@ used by Google Drive (and, later, SharePoint). Adapters subclass
 provider-specific token endpoint call.
 
 Design decisions:
-- Token cache is keyed by ``connector.id`` and uses ``time.monotonic()`` for
-  expiry checks (wall-clock changes cannot prematurely invalidate a token).
+- Token cache is keyed by the canonical connector identifier
+  (``PortalConnectorConfig.connector_id``, resolved via
+  :func:`app.adapters.base.resolve_connector_id`) and uses
+  ``time.monotonic()`` for expiry checks (wall-clock changes cannot
+  prematurely invalidate a token).
 - Cache holds only ``(access_token, expires_at_monotonic)`` — never the
   refresh_token, which lives in the encrypted connector config.
 - On successful refresh, we call ``portal_client.update_credentials`` so the
@@ -30,6 +33,7 @@ from abc import ABC, abstractmethod
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from app.adapters.base import resolve_connector_id
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.services.portal_client import PortalClient
@@ -72,7 +76,8 @@ class OAuthAdapterBase(ABC):
         """Call the provider's token endpoint with the refresh_token.
 
         Args:
-            connector: The connector model (provides org_id + config context).
+            connector: :class:`PortalConnectorConfig` (provides
+                ``zitadel_org_id`` and ``config`` context).
             refresh_token: The long-lived OAuth refresh token.
 
         Returns:
@@ -86,7 +91,9 @@ class OAuthAdapterBase(ABC):
         """Return a valid access_token, refreshing if the cached one has expired.
 
         Args:
-            connector: Connector model with ``id`` and ``config`` attributes.
+            connector: :class:`PortalConnectorConfig` (or compatible
+                test stub). The canonical identifier is resolved via
+                :func:`resolve_connector_id`.
 
         Returns:
             A non-empty access_token string suitable for Bearer auth.
@@ -95,7 +102,7 @@ class OAuthAdapterBase(ABC):
             ValueError: If the connector config lacks a refresh_token AND the
                 cached access_token is expired (or absent).
         """
-        connector_id = str(connector.id)
+        connector_id = resolve_connector_id(connector)
         cached = self._token_cache.get(connector_id)
         now = time.monotonic()
         if cached is not None:
