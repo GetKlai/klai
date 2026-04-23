@@ -1,7 +1,7 @@
 ---
 id: SPEC-PORTAL-UNIFY-KB-001
-version: "0.1.0"
-status: draft
+version: "0.2.0"
+status: implemented
 created: 2026-04-23
 updated: 2026-04-23
 author: Mark Vletter
@@ -16,6 +16,7 @@ source_inspiration: feat/chat-first-redesign (Jantine Doornbos) — commits 6ab4
 | Date | Version | Change |
 |------|---------|--------|
 | 2026-04-23 | 0.1.0 | Initiele draft na sparring-sessie. Focus wordt gedeprecateerd; Knowledge wordt het enige KB-oppervlak in het portal met harde limieten voor het `core` plan (5 KBs × 20 documenten per gebruiker, geen connectors / taxonomy / members / gaps). `professional` krijgt dezelfde limieten als `core` (blijft in catalog voor consistentie, niet actief in GTM). `complete` behoudt alles. Focus-data wordt niet gemigreerd — research-api volledig decommission (hard). Website is expliciet buiten scope. |
+| 2026-04-23 | 0.2.0 | Post-merge polish. K2 race condition opgelost via `pg_advisory_xact_lock`. K5 loading flash opgelost: `ProductCapabilityGuard` rendert grijze wrapper met `aria-busy` tijdens loading. D4 grayed-out implementatie gedocumenteerd. Billing plan labels bijgewerkt na collision met andere plan-wijzigingen. Post-merge verificatie appendix toegevoegd. |
 
 ---
 
@@ -204,6 +205,13 @@ Dit geldt voor:
 
 Server-side blijft strikt: ook als de frontend een knop per ongeluk clickable maakt, geeft de backend 403.
 
+#### Implementatie-notitie (v0.2.0 — wat daadwerkelijk is uitgeleverd)
+
+- Tabs en knoppen worden grijs via `opacity-50` + `cursor-default` + `pointer-events-none` op de wrapper.
+- Tooltip on hover via de bestaande `components/ui/tooltip` component (of het `title`-attribuut als fallback).
+- `aria-disabled="true"` + `data-capability-guard=<cap>` attributen gezet voor accessibility en testbaarheid.
+- Geen lock-icoon. Geen klikbare upgrade-CTA — dat is `SPEC-BILLING-UPGRADE-001`.
+
 ### D5: Routes — oude focus-URLs redirecten
 
 Alle `/app/focus/*` routes → 301 redirect (react-router `redirect()`) naar `/app/knowledge`. Geen externe users op Focus, maar interne testers hebben bookmarks.
@@ -268,6 +276,12 @@ Edge case: gebruikers die vandaag >5 personal KBs hebben houden die — alleen n
 - **R-X2.** Capability-gating lekt niet via de frontend; backend handhaaft onafhankelijk.
 - **R-X3.** Quota-check discrimineert niet tussen create-paths — alle paden raken dezelfde quota-service.
 - **R-X4.** Een core/professional user ziet nooit een org-KB in de KB-switcher.
+
+---
+
+## Bekende beperkingen
+
+- **K5 — Optimistisch guard-rendering tijdens user-data loading** — **RESOLVED in v0.2.0**. De component rendert nu tijdens de loading-phase direct de grijze wrapper met `aria-busy="true"` in plaats van de kinderen onbeschermd te tonen. Daarmee is de "clickable-then-grayed" flash weg en blijft de UI fail-closed tot `useCurrentUser()` resolveert.
 
 ---
 
@@ -381,9 +395,12 @@ Scenario's tegen dev-stack met seed-users per plan:
 
 - **`SPEC-BILLING-UPGRADE-001`** — self-serve upgrade-flow. Deze SPEC levert alleen grijze elementen + tooltip; een klikbare upgrade-CTA komt hier.
 - **`SPEC-KB-ORG-QUOTA-001`** — org-wide KB-limits.
-- **`SPEC-PORTAL-GRANDFATHER-001`** — per-org overrides op `PLAN_LIMITS`.
+- **`SPEC-PORTAL-GRANDFATHER-001`** — per-org overrides op `PLAN_LIMITS`. De stub `get_effective_limits(org_id, db)` in `app/core/plan_limits.py` is al aanwezig.
 - **`SPEC-KB-EXPORT-001`** — user-facing KB-export zodat core-users tegen de limiet zelf kunnen schonen.
 - **`SPEC-RESEARCH-API-ARCHIVE-001`** — mocht de `klai-focus/` submodule ooit volledig uit de tree worden verwijderd.
+
+*Opgeloste non-goals (verwijderd in v0.2.0):*
+- ~~`SPEC-KB-QUOTA-ATOMICITY-001`~~ — de quota race condition (K2) is opgelost in de v0.2.0 polish via `pg_advisory_xact_lock`. Geen aparte SPEC nodig.
 
 ---
 
@@ -411,3 +428,24 @@ Scenario's tegen dev-stack met seed-users per plan:
 - `klai-focus/research-api/` — te decommissionen
 - `deploy/docker-compose.yml` — research-api service block
 - `deploy/volume-mounts.yaml` — research-api volumes
+
+---
+
+## Post-merge verificatie (v0.2.0 — appendix)
+
+### Gemerge PRs
+
+- **Portal PR #117** → main: `7f44784d` (SPEC-PORTAL-UNIFY-KB-001 implementatie)
+- **klai-infra PR #2** → main: `f7e1fc2` (research-api decommission infrastructure)
+
+### Productie verificatie
+
+- `PLAN_LIMITS` in draaiende portal-api container matcht spec-waarden (`core`: 5 × 20, `complete`: None × None)
+- `/api/research/*` endpoints geven 404 terug — research-api container niet meer actief op core-01
+- `docker ps | grep research-api` op core-01 leeg (container is gestopt en verwijderd)
+- `/app/focus` redirect naar `/app/knowledge` werkzaam in productie
+
+### Bekende openstaande issues na merge
+
+- **K2 (race condition)** — opgelost in polish PR via `pg_advisory_xact_lock` in `assert_can_create_personal_kb`. Zie HISTORY v0.2.0 en `TestAdvisoryLockPersonalKB` in `tests/test_kb_quota_service.py`.
+- **K5 (loading flash)** — opgelost in polish PR: `ProductCapabilityGuard` rendert de grijze wrapper met `aria-busy="true"` tijdens loading. Geen flash meer.
