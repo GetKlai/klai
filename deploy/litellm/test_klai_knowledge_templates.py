@@ -59,6 +59,69 @@ def _set_secret(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# _prepend_system_prefix — pure mutator, idempotent on empty prefix
+# ---------------------------------------------------------------------------
+
+
+def test_prepend_prefix_empty_is_noop():
+    import klai_knowledge as k
+
+    msgs = [{"role": "user", "content": "hi"}]
+    k._prepend_system_prefix(msgs, "")
+    assert msgs == [{"role": "user", "content": "hi"}]
+
+
+def test_prepend_prefix_no_existing_system_inserts_at_index_0():
+    import klai_knowledge as k
+
+    msgs = [{"role": "user", "content": "hi"}]
+    k._prepend_system_prefix(msgs, "SYSTEM PREFIX")
+    assert len(msgs) == 2
+    assert msgs[0] == {"role": "system", "content": "SYSTEM PREFIX"}
+    assert msgs[1] == {"role": "user", "content": "hi"}
+
+
+def test_prepend_prefix_with_existing_system_preserves_existing():
+    import klai_knowledge as k
+
+    msgs = [
+        {"role": "system", "content": "existing-system"},
+        {"role": "user", "content": "hi"},
+    ]
+    k._prepend_system_prefix(msgs, "NEW-PREFIX")
+    assert msgs[0]["role"] == "system"
+    assert msgs[0]["content"] == "NEW-PREFIX\n\nexisting-system"
+    assert msgs[1] == {"role": "user", "content": "hi"}
+
+
+def test_prepend_prefix_with_empty_existing_system_collapses():
+    """Empty existing system content shouldn't produce a dangling '\\n\\n' tail."""
+    import klai_knowledge as k
+
+    msgs = [
+        {"role": "system", "content": ""},
+        {"role": "user", "content": "hi"},
+    ]
+    k._prepend_system_prefix(msgs, "PREFIX")
+    assert msgs[0]["content"] == "PREFIX"
+
+
+def test_prepend_prefix_finds_later_system_message():
+    """System messages can legally appear anywhere in the list (LibreChat quirk)."""
+    import klai_knowledge as k
+
+    msgs = [
+        {"role": "user", "content": "hi"},
+        {"role": "system", "content": "late-system"},
+    ]
+    k._prepend_system_prefix(msgs, "PREFIX")
+    # First system-role message gets the prefix; order preserved otherwise.
+    assert msgs[0] == {"role": "user", "content": "hi"}
+    assert msgs[1]["role"] == "system"
+    assert msgs[1]["content"] == "PREFIX\n\nlate-system"
+
+
+# ---------------------------------------------------------------------------
 # _build_template_instructions_block — pure formatter
 # ---------------------------------------------------------------------------
 
