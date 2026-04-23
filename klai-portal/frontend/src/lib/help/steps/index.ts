@@ -3,7 +3,6 @@ export { routeIntros } from './intros'
 import { appHomeSteps } from './app-home'
 import { appChatSteps } from './app-chat'
 import { appTranscribeSteps } from './app-transcribe'
-import { appFocusSteps } from './app-focus'
 import { appDocsSteps } from './app-docs'
 import { appAccountSteps } from './app-account'
 import { adminUsersSteps } from './admin-users'
@@ -20,8 +19,6 @@ export const routeSteps: Record<string, HelpStep[]> = {
   '/app/chat': appChatSteps,
   '/app/transcribe': appTranscribeSteps,
   '/app/transcribe/': appTranscribeSteps,
-  '/app/focus': appFocusSteps,
-  '/app/focus/': appFocusSteps,
   '/app/docs': appDocsSteps,
   '/app/docs/': appDocsSteps,
   '/app/account': appAccountSteps,

@@ -208,12 +208,13 @@
         reverse_proxy portal-api:8010
     }
 
-    # SEC-023 / F-038 — Research/Scribe/Docs are no longer publicly routed.
-    # Frontend calls /api/research/*, /api/scribe/*, /api/docs/* which hit the
-    # BFF proxy in portal-api (app/api/proxy.py). That handler pulls the Zitadel
+    # SEC-023 / F-038 — Scribe/Docs are no longer publicly routed.
+    # Frontend calls /api/scribe/*, /api/docs/* which hit the BFF proxy in
+    # portal-api (app/api/proxy.py). That handler pulls the Zitadel
     # access_token from the BFF session and forwards to the internal service
     # with Authorization: Bearer injected. The services listen only on the
     # klai-net Docker network now — no Caddy exposure.
+    # research-api removed in SPEC-PORTAL-UNIFY-KB-001 (Phase C).
 
     # Vexa meeting bot gateway (SEC-013 F-030 — fix dead route from VEXA-003 migration)
     # Route maps /bots/<path> → api-gateway:8000/<path>. The old `vexa-bot-manager`

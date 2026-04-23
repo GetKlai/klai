@@ -11,6 +11,7 @@ import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
+import { useKBQuota } from '@/hooks/useKBQuota'
 
 export const Route = createFileRoute('/app/knowledge/')({
   component: () => (
@@ -199,6 +200,7 @@ function KnowledgePage() {
 
   const { user: currentUser } = useCurrentUser()
   const isAdmin = currentUser?.isAdmin === true
+  const { canCreateKB } = useKBQuota()
 
   const [search, setSearch] = useState('')
 
@@ -273,10 +275,24 @@ function KnowledgePage() {
               )}
             </Button>
           )}
-          <Button size="sm" onClick={() => void navigate({ to: '/app/knowledge/new' })}>
-            <Plus className="h-4 w-4 mr-2" />
-            {m.knowledge_page_kbs_create()}
-          </Button>
+          {canCreateKB ? (
+            <Button size="sm" onClick={() => void navigate({ to: '/app/knowledge/new' })}>
+              <Plus className="h-4 w-4 mr-2" />
+              {m.knowledge_page_kbs_create()}
+            </Button>
+          ) : (
+            <Tooltip label={m.kb_limit_tooltip_kb_count()}>
+              <span
+                className="inline-flex items-center gap-1 opacity-50 cursor-default select-none"
+                aria-disabled="true"
+              >
+                <Button size="sm" tabIndex={-1} className="pointer-events-none">
+                  <Plus className="h-4 w-4 mr-2" />
+                  {m.knowledge_page_kbs_create()}
+                </Button>
+              </span>
+            </Tooltip>
+          )}
         </div>
       </div>
 
