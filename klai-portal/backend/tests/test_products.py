@@ -37,11 +37,14 @@ class TestPlanProducts:
     def test_free_plan_has_no_products(self) -> None:
         assert get_plan_products("free") == []
 
-    def test_core_plan_has_chat(self) -> None:
-        assert get_plan_products("core") == ["chat"]
+    def test_core_plan_has_chat_and_knowledge(self) -> None:
+        # SPEC-PORTAL-UNIFY-KB-001 D2: core now includes knowledge.
+        assert get_plan_products("core") == ["chat", "knowledge"]
 
-    def test_professional_plan_has_chat_and_scribe(self) -> None:
-        assert get_plan_products("professional") == ["chat", "scribe"]
+    def test_professional_plan_has_chat_scribe_knowledge(self) -> None:
+        # SPEC-PORTAL-UNIFY-KB-001 D2: professional gained knowledge; limits
+        # still match core tier until complete is reached.
+        assert get_plan_products("professional") == ["chat", "scribe", "knowledge"]
 
     def test_complete_plan_has_all_products(self) -> None:
         assert get_plan_products("complete") == ["chat", "scribe", "knowledge"]
@@ -645,7 +648,9 @@ class TestInternalGetUserProducts:
             patch("app.api.internal._require_internal_token"),
             patch("app.api.internal.set_tenant", new_callable=AsyncMock),
             patch("app.api.internal.get_effective_products", new_callable=AsyncMock, return_value=["chat", "scribe"]),
-            patch("app.api.internal.get_effective_capabilities", new_callable=AsyncMock, return_value={"kb.connectors"}),
+            patch(
+                "app.api.internal.get_effective_capabilities", new_callable=AsyncMock, return_value={"kb.connectors"}
+            ),
             patch("app.api.internal._audit_internal_call", new_callable=AsyncMock),
         ):
             result = await get_user_products(
