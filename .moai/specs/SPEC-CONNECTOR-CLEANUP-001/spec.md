@@ -14,6 +14,7 @@ issue_number: 0
 | Version | Date | Author | Change |
 |---------|------|--------|--------|
 | 1.0 | 2026-04-23 | Mark Vletter | Initial draft. Found during SPEC-CRAWLER-005 Fase 6 E2E: legacy `connector.connectors` tabel, dead `ConnectorScheduler`, missing FK `sync_runs → portal_connectors`. |
+| 1.1 | 2026-04-23 | Mark Vletter | REQ-05 resolved: option B — reimplement cron scheduling in a separate SPEC (`SPEC-CONNECTOR-SCHEDULING-001`). `portal_connectors.schedule` kolom blijft staan (als zombie) tot die SPEC landt. Fase 6 van dit SPEC wordt een one-liner: forward-reference schrijven, niets droppen. |
 
 ---
 
@@ -88,13 +89,12 @@ De drie bevindingen wijzen allemaal naar hetzelfde probleem: **de legacy connect
 - **04.3** `portal_connectors.id` staat in de `klai` database `public` schema — de FK kruist schema's, wat Postgres ondersteunt maar vereist dat de klai-connector role rechten heeft op `public.portal_connectors`. Verifieer dit in de migration.
 - **04.4** Na FK: `qdrant_store.delete_connector` + `pg_store.delete_connector_artifacts` krijgen een automatisch-cascadende sync_runs-cleanup als bijeffect van de portal connector delete. Backup voor de applicatielaag.
 
-### REQ-05 — Cron-scheduling beslissing
+### REQ-05 — Cron-scheduling: reimplement via aparte SPEC (beslissing B)
 
-- **05.1** Twee opties, niet allebei:
-  - **(a) Permanently drop** — `portal_connectors.schedule` kolom droppen, UI-veld weghalen, documenteren in `.claude/rules/klai/projects/knowledge.md` dat schedules een afgedankte feature zijn.
-  - **(b) Reimplement** — aparte follow-up SPEC (`SPEC-CONNECTOR-SCHEDULING-001`) die de feature opnieuw optuigt in de nieuwe architectuur (portal-api schrijft schedules, een background-worker triggert syncs op tijd).
-- **05.2** Keuze wordt expliciet gedocumenteerd in deze SPEC's HISTORY.
-- **05.3** Als (a): migration om `portal_connectors.schedule` kolom te droppen is onderdeel van deze SPEC.
+- **05.1** `portal_connectors.schedule` kolom blijft staan — geen column drop in deze SPEC.
+- **05.2** Er wordt een stub SPEC aangemaakt: `.moai/specs/SPEC-CONNECTOR-SCHEDULING-001/spec.md` met de intentie + scope voor de reimplementatie.
+- **05.3** Pitfall entry in `.claude/rules/klai/projects/knowledge.md` documenteert: *"`portal_connectors.schedule` bestaat maar wordt niet gehonoreerd. Zie SPEC-CONNECTOR-SCHEDULING-001 voor de reimpl."* — voorkomt dat een volgende ontwikkelaar denkt dat de feature werkt.
+- **05.4** Geen UI-verandering — het veld in de connector wizard / edit blijft zichtbaar maar doet gewoon niks. (Alternatief: frontend toont "Not yet supported" badge; scope-call voor SPEC-SCHEDULING-001.)
 
 ### REQ-06 — Tests + verificatie
 
