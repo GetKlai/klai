@@ -30,7 +30,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import _get_caller_org, bearer
-from app.core.database import get_db
+from app.core.database import get_db, set_tenant
 from app.models.templates import PortalTemplate
 from app.services.default_templates import ensure_default_templates
 from app.services.litellm_cache import invalidate_templates
@@ -213,13 +213,18 @@ async def create_template(
     db.add(template)
     try:
         await db.commit()
-        await db.refresh(template)
     except IntegrityError as exc:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Er bestaat al een template met slug '{slug}' in deze organisatie",
         ) from exc
+    # SQLAlchemy expires attributes on commit. Any attribute access below
+    # (inside _template_out) triggers a lazy reload query; with RLS enabled
+    # on portal_templates the reload needs the tenant GUC re-applied after
+    # the commit released the transaction's session-level config.
+    await set_tenant(db, org.id)
+    await db.refresh(template)
 
     logger.info(
         "template_created",
@@ -308,13 +313,16 @@ async def update_template(
 
     try:
         await db.commit()
-        await db.refresh(template)
     except IntegrityError as exc:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Er bestaat al een template met deze slug in deze organisatie",
         ) from exc
+    # Same RLS-after-commit reason as in create_template — re-set tenant
+    # GUC so the post-commit refresh query can see the row.
+    await set_tenant(db, org.id)
+    await db.refresh(template)
 
     logger.info(
         "template_updated",
