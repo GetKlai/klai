@@ -124,7 +124,7 @@ function TranscriptionDetailPage() {
   return (
     <div className="p-6 max-w-3xl">
       <div className="flex items-start justify-between mb-6">
-        <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {displayTitle}
         </h1>
         <Button

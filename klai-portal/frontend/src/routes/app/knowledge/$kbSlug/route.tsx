@@ -133,7 +133,7 @@ function KbLayout() {
       {/* Header */}
       <div className="flex items-start gap-3">
         <div className="flex-1">
-          <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">{kb.name}</h1>
+          <h1 className="page-title text-[26px] font-display-bold text-gray-900">{kb.name}</h1>
           {kb.description && (
             <p className="text-sm text-[var(--color-muted-foreground)] mt-1">{kb.description}</p>
           )}

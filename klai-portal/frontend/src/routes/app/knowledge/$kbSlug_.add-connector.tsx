@@ -277,7 +277,7 @@ function AddConnectorPage() {
     <div className="p-6 max-w-xl">
       {/* Page header */}
       <div className="flex items-center justify-between mb-6">
-        <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.admin_connectors_add_title()}
         </h1>
         <Button type="button" variant="ghost" size="sm" onClick={goBack}>

@@ -280,7 +280,7 @@ function EditConnectorPage() {
     <div className="p-6 max-w-lg">
       <div className="flex items-start justify-between mb-6">
         <div className="space-y-1.5">
-          <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
             {m.admin_connectors_edit_title()}
           </h1>
           {connector && (
