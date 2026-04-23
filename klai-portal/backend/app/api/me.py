@@ -24,6 +24,7 @@ from app.models.groups import PortalGroup, PortalGroupMembership
 from app.models.knowledge_bases import PortalKnowledgeBase, PortalUserKBAccess
 from app.models.meetings import VexaMeeting
 from app.models.portal import PortalOrg, PortalUser
+from app.api.dependencies import get_effective_capabilities
 from app.services.entitlements import get_effective_products
 from app.services.zitadel import zitadel
 
@@ -53,6 +54,7 @@ class MeResponse(BaseModel):
     preferred_language: Literal["nl", "en"] = "nl"
     portal_role: str = "member"
     products: list[str] = []
+    capabilities: list[str] = []
     org_found: bool = False
 
 
@@ -126,6 +128,7 @@ async def me(
     # get_effective_products self-heals its own RLS tenant context — no
     # set_tenant needed at this call site.
     products = await get_effective_products(zitadel_user_id, db) if zitadel_user_id else []
+    capabilities = await get_effective_capabilities(zitadel_user_id, db) if zitadel_user_id else set()
 
     return MeResponse(
         user_id=zitadel_user_id,
@@ -140,6 +143,7 @@ async def me(
         preferred_language=preferred_language,
         portal_role=portal_role,
         products=products,
+        capabilities=sorted(capabilities),
         org_found=org_found,
     )
 

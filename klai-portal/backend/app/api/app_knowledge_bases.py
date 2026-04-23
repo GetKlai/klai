@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import _get_caller_org, bearer
 from app.core.config import settings
 from app.core.database import get_db
-from app.services.kb_quota import assert_can_create_org_kb, assert_can_create_personal_kb
 from app.models.audit import PortalAuditLog
 from app.models.connectors import PortalConnector
 from app.models.groups import PortalGroup
@@ -26,6 +25,7 @@ from app.models.portal import PortalUser
 from app.models.retrieval_gaps import PortalRetrievalGap
 from app.services import docs_client, knowledge_ingest_client
 from app.services.access import get_user_role_for_kb
+from app.services.kb_quota import assert_can_create_org_kb, assert_can_create_personal_kb
 from app.services.zitadel import zitadel
 
 logger = structlog.get_logger()

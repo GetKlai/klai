@@ -19,6 +19,8 @@ import { StepIndicator, type StepItem } from '@/components/ui/step-indicator'
 import * as m from '@/paraglide/messages'
 import { apiFetch, ApiError } from '@/lib/apiFetch'
 import { ProductGuard } from '@/components/layout/ProductGuard'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
+import { useKBQuota } from '@/hooks/useKBQuota'
 import { MemberPicker } from './new._components/MemberPicker'
 import type { WizardData, Step, OrgGroup } from './new._types'
 
@@ -49,6 +51,11 @@ function NewKnowledgeBasePage() {
   const auth = useAuth()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const { user } = useCurrentUser()
+  const { canCreateKB } = useKBQuota()
+
+  // Limited plan users (no kb.connectors) may only create personal KBs.
+  const isLimitedPlan = user ? !user.hasCapability('kb.connectors') : false
 
   const [step, setStep] = useState<Step>(1)
   const [errorKey, setErrorKey] = useState<'conflict' | 'generic' | null>(null)
@@ -58,7 +65,8 @@ function NewKnowledgeBasePage() {
     slug: '',
     slugManuallyEdited: false,
     description: '',
-    ownerType: 'org',
+    // Limited plan users can only create personal KBs.
+    ownerType: isLimitedPlan ? 'user' : 'org',
     visibilityMode: 'org',
     allowContribute: true,
     initialGroups: [],
@@ -211,7 +219,7 @@ function NewKnowledgeBasePage() {
 
       {/* Step content */}
       <div className="mt-6">
-        {step === 1 && <StepName data={data} setData={setData} errorKey={errorKey} />}
+        {step === 1 && <StepName data={data} setData={setData} errorKey={errorKey} isLimitedPlan={isLimitedPlan} />}
         {step === 2 && <StepAccess data={data} setData={setData} />}
         {step === 3 && (
           <StepPermissions
@@ -226,6 +234,7 @@ function NewKnowledgeBasePage() {
             data={data}
             isPending={isPending}
             errorKey={errorKey}
+            canCreateKB={canCreateKB}
             onSubmit={() => {
               setErrorKey(null)
               mutate()
@@ -256,10 +265,12 @@ function StepName({
   data,
   setData,
   errorKey,
+  isLimitedPlan,
 }: {
   data: WizardData
   setData: React.Dispatch<React.SetStateAction<WizardData>>
   errorKey: 'conflict' | 'generic' | null
+  isLimitedPlan: boolean
 }) {
   function handleNameChange(value: string) {
     setData((prev) => ({
@@ -283,45 +294,47 @@ function StepName({
         {m.knowledge_wizard_title_step1()}
       </p>
 
-      {/* Scope picker */}
-      <div className="flex flex-col gap-1.5">
-        <Label>{m.knowledge_new_scope_label()}</Label>
-        <div className="grid grid-cols-2 gap-3">
-          {(['org', 'user'] as const).map((type) => (
-            <button
-              key={type}
-              type="button"
-              onClick={() =>
-                setData((prev) => ({
-                  ...prev,
-                  ownerType: type,
-                  visibilityMode: type === 'user' ? 'org' : prev.visibilityMode,
-                }))
-              }
-              className={[
-                'flex flex-col items-start gap-1 rounded-xl border p-4 text-left transition-all',
-                data.ownerType === type
-                  ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/5 ring-1 ring-[var(--color-accent)]'
-                  : 'border-[var(--color-border)] bg-[var(--color-card)] hover:border-[var(--color-accent)]/50',
-              ].join(' ')}
-            >
-              {type === 'org' ? (
-                <Users className="h-4 w-4 text-[var(--color-accent)]" />
-              ) : (
-                <User className="h-4 w-4 text-[var(--color-accent)]" />
-              )}
-              <span className="text-sm font-medium text-[var(--color-foreground)]">
-                {type === 'org' ? m.knowledge_new_scope_org() : m.knowledge_new_scope_personal()}
-              </span>
-              <span className="text-xs text-[var(--color-muted-foreground)]">
-                {type === 'org'
-                  ? m.knowledge_new_scope_org_description()
-                  : m.knowledge_new_scope_personal_description()}
-              </span>
-            </button>
-          ))}
+      {/* Scope picker — limited plan users may only create personal KBs (D4) */}
+      {!isLimitedPlan && (
+        <div className="flex flex-col gap-1.5">
+          <Label>{m.knowledge_new_scope_label()}</Label>
+          <div className="grid grid-cols-2 gap-3">
+            {(['org', 'user'] as const).map((type) => (
+              <button
+                key={type}
+                type="button"
+                onClick={() =>
+                  setData((prev) => ({
+                    ...prev,
+                    ownerType: type,
+                    visibilityMode: type === 'user' ? 'org' : prev.visibilityMode,
+                  }))
+                }
+                className={[
+                  'flex flex-col items-start gap-1 rounded-xl border p-4 text-left transition-all',
+                  data.ownerType === type
+                    ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/5 ring-1 ring-[var(--color-accent)]'
+                    : 'border-[var(--color-border)] bg-[var(--color-card)] hover:border-[var(--color-accent)]/50',
+                ].join(' ')}
+              >
+                {type === 'org' ? (
+                  <Users className="h-4 w-4 text-[var(--color-accent)]" />
+                ) : (
+                  <User className="h-4 w-4 text-[var(--color-accent)]" />
+                )}
+                <span className="text-sm font-medium text-[var(--color-foreground)]">
+                  {type === 'org' ? m.knowledge_new_scope_org() : m.knowledge_new_scope_personal()}
+                </span>
+                <span className="text-xs text-[var(--color-muted-foreground)]">
+                  {type === 'org'
+                    ? m.knowledge_new_scope_org_description()
+                    : m.knowledge_new_scope_personal_description()}
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Name */}
       <div className="flex flex-col gap-1.5">
@@ -557,12 +570,14 @@ function StepConfirm({
   data,
   isPending,
   errorKey,
+  canCreateKB,
   onSubmit,
   onEditSlug,
 }: {
   data: WizardData
   isPending: boolean
   errorKey: 'conflict' | 'generic' | null
+  canCreateKB: boolean
   onSubmit: () => void
   onEditSlug: () => void
 }) {
@@ -680,9 +695,16 @@ function StepConfirm({
         <p className="text-sm text-[var(--color-destructive)]">{m.knowledge_new_error()}</p>
       )}
 
+      {/* Quota notice for personal KBs on limited plans */}
+      {data.ownerType === 'user' && !canCreateKB && (
+        <p className="text-sm text-[var(--color-muted-foreground)] opacity-70">
+          {m.kb_limit_tooltip_kb_count()}
+        </p>
+      )}
+
       {/* Submit button */}
       <div className="flex justify-end pt-2">
-        <Button onClick={onSubmit} disabled={isPending}>
+        <Button onClick={onSubmit} disabled={isPending || (data.ownerType === 'user' && !canCreateKB)}>
           {m.knowledge_wizard_create_button()}
         </Button>
       </div>
