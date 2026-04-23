@@ -94,9 +94,7 @@ async def ensure_default_templates(
     """
     try:
         count_result = await db.execute(
-            select(func.count())
-            .select_from(PortalTemplate)
-            .where(PortalTemplate.org_id == org_id)
+            select(func.count()).select_from(PortalTemplate).where(PortalTemplate.org_id == org_id)
         )
         existing_count = count_result.scalar() or 0
 
@@ -117,13 +115,9 @@ async def ensure_default_templates(
             )
 
         await db.flush()
-        logger.info(
-            "default_templates_seeded", org_id=org_id, count=len(DEFAULT_TEMPLATES)
-        )
+        logger.info("default_templates_seeded", org_id=org_id, count=len(DEFAULT_TEMPLATES))
         return len(DEFAULT_TEMPLATES)
     except Exception:
         await db.rollback()
-        logger.warning(
-            "default_templates_seeding_failed", org_id=org_id, exc_info=True
-        )
+        logger.warning("default_templates_seeding_failed", org_id=org_id, exc_info=True)
         return 0

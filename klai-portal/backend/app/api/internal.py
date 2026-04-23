@@ -1097,9 +1097,7 @@ async def get_effective_templates(
     await _require_internal_token(request)
 
     # Resolve org before set_tenant so an unknown zitadel_org_id still 404s.
-    org_row = await db.execute(
-        select(PortalOrg).where(PortalOrg.zitadel_org_id == zitadel_org_id)
-    )
+    org_row = await db.execute(select(PortalOrg).where(PortalOrg.zitadel_org_id == zitadel_org_id))
     org = org_row.scalar_one_or_none()
     if org is None:
         await _audit_internal_call(request, org_id=0)

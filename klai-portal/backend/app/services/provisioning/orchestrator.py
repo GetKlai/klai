@@ -428,9 +428,7 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
                 await ensure_default_templates(org.id, "system", db)
                 await db.commit()
             except Exception:
-                logger.warning(
-                    "default_templates_step_failed", org_id=org.id, exc_info=True
-                )
+                logger.warning("default_templates_step_failed", org_id=org.id, exc_info=True)
 
             # --- step 7: Docker container ---------------------------------
             mark_step_start(org_id, "librechat_container")

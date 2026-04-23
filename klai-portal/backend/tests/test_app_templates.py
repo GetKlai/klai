@@ -193,12 +193,8 @@ async def test_rate_limit_returns_429_with_retry_after(monkeypatch):
     from app.api import app_templates
 
     fake_pool = MagicMock()
-    monkeypatch.setattr(
-        app_templates, "get_redis_pool", AsyncMock(return_value=fake_pool)
-    )
-    monkeypatch.setattr(
-        app_templates, "check_rate_limit", AsyncMock(return_value=(False, 37))
-    )
+    monkeypatch.setattr(app_templates, "get_redis_pool", AsyncMock(return_value=fake_pool))
+    monkeypatch.setattr(app_templates, "check_rate_limit", AsyncMock(return_value=(False, 37)))
 
     with pytest.raises(HTTPException) as exc:
         await app_templates._enforce_rate_limit(org_id=42)
@@ -223,12 +219,8 @@ async def test_rate_limit_fail_open_on_redis_error(monkeypatch):
     from app.api import app_templates
 
     fake_pool = MagicMock()
-    monkeypatch.setattr(
-        app_templates, "get_redis_pool", AsyncMock(return_value=fake_pool)
-    )
-    monkeypatch.setattr(
-        app_templates, "check_rate_limit", AsyncMock(side_effect=RuntimeError("redis down"))
-    )
+    monkeypatch.setattr(app_templates, "get_redis_pool", AsyncMock(return_value=fake_pool))
+    monkeypatch.setattr(app_templates, "check_rate_limit", AsyncMock(side_effect=RuntimeError("redis down")))
     # Must NOT raise.
     await app_templates._enforce_rate_limit(org_id=42)
 
@@ -250,15 +242,11 @@ async def test_patch_by_non_owner_non_admin_returns_403(monkeypatch):
     )
     monkeypatch.setattr(app_templates, "_enforce_rate_limit", AsyncMock())
     template = _mock_template(created_by="user-2")  # someone else's template
-    monkeypatch.setattr(
-        app_templates, "_get_template_or_404", AsyncMock(return_value=template)
-    )
+    monkeypatch.setattr(app_templates, "_get_template_or_404", AsyncMock(return_value=template))
 
     body = app_templates.TemplatePatch(name="New Name")
     with pytest.raises(HTTPException) as exc:
-        await app_templates.update_template(
-            slug="test", body=body, credentials=MagicMock(), db=MagicMock()
-        )
+        await app_templates.update_template(slug="test", body=body, credentials=MagicMock(), db=MagicMock())
 
     assert exc.value.status_code == 403
 
@@ -275,15 +263,11 @@ async def test_patch_promoting_personal_to_org_requires_admin(monkeypatch):
     )
     monkeypatch.setattr(app_templates, "_enforce_rate_limit", AsyncMock())
     template = _mock_template(created_by="user-1", scope="personal")  # owner trying to promote
-    monkeypatch.setattr(
-        app_templates, "_get_template_or_404", AsyncMock(return_value=template)
-    )
+    monkeypatch.setattr(app_templates, "_get_template_or_404", AsyncMock(return_value=template))
 
     body = app_templates.TemplatePatch(scope="org")
     with pytest.raises(HTTPException) as exc:
-        await app_templates.update_template(
-            slug="test", body=body, credentials=MagicMock(), db=MagicMock()
-        )
+        await app_templates.update_template(slug="test", body=body, credentials=MagicMock(), db=MagicMock())
 
     assert exc.value.status_code == 403
 
@@ -304,14 +288,10 @@ async def test_get_personal_hides_from_non_owner_non_admin(monkeypatch):
         AsyncMock(return_value=_mock_caller(role="user", zitadel_user_id="user-1")),
     )
     template = _mock_template(created_by="user-2", scope="personal")
-    monkeypatch.setattr(
-        app_templates, "_get_template_or_404", AsyncMock(return_value=template)
-    )
+    monkeypatch.setattr(app_templates, "_get_template_or_404", AsyncMock(return_value=template))
 
     with pytest.raises(HTTPException) as exc:
-        await app_templates.get_template(
-            slug="test", credentials=MagicMock(), db=MagicMock()
-        )
+        await app_templates.get_template(slug="test", credentials=MagicMock(), db=MagicMock())
 
     assert exc.value.status_code == 404
 
@@ -327,13 +307,9 @@ async def test_get_personal_visible_to_admin(monkeypatch):
         AsyncMock(return_value=_mock_caller(role="admin", zitadel_user_id="admin-1")),
     )
     template = _mock_template(created_by="user-2", scope="personal")
-    monkeypatch.setattr(
-        app_templates, "_get_template_or_404", AsyncMock(return_value=template)
-    )
+    monkeypatch.setattr(app_templates, "_get_template_or_404", AsyncMock(return_value=template))
 
-    out = await app_templates.get_template(
-        slug="test", credentials=MagicMock(), db=MagicMock()
-    )
+    out = await app_templates.get_template(slug="test", credentials=MagicMock(), db=MagicMock())
 
     assert out.scope == "personal"
     assert out.created_by == "user-2"

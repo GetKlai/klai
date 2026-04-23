@@ -37,6 +37,7 @@ import { Route as AdminDomainsRouteImport } from './routes/admin/domains'
 import { Route as AdminBillingRouteImport } from './routes/admin/billing'
 import { Route as LocaleSignupRouteImport } from './routes/$locale/signup'
 import { Route as AppTranscribeIndexRouteImport } from './routes/app/transcribe/index'
+import { Route as AppTemplatesIndexRouteImport } from './routes/app/templates/index'
 import { Route as AppKnowledgeIndexRouteImport } from './routes/app/knowledge/index'
 import { Route as AppGapsIndexRouteImport } from './routes/app/gaps/index'
 import { Route as AppFocusIndexRouteImport } from './routes/app/focus/index'
@@ -227,6 +228,11 @@ const LocaleSignupRoute = LocaleSignupRouteImport.update({
 const AppTranscribeIndexRoute = AppTranscribeIndexRouteImport.update({
   id: '/transcribe/',
   path: '/transcribe/',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppTemplatesIndexRoute = AppTemplatesIndexRouteImport.update({
+  id: '/templates/',
+  path: '/templates/',
   getParentRoute: () => AppRouteRoute,
 } as any)
 const AppKnowledgeIndexRoute = AppKnowledgeIndexRouteImport.update({
@@ -559,6 +565,7 @@ export interface FileRoutesByFullPath {
   '/app/focus/': typeof AppFocusIndexRoute
   '/app/gaps/': typeof AppGapsIndexRoute
   '/app/knowledge/': typeof AppKnowledgeIndexRoute
+  '/app/templates/': typeof AppTemplatesIndexRoute
   '/app/transcribe/': typeof AppTranscribeIndexRoute
   '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
   '/admin/groups/$groupId/edit': typeof AdminGroupsGroupIdEditRoute
@@ -635,6 +642,7 @@ export interface FileRoutesByTo {
   '/app/focus': typeof AppFocusIndexRoute
   '/app/gaps': typeof AppGapsIndexRoute
   '/app/knowledge': typeof AppKnowledgeIndexRoute
+  '/app/templates': typeof AppTemplatesIndexRoute
   '/app/transcribe': typeof AppTranscribeIndexRoute
   '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
   '/admin/groups/$groupId/edit': typeof AdminGroupsGroupIdEditRoute
@@ -717,6 +725,7 @@ export interface FileRoutesById {
   '/app/focus/': typeof AppFocusIndexRoute
   '/app/gaps/': typeof AppGapsIndexRoute
   '/app/knowledge/': typeof AppKnowledgeIndexRoute
+  '/app/templates/': typeof AppTemplatesIndexRoute
   '/app/transcribe/': typeof AppTranscribeIndexRoute
   '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
   '/admin/groups/$groupId/edit': typeof AdminGroupsGroupIdEditRoute
@@ -800,6 +809,7 @@ export interface FileRouteTypes {
     | '/app/focus/'
     | '/app/gaps/'
     | '/app/knowledge/'
+    | '/app/templates/'
     | '/app/transcribe/'
     | '/admin/groups/$groupId/add-member'
     | '/admin/groups/$groupId/edit'
@@ -876,6 +886,7 @@ export interface FileRouteTypes {
     | '/app/focus'
     | '/app/gaps'
     | '/app/knowledge'
+    | '/app/templates'
     | '/app/transcribe'
     | '/admin/groups/$groupId/add-member'
     | '/admin/groups/$groupId/edit'
@@ -957,6 +968,7 @@ export interface FileRouteTypes {
     | '/app/focus/'
     | '/app/gaps/'
     | '/app/knowledge/'
+    | '/app/templates/'
     | '/app/transcribe/'
     | '/admin/groups/$groupId/add-member'
     | '/admin/groups/$groupId/edit'
@@ -1196,6 +1208,13 @@ declare module '@tanstack/react-router' {
       path: '/transcribe'
       fullPath: '/app/transcribe/'
       preLoaderRoute: typeof AppTranscribeIndexRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/templates/': {
+      id: '/app/templates/'
+      path: '/templates'
+      fullPath: '/app/templates/'
+      preLoaderRoute: typeof AppTemplatesIndexRouteImport
       parentRoute: typeof AppRouteRoute
     }
     '/app/knowledge/': {
@@ -1701,6 +1720,7 @@ interface AppRouteRouteChildren {
   AppFocusIndexRoute: typeof AppFocusIndexRoute
   AppGapsIndexRoute: typeof AppGapsIndexRoute
   AppKnowledgeIndexRoute: typeof AppKnowledgeIndexRoute
+  AppTemplatesIndexRoute: typeof AppTemplatesIndexRoute
   AppTranscribeIndexRoute: typeof AppTranscribeIndexRoute
   AppDocsKbSlugEditRoute: typeof AppDocsKbSlugEditRoute
   AppFocusNotebookIdAddSourceRoute: typeof AppFocusNotebookIdAddSourceRoute
@@ -1730,6 +1750,7 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppFocusIndexRoute: AppFocusIndexRoute,
   AppGapsIndexRoute: AppGapsIndexRoute,
   AppKnowledgeIndexRoute: AppKnowledgeIndexRoute,
+  AppTemplatesIndexRoute: AppTemplatesIndexRoute,
   AppTranscribeIndexRoute: AppTranscribeIndexRoute,
   AppDocsKbSlugEditRoute: AppDocsKbSlugEditRoute,
   AppFocusNotebookIdAddSourceRoute: AppFocusNotebookIdAddSourceRoute,

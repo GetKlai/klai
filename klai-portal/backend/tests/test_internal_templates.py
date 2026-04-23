@@ -70,9 +70,7 @@ async def test_unknown_org_returns_404(monkeypatch):
     db.execute = AsyncMock(return_value=_scalar_one_or_none_result(None))
 
     with pytest.raises(HTTPException) as exc:
-        await internal.get_effective_templates(
-            request=MagicMock(), zitadel_org_id="nope", librechat_user_id="x", db=db
-        )
+        await internal.get_effective_templates(request=MagicMock(), zitadel_org_id="nope", librechat_user_id="x", db=db)
 
     assert exc.value.status_code == 404
 
