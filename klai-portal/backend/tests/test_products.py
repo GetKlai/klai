@@ -37,11 +37,14 @@ class TestPlanProducts:
     def test_free_plan_has_no_products(self) -> None:
         assert get_plan_products("free") == []
 
-    def test_core_plan_has_chat(self) -> None:
-        assert get_plan_products("core") == ["chat"]
+    def test_core_plan_has_chat_and_knowledge(self) -> None:
+        # SPEC-PORTAL-UNIFY-KB-001 D2: core now includes knowledge.
+        assert get_plan_products("core") == ["chat", "knowledge"]
 
-    def test_professional_plan_has_chat_and_scribe(self) -> None:
-        assert get_plan_products("professional") == ["chat", "scribe"]
+    def test_professional_plan_has_chat_scribe_knowledge(self) -> None:
+        # SPEC-PORTAL-UNIFY-KB-001 D2: professional gained knowledge; limits
+        # still match core tier until complete is reached.
+        assert get_plan_products("professional") == ["chat", "scribe", "knowledge"]
 
     def test_complete_plan_has_all_products(self) -> None:
         assert get_plan_products("complete") == ["chat", "scribe", "knowledge"]
@@ -158,7 +161,9 @@ class TestAssignProduct:
         with patch("app.api.admin.products._get_caller_org", return_value=("admin-1", org, caller)):
             with pytest.raises(HTTPException) as exc_info:
                 body = MagicMock()
-                body.product = "knowledge"  # not in core plan
+                # SPEC-PORTAL-UNIFY-KB-001 D2: core now includes knowledge,
+                # so we use scribe (only in professional+) to test the ceiling.
+                body.product = "scribe"
                 await assign_product(
                     zitadel_user_id="user-1",
                     body=body,
@@ -167,7 +172,7 @@ class TestAssignProduct:
                 )
 
             assert exc_info.value.status_code == 403
-            assert "knowledge" in str(exc_info.value.detail)
+            assert "scribe" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
     async def test_assign_product_within_ceiling_succeeds(self) -> None:
@@ -343,11 +348,11 @@ class TestAutoAssignOnInvite:
 
         assert result.user_id == "new-user-id"
 
-        # Should have added: 1 PortalUser + 2 products (chat, scribe for professional)
+        # SPEC-PORTAL-UNIFY-KB-001 D2: professional plan is chat + scribe + knowledge.
         product_adds = [obj for obj in added_objects if isinstance(obj, PortalUserProduct)]
-        assert len(product_adds) == 2
+        assert len(product_adds) == 3
         product_names = {p.product for p in product_adds}
-        assert product_names == {"chat", "scribe"}
+        assert product_names == {"chat", "scribe", "knowledge"}
 
         # All product rows should reference the admin who did the invite
         for p in product_adds:
@@ -598,7 +603,8 @@ class TestListAvailableProducts:
         with patch("app.api.admin.products._get_caller_org", return_value=("admin-1", org, caller)):
             result = await list_available_products(credentials=mock_credentials, db=mock_db)
 
-        assert result.products == ["chat", "scribe"]
+        # SPEC-PORTAL-UNIFY-KB-001 D2: professional = chat + scribe + knowledge.
+        assert result.products == ["chat", "scribe", "knowledge"]
 
     @pytest.mark.asyncio
     async def test_list_products_free_plan_returns_empty(self) -> None:
@@ -631,13 +637,22 @@ class TestInternalGetUserProducts:
         from app.api.internal import get_user_products
 
         mock_db = AsyncMock()
+        # First DB call: org_id lookup returns 1
         mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = ["chat", "scribe"]
+        mock_result.scalar_one_or_none.return_value = 1
         mock_db.execute.return_value = mock_result
 
         mock_request = MagicMock()
 
-        with patch("app.api.internal._require_internal_token"):
+        with (
+            patch("app.api.internal._require_internal_token"),
+            patch("app.api.internal.set_tenant", new_callable=AsyncMock),
+            patch("app.api.internal.get_effective_products", new_callable=AsyncMock, return_value=["chat", "scribe"]),
+            patch(
+                "app.api.internal.get_effective_capabilities", new_callable=AsyncMock, return_value={"kb.connectors"}
+            ),
+            patch("app.api.internal._audit_internal_call", new_callable=AsyncMock),
+        ):
             result = await get_user_products(
                 zitadel_user_id="user-123",
                 request=mock_request,
@@ -645,6 +660,7 @@ class TestInternalGetUserProducts:
             )
 
         assert result.products == ["chat", "scribe"]
+        assert result.capabilities == ["kb.connectors"]
 
     @pytest.mark.asyncio
     async def test_get_user_products_unknown_user_returns_empty(self) -> None:
@@ -652,12 +668,17 @@ class TestInternalGetUserProducts:
 
         mock_db = AsyncMock()
         mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = []
+        mock_result.scalar_one_or_none.return_value = None  # user not found
         mock_db.execute.return_value = mock_result
 
         mock_request = MagicMock()
 
-        with patch("app.api.internal._require_internal_token"):
+        with (
+            patch("app.api.internal._require_internal_token"),
+            patch("app.api.internal.get_effective_products", new_callable=AsyncMock, return_value=[]),
+            patch("app.api.internal.get_effective_capabilities", new_callable=AsyncMock, return_value=set()),
+            patch("app.api.internal._audit_internal_call", new_callable=AsyncMock),
+        ):
             result = await get_user_products(
                 zitadel_user_id="unknown-user",
                 request=mock_request,
@@ -665,6 +686,7 @@ class TestInternalGetUserProducts:
             )
 
         assert result.products == []
+        assert result.capabilities == []
 
 
 # ---------------------------------------------------------------------------

@@ -2,19 +2,18 @@
 BFF proxy router (SEC-023 / F-038).
 
 Portal-frontend is BFF-only since SPEC-AUTH-008: it sends cookies, no Bearer
-token. Three internal services still expect Bearer JWT:
+token. Two internal services still expect Bearer JWT:
 
-- ``research-api`` at ``research-api:8030`` (Focus module)
 - ``scribe-api``   at ``scribe-api:8020``   (Scribe module)
 - ``docs-app``     at ``docs-app:3010``     (klai-docs)
+
+research-api was removed in SPEC-PORTAL-UNIFY-KB-001 (Phase C). Focus is
+decommissioned; Knowledge (knowledge-ingest) is the sole KB surface.
 
 This router exposes each as ``/api/<slug>/*`` under portal-api. The handler
 reads the BFF ``SessionContext`` from ``request.state`` and forwards the
 request to the upstream with ``Authorization: Bearer <session.access_token>``
 injected. Streaming is preserved for SSE chat endpoints.
-
-After this lands, the Caddy public routes (``/research/*`` etc.) are dropped
-— the upstreams become internal-only on the Docker network.
 """
 
 from __future__ import annotations
@@ -37,11 +36,10 @@ router = APIRouter(prefix="/api")
 
 # ---------------------------------------------------------------------------
 # Upstream map. Each entry: (public prefix, upstream base URL). The prefix is
-# stripped before forwarding so that ``/api/research/v1/notebooks`` hits
-# ``http://research-api:8030/v1/notebooks``.
+# stripped before forwarding so that ``/api/scribe/...`` hits
+# ``http://scribe-api:8020/...``.
 # ---------------------------------------------------------------------------
 _UPSTREAMS: Final[dict[str, str]] = {
-    "research": "http://research-api:8030",
     "scribe": "http://scribe-api:8020",
     # klai-docs has basePath "/docs" in next.config.ts — must be included here
     # so that /api/docs/api/orgs/... resolves to /docs/api/orgs/... upstream.
@@ -215,23 +213,13 @@ async def _proxy(
 
 # ---------------------------------------------------------------------------
 # Route definitions — one per service. The router is mounted at /api so the
-# full public paths are /api/research/*, /api/scribe/*, /api/docs/*.
+# full public paths are /api/scribe/*, /api/docs/*.
 #
 # FastAPI's ``api_route`` supports all methods on one handler. Tail matcher
 # ``{rest:path}`` accepts arbitrary sub-paths.
 # ---------------------------------------------------------------------------
 
 _ALLOWED_METHODS: Final[list[str]] = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
-
-
-@router.api_route("/research/{rest:path}", methods=_ALLOWED_METHODS)
-async def proxy_research(
-    rest: str,
-    request: Request,
-    session: SessionContext = Depends(get_session),
-) -> StreamingResponse:
-    """Forward /api/research/* to research-api:8030."""
-    return await _proxy("research", rest, request, session)
 
 
 @router.api_route("/scribe/{rest:path}", methods=_ALLOWED_METHODS)

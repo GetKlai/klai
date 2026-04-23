@@ -48,8 +48,8 @@ interface MandateForm {
 
 const PLANS: { id: Plan; name: string; monthly: number; yearly: number }[] = [
   { id: 'core', name: 'Chat', monthly: 22, yearly: 18 },
-  { id: 'professional', name: 'Chat + Focus', monthly: 42, yearly: 34 },
-  { id: 'complete', name: 'Chat + Focus + Scribe', monthly: 60, yearly: 48 },
+  { id: 'professional', name: 'Chat + Scribe', monthly: 42, yearly: 34 },
+  { id: 'complete', name: 'Chat + Scribe + Knowledge', monthly: 60, yearly: 48 },
 ]
 
 function getPlanDescription(id: Plan): string {

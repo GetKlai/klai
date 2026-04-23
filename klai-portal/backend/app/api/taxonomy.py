@@ -13,7 +13,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _get_caller_org, _require_admin, bearer
+from app.api.dependencies import _get_caller_org, _require_admin, bearer, require_capability
 from app.core.config import settings
 from app.core.database import get_db, set_tenant
 from app.models.knowledge_bases import PortalKnowledgeBase
@@ -179,7 +179,11 @@ async def _check_circular_reference(
 # -- Taxonomy nodes -----------------------------------------------------------
 
 
-@router.get("/{kb_slug}/taxonomy/nodes", response_model=TaxonomyNodesResponse)
+@router.get(
+    "/{kb_slug}/taxonomy/nodes",
+    response_model=TaxonomyNodesResponse,
+    dependencies=[Depends(require_capability("kb.taxonomy"))],
+)
 async def list_taxonomy_nodes(
     kb_slug: str,
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
@@ -202,6 +206,7 @@ async def list_taxonomy_nodes(
     "/{kb_slug}/taxonomy/nodes",
     response_model=TaxonomyNodeOut,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_capability("kb.taxonomy"))],
 )
 async def create_taxonomy_node(
     kb_slug: str,
@@ -247,7 +252,11 @@ async def create_taxonomy_node(
     return _node_out(node)
 
 
-@router.patch("/{kb_slug}/taxonomy/nodes/{node_id}", response_model=TaxonomyNodeOut)
+@router.patch(
+    "/{kb_slug}/taxonomy/nodes/{node_id}",
+    response_model=TaxonomyNodeOut,
+    dependencies=[Depends(require_capability("kb.taxonomy"))],
+)
 async def update_taxonomy_node(
     kb_slug: str,
     node_id: int,
@@ -310,7 +319,11 @@ async def update_taxonomy_node(
     return _node_out(node)
 
 
-@router.delete("/{kb_slug}/taxonomy/nodes/{node_id}", status_code=status.HTTP_200_OK)
+@router.delete(
+    "/{kb_slug}/taxonomy/nodes/{node_id}",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_capability("kb.taxonomy"))],
+)
 async def delete_taxonomy_node(
     kb_slug: str,
     node_id: int,
@@ -358,7 +371,11 @@ async def delete_taxonomy_node(
 # -- Taxonomy proposals -------------------------------------------------------
 
 
-@router.get("/{kb_slug}/taxonomy/proposals", response_model=ProposalsResponse)
+@router.get(
+    "/{kb_slug}/taxonomy/proposals",
+    response_model=ProposalsResponse,
+    dependencies=[Depends(require_capability("kb.taxonomy"))],
+)
 async def list_taxonomy_proposals(
     kb_slug: str,
     proposal_status: str = "pending",

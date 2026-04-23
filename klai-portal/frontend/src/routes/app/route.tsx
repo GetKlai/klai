@@ -1,14 +1,14 @@
 import { createFileRoute, Outlet } from '@tanstack/react-router'
-import { MessageSquare, Mic, BookOpen, BookMarked, Brain } from 'lucide-react'
+import { MessageSquare, Mic, BookMarked, Brain } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { HelpButton } from '@/components/help/HelpButton'
 import * as m from '@/paraglide/messages'
 import { useProtectedRoute } from '@/hooks/useProtectedRoute'
 
+// SPEC-PORTAL-UNIFY-KB-001: Focus removed; all /app/focus/* now redirects to /app/knowledge.
 const PRODUCT_ROUTES: Record<string, string[]> = {
   '/app/chat': ['chat'],
   '/app/transcribe': ['scribe'],
-  '/app/focus': ['chat'],
   '/app/knowledge': ['knowledge'],
   '/app/docs': ['knowledge'],
 }
@@ -23,7 +23,6 @@ function AppLayout() {
   const allNavItems = [
     { to: '/app/chat', label: m.app_tool_chat_title(), icon: MessageSquare },
     { to: '/app/transcribe', label: m.app_tool_transcribe_title(), icon: Mic },
-    { to: '/app/focus', label: m.app_tool_focus_title(), icon: BookOpen },
     { to: '/app/knowledge', label: m.app_tool_knowledge_title(), icon: Brain },
     { to: '/app/docs', label: m.app_tool_docs_title(), icon: BookMarked },
   ]

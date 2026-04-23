@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.bearer import bearer
+from app.api.dependencies import get_effective_capabilities
 from app.core.config import settings
 from app.core.database import get_db, set_tenant
 from app.models.audit import PortalAuditLog
@@ -53,6 +54,7 @@ class MeResponse(BaseModel):
     preferred_language: Literal["nl", "en"] = "nl"
     portal_role: str = "member"
     products: list[str] = []
+    capabilities: list[str] = []
     org_found: bool = False
 
 
@@ -126,6 +128,7 @@ async def me(
     # get_effective_products self-heals its own RLS tenant context — no
     # set_tenant needed at this call site.
     products = await get_effective_products(zitadel_user_id, db) if zitadel_user_id else []
+    capabilities = await get_effective_capabilities(zitadel_user_id, db) if zitadel_user_id else set()
 
     return MeResponse(
         user_id=zitadel_user_id,
@@ -140,6 +143,7 @@ async def me(
         preferred_language=preferred_language,
         portal_role=portal_role,
         products=products,
+        capabilities=sorted(capabilities),
         org_found=org_found,
     )
 

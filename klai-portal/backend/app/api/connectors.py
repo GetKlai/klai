@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _get_caller_org, bearer
+from app.api.dependencies import _get_caller_org, bearer, require_capability
 from app.core.database import get_db
 from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
@@ -20,6 +20,7 @@ from app.services import knowledge_ingest_client
 from app.services.access import get_user_role_for_kb
 from app.services.connector_credentials import SENSITIVE_FIELDS, credential_store
 from app.services.events import emit_event
+from app.services.kb_quota import assert_can_add_item_to_kb
 from app.services.klai_connector_client import SyncRunData, klai_connector_client
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,8 @@ async def _auto_fill_canary_fingerprint(config: dict) -> dict:
 router = APIRouter(
     prefix="/api/app/knowledge-bases/{kb_slug}/connectors",
     tags=["connectors"],
+    # R-X2 / AC-3: all connector endpoints require the kb.connectors capability.
+    dependencies=[Depends(require_capability("kb.connectors"))],
 )
 
 # -- Webcrawler config schema (SPEC-CRAWL-003) --------------------------------
@@ -472,6 +475,9 @@ async def trigger_sync(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Connector is disabled")
     if connector.last_sync_status == "running":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Sync already running")
+
+    # R-E2: enforce per-KB item quota before triggering ingest.
+    await assert_can_add_item_to_kb(kb=kb, org=org)
 
     try:
         sync_run = await klai_connector_client.trigger_sync(connector_id)
