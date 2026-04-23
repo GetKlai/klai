@@ -82,11 +82,6 @@ push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://scribe-api:8020/health')\"" \
     "${KUMA_TOKEN_SCRIBE}" "Scribe"
 
-# Focus: research-api (document Q&A + web research)
-push_exec "$PORTAL_API" \
-    "python3 -c \"import urllib.request; urllib.request.urlopen('http://research-api:8030/health')\"" \
-    "${KUMA_TOKEN_FOCUS}" "Focus"
-
 # Docs: Next.js app — check TCP reachability (no /health route)
 push_exec "$PORTAL_API" \
     "python3 -c \"import socket; s=socket.create_connection(('docs-app',3010),timeout=5); s.close()\"" \
@@ -128,15 +123,10 @@ push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://whisper-server:8000/health')\"" \
     "${KUMA_TOKEN_WHISPER}" "Transcription Engine"
 
-# Docling: document-to-markdown conversion (Focus/research-api)
+# Docling: document-to-markdown conversion (knowledge-ingest only since SPEC-PORTAL-UNIFY-KB-001)
 push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://docling-serve:5001/health')\"" \
     "${KUMA_TOKEN_DOCLING:-}" "Document Processing"
-
-# Research API: service-level monitor (Focus product depends on this)
-push_exec "$PORTAL_API" \
-    "python3 -c \"import urllib.request; urllib.request.urlopen('http://research-api:8030/health')\"" \
-    "${KUMA_TOKEN_RESEARCH_API:-}" "Research API"
 
 # Gitea: docs content store (Docs product, Knowledge webhook source)
 push_exec "$PORTAL_API" \
