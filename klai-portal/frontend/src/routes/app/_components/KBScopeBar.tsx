@@ -5,6 +5,7 @@ import { BookOpen, ChevronDown } from 'lucide-react'
 
 import { apiFetch } from '@/lib/apiFetch'
 import { chatKbLogger } from '@/lib/logger'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
 import * as m from '@/paraglide/messages'
 
 interface KBPref {
@@ -22,9 +23,13 @@ interface OrgKB {
 
 export function KBScopeBar() {
   const auth = useAuth()
+  const { user } = useCurrentUser()
   const queryClient = useQueryClient()
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
+
+  // Limited plan users (no kb.connectors) cannot use org KBs — hide the scope bar entirely.
+  const canUseOrgKBs = !user || user.hasCapability('kb.connectors')
 
   const { data: pref } = useQuery<KBPref>({
     queryKey: ['kb-preference'],
@@ -35,7 +40,8 @@ export function KBScopeBar() {
   const { data: kbsData } = useQuery<{ knowledge_bases: OrgKB[] }>({
     queryKey: ['org-kbs-for-bar'],
     queryFn: async () => apiFetch<{ knowledge_bases: OrgKB[] }>('/api/app/knowledge-bases?owner_type=org'),
-    enabled: auth.isAuthenticated,
+    // Limited plan users cannot access org KBs — skip the fetch.
+    enabled: auth.isAuthenticated && canUseOrgKBs,
   })
 
   const orgKbs = kbsData?.knowledge_bases ?? []

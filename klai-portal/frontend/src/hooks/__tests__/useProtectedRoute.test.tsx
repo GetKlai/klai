@@ -64,6 +64,8 @@ function userFixture(partial: Partial<CurrentUser> = {}): CurrentUser {
     isAdmin: false,
     isGroupAdmin: false,
     requires_2fa_setup: false,
+    capabilities: [],
+    hasCapability: () => false,
     ...partial,
   }
 }

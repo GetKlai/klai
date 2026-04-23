@@ -2,8 +2,8 @@
 
 PLAN_PRODUCTS: dict[str, list[str]] = {
     "free": [],
-    "core": ["chat"],
-    "professional": ["chat", "scribe"],
+    "core": ["chat", "knowledge"],
+    "professional": ["chat", "scribe", "knowledge"],
     "complete": ["chat", "scribe", "knowledge"],
 }
 

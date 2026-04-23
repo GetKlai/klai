@@ -12,6 +12,7 @@ import { apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
+import { Tooltip } from '@/components/ui/tooltip'
 
 type GapsSearch = { days?: number; gapType?: string }
 const VALID_DAYS = new Set([7, 14, 30, 60, 90])
@@ -62,6 +63,9 @@ function GapsPage() {
   const auth = useAuth()
   const { user } = useCurrentUser()
   const isAdmin = user?.isAdmin === true
+  // SPEC-PORTAL-UNIFY-KB-001: kb.gaps capability gate.
+  // Admins bypass; core/professional see grayed unavailable state.
+  const hasGapsCapability = !user || user.hasCapability('kb.gaps')
   const navigate = useNavigate({ from: '/app/gaps/' })
 
   const { days: daysParam, gapType: gapTypeParam } = Route.useSearch()
@@ -95,6 +99,24 @@ function GapsPage() {
   const orgKbs = (kbsData?.knowledge_bases ?? []).filter((kb) => kb.owner_type === 'org')
 
   if (!isAdmin) {
+    // Non-admins without kb.gaps capability see a grayed unavailable state (D4).
+    if (!hasGapsCapability) {
+      return (
+        <div className="p-6 max-w-2xl opacity-50 cursor-default select-none" aria-disabled="true">
+          <div className="flex items-start gap-3 mb-4">
+            <AlertTriangle className="h-7 w-7 text-[var(--color-foreground)]" />
+            <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+              {m.gaps_page_title()}
+            </h1>
+          </div>
+          <Tooltip label={m.capability_tooltip_knowledge_only()}>
+            <p className="text-sm text-[var(--color-muted-foreground)]">
+              {m.capability_tooltip_knowledge_only()}
+            </p>
+          </Tooltip>
+        </div>
+      )
+    }
     return (
       <div className="p-6 max-w-2xl">
         <p className="text-[var(--color-muted-foreground)]">Admin access required.</p>

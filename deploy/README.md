@@ -113,10 +113,9 @@ sudo bash scripts/harden-docker-user.sh
 | **klai-knowledge-mcp** | MCP server for saving to personal knowledge base |
 | **Gitea** | Knowledge base content store (internal) |
 | **docs-app** | Klai Docs (Next.js) |
-| **SearXNG** | Self-hosted web search for research features |
+| **SearXNG** | Self-hosted web search engine |
 | **Whisper Server** | Speech-to-text transcription |
 | **scribe-api** | Transcription API |
-| **research-api** | Document Q&A |
 | **PostgreSQL** | Primary relational database |
 | **MongoDB** | LibreChat conversation storage |
 | **Redis** | Caching and session storage |

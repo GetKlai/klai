@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useAuth } from '@/lib/auth'
-import { MessageSquare, Mic, BookOpen, BookMarked, Brain } from 'lucide-react'
+import { MessageSquare, Mic, BookMarked, Brain } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 
@@ -20,6 +20,7 @@ function AppHome() {
   const { user } = useCurrentUser()
   const userName = auth.user?.profile.given_name ?? auth.user?.profile.name ?? m.app_home_user_fallback()
 
+  // SPEC-PORTAL-UNIFY-KB-001: Focus tile removed; Knowledge replaces it as single KB surface.
   const tools = [
     {
       title: m.app_tool_chat_title(),
@@ -36,14 +37,6 @@ function AppHome() {
       href: '/app/transcribe',
       helpId: 'home-tool-transcribe',
       product: 'scribe',
-    },
-    {
-      title: m.app_tool_focus_title(),
-      description: m.app_tool_focus_description(),
-      icon: BookOpen,
-      href: '/app/focus',
-      helpId: 'home-tool-focus',
-      product: 'chat',
     },
     {
       title: m.app_tool_knowledge_title(),
