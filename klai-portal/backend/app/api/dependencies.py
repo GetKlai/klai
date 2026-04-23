@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import get_current_user_id
 from app.api.bearer import bearer as bearer  # re-export for routes that import from here
 from app.core.database import get_db, set_tenant
+from app.core.plan_limits import PLAN_LIMITS, get_plan_limits
 from app.models.groups import PortalGroup, PortalGroupMembership
 from app.models.portal import PortalOrg, PortalUser
 from app.services.entitlements import get_effective_products
@@ -148,3 +149,29 @@ async def _require_admin_or_group_manager(
     )
     if not member_result.scalar_one_or_none():
         raise _no_access
+
+
+async def get_effective_capabilities(user_id: str, db: AsyncSession) -> set[str]:
+    """Return the set of KB capabilities for a user based on their org's plan.
+
+    Admin users always receive the complete-tier capabilities (superset of all plans).
+    Returns an empty set for unknown users or plans.
+
+    SPEC-PORTAL-UNIFY-KB-001 Phase A — AC-3.
+    """
+    result = await db.execute(
+        select(PortalUser, PortalOrg)
+        .join(PortalOrg, PortalOrg.id == PortalUser.org_id)
+        .where(PortalUser.zitadel_user_id == user_id)
+    )
+    row = result.one_or_none()
+    if row is None:
+        return set()
+
+    user, org = row
+
+    # Admin users get the complete-tier capabilities regardless of plan.
+    if user.role == "admin":
+        return set(PLAN_LIMITS["complete"].capabilities)
+
+    return set(get_plan_limits(org.plan).capabilities)
