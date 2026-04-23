@@ -368,6 +368,29 @@ async def _get_templates(org_id: str, user_id: str, cache) -> list[dict]:
     return instructions
 
 
+def _prepend_system_prefix(messages: list[dict], prefix: str) -> None:
+    """Prepend `prefix` to the system message (or insert one if none exists).
+
+    Mutates `messages` in-place. No-op when `prefix` is empty.
+
+    Separated from the hook body so templates-only and templates+KB paths
+    share the same insertion logic. Unit-testable without a running hook.
+    """
+    if not prefix:
+        return
+    sys_idx = next(
+        (i for i, m in enumerate(messages) if m.get("role") == "system"), None
+    )
+    if sys_idx is not None:
+        existing = messages[sys_idx].get("content", "")
+        messages[sys_idx] = {
+            "role": "system",
+            "content": f"{prefix}\n\n{existing}" if existing else prefix,
+        }
+    else:
+        messages.insert(0, {"role": "system", "content": prefix})
+
+
 def _build_template_instructions_block(instructions: list[dict]) -> str:
     """Render template list into a single system-prompt prefix block.
 
@@ -417,33 +440,17 @@ class KlaiKnowledgeHook(CustomLogger):
         template_instructions = await _get_templates(org_id, user_id, cache)
         templates_block = _build_template_instructions_block(template_instructions)
 
-        def _prepend_templates_to_system(msgs: list[dict]) -> None:
-            """Idempotent per-call: apply templates_block to the system message."""
-            if not templates_block:
-                return
-            sys_idx = next(
-                (i for i, m in enumerate(msgs) if m.get("role") == "system"), None
-            )
-            if sys_idx is not None:
-                existing = msgs[sys_idx].get("content", "")
-                msgs[sys_idx] = {
-                    "role": "system",
-                    "content": f"{templates_block}\n\n{existing}",
-                }
-            else:
-                msgs.insert(0, {"role": "system", "content": templates_block})
-
         # Feature gate + KB scope preference (version-based cache, 30s propagation)
         feature = await _get_kb_feature(user_id, org_id, cache)
         if not feature["enabled"]:
             # No KB entitlement. Templates still apply.
-            _prepend_templates_to_system(messages)
+            _prepend_system_prefix(messages, templates_block)
             data["messages"] = messages
             return data
 
         if not feature["kb_retrieval_enabled"]:
             # User disabled KB retrieval. Templates still apply.
-            _prepend_templates_to_system(messages)
+            _prepend_system_prefix(messages, templates_block)
             data["messages"] = messages
             return data
 
@@ -478,7 +485,7 @@ class KlaiKnowledgeHook(CustomLogger):
         except Exception as exc:
             logger.warning("KlaiKnowledgeHook: retrieval failed (%s) — degrading", exc)
             # Templates still apply even when KB retrieval fails.
-            _prepend_templates_to_system(messages)
+            _prepend_system_prefix(messages, templates_block)
             data["messages"] = messages
             return data
 
@@ -486,7 +493,7 @@ class KlaiKnowledgeHook(CustomLogger):
 
         # If the retrieval-gate determined no KB context is needed, skip injection
         if result.get("retrieval_bypassed"):
-            _prepend_templates_to_system(messages)
+            _prepend_system_prefix(messages, templates_block)
             data["messages"] = messages
             data.setdefault("metadata", {})["_klai_kb_meta"] = {
                 "org_id": org_id,
@@ -520,7 +527,7 @@ class KlaiKnowledgeHook(CustomLogger):
 
         if not chunks:
             # Zero chunks but templates may still apply.
-            _prepend_templates_to_system(messages)
+            _prepend_system_prefix(messages, templates_block)
             data["messages"] = messages
             return data
 
@@ -591,20 +598,7 @@ class KlaiKnowledgeHook(CustomLogger):
         # SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-HOOK-E1: templates → KB → existing.
         # Compose blocks in order; empty templates_block is filtered out.
         prefix = "\n\n".join(b for b in (templates_block, context_block) if b)
-
-        # Prepend to existing system message or insert new one
-        system_idx = next(
-            (i for i, m in enumerate(messages) if m.get("role") == "system"), None
-        )
-        if system_idx is not None:
-            existing = messages[system_idx].get("content", "")
-            messages[system_idx] = {
-                "role": "system",
-                "content": f"{prefix}\n\n{existing}" if existing else prefix,
-            }
-        else:
-            messages.insert(0, {"role": "system", "content": prefix})
-
+        _prepend_system_prefix(messages, prefix)
         data["messages"] = messages
         # Signal KB injection to downstream hooks (e.g. custom_router, post-call logger)
         # Stored in data["metadata"] so it is never forwarded to the LLM provider.
