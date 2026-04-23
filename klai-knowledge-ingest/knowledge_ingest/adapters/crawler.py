@@ -328,12 +328,15 @@ async def _ingest_crawl_result(
 
     from knowledge_ingest.routes.ingest import ingest_document
 
+    # SPEC-CRAWLER-005 Fase 6 follow-up: was "connector"; crawl chunks now carry
+    # source_type="crawl" so retrieval + assertions can distinguish them from
+    # non-crawl connector artifacts (notion, github, gdrive).
     await ingest_document(IngestRequest(
         org_id=org_id,
         kb_slug=kb_slug,
         path=url,
         content=text,
-        source_type="connector",
+        source_type="crawl",
         content_type=content_type,
         synthesis_depth=1,
         extra=extra,

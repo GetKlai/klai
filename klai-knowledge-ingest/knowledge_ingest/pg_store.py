@@ -246,7 +246,13 @@ async def delete_connector_artifacts(org_id: str, kb_slug: str, connector_id: st
     """Hard-delete all PostgreSQL artifact records for a specific connector.
 
     Follows the same cascade order as delete_kb():
-    nullify self-references → embedding_queue → artifact_entities → derivations → artifacts.
+    nullify self-references → embedding_queue → artifact_entities → derivations →
+    crawled_pages (by URL) → page_links (by URL) → artifacts.
+
+    crawled_pages + page_links have no connector_id column (legacy schema), so we
+    scope them via the artifact path-URL set BEFORE deleting artifacts. Covers the
+    cleanup-gap discovered during SPEC-CRAWLER-005 Fase 6: re-ingest would otherwise
+    skip all pages as dedup-"unchanged" via content_hash.
 
     Returns the number of artifacts deleted.
     """
@@ -292,6 +298,39 @@ async def delete_connector_artifacts(org_id: str, kb_slug: str, connector_id: st
                      WHERE org_id = $1 AND kb_slug = $2
                        AND extra IS NOT NULL
                        AND extra::jsonb->>'source_connector_id' = $3
+                   )""",
+                org_id, kb_slug, connector_id,
+            )
+            # SPEC-CRAWLER-005 Fase 6 follow-up: scrub crawled_pages + page_links
+            # for URLs owned by this connector. Scoped via the artifact path-URL
+            # set (web_crawler/crawl adapters write artifacts with path=URL).
+            # Must run BEFORE the artifacts DELETE so the URL set is still
+            # reachable. Other connectors in the same KB remain untouched — their
+            # URLs don't appear in this connector's artifact set.
+            await conn.execute(
+                """DELETE FROM knowledge.crawled_pages
+                   WHERE org_id = $1 AND kb_slug = $2 AND url IN (
+                     SELECT path FROM knowledge.artifacts
+                     WHERE org_id = $1 AND kb_slug = $2
+                       AND extra IS NOT NULL
+                       AND extra::jsonb->>'source_connector_id' = $3
+                   )""",
+                org_id, kb_slug, connector_id,
+            )
+            await conn.execute(
+                """DELETE FROM knowledge.page_links
+                   WHERE org_id = $1 AND kb_slug = $2 AND (
+                     from_url IN (
+                       SELECT path FROM knowledge.artifacts
+                       WHERE org_id = $1 AND kb_slug = $2
+                         AND extra IS NOT NULL
+                         AND extra::jsonb->>'source_connector_id' = $3
+                     ) OR to_url IN (
+                       SELECT path FROM knowledge.artifacts
+                       WHERE org_id = $1 AND kb_slug = $2
+                         AND extra IS NOT NULL
+                         AND extra::jsonb->>'source_connector_id' = $3
+                     )
                    )""",
                 org_id, kb_slug, connector_id,
             )
