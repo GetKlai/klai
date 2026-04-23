@@ -41,6 +41,7 @@ from app.core.database import AsyncSessionLocal, get_db, set_tenant
 from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg, PortalUser
+from app.models.templates import PortalTemplate
 from app.services.connector_credentials import credential_store
 from app.services.entitlements import get_effective_products
 from app.services.events import emit_event
@@ -1044,3 +1045,99 @@ async def regenerate_librechat_configs(
 
     await _audit_internal_call(request, org_id=0)
     return RegenerateResponse(tenants_updated=updated, errors=errors)
+
+
+# ---------------------------------------------------------------------------
+# SPEC-CHAT-TEMPLATES-001: GET /internal/templates/effective
+#
+# Called by the LiteLLM pre-call hook once per (org, user) chat session, cached
+# 30s in-process on the hook side. Returns the list of prompt-template
+# instructions to prepend to the system message.
+#
+# Fail-safe design (REQ-TEMPLATES-INTERNAL-E2): an unknown librechat_user_id
+# (the user hasn't called chat yet, so no PortalUser mapping row exists)
+# returns 200 with empty instructions — NEVER 404. Chat must never break
+# because the mapping is missing.
+#
+# RLS: we resolve the org first, then call set_tenant() before any
+# portal_templates query so the strict tenant_isolation policy admits the
+# SELECT.
+# ---------------------------------------------------------------------------
+
+
+class TemplateInstruction(BaseModel):
+    source: Literal["template"] = "template"
+    name: str
+    text: str
+
+
+class TemplatesEffectiveResponse(BaseModel):
+    instructions: list[TemplateInstruction]
+
+
+@router.get("/templates/effective", response_model=TemplatesEffectiveResponse)
+async def get_effective_templates(
+    request: Request,
+    zitadel_org_id: str,
+    librechat_user_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> TemplatesEffectiveResponse:
+    """Resolve effective prompt templates for a (org, librechat_user) pair.
+
+    Contract (SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-INTERNAL):
+    - 401 on missing/bad bearer (before any DB access).
+    - 404 when the Zitadel org is unknown (config-fout).
+    - 200 with empty instructions when:
+        * librechat_user_id has no PortalUser row (fail-safe),
+        * the user has NULL or empty active_template_ids,
+        * every referenced template is inactive or deleted.
+    - 200 with instructions[] in the order active_template_ids specifies,
+      skipping inactive/missing templates silently.
+    """
+    await _require_internal_token(request)
+
+    # Resolve org before set_tenant so an unknown zitadel_org_id still 404s.
+    org_row = await db.execute(
+        select(PortalOrg).where(PortalOrg.zitadel_org_id == zitadel_org_id)
+    )
+    org = org_row.scalar_one_or_none()
+    if org is None:
+        await _audit_internal_call(request, org_id=0)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Org not found")
+
+    # Scope RLS to this org for all subsequent queries.
+    await set_tenant(db, org.id)
+
+    user_row = await db.execute(
+        select(PortalUser).where(
+            PortalUser.org_id == org.id,
+            PortalUser.librechat_user_id == librechat_user_id,
+        )
+    )
+    user = user_row.scalar_one_or_none()
+    if user is None or not user.active_template_ids:
+        # Fail-safe: missing mapping or no active templates → empty.
+        await _audit_internal_call(request, org_id=org.id)
+        return TemplatesEffectiveResponse(instructions=[])
+
+    template_ids = list(user.active_template_ids)
+
+    tpl_rows = await db.execute(
+        select(PortalTemplate).where(
+            PortalTemplate.org_id == org.id,
+            PortalTemplate.id.in_(template_ids),
+            PortalTemplate.is_active.is_(True),
+        )
+    )
+    tpl_by_id = {t.id: t for t in tpl_rows.scalars().all()}
+
+    # Preserve user-specified order; skip ids that don't map (deleted or inactive).
+    instructions: list[TemplateInstruction] = []
+    for tid in template_ids:
+        tpl = tpl_by_id.get(tid)
+        if tpl is None:
+            continue
+        instructions.append(TemplateInstruction(name=tpl.name, text=tpl.prompt_text))
+
+    await _audit_internal_call(request, org_id=org.id)
+    return TemplatesEffectiveResponse(instructions=instructions)
