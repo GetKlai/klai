@@ -214,7 +214,6 @@ class TestConnectorCapabilityGate:
     @pytest.mark.asyncio
     async def test_core_user_cannot_list_connectors(self) -> None:
         """GET /connectors → 403 capability_required for core-plan user."""
-        from app.api.connectors import list_connectors  # type: ignore[attr-defined]
         from app.api.dependencies import require_capability
 
         mock_db = AsyncMock()
