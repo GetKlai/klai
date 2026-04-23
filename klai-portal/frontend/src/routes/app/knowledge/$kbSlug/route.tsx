@@ -129,7 +129,7 @@ function KbLayout() {
   ]
 
   return (
-    <div className="p-6 max-w-4xl space-y-8">
+    <div className="mx-auto max-w-4xl px-6 py-10 space-y-8">
       {/* Header */}
       <div className="flex items-start gap-3">
         <div className="flex-1">

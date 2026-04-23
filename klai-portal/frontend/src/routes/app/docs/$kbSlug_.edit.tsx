@@ -81,7 +81,7 @@ function EditKBPage() {
   }
 
   return (
-    <div className="p-6 max-w-lg">
+    <div className="mx-auto max-w-lg px-6 py-10">
       <div className="flex items-start justify-between mb-6">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.docs_kb_edit_modal_title()}
