@@ -5,7 +5,7 @@ import ReactMarkdown from 'react-markdown'
 import {
   ArrowLeft, ChevronRight, Settings, ChevronDown, AlertTriangle, CheckCircle2, Loader2, Sparkles, Globe, FileText, Shield,
 } from 'lucide-react'
-import { SiGithub, SiNotion, SiGoogledrive } from '@icons-pack/react-simple-icons'
+import { SiGithub, SiNotion, SiGoogledrive, SiAirtable, SiConfluence, SiGoogledocs, SiGooglesheets, SiGoogleslides } from '@icons-pack/react-simple-icons'
 import { Button } from '@/components/ui/button'
 import { StepIndicator, type StepItem } from '@/components/ui/step-indicator'
 import { Badge } from '@/components/ui/badge'
@@ -17,7 +17,10 @@ import { apiFetch } from '@/lib/apiFetch'
 
 // -- Types -------------------------------------------------------------------
 
-type ConnectorType = 'github' | 'web_crawler' | 'google_drive' | 'notion' | 'ms_docs'
+type ConnectorType =
+  | 'github' | 'web_crawler' | 'google_drive' | 'notion' | 'ms_docs'
+  | 'airtable' | 'confluence'
+  | 'google_docs' | 'google_sheets' | 'google_slides'
 type WcStep = 'details' | 'preview' | 'settings'
 
 interface GitHubConfig {
@@ -49,6 +52,20 @@ interface NotionConfig {
   max_pages: string
 }
 
+interface AirtableConfig {
+  api_key: string
+  base_id: string
+  table_names: string
+  view_name: string
+}
+
+interface ConfluenceConfig {
+  base_url: string
+  email: string
+  api_token: string
+  space_keys: string
+}
+
 const ASSERTION_MODE_OPTIONS: MultiSelectOption[] = [
   { value: 'factual',     label: 'Fact',        description: 'Established fact, documentation, specs' },
   { value: 'procedural',  label: 'Procedure',   description: "Step-by-step instructions, how-to's" },
@@ -64,11 +81,16 @@ const CONNECTOR_TYPES: {
   available: boolean
   Icon: React.ComponentType<{ className?: string }>
 }[] = [
-  { type: 'github',       label: m.admin_connectors_type_github,       available: true,  Icon: SiGithub },
-  { type: 'web_crawler',  label: m.admin_connectors_type_website,      available: true,  Icon: Globe },
-  { type: 'google_drive', label: m.admin_connectors_type_google_drive, available: true,  Icon: SiGoogledrive },
-  { type: 'notion',       label: m.admin_connectors_type_notion,       available: true,  Icon: SiNotion },
-  { type: 'ms_docs',      label: m.admin_connectors_type_ms_docs,      available: true,  Icon: FileText },
+  { type: 'github',        label: m.admin_connectors_type_github,        available: true,  Icon: SiGithub },
+  { type: 'web_crawler',  label: m.admin_connectors_type_website,       available: true,  Icon: Globe },
+  { type: 'google_drive', label: m.admin_connectors_type_google_drive,  available: true,  Icon: SiGoogledrive },
+  { type: 'notion',       label: m.admin_connectors_type_notion,        available: true,  Icon: SiNotion },
+  { type: 'ms_docs',      label: m.admin_connectors_type_ms_docs,       available: true,  Icon: FileText },
+  { type: 'airtable',     label: m.admin_connectors_type_airtable,      available: true,  Icon: SiAirtable },
+  { type: 'confluence',   label: m.admin_connectors_type_confluence,    available: true,  Icon: SiConfluence },
+  { type: 'google_docs',  label: m.admin_connectors_type_google_docs,   available: true,  Icon: SiGoogledocs },
+  { type: 'google_sheets', label: m.admin_connectors_type_google_sheets, available: true, Icon: SiGooglesheets },
+  { type: 'google_slides', label: m.admin_connectors_type_google_slides, available: true, Icon: SiGoogleslides },
 ]
 
 const MARKDOWN_PROSE_CLASSES = 'overflow-y-auto max-h-64 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-[var(--color-foreground)] [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-[var(--color-foreground)] [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-[var(--color-foreground)] [&_h3]:mb-1 [&_p]:text-[var(--color-muted-foreground)] [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-[var(--color-muted-foreground)] [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-[var(--color-muted-foreground)] [&_ol]:mb-1.5 [&_strong]:font-semibold [&_strong]:text-[var(--color-foreground)] [&_hr]:border-[var(--color-border)] [&_hr]:my-2'
@@ -99,6 +121,12 @@ function AddConnectorPage() {
     access_token: '', database_ids: '', max_pages: '500',
   })
   const [notionStep, setNotionStep] = useState<'credentials' | 'settings'>('credentials')
+  const [airtableConfig, setAirtableConfig] = useState<AirtableConfig>({
+    api_key: '', base_id: '', table_names: '', view_name: '',
+  })
+  const [confluenceConfig, setConfluenceConfig] = useState<ConfluenceConfig>({
+    base_url: '', email: '', api_token: '', space_keys: '',
+  })
   const [folderId, setFolderId] = useState('')
   // ms_docs (SPEC-KB-MS-DOCS-001): optional site_url + drive_id — both empty = personal OneDrive
   const [msSiteUrl, setMsSiteUrl] = useState('')
@@ -173,6 +201,20 @@ function AddConnectorPage() {
         if (ids.length > 0) config.database_ids = ids
         if (notionConfig.max_pages && notionConfig.max_pages !== '500') config.max_pages = Number(notionConfig.max_pages)
       }
+      if (selectedType === 'airtable') {
+        config.api_key = airtableConfig.api_key
+        config.base_id = airtableConfig.base_id
+        config.table_names = airtableConfig.table_names
+          .split(',').map((s) => s.trim()).filter(Boolean)
+        if (airtableConfig.view_name.trim()) config.view_name = airtableConfig.view_name.trim()
+      }
+      if (selectedType === 'confluence') {
+        config.base_url = confluenceConfig.base_url.replace(/\/$/, '')
+        config.email = confluenceConfig.email
+        config.api_token = confluenceConfig.api_token
+        const keys = confluenceConfig.space_keys.split(',').map((s) => s.trim()).filter(Boolean)
+        if (keys.length > 0) config.space_keys = keys
+      }
       await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/`, {
         method: 'POST',
         body: JSON.stringify({
@@ -192,13 +234,17 @@ function AddConnectorPage() {
 
   const createGoogleDriveMutation = useMutation({
     mutationFn: async () => {
+      // google_docs / google_sheets / google_slides are aliases that reuse the google_drive
+      // OAuth flow — the backend's GoogleDriveAdapter injects content_types based on
+      // connector.connector_type. We pass the selected type as-is.
+      const connectorType = selectedType ?? 'google_drive'
       const config: Record<string, unknown> = {}
       if (folderId.trim()) config.folder_id = folderId.trim()
       const result = await apiFetch<{ id: string }>(`/api/app/knowledge-bases/${kbSlug}/connectors/`, {
         method: 'POST',
         body: JSON.stringify({
           name,
-          connector_type: 'google_drive',
+          connector_type: connectorType,
           config,
           schedule: null,
           allowed_assertion_modes: allowedAssertionModes.length > 0 ? allowedAssertionModes : null,
@@ -289,6 +335,8 @@ function AddConnectorPage() {
       {/* Step indicator — shared component */}
       {(() => {
         const isSimple = selectedType === 'github' || selectedType === 'notion' || selectedType === 'google_drive' || selectedType === 'ms_docs'
+          || selectedType === 'airtable' || selectedType === 'confluence'
+          || selectedType === 'google_docs' || selectedType === 'google_sheets' || selectedType === 'google_slides'
 
         const steps: StepItem[] = isSimple
           ? [
@@ -469,9 +517,18 @@ function AddConnectorPage() {
               </div>
             )}
 
-            {/* Google Drive OAuth flow */}
-            {selectedType === 'google_drive' && (
+            {/* Google Drive OAuth flow — also used for google_docs / google_sheets / google_slides aliases */}
+            {(selectedType === 'google_drive' || selectedType === 'google_docs' || selectedType === 'google_sheets' || selectedType === 'google_slides') && (
               <form onSubmit={(e) => { e.preventDefault(); createGoogleDriveMutation.mutate() }} className="space-y-3">
+                {selectedType === 'google_docs' && (
+                  <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_google_docs_subtitle()}</p>
+                )}
+                {selectedType === 'google_sheets' && (
+                  <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_google_sheets_subtitle()}</p>
+                )}
+                {selectedType === 'google_slides' && (
+                  <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_google_slides_subtitle()}</p>
+                )}
                 <div className="space-y-1.5">
                   <Label htmlFor="gd-name">{m.admin_connectors_field_name()}</Label>
                   <Input id="gd-name" required placeholder={m.admin_connectors_field_name_placeholder()} value={name} onChange={(e) => setName(e.target.value)} />
@@ -543,6 +600,92 @@ function AddConnectorPage() {
                 <div className="flex gap-2 pt-1">
                   <Button type="submit" size="sm" disabled={createMsDocsMutation.isPending || !name}>
                     {createMsDocsMutation.isPending ? m.admin_connectors_ms_docs_connecting() : m.admin_connectors_ms_docs_connect()}
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setSelectedType(null)}>
+                    {m.admin_connectors_webcrawler_back()}
+                  </Button>
+                </div>
+              </form>
+            )}
+
+            {/* Airtable form (SPEC-KB-CONNECTORS-001 R3.1) */}
+            {selectedType === 'airtable' && (
+              <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate() }} className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="at-name">{m.admin_connectors_field_name()}</Label>
+                  <Input id="at-name" required placeholder={m.admin_connectors_field_name_placeholder()} value={name} onChange={(e) => setName(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="at-api-key">{m.admin_connectors_airtable_api_key_label()}</Label>
+                  <Input id="at-api-key" type="password" required placeholder={m.admin_connectors_airtable_api_key_hint()} value={airtableConfig.api_key} onChange={(e) => setAirtableConfig((p) => ({ ...p, api_key: e.target.value }))} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="at-base-id">{m.admin_connectors_airtable_base_id_label()}</Label>
+                  <Input id="at-base-id" required placeholder={m.admin_connectors_airtable_base_id_hint()} value={airtableConfig.base_id} onChange={(e) => setAirtableConfig((p) => ({ ...p, base_id: e.target.value }))} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="at-tables">{m.admin_connectors_airtable_table_names_label()}</Label>
+                  <Input id="at-tables" required placeholder={m.admin_connectors_airtable_table_names_hint()} value={airtableConfig.table_names} onChange={(e) => setAirtableConfig((p) => ({ ...p, table_names: e.target.value }))} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="at-view">{m.admin_connectors_airtable_view_name_label()}</Label>
+                  <Input id="at-view" placeholder={m.admin_connectors_airtable_view_name_hint()} value={airtableConfig.view_name} onChange={(e) => setAirtableConfig((p) => ({ ...p, view_name: e.target.value }))} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>{m.admin_connectors_assertion_modes_label()}</Label>
+                  <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
+                </div>
+                {createMutation.error && (
+                  <p className="text-sm text-[var(--color-destructive)]">
+                    {createMutation.error instanceof Error ? createMutation.error.message : m.admin_connectors_error_create_generic()}
+                  </p>
+                )}
+                <div className="flex gap-2 pt-1">
+                  <Button type="submit" size="sm" disabled={createMutation.isPending || !name || !airtableConfig.api_key || !airtableConfig.base_id || !airtableConfig.table_names}>
+                    {createMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setSelectedType(null)}>
+                    {m.admin_connectors_webcrawler_back()}
+                  </Button>
+                </div>
+              </form>
+            )}
+
+            {/* Confluence form (SPEC-KB-CONNECTORS-001 R4.1) */}
+            {selectedType === 'confluence' && (
+              <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate() }} className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="cf-name">{m.admin_connectors_field_name()}</Label>
+                  <Input id="cf-name" required placeholder={m.admin_connectors_field_name_placeholder()} value={name} onChange={(e) => setName(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="cf-base-url">{m.admin_connectors_confluence_base_url_label()}</Label>
+                  <Input id="cf-base-url" type="url" required placeholder={m.admin_connectors_confluence_base_url_hint()} value={confluenceConfig.base_url} onChange={(e) => setConfluenceConfig((p) => ({ ...p, base_url: e.target.value }))} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="cf-email">{m.admin_connectors_confluence_email_label()}</Label>
+                  <Input id="cf-email" type="email" required placeholder="you@company.com" value={confluenceConfig.email} onChange={(e) => setConfluenceConfig((p) => ({ ...p, email: e.target.value }))} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="cf-token">{m.admin_connectors_confluence_api_token_label()}</Label>
+                  <Input id="cf-token" type="password" required value={confluenceConfig.api_token} onChange={(e) => setConfluenceConfig((p) => ({ ...p, api_token: e.target.value }))} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="cf-spaces">{m.admin_connectors_confluence_space_keys_label()}</Label>
+                  <Input id="cf-spaces" placeholder={m.admin_connectors_confluence_space_keys_hint()} value={confluenceConfig.space_keys} onChange={(e) => setConfluenceConfig((p) => ({ ...p, space_keys: e.target.value }))} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>{m.admin_connectors_assertion_modes_label()}</Label>
+                  <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
+                </div>
+                {createMutation.error && (
+                  <p className="text-sm text-[var(--color-destructive)]">
+                    {createMutation.error instanceof Error ? createMutation.error.message : m.admin_connectors_error_create_generic()}
+                  </p>
+                )}
+                <div className="flex gap-2 pt-1">
+                  <Button type="submit" size="sm" disabled={createMutation.isPending || !name || !confluenceConfig.base_url || !confluenceConfig.email || !confluenceConfig.api_token}>
+                    {createMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
                   </Button>
                   <Button type="button" size="sm" variant="ghost" onClick={() => setSelectedType(null)}>
                     {m.admin_connectors_webcrawler_back()}
