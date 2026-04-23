@@ -117,6 +117,7 @@ async def run_crawl_job(
     cookies: list[dict] | None = None,
     canary_url: str | None = None,
     canary_fingerprint: str | None = None,
+    connector_id: str | None = None,
 ) -> None:
     """
     Crawl a website and ingest each page into the knowledge pipeline.
@@ -185,6 +186,7 @@ async def run_crawl_job(
                     pool=pool,
                     stored=known_hashes.get(url),
                     login_indicator_selector=login_indicator_selector,
+                    connector_id=connector_id,
                 )
                 pages_done += 1
             except AuthWallDetected:
@@ -226,6 +228,7 @@ async def _ingest_crawl_result(
     pool: object | None = None,
     stored: pg_store.PageHashes | None | object = _UNSET,
     login_indicator_selector: str | None = None,
+    connector_id: str | None = None,
 ) -> None:
     """Process a crawl result: dedup, extract links, ingest.
 
@@ -286,6 +289,13 @@ async def _ingest_crawl_result(
             return
 
     extra: dict = {"source_url": url, "crawled_at": int(time.time())}
+    if connector_id:
+        # SPEC-CRAWLER-005 Fase 6 follow-up: wire source_connector_id through
+        # so connector-delete (qdrant_store.delete_connector +
+        # pg_store.delete_connector_artifacts) can actually find this chunk.
+        # Before this, every crawl chunk had source_connector_id=None and
+        # neither Qdrant nor artifact delete matched.
+        extra["source_connector_id"] = connector_id
     if is_pdf and front_matter:
         extra["front_matter"] = front_matter
 
