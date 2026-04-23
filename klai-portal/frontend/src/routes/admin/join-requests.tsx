@@ -70,10 +70,10 @@ function AdminJoinRequestsPage() {
             <table className="w-full text-sm border-t border-b border-[var(--color-border)]">
               <thead>
                 <tr className="border-b border-[var(--color-border)]">
-                  <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]">
+                  <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
                     Name
                   </th>
-                  <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]">
+                  <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
                     Email
                   </th>
                   <th className="py-3 text-right w-36" />

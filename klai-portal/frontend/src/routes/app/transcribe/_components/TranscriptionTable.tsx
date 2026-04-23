@@ -239,13 +239,13 @@ export function TranscriptionTable({
           <thead>
             <tr className="border-b border-[var(--color-border)]">
               <th className="py-3 pr-2 w-6" />
-              <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]">
+              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
                 {m.app_transcribe_col_text()}
               </th>
-              <th className="py-3 pr-2 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-28">
+              <th className="py-3 pr-2 text-left text-xs font-medium text-gray-400 tracking-wide w-28">
                 {m.app_transcribe_col_date()}
               </th>
-              <th className="py-3 text-right text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-36" />
+              <th className="py-3 text-right text-xs font-medium text-gray-400 tracking-wide w-36" />
             </tr>
           </thead>
           <tbody>
