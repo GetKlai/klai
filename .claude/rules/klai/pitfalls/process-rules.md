@@ -165,3 +165,36 @@ its file writes land in that worktree, not the main working tree. After the
 agent completes, manually verify that changes exist in the main directory,
 copy them if needed, and prune with `git worktree prune`. Skipping this
 means reviewing and committing an empty diff.
+
+## spec-work-in-a-worktree (HIGH)
+Before making the first edit for any multi-file SPEC implementation, create a
+dedicated git worktree branched from `main`:
+
+```bash
+git worktree add ../klai-<spec-short-name> -b feature/SPEC-<SPEC-ID> main
+```
+
+Then `cd` there and do all work in that worktree — implementation, tests,
+docs, runbooks, everything. Commit inside the worktree. Open the PR from
+that branch.
+
+**Why:** When work spans 10+ files across multiple services (connector +
+portal + frontend + docs), doing it on whatever feature branch happens to
+be checked out is a recipe for the work getting swept into an unrelated
+commit. SPEC-KB-MS-DOCS-001 suffered exactly this: 17 files of MS-365
+connector work landed in commit `726d81a2` titled "fix(knowledge-ingest):
+seed BFS start_url inside path_prefix subtree" because the implementation
+assistant never created a dedicated worktree. Recovering clean history
+after the fact requires rewriting pushed commits, which is rarely worth
+the risk — the mess ships as-is.
+
+**Prevention:**
+- Every new SPEC implementation starts with `git worktree add` as literal
+  step 0. No exceptions, no "I'll clean up later".
+- If you catch yourself editing on the wrong branch, STOP — stash, create
+  the worktree, replay the edits there.
+- Rule-of-thumb trigger: if the SPEC touches more than 3 files, worktree.
+  Below that, a normal feature branch is fine.
+
+See `.claude/rules/moai/workflow/worktree-integration.md` for the decision
+tree and `worktree add` flags.

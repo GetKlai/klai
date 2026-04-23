@@ -28,7 +28,7 @@ import asyncio
 import time
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from app.core.config import Settings
 from app.core.logging import get_logger
@@ -113,7 +113,9 @@ class OAuthAdapterBase(ABC):
             if cached is not None and cached[1] - now > _EXPIRY_SKEW_SECONDS:
                 return cached[0]
 
-            refresh_token = (connector.config or {}).get("refresh_token", "")
+            current_config: dict[str, Any] = connector.config or {}
+            refresh_token_value = current_config.get("refresh_token", "")
+            refresh_token: str = refresh_token_value if isinstance(refresh_token_value, str) else ""
             if not refresh_token:
                 raise ValueError(
                     "OAuth connector missing refresh_token — reconnect required "
@@ -146,14 +148,16 @@ class OAuthAdapterBase(ABC):
             # is invalidated after a grace window. We must (a) writeback the
             # new one so it survives restart, and (b) mutate connector.config
             # so subsequent refreshes within the same process use the new RT.
-            rotated_refresh_token: str | None = payload.get("refresh_token")
+            rotated_raw = payload.get("refresh_token")
+            rotated_refresh_token: str | None = rotated_raw if isinstance(rotated_raw, str) else None
             if rotated_refresh_token is not None and rotated_refresh_token == refresh_token:
                 # Provider echoed the same RT — treat as no-rotation.
                 rotated_refresh_token = None
             if rotated_refresh_token:
                 if connector.config is None:
                     connector.config = {}
-                connector.config["refresh_token"] = rotated_refresh_token
+                # connector.config is typed Any at the ABC boundary; cast narrows for the write.
+                cast("dict[str, Any]", connector.config)["refresh_token"] = rotated_refresh_token  # pyright: ignore[reportUnknownMemberType]
 
             token_expiry = (datetime.now(UTC) + timedelta(seconds=expires_in)).isoformat()
             try:
