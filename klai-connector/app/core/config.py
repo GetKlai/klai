@@ -49,10 +49,11 @@ class Settings(BaseSettings):
     google_drive_client_id: str = ""  # empty = connector disabled
     google_drive_client_secret: str = ""
 
-    # SharePoint OAuth (prep for SPEC-KB-025b)
-    sharepoint_client_id: str = ""  # empty = connector disabled
-    sharepoint_client_secret: str = ""
-    sharepoint_tenant_authority: str = "https://login.microsoftonline.com/common"
+    # Microsoft 365 OAuth (SPEC-KB-MS-DOCS-001) — empty client_id disables the connector.
+    # Azure AD app registered in the Klai-owned M365 tenant as a multi-tenant app.
+    ms_docs_client_id: str = ""
+    ms_docs_client_secret: str = ""
+    ms_docs_tenant_id: str = "common"  # multi-tenant default; accepts any M365 tenant
 
     # Image storage (Garage S3)
     garage_s3_endpoint: str = ""

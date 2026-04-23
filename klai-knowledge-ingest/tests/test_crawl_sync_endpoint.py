@@ -251,6 +251,62 @@ class TestCrawlSyncEndpoint:
         assert kwargs["org_id"] == "42"
         assert kwargs["kb_slug"] == "support"
 
+    def test_path_prefix_is_prepended_to_start_url(self) -> None:
+        """BFS must enter the allowed subtree; start_url = base_url + path_prefix.
+
+        Wiki.redcactus.cloud homepage only links to /en/... so starting BFS on the
+        bare root with include_patterns=['/nl/'] stops after 1 page (filter rejects
+        every outgoing link). Starting on /nl/ gives BFS a seeded entry.
+        """
+        pool = _make_pool(
+            connector_row={
+                "id": uuid.UUID(int=2),
+                "zitadel_org_id": "42",
+                "encrypted_credentials": None,
+                "connector_dek_enc": None,
+            },
+        )
+        with _client_with_patches(pool) as (client, defer_mock):
+            resp = client.post(
+                "/ingest/v1/crawl/sync",
+                json={
+                    "connector_id": str(uuid.uuid4()),
+                    "org_id": "42",
+                    "kb_slug": "support",
+                    "base_url": "https://wiki.redcactus.cloud",
+                    "path_prefix": "/nl/",
+                },
+            )
+        assert resp.status_code == 202, resp.text
+        kwargs = defer_mock.await_args.kwargs
+        assert kwargs["start_url"] == "https://wiki.redcactus.cloud/nl/"
+        assert kwargs["include_patterns"] == ["/nl/"]
+
+    def test_trailing_slash_in_base_url_is_normalised(self) -> None:
+        """Avoid building 'https://host//nl/' when base_url already ends with '/'."""
+        pool = _make_pool(
+            connector_row={
+                "id": uuid.UUID(int=3),
+                "zitadel_org_id": "42",
+                "encrypted_credentials": None,
+                "connector_dek_enc": None,
+            },
+        )
+        with _client_with_patches(pool) as (client, defer_mock):
+            resp = client.post(
+                "/ingest/v1/crawl/sync",
+                json={
+                    "connector_id": str(uuid.uuid4()),
+                    "org_id": "42",
+                    "kb_slug": "support",
+                    "base_url": "https://wiki.redcactus.cloud/",
+                    "path_prefix": "/nl/",
+                },
+            )
+        assert resp.status_code == 202, resp.text
+        kwargs = defer_mock.await_args.kwargs
+        assert kwargs["start_url"] == "https://wiki.redcactus.cloud/nl/"
+
     def test_public_crawl_still_enqueues(self) -> None:
         """Connector with no encrypted credentials still enqueues; task gets no cookies."""
         pool = _make_pool(

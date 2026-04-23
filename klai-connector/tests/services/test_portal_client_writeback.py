@@ -96,3 +96,61 @@ async def test_update_credentials_swallows_errors() -> None:
             connector_id="conn-uuid-2",
             access_token="placeholder-access-value",
         )
+
+
+# ---------------------------------------------------------------------------
+# 3. Refresh-token rotation (SPEC-KB-MS-DOCS-001 R9)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_update_credentials_includes_refresh_token_when_provided() -> None:
+    """When refresh_token kwarg is set, PATCH body includes refresh_token field."""
+    settings = _make_settings()
+    client = PortalClient(settings)  # type: ignore[arg-type]
+
+    response = MagicMock()
+    response.status_code = 204
+    response.raise_for_status = MagicMock(return_value=None)
+
+    with patch(
+        "app.services.portal_client.httpx.AsyncClient",
+        _mock_httpx_client(response),
+    ) as mock_cls:
+        await client.update_credentials(
+            connector_id="conn-uuid-3",
+            access_token="placeholder-new-access-value",
+            token_expiry="2026-04-23T12:00:00+00:00",
+            refresh_token="placeholder-rotated-refresh-value",
+        )
+
+    http_client = mock_cls.return_value
+    json_body = http_client.patch.call_args.kwargs.get("json", {})
+    assert json_body.get("access_token") == "placeholder-new-access-value"
+    assert json_body.get("refresh_token") == "placeholder-rotated-refresh-value"
+    assert json_body.get("token_expiry") == "2026-04-23T12:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_update_credentials_omits_refresh_token_when_none() -> None:
+    """Backward-compat: when refresh_token is None/omitted, PATCH body has no refresh_token key."""
+    settings = _make_settings()
+    client = PortalClient(settings)  # type: ignore[arg-type]
+
+    response = MagicMock()
+    response.status_code = 204
+    response.raise_for_status = MagicMock(return_value=None)
+
+    with patch(
+        "app.services.portal_client.httpx.AsyncClient",
+        _mock_httpx_client(response),
+    ) as mock_cls:
+        await client.update_credentials(
+            connector_id="conn-uuid-4",
+            access_token="placeholder-access-value",
+            refresh_token=None,
+        )
+
+    http_client = mock_cls.return_value
+    json_body = http_client.patch.call_args.kwargs.get("json", {})
+    assert "refresh_token" not in json_body, "refresh_token must not appear when kwarg is None"

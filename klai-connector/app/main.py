@@ -10,8 +10,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import update
 
 import app.core.database as _db
+from app.adapters.airtable import AirtableAdapter
 from app.adapters.github import GitHubAdapter
 from app.adapters.google_drive import GoogleDriveAdapter
+from app.adapters.ms_docs import MsDocsAdapter
 from app.adapters.notion import NotionAdapter
 from app.adapters.registry import AdapterRegistry
 from app.clients.knowledge_ingest import KnowledgeIngestClient
@@ -77,11 +79,26 @@ def create_app() -> FastAPI:
         # SPEC-CRAWLER-004 Fase D: web_crawler is handled by the delegation path
         # in sync_engine._run_web_crawler_delegation; no local adapter is registered.
         registry.register("notion", NotionAdapter(settings))
+        registry.register("airtable", AirtableAdapter(settings))
         # Google Drive adapter — only registered when OAuth client is configured.
         if settings.google_drive_client_id:
             registry.register(
                 "google_drive",
                 GoogleDriveAdapter(settings=settings, portal_client=portal_client),
+            )
+        else:
+            logger.warning(
+                "google_drive adapter not registered — GOOGLE_DRIVE_CLIENT_ID unset"
+            )
+        # Microsoft 365 adapter (SPEC-KB-MS-DOCS-001) — conditional on OAuth client.
+        if settings.ms_docs_client_id:
+            registry.register(
+                "ms_docs",
+                MsDocsAdapter(settings=settings, portal_client=portal_client),
+            )
+        else:
+            logger.warning(
+                "ms_docs adapter not registered — MS_DOCS_CLIENT_ID unset"
             )
         app.state.registry = registry
 
