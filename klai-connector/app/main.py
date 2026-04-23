@@ -31,7 +31,6 @@ from app.routes.health import router as health_router
 from app.routes.sync import router as sync_router
 from app.services.crypto import PostgresSecretsStore
 from app.services.portal_client import PortalClient
-from app.services.scheduler import ConnectorScheduler
 from app.services.sync_engine import SyncEngine
 
 logger = get_logger(__name__)
@@ -145,17 +144,11 @@ def create_app() -> FastAPI:
         )
         app.state.sync_engine = sync_engine
 
-        # Scheduler
-        scheduler = ConnectorScheduler()
-        app.state.scheduler = scheduler
-        await scheduler.start(_db.session_maker, sync_engine.run_sync)
-
         logger.info("klai-connector started successfully")
         yield
 
         # -- Shutdown --
         logger.info("Shutting down klai-connector")
-        await scheduler.shutdown()
         await registry.aclose()
         await ingest_client.aclose()
         await dispose_engine()
