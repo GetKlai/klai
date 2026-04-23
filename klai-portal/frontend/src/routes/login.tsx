@@ -343,7 +343,7 @@ function LoginPage() {
           {/* Social login */}
           <div className="relative flex items-center gap-3 pt-1">
             <div className="h-px flex-1 bg-[var(--color-border)]" />
-            <span className="text-xs uppercase tracking-[0.12em] text-[var(--color-muted-foreground)]">
+            <span className="text-xs tracking-wide text-gray-400">
               {m.login_or_continue_with()}
             </span>
             <div className="h-px flex-1 bg-[var(--color-border)]" />

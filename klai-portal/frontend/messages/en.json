@@ -1556,5 +1556,19 @@
   "admin_widgets_delete_button": "Delete widget",
   "admin_widgets_back_to_list": "Back to widgets",
   "admin_widgets_wizard_step_appearance": "Appearance",
-  "admin_widgets_wizard_appearance_intro": "Customise how the widget looks and feels to visitors. Title and welcome message appear in the chat; colour variables override the defaults."
+  "admin_widgets_wizard_appearance_intro": "Customise how the widget looks and feels to visitors. Title and welcome message appear in the chat; colour variables override the defaults.",
+  "sidebar_knowledge": "Knowledge",
+  "sidebar_rules": "Rules",
+  "sidebar_team": "Team",
+  "sidebar_mcps": "MCPs",
+  "chatbar_templates_label": "Templates",
+  "chatbar_templates_empty": "None",
+  "chatbar_templates_clear": "Clear all",
+  "chatbar_rules_active": "{count} rule(s) active",
+  "rules_page_title": "Rules (Guardrails)",
+  "rules_empty_title": "No rules yet",
+  "rules_empty_description": "Add rules to control what topics, content, and data are allowed in AI conversations.",
+  "templates_page_title": "Templates",
+  "templates_empty_title": "No templates yet",
+  "templates_empty_description": "Templates inject standard instructions into every conversation, so you don't have to repeat yourself."
 }

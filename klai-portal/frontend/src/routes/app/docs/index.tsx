@@ -79,10 +79,10 @@ function DocsPage() {
         <table data-help-id="docs-list" className="w-full text-sm table-fixed border-t border-b border-[var(--color-border)]">
           <thead>
             <tr className="border-b border-[var(--color-border)]">
-              <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]">
+              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
                 {m.docs_kb_name_label()}
               </th>
-              <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-32">
+              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide w-32">
                 {m.docs_kb_visibility_label()}
               </th>
               <th className="py-3 text-right w-24" />
