@@ -276,3 +276,57 @@ The `extra` JSONB dict on connector ingest requests flows through automatically 
 Using `locals().get("node")` after an if/elif chain to retrieve a variable set in only one branch bypasses type checking (pyright cannot track it), hides control flow, and breaks on rename.
 
 **Prevention:** Declare `_result: SomeType | None = None` before the if/elif chain, assign inside each branch, and read `_result` after. Never use `locals()` for cross-branch variable access.
+
+## portal_connectors.schedule is not honored (MED)
+
+The `schedule` column on `public.portal_connectors` accepts a cron expression
+via the portal connector wizard, but nothing currently reads it. The
+`ConnectorScheduler` in klai-connector that used to read schedules from the
+legacy `connector.connectors` table was removed in SPEC-CONNECTOR-CLEANUP-001
+Fase 1 (it had been a no-op since the migration to portal_connectors —
+that legacy table was empty in production at all tenants).
+
+Manually-triggered "Sync now" from the portal UI is the only working path.
+Cron expressions stored on `portal_connectors.schedule` are inert — they
+are accepted, persisted, and displayed back in the UI without any worker
+acting on them.
+
+Reimplementation is tracked in **SPEC-CONNECTOR-SCHEDULING-001** (draft).
+Open design questions in that SPEC: which component triggers syncs (portal-api
+itself, klai-connector pull, a new dedicated scheduler service?), which cron
+library, how to handle timezones, and how to coordinate with the existing
+`/internal/sync/{connector_id}` endpoint.
+
+**Rule:** Until SPEC-CONNECTOR-SCHEDULING-001 lands, do not assume
+`portal_connectors.schedule` triggers anything. Treat it as a
+forward-compatible placeholder. Do not surface a "Schedule active" badge in
+the UI; that scope-call belongs to the scheduling SPEC itself.
+
+## Connector lifecycle: portal_connectors is the source of truth (HIGH)
+
+Connector configuration lives in `public.portal_connectors` (portal database).
+The legacy `connector.connectors` table in klai-connector was removed in
+SPEC-CONNECTOR-CLEANUP-001 (it had been empty at all tenants since the
+migration to portal_connectors).
+
+`klai-connector` is stateless w.r.t. configuration: it fetches the active
+config at sync time via `PortalClient.get_connector_config(connector_id)`
+and returns a `PortalConnectorConfig` dataclass. There is no local ORM
+model for connectors anymore — only `connector.sync_runs` lives in the
+klai-connector schema.
+
+`connector.sync_runs.connector_id` has a cross-schema FK to
+`public.portal_connectors.id` with `ON DELETE CASCADE` since
+SPEC-CONNECTOR-CLEANUP-001 Fase 5 (migration 007). Portal-side connector
+deletes automatically clean up their sync_runs rows. Cross-schema FKs
+require `REFERENCES` privilege on `public.portal_connectors` for the
+klai-connector role.
+
+The four-layer connector-delete cleanup (Qdrant chunks, knowledge.artifacts,
+crawled_pages/page_links, and now sync_runs via CASCADE) closes the orphan
+gap that bit SPEC-CRAWLER-005 Fase 6.
+
+**Rule:** When adding a new connector-scoped data layer, decide explicitly
+how it gets cleaned on connector delete (FK CASCADE, app-layer cascade, or
+periodic GC). Always write a regression test: insert → portal delete →
+assert rows == 0.
