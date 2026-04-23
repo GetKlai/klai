@@ -1,16 +1,34 @@
 """Sync orchestrator with global semaphore and per-connector locking."""
 
 import asyncio
+import base64
 import time
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+# MIME → filename extension map for Unstructured parser output. Kept
+# local to the connector because the shared lib intentionally does not
+# know the parser's envelope format.
+_PARSER_MIME_EXT: dict[str, str] = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/gif": "gif",
+    "image/webp": "webp",
+    "image/svg+xml": "svg",
+}
+
+
+def _ext_from_parser_mime(mime: str) -> str:
+    """Return the extension for a parser-provided MIME type, default ``png``."""
+    return _PARSER_MIME_EXT.get(mime, "png")
+
 import httpx
 from gidgethub import BadRequest
-from klai_image_storage import ImageStore
 from klai_image_storage import (
-    download_and_upload_adapter_images as download_and_upload_images,
+    ImageStore,
+    ParsedImage,
+    download_and_upload_adapter_images,
 )
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -599,6 +617,12 @@ class SyncEngine:
         Each adapter is responsible for populating ``ref.images`` with
         resolved absolute URLs during list_documents()/fetch_document().
         The sync engine is connector-agnostic: it only iterates ref.images.
+
+        Parser-extracted images (Unstructured PDF/DOCX output) arrive
+        here as base64-encoded dicts with ``data_b64`` / ``mime_type``
+        keys. We decode them locally and hand :class:`ParsedImage`
+        instances to the shared lib so the lib stays unaware of the
+        Unstructured envelope.
         """
         assert self._image_store is not None
         assert self._image_http is not None
@@ -607,13 +631,23 @@ class SyncEngine:
         if ref.images:
             image_urls = [(img.alt, img.url) for img in ref.images]
 
-        return await download_and_upload_images(
+        decoded_parsed = [
+            ParsedImage(
+                data=base64.b64decode(img["data_b64"]),
+                ext=_ext_from_parser_mime(img.get("mime_type", "image/png")),
+                source_id=ref.path,
+            )
+            for img in parsed_images
+            if "data_b64" in img
+        ]
+
+        return await download_and_upload_adapter_images(
             image_urls=image_urls,
             org_id=org_id,
             kb_slug=kb_slug,
             image_store=self._image_store,
             http_client=self._image_http,
-            parsed_images=parsed_images,
+            parsed_images=decoded_parsed,
         )
 
     async def _fail_sync_run(self, sync_run_id: uuid.UUID, error_message: str) -> None:

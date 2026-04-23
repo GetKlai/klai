@@ -14,7 +14,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from klai_image_storage import (
-    PUBLIC_IMAGE_PATH_PREFIX,
     ImageStore,
     ImageUploadResult,
 )
@@ -57,8 +56,10 @@ class TestBuildObjectKey:
 
 class TestBuildPublicUrl:
     def test_prefixes_with_kb_images_path(self) -> None:
+        # `/kb-images/` is an intentional wire-level invariant —
+        # asserted as a literal so no refactor can silently change it.
         url = ImageStore.build_public_url("org/images/kb/hash.png")
-        assert url == f"{PUBLIC_IMAGE_PATH_PREFIX}/org/images/kb/hash.png"
+        assert url == "/kb-images/org/images/kb/hash.png"
 
     def test_public_url_format(self) -> None:
         """Public URL uses /kb-images/ prefix."""
@@ -122,7 +123,7 @@ class TestUploadImage:
         assert isinstance(result, ImageUploadResult)
         assert result.deduplicated is False
         assert result.object_key.startswith("org-1/images/kb-1/")
-        assert result.public_url.startswith(f"{PUBLIC_IMAGE_PATH_PREFIX}/org-1/images/kb-1/")
+        assert result.public_url.startswith("/kb-images/org-1/images/kb-1/")
         mock_client.put_object.assert_called_once()
 
     async def test_deduplicates_when_object_exists(self, fresh_store: ImageStore) -> None:

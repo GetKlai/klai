@@ -37,6 +37,9 @@ _ALLOWED_IMAGE_MIMES: frozenset[str] = frozenset(
 # SVG has no magic bytes that filetype recognises, so we check manually.
 _SVG_SIGNATURES = (b"<?xml", b"<svg")
 
+# Invariants — intentionally not re-exported in ``klai_image_storage/__init__.py``.
+# Internal modules may reference them; consumers should not override policy.
+# Changing any of these breaks every previously uploaded image's URL.
 MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5 MB
 MAX_IMAGES_PER_DOCUMENT = 20
 
@@ -70,7 +73,6 @@ class ImageStore:
         secret_key: str,
         bucket: str,
         region: str = "garage",
-        **_kwargs: object,
     ) -> None:
         self._bucket = bucket
         self._client = Minio(

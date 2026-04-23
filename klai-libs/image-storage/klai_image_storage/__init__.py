@@ -11,14 +11,18 @@ Public API (all re-exported at package root):
   dedup
 - :class:`ImageUploadResult` — result dataclass returned by
   :meth:`ImageStore.upload_image`
+- :class:`ParsedImage` — value object for pre-decoded images supplied
+  by a document parser (see :func:`download_and_upload_adapter_images`)
 - :func:`download_and_upload_adapter_images` — connector sync engine
-  orchestrator (markdown + optional parsed base64 images)
+  orchestrator (markdown URLs + optional :class:`ParsedImage` list)
 - :func:`download_and_upload_crawl_images` — web-crawl orchestrator
   (crawl4ai ``media.images`` dicts)
 - :func:`extract_markdown_image_urls`, :func:`is_valid_image_src`,
   :func:`resolve_relative_url`, :func:`dedupe_image_urls` — URL helpers
-- :data:`MAX_IMAGE_SIZE`, :data:`MAX_IMAGES_PER_DOCUMENT`,
-  :data:`PUBLIC_IMAGE_PATH_PREFIX` — size + URL invariants
+
+Size + URL-path invariants are intentionally module-private. They are
+wire-level contracts — every uploaded image's URL depends on them —
+and consumers should never override them.
 """
 
 from klai_image_storage.pipeline import (
@@ -26,12 +30,10 @@ from klai_image_storage.pipeline import (
     download_and_upload_crawl_images,
 )
 from klai_image_storage.storage import (
-    MAX_IMAGE_SIZE,
-    MAX_IMAGES_PER_DOCUMENT,
-    PUBLIC_IMAGE_PATH_PREFIX,
     ImageStore,
     ImageUploadResult,
 )
+from klai_image_storage.types import ParsedImage
 from klai_image_storage.utils import (
     dedupe_image_urls,
     extract_markdown_image_urls,
@@ -40,11 +42,9 @@ from klai_image_storage.utils import (
 )
 
 __all__ = [
-    "MAX_IMAGES_PER_DOCUMENT",
-    "MAX_IMAGE_SIZE",
-    "PUBLIC_IMAGE_PATH_PREFIX",
     "ImageStore",
     "ImageUploadResult",
+    "ParsedImage",
     "dedupe_image_urls",
     "download_and_upload_adapter_images",
     "download_and_upload_crawl_images",
