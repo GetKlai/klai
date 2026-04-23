@@ -16,7 +16,7 @@ source_inspiration: feat/chat-first-redesign (Jantine Doornbos) — commits 6ab4
 | Date | Version | Change |
 |------|---------|--------|
 | 2026-04-23 | 0.1.0 | Initiele draft na sparring-sessie. Focus wordt gedeprecateerd; Knowledge wordt het enige KB-oppervlak in het portal met harde limieten voor het `core` plan (5 KBs × 20 documenten per gebruiker, geen connectors / taxonomy / members / gaps). `professional` krijgt dezelfde limieten als `core` (blijft in catalog voor consistentie, niet actief in GTM). `complete` behoudt alles. Focus-data wordt niet gemigreerd — research-api volledig decommission (hard). Website is expliciet buiten scope. |
-| 2026-04-23 | 0.2.0 | Post-merge polish. K2 race condition opgelost via `pg_advisory_xact_lock`. D4 grayed-out implementatie gedocumenteerd. Bekende beperkingen (K5 loading flash) opgenomen. Billing plan labels bijgewerkt na collision met andere plan-wijzigingen. Post-merge verificatie appendix toegevoegd. |
+| 2026-04-23 | 0.2.0 | Post-merge polish. K2 race condition opgelost via `pg_advisory_xact_lock`. K5 loading flash opgelost: `ProductCapabilityGuard` rendert grijze wrapper met `aria-busy` tijdens loading. D4 grayed-out implementatie gedocumenteerd. Billing plan labels bijgewerkt na collision met andere plan-wijzigingen. Post-merge verificatie appendix toegevoegd. |
 
 ---
 
@@ -281,7 +281,7 @@ Edge case: gebruikers die vandaag >5 personal KBs hebben houden die — alleen n
 
 ## Bekende beperkingen
 
-- **K5 — Optimistisch guard-rendering tijdens user-data loading**: `ProductCapabilityGuard` rendert zijn children ongewijzigd terwijl `useCurrentUser()` nog aan het laden is (korte flash voordat de grijze wrapper verschijnt). Geen security-impact — de backend capability-check is de autoriteit. Fix uitgesteld; indien visueel storend, vervang de early-return door een skeleton placeholder.
+- **K5 — Optimistisch guard-rendering tijdens user-data loading** — **RESOLVED in v0.2.0**. De component rendert nu tijdens de loading-phase direct de grijze wrapper met `aria-busy="true"` in plaats van de kinderen onbeschermd te tonen. Daarmee is de "clickable-then-grayed" flash weg en blijft de UI fail-closed tot `useCurrentUser()` resolveert.
 
 ---
 
@@ -448,4 +448,4 @@ Scenario's tegen dev-stack met seed-users per plan:
 ### Bekende openstaande issues na merge
 
 - **K2 (race condition)** — opgelost in polish PR via `pg_advisory_xact_lock` in `assert_can_create_personal_kb`. Zie HISTORY v0.2.0 en `TestAdvisoryLockPersonalKB` in `tests/test_kb_quota_service.py`.
-- **K5 (loading flash)** — gedocumenteerd als bekende beperking; uitgesteld naar toekomstige iteratie.
+- **K5 (loading flash)** — opgelost in polish PR: `ProductCapabilityGuard` rendert de grijze wrapper met `aria-busy="true"` tijdens loading. Geen flash meer.
