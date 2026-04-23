@@ -74,6 +74,44 @@ class KBPreferencePatch(BaseModel):
     active_template_ids: list[int] | None = None
 
 
+async def _validate_and_normalize_template_ids(
+    tpl_ids: list[int] | None,
+    org_id: int,
+    db: AsyncSession,
+) -> list[int] | None:
+    """Dedupe (preserving order) and validate every template ID against caller's org.
+
+    Normalizes an empty list to None — "no active templates" is expressed as NULL
+    in the DB, never as `[]`. Raises 400 if any ID belongs to another org or
+    does not exist.
+    """
+    if tpl_ids is None or len(tpl_ids) == 0:
+        return None
+
+    seen: set[int] = set()
+    deduped: list[int] = []
+    for tid in tpl_ids:
+        if tid not in seen:
+            seen.add(tid)
+            deduped.append(tid)
+
+    result = await db.execute(
+        select(PortalTemplate.id).where(
+            PortalTemplate.org_id == org_id,
+            PortalTemplate.id.in_(deduped),
+        )
+    )
+    valid_ids = {row[0] for row in result}
+    invalid = set(deduped) - valid_ids
+    if invalid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown template IDs for this org: {sorted(invalid)}",
+        )
+
+    return deduped
+
+
 # -- Endpoints ----------------------------------------------------------------
 
 
@@ -142,45 +180,13 @@ async def patch_kb_preference(
 
         user.kb_slugs_filter = slugs
 
-    # SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-CRUD-E5: validate every ID exists
-    # in caller's own org. Normalize empty list to NULL for semantic clarity
-    # ("no active templates"). We do NOT validate `is_active` at PATCH time —
-    # users may activate a template now and toggle is_active later; the
-    # internal endpoint filters at read time.
+    # SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-CRUD-E5
     active_templates_changed = False
     if "active_template_ids" in body.model_fields_set:
         active_templates_changed = True
-        tpl_ids = body.active_template_ids
-
-        if tpl_ids is not None and len(tpl_ids) == 0:
-            tpl_ids = None
-
-        if tpl_ids is not None:
-            # Dedupe while preserving order (user intent matters — templates
-            # are injected in the order the user specified).
-            seen: set[int] = set()
-            deduped: list[int] = []
-            for tid in tpl_ids:
-                if tid not in seen:
-                    seen.add(tid)
-                    deduped.append(tid)
-            tpl_ids = deduped
-
-            result = await db.execute(
-                select(PortalTemplate.id).where(
-                    PortalTemplate.org_id == org.id,
-                    PortalTemplate.id.in_(tpl_ids),
-                )
-            )
-            valid_ids = {row[0] for row in result}
-            invalid = set(tpl_ids) - valid_ids
-            if invalid:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Unknown template IDs for this org: {sorted(invalid)}",
-                )
-
-        user.active_template_ids = tpl_ids
+        user.active_template_ids = await _validate_and_normalize_template_ids(
+            body.active_template_ids, org_id=org.id, db=db
+        )
 
     user.kb_pref_version += 1
     await db.commit()
