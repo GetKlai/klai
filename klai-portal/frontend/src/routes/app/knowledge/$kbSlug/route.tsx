@@ -175,7 +175,7 @@ function KbLayout() {
               return (
                 <ProductCapabilityGuard
                   key={id}
-                  capability={requiredCap!}
+                  capability={requiredCap}
                   tooltip={m.capability_tooltip_knowledge_only()}
                 >
                   <span className="flex items-center gap-1.5 pb-3 text-sm font-medium border-b-2 border-transparent text-[var(--color-muted-foreground)]">
