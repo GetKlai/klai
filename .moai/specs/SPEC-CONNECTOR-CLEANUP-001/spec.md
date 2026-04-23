@@ -1,7 +1,7 @@
 ---
 id: SPEC-CONNECTOR-CLEANUP-001
-version: "1.0"
-status: draft
+version: "2.0"
+status: implemented
 created: 2026-04-23
 updated: 2026-04-23
 author: Mark Vletter
@@ -15,6 +15,7 @@ issue_number: 0
 |---------|------|--------|--------|
 | 1.0 | 2026-04-23 | Mark Vletter | Initial draft. Found during SPEC-CRAWLER-005 Fase 6 E2E: legacy `connector.connectors` tabel, dead `ConnectorScheduler`, missing FK `sync_runs → portal_connectors`. |
 | 1.1 | 2026-04-23 | Mark Vletter | REQ-05 resolved: option B — reimplement cron scheduling in a separate SPEC (`SPEC-CONNECTOR-SCHEDULING-001`). `portal_connectors.schedule` kolom blijft staan (als zombie) tot die SPEC landt. Fase 6 van dit SPEC wordt een one-liner: forward-reference schrijven, niets droppen. |
+| 2.0 | 2026-04-23 | Claude (Opus 4.7) | Implementation complete. Fase 1, 4, 5, 6, 7 landed on `spec/connector-legacy-cleanup`: scheduler removed (commit `e6e9e2a5`), table+ORM+dead CRUD routes dropped (commit `9847ad4a`), cross-schema FK with CASCADE added + mock-based migration tests (commit `692b3b56`), pitfall + lifecycle entries in knowledge.md (commit `27ddad23`), architecture doc updated. Scope grew during implementation: `app/routes/connectors.py` + `app/schemas/connector.py` were not in the original SPEC files-list but were dead CRUD endpoints over the legacy `Connector` ORM, so they had to go alongside the class drop in Fase 4. **Fase 3 (adapter type-hint refactor) deferred** — concurrent session work was actively refactoring the same adapter / OAuth files; landing fase 3 here would have created merge conflicts. The Connector class drop in Fase 4 is safe regardless because no adapter file imports `Connector` at runtime; only docstring references remain. See "Follow-up verification" section below. |
 
 ---
 
@@ -168,5 +169,47 @@ De drie bevindingen wijzen allemaal naar hetzelfde probleem: **de legacy connect
 
 - SPEC-CRAWLER-005 Fase 6 closure waar de bugs naar boven kwamen
 - `klai-connector/alembic/versions/004_remove_sync_run_fk.py` — de migratie die dit probleem achterliet
-- Docstring in `klai-connector/app/models/connector.py` regel 1-5 die de legacy status expliciet maakt
-- Commits `04dc434c` (cleanup gap fix) en `66ea2d0c` (source_connector_id threading) — reparaties die nu mooi worden bekroond met FK-cascade
+- Docstring in `klai-connector/app/models/connector.py` regel 1-5 die de legacy status expliciet maakt (post-cleanup: alleen Base meer)
+- Commits `04dc434c` (cleanup gap fix) en `66ea2d0c` (source_connector_id threading) — reparaties die nu zijn bekroond met FK-cascade
+
+---
+
+## Follow-up verification (post-implementation)
+
+Tijdens Fase 3 pre-flight bleek dat de adapters runtime een
+`PortalConnectorConfig` (uit `app/services/portal_client.py`) krijgen,
+niet een `Connector` ORM-instance. De huidige adapter-code refereert op
+meerdere plekken naar `connector.id`:
+
+- `app/adapters/oauth_base.py:98` — `connector_id = str(connector.id)` in `ensure_token`
+- `app/adapters/google_drive.py:170` — `connector_id = str(connector.id)`
+- `app/adapters/google_drive.py:252` — `connector_id = str(connector.id)`
+
+`PortalConnectorConfig` heeft echter **geen `.id` attribuut**, alleen
+`.connector_id: str`. Dat zou runtime een `AttributeError` moeten geven
+in de OAuth refresh paden (Google Drive sync). Twee mogelijkheden:
+
+1. Die paden zijn dood (connectors zonder geldige refresh_token bereiken
+   die regel niet) — maar dan crashen ze de eerste keer dat ze écht
+   nodig zijn.
+2. Een concurrent session refactort dit op `main` (er was uncommitted
+   work in `app/services/portal_client.py`, `app/adapters/oauth_base.py`
+   en `app/adapters/base.py` op het moment van CLEANUP-001 implementatie)
+   die ofwel `.id` als alias toevoegt aan `PortalConnectorConfig` of de
+   adapter-references hernoemt naar `.connector_id`.
+
+**Actie na merge van CLEANUP-001 én de adapter-refactor:**
+
+- [ ] Verify dat `PortalConnectorConfig` een werkende `.id` attribuut heeft
+  (alias property of dataclass field) **óf** dat alle `connector.id`
+  references in adapters/oauth_base/google_drive zijn vervangen door
+  `connector.connector_id`.
+- [ ] Run `uv run --with pyright pyright klai-connector/app/adapters/`
+  strict en verifieer 0 errors.
+- [ ] Trigger een Google Drive sync met expired token in dev/staging om
+  de OAuth refresh path te bereiken; verify geen `AttributeError`.
+
+Dit was de oorspronkelijke Fase 3 (adapter type-hints naar
+`PortalConnectorConfig`). Bewust gedeferreerd om merge-conflicten met
+parallel adapter-refactor werk te vermijden. Hoort bij eerstvolgende
+sync na merge-resolutie.
