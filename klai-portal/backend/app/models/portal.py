@@ -7,6 +7,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Integer,
     LargeBinary,
     String,
     Text,
@@ -100,6 +101,10 @@ class PortalUser(Base):
     kb_slugs_filter: Mapped[list[str] | None] = mapped_column(ARRAY(String(128)), nullable=True)
     kb_narrow: Mapped[bool] = mapped_column(nullable=False, default=False, server_default="false")
     kb_pref_version: Mapped[int] = mapped_column(nullable=False, default=0, server_default="0")
+
+    # SPEC-CHAT-TEMPLATES-001: active prompt-template IDs the user has toggled on.
+    # NULL means no active templates. Validated at PATCH time to belong to caller's org.
+    active_template_ids: Mapped[list[int] | None] = mapped_column(ARRAY(Integer), nullable=True)
 
     org: Mapped["PortalOrg"] = relationship(back_populates="users")
 
