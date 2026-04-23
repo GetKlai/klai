@@ -11,14 +11,31 @@ Keeping quota logic here (instead of inline in routes) ensures:
 
 from __future__ import annotations
 
+import zlib
+
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.plan_limits import get_plan_limits
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg
 from app.services import knowledge_ingest_client
+
+
+async def _get_dialect_name(db: AsyncSession) -> str:
+    """Return the SQLAlchemy dialect name for the given session.
+
+    Tries get_bind() first (synchronous sessions), then falls back to
+    db.connection() which works for AsyncSession.
+    """
+    if hasattr(db, "get_bind"):
+        bind = db.get_bind()
+        dialect_name: str | None = getattr(getattr(bind, "dialect", None), "name", None)
+        if dialect_name:
+            return dialect_name
+    conn = await db.connection()
+    return conn.dialect.name
 
 
 async def assert_can_create_personal_kb(
@@ -33,6 +50,13 @@ async def assert_can_create_personal_kb(
 
     Skips the DB query entirely when the plan has no limit (None = unlimited).
 
+    K2 — race condition fix: on PostgreSQL, a pg_advisory_xact_lock is acquired
+    before the count query.  This serializes concurrent quota checks for the same
+    (org_id, user_id) pair so two simultaneous requests cannot both see count < limit
+    and both succeed.  The lock is automatically released at transaction end.
+    SQLite (used in tests) has no equivalent — the lock call is skipped there;
+    single-writer semantics make the race impossible in that context.
+
     R-X3: callers MUST route through this function to guarantee consistent
     quota enforcement across all create paths.
     """
@@ -41,6 +65,16 @@ async def assert_can_create_personal_kb(
     if limits.max_personal_kbs_per_user is None:
         # Unlimited plan — no quota check needed.
         return
+
+    # Serialize concurrent quota checks for this (org, user) pair.
+    dialect_name = await _get_dialect_name(db)
+    if dialect_name == "postgresql":
+        # adler32 fits in a signed 32-bit int (masked to 0x7FFFFFFF).
+        user_key = zlib.adler32(user_id.encode("utf-8")) & 0x7FFFFFFF
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(:org_id, :user_key)"),
+            {"org_id": org.id, "user_key": user_key},
+        )
 
     result = await db.execute(
         select(func.count()).where(
