@@ -125,7 +125,14 @@ def build_crawl_config(
     }
 
     if selector:
-        params["css_selector"] = selector
+        # Use target_elements instead of css_selector so BFS link discovery still
+        # sees the full page DOM. css_selector shrinks the raw HTML before any
+        # processing, which also hides sidebar/nav links from BFS — breaking
+        # site crawls on wikis where the main <nav> holds all category links
+        # (e.g. wiki.redcactus.cloud /nl/ pages = 1 instead of 30+).
+        # target_elements only narrows the markdown/extraction pass; the BFS
+        # strategy still discovers links from the full HTML.
+        params["target_elements"] = [selector]
         params["excluded_tags"] = []
     else:
         params["js_code_before_wait"] = JS_REMOVE_CHROME
