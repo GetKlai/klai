@@ -36,7 +36,7 @@ interface KBPref {
   active_template_ids: number[] | null
 }
 
-function TemplatesPage() {
+export function TemplatesPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { data: currentUser } = useCurrentUser()
