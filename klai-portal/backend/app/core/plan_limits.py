@@ -82,4 +82,3 @@ async def get_effective_limits(org_id: int, db: AsyncSession) -> KBLimits:
     if org is None:
         return _FALLBACK_LIMITS
     return get_plan_limits(org.plan)
-
