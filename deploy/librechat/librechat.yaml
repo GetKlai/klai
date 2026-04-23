@@ -28,7 +28,6 @@ interface:
     use: false
     create: false
     share: false
-  remoteAgents: false
   prompts:
     use: false
     create: false
