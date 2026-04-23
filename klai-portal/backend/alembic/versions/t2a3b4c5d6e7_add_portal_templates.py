@@ -65,9 +65,7 @@ def upgrade() -> None:
             server_default=sa.func.now(),
         ),
     )
-    op.create_unique_constraint(
-        "uq_portal_template_org_slug", "portal_templates", ["org_id", "slug"]
-    )
+    op.create_unique_constraint("uq_portal_template_org_slug", "portal_templates", ["org_id", "slug"])
     op.create_index(
         "ix_portal_template_org_id_active",
         "portal_templates",

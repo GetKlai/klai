@@ -107,9 +107,7 @@ async def _enforce_rate_limit(org_id: int) -> None:
     if pool is None:
         return
     try:
-        allowed, retry_after = await check_rate_limit(
-            pool, f"templates_rl:{org_id}", _RATE_LIMIT_PER_MINUTE
-        )
+        allowed, retry_after = await check_rate_limit(pool, f"templates_rl:{org_id}", _RATE_LIMIT_PER_MINUTE)
     except Exception:
         logger.warning("templates_rate_limit_redis_error", org_id=org_id, exc_info=True)
         return
@@ -130,9 +128,7 @@ async def _get_template_or_404(slug: str, org_id: int, db: AsyncSession) -> Port
     )
     template = result.scalar_one_or_none()
     if not template:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Template niet gevonden"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template niet gevonden")
     return template
 
 
@@ -255,14 +251,8 @@ async def get_template(
     template = await _get_template_or_404(slug, org.id, db)
 
     # Personal templates are only visible to the creator + admins.
-    if (
-        template.scope == "personal"
-        and template.created_by != zitadel_user_id
-        and caller.role != "admin"
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Template niet gevonden"
-        )
+    if template.scope == "personal" and template.created_by != zitadel_user_id and caller.role != "admin":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template niet gevonden")
 
     return _template_out(template)
 
