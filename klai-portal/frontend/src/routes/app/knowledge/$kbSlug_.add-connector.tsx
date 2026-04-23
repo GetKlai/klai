@@ -223,7 +223,7 @@ function AddConnectorPage() {
       // Client-side validation (R4.3) before posting.
       const siteUrl = msSiteUrl.trim()
       if (siteUrl && !MS_SITE_URL_PATTERN.test(siteUrl)) {
-        setMsSiteUrlError(m.admin_connectors_ms_docs_site_url_invalid())
+        setMsSiteUrlError(m.admin_connectors_ms_docs_site_url_invalid({ tenant: '{tenant}', site: '{site}' }))
         throw new Error('invalid_site_url')
       }
       setMsSiteUrlError(null)

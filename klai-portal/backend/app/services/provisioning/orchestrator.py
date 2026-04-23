@@ -417,6 +417,19 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
             first_user_id = first_user_result.scalar_one_or_none() or "system"
             await ensure_default_knowledge_bases(org.id, first_user_id, db)
 
+            # --- step 6b: default prompt templates (non-fatal) -----------
+            # SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-SEED-E2: failure here is
+            # non-fatal — provisioning completes and the list endpoint
+            # lazy-seeds as a fallback.
+            # @MX:NOTE: idempotent via row-count; safe to retry.
+            try:
+                from app.services.default_templates import ensure_default_templates
+
+                await ensure_default_templates(org.id, "system", db)
+                await db.commit()
+            except Exception:
+                logger.warning("default_templates_step_failed", org_id=org.id, exc_info=True)
+
             # --- step 7: Docker container ---------------------------------
             mark_step_start(org_id, "librechat_container")
             await transition_state(

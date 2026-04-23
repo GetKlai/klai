@@ -27,8 +27,8 @@ Customers sign up (email, Google or Microsoft), log in via Zitadel, and land in 
 
 - **Chat** — embedded LibreChat with knowledge scope bar
 - **Kennis** — KB editor (BlockNote) + source catalogue (Superdock-style unified wizard for file upload, web crawler, Google Drive, Notion, GitHub, …)
-- **Regels** — guardrails (strict rules, not instructions) applied in the LiteLLM pre-call hook
-- **Templates** — reusable response scaffolds, also applied in the hook
+- **Templates** — reusable prompt scaffolds, prepended to the system message in the LiteLLM pre-call hook (SPEC-CHAT-TEMPLATES-001)
+- **Regels** — guardrails (PII block/redact) applied in the LiteLLM pre-call hook (planned, SPEC-CHAT-GUARDRAILS-001)
 - **Team / MCP's / API keys / Chat widgets / Account** — admin surfaces
 
 Billing (handled by Moneybird, see Stack table):
@@ -56,13 +56,21 @@ Embeddable SolidJS bundle served from the portal origin (`/klai-chat.js`). One-t
 
 Widgets live in their own `widgets` table with RLS tenant scoping (SPEC-WIDGET-002 split them out from `partner_api_keys`). No per-widget secret is persisted; rotating `WIDGET_JWT_SECRET` invalidates all live sessions. Bundle budget: <200 kB gzipped (CI-enforced).
 
-### Guardrails — Rules + Templates
+### Prompt Templates (productfeature)
 
-Both applied in the **LiteLLM pre-call hook**, before the user message reaches the model:
-- **Rules** — strict guardrails (no instructions). Scoped per org, injected into system prompt.
-- **Templates** — reusable response scaffolds, scoped per org/KB. Injected alongside KB context.
+**Templates are a product-feature for response styling, NOT a safety/guardrail layer.** Org-admins create reusable prompt-scaffolds (e.g. "Klantenservice", "Formeel"); users toggle 0+ active per chat session via `active_template_ids`. The LiteLLM pre-call hook fetches them from `/internal/templates/effective` (30 s cache) and prepends them to the system message before the KB-context block.
 
-Rules and Templates have independent CRUD UIs in the portal and mirror each other's data model. Rules never fall back to "instruction" semantics — they are guardrails by design.
+- Scope: `"org"` (admin-only create/update) or `"personal"` (any user, creator-visible; admins see all).
+- Storage: `portal_templates` with RLS strict, `CHECK char_length(prompt_text) <= 8000`, `CHECK scope IN ('org','personal')`, `UNIQUE (org_id, slug)`.
+- Rate-limit: 10 req/s per org on CRUD via the shared Redis sliding-window (`templates_rl:{org_id}`).
+- Cache invalidation: every CRUD write + `active_template_ids` change triggers a fire-and-forget Redis DEL (single DEL for personal / self changes, SCAN+DEL for org-wide changes). Failure-mode TTL fallback is 30 s.
+- Hook fail-open: `/internal/templates/effective` timeout or 5xx logs `templates_degraded` and the chat continues without template injection.
+
+Implemented in **SPEC-CHAT-TEMPLATES-001**.
+
+### Guardrails — Rules (planned, separate SPEC)
+
+Guardrails (PII block/redact, keyword block/redact) are intentionally split from Templates into **SPEC-CHAT-GUARDRAILS-001**, which adds a dedicated `klai-pii` microservice (Presidio + GLiNER). Rules are strict guardrails applied to the user message; Templates are styling instructions prepended to the system prompt. Different product, different safety posture, different cache key (`templates:{org}:{user}` vs `guardrails:{org}:{user}`).
 
 ### SSO self-service (SPEC-AUTH-006)
 
@@ -736,7 +744,8 @@ Legend: ✅ confirmed compatible | ⚠️ attention point | ❌ correction neede
 | ✅ Done | Social signup | Google + Microsoft IDPs via Zitadel (SPEC-AUTH-001). Retries session creation on CQRS replication lag. |
 | ✅ Done | SSO self-service | Domain allowlist + join requests + multi-org workspace selection (SPEC-AUTH-006). |
 | ✅ Done | 401 storm fix | Singleflight on Zitadel userinfo + coalesced `signinSilent()` — eliminates parallel 401 → Zitadel → refresh cascade. |
-| ✅ Done | Rules + Templates | Both applied in LiteLLM pre-call hook. Rules CRUD mirrors Templates. `instruction` type removed from rules. |
+| ✅ Done | Prompt Templates | Applied in LiteLLM pre-call hook. CRUD under `/api/app/templates` (SPEC-CHAT-TEMPLATES-001). |
+| 📋 Planned | Guardrail Rules | PII block/redact + keyword block/redact via klai-pii microservice (SPEC-CHAT-GUARDRAILS-001). |
 | ✅ Done | Two-phase web crawler | BFS discovery + extraction split (SPEC-CRAWL-002). Cookie auth, canary + login-indicator guard, SimHash-LSH dedup for >200 pages (SPEC-CRAWL-003), Layer A/B/C quality status. |
 | ✅ Done | Google Drive OAuth connector | SPEC-KB-025a. First OAuth-based connector. |
 | ✅ Done | Source-aware retrieval | `source_aware_select` replaces router+quota (SPEC-KB-021). Router-as-signal (keyword + semantic centroid). `source_label` Qdrant payload field enables Facet API. |
