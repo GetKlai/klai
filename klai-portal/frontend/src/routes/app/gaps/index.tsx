@@ -109,7 +109,7 @@ function GapsPage() {
       <div className="flex items-start justify-between mb-6">
         <div className="flex items-center gap-3">
           <AlertTriangle className="h-7 w-7 text-[var(--color-foreground)]" />
-          <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
             {m.gaps_page_title()}
           </h1>
         </div>
