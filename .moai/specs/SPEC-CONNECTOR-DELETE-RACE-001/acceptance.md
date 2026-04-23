@@ -48,8 +48,9 @@ Unit tests (klai-knowledge-ingest/tests/):
 - [ ] `test_delete_connector_second_pass.py::test_delete_connector_schedules_second_pass`
 - [ ] `test_delete_connector_second_pass.py::test_second_pass_deletes_leaked_chunks`
 
-Integration test:
-- [ ] `test_delete_race_regression.py::test_full_delete_race_regression` — marked `@pytest.mark.integration`, green under testcontainers Postgres+Qdrant fixture.
+Regression test (pool-mock):
+- [ ] `test_delete_race_regression.py::test_delete_connector_cancels_pending_jobs` — mock pool with 5 todo rows, assert cancel SQL issued + second-pass scheduled.
+- [ ] `test_delete_race_regression.py::test_delete_connector_call_order` — assert cancel-before-Qdrant-delete-before-second-pass ordering.
 
 ## Definition of Done
 

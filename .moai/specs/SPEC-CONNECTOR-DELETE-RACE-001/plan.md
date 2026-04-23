@@ -142,20 +142,42 @@ Fase 3 exit: 6 tests pass (3 new + regression of Fase 1-2), route committed.
 
 ---
 
-## Fase 4 — Integration regression test
+## Fase 4 — Regression coverage (no testcontainers)
 
-**Files:**
-- `klai-knowledge-ingest/tests/test_delete_race_regression.py` (new)
+**Context:** klai-knowledge-ingest has no testcontainers or pytest-docker
+setup; existing integration tests rely on AsyncMock pools. A pure
+testcontainers fixture is out of scope here — we keep the harness simple.
 
-**Implementation:**
-Testcontainers fixture (Postgres + Qdrant). Enqueue 5 real procrastinate jobs via `defer_async` with mocked enrichment body. Call `delete_connector_route`. Wait `drain_seconds + 5s`. Assert:
-- Qdrant chunks with connector_id = 0
-- `knowledge.artifacts` rows = 0
-- Procrastinate: 0 todo, 5 cancelled OR succeeded (depending on whether job was picked up before cancel)
+**Two-part approach:**
 
-Marker: `@pytest.mark.integration` — skipped in fast CI, run in `make test-integration`.
+### 4a — Pool-mock integration test
+`klai-knowledge-ingest/tests/test_delete_race_regression.py` uses the same
+`_make_pool` helper pattern as `test_crawl_sync_endpoint.py`:
 
-Fase 4 exit: integration test green.
+- Seed the mock pool with 5 `procrastinate_jobs` rows in `todo` for the
+  target connector_id.
+- Seed `knowledge.artifacts` mock with 5 corresponding rows.
+- Call `delete_connector_route`.
+- Assert `UPDATE procrastinate_jobs SET status='cancelled'` was issued with
+  correct WHERE clause (via pool.execute call history).
+- Assert `qdrant_store.delete_connector` was called twice (primary + second
+  pass).
+- Assert `_second_pass_cleanup` task was scheduled.
+
+This gives us the call-order contract without needing a real database.
+
+### 4b — Live smoketest checklist (Fase 5)
+The real integration proof is the Fase 5 live run on voys tenant. Fase 4b
+adds a structured checklist to `progress.md` that captures:
+
+- Pre-delete: `todo` job count, Qdrant chunk count.
+- Immediate post-delete: same two counts (expect 0 todo, small Qdrant
+  count equal to `doing`-state chunks).
+- Post drain window (60s): Qdrant count must be 0.
+- Log lines observed: `connector_jobs_cancelled`, `connector_delete_second_pass`.
+
+Fase 4 exit: mock-based regression test green, Fase 5 checklist documented
+in `progress.md`.
 
 ---
 
