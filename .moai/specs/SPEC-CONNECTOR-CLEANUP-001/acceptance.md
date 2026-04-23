@@ -148,27 +148,39 @@ Then portal_connectors rij is weg
 
 ---
 
-## REQ-CONNECTOR-CLEANUP-001-05 — Cron-scheduling beslissing
+## REQ-CONNECTOR-CLEANUP-001-05 — Cron-scheduling: SPEC-SCHEDULING-001 stub + pitfall
 
-### AC-05a.1: Als 6a (permanent drop)
+**Decision (fixed):** optie B — reimplement via aparte SPEC.
+
+### AC-05.1: SPEC-SCHEDULING-001 stub bestaat
 
 ```gherkin
-Given de gebruiker heeft 6a gekozen
-When de migrations zijn toegepast
-Then portal_connectors.schedule kolom bestaat niet meer
-  And de add-connector + edit-connector UI flows hebben geen schedule-veld meer
-  And ConnectorCreate / ConnectorUpdate Pydantic schemas bevatten geen schedule-field
-  And .claude/rules/klai/projects/knowledge.md bevat entry dat schedule-feature afgedankt is
+Given SPEC-CONNECTOR-CLEANUP-001 is geïmplementeerd
+When ls .moai/specs/SPEC-CONNECTOR-SCHEDULING-001/
+Then spec.md bestaat
+  And status is "draft"
+  And Context sectie verwijst naar SPEC-CONNECTOR-CLEANUP-001 als prerequisite
 ```
 
-### AC-05b.1: Als 6b (reimplement via nieuwe SPEC)
+### AC-05.2: Pitfall entry bevat forward-reference
 
 ```gherkin
-Given de gebruiker heeft 6b gekozen
-When de SPEC wordt afgesloten
-Then er bestaat een nieuwe SPEC-CONNECTOR-SCHEDULING-001 stub
-  And .claude/rules/klai/projects/knowledge.md bevat entry met forward-reference
-  And portal_connectors.schedule kolom blijft staan (maar gedocumenteerd als "not honored")
+Given .claude/rules/klai/projects/knowledge.md
+When grep -A 5 "portal_connectors.schedule is not honored"
+Then vindt matches
+  And de entry noemt expliciet "SPEC-CONNECTOR-SCHEDULING-001"
+  And de entry legt uit dat "Sync now" het enige werkende pad is
+```
+
+### AC-05.3: Kolom + UI blijven intact (bewust)
+
+```gherkin
+Given dit SPEC is implementeerd
+When psql \d public.portal_connectors
+Then de schedule kolom bestaat nog (wordt niet gedropt)
+  And de Add Connector UI flow bevat nog steeds het Schedule-veld
+  And ConnectorCreate / ConnectorUpdate Pydantic schemas bevatten schedule-field
+  And geen portal_connectors rij heeft per ongeluk schedule=NULL gekregen tijdens deploy
 ```
 
 ---

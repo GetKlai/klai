@@ -174,26 +174,31 @@ Python 3.12, SQLAlchemy 2.x async, Alembic, asyncpg, pyright strict. Geen nieuwe
 - `portal_connectors` is eigendom van portal-api service, niet klai-connector. De FK creëert een logische koppeling tussen twee services' DB-schema's. Dat is architectural debatable — maar praktisch klopt het omdat het 1 Postgres database is.
 - Alternatief als cross-schema FK te eng: laat applicatie-laag de cascade doen (portal-api roept knowledge-ingest's `/ingest/v1/connector` aan, knowledge-ingest cleant sync_runs). Meer werk, minder DB-integriteit. Default: cross-schema FK.
 
-### Fase 6 — Cron-scheduling beslissing (REQ-05)
+### Fase 6 — Cron-scheduling: forward-reference naar SPEC-SCHEDULING-001
 
-**Goal:** documenteren en, als (a), de UI-resten opruimen.
+**Decision (resolved):** optie B — reimplement in een aparte SPEC.
 
-**Sub-variant 6a — drop permanently:**
+**Goal:** voorkom dat `portal_connectors.schedule` een onzichtbare-maar-werkende-indruk-gevende feature blijft.
 
-1. Alembic migration (portal-api): `ALTER TABLE public.portal_connectors DROP COLUMN schedule`.
-2. Portal UI: verwijder schedule-veld uit `/app/knowledge/<kb>/add-connector` wizard + edit-flow.
-3. API: verwijder `schedule` uit `ConnectorCreate` / `ConnectorUpdate` Pydantic schemas.
-4. Pitfall entry in `.claude/rules/klai/projects/knowledge.md`: "cron schedules zijn afgedankt na SPEC-CONNECTOR-CLEANUP-001 — tegenwoordig syncs altijd portal- of user-getriggerd".
+**Tasks:**
 
-**Sub-variant 6b — reimplement:**
+1. Creëer `.moai/specs/SPEC-CONNECTOR-SCHEDULING-001/spec.md` stub (draft) met:
+   - Scope: herimpl van cron-scheduling in portal-api + background worker
+   - Dependency: SPEC-CONNECTOR-CLEANUP-001 (deze SPEC) moet eerst zijn afgerond
+   - Open onderdelen: welke component triggert syncs (portal-api zelf, klai-connector pull, nieuwe scheduler-service?), welke cron-library, hoe met timezones
+2. Pitfall entry in `.claude/rules/klai/projects/knowledge.md`:
+   ```
+   ## portal_connectors.schedule is not honored (MED)
+   The `schedule` column on `public.portal_connectors` accepts a cron expression
+   via the portal UI, but nothing currently reads it. Manually-triggered "Sync now"
+   is the only working path. Reimplementation is tracked in
+   SPEC-CONNECTOR-SCHEDULING-001 (draft).
+   ```
+3. Optioneel (niet verplicht in deze SPEC): frontend badge "Not yet supported" bij het schedule-veld. Laat ik open — scope-call voor de scheduling SPEC zelf.
 
-1. Skip deze fase binnen dit SPEC.
-2. Open nieuwe SPEC `SPEC-CONNECTOR-SCHEDULING-001`.
-3. Pitfall entry: "cron schedules staan in `portal_connectors.schedule` maar worden nog niet gehonoreerd — zie SPEC-CONNECTOR-SCHEDULING-001".
+**Estimated size:** ~30 LOC (spec stub) + ~15 LOC (pitfall entry).
 
-**Estimated size (6a):** ~100 LOC migration + frontend + schema.
-
-**Decision owner:** Mark Vletter.
+**No migration. No code deletion. No UI changes.**
 
 ### Fase 7 — Docs + pitfall
 
@@ -251,7 +256,7 @@ Geen `@MX:WARN` te bedenken — alles wat we doen is opruimen, niet riskante toe
 
 ## Open Questions
 
-1. **6a of 6b?** Drop cron scheduling permanent, of reimplement in nieuwe SPEC? → beslissing van gebruiker vóór fase 6.
+1. ~~**6a of 6b?**~~ → Beslissing B (reimplement via SPEC-SCHEDULING-001) vastgelegd in HISTORY v1.1.
 2. **`Base` verhuizen?** Na class-drop in fase 4, blijft `app/models/connector.py` leeg op `Base` na. Verplaatsen naar `app/models/__init__.py` of `app/models/base.py`, of laten staan? → cosmetisch, laat ik aan de implementerende agent.
 3. **Cross-schema FK toegestaan?** Als Postgres-roles die REFERENCES niet toestaan, fallback naar applicatie-cascade. → dev-env test beslist.
 
