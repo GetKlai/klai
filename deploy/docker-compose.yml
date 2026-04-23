@@ -629,35 +629,6 @@ services:
       - klai-net
     # NOT exposed via Caddy — internal Docker network only
 
-  research-api:
-    image: ghcr.io/getklai/research-api:latest
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      POSTGRES_DSN: postgresql+asyncpg://klai:${POSTGRES_PASSWORD}@postgres:5432/klai
-      ZITADEL_ISSUER: https://auth.${DOMAIN}
-      ZITADEL_API_AUDIENCE: ${RESEARCH_API_ZITADEL_AUDIENCE}
-      LITELLM_API_KEY: ${LITELLM_MASTER_KEY}
-      VECTOR_BACKEND: qdrant
-      QDRANT_URL: http://qdrant:6333
-      QDRANT_API_KEY: ${QDRANT_API_KEY}
-      RETRIEVAL_API_URL: http://retrieval-api:8040
-      DOCLING_URL: http://docling-serve:5001
-      TEI_URL: http://172.18.0.1:7997
-      LITELLM_URL: http://litellm:4000
-      SEARXNG_URL: http://searxng:8080
-    volumes:
-      - /opt/klai/research-uploads:/opt/klai/research-uploads
-    networks:
-      - klai-net
-      - net-postgres
-    depends_on:
-      - docling-serve
-      - searxng
-      - postgres
-      - qdrant
-      - retrieval-api
-
   retrieval-api:
     image: ghcr.io/getklai/retrieval-api:latest
     restart: unless-stopped

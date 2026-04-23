@@ -68,6 +68,15 @@ def mock_orchestrator_env(tmp_path, monkeypatch):
                 return patches["litellm_key_post"]
             if "/team/delete" in path:
                 return MagicMock()
+            # SPEC-PORTAL-UNIFY-KB-001: core plan now includes knowledge, so
+            # the orchestrator may POST to /api/orgs/<slug>/kbs when provisioning
+            # default KBs. Accept any /kbs path with a generic OK response.
+            if "/kbs" in path:
+                ok = MagicMock()
+                ok.status_code = 200
+                ok.raise_for_status = MagicMock()
+                ok.json = MagicMock(return_value={"id": 1, "slug": "default"})
+                return ok
             raise AssertionError(f"Unexpected httpx call: {path}")
 
     monkeypatch.setattr(orchestrator.httpx, "AsyncClient", lambda **kw: _FakeClient())
