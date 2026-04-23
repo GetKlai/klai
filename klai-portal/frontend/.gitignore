@@ -13,6 +13,9 @@ dist-ssr
 *.local
 .env.production
 
+# TanStack Router local cache (router tree generator temp files)
+.tanstack/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

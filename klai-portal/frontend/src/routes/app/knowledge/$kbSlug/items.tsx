@@ -56,7 +56,7 @@ function ItemsTab() {
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-[var(--color-border)] text-left text-xs uppercase tracking-wide text-[var(--color-muted-foreground)]">
+            <tr className="border-b border-[var(--color-border)] text-left text-xs tracking-wide text-gray-400">
               <th className="pb-2 pr-4 font-medium">{m.knowledge_items_column_title()}</th>
               <th className="pb-2 pr-4 font-medium">{m.knowledge_items_column_type()}</th>
               <th className="pb-2 pr-4 font-medium">{m.knowledge_items_column_saved_at()}</th>

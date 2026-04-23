@@ -177,19 +177,19 @@ function GapsPage() {
         <table className="w-full text-sm table-fixed border-t border-b border-[var(--color-border)]">
           <thead>
             <tr className="border-b border-[var(--color-border)]">
-              <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]">
+              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
                 {m.gaps_column_query()}
               </th>
-              <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-24">
+              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide w-24">
                 {m.gaps_column_type()}
               </th>
-              <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-36">
+              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide w-36">
                 {m.gaps_column_nearest_kb()}
               </th>
-              <th className="py-3 pr-4 text-right text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-20">
+              <th className="py-3 pr-4 text-right text-xs font-medium text-gray-400 tracking-wide w-20">
                 {m.gaps_column_count()}
               </th>
-              <th className="py-3 pr-4 text-right text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-28">
+              <th className="py-3 pr-4 text-right text-xs font-medium text-gray-400 tracking-wide w-28">
                 {m.gaps_column_last()}
               </th>
               <th className="py-3 text-right w-12" />

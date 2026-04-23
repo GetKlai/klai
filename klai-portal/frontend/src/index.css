@@ -51,13 +51,13 @@
   --color-input:                #f5f4ef;
   --color-ring:                 #fcaa2d;
 
-  /* Sidebar (light organic) */
+  /* Sidebar (warm cream) */
   --color-sidebar:                    #f5f4ef;
   --color-sidebar-foreground:         #191918;
-  --color-sidebar-border:             #e8e6de;
-  --color-sidebar-accent:             #fcaa2d14;
+  --color-sidebar-border:             #e3e2d8;
+  --color-sidebar-accent:             #1919180d;
   --color-sidebar-accent-foreground:  #191918;
-  --color-sidebar-muted-foreground:   #19191880;
+  --color-sidebar-muted-foreground:   #19191866;
 
   /* Typography */
   --font-sans:    "Parabole Regular", system-ui, sans-serif;

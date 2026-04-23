@@ -75,10 +75,10 @@ function McpsListPage() {
         <table className="w-full text-sm table-fixed border-t border-b border-[var(--color-border)]">
           <thead>
             <tr className="border-b border-[var(--color-border)]">
-              <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-48">
+              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide w-48">
                 {m.admin_mcps_col_name()}
               </th>
-              <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]">
+              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
                 {m.admin_mcps_col_description()}
               </th>
               <th className="py-3 text-right w-28" aria-label={m.admin_mcps_col_actions()} />
@@ -97,7 +97,7 @@ function McpsListPage() {
                     <div className="flex items-center gap-2">
                       <span className="font-medium">{displayName}</span>
                       {server.managed && (
-                        <span className="rounded-full bg-[var(--color-muted)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.04em] text-[var(--color-muted-foreground)]">
+                        <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-400">
                           {m.admin_mcps_builtin()}
                         </span>
                       )}

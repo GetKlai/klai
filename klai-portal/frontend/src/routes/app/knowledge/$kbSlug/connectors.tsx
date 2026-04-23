@@ -126,13 +126,13 @@ function ConnectorsTab() {
           <thead>
             <tr className="border-b border-[var(--color-border)]">
               <th className="py-3 pr-2 w-6" />
-              <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]">
+              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
                 {m.admin_connectors_col_name()}
               </th>
-              <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-28">
+              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide w-28">
                 {m.admin_connectors_col_type()}
               </th>
-              <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-32">
+              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide w-32">
                 {m.admin_connectors_col_status()}
               </th>
               {isOwner && <th className="py-3 text-right w-28" />}

@@ -2,19 +2,23 @@ import * as React from 'react'
 import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '@/lib/utils'
 
+// Portal v1 spine (SPEC-PORTAL-REDESIGN-002):
+// - rounded-full (same as buttons)
+// - default/accent use neutral gray (polish-1 decides amber reintroduction)
+// - semantic states (success/warning/destructive) use CSS tokens
 const badgeVariants = cva(
   'inline-flex w-fit items-center rounded-full border px-2 py-0.5 text-xs font-medium transition-colors',
   {
     variants: {
       variant: {
         default:
-          'border-transparent bg-[var(--color-rl-accent)] text-[var(--color-foreground)]',
+          'border-transparent bg-gray-900 text-white',
         secondary:
-          'border-transparent bg-[var(--color-secondary)] text-[var(--color-secondary-foreground)]',
+          'border-transparent bg-gray-100 text-gray-700',
         accent:
-          'border-transparent bg-[var(--color-rl-accent)] text-[var(--color-foreground)]',
+          'border-transparent bg-gray-900 text-white',
         outline:
-          'border-[var(--color-border)] text-[var(--color-foreground)]',
+          'border-gray-200 text-gray-700',
         success:
           'border-transparent bg-[var(--color-success-bg)] text-[var(--color-success-text)]',
         warning:

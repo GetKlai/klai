@@ -297,7 +297,7 @@ function AdminGroups() {
                 {headerGroup.headers.map((header) => (
                   <th
                     key={header.id}
-                    className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]"
+                    className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide"
                   >
                     {flexRender(
                       header.column.columnDef.header,

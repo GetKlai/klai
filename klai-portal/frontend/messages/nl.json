@@ -1556,5 +1556,19 @@
   "admin_widgets_delete_button": "Widget verwijderen",
   "admin_widgets_back_to_list": "Terug naar widgets",
   "admin_widgets_wizard_step_appearance": "Vormgeving",
-  "admin_widgets_wizard_appearance_intro": "Pas aan hoe de widget eruitziet voor bezoekers. Titel en welkomstbericht verschijnen in de chat; kleurvariabelen overschrijven de standaardwaarden."
+  "admin_widgets_wizard_appearance_intro": "Pas aan hoe de widget eruitziet voor bezoekers. Titel en welkomstbericht verschijnen in de chat; kleurvariabelen overschrijven de standaardwaarden.",
+  "sidebar_knowledge": "Kennis",
+  "sidebar_rules": "Regels",
+  "sidebar_team": "Team",
+  "sidebar_mcps": "MCP's",
+  "chatbar_templates_label": "Templates",
+  "chatbar_templates_empty": "Geen",
+  "chatbar_templates_clear": "Alles uit",
+  "chatbar_rules_active": "{count} regel(s) actief",
+  "rules_page_title": "Rules (Guardrails)",
+  "rules_empty_title": "Nog geen regels",
+  "rules_empty_description": "Voeg regels toe om te bepalen welke onderwerpen, content en data zijn toegestaan in AI-gesprekken.",
+  "templates_page_title": "Templates",
+  "templates_empty_title": "Nog geen templates",
+  "templates_empty_description": "Templates voegen standaard instructies toe aan elk gesprek, zodat je jezelf niet hoeft te herhalen."
 }
