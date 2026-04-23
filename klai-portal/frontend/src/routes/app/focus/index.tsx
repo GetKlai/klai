@@ -170,16 +170,16 @@ function FocusPage() {
             <table className="w-full text-sm table-fixed border-t border-b border-[var(--color-border)]">
               <thead>
                 <tr className="border-b border-[var(--color-border)]">
-                  <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]">
+                  <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
                     {m.app_focus_notebook_name_label()}
                   </th>
-                  <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-24">
+                  <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide w-24">
                     {m.app_focus_sources_heading()}
                   </th>
-                  <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-32">
+                  <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide w-32">
                     {m.app_focus_notebook_scope_label()}
                   </th>
-                  <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-28">
+                  <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide w-28">
                     {m.app_focus_col_created()}
                   </th>
                   <th className="py-3 text-right w-20" />

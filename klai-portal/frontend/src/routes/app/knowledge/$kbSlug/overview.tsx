@@ -66,7 +66,7 @@ function OverviewTab() {
       <DashboardSection icon={BarChart2} title={m.knowledge_detail_section_stats()}>
         <div className="flex gap-8 mb-5">
           <div>
-            <p className="text-xs text-[var(--color-muted-foreground)] uppercase tracking-wide mb-1">{m.knowledge_detail_stats_search_index()}</p>
+            <p className="text-xs text-gray-400 tracking-wide mb-1">{m.knowledge_detail_stats_search_index()}</p>
             <p className="text-sm font-medium text-[var(--color-foreground)]">
               {stats?.volume != null
                 ? m.knowledge_detail_volume({ count: String(stats.volume) })
@@ -74,7 +74,7 @@ function OverviewTab() {
             </p>
           </div>
           <div>
-            <p className="text-xs text-[var(--color-muted-foreground)] uppercase tracking-wide mb-1">{m.knowledge_detail_stats_queries()}</p>
+            <p className="text-xs text-gray-400 tracking-wide mb-1">{m.knowledge_detail_stats_queries()}</p>
             <p className="text-sm font-medium text-[var(--color-foreground)]">
               {stats?.usage_last_30d != null
                 ? m.knowledge_detail_usage({ count: String(stats.usage_last_30d) })
@@ -84,7 +84,7 @@ function OverviewTab() {
           {user?.isAdmin === true && stats?.org_gap_count_7d != null && (
             <Link to="/app/gaps" className="group">
               <div>
-                <p className="text-xs text-[var(--color-muted-foreground)] uppercase tracking-wide mb-1 flex items-center gap-1">
+                <p className="text-xs text-gray-400 tracking-wide mb-1 flex items-center gap-1">
                   <AlertTriangle className="h-3 w-3" />
                   {m.gaps_overview_tile()}
                 </p>
@@ -98,7 +98,7 @@ function OverviewTab() {
 
         {/* Breakdown per database */}
         <div>
-          <p className="text-xs text-[var(--color-muted-foreground)] uppercase tracking-wide mb-2">
+          <p className="text-xs text-gray-400 tracking-wide mb-2">
             {m.knowledge_detail_volume_breakdown_title()}
           </p>
           <div className="grid grid-cols-3 gap-3">

@@ -350,16 +350,16 @@ function AdminGroupDetail() {
             <table className="w-full text-sm table-fixed border-t border-b border-[var(--color-border)]">
               <thead>
                 <tr className="border-b border-[var(--color-border)]">
-                  <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]">
+                  <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
                     {m.admin_groups_name()}
                   </th>
-                  <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]">
+                  <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
                     Email
                   </th>
-                  <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-28">
+                  <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide w-28">
                     {m.admin_groups_members_joined_at()}
                   </th>
-                  <th className="py-3 text-right text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-16">
+                  <th className="py-3 text-right text-xs font-medium text-gray-400 tracking-wide w-16">
                     {/* Actions */}
                   </th>
                 </tr>

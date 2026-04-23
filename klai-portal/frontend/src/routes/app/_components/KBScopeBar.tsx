@@ -145,7 +145,7 @@ export function KBScopeBar() {
         disabled={isPending}
         title={isOn ? m.chat_kb_bar_tooltip_on() : m.chat_kb_bar_tooltip_off()}
         className={[
-          'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium tracking-wide uppercase transition-colors',
+          'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors',
           isPending ? 'opacity-50' : '',
           isOn
             ? 'bg-[var(--color-rl-accent)]/12 text-[var(--color-foreground)]'
@@ -171,7 +171,7 @@ export function KBScopeBar() {
             disabled={isPending}
             title={m.chat_kb_bar_personal_tooltip()}
             className={[
-              'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium tracking-wide uppercase transition-colors',
+              'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors',
               isPending ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
               pref.kb_personal_enabled
                 ? 'bg-[var(--color-rl-accent)]/12 text-[var(--color-foreground)]'
@@ -189,7 +189,7 @@ export function KBScopeBar() {
               onClick={() => setDropdownOpen((v) => !v)}
               disabled={isPending}
               className={[
-                'flex items-center gap-1 rounded-full border border-[var(--color-border)] px-2.5 py-1 text-xs font-medium tracking-wide uppercase transition-colors',
+                'flex items-center gap-1 rounded-full border border-[var(--color-border)] px-2.5 py-1 text-xs font-medium transition-colors',
                 isPending
                   ? 'opacity-50'
                   : 'hover:border-[var(--color-foreground)]/30 hover:text-[var(--color-foreground)]',
@@ -224,7 +224,7 @@ export function KBScopeBar() {
             onClick={toggleNarrow}
             disabled={isPending}
             className={[
-              'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium tracking-wide uppercase transition-colors',
+              'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors',
               isPending ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
               pref.kb_narrow
                 ? 'bg-[var(--color-rl-accent)]/12 text-[var(--color-foreground)]'
