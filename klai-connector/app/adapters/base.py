@@ -1,7 +1,7 @@
 """Base adapter ABC defining the interface for all source connectors."""
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -42,6 +42,17 @@ class DocumentRef:
             the adapter during list_documents() or fetch_document(). Each
             ImageRef.url MUST be absolute. Embedded images from binary formats
             (DOCX/PDF) are handled separately via the parser pipeline, not here.
+        sender_email: Raw email string captured from the source's ``created_by``
+            or ``author`` field (e.g., Confluence ``created_by.email``,
+            Airtable creator field).  Stored as-is — no normalisation, no
+            plus-tag stripping, no role-mailbox denylist.  Entity resolution
+            (persons/orgs tables, cross-source merging) is explicitly out of
+            scope; see ADR-KB-ENTITIES-DEFERRED.  Empty string when unavailable.
+        mentioned_emails: Raw email strings captured from ``mentioned`` /
+            ``collaborators`` fields in the source document.  Same
+            no-normalisation contract as ``sender_email``.  Empty list when
+            unavailable.  Uses ``field(default_factory=list)`` so instances
+            never share a mutable default.
     """
 
     path: str
@@ -52,6 +63,8 @@ class DocumentRef:
     source_url: str = ""
     last_edited: str = ""  # ISO 8601 from source (used by sync engine for reconciliation)
     images: list[ImageRef] | None = None
+    sender_email: str = ""
+    mentioned_emails: list[str] = field(default_factory=lambda: [])
     # @MX:NOTE: content_fingerprint field (SPEC-CRAWL-003 REQ-12) removed in
     # SPEC-CRAWLER-004 Fase F — only WebCrawlerAdapter populated it, and that
     # adapter has been deleted now that bulk crawls go through the delegation
@@ -93,3 +106,4 @@ class BaseAdapter(ABC):
         Override to release per-sync resources (e.g. in-memory caches).
         Default implementation is a no-op.
         """
+        return None
