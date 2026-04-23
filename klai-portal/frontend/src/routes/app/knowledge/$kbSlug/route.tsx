@@ -140,11 +140,11 @@ function KbLayout() {
   ]
 
   return (
-    <div className="p-6 max-w-4xl space-y-8">
+    <div className="mx-auto max-w-4xl px-6 py-10 space-y-8">
       {/* Header */}
       <div className="flex items-start gap-3">
         <div className="flex-1">
-          <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">{kb.name}</h1>
+          <h1 className="page-title text-[26px] font-display-bold text-gray-900">{kb.name}</h1>
           {kb.description && (
             <p className="text-sm text-[var(--color-muted-foreground)] mt-1">{kb.description}</p>
           )}

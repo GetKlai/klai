@@ -223,7 +223,7 @@ function AddConnectorPage() {
       // Client-side validation (R4.3) before posting.
       const siteUrl = msSiteUrl.trim()
       if (siteUrl && !MS_SITE_URL_PATTERN.test(siteUrl)) {
-        setMsSiteUrlError(m.admin_connectors_ms_docs_site_url_invalid({ tenant: '{tenant}', site: '{site}' }))
+        setMsSiteUrlError(m.admin_connectors_ms_docs_site_url_invalid())
         throw new Error('invalid_site_url')
       }
       setMsSiteUrlError(null)
@@ -274,10 +274,10 @@ function AddConnectorPage() {
   })
 
   return (
-    <div className="p-6 max-w-xl">
+    <div className="mx-auto max-w-xl px-6 py-10">
       {/* Page header */}
       <div className="flex items-center justify-between mb-6">
-        <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.admin_connectors_add_title()}
         </h1>
         <Button type="button" variant="ghost" size="sm" onClick={goBack}>
