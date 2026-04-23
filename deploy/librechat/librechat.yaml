@@ -28,6 +28,7 @@ interface:
     use: false
     create: false
     share: false
+  remoteAgents: false
   prompts:
     use: false
     create: false
@@ -50,6 +51,7 @@ interface:
   parameters: false
   sidePanel: false
   temporaryChat: false
+  artifacts: false
 
 balance:
   enabled: false
