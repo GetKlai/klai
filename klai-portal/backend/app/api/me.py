@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.bearer import bearer
+from app.api.dependencies import get_effective_capabilities
 from app.core.config import settings
 from app.core.database import get_db, set_tenant
 from app.models.audit import PortalAuditLog
@@ -24,7 +25,6 @@ from app.models.groups import PortalGroup, PortalGroupMembership
 from app.models.knowledge_bases import PortalKnowledgeBase, PortalUserKBAccess
 from app.models.meetings import VexaMeeting
 from app.models.portal import PortalOrg, PortalUser
-from app.api.dependencies import get_effective_capabilities
 from app.services.entitlements import get_effective_products
 from app.services.zitadel import zitadel
 
