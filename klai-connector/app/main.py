@@ -88,6 +88,19 @@ def create_app() -> FastAPI:
                 "google_drive",
                 GoogleDriveAdapter(settings=settings, portal_client=portal_client),
             )
+            # SPEC-KB-CONNECTORS-001 R5.x — user-facing split of Google Workspace.
+            # All three aliases reuse the same GoogleDriveAdapter instance; the
+            # adapter's _extract_config injects a content_types preset based on
+            # connector.connector_type.
+            registry.register_alias(
+                "google_docs", "google_drive", {"content_types": ["google_doc"]}
+            )
+            registry.register_alias(
+                "google_sheets", "google_drive", {"content_types": ["google_sheet"]}
+            )
+            registry.register_alias(
+                "google_slides", "google_drive", {"content_types": ["google_slides"]}
+            )
         else:
             logger.warning(
                 "google_drive adapter not registered — GOOGLE_DRIVE_CLIENT_ID unset"
