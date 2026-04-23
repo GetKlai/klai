@@ -48,10 +48,31 @@ _ORPHAN_QUERY = sa.text(
     LIMIT 50
     """
 )
+_REFERENCES_QUERY = sa.text(
+    "SELECT has_table_privilege(current_user, 'public.portal_connectors', 'REFERENCES')"
+)
 
 
 def upgrade() -> None:
     bind = op.get_bind()
+
+    # Pre-check 1: cross-schema REFERENCES privilege. Without this Postgres
+    # raises a bare "permission denied for table portal_connectors" inside
+    # create_foreign_key — actionable only if the operator already knows the
+    # cause. Raising here surfaces the exact GRANT statement required.
+    has_references = bind.execute(_REFERENCES_QUERY).scalar()
+    if not has_references:
+        raise RuntimeError(
+            f"Cannot add FK {_FK_NAME!r}: current database role lacks the "
+            "REFERENCES privilege on public.portal_connectors. "
+            "Have a Postgres superuser run: "
+            "GRANT REFERENCES ON public.portal_connectors TO <klai-connector role>; "
+            "then re-run this migration."
+        )
+
+    # Pre-check 2: orphan sync_runs would block create_foreign_key with a
+    # confusing constraint-violation error. Detect early and tell the
+    # operator exactly which rows to triage.
     orphans = bind.execute(_ORPHAN_QUERY).fetchall()
     if orphans:
         sample_ids = ", ".join(str(row[0]) for row in orphans[:10])
