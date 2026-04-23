@@ -41,7 +41,7 @@ layers must be cleaned or the next re-ingest hits dedup and produces zero new wo
 | Qdrant chunks | `qdrant_store.delete_connector` (filters on `source_connector_id`) |
 | `knowledge.artifacts` | `pg_store.delete_connector_artifacts` (filters on `extra::jsonb->>'source_connector_id'`) |
 | `knowledge.crawled_pages` + `knowledge.page_links` | `pg_store.delete_connector_artifacts` (scoped via artifact URL set — added post-SPEC-CRAWLER-005) |
-| `connector.sync_runs` | Currently NOT cleaned — tracked in SPEC-CONNECTOR-CLEANUP-001 REQ-04 (FK CASCADE) |
+| `connector.sync_runs` | Cleaned via cross-schema `ON DELETE CASCADE` FK to `public.portal_connectors` since SPEC-CONNECTOR-CLEANUP-001 (migration `007_sync_runs_fk_portal_connectors`) |
 
 **Prevention:** when adding a new data layer that is connector-scoped, immediately
 wire it into `delete_connector_artifacts` (or the Qdrant equivalent) AND write a
