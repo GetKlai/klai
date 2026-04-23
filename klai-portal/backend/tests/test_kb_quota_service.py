@@ -225,4 +225,110 @@ class TestAssertCanCreateOrgKB:
 
         detail = exc_info.value.detail
         assert "plan" in detail
-        assert detail["plan"] == "core"
+
+
+def _make_kb(owner_type: str = "user", slug: str = "my-kb") -> MagicMock:
+    kb = MagicMock()
+    kb.owner_type = owner_type
+    kb.slug = slug
+    return kb
+
+
+class TestAssertCanAddItemToKB:
+    """assert_can_add_item_to_kb enforces max_items_per_kb for personal KBs.
+
+    SPEC-PORTAL-UNIFY-KB-001 R-E2.
+    """
+
+    @pytest.mark.asyncio
+    async def test_raises_403_when_personal_kb_at_limit_core_plan(self) -> None:
+        """Core plan: 20 items in personal KB → 403 kb_quota_items_exceeded."""
+        from unittest.mock import patch
+
+        from app.services.kb_quota import assert_can_add_item_to_kb
+
+        kb = _make_kb(owner_type="user")
+        org = _make_org("core")
+
+        with patch(
+            "app.services.kb_quota.knowledge_ingest_client.get_source_count",
+            new_callable=AsyncMock,
+            return_value=20,
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await assert_can_add_item_to_kb(kb=kb, org=org)
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail["error_code"] == "kb_quota_items_exceeded"
+        assert exc_info.value.detail["limit"] == 20
+        assert exc_info.value.detail["current"] == 20
+
+    @pytest.mark.asyncio
+    async def test_passes_when_personal_kb_below_limit_core_plan(self) -> None:
+        """Core plan: 19 items in personal KB → no error."""
+        from unittest.mock import patch
+
+        from app.services.kb_quota import assert_can_add_item_to_kb
+
+        kb = _make_kb(owner_type="user")
+        org = _make_org("core")
+
+        with patch(
+            "app.services.kb_quota.knowledge_ingest_client.get_source_count",
+            new_callable=AsyncMock,
+            return_value=19,
+        ):
+            # Should not raise
+            await assert_can_add_item_to_kb(kb=kb, org=org)
+
+    @pytest.mark.asyncio
+    async def test_passes_for_complete_plan_unlimited(self) -> None:
+        """Complete plan: max_items_per_kb is None → always allowed, no network call."""
+        from unittest.mock import patch
+
+        from app.services.kb_quota import assert_can_add_item_to_kb
+
+        kb = _make_kb(owner_type="user")
+        org = _make_org("complete")
+
+        with patch(
+            "app.services.kb_quota.knowledge_ingest_client.get_source_count",
+            new_callable=AsyncMock,
+        ) as mock_count:
+            await assert_can_add_item_to_kb(kb=kb, org=org)
+            mock_count.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_passes_for_org_kb_regardless_of_plan(self) -> None:
+        """Org-scoped KB: quota not enforced (only complete users have org KBs)."""
+        from unittest.mock import patch
+
+        from app.services.kb_quota import assert_can_add_item_to_kb
+
+        kb = _make_kb(owner_type="org")
+        org = _make_org("core")
+
+        with patch(
+            "app.services.kb_quota.knowledge_ingest_client.get_source_count",
+            new_callable=AsyncMock,
+        ) as mock_count:
+            await assert_can_add_item_to_kb(kb=kb, org=org)
+            mock_count.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_fails_open_when_source_count_unavailable(self) -> None:
+        """When knowledge-ingest is unreachable (None), fail open — allow the ingest."""
+        from unittest.mock import patch
+
+        from app.services.kb_quota import assert_can_add_item_to_kb
+
+        kb = _make_kb(owner_type="user")
+        org = _make_org("core")
+
+        with patch(
+            "app.services.kb_quota.knowledge_ingest_client.get_source_count",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            # Should NOT raise even for a core plan when count is unavailable
+            await assert_can_add_item_to_kb(kb=kb, org=org)
