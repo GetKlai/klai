@@ -1,10 +1,10 @@
 """Tests for image handling in the SyncEngine."""
 
-import base64
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from klai_image_storage import (
+    ParsedImage,
     download_and_upload_adapter_images as download_and_upload_images,
 )
 
@@ -149,7 +149,6 @@ class TestDownloadAndUploadImages:
         mock_store.upload_image = fake_upload
 
         png_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
-        b64_data = base64.b64encode(png_bytes).decode()
 
         result = await download_and_upload_images(
             image_urls=[],
@@ -157,7 +156,7 @@ class TestDownloadAndUploadImages:
             kb_slug="kb-1",
             image_store=mock_store,
             http_client=AsyncMock(),
-            parsed_images=[{"data_b64": b64_data, "mime_type": "image/png"}],
+            parsed_images=[ParsedImage(data=png_bytes, ext="png")],
         )
 
         assert len(result) == 1

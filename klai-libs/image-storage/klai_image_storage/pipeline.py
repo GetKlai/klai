@@ -4,23 +4,27 @@ SPEC-KB-IMAGE-002 — two orchestrators, one per consumer flow:
 
 - :func:`download_and_upload_adapter_images` is used by the connector
   sync engine (github / notion / drive adapters). It accepts markdown
-  ``(alt, url)`` tuples plus optional base64-encoded parser images
-  emitted by Unstructured for PDF/DOCX.
+  ``(alt, url)`` tuples plus optional :class:`ParsedImage` entries for
+  already-decoded images emitted by a document parser (e.g. Unstructured
+  for PDF/DOCX).
 - :func:`download_and_upload_crawl_images` is used by the web-crawl
   pipeline. It accepts a crawl4ai ``media.images`` list, filters
   Cloudflare srcset debris via :func:`is_valid_image_src`, resolves
   relative URLs against the page URL, and dedupes before downloading.
 
 Both orchestrators return the list of public URLs so the caller can
-append them to the Qdrant payload's ``image_urls`` field (it flows
-through via the SPEC-KB-021 extra passthrough rule). Partial failures
-log at ``warning`` with the source URL and do not abort — single-image
-errors must not halt a page or document ingest.
+append them to the Qdrant payload's ``image_urls`` field. Partial
+failures log and do not abort — a single image's failure must never
+halt a page or document ingest.
+
+Internally both orchestrators share :func:`_download_validate_upload`:
+GET → HTTP status check → size check → magic-byte validate → S3 upload.
+Transport errors (``httpx.HTTPError``) log at ``warning``; upload-side
+failures log at ``exception`` so unexpected crashes keep their stack.
 """
 
 from __future__ import annotations
 
-import base64
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
@@ -39,6 +43,7 @@ from klai_image_storage.utils import (
 
 if TYPE_CHECKING:
     from klai_image_storage.storage import ImageStore
+    from klai_image_storage.types import ParsedImage
 
 logger = structlog.get_logger()
 
@@ -47,17 +52,6 @@ def _ext_from_url(url: str) -> str:
     """Extract a file extension from a URL path, defaulting to ``png``."""
     suffix = PurePosixPath(url.split("?")[0]).suffix.lower().lstrip(".")
     return suffix if suffix else "png"
-
-
-def _ext_from_mime(mime: str) -> str:
-    """Map a MIME type to a file extension."""
-    return {
-        "image/jpeg": "jpg",
-        "image/png": "png",
-        "image/gif": "gif",
-        "image/webp": "webp",
-        "image/svg+xml": "svg",
-    }.get(mime, "png")
 
 
 def _collect_srcs(media_images: list[dict[str, Any]]) -> list[tuple[str, str]]:
@@ -76,6 +70,98 @@ def _collect_srcs(media_images: list[dict[str, Any]]) -> list[tuple[str, str]]:
     return pairs
 
 
+async def _download_validate_upload(
+    url: str,
+    *,
+    http_client: httpx.AsyncClient,
+    image_store: ImageStore,
+    org_id: str,
+    kb_slug: str,
+) -> str | None:
+    """Fetch *url*, validate magic bytes, upload to S3, return the public URL.
+
+    Returns the public URL on success, ``None`` on any failure. All
+    failure paths log with the ``url`` field so production can correlate.
+
+    Exception policy:
+    - ``httpx.HTTPError`` (connect, timeout, read, decode) → ``warning``,
+      no traceback. These are expected when crawling hostile or dead
+      pages.
+    - any other ``Exception`` on the upload leg → ``exception``, with
+      traceback. Unexpected — e.g. S3 layer crash, mock mis-set in tests.
+    """
+    try:
+        resp = await http_client.get(url)
+    except httpx.HTTPError as exc:
+        # Expected transport failure (connect, timeout, decode, ...) — noisy
+        # but normal when crawling hostile or dead sites. Warning without
+        # traceback keeps VictoriaLogs readable.
+        logger.warning("image_download_error", url=url, error=str(exc))
+        return None
+    except Exception:
+        # Unexpected — e.g. a third-party interceptor, a mis-set test mock,
+        # or an httpx internals bug. Keep the traceback so post-mortems work.
+        logger.exception("image_download_unexpected_error", url=url)
+        return None
+
+    if resp.status_code != 200:
+        logger.warning("image_download_failed", url=url, status=resp.status_code)
+        return None
+
+    data = resp.content
+    if len(data) > MAX_IMAGE_SIZE:
+        logger.warning("image_too_large", url=url, size=len(data))
+        return None
+
+    if not image_store.validate_image(data):
+        logger.warning("image_invalid_content", url=url)
+        return None
+
+    try:
+        result = await image_store.upload_image(
+            org_id, kb_slug, data, _ext_from_url(url)
+        )
+    except Exception:
+        logger.exception("image_upload_failed", url=url)
+        return None
+
+    return result.public_url
+
+
+async def _upload_parsed_image(
+    image: ParsedImage,
+    *,
+    image_store: ImageStore,
+    org_id: str,
+    kb_slug: str,
+) -> str | None:
+    """Validate + upload a pre-decoded :class:`ParsedImage`.
+
+    Mirrors :func:`_download_validate_upload` minus the HTTP fetch leg.
+    Logs include the image's ``source_id`` so failures are attributable
+    to a specific parsed element (document path, Notion block ID, ...).
+    """
+    if len(image.data) > MAX_IMAGE_SIZE:
+        logger.warning(
+            "parsed_image_too_large", source_id=image.source_id, size=len(image.data)
+        )
+        return None
+
+    if not image_store.validate_image(image.data):
+        logger.warning("parsed_image_invalid_content", source_id=image.source_id)
+        return None
+
+    try:
+        result = await image_store.upload_image(
+            org_id, kb_slug, image.data, image.ext
+        )
+    except Exception:
+        logger.exception("parsed_image_upload_failed", source_id=image.source_id)
+        return None
+
+    return result.public_url
+
+
 # @MX:ANCHOR: download_and_upload_adapter_images — connector sync-engine hot path.
 # @MX:REASON: Every github/notion/drive sync calls this for every document.
 #   A silent upload failure here strands images for the affected KB.
@@ -87,77 +173,53 @@ async def download_and_upload_adapter_images(
     kb_slug: str,
     image_store: ImageStore,
     http_client: httpx.AsyncClient,
-    parsed_images: list[dict[str, str]] | None = None,
+    parsed_images: list[ParsedImage] | None = None,
 ) -> list[str]:
-    """Download images from URLs and upload to S3 (connector adapter path).
+    """Upload images for a connector-adapter document.
 
     Args:
-        image_urls: List of ``(alt, url)`` tuples from markdown extraction.
+        image_urls: ``(alt, url)`` tuples extracted from markdown. Alts
+            are not used for storage — they only document intent.
         org_id: Organisation ID for tenant-scoped storage.
         kb_slug: Knowledge base slug.
         image_store: S3 image store client.
-        http_client: Async HTTP client for downloading images. The caller
-            owns its lifecycle.
-        parsed_images: Optional list of base64-encoded images from the
-            parser (extracted from PDF/DOCX via Unstructured).
+        http_client: Async HTTP client for downloading URL-referenced
+            images. The caller owns its lifecycle.
+        parsed_images: Optional list of already-decoded images from a
+            document parser (e.g. Unstructured for PDF/DOCX). The
+            caller is responsible for the base64 decode and the
+            MIME-to-extension mapping; see :class:`ParsedImage`.
 
     Returns:
-        List of public URLs for successfully uploaded images.
+        List of public URLs for successfully uploaded images, in the
+        order they were processed (parsed first, then URL-referenced).
     """
     uploaded_urls: list[str] = []
     remaining = MAX_IMAGES_PER_DOCUMENT
 
-    # Phase 1: Upload base64 images from parser (PDF/DOCX).
-    for img in parsed_images or []:
+    for image in parsed_images or []:
         if remaining <= 0:
             break
-        try:
-            data = base64.b64decode(img["data_b64"])
-            mime = img.get("mime_type", "image/png")
-            if not image_store.validate_image(data):
-                continue
-            if len(data) > MAX_IMAGE_SIZE:
-                logger.warning("parsed_image_too_large", size=len(data))
-                continue
-            result = await image_store.upload_image(
-                org_id, kb_slug, data, _ext_from_mime(mime)
-            )
-            uploaded_urls.append(result.public_url)
+        public_url = await _upload_parsed_image(
+            image, image_store=image_store, org_id=org_id, kb_slug=kb_slug
+        )
+        if public_url is not None:
+            uploaded_urls.append(public_url)
             remaining -= 1
-        except Exception:
-            logger.exception("parsed_image_upload_failed")
 
-    # Phase 2: Download and upload URL-referenced images.
-    # @MX:NOTE: Broad ``except Exception`` matches pre-SPEC klai-connector
-    #   behaviour exactly (zero-behaviour-change, SPEC-KB-IMAGE-002 REQ-03).
-    #   A single image's failure must never abort the sync.
     for _alt, url in image_urls:
         if remaining <= 0:
             break
-        try:
-            resp = await http_client.get(url)
-            if resp.status_code != 200:
-                logger.warning(
-                    "image_download_failed", url=url, status=resp.status_code
-                )
-                continue
-
-            data = resp.content
-            if len(data) > MAX_IMAGE_SIZE:
-                logger.warning("image_too_large", url=url, size=len(data))
-                continue
-
-            if not image_store.validate_image(data):
-                logger.warning("image_invalid_content", url=url)
-                continue
-
-            result = await image_store.upload_image(
-                org_id, kb_slug, data, _ext_from_url(url)
-            )
-            uploaded_urls.append(result.public_url)
+        public_url = await _download_validate_upload(
+            url,
+            http_client=http_client,
+            image_store=image_store,
+            org_id=org_id,
+            kb_slug=kb_slug,
+        )
+        if public_url is not None:
+            uploaded_urls.append(public_url)
             remaining -= 1
-        except Exception:
-            logger.exception("image_download_upload_failed", url=url)
 
     return uploaded_urls
 
@@ -176,26 +238,30 @@ async def download_and_upload_crawl_images(
     image_store: ImageStore,
     http_client: httpx.AsyncClient,
 ) -> list[str]:
-    """Download, validate and upload images from a crawl4ai ``media.images`` list.
+    """Upload images for a web-crawled page.
+
+    Filters crawl4ai ``media.images`` entries, resolves relative URLs
+    against *base_url*, dedupes by final resolved URL, and then feeds
+    each through :func:`_download_validate_upload`.
 
     Args:
-        media_images: ``result.media.images`` from crawl4ai (list of dicts).
+        media_images: ``result.media.images`` from crawl4ai (list of
+            dicts with ``src`` / ``data_src`` / ``alt``).
         base_url: Page URL — used to resolve relative image paths.
         org_id: Tenant org_id for the S3 key namespace.
         kb_slug: Knowledge base slug.
         image_store: S3 client to upload into.
-        http_client: Async HTTP client used for image downloads. The caller
-            owns its lifecycle.
+        http_client: Async HTTP client used for image downloads. The
+            caller owns its lifecycle.
 
     Returns:
-        List of public URLs for successfully uploaded images, in order of
-        first appearance, deduplicated by final resolved URL.
+        List of public URLs for successfully uploaded images, in order
+        of first appearance, deduplicated by final resolved URL.
     """
     pairs = _collect_srcs(media_images)
     if not pairs:
         return []
 
-    # Resolve against base_url + dedupe by final URL, preserving order.
     resolved: list[str] = [resolve_relative_url(src, base_url) for _alt, src in pairs]
     urls_to_fetch = dedupe_image_urls(resolved)
 
@@ -205,34 +271,15 @@ async def download_and_upload_crawl_images(
     for url in urls_to_fetch:
         if remaining <= 0:
             break
-        try:
-            resp = await http_client.get(url)
-        except httpx.HTTPError as exc:
-            logger.warning("image_download_error", url=url, error=str(exc))
-            continue
-
-        if resp.status_code != 200:
-            logger.warning("image_download_failed", url=url, status=resp.status_code)
-            continue
-
-        data = resp.content
-        if len(data) > MAX_IMAGE_SIZE:
-            logger.warning("image_too_large", url=url, size=len(data))
-            continue
-
-        if not image_store.validate_image(data):
-            logger.warning("image_invalid_content", url=url)
-            continue
-
-        try:
-            result = await image_store.upload_image(
-                org_id, kb_slug, data, _ext_from_url(url)
-            )
-        except Exception:
-            logger.exception("image_upload_failed", url=url)
-            continue
-
-        uploaded_urls.append(result.public_url)
-        remaining -= 1
+        public_url = await _download_validate_upload(
+            url,
+            http_client=http_client,
+            image_store=image_store,
+            org_id=org_id,
+            kb_slug=kb_slug,
+        )
+        if public_url is not None:
+            uploaded_urls.append(public_url)
+            remaining -= 1
 
     return uploaded_urls

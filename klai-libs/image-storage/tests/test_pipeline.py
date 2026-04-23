@@ -13,15 +13,14 @@ ImageStore's minio client is patched to never hit S3. EC-3 guard.
 
 from __future__ import annotations
 
-import base64
 from typing import Any
 from unittest.mock import MagicMock
 
 import httpx
 
 from klai_image_storage import (
-    MAX_IMAGE_SIZE,
     ImageStore,
+    ParsedImage,
     download_and_upload_adapter_images,
     download_and_upload_crawl_images,
 )
@@ -30,6 +29,9 @@ from klai_image_storage import (
 # ImageStore.validate_image.
 _PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 _GIF_BYTES = b"GIF89a" + b"\x00" * 64
+# Matches _MAX_IMAGE_SIZE in storage.py; duplicated here so tests stay
+# readable without importing a private name.
+_MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024
 
 
 def _mock_image_store() -> ImageStore:
@@ -139,7 +141,7 @@ class TestAdapterUrls:
 
     async def test_skips_too_large_image(self) -> None:
         store = _mock_image_store()
-        big = _PNG_BYTES + b"\x00" * MAX_IMAGE_SIZE  # over the limit
+        big = _PNG_BYTES + b"\x00" * _MAX_IMAGE_SIZE_BYTES  # over the limit
         async with _http_client(
             responses={
                 "https://example.com/huge.png": httpx.Response(200, content=big),
@@ -194,7 +196,7 @@ class TestAdapterUrls:
 
 
 class TestAdapterParsedImages:
-    async def test_uploads_base64_parsed_image(self) -> None:
+    async def test_uploads_parsed_image(self) -> None:
         store = _mock_image_store()
         async with _http_client() as client:
             urls = await download_and_upload_adapter_images(
@@ -204,17 +206,14 @@ class TestAdapterParsedImages:
                 image_store=store,
                 http_client=client,
                 parsed_images=[
-                    {
-                        "data_b64": base64.b64encode(_PNG_BYTES).decode(),
-                        "mime_type": "image/png",
-                    }
+                    ParsedImage(data=_PNG_BYTES, ext="png", source_id="doc1:el7"),
                 ],
             )
         assert len(urls) == 1
 
     async def test_skips_too_large_parsed_image(self) -> None:
         store = _mock_image_store()
-        big = _PNG_BYTES + b"\x00" * MAX_IMAGE_SIZE
+        big = _PNG_BYTES + b"\x00" * _MAX_IMAGE_SIZE_BYTES
         async with _http_client() as client:
             urls = await download_and_upload_adapter_images(
                 image_urls=[],
@@ -222,12 +221,7 @@ class TestAdapterParsedImages:
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
-                parsed_images=[
-                    {
-                        "data_b64": base64.b64encode(big).decode(),
-                        "mime_type": "image/png",
-                    }
-                ],
+                parsed_images=[ParsedImage(data=big, ext="png")],
             )
         assert urls == []
 
@@ -240,12 +234,7 @@ class TestAdapterParsedImages:
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
-                parsed_images=[
-                    {
-                        "data_b64": base64.b64encode(b"not an image").decode(),
-                        "mime_type": "image/png",
-                    }
-                ],
+                parsed_images=[ParsedImage(data=b"not an image", ext="png")],
             )
         assert urls == []
 
@@ -262,14 +251,27 @@ class TestAdapterParsedImages:
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
-                parsed_images=[
-                    {
-                        "data_b64": base64.b64encode(_GIF_BYTES).decode(),
-                        "mime_type": "image/gif",
-                    }
-                ],
+                parsed_images=[ParsedImage(data=_GIF_BYTES, ext="gif")],
             )
         assert len(urls) == 2
+
+    async def test_parsed_image_source_id_in_log_context(self) -> None:
+        """Failing parsed images log their source_id for production triage."""
+        store = _mock_image_store()
+        async with _http_client() as client:
+            urls = await download_and_upload_adapter_images(
+                image_urls=[],
+                org_id="org-1",
+                kb_slug="kb",
+                image_store=store,
+                http_client=client,
+                parsed_images=[
+                    ParsedImage(
+                        data=b"bogus", ext="png", source_id="report.pdf#element-42"
+                    ),
+                ],
+            )
+        assert urls == []  # invalid content is rejected; exercise source_id path
 
 
 # ---------------------------------------------------------------------------

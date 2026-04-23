@@ -4,13 +4,13 @@ Tests the full flow: adapter -> parser -> image extraction -> S3 upload -> inges
 using mocks for external services (S3, HTTP, knowledge-ingest).
 """
 
-import base64
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from klai_image_storage import (
     ImageStore,
     ImageUploadResult,
+    ParsedImage,
     extract_markdown_image_urls,
     resolve_relative_url,
 )
@@ -243,13 +243,12 @@ class TestPDFImageE2E:
 
     @pytest.mark.asyncio
     async def test_pdf_base64_images_uploaded(self):
-        """Base64 images from Unstructured PDF partition are uploaded to S3."""
+        """Already-decoded images from Unstructured PDF partition are uploaded to S3."""
         png_data = _png_bytes()
-        b64_data = base64.b64encode(png_data).decode()
 
         parsed_images = [
-            {"data_b64": b64_data, "mime_type": "image/png"},
-            {"data_b64": b64_data, "mime_type": "image/jpeg"},
+            ParsedImage(data=png_data, ext="png", source_id="report.pdf#p1"),
+            ParsedImage(data=png_data, ext="jpg", source_id="report.pdf#p2"),
         ]
 
         public_urls = await download_and_upload_images(
@@ -281,7 +280,7 @@ class TestMixedE2E:
             kb_slug="mixed",
             image_store=_mock_image_store(),
             http_client=_mock_http_ok(),
-            parsed_images=[{"data_b64": base64.b64encode(png_data).decode(), "mime_type": "image/png"}],
+            parsed_images=[ParsedImage(data=png_data, ext="png")],
         )
         # 1 parsed + 1 markdown = 2 total
         assert len(public_urls) == 2
