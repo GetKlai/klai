@@ -60,6 +60,7 @@ def register_crawl_tasks(procrastinate_app: Any) -> None:
             cookies=cookies,
             canary_url=canary_url,
             canary_fingerprint=canary_fingerprint,
+            connector_id=connector_id,
         )
 
     procrastinate_app.run_crawl = run_crawl  # type: ignore[attr-defined]
