@@ -14,7 +14,6 @@ dependencies = [
     "pydantic-settings>=2.7.0",
     "unstructured>=0.16.0",
     "httpx[http2]>=0.28.0",
-    "apscheduler>=3.10.0",
     "cryptography>=44.0.0",
     "gidgethub>=5.3.0",
     "PyJWT[crypto]>=2.9.0",

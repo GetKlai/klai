@@ -168,7 +168,7 @@ portal-api ─▶ klai-connector sync_engine ─▶ POST /ingest/v1/crawl/sync �
    closes sync_run.status=completed + documents_ok=pages_total
 ```
 
-The actual crawl happens inside **knowledge-ingest's** crawler adapter, which uses the same Crawl4AI REST container (`http://crawl4ai:11235`) as the old in-connector path. The two-phase "discover → extract" semantics (SPEC-CRAWL-002) now live in `knowledge_ingest/adapters/crawler.py`. klai-connector keeps ownership of `connector.sync_runs` + `product_events` so scheduler, analytics, and UI stay untouched.
+The actual crawl happens inside **knowledge-ingest's** crawler adapter, which uses the same Crawl4AI REST container (`http://crawl4ai:11235`) as the old in-connector path. The two-phase "discover → extract" semantics (SPEC-CRAWL-002) now live in `knowledge_ingest/adapters/crawler.py`. klai-connector keeps ownership of `connector.sync_runs` + `product_events` so analytics and UI stay untouched. Since SPEC-CONNECTOR-CLEANUP-001 the legacy in-connector scheduler is gone (reimplementation tracked in SPEC-CONNECTOR-SCHEDULING-001) and `connector.sync_runs.connector_id` has a cross-schema `ON DELETE CASCADE` FK to `public.portal_connectors.id`, so portal-side connector deletes clean up sync_runs automatically.
 
 **Wizard endpoints:**
 

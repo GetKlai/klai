@@ -25,13 +25,11 @@ from app.core.logging import RequestContextMiddleware, get_logger, setup_logging
 from app.core.security import AESGCMCipher
 from app.middleware.auth import AuthMiddleware
 from app.models.sync_run import SyncRun
-from app.routes.connectors import router as connectors_router
 from app.routes.fingerprint import router as fingerprint_router
 from app.routes.health import router as health_router
 from app.routes.sync import router as sync_router
 from app.services.crypto import PostgresSecretsStore
 from app.services.portal_client import PortalClient
-from app.services.scheduler import ConnectorScheduler
 from app.services.sync_engine import SyncEngine
 
 logger = get_logger(__name__)
@@ -158,17 +156,11 @@ def create_app() -> FastAPI:
         )
         app.state.sync_engine = sync_engine
 
-        # Scheduler
-        scheduler = ConnectorScheduler()
-        app.state.scheduler = scheduler
-        await scheduler.start(_db.session_maker, sync_engine.run_sync)
-
         logger.info("klai-connector started successfully")
         yield
 
         # -- Shutdown --
         logger.info("Shutting down klai-connector")
-        await scheduler.shutdown()
         await registry.aclose()
         await ingest_client.aclose()
         await dispose_engine()
@@ -194,7 +186,6 @@ def create_app() -> FastAPI:
 
     # Routes
     app.include_router(health_router)
-    app.include_router(connectors_router, prefix="/api/v1")
     app.include_router(sync_router, prefix="/api/v1")
     app.include_router(fingerprint_router, prefix="/api/v1")
 
