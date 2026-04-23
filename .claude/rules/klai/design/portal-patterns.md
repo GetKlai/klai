@@ -410,6 +410,28 @@ All icons use Lucide React with consistent props:
 
 Third-party icons: `@icons-pack/react-simple-icons` for brand logos (GitHub, Notion, Google Drive, etc.).
 
+### Action icons in list views (semantic colors — retained)
+
+Icon-only action buttons in table rows (edit, delete, view, confirm) keep their semantic token colors. They are NOT neutralized to gray alongside the v1 button refresh — the color IS the affordance.
+
+| Action | Icon (lucide) | Class | Token |
+|---|---|---|---|
+| Edit / Rename | `Pencil` | `text-[var(--color-warning)]` | amber `#D97706` |
+| Delete / Remove | `Trash2` | `text-[var(--color-destructive)]` | red `#C0392B` |
+| View / Open / Confirm | `Eye`, `Check` | `text-[var(--color-accent)]` | amber `#fcaa2d` |
+
+Standard wrapper: `inline-flex items-center justify-center transition-opacity hover:opacity-70`.
+
+```tsx
+<button onClick={handleDelete}
+  aria-label={m.delete_label()}
+  className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70">
+  <Trash2 className="h-4 w-4" />
+</button>
+```
+
+**Rule:** Action icons in lists keep semantic color + `hover:opacity-70`. Do NOT replace with gray; do NOT wrap in the primary `<Button>` component (which uses `rounded-full bg-gray-900`). They are inline affordances, not primary buttons.
+
 ---
 
 ## Spacing Reference
