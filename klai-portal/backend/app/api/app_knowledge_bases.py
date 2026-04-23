@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import _get_caller_org, bearer
 from app.core.config import settings
 from app.core.database import get_db
+from app.services.kb_quota import assert_can_create_org_kb, assert_can_create_personal_kb
 from app.models.audit import PortalAuditLog
 from app.models.connectors import PortalConnector
 from app.models.groups import PortalGroup
@@ -474,6 +475,13 @@ async def create_app_knowledge_base(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="default_org_role must be 'viewer', 'contributor', or null",
         )
+
+    # Quota enforcement — SPEC-PORTAL-UNIFY-KB-001 Phase A (R-E1, R-E3, R-X3).
+    # _resolve_personal_kb auto-provisioning is explicitly exempt (D8).
+    if body.owner_type == "user":
+        await assert_can_create_personal_kb(user_id=caller_id, org=org, db=db)
+    elif body.owner_type == "org":
+        await assert_can_create_org_kb(org=org, db=db)
 
     owner_user_id = caller_id if body.owner_type == "user" else None
 
