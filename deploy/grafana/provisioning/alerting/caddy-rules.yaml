@@ -87,7 +87,13 @@ groups:
                   reducer: { params: [], type: last }
                   type: query
         noDataState: OK
-        execErrState: Alerting
+        # execErrState: OK — the VictoriaLogs plugin + Grafana SSE combo
+        # intermittently trips "input data must be a wide series but got
+        # type long" on LogsQL reduce chains. Observed since 2026-04-22
+        # across all three LogsQL-based caddy/portal rules. We'd rather
+        # miss a fire on plugin hiccup than page on plugin error — matches
+        # the intent documented in the portal-api-rules.yaml header.
+        execErrState: OK
         for: 5m
         keepFiringFor: 10m
         isPaused: false
