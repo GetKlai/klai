@@ -94,15 +94,14 @@ async def test_post_scope_personal_as_non_admin_allowed(monkeypatch):
     )
     monkeypatch.setattr(app_templates, "_enforce_rate_limit", AsyncMock())
     monkeypatch.setattr(app_templates, "invalidate_templates", AsyncMock())
-    # Hotfix: create/update re-apply tenant GUC before post-commit refresh.
-    # Mock it out in unit tests since the DB is a MagicMock.
-    monkeypatch.setattr(app_templates, "set_tenant", AsyncMock())
 
     db = MagicMock()
     db.add = MagicMock()
+    db.flush = AsyncMock()
     db.commit = AsyncMock()
 
-    # Simulate db.refresh populating id + timestamps after the flush/commit
+    # Canonical CREATE pattern: flush + refresh run BEFORE commit, while the
+    # tenant GUC is still active on the transaction.
     async def _refresh(obj):
         obj.id = 123
         obj.slug = "x"
@@ -118,6 +117,10 @@ async def test_post_scope_personal_as_non_admin_allowed(monkeypatch):
     out = await app_templates.create_template(body=body, credentials=MagicMock(), db=db)
 
     assert out.scope == "personal"
+    # flush → refresh → commit ordering is part of the contract.
+    assert db.flush.await_count == 1
+    assert db.refresh.await_count == 1
+    assert db.commit.await_count == 1
     # Personal write → single-user invalidation, not org-wide.
     app_templates.invalidate_templates.assert_awaited_once_with(42, "lc-1")
 
@@ -134,12 +137,10 @@ async def test_post_scope_org_as_admin_triggers_org_wide_invalidate(monkeypatch)
     )
     monkeypatch.setattr(app_templates, "_enforce_rate_limit", AsyncMock())
     monkeypatch.setattr(app_templates, "invalidate_templates", AsyncMock())
-    # Hotfix: create/update re-apply tenant GUC before post-commit refresh.
-    # Mock it out in unit tests since the DB is a MagicMock.
-    monkeypatch.setattr(app_templates, "set_tenant", AsyncMock())
 
     db = MagicMock()
     db.add = MagicMock()
+    db.flush = AsyncMock()
     db.commit = AsyncMock()
 
     async def _refresh(obj):
