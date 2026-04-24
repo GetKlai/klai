@@ -77,6 +77,23 @@ def test_no_ics_in_email() -> None:
     assert parts == []
 
 
+def _make_verified_result(raw_email: bytes, from_addr: str):
+    """Build a passing MailAuthResult for tests that isolate the post-auth flow."""
+    from app.services.mail_auth import ArcResult, DkimResult, MailAuthResult, SpfResult
+
+    return MailAuthResult(
+        dkim_result=DkimResult(present=True, valid=True, d="example.com", aligned=True),
+        spf_result=SpfResult(result="pass", smtp_mailfrom_domain="example.com", aligned=True),
+        arc_result=ArcResult(),
+        from_header=from_addr,
+        from_domain="example.com",
+        message_id="<test@example.com>",
+        verified_from=from_addr,
+        reason="",
+        parsed_message=email.message_from_bytes(raw_email),
+    )
+
+
 @pytest.mark.asyncio
 async def test_process_email_with_valid_invite() -> None:
     """A mail-auth-verified .ics email triggers tenant lookup and scheduling.
@@ -89,24 +106,7 @@ async def test_process_email_with_valid_invite() -> None:
     """
     ics_bytes = (FIXTURES / "google_meet.ics").read_bytes()
     raw_email = _make_email_with_ics(ics_bytes)
-
-    from app.services.mail_auth import MailAuthResult
-
-    verified = MailAuthResult(
-        dkim_result={"present": True, "valid": True, "d": "example.com", "aligned": True},
-        spf_result={"result": "pass", "smtp_mailfrom_domain": "example.com", "aligned": True},
-        arc_result={
-            "present": False,
-            "valid": False,
-            "sealer": None,
-            "trusted": False,
-            "aligned_from_domain": False,
-        },
-        from_header="calendar@example.com",
-        from_domain="example.com",
-        verified_from="calendar@example.com",
-        reason="",
-    )
+    verified = _make_verified_result(raw_email, "calendar@example.com")
 
     mock_imap = MagicMock()
     mock_imap.fetch = MagicMock(return_value=("OK", [(b"1", raw_email)]))
@@ -180,24 +180,7 @@ async def test_graceful_when_no_ics() -> None:
     This test mocks verify_mail_auth to isolate the "no ICS" branch.
     """
     raw_email = MIMEText("Just a plain email").as_bytes()
-
-    from app.services.mail_auth import MailAuthResult
-
-    verified = MailAuthResult(
-        dkim_result={"present": True, "valid": True, "d": "example.com", "aligned": True},
-        spf_result={"result": "pass", "smtp_mailfrom_domain": "example.com", "aligned": True},
-        arc_result={
-            "present": False,
-            "valid": False,
-            "sealer": None,
-            "trusted": False,
-            "aligned_from_domain": False,
-        },
-        from_header="sender@example.com",
-        from_domain="example.com",
-        verified_from="sender@example.com",
-        reason="",
-    )
+    verified = _make_verified_result(raw_email, "sender@example.com")
 
     mock_imap = MagicMock()
     mock_imap.fetch = MagicMock(return_value=("OK", [(b"1", raw_email)]))

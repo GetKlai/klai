@@ -14,6 +14,7 @@ Strategy:
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from typing import Any
 from unittest.mock import patch
 
@@ -102,8 +103,8 @@ class TestAC1_NoDkim:
         assert result.reason == "no_dkim_signature"
         assert result.from_header.strip() == "ceo@customer.nl"
         assert result.from_domain == "customer.nl"
-        assert result.dkim_result["present"] is False
-        assert result.arc_result["present"] is False
+        assert result.dkim_result.present is False
+        assert result.arc_result.present is False
 
 
 # ---------- AC-2: DKIM valid but misaligned -------------------------------
@@ -126,9 +127,9 @@ class TestAC2_DkimMisaligned:
 
         assert result.verified_from is None
         assert result.reason == "dkim_misaligned"
-        assert result.dkim_result["valid"] is True
-        assert result.dkim_result["d"] == "spammer.net"
-        assert result.dkim_result["aligned"] is False
+        assert result.dkim_result.valid is True
+        assert result.dkim_result.d == "spammer.net"
+        assert result.dkim_result.aligned is False
         assert result.from_domain == "customer.nl"
 
 
@@ -152,8 +153,8 @@ class TestAC3AC4_DkimValidAligned:
 
         assert result.verified_from == "boss@customer.nl"
         assert result.reason == ""
-        assert result.dkim_result["valid"] is True
-        assert result.dkim_result["aligned"] is True
+        assert result.dkim_result.valid is True
+        assert result.dkim_result.aligned is True
         assert result.from_domain == "customer.nl"
 
     @pytest.mark.asyncio
@@ -170,8 +171,8 @@ class TestAC3AC4_DkimValidAligned:
 
         assert result.verified_from == "someone@gmail.com"
         assert result.reason == ""
-        assert result.dkim_result["valid"] is True
-        assert result.dkim_result["aligned"] is True
+        assert result.dkim_result.valid is True
+        assert result.dkim_result.aligned is True
 
     @pytest.mark.asyncio
     async def test_dkim_valid_org_domain_alignment(self) -> None:
@@ -187,7 +188,7 @@ class TestAC3AC4_DkimValidAligned:
         )
 
         assert result.verified_from == "user@mail.customer.nl"
-        assert result.dkim_result["aligned"] is True
+        assert result.dkim_result.aligned is True
 
 
 # ---------- AC-5: Valid ARC from trusted sealer (forwarded) ---------------
@@ -238,10 +239,10 @@ class TestAC5_ArcTrustedForwarded:
 
         assert result.verified_from == "boss@customer.nl"
         assert result.reason == ""
-        assert result.arc_result["valid"] is True
-        assert result.arc_result["sealer"] == "google.com"
-        assert result.arc_result["trusted"] is True
-        assert result.arc_result["aligned_from_domain"] is True
+        assert result.arc_result.valid is True
+        assert result.arc_result.sealer == "google.com"
+        assert result.arc_result.trusted is True
+        assert result.arc_result.aligned_from_domain is True
 
 
 # ---------- AC-6: ARC from untrusted sealer -------------------------------
@@ -286,9 +287,9 @@ class TestAC6_ArcUntrustedSealer:
 
         assert result.verified_from is None
         assert result.reason == "arc_untrusted_sealer"
-        assert result.arc_result["valid"] is True
-        assert result.arc_result["sealer"] == "weird-provider.example"
-        assert result.arc_result["trusted"] is False
+        assert result.arc_result.valid is True
+        assert result.arc_result.sealer == "weird-provider.example"
+        assert result.arc_result.trusted is False
 
 
 # ---------- AC-8: Verification timeout ------------------------------------
@@ -361,18 +362,31 @@ class TestAC9_Malformed:
 
 
 class TestAC11_ResultSchema:
-    """Every MailAuthResult contains the same top-level keys regardless of verdict."""
+    """Every MailAuthResult carries the same typed sub-results regardless of verdict.
+
+    The :class:`DkimResult` / :class:`SpfResult` / :class:`ArcResult` frozen
+    dataclasses replace the previous ``dict[str, Any]`` shape, so a typo in
+    a field access is now a pyright / runtime error rather than a silent
+    KeyError-or-None in prod.
+    """
 
     @pytest.mark.asyncio
     async def test_reject_result_has_stable_shape(self) -> None:
         raw = build_email(from_addr="ceo@customer.nl")
         result = await verify_mail_auth(raw)
 
-        # MailAuthResult is a frozen dataclass with a fixed shape; the
-        # listener will pull these into the imap_auth_failed log.
-        assert set(result.dkim_result.keys()) == {"present", "valid", "d", "aligned"}
-        assert set(result.spf_result.keys()) == {"result", "smtp_mailfrom_domain", "aligned"}
-        assert set(result.arc_result.keys()) == {
+        assert {f.name for f in dataclasses.fields(result.dkim_result)} == {
+            "present",
+            "valid",
+            "d",
+            "aligned",
+        }
+        assert {f.name for f in dataclasses.fields(result.spf_result)} == {
+            "result",
+            "smtp_mailfrom_domain",
+            "aligned",
+        }
+        assert {f.name for f in dataclasses.fields(result.arc_result)} == {
             "present",
             "valid",
             "sealer",
@@ -403,14 +417,8 @@ class TestAC11_ResultSchema:
 
         assert result.verified_from == "user@accept-shape.test"
         assert result.reason == ""
-        assert set(result.dkim_result.keys()) == {"present", "valid", "d", "aligned"}
-        assert set(result.arc_result.keys()) == {
-            "present",
-            "valid",
-            "sealer",
-            "trusted",
-            "aligned_from_domain",
-        }
+        assert result.parsed_message is not None
+        assert result.message_id  # non-empty; either real or "<unknown>"
 
 
 # ---------- REQ-2.1: SPF alignment pulled from trusted Auth-Results --------
@@ -436,9 +444,9 @@ class TestSPFFromAuthResults:
         result = await verify_mail_auth(raw, dnsfunc=make_dnsfunc(k), authserv_id="mail.getklai.com")
 
         assert result.verified_from == "boss@spf-aligned.test"
-        assert result.spf_result["result"] == "pass"
-        assert result.spf_result["smtp_mailfrom_domain"] == "spf-aligned.test"
-        assert result.spf_result["aligned"] is True
+        assert result.spf_result.result == "pass"
+        assert result.spf_result.smtp_mailfrom_domain == "spf-aligned.test"
+        assert result.spf_result.aligned is True
 
     @pytest.mark.asyncio
     async def test_spf_misaligned_not_marked_aligned(self) -> None:
@@ -459,9 +467,9 @@ class TestSPFFromAuthResults:
 
         # DKIM-aligned accept still happens; SPF is a soft signal per REQ-2.2.
         assert result.verified_from == "boss@dkim-only.com"
-        assert result.spf_result["result"] == "pass"
-        assert result.spf_result["aligned"] is False
-        assert result.spf_result["smtp_mailfrom_domain"] == "mail-relay.com"
+        assert result.spf_result.result == "pass"
+        assert result.spf_result.aligned is False
+        assert result.spf_result.smtp_mailfrom_domain == "mail-relay.com"
 
     @pytest.mark.asyncio
     async def test_authserv_id_filter_ignores_sender_injected_auth_results(self) -> None:
@@ -488,8 +496,8 @@ class TestSPFFromAuthResults:
         # DKIM alignment still carries the accept; SPF signal from untrusted
         # header is discarded (result stays "absent").
         assert result.verified_from == "boss@dkim-only-again.test"
-        assert result.spf_result["result"] == "absent"
-        assert result.spf_result["aligned"] is False
+        assert result.spf_result.result == "absent"
+        assert result.spf_result.aligned is False
 
 
 # ---------- REQ-3: ARC edge cases -----------------------------------------
@@ -533,8 +541,8 @@ class TestARCEdgeCases:
         # signal remains → no_auth_signal.
         assert result.verified_from is None
         assert result.reason == "no_auth_signal"
-        assert result.arc_result["aligned_from_domain"] is False
-        assert result.arc_result["trusted"] is True
+        assert result.arc_result.aligned_from_domain is False
+        assert result.arc_result.trusted is True
 
     @pytest.mark.asyncio
     async def test_arc_inner_dkim_fail_does_not_align(self) -> None:
@@ -562,7 +570,7 @@ class TestARCEdgeCases:
             result = await verify_mail_auth(raw, trusted_arc_sealers=["google.com"], timeout_seconds=5.0)
 
         assert result.verified_from is None
-        assert result.arc_result["aligned_from_domain"] is False
+        assert result.arc_result.aligned_from_domain is False
 
     @pytest.mark.asyncio
     async def test_arc_cv_fail_yields_arc_invalid(self) -> None:
@@ -607,8 +615,8 @@ class TestARCEdgeCases:
             result = await verify_mail_auth(raw, trusted_arc_sealers=["google.com"], timeout_seconds=5.0)
 
         assert result.verified_from is None
-        assert result.arc_result["valid"] is False
-        assert result.arc_result["present"] is True
+        assert result.arc_result.valid is False
+        assert result.arc_result.present is True
 
 
 # ---------- REQ-1: DKIM exception + invalid sig variants ------------------
@@ -631,8 +639,8 @@ class TestDkimInvalidBranches:
 
         assert result.verified_from is None
         assert result.reason == "dkim_invalid"
-        assert result.dkim_result["present"] is True
-        assert result.dkim_result["valid"] is False
+        assert result.dkim_result.present is True
+        assert result.dkim_result.valid is False
 
     @pytest.mark.asyncio
     async def test_arc_with_dkim_invalid_and_no_arc_header_yields_dkim_invalid(
