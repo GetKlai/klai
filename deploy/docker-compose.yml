@@ -632,7 +632,14 @@ services:
   retrieval-api:
     image: ghcr.io/getklai/retrieval-api:latest
     restart: unless-stopped
-    env_file: .env
+    # SPEC-SEC-ENVFILE-SCOPE-001 — retrieval-api's process env is scoped
+    # to what retrieval_api/config.py reads. Previously `env_file: .env`
+    # injected all ~120 host secrets including portal INTERNAL_SECRET,
+    # ENCRYPTION_KEY, Moneybird/Vexa webhook tokens — an RCE primitive
+    # in a query-crafting path would have forwarded Moneybird webhooks
+    # and tampered tenants. The explicit block below is unchanged;
+    # the only change is removing the env_file directive since every
+    # var retrieval reads was already declared here.
     environment:
       QDRANT_URL: http://qdrant:6333
       QDRANT_API_KEY: ${QDRANT_API_KEY}
