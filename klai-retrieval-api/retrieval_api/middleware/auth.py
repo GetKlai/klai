@@ -231,9 +231,19 @@ def _extract_role(payload: dict[str, Any]) -> str | None:
 
 
 def _source_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    # SPEC-SEC-WEBHOOK-001 REQ-1.5: trust boundary for rate-limit key derivation.
+    # Previously this function read `X-Forwarded-For` directly from request headers,
+    # bypassing uvicorn's `--proxy-headers` handling. That meant any klai-net peer
+    # could forge an XFF value and either bypass the 600 rpm ceiling (by rotating
+    # the forged IP per request) or collapse all traffic into the caller's TCP
+    # peer bucket (denying others).
+    #
+    # After SPEC-SEC-WEBHOOK-001 REQ-1: retrieval-api's uvicorn runs with
+    # `--proxy-headers --forwarded-allow-ips=127.0.0.1` — meaning NO upstream is
+    # trusted to set X-Forwarded-For. `request.client.host` therefore always
+    # reflects the TCP peer's container IP on klai-net (portal-api, litellm, etc.),
+    # which is the legitimate caller identity for service-to-service rate-limiting.
+    # We use it directly and NEVER read the raw header.
     if request.client is not None:
         return request.client.host
     return "unknown"
