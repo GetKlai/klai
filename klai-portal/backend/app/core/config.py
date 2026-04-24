@@ -154,6 +154,14 @@ class Settings(BaseSettings):
     # Same endpoint that klai-knowledge-ingest and klai-connector already target.
     crawl4ai_api_url: str = "http://crawl4ai:11235"
 
+    # Optional residential proxy for YouTube transcript fetches (SPEC-KB-SOURCES-001
+    # D5 follow-up). When set, the YouTube extractor retries via this proxy when
+    # YouTube refuses the datacenter IP (RequestBlocked / IpBlocked). Empty = direct
+    # fetch only, and an IP-block surfaces as a 502 "could not reach YouTube".
+    # Format: full proxy URL including scheme + credentials, e.g.
+    # "http://user:pass@p.webshare.io:9999".
+    youtube_proxy_url: str = ""
+
     # Redis (used for retrieval logs and feedback idempotency -- SPEC-KB-015)
     redis_url: str = ""
 

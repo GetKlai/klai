@@ -681,6 +681,7 @@
   "knowledge_add_source_error_invalid_url": "Geen geldige URL",
   "knowledge_add_source_error_blocked_url": "Deze URL is niet toegestaan",
   "knowledge_add_source_error_fetch_failed": "Pagina onbereikbaar — probeer opnieuw",
+  "knowledge_add_source_error_youtube_unreachable": "YouTube onbereikbaar — probeer opnieuw",
   "knowledge_add_source_error_no_transcript": "Deze video heeft geen transcript",
   "knowledge_add_source_error_kb_full": "Deze kennisbank heeft de documentlimiet bereikt",
   "knowledge_add_source_error_generic": "Er ging iets mis. Probeer opnieuw.",

@@ -77,7 +77,9 @@ export function errorMessageFor(kind: SourceKind, err: unknown): string {
         ? m.knowledge_add_source_error_no_transcript()
         : m.knowledge_add_source_error_generic()
     case 502:
-      return m.knowledge_add_source_error_fetch_failed()
+      return kind === 'youtube'
+        ? m.knowledge_add_source_error_youtube_unreachable()
+        : m.knowledge_add_source_error_fetch_failed()
     default:
       return m.knowledge_add_source_error_generic()
   }

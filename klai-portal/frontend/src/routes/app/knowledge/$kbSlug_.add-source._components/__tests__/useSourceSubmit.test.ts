@@ -86,9 +86,27 @@ describe('errorMessageFor — SPEC D8 mapping', () => {
     expect(errorMessageFor('url', err)).toBe(keyOf('Something went wrong. Try again.'))
   })
 
-  it('ApiError 502 on any kind → fetch-failed banner', () => {
+  it('ApiError 502 on URL kind → fetch-failed banner', () => {
     const err = new ApiError(502, 'crawl4ai unreachable')
     expect(errorMessageFor('url', err)).toBe(
+      keyOf('Could not reach the page — try again'),
+    )
+  })
+
+  it('ApiError 502 on YouTube kind → YouTube-specific unreachable banner', () => {
+    // IP block / rate-limit on core-01 surfaces here — user needs to know
+    // it's a transient upstream issue, not "no transcript".
+    const err = new ApiError(502, 'Could not reach YouTube — try again')
+    expect(errorMessageFor('youtube', err)).toBe(
+      keyOf('Could not reach YouTube — try again'),
+    )
+  })
+
+  it('ApiError 502 on Text kind → generic fetch-failed (no upstream for text)', () => {
+    // Text never calls crawl4ai or YouTube — a 502 here is from the
+    // knowledge-ingest forwarding step. Generic fetch-failed copy is fine.
+    const err = new ApiError(502, 'Knowledge ingest unreachable')
+    expect(errorMessageFor('text', err)).toBe(
       keyOf('Could not reach the page — try again'),
     )
   })

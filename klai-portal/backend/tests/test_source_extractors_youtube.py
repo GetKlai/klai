@@ -3,6 +3,15 @@
 Covers video-ID extraction across URL variants, transcript fetching via
 youtube-transcript-api (mocked), and oembed title resolution with
 best-effort fallback.
+
+Error-mapping invariants (SPEC-KB-SOURCES-001 v1.3):
+- NoTranscriptFound / TranscriptsDisabled / VideoUnavailable
+  → UnsupportedSourceError (route → 422, "no transcript").
+- RequestBlocked / IpBlocked / YouTubeRequestFailed /
+  CouldNotRetrieveTranscript
+  → SourceFetchError (route → 502, "could not reach YouTube").
+  With ``settings.youtube_proxy_url`` configured, a retry is attempted
+  via the proxy before the SourceFetchError is raised.
 """
 
 from __future__ import annotations
@@ -13,13 +22,18 @@ from typing import Any
 import httpx
 import pytest
 from youtube_transcript_api import (
+    CouldNotRetrieveTranscript,
+    IpBlocked,
     NoTranscriptFound,
+    RequestBlocked,
     TranscriptsDisabled,
     VideoUnavailable,
+    YouTubeRequestFailed,
 )
 
 from app.services.source_extractors.exceptions import (
     InvalidUrlError,
+    SourceFetchError,
     UnsupportedSourceError,
 )
 from app.services.source_extractors.youtube import (
@@ -55,22 +69,61 @@ class _FakeApi:
         return _FakeTranscript(self._result)
 
 
+def _make_factory(results: list[list[_Snippet] | Exception]):
+    """Build a ``YouTubeTranscriptApi(proxy_config=...)`` factory.
+
+    ``results`` is the queue of outcomes for successive instantiations:
+    index 0 is returned on the first ``YouTubeTranscriptApi(...)`` call,
+    index 1 on the second, etc. Each entry is either snippet list or an
+    exception to raise from ``.fetch``. Matches the production retry
+    flow: direct call first, optional proxy-retry on upstream block.
+    """
+    calls: list[dict[str, Any]] = []
+
+    def _factory(*, proxy_config: Any = None) -> _FakeApi:
+        calls.append({"proxy_config": proxy_config})
+        result = results[min(len(calls) - 1, len(results) - 1)]
+        return _FakeApi(result)
+
+    _factory.calls = calls  # type: ignore[attr-defined]
+    return _factory
+
+
 @pytest.fixture
 def mock_transcript(monkeypatch: pytest.MonkeyPatch):
-    """Return a callable that installs a transcript or exception into the extractor."""
+    """Install a one-shot transcript result (no retry)."""
 
     def _install(result: list[_Snippet] | Exception) -> None:
         monkeypatch.setattr(
             "app.services.source_extractors.youtube.YouTubeTranscriptApi",
-            lambda: _FakeApi(result),
+            _make_factory([result]),
         )
 
     return _install
 
 
 @pytest.fixture
+def mock_transcript_sequence(monkeypatch: pytest.MonkeyPatch):
+    """Install an ordered sequence of results for successive API instantiations.
+
+    Returns the factory object so tests can inspect ``.calls`` to assert
+    how many times (and with which proxy_config) the API was instantiated.
+    """
+
+    def _install(results: list[list[_Snippet] | Exception]):
+        factory = _make_factory(results)
+        monkeypatch.setattr(
+            "app.services.source_extractors.youtube.YouTubeTranscriptApi",
+            factory,
+        )
+        return factory
+
+    return _install
+
+
+@pytest.fixture
 def mock_oembed(monkeypatch: pytest.MonkeyPatch):
-    """Replace the oembed AsyncClient with a MockTransport that returns the given response."""
+    """Replace the oembed AsyncClient with a MockTransport."""
 
     def _install(response: httpx.Response) -> None:
         def handler(_request: httpx.Request) -> httpx.Response:
@@ -186,6 +239,127 @@ class TestTranscriptFetching:
         mock_oembed(httpx.Response(200, json={"title": "T"}))
         with pytest.raises(UnsupportedSourceError):
             await extract_youtube("https://youtu.be/dQw4w9WgXcQ")
+
+
+class TestUpstreamBlocked:
+    """RequestBlocked / IpBlocked / YouTubeRequestFailed / CouldNotRetrieveTranscript
+    must NOT leak as "no transcript" — they're infrastructure, not user input."""
+
+    async def test_request_blocked_no_proxy_raises_source_fetch(
+        self, mock_transcript, mock_oembed, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("app.services.source_extractors.youtube.settings.youtube_proxy_url", "")
+        mock_transcript(RequestBlocked("dQw4w9WgXcQ"))
+        mock_oembed(httpx.Response(200, json={"title": "T"}))
+        with pytest.raises(SourceFetchError):
+            await extract_youtube("https://youtu.be/dQw4w9WgXcQ")
+
+    async def test_ip_blocked_no_proxy_raises_source_fetch(
+        self, mock_transcript, mock_oembed, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("app.services.source_extractors.youtube.settings.youtube_proxy_url", "")
+        mock_transcript(IpBlocked("dQw4w9WgXcQ"))
+        mock_oembed(httpx.Response(200, json={"title": "T"}))
+        with pytest.raises(SourceFetchError):
+            await extract_youtube("https://youtu.be/dQw4w9WgXcQ")
+
+    async def test_youtube_request_failed_no_proxy_raises_source_fetch(
+        self, mock_transcript, mock_oembed, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("app.services.source_extractors.youtube.settings.youtube_proxy_url", "")
+        mock_transcript(YouTubeRequestFailed("dQw4w9WgXcQ", "network error"))
+        mock_oembed(httpx.Response(200, json={"title": "T"}))
+        with pytest.raises(SourceFetchError):
+            await extract_youtube("https://youtu.be/dQw4w9WgXcQ")
+
+    async def test_could_not_retrieve_transcript_raises_source_fetch(
+        self, mock_transcript, mock_oembed, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("app.services.source_extractors.youtube.settings.youtube_proxy_url", "")
+        mock_transcript(CouldNotRetrieveTranscript("dQw4w9WgXcQ"))
+        mock_oembed(httpx.Response(200, json={"title": "T"}))
+        with pytest.raises(SourceFetchError):
+            await extract_youtube("https://youtu.be/dQw4w9WgXcQ")
+
+
+class TestProxyFallback:
+    """When YOUTUBE_PROXY_URL is set, upstream blocks trigger one retry."""
+
+    async def test_proxy_retry_recovers(
+        self, mock_transcript_sequence, mock_oembed, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """First call blocked, proxy retry succeeds → happy-path transcript."""
+        monkeypatch.setattr(
+            "app.services.source_extractors.youtube.settings.youtube_proxy_url",
+            "http://user:pass@proxy.example:9999",
+        )
+        factory = mock_transcript_sequence(
+            [
+                RequestBlocked("dQw4w9WgXcQ"),  # direct call
+                [_Snippet(text="works"), _Snippet(text="via"), _Snippet(text="proxy")],  # proxy call
+            ]
+        )
+        mock_oembed(httpx.Response(200, json={"title": "T"}))
+
+        _, content, _ = await extract_youtube("https://youtu.be/dQw4w9WgXcQ")
+
+        assert content == "works via proxy"
+        # Two instantiations: first direct (no proxy), second with proxy_config.
+        assert len(factory.calls) == 2
+        assert factory.calls[0]["proxy_config"] is None
+        assert factory.calls[1]["proxy_config"] is not None
+
+    async def test_proxy_retry_still_no_transcript_raises_unsupported(
+        self, mock_transcript_sequence, mock_oembed, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Proxy got through but the video really has no transcript."""
+        monkeypatch.setattr(
+            "app.services.source_extractors.youtube.settings.youtube_proxy_url",
+            "http://user:pass@proxy.example:9999",
+        )
+        mock_transcript_sequence(
+            [
+                RequestBlocked("dQw4w9WgXcQ"),
+                NoTranscriptFound("dQw4w9WgXcQ", ["en"], None),
+            ]
+        )
+        mock_oembed(httpx.Response(200, json={"title": "T"}))
+
+        with pytest.raises(UnsupportedSourceError):
+            await extract_youtube("https://youtu.be/dQw4w9WgXcQ")
+
+    async def test_proxy_retry_also_blocked_raises_source_fetch(
+        self, mock_transcript_sequence, mock_oembed, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If proxy is ALSO blocked (rare but possible), surface 502."""
+        monkeypatch.setattr(
+            "app.services.source_extractors.youtube.settings.youtube_proxy_url",
+            "http://user:pass@proxy.example:9999",
+        )
+        mock_transcript_sequence(
+            [
+                RequestBlocked("dQw4w9WgXcQ"),
+                IpBlocked("dQw4w9WgXcQ"),
+            ]
+        )
+        mock_oembed(httpx.Response(200, json={"title": "T"}))
+
+        with pytest.raises(SourceFetchError):
+            await extract_youtube("https://youtu.be/dQw4w9WgXcQ")
+
+    async def test_no_proxy_config_no_retry(
+        self, mock_transcript_sequence, mock_oembed, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without proxy URL, the direct call is the only attempt."""
+        monkeypatch.setattr("app.services.source_extractors.youtube.settings.youtube_proxy_url", "")
+        factory = mock_transcript_sequence([RequestBlocked("dQw4w9WgXcQ")])
+        mock_oembed(httpx.Response(200, json={"title": "T"}))
+
+        with pytest.raises(SourceFetchError):
+            await extract_youtube("https://youtu.be/dQw4w9WgXcQ")
+
+        assert len(factory.calls) == 1
+        assert factory.calls[0]["proxy_config"] is None
 
 
 class TestOembedTitle:

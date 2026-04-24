@@ -468,6 +468,30 @@ class TestYoutubeRoute:
         assert exc.value.status_code == 422
 
     @pytest.mark.asyncio
+    async def test_returns_502_on_source_fetch_error(self) -> None:
+        """IP block / rate-limit on YouTube → 502, NOT 422 (SPEC-KB-SOURCES-001 v1.3)."""
+        from app.api.app_knowledge_sources import YouTubeSourceRequest, add_youtube_source
+
+        kb = _make_kb()
+        db = _make_db_mock(kb)
+
+        with (
+            _CommonPatches(
+                extract_target="youtube",
+                extract_side_effect=SourceFetchError("YouTube refused the request"),
+            ),
+            pytest.raises(HTTPException) as exc,
+        ):
+            await add_youtube_source(
+                kb_slug="personal",
+                body=YouTubeSourceRequest(url="https://youtu.be/dQw4w9WgXcQ"),
+                credentials=MagicMock(),
+                db=db,
+            )
+        assert exc.value.status_code == 502
+        assert "youtube" in exc.value.detail.lower()
+
+    @pytest.mark.asyncio
     async def test_source_ref_dedup_across_url_variants(self) -> None:
         """R3.5: same video via different URL shapes hits the same source_ref."""
         from app.api.app_knowledge_sources import YouTubeSourceRequest, add_youtube_source
