@@ -20,6 +20,11 @@ from app.config import settings
 from app.logging_setup import RequestContextMiddleware, setup_logging
 from app.mailer import send_email
 from app.models import ZitadelPayload
+from app.nonce import (
+    NonceReplayError,
+    RedisUnavailableError,
+    check_and_record_nonce,
+)
 from app.portal_client import get_user_language
 from app.renderer import Renderer
 from app.signature import SignatureError, verify_zitadel_signature
@@ -61,21 +66,38 @@ def _validate_incoming_secret(header_value: str | None) -> None:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
-def _verify_zitadel_signature(raw_body: bytes, signature_header: str | None) -> dict[str, str]:
-    """Wrapper around app.signature.verify_zitadel_signature with uniform 401.
+async def _verify_zitadel_signature(
+    raw_body: bytes, signature_header: str | None
+) -> dict[str, str]:
+    """Wrapper around app.signature + app.nonce with uniform 401 / 503.
 
-    REQ-7.1: every failure returns HTTP 401 with body {"detail": "invalid signature"}.
+    REQ-7.1: every signature failure returns HTTP 401 body
+             {"detail": "invalid signature"}.
     REQ-7.2: the failure `reason` is logged, not leaked to the response.
     REQ-7.3: no side-channel response headers.
-    REQ-10: unknown vN fields, >5 tokens, and unknown non-vN keys all rejected
-            via the SignatureError("unknown_vN_field") path.
+    REQ-10:  unknown vN fields, >5 tokens, and unknown non-vN keys all rejected
+             via the SignatureError("unknown_vN_field") path.
+    REQ-6.1: nonce check runs AFTER HMAC verification to prevent cache pollution
+             by forged signatures.
+    REQ-6.3: Redis unreachable → HTTP 503 (fail-closed). The nonce check is
+             a security control; no silent bypass on degraded infra.
     """
     try:
-        return verify_zitadel_signature(raw_body, signature_header, settings.webhook_secret)
+        parts = verify_zitadel_signature(raw_body, signature_header, settings.webhook_secret)
     except SignatureError as exc:
-        log_kwargs = {"reason": exc.reason, **exc.extra}
-        struct_logger.warning("mailer_signature_invalid", **log_kwargs)
+        struct_logger.warning("mailer_signature_invalid", reason=exc.reason, **exc.extra)
         raise HTTPException(status_code=401, detail="invalid signature") from exc
+
+    try:
+        await check_and_record_nonce(parts)
+    except NonceReplayError as exc:
+        struct_logger.warning("mailer_signature_invalid", reason="replay")
+        raise HTTPException(status_code=401, detail="invalid signature") from exc
+    except RedisUnavailableError as exc:
+        struct_logger.error("mailer_nonce_redis_unavailable", error=str(exc))
+        raise HTTPException(status_code=503, detail="Service unavailable") from exc
+
+    return parts
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +119,7 @@ async def notify(request: Request) -> JSONResponse:
     Returns 500 on render/SMTP failure (Zitadel will retry).
     """
     raw_body = await request.body()
-    _verify_zitadel_signature(raw_body, request.headers.get("zitadel-signature"))
+    await _verify_zitadel_signature(raw_body, request.headers.get("zitadel-signature"))
 
     if settings.debug:
         logger.info("RAW PAYLOAD: %s", raw_body.decode(errors="replace"))
@@ -220,7 +242,7 @@ async def debug(request: Request) -> JSONResponse:
         raise HTTPException(status_code=404, detail="Not found")
 
     raw_body = await request.body()
-    _verify_zitadel_signature(raw_body, request.headers.get("zitadel-signature"))
+    await _verify_zitadel_signature(raw_body, request.headers.get("zitadel-signature"))
 
     try:
         parsed = json.loads(raw_body)
