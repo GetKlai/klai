@@ -24,14 +24,14 @@ from knowledge_ingest.domain_selectors import (
     get_domain_selector,
     upsert_domain_selector,
 )
+from knowledge_ingest.fingerprint import compute_content_fingerprint
 from knowledge_ingest.models import CrawlRequest, CrawlResponse, IngestRequest
 from knowledge_ingest.routes.ingest import ingest_document
-from knowledge_ingest.fingerprint import compute_content_fingerprint
 from knowledge_ingest.selector_ai import (
     detect_login_indicator_via_llm,
     detect_selector_via_llm,
 )
-from knowledge_ingest.utils.url_validator import validate_url
+from knowledge_ingest.utils.url_validator import validate_url, validate_url_pinned
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -126,6 +126,16 @@ async def _run_crawl(
 async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
     """Fetch a URL with PruningContentFilter and return the filtered markdown preview."""
     logger.info("crawl_preview_started", url=body.url)
+    # SPEC-SEC-SSRF-001 / REQ-1.1 / AC-1 / AC-6: SSRF validation MUST
+    # run before any DNS lookup triggered by downstream crawl4ai /
+    # get_domain_selector / crawl_dom_summary logic. It runs outside
+    # the try/except block below because REQ-1.2 forbids the broad
+    # ``except Exception`` from swallowing the 400-class rejection
+    # into the historical 200-with-empty-body shape.
+    try:
+        await validate_url_pinned(body.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
         # Resolve effective selector: user-provided wins, then stored domain selector
         # SPEC-CRAWL-001 / R-2, R-6
