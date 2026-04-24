@@ -1,9 +1,9 @@
 """Shared base class for OAuth-backed connector adapters (SPEC-KB-025).
 
 This module centralises the OAuth token refresh + in-memory caching logic
-used by Google Drive (and, later, SharePoint). Adapters subclass
-``OAuthAdapterBase`` and implement ``_refresh_oauth_token`` with the
-provider-specific token endpoint call.
+used by Google Drive and Microsoft 365 (SharePoint/OneDrive). Adapters
+subclass ``OAuthAdapterBase`` and implement ``_refresh_oauth_token`` with
+the provider-specific token endpoint call.
 
 Design decisions:
 - Token cache is keyed by ``connector.id`` and uses ``time.monotonic()`` for
@@ -15,12 +15,15 @@ Design decisions:
   This is best-effort: a callback failure is logged but never propagates,
   since the next sync can always refresh again.
 - NEVER log access_token / refresh_token values — only metadata.
+- Connector shape is expressed as a ``ConnectorLike`` Protocol so both
+  SQLAlchemy models (production) and ``SimpleNamespace`` stubs (tests)
+  type-check cleanly without ``Any``.
 """
 
 # @MX:ANCHOR: [AUTO] Shared OAuth refresh path for all OAuth-backed adapters.
-# @MX:REASON: fan_in>=2 now (google_drive) and grows with every new OAuth provider.
+# @MX:REASON: fan_in>=2 (google_drive, ms_docs) and grows with every new OAuth provider.
 #             Cache + writeback invariants must stay identical across providers.
-# @MX:SPEC: SPEC-KB-025
+# @MX:SPEC: SPEC-KB-025, SPEC-KB-MS-DOCS-001
 
 from __future__ import annotations
 
@@ -28,7 +31,7 @@ import asyncio
 import time
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import Any, Protocol, runtime_checkable
 
 from app.core.config import Settings
 from app.core.logging import get_logger
@@ -40,6 +43,35 @@ logger = get_logger(__name__)
 # How many seconds before actual expiry we consider a token "expired" and
 # trigger a refresh. Avoids racing API calls against wall-clock expiry.
 _EXPIRY_SKEW_SECONDS = 60.0
+
+
+@runtime_checkable
+class ConnectorLike(Protocol):
+    """Structural Protocol for a connector model passed to OAuthAdapterBase.
+
+    Both SQLAlchemy ``PortalConnector`` instances (production) and
+    ``SimpleNamespace(id=..., config=...)`` stubs (tests) match this shape.
+    The Protocol lets pyright narrow ``config`` without ``Any`` / cast
+    workarounds and catches missing-attribute typos at type-check time.
+
+    ``id`` is typed as ``Any`` because different callers pass different
+    shapes: SQLAlchemy ``Column[UUID]``, ``uuid.UUID``, or ``str``. The
+    adapter always stringifies via ``str(connector.id)``.
+    """
+
+    id: Any
+    config: dict[str, Any] | None
+
+
+class OAuthReconnectRequiredError(RuntimeError):
+    """Raised when the provider indicates the refresh_token is no longer valid.
+
+    Signals that the connector needs a fresh OAuth consent from the user
+    (e.g. Microsoft ``invalid_grant`` after password change, consent revoke,
+    or refresh-token-past-grace-window). Sync engines should catch this and
+    mark the connector as ``auth_error`` so the portal can surface a
+    "Reconnect Microsoft" / "Reconnect Google" affordance.
+    """
 
 
 class OAuthAdapterBase(ABC):
@@ -67,22 +99,30 @@ class OAuthAdapterBase(ABC):
 
     @abstractmethod
     async def _refresh_oauth_token(
-        self, connector: Any, refresh_token: str,
+        self, connector: ConnectorLike, refresh_token: str,
     ) -> dict[str, Any]:
         """Call the provider's token endpoint with the refresh_token.
 
+        Implementations MAY raise ``OAuthReconnectRequiredError`` when the
+        provider returns ``invalid_grant`` so the sync engine can mark the
+        connector as needing user-driven re-consent.
+
         Args:
-            connector: The connector model (provides org_id + config context).
+            connector: The connector model (provides id + config context).
             refresh_token: The long-lived OAuth refresh token.
 
         Returns:
             Raw JSON dict from the token endpoint. MUST contain ``access_token``
             and ``expires_in`` keys. Provider-specific extras are ignored here.
+
+        Raises:
+            OAuthReconnectRequiredError: Provider signalled the refresh_token is
+                permanently invalid.
         """
 
     # -- Public API ----------------------------------------------------------
 
-    async def ensure_token(self, connector: Any) -> str:
+    async def ensure_token(self, connector: ConnectorLike) -> str:
         """Return a valid access_token, refreshing if the cached one has expired.
 
         Args:
@@ -94,6 +134,8 @@ class OAuthAdapterBase(ABC):
         Raises:
             ValueError: If the connector config lacks a refresh_token AND the
                 cached access_token is expired (or absent).
+            OAuthReconnectRequiredError: Provider rejected the refresh_token as
+                permanently invalid (propagated from ``_refresh_oauth_token``).
         """
         connector_id = str(connector.id)
         cached = self._token_cache.get(connector_id)
@@ -104,7 +146,7 @@ class OAuthAdapterBase(ABC):
                 return token
 
         # Serialise refreshes for the same connector so we don't burn through
-        # Google's refresh quota with a thundering-herd at startup.
+        # the provider's refresh quota with a thundering-herd at startup.
         lock = self._refresh_locks.setdefault(connector_id, asyncio.Lock())
         async with lock:
             # Re-check under the lock in case another coroutine just refreshed.
@@ -114,8 +156,10 @@ class OAuthAdapterBase(ABC):
                 return cached[0]
 
             current_config: dict[str, Any] = connector.config or {}
-            refresh_token_value = current_config.get("refresh_token", "")
-            refresh_token: str = refresh_token_value if isinstance(refresh_token_value, str) else ""
+            refresh_token_raw = current_config.get("refresh_token", "")
+            refresh_token: str = (
+                refresh_token_raw if isinstance(refresh_token_raw, str) else ""
+            )
             if not refresh_token:
                 raise ValueError(
                     "OAuth connector missing refresh_token — reconnect required "
@@ -130,7 +174,10 @@ class OAuthAdapterBase(ABC):
                 type(self).__name__,
             )
             payload = await self._refresh_oauth_token(connector, refresh_token)
-            access_token = payload.get("access_token", "")
+            access_token_raw = payload.get("access_token", "")
+            access_token: str = (
+                access_token_raw if isinstance(access_token_raw, str) else ""
+            )
             expires_in = int(payload.get("expires_in", 3600))
             if not access_token:
                 raise ValueError(
@@ -149,15 +196,18 @@ class OAuthAdapterBase(ABC):
             # new one so it survives restart, and (b) mutate connector.config
             # so subsequent refreshes within the same process use the new RT.
             rotated_raw = payload.get("refresh_token")
-            rotated_refresh_token: str | None = rotated_raw if isinstance(rotated_raw, str) else None
+            rotated_refresh_token: str | None = (
+                rotated_raw if isinstance(rotated_raw, str) else None
+            )
             if rotated_refresh_token is not None and rotated_refresh_token == refresh_token:
                 # Provider echoed the same RT — treat as no-rotation.
                 rotated_refresh_token = None
             if rotated_refresh_token:
-                if connector.config is None:
-                    connector.config = {}
-                # connector.config is typed Any at the ABC boundary; cast narrows for the write.
-                cast("dict[str, Any]", connector.config)["refresh_token"] = rotated_refresh_token  # pyright: ignore[reportUnknownMemberType]
+                config_dict: dict[str, Any] = (
+                    connector.config if connector.config is not None else {}
+                )
+                config_dict["refresh_token"] = rotated_refresh_token
+                connector.config = config_dict
 
             token_expiry = (datetime.now(UTC) + timedelta(seconds=expires_in)).isoformat()
             try:
