@@ -39,6 +39,7 @@ from SOPS `klai-infra/core-01/.env.sops`) unless noted otherwise.
 | Secret | Service | Purpose |
 |---|---|---|
 | `DOCS_INTERNAL_SECRET` | portal-api | Shared secret portal-api → klai-docs for KB provisioning calls. |
+| `GRAPHITI_LLM_MODEL` | retrieval-api | LLM model name used by Graphiti for knowledge-graph extraction. Prod uses `klai-pipeline`; config.py default is `klai-fast`. Not a secret — declared here because the prod value differs from the code default. |
 | `FIRECRAWL_INTERNAL_KEY` | portal-api | Shared web-search API key (portal re-uses the Firecrawl internal key for URL extraction). |
 | `GITHUB_ADMIN_PAT` | portal-api | GitHub PAT with `admin:org` scope — used during offboarding to remove members from the GetKlai org. |
 | `KLAI_CONNECTOR_SECRET` | portal-api | Shared secret for portal → klai-connector orchestration calls (SOPS key: `PORTAL_API_KLAI_CONNECTOR_SECRET`, mapped inline). |
@@ -73,7 +74,9 @@ from SOPS `klai-infra/core-01/.env.sops`) unless noted otherwise.
 | `RETRIEVAL_API_INTERNAL_SECRET` | retrieval-api | Shared secret for internal callers (portal-api, LiteLLM hook). Mapped to `INTERNAL_SECRET` in-container (SPEC-SEC-010). |
 | `RETRIEVAL_API_RATE_LIMIT_RPM` | retrieval-api | Sliding-window rate-limit threshold per caller identity (SPEC-SEC-010). |
 | `RETRIEVAL_API_ZITADEL_AUDIENCE` | retrieval-api | Zitadel audience for JWT validation. Mapped to `ZITADEL_API_AUDIENCE` in-container. |
+| `VEXA_ADMIN_TOKEN` | portal-api | Reserved for Vexa admin-API calls (tenant provisioning, quota inspection). @MX:NOTE in config.py — no runtime reader yet; declared to preserve pre-migration env-shape. |
 | `VEXA_BOT_MANAGER_API_KEY` | portal-api | Vexa bot-manager API key. Mapped to `VEXA_API_KEY` in-container. |
+| `VEXA_MEETING_API_URL` | portal-api | Base URL for Vexa meeting-api (prod routes through `api-gateway:8000`, not the raw meeting-api). Overrides the config.py default. |
 | `VEXA_WEBHOOK_SECRET` | portal-api | Signs Vexa webhook deliveries to portal; config.py validator fails closed on empty/whitespace (SEC-013 F-033). |
 | `VICTORIALOGS_AUTH_PASSWORD` | victorialogs | HTTP basic-auth password (set via `-httpAuth.password` cmdline flag). Also needed inside the container so the busybox-wget healthcheck can build the auth header. |
 | `VICTORIALOGS_AUTH_USER` | victorialogs | HTTP basic-auth username (set via `-httpAuth.username` cmdline flag). Also needed inside the container for the healthcheck. |
