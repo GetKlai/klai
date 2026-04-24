@@ -22,4 +22,9 @@ EXPOSE 8020
 
 USER klai
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8020"]
+# SPEC-SEC-WEBHOOK-001 REQ-1.6: --proxy-headers + allow-ips=127.0.0.1 for internal
+# services. scribe-api is reached only on klai-net (portal-api BFF proxy); no
+# upstream is trusted to set X-Forwarded-For. request.client.host reflects the
+# TCP peer's container IP, which is the legitimate caller identity for
+# service-to-service rate-limiting.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8020", "--proxy-headers", "--forwarded-allow-ips", "127.0.0.1"]
