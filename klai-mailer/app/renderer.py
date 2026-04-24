@@ -122,9 +122,13 @@ class Renderer:
         }
 
     def wrap(self, render_result: dict[str, Any], branding: dict[str, Any]) -> str:
-        """Inject rendered content into the Klai HTML email wrapper."""
+        """Inject rendered content into the Klai HTML email wrapper.
+
+        SandboxedEnvironment + autoescape + StrictUndefined block the XSS
+        class of bugs the semgrep rule targets (SPEC-SEC-MAILER-INJECTION-001).
+        """
         template = self._theme_env.get_template("email.html.j2")
-        return template.render(**render_result, **branding)
+        return template.render(**render_result, **branding)  # nosemgrep: direct-use-of-jinja2
 
     def render_internal(
         self,
@@ -142,9 +146,11 @@ class Renderer:
         pulled from settings — attacker cannot override `brand_url` etc.
         via the request body (REQ-2.4).
         """
+        # SandboxedEnvironment + Pydantic-validated context (REQ-2) enforced
+        # before we reach here. StrictUndefined traps missing vars.
         template_path = f"internal/{template_name}.{lang}.html.j2"
         template = self._theme_env.get_template(template_path)
-        rendered = template.render(**context)
+        rendered = template.render(**context)  # nosemgrep: direct-use-of-jinja2
         # Template format convention: first line is `Subject: <subject>`,
         # remaining content is the body HTML. The separator is a blank line.
         if rendered.startswith("Subject:"):
