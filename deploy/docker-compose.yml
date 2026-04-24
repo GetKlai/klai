@@ -363,6 +363,15 @@ services:
       # ─── Vexa (meeting bot) ─────────────────────────────────────
       VEXA_API_KEY: ${VEXA_BOT_MANAGER_API_KEY}
       VEXA_WEBHOOK_SECRET: ${VEXA_WEBHOOK_SECRET}
+      # Vexa meeting-api base URL. Prod routes through the api-gateway
+      # (:8000) — NOT the raw meeting-api (:8080). Overrides the
+      # config.py default to match pre-SPEC-SEC-ENVFILE-SCOPE-001 behaviour.
+      VEXA_MEETING_API_URL: ${VEXA_MEETING_API_URL:-http://api-gateway:8000}
+      # Reserved for Vexa admin-API calls (tenant provisioning, quota).
+      # @MX:NOTE in config.py — no runtime reader yet; kept declared so
+      # a future admin-api caller picks up the real token, matching the
+      # pre-migration env-shape.
+      VEXA_ADMIN_TOKEN: ${VEXA_ADMIN_TOKEN}
       # ─── Billing — Moneybird ────────────────────────────────────
       # Validator in config.py requires MONEYBIRD_WEBHOOK_TOKEN at boot.
       MONEYBIRD_WEBHOOK_TOKEN: ${MONEYBIRD_WEBHOOK_TOKEN}
@@ -697,6 +706,11 @@ services:
       FALKORDB_PORT: "6379"
       GRAPHITI_ENABLED: "true"
       GRAPH_SEARCH_TIMEOUT: "60.0"
+      # Graphiti LLM model for knowledge-graph extraction. Prod uses
+      # the heavier pipeline model; config.py defaults to klai-fast
+      # which is not suitable for graph extraction. Overrides the
+      # default to match pre-SPEC-SEC-ENVFILE-SCOPE-001 behaviour.
+      GRAPHITI_LLM_MODEL: ${GRAPHITI_LLM_MODEL:-klai-pipeline}
       RERANKER_ENABLED: "true"
       RERANKER_TIMEOUT: "60.0"
       OPENAI_API_KEY: "dummy"
