@@ -198,3 +198,50 @@ the risk — the mess ships as-is.
 
 See `.claude/rules/moai/workflow/worktree-integration.md` for the decision
 tree and `worktree add` flags.
+
+## validator-env-parity (HIGH)
+When a pydantic `@model_validator` is added that REJECTS an empty /
+whitespace-only env var at app startup, verify the env var already exists
+in production BEFORE landing the code change. Local tests pass because the
+conftest sets a default; prod doesn't have a conftest, only SOPS. Shipping
+the validator without the env var causes the service to refuse to start
+and returns HTTP 502 until reverted.
+
+**Why this happened:** SPEC-SEC-WEBHOOK-001 REQ-3 added
+`_require_moneybird_webhook_token` to `klai-portal/backend/app/core/config.py`.
+Tests passed (conftest sets the var), CI green, PR merged → auto-deploy to
+core-01 → portal-api startup raised `ValidationError: Missing required:
+MONEYBIRD_WEBHOOK_TOKEN` because the var was never in
+`klai-infra/core-01/.env.sops`. Prod 502 for ~4 minutes until the merge was
+reverted. The Moneybird finding (Cornelis #3) was the CAUSE: the token had
+never been configured, so webhooks ran fail-open. The validator correctly
+closed that bypass but required the env var to ship in the same deploy
+window.
+
+**Prevention:**
+
+1. Before committing any `_require_<X>_secret` validator, run:
+   ```bash
+   grep -c "^ *<X>_SECRET\|^ *<X>_TOKEN" klai-infra/core-01/.env.sops
+   grep -c "<X>_SECRET\|<X>_TOKEN" deploy/docker-compose.yml
+   ```
+   If either returns `0`, add the env var to SOPS first (and to the compose
+   environment block if applicable), commit to klai-infra, verify decrypt
+   works, THEN land the validator.
+
+2. Deploy order is **env var first, validator second** — never the other
+   way around. Even a same-day gap is acceptable; a same-deploy gap is
+   catastrophic because validator-fails-at-startup triggers Docker restart
+   loop and 502 cascade.
+
+3. For audit-finding fixes that make a previously-optional config
+   mandatory, list "env var pre-flight in klai-infra/core-01/.env.sops"
+   as an explicit checkbox in the SPEC's Success Criteria AND in the PR
+   body — not only in the forcing-function prose.
+
+4. Conftest-sets-a-default is the classic trap that hides this regression.
+   When writing the fail-closed test (`test_settings_startup_fails_without_X`),
+   add a comment on the pydantic validator linking to this pitfall so
+   reviewers stop and think about prod env parity.
+
+See `klai-infra/core-01/.env.sops` for the canonical prod env inventory.
