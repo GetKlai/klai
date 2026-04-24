@@ -118,7 +118,10 @@ function ConnectorsTab() {
       const { authorize_url } = await apiFetch<{ authorize_url: string }>(
         `/api/oauth/${encodeURIComponent(connectorType)}/authorize?kb_slug=${encodeURIComponent(kbSlug)}&connector_id=${encodeURIComponent(connectorId)}`,
       )
-      window.location.href = authorize_url
+      // Use .assign() not `.href =` — react-hooks/immutability flags the
+      // assignment as a modification of a component-external variable.
+      // Functionally equivalent (both navigate + push history entry).
+      window.location.assign(authorize_url)
     } catch {
       // Surface stale status via refetch; user sees the badge unchanged.
       void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
