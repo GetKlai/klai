@@ -38,4 +38,7 @@ USER app
 
 EXPOSE 8000
 
-CMD ["uvicorn", "knowledge_ingest.app:app", "--host", "0.0.0.0", "--port", "8000"]
+# SPEC-SEC-WEBHOOK-001 REQ-1.6: --proxy-headers + allow-ips=127.0.0.1 for internal
+# services. knowledge-ingest is reached only on klai-net (portal-api forwarding,
+# klai-connector crawl delegation); no upstream is trusted to set X-Forwarded-For.
+CMD ["uvicorn", "knowledge_ingest.app:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "127.0.0.1"]
