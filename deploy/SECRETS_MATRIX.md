@@ -21,8 +21,8 @@ Services previously using `env_file: .env` (the shared global file at
 | Service | Migrated to explicit `environment:` | Commit |
 |---|---|---|
 | scribe-api | YES | `1ff65d1b` |
-| retrieval-api | YES | (this commit) |
-| victorialogs | pending | — |
+| retrieval-api | YES | `d6fcdb7f` |
+| victorialogs | YES | (this commit) |
 | portal-api | pending | — |
 
 Services using an acceptable per-service `env_file: ./<svc>/.env`
@@ -45,6 +45,8 @@ Rows sorted by secret name, then by service.
 | `RETRIEVAL_API_INTERNAL_SECRET` | retrieval-api | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | Shared secret for internal callers (portal-api, LiteLLM hook). Mapped to `INTERNAL_SECRET` in-container (SPEC-SEC-010). |
 | `RETRIEVAL_API_ZITADEL_AUDIENCE` | retrieval-api | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | Zitadel audience for JWT validation. Mapped to `ZITADEL_API_AUDIENCE` in-container. |
 | `RETRIEVAL_API_RATE_LIMIT_RPM` | retrieval-api | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | Sliding-window rate-limit threshold per caller identity (SPEC-SEC-010). |
+| `VICTORIALOGS_AUTH_PASSWORD` | victorialogs | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | HTTP basic-auth password (set via `-httpAuth.password` cmdline flag). Also needed inside the container so the busybox-wget healthcheck can build the auth header. |
+| `VICTORIALOGS_AUTH_USER` | victorialogs | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | HTTP basic-auth username (set via `-httpAuth.username` cmdline flag). Also needed inside the container for the healthcheck. |
 
 ## Rotation coupling
 
