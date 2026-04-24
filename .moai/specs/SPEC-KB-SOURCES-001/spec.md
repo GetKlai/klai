@@ -1,7 +1,7 @@
 ---
 id: SPEC-KB-SOURCES-001
-version: "1.1.0"
-status: draft
+version: "1.2.0"
+status: implemented
 created: 2026-04-24
 updated: 2026-04-24
 author: Mark Vletter
@@ -22,6 +22,7 @@ source_inspiration: |
 |------|---------|--------|
 | 2026-04-24 | 1.0.0 | Initial draft. Activates the three "Coming soon" tiles on the unified add-source grid (PR #139) by wiring them to the existing knowledge-ingest pipeline. Research-api is **not** resurrected; the three extractor helpers are ported into portal-api as thin routes that forward to `POST /ingest/v1/document`. URL and YouTube are separate tiles per user preference (no auto-detect collapse). |
 | 2026-04-24 | 1.1.0 | Post-review tweaks. **Dedup via stable source_ref** (D7/R4): re-submitting the same URL / YouTube video / identical text is a no-op on the ingest pipeline, not a duplicate row — knowledge-ingest already honours source_ref + content-hash dedup. **Text and URL/YouTube go direct to knowledge-ingest, not via Gitea** (made explicit in D1/architecture; file upload stays on the Gitea path). **Per-hour rate limits removed** (R5): portal-api has no generic per-route rate-limiter today, existing KB-write paths rely on per-plan KB-item quota + middleware auth. This SPEC matches that pattern; SSRF guard stays as a security requirement, not a throughput one. **oembed confirmed** as the YouTube title source (R3.4), public endpoint, no auth. |
+| 2026-04-24 | 1.2.0 | **Implemented.** Backend extractors (text / url / youtube) + SSRF guard + three routes under `/api/app/knowledge-bases/{kb_slug}/sources/{type}` landed on branch `feature/SPEC-KB-SOURCES-001`. Frontend tiles activated with active forms + shared `useSourceSubmit` hook + 13 new i18n keys (EN + NL). Status → `implemented`. 124 new tests / 94% coverage on new modules. See "Implementation Notes" at the bottom for scope deltas. |
 
 ---
 
@@ -438,3 +439,54 @@ All extractors **will** emit structured logs with `org_id`, `kb_slug`, `source_t
 - **`klai-knowledge-ingest/knowledge_ingest/routes/ingest.py:493`** — `POST /ingest/v1/document` route definition.
 - **`.claude/rules/klai/projects/knowledge.md`** — crawl4ai usage + SSRF + Procrastinate passthrough rules.
 - **`.claude/rules/klai/projects/portal-security.md`** — `_get_{model}_or_404` pattern + RLS coverage.
+
+---
+
+## Implementation Notes
+
+Recorded at 1.2.0 sync, reflecting what actually shipped versus the 1.1.0 plan. SPEC level 1 (spec-first) — these notes are the authoritative record of scope deltas.
+
+### What landed as planned
+
+All seven modules (R1–R7) implemented without scope reduction:
+- Three extractors (`text.py`, `url.py`, `youtube.py`) as pure async/sync functions raising typed exceptions.
+- SSRF guard (`_url_validator.py`) covering IPv4 rfc1918/link-local/loopback + IPv6 ::1/fe80::/10/fc00::/7 + docker-internal hostname deny list.
+- Three routes under `app_knowledge_sources.py` forwarding to `knowledge_ingest_client.ingest_document` with `X-Internal-Secret` + `get_trace_headers()`.
+- Dedup via stable `source_ref` (canonical URL / `youtube:{id}` / `text:sha256:{hex}`) — verified by the `test_same_content_same_source_ref_dedup` and `test_source_ref_dedup_across_url_variants` cases.
+- Frontend tiles flipped to `available: true`; three active forms with shared `useSourceSubmit` hook; 13 new i18n keys (EN + NL).
+
+### Deltas from plan
+
+| Area | Planned | Actual | Rationale |
+|---|---|---|---|
+| **Capability gate** | SPEC R1 said "`knowledge` product capability" | Used schrijf-rol check (`contributor`/`owner`) via `get_user_role_for_kb` + `assert_can_add_item_to_kb`, **NO** `require_capability("kb.connectors")` | `kb.connectors` is complete-plan-only in `plan_limits.py` — gating these three routes on it would exclude core/professional users who see the tiles as available. The existing KB-write paths (file upload via klai-docs, connector create) follow the same role+quota pattern. |
+| **URL scheme policy** | SPEC silent on http vs https | Both accepted | Product decision during /moai run. SSRF guard runs for both; matching the common case where users paste blog/docs URLs that are still HTTP. |
+| **IP pinning (R5.1)** | "Pin resolved IP when calling crawl4ai" | Not implementable | crawl4ai's HTTP API accepts only a URL, not IP+Host-header split. Portal-api's SSRF guard rejects private/loopback IPs before calling crawl4ai; crawl4ai's own resolver is out of our control. DNS rebinding between our check and crawl4ai's fetch is a residual risk — adding to the risks table below. |
+| **SSRF extract to klai-libs** | SPEC D6 called it "preferred: extract `validate_url` into klai-libs/" | Mirrored the logic in portal-api | SPEC marked extract as non-blocking follow-up. Left as-is for a dedicated SPEC. |
+| **Route file location** | SPEC offered both `app_knowledge_bases.py` extension or new sibling file | Chose new `app_knowledge_sources.py` | `app_knowledge_bases.py` already holds 28 handlers + 1400 lines; adding three more would hurt readability. The new module reuses `_get_caller_org`, `bearer`, and the same dependency patterns. |
+
+### New residual risks
+
+Adding to the Risks table at 1.2.0:
+
+| Risk | Likelihood | Impact | Mitigation |
+|---|---|---|---|
+| DNS rebinding: record changes between portal-api's SSRF check and crawl4ai's fetch, landing on a private IP | Low | Medium | crawl4ai runs inside docker — no path to RFC1918 routes outside the compose network from its container (unless the compose network exposes them). Follow-up: either add `dns_rebind_protection` to crawl4ai (upstream feature), or move first-hop fetch into portal-api and send HTML payload to crawl4ai (would require crawl4ai API change). |
+
+### Test + coverage summary
+
+- **124 new tests**, all passing: text (22), SSRF (44), URL (15), YouTube (28), routes (15).
+- **94% coverage** on the new modules (target 85% per R7). Route module 96%.
+- Ruff + pyright clean on all new code. 32 existing KB/quota tests regression-checked green.
+- Frontend: paraglide compile ✓, `tsc -b` ✓, `eslint .` ✓.
+
+### Not verified (requires staging)
+
+Per SPEC §Verification step 3, end-to-end happy-path against real crawl4ai + real YouTube transcripts + real Zitadel cookie was not run — requires a staging deploy. Plan: manual smoke after merge, before announcing the feature.
+
+### Follow-up tickets
+
+Not created yet; candidates:
+1. Extract SSRF `validate_url` into `klai-libs/` for reuse between portal-api and knowledge-ingest (SPEC D6 recap).
+2. crawl4ai DNS rebinding mitigation (either upstream feature request or architectural change — whichever is cheaper).
+3. Proxy rotation for YouTube IP blocks (SPEC risks table item "YouTube blocks core-01's IP") — already flagged in 1.0.0 as known limitation; materialises as a separate SPEC only when hit rate drops.
