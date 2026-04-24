@@ -401,6 +401,112 @@ async def test_refresh_oauth_token_posts_to_microsoft_endpoint(
 
 
 @pytest.mark.asyncio
+async def test_refresh_oauth_token_invalid_grant_raises_reconnect_required(
+    ms_adapter: Any, ms_connector: SimpleNamespace,
+) -> None:
+    """Microsoft returns 400 + invalid_grant → OAuthReconnectRequiredError, not HTTPStatusError."""
+    from app.adapters.oauth_base import OAuthReconnectRequiredError
+
+    mock_response = MagicMock()
+    mock_response.status_code = 400
+    mock_response.json = MagicMock(
+        return_value={
+            "error": "invalid_grant",
+            "error_description": "AADSTS700082: refresh token expired",
+        }
+    )
+    # raise_for_status won't be called on the 400 path (our code raises before)
+    mock_response.raise_for_status = MagicMock(return_value=None)
+
+    http_client = MagicMock()
+    http_client.post = AsyncMock(return_value=mock_response)
+    http_client.__aenter__ = AsyncMock(return_value=http_client)
+    http_client.__aexit__ = AsyncMock(return_value=None)
+
+    with patch(
+        "app.adapters.ms_docs.httpx.AsyncClient",
+        MagicMock(return_value=http_client),
+    ), pytest.raises(OAuthReconnectRequiredError, match="refresh token expired"):
+        await ms_adapter._refresh_oauth_token(
+            ms_connector, refresh_token="placeholder-dead-refresh"
+        )
+
+
+@pytest.mark.asyncio
+async def test_refresh_oauth_token_other_400_propagates_as_http_error(
+    ms_adapter: Any, ms_connector: SimpleNamespace,
+) -> None:
+    """A 400 that is NOT invalid_grant still bubbles up via raise_for_status."""
+    import httpx
+
+    mock_response = MagicMock()
+    mock_response.status_code = 400
+    mock_response.json = MagicMock(
+        return_value={"error": "invalid_client", "error_description": "Unknown client"}
+    )
+    http_err = httpx.HTTPStatusError(
+        "bad request", request=MagicMock(), response=mock_response,
+    )
+    mock_response.raise_for_status = MagicMock(side_effect=http_err)
+
+    http_client = MagicMock()
+    http_client.post = AsyncMock(return_value=mock_response)
+    http_client.__aenter__ = AsyncMock(return_value=http_client)
+    http_client.__aexit__ = AsyncMock(return_value=None)
+
+    with patch(
+        "app.adapters.ms_docs.httpx.AsyncClient",
+        MagicMock(return_value=http_client),
+    ), pytest.raises(httpx.HTTPStatusError):
+        await ms_adapter._refresh_oauth_token(
+            ms_connector, refresh_token="placeholder-rt"
+        )
+
+
+@pytest.mark.asyncio
+async def test_metadata_keyed_by_stable_graph_id_not_python_id(
+    ms_adapter: Any, ms_connector: SimpleNamespace,
+) -> None:
+    """SPEC-KB-MS-DOCS-001 cleanup: metadata survives rebuilding the DocumentRef.
+
+    Regression guard for the previous id(ref) keying that would break if a
+    caller reconstructs a DocumentRef with the same Graph id but a different
+    Python object identity (e.g. after DB round-trip).
+    """
+    delta_response = {
+        "value": [_drive_item(
+            "item-stable-id",
+            "Stable.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )],
+        "@odata.deltaLink": "https://graph/.../delta?t=x",
+    }
+
+    async def _fake_get(url: str) -> dict[str, Any]:
+        return delta_response
+
+    with patch.object(ms_adapter, "_graph_get_json", side_effect=_fake_get):
+        refs_first = await ms_adapter.list_documents(ms_connector, cursor_context=None)
+
+    # Look up via a FRESH DocumentRef with the same .ref — different Python id
+    fresh_ref = DocumentRef(
+        path="Stable.docx",
+        ref="item-stable-id",
+        size=1024,
+        content_type="word_document",
+        source_ref="item-stable-id",
+        source_url="https://contoso.sharepoint.com/x",
+        last_edited="2026-04-20T10:00:00Z",
+    )
+    assert id(fresh_ref) != id(refs_first[0]), "test needs distinct Python objects"
+
+    # Old code (id(ref)) would return default empty metadata here; new code returns real metadata.
+    meta = ms_adapter._get_metadata_for_ref(fresh_ref)
+    assert meta["sender_email"] == "bob@example.com"
+    assert set(meta["mentioned_emails"]) == {"alice@example.com", "bob@example.com"}
+
+
+@pytest.mark.asyncio
 async def test_graph_get_json_retries_on_429(
     ms_adapter: Any, ms_connector: SimpleNamespace,
 ) -> None:

@@ -39,7 +39,7 @@ from typing import Any
 import httpx
 
 from app.adapters.base import BaseAdapter, DocumentRef
-from app.adapters.oauth_base import OAuthAdapterBase
+from app.adapters.oauth_base import ConnectorLike, OAuthAdapterBase
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.services.portal_client import PortalClient
@@ -190,7 +190,7 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
     # -- OAuth refresh --------------------------------------------------------
 
     async def _refresh_oauth_token(
-        self, connector: Any, refresh_token: str,
+        self, connector: ConnectorLike, refresh_token: str,
     ) -> dict[str, Any]:
         """Exchange a refresh_token for a new access_token against Google.
 
