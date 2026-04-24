@@ -23,7 +23,7 @@ dependencies = [
     "pyjwt>=2.12",
     "klai-connector-credentials",
     "klai-image-storage",
-    "youtube-transcript-api>=1.2.4",
+    "yt-dlp>=2026.3.17",
 ]
 
 [tool.uv.sources]
