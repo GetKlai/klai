@@ -115,7 +115,7 @@ body {
    Apply via `page-title` utility class on any h1 used as a page heading.
    ─────────────────────────────────────────────────────────────────────── */
 @utility page-title {
-  margin-top: -16px;
+  margin-top: -2px;
 }
 
 /* ─── BlockNote editor: calibrate heading scale to portal context ──────────
