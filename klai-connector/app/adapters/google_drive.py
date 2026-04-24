@@ -39,7 +39,7 @@ from typing import Any
 import httpx
 
 from app.adapters.base import BaseAdapter, DocumentRef
-from app.adapters.oauth_base import ConnectorLike, OAuthAdapterBase, OAuthReconnectRequiredError
+from app.adapters.oauth_base import ConnectorLike, OAuthAdapterBase, check_invalid_grant_and_raise
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.services.portal_client import PortalClient
@@ -217,25 +217,12 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
         }
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(_GOOGLE_TOKEN_URL, data=payload)
-            # Google returns 400 + JSON body with error=invalid_grant when the
-            # refresh_token is permanently invalid. Translate to a typed
-            # signal so sync_engine can catch it specifically and mark the
-            # connector AUTH_ERROR instead of the generic FAILED. See:
-            # https://developers.google.com/identity/protocols/oauth2#expiration
-            if response.status_code == 400:
-                try:
-                    body = response.json()
-                except ValueError:
-                    body = {}
-                if isinstance(body, dict) and body.get("error") == "invalid_grant":
-                    logger.warning(
-                        "Google invalid_grant for connector=%s — reconnect required",
-                        str(connector.id),
-                    )
-                    raise OAuthReconnectRequiredError(
-                        f"Google refresh_token rejected (connector_id={connector.id}): "
-                        f"{body.get('error_description', 'invalid_grant')}"
-                    )
+            # Shared helper translates 400 + error=invalid_grant to a typed
+            # OAuthReconnectRequiredError; other 400s fall through to
+            # raise_for_status (generic HTTPStatusError).
+            check_invalid_grant_and_raise(
+                response, provider="Google", connector_id=connector.id,
+            )
             response.raise_for_status()
             data = response.json()
         return data if isinstance(data, dict) else {}

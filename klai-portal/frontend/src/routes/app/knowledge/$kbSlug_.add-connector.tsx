@@ -269,7 +269,9 @@ function AddConnectorPage() {
     },
     onSuccess: ({ authorizeUrl }) => {
       void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
-      window.location.href = authorizeUrl
+      // .assign() over `.href =` — consistent with connectors.tsx reconnect flow;
+      // react-hooks/immutability flags the property-assignment form.
+      window.location.assign(authorizeUrl)
     },
   })
 
@@ -302,7 +304,9 @@ function AddConnectorPage() {
     },
     onSuccess: ({ authorizeUrl }) => {
       void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
-      window.location.href = authorizeUrl
+      // .assign() over `.href =` — consistent with connectors.tsx reconnect flow;
+      // react-hooks/immutability flags the property-assignment form.
+      window.location.assign(authorizeUrl)
     },
   })
 

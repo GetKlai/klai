@@ -988,6 +988,7 @@
   "admin_connectors_status_failed": "Mislukt",
   "admin_connectors_status_auth_error": "Authenticatiefout",
   "admin_connectors_reconnect_action": "Opnieuw verbinden",
+  "admin_connectors_reconnect_error": "Opnieuw verbinden mislukt. Probeer het nog eens.",
   "admin_connectors_status_never": "Nooit gesynchroniseerd",
   "admin_connectors_type_github": "GitHub",
   "admin_connectors_type_google_drive": "Google Drive",
