@@ -347,7 +347,7 @@ class SyncEngine:
                 #   analysis (if ever desired) happens in knowledge-ingest.
 
             except OAuthReconnectRequiredError as err:
-                # Provider signalled the refresh_token is permanently invalid
+                # Provider signalled the stored credential is permanently invalid
                 # (Microsoft invalid_grant after password change / consent
                 # revoke / post-grace rotation; Google equivalent). The only
                 # recovery is user-driven re-consent via the OAuth authorize
@@ -356,8 +356,9 @@ class SyncEngine:
                 # cause is user-state, not our bug.
                 status = SyncStatus.AUTH_ERROR
                 error_details.append({"error": str(err), "reason": "reconnect_required"})
+                # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
                 logger.warning(
-                    "OAuth refresh_token invalid for connector %s — reconnect required",
+                    "OAuth reconnect required for connector %s",
                     connector_id,
                     extra={"connector_id": str(connector_id)},
                 )
