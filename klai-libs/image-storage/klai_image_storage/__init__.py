@@ -34,6 +34,14 @@ from klai_image_storage.storage import (
     ImageUploadResult,
 )
 from klai_image_storage.types import ParsedImage
+from klai_image_storage.url_guard import (
+    PinnedResolverTransport,
+    SsrfBlockedError,
+    ValidatedURL,
+    validate_image_url,
+    validate_url_pinned,
+    validate_url_pinned_sync,
+)
 from klai_image_storage.utils import (
     dedupe_image_urls,
     extract_markdown_image_urls,
@@ -45,10 +53,16 @@ __all__ = [
     "ImageStore",
     "ImageUploadResult",
     "ParsedImage",
+    "PinnedResolverTransport",
+    "SsrfBlockedError",
+    "ValidatedURL",
     "dedupe_image_urls",
     "download_and_upload_adapter_images",
     "download_and_upload_crawl_images",
     "extract_markdown_image_urls",
     "is_valid_image_src",
     "resolve_relative_url",
+    "validate_image_url",
+    "validate_url_pinned",
+    "validate_url_pinned_sync",
 ]

@@ -35,6 +35,10 @@ from klai_image_storage.storage import (
     MAX_IMAGE_SIZE,
     MAX_IMAGES_PER_DOCUMENT,
 )
+from klai_image_storage.url_guard import (
+    SsrfBlockedError,
+    validate_image_url,
+)
 from klai_image_storage.utils import (
     dedupe_image_urls,
     is_valid_image_src,
@@ -84,12 +88,33 @@ async def _download_validate_upload(
     failure paths log with the ``url`` field so production can correlate.
 
     Exception policy:
+    - :class:`SsrfBlockedError` (REQ-7.2) → ``warning`` with stable
+      key ``adapter_image_ssrf_blocked`` and ``org_id``/``kb_slug``
+      context. No HTTP request is made. A single image rejection
+      never halts a document's ingest (AC-15).
     - ``httpx.HTTPError`` (connect, timeout, read, decode) → ``warning``,
       no traceback. These are expected when crawling hostile or dead
       pages.
     - any other ``Exception`` on the upload leg → ``exception``, with
       traceback. Unexpected — e.g. S3 layer crash, mock mis-set in tests.
     """
+    # REQ-7.2 / AC-15 through AC-18: validate the image URL before ANY network
+    # I/O. Runs before status checks, magic-byte validation, and the
+    # http_client.get() call so docker-internal hosts are never probed
+    # even for their TCP handshake.
+    try:
+        await validate_image_url(url)
+    except SsrfBlockedError as exc:
+        logger.warning(
+            "adapter_image_ssrf_blocked",
+            url=url.split("?", 1)[0],
+            hostname=exc.hostname,
+            reason=exc.reason,
+            org_id=org_id,
+            kb_slug=kb_slug,
+        )
+        return None
+
     try:
         resp = await http_client.get(url)
     except httpx.HTTPError as exc:
