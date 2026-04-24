@@ -28,6 +28,7 @@ from gidgethub import BadRequest
 from klai_image_storage import (
     ImageStore,
     ParsedImage,
+    PinnedResolverTransport,
     download_and_upload_adapter_images,
 )
 from sqlalchemy import select
@@ -83,7 +84,23 @@ class SyncEngine:
         self._ingest_client = ingest_client
         self._portal_client = portal_client
         self._image_store = image_store
-        self._image_http = httpx.AsyncClient(timeout=30.0) if image_store else None
+        # SPEC-SEC-SSRF-001 REQ-7.4 / REQ-7.6 / AC-23: wrap the image
+        # http client in a ``PinnedResolverTransport`` so every adapter
+        # image fetch (Notion / Confluence / GitHub / Airtable) inherits
+        # DNS-rebinding defence without per-adapter boilerplate. The
+        # guard call in klai_image_storage.pipeline runs first and
+        # populates the transport's pin map via ``_image_transport``
+        # below. Unpinned hosts still fall through to normal DNS, so
+        # tests that don't seed pins keep working.
+        self._image_transport: PinnedResolverTransport | None
+        if image_store:
+            self._image_transport = PinnedResolverTransport()
+            self._image_http = httpx.AsyncClient(
+                transport=self._image_transport, timeout=30.0,
+            )
+        else:
+            self._image_transport = None
+            self._image_http = None
         self._crawl_sync_client = crawl_sync_client
         self._global_semaphore = asyncio.Semaphore(3)
         self._connector_locks: dict[uuid.UUID, asyncio.Lock] = {}
