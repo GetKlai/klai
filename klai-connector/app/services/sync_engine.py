@@ -34,6 +34,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.adapters.base import DocumentRef
+from app.adapters.oauth_base import OAuthReconnectRequiredError
 from app.adapters.registry import AdapterRegistry
 from app.clients.knowledge_ingest import CrawlSyncClient, KnowledgeIngestClient
 from app.core.enums import SyncStatus
@@ -344,6 +345,23 @@ class SyncEngine:
                 #   crawl in knowledge-ingest and polls /status; failure surfaces as
                 #   sync_run.status=FAILED via the remote response, and quality
                 #   analysis (if ever desired) happens in knowledge-ingest.
+
+            except OAuthReconnectRequiredError as err:
+                # Provider signalled the stored credential is permanently invalid
+                # (Microsoft invalid_grant after password change / consent
+                # revoke / post-grace rotation; Google equivalent). The only
+                # recovery is user-driven re-consent via the OAuth authorize
+                # flow. Mark AUTH_ERROR so the portal surfaces a
+                # "Reconnect" affordance; warning not error because the
+                # cause is user-state, not our bug.
+                status = SyncStatus.AUTH_ERROR
+                error_details.append({"error": str(err), "reason": "reconnect_required"})
+                # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
+                logger.warning(
+                    "OAuth reconnect required for connector %s",
+                    connector_id,
+                    extra={"connector_id": str(connector_id)},
+                )
 
             except BadRequest as err:
                 # gidgethub raises BadRequest for 401/403; treat as auth failure

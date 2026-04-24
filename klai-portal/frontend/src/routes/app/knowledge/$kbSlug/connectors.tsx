@@ -37,8 +37,11 @@ const CONNECTOR_TYPE_MAP: Record<string, ConnectorTypeInfo> = {
   web_crawler:  { label: 'Web',          IconComponent: Globe },
   notion:       { label: 'Notion',       IconComponent: SiNotion },
   google_drive: { label: 'Google Drive', IconComponent: SiGoogledrive },
-  ms_docs:      { label: 'MS Docs',      IconComponent: FileText },
+  ms_docs:      { label: 'Office 365',   IconComponent: FileText },
 }
+
+/** OAuth-backed connector types that support the /api/oauth/{provider}/authorize reconnect flow. */
+const OAUTH_RECONNECTABLE = new Set<string>(['google_drive', 'ms_docs'])
 
 function ConnectorsTab() {
   const { kbSlug } = Route.useParams()
@@ -106,6 +109,25 @@ function ConnectorsTab() {
     }
   }
 
+  // SPEC-KB-MS-DOCS-001 reconnect-signal: when sync_engine catches
+  // OAuthReconnectRequiredError it marks the connector AUTH_ERROR. User
+  // recovers by triggering a fresh OAuth authorize flow — same endpoint
+  // the add-connector and edit-connector pages use.
+  async function handleReconnect(connectorType: string, connectorId: string) {
+    try {
+      const { authorize_url } = await apiFetch<{ authorize_url: string }>(
+        `/api/oauth/${encodeURIComponent(connectorType)}/authorize?kb_slug=${encodeURIComponent(kbSlug)}&connector_id=${encodeURIComponent(connectorId)}`,
+      )
+      // Use .assign() not `.href =` — react-hooks/immutability flags the
+      // assignment as a modification of a component-external variable.
+      // Functionally equivalent (both navigate + push history entry).
+      window.location.assign(authorize_url)
+    } catch {
+      // Surface stale status via refetch; user sees the badge unchanged.
+      void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
+    }
+  }
+
   if (isLoading) {
     return <p className="py-4 text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_loading()}</p>
   }
@@ -160,6 +182,17 @@ function ConnectorsTab() {
                   </td>
                   <td className="py-4 pr-4 align-top w-32">
                     <SyncStatusBadge status={c.last_sync_status} lastSyncAt={c.last_sync_at} />
+                    {isOwner
+                      && c.last_sync_status?.toUpperCase() === 'AUTH_ERROR'
+                      && OAUTH_RECONNECTABLE.has(c.connector_type) && (
+                      <button
+                        type="button"
+                        onClick={() => void handleReconnect(c.connector_type, c.id)}
+                        className="mt-1 block text-xs text-[var(--color-rl-accent-dark)] underline underline-offset-2 hover:opacity-70"
+                      >
+                        {m.admin_connectors_reconnect_action()}
+                      </button>
+                    )}
                     {c.last_sync_documents_ok != null && c.last_sync_documents_ok > 0 && (
                       <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)] tabular-nums">
                         {c.last_sync_documents_ok.toLocaleString()} {m.connectors_documents_indexed()}
