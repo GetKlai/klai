@@ -7,13 +7,12 @@ Endpoints:
   POST /debug    Log raw payload to verify field names (DEBUG=true only)
 """
 
-import hashlib
 import hmac
 import json
 import logging
-import time
 from pathlib import Path
 
+import structlog
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
@@ -23,10 +22,12 @@ from app.mailer import send_email
 from app.models import ZitadelPayload
 from app.portal_client import get_user_language
 from app.renderer import Renderer
+from app.signature import SignatureError, verify_zitadel_signature
 
 setup_logging()
 
 logger = logging.getLogger(__name__)
+struct_logger = structlog.get_logger()
 
 app = FastAPI(title="klai-mailer", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -60,41 +61,21 @@ def _validate_incoming_secret(header_value: str | None) -> None:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
-def _verify_zitadel_signature(raw_body: bytes, signature_header: str | None) -> None:
+def _verify_zitadel_signature(raw_body: bytes, signature_header: str | None) -> dict[str, str]:
+    """Wrapper around app.signature.verify_zitadel_signature with uniform 401.
+
+    REQ-7.1: every failure returns HTTP 401 with body {"detail": "invalid signature"}.
+    REQ-7.2: the failure `reason` is logged, not leaked to the response.
+    REQ-7.3: no side-channel response headers.
+    REQ-10: unknown vN fields, >5 tokens, and unknown non-vN keys all rejected
+            via the SignatureError("unknown_vN_field") path.
     """
-    Verify the ZITADEL-Signature header.
-
-    Format: t={timestamp},v1={hmac_hex}
-    Signed payload: {timestamp}.{raw_body}
-    Algorithm: HMAC-SHA256 with the signing key.
-    """
-    if not signature_header:
-        logger.warning("Webhook call received without ZITADEL-Signature header")
-        raise HTTPException(status_code=401, detail="Missing ZITADEL-Signature header")
-
-    parts = {k: v for k, v in (p.split("=", 1) for p in signature_header.split(",") if "=" in p)}
-    timestamp = parts.get("t")
-    v1 = parts.get("v1")
-
-    if not timestamp or not v1:
-        logger.warning("Malformed ZITADEL-Signature header: %s", signature_header)
-        raise HTTPException(status_code=401, detail="Malformed ZITADEL-Signature header")
-
-    # Reject replayed webhooks older than 5 minutes
     try:
-        ts_age = abs(int(timestamp) - int(time.time()))
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Malformed ZITADEL-Signature header")
-    if ts_age > 300:
-        logger.warning("ZITADEL-Signature timestamp too old: %s", timestamp)
-        raise HTTPException(status_code=401, detail="Webhook timestamp too old")
-
-    signed_payload = f"{timestamp}.".encode() + raw_body
-    expected = hmac.new(settings.webhook_secret.encode(), signed_payload, hashlib.sha256).hexdigest()
-
-    if not hmac.compare_digest(expected, v1):
-        logger.warning("ZITADEL-Signature verification failed")
-        raise HTTPException(status_code=401, detail="Invalid signature")
+        return verify_zitadel_signature(raw_body, signature_header, settings.webhook_secret)
+    except SignatureError as exc:
+        log_kwargs = {"reason": exc.reason, **exc.extra}
+        struct_logger.warning("mailer_signature_invalid", **log_kwargs)
+        raise HTTPException(status_code=401, detail="invalid signature") from exc
 
 
 # ---------------------------------------------------------------------------
