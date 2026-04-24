@@ -987,6 +987,7 @@
   "admin_connectors_status_completed": "Synced",
   "admin_connectors_status_failed": "Failed",
   "admin_connectors_status_auth_error": "Auth error",
+  "admin_connectors_reconnect_action": "Reconnect",
   "admin_connectors_status_never": "Never synced",
   "admin_connectors_type_github": "GitHub",
   "admin_connectors_type_google_drive": "Google Drive",

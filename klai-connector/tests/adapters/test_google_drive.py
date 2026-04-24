@@ -883,3 +883,77 @@ async def test_list_request_includes_owners_and_permissions_fields(
 
     assert "owners" in gd_module._LIST_FIELDS
     assert "permissions" in gd_module._LIST_FIELDS
+
+
+# ===========================================================================
+# SPEC-KB-MS-DOCS-001 reconnect-signal parity — Google too raises
+# OAuthReconnectRequiredError on Google's invalid_grant
+# ===========================================================================
+
+
+async def test_refresh_oauth_token_invalid_grant_raises_reconnect_required(
+    gdrive_adapter: Any,
+) -> None:
+    """Google returns 400 + invalid_grant → OAuthReconnectRequiredError, not HTTPStatusError.
+
+    Parity with MsDocsAdapter so the sync engine's single
+    ``except OAuthReconnectRequiredError`` branch covers both providers.
+    """
+    from app.adapters.oauth_base import OAuthReconnectRequiredError
+
+    connector = _make_connector(
+        {"access_token": "x", "refresh_token": "placeholder-dead-refresh"}
+    )
+
+    mock_response = MagicMock()
+    mock_response.status_code = 400
+    mock_response.json = MagicMock(
+        return_value={
+            "error": "invalid_grant",
+            "error_description": "Token has been expired or revoked.",
+        }
+    )
+    mock_response.raise_for_status = MagicMock(return_value=None)
+
+    http_client = MagicMock()
+    http_client.post = AsyncMock(return_value=mock_response)
+    http_client.__aenter__ = AsyncMock(return_value=http_client)
+    http_client.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch("app.adapters.google_drive.httpx.AsyncClient", MagicMock(return_value=http_client)),
+        pytest.raises(OAuthReconnectRequiredError, match="expired or revoked"),
+    ):
+        await gdrive_adapter._refresh_oauth_token(
+            connector, refresh_token="placeholder-dead-refresh"
+        )
+
+
+async def test_refresh_oauth_token_other_400_propagates_as_http_error(
+    gdrive_adapter: Any,
+) -> None:
+    """A 400 that is NOT invalid_grant still bubbles up as HTTPStatusError."""
+    import httpx
+
+    connector = _make_connector(
+        {"access_token": "x", "refresh_token": "placeholder-rt"}
+    )
+
+    mock_response = MagicMock()
+    mock_response.status_code = 400
+    mock_response.json = MagicMock(
+        return_value={"error": "invalid_request", "error_description": "Bad request"}
+    )
+    http_err = httpx.HTTPStatusError("bad", request=MagicMock(), response=mock_response)
+    mock_response.raise_for_status = MagicMock(side_effect=http_err)
+
+    http_client = MagicMock()
+    http_client.post = AsyncMock(return_value=mock_response)
+    http_client.__aenter__ = AsyncMock(return_value=http_client)
+    http_client.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch("app.adapters.google_drive.httpx.AsyncClient", MagicMock(return_value=http_client)),
+        pytest.raises(httpx.HTTPStatusError),
+    ):
+        await gdrive_adapter._refresh_oauth_token(connector, refresh_token="placeholder-rt")
