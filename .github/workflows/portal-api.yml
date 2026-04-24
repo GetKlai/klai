@@ -63,8 +63,10 @@ jobs:
       # CVE-2026-4539: ignored — package not directly exploitable in our context (sandboxed container,
       # no user-controlled input reaches the vulnerable code path). Re-assess Q3 2026.
       # See: https://github.com/GetKlai/klai/issues/62
+      # CVE-2026-3219: advisory against pip 26.0.1 (the CI runner's bootstrap pip, not an app
+      # dependency resolved by uv). Ignored until the Actions runner image bumps its default pip.
       - name: Dependency vulnerability scan (pip-audit)
-        run: uv run --with pip-audit pip-audit --ignore-vuln CVE-2026-4539 --ignore-vuln CVE-2025-71176
+        run: uv run --with pip-audit pip-audit --ignore-vuln CVE-2026-4539 --ignore-vuln CVE-2025-71176 --ignore-vuln CVE-2026-3219
 
       # Guards against the two classes of alembic mistakes we've been bitten by:
       # 1. Hand-typed rev ids (SPEC-KB-020: duplicate `a1b2c3d4e5f6` crashed
