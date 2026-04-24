@@ -7,22 +7,6 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-# MIME → filename extension map for Unstructured parser output. Kept
-# local to the connector because the shared lib intentionally does not
-# know the parser's envelope format.
-_PARSER_MIME_EXT: dict[str, str] = {
-    "image/jpeg": "jpg",
-    "image/png": "png",
-    "image/gif": "gif",
-    "image/webp": "webp",
-    "image/svg+xml": "svg",
-}
-
-
-def _ext_from_parser_mime(mime: str) -> str:
-    """Return the extension for a parser-provided MIME type, default ``png``."""
-    return _PARSER_MIME_EXT.get(mime, "png")
-
 import httpx
 from gidgethub import BadRequest
 from klai_image_storage import (
@@ -42,6 +26,23 @@ from app.core.logging import get_logger
 from app.models.sync_run import SyncRun
 from app.services.parser import parse_document_with_images
 from app.services.portal_client import PortalClient
+
+# MIME → filename extension map for Unstructured parser output. Kept
+# local to the connector because the shared lib intentionally does not
+# know the parser's envelope format.
+_PARSER_MIME_EXT: dict[str, str] = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/gif": "gif",
+    "image/webp": "webp",
+    "image/svg+xml": "svg",
+}
+
+
+def _ext_from_parser_mime(mime: str) -> str:
+    """Return the extension for a parser-provided MIME type, default ``png``."""
+    return _PARSER_MIME_EXT.get(mime, "png")
+
 
 logger = get_logger(__name__)
 
