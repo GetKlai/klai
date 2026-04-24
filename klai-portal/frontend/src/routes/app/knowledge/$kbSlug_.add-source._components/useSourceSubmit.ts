@@ -1,8 +1,10 @@
 /**
- * Shared mutation + error-mapping hook for URL / YouTube / Text source forms.
+ * Shared mutation + error-mapping hook for URL / Text source forms.
  *
  * Keeps each individual form component under 100 lines (SPEC-KB-SOURCES-001
- * R6.3) and guarantees consistent error text across the three tiles.
+ * R6.3) and guarantees consistent error text across the two tiles. The
+ * ``youtube`` kind used to be wired here too, but the tile was pulled from
+ * the UI in 1.5.0 — the backend route remains live for when we re-enable.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
@@ -10,7 +12,7 @@ import { useState } from 'react'
 import { ApiError, apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
 
-export type SourceKind = 'url' | 'youtube' | 'text'
+export type SourceKind = 'url' | 'text'
 
 export interface SourceIngestedResponse {
   artifact_id: string
@@ -48,11 +50,11 @@ export function extractErrorCode(detail: string): string | undefined {
  * Map an ApiError to one of the i18n error keys documented in SPEC D8.
  *
  * Never calls the generic key for errors we can recognise — the UI should
- * tell the user WHICH constraint tripped (invalid URL / blocked URL / no
- * transcript / KB full) rather than a vague "try again". Exported for
- * direct unit testing.
+ * tell the user WHICH constraint tripped (invalid URL / blocked URL /
+ * KB full) rather than a vague "try again". Exported for direct unit
+ * testing.
  */
-export function errorMessageFor(kind: SourceKind, err: unknown): string {
+export function errorMessageFor(_kind: SourceKind, err: unknown): string {
   if (!(err instanceof ApiError)) {
     return m.knowledge_add_source_error_generic()
   }
@@ -70,16 +72,8 @@ export function errorMessageFor(kind: SourceKind, err: unknown): string {
       return lowerDetail.includes('not allowed')
         ? m.knowledge_add_source_error_blocked_url()
         : m.knowledge_add_source_error_invalid_url()
-    case 422:
-      // Only the YouTube route emits 422 for "no transcript" — other 422s
-      // are Pydantic validation, which shouldn't happen in the UI path.
-      return kind === 'youtube'
-        ? m.knowledge_add_source_error_no_transcript()
-        : m.knowledge_add_source_error_generic()
     case 502:
-      return kind === 'youtube'
-        ? m.knowledge_add_source_error_youtube_unreachable()
-        : m.knowledge_add_source_error_fetch_failed()
+      return m.knowledge_add_source_error_fetch_failed()
     default:
       return m.knowledge_add_source_error_generic()
   }
