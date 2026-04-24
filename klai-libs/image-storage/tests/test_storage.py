@@ -81,14 +81,7 @@ class TestValidateImage:
         assert ImageStore.validate_image(gif_header) == "image/gif"
 
     def test_accepts_webp(self) -> None:
-        webp_header = (
-            b"RIFF"
-            + b"\x24\x00\x00\x00"
-            + b"WEBP"
-            + b"VP8 "
-            + b"\x18\x00\x00\x00"
-            + b"\x00" * 24
-        )
+        webp_header = b"RIFF" + b"\x24\x00\x00\x00" + b"WEBP" + b"VP8 " + b"\x18\x00\x00\x00" + b"\x00" * 24
         assert ImageStore.validate_image(webp_header) == "image/webp"
 
     def test_accepts_svg(self) -> None:

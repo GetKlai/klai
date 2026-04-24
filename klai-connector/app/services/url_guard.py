@@ -3,23 +3,25 @@
 Legacy rows in ``connector.connectors`` may have been persisted before
 the portal validators landed (REQ-2 / REQ-8). When a scheduled sync
 loads such a row and extracts its config, this module re-validates
-the user-supplied URL fields against the same reject-list. A stored
-``base_url`` pointing at ``portal-api:8010`` or ``10.0.0.5`` SHALL
-fail the sync run with a stable error code rather than fetch.
+the user-supplied URL fields against the canonical klai-libs guard.
+A stored ``base_url`` pointing at ``portal-api:8010`` or ``10.0.0.5``
+SHALL fail the sync run with a stable error code rather than fetch.
 
-Thin wrappers around :mod:`klai_image_storage.url_guard` — one entry
-point per connector type so the structlog event key and the
-`sync_runs.error` string are stable and LogsQL-queryable (REQ-8.5 /
-AC-21).
+The validator + Atlassian allowlist live in
+:mod:`klai_image_storage.url_guard` — this module only adds connector-
+specific context (stable error codes, structured log event keys, the
+``PersistedUrlRejectedError`` envelope the sync runner catches). No
+reject-list logic lives here; drift between portal and connector is
+structurally impossible.
 """
 
 from __future__ import annotations
 
 from typing import NoReturn
-from urllib.parse import urlparse
 
 from klai_image_storage.url_guard import (
     SsrfBlockedError,
+    validate_confluence_base_url,
     validate_url_pinned_sync,
 )
 
@@ -48,9 +50,6 @@ class PersistedUrlRejectedError(Exception):
         super().__init__(message)
         self.error_code = error_code
         self.hostname = hostname
-
-
-_ATLASSIAN_SUFFIXES = (".atlassian.net", ".atlassian.com")
 
 
 def validate_web_crawler_config_strict(
@@ -95,7 +94,10 @@ def validate_web_crawler_config_strict(
         if not isinstance(raw, str):
             _reject(field, "invalid_type", f"{field} must be a string", None)
         try:
-            validate_url_pinned_sync(raw)
+            # Suppress the guard's own ``ssrf_blocked`` entry — we
+            # emit the richer ``web_crawler_persisted_url_blocked``
+            # event in ``_reject`` with connector_id + field context.
+            validate_url_pinned_sync(raw, log_as=None)
         except SsrfBlockedError as exc:
             _reject(field, exc.reason, str(exc), exc.hostname)
 
@@ -103,51 +105,38 @@ def validate_web_crawler_config_strict(
 def validate_confluence_base_url_strict(base_url: str, *, connector_id: str | None = None) -> None:
     """REQ-8.4 / AC-21: re-validate a stored Confluence base_url at load time.
 
-    Applies the same allowlist + SSRF reject-list as the portal
-    ``ConfluenceConfig`` validator. On failure emits an
-    ``event="confluence_base_url_blocked"`` warning (REQ-8.5) with
-    the stable connector_id / reason fields and raises
-    :class:`PersistedUrlRejectedError` — which the sync runner catches
-    and converts into a failed ``sync_runs`` row.
+    Delegates the reject-list logic (Atlassian allowlist, SSRF, IP-
+    literal classification) to
+    :func:`klai_image_storage.url_guard.validate_confluence_base_url`
+    so the connector and portal share exactly one implementation.
+    This helper adds connector-specific envelopes: stable error code
+    (``ssrf_blocked_persisted_confluence_base_url``), structured log
+    event (``confluence_base_url_blocked``), and the
+    :class:`PersistedUrlRejectedError` the sync runner catches.
     """
 
-    parsed = urlparse(base_url)
-    scheme = parsed.scheme
-    host = (parsed.hostname or "").lower()
-
-    def _reject(reason: str, message: str) -> None:
+    try:
+        # Suppress the generic ``ssrf_blocked`` entry — the
+        # ``confluence_base_url_blocked`` event below carries the
+        # richer connector_id context.
+        validate_confluence_base_url(base_url, log_as=None)
+    except SsrfBlockedError as exc:
         logger.warning(
             "confluence_base_url_blocked — %s",
-            message,
+            exc,
             extra={
                 "event": "confluence_base_url_blocked",
                 "url": base_url.split("?", 1)[0],
-                "hostname": host or None,
-                "reason": reason,
+                "hostname": exc.hostname,
+                "reason": exc.reason,
                 "connector_id": connector_id,
             },
         )
         raise PersistedUrlRejectedError(
             error_code=SSRF_PERSISTED_CONFLUENCE_ERROR,
-            hostname=host or None,
-            message=message,
-        )
-
-    if scheme != "https":
-        _reject("non_https", "base_url must use HTTPS")
-    if not host:
-        _reject("no_hostname", "base_url has no hostname")
-    # IP literals fall through to the SSRF reject-list.
-    is_literal = all(c.isdigit() or c in ".:" for c in host)
-    if not is_literal and not any(host.endswith(s) for s in _ATLASSIAN_SUFFIXES):
-        _reject(
-            "domain_not_allowed",
-            "base_url must be on *.atlassian.net or *.atlassian.com",
-        )
-    try:
-        validate_url_pinned_sync(base_url)
-    except SsrfBlockedError as exc:
-        _reject(exc.reason, str(exc))
+            hostname=exc.hostname,
+            message=str(exc),
+        ) from exc
 
 
 __all__ = [

@@ -27,8 +27,10 @@ from klai_image_storage.url_guard import (
     SsrfBlockedError,
     ValidatedURL,
     _DnsCache,
+    _is_ip_literal,
+    _reset_dns_cache,
     classify_ip,
-    reset_dns_cache,
+    validate_confluence_base_url,
     validate_image_url,
     validate_url_pinned,
     validate_url_pinned_sync,
@@ -43,7 +45,7 @@ from klai_image_storage.url_guard import (
 def _clear_cache() -> None:
     """Reset the global DNS cache between tests."""
 
-    reset_dns_cache()
+    _reset_dns_cache()
 
 
 def _stub_resolver(mapping: dict[str, list[str]]):
@@ -390,3 +392,115 @@ def test_dns_cache_evicts_lru() -> None:
     assert cache.get("a.example") is None
     assert cache.get("b.example") == ("2.2.2.2",)
     assert cache.get("c.example") == ("3.3.3.3",)
+
+
+# ---------------------------------------------------------------------------
+# IP-literal detection (regression guard)
+# ---------------------------------------------------------------------------
+
+
+class TestIsIpLiteral:
+    """Detecting IP literals correctly is load-bearing for the Atlassian
+    allowlist — a false positive here would let a domain like ``10.co``
+    skip the allowlist check (even though the SSRF guard would still
+    reject it by IP class, the reason code would be wrong and the
+    intent of the allowlist would be bypassed)."""
+
+    @pytest.mark.parametrize(
+        "host",
+        [
+            "10.0.0.5",
+            "127.0.0.1",
+            "93.184.216.34",
+            "::1",
+            "fe80::1",
+            "2606:4700:4700::1111",
+        ],
+    )
+    def test_valid_ip_literals(self, host: str) -> None:
+        assert _is_ip_literal(host) is True
+
+    @pytest.mark.parametrize(
+        "host",
+        [
+            # Domains that a naive char-set check would mis-classify
+            # as IP literals because they contain only digits + dots.
+            "1.co",
+            "10.co",
+            "1.0.0.co",
+            # Normal hostnames.
+            "example.com",
+            "klai-tenant.atlassian.net",
+            "wiki.example.com",
+        ],
+    )
+    def test_domains_are_not_ip_literals(self, host: str) -> None:
+        assert _is_ip_literal(host) is False
+
+
+# ---------------------------------------------------------------------------
+# validate_confluence_base_url — shared allowlist guard
+# ---------------------------------------------------------------------------
+
+
+class TestValidateConfluenceBaseUrl:
+    """REQ-8 / AC-19: shared allowlist + SSRF guard used by both the
+    portal pydantic validator and the connector legacy-row gate."""
+
+    def test_atlassian_tenant_accepted(self) -> None:
+        with patch(
+            "klai_image_storage.url_guard._resolve_blocking",
+            return_value=("104.192.136.1",),
+        ):
+            validated = validate_confluence_base_url("https://klai.atlassian.net")
+        assert validated.hostname == "klai.atlassian.net"
+
+    def test_atlassian_com_accepted(self) -> None:
+        with patch(
+            "klai_image_storage.url_guard._resolve_blocking",
+            return_value=("104.192.136.1",),
+        ):
+            validated = validate_confluence_base_url("https://id.atlassian.com/authenticate")
+        assert validated.hostname == "id.atlassian.com"
+
+    def test_non_atlassian_host_rejected(self) -> None:
+        with patch(
+            "klai_image_storage.url_guard._resolve_blocking",
+            return_value=("93.184.216.34",),
+        ):
+            with pytest.raises(SsrfBlockedError) as excinfo:
+                validate_confluence_base_url("https://attacker.example.com/wiki/")
+        assert excinfo.value.reason == Reason.DOMAIN_NOT_ALLOWED
+
+    def test_docker_internal_rejected(self) -> None:
+        with pytest.raises(SsrfBlockedError) as excinfo:
+            validate_confluence_base_url("https://portal-api:8010/")
+        assert excinfo.value.reason == Reason.DOCKER_INTERNAL
+
+    def test_rfc1918_literal_rejected(self) -> None:
+        """AC-19 bullet 3: IP-literal bypass is not possible — the
+        SSRF check classifies by IP class after the allowlist skip."""
+
+        with pytest.raises(SsrfBlockedError) as excinfo:
+            validate_confluence_base_url("https://10.0.0.5/wiki")
+        assert excinfo.value.reason == Reason.PRIVATE_IP
+
+    def test_domain_with_only_digits_and_dots_not_treated_as_ip(self) -> None:
+        """Regression guard for the old char-set IP-literal heuristic.
+
+        ``10.co`` is a domain, not an IP literal. It must fail the
+        allowlist (domain_not_allowed), not slip through as "looks
+        like an IP, skip the check, DNS-resolve and see what happens"."""
+
+        with patch(
+            "klai_image_storage.url_guard._resolve_blocking",
+            return_value=("93.184.216.34",),
+        ):
+            with pytest.raises(SsrfBlockedError) as excinfo:
+                validate_confluence_base_url("https://10.co/wiki")
+        assert excinfo.value.reason == Reason.DOMAIN_NOT_ALLOWED
+
+    def test_http_scheme_rejected(self) -> None:
+        with pytest.raises(SsrfBlockedError) as excinfo:
+            validate_confluence_base_url("http://klai.atlassian.net/")
+        assert excinfo.value.reason == Reason.NON_HTTPS

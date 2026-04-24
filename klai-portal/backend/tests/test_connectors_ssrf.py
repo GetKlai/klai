@@ -21,7 +21,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
-from klai_image_storage.url_guard import reset_dns_cache
+from klai_image_storage.url_guard import _reset_dns_cache
 from pydantic import ValidationError
 
 from app.api.connectors import (
@@ -33,7 +33,7 @@ from app.api.connectors import (
 
 @pytest.fixture(autouse=True)
 def _clear_cache() -> None:
-    reset_dns_cache()
+    _reset_dns_cache()
 
 
 def _patched_resolve(ip: str):

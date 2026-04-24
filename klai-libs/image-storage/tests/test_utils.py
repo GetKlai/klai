@@ -62,8 +62,7 @@ class TestResolveRelativeUrl:
 
     def test_parent_traversal(self) -> None:
         assert (
-            resolve_relative_url("../img.png", "https://site.com/docs/sub/page.html")
-            == "https://site.com/docs/img.png"
+            resolve_relative_url("../img.png", "https://site.com/docs/sub/page.html") == "https://site.com/docs/img.png"
         )
 
     def test_empty_base_returns_original(self) -> None:

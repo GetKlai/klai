@@ -15,7 +15,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
-from klai_image_storage.url_guard import reset_dns_cache
+from klai_image_storage.url_guard import _reset_dns_cache
 from pydantic import ValidationError
 
 from app.api.connectors import WebcrawlerConfig
@@ -25,7 +25,7 @@ from app.api.connectors import WebcrawlerConfig
 def _stub_dns_resolver():
     """Make ``wiki.example.com`` etc. look like a public hostname."""
 
-    reset_dns_cache()
+    _reset_dns_cache()
     with patch(
         "klai_image_storage.url_guard._resolve_blocking",
         return_value=("93.184.216.34",),

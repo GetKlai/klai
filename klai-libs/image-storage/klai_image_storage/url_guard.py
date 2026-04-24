@@ -57,27 +57,29 @@ logger = structlog.get_logger()
 # Hostnames whose only resolution path is Docker's embedded DNS. These
 # resolve to container IPs on internal bridges; any user-supplied URL
 # pointing at one is SSRF by construction. REQ-1.3 / REQ-7.3.
-DOCKER_INTERNAL_HOSTS: frozenset[str] = frozenset({
-    "portal-api",
-    "docker-socket-proxy",
-    "knowledge-ingest",
-    "klai-connector",
-    "klai-mailer",
-    "mailer",
-    "retrieval-api",
-    "research-api",
-    "klai-knowledge-mcp",
-    "scribe",
-    "scribe-api",
-    "crawl4ai",
-    "redis",
-    "postgres",
-    "qdrant",
-    "falkordb",
-    "litellm",
-    "garage",
-    "klai-focus",
-})
+DOCKER_INTERNAL_HOSTS: frozenset[str] = frozenset(
+    {
+        "portal-api",
+        "docker-socket-proxy",
+        "knowledge-ingest",
+        "klai-connector",
+        "klai-mailer",
+        "mailer",
+        "retrieval-api",
+        "research-api",
+        "klai-knowledge-mcp",
+        "scribe",
+        "scribe-api",
+        "crawl4ai",
+        "redis",
+        "postgres",
+        "qdrant",
+        "falkordb",
+        "litellm",
+        "garage",
+        "klai-focus",
+    }
+)
 
 
 class Reason:
@@ -93,6 +95,32 @@ class Reason:
     DOCKER_INTERNAL = "docker_internal"
     DNS_FAILED = "dns_failed"
     DNS_TIMEOUT = "dns_failed"  # aliased — same meaning, distinct cause
+    DOMAIN_NOT_ALLOWED = "domain_not_allowed"
+
+
+# REQ-8.1 / AC-19: Confluence connector ``base_url`` must live on an
+# Atlassian-owned domain. The suffix list is authoritative for every
+# klai service that validates a Confluence config — portal (create /
+# update) and connector (legacy-row sync gate) both import from here.
+ATLASSIAN_ALLOWED_SUFFIXES: tuple[str, ...] = (
+    ".atlassian.net",
+    ".atlassian.com",
+)
+
+
+def _is_ip_literal(host: str) -> bool:
+    """Return True if *host* is a valid IP literal (v4 or v6).
+
+    Uses :func:`ipaddress.ip_address` rather than a character-set
+    heuristic. ``1.co`` and ``10.co`` are domains, not IP literals,
+    and must go through the domain-allowlist check.
+    """
+
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -182,8 +210,13 @@ class _DnsCache:
 _DEFAULT_CACHE = _DnsCache()
 
 
-def reset_dns_cache() -> None:
-    """Clear the process-wide DNS cache — used by tests."""
+def _reset_dns_cache() -> None:
+    """Clear the process-wide DNS cache.
+
+    Internal helper — prefixed with ``_`` to signal test-only use.
+    Production code should not reach into the cache; let the TTL
+    expire naturally.
+    """
 
     _DEFAULT_CACHE.clear()
 
@@ -237,14 +270,24 @@ def _hostname_is_docker_internal(hostname: str) -> bool:
 
 def _log_blocked(
     *,
+    event: str | None,
     url: str,
     hostname: str | None,
     reason: str,
     resolved_ips: list[str] | None = None,
     extra: dict[str, Any] | None = None,
 ) -> None:
-    """Emit an ``event="ssrf_blocked"`` warning with stable fields (AC-11)."""
+    """Emit a ``warning`` with AC-11's stable field shape.
 
+    The *event* arg is the structlog event name. Callers that will
+    log a richer event themselves (with tenant context: ``org_id``,
+    ``connector_id``, ...) pass ``event=None`` to suppress the
+    generic entry — their own log replaces it 1-to-1, keeping
+    VictoriaLogs LogsQL queries correlatable without duplicate hits.
+    """
+
+    if event is None:
+        return
     fields: dict[str, Any] = {
         # Sanitise URL — drop query string per AC-11 spec.
         "url": url.split("?", 1)[0],
@@ -255,7 +298,7 @@ def _log_blocked(
     if extra:
         fields.update(extra)
     # structlog uses the first positional arg as the ``event`` field.
-    logger.warning("ssrf_blocked", **fields)
+    logger.warning(event, **fields)
 
 
 # ---------------------------------------------------------------------------
@@ -387,19 +430,25 @@ async def validate_url_pinned(
     *,
     dns_timeout: float = 2.0,
     cache: _DnsCache | None = None,
+    log_as: str | None = "ssrf_blocked",
 ) -> ValidatedURL:
     """Validate *url* for SSRF and pin the resolved IP.
 
     Returns a :class:`ValidatedURL` on success. On rejection raises
-    :class:`SsrfBlockedError` and emits an ``event="ssrf_blocked"``
-    warning. DNS results are cached per hostname to meet the REQ-6.4
-    latency budget.
+    :class:`SsrfBlockedError` and emits a structured ``warning`` with
+    the stable field shape from AC-11. DNS results are cached per
+    hostname to meet the REQ-6.4 latency budget.
+
+    Pass ``log_as=None`` when the caller will emit its own richer
+    structured event (e.g. with ``org_id`` / ``connector_id``) —
+    that prevents VictoriaLogs from recording two entries for the
+    same rejection.
     """
 
     try:
         hostname, _ = _parse_and_classify(url)
     except SsrfBlockedError as exc:
-        _log_blocked(url=url, hostname=exc.hostname, reason=exc.reason)
+        _log_blocked(event=log_as, url=url, hostname=exc.hostname, reason=exc.reason)
         raise
 
     # Literal IP hostnames: classify directly, no DNS lookup.
@@ -415,31 +464,43 @@ async def validate_url_pinned(
             try:
                 ips = await _resolve_async(hostname, dns_timeout)
             except SsrfBlockedError as exc:
-                _log_blocked(url=url, hostname=hostname, reason=exc.reason)
+                _log_blocked(event=log_as, url=url, hostname=hostname, reason=exc.reason)
                 raise
             c.set(hostname, ips)
 
     try:
         validated = _classify_resolved(hostname, ips, url=url)
     except SsrfBlockedError as exc:
-        _log_blocked(url=url, hostname=hostname, reason=exc.reason, resolved_ips=list(ips))
+        _log_blocked(
+            event=log_as,
+            url=url,
+            hostname=hostname,
+            reason=exc.reason,
+            resolved_ips=list(ips),
+        )
         raise
     return validated
 
 
-def validate_url_pinned_sync(url: str) -> ValidatedURL:
+def validate_url_pinned_sync(
+    url: str,
+    *,
+    log_as: str | None = "ssrf_blocked",
+) -> ValidatedURL:
     """Blocking variant for pydantic ``model_validator(mode="after")``.
 
     Pydantic validators run synchronously. We cannot ``await`` inside
     them, so the sync path bypasses the async thread pool and does a
     direct ``getaddrinfo``. The cache is still consulted so validation
     inside a busy request loop stays cheap.
+
+    See :func:`validate_url_pinned` for the ``log_as`` semantics.
     """
 
     try:
         hostname, _ = _parse_and_classify(url)
     except SsrfBlockedError as exc:
-        _log_blocked(url=url, hostname=exc.hostname, reason=exc.reason)
+        _log_blocked(event=log_as, url=url, hostname=exc.hostname, reason=exc.reason)
         raise
 
     try:
@@ -453,7 +514,12 @@ def validate_url_pinned_sync(url: str) -> ValidatedURL:
             try:
                 ips = _resolve_blocking(hostname)
             except OSError as exc:
-                _log_blocked(url=url, hostname=hostname, reason=Reason.DNS_FAILED)
+                _log_blocked(
+                    event=log_as,
+                    url=url,
+                    hostname=hostname,
+                    reason=Reason.DNS_FAILED,
+                )
                 raise SsrfBlockedError(
                     f"DNS resolution failed: {exc}",
                     reason=Reason.DNS_FAILED,
@@ -464,7 +530,13 @@ def validate_url_pinned_sync(url: str) -> ValidatedURL:
     try:
         validated = _classify_resolved(hostname, ips, url=url)
     except SsrfBlockedError as exc:
-        _log_blocked(url=url, hostname=hostname, reason=exc.reason, resolved_ips=list(ips))
+        _log_blocked(
+            event=log_as,
+            url=url,
+            hostname=hostname,
+            reason=exc.reason,
+            resolved_ips=list(ips),
+        )
         raise
     return validated
 
@@ -473,12 +545,71 @@ async def validate_image_url(url: str, *, dns_timeout: float = 2.0) -> Validated
     """Image-pipeline alias for :func:`validate_url_pinned` (REQ-7.1).
 
     The reject-list is identical to the general guard (REQ-7.3). The
-    caller (pipeline.py) owns the ``adapter_image_ssrf_blocked``
-    structured log entry because it has ``org_id`` / ``kb_slug``
-    context that the guard does not.
+    generic log is suppressed (``log_as=None``) because the pipeline
+    always emits its own ``adapter_image_ssrf_blocked`` event with
+    the richer ``org_id`` / ``kb_slug`` context.
     """
 
-    return await validate_url_pinned(url, dns_timeout=dns_timeout)
+    return await validate_url_pinned(url, dns_timeout=dns_timeout, log_as=None)
+
+
+def validate_confluence_base_url(
+    base_url: str,
+    *,
+    log_as: str | None = "ssrf_blocked",
+) -> ValidatedURL:
+    """Shared Confluence ``base_url`` validator (REQ-8).
+
+    Used by both the portal pydantic ``ConfluenceConfig.model_validator``
+    (create / update path) and the klai-connector adapter's load-time
+    legacy-row gate. One source of truth for the allowlist — drift
+    between services is structurally impossible.
+
+    Applies, in order:
+
+    1. HTTPS scheme + hostname presence (:func:`_parse_and_classify`).
+    2. Docker-internal reject (same function).
+    3. Atlassian domain allowlist — ``*.atlassian.net`` /
+       ``*.atlassian.com``. IP literals are structurally skipped and
+       fall through to (4) so an attacker cannot bypass the
+       allowlist by writing ``https://10.0.0.5/`` — the SSRF check
+       still rejects it.
+    4. DNS resolution + IP reject-list (RFC1918, loopback, link-local,
+       multicast, reserved).
+
+    Raises :class:`SsrfBlockedError` on any failure; the caller wraps
+    it into a pydantic ``ValueError`` (portal) or a
+    ``PersistedUrlRejectedError`` (connector).
+    """
+
+    try:
+        hostname, _ = _parse_and_classify(base_url)
+    except SsrfBlockedError as exc:
+        _log_blocked(event=log_as, url=base_url, hostname=exc.hostname, reason=exc.reason)
+        raise
+
+    # Atlassian allowlist — skipped for IP literals so the SSRF
+    # reject-list classifies them by IP class instead. This matters
+    # for ``https://10.0.0.5/``: the allowlist would never accept
+    # it anyway, but by skipping here we produce the more precise
+    # ``private_ip`` reason code instead of ``domain_not_allowed``.
+    if not _is_ip_literal(hostname) and not any(hostname.endswith(suffix) for suffix in ATLASSIAN_ALLOWED_SUFFIXES):
+        _log_blocked(
+            event=log_as,
+            url=base_url,
+            hostname=hostname,
+            reason=Reason.DOMAIN_NOT_ALLOWED,
+        )
+        raise SsrfBlockedError(
+            "base_url must be on *.atlassian.net or *.atlassian.com",
+            reason=Reason.DOMAIN_NOT_ALLOWED,
+            hostname=hostname,
+        )
+
+    # Suppress the inner generic log — we already emitted one for
+    # any pre-DNS rejection above, and the DNS path will log under
+    # *log_as* too.
+    return validate_url_pinned_sync(base_url, log_as=log_as)
 
 
 # ---------------------------------------------------------------------------
@@ -568,13 +699,14 @@ class PinnedResolverTransport(httpx.AsyncHTTPTransport):
 
 
 __all__ = [
+    "ATLASSIAN_ALLOWED_SUFFIXES",
     "DOCKER_INTERNAL_HOSTS",
     "PinnedResolverTransport",
     "Reason",
     "SsrfBlockedError",
     "ValidatedURL",
     "classify_ip",
-    "reset_dns_cache",
+    "validate_confluence_base_url",
     "validate_image_url",
     "validate_url_pinned",
     "validate_url_pinned_sync",

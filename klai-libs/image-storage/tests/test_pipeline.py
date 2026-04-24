@@ -125,9 +125,7 @@ class TestAdapterUrls:
         store = _mock_image_store()
         async with _http_client(
             responses={
-                "https://example.com/not-an-image.png": httpx.Response(
-                    200, content=b"Hello, world!"
-                ),
+                "https://example.com/not-an-image.png": httpx.Response(200, content=b"Hello, world!"),
             }
         ) as client:
             urls = await download_and_upload_adapter_images(
@@ -358,9 +356,7 @@ class TestAdapterSsrfGuard:
         store = _mock_image_store()
         async with _http_client(
             responses={
-                "https://example.com/good.png": httpx.Response(
-                    200, content=_PNG_BYTES
-                ),
+                "https://example.com/good.png": httpx.Response(200, content=_PNG_BYTES),
             }
         ) as client:
             urls = await download_and_upload_adapter_images(
@@ -382,9 +378,9 @@ class TestAdapterSsrfGuard:
         from unittest.mock import patch
 
         from klai_image_storage import PinnedResolverTransport
-        from klai_image_storage.url_guard import reset_dns_cache
+        from klai_image_storage.url_guard import _reset_dns_cache
 
-        reset_dns_cache()
+        _reset_dns_cache()
 
         store = _mock_image_store()
         transport = PinnedResolverTransport()
@@ -395,9 +391,7 @@ class TestAdapterSsrfGuard:
         # observable side effect.
         async with _http_client(
             responses={
-                "https://pinned.example.test/img.png": httpx.Response(
-                    200, content=_PNG_BYTES
-                ),
+                "https://pinned.example.test/img.png": httpx.Response(200, content=_PNG_BYTES),
             }
         ) as client:
             with patch(
@@ -422,9 +416,7 @@ class TestAdapterSsrfGuard:
         store = _mock_image_store()
         async with _http_client(
             responses={
-                "https://example.com/ok.png": httpx.Response(
-                    200, content=_PNG_BYTES
-                ),
+                "https://example.com/ok.png": httpx.Response(200, content=_PNG_BYTES),
             }
         ) as client:
             urls = await download_and_upload_adapter_images(
@@ -464,9 +456,7 @@ class TestAdapterSsrfGuard:
                 image_store=store,
                 http_client=client,
                 parsed_images=[
-                    ParsedImage(
-                        data=b"bogus", ext="png", source_id="report.pdf#element-42"
-                    ),
+                    ParsedImage(data=b"bogus", ext="png", source_id="report.pdf#element-42"),
                 ],
             )
         assert urls == []  # invalid content is rejected; exercise source_id path
@@ -534,9 +524,7 @@ class TestCrawlImages:
         media: list[dict[str, Any]] = [{"src": "/assets/img.png"}]
         async with _http_client(
             responses={
-                "https://example.com/assets/img.png": httpx.Response(
-                    200, content=_PNG_BYTES
-                ),
+                "https://example.com/assets/img.png": httpx.Response(200, content=_PNG_BYTES),
             }
         ) as client:
             urls = await download_and_upload_crawl_images(
