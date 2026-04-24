@@ -30,14 +30,17 @@ export const Route = createFileRoute('/app/knowledge/$kbSlug/connectors')({
   component: ConnectorsTab,
 })
 
-type ConnectorTypeInfo = { label: string; IconComponent: React.ComponentType<{ className?: string }> }
+type ConnectorTypeInfo = { label: () => string; IconComponent: React.ComponentType<{ className?: string }> }
 
+// Paraglide message functions — keeps the type labels i18n-driven instead of
+// hard-coded strings. The key on the right is the Paraglide-generated function
+// (see klai-portal/frontend/messages/*.json).
 const CONNECTOR_TYPE_MAP: Record<string, ConnectorTypeInfo> = {
-  github:       { label: 'GitHub',       IconComponent: SiGithub },
-  web_crawler:  { label: 'Web',          IconComponent: Globe },
-  notion:       { label: 'Notion',       IconComponent: SiNotion },
-  google_drive: { label: 'Google Drive', IconComponent: SiGoogledrive },
-  ms_docs:      { label: 'Office 365',   IconComponent: FileText },
+  github:       { label: m.admin_connectors_type_github,       IconComponent: SiGithub },
+  web_crawler:  { label: m.admin_connectors_type_website,      IconComponent: Globe },
+  notion:       { label: m.admin_connectors_type_notion,       IconComponent: SiNotion },
+  google_drive: { label: m.admin_connectors_type_google_drive, IconComponent: SiGoogledrive },
+  ms_docs:      { label: m.admin_connectors_type_ms_docs,      IconComponent: FileText },
 }
 
 /** OAuth-backed connector types that support the /api/oauth/{provider}/authorize reconnect flow. */
@@ -59,6 +62,11 @@ function ConnectorsTab() {
     }
   }, [oauth])
   const [syncingIds, setSyncingIds] = useState<Set<string>>(new Set())
+  // Per-connector reconnect state: tracks which connector is mid-redirect and
+  // which failed so the UI can show a spinner / error message without stale
+  // state bleeding to other rows.
+  const [reconnectingId, setReconnectingId] = useState<string | null>(null)
+  const [reconnectErrorId, setReconnectErrorId] = useState<string | null>(null)
 
   const { data: kb } = useQuery<KnowledgeBase>({
     queryKey: ['app-knowledge-base', kbSlug],
@@ -114,16 +122,21 @@ function ConnectorsTab() {
   // recovers by triggering a fresh OAuth authorize flow — same endpoint
   // the add-connector and edit-connector pages use.
   async function handleReconnect(connectorType: string, connectorId: string) {
+    setReconnectErrorId(null)
+    setReconnectingId(connectorId)
     try {
       const { authorize_url } = await apiFetch<{ authorize_url: string }>(
         `/api/oauth/${encodeURIComponent(connectorType)}/authorize?kb_slug=${encodeURIComponent(kbSlug)}&connector_id=${encodeURIComponent(connectorId)}`,
       )
-      // Use .assign() not `.href =` — react-hooks/immutability flags the
-      // assignment as a modification of a component-external variable.
-      // Functionally equivalent (both navigate + push history entry).
       window.location.assign(authorize_url)
+      // Intentionally don't clear `reconnectingId` on success: the navigation
+      // unmounts this tree, so the spinner stays visible until the redirect
+      // completes (vs. briefly flashing back to the Reconnect button).
     } catch {
-      // Surface stale status via refetch; user sees the badge unchanged.
+      setReconnectingId(null)
+      setReconnectErrorId(connectorId)
+      // Also refetch in case the error was a stale-session 401 — the
+      // connectors list will refresh with up-to-date status.
       void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
     }
   }
@@ -164,7 +177,7 @@ function ConnectorsTab() {
             {connectors.map((c) => {
               const info = CONNECTOR_TYPE_MAP[c.connector_type]
               const Icon = info?.IconComponent ?? FileText
-              const typeLabel = info?.label ?? c.connector_type
+              const typeLabel = info?.label() ?? c.connector_type
               const isSyncing = syncingIds.has(c.id)
               const isRunning = c.last_sync_status?.toUpperCase() === 'RUNNING'
               return (
@@ -185,13 +198,25 @@ function ConnectorsTab() {
                     {isOwner
                       && c.last_sync_status?.toUpperCase() === 'AUTH_ERROR'
                       && OAUTH_RECONNECTABLE.has(c.connector_type) && (
-                      <button
-                        type="button"
-                        onClick={() => void handleReconnect(c.connector_type, c.id)}
-                        className="mt-1 block text-xs text-[var(--color-rl-accent-dark)] underline underline-offset-2 hover:opacity-70"
-                      >
-                        {m.admin_connectors_reconnect_action()}
-                      </button>
+                      <div className="mt-1.5 space-y-1">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={reconnectingId === c.id}
+                          onClick={() => void handleReconnect(c.connector_type, c.id)}
+                          className="h-7 text-xs"
+                        >
+                          {reconnectingId === c.id ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : null}
+                          {m.admin_connectors_reconnect_action()}
+                        </Button>
+                        {reconnectErrorId === c.id && (
+                          <p className="text-xs text-[var(--color-destructive)]">
+                            {m.admin_connectors_reconnect_error()}
+                          </p>
+                        )}
+                      </div>
                     )}
                     {c.last_sync_documents_ok != null && c.last_sync_documents_ok > 0 && (
                       <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)] tabular-nums">

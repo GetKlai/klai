@@ -121,7 +121,9 @@ function EditConnectorPage() {
     setIsReconnecting(true)
     try {
       const { authorize_url } = await apiFetch<{ authorize_url: string }>(`/api/oauth/google_drive/authorize?kb_slug=${encodeURIComponent(kbSlug)}&connector_id=${encodeURIComponent(connectorId)}`, )
-      window.location.href = authorize_url
+      // .assign() over `.href =` — consistent with connectors.tsx + add-connector;
+      // react-hooks/immutability flags the property-assignment form.
+      window.location.assign(authorize_url)
     } finally {
       setIsReconnecting(false)
     }
@@ -132,7 +134,7 @@ function EditConnectorPage() {
     setIsReconnecting(true)
     try {
       const { authorize_url } = await apiFetch<{ authorize_url: string }>(`/api/oauth/ms_docs/authorize?kb_slug=${encodeURIComponent(kbSlug)}&connector_id=${encodeURIComponent(connectorId)}`, )
-      window.location.href = authorize_url
+      window.location.assign(authorize_url)
     } finally {
       setIsReconnecting(false)
     }

@@ -36,6 +36,7 @@ from app.core.database import get_db, set_tenant
 from app.models.connectors import PortalConnector
 from app.models.portal import PortalUser
 from app.services.connector_credentials import credential_store
+from app.services.events import emit_event
 
 logger = logging.getLogger(__name__)
 
@@ -258,6 +259,14 @@ async def callback_provider(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
     await set_tenant(db, connector.org_id)
 
+    # Detect reconnect-flow: connector already had encrypted credentials AND
+    # was in auth_error. Used below to emit connector.reconnected for
+    # observability (distinguish successful recoveries from initial setups).
+    was_reconnect = (
+        connector.encrypted_credentials is not None
+        and (connector.last_sync_status or "").lower() == "auth_error"
+    )
+
     # 3. Exchange authorization code for tokens. NEVER log the response body.
     token_url: str
     token_payload: dict[str, Any]
@@ -323,7 +332,22 @@ async def callback_provider(
     )
     connector.encrypted_credentials = encrypted_blob
     connector.config = redacted_config
+    # Clear auth_error so the badge + Reconnect CTA disappear on the next list
+    # query. sync_engine will overwrite this again on the next run; clearing
+    # here is a best-effort UX improvement so users aren't left staring at a
+    # red badge immediately after a successful reconnect.
+    if was_reconnect:
+        connector.last_sync_status = None
     await db.commit()
+
+    # Observability: successful re-consent recovery from auth_error is a
+    # different signal from first-time connector setup. emit both separately.
+    emit_event(
+        "connector.reconnected" if was_reconnect else "connector.connected",
+        org_id=connector.org_id,
+        user_id=user_id,
+        properties={"provider": provider, "connector_id": str(connector.id)},
+    )
 
     logger.info(
         "oauth_callback_success: provider=%s connector_id=%s",
