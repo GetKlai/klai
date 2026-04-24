@@ -43,6 +43,7 @@ from app.core.logging import get_logger
 from app.models.sync_run import SyncRun
 from app.services.parser import parse_document_with_images
 from app.services.portal_client import PortalClient
+from app.services.url_guard import PersistedUrlRejected
 
 logger = get_logger(__name__)
 
@@ -388,6 +389,29 @@ class SyncEngine:
                     "Sync failed for connector %s",
                     connector_id,
                     extra={"connector_id": str(connector_id)},
+                )
+
+            except PersistedUrlRejected as err:
+                # SPEC-SEC-SSRF-001 REQ-8.4 / AC-21: legacy connector
+                # row stored an SSRF-unsafe URL. Mark the sync failed
+                # with the stable error code so ops dashboards and
+                # regression tests can query it. No Atlassian SDK
+                # client or HTTP request was issued — the guard fired
+                # inside ``_extract_config``.
+                status = SyncStatus.FAILED
+                error_details.append({
+                    "error": err.error_code,
+                    "hostname": err.hostname or "",
+                    "reason": str(err),
+                })
+                logger.warning(
+                    "Sync blocked for connector %s: persisted URL failed SSRF guard",
+                    connector_id,
+                    extra={
+                        "connector_id": str(connector_id),
+                        "error_code": err.error_code,
+                        "hostname": err.hostname,
+                    },
                 )
 
             except Exception as err:
