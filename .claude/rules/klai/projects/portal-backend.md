@@ -44,27 +44,42 @@ because each call checks out a different pooled connection.
 from a prior request) serving a request for org_id=1 (getklai) filters the
 getklai user row out via RLS, and the handler raises 404.
 
-**Fix:** `_pin_and_reset_connection` (renamed from `_pin_and_reset_on_exit`)
-runs `_reset_tenant_context` at checkout, before yielding the session.
-Defense-in-depth — cleanup still runs, but checkout catches any leak from
-a prior cleanup that the suppress-blocks ate.
+**Fix (three independent layers):**
+
+1. `_pin_and_reset_connection` (renamed from `_pin_and_reset_on_exit`) runs
+   `_reset_tenant_context` at checkout, before yielding the session.
+   Cleanup-time reset still runs; checkout-time reset catches any leak from
+   a prior cleanup that the suppress-blocks ate.
+2. `PooledTenantSession` — an `AsyncSession` subclass wired into
+   `async_sessionmaker(class_=PooledTenantSession)`. Every
+   `async with AsyncSessionLocal() as s:` block auto-pins + resets on
+   `__aenter__`, so a future helper that forgets the explicit
+   `_pin_and_reset_connection` call cannot re-introduce the bug.
+3. `assert_portal_users_rls_ready()` runs in the `main.py` lifespan after
+   `install_rls_guard`. It fails loud at startup if the `portal_users`
+   `tenant_isolation` policy drops its `IS NULL` branch — without that
+   branch, every authenticated request 404s after deploy (because the
+   freshly-reset GUC makes `_get_caller_org`'s user lookup return zero rows).
 
 **Prevention:**
 - Every helper that hands out a pooled session MUST call
   `_pin_and_reset_connection(session)` before yielding. `get_db`,
-  `tenant_scoped_session`, `pin_session`, `cross_org_session` all do.
-- New RLS-protected tables: the policy MUST include the
-  `OR current_setting(...) IS NULL` branch so cleared GUCs do not
-  lock out fresh connections (unless the table is intentionally cross-
-  org-inaccessible from unset context).
-- Never query an RLS-protected table before setting the tenant context in
-  the same request. If you must, accept that the query returns all rows
-  visible under the NULL policy branch.
+  `tenant_scoped_session`, `pin_session`, `cross_org_session` all do. This
+  layers on top of the `PooledTenantSession` auto-reset — belt + braces.
+- Category-A tables (`portal_users`, `portal_connectors` — see the 4-category
+  framework in `portal-security.md`) MUST keep the `OR current_setting(...)
+  IS NULL` branch. The startup assertion guards `portal_users`; extend it
+  if a new Category-A table joins the auth path before `set_tenant` fires.
+- Never query an RLS-protected table before `_get_caller_org` / `set_tenant`
+  in the same request. With the pool reset, empty GUC = Category-A permissive
+  only; Category-D raises 42501, Category-C SELECT returns zero rows.
 
-**Verification:** `docker exec klai-core-portal-api-1 psql -U klai -d klai -c
-"SELECT application_name, state, backend_start, query FROM pg_stat_activity
-WHERE application_name LIKE '%portal-api%';"` — all idle connections should
-sit in state=idle with no pending RLS statement.
+**Verification:**
+- `docker logs klai-core-portal-api-1 | grep "RLS policy checked"` — must
+  appear once per startup. Absence means the assertion regressed.
+- Reproduce the original bug: inject a stale GUC into the pool and fire a
+  cross-tenant burst. Before the fix: mixed 200/404. After: 100% 200.
+  Repro script lives in PR #133 description.
 
 ## Prometheus metrics in tests
 - Never use the global `prometheus_client` registry in tests — causes `Duplicated timeseries`.
