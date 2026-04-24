@@ -999,6 +999,7 @@
   "admin_connectors_google_drive_folder_id_help": "Limit the sync to a specific folder. Find the folder ID in the URL when opening a folder in Google Drive.",
   "admin_connectors_google_drive_reconnect": "Reconnect Google",
   "admin_connectors_oauth_success": "Google Drive connected successfully.",
+  "admin_connectors_oauth_failed": "Connection failed. Please try again, or contact support if this keeps happening.",
   "admin_connectors_type_notion": "Notion",
   "admin_connectors_notion_access_token": "Notion integration token",
   "admin_connectors_notion_access_token_placeholder": "secret_...",
