@@ -4,6 +4,8 @@ Route prefix: /api/bots
 """
 
 import asyncio
+import base64
+import binascii
 import hmac
 import io
 from datetime import UTC, datetime
@@ -45,19 +47,46 @@ MAX_CONCURRENT_BOTS = 2
 
 def _require_webhook_secret(request: Request) -> None:
     # SPEC-SEC-WEBHOOK-001 REQ-2: fail-closed auth on /api/bots/internal/webhook.
-    # Authentication is the Bearer-token compare alone — NO IP-range short-circuit.
-    # The previous "internal Docker network callers are trusted" path (172.x / 10.x
-    # / 192.168.x) was effectively an auth bypass: Caddy's container IP always sat
-    # in those ranges, so every external request was implicitly authenticated.
-    # Vexa's POST_MEETING_HOOKS MUST supply `Authorization: Bearer <secret>` now.
+    # Authentication is the Authorization-header compare alone — NO IP-range
+    # short-circuit. Two accepted forms:
     #
-    # Startup validator _require_vexa_webhook_secret in app.core.config guarantees
+    # 1. `Authorization: Bearer <vexa_webhook_secret>` — canonical form, used by any
+    #    caller that can add a custom header (e.g. a proxy shim or a future Vexa
+    #    release that wires `webhook_secret` into `fire_post_meeting_hooks`).
+    #
+    # 2. `Authorization: Basic <base64(user:vexa_webhook_secret)>` — derived
+    #    automatically by httpx when the POST URL contains userinfo
+    #    (`http://u:secret@portal-api:8010/...`). This is the path used today by
+    #    Vexa's `POST_MEETING_HOOKS` — Vexa's `fire_post_meeting_hooks` does not
+    #    expose a header-injection hook, but it passes the URL verbatim to
+    #    httpx.AsyncClient.post which auto-adds Basic auth from userinfo. The
+    #    `user` component is ignored by this guard; the secret lives in the
+    #    password half. See SPEC-SEC-WEBHOOK-001 Assumptions ("URL variant that
+    #    embeds the secret").
+    #
+    # The IP-range "trusted Docker networks" shortcut has been permanently removed;
+    # every caller MUST present one of the two valid Authorization forms.
+    # Startup validator `_require_vexa_webhook_secret` in app.core.config guarantees
     # settings.vexa_webhook_secret is non-empty, so an empty expected value cannot
-    # lead to compare_digest returning True against an empty attacker header.
+    # lead to a compare_digest false-positive.
     auth_header = request.headers.get("Authorization", "")
-    expected = f"Bearer {settings.vexa_webhook_secret}"
-    if not hmac.compare_digest(auth_header.encode("utf-8"), expected.encode("utf-8")):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+    expected_secret = settings.vexa_webhook_secret.encode("utf-8")
+
+    if auth_header.startswith("Bearer "):
+        expected = f"Bearer {settings.vexa_webhook_secret}".encode()
+        if hmac.compare_digest(auth_header.encode("utf-8"), expected):
+            return
+    elif auth_header.startswith("Basic "):
+        try:
+            decoded = base64.b64decode(auth_header[len("Basic ") :], validate=True).decode("utf-8")
+        except (binascii.Error, UnicodeDecodeError):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized") from None
+        # Basic auth format is "user:password"; only the password carries the secret.
+        _, sep, password = decoded.partition(":")
+        if sep and hmac.compare_digest(password.encode("utf-8"), expected_secret):
+            return
+
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
 
 
 # -- Request / Response models -----------------------------------------------
