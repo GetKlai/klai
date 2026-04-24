@@ -107,7 +107,7 @@ def canonicalise_url(url: str) -> str:
     - An empty path is normalised to "/".
     """
     parsed = urlparse(url)
-    hostname = (parsed.hostname or "").lower()
+    hostname = (parsed.hostname or "").lower().rstrip(".")
 
     # Reconstruct netloc without default-port or userinfo.
     netloc = hostname
@@ -146,7 +146,9 @@ async def validate_url(url: str) -> str:
     if parsed.scheme not in _ALLOWED_SCHEMES:
         raise InvalidUrlError(f"URL scheme must be http or https, got {parsed.scheme!r}")
 
-    hostname = (parsed.hostname or "").lower()
+    # Normalise hostname: lower-case (RFC 3986) and strip FQDN trailing dot
+    # so `http://redis./api` does NOT bypass the docker-internal deny list.
+    hostname = (parsed.hostname or "").lower().rstrip(".")
     if not hostname:
         raise InvalidUrlError("URL has no hostname")
 

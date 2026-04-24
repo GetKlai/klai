@@ -225,6 +225,27 @@ class TestDockerInternalHostnames:
         with pytest.raises(SSRFBlockedError):
             await validate_url("http://KNOWLEDGE-INGEST/api")
 
+    async def test_rejects_docker_internal_with_trailing_dot(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """RFC 3986 FQDNs can have a trailing dot — `redis.` must NOT bypass the deny list."""
+        monkeypatch.setattr(
+            "app.services.source_extractors._url_validator._resolve_host",
+            _fake_resolver(["93.184.216.34"]),
+        )
+        with pytest.raises(SSRFBlockedError):
+            await validate_url("http://redis./api")
+
+    async def test_rejects_uppercase_internal_with_trailing_dot(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "app.services.source_extractors._url_validator._resolve_host",
+            _fake_resolver(["93.184.216.34"]),
+        )
+        with pytest.raises(SSRFBlockedError):
+            await validate_url("http://Knowledge-Ingest./api")
+
 
 class TestDualStackResolution:
     async def test_rejects_if_any_resolved_ip_is_private(
@@ -297,6 +318,10 @@ class TestCanonicaliseUrl:
 
     def test_empty_path_becomes_slash(self) -> None:
         assert canonicalise_url("https://example.com") == "https://example.com/"
+
+    def test_strips_fqdn_trailing_dot(self) -> None:
+        """Trailing dot on the hostname is normalised away in the canonical URL."""
+        assert canonicalise_url("https://example.com./page") == "https://example.com/page"
 
 
 class TestIntegrationWithSocketResolution:
