@@ -259,6 +259,51 @@ async def test_patch_by_non_owner_non_admin_returns_403(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_patch_happy_path_flushes_and_refreshes_before_commit(monkeypatch):
+    """Regression: `PortalTemplate.updated_at` has `onupdate=func.now()`, which
+    SQLAlchemy expires after flush. Without a refresh, `_template_out` later
+    triggers a lazy SELECT that fires outside the greenlet context and raises
+    `MissingGreenlet` (observed in production 2026-04-24 as HTTP 500 on
+    PATCH /api/app/templates/klantenservice2).
+
+    This test locks the flush → refresh → commit ordering so a future cleanup
+    cannot re-introduce the same bug.
+    """
+    from app.api import app_templates
+
+    monkeypatch.setattr(
+        app_templates,
+        "_get_caller_org",
+        AsyncMock(return_value=_mock_caller(role="admin", zitadel_user_id="user-1")),
+    )
+    monkeypatch.setattr(app_templates, "_enforce_rate_limit", AsyncMock())
+    monkeypatch.setattr(app_templates, "invalidate_templates", AsyncMock())
+    template = _mock_template(created_by="user-1", scope="org", slug="klantenservice")
+    monkeypatch.setattr(app_templates, "_get_template_or_404", AsyncMock(return_value=template))
+
+    call_order: list[str] = []
+    db = MagicMock()
+    db.flush = AsyncMock(side_effect=lambda: call_order.append("flush"))
+
+    async def _refresh(obj):
+        call_order.append("refresh")
+        # Simulate server-side updated_at being re-populated.
+        obj.updated_at = datetime(2026, 4, 24, 14, 0, 0)
+
+    db.refresh = AsyncMock(side_effect=_refresh)
+    db.commit = AsyncMock(side_effect=lambda: call_order.append("commit"))
+
+    body = app_templates.TemplatePatch(name="Klantenservice 2")
+    out = await app_templates.update_template(slug="klantenservice", body=body, credentials=MagicMock(), db=db)
+
+    # flush MUST precede refresh MUST precede commit, so the refresh SELECT
+    # runs inside the tenant-scoped transaction.
+    assert call_order == ["flush", "refresh", "commit"], call_order
+    # Response carries the new slug derived from the renamed template.
+    assert out.slug == "klantenservice-2"
+
+
+@pytest.mark.asyncio
 async def test_patch_promoting_personal_to_org_requires_admin(monkeypatch):
     """REQ-TEMPLATES-CRUD-E1 applies on PATCH too: promoting to scope='org' needs admin."""
     from app.api import app_templates
