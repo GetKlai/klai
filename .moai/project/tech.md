@@ -163,6 +163,39 @@ Klai is a multi-service TypeScript/Python monorepo. The frontend stack is TypeSc
 
 ---
 
+## Shared Libraries (klai-libs/)
+
+Path-installed editable libraries consumed by multiple services. Changes
+ripple to every consumer on `uv sync`; drift between services is
+structurally prevented because there is only one implementation.
+
+### klai-libs/image-storage
+
+**Purpose:** Shared image pipeline + canonical SSRF guard
+(SPEC-KB-IMAGE-002, SPEC-SEC-SSRF-001)
+
+**Consumers:** `klai-knowledge-ingest`, `klai-connector`, `klai-portal/backend`
+
+| Module | Purpose |
+|---|---|
+| `storage` | Content-addressed S3 upload (Garage) |
+| `pipeline` | Adapter + crawl image download orchestrators |
+| `url_guard` | Canonical SSRF guard: `validate_url_pinned`, `validate_confluence_base_url`, `PinnedResolverTransport`, `ValidatedURL` |
+
+| Layer | Technology | Version |
+|-------|-----------|---------|
+| HTTP Client | httpx | >=0.28 |
+| S3 Client | minio | >=7.2 |
+| Image Validation | filetype | >=1.2 |
+| Structured Logging | structlog | >=25.0 |
+
+### klai-libs/connector-credentials
+
+**Purpose:** Tenant-scoped encrypted credential storage for connector
+configs. Consumed by `klai-portal/backend` and `klai-connector`.
+
+---
+
 ## Garage S3 (deploy/garage/)
 
 **Purpose:** Image storage for the knowledge pipeline (SPEC-KB-IMAGE-001)
