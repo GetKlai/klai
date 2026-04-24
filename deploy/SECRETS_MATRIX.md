@@ -22,8 +22,8 @@ Services previously using `env_file: .env` (the shared global file at
 |---|---|---|
 | scribe-api | YES | `1ff65d1b` |
 | retrieval-api | YES | `d6fcdb7f` |
-| victorialogs | YES | (this commit) |
-| portal-api | pending | — |
+| victorialogs | YES | `58e11c30` |
+| portal-api | YES | (this commit) |
 
 Services using an acceptable per-service `env_file: ./<svc>/.env`
 pattern (REQ-6 — compliant as-is, content audit is a follow-up):
@@ -33,20 +33,54 @@ klai-mailer, klai-connector, librechat-getklai.
 
 Rows sorted by secret name, then by service.
 
-| Secret | Service | Source | Purpose |
-|---|---|---|---|
-| `KNOWLEDGE_INGEST_SECRET` | scribe-api | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | HMAC auth when scribe pushes transcripts to knowledge-ingest. |
-| `LITELLM_MASTER_KEY` | scribe-api | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | Bearer token for the LiteLLM gateway (AI summarization of transcripts). |
-| `LITELLM_MASTER_KEY` | retrieval-api | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | Bearer token for the LiteLLM gateway (re-exposed as `LITELLM_API_KEY` in-container). |
-| `POSTGRES_PASSWORD` | retrieval-api | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | Portal-events write path — retrieval-api pushes `knowledge.queried` events to the portal `product_events` table. Interpolated into `PORTAL_EVENTS_PASSWORD`. |
-| `POSTGRES_PASSWORD` | scribe-api | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | PostgreSQL password; interpolated into `POSTGRES_DSN` for the scribe schema. |
-| `QDRANT_API_KEY` | retrieval-api | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | Qdrant vector-store API key (dense retrieval). |
-| `REDIS_PASSWORD` | retrieval-api | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | Interpolated into `REDIS_URL` for the rate-limiter (SPEC-SEC-010). |
-| `RETRIEVAL_API_INTERNAL_SECRET` | retrieval-api | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | Shared secret for internal callers (portal-api, LiteLLM hook). Mapped to `INTERNAL_SECRET` in-container (SPEC-SEC-010). |
-| `RETRIEVAL_API_ZITADEL_AUDIENCE` | retrieval-api | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | Zitadel audience for JWT validation. Mapped to `ZITADEL_API_AUDIENCE` in-container. |
-| `RETRIEVAL_API_RATE_LIMIT_RPM` | retrieval-api | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | Sliding-window rate-limit threshold per caller identity (SPEC-SEC-010). |
-| `VICTORIALOGS_AUTH_PASSWORD` | victorialogs | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | HTTP basic-auth password (set via `-httpAuth.password` cmdline flag). Also needed inside the container so the busybox-wget healthcheck can build the auth header. |
-| `VICTORIALOGS_AUTH_USER` | victorialogs | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | HTTP basic-auth username (set via `-httpAuth.username` cmdline flag). Also needed inside the container for the healthcheck. |
+Source column: all rows below reference `/opt/klai/.env` (rendered
+from SOPS `klai-infra/core-01/.env.sops`) unless noted otherwise.
+
+| Secret | Service | Purpose |
+|---|---|---|
+| `DOCS_INTERNAL_SECRET` | portal-api | Shared secret portal-api → klai-docs for KB provisioning calls. |
+| `FIRECRAWL_INTERNAL_KEY` | portal-api | Shared web-search API key (portal re-uses the Firecrawl internal key for URL extraction). |
+| `GITHUB_ADMIN_PAT` | portal-api | GitHub PAT with `admin:org` scope — used during offboarding to remove members from the GetKlai org. |
+| `KLAI_CONNECTOR_SECRET` | portal-api | Shared secret for portal → klai-connector orchestration calls (SOPS key: `PORTAL_API_KLAI_CONNECTOR_SECRET`, mapped inline). |
+| `KNOWLEDGE_INGEST_SECRET` | portal-api | Shared secret portal-api → knowledge-ingest for tenant KB mutations. |
+| `KNOWLEDGE_INGEST_SECRET` | scribe-api | HMAC auth when scribe pushes transcripts to knowledge-ingest. |
+| `KNOWLEDGE_RETRIEVE_URL` | portal-api | URL of retrieval-api used for gap re-scoring (value, not secret — kept here because it crosses a trust boundary). |
+| `LIBRECHAT_MONGO_ROOT_URI` | portal-api | MongoDB root URI with multi-DB read access for lazy LibreChat user mapping (KB-010). |
+| `LITELLM_MASTER_KEY` | portal-api | Master key for the LiteLLM gateway — portal writes this when provisioning per-tenant LibreChat containers. |
+| `LITELLM_MASTER_KEY` | retrieval-api | Bearer token for the LiteLLM gateway (re-exposed as `LITELLM_API_KEY` in-container). |
+| `LITELLM_MASTER_KEY` | scribe-api | Bearer token for the LiteLLM gateway (AI summarization of transcripts). |
+| `MEILI_MASTER_KEY` | portal-api | Meilisearch master key — portal provisions Meili indexes per tenant. |
+| `MONEYBIRD_WEBHOOK_TOKEN` | portal-api | Signs Moneybird billing webhooks; portal's config validator fails closed on empty/whitespace (SPEC-SEC-WEBHOOK-001 REQ-3). |
+| `MONGO_ROOT_PASSWORD` | portal-api | MongoDB root password for per-tenant LibreChat database provisioning. |
+| `MONGO_ROOT_USERNAME` | portal-api | MongoDB root username (non-secret but kept here for pairing with the password). |
+| `PORTAL_API_BFF_SESSION_KEY` | portal-api | Fernet key for BFF session records at rest in Redis (SPEC-AUTH-008). Mapped to `BFF_SESSION_KEY` in-container. |
+| `PORTAL_API_DB_PASSWORD` | portal-api | Portal's PostgreSQL password; interpolated into `DATABASE_URL`. |
+| `PORTAL_API_ENCRYPTION_KEY` | portal-api | KEK for the two-tier connector credential hierarchy (SPEC-KB-020). Mapped to `ENCRYPTION_KEY` in-container. |
+| `PORTAL_API_IMAP_PASSWORD` | portal-api | IMAP password for the meeting-invite listener (`meet@getklai.com`). Mapped to `IMAP_PASSWORD` in-container. |
+| `PORTAL_API_INTERNAL_SECRET` | portal-api | Shared secret used by klai-mailer → portal for webhook callbacks. Mapped to `INTERNAL_SECRET` in-container. |
+| `PORTAL_API_KLAI_CONNECTOR_SECRET` | portal-api | See `KLAI_CONNECTOR_SECRET` row — this is the SOPS-side name. |
+| `PORTAL_API_PORTAL_SECRETS_KEY` | portal-api | Application-level key encrypting per-tenant secrets (zitadel_librechat_client_secret, litellm_team_key). Mapped to `PORTAL_SECRETS_KEY` in-container. |
+| `PORTAL_API_SSO_COOKIE_KEY` | portal-api | Fernet key for SSO session cookies. Mapped to `SSO_COOKIE_KEY` in-container. |
+| `PORTAL_API_ZITADEL_PAT` | portal-api | Zitadel admin PAT for provisioning portal users/orgs. Mapped to `ZITADEL_PAT` in-container. |
+| `PORTAL_API_ZITADEL_PORTAL_CLIENT_SECRET` | portal-api | OIDC confidential-client secret for BFF code-exchange (SPEC-AUTH-008). Mapped to `ZITADEL_PORTAL_CLIENT_SECRET` in-container. |
+| `POSTGRES_PASSWORD` | retrieval-api | Portal-events write path — retrieval-api pushes `knowledge.queried` events to the portal `product_events` table. Interpolated into `PORTAL_EVENTS_PASSWORD`. |
+| `POSTGRES_PASSWORD` | scribe-api | PostgreSQL password; interpolated into `POSTGRES_DSN` for the scribe schema. |
+| `QDRANT_API_KEY` | portal-api | Qdrant vector-store API key (portal runs embedding-write paths for demo content). |
+| `QDRANT_API_KEY` | retrieval-api | Qdrant vector-store API key (dense retrieval). |
+| `REDIS_PASSWORD` | portal-api | Redis password; interpolated into `REDIS_URL` for the BFF session store + rate limiter + LibreChat provisioning. |
+| `REDIS_PASSWORD` | retrieval-api | Interpolated into `REDIS_URL` for the rate-limiter (SPEC-SEC-010). |
+| `RETRIEVAL_API_INTERNAL_SECRET` | portal-api | Shared secret portal-api → retrieval-api for `/retrieve` calls. Kept separate from `INTERNAL_SECRET` so the two trust boundaries can rotate independently (SPEC-SEC-010 REQ-6.1). |
+| `RETRIEVAL_API_INTERNAL_SECRET` | retrieval-api | Shared secret for internal callers (portal-api, LiteLLM hook). Mapped to `INTERNAL_SECRET` in-container (SPEC-SEC-010). |
+| `RETRIEVAL_API_RATE_LIMIT_RPM` | retrieval-api | Sliding-window rate-limit threshold per caller identity (SPEC-SEC-010). |
+| `RETRIEVAL_API_ZITADEL_AUDIENCE` | retrieval-api | Zitadel audience for JWT validation. Mapped to `ZITADEL_API_AUDIENCE` in-container. |
+| `VEXA_BOT_MANAGER_API_KEY` | portal-api | Vexa bot-manager API key. Mapped to `VEXA_API_KEY` in-container. |
+| `VEXA_WEBHOOK_SECRET` | portal-api | Signs Vexa webhook deliveries to portal; config.py validator fails closed on empty/whitespace (SEC-013 F-033). |
+| `VICTORIALOGS_AUTH_PASSWORD` | victorialogs | HTTP basic-auth password (set via `-httpAuth.password` cmdline flag). Also needed inside the container so the busybox-wget healthcheck can build the auth header. |
+| `VICTORIALOGS_AUTH_USER` | victorialogs | HTTP basic-auth username (set via `-httpAuth.username` cmdline flag). Also needed inside the container for the healthcheck. |
+| `WIDGET_JWT_SECRET` | portal-api | Signs widget JWTs (SPEC-WIDGET-001). Empty value causes widget endpoints to return 503 — not a validator-blocked field. |
+| `ZITADEL_IDP_GOOGLE_ID` | portal-api | Instance-level Zitadel IDP id for Google social login (non-secret). |
+| `ZITADEL_IDP_MICROSOFT_ID` | portal-api | Instance-level Zitadel IDP id for Microsoft social login (non-secret). |
+| `ZITADEL_PORTAL_CLIENT_ID` | portal-api | OIDC client_id for the BFF confidential WEB app (non-secret). |
 
 ## Rotation coupling
 
