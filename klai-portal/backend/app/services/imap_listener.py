@@ -1,5 +1,4 @@
-"""
-IMAP listener -- poll an IMAP mailbox for calendar invites.
+"""IMAP listener — poll an IMAP mailbox for calendar invites.
 
 Connects to IMAP4_SSL, polls for UNSEEN emails, verifies sender identity
 via DKIM/SPF/ARC (SPEC-SEC-IMAP-001), extracts .ics data, parses invites,
@@ -7,9 +6,7 @@ resolves tenants, and schedules bot joins.
 """
 
 import asyncio
-import email
 import imaplib
-import logging
 from email.message import Message
 
 import structlog
@@ -17,14 +14,10 @@ import structlog
 from app.core.config import settings
 from app.services.ical_parser import parse_ics
 from app.services.invite_scheduler import schedule_invite
-from app.services.mail_auth import verify_mail_auth
+from app.services.mail_auth import result_log_fields, verify_mail_auth
 from app.services.tenant_matcher import find_tenant
 
-# Stdlib logger kept for existing operational messages (poll errors, startup
-# noise). SPEC-SEC-IMAP-001 events (imap_auth_*) use structlog so their fields
-# land as queryable keys in VictoriaLogs.
-logger = logging.getLogger(__name__)
-struct_logger = structlog.get_logger()
+logger = structlog.get_logger()
 
 # Exponential backoff limits
 _BACKOFF_BASE = 1.0
@@ -43,7 +36,7 @@ async def start_imap_listener() -> None:
         except asyncio.CancelledError:
             break
         except Exception:
-            logger.exception("IMAP poll error (retrying in %.0fs)", backoff)
+            logger.exception("imap_poll_error", backoff_seconds=backoff)
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, _BACKOFF_MAX)
             continue
@@ -66,13 +59,13 @@ async def _poll_once() -> None:
             return
 
         msg_ids = data[0].split()
-        logger.info("IMAP: found %d unseen emails", len(msg_ids))
+        logger.info("imap_poll_found_unseen", count=len(msg_ids))
 
         for msg_id in msg_ids:
             try:
                 await _process_email(imap, msg_id)
             except Exception:
-                logger.exception("Failed to process email %s", msg_id)
+                logger.exception("imap_process_email_failed", imap_msg_id=msg_id.decode(errors="replace"))
             # Mark as SEEN regardless (avoid reprocessing). REQ-5.4: rejected
             # messages also get the \Seen flag so they do not loop.
             await asyncio.to_thread(imap.store, msg_id, "+FLAGS", "\\Seen")
@@ -80,7 +73,7 @@ async def _poll_once() -> None:
         try:
             await asyncio.to_thread(imap.logout)
         except Exception:
-            logger.debug("IMAP logout failed (connection may already be closed)")
+            logger.debug("imap_logout_failed", exc_info=True)
 
 
 async def _process_email(imap: imaplib.IMAP4_SSL, msg_id: bytes) -> None:
@@ -96,45 +89,41 @@ async def _process_email(imap: imaplib.IMAP4_SSL, msg_id: bytes) -> None:
         return
 
     raw_email = msg_data[0]
-    if isinstance(raw_email, tuple):
-        raw_bytes = raw_email[1]
-    else:
+    if not isinstance(raw_email, tuple):
         return
+    raw_bytes = raw_email[1]
 
-    # REQ-1..REQ-5: verify mail-auth. Structured result drives both the
-    # accept/reject gate and the observability event.
+    # REQ-1..REQ-5: verify mail-auth. The result carries the parsed Message
+    # so we don't re-parse raw_bytes downstream.
     auth = await verify_mail_auth(raw_bytes)
-    msg = email.message_from_bytes(raw_bytes)
-    message_id = msg.get("Message-ID") or "<unknown>"
 
     if auth.verified_from is None:
         # REQ-4.1 + REQ-4.2: stable log keys; no body, no ICS payload.
-        struct_logger.warning(
+        logger.warning(
             "imap_auth_failed",
             reason=auth.reason,
             from_header=auth.from_header,
             from_domain=auth.from_domain,
-            dkim_result=auth.dkim_result,
-            spf_result=auth.spf_result,
-            arc_result=auth.arc_result,
-            message_id=message_id,
+            message_id=auth.message_id,
+            **result_log_fields(auth),
         )
         return
 
     # REQ-4.3: positive trail for post-incident forensics.
-    struct_logger.info(
+    logger.info(
         "imap_auth_passed",
         verified_from=auth.verified_from,
         from_domain=auth.from_domain,
-        dkim_result=auth.dkim_result,
-        spf_result=auth.spf_result,
-        arc_result=auth.arc_result,
-        message_id=message_id,
+        message_id=auth.message_id,
+        **result_log_fields(auth),
     )
 
-    ics_parts = _extract_ics_parts(msg)
+    # verified_from is not None implies the raw bytes were parseable; the
+    # invariant is documented on MailAuthResult.
+    assert auth.parsed_message is not None
+    ics_parts = _extract_ics_parts(auth.parsed_message)
     if not ics_parts:
-        logger.debug("No iCal content in email %s", msg_id)
+        logger.debug("imap_no_ics_content", message_id=auth.message_id)
         return
 
     for ics_bytes in ics_parts:
@@ -148,11 +137,11 @@ async def _process_email(imap: imaplib.IMAP4_SSL, msg_id: bytes) -> None:
         # must see these but not break them. mail-auth is authoritative,
         # the ICS field is informational.
         if invite.organizer_email and invite.organizer_email.lower() != auth.verified_from:
-            struct_logger.warning(
+            logger.warning(
                 "imap_organizer_mismatch",
                 verified_from=auth.verified_from,
                 ics_organizer=invite.organizer_email,
-                message_id=message_id,
+                message_id=auth.message_id,
             )
 
         # REQ-5.2: find_tenant is called with verified_from, NOT
