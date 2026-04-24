@@ -24,46 +24,63 @@ interface UseSourceSubmitOptions {
 }
 
 /**
+ * Parse ApiError.detail as JSON and return ``detail.error_code`` when present.
+ *
+ * Portal-api's structured errors are emitted as
+ * ``HTTPException(detail={"error_code": "...", ...})``, which apiFetch
+ * stringifies into ``err.detail`` so the JSON roundtrip works here. Plain
+ * string details (non-JSON) are ignored and return ``undefined``.
+ *
+ * Exported purely so the return value can be asserted against without
+ * re-implementing the parse logic in tests.
+ */
+export function extractErrorCode(detail: string): string | undefined {
+  if (!detail) return undefined
+  try {
+    const parsed = JSON.parse(detail) as { error_code?: unknown }
+    return typeof parsed.error_code === 'string' ? parsed.error_code : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * Map an ApiError to one of the i18n error keys documented in SPEC D8.
  *
  * Never calls the generic key for errors we can recognise — the UI should
  * tell the user WHICH constraint tripped (invalid URL / blocked URL / no
- * transcript / KB full) rather than a vague "try again".
+ * transcript / KB full) rather than a vague "try again". Exported for
+ * direct unit testing.
  */
-function errorMessageFor(kind: SourceKind, err: unknown): string {
-  if (err instanceof ApiError) {
-    const detail = (err.detail || '').toLowerCase()
-    const errorCode = (() => {
-      try {
-        const parsed = JSON.parse(err.detail || '{}') as {
-          error_code?: string
-        }
-        return parsed.error_code
-      } catch {
-        return undefined
-      }
-    })()
-
-    if (errorCode === 'kb_quota_items_exceeded') {
-      return m.knowledge_add_source_error_kb_full()
-    }
-    if (err.status === 400) {
-      if (detail.includes('not allowed')) {
-        return m.knowledge_add_source_error_blocked_url()
-      }
-      if (kind === 'youtube') {
-        return m.knowledge_add_source_error_invalid_url()
-      }
-      return m.knowledge_add_source_error_invalid_url()
-    }
-    if (err.status === 422 && kind === 'youtube') {
-      return m.knowledge_add_source_error_no_transcript()
-    }
-    if (err.status === 502) {
-      return m.knowledge_add_source_error_fetch_failed()
-    }
+export function errorMessageFor(kind: SourceKind, err: unknown): string {
+  if (!(err instanceof ApiError)) {
+    return m.knowledge_add_source_error_generic()
   }
-  return m.knowledge_add_source_error_generic()
+
+  // Structured backend error: dict detail with error_code. Always wins over
+  // status-based mapping because the code is more specific than the status.
+  if (extractErrorCode(err.detail) === 'kb_quota_items_exceeded') {
+    return m.knowledge_add_source_error_kb_full()
+  }
+
+  const lowerDetail = (err.detail || '').toLowerCase()
+
+  switch (err.status) {
+    case 400:
+      return lowerDetail.includes('not allowed')
+        ? m.knowledge_add_source_error_blocked_url()
+        : m.knowledge_add_source_error_invalid_url()
+    case 422:
+      // Only the YouTube route emits 422 for "no transcript" — other 422s
+      // are Pydantic validation, which shouldn't happen in the UI path.
+      return kind === 'youtube'
+        ? m.knowledge_add_source_error_no_transcript()
+        : m.knowledge_add_source_error_generic()
+    case 502:
+      return m.knowledge_add_source_error_fetch_failed()
+    default:
+      return m.knowledge_add_source_error_generic()
+  }
 }
 
 export function useSourceSubmit<TBody>({

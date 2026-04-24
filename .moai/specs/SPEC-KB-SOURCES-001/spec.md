@@ -475,10 +475,27 @@ Adding to the Risks table at 1.2.0:
 
 ### Test + coverage summary
 
-- **124 new tests**, all passing: text (22), SSRF (44), URL (15), YouTube (28), routes (15).
-- **94% coverage** on the new modules (target 85% per R7). Route module 96%.
-- Ruff + pyright clean on all new code. 32 existing KB/quota tests regression-checked green.
-- Frontend: paraglide compile ✓, `tsc -b` ✓, `eslint .` ✓.
+**Backend (pytest):** 127 tests across five files, all green.
+- `test_source_extractors_text.py` — 22 cases (validation, normalisation, title derivation, source_ref determinism).
+- `test_source_extractors_ssrf.py` — 47 cases, including the IPv4/IPv6 block ranges, docker-internal deny list, and three post-review regressions for FQDN trailing dots (`http://redis./api`).
+- `test_source_extractors_url.py` — 15 cases (crawl4ai mock, title derivation, failure modes, canonical source_ref).
+- `test_source_extractors_youtube.py` — 28 cases (regex variants, transcript mocks, oembed best-effort).
+- `test_app_knowledge_sources.py` — 15 route-level integration cases.
+
+**Frontend (vitest):** 17 tests across two files cover the user-facing error pipeline:
+- `lib/__tests__/apiFetch.test.ts` — 7 cases, including three new regressions for the dict/string/array detail shapes.
+- `routes/app/knowledge/$kbSlug_.add-source._components/__tests__/useSourceSubmit.test.ts` — 10 cases pinning every SPEC D8 row (non-ApiError → generic, 403 error_code → kb_full, 400 "not allowed" → blocked URL, 400 → invalid URL, 422 on YouTube → no-transcript, 422 elsewhere → generic, 502 → fetch-failed, unmapped status → generic, error_code precedence over status).
+
+**Coverage:** 94% on the new backend modules (target 85% per R7). Route module 96%. Ruff + pyright clean. 32 existing KB/quota tests regression-checked green. Frontend: paraglide compile ✓, `tsc -b` ✓, `eslint .` ✓.
+
+### IngestRequest.path usage verified
+
+`path` on `IngestRequest` is a logical identifier (pg store + procrastinate queue-lock key), **not** a filesystem or S3 key. Confirmed via:
+- `pg_store.get_active_content_hash(org_id, kb_slug, path)` — database lookup.
+- Queueing lock: `f"{org_id}:{kb_slug}:{path}"` — string key, colons are irrelevant.
+- No filesystem writes path'd by this value.
+
+Therefore the colons in `text:sha256:{hex}` and `youtube:{video_id}` are safe to reuse both as `source_ref` AND as `path`. No separate path format is needed.
 
 ### Not verified (requires staging)
 
