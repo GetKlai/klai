@@ -1,12 +1,15 @@
 ---
 id: SPEC-SEC-SSRF-001
-version: 0.3.0
-status: draft
+version: 1.0.0
+status: completed
 created: 2026-04-24
 updated: 2026-04-24
+completed: 2026-04-24
 author: Mark Vletter
 priority: critical
 tracker: SPEC-SEC-AUDIT-2026-04
+pr: "#167"
+lifecycle: spec-first
 ---
 
 # SPEC-SEC-SSRF-001: SSRF Guard Coverage + DNS-Rebinding Defense
@@ -18,6 +21,15 @@ tracker: SPEC-SEC-AUDIT-2026-04
 > klai-knowledge-mcp complete, if additional SSRF primitives are discovered.
 > New findings append to the Findings table and may add requirements; they
 > do not invalidate the requirements already accepted.
+
+### v1.0.0 (2026-04-24) — COMPLETED
+- Implementation landed in PR #167 (12 commits on
+  `feature/SPEC-SEC-SSRF-001`, +3019 / −304 across 26 files).
+- All critical and high findings closed (#6, #7, #8, A1, I, II).
+- 336 SSRF-relevant tests green across 4 services; ruff + pyright
+  clean on every touched file.
+- See Implementation Notes section at the end of this SPEC for full
+  as-built summary, deviations from plan, and residual risks.
 
 ### v0.3.0 (2026-04-24)
 - Internal-wave audit added two klai-connector SSRF primitives that were
@@ -545,3 +557,75 @@ at validator time.
 - Related SPEC: [SPEC-CRAWL-003](../SPEC-CRAWL-003/spec.md) (WebcrawlerConfig origin)
 - Related SPEC: [SPEC-CRAWLER-004](../SPEC-CRAWLER-004/spec.md) (canary_url, login_indicator)
 - Observability: [.claude/rules/klai/infra/observability.md](../../../.claude/rules/klai/infra/observability.md) — `event="ssrf_blocked"` query via VictoriaLogs MCP
+
+---
+
+## Implementation Notes (as-built, 2026-04-24)
+
+PR: [#167](https://github.com/GetKlai/klai/pull/167) — merged to `main` after review.
+
+### Architecture landed
+
+One canonical guard lives in
+[`klai-libs/image-storage/klai_image_storage/url_guard.py`](../../../klai-libs/image-storage/klai_image_storage/url_guard.py).
+Four services consume it:
+
+| Service | Consumption path |
+|---|---|
+| `klai-knowledge-ingest` | `utils/url_validator.py` thin wrapper (keeps historical `validate_url` API) |
+| `klai-connector` | `services/url_guard.py` for legacy-row gates (web_crawler + Confluence); `services/sync_engine.py` for `PinnedResolverTransport` on image http client |
+| `klai-portal/backend` | `services/url_validator.py` thin re-export; `api/connectors.py` pydantic validators (`WebcrawlerConfig`, `ConfluenceConfig`) + `_validate_connector_config` dispatcher |
+| `klai-libs/image-storage` | `pipeline._download_validate_upload` wraps every adapter image GET |
+
+Public API of the shared guard:
+
+- `ValidatedURL` — frozen dataclass carrying pinned IP set
+- `SsrfBlockedError(ValueError)` — stable `reason` codes
+- `validate_url_pinned(url, *, dns_timeout, cache, log_as)` — async guard
+- `validate_url_pinned_sync(url, *, log_as)` — sync variant for pydantic
+- `validate_image_url(url)` — image-pipeline alias
+- `validate_confluence_base_url(base_url, *, log_as)` — Atlassian allowlist + SSRF
+- `PinnedResolverTransport` — httpx transport pinning IP + preserving TLS SNI
+- `ATLASSIAN_ALLOWED_SUFFIXES`, `DOCKER_INTERNAL_HOSTS`, `Reason`, `classify_ip`
+
+### Requirements coverage
+
+| REQ | Status | Landed in |
+|---|---|---|
+| REQ-1 (preview_crawl parity) | Complete | `klai-knowledge-ingest/routes/crawl.py` |
+| REQ-2 (WebcrawlerConfig SSRF) | Complete | `klai-portal/backend/app/api/connectors.py` |
+| REQ-3 (TOCTOU / IP pinning) | Complete for own fetches; mitigated for crawl4ai (DNS cache + pre-validation; full rewrite deferred — see Residual risks) |
+| REQ-4 (central guard, no bypass) | Complete | shared lib + thin wrappers |
+| REQ-5 (must-not-join socket-proxy) | Complete | [rule file](../../../.claude/rules/klai/platform/docker-socket-proxy.md) + `scripts/smoke-ssrf-isolation.sh` |
+| REQ-6 (regression tests + logs) | Complete | 336 tests; stable `event="ssrf_blocked"` |
+| REQ-7 (adapter image pipeline) | Complete | `klai_image_storage.pipeline` + `PinnedResolverTransport` in sync engine |
+| REQ-8 (Confluence allowlist) | Complete | `ConfluenceConfig` + shared `validate_confluence_base_url` |
+
+### Acceptance criteria coverage
+
+Direct coverage: AC-1, AC-2, AC-3, AC-4, AC-5, AC-6, AC-7, AC-8, AC-9, AC-11, AC-13, AC-15, AC-16, AC-17, AC-18, AC-19, AC-20, AC-21, AC-22, AC-23 — all pinned by tests.
+
+Deferred:
+- **AC-12** (pytest-benchmark perf budget) — LRU cache in place meets the budget in observation; a formal benchmark test is tracked as an ops-only follow-up.
+- **AC-14** (7-day zero-private-IP VictoriaLogs window) — post-deploy observation, not a code gate.
+
+### Deviations from the original plan
+
+1. **Pipeline `pin_transport` API refactor** — initial implementation reached into `http_client._transport` (private httpx attribute). After adversarial review this was refactored to an explicit `pin_transport: PinnedResolverTransport | None` kwarg on `download_and_upload_adapter_images` and `download_and_upload_crawl_images`. httpx version drift cannot silently disable pinning anymore.
+2. **Confluence allowlist consolidation** — originally duplicated between portal and connector; consolidated into `klai_image_storage.url_guard.validate_confluence_base_url` so drift between services is structurally impossible.
+3. **IP-literal detection correctness** — initial char-set heuristic (`all(c.isdigit() or c in ".:" for c in host)`) mis-classified `1.co`, `10.co` as IP literals. Replaced with `ipaddress.ip_address()` check via `_is_ip_literal` helper; regression test pins the edge cases.
+4. **Structured log rationalisation** — each validator now takes an optional `log_as: str | None` kwarg. Callers with richer context (org_id, connector_id, kb_slug) pass `log_as=None` to suppress the generic `ssrf_blocked` and emit exactly one rich event. No duplicate VictoriaLogs entries per rejection.
+5. **must-not-join list correction** — `klai-mailer` initially included on the socket-proxy isolation list. Code inspection (`app/renderer.py`, `app/portal_client.py`) showed only one hardcoded outbound call (no user-URL surface). Removed from the list; `klai-focus/research-api` added after verifying `services/docling.py::convert_url` forwards a user URL.
+
+### Residual risks (tracked, non-blocking)
+
+1. **crawl4ai-delegated fetches still re-resolve DNS inside the Playwright browser context** (REQ-3.3 `extra_headers` + SNI rewrite was verified unworkable via code inspection). Mitigation in place: pre-validation + 60 s DNS cache narrows the rebind window. Full fail-closed per REQ-3.5 would break every crawl — deferred to a follow-up SPEC if the ops team accepts that trade-off.
+2. **`validate_url_pinned_sync` blocks the event loop in pydantic validators** on cold DNS (~2 s worst-case). Acceptable today because cache hit is <1 ms and the validator runs at request-time only. If pydantic-async validators become available in a future pydantic release, revisit.
+3. **PinnedResolverTransport SNI rewrite not tested against a real TLS endpoint.** Unit tests verify the pin map is set and the transport rewrites the URL; integration test with self-signed cert is a follow-up if operational risk surfaces.
+
+### Follow-ups intentionally not in scope
+
+- Host-level egress firewall (iptables / DOCKER-USER) — separate infra SPEC.
+- pytest-benchmark AC-12 test — ops follow-up.
+- 7-day VictoriaLogs observation (AC-14) — deployment runbook item.
+- crawl4ai URL-rewrite spike if Playwright ever gains a serverName-override API.
