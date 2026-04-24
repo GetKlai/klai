@@ -121,6 +121,15 @@ async def get_db() -> AsyncGenerator[AsyncSession]:
     awaits. This caused set_tenant() to set app.current_org_id on connection A
     while the next query ran on connection B (where the setting was empty),
     making RLS block all rows.
+
+    The explicit `_pin_and_reset_connection` below is intentionally double work
+    with `PooledTenantSession.__aenter__`. Rationale:
+      * Tests monkeypatch `AsyncSessionLocal` with a FakeSession that bypasses
+        `PooledTenantSession` entirely, so the explicit call is the only way
+        checkout behaviour stays covered in unit tests.
+      * The three extra SQL statements per checkout are sub-millisecond and
+        the call site makes the invariant readable without chasing a subclass.
+      * `_reset_tenant_context` is idempotent — repeating it is cheap and safe.
     """
     async with AsyncSessionLocal() as session:
         await _pin_and_reset_connection(session)
