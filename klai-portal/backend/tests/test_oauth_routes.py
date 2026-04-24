@@ -254,6 +254,8 @@ class TestCallbackEndpoint:
                 provider="google_drive",
                 code="auth-code-xyz",
                 state=state_token,
+                error=None,
+                error_description=None,
                 klai_oauth_state=state_token,
                 user_id="zitadel-user-1",
                 db=db,
@@ -610,6 +612,8 @@ class TestMsDocsProvider:
                 provider="ms_docs",
                 code="auth-code-ms",
                 state=state_token,
+                error=None,
+                error_description=None,
                 klai_oauth_state=state_token,
                 user_id="zitadel-user-1",
                 db=db,
@@ -622,3 +626,292 @@ class TestMsDocsProvider:
             # Scope is forwarded
             assert post_call.kwargs["data"]["scope"] == "offline_access User.Read Files.Read.All Sites.Read.All"
             mock_store.encrypt_credentials.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# SPEC-KB-MS-DOCS-001 — connector.reconnect_failed emission
+# ---------------------------------------------------------------------------
+
+
+class TestCallbackReconnectFailed:
+    """Callback emits connector.reconnect_failed on consent-denied and token-exchange failure.
+
+    was_reconnect flag is true when the connector already had encrypted_credentials
+    AND last_sync_status == "auth_error" (i.e. the user is recovering from a failed
+    sync). Only reconnect-flow failures emit the event — first-time failures don't.
+    """
+
+    @pytest.mark.asyncio
+    async def test_callback_consent_denied_emits_reconnect_failed_and_redirects(self) -> None:
+        """Provider redirects with ?error=access_denied (user refused consent).
+
+        Expected: emit connector.reconnect_failed with reason=consent_denied,
+        then 302 redirect to portal with ?oauth=failed. No token exchange.
+        """
+        from app.api.oauth import _sign_state, callback_provider
+
+        db = AsyncMock()
+
+        mock_portal_user = MagicMock()
+        mock_portal_user.org_id = 77
+
+        mock_connector = MagicMock()
+        mock_connector.id = "conn-uuid-reconnect-denied"
+        mock_connector.org_id = 77
+        mock_connector.connector_type = "ms_docs"
+        mock_connector.config = {}
+        # was_reconnect=True requires BOTH of these
+        mock_connector.encrypted_credentials = b"EXISTING_ENCRYPTED_BLOB"
+        mock_connector.last_sync_status = "auth_error"
+
+        with (
+            patch("app.api.oauth.settings") as mock_settings,
+            patch("app.api.oauth.emit_event") as mock_emit_event,
+        ):
+            mock_settings.ms_docs_client_id = _PLACEHOLDER_CLIENT_ID
+            mock_settings.ms_docs_client_secret = _PLACEHOLDER_CLIENT_SECRET
+            mock_settings.ms_docs_tenant_id = "common"
+            mock_settings.google_drive_client_id = ""
+            mock_settings.sso_cookie_key = _PLACEHOLDER_COOKIE_KEY
+            mock_settings.portal_url = "https://my.getklai.com"
+            mock_settings.domain = "getklai.com"
+
+            state_token = _sign_state(
+                {
+                    "provider": "ms_docs",
+                    "user_id": "zitadel-user-1",
+                    "kb_slug": "main",
+                    "connector_id": "conn-uuid-reconnect-denied",
+                    "nonce": "nonce",
+                }
+            )
+
+            db.scalar = AsyncMock(return_value=mock_portal_user)
+            db.get = AsyncMock(return_value=mock_connector)
+
+            response = await callback_provider(
+                provider="ms_docs",
+                code=None,
+                state=state_token,
+                error="access_denied",
+                error_description="The user denied the request.",
+                klai_oauth_state=state_token,
+                user_id="zitadel-user-1",
+                db=db,
+            )
+
+            # 302 redirect with ?oauth=failed on the connectors page
+            assert response.status_code == 302
+            assert "oauth=failed" in response.headers["location"]
+            assert "/app/knowledge/main/connectors" in response.headers["location"]
+
+            # Exactly one reconnect_failed event with the expected shape
+            mock_emit_event.assert_called_once()
+            call = mock_emit_event.call_args
+            assert call.args[0] == "connector.reconnect_failed"
+            assert call.kwargs["org_id"] == 77
+            assert call.kwargs["user_id"] == "zitadel-user-1"
+            assert call.kwargs["properties"]["provider"] == "ms_docs"
+            assert call.kwargs["properties"]["reason"] == "consent_denied"
+            assert call.kwargs["properties"]["provider_error"] == "access_denied"
+
+            # No token exchange happened — no commit, no re-encrypt
+            db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_callback_consent_denied_first_time_does_not_emit_reconnect_failed(
+        self,
+    ) -> None:
+        """First-time connection refused (no prior credentials) must NOT emit the
+        reconnect_failed event — it's a first-setup abandonment, not a reconnect.
+        Still redirects to ?oauth=failed for UX.
+        """
+        from app.api.oauth import _sign_state, callback_provider
+
+        db = AsyncMock()
+
+        mock_portal_user = MagicMock()
+        mock_portal_user.org_id = 77
+
+        mock_connector = MagicMock()
+        mock_connector.id = "conn-uuid-first-time"
+        mock_connector.org_id = 77
+        mock_connector.connector_type = "ms_docs"
+        mock_connector.config = {}
+        # was_reconnect=False: no prior credentials
+        mock_connector.encrypted_credentials = None
+        mock_connector.last_sync_status = None
+
+        with (
+            patch("app.api.oauth.settings") as mock_settings,
+            patch("app.api.oauth.emit_event") as mock_emit_event,
+        ):
+            mock_settings.ms_docs_client_id = _PLACEHOLDER_CLIENT_ID
+            mock_settings.ms_docs_client_secret = _PLACEHOLDER_CLIENT_SECRET
+            mock_settings.ms_docs_tenant_id = "common"
+            mock_settings.google_drive_client_id = ""
+            mock_settings.sso_cookie_key = _PLACEHOLDER_COOKIE_KEY
+            mock_settings.portal_url = "https://my.getklai.com"
+            mock_settings.domain = "getklai.com"
+
+            state_token = _sign_state(
+                {
+                    "provider": "ms_docs",
+                    "user_id": "zitadel-user-1",
+                    "kb_slug": "main",
+                    "connector_id": "conn-uuid-first-time",
+                    "nonce": "nonce",
+                }
+            )
+
+            db.scalar = AsyncMock(return_value=mock_portal_user)
+            db.get = AsyncMock(return_value=mock_connector)
+
+            response = await callback_provider(
+                provider="ms_docs",
+                code=None,
+                state=state_token,
+                error="access_denied",
+                klai_oauth_state=state_token,
+                user_id="zitadel-user-1",
+                db=db,
+            )
+
+            assert response.status_code == 302
+            assert "oauth=failed" in response.headers["location"]
+            # No event — this was a first-time setup, not a reconnect
+            mock_emit_event.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_callback_token_exchange_failure_emits_reconnect_failed(self) -> None:
+        """Token endpoint returns non-2xx while in a reconnect flow.
+
+        Expected: emit connector.reconnect_failed with reason=token_exchange_failed,
+        then raise HTTPException(502).
+        """
+        from app.api.oauth import _sign_state, callback_provider
+
+        db = AsyncMock()
+
+        mock_portal_user = MagicMock()
+        mock_portal_user.org_id = 77
+
+        mock_connector = MagicMock()
+        mock_connector.id = "conn-uuid-reconnect-tx-fail"
+        mock_connector.org_id = 77
+        mock_connector.connector_type = "google_drive"
+        mock_connector.config = {}
+        # was_reconnect=True
+        mock_connector.encrypted_credentials = b"EXISTING_ENCRYPTED_BLOB"
+        mock_connector.last_sync_status = "auth_error"
+
+        # Token endpoint returns 400 -> raise_for_status triggers HTTPStatusError
+        token_response = _make_http_response(400, {"error": "invalid_grant"})
+
+        with (
+            patch("app.api.oauth.settings") as mock_settings,
+            patch("app.api.oauth.httpx.AsyncClient", _mock_httpx_client(token_response)),
+            patch("app.api.oauth.emit_event") as mock_emit_event,
+        ):
+            mock_settings.google_drive_client_id = _PLACEHOLDER_CLIENT_ID
+            mock_settings.google_drive_client_secret = _PLACEHOLDER_CLIENT_SECRET
+            mock_settings.sso_cookie_key = _PLACEHOLDER_COOKIE_KEY
+            mock_settings.portal_url = "https://portal.getklai.com"
+            mock_settings.domain = "getklai.com"
+
+            state_token = _sign_state(
+                {
+                    "provider": "google_drive",
+                    "user_id": "zitadel-user-1",
+                    "connector_id": "conn-uuid-reconnect-tx-fail",
+                }
+            )
+
+            db.scalar = AsyncMock(return_value=mock_portal_user)
+            db.get = AsyncMock(return_value=mock_connector)
+
+            with pytest.raises(HTTPException) as exc_info:
+                await callback_provider(
+                    provider="google_drive",
+                    code="auth-code-xyz",
+                    state=state_token,
+                    error=None,
+                    error_description=None,
+                    klai_oauth_state=state_token,
+                    user_id="zitadel-user-1",
+                    db=db,
+                )
+
+            assert exc_info.value.status_code == 502
+
+            mock_emit_event.assert_called_once()
+            call = mock_emit_event.call_args
+            assert call.args[0] == "connector.reconnect_failed"
+            assert call.kwargs["org_id"] == 77
+            assert call.kwargs["user_id"] == "zitadel-user-1"
+            assert call.kwargs["properties"]["provider"] == "google_drive"
+            assert call.kwargs["properties"]["reason"] == "token_exchange_failed"
+            assert call.kwargs["properties"]["provider_status"] == 400
+
+            # No commit on failure
+            db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_callback_token_exchange_failure_first_time_does_not_emit(self) -> None:
+        """First-time token exchange failure must NOT emit reconnect_failed.
+
+        Still raises 502 — only the event emission is conditional on was_reconnect.
+        """
+        from app.api.oauth import _sign_state, callback_provider
+
+        db = AsyncMock()
+
+        mock_portal_user = MagicMock()
+        mock_portal_user.org_id = 77
+
+        mock_connector = MagicMock()
+        mock_connector.id = "conn-uuid-first-time-tx-fail"
+        mock_connector.org_id = 77
+        mock_connector.connector_type = "google_drive"
+        mock_connector.config = {}
+        mock_connector.encrypted_credentials = None
+        mock_connector.last_sync_status = None
+
+        token_response = _make_http_response(400, {"error": "invalid_grant"})
+
+        with (
+            patch("app.api.oauth.settings") as mock_settings,
+            patch("app.api.oauth.httpx.AsyncClient", _mock_httpx_client(token_response)),
+            patch("app.api.oauth.emit_event") as mock_emit_event,
+        ):
+            mock_settings.google_drive_client_id = _PLACEHOLDER_CLIENT_ID
+            mock_settings.google_drive_client_secret = _PLACEHOLDER_CLIENT_SECRET
+            mock_settings.sso_cookie_key = _PLACEHOLDER_COOKIE_KEY
+            mock_settings.portal_url = "https://portal.getklai.com"
+            mock_settings.domain = "getklai.com"
+
+            state_token = _sign_state(
+                {
+                    "provider": "google_drive",
+                    "user_id": "zitadel-user-1",
+                    "connector_id": "conn-uuid-first-time-tx-fail",
+                }
+            )
+
+            db.scalar = AsyncMock(return_value=mock_portal_user)
+            db.get = AsyncMock(return_value=mock_connector)
+
+            with pytest.raises(HTTPException) as exc_info:
+                await callback_provider(
+                    provider="google_drive",
+                    code="auth-code-xyz",
+                    state=state_token,
+                    error=None,
+                    error_description=None,
+                    klai_oauth_state=state_token,
+                    user_id="zitadel-user-1",
+                    db=db,
+                )
+
+            assert exc_info.value.status_code == 502
+            mock_emit_event.assert_not_called()

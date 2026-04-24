@@ -101,6 +101,65 @@ def _provider_enabled(provider: str) -> bool:
     return False
 
 
+def _emit_reconnect_failed(
+    *,
+    was_reconnect: bool,
+    connector: PortalConnector,
+    user_id: str,
+    provider: str,
+    reason: str,
+    **extra: Any,
+) -> None:
+    """Emit connector.reconnect_failed when the flow was a reconnect.
+
+    First-time OAuth failures (no prior credentials) are silent — they're
+    setup abandonments, not reconnect signals. Only actual reconnect attempts
+    generate the event so the dashboard shows true recovery-attempt failures.
+    """
+    if not was_reconnect:
+        return
+    emit_event(
+        "connector.reconnect_failed",
+        org_id=connector.org_id,
+        user_id=user_id,
+        properties={
+            "provider": provider,
+            "connector_id": str(connector.id),
+            "reason": reason,
+            **extra,
+        },
+    )
+
+
+def _build_token_exchange(provider: str, code: str) -> tuple[str, dict[str, Any]]:
+    """Build (token_url, token_payload) for the authorization_code grant.
+
+    Providers differ in scope handling (Google infers from authorize, MS
+    requires scope on exchange too) and in tenant-scoped endpoint URLs.
+    """
+    redirect_uri = _frontend_redirect_url(f"/api/oauth/{provider}/callback")
+    if provider == "google_drive":
+        return _GOOGLE_TOKEN_URL, {
+            "code": code,
+            "client_id": settings.google_drive_client_id,
+            "client_secret": settings.google_drive_client_secret,
+            "redirect_uri": redirect_uri,
+            "grant_type": "authorization_code",
+        }
+    if provider == "ms_docs":
+        tenant = settings.ms_docs_tenant_id or "common"
+        return _MS_TOKEN_URL_TMPL.format(tenant=tenant), {
+            "code": code,
+            "client_id": settings.ms_docs_client_id,
+            "client_secret": settings.ms_docs_client_secret,
+            "redirect_uri": redirect_uri,
+            "grant_type": "authorization_code",
+            "scope": _MS_SCOPES,
+        }
+    # Guarded by _SUPPORTED_PROVIDERS check in the caller.
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown provider")
+
+
 def _frontend_redirect_url(path: str) -> str:
     """Build the browser redirect URL for post-callback navigation."""
     return f"{settings.portal_url.rstrip('/')}{path}"
@@ -224,13 +283,25 @@ async def authorize_provider(
 @router.get("/{provider}/callback")
 async def callback_provider(
     provider: str,
-    code: str = Query(...),
     state: str = Query(...),
+    code: str | None = Query(None, description="Authorization code from provider (absent if user denied consent)"),
+    error: str | None = Query(None, description="OAuth error code (e.g. 'access_denied' when user denies consent)"),
+    error_description: str | None = Query(None, description="Human-readable error detail from provider"),
     klai_oauth_state: str | None = Cookie(default=None),
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> RedirectResponse:
-    """Validate state, exchange code for tokens, encrypt and store on the connector row."""
+    """Validate state, exchange code for tokens, encrypt and store on the connector row.
+
+    Error handling branches (in order):
+      1. Invalid state (CSRF) → 400
+      2. User denied consent (provider redirected with ?error=) → emit
+         connector.reconnect_failed if reconnect-flow, then redirect to portal
+         with ?oauth=failed
+      3. Missing code with no error (malformed redirect) → 400
+      4. Token exchange failure → emit connector.reconnect_failed if
+         reconnect-flow, then 502
+    """
     if provider not in _SUPPORTED_PROVIDERS:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not enabled")
 
@@ -260,38 +331,47 @@ async def callback_provider(
     await set_tenant(db, connector.org_id)
 
     # Detect reconnect-flow: connector already had encrypted credentials AND
-    # was in auth_error. Used below to emit connector.reconnected for
-    # observability (distinguish successful recoveries from initial setups).
+    # was in auth_error. Used below to emit connector.reconnected /
+    # connector.reconnect_failed for observability (distinguishes successful
+    # recoveries + failure modes from first-time setups).
+    kb_slug = payload.get("kb_slug", "")
     was_reconnect = (
         connector.encrypted_credentials is not None and (connector.last_sync_status or "").lower() == "auth_error"
     )
 
-    # 3. Exchange authorization code for tokens. NEVER log the response body.
-    token_url: str
-    token_payload: dict[str, Any]
-    if provider == "google_drive":
-        token_url = _GOOGLE_TOKEN_URL
-        token_payload = {
-            "code": code,
-            "client_id": settings.google_drive_client_id,
-            "client_secret": settings.google_drive_client_secret,
-            "redirect_uri": _frontend_redirect_url(f"/api/oauth/{provider}/callback"),
-            "grant_type": "authorization_code",
-        }
-    elif provider == "ms_docs":
-        tenant = settings.ms_docs_tenant_id or "common"
-        token_url = _MS_TOKEN_URL_TMPL.format(tenant=tenant)
-        token_payload = {
-            "code": code,
-            "client_id": settings.ms_docs_client_id,
-            "client_secret": settings.ms_docs_client_secret,
-            "redirect_uri": _frontend_redirect_url(f"/api/oauth/{provider}/callback"),
-            "grant_type": "authorization_code",
-            "scope": _MS_SCOPES,
-        }
-    else:  # pragma: no cover -- guarded by _SUPPORTED_PROVIDERS above
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown provider")
+    # 2a. Provider-reported error (most commonly: user denied consent on the
+    # provider's page). No code will be present. Emit the failure event with
+    # the provider-supplied reason, then redirect back to the portal with a
+    # failed-banner flag so the frontend can acknowledge it.
+    if error:
+        logger.info(
+            "oauth_callback_provider_error: provider=%s error=%s connector_id=%s",
+            provider,
+            error,
+            connector_id,
+        )
+        _emit_reconnect_failed(
+            was_reconnect=was_reconnect,
+            connector=connector,
+            user_id=user_id,
+            provider=provider,
+            reason="consent_denied",
+            provider_error=error,
+        )
+        return RedirectResponse(
+            url=_frontend_redirect_url(f"/app/knowledge/{kb_slug}/connectors?oauth=failed"),
+            status_code=status.HTTP_302_FOUND,
+        )
 
+    # 2b. No code AND no error: malformed redirect.
+    if not code:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing authorization code",
+        )
+
+    # 3. Exchange authorization code for tokens. NEVER log the response body.
+    token_url, token_payload = _build_token_exchange(provider, code)
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             token_response = await client.post(token_url, data=token_payload)
@@ -303,6 +383,14 @@ async def callback_provider(
             "oauth_callback_token_exchange_failed: provider=%s status=%s",
             provider,
             exc.response.status_code,
+        )
+        _emit_reconnect_failed(
+            was_reconnect=was_reconnect,
+            connector=connector,
+            user_id=user_id,
+            provider=provider,
+            reason="token_exchange_failed",
+            provider_status=exc.response.status_code,
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
