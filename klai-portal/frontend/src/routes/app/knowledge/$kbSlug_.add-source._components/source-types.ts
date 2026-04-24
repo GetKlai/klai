@@ -40,6 +40,13 @@ export interface SourceTypeMeta {
   available: boolean
   /** For connector types: builds the deep-link URL. Upload types (file/url/text): undefined. */
   routeTo?: (kbSlug: string) => string
+  /**
+   * Short pill text for tiles that are temporarily unavailable but still
+   * clickable — e.g. "Temporarily off" while we wait on infra work. When
+   * set, the tile stays clickable and the pill + tooltip show this text
+   * instead of the generic "Coming soon" chip.
+   */
+  disabledHint?: () => string
 }
 
 export const SOURCE_TYPES: SourceTypeMeta[] = [
@@ -61,12 +68,17 @@ export const SOURCE_TYPES: SourceTypeMeta[] = [
     available: true,
   },
   {
+    // YouTube is temporarily disabled: YouTube blocks all requests from
+    // datacenter IPs (including ours). Re-enabled once a privacy-friendly
+    // EU residential proxy is in place. Tile stays clickable so users see
+    // WHY it's off and which alternatives Klai offers today.
     type: 'youtube',
     group: 'upload',
     label: m.knowledge_add_source_youtube_label,
     subtitle: m.knowledge_add_source_youtube_subtitle,
     Icon: SiYoutube,
-    available: true,
+    available: false,
+    disabledHint: m.knowledge_add_source_youtube_disabled_pill,
   },
   {
     type: 'text',
