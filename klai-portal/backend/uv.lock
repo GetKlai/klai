@@ -79,6 +79,24 @@ wheels = [
 ]
 
 [[package]]
+name = "authheaders"
+version = "0.16.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "authres" },
+    { name = "dkimpy" },
+    { name = "dnspython" },
+    { name = "publicsuffix2" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6a/3b/50fb88a96976e14730bb0eb699be194ed66146489a64ddb3ccfed5b75e85/authheaders-0.16.3.tar.gz", hash = "sha256:118edc6d3cb1ad18ffab3d788ccc562fca2854cd645faab08fc47033c648148a", size = 115428 }
+
+[[package]]
+name = "authres"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6a/29/e28209b5d3d56c102845cca5a4a3abaf2724f79e83476a52b94d775ecce6/authres-1.2.0.tar.gz", hash = "sha256:93d1b995ad7ce21e62db649f361048125dd6022563a0ae8a23909465f1fd25b7", size = 23226 }
+
+[[package]]
 name = "certifi"
 version = "2026.2.25"
 source = { registry = "https://pypi.org/simple" }
@@ -262,6 +280,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/4b/fa/f0ab06238e899cc3fb332623f337a7364f36f4bb3f2534c2bb95a35b132c/cryptography-46.0.7-cp38-abi3-win32.whl", hash = "sha256:f247c8c1a1fb45e12586afbb436ef21ff1e80670b2861a90353d9b025583d246", size = 3013001 },
     { url = "https://files.pythonhosted.org/packages/d2/f1/00ce3bde3ca542d1acd8f8cfa38e446840945aa6363f9b74746394b14127/cryptography-46.0.7-cp38-abi3-win_amd64.whl", hash = "sha256:506c4ff91eff4f82bdac7633318a526b1d1309fc07ca76a3ad182cb5b686d6d3", size = 3472985 },
 ]
+
+[[package]]
+name = "dkimpy"
+version = "1.1.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "dnspython" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f0/6f/84e91828186bbfcedd7f9385ef5e0d369632444195c20e08951b7ffe0481/dkimpy-1.1.8.tar.gz", hash = "sha256:b5f60fb47bbf5d8d762f134bcea0c388eba6b498342a682a21f1686545094b77", size = 66979 }
 
 [[package]]
 name = "dnspython"
@@ -524,6 +551,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
     { name = "asyncpg" },
+    { name = "authheaders" },
     { name = "cryptography" },
     { name = "docker" },
     { name = "fastapi" },
@@ -532,6 +560,7 @@ dependencies = [
     { name = "klai-connector-credentials" },
     { name = "motor" },
     { name = "prometheus-client" },
+    { name = "publicsuffix2" },
     { name = "pydantic", extra = ["email"] },
     { name = "pydantic-settings" },
     { name = "pyjwt" },
@@ -566,6 +595,7 @@ dev = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.18" },
     { name = "asyncpg", specifier = ">=0.31" },
+    { name = "authheaders", specifier = ">=0.16,<1.0" },
     { name = "cryptography", specifier = ">=46.0" },
     { name = "docker", specifier = ">=7.1" },
     { name = "fastapi", specifier = ">=0.136" },
@@ -575,6 +605,7 @@ requires-dist = [
     { name = "klai-connector-credentials", editable = "../../klai-libs/connector-credentials" },
     { name = "motor", specifier = ">=3.7" },
     { name = "prometheus-client", specifier = ">=0.25,<1.0" },
+    { name = "publicsuffix2", specifier = ">=2.2,<3.0" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.13" },
     { name = "pydantic-settings", specifier = ">=2.13" },
     { name = "pyjwt", specifier = ">=2.12" },
@@ -711,6 +742,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/1b/fb/d9aa83ffe43ce1f19e557c0971d04b90561b0cfd50762aafb01968285553/prometheus_client-0.25.0.tar.gz", hash = "sha256:5e373b75c31afb3c86f1a52fa1ad470c9aace18082d39ec0d2f918d11cc9ba28", size = 86035 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8d/9b/d4b1e644385499c8346fa9b622a3f030dce14cd6ef8a1871c221a17a67e7/prometheus_client-0.25.0-py3-none-any.whl", hash = "sha256:d5aec89e349a6ec230805d0df882f3807f74fd6c1a2fa86864e3c2279059fed1", size = 64154 },
+]
+
+[[package]]
+name = "publicsuffix2"
+version = "2.20191221"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/5a/04/1759906c4c5b67b2903f546de234a824d4028ef24eb0b1122daa43376c20/publicsuffix2-2.20191221.tar.gz", hash = "sha256:00f8cc31aa8d0d5592a5ced19cccba7de428ebca985db26ac852d920ddd6fe7b", size = 99592 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9d/16/053c2945c5e3aebeefb4ccd5c5e7639e38bc30ad1bdc7ce86c6d01707726/publicsuffix2-2.20191221-py2.py3-none-any.whl", hash = "sha256:786b5e36205b88758bd3518725ec8cfe7a8173f5269354641f581c6b80a99893", size = 89033 },
 ]
 
 [[package]]

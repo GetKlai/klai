@@ -215,6 +215,26 @@ class Settings(BaseSettings):
     imap_poll_interval_seconds: int = 60
     invite_bot_rate_limit_per_user_per_day: int = 10
 
+    # SPEC-SEC-IMAP-001: mail-auth (DKIM/SPF/ARC) enforcement on the listener.
+    # `imap_authserv_id` is the authserv-id written into Authentication-Results
+    # by the trusted upstream relay (`mail.getklai.com`). Only auth-results
+    # stamped by that authserv-id are consulted; sender-injected headers are
+    # ignored.
+    imap_authserv_id: str = "mail.getklai.com"
+    # Per-message wall-clock timeout for the synchronous DKIM/ARC verify call
+    # (runs in `asyncio.to_thread` with `asyncio.wait_for`).
+    imap_auth_timeout_seconds: float = 5.0
+    # Allowlist of ARC sealing domains (`d=` of the outermost valid ARC-Seal)
+    # whose `ARC-Authentication-Results` we accept when DKIM direct alignment
+    # is broken (legitimate mailing-list / forwarded mail).
+    imap_trusted_arc_sealers: list[str] = [
+        "google.com",
+        "outlook.com",
+        "icloud.com",
+        "fastmail.com",
+        "protonmail.ch",
+    ]
+
     # Widget JWT secret (SPEC-WIDGET-001)
     # Generate with: openssl rand -hex 32
     # When empty, widget endpoints return 503.

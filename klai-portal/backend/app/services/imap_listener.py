@@ -1,8 +1,9 @@
 """
 IMAP listener -- poll an IMAP mailbox for calendar invites.
 
-Connects to IMAP4_SSL, polls for UNSEEN emails, extracts .ics data,
-parses invites, resolves tenants, and schedules bot joins.
+Connects to IMAP4_SSL, polls for UNSEEN emails, verifies sender identity
+via DKIM/SPF/ARC (SPEC-SEC-IMAP-001), extracts .ics data, parses invites,
+resolves tenants, and schedules bot joins.
 """
 
 import asyncio
@@ -11,12 +12,19 @@ import imaplib
 import logging
 from email.message import Message
 
+import structlog
+
 from app.core.config import settings
 from app.services.ical_parser import parse_ics
 from app.services.invite_scheduler import schedule_invite
+from app.services.mail_auth import verify_mail_auth
 from app.services.tenant_matcher import find_tenant
 
+# Stdlib logger kept for existing operational messages (poll errors, startup
+# noise). SPEC-SEC-IMAP-001 events (imap_auth_*) use structlog so their fields
+# land as queryable keys in VictoriaLogs.
 logger = logging.getLogger(__name__)
+struct_logger = structlog.get_logger()
 
 # Exponential backoff limits
 _BACKOFF_BASE = 1.0
@@ -65,7 +73,8 @@ async def _poll_once() -> None:
                 await _process_email(imap, msg_id)
             except Exception:
                 logger.exception("Failed to process email %s", msg_id)
-            # Mark as SEEN regardless (avoid reprocessing)
+            # Mark as SEEN regardless (avoid reprocessing). REQ-5.4: rejected
+            # messages also get the \Seen flag so they do not loop.
             await asyncio.to_thread(imap.store, msg_id, "+FLAGS", "\\Seen")
     finally:
         try:
@@ -75,7 +84,13 @@ async def _poll_once() -> None:
 
 
 async def _process_email(imap: imaplib.IMAP4_SSL, msg_id: bytes) -> None:
-    """Extract .ics content from a single email and process it."""
+    """Extract .ics content from a single email and process it.
+
+    SPEC-SEC-IMAP-001: gates every downstream call (parse_ics, find_tenant,
+    schedule_invite) on verify_mail_auth. Messages whose RFC-5322 From
+    identity cannot be cryptographically verified are logged as
+    ``imap_auth_failed`` and dropped before any tenant lookup.
+    """
     _status, msg_data = await asyncio.to_thread(imap.fetch, msg_id.decode(), "(RFC822)")
     if not msg_data or not msg_data[0]:
         return
@@ -86,20 +101,65 @@ async def _process_email(imap: imaplib.IMAP4_SSL, msg_id: bytes) -> None:
     else:
         return
 
+    # REQ-1..REQ-5: verify mail-auth. Structured result drives both the
+    # accept/reject gate and the observability event.
+    auth = await verify_mail_auth(raw_bytes)
     msg = email.message_from_bytes(raw_bytes)
-    ics_parts = _extract_ics_parts(msg)
+    message_id = msg.get("Message-ID") or "<unknown>"
 
+    if auth.verified_from is None:
+        # REQ-4.1 + REQ-4.2: stable log keys; no body, no ICS payload.
+        struct_logger.warning(
+            "imap_auth_failed",
+            reason=auth.reason,
+            from_header=auth.from_header,
+            from_domain=auth.from_domain,
+            dkim_result=auth.dkim_result,
+            spf_result=auth.spf_result,
+            arc_result=auth.arc_result,
+            message_id=message_id,
+        )
+        return
+
+    # REQ-4.3: positive trail for post-incident forensics.
+    struct_logger.info(
+        "imap_auth_passed",
+        verified_from=auth.verified_from,
+        from_domain=auth.from_domain,
+        dkim_result=auth.dkim_result,
+        spf_result=auth.spf_result,
+        arc_result=auth.arc_result,
+        message_id=message_id,
+    )
+
+    ics_parts = _extract_ics_parts(msg)
     if not ics_parts:
         logger.debug("No iCal content in email %s", msg_id)
         return
 
-    # Process each .ics part (usually just one)
     for ics_bytes in ics_parts:
         invite = parse_ics(ics_bytes)
         if invite is None:
             continue
 
-        tenant = await find_tenant(invite.organizer_email)
+        # REQ-5.3: audit ICS/From organizer mismatches but do not reject.
+        # A minority of calendar clients put a delegated organizer in the
+        # ICS while the message is sent from the delegate's mailbox; we
+        # must see these but not break them. mail-auth is authoritative,
+        # the ICS field is informational.
+        if invite.organizer_email and invite.organizer_email.lower() != auth.verified_from:
+            struct_logger.warning(
+                "imap_organizer_mismatch",
+                verified_from=auth.verified_from,
+                ics_organizer=invite.organizer_email,
+                message_id=message_id,
+            )
+
+        # REQ-5.2: find_tenant is called with verified_from, NOT
+        # invite.organizer_email. The ICS ORGANIZER field is
+        # attacker-controlled; only the DKIM-verified RFC-5322 From
+        # header is authoritative.
+        tenant = await find_tenant(auth.verified_from)
         if tenant is None:
             continue
 

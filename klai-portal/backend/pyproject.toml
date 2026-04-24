@@ -23,6 +23,13 @@ dependencies = [
     "pyjwt>=2.12",
     "klai-connector-credentials",
     "yt-dlp>=2026.3.17",
+    # SPEC-SEC-IMAP-001: DKIM/SPF/ARC verification for the IMAP calendar listener.
+    # MPL-2.0 license, pure Python, wraps dkimpy + authres.
+    "authheaders>=0.16,<1.0",
+    # SPEC-SEC-IMAP-001: RFC 7489 §3.1.1 organizational-domain alignment via
+    # the Public Suffix List. Transitive via authheaders; pinned explicitly
+    # because we import it directly in app/services/mail_auth.py.
+    "publicsuffix2>=2.2,<3.0",
 ]
 
 [tool.uv.sources]
