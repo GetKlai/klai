@@ -78,7 +78,12 @@ groups:
                   reducer: { params: [], type: last }
                   type: query
         noDataState: OK
-        execErrState: Alerting
+        # execErrState: OK — matches the intent documented in the header
+        # comment of this file. The VictoriaLogs plugin + Grafana SSE combo
+        # trips "input data must be a wide series but got type long" on
+        # LogsQL reduce chains (observed since 2026-04-22). Miss-on-hiccup
+        # beats false-page-on-plugin-error.
+        execErrState: OK
         for: 5m
         keepFiringFor: 10m
         isPaused: false
@@ -191,7 +196,10 @@ groups:
                   reducer: { params: [], type: last }
                   type: query
         noDataState: OK
-        execErrState: Alerting
+        # execErrState: OK — see header comment + p95 rule above. LogsQL
+        # reduce chains intermittently fail with "long vs wide" plugin
+        # errors; suppress false-fires on eval failure.
+        execErrState: OK
         for: 10m
         keepFiringFor: 15m
         isPaused: false
