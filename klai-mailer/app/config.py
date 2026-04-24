@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     # Empty / whitespace-only values are rejected at startup (REQ-9.2).
     internal_secret: str
 
+    # Redis URL for nonce tracking (REQ-6) and per-recipient rate limiting
+    # (REQ-4). Required in every deployment — nonce replay protection is
+    # a security control, not a degraded-monitoring feature.
+    redis_url: str = "redis://redis:6379/0"
+
     # Set DEBUG=true to enable /debug endpoint (logs raw Zitadel payloads)
     debug: bool = False
 
