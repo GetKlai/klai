@@ -125,11 +125,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             raise SystemExit(1)
         logger.info("Zitadel PAT validated successfully")
 
-    from app.core.database import engine
+    from app.core.database import assert_portal_users_rls_ready, engine
     from app.core.rls_guard import install_rls_guard
 
     install_rls_guard(engine)
     logger.info("RLS silent-filter guard installed")
+
+    # Fail-loud if a migration ever drops the IS NULL branch from the
+    # portal_users policy — without it every authenticated request would
+    # 404 after deploy because _get_caller_org runs before set_tenant.
+    await assert_portal_users_rls_ready()
+    logger.info("portal_users RLS policy checked: IS NULL branch present")
 
     await _run_stuck_detector()
 
