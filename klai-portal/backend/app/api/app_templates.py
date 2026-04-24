@@ -313,12 +313,19 @@ async def update_template(
         template.is_active = body.is_active
 
     # UPDATE pattern (see .claude/rules/klai/projects/portal-security.md —
-    # "Post-commit db.refresh on RLS tables"): no refresh needed. All fields
-    # above are assigned in Python; AsyncSessionLocal uses expire_on_commit=False
-    # so the ORM instance stays populated after commit. The post-commit refresh
-    # would hit RLS without the tenant GUC (transaction-scoped SET LOCAL) and
-    # raise 500 — skipping it is both safer and cheaper.
+    # "Post-commit db.refresh on RLS tables"). Flush + refresh BEFORE commit,
+    # same as the CREATE path. The generic rule ("drop refresh entirely for
+    # UPDATE") assumes every mutated column stays Python-assigned, but
+    # `PortalTemplate.updated_at` has `onupdate=func.now()` — SQLAlchemy
+    # generates the new timestamp server-side and marks the attribute as
+    # expired after flush. Without a refresh, `_template_out` touches
+    # `template.updated_at` and triggers a lazy SELECT that fires outside the
+    # async greenlet context → `sqlalchemy.exc.MissingGreenlet` → HTTP 500.
+    # The refresh runs inside the tenant-scoped transaction so RLS still sees
+    # the row.
     try:
+        await db.flush()
+        await db.refresh(template)
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
