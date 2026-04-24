@@ -10,6 +10,33 @@ SEC-021 routes all portal-api and runtime-api Docker API traffic through
 `tecnativa/docker-socket-proxy` instead of binding `/var/run/docker.sock`
 directly. The proxy restricts which Docker API endpoints are reachable.
 
+## Containers that MUST NOT join the socket-proxy network (SPEC-SEC-SSRF-001 REQ-5)
+
+Any container that accepts a user-supplied URL and fetches it is one
+compose edit away from an env-dump primitive if it can reach
+`docker-socket-proxy:2375`. The Cornelis A1 chain depends entirely on
+those containers staying off the `socket-proxy` network.
+
+The following containers MUST NOT be added to the `socket-proxy`
+network in `deploy/docker-compose.yml`:
+
+| Container | Why |
+|---|---|
+| `knowledge-ingest` | Accepts `POST /ingest/v1/crawl(/preview)` and forwards user URLs to crawl4ai |
+| `crawl4ai` | Fetches every user URL submitted by knowledge-ingest and connector |
+| `klai-connector` | Sync engine + adapters (Notion / Confluence / GitHub / Airtable) fetch images from user-supplied URLs via `klai-libs/image-storage` |
+| `klai-mailer` | Renders HTML that may contain remote resources (SPEC-SEC-MAILER-INJECTION-001) |
+| `scribe` / `scribe-api` | Processes user-supplied audio URLs |
+| `research-api` | Executes user-supplied research queries that can trigger outbound fetches |
+| `klai-knowledge-mcp` | Delegates to retrieval + ingest — same URL surface |
+| `retrieval-api` | Internal queries only, but fetches external URLs during enrichment |
+| `klai-focus` | Forwarded to external APIs on behalf of users |
+
+Verification: every PR touching `deploy/docker-compose.yml` must pass
+`./scripts/smoke-ssrf-isolation.sh` post-deploy — runs the AC-13 /
+AC-22 curl check from each container above against
+`docker-socket-proxy:2375` and asserts `connect timeout`.
+
 ## Vexa runtime-api speaks Unix socket only (HIGH)
 
 The Vexa `runtime-api` image (`vexaai/runtime-api:0.10.0-*`) hardcodes
