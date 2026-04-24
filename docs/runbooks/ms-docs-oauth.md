@@ -49,10 +49,18 @@ consent for their own tenants the first time their admin clicks "Connect Office 
 **Certificates & secrets → Client secrets → New client secret**
 
 - Description: `Klai connector (rotated YYYY-MM)`
-- Expires: **6 months** (see Rotation below)
+- Expires: **24 months** (Microsoft default for app-integration secrets — longer cadence acceptable because the Klai-owned app is not exposed to end users directly; security guardrail is admin-consent revocation, not secret rotation)
 
 Copy the **Value** immediately — this is `MS_DOCS_CLIENT_SECRET`. The portal
 only shows this once.
+
+**Initial registration values (2026-04):**
+- App name: `Klai Knowledge - Office 365 Connector`
+- Client ID: `01ecb41b-f867-447c-9e0b-65ed25cbb6ef`
+- Client secret description: `Klai connector (rotated 2026-04)`
+- Expires: 2028-04
+- Supported account types: `Multiple Entra ID tenants` (multi-tenant, no personal accounts)
+- Delegated permissions + admin consent granted: `offline_access`, `User.Read`, `Files.Read.All`, `Sites.Read.All`
 
 ### 4. Publisher verification (optional, recommended)
 
@@ -64,20 +72,64 @@ in the tenant. Unverified apps trigger a warning banner during user consent.
 Add the three values to the core-01 encrypted env file:
 
 ```bash
-cd klai-infra/core-01
-sops -d .env.sops > .env.decrypted
-# Append / update:
-#   MS_DOCS_CLIENT_ID=<application-client-id>
-#   MS_DOCS_CLIENT_SECRET=<client-secret-value>
-#   MS_DOCS_TENANT_ID=common
-sops -e .env.decrypted > .env.sops.new && mv .env.sops.new .env.sops
-rm .env.decrypted
-git diff .env.sops   # verify only the ciphertext blocks changed
-git add .env.sops && git commit -m "chore(infra): add MS_DOCS_* for SPEC-KB-MS-DOCS-001"
-git push
+# 1. SSH to core-01 and set up a working directory matching .sops.yaml path_regex
+ssh core-01 "mkdir -p /tmp/klai-sops/core-01 && chmod 700 /tmp/klai-sops"
+scp klai-infra/core-01/.env.sops core-01:/tmp/klai-sops/core-01/.env.sops
+scp klai-infra/.sops.yaml core-01:/tmp/klai-sops/.sops.yaml
+
+# 2. Decrypt → append 3 new vars → re-encrypt, all on the server (sops/age runs there)
+ssh core-01 bash <<'EOF'
+  cd /tmp/klai-sops
+  SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --decrypt --input-type dotenv --output-type dotenv core-01/.env.sops > core-01/.new.env
+  cat >> core-01/.new.env <<'INNER'
+MS_DOCS_CLIENT_ID=<application-client-id>
+MS_DOCS_CLIENT_SECRET=<client-secret-value>
+MS_DOCS_TENANT_ID=common
+INNER
+  SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --encrypt --in-place --input-type dotenv --output-type dotenv core-01/.new.env
+  mv core-01/.new.env core-01/.env.sops
+EOF
+
+# 3. Retrieve + cleanup
+scp core-01:/tmp/klai-sops/core-01/.env.sops klai-infra/core-01/.env.sops
+ssh core-01 "rm -rf /tmp/klai-sops"
+
+# 4. Commit + push — GitHub Action auto-syncs to /opt/klai/.env (but see gotcha below)
+cd klai-infra && git add core-01/.env.sops && git commit -m "feat(infra): add MS_DOCS_* for SPEC-KB-MS-DOCS-001" && git push
 ```
 
-GitHub Action auto-syncs to `/opt/klai/.env`. Verify after sync:
+### Gotcha: sync-env.yml refuses removals (HIGH)
+
+The `sync-env.yml` GitHub Action aborts when the new `.env.sops` has fewer
+keys than the current `/opt/klai/.env`. The error message says "use
+workflow_dispatch with confirmation" but the current workflow **does not**
+actually bypass the check on manual dispatch — the removal guard is
+unconditional (verified 2026-04-24). If a prior commit removed keys
+(e.g. SPEC-PORTAL-UNIFY-KB-001 Phase C removed `RESEARCH_API_*` +
+`KUMA_TOKEN_RESEARCH_API`), every subsequent push fails the sync, including
+unrelated pushes like adding MS_DOCS_*.
+
+**Emergency-only workaround** (documented in `sops-env.md`): direct-append
+to `/opt/klai/.env` on the server while the sync pipeline is blocked:
+
+```bash
+ssh core-01 "sudo cp /opt/klai/.env /opt/klai/.env.bak.pre-ms-docs.$(date +%s)"
+ssh core-01 bash <<'EOF'
+sudo tee -a /opt/klai/.env >/dev/null <<'INNER'
+MS_DOCS_CLIENT_ID=<client-id>
+MS_DOCS_CLIENT_SECRET=<secret>
+MS_DOCS_TENANT_ID=common
+INNER
+EOF
+ssh core-01 "cd /opt/klai && docker compose up -d portal-api klai-connector"
+```
+
+**Permanent fix** (separate follow-up): patch
+`klai-infra/.github/workflows/sync-env.yml` to honor a `workflow_dispatch`
+input like `allow_removal: true` so removals can be explicitly approved
+through the Actions UI.
+
+GitHub Action auto-syncs to `/opt/klai/.env` (unless blocked per above). Verify after sync:
 
 ```bash
 ssh core-01 "sudo grep '^MS_DOCS_' /opt/klai/.env | sed 's/=.*/=***/'"
@@ -125,8 +177,10 @@ the env var must reach the container.
 
 ## Rotation
 
-Microsoft client-secret has configurable expiry. Rotate **every 6 months** even
-if not expired, per `runbooks/credential-rotation.md` cadence.
+Microsoft client-secret has configurable expiry. The initial secret (2026-04)
+was created with a 24-month expiry. Rotate proactively at the 18-month mark
+(**2027-10**) to leave 6 months of overlap in case something breaks during
+rotation. Add a calendar event for that date.
 
 ```
 1. Azure Portal → Certificates & secrets → New client secret
