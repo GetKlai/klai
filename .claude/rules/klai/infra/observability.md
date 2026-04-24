@@ -79,6 +79,9 @@ Query via Grafana PostgreSQL datasource or direct SQL on core-01.
 | `billing.*` | portal-api | billing endpoints |
 | `meeting.*` | portal-api | meetings endpoints |
 | `knowledge.uploaded` | portal-api | connectors endpoint |
+| `connector.connected` | portal-api | OAuth callback — first-time provider connection |
+| `connector.reconnected` | portal-api | OAuth callback — recovery from `auth_error` |
+| `connector.reconnect_failed` | portal-api | OAuth callback — reconnect attempt failed (`reason=consent_denied` or `reason=token_exchange_failed`; only emitted when the connector was already in `auth_error`) |
 | `notebook.created`, `notebook.opened` | research-api | notebooks endpoint (SQLAlchemy) |
 | `source.added` | research-api | sources endpoint (SQLAlchemy) |
 | `knowledge.queried` | retrieval-api | retrieve endpoint (asyncpg pool) |
@@ -86,6 +89,7 @@ Query via Grafana PostgreSQL datasource or direct SQL on core-01.
 Useful queries:
 - Feature adoption: `SELECT event_type, COUNT(*) FROM product_events GROUP BY 1`
 - Tenant activity: `SELECT * FROM product_events WHERE org_id = <id> ORDER BY created_at DESC`
+- Reconnect-funnel health: `SELECT properties->>'reason' AS reason, COUNT(*) FROM product_events WHERE event_type = 'connector.reconnect_failed' GROUP BY 1`
 
 ## When to use what
 | Scenario | Tool |
