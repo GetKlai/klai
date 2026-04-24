@@ -13,6 +13,7 @@ import { Label } from '@/components/ui/label'
 import { MultiSelect } from '@/components/ui/multi-select'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
+import { MS_SITE_URL_PATTERN } from '@/lib/ms-docs'
 import { ASSERTION_MODE_OPTIONS } from './$kbSlug/-kb-helpers'
 import type { ConnectorSummary, GitHubConfig, WebCrawlerConfig } from './$kbSlug/-kb-types'
 
@@ -136,9 +137,6 @@ function EditConnectorPage() {
       setIsReconnecting(false)
     }
   }
-
-  // Keep in sync with add-connector.tsx MS_SITE_URL_PATTERN.
-  const MS_SITE_URL_PATTERN = /^https:\/\/[a-z0-9-]+\.sharepoint\.com\/sites\/[^/]+\/?$/
 
   function parseCookies(): unknown[] | undefined {
     const raw = wcCookies.trim()

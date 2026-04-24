@@ -46,7 +46,7 @@ from urllib.parse import quote, urlparse
 import httpx
 
 from app.adapters.base import BaseAdapter, DocumentRef
-from app.adapters.oauth_base import OAuthAdapterBase
+from app.adapters.oauth_base import ConnectorLike, OAuthAdapterBase, OAuthReconnectRequiredError
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.services.portal_client import PortalClient
@@ -109,9 +109,11 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
         self._latest_delta_link: dict[str, str] = {}
         # connector_id -> resolved SharePoint site id (from site_url lookup).
         self._resolved_sites: dict[str, str] = {}
-        # DocumentRef identity -> adapter-owned metadata (sender_email, mentioned_emails).
-        # Keyed by object id since DocumentRef is frozen.
-        self._ref_metadata: dict[int, dict[str, Any]] = {}
+        # DocumentRef.ref (Graph driveItem id, stable) -> adapter-owned metadata
+        # (sender_email, mentioned_emails). Keyed by the Graph id rather than
+        # Python id() so entries survive GC and can be looked up safely even
+        # if a caller rebuilds DocumentRef instances.
+        self._ref_metadata: dict[str, dict[str, Any]] = {}
 
     async def aclose(self) -> None:
         """No persistent resources to close."""
@@ -130,7 +132,7 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
     # -- OAuth refresh (SPEC-KB-MS-DOCS-001 R2.1) -----------------------------
 
     async def _refresh_oauth_token(
-        self, connector: Any, refresh_token: str,
+        self, connector: ConnectorLike, refresh_token: str,
     ) -> dict[str, Any]:
         """Exchange a refresh_token for a new access_token against Microsoft.
 
@@ -139,11 +141,18 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
         handles the writeback + in-memory rotation (see R9.2).
 
         Args:
-            connector: Connector model (unused — kept for the OAuth base contract).
+            connector: Connector model (used for connector_id in error messages).
             refresh_token: Long-lived refresh token from the encrypted config.
 
         Returns:
             Raw JSON dict from Microsoft's token endpoint.
+
+        Raises:
+            OAuthReconnectRequiredError: Microsoft returned ``invalid_grant``
+                (refresh_token revoked by user password change, admin consent
+                revoke, or past grace window after rotation). The caller
+                (sync engine) should mark the connector as auth_error so the
+                portal can surface a "Reconnect Microsoft" affordance.
         """
         # @MX:NOTE: [AUTO] NEVER log the refresh_token or the returned access_token.
         payload = {
@@ -156,6 +165,24 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
         token_url = _ms_token_url(self._settings.ms_docs_tenant_id)
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(token_url, data=payload)
+            # Microsoft returns 400 + JSON body with error=invalid_grant when
+            # the refresh_token is permanently invalid. Translate to a clean
+            # signal before raising a generic HTTPStatusError. See MS docs:
+            # https://learn.microsoft.com/en-us/entra/identity-platform/reference-error-codes
+            if response.status_code == 400:
+                try:
+                    body = response.json()
+                except ValueError:
+                    body = {}
+                if isinstance(body, dict) and body.get("error") == "invalid_grant":
+                    logger.warning(
+                        "Microsoft invalid_grant for connector=%s — reconnect required",
+                        str(connector.id),
+                    )
+                    raise OAuthReconnectRequiredError(
+                        f"Microsoft refresh_token rejected (connector_id={connector.id}): "
+                        f"{body.get('error_description', 'invalid_grant')}"
+                    )
             response.raise_for_status()
             data = response.json()
         if not isinstance(data, dict):
@@ -216,7 +243,7 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
                 continue
             # Adapter-owned metadata (identifier capture, R2.5)
             meta = self._extract_metadata(item)
-            self._ref_metadata[id(ref)] = meta
+            self._ref_metadata[ref.ref] = meta
             refs.append(ref)
 
         logger.info(
@@ -265,7 +292,7 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
         The sync engine reads this after ``list_documents`` to populate the
         ``extra`` JSONB passthrough into knowledge-ingest (R2.10).
         """
-        return self._ref_metadata.get(id(ref), {"sender_email": "", "mentioned_emails": []})
+        return self._ref_metadata.get(ref.ref, {"sender_email": "", "mentioned_emails": []})
 
     # -- Delta URL construction + pagination ---------------------------------
 
@@ -387,25 +414,40 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
     # -- Graph HTTP helpers (auth + retry) -----------------------------------
 
     # @MX:ANCHOR: Single HTTP request codepath for all Graph calls.
-    # @MX:REASON: fan_in >= 3 (list, resolve, get_cursor_state).
+    # @MX:REASON: fan_in >= 3 (list, resolve, get_cursor_state, fetch_document).
     #             Auth header + Retry-After + 429 handling must stay identical.
-    async def _graph_get_json(
-        self, url: str, connector: Any | None = None,
-    ) -> dict[str, Any]:
-        """GET a JSON response from the Graph API with auth + 429 retry.
+    async def _graph_request(
+        self,
+        url: str,
+        *,
+        connector: ConnectorLike | None = None,
+        timeout: float = 30.0,
+        follow_redirects: bool = False,
+    ) -> httpx.Response:
+        """Issue a GET against the Graph API with auth + one 429/503 retry.
 
-        One retry on 429/503 using ``Retry-After`` (capped at
-        ``_RETRY_AFTER_CAP_SECONDS``); after a second failure, the exception
-        propagates and the scheduler does exponential backoff (R2.11).
+        Single codepath used by both JSON and byte-stream consumers. One
+        retry on 429/503 using ``Retry-After`` (capped at
+        ``_RETRY_AFTER_CAP_SECONDS``); after a second failure the exception
+        propagates so the scheduler does exponential backoff (R2.11).
 
         Args:
             url: Fully-qualified Graph URL (or a deltaLink echoed from Graph).
             connector: Optional — needed for token refresh when called outside
                 list_documents. In practice ensure_token uses the last-seen
                 connector via the cache.
+            timeout: httpx timeout; callers raise it for content downloads.
+            follow_redirects: Graph may 302 content requests to
+                preauthenticated URLs; set True for binary fetches.
+
+        Returns:
+            The raised-for-status httpx Response. Caller decides ``.json()``
+            vs ``.content`` shape.
         """
         headers = await self._auth_headers(connector)
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(
+            timeout=timeout, follow_redirects=follow_redirects,
+        ) as client:
             response = await client.get(url, headers=headers)
             if response.status_code in (429, 503):
                 retry_after = self._parse_retry_after(response)
@@ -416,7 +458,14 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
                 await asyncio.sleep(retry_after)
                 response = await client.get(url, headers=headers)
             response.raise_for_status()
-            data = response.json()
+            return response
+
+    async def _graph_get_json(
+        self, url: str, connector: ConnectorLike | None = None,
+    ) -> dict[str, Any]:
+        """Thin wrapper over ``_graph_request`` returning a JSON dict."""
+        response = await self._graph_request(url, connector=connector)
+        data = response.json()
         if not isinstance(data, dict):
             return {}
         # data is a genuinely untyped JSON dict; the caller treats keys as Any.
@@ -424,28 +473,19 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
         return result
 
     async def _graph_get_bytes(
-        self, url: str, connector: Any | None = None,
+        self, url: str, connector: ConnectorLike | None = None,
     ) -> bytes:
-        """GET binary content from the Graph API (used by fetch_document).
+        """Thin wrapper over ``_graph_request`` returning raw bytes.
 
-        Follows 302 redirects to preauthenticated download URLs that Graph may
-        return for large files.
+        Uses a longer timeout + follow_redirects since Graph can 302 binary
+        downloads to preauthenticated blob URLs for large files.
         """
-        headers = await self._auth_headers(connector)
-        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
-            response = await client.get(url, headers=headers)
-            if response.status_code in (429, 503):
-                retry_after = self._parse_retry_after(response)
-                logger.warning(
-                    "Graph throttled on content fetch (status=%s, retry_after=%.1fs)",
-                    response.status_code, retry_after,
-                )
-                await asyncio.sleep(retry_after)
-                response = await client.get(url, headers=headers)
-            response.raise_for_status()
-            return response.content
+        response = await self._graph_request(
+            url, connector=connector, timeout=60.0, follow_redirects=True,
+        )
+        return response.content
 
-    async def _auth_headers(self, connector: Any | None) -> dict[str, str]:
+    async def _auth_headers(self, connector: ConnectorLike | None) -> dict[str, str]:
         """Return an ``Authorization: Bearer <token>`` header for Graph calls.
 
         Uses the most-recently cached access token. If ``connector`` is given

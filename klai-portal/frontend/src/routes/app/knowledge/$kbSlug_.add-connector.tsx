@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label'
 import { MultiSelect, type MultiSelectOption } from '@/components/ui/multi-select'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
+import { MS_SITE_URL_PATTERN } from '@/lib/ms-docs'
 
 // -- Types -------------------------------------------------------------------
 
@@ -261,9 +262,7 @@ function AddConnectorPage() {
   })
 
   // SPEC-KB-MS-DOCS-001 R4: Microsoft 365 OAuth flow, mirrors Google Drive.
-  // SharePoint site URL format. Keep this in sync with the server-side parse in ms_docs.py.
-  const MS_SITE_URL_PATTERN = /^https:\/\/[a-z0-9-]+\.sharepoint\.com\/sites\/[^/]+\/?$/
-
+  // MS_SITE_URL_PATTERN imported from @/lib/ms-docs (shared with edit-connector).
   const createMsDocsMutation = useMutation({
     mutationFn: async () => {
       // Client-side validation (R4.3) before posting.
