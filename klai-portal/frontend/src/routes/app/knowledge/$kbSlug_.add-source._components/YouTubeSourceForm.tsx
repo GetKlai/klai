@@ -1,25 +1,26 @@
 import { useState, type FormEvent } from 'react'
-import { CheckCircle2, Link2 } from 'lucide-react'
+import { CheckCircle2 } from 'lucide-react'
+import { SiYoutube } from '@icons-pack/react-simple-icons'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import * as m from '@/paraglide/messages'
 import { useSourceSubmit } from './useSourceSubmit'
 
-interface UrlSourceFormProps {
+interface YouTubeSourceFormProps {
   kbSlug: string
   onBack: () => void
 }
 
-interface UrlBody {
+interface YouTubeBody {
   url: string
 }
 
-export function UrlSourceForm({ kbSlug, onBack }: UrlSourceFormProps) {
+export function YouTubeSourceForm({ kbSlug, onBack }: YouTubeSourceFormProps) {
   const [url, setUrl] = useState('')
-  const { mutation, errorMessage, successful } = useSourceSubmit<UrlBody>({
+  const { mutation, errorMessage, successful } = useSourceSubmit<YouTubeBody>({
     kbSlug,
-    kind: 'url',
+    kind: 'youtube',
   })
 
   function handleSubmit(e: FormEvent) {
@@ -32,20 +33,22 @@ export function UrlSourceForm({ kbSlug, onBack }: UrlSourceFormProps) {
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       <div className="flex items-center gap-2 text-gray-400">
-        <Link2 className="h-5 w-5" />
-        <p className="text-sm">{m.knowledge_add_source_url_hint()}</p>
+        <SiYoutube className="h-5 w-5" />
+        <p className="text-sm">{m.knowledge_add_source_youtube_hint()}</p>
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="source-url">{m.knowledge_add_source_url_label()}</Label>
+        <Label htmlFor="source-youtube">
+          {m.knowledge_add_source_youtube_label()}
+        </Label>
         <Input
-          id="source-url"
+          id="source-youtube"
           type="url"
           autoFocus
           required
           value={url}
           onChange={(e) => setUrl(e.target.value)}
-          placeholder={m.knowledge_add_source_url_placeholder()}
+          placeholder={m.knowledge_add_source_youtube_placeholder()}
           disabled={mutation.isPending || successful}
         />
       </div>
@@ -70,7 +73,7 @@ export function UrlSourceForm({ kbSlug, onBack }: UrlSourceFormProps) {
         >
           {mutation.isPending
             ? m.knowledge_add_source_submitting()
-            : m.knowledge_add_source_submit_url()}
+            : m.knowledge_add_source_submit_youtube()}
         </Button>
         <button
           type="button"

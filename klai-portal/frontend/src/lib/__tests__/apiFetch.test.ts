@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { ApiError, formatValidationIssues, type ValidationIssue } from '../apiFetch'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ApiError, apiFetch, formatValidationIssues, type ValidationIssue } from '../apiFetch'
 
 describe('formatValidationIssues', () => {
   it('joins field + message per issue and strips the body. prefix', () => {
@@ -44,5 +44,99 @@ describe('ApiError', () => {
     expect(err.status).toBe(422)
     expect(err.message).toBe('email: value is not a valid email address')
     expect(err.validationIssues).toEqual(issues)
+  })
+})
+
+describe('apiFetch — detail body handling', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('stringifies an object detail so callers can JSON.parse(err.detail) to read the error_code', async () => {
+    // Portal-api emits this shape for quota / capability / structured errors:
+    //   HTTPException(status_code=403, detail={"error_code": "kb_quota_items_exceeded", ...})
+    const body = {
+      detail: { error_code: 'kb_quota_items_exceeded', plan: 'core', limit: 20, current: 20 },
+    }
+    // Factory: each call gets a fresh Response (bodies are single-use).
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Response(JSON.stringify(body), {
+            status: 403,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      ),
+    )
+
+    let caught: unknown
+    try {
+      await apiFetch<unknown>('/api/app/knowledge-bases/personal/sources/text', {
+        method: 'POST',
+        body: JSON.stringify({ title: 't', content: 'x' }),
+      })
+    } catch (err) {
+      caught = err
+    }
+
+    expect(caught).toBeInstanceOf(ApiError)
+    const apiErr = caught as ApiError
+    expect(apiErr.status).toBe(403)
+    // Must be JSON-parseable back into the structured detail.
+    const parsed = JSON.parse(apiErr.detail) as { error_code?: string }
+    expect(parsed.error_code).toBe('kb_quota_items_exceeded')
+  })
+
+  it('keeps a string detail as-is (regression guard)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Response(JSON.stringify({ detail: 'Knowledge base not found' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      ),
+    )
+
+    let caught: unknown
+    try {
+      await apiFetch<unknown>('/api/app/knowledge-bases/missing/sources/text', {
+        method: 'POST',
+      })
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(ApiError)
+    expect((caught as ApiError).detail).toBe('Knowledge base not found')
+  })
+
+  it('keeps a validation-issue array as validationIssues (regression guard)', async () => {
+    const issues: ValidationIssue[] = [
+      { loc: ['body', 'url'], msg: 'field required', type: 'missing' },
+    ]
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Response(JSON.stringify({ detail: issues }), {
+            status: 422,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      ),
+    )
+
+    let caught: unknown
+    try {
+      await apiFetch<unknown>('/api/app/knowledge-bases/personal/sources/url', {
+        method: 'POST',
+        body: JSON.stringify({}),
+      })
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(ApiError)
+    expect((caught as ApiError).validationIssues).toEqual(issues)
   })
 })

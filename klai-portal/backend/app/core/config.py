@@ -150,6 +150,10 @@ class Settings(BaseSettings):
     knowledge_ingest_url: str = "http://knowledge-ingest:8000"
     knowledge_ingest_secret: str = ""  # PORTAL_API_KNOWLEDGE_INGEST_SECRET
 
+    # crawl4ai HTTP service — used by the URL source extractor (SPEC-KB-SOURCES-001).
+    # Same endpoint that klai-knowledge-ingest and klai-connector already target.
+    crawl4ai_api_url: str = "http://crawl4ai:11235"
+
     # Redis (used for retrieval logs and feedback idempotency -- SPEC-KB-015)
     redis_url: str = ""
 

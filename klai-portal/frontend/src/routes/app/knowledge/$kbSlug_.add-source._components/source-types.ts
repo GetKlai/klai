@@ -9,12 +9,13 @@ import {
   SiGoogledocs,
   SiGooglesheets,
   SiGoogleslides,
+  SiYoutube,
 } from '@icons-pack/react-simple-icons'
 import * as m from '@/paraglide/messages'
 
 export type SourceGroup = 'upload' | 'connector'
 
-export type UploadType = 'file' | 'url' | 'text'
+export type UploadType = 'file' | 'url' | 'youtube' | 'text'
 
 export type ConnectorSourceType =
   | 'github'
@@ -57,7 +58,15 @@ export const SOURCE_TYPES: SourceTypeMeta[] = [
     label: m.knowledge_add_source_url_label,
     subtitle: m.knowledge_add_source_url_subtitle,
     Icon: Link2,
-    available: false,
+    available: true,
+  },
+  {
+    type: 'youtube',
+    group: 'upload',
+    label: m.knowledge_add_source_youtube_label,
+    subtitle: m.knowledge_add_source_youtube_subtitle,
+    Icon: SiYoutube,
+    available: true,
   },
   {
     type: 'text',
@@ -65,7 +74,7 @@ export const SOURCE_TYPES: SourceTypeMeta[] = [
     label: m.knowledge_add_source_text_label,
     subtitle: m.knowledge_add_source_text_subtitle,
     Icon: Type,
-    available: false,
+    available: true,
   },
 
   // -- Connector group -------------------------------------------------------

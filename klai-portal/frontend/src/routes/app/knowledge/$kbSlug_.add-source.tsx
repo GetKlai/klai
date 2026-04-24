@@ -7,6 +7,7 @@ import * as m from '@/paraglide/messages'
 import { SourceTypeGrid } from './$kbSlug_.add-source._components/SourceTypeGrid'
 import { FileUploadForm } from './$kbSlug_.add-source._components/FileUploadForm'
 import { UrlSourceForm } from './$kbSlug_.add-source._components/UrlSourceForm'
+import { YouTubeSourceForm } from './$kbSlug_.add-source._components/YouTubeSourceForm'
 import { TextSourceForm } from './$kbSlug_.add-source._components/TextSourceForm'
 import type { UploadType } from './$kbSlug_.add-source._components/source-types'
 
@@ -14,7 +15,7 @@ import type { UploadType } from './$kbSlug_.add-source._components/source-types'
 
 type AddSourceSearch = { type?: UploadType }
 
-const VALID_UPLOAD_TYPES = new Set<string>(['file', 'url', 'text'])
+const VALID_UPLOAD_TYPES = new Set<string>(['file', 'url', 'youtube', 'text'])
 
 // -- Route -------------------------------------------------------------------
 
@@ -78,6 +79,11 @@ function AddSourcePage() {
         />
       ) : selectedUpload === 'url' ? (
         <UrlSourceForm
+          kbSlug={kbSlug}
+          onBack={() => setSelectedUpload(null)}
+        />
+      ) : selectedUpload === 'youtube' ? (
+        <YouTubeSourceForm
           kbSlug={kbSlug}
           onBack={() => setSelectedUpload(null)}
         />
