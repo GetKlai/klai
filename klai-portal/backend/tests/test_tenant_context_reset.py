@@ -326,6 +326,41 @@ def test_pooled_tenant_session_is_the_configured_class() -> None:
     assert db_module.AsyncSessionLocal.class_ is db_module.PooledTenantSession
 
 
+@pytest.mark.asyncio
+async def test_pooled_tenant_session_closes_on_checkout_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If `_pin_and_reset_connection` raises in `__aenter__`, the session MUST
+    be closed before the exception propagates. Otherwise the caller never
+    enters the `async with` body, `__aexit__` never fires, and the pooled
+    connection leaks back to the pool with indeterminate GUC state.
+    """
+
+    async def boom(_session: object) -> None:
+        raise RuntimeError("simulated pin/reset failure at checkout")
+
+    monkeypatch.setattr(db_module, "_pin_and_reset_connection", boom)
+
+    close_calls: list[object] = []
+    orig_close = db_module.AsyncSession.close
+
+    async def tracking_close(self: db_module.AsyncSession) -> None:
+        close_calls.append(self)
+        await orig_close(self)
+
+    monkeypatch.setattr(db_module.AsyncSession, "close", tracking_close)
+
+    with pytest.raises(RuntimeError, match="simulated pin/reset failure"):
+        async with db_module.AsyncSessionLocal() as _:
+            # Never reached — checkout raises.
+            pass
+
+    # Exactly one session was opened (by super().__aenter__) and it must have
+    # been closed by our error-path cleanup. Zero close calls means the
+    # connection is leaked with whatever GUC state it had on checkout.
+    assert len(close_calls) == 1, f"session must be closed on checkout failure; got {len(close_calls)} close() calls"
+
+
 # ---------------------------------------------------------------------------
 # assert_portal_users_rls_ready — startup fail-loud on broken policy
 # ---------------------------------------------------------------------------

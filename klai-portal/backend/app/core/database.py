@@ -41,7 +41,17 @@ class PooledTenantSession(AsyncSession):
 
     async def __aenter__(self) -> AsyncSession:  # type: ignore[override]
         session = await super().__aenter__()
-        await _pin_and_reset_connection(session)
+        try:
+            await _pin_and_reset_connection(session)
+        except BaseException:
+            # Pin/reset raised (e.g. asyncpg connection error during pin, or an
+            # unsuppressed failure in _reset_tenant_context). The caller never
+            # enters the `async with` body, so `__aexit__` does not fire. Close
+            # the session explicitly so its pooled connection returns to the
+            # pool instead of leaking with indeterminate GUC state. Using
+            # BaseException also covers KeyboardInterrupt / SystemExit.
+            await session.close()
+            raise
         return session
 
 
