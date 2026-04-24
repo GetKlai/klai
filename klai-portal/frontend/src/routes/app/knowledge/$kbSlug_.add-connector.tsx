@@ -98,7 +98,18 @@ const MARKDOWN_PROSE_CLASSES = 'overflow-y-auto max-h-64 text-xs [&_h1]:text-sm 
 
 // -- Route -------------------------------------------------------------------
 
+const VALID_PRESELECT_TYPES = new Set<ConnectorType>([
+  'github', 'notion', 'google_drive', 'google_docs', 'google_sheets', 'google_slides',
+  'airtable', 'confluence', 'ms_docs', 'web_crawler',
+])
+type AddConnectorSearch = { type?: ConnectorType }
+
 export const Route = createFileRoute('/app/knowledge/$kbSlug_/add-connector')({
+  validateSearch: (s: Record<string, unknown>): AddConnectorSearch => ({
+    type: (VALID_PRESELECT_TYPES as Set<string>).has(s.type as string)
+      ? (s.type as ConnectorType)
+      : undefined,
+  }),
   component: AddConnectorPage,
 })
 
@@ -106,10 +117,11 @@ export const Route = createFileRoute('/app/knowledge/$kbSlug_/add-connector')({
 
 function AddConnectorPage() {
   const { kbSlug } = Route.useParams()
+  const { type: preselectType } = Route.useSearch()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
-  const [selectedType, setSelectedType] = useState<ConnectorType | null>(null)
+  const [selectedType, setSelectedType] = useState<ConnectorType | null>(preselectType ?? null)
   const [name, setName] = useState('')
   const [allowedAssertionModes, setAllowedAssertionModes] = useState<string[]>([])
   const [githubConfig, setGithubConfig] = useState<GitHubConfig>({
