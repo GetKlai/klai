@@ -263,8 +263,7 @@ async def callback_provider(
     # was in auth_error. Used below to emit connector.reconnected for
     # observability (distinguish successful recoveries from initial setups).
     was_reconnect = (
-        connector.encrypted_credentials is not None
-        and (connector.last_sync_status or "").lower() == "auth_error"
+        connector.encrypted_credentials is not None and (connector.last_sync_status or "").lower() == "auth_error"
     )
 
     # 3. Exchange authorization code for tokens. NEVER log the response body.
