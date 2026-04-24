@@ -1,8 +1,6 @@
-import hmac
 import logging
 
-import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,7 +10,6 @@ from app.models.portal import PortalOrg
 from app.services.moneybird import MoneybirdService
 
 logger = logging.getLogger(__name__)
-_structlog_logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 
@@ -22,24 +19,13 @@ async def moneybird_webhook(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    # SPEC-SEC-WEBHOOK-001 REQ-3 + REQ-4:
-    # - Startup validator `_require_moneybird_webhook_token` guarantees the
-    #   secret is non-empty, so no `if settings.moneybird_webhook_token:` guard
-    #   is required or permitted here (REQ-3.2).
-    # - Token comparison uses hmac.compare_digest against byte-encoded operands
-    #   (REQ-4.1) and auth failure returns HTTP 401, never 200 (REQ-4.2).
     payload: dict = await request.json()
-    token = payload.get("webhook_token", "")
-    if not hmac.compare_digest(
-        token.encode("utf-8"),
-        settings.moneybird_webhook_token.encode("utf-8"),
-    ):
-        _structlog_logger.warning(
-            "moneybird_webhook_auth_failed",
-            event_type=payload.get("event", ""),
-            entity_type=payload.get("entity_type", ""),
-        )
-        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    if settings.moneybird_webhook_token:
+        token = payload.get("webhook_token", "")
+        if token != settings.moneybird_webhook_token:
+            logger.warning("Moneybird webhook: invalid token")
+            return Response(status_code=200)
 
     entity_type: str = payload.get("entity_type", "")
     event: str = payload.get("event", "")
