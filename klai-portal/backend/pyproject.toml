@@ -22,11 +22,13 @@ dependencies = [
     "redis[hiredis]>=7.4",
     "pyjwt>=2.12",
     "klai-connector-credentials",
+    "klai-image-storage",
     "youtube-transcript-api>=1.2.4",
 ]
 
 [tool.uv.sources]
 klai-connector-credentials = { path = "../../klai-libs/connector-credentials", editable = true }
+klai-image-storage = { path = "../../klai-libs/image-storage", editable = true }
 
 [project.optional-dependencies]
 dev = [
