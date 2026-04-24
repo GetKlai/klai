@@ -152,6 +152,145 @@ async def test_reset_swallows_set_config_failure_on_first_guc() -> None:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# _pin_and_reset_connection — checkout-time defense against pool pollution
+# ---------------------------------------------------------------------------
+#
+# Symptom that led to these tests (2026-04-24):
+#   Apr 23 — getklai.getklai.com chat: `/api/app/templates` and
+#   `/api/app/chat-health` returned intermittent 404 "Organisation not found"
+#   for a valid session, while `/api/app/knowledge-bases` with the same cookie
+#   in the same second returned 200. Caddy logs showed alternating statuses
+#   tied to which pooled DB connection served the request.
+#
+# Root cause:
+#   `_get_caller_org` queries portal_users (RLS: `org_id = GUC OR GUC IS NULL`)
+#   BEFORE calling set_tenant. If the checked-out connection had a stale
+#   `app.current_org_id` from a prior request whose cleanup `_reset_tenant_context`
+#   suppressed an error (aborted transaction, closed connection), the user row
+#   was filtered out and the handler raised 404.
+#
+#   Cleanup-time reset was not enough — any silent failure there leaks the GUC
+#   to the next checkout. These tests lock the new checkout-time reset.
+
+
+@pytest.mark.asyncio
+async def test_pin_and_reset_clears_stale_tenant_at_checkout() -> None:
+    """`_pin_and_reset_connection` MUST clear any leftover tenant GUC.
+
+    Without this, a pooled connection whose prior cleanup suppressed an
+    error returns to the next request with the stale `app.current_org_id`,
+    and RLS silently filters portal_users for the wrong tenant.
+    """
+    session = _fake_session()
+    session.connection = AsyncMock()
+
+    await db_module._pin_and_reset_connection(session)
+
+    # Connection pinned exactly once before reset runs.
+    assert session.connection.await_count == 1
+    # Reset: rollback + two set_config calls (current_org_id + cross_org_admin).
+    assert session.rollback.await_count == 1
+    assert session.execute.await_count == 2
+    rendered = [str(c.args[0]) for c in session.execute.await_args_list]
+    assert any("app.current_org_id" in s for s in rendered), rendered
+    assert any("app.cross_org_admin" in s for s in rendered), rendered
+
+
+@pytest.mark.asyncio
+async def test_pin_runs_connection_before_reset() -> None:
+    """Connection MUST be pinned before the set_config statements run.
+
+    If the reset landed on a non-pinned session, SQLAlchemy could route each
+    set_config to a different pooled connection and the RLS GUC would end up
+    on the wrong physical connection — re-introducing the same class of bug.
+    """
+    session = AsyncMock()
+    calls: list[str] = []
+
+    async def tracked_connection() -> None:
+        calls.append("connection")
+
+    async def tracked_rollback() -> None:
+        calls.append("rollback")
+
+    async def tracked_execute(*_args: object, **_kwargs: object) -> object:
+        calls.append("execute")
+        return MagicMock()
+
+    session.connection = AsyncMock(side_effect=tracked_connection)
+    session.rollback = AsyncMock(side_effect=tracked_rollback)
+    session.execute = AsyncMock(side_effect=tracked_execute)
+
+    await db_module._pin_and_reset_connection(session)
+
+    assert calls[0] == "connection", f"connection() must run first, got {calls}"
+    # Then the reset sequence (rollback, execute, execute).
+    assert calls[1:] == ["rollback", "execute", "execute"], calls
+
+
+@pytest.mark.asyncio
+async def test_get_db_clears_stale_guc_before_yielding(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression test for the getklai.getklai.com intermittent-404 incident.
+
+    Before the fix, `get_db` pinned the connection but did NOT reset the
+    tenant GUC at checkout. If the previous request leaked `app.current_org_id`
+    into the pool, the very next `_get_caller_org` query ran with the wrong
+    tenant and returned 404 for a valid session.
+
+    After the fix, `_pin_and_reset_connection` fires before yielding, so the
+    handler sees a clean GUC and its own `set_tenant` lands reliably.
+    """
+    fake_session = _fake_session()
+    fake_session.connection = AsyncMock()
+
+    class FakeSessionCM:
+        async def __aenter__(self) -> AsyncMock:
+            return fake_session
+
+        async def __aexit__(self, *_args: object) -> None:
+            pass
+
+    monkeypatch.setattr(db_module, "AsyncSessionLocal", lambda: FakeSessionCM())
+
+    yielded_sessions: list[AsyncMock] = []
+    async for session in db_module.get_db():
+        yielded_sessions.append(session)
+        # At yield-time the reset must already have run — otherwise the
+        # handler's first query (which typically lands before set_tenant)
+        # can still hit a stale RLS context.
+        assert session.rollback.await_count == 1
+        assert session.execute.await_count == 2
+        break
+
+    assert yielded_sessions == [fake_session]
+
+
+@pytest.mark.asyncio
+async def test_pin_session_also_clears_stale_guc() -> None:
+    """External-session pin (used by provisioning orchestrator) must reset too.
+
+    `pin_session` accepts a session from the caller. Provisioning pipelines
+    reuse a long-lived session across compensator steps; each step should
+    start from a clean RLS context, not whatever the previous step left
+    behind.
+    """
+    session = _fake_session()
+    session.connection = AsyncMock()
+
+    await db_module.pin_session(session)
+
+    # Same contract as _pin_and_reset_connection.
+    assert session.connection.await_count == 1
+    assert session.rollback.await_count == 1
+    assert session.execute.await_count == 2
+
+
+# ---------------------------------------------------------------------------
+# cross_org_session — no more double-reset of app.cross_org_admin
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
 async def test_cross_org_session_delegates_reset_to_shared_helper(
     monkeypatch: pytest.MonkeyPatch,
@@ -161,6 +300,11 @@ async def test_cross_org_session_delegates_reset_to_shared_helper(
     Before the fix it had its own standalone
     `set_config('app.cross_org_admin', '', false)` wrapped in suppress —
     same aborted-transaction trap. Now the shared helper handles it.
+
+    Post-2026-04-24 pool-reset fix: the helper is also invoked at checkout
+    via `_pin_and_reset_connection`, so a `cross_org_session` block runs
+    two resets total (checkout + cleanup). Both target the same fake
+    session, and the cleanup one is the one that matters for pool hygiene.
     """
     fake_session = AsyncMock()
     fake_session.rollback = AsyncMock()
@@ -186,5 +330,7 @@ async def test_cross_org_session_delegates_reset_to_shared_helper(
     async with db_module.cross_org_session() as db:
         assert db is fake_session
 
-    assert len(reset_calls) == 1, "Shared reset helper must run exactly once"
-    assert reset_calls[0] is fake_session
+    # Two resets: one at checkout (_pin_and_reset_connection), one at cleanup.
+    # Both must target the fake session — no other sessions created.
+    assert len(reset_calls) == 2, "Shared reset must run at checkout AND cleanup"
+    assert all(s is fake_session for s in reset_calls)

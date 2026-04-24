@@ -23,6 +23,49 @@ paths:
 - Use `text()` raw SQL for inserts on RLS-protected tables where the inserting role differs from the reading role.
 - `::jsonb` casts conflict with SQLAlchemy `:param` — use `CAST(:param AS jsonb)` instead.
 
+## Pool-GUC pollution — reset at checkout AND cleanup (CRIT)
+
+PostgreSQL `set_config('app.current_org_id', ...)` persists for the lifetime
+of the pooled connection. `app/core/database.py` resets both RLS GUCs on
+cleanup, but the reset is wrapped in `suppress(Exception)` — if the session
+is in aborted-transaction state (42501 RLS fail-loud, closed connection)
+the reset silently fails and the connection returns to the pool with a
+stale tenant GUC.
+
+**Symptom:** Intermittent 404 "Organisation not found" on `/api/app/*`
+endpoints with a valid session. Same cookie alternately succeeds and fails
+within seconds. Adjacent endpoints (`/api/app/knowledge-bases` vs
+`/api/app/templates`) return different statuses in the same millisecond
+because each call checks out a different pooled connection.
+
+**Root cause (2026-04-24 getklai incident):** `_get_caller_org` queries
+`portal_users` (RLS: `org_id = GUC OR GUC IS NULL`) BEFORE calling
+`set_tenant`. A pooled connection with `app.current_org_id=8` (Voys, leaked
+from a prior request) serving a request for org_id=1 (getklai) filters the
+getklai user row out via RLS, and the handler raises 404.
+
+**Fix:** `_pin_and_reset_connection` (renamed from `_pin_and_reset_on_exit`)
+runs `_reset_tenant_context` at checkout, before yielding the session.
+Defense-in-depth — cleanup still runs, but checkout catches any leak from
+a prior cleanup that the suppress-blocks ate.
+
+**Prevention:**
+- Every helper that hands out a pooled session MUST call
+  `_pin_and_reset_connection(session)` before yielding. `get_db`,
+  `tenant_scoped_session`, `pin_session`, `cross_org_session` all do.
+- New RLS-protected tables: the policy MUST include the
+  `OR current_setting(...) IS NULL` branch so cleared GUCs do not
+  lock out fresh connections (unless the table is intentionally cross-
+  org-inaccessible from unset context).
+- Never query an RLS-protected table before setting the tenant context in
+  the same request. If you must, accept that the query returns all rows
+  visible under the NULL policy branch.
+
+**Verification:** `docker exec klai-core-portal-api-1 psql -U klai -d klai -c
+"SELECT application_name, state, backend_start, query FROM pg_stat_activity
+WHERE application_name LIKE '%portal-api%';"` — all idle connections should
+sit in state=idle with no pending RLS statement.
+
 ## Prometheus metrics in tests
 - Never use the global `prometheus_client` registry in tests — causes `Duplicated timeseries`.
 - Use a `CollectorRegistry` per instance via dataclass + `autouse` fixture that patches module-level singleton.
