@@ -374,6 +374,14 @@ def _classify_resolved(
     )
 
 
+# @MX:ANCHOR: validate_url_pinned — canonical SSRF guard used by
+#   knowledge-ingest (utils.url_validator), klai-connector
+#   (services.url_guard, pipeline), and klai-portal
+#   (services.url_validator). fan_in >= 3.
+# @MX:REASON: Single source of truth for the reject-list. A bypass
+#   in this function re-opens Findings #6 / #7 / #8 / I / II
+#   simultaneously across all three services.
+# @MX:SPEC: SPEC-SEC-SSRF-001
 async def validate_url_pinned(
     url: str,
     *,
@@ -478,6 +486,15 @@ async def validate_image_url(url: str, *, dns_timeout: float = 2.0) -> Validated
 # ---------------------------------------------------------------------------
 
 
+# @MX:ANCHOR: PinnedResolverTransport — DNS-rebinding defence used by
+#   klai-connector SyncEngine (_image_http), klai-libs pipeline
+#   (seeds pin map), and knowledge-ingest (imported via
+#   utils.url_validator for future crawl4ai_client work). fan_in >= 3.
+# @MX:REASON: Closes the TOCTOU window between the guard's DNS
+#   resolution and httpx's subsequent getaddrinfo. Breaking the
+#   pin-map contract (host missing, SNI dropped) silently reopens
+#   Finding #8.
+# @MX:SPEC: SPEC-SEC-SSRF-001
 class PinnedResolverTransport(httpx.AsyncHTTPTransport):
     """httpx transport that connects to a pre-validated IP.
 

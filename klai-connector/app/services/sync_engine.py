@@ -43,7 +43,7 @@ from app.core.logging import get_logger
 from app.models.sync_run import SyncRun
 from app.services.parser import parse_document_with_images
 from app.services.portal_client import PortalClient
-from app.services.url_guard import PersistedUrlRejected
+from app.services.url_guard import PersistedUrlRejectedError
 
 logger = get_logger(__name__)
 
@@ -391,7 +391,7 @@ class SyncEngine:
                     extra={"connector_id": str(connector_id)},
                 )
 
-            except PersistedUrlRejected as err:
+            except PersistedUrlRejectedError as err:
                 # SPEC-SEC-SSRF-001 REQ-8.4 / AC-21: legacy connector
                 # row stored an SSRF-unsafe URL. Mark the sync failed
                 # with the stable error code so ops dashboards and
