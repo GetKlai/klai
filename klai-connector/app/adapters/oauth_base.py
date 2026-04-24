@@ -74,6 +74,53 @@ class OAuthReconnectRequiredError(RuntimeError):
     """
 
 
+def check_invalid_grant_and_raise(
+    response: Any,  # httpx.Response; Any here to avoid circular imports in type-only usage.
+    *,
+    provider: str,
+    connector_id: Any,
+) -> None:
+    """Translate a provider ``invalid_grant`` response to ``OAuthReconnectRequiredError``.
+
+    Both Microsoft Graph and Google Identity return HTTP 400 with a JSON body
+    ``{"error": "invalid_grant", "error_description": "..."}`` when the stored
+    refresh_token is permanently invalid (password change, consent revoke,
+    extended inactivity, post-grace rotation). All OAuth adapters translate
+    that specific response into the typed ``OAuthReconnectRequiredError`` so
+    the sync engine can mark the connector ``AUTH_ERROR`` and the portal can
+    surface a "Reconnect <provider>" affordance.
+
+    Args:
+        response: The ``httpx.Response`` from the provider token endpoint.
+            Must have ``status_code`` and ``json()``.
+        provider: Human-readable provider name for logs + error message
+            (e.g. ``"Microsoft"``, ``"Google"``).
+        connector_id: Used in the exception message only; never logged alone.
+
+    Raises:
+        OAuthReconnectRequiredError: When the response is a 400 +
+            ``error=invalid_grant``. Other responses are left for the caller
+            to handle (typically via ``response.raise_for_status()``).
+    """
+    if response.status_code != 400:
+        return
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+    if not isinstance(body, dict) or body.get("error") != "invalid_grant":
+        return
+    logger.warning(
+        "%s invalid_grant for connector=%s — reconnect required",
+        provider,
+        str(connector_id),
+    )
+    raise OAuthReconnectRequiredError(
+        f"{provider} refresh_token rejected (connector_id={connector_id}): "
+        f"{body.get('error_description', 'invalid_grant')}"
+    )
+
+
 class OAuthAdapterBase(ABC):
     """Base class contributing OAuth token management to adapters.
 
