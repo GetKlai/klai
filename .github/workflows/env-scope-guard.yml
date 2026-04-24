@@ -1,0 +1,72 @@
+name: env-scope-guard (SPEC-SEC-ENVFILE-SCOPE-001)
+
+# SPEC-SEC-ENVFILE-SCOPE-001 REQ-4: block reintroduction of bare
+# `env_file: .env` on any service in deploy/docker-compose.yml. The
+# bare form (pointing at /opt/klai/.env, the merged SOPS-global file)
+# leaks every Klai secret into the service's process env — see SPEC
+# §Threat Model. Per-service paths like `env_file: ./klai-mailer/.env`
+# are permitted by REQ-6 and explicitly allowed here.
+#
+# REQ-4.4: runs on every PR push, not only at merge — a late catch
+# forces an extra commit.
+# REQ-4.5: pure shell grep, no YAML parser — also catches the
+# multi-line form (`env_file:\n  - .env`).
+
+on:
+  pull_request:
+    paths:
+      - 'deploy/docker-compose.yml'
+      - '.github/workflows/env-scope-guard.yml'
+  # Re-run on main so a direct push (rare, but possible) is still gated.
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/docker-compose.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  no-shared-env-file:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Forbid bare env_file&#58; .env in deploy/docker-compose.yml
+        run: |
+          set -u
+          FILE=deploy/docker-compose.yml
+          FAIL=0
+
+          # Match the scalar form:   env_file: .env
+          # (tolerate trailing whitespace; reject any leading indentation
+          # because a valid per-service path would have `./...`).
+          if grep -nE '^\s*env_file:\s*\.env\s*$' "$FILE"; then
+            echo "::error file=$FILE::Bare 'env_file: .env' is forbidden by SPEC-SEC-ENVFILE-SCOPE-001. Use an explicit 'environment:' block or a per-service 'env_file: ./<svc>/.env' path. See deploy/SECRETS_MATRIX.md."
+            FAIL=1
+          fi
+
+          # Match the multi-line list form:
+          #   env_file:
+          #     - .env
+          # Use PCRE (-P) + -z so \s\n cross line boundaries reliably.
+          # POSIX ERE with [[:space:]]\n is unreliable across GNU grep
+          # versions; PCRE is installed on ubuntu-latest runners.
+          if grep -Pzo 'env_file:\s*\n\s*-\s*\.env\s*\n' "$FILE" > /dev/null; then
+            echo "::error file=$FILE::Multi-line 'env_file:\\n  - .env' is forbidden by SPEC-SEC-ENVFILE-SCOPE-001."
+            FAIL=1
+          fi
+
+          if [ "$FAIL" -eq 1 ]; then
+            echo ""
+            echo "Context: the bare '.env' in deploy/ points at /opt/klai/.env,"
+            echo "the merged SOPS-global file containing every Klai secret."
+            echo "Injecting all of it into a single service makes any RCE in"
+            echo "that service exfiltrate every secret on the host. The SPEC"
+            echo "requires each service to declare only the env vars it reads,"
+            echo "either via an explicit 'environment:' block or via a"
+            echo "per-service 'env_file: ./<svc>/.env'."
+            exit 1
+          fi
+
+          echo "env-scope-guard: OK"
