@@ -114,10 +114,7 @@ class TestVideoIdExtraction:
         assert _extract_video_id("https://www.youtube.com/embed/dQw4w9WgXcQ") == "dQw4w9WgXcQ"
 
     def test_with_extra_query_params(self) -> None:
-        assert (
-            _extract_video_id("https://www.youtube.com/watch?v=dQw4w9WgXcQ&feature=share")
-            == "dQw4w9WgXcQ"
-        )
+        assert _extract_video_id("https://www.youtube.com/watch?v=dQw4w9WgXcQ&feature=share") == "dQw4w9WgXcQ"
 
     def test_with_underscore_and_dash_in_id(self) -> None:
         # Real video IDs contain [A-Za-z0-9_-]
@@ -172,17 +169,13 @@ class TestTranscriptFetching:
         with pytest.raises(UnsupportedSourceError):
             await extract_youtube("https://youtu.be/dQw4w9WgXcQ")
 
-    async def test_transcripts_disabled_raises_unsupported(
-        self, mock_transcript, mock_oembed
-    ) -> None:
+    async def test_transcripts_disabled_raises_unsupported(self, mock_transcript, mock_oembed) -> None:
         mock_transcript(TranscriptsDisabled("dQw4w9WgXcQ"))
         mock_oembed(httpx.Response(200, json={"title": "T"}))
         with pytest.raises(UnsupportedSourceError):
             await extract_youtube("https://youtu.be/dQw4w9WgXcQ")
 
-    async def test_video_unavailable_raises_unsupported(
-        self, mock_transcript, mock_oembed
-    ) -> None:
+    async def test_video_unavailable_raises_unsupported(self, mock_transcript, mock_oembed) -> None:
         mock_transcript(VideoUnavailable("dQw4w9WgXcQ"))
         mock_oembed(httpx.Response(200, json={"title": "T"}))
         with pytest.raises(UnsupportedSourceError):
@@ -208,25 +201,19 @@ class TestOembedTitle:
         title, _, _ = await extract_youtube("https://youtu.be/dQw4w9WgXcQ")
         assert title == "YouTube video dQw4w9WgXcQ"
 
-    async def test_fallback_on_oembed_missing_title_key(
-        self, mock_transcript, mock_oembed
-    ) -> None:
+    async def test_fallback_on_oembed_missing_title_key(self, mock_transcript, mock_oembed) -> None:
         mock_transcript([_Snippet(text="words here")])
         mock_oembed(httpx.Response(200, json={"author": "X"}))  # no 'title'
         title, _, _ = await extract_youtube("https://youtu.be/dQw4w9WgXcQ")
         assert title == "YouTube video dQw4w9WgXcQ"
 
-    async def test_fallback_on_oembed_non_json(
-        self, mock_transcript, mock_oembed
-    ) -> None:
+    async def test_fallback_on_oembed_non_json(self, mock_transcript, mock_oembed) -> None:
         mock_transcript([_Snippet(text="words here")])
         mock_oembed(httpx.Response(200, content=b"<html>not json</html>"))
         title, _, _ = await extract_youtube("https://youtu.be/dQw4w9WgXcQ")
         assert title == "YouTube video dQw4w9WgXcQ"
 
-    async def test_oembed_failure_does_not_fail_ingest(
-        self, mock_transcript, mock_oembed
-    ) -> None:
+    async def test_oembed_failure_does_not_fail_ingest(self, mock_transcript, mock_oembed) -> None:
         """R3.4: oembed failure must NOT fail the whole ingest — transcript is primary."""
         mock_transcript([_Snippet(text="primary payload here")])
         mock_oembed(httpx.Response(500))

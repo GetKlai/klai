@@ -204,9 +204,7 @@ class TestDockerInternalHostnames:
             "mailer",
         ],
     )
-    async def test_rejects_docker_internal_hostname(
-        self, hostname: str, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_rejects_docker_internal_hostname(self, hostname: str, monkeypatch: pytest.MonkeyPatch) -> None:
         # Even if DNS resolved to a public IP, the hostname itself is blocked.
         monkeypatch.setattr(
             "app.services.source_extractors._url_validator._resolve_host",
@@ -215,9 +213,7 @@ class TestDockerInternalHostnames:
         with pytest.raises(SSRFBlockedError):
             await validate_url(f"http://{hostname}/api")
 
-    async def test_rejects_docker_internal_case_insensitive(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_rejects_docker_internal_case_insensitive(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
             "app.services.source_extractors._url_validator._resolve_host",
             _fake_resolver(["93.184.216.34"]),
@@ -225,9 +221,7 @@ class TestDockerInternalHostnames:
         with pytest.raises(SSRFBlockedError):
             await validate_url("http://KNOWLEDGE-INGEST/api")
 
-    async def test_rejects_docker_internal_with_trailing_dot(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_rejects_docker_internal_with_trailing_dot(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """RFC 3986 FQDNs can have a trailing dot — `redis.` must NOT bypass the deny list."""
         monkeypatch.setattr(
             "app.services.source_extractors._url_validator._resolve_host",
@@ -236,9 +230,7 @@ class TestDockerInternalHostnames:
         with pytest.raises(SSRFBlockedError):
             await validate_url("http://redis./api")
 
-    async def test_rejects_uppercase_internal_with_trailing_dot(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_rejects_uppercase_internal_with_trailing_dot(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
             "app.services.source_extractors._url_validator._resolve_host",
             _fake_resolver(["93.184.216.34"]),
@@ -248,9 +240,7 @@ class TestDockerInternalHostnames:
 
 
 class TestDualStackResolution:
-    async def test_rejects_if_any_resolved_ip_is_private(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_rejects_if_any_resolved_ip_is_private(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Dual-stack: if the host has one public and one private IP, reject."""
         monkeypatch.setattr(
             "app.services.source_extractors._url_validator._resolve_host",
@@ -307,10 +297,7 @@ class TestCanonicaliseUrl:
 
     def test_preserves_query_string(self) -> None:
         # Different queries on the same path are different pages (pagination).
-        assert (
-            canonicalise_url("https://example.com/archive?page=2")
-            == "https://example.com/archive?page=2"
-        )
+        assert canonicalise_url("https://example.com/archive?page=2") == "https://example.com/archive?page=2"
 
     def test_lowercases_hostname(self) -> None:
         # Hostnames are case-insensitive per RFC 3986.

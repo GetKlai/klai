@@ -303,10 +303,13 @@ class TestUrlRoute:
         kb = _make_kb()
         db = _make_db_mock(kb)
 
-        with _CommonPatches(
-            extract_target="url",
-            extract_side_effect=InvalidUrlError("bad"),
-        ), pytest.raises(HTTPException) as exc:
+        with (
+            _CommonPatches(
+                extract_target="url",
+                extract_side_effect=InvalidUrlError("bad"),
+            ),
+            pytest.raises(HTTPException) as exc,
+        ):
             await add_url_source(
                 kb_slug="personal",
                 body=UrlSourceRequest(url="ftp://bad"),
@@ -322,10 +325,13 @@ class TestUrlRoute:
         kb = _make_kb()
         db = _make_db_mock(kb)
 
-        with _CommonPatches(
-            extract_target="url",
-            extract_side_effect=SSRFBlockedError("blocked"),
-        ), pytest.raises(HTTPException) as exc:
+        with (
+            _CommonPatches(
+                extract_target="url",
+                extract_side_effect=SSRFBlockedError("blocked"),
+            ),
+            pytest.raises(HTTPException) as exc,
+        ):
             await add_url_source(
                 kb_slug="personal",
                 body=UrlSourceRequest(url="http://localhost/"),
@@ -342,10 +348,13 @@ class TestUrlRoute:
         kb = _make_kb()
         db = _make_db_mock(kb)
 
-        with _CommonPatches(
-            extract_target="url",
-            extract_side_effect=SourceFetchError("network"),
-        ), pytest.raises(HTTPException) as exc:
+        with (
+            _CommonPatches(
+                extract_target="url",
+                extract_side_effect=SourceFetchError("network"),
+            ),
+            pytest.raises(HTTPException) as exc,
+        ):
             await add_url_source(
                 kb_slug="personal",
                 body=UrlSourceRequest(url="https://example.com/"),
@@ -361,11 +370,14 @@ class TestUrlRoute:
         kb = _make_kb()
         db = _make_db_mock(kb)
 
-        with _CommonPatches(
-            extract_target="url",
-            extract_return=("T", "body", "https://example.com/"),
-            ingest_side_effect=httpx.ConnectError("refused"),
-        ), pytest.raises(HTTPException) as exc:
+        with (
+            _CommonPatches(
+                extract_target="url",
+                extract_return=("T", "body", "https://example.com/"),
+                ingest_side_effect=httpx.ConnectError("refused"),
+            ),
+            pytest.raises(HTTPException) as exc,
+        ):
             await add_url_source(
                 kb_slug="personal",
                 body=UrlSourceRequest(url="https://example.com/"),
@@ -418,10 +430,13 @@ class TestYoutubeRoute:
         kb = _make_kb()
         db = _make_db_mock(kb)
 
-        with _CommonPatches(
-            extract_target="youtube",
-            extract_side_effect=InvalidUrlError("nope"),
-        ), pytest.raises(HTTPException) as exc:
+        with (
+            _CommonPatches(
+                extract_target="youtube",
+                extract_side_effect=InvalidUrlError("nope"),
+            ),
+            pytest.raises(HTTPException) as exc,
+        ):
             await add_youtube_source(
                 kb_slug="personal",
                 body=YouTubeSourceRequest(url="https://vimeo.com/x"),
@@ -437,10 +452,13 @@ class TestYoutubeRoute:
         kb = _make_kb()
         db = _make_db_mock(kb)
 
-        with _CommonPatches(
-            extract_target="youtube",
-            extract_side_effect=UnsupportedSourceError("no transcript"),
-        ), pytest.raises(HTTPException) as exc:
+        with (
+            _CommonPatches(
+                extract_target="youtube",
+                extract_side_effect=UnsupportedSourceError("no transcript"),
+            ),
+            pytest.raises(HTTPException) as exc,
+        ):
             await add_youtube_source(
                 kb_slug="personal",
                 body=YouTubeSourceRequest(url="https://youtu.be/noTranscrip"),

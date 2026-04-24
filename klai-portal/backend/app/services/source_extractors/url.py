@@ -44,9 +44,7 @@ def _crawl_config() -> dict[str, Any]:
         "params": {
             "cache_mode": "bypass",
             "word_count_threshold": 10,
-            "wait_for": (
-                "js:() => document.body.innerText.trim().split(/\\s+/).length > 50"
-            ),
+            "wait_for": ("js:() => document.body.innerText.trim().split(/\\s+/).length > 50"),
             "remove_consent_popups": True,
             "remove_overlay_elements": True,
             "page_timeout": 25_000,  # crawl4ai internal page timeout, well under our 30s
@@ -138,9 +136,7 @@ async def extract_url(url: str) -> tuple[str, str, str]:
         raise SourceFetchError(f"crawl4ai unreachable: {exc}") from exc
 
     if resp.status_code != 200:
-        logger.warning(
-            "crawl4ai_non_200", hostname=hostname, status=resp.status_code
-        )
+        logger.warning("crawl4ai_non_200", hostname=hostname, status=resp.status_code)
         raise SourceFetchError(f"crawl4ai returned {resp.status_code}")
 
     try:

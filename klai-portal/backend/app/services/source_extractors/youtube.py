@@ -100,9 +100,7 @@ async def _fetch_transcript(video_id: str) -> str:
         VideoUnavailable,
         RequestBlocked,
     ) as exc:
-        raise UnsupportedSourceError(
-            f"No transcript available for {video_id}: {exc.__class__.__name__}"
-        ) from exc
+        raise UnsupportedSourceError(f"No transcript available for {video_id}: {exc.__class__.__name__}") from exc
 
     joined = " ".join(text.strip() for text in snippets if text and text.strip())
     if not joined:
@@ -120,13 +118,9 @@ async def _fetch_oembed_title(video_url: str, video_id: str) -> str:
     fallback = f"YouTube video {video_id}"
     try:
         async with httpx.AsyncClient(timeout=_OEMBED_TIMEOUT) as client:
-            resp = await client.get(
-                _OEMBED_URL, params={"url": video_url, "format": "json"}
-            )
+            resp = await client.get(_OEMBED_URL, params={"url": video_url, "format": "json"})
             if resp.status_code != 200:
-                logger.info(
-                    "youtube_oembed_non_200", video_id=video_id, status=resp.status_code
-                )
+                logger.info("youtube_oembed_non_200", video_id=video_id, status=resp.status_code)
                 return fallback
             try:
                 data = resp.json()

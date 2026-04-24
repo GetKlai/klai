@@ -56,6 +56,7 @@ _WRITE_ROLES = frozenset({"contributor", "owner"})
 
 # --- Request / response models ---------------------------------------------
 
+
 class UrlSourceRequest(BaseModel):
     url: str = Field(min_length=1, max_length=2048)
 
@@ -76,6 +77,7 @@ class SourceIngestedResponse(BaseModel):
 
 
 # --- Helpers ---------------------------------------------------------------
+
 
 async def _get_writable_kb_or_raise(
     kb_slug: str,
@@ -174,6 +176,7 @@ def _hostname(raw: str) -> str:
 
 # --- Routes ----------------------------------------------------------------
 
+
 @router.post(
     "/knowledge-bases/{kb_slug}/sources/url",
     response_model=SourceIngestedResponse,
@@ -220,9 +223,7 @@ async def add_url_source(
         hostname=_hostname(source_ref),
         duration_ms=int((time.monotonic() - start) * 1000),
     )
-    return SourceIngestedResponse(
-        artifact_id=artifact_id, source_ref=source_ref, source_type="url"
-    )
+    return SourceIngestedResponse(artifact_id=artifact_id, source_ref=source_ref, source_type="url")
 
 
 @router.post(
@@ -271,9 +272,7 @@ async def add_youtube_source(
         video_id=video_id,
         duration_ms=int((time.monotonic() - start) * 1000),
     )
-    return SourceIngestedResponse(
-        artifact_id=artifact_id, source_ref=source_ref, source_type="youtube"
-    )
+    return SourceIngestedResponse(artifact_id=artifact_id, source_ref=source_ref, source_type="youtube")
 
 
 @router.post(
@@ -315,6 +314,4 @@ async def add_text_source(
         content_length=len(content),
         duration_ms=int((time.monotonic() - start) * 1000),
     )
-    return SourceIngestedResponse(
-        artifact_id=artifact_id, source_ref=source_ref, source_type="text"
-    )
+    return SourceIngestedResponse(artifact_id=artifact_id, source_ref=source_ref, source_type="text")
