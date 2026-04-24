@@ -36,6 +36,7 @@ from klai_image_storage.storage import (
     MAX_IMAGES_PER_DOCUMENT,
 )
 from klai_image_storage.url_guard import (
+    PinnedResolverTransport,
     SsrfBlockedError,
     validate_image_url,
 )
@@ -103,7 +104,7 @@ async def _download_validate_upload(
     # http_client.get() call so docker-internal hosts are never probed
     # even for their TCP handshake.
     try:
-        await validate_image_url(url)
+        validated = await validate_image_url(url)
     except SsrfBlockedError as exc:
         logger.warning(
             "adapter_image_ssrf_blocked",
@@ -114,6 +115,17 @@ async def _download_validate_upload(
             kb_slug=kb_slug,
         )
         return None
+
+    # REQ-7.4 / AC-23: if the caller wired a ``PinnedResolverTransport``
+    # onto the http client, seed the pin map so the actual GET lands on
+    # the exact IP the guard accepted. Closes the DNS-rebinding window
+    # between ``validate_image_url`` and ``http_client.get``. Clients
+    # without the transport (e.g. unit tests using MockTransport) fall
+    # through — the guard already ran, and the 60 s DNS cache narrows
+    # the rebind window even without the transport.
+    transport = getattr(http_client, "_transport", None)
+    if isinstance(transport, PinnedResolverTransport):
+        transport.pin(validated.hostname, validated.preferred_ip)
 
     try:
         resp = await http_client.get(url)
