@@ -1,12 +1,16 @@
 """
-SPEC-SEC-F033: Vexa webhook auth — fail-closed + constant-time compare.
+SPEC-SEC-WEBHOOK-001 REQ-2 — Vexa webhook auth hardening.
+
+Supersedes the SEC-013 F-033 test suite. The IP-range bypass
+(172.x / 10.x / 192.168.x short-circuit) is REMOVED — every caller,
+including Docker-internal peers, MUST present a valid Bearer token.
 
 Covers:
-- startup fails when VEXA_WEBHOOK_SECRET is empty (pydantic model_validator)
+- startup fails when VEXA_WEBHOOK_SECRET is empty (pydantic model_validator, unchanged)
 - _require_webhook_secret uses hmac.compare_digest for the Bearer comparison
 - 401 on wrong Bearer
-- 200 (pass) on correct Bearer
-- Docker-network IP is still trusted without a Bearer
+- 401 on Docker-network source IP with no Bearer (inverted legacy case)
+- Pass on correct Bearer regardless of source IP
 """
 
 from __future__ import annotations
@@ -114,15 +118,33 @@ def test_require_webhook_secret_missing_authorization_header_rejects() -> None:
     assert excinfo.value.status_code == 401
 
 
-def test_require_webhook_secret_docker_network_trusted_without_bearer() -> None:
-    """Callers on the internal Docker networks (172.x/10.x/192.168.x) are trusted.
+def test_require_webhook_secret_docker_network_IP_no_bearer_rejects_401() -> None:
+    """SPEC-SEC-WEBHOOK-001 REQ-2.2: source IP alone NEVER authenticates.
 
-    This preserves pre-existing behaviour: meeting-api reaches portal-api via
-    klai-net and must not be forced to embed the secret in POST_MEETING_HOOKS.
-    Further hardening tracked in SEC-013.
+    Inverted from the legacy `test_require_webhook_secret_docker_network_trusted_without_bearer`
+    test. Docker-internal source IPs (172.x / 10.x / 192.168.x) previously short-
+    circuited the auth check — that was an auth bypass because Caddy's container
+    IP always sat in those ranges for every external request. The IP-range
+    early-return is deleted in REQ-2.1; every caller now MUST present a valid
+    Bearer, full stop.
     """
     for host in ("172.18.0.5", "10.0.0.2", "192.168.1.10"):
         req = _make_request(client_host=host, auth_header=None)
+        with patch("app.api.meetings.settings") as mock_settings:
+            mock_settings.vexa_webhook_secret = "correct-secret"
+            with pytest.raises(HTTPException) as excinfo:
+                _require_webhook_secret(req)
+            assert excinfo.value.status_code == 401, f"Docker-internal host {host} was accepted without a Bearer"
+
+
+def test_require_webhook_secret_docker_network_IP_with_valid_bearer_passes() -> None:
+    """Legitimate callers on klai-net (Vexa api-gateway) continue to work provided
+    they present the Bearer — this covers the forcing function documented in the
+    SPEC Assumptions: POST_MEETING_HOOKS must be (re)configured with
+    `Authorization: Bearer <secret>` for the Vexa webhook flow to keep working.
+    """
+    for host in ("172.18.0.5", "10.0.0.2", "192.168.1.10"):
+        req = _make_request(client_host=host, auth_header="Bearer correct-secret")
         with patch("app.api.meetings.settings") as mock_settings:
             mock_settings.vexa_webhook_secret = "correct-secret"
             _require_webhook_secret(req)  # no exception
