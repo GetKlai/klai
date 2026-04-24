@@ -631,6 +631,7 @@
   "knowledge_detail_delete_confirm_title": "Kennisbank verwijderen?",
   "knowledge_detail_delete_confirm_body": "Dit verwijdert \"{name}\" permanent, inclusief alle documenten en connectoren. Dit kan niet ongedaan worden gemaakt.",
   "knowledge_detail_delete_confirm_action": "Ja, verwijderen",
+  "knowledge_detail_add_source": "Toevoegen",
   "knowledge_detail_tab_overview": "Overzicht",
   "knowledge_detail_tab_connectors": "Connectoren",
   "knowledge_detail_tab_members": "Toegang",
