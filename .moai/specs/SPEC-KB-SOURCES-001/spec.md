@@ -1,6 +1,6 @@
 ---
 id: SPEC-KB-SOURCES-001
-version: "1.4.0"
+version: "1.5.0"
 status: implemented
 created: 2026-04-24
 updated: 2026-04-24
@@ -25,6 +25,7 @@ source_inspiration: |
 | 2026-04-24 | 1.2.0 | **Implemented.** Backend extractors (text / url / youtube) + SSRF guard + three routes under `/api/app/knowledge-bases/{kb_slug}/sources/{type}` landed on branch `feature/SPEC-KB-SOURCES-001`. Frontend tiles activated with active forms + shared `useSourceSubmit` hook + 13 new i18n keys (EN + NL). Status → `implemented`. 124 new tests / 94% coverage on new modules. See "Implementation Notes" at the bottom for scope deltas. |
 | 2026-04-24 | 1.3.0 | **Post-prod-smoke YouTube hardening.** Voys smoke test revealed two issues: (a) `youtube-transcript-api` error mapping conflated `RequestBlocked` with `NoTranscriptFound` → users saw "no transcript" on IP-blocked videos (lie); (b) even after fixing the mapping, YouTube blocks core-01's datacenter IP regardless. Changes: swapped `youtube-transcript-api` for **yt-dlp** (Android + web player clients, JSON3 subtitle parsing); split error classification into "no transcript" (422) vs "upstream blocked" (502); added `settings.youtube_proxy_url` for optional residential-proxy retry. Verified on prod container: yt-dlp hits the same datacenter-IP block YouTube raised against `youtube-transcript-api` — "Sign in to confirm you're not a bot". yt-dlp is strictly better (more robust + actively maintained), but not a silver bullet for the datacenter-IP problem. |
 | 2026-04-24 | 1.4.0 | **YouTube tile disabled, explainer shipped.** Given that yt-dlp confirms datacenter IPs are blocked and that user-facing cookie upload / OAuth scope hacks were rejected as either too technical or API-limited, we pulled the YouTube tile out of the active upload flow. New state: tile shows "Tijdelijk uit" pill + stays clickable. Click routes to an explainer panel stating WHY (YouTube anti-scraping on datacenter IPs) and WHAT WE'RE DOING (privacy-friendly EU residential proxy), with two concrete alternatives that already work today — URL tile for page metadata + Scribe for audio transcription. Backend route stays live: flipping `available: true` + setting `YOUTUBE_PROXY_URL` in SOPS re-enables the full path with zero code changes. New i18n keys (7 × EN + NL) carry the explainer text. |
+| 2026-04-24 | 1.5.0 | **YouTube tile removed from UI entirely** (per product direction: "tijdelijk uit" is noise, just don't show it). Surface cleanup: YouTube dropped from `UploadType` union, `SOURCE_TYPES`, `VALID_UPLOAD_TYPES`, orchestrator switch; `YouTubeSourceForm.tsx` deleted; `SourceTypeTile.tsx` reverted to the 2-state version (no `disabledHint` field, no explainer routing); `SourceKind` in `useSourceSubmit.ts` back to `'url' \| 'text'`; 15 YouTube-specific i18n keys removed from both EN and NL. Backend unchanged — yt-dlp extractor + routes + 51 tests all stay. Re-enabling is now a single-PR restore: re-add the tile entry, the form component, the orchestrator branch, and the i18n keys. |
 
 ---
 
