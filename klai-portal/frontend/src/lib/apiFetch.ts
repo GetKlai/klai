@@ -98,13 +98,20 @@ async function doFetch<T>(path: string, options: ApiFetchOptions): Promise<T> {
     let detail = `${res.status}`
     let validationIssues: ValidationIssue[] | undefined
     try {
-      const body = (await res.json()) as { detail?: string | ValidationIssue[] }
+      const body = (await res.json()) as {
+        detail?: string | ValidationIssue[] | Record<string, unknown>
+      }
       if (Array.isArray(body.detail)) {
         // FastAPI validation: detail is a list of Pydantic issue records.
         validationIssues = body.detail
         detail = JSON.stringify(body.detail)
       } else if (typeof body.detail === 'string') {
         detail = body.detail
+      } else if (typeof body.detail === 'object' && body.detail !== null) {
+        // Some portal-api routes raise HTTPException(detail={"error_code": ...})
+        // for structured error signalling (quota exceeded, capability gate, etc.)
+        // Stringify here so callers can JSON.parse(err.detail) to read the code.
+        detail = JSON.stringify(body.detail)
       }
     } catch {
       // no JSON body

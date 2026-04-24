@@ -244,6 +244,28 @@ async def classify_gap_taxonomy(org_id: str, kb_slug: str, text: str) -> list[in
         return []
 
 
+async def ingest_document(payload: dict) -> str:
+    """Forward a pre-extracted document to knowledge-ingest.
+
+    SPEC-KB-SOURCES-001 sink for URL / YouTube / Text sources. Caller is
+    responsible for supplying every required IngestRequest field
+    (see ``klai-knowledge-ingest/knowledge_ingest/models.py`` IngestRequest).
+
+    Raises on any non-2xx so the route layer translates to the correct
+    HTTP status (400 / 502 / etc.). Returns the ``artifact_id`` from the
+    sink's response.
+    """
+    async with httpx.AsyncClient(
+        base_url=settings.knowledge_ingest_url,
+        headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
+        timeout=60.0,
+    ) as client:
+        resp = await client.post("/ingest/v1/document", json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("artifact_id", "") if isinstance(data, dict) else ""
+
+
 async def update_kb_visibility(org_id: str, kb_slug: str, visibility: str) -> None:
     """Persist KB visibility to knowledge-ingest (kb_config table + Qdrant backfill).
 
