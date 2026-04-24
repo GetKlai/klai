@@ -287,6 +287,112 @@ async def test_pin_session_also_clears_stale_guc() -> None:
 
 
 # ---------------------------------------------------------------------------
+# PooledTenantSession — defense-in-depth auto-reset on session-maker enter
+# ---------------------------------------------------------------------------
+#
+# The explicit `_pin_and_reset_connection` calls in `get_db` / `tenant_scoped_session`
+# / `pin_session` / `cross_org_session` already clear stale GUCs at checkout.
+# `PooledTenantSession.__aenter__` runs the same pin+reset automatically on
+# every `async with AsyncSessionLocal() as s:` block, so a future helper that
+# forgets to invoke the explicit call cannot re-introduce the 2026-04-24
+# pool-pollution bug.
+
+
+@pytest.mark.asyncio
+async def test_pooled_tenant_session_autoresets_on_enter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`AsyncSessionLocal()` yields a session whose connection is pinned AND
+    whose tenant GUC has been reset — no explicit caller step required."""
+    pin_reset_calls: list[object] = []
+
+    async def fake_pin_and_reset(session: object) -> None:
+        pin_reset_calls.append(session)
+
+    monkeypatch.setattr(db_module, "_pin_and_reset_connection", fake_pin_and_reset)
+
+    async with db_module.AsyncSessionLocal() as session:
+        # The subclass `__aenter__` must have invoked pin+reset on this exact
+        # session instance before yielding.
+        assert pin_reset_calls == [session]
+
+
+def test_pooled_tenant_session_is_the_configured_class() -> None:
+    """AsyncSessionLocal must produce instances of PooledTenantSession.
+
+    If a future refactor swaps the `class_=` argument back to the default
+    AsyncSession, the auto-reset layer silently disappears and the only
+    line of defense becomes the explicit `_pin_and_reset_connection` calls
+    — which is exactly the single-point-of-failure we are trying to avoid.
+    """
+    assert db_module.AsyncSessionLocal.class_ is db_module.PooledTenantSession
+
+
+# ---------------------------------------------------------------------------
+# assert_portal_users_rls_ready — startup fail-loud on broken policy
+# ---------------------------------------------------------------------------
+
+
+def _fake_engine_returning(expr: str | None) -> object:
+    class FakeResult:
+        def scalar(self) -> str | None:
+            return expr
+
+    class FakeConn:
+        async def execute(self, _stmt: object) -> FakeResult:
+            return FakeResult()
+
+        async def __aenter__(self) -> FakeConn:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class FakeEngine:
+        def connect(self) -> FakeConn:
+            return FakeConn()
+
+    return FakeEngine()
+
+
+@pytest.mark.asyncio
+async def test_assert_portal_users_rls_ready_passes_with_is_null_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Current production policy uses `NULLIF(...) IS NULL OR ...` form."""
+    captured_expr = (
+        "((org_id = (NULLIF(current_setting('app.current_org_id'::text, true), "
+        "''::text))::integer) OR (NULLIF(current_setting('app.current_org_id'::text, true), "
+        "''::text) IS NULL))"
+    )
+    monkeypatch.setattr(db_module, "engine", _fake_engine_returning(captured_expr))
+
+    # Must not raise.
+    await db_module.assert_portal_users_rls_ready()
+
+
+@pytest.mark.asyncio
+async def test_assert_portal_users_rls_ready_raises_when_is_null_branch_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A policy without IS NULL would 404 every request after deploy — fail at startup."""
+    strict_expr = "(org_id = (current_setting('app.current_org_id'::text))::integer)"
+    monkeypatch.setattr(db_module, "engine", _fake_engine_returning(strict_expr))
+
+    with pytest.raises(RuntimeError, match="IS NULL"):
+        await db_module.assert_portal_users_rls_ready()
+
+
+@pytest.mark.asyncio
+async def test_assert_portal_users_rls_ready_raises_when_policy_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No policy at all → _get_caller_org never returns a row → fail at startup."""
+    monkeypatch.setattr(db_module, "engine", _fake_engine_returning(None))
+
+    with pytest.raises(RuntimeError, match="no 'tenant_isolation' policy"):
+        await db_module.assert_portal_users_rls_ready()
+
+
+# ---------------------------------------------------------------------------
 # cross_org_session — no more double-reset of app.cross_org_admin
 # ---------------------------------------------------------------------------
 
