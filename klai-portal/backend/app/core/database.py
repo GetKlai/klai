@@ -18,7 +18,38 @@ engine = create_async_engine(
     pool_recycle=settings.db_pool_recycle,
     pool_pre_ping=settings.db_pool_pre_ping,
 )
-AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+
+
+class PooledTenantSession(AsyncSession):
+    """AsyncSession that auto-pins + resets RLS tenant context on `__aenter__`.
+
+    Every `async with AsyncSessionLocal() as s:` block starts with:
+      1. a pinned pooled connection (session-level `set_config` survives awaits); and
+      2. both RLS GUCs (`app.current_org_id`, `app.cross_org_admin`) cleared.
+
+    This is a defense-in-depth layer on top of the explicit
+    `_pin_and_reset_connection` calls in `get_db`, `tenant_scoped_session`,
+    `pin_session`, `cross_org_session`. A new helper that forgets to call the
+    explicit pin+reset would previously re-introduce the 2026-04-24 pool
+    pollution bug. With this subclass as the session base, forgetting is
+    harmless — every session-maker exit point runs pin+reset unconditionally.
+
+    The explicit `_pin_and_reset_connection` calls stay in place so the
+    behaviour remains visible at the call site (and idempotent — a repeat
+    reset is three cheap no-op SQL statements).
+    """
+
+    async def __aenter__(self) -> AsyncSession:  # type: ignore[override]
+        session = await super().__aenter__()
+        await _pin_and_reset_connection(session)
+        return session
+
+
+AsyncSessionLocal = async_sessionmaker(
+    engine,
+    class_=PooledTenantSession,
+    expire_on_commit=False,
+)
 
 
 async def _pin_and_reset_connection(session: AsyncSession) -> None:
@@ -118,6 +149,49 @@ async def set_tenant(session: AsyncSession, org_id: int) -> None:
         {"org_id": str(org_id)},
     )
     current_org_id.set(org_id)
+
+
+async def assert_portal_users_rls_ready() -> None:
+    """Fail-loud at startup if `portal_users` RLS breaks `_get_caller_org`.
+
+    `_get_caller_org` looks up `portal_users` with a freshly-reset tenant
+    GUC (empty string, thanks to `_pin_and_reset_connection` at checkout).
+    That only returns the authenticated user's row when the policy includes
+    an `IS NULL` branch — i.e. the current `tenant_isolation` expression
+    evaluates to TRUE when `app.current_org_id` is NULL/empty.
+
+    If a future migration tightens the policy to the strict form
+    `org_id = current_setting(...)::int` (no IS NULL branch), every
+    authenticated request would 404 immediately after deploy because the
+    auth lookup returns zero rows on the reset connection. Catch that at
+    startup, not in the first user's session.
+
+    The check is cheap (one SQL statement) and runs once per process.
+    """
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            text(
+                "SELECT pg_get_expr(p.polqual, p.polrelid) "
+                "FROM pg_policy p JOIN pg_class c ON p.polrelid = c.oid "
+                "WHERE c.relname = 'portal_users' AND p.polname = 'tenant_isolation'"
+            )
+        )
+        expr = result.scalar()
+
+    if expr is None:
+        raise RuntimeError(
+            "Startup RLS check: portal_users has no 'tenant_isolation' policy. "
+            "_get_caller_org cannot resolve any user. "
+            "Re-run migrations or restore the policy."
+        )
+    if "IS NULL" not in expr:
+        raise RuntimeError(
+            "Startup RLS check: portal_users 'tenant_isolation' policy is missing "
+            "the `IS NULL` branch. The checkout-time GUC reset in "
+            "_pin_and_reset_connection would make every _get_caller_org lookup "
+            "return zero rows (HTTP 404 'Organisation not found' for every "
+            f"authenticated request). Current policy expression: {expr}"
+        )
 
 
 @contextlib.asynccontextmanager
