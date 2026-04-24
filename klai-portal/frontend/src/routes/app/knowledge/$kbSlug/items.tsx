@@ -1,8 +1,8 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { useAuth } from '@/lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { List } from 'lucide-react'
+import { List, Plus } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
@@ -57,21 +57,29 @@ function ItemsTab() {
 
   return (
     <div className="space-y-4">
-      {/* Item quota indicator — only shown when the limit is reached (D4) */}
-      {!canAddItem && (
-        <div className="flex items-center justify-between">
+      {/* Add document button — active when canAddItem, disabled with tooltip when quota reached */}
+      <div className="flex items-center justify-between">
+        {canAddItem ? (
+          <Link to="/app/knowledge/$kbSlug/add-source" params={{ kbSlug }}>
+            <Button size="sm">
+              <Plus className="h-4 w-4 mr-1.5" />
+              {m.knowledge_items_add_button()}
+            </Button>
+          </Link>
+        ) : (
           <Tooltip label={m.kb_limit_tooltip_items()}>
             <span
               className="inline-flex items-center gap-2 opacity-50 cursor-default select-none"
               aria-disabled="true"
             >
               <Button size="sm" tabIndex={-1} className="pointer-events-none">
+                <Plus className="h-4 w-4 mr-1.5" />
                 {m.knowledge_items_add_button()}
               </Button>
             </span>
           </Tooltip>
-        </div>
-      )}
+        )}
+      </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>

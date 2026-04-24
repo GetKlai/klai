@@ -258,3 +258,19 @@ class TestCsrfEnforcement:
         client = TestClient(app)
         resp = client.post("/internal/webhook", cookies={SESSION_COOKIE_NAME: sid})
         assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_perf_beacon_is_csrf_exempt(self, app: FastAPI, wire_redis: AsyncMock) -> None:
+        # /api/perf receives navigator.sendBeacon payloads, which cannot set
+        # X-CSRF-Token. Must bypass CSRF even with an active session.
+        sid, _csrf = await _create_session(wire_redis)
+        app = FastAPI()
+        app.add_middleware(SessionMiddleware)
+
+        @app.post("/api/perf")
+        async def perf():  # type: ignore[no-untyped-def]
+            return {"ok": True}
+
+        client = TestClient(app)
+        resp = client.post("/api/perf", cookies={SESSION_COOKIE_NAME: sid})
+        assert resp.status_code == 200

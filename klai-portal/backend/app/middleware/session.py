@@ -46,6 +46,8 @@ _CSRF_EXEMPT_PREFIXES: tuple[str, ...] = (
     "/api/signup",
     "/api/health",
     "/api/public/",
+    # Web-vitals beacon: navigator.sendBeacon cannot set X-CSRF-Token.
+    "/api/perf",
     "/internal/",
     "/partner/",
     "/widget/",
