@@ -34,7 +34,7 @@ SSRF_PERSISTED_ERROR = "ssrf_blocked_persisted_url"
 SSRF_PERSISTED_CONFLUENCE_ERROR = "ssrf_blocked_persisted_confluence_base_url"
 
 
-class PersistedUrlRejected(Exception):
+class PersistedUrlRejectedError(Exception):
     """Raised when a legacy row's URL fails the guard at load time.
 
     Subclasses plain :class:`Exception` (NOT ``ValueError``) so the
@@ -59,7 +59,7 @@ def validate_confluence_base_url_strict(base_url: str, *, connector_id: str | No
     ``ConfluenceConfig`` validator. On failure emits an
     ``event="confluence_base_url_blocked"`` warning (REQ-8.5) with
     the stable connector_id / reason fields and raises
-    :class:`PersistedUrlRejected` — which the sync runner catches
+    :class:`PersistedUrlRejectedError` — which the sync runner catches
     and converts into a failed ``sync_runs`` row.
     """
 
@@ -79,7 +79,7 @@ def validate_confluence_base_url_strict(base_url: str, *, connector_id: str | No
                 "connector_id": connector_id,
             },
         )
-        raise PersistedUrlRejected(
+        raise PersistedUrlRejectedError(
             error_code=SSRF_PERSISTED_CONFLUENCE_ERROR,
             hostname=host or None,
             message=message,
@@ -105,6 +105,6 @@ def validate_confluence_base_url_strict(base_url: str, *, connector_id: str | No
 __all__ = [
     "SSRF_PERSISTED_CONFLUENCE_ERROR",
     "SSRF_PERSISTED_ERROR",
-    "PersistedUrlRejected",
+    "PersistedUrlRejectedError",
     "validate_confluence_base_url_strict",
 ]

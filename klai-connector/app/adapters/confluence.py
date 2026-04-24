@@ -106,7 +106,7 @@ class ConfluenceAdapter(BaseAdapter):
         # base_url against the Atlassian allowlist + SSRF reject-list.
         # Legacy rows predating REQ-8 may still hold a docker-internal
         # or private-IP URL. If validation fails the helper raises
-        # ``PersistedUrlRejected`` which propagates to the sync runner
+        # ``PersistedUrlRejectedError`` which propagates to the sync runner
         # to mark the run failed with
         # ``error="ssrf_blocked_persisted_confluence_base_url"``
         # WITHOUT instantiating an ``atlassian.Confluence`` client

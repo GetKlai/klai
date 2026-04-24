@@ -16,10 +16,9 @@ import pytest
 from klai_image_storage.url_guard import reset_dns_cache
 
 from app.adapters.confluence import ConfluenceAdapter
-from app.core.config import Settings
 from app.services.url_guard import (
     SSRF_PERSISTED_CONFLUENCE_ERROR,
-    PersistedUrlRejected,
+    PersistedUrlRejectedError,
     validate_confluence_base_url_strict,
 )
 
@@ -31,7 +30,7 @@ def _clear_cache() -> None:
 
 class TestConfluenceBaseUrlStrict:
     def test_docker_internal_rejected(self) -> None:
-        with pytest.raises(PersistedUrlRejected) as excinfo:
+        with pytest.raises(PersistedUrlRejectedError) as excinfo:
             validate_confluence_base_url_strict(
                 "http://portal-api:8010/", connector_id="abc"
             )
@@ -41,15 +40,14 @@ class TestConfluenceBaseUrlStrict:
         with patch(
             "klai_image_storage.url_guard._resolve_blocking",
             return_value=("93.184.216.34",),
-        ):
-            with pytest.raises(PersistedUrlRejected) as excinfo:
-                validate_confluence_base_url_strict(
-                    "https://attacker.example.com/wiki", connector_id="abc"
-                )
+        ), pytest.raises(PersistedUrlRejectedError) as excinfo:
+            validate_confluence_base_url_strict(
+                "https://attacker.example.com/wiki", connector_id="abc"
+            )
         assert excinfo.value.error_code == SSRF_PERSISTED_CONFLUENCE_ERROR
 
     def test_ip_literal_private_rejected(self) -> None:
-        with pytest.raises(PersistedUrlRejected):
+        with pytest.raises(PersistedUrlRejectedError):
             validate_confluence_base_url_strict(
                 "https://10.0.0.5/wiki", connector_id="abc"
             )
@@ -81,9 +79,8 @@ class TestAdapterExtractConfig:
     def test_legacy_internal_base_url_blocks_client(self) -> None:
         connector = self._connector("http://confluence-internal:8090/")
 
-        with patch("app.adapters.confluence.Confluence") as sdk:
-            with pytest.raises(PersistedUrlRejected) as excinfo:
-                ConfluenceAdapter._extract_config(connector)
+        with patch("app.adapters.confluence.Confluence") as sdk, pytest.raises(PersistedUrlRejectedError) as excinfo:
+            ConfluenceAdapter._extract_config(connector)
         # CRITICAL: the SDK client MUST NOT have been constructed.
         assert sdk.call_count == 0
         assert excinfo.value.error_code == SSRF_PERSISTED_CONFLUENCE_ERROR
