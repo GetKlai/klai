@@ -42,8 +42,22 @@ _branding = {
 
 
 # ---------------------------------------------------------------------------
-# Auth helper
+# Auth helpers
 # ---------------------------------------------------------------------------
+
+
+def _validate_incoming_secret(header_value: str | None) -> None:
+    """Constant-time check of X-Internal-Secret against settings.internal_secret.
+
+    REQ-8: uses hmac.compare_digest to prevent a timing oracle on the shared
+    secret. This helper is the single authoritative comparison for any
+    /internal/* endpoint — never reintroduce direct-equality comparison
+    against the settings value.
+    """
+    supplied = (header_value or "").encode("utf-8")
+    expected = settings.internal_secret.encode("utf-8")
+    if not hmac.compare_digest(supplied, expected):
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 def _verify_zitadel_signature(raw_body: bytes, signature_header: str | None) -> None:
@@ -179,8 +193,7 @@ async def internal_send(request: Request) -> JSONResponse:
 
     Authenticated via X-Internal-Secret header (same as portal-api internal endpoints).
     """
-    if not settings.internal_secret or request.headers.get("X-Internal-Secret") != settings.internal_secret:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    _validate_incoming_secret(request.headers.get("X-Internal-Secret"))
 
     body = json.loads(await request.body())
     template_name = body.get("template", "")
