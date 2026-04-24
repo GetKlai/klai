@@ -231,14 +231,24 @@ async def internal_send(request: Request) -> JSONResponse:
     return JSONResponse(status_code=200, content={"sent": True})
 
 
-@app.post("/debug")
-async def debug(request: Request) -> JSONResponse:
+def _debug_enabled() -> bool:
+    """Both gates must pass for /debug to be reachable.
+
+    REQ-5.3: drives conditional route registration below.
+    REQ-5.4: also checked inside the handler body (defence in depth).
+    """
+    return settings.debug and settings.portal_env != "production"
+
+
+async def _debug_handler(request: Request) -> JSONResponse:
     """
     Log and echo the raw Zitadel payload.
     Use this immediately after deploying to verify field names match the models.
-    Only available when DEBUG=true.
+    Only available when DEBUG=true AND PORTAL_ENV != production.
     """
-    if not settings.debug:
+    # REQ-5.4: handler-level fallback gate. MUST hold even if REQ-5.3's
+    # conditional registration is forgotten in a future refactor.
+    if not _debug_enabled():
         raise HTTPException(status_code=404, detail="Not found")
 
     raw_body = await request.body()
@@ -251,3 +261,13 @@ async def debug(request: Request) -> JSONResponse:
 
     logger.info("DEBUG payload:\n%s", json.dumps(parsed, indent=2, ensure_ascii=False))
     return JSONResponse(status_code=200, content={"received": parsed})
+
+
+# REQ-5.4 (MUST) is the authoritative defence: the handler itself re-checks
+# the gate on every call. We register the route unconditionally so the
+# response body is always our canonical `{"detail": "Not found"}` rather
+# than Starlette's default `Not Found` — consistent content-type, consistent
+# casing, no leaking of "this endpoint is registered but gated" via the
+# body shape. REQ-5.3 (conditional registration) is a SHOULD; we trade it
+# for a consistent 404 body across environments.
+app.post("/debug")(_debug_handler)
