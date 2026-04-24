@@ -76,14 +76,23 @@ async def test_tenant_scoped_session_pins_before_set_tenant(monkeypatch):
 
     # Critical invariants:
     #   1. pin happens before set_tenant (set_config must see pinned connection)
-    #   2. on exit, rollback runs BEFORE set_config resets — otherwise an aborted
+    #   2. at checkout, the tenant context is reset BEFORE set_tenant runs —
+    #      defense-in-depth against a pooled connection whose prior cleanup
+    #      silently failed and leaked a stale GUC (2026-04-24 getklai incident).
+    #   3. on exit, rollback runs BEFORE set_config resets — otherwise an aborted
     #      transaction from a 42501 RLS fail-loud would trap the reset and leak
     #      app.current_org_id to the next pooled request (2026-04-23 incident).
-    #   3. both GUCs are cleared on exit.
+    #   4. both GUCs are cleared on exit.
     assert calls == [
+        # Checkout: pin + reset (rollback + both GUCs).
         "pin",
+        "rollback",
+        "reset_current_org_id",
+        "reset_cross_org_admin",
+        # Caller sets the tenant.
         "set_tenant:42",
         "yield",
+        # Cleanup: rollback + both GUCs.
         "rollback",
         "reset_current_org_id",
         "reset_cross_org_admin",
@@ -125,8 +134,17 @@ async def test_tenant_scoped_session_resets_on_exception(monkeypatch):
         async with db_module.tenant_scoped_session(7):
             raise RuntimeError("boom")
 
-    # Even on exception: rollback runs, then both GUCs are cleared.
-    assert calls == ["pin", "set", "rollback", "reset_current_org_id", "reset_cross_org_admin"]
+    # Checkout reset runs first, then set, then on exception cleanup reset fires again.
+    assert calls == [
+        "pin",
+        "rollback",
+        "reset_current_org_id",
+        "reset_cross_org_admin",
+        "set",
+        "rollback",
+        "reset_current_org_id",
+        "reset_cross_org_admin",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +208,20 @@ async def test_cross_org_session_sets_and_resets_bypass_flag(monkeypatch):
     # (current_org_id before cross_org_admin). An aborted transaction from
     # a 42501 inside the cross-org body would otherwise leak the bypass
     # flag to the next pooled request.
-    assert calls == ["pin", "bypass_on", "yield", "rollback", "tenant_reset", "bypass_off"]
+    # After the 2026-04-24 checkout-reset fix, the same helper runs BEFORE
+    # bypass_on is set — so the sequence is pin → reset → bypass_on →
+    # yield → cleanup reset.
+    assert calls == [
+        "pin",
+        "rollback",
+        "tenant_reset",
+        "bypass_off",
+        "bypass_on",
+        "yield",
+        "rollback",
+        "tenant_reset",
+        "bypass_off",
+    ]
 
 
 @pytest.mark.asyncio
@@ -223,7 +254,12 @@ async def test_cross_org_session_clears_bypass_on_exception(monkeypatch):
             raise RuntimeError("kaboom")
 
     assert "bypass_on" in calls and "bypass_off" in calls
-    assert calls.index("bypass_on") < calls.index("bypass_off")
+    # The checkout reset clears bypass BEFORE the body sets it, so the first
+    # bypass_off precedes bypass_on. What we care about is that the LAST
+    # bypass_off (cleanup) runs after bypass_on — i.e. the pool never returns
+    # with the bypass flag still lit.
+    last_off_idx = len(calls) - 1 - calls[::-1].index("bypass_off")
+    assert calls.index("bypass_on") < last_off_idx
 
 
 # ---------------------------------------------------------------------------
