@@ -245,3 +245,49 @@ window.
    reviewers stop and think about prod env parity.
 
 See `klai-infra/core-01/.env.sops` for the canonical prod env inventory.
+
+## env-file-migration-reverse-check (HIGH)
+When replacing `env_file: .env` on a service with an explicit
+`environment:` block, the obvious audit is forward: "what env vars does
+the service's code read, and is each one declared in the new block?"
+That audit is necessary but NOT sufficient. It misses the case where
+a pydantic-settings field has an in-code default AND `/opt/klai/.env`
+overrides it with a different value. Pre-migration the override was
+inherited silently via `env_file: .env`; post-migration the field falls
+back to the code default and behaviour changes.
+
+SPEC-SEC-ENVFILE-SCOPE-001 shipped with three such regressions that
+survived the forward audit:
+
+- `VEXA_MEETING_API_URL` on portal-api: prod set `http://api-gateway:8000`,
+  code default was `http://vexa-meeting-api:8080`. Would have routed
+  meeting-bot traffic past the api-gateway layer.
+- `GRAPHITI_LLM_MODEL` on retrieval-api: prod set `klai-pipeline`,
+  code default was `klai-fast`. Different quality/cost on graph
+  extraction.
+- `VEXA_ADMIN_TOKEN` on portal-api: prod set a real token, code default
+  was `""`. No current runtime reader, but future callers would have
+  silently gotten an empty token.
+
+**Prevention:** For every service migrated off `env_file: .env`, run
+the reverse check explicitly:
+
+```bash
+# For each pydantic field with a default, compare /opt/klai/.env to the container env
+for var in $FIELD_NAMES; do
+  VAL_ENV=$(grep -E "^${var}=" /opt/klai/.env | cut -d= -f2-)
+  VAL_CTR=$(docker exec klai-core-<svc>-1 printenv $var 2>/dev/null)
+  [ -n "$VAL_ENV" ] && [ "$VAL_ENV" != "$VAL_CTR" ] && \
+    echo "DIVERGENCE: $var — .env='$VAL_ENV' vs container='$VAL_CTR'"
+done
+```
+
+Run both BEFORE the migration (to build the override inventory) and
+AFTER the deploy (to confirm zero divergence). Any DIVERGENCE line is
+a behaviour regression. Fix by declaring the var in the explicit block
+with `${VAR:-<code-default>}` interpolation so the compose file is also
+self-documenting about the expected prod value if SOPS drift occurs.
+
+The same-shape generalisation: **trust the container env, not the
+config source.** Any "silent fallback to a code default" in a migration
+off a blanket-inherit pattern is a latent bug.
