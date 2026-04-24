@@ -30,9 +30,7 @@ from minio.error import S3Error
 logger = structlog.get_logger()
 
 # Image MIME types we accept (validated via magic bytes, not extension).
-_ALLOWED_IMAGE_MIMES: frozenset[str] = frozenset(
-    {"image/jpeg", "image/png", "image/gif", "image/webp"}
-)
+_ALLOWED_IMAGE_MIMES: frozenset[str] = frozenset({"image/jpeg", "image/png", "image/gif", "image/webp"})
 
 # SVG has no magic bytes that filetype recognises, so we check manually.
 _SVG_SIGNATURES = (b"<?xml", b"<svg")

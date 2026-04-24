@@ -20,7 +20,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-from klai_image_storage.url_guard import reset_dns_cache
+from klai_image_storage.url_guard import _reset_dns_cache
 
 from knowledge_ingest.utils.url_validator import (
     is_private_ip,
@@ -34,7 +34,7 @@ from knowledge_ingest.utils.url_validator import (
 def _clear_cache() -> None:
     """Reset the shared DNS cache between tests."""
 
-    reset_dns_cache()
+    _reset_dns_cache()
 
 
 def _getaddrinfo(ips: list[str]) -> list[Any]:

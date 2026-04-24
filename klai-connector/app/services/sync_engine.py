@@ -7,22 +7,6 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-# MIME → filename extension map for Unstructured parser output. Kept
-# local to the connector because the shared lib intentionally does not
-# know the parser's envelope format.
-_PARSER_MIME_EXT: dict[str, str] = {
-    "image/jpeg": "jpg",
-    "image/png": "png",
-    "image/gif": "gif",
-    "image/webp": "webp",
-    "image/svg+xml": "svg",
-}
-
-
-def _ext_from_parser_mime(mime: str) -> str:
-    """Return the extension for a parser-provided MIME type, default ``png``."""
-    return _PARSER_MIME_EXT.get(mime, "png")
-
 import httpx
 from gidgethub import BadRequest
 from klai_image_storage import (
@@ -49,6 +33,23 @@ from app.services.url_guard import (
 )
 
 logger = get_logger(__name__)
+
+
+# MIME → filename extension map for Unstructured parser output. Kept
+# local to the connector because the shared lib intentionally does not
+# know the parser's envelope format.
+_PARSER_MIME_EXT: dict[str, str] = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/gif": "gif",
+    "image/webp": "webp",
+    "image/svg+xml": "svg",
+}
+
+
+def _ext_from_parser_mime(mime: str) -> str:
+    """Return the extension for a parser-provided MIME type, default ``png``."""
+    return _PARSER_MIME_EXT.get(mime, "png")
 
 
 class SyncEngine:
@@ -377,7 +378,7 @@ class SyncEngine:
                 # cause is user-state, not our bug.
                 status = SyncStatus.AUTH_ERROR
                 error_details.append({"error": str(err), "reason": "reconnect_required"})
-                # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
+                # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure  # noqa: E501
                 logger.warning(
                     "OAuth reconnect required for connector %s",
                     connector_id,

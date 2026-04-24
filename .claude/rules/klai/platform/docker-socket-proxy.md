@@ -20,17 +20,22 @@ those containers staying off the `socket-proxy` network.
 The following containers MUST NOT be added to the `socket-proxy`
 network in `deploy/docker-compose.yml`:
 
-| Container | Why |
+| Container | Why (verified call-site on 2026-04-24) |
 |---|---|
-| `knowledge-ingest` | Accepts `POST /ingest/v1/crawl(/preview)` and forwards user URLs to crawl4ai |
-| `crawl4ai` | Fetches every user URL submitted by knowledge-ingest and connector |
-| `klai-connector` | Sync engine + adapters (Notion / Confluence / GitHub / Airtable) fetch images from user-supplied URLs via `klai-libs/image-storage` |
-| `klai-mailer` | Renders HTML that may contain remote resources (SPEC-SEC-MAILER-INJECTION-001) |
-| `scribe` / `scribe-api` | Processes user-supplied audio URLs |
-| `research-api` | Executes user-supplied research queries that can trigger outbound fetches |
-| `klai-knowledge-mcp` | Delegates to retrieval + ingest — same URL surface |
-| `retrieval-api` | Internal queries only, but fetches external URLs during enrichment |
-| `klai-focus` | Forwarded to external APIs on behalf of users |
+| `knowledge-ingest` | `routes/crawl.py::preview_crawl` + `crawl_url` accept a user URL and forward it to crawl4ai |
+| `crawl4ai` | Browser context fetches every URL submitted by knowledge-ingest and connector |
+| `klai-connector` | `SyncEngine._upload_images` → `klai_image_storage.pipeline._download_validate_upload` fetches adapter-extracted image URLs (Notion / Confluence / GitHub / Airtable) |
+| `klai-focus` / `research-api` | `app/services/docling.py::convert_url` forwards a user-supplied URL to docling-serve for content extraction |
+| `klai-knowledge-mcp` | Delegates search + ingest queries to retrieval-api + knowledge-ingest — same URL surface by transitive reach |
+| `retrieval-api` | Enrichment pipeline fetches external URLs during reranking / summary |
+| `scribe` / `scribe-api` | Accepts meeting audio URLs (`/transcribe` endpoint) and calls providers on the user's behalf |
+
+**Not in the list, despite surface-level suspicion:**
+
+- `klai-mailer` — only outbound call is a hardcoded `portal_api_url`
+  language lookup; the template renderer (`app/renderer.py`) does not
+  fetch remote resources. Safe to revisit if a future feature adds
+  user-URL rendering.
 
 Verification: every PR touching `deploy/docker-compose.yml` must pass
 `./scripts/smoke-ssrf-isolation.sh` post-deploy — runs the AC-13 /

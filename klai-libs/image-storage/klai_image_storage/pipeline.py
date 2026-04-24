@@ -166,9 +166,7 @@ async def _download_validate_upload(
         return None
 
     try:
-        result = await image_store.upload_image(
-            org_id, kb_slug, data, _ext_from_url(url)
-        )
+        result = await image_store.upload_image(org_id, kb_slug, data, _ext_from_url(url))
     except Exception:
         logger.exception("image_upload_failed", url=url)
         return None
@@ -190,9 +188,7 @@ async def _upload_parsed_image(
     to a specific parsed element (document path, Notion block ID, ...).
     """
     if len(image.data) > MAX_IMAGE_SIZE:
-        logger.warning(
-            "parsed_image_too_large", source_id=image.source_id, size=len(image.data)
-        )
+        logger.warning("parsed_image_too_large", source_id=image.source_id, size=len(image.data))
         return None
 
     if not image_store.validate_image(image.data):
@@ -200,9 +196,7 @@ async def _upload_parsed_image(
         return None
 
     try:
-        result = await image_store.upload_image(
-            org_id, kb_slug, image.data, image.ext
-        )
+        result = await image_store.upload_image(org_id, kb_slug, image.data, image.ext)
     except Exception:
         logger.exception("parsed_image_upload_failed", source_id=image.source_id)
         return None
@@ -253,9 +247,7 @@ async def download_and_upload_adapter_images(
     for image in parsed_images or []:
         if remaining <= 0:
             break
-        public_url = await _upload_parsed_image(
-            image, image_store=image_store, org_id=org_id, kb_slug=kb_slug
-        )
+        public_url = await _upload_parsed_image(image, image_store=image_store, org_id=org_id, kb_slug=kb_slug)
         if public_url is not None:
             uploaded_urls.append(public_url)
             remaining -= 1

@@ -22,13 +22,14 @@ set -euo pipefail
 # ─── Config ─────────────────────────────────────────────────────────────────
 
 # Containers that MUST NOT be able to reach docker-socket-proxy.
-# Extends the SEC-021 must-not list with the SPEC-SEC-SSRF-001
-# additions (klai-connector, scribe, research-api, ...).
+# Source of truth: see the "must not join" table in
+# .claude/rules/klai/platform/docker-socket-proxy.md (REQ-5.2).
+# Keep this list in lock-step with that file. klai-mailer is NOT in
+# the set — it has no user-URL fetch surface, verified 2026-04-24.
 ISOLATED_CONTAINERS=(
   "klai-core-knowledge-ingest-1"
   "klai-core-crawl4ai-1"
   "klai-core-klai-connector-1"
-  "klai-core-klai-mailer-1"
   "klai-core-scribe-1"
   "klai-core-research-api-1"
   "klai-core-retrieval-api-1"

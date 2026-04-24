@@ -13,7 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from klai_image_storage.url_guard import reset_dns_cache
+from klai_image_storage.url_guard import _reset_dns_cache
 
 from app.adapters.confluence import ConfluenceAdapter
 from app.services.url_guard import (
@@ -25,7 +25,7 @@ from app.services.url_guard import (
 
 @pytest.fixture(autouse=True)
 def _clear_cache() -> None:
-    reset_dns_cache()
+    _reset_dns_cache()
 
 
 class TestConfluenceBaseUrlStrict:
