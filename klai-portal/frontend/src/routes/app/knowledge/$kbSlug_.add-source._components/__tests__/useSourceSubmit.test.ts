@@ -69,19 +69,8 @@ describe('errorMessageFor — SPEC D8 mapping', () => {
     expect(errorMessageFor('url', err)).toBe(keyOf('Not a valid URL'))
   })
 
-  it('ApiError 400 with generic message → invalid URL banner (YouTube kind)', () => {
-    const err = new ApiError(400, 'Not a valid YouTube URL')
-    expect(errorMessageFor('youtube', err)).toBe(keyOf('Not a valid URL'))
-  })
-
-  it('ApiError 422 on YouTube → no-transcript banner', () => {
-    const err = new ApiError(422, 'This video has no transcript available')
-    expect(errorMessageFor('youtube', err)).toBe(
-      keyOf('This video has no transcript available'),
-    )
-  })
-
-  it('ApiError 422 on URL kind → generic (422 is unexpected outside YouTube)', () => {
+  it('ApiError 422 is unexpected from UI-reachable routes → generic', () => {
+    // Pydantic validation should never reach the UI with a 422; treat as generic.
     const err = new ApiError(422, 'Validation failed')
     expect(errorMessageFor('url', err)).toBe(keyOf('Something went wrong. Try again.'))
   })
@@ -93,18 +82,9 @@ describe('errorMessageFor — SPEC D8 mapping', () => {
     )
   })
 
-  it('ApiError 502 on YouTube kind → YouTube-specific unreachable banner', () => {
-    // IP block / rate-limit on core-01 surfaces here — user needs to know
-    // it's a transient upstream issue, not "no transcript".
-    const err = new ApiError(502, 'Could not reach YouTube — try again')
-    expect(errorMessageFor('youtube', err)).toBe(
-      keyOf('Could not reach YouTube — try again'),
-    )
-  })
-
-  it('ApiError 502 on Text kind → generic fetch-failed (no upstream for text)', () => {
-    // Text never calls crawl4ai or YouTube — a 502 here is from the
-    // knowledge-ingest forwarding step. Generic fetch-failed copy is fine.
+  it('ApiError 502 on Text kind → fetch-failed banner', () => {
+    // Text never calls crawl4ai — a 502 here is from the knowledge-ingest
+    // forwarding step. Same generic "fetch failed" copy is fine.
     const err = new ApiError(502, 'Knowledge ingest unreachable')
     expect(errorMessageFor('text', err)).toBe(
       keyOf('Could not reach the page — try again'),
