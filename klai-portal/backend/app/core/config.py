@@ -247,5 +247,26 @@ class Settings(BaseSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def _require_moneybird_webhook_token(self) -> "Settings":
+        """SPEC-SEC-WEBHOOK-001 REQ-3: fail-closed on missing moneybird_webhook_token.
+
+        Moneybird webhooks flip `PortalOrg.billing_status` between active, cancelled
+        and payment_failed. Before this validator, an empty/whitespace-only token
+        made the signature check at /api/webhooks/moneybird optional (guarded by
+        `if settings.moneybird_webhook_token:`) — any unauthenticated POST could
+        mutate billing state. Fail fast at startup rather than ship a silent
+        fail-open. Same pattern as _require_vexa_webhook_secret above.
+
+        If Moneybird webhook processing must be disabled, unregister the router
+        instead of emptying the secret (see SPEC-SEC-WEBHOOK-001 REQ-3.3).
+        """
+        if not self.moneybird_webhook_token or not self.moneybird_webhook_token.strip():
+            raise ValueError(
+                "Missing required: MONEYBIRD_WEBHOOK_TOKEN (SPEC-SEC-WEBHOOK-001 REQ-3). "
+                "Set it in SOPS before starting portal-api, or unregister the Moneybird router."
+            )
+        return self
+
 
 settings = Settings()  # type: ignore[call-arg]  # pydantic-settings reads required fields from env
