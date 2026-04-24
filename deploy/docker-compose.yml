@@ -883,7 +883,14 @@ services:
       CAPTURE_MODES: "audio"
       TRANSCRIPTION_SERVICE_URL: http://172.18.0.1:8000/v1/audio/transcriptions
       TRANSCRIPTION_SERVICE_TOKEN: ${WHISPER_SERVICE_TOKEN:-internal}  # SEC-013 F-035 — prefer SOPS secret, fallback to legacy placeholder
-      POST_MEETING_HOOKS: http://portal-api:8010/api/bots/internal/webhook
+      # SPEC-SEC-WEBHOOK-001 REQ-2 forcing function: portal-api's webhook requires
+      # an Authorization header now. Vexa's meeting-api does not natively inject a
+      # Bearer header (fire_post_meeting_hooks does not pass webhook_secret to
+      # deliver()), but its httpx client auto-adds `Authorization: Basic <b64>`
+      # when the URL contains userinfo. The "vexa" user component is ignored by
+      # portal-api; the password half carries VEXA_WEBHOOK_SECRET. If the secret
+      # is rotated, update this value in the same deploy. Do not log this value.
+      POST_MEETING_HOOKS: http://vexa:${VEXA_WEBHOOK_SECRET}@portal-api:8010/api/bots/internal/webhook
       LOG_LEVEL: INFO
     init: true
     depends_on:
