@@ -42,8 +42,14 @@ class Settings(BaseSettings):
     # a security control, not a degraded-monitoring feature.
     redis_url: str = "redis://redis:6379/0"
 
-    # Set DEBUG=true to enable /debug endpoint (logs raw Zitadel payloads)
+    # Set DEBUG=true to enable /debug endpoint (logs raw Zitadel payloads).
+    # In production (PORTAL_ENV=production) the /debug route is NOT registered
+    # regardless of this flag (REQ-5.3 + REQ-5.4 double-gate).
     debug: bool = False
+
+    # Deployment environment — one of development, staging, production.
+    # Drives the /debug route gate. SPEC-SEC-MAILER-INJECTION-001 REQ-5.1.
+    portal_env: str = "development"
 
     # @MX:NOTE: required validator — empty secret is never a valid runtime state.
     # Mirrors SPEC-SEC-WEBHOOK-001 REQ-9 (_require_vexa_webhook_secret in
