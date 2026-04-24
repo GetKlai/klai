@@ -17,7 +17,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-from jinja2 import FileSystemLoader, Environment, select_autoescape
+from jinja2 import FileSystemLoader, StrictUndefined, select_autoescape
+from jinja2.sandbox import SandboxedEnvironment
 
 from app.models import ZitadelPayload
 
@@ -75,10 +76,18 @@ def _text_to_html(text: str) -> str:
 
 
 class Renderer:
+    """Jinja2 renderer using SandboxedEnvironment (REQ-1.4).
+
+    Dunder-attribute access, function-call arg types, and other Python-graph
+    introspection are blocked at the rendering layer. `StrictUndefined`
+    raises on any reference to a variable not in the render context.
+    """
+
     def __init__(self, theme_dir: Path):
-        self._theme_env = Environment(  # nosemgrep: direct-use-of-jinja2
+        self._theme_env = SandboxedEnvironment(
             loader=FileSystemLoader(str(theme_dir)),
             autoescape=select_autoescape(["html", "j2"]),
+            undefined=StrictUndefined,
         )
 
     def render(self, payload: ZitadelPayload, lang: str | None = None) -> dict[str, Any]:
@@ -115,4 +124,33 @@ class Renderer:
     def wrap(self, render_result: dict[str, Any], branding: dict[str, Any]) -> str:
         """Inject rendered content into the Klai HTML email wrapper."""
         template = self._theme_env.get_template("email.html.j2")
-        return template.render(**render_result, **branding)  # nosemgrep: direct-use-of-jinja2
+        return template.render(**render_result, **branding)
+
+    def render_internal(
+        self,
+        template_name: str,
+        lang: str,
+        context: dict[str, Any],
+    ) -> dict[str, str]:
+        """Render an internal transactional template.
+
+        SPEC-SEC-MAILER-INJECTION-001 REQ-1.5: each template lives in
+        `theme/internal/<name>.<lang>.html.j2` and produces a dict with
+        `subject` (first non-empty paragraph) and `body` (full HTML).
+
+        The Pydantic-validated variable context is merged with branding
+        pulled from settings — attacker cannot override `brand_url` etc.
+        via the request body (REQ-2.4).
+        """
+        template_path = f"internal/{template_name}.{lang}.html.j2"
+        template = self._theme_env.get_template(template_path)
+        rendered = template.render(**context)
+        # Template format convention: first line is `Subject: <subject>`,
+        # remaining content is the body HTML. The separator is a blank line.
+        if rendered.startswith("Subject:"):
+            first_line, _, body = rendered.partition("\n")
+            subject = first_line[len("Subject:"):].strip()
+            return {"subject": subject, "body": body.lstrip()}
+        raise ValueError(
+            f"internal template {template_path} must start with `Subject: <line>\\n`"
+        )

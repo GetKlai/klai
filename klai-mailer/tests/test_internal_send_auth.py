@@ -32,9 +32,9 @@ def _send(client, secret_header: str | None = None, body=None):
         headers["X-Internal-Secret"] = secret_header
     payload = body or {
         "template": "join_request_admin",
-        "to": "admin@test.local",
+        "to": "admin@test.example",
         "locale": "nl",
-        "variables": {"name": "Alice", "email": "a@test.local"},
+        "variables": {"name": "Alice", "email": "a@test.example"},
     }
     return client.post("/internal/send", json=payload, headers=headers)
 

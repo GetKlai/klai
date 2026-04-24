@@ -51,7 +51,6 @@ class TestJoinRequestEndpoint:
             patch("app.api.auth_join.get_current_user_id", return_value="user-sso-1"),
             patch("app.api.auth_join.zitadel") as mock_zitadel,
             patch("app.api.auth_join.generate_approval_token", return_value="a" * 64),
-            patch("app.api.auth_join.notify_admin_join_request"),
         ):
             mock_zitadel.get_userinfo = AsyncMock(
                 return_value={"sub": "user-sso-1", "email": "test@company.com", "name": "Test User"}
