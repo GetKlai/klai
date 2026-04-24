@@ -477,9 +477,7 @@ async def update_connector(
         # SPEC-SEC-SSRF-001 REQ-2.1 / AC-8 / AC-20: SSRF + allowlist
         # validation runs before any downstream fingerprint fetch
         # (which would dispatch an HTTP request to the candidate URL).
-        validated_config = _validate_connector_config(
-            connector.connector_type, body.config
-        )
+        validated_config = _validate_connector_config(connector.connector_type, body.config)
         # SPEC-CRAWL-004: auto-compute canary fingerprint before encryption
         config_for_save = await _auto_fill_canary_fingerprint(validated_config)
         if credential_store is not None:
