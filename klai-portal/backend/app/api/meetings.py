@@ -44,14 +44,16 @@ MAX_CONCURRENT_BOTS = 2
 
 
 def _require_webhook_secret(request: Request) -> None:
-    # SEC-013 F-033: fail-closed + constant-time compare. Startup validator in
-    # app.core.config guarantees vexa_webhook_secret is non-empty.
+    # SPEC-SEC-WEBHOOK-001 REQ-2: fail-closed auth on /api/bots/internal/webhook.
+    # Authentication is the Bearer-token compare alone — NO IP-range short-circuit.
+    # The previous "internal Docker network callers are trusted" path (172.x / 10.x
+    # / 192.168.x) was effectively an auth bypass: Caddy's container IP always sat
+    # in those ranges, so every external request was implicitly authenticated.
+    # Vexa's POST_MEETING_HOOKS MUST supply `Authorization: Bearer <secret>` now.
     #
-    # Internal Docker network callers (172.x, 10.x, 192.168.x) are trusted without a token.
-    # This avoids embedding secrets in POST_MEETING_HOOKS URLs where they appear in container logs.
-    client_host = request.client.host if request.client else ""
-    if client_host.startswith(("172.", "10.", "192.168.")):
-        return
+    # Startup validator _require_vexa_webhook_secret in app.core.config guarantees
+    # settings.vexa_webhook_secret is non-empty, so an empty expected value cannot
+    # lead to compare_digest returning True against an empty attacker header.
     auth_header = request.headers.get("Authorization", "")
     expected = f"Bearer {settings.vexa_webhook_secret}"
     if not hmac.compare_digest(auth_header.encode("utf-8"), expected.encode("utf-8")):
