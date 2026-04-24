@@ -476,7 +476,16 @@ services:
       - -httpListenAddr=:9428
       - -httpAuth.username=${VICTORIALOGS_AUTH_USER}
       - -httpAuth.password=${VICTORIALOGS_AUTH_PASSWORD}
-    env_file: .env
+    # SPEC-SEC-ENVFILE-SCOPE-001 — VictoriaLogs reads its config from
+    # command-line flags above; the container only needs
+    # VICTORIALOGS_AUTH_{USER,PASSWORD} in its process env for the
+    # authenticated healthcheck below (busybox wget builds the auth
+    # header from $$VICTORIALOGS_AUTH_*). Previously `env_file: .env`
+    # injected all host secrets — a log-store is a juicy pivot
+    # primitive because it sits on the monitoring network.
+    environment:
+      VICTORIALOGS_AUTH_USER: ${VICTORIALOGS_AUTH_USER}
+      VICTORIALOGS_AUTH_PASSWORD: ${VICTORIALOGS_AUTH_PASSWORD}
     networks:
       - monitoring
     deploy:
