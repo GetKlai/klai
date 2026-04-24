@@ -376,29 +376,30 @@ class TestAdapterSsrfGuard:
         assert len(urls) == 1
 
     async def test_pipeline_seeds_pinned_transport(self) -> None:
-        """AC-23: when the client's transport is PinnedResolverTransport,
-        the guard's preferred_ip is registered before the GET fires."""
+        """AC-23: the caller-supplied PinnedResolverTransport gets its
+        pin map seeded with the guard-resolved IP before the GET fires."""
 
         from unittest.mock import patch
 
         from klai_image_storage import PinnedResolverTransport
         from klai_image_storage.url_guard import reset_dns_cache
 
-        # Reset the shared DNS cache so the mocked resolver value wins
-        # over any earlier test's real lookup.
         reset_dns_cache()
 
         store = _mock_image_store()
-        inner = httpx.MockTransport(
-            lambda _req: httpx.Response(200, content=_PNG_BYTES)
-        )
         transport = PinnedResolverTransport()
-        # Swap the real network leg in the PinnedResolverTransport for
-        # a MockTransport so no DNS / TCP happens. We still exercise
-        # the ``pin()`` code path.
-        transport.handle_async_request = inner.handle_async_request  # type: ignore[method-assign]
 
-        async with httpx.AsyncClient(transport=transport) as client:
+        # MockTransport-backed client — no network IO. The pipeline
+        # passes ``pin_transport`` explicitly; httpx uses its own
+        # MockTransport for the GET, so the pin map is the only
+        # observable side effect.
+        async with _http_client(
+            responses={
+                "https://pinned.example.test/img.png": httpx.Response(
+                    200, content=_PNG_BYTES
+                ),
+            }
+        ) as client:
             with patch(
                 "klai_image_storage.url_guard._resolve_blocking",
                 return_value=("93.184.216.34",),
@@ -409,9 +410,31 @@ class TestAdapterSsrfGuard:
                     kb_slug="kb",
                     image_store=store,
                     http_client=client,
+                    pin_transport=transport,
                 )
         assert len(urls) == 1
         assert transport._pinned.get("pinned.example.test") == "93.184.216.34"
+
+    async def test_pipeline_works_without_pin_transport(self) -> None:
+        """Backwards-compatible path: no ``pin_transport`` kwarg
+        means guard runs, GET fires normally, nothing gets pinned."""
+
+        store = _mock_image_store()
+        async with _http_client(
+            responses={
+                "https://example.com/ok.png": httpx.Response(
+                    200, content=_PNG_BYTES
+                ),
+            }
+        ) as client:
+            urls = await download_and_upload_adapter_images(
+                image_urls=[("alt", "https://example.com/ok.png")],
+                org_id="org-1",
+                kb_slug="kb",
+                image_store=store,
+                http_client=client,
+            )
+        assert len(urls) == 1
 
     async def test_parsed_and_url_images_combined(self) -> None:
         store = _mock_image_store()

@@ -15,6 +15,7 @@ AC-21).
 
 from __future__ import annotations
 
+from typing import NoReturn
 from urllib.parse import urlparse
 
 from klai_image_storage.url_guard import (
@@ -50,6 +51,53 @@ class PersistedUrlRejectedError(Exception):
 
 
 _ATLASSIAN_SUFFIXES = (".atlassian.net", ".atlassian.com")
+
+
+def validate_web_crawler_config_strict(
+    config: dict[str, object],
+    *,
+    connector_id: str | None = None,
+) -> None:
+    """REQ-2.4 / AC-9: re-validate a stored web_crawler config at load time.
+
+    The portal's ``WebcrawlerConfig`` validator (Fase 5) guards new and
+    updated rows. Legacy rows persisted before that landed may still
+    hold an SSRF-unsafe ``base_url`` or ``canary_url``. This helper is
+    called by the connector sync runner BEFORE it delegates to
+    knowledge-ingest's ``/ingest/v1/crawl/sync`` endpoint — if
+    validation fails, ``crawl_site`` is never invoked and the sync
+    run is marked failed with the stable error code
+    ``ssrf_blocked_persisted_url``.
+    """
+
+    def _reject(field: str, reason: str, message: str, hostname: str | None) -> NoReturn:
+        logger.warning(
+            "web_crawler_persisted_url_blocked — %s",
+            message,
+            extra={
+                "event": "web_crawler_persisted_url_blocked",
+                "field": field,
+                "hostname": hostname,
+                "reason": reason,
+                "connector_id": connector_id,
+            },
+        )
+        raise PersistedUrlRejectedError(
+            error_code=SSRF_PERSISTED_ERROR,
+            hostname=hostname,
+            message=f"{field}: {message}",
+        )
+
+    for field in ("base_url", "canary_url"):
+        raw = config.get(field)
+        if raw is None:
+            continue
+        if not isinstance(raw, str):
+            _reject(field, "invalid_type", f"{field} must be a string", None)
+        try:
+            validate_url_pinned_sync(raw)
+        except SsrfBlockedError as exc:
+            _reject(field, exc.reason, str(exc), exc.hostname)
 
 
 def validate_confluence_base_url_strict(base_url: str, *, connector_id: str | None = None) -> None:
@@ -107,4 +155,5 @@ __all__ = [
     "SSRF_PERSISTED_ERROR",
     "PersistedUrlRejectedError",
     "validate_confluence_base_url_strict",
+    "validate_web_crawler_config_strict",
 ]

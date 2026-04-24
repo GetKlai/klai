@@ -82,11 +82,25 @@ async def _download_validate_upload(
     image_store: ImageStore,
     org_id: str,
     kb_slug: str,
+    pin_transport: PinnedResolverTransport | None = None,
 ) -> str | None:
     """Fetch *url*, validate magic bytes, upload to S3, return the public URL.
 
     Returns the public URL on success, ``None`` on any failure. All
     failure paths log with the ``url`` field so production can correlate.
+
+    Args:
+        url: Image URL to fetch.
+        http_client: httpx client that owns its own transport.
+        image_store: S3 store client.
+        org_id / kb_slug: Tenant context surfaced in log events.
+        pin_transport: Optional :class:`PinnedResolverTransport` to
+            seed with the validator's resolved IP before the GET.
+            When provided, the fetch connects to the exact IP the
+            guard accepted (closes the DNS-rebinding TOCTOU window,
+            REQ-7.4). When ``None``, the guard has still run and
+            the 60 s DNS cache narrows the window even without the
+            transport.
 
     Exception policy:
     - :class:`SsrfBlockedError` (REQ-7.2) → ``warning`` with stable
@@ -116,16 +130,13 @@ async def _download_validate_upload(
         )
         return None
 
-    # REQ-7.4 / AC-23: if the caller wired a ``PinnedResolverTransport``
-    # onto the http client, seed the pin map so the actual GET lands on
-    # the exact IP the guard accepted. Closes the DNS-rebinding window
-    # between ``validate_image_url`` and ``http_client.get``. Clients
-    # without the transport (e.g. unit tests using MockTransport) fall
-    # through — the guard already ran, and the 60 s DNS cache narrows
-    # the rebind window even without the transport.
-    transport = getattr(http_client, "_transport", None)
-    if isinstance(transport, PinnedResolverTransport):
-        transport.pin(validated.hostname, validated.preferred_ip)
+    # REQ-7.4 / AC-23: seed the caller-provided transport's pin map
+    # with the resolved IP so the GET targets the exact address the
+    # guard accepted. Explicit kwarg is preferred over reaching into
+    # http_client internals — the API contract is clear and httpx
+    # version drift cannot silently disable pinning.
+    if pin_transport is not None:
+        pin_transport.pin(validated.hostname, validated.preferred_ip)
 
     try:
         resp = await http_client.get(url)
@@ -211,6 +222,7 @@ async def download_and_upload_adapter_images(
     image_store: ImageStore,
     http_client: httpx.AsyncClient,
     parsed_images: list[ParsedImage] | None = None,
+    pin_transport: PinnedResolverTransport | None = None,
 ) -> list[str]:
     """Upload images for a connector-adapter document.
 
@@ -226,6 +238,10 @@ async def download_and_upload_adapter_images(
             document parser (e.g. Unstructured for PDF/DOCX). The
             caller is responsible for the base64 decode and the
             MIME-to-extension mapping; see :class:`ParsedImage`.
+        pin_transport: Optional :class:`PinnedResolverTransport` paired
+            with *http_client* — when provided, the SSRF guard's
+            resolved IP is registered so the actual GET connects to
+            that exact address. See REQ-7.4 / AC-23.
 
     Returns:
         List of public URLs for successfully uploaded images, in the
@@ -253,6 +269,7 @@ async def download_and_upload_adapter_images(
             image_store=image_store,
             org_id=org_id,
             kb_slug=kb_slug,
+            pin_transport=pin_transport,
         )
         if public_url is not None:
             uploaded_urls.append(public_url)
@@ -274,6 +291,7 @@ async def download_and_upload_crawl_images(
     kb_slug: str,
     image_store: ImageStore,
     http_client: httpx.AsyncClient,
+    pin_transport: PinnedResolverTransport | None = None,
 ) -> list[str]:
     """Upload images for a web-crawled page.
 
@@ -290,6 +308,9 @@ async def download_and_upload_crawl_images(
         image_store: S3 client to upload into.
         http_client: Async HTTP client used for image downloads. The
             caller owns its lifecycle.
+        pin_transport: Optional :class:`PinnedResolverTransport` paired
+            with *http_client* — see the adapter orchestrator docs
+            for the REQ-7.4 / AC-23 rationale.
 
     Returns:
         List of public URLs for successfully uploaded images, in order
@@ -314,6 +335,7 @@ async def download_and_upload_crawl_images(
             image_store=image_store,
             org_id=org_id,
             kb_slug=kb_slug,
+            pin_transport=pin_transport,
         )
         if public_url is not None:
             uploaded_urls.append(public_url)

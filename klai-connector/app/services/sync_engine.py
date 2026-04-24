@@ -43,7 +43,10 @@ from app.core.logging import get_logger
 from app.models.sync_run import SyncRun
 from app.services.parser import parse_document_with_images
 from app.services.portal_client import PortalClient
-from app.services.url_guard import PersistedUrlRejectedError
+from app.services.url_guard import (
+    PersistedUrlRejectedError,
+    validate_web_crawler_config_strict,
+)
 
 logger = get_logger(__name__)
 
@@ -509,6 +512,19 @@ class SyncEngine:
                 return
 
             try:
+                # SPEC-SEC-SSRF-001 REQ-2.4 / AC-9: re-validate the
+                # persisted web_crawler config BEFORE delegating to
+                # knowledge-ingest. Legacy rows predating the portal
+                # validator (Fase 5) may still hold an SSRF-unsafe
+                # base_url / canary_url. On rejection
+                # ``PersistedUrlRejectedError`` propagates to the
+                # common except handler below, which marks the sync
+                # run failed with ``error="ssrf_blocked_persisted_url"``
+                # — ``crawl_sync`` / ``crawl_site`` are never invoked.
+                validate_web_crawler_config_strict(
+                    portal_config.config,
+                    connector_id=str(connector_id),
+                )
                 # REQ-03.1: submit the config (connector_id only — no cookies).
                 enqueue_resp = await self._crawl_sync_client.crawl_sync(
                     connector_id=str(connector_id),
@@ -585,6 +601,29 @@ class SyncEngine:
                                 "remote_job_id": remote_job_id,
                             },
                         ]
+
+            except PersistedUrlRejectedError as ssrf_err:
+                # SPEC-SEC-SSRF-001 REQ-2.4 / AC-9: legacy config failed
+                # the SSRF guard. Do NOT delegate to knowledge-ingest.
+                # The stable error code lets ops dashboards and the
+                # regression suite query persisted-URL rejections
+                # separately from network / validation failures.
+                status = SyncStatus.FAILED
+                error_details = [
+                    {
+                        "error": ssrf_err.error_code,
+                        "hostname": ssrf_err.hostname or "",
+                        "reason": str(ssrf_err),
+                    },
+                ]
+                logger.warning(
+                    "web_crawler_delegation_blocked_ssrf",
+                    extra={
+                        "connector_id": str(connector_id),
+                        "error_code": ssrf_err.error_code,
+                        "hostname": ssrf_err.hostname,
+                    },
+                )
 
             except httpx.HTTPStatusError as enqueue_err:
                 # REQ-03.5: non-2xx from /crawl/sync → single failed row, no retry.
@@ -707,6 +746,7 @@ class SyncEngine:
             image_store=self._image_store,
             http_client=self._image_http,
             parsed_images=decoded_parsed,
+            pin_transport=self._image_transport,
         )
 
     async def _fail_sync_run(self, sync_run_id: uuid.UUID, error_message: str) -> None:
