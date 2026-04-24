@@ -20,8 +20,8 @@ Services previously using `env_file: .env` (the shared global file at
 
 | Service | Migrated to explicit `environment:` | Commit |
 |---|---|---|
-| scribe-api | YES | (this commit) |
-| retrieval-api | pending | — |
+| scribe-api | YES | `1ff65d1b` |
+| retrieval-api | YES | (this commit) |
 | victorialogs | pending | — |
 | portal-api | pending | — |
 
@@ -37,7 +37,14 @@ Rows sorted by secret name, then by service.
 |---|---|---|---|
 | `KNOWLEDGE_INGEST_SECRET` | scribe-api | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | HMAC auth when scribe pushes transcripts to knowledge-ingest. |
 | `LITELLM_MASTER_KEY` | scribe-api | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | Bearer token for the LiteLLM gateway (AI summarization of transcripts). |
+| `LITELLM_MASTER_KEY` | retrieval-api | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | Bearer token for the LiteLLM gateway (re-exposed as `LITELLM_API_KEY` in-container). |
+| `POSTGRES_PASSWORD` | retrieval-api | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | Portal-events write path — retrieval-api pushes `knowledge.queried` events to the portal `product_events` table. Interpolated into `PORTAL_EVENTS_PASSWORD`. |
 | `POSTGRES_PASSWORD` | scribe-api | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | PostgreSQL password; interpolated into `POSTGRES_DSN` for the scribe schema. |
+| `QDRANT_API_KEY` | retrieval-api | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | Qdrant vector-store API key (dense retrieval). |
+| `REDIS_PASSWORD` | retrieval-api | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | Interpolated into `REDIS_URL` for the rate-limiter (SPEC-SEC-010). |
+| `RETRIEVAL_API_INTERNAL_SECRET` | retrieval-api | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | Shared secret for internal callers (portal-api, LiteLLM hook). Mapped to `INTERNAL_SECRET` in-container (SPEC-SEC-010). |
+| `RETRIEVAL_API_ZITADEL_AUDIENCE` | retrieval-api | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | Zitadel audience for JWT validation. Mapped to `ZITADEL_API_AUDIENCE` in-container. |
+| `RETRIEVAL_API_RATE_LIMIT_RPM` | retrieval-api | `/opt/klai/.env` (SOPS `core-01/.env.sops`) | Sliding-window rate-limit threshold per caller identity (SPEC-SEC-010). |
 
 ## Rotation coupling
 
