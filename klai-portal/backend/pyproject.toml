@@ -22,6 +22,7 @@ dependencies = [
     "redis[hiredis]>=7.4",
     "pyjwt>=2.12",
     "klai-connector-credentials",
+    "youtube-transcript-api>=1.2.4",
 ]
 
 [tool.uv.sources]
