@@ -21,14 +21,31 @@ engine = create_async_engine(
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
-async def _pin_and_reset_on_exit(session: AsyncSession) -> None:
-    """Pin the session's pooled connection.
+async def _pin_and_reset_connection(session: AsyncSession) -> None:
+    """Pin the session's pooled connection AND clear any stale tenant context.
 
-    After this call every subsequent statement on the session uses the same
-    physical connection, so PostgreSQL session-level `set_config()` values
-    stay visible across awaits.
+    Two jobs, both at checkout time:
+
+    1. Pin the pooled connection via `session.connection()`. After this call
+       every subsequent statement on the session uses the same physical
+       connection, so PostgreSQL session-level `set_config()` values stay
+       visible across awaits.
+
+    2. Clear any stale `app.current_org_id` / `app.cross_org_admin` inherited
+       from a prior request. `_reset_tenant_context` already runs at cleanup,
+       but its two `set_config` calls are each wrapped in `suppress(Exception)`
+       — if the suppressed path fires (aborted transaction, closed connection,
+       etc.) the GUC stays set on the pooled connection. The next request
+       picking up that connection runs its auth lookup BEFORE set_tenant, so
+       a stale GUC from a different tenant silently filters `portal_users` via
+       RLS. Observable symptom: valid sessions get intermittent
+       "Organisation not found" 404s on `/api/app/*` endpoints, with the
+       exact same cookie alternately succeeding and failing within seconds
+       depending on which pooled connection is checked out. Defense-in-depth
+       at checkout closes that window.
     """
     await session.connection()
+    await _reset_tenant_context(session)
 
 
 async def _reset_tenant_context(session: AsyncSession) -> None:
@@ -75,7 +92,7 @@ async def get_db() -> AsyncGenerator[AsyncSession]:
     making RLS block all rows.
     """
     async with AsyncSessionLocal() as session:
-        await _pin_and_reset_on_exit(session)
+        await _pin_and_reset_connection(session)
         try:
             yield session
         finally:
@@ -127,7 +144,7 @@ async def tenant_scoped_session(org_id: int) -> AsyncIterator[AsyncSession]:
                 await db.commit()
     """
     async with AsyncSessionLocal() as session:
-        await _pin_and_reset_on_exit(session)
+        await _pin_and_reset_connection(session)
         await set_tenant(session, org_id)
         try:
             yield session
@@ -141,9 +158,10 @@ async def pin_session(session: AsyncSession) -> None:
     For code paths that accept a session as a parameter (e.g. provisioning
     orchestrator) and need to guarantee that later set_config() calls on
     that session remain visible. Idempotent — calling session.connection()
-    twice is safe.
+    twice is safe, and re-clearing the tenant GUC is a no-op when already
+    clear.
     """
-    await _pin_and_reset_on_exit(session)
+    await _pin_and_reset_connection(session)
 
 
 @contextlib.asynccontextmanager
@@ -175,7 +193,7 @@ async def cross_org_session() -> AsyncIterator[AsyncSession]:
     why tenant scoping is not possible.
     """
     async with AsyncSessionLocal() as session:
-        await _pin_and_reset_on_exit(session)
+        await _pin_and_reset_connection(session)
         await session.execute(text("SELECT set_config('app.cross_org_admin', 'true', false)"))
         try:
             yield session
