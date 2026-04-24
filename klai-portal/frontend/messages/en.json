@@ -681,6 +681,7 @@
   "knowledge_add_source_error_invalid_url": "Not a valid URL",
   "knowledge_add_source_error_blocked_url": "This URL is not allowed",
   "knowledge_add_source_error_fetch_failed": "Could not reach the page — try again",
+  "knowledge_add_source_error_youtube_unreachable": "Could not reach YouTube — try again",
   "knowledge_add_source_error_no_transcript": "This video has no transcript available",
   "knowledge_add_source_error_kb_full": "This knowledge base has reached its document limit",
   "knowledge_add_source_error_generic": "Something went wrong. Try again.",

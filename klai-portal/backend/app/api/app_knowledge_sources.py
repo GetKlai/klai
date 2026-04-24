@@ -251,6 +251,14 @@ async def add_youtube_source(
             status_code=422,
             detail="This video has no transcript available",
         ) from exc
+    except SourceFetchError as exc:
+        # YouTube refused our request (IP block / rate limit / transient
+        # failure). Distinct from UnsupportedSource — this is retryable
+        # and NOT the user's fault.
+        raise HTTPException(
+            status_code=502,
+            detail="Could not reach YouTube — try again",
+        ) from exc
 
     # video_id is the portion after "youtube:" in source_ref (R3.5).
     video_id = source_ref.removeprefix("youtube:")
