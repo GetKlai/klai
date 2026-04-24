@@ -2,7 +2,7 @@ import { createFileRoute, Link, Outlet, redirect } from '@tanstack/react-router'
 import { useAuth } from '@/lib/auth'
 import { useQuery } from '@tanstack/react-query'
 import {
-  Globe, Lock, Shield, BarChart2, Zap, List, FolderTree, Settings, SlidersHorizontal, ArrowLeft
+  Globe, Lock, Shield, BarChart2, Zap, List, FolderTree, Settings, SlidersHorizontal, ArrowLeft, Plus
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -154,6 +154,12 @@ function KbLayout() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <Button size="sm" asChild>
+            <Link to="/app/knowledge/$kbSlug/add-source" params={{ kbSlug }}>
+              <Plus className="h-4 w-4 mr-2" />
+              {m.knowledge_detail_add_source()}
+            </Link>
+          </Button>
           <Button variant="ghost" size="sm" asChild>
             <Link to="/app/knowledge">
               <ArrowLeft className="h-4 w-4 mr-2" />

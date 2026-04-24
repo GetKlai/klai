@@ -212,7 +212,7 @@ function ConnectorsTab() {
       )}
 
       {isOwner && (
-        <Button size="sm" variant="outline" onClick={() => void navigate({ to: '/app/knowledge/$kbSlug/add-connector', params: { kbSlug } })}>
+        <Button size="sm" variant="outline" onClick={() => void navigate({ to: '/app/knowledge/$kbSlug/add-source', params: { kbSlug } })}>
           <Plus className="h-4 w-4 mr-1" />
           {m.admin_connectors_add_button()}
         </Button>

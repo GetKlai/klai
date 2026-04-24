@@ -631,6 +631,7 @@
   "knowledge_detail_delete_confirm_title": "Delete knowledge base?",
   "knowledge_detail_delete_confirm_body": "This will permanently delete \"{name}\" and all its documents and connectors. This cannot be undone.",
   "knowledge_detail_delete_confirm_action": "Yes, delete",
+  "knowledge_detail_add_source": "Add",
   "knowledge_detail_tab_overview": "Overview",
   "knowledge_detail_tab_connectors": "Connectors",
   "knowledge_detail_tab_members": "Access",
