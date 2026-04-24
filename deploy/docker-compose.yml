@@ -755,11 +755,25 @@ services:
   scribe-api:
     image: ghcr.io/getklai/scribe-api:latest
     restart: unless-stopped
-    env_file: .env
+    # SPEC-SEC-ENVFILE-SCOPE-001 — scribe's process env is scoped to what
+    # scribe reads. Previously `env_file: .env` injected all ~120 host
+    # secrets (portal INTERNAL_SECRET, ENCRYPTION_KEY, ZITADEL_PAT,
+    # Moneybird token, Vexa secrets, VictoriaLogs auth, etc.) — any RCE
+    # in scribe's media pipeline would exfiltrate the full shared set.
+    # Reads: app/core/config.py (pydantic-settings).
     environment:
+      # Database
       POSTGRES_DSN: postgresql+asyncpg://klai:${POSTGRES_PASSWORD}@postgres:5432/klai
-      WHISPER_SERVER_URL: http://172.18.0.1:8000
+      # Auth
       ZITADEL_ISSUER: https://auth.${DOMAIN}
+      # Whisper STT
+      WHISPER_SERVER_URL: http://172.18.0.1:8000
+      # LiteLLM gateway (AI summarization)
+      LITELLM_BASE_URL: http://litellm:4000
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      # Knowledge-ingest (KB push of transcripts)
+      KNOWLEDGE_INGEST_URL: http://knowledge-ingest:8000
+      KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
     volumes:
       - scribe-audio-data:/data/audio
     networks:
