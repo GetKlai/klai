@@ -26,7 +26,7 @@ DEFAULT_TEST_ENV: dict[str, str] = {
     "SMTP_HOST": "smtp.test.local",
     "SMTP_USERNAME": "mailer@test",
     "SMTP_PASSWORD": "smtp-test-secret",
-    "SMTP_FROM": "noreply@test.local",
+    "SMTP_FROM": "noreply@test.example",
     "WEBHOOK_SECRET": "webhook-test-secret",
     "INTERNAL_SECRET": "internal-test-secret",
     "BRAND_URL": "https://test.klai.example",
@@ -133,6 +133,44 @@ def broken_redis() -> Any:
     (fail-closed on nonce Redis outage).
     """
 
+    class _BrokenPipeline:
+        """Sync-queue pipeline whose execute() raises ConnectionError.
+
+        Real redis-py pipelines queue commands synchronously; only `execute`
+        is async. We mirror that so rate_limit.py's pipeline use doesn't
+        produce un-awaited-coroutine warnings.
+        """
+
+        def zadd(self, *args: Any, **kwargs: Any) -> _BrokenPipeline:
+            return self
+
+        def zremrangebyscore(self, *args: Any, **kwargs: Any) -> _BrokenPipeline:
+            return self
+
+        def zcard(self, *args: Any, **kwargs: Any) -> _BrokenPipeline:
+            return self
+
+        def zrange(self, *args: Any, **kwargs: Any) -> _BrokenPipeline:
+            return self
+
+        def zrem(self, *args: Any, **kwargs: Any) -> _BrokenPipeline:
+            return self
+
+        def expire(self, *args: Any, **kwargs: Any) -> _BrokenPipeline:
+            return self
+
+        def set(self, *args: Any, **kwargs: Any) -> _BrokenPipeline:
+            return self
+
+        async def execute(self) -> None:
+            raise ConnectionError("fake redis unavailable")
+
+        async def __aenter__(self) -> _BrokenPipeline:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
     class _BrokenRedis:
         async def set(self, *args: Any, **kwargs: Any) -> None:
             raise ConnectionError("fake redis unavailable")
@@ -152,23 +190,17 @@ def broken_redis() -> Any:
         async def zrange(self, *args: Any, **kwargs: Any) -> None:
             raise ConnectionError("fake redis unavailable")
 
+        async def zrem(self, *args: Any, **kwargs: Any) -> None:
+            raise ConnectionError("fake redis unavailable")
+
         async def expire(self, *args: Any, **kwargs: Any) -> None:
             raise ConnectionError("fake redis unavailable")
 
         async def aclose(self) -> None:
             return None
 
-        def pipeline(self, *args: Any, **kwargs: Any) -> _BrokenRedis:
-            return self
-
-        async def execute(self) -> None:
-            raise ConnectionError("fake redis unavailable")
-
-        async def __aenter__(self) -> _BrokenRedis:
-            return self
-
-        async def __aexit__(self, *args: Any) -> None:
-            return None
+        def pipeline(self, *args: Any, **kwargs: Any) -> _BrokenPipeline:
+            return _BrokenPipeline()
 
     return _BrokenRedis()
 

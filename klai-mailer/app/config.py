@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     # a security control, not a degraded-monitoring feature.
     redis_url: str = "redis://redis:6379/0"
 
+    # Per-recipient rate limit for /internal/send (REQ-4.4). Default 10
+    # sends per trailing 24h window. Adjust upward if legitimate admin
+    # flows hit the ceiling (observe via mailer_recipient_rate_limited log).
+    mailer_rate_limit_per_recipient: int = 10
+    mailer_rate_limit_window_seconds: int = 86400
+
     # Set DEBUG=true to enable /debug endpoint (logs raw Zitadel payloads).
     # In production (PORTAL_ENV=production) the /debug route is NOT registered
     # regardless of this flag (REQ-5.3 + REQ-5.4 double-gate).
