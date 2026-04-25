@@ -312,6 +312,13 @@ services:
     ports:
       - "127.0.0.1:8001:8000"
     env_file: ./klai-mailer/.env
+    environment:
+      # Cross-service shared secret — single source of truth in /opt/klai/.env.
+      # Portal-api sends `X-Internal-Secret: ${PORTAL_API_INTERNAL_SECRET}` when
+      # calling /internal/send; mailer compares via hmac.compare_digest
+      # (SPEC-SEC-MAILER-INJECTION-001 REQ-8). Wiring via `environment:` instead
+      # of duplicating into klai-mailer/.env keeps rotation atomic.
+      INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
     networks:
       - klai-net
 
@@ -319,47 +326,93 @@ services:
   portal-api:
     image: ghcr.io/getklai/portal-api:latest
     restart: unless-stopped
-    env_file: .env
+    # SPEC-SEC-ENVFILE-SCOPE-001 — portal-api's process env is scoped
+    # to what app/core/config.py reads. Previously `env_file: .env`
+    # injected all ~120 host secrets (VictoriaLogs auth, Hetzner API
+    # token, Vexa DB secrets, GlitchTip, Gitea admin, KUMA_TOKEN_*,
+    # Garage S3 creds, crawl4ai internal key, etc.) — portal is the
+    # orchestrator so its scope is legitimately wide, but the leaked
+    # set was ~3× what the code reads.
+    #
+    # New vars below (vs pre-SPEC compose) were previously silently
+    # inherited via env_file. The validators in config.py assert
+    # VEXA_WEBHOOK_SECRET and MONEYBIRD_WEBHOOK_TOKEN at startup — a
+    # missing MONEYBIRD_WEBHOOK_TOKEN here would crash boot.
     volumes:
       - caddy-tenants:/caddy/tenants
       - ./librechat:/librechat
     environment:
+      # ─── Platform / domain ──────────────────────────────────────
       DOMAIN: ${DOMAIN}
-      ZITADEL_PAT: ${PORTAL_API_ZITADEL_PAT}
-      DATABASE_URL: postgresql+asyncpg://portal_api:${PORTAL_API_DB_PASSWORD}@postgres:5432/klai
+      FRONTEND_URL: ${FRONTEND_URL:-}
       DOCKER_HOST: tcp://docker-socket-proxy:2375
-      INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
-      SSO_COOKIE_KEY: ${PORTAL_API_SSO_COOKIE_KEY}
-      # SPEC-AUTH-008 BFF — server-side session store
-      BFF_SESSION_KEY: ${PORTAL_API_BFF_SESSION_KEY:-}
+      # ─── Database (portal schema) ───────────────────────────────
+      DATABASE_URL: postgresql+asyncpg://portal_api:${PORTAL_API_DB_PASSWORD}@postgres:5432/klai
+      # ─── Auth — Zitadel ─────────────────────────────────────────
+      ZITADEL_PAT: ${PORTAL_API_ZITADEL_PAT}
       ZITADEL_PORTAL_CLIENT_ID: ${ZITADEL_PORTAL_CLIENT_ID:-369262708920483857}
       ZITADEL_PORTAL_CLIENT_SECRET: ${PORTAL_API_ZITADEL_PORTAL_CLIENT_SECRET:-}
-      VEXA_API_KEY: ${VEXA_BOT_MANAGER_API_KEY}
-      VEXA_WEBHOOK_SECRET: ${VEXA_WEBHOOK_SECRET}
+      ZITADEL_IDP_GOOGLE_ID: ${ZITADEL_IDP_GOOGLE_ID}
+      ZITADEL_IDP_MICROSOFT_ID: ${ZITADEL_IDP_MICROSOFT_ID}
+      # ─── Auth — session / BFF (SPEC-AUTH-008) ───────────────────
+      SSO_COOKIE_KEY: ${PORTAL_API_SSO_COOKIE_KEY}
+      BFF_SESSION_KEY: ${PORTAL_API_BFF_SESSION_KEY:-}
+      # ─── Internal service-to-service secrets ────────────────────
+      INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
+      KLAI_CONNECTOR_SECRET: ${PORTAL_API_KLAI_CONNECTOR_SECRET}
+      DOCS_INTERNAL_SECRET: ${DOCS_INTERNAL_SECRET}
+      KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
+      RETRIEVAL_API_INTERNAL_SECRET: ${RETRIEVAL_API_INTERNAL_SECRET}
+      # ─── Application-level encryption (secrets at rest) ─────────
       PORTAL_SECRETS_KEY: ${PORTAL_API_PORTAL_SECRETS_KEY}
       ENCRYPTION_KEY: ${PORTAL_API_ENCRYPTION_KEY}
+      WIDGET_JWT_SECRET: ${WIDGET_JWT_SECRET}
+      # ─── Vexa (meeting bot) ─────────────────────────────────────
+      VEXA_API_KEY: ${VEXA_BOT_MANAGER_API_KEY}
+      VEXA_WEBHOOK_SECRET: ${VEXA_WEBHOOK_SECRET}
+      # Vexa meeting-api base URL. Prod routes through the api-gateway
+      # (:8000) — NOT the raw meeting-api (:8080). Overrides the
+      # config.py default to match pre-SPEC-SEC-ENVFILE-SCOPE-001 behaviour.
+      VEXA_MEETING_API_URL: ${VEXA_MEETING_API_URL:-http://api-gateway:8000}
+      # Reserved for Vexa admin-API calls (tenant provisioning, quota).
+      # @MX:NOTE in config.py — no runtime reader yet; kept declared so
+      # a future admin-api caller picks up the real token, matching the
+      # pre-migration env-shape.
+      VEXA_ADMIN_TOKEN: ${VEXA_ADMIN_TOKEN}
+      # ─── Billing — Moneybird ────────────────────────────────────
+      # Validator in config.py requires MONEYBIRD_WEBHOOK_TOKEN at boot.
+      MONEYBIRD_WEBHOOK_TOKEN: ${MONEYBIRD_WEBHOOK_TOKEN}
+      # ─── Meeting ingress — IMAP calendar-invite listener ────────
       IMAP_HOST: mail.getklai.com
       IMAP_PORT: "993"
       IMAP_USERNAME: meet@getklai.com
       IMAP_POLL_INTERVAL_SECONDS: "60"
       IMAP_PASSWORD: ${PORTAL_API_IMAP_PASSWORD}
+      # ─── LibreChat tenant provisioning ──────────────────────────
       LIBRECHAT_MONGO_ROOT_URI: ${LIBRECHAT_MONGO_ROOT_URI}
-      KLAI_CONNECTOR_SECRET: ${PORTAL_API_KLAI_CONNECTOR_SECRET}
-      GITHUB_ADMIN_PAT: ${GITHUB_ADMIN_PAT}
-      GITHUB_ORG: GetKlai
+      MONGODB_CONTAINER_NAME: ${MONGODB_CONTAINER_NAME}
+      MONGO_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
+      MONGO_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      # ─── Redis (BFF session store + rate limiter + provisioning) ─
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      # ─── Qdrant (knowledge vector store) ────────────────────────
       QDRANT_URL: http://qdrant:6333
       QDRANT_API_KEY: ${QDRANT_API_KEY}
-      ZITADEL_IDP_GOOGLE_ID: ${ZITADEL_IDP_GOOGLE_ID}
-      ZITADEL_IDP_MICROSOFT_ID: ${ZITADEL_IDP_MICROSOFT_ID}
-      FRONTEND_URL: ${FRONTEND_URL:-}
+      # ─── Knowledge services ─────────────────────────────────────
+      KNOWLEDGE_RETRIEVE_URL: ${KNOWLEDGE_RETRIEVE_URL}
+      FIRECRAWL_INTERNAL_KEY: ${FIRECRAWL_INTERNAL_KEY}
+      # ─── OAuth — Drive / M365 (optional providers) ──────────────
       GOOGLE_DRIVE_CLIENT_ID: ${GOOGLE_DRIVE_CLIENT_ID:-}
       GOOGLE_DRIVE_CLIENT_SECRET: ${GOOGLE_DRIVE_CLIENT_SECRET:-}
       MS_DOCS_CLIENT_ID: ${MS_DOCS_CLIENT_ID:-}
       MS_DOCS_CLIENT_SECRET: ${MS_DOCS_CLIENT_SECRET:-}
       MS_DOCS_TENANT_ID: ${MS_DOCS_TENANT_ID:-common}
-      MONGODB_CONTAINER_NAME: ${MONGODB_CONTAINER_NAME}
-      MONGO_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
+      # ─── GitHub (org offboarding) ───────────────────────────────
+      GITHUB_ADMIN_PAT: ${GITHUB_ADMIN_PAT}
+      GITHUB_ORG: GetKlai
     networks:
       - klai-net
       - net-postgres
@@ -476,7 +529,16 @@ services:
       - -httpListenAddr=:9428
       - -httpAuth.username=${VICTORIALOGS_AUTH_USER}
       - -httpAuth.password=${VICTORIALOGS_AUTH_PASSWORD}
-    env_file: .env
+    # SPEC-SEC-ENVFILE-SCOPE-001 — VictoriaLogs reads its config from
+    # command-line flags above; the container only needs
+    # VICTORIALOGS_AUTH_{USER,PASSWORD} in its process env for the
+    # authenticated healthcheck below (busybox wget builds the auth
+    # header from $$VICTORIALOGS_AUTH_*). Previously `env_file: .env`
+    # injected all host secrets — a log-store is a juicy pivot
+    # primitive because it sits on the monitoring network.
+    environment:
+      VICTORIALOGS_AUTH_USER: ${VICTORIALOGS_AUTH_USER}
+      VICTORIALOGS_AUTH_PASSWORD: ${VICTORIALOGS_AUTH_PASSWORD}
     networks:
       - monitoring
     deploy:
@@ -632,7 +694,14 @@ services:
   retrieval-api:
     image: ghcr.io/getklai/retrieval-api:latest
     restart: unless-stopped
-    env_file: .env
+    # SPEC-SEC-ENVFILE-SCOPE-001 — retrieval-api's process env is scoped
+    # to what retrieval_api/config.py reads. Previously `env_file: .env`
+    # injected all ~120 host secrets including portal INTERNAL_SECRET,
+    # ENCRYPTION_KEY, Moneybird/Vexa webhook tokens — an RCE primitive
+    # in a query-crafting path would have forwarded Moneybird webhooks
+    # and tampered tenants. The explicit block below is unchanged;
+    # the only change is removing the env_file directive since every
+    # var retrieval reads was already declared here.
     environment:
       QDRANT_URL: http://qdrant:6333
       QDRANT_API_KEY: ${QDRANT_API_KEY}
@@ -644,6 +713,11 @@ services:
       FALKORDB_PORT: "6379"
       GRAPHITI_ENABLED: "true"
       GRAPH_SEARCH_TIMEOUT: "60.0"
+      # Graphiti LLM model for knowledge-graph extraction. Prod uses
+      # the heavier pipeline model; config.py defaults to klai-fast
+      # which is not suitable for graph extraction. Overrides the
+      # default to match pre-SPEC-SEC-ENVFILE-SCOPE-001 behaviour.
+      GRAPHITI_LLM_MODEL: ${GRAPHITI_LLM_MODEL:-klai-pipeline}
       RERANKER_ENABLED: "true"
       RERANKER_TIMEOUT: "60.0"
       OPENAI_API_KEY: "dummy"
@@ -755,11 +829,25 @@ services:
   scribe-api:
     image: ghcr.io/getklai/scribe-api:latest
     restart: unless-stopped
-    env_file: .env
+    # SPEC-SEC-ENVFILE-SCOPE-001 — scribe's process env is scoped to what
+    # scribe reads. Previously `env_file: .env` injected all ~120 host
+    # secrets (portal INTERNAL_SECRET, ENCRYPTION_KEY, ZITADEL_PAT,
+    # Moneybird token, Vexa secrets, VictoriaLogs auth, etc.) — any RCE
+    # in scribe's media pipeline would exfiltrate the full shared set.
+    # Reads: app/core/config.py (pydantic-settings).
     environment:
+      # Database
       POSTGRES_DSN: postgresql+asyncpg://klai:${POSTGRES_PASSWORD}@postgres:5432/klai
-      WHISPER_SERVER_URL: http://172.18.0.1:8000
+      # Auth
       ZITADEL_ISSUER: https://auth.${DOMAIN}
+      # Whisper STT
+      WHISPER_SERVER_URL: http://172.18.0.1:8000
+      # LiteLLM gateway (AI summarization)
+      LITELLM_BASE_URL: http://litellm:4000
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      # Knowledge-ingest (KB push of transcripts)
+      KNOWLEDGE_INGEST_URL: http://knowledge-ingest:8000
+      KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
     volumes:
       - scribe-audio-data:/data/audio
     networks:

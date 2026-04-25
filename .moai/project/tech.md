@@ -26,6 +26,7 @@ Klai is a multi-service TypeScript/Python monorepo. The frontend stack is TypeSc
 | Crypto | cryptography | >=43.0 |
 | Calendar | icalendar | >=6.1, <7.0 |
 | MongoDB Driver | motor | >=3.6 |
+| YouTube extractor | yt-dlp | >=2026.3 |
 | Linting | ruff | >=0.8 |
 | Type Checking | pyright | >=1.1 |
 | Testing | pytest + pytest-asyncio | >=8 / >=0.24 |

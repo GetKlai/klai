@@ -18,7 +18,6 @@ from app.api.bearer import bearer
 from app.core.database import get_db
 from app.models.portal import PortalJoinRequest
 from app.services.join_request_token import generate_approval_token
-from app.services.notifications import notify_admin_join_request
 from app.services.zitadel import zitadel
 
 logger = structlog.get_logger()
@@ -113,11 +112,19 @@ async def create_join_request(
         email=email,
     )
 
-    # C7.3: email failure never blocks join request creation
-    try:
-        await notify_admin_join_request(email=email, display_name=display_name)
-    except Exception:
-        logger.warning("Admin notification failed for join request", request_id=new_request.id, exc_info=True)
+    # Admin notification is a no-op at this call site: the join request is
+    # created BEFORE an org is assigned (org_id=None above). With the
+    # SPEC-SEC-MAILER-INJECTION-001 recipient-binding contract, the
+    # notification requires a known `org_id` + `admin_email` pair so
+    # klai-mailer can prove the recipient via portal-api callback. Once a
+    # per-target-org assignment flow lands, re-enable the call:
+    #   await notify_admin_join_request(
+    #       email=email, display_name=display_name,
+    #       org_id=target_org_id, admin_email=target_admin_email,
+    #   )
+    # Until then we rely on the admin approval flow to surface pending
+    # requests in the UI.
+    logger.info("join_request_pending_admin_review", request_id=new_request.id)
 
     return JoinRequestResponse(
         id=new_request.id,

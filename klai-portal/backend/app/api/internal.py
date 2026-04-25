@@ -275,6 +275,48 @@ class UserLanguageResponse(BaseModel):
     preferred_language: str
 
 
+class OrgAdminEmailResponse(BaseModel):
+    admin_email: str
+
+
+@router.get("/org/{org_id}/admin-email", response_model=OrgAdminEmailResponse)
+async def get_org_admin_email(
+    org_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> OrgAdminEmailResponse:
+    """Return the primary admin email for an organisation.
+
+    SPEC-SEC-MAILER-INJECTION-001 REQ-3.1 callback: klai-mailer resolves
+    the expected recipient for `join_request_admin` via this endpoint
+    rather than trusting an attacker-supplied `to` address.
+
+    Returns the earliest-created `role='admin'` user with a populated
+    email for the org. 404 if no such user exists.
+    """
+    await _require_internal_token(request)
+    await set_tenant(db, org_id)
+
+    result = await db.execute(
+        select(PortalUser.email)
+        .where(
+            PortalUser.org_id == org_id,
+            PortalUser.role == "admin",
+            PortalUser.status == "active",
+            PortalUser.email.isnot(None),
+        )
+        .order_by(PortalUser.created_at.asc())
+        .limit(1)
+    )
+    admin_email = result.scalar_one_or_none()
+    if not admin_email:
+        await _audit_internal_call(request, org_id=org_id)
+        raise HTTPException(status_code=404, detail="No admin user for org")
+
+    await _audit_internal_call(request, org_id=org_id)
+    return OrgAdminEmailResponse(admin_email=admin_email)
+
+
 @router.get("/user-language", response_model=UserLanguageResponse)
 async def get_user_language(
     email: str,

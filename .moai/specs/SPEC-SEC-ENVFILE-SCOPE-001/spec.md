@@ -1,7 +1,7 @@
 ---
 id: SPEC-SEC-ENVFILE-SCOPE-001
-version: 0.2.0
-status: draft
+version: 0.3.0
+status: done
 created: 2026-04-24
 updated: 2026-04-24
 author: Mark Vletter
@@ -12,6 +12,27 @@ tracker: SPEC-SEC-AUDIT-2026-04
 # SPEC-SEC-ENVFILE-SCOPE-001: Replace `env_file: .env` with Explicit Per-Service Environment
 
 ## HISTORY
+
+### v0.3.0 (2026-04-24) — Landed
+
+Staged rollout complete on core-01. All four migrations deployed +
+runtime-verified, CI guard active on main, SECRETS_MATRIX.md published,
+adversarial reverse-check revealed and fixed 3 missed vars
+(`VEXA_MEETING_API_URL`, `VEXA_ADMIN_TOKEN`, `GRAPHITI_LLM_MODEL`) in a
+follow-up hotfix. Final env-var counts: scribe 163→15, retrieval 179→29,
+victorialogs 155→5, portal 177→55. Smoking-gun filters empty on all
+four. PRs: [#163](https://github.com/GetKlai/klai/pull/163) (initial
+migration, 5 commits staged per REQ-5.1) +
+[#170](https://github.com/GetKlai/klai/pull/170) (hotfix for missed
+vars).
+
+Retro pitfall captured in
+[.claude/rules/klai/pitfalls/process-rules.md](../../../.claude/rules/klai/pitfalls/process-rules.md)
+as `env-file-migration-reverse-check` — the initial audit methodology
+was asymmetric (code-reads → compose) and missed pydantic-settings
+fields where the prod override in `/opt/klai/.env` differed from the
+in-code default. Future `env_file` migrations must do the reverse check
+explicitly.
 
 ### v0.2.0 (2026-04-24)
 - Expanded stub to full EARS SPEC after repo-wide audit of
