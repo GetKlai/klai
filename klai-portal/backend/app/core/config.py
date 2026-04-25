@@ -216,18 +216,22 @@ class Settings(BaseSettings):
     invite_bot_rate_limit_per_user_per_day: int = 10
 
     # SPEC-SEC-IMAP-001: mail-auth (DKIM/SPF/ARC) enforcement on the listener.
-    # `imap_authserv_id` is the authserv-id written into Authentication-Results
-    # by the trusted upstream relay (`mail.getklai.com`). Only auth-results
-    # stamped by that authserv-id are consulted; sender-injected headers are
-    # ignored.
-    imap_authserv_id: str = "mail.getklai.com"
+    # `imap_authserv_id` is the authserv-id stamped into Authentication-Results
+    # by the trusted upstream relay. Only auth-results from that authserv-id
+    # are consulted; sender-injected headers are ignored. The default matches
+    # the cloud86 hosting relay observed in production headers (April 2026);
+    # override via PORTAL_API_IMAP_AUTHSERV_ID after a hosting-provider change.
+    imap_authserv_id: str = "shared199.cloud86-host.io"
     # Per-message wall-clock timeout for the synchronous DKIM/ARC verify call
     # (runs in `asyncio.to_thread` with `asyncio.wait_for`).
     imap_auth_timeout_seconds: float = 5.0
     # Allowlist of ARC sealing domains (`d=` of the outermost valid ARC-Seal)
-    # whose `ARC-Authentication-Results` we accept when DKIM direct alignment
-    # is broken (legitimate mailing-list / forwarded mail).
+    # whose `ARC-Authentication-Results` we accept when direct DKIM alignment
+    # is broken — legitimate forwarded mail. `getklai.com` is in this list
+    # because the operator-controlled mail.getklai.com MX seals every inbound
+    # invite, and that seal is the trusted boundary for our IMAP ingress.
     imap_trusted_arc_sealers: list[str] = [
+        "getklai.com",
         "google.com",
         "outlook.com",
         "icloud.com",
