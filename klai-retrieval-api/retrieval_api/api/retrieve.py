@@ -61,6 +61,12 @@ async def retrieve(req: RetrieveRequest, request: Request) -> RetrieveResponse:
         raise HTTPException(status_code=400, detail="user_id required for scope=personal/both")
     if req.scope == "notebook" and not req.notebook_id:
         raise HTTPException(status_code=400, detail="notebook_id required for scope=notebook")
+    # SPEC-SEC-IDENTITY-ASSERT-001 REQ-5.2: notebook scope requires user_id so the
+    # personal-vs-team visibility gate can apply. Without user_id, the personal
+    # leg of _notebook_filter cannot fire and personal chunks would silently
+    # disappear from results — fail loud rather than silent.
+    if req.scope == "notebook" and not req.user_id:
+        raise HTTPException(status_code=400, detail="missing_user_id_for_personal_scope")
 
     # SPEC-SEC-010 REQ-3: cross-user / cross-org guard (JWT path only).
     verify_body_identity(request, req.org_id, req.user_id)

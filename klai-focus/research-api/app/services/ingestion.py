@@ -31,10 +31,27 @@ async def ingest_source(source_id: str) -> None:
 async def _run_ingestion(db: AsyncSession, source_id: str) -> None:
     from sqlalchemy import select
 
+    from app.models.notebook import Notebook
+
     row = await db.execute(select(Source).where(Source.id == source_id))
     source: Source | None = row.scalar_one_or_none()
     if source is None:
         logger.error("Ingestion: source %s not found", source_id)
+        return
+
+    # SPEC-SEC-IDENTITY-ASSERT-001 REQ-5: resolve notebook visibility + owner
+    # so each chunk written to klai_focus carries the gate that retrieval-api's
+    # _search_notebook enforces. Fail fast if the notebook is missing — the
+    # source row references it via FK, so absence is unrecoverable.
+    nb_row = await db.execute(select(Notebook).where(Notebook.id == source.notebook_id))
+    notebook: Notebook | None = nb_row.scalar_one_or_none()
+    if notebook is None:
+        logger.error(
+            "Ingestion: notebook %s missing for source %s — abort",
+            source.notebook_id,
+            source_id,
+        )
+        await _set_status(db, source_id, "error", error_message="notebook_missing")
         return
 
     await _set_status(db, source_id, "processing")
@@ -49,6 +66,14 @@ async def _run_ingestion(db: AsyncSession, source_id: str) -> None:
         )
         if not chunks:
             raise ValueError("Geen tekst gevonden in het document")
+
+        # Stamp every chunk with the visibility gate. Notebook.scope is
+        # ("personal", "org") — the same string is forwarded as
+        # notebook_visibility so the Qdrant filter in retrieval-api can
+        # match without a translation layer.
+        for chunk in chunks:
+            chunk["notebook_visibility"] = notebook.scope
+            chunk["owner_user_id"] = notebook.owner_user_id
 
         texts = [c["content"] for c in chunks]
         embeddings = await tei.embed_texts(texts)
