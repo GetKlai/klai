@@ -184,12 +184,12 @@ def _arc_verify_sync(
         return ArcResult()
     a = dkim.ARC(raw, timeout=int(timeout))
     try:
-        cv, _results, _reason = a.verify(dnsfunc=dnsfunc) if dnsfunc is not None else a.verify()
+        cv, results, _reason = a.verify(dnsfunc=dnsfunc) if dnsfunc is not None else a.verify()
     except dkim.DKIMException:
         return ArcResult(present=True)
 
     valid = cv == dkim.CV_Pass
-    sealer = a.domain.decode().lower() if a.domain else None
+    sealer = _outermost_arc_sealer(results)
     trusted = sealer in trusted_sealers if sealer else False
     aligned_from = valid and trusted and _arc_inner_dkim_aligned(msg, from_domain)
     return ArcResult(
@@ -199,6 +199,24 @@ def _arc_verify_sync(
         trusted=trusted,
         aligned_from_domain=aligned_from,
     )
+
+
+def _outermost_arc_sealer(results: list[dict[str, Any]] | None) -> str | None:
+    """Return the ``d=`` of the outermost ARC-Seal (highest ``instance``).
+
+    ``dkim.ARC.verify`` returns the sealing domain inside its results list as
+    ``as-domain``; the ``ARC.domain`` attribute is only populated for signing
+    flows, not verification, so we cannot read it from there.
+    """
+    if not results:
+        return None
+    outermost = max(results, key=lambda r: r.get("instance", 0))
+    as_domain = outermost.get("as-domain")
+    if isinstance(as_domain, (bytes, bytearray)):
+        return as_domain.decode(errors="replace").lower()
+    if isinstance(as_domain, str):
+        return as_domain.lower()
+    return None
 
 
 def _arc_inner_dkim_aligned(msg: Message, from_domain: str) -> bool:
