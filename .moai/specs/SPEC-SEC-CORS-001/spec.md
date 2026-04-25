@@ -1,9 +1,9 @@
 ---
 id: SPEC-SEC-CORS-001
-version: 0.3.0
-status: draft
+version: 0.4.0
+status: in_progress
 created: 2026-04-24
-updated: 2026-04-24
+updated: 2026-04-25
 author: Mark Vletter
 priority: critical
 tracker: SPEC-SEC-AUDIT-2026-04
@@ -12,6 +12,39 @@ tracker: SPEC-SEC-AUDIT-2026-04
 # SPEC-SEC-CORS-001: CORS Allowlist + CSRF-Exempt Scope Review
 
 ## HISTORY
+
+### v0.4.0 (2026-04-25)
+- Phase 1 (manager-strategy) verified all research.md findings against current
+  code in the worktree. Two BLOCKING discrepancies surfaced and folded into the
+  implementation plan:
+  - Verification B: portal-api `app/main.py:180-203` registers CORSMiddleware
+    BEFORE `LoggingContextMiddleware` (line 199) and `SessionMiddleware`
+    (line 203). Per Starlette LIFO, SessionMiddleware is OUTSIDE CORSMiddleware,
+    so a 401 emitted by SessionMiddleware (CSRF reject at session.py:75-77)
+    bypasses CORS. This is the same failure class REQ-6 demands of every other
+    service. Resolved by adding REQ-6.7 (portal-api self-fix) to scope —
+    CORSMiddleware MUST be the LAST add_middleware call in portal-api's
+    `app/main.py` too. Implemented as the Q1-FIX task between T-014 and T-015.
+  - Verification K: production compose env block for portal-api does NOT pass
+    `CORS_ORIGINS`. Combined with the in-code default `cors_origins: str =
+    "http://localhost:5174"`, today's wildcard regex r".*" is the only thing
+    keeping prod browsers from `my.getklai.com` working. Once REQ-1 narrows
+    the regex, prod 502s on first restart unless `CORS_ORIGINS` is added to
+    `klai-infra/core-01/.env.sops` AND to `deploy/docker-compose.yml`'s
+    portal-api `environment:` block FIRST (validator-env-parity). Folded into
+    pre-flight task T-000A.bis; documented in Cross-references as the SPEC-
+    SEC-WEBHOOK-001 / SPEC-SEC-ENVFILE-SCOPE-001 same-deploy regression class.
+- Added REQ-6.7: portal-api `app/main.py` CORSMiddleware order parity (treat
+  portal-api the same way the lint demands of every other service).
+- Updated REQ-6.2 / REQ-6.3 lint rule location: from speculative
+  `.claude/lint/cors_middleware_last.yml` to `rules/cors_middleware_last.yml`,
+  matching existing repo precedent (`rules/no-exec-run.yml` discovered via
+  repo-root `sgconfig.yml`). acceptance.md AC-18 paths updated accordingly.
+- Status bumped from `draft` to `in_progress`. Phase 2 implementation runs on
+  branch `feature/SPEC-SEC-CORS-001` in worktree
+  `/c/Users/markv/.moai/worktrees/klai/SPEC-SEC-CORS-001`.
+- Added planning artefacts `tasks.md` (25 atomic tasks) and `progress.md`.
+  Drift target: 28 files (17 modified + 11 created).
 
 ### v0.3.0 (2026-04-24)
 - Internal-wave additions from the cross-service middleware audit triggered by the
@@ -376,6 +409,22 @@ and are visible to cross-origin browsers.
   response (no Authorization header on an authenticated route) carries
   `Access-Control-Allow-Origin: <request-origin>` when the request Origin is in the
   connector's `cors_origins` allowlist.
+- **REQ-6.7:** klai-portal `klai-portal/backend/app/main.py` SHALL be reordered so
+  that `app.add_middleware(CORSMiddleware, ...)` is the LAST `add_middleware(...)`
+  call in `create_app`. Today (verified during Phase 1, 2026-04-25) it is registered
+  at line ~180, with `LoggingContextMiddleware` (line ~199) and `SessionMiddleware`
+  (line ~203) added AFTER it in source order. Per Starlette LIFO, this places
+  SessionMiddleware OUTSIDE CORSMiddleware, so a 401 emitted by SessionMiddleware
+  (e.g. CSRF reject at session.py:75-77) bypasses CORS and a cross-origin browser
+  sees an opaque failure. The fix preserves the desired execution order
+  (SessionMiddleware -> LoggingContextMiddleware -> @http no_cache decorator ->
+  CORS -> route) becomes (CORS -> LoggingContextMiddleware -> @http no_cache ->
+  SessionMiddleware -> route). The reorder converts a pre-existing latent bug
+  (currently masked by the wildcard regex r".*") into a properly bounded CORS
+  policy. Acceptance: a positive test SHALL assert that a CSRF-rejected POST
+  (e.g. cross-origin POST to a non-exempt path with mismatched X-CSRF-Token)
+  carries `Access-Control-Allow-Origin` for an allowlisted first-party origin.
+  Lint REQ-6.2 SHALL apply uniformly to klai-portal/backend/app/main.py.
 
 ### REQ-7: klai-retrieval-api CORS deny-by-default starter
 
