@@ -25,6 +25,7 @@ from app.services.mail_auth import (
     MailAuthResult,
     _aligned,
     _organizational_domain,
+    _outermost_arc_sealer,
     verify_mail_auth,
 )
 from tests.services.fixtures.imap.builders import (
@@ -81,6 +82,33 @@ class TestAlignmentHelpers:
     )
     def test_distinct_slds_under_public_suffix_do_not_align(self, a: str, b: str) -> None:
         assert _aligned(a, b) is False
+
+
+class TestArcSealerExtraction:
+    """Regression for an April 2026 production incident: ``dkim.ARC.verify()``
+    does NOT populate ``ARC.domain`` for verification flows; the sealing
+    domain is in ``results[*]['as-domain']``. The original implementation
+    read ``a.domain``, which silently returned ``sealer=None`` for every
+    legitimately-forwarded invite — every real customer message rejected.
+    """
+
+    def test_extracts_outermost_seal_domain_from_results(self) -> None:
+        results = [
+            {"instance": 1, "as-domain": b"google.com"},
+            {"instance": 2, "as-domain": b"getklai.com"},  # outermost
+        ]
+        assert _outermost_arc_sealer(results) == "getklai.com"
+
+    def test_lowercases_domain(self) -> None:
+        assert _outermost_arc_sealer([{"instance": 1, "as-domain": b"Google.COM"}]) == "google.com"
+
+    def test_accepts_str_value(self) -> None:
+        assert _outermost_arc_sealer([{"instance": 1, "as-domain": "fastmail.com"}]) == "fastmail.com"
+
+    def test_returns_none_on_missing_or_empty(self) -> None:
+        assert _outermost_arc_sealer(None) is None
+        assert _outermost_arc_sealer([]) is None
+        assert _outermost_arc_sealer([{"instance": 1}]) is None  # missing as-domain
 
 
 # ---------- AC-1: forged From, no DKIM -------------------------------------
@@ -228,8 +256,13 @@ class TestAC5_ArcTrustedForwarded:
             mock_dkim.domain = None
 
             mock_arc = mock_arc_cls.return_value
-            mock_arc.verify.return_value = (dkim.CV_Pass, [], "")
-            mock_arc.domain = b"google.com"
+            # dkim.ARC.verify returns (cv, results, reason); the sealing
+            # domain is in results[*]['as-domain'] (NOT in `a.domain`).
+            mock_arc.verify.return_value = (
+                dkim.CV_Pass,
+                [{"instance": 1, "as-domain": b"google.com"}],
+                "",
+            )
 
             result = await verify_mail_auth(
                 raw,
@@ -276,8 +309,11 @@ class TestAC6_ArcUntrustedSealer:
             mock_dkim.domain = None
 
             mock_arc = mock_arc_cls.return_value
-            mock_arc.verify.return_value = (dkim.CV_Pass, [], "")
-            mock_arc.domain = b"weird-provider.example"
+            mock_arc.verify.return_value = (
+                dkim.CV_Pass,
+                [{"instance": 1, "as-domain": b"weird-provider.example"}],
+                "",
+            )
 
             result = await verify_mail_auth(
                 raw,
@@ -531,8 +567,11 @@ class TestARCEdgeCases:
         ):
             mock_dkim_cls.return_value.verify.side_effect = dkim.DKIMException("broken")
             mock_dkim_cls.return_value.domain = None
-            mock_arc_cls.return_value.verify.return_value = (dkim.CV_Pass, [], "")
-            mock_arc_cls.return_value.domain = b"google.com"
+            mock_arc_cls.return_value.verify.return_value = (
+                dkim.CV_Pass,
+                [{"instance": 1, "as-domain": b"google.com"}],
+                "",
+            )
 
             result = await verify_mail_auth(raw, trusted_arc_sealers=["google.com"], timeout_seconds=5.0)
 
@@ -564,8 +603,11 @@ class TestARCEdgeCases:
         ):
             mock_dkim_cls.return_value.verify.side_effect = dkim.DKIMException("broken")
             mock_dkim_cls.return_value.domain = None
-            mock_arc_cls.return_value.verify.return_value = (dkim.CV_Pass, [], "")
-            mock_arc_cls.return_value.domain = b"google.com"
+            mock_arc_cls.return_value.verify.return_value = (
+                dkim.CV_Pass,
+                [{"instance": 1, "as-domain": b"google.com"}],
+                "",
+            )
 
             result = await verify_mail_auth(raw, trusted_arc_sealers=["google.com"], timeout_seconds=5.0)
 
@@ -587,8 +629,11 @@ class TestARCEdgeCases:
         ):
             mock_dkim_cls.return_value.verify.side_effect = dkim.DKIMException("broken")
             mock_dkim_cls.return_value.domain = None
-            mock_arc_cls.return_value.verify.return_value = (dkim.CV_Fail, [], "")
-            mock_arc_cls.return_value.domain = b"google.com"
+            mock_arc_cls.return_value.verify.return_value = (
+                dkim.CV_Fail,
+                [{"instance": 1, "as-domain": b"google.com"}],
+                "",
+            )
 
             result = await verify_mail_auth(raw, trusted_arc_sealers=["google.com"], timeout_seconds=5.0)
 
