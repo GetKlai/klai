@@ -35,6 +35,7 @@ has expired there, ``finalize_auth_request`` will fail and the user sees the log
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import secrets
@@ -220,6 +221,168 @@ async def _finalize_and_set_cookie(
     return LoginResponse(callback_url=_validate_callback_url(callback_url))
 
 
+
+# ---------------------------------------------------------------------------
+# SPEC-SEC-MFA-001: MFA fail-closed enforcement helpers
+# ---------------------------------------------------------------------------
+
+_MFA_503_DETAIL = "Authentication service temporarily unavailable, please retry in a moment"
+_MFA_503_HEADERS = {"Retry-After": "5"}
+
+
+def _mfa_unavailable() -> HTTPException:
+    """Return the 503 raised when MFA enforcement cannot complete (SPEC-SEC-MFA-001)."""
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=_MFA_503_DETAIL,
+        headers=_MFA_503_HEADERS,
+    )
+
+
+def _emit_mfa_check_failed(
+    *,
+    reason: str,
+    mfa_policy: str,
+    outcome: str,
+    email: str,
+    zitadel_status: int | None = None,
+    level: str = "warning",
+) -> None:
+    """Emit a structured ``mfa_check_failed`` event (SPEC-SEC-MFA-001 REQ-4).
+
+    Email is sha256-hashed before logging — never the plaintext email.
+    ``request_id`` is auto-bound by structlog contextvars from
+    ``LoggingContextMiddleware``; no manual propagation needed.
+    """
+    email_hash = hashlib.sha256(email.lower().encode("utf-8")).hexdigest()
+    log_method = getattr(_slog, level, _slog.warning)
+    log_method(
+        "mfa_check_failed",
+        reason=reason,
+        mfa_policy=mfa_policy,
+        zitadel_status=zitadel_status,
+        email_hash=email_hash,
+        outcome=outcome,
+    )
+
+
+async def _resolve_and_enforce_mfa(
+    *,
+    zitadel_user_id: str,
+    email: str,
+    db: AsyncSession,
+) -> "PortalUser | None":
+    """Resolve mfa_policy for the calling user and enforce SPEC-SEC-MFA-001.
+
+    Returns the ``PortalUser`` row for downstream audit context, or ``None``
+    when the user is not yet provisioned in portal.
+
+    Raises:
+        HTTPException(503): Org fetch failed (cannot determine policy for a
+            known portal user) OR Zitadel/connection failure during
+            ``has_any_mfa`` under ``mfa_policy="required"``.
+        HTTPException(403): ``mfa_policy="required"`` and the user has no MFA
+            enrolled (existing behaviour, unchanged).
+
+    Fail-open paths (login proceeds):
+        - portal_user lookup raised — cannot map email to org; preserve
+          provisioning grace (REQ-3.2 fail-open arm).
+        - ``mfa_policy in {"optional", "recommended"}`` regardless of
+          ``has_any_mfa`` outcome — orgs that have not opted into enforcement
+          accept availability over security at login time (REQ-3).
+    """
+    portal_user: PortalUser | None = None
+    db_failure: str | None = None
+    try:
+        portal_user = await db.scalar(
+            select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id)
+        )
+    except Exception:
+        db_failure = "portal_user"
+        logger.warning("portal_user lookup failed", exc_info=True)
+
+    org: PortalOrg | None = None
+    if portal_user is not None and db_failure is None:
+        try:
+            org = await db.get(PortalOrg, portal_user.org_id)
+        except Exception:
+            db_failure = "portal_org"
+            logger.warning("portal_org lookup failed", exc_info=True)
+
+    if db_failure == "portal_user":
+        # REQ-3.2 fail-open arm: cannot map email to portal-org; if we 503'd
+        # here every brand-new tenant before provisioning would be locked out.
+        _emit_mfa_check_failed(
+            reason="db_lookup_failed",
+            mfa_policy="optional",
+            outcome="fail-open",
+            email=email,
+            level="warning",
+        )
+        return portal_user  # always None on this branch
+
+    if db_failure == "portal_org":
+        # REQ-3.2 fail-closed arm: known portal_user but unresolvable org
+        # policy — refuse rather than silently downgrade to optional.
+        _emit_mfa_check_failed(
+            reason="db_lookup_failed",
+            mfa_policy="unresolved",
+            outcome="503",
+            email=email,
+            level="error",
+        )
+        raise _mfa_unavailable()
+
+    mfa_policy = org.mfa_policy if org else "optional"
+    if mfa_policy != "required":
+        # REQ-3 / REQ-3.4: optional and recommended preserve fail-open.
+        # has_any_mfa is short-circuited entirely under these policies.
+        return portal_user
+
+    try:
+        user_has_mfa = await zitadel.has_any_mfa(zitadel_user_id)
+    except httpx.HTTPStatusError as exc:
+        _emit_mfa_check_failed(
+            reason="has_any_mfa_5xx",
+            mfa_policy="required",
+            outcome="503",
+            email=email,
+            zitadel_status=exc.response.status_code,
+            level="error",
+        )
+        raise _mfa_unavailable() from exc
+    except httpx.RequestError as exc:
+        _emit_mfa_check_failed(
+            reason="has_any_mfa_5xx",
+            mfa_policy="required",
+            outcome="503",
+            email=email,
+            zitadel_status=None,
+            level="error",
+        )
+        raise _mfa_unavailable() from exc
+    except Exception as exc:
+        # REQ-1.6: any unexpected exception type still fails closed under
+        # required policy. Better a transient 503 than a silent bypass.
+        _emit_mfa_check_failed(
+            reason="unexpected",
+            mfa_policy="required",
+            outcome="503",
+            email=email,
+            zitadel_status=None,
+            level="error",
+        )
+        raise _mfa_unavailable() from exc
+
+    if not user_has_mfa:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="MFA required by your organization. Please set up two-factor authentication.",
+        )
+
+    return portal_user
+
+
 # ---------------------------------------------------------------------------
 # Request / Response models
 # ---------------------------------------------------------------------------
@@ -358,16 +521,49 @@ async def password_set(body: PasswordSetRequest) -> None:
 
 @router.post("/auth/login", response_model=LoginResponse)
 async def login(body: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)) -> LoginResponse:
-    # 1. Check if user has TOTP registered
-    has_totp = False
+    # 1a. Find Zitadel user by email — SPEC-SEC-MFA-001 REQ-2: split 4xx ↔ 5xx
     zitadel_user_id: str | None = None
+    org_id_zitadel: str | None = None
     try:
         user_info = await zitadel.find_user_by_email(body.email)
         if user_info:
-            zitadel_user_id, org_id = user_info
-            has_totp = await zitadel.has_totp(zitadel_user_id, org_id)
+            zitadel_user_id, org_id_zitadel = user_info
     except httpx.HTTPStatusError as exc:
-        logger.warning("TOTP check failed %s — continuing without 2FA check", exc.response.status_code)
+        if exc.response.status_code >= 500:
+            _emit_mfa_check_failed(
+                reason="find_user_by_email_5xx",
+                mfa_policy="unresolved",
+                outcome="503",
+                email=body.email,
+                zitadel_status=exc.response.status_code,
+                level="error",
+            )
+            raise _mfa_unavailable() from exc
+        # 4xx: well-formed not-found / client error — treat as user_info=None
+        # and continue to the password check (which will return 401 for an
+        # unknown user). Closes finding #12 (REQ-2.3, REQ-2.5).
+    except httpx.RequestError as exc:
+        _emit_mfa_check_failed(
+            reason="find_user_by_email_5xx",
+            mfa_policy="unresolved",
+            outcome="503",
+            email=body.email,
+            zitadel_status=None,
+            level="error",
+        )
+        raise _mfa_unavailable() from exc
+
+    # 1b. has_totp — UI-flag only; failure is fail-open (no enforcement
+    # implication; user simply does not see the TOTP prompt). REQ-2.6 moves
+    # this OUT of the find_user_by_email try so a TOTP outage never causes a
+    # find_user_by_email-style 5xx escalation.
+    has_totp = False
+    if zitadel_user_id:
+        try:
+            has_totp = await zitadel.has_totp(zitadel_user_id, org_id_zitadel)
+        except (httpx.HTTPStatusError, httpx.RequestError):
+            logger.warning("has_totp_check_failed -- defaulting to no-totp prompt", exc_info=True)
+            has_totp = False
 
     # 2. Create a Zitadel session by checking email + password
     try:
@@ -392,34 +588,16 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
             detail="Login failed, please try again later",
         ) from exc
 
-    # 2b. Enforce MFA policy (NEN 7510: REQ-SEC-001-08)
+    # 2b. Enforce MFA policy — SPEC-SEC-MFA-001 (supersedes the previous
+    # NEN 7510 REQ-SEC-001-08 implementation: fail-closed under required,
+    # documented fail-open under optional).
     portal_user_for_mfa: PortalUser | None = None
-    mfa_policy = "optional"
     if zitadel_user_id:
-        try:
-            portal_user_for_mfa = await db.scalar(
-                select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id)
-            )
-            if portal_user_for_mfa:
-                org_for_mfa = await db.get(PortalOrg, portal_user_for_mfa.org_id)
-                mfa_policy = org_for_mfa.mfa_policy if org_for_mfa else "optional"
-        except Exception:
-            logger.warning("MFA policy lookup failed -- defaulting to optional (fail-open)", exc_info=True)
-
-        if mfa_policy == "required":
-            try:
-                user_has_mfa = await zitadel.has_any_mfa(zitadel_user_id)
-            except httpx.HTTPStatusError as exc:
-                logger.warning(
-                    "has_any_mfa check failed %s -- defaulting to pass (fail-open)",
-                    exc.response.status_code,
-                )
-                user_has_mfa = True
-            if not user_has_mfa:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="MFA required by your organization. Please set up two-factor authentication.",
-                )
+        portal_user_for_mfa = await _resolve_and_enforce_mfa(
+            zitadel_user_id=zitadel_user_id,
+            email=body.email,
+            db=db,
+        )
 
     emit_event("login", user_id=zitadel_user_id, properties={"method": "password"})
 
