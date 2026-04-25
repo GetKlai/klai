@@ -22,6 +22,11 @@ from app.services.connector_credentials import SENSITIVE_FIELDS, credential_stor
 from app.services.events import emit_event
 from app.services.kb_quota import assert_can_add_item_to_kb
 from app.services.klai_connector_client import SyncRunData, klai_connector_client
+from app.services.url_validator import (
+    SsrfBlockedError,
+    validate_confluence_base_url_sync,
+    validate_url_pinned_sync,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +117,28 @@ class WebcrawlerConfig(BaseModel):
         backend auto-computes the fingerprint via klai-connector on save
         (SPEC-CRAWL-004 REQ-9). canary_fingerprint without canary_url is still
         rejected (orphaned fingerprint has no meaning).
+
+        SPEC-SEC-SSRF-001 REQ-2 / AC-7 / AC-8: run an SSRF check on
+        ``base_url`` and ``canary_url`` here so every API path that
+        validates a ``WebcrawlerConfig`` (create / update / bulk
+        import) inherits the guard. The validator runs before
+        ``_auto_fill_canary_fingerprint`` calls klai-connector, so a
+        malicious URL cannot trigger an internal fingerprint fetch.
         """
+
+        # REQ-2.1 / REQ-2.2 / AC-7: SSRF-validate base_url.
+        try:
+            validate_url_pinned_sync(self.base_url)
+        except SsrfBlockedError as exc:
+            raise ValueError(f"base_url: {exc}") from exc
+
+        # REQ-2.1 / AC-7 third bullet: SSRF-validate canary_url too.
+        if self.canary_url is not None:
+            try:
+                validate_url_pinned_sync(self.canary_url)
+            except SsrfBlockedError as exc:
+                raise ValueError(f"canary_url: {exc}") from exc
+
         url_set = self.canary_url is not None
         fp_set = self.canary_fingerprint is not None
         if fp_set and not url_set:
@@ -147,6 +173,67 @@ class WebcrawlerConfig(BaseModel):
                 raise ValueError("login_indicator_selector must not contain 'javascript:' URIs")
 
         return self
+
+
+class ConfluenceConfig(BaseModel):
+    """Validated configuration schema for confluence connectors (REQ-8).
+
+    Enforces the Atlassian domain allowlist and the full SSRF
+    reject-list at config-save time. Prevents a tenant from pointing
+    ``base_url`` at an internal host that would then receive the
+    tenant's Atlassian Basic-auth header (research.md §11.2 threat
+    model) on every sync run.
+    """
+
+    base_url: str
+    email: str
+    api_token: str
+    space_keys: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_base_url(self) -> "ConfluenceConfig":
+        """REQ-8.1 / REQ-8.2 / AC-19: domain allowlist + SSRF reject-list."""
+
+        try:
+            validate_confluence_base_url_sync(self.base_url)
+        except SsrfBlockedError as exc:
+            raise ValueError(f"base_url: {exc}") from exc
+        return self
+
+
+# Connector-type -> pydantic config class. Adding a new entry wires
+# validation (including SSRF) into both create_connector and
+# update_connector without further per-endpoint code.
+_CONFIG_SCHEMA: dict[str, type[BaseModel]] = {
+    "web_crawler": WebcrawlerConfig,
+    "confluence": ConfluenceConfig,
+}
+
+
+def _validate_connector_config(connector_type: str, config: dict) -> dict:
+    """REQ-2.3 / REQ-8.3: validate a connector config via its pydantic class.
+
+    Returns the validated config (possibly with normalised fields).
+    Raises HTTPException 422 on validation failure so the caller gets
+    a consistent pydantic-style error naming the offending field.
+    Connector types without a registered schema pass through unchanged.
+    """
+
+    schema = _CONFIG_SCHEMA.get(connector_type)
+    if schema is None:
+        return config
+    try:
+        validated = schema.model_validate(config)
+    except ValueError as exc:
+        # Surface the original validation message so the UI can
+        # display which field was rejected.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    # model_dump keeps the dict-on-disk contract; sensitive fields
+    # are re-masked later by the credential store.
+    return validated.model_dump(exclude_unset=False)
 
 
 # @MX:ANCHOR: ConnectorType Literal — Pydantic validation boundary for connector_type.
@@ -324,9 +411,14 @@ async def create_connector(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Invalid assertion modes: {sorted(invalid)}. Valid: {sorted(VALID_ASSERTION_MODES)}",
             )
+    # SPEC-SEC-SSRF-001 REQ-2 / REQ-8 / AC-7 / AC-19: validate the
+    # connector-type-specific config (SSRF, Atlassian allowlist, ...)
+    # BEFORE _auto_fill_canary_fingerprint, so a malicious base_url /
+    # canary_url cannot trigger an internal fingerprint fetch.
+    validated_config = _validate_connector_config(body.connector_type, body.config)
     # SPEC-CRAWL-004: auto-compute canary fingerprint before encryption
     # (needs plaintext cookies from config).
-    config_for_save = await _auto_fill_canary_fingerprint(body.config)
+    config_for_save = await _auto_fill_canary_fingerprint(validated_config)
 
     # Encrypt sensitive fields if credential store is configured
     config_to_store = config_for_save
@@ -382,8 +474,12 @@ async def update_connector(
     if body.name is not None:
         connector.name = body.name
     if body.config is not None:
+        # SPEC-SEC-SSRF-001 REQ-2.1 / AC-8 / AC-20: SSRF + allowlist
+        # validation runs before any downstream fingerprint fetch
+        # (which would dispatch an HTTP request to the candidate URL).
+        validated_config = _validate_connector_config(connector.connector_type, body.config)
         # SPEC-CRAWL-004: auto-compute canary fingerprint before encryption
-        config_for_save = await _auto_fill_canary_fingerprint(body.config)
+        config_for_save = await _auto_fill_canary_fingerprint(validated_config)
         if credential_store is not None:
             encrypted_blob, stripped_config = await credential_store.encrypt_credentials(
                 org_id=org.id,

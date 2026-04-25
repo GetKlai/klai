@@ -22,6 +22,7 @@ dependencies = [
     "redis[hiredis]>=7.4",
     "pyjwt>=2.12",
     "klai-connector-credentials",
+    "klai-image-storage",
     "yt-dlp>=2026.3.17",
     # SPEC-SEC-IMAP-001: DKIM/SPF/ARC verification for the IMAP calendar listener.
     # MPL-2.0 license, pure Python, wraps dkimpy + authres.
@@ -34,6 +35,7 @@ dependencies = [
 
 [tool.uv.sources]
 klai-connector-credentials = { path = "../../klai-libs/connector-credentials", editable = true }
+klai-image-storage = { path = "../../klai-libs/image-storage", editable = true }
 
 [project.optional-dependencies]
 dev = [
