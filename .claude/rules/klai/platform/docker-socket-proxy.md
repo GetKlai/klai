@@ -10,6 +10,38 @@ SEC-021 routes all portal-api and runtime-api Docker API traffic through
 `tecnativa/docker-socket-proxy` instead of binding `/var/run/docker.sock`
 directly. The proxy restricts which Docker API endpoints are reachable.
 
+## Containers that MUST NOT join the socket-proxy network (SPEC-SEC-SSRF-001 REQ-5)
+
+Any container that accepts a user-supplied URL and fetches it is one
+compose edit away from an env-dump primitive if it can reach
+`docker-socket-proxy:2375`. The Cornelis A1 chain depends entirely on
+those containers staying off the `socket-proxy` network.
+
+The following containers MUST NOT be added to the `socket-proxy`
+network in `deploy/docker-compose.yml`:
+
+| Container | Why (verified call-site on 2026-04-24) |
+|---|---|
+| `knowledge-ingest` | `routes/crawl.py::preview_crawl` + `crawl_url` accept a user URL and forward it to crawl4ai |
+| `crawl4ai` | Browser context fetches every URL submitted by knowledge-ingest and connector |
+| `klai-connector` | `SyncEngine._upload_images` → `klai_image_storage.pipeline._download_validate_upload` fetches adapter-extracted image URLs (Notion / Confluence / GitHub / Airtable) |
+| `klai-focus` / `research-api` | `app/services/docling.py::convert_url` forwards a user-supplied URL to docling-serve for content extraction |
+| `klai-knowledge-mcp` | Delegates search + ingest queries to retrieval-api + knowledge-ingest — same URL surface by transitive reach |
+| `retrieval-api` | Enrichment pipeline fetches external URLs during reranking / summary |
+| `scribe` / `scribe-api` | Accepts meeting audio URLs (`/transcribe` endpoint) and calls providers on the user's behalf |
+
+**Not in the list, despite surface-level suspicion:**
+
+- `klai-mailer` — only outbound call is a hardcoded `portal_api_url`
+  language lookup; the template renderer (`app/renderer.py`) does not
+  fetch remote resources. Safe to revisit if a future feature adds
+  user-URL rendering.
+
+Verification: every PR touching `deploy/docker-compose.yml` must pass
+`./scripts/smoke-ssrf-isolation.sh` post-deploy — runs the AC-13 /
+AC-22 curl check from each container above against
+`docker-socket-proxy:2375` and asserts `connect timeout`.
+
 ## Vexa runtime-api speaks Unix socket only (HIGH)
 
 The Vexa `runtime-api` image (`vexaai/runtime-api:0.10.0-*`) hardcodes

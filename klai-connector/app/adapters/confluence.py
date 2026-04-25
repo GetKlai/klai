@@ -33,6 +33,7 @@ from bs4 import BeautifulSoup
 from app.adapters.base import BaseAdapter, DocumentRef, ImageRef
 from app.core.config import Settings
 from app.core.logging import get_logger
+from app.services.url_guard import validate_confluence_base_url_strict
 
 logger = get_logger(__name__)
 
@@ -101,6 +102,20 @@ class ConfluenceAdapter(BaseAdapter):
                 "Provide the Atlassian Cloud URL in connector.config.base_url."
             )
         base_url = base_url.rstrip("/")
+        # SPEC-SEC-SSRF-001 REQ-8.4 / AC-21: re-validate a persisted
+        # base_url against the Atlassian allowlist + SSRF reject-list.
+        # Legacy rows predating REQ-8 may still hold a docker-internal
+        # or private-IP URL. If validation fails the helper raises
+        # ``PersistedUrlRejectedError`` which propagates to the sync runner
+        # to mark the run failed with
+        # ``error="ssrf_blocked_persisted_confluence_base_url"``
+        # WITHOUT instantiating an ``atlassian.Confluence`` client
+        # (avoiding the blind-SSRF + Basic-auth-leak primitive).
+        connector_id = getattr(connector, "id", None)
+        validate_confluence_base_url_strict(
+            base_url,
+            connector_id=str(connector_id) if connector_id else None,
+        )
 
         email: str | None = config.get("email")
         if not email:

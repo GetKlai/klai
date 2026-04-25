@@ -125,9 +125,7 @@ class TestAdapterUrls:
         store = _mock_image_store()
         async with _http_client(
             responses={
-                "https://example.com/not-an-image.png": httpx.Response(
-                    200, content=b"Hello, world!"
-                ),
+                "https://example.com/not-an-image.png": httpx.Response(200, content=b"Hello, world!"),
             }
         ) as client:
             urls = await download_and_upload_adapter_images(
@@ -238,6 +236,198 @@ class TestAdapterParsedImages:
             )
         assert urls == []
 
+
+# ---------------------------------------------------------------------------
+# SSRF regression tests — AC-15 (Notion), AC-17 (GitHub), AC-18 (Airtable)
+# ---------------------------------------------------------------------------
+#
+# AC-16 (Confluence) matches AC-15/17 at the pipeline layer — the
+# Confluence adapter emits the same ``ImageRef`` / markdown pair shape
+# that feeds _download_validate_upload, so a single pipeline-layer test
+# covers all four connectors for the HTTPS + docker-internal case. The
+# per-adapter tests in the connector repo hit the Confluence-specific
+# extraction path.
+
+
+class TestAdapterSsrfGuard:
+    """REQ-7.2 / AC-15 through AC-18: reject docker-internal and private-IP URLs."""
+
+    async def test_rejects_docker_internal_hostname(self) -> None:
+        """AC-15: portal-api is docker-internal — no HTTP call issued."""
+
+        store = _mock_image_store()
+        spy: list[str] = []
+
+        def _spy(request: httpx.Request) -> httpx.Response:
+            spy.append(str(request.url))
+            return httpx.Response(200, content=_PNG_BYTES)
+
+        async with _http_client(handler=httpx.MockTransport(_spy)) as client:
+            urls = await download_and_upload_adapter_images(
+                image_urls=[
+                    (
+                        "alt",
+                        "https://portal-api:8010/internal/v1/orgs",
+                    ),
+                ],
+                org_id="org-notion",
+                kb_slug="kb-notion",
+                image_store=store,
+                http_client=client,
+            )
+        assert urls == []
+        assert spy == []  # guard rejected; http_client.get was never called
+
+    async def test_rejects_docker_socket_proxy(self) -> None:
+        """AC-17: docker-socket-proxy (github adapter markdown image)."""
+
+        store = _mock_image_store()
+        spy: list[str] = []
+
+        async def _spy(request: httpx.Request) -> httpx.Response:
+            spy.append(str(request.url))
+            return httpx.Response(200, content=_PNG_BYTES)
+
+        async with _http_client(
+            handler=httpx.MockTransport(_spy)  # type: ignore[arg-type]
+        ) as client:
+            urls = await download_and_upload_adapter_images(
+                image_urls=[
+                    (
+                        "diagram",
+                        "https://docker-socket-proxy:2375/v1.42/info",
+                    ),
+                ],
+                org_id="org-gh",
+                kb_slug="kb-gh",
+                image_store=store,
+                http_client=client,
+            )
+        assert urls == []
+        assert spy == []
+
+    async def test_rejects_rfc1918_literal(self) -> None:
+        """AC-18: airtable attachment pointing at a private IP literal."""
+
+        store = _mock_image_store()
+        spy: list[str] = []
+
+        def _spy(request: httpx.Request) -> httpx.Response:
+            spy.append(str(request.url))
+            return httpx.Response(200, content=_PNG_BYTES)
+
+        async with _http_client(handler=httpx.MockTransport(_spy)) as client:
+            urls = await download_and_upload_adapter_images(
+                image_urls=[
+                    ("attachment", "https://10.0.0.5/asset.png"),
+                ],
+                org_id="org-air",
+                kb_slug="kb-air",
+                image_store=store,
+                http_client=client,
+            )
+        assert urls == []
+        assert spy == []
+
+    async def test_rejects_non_https(self) -> None:
+        """HTTP (not HTTPS) is rejected by the first guard check."""
+
+        store = _mock_image_store()
+        spy: list[str] = []
+
+        def _spy(request: httpx.Request) -> httpx.Response:
+            spy.append(str(request.url))
+            return httpx.Response(200, content=_PNG_BYTES)
+
+        async with _http_client(handler=httpx.MockTransport(_spy)) as client:
+            urls = await download_and_upload_adapter_images(
+                image_urls=[("alt", "http://example.com/img.png")],
+                org_id="org-1",
+                kb_slug="kb",
+                image_store=store,
+                http_client=client,
+            )
+        assert urls == []
+        assert spy == []
+
+    async def test_ssrf_failure_does_not_halt_document(self) -> None:
+        """AC-15: single-image SSRF rejection preserves other images."""
+
+        store = _mock_image_store()
+        async with _http_client(
+            responses={
+                "https://example.com/good.png": httpx.Response(200, content=_PNG_BYTES),
+            }
+        ) as client:
+            urls = await download_and_upload_adapter_images(
+                image_urls=[
+                    ("bad", "https://portal-api:8010/leak"),  # rejected
+                    ("good", "https://example.com/good.png"),  # uploaded
+                ],
+                org_id="org-1",
+                kb_slug="kb",
+                image_store=store,
+                http_client=client,
+            )
+        assert len(urls) == 1
+
+    async def test_pipeline_seeds_pinned_transport(self) -> None:
+        """AC-23: the caller-supplied PinnedResolverTransport gets its
+        pin map seeded with the guard-resolved IP before the GET fires."""
+
+        from unittest.mock import patch
+
+        from klai_image_storage import PinnedResolverTransport
+        from klai_image_storage.url_guard import _reset_dns_cache
+
+        _reset_dns_cache()
+
+        store = _mock_image_store()
+        transport = PinnedResolverTransport()
+
+        # MockTransport-backed client — no network IO. The pipeline
+        # passes ``pin_transport`` explicitly; httpx uses its own
+        # MockTransport for the GET, so the pin map is the only
+        # observable side effect.
+        async with _http_client(
+            responses={
+                "https://pinned.example.test/img.png": httpx.Response(200, content=_PNG_BYTES),
+            }
+        ) as client:
+            with patch(
+                "klai_image_storage.url_guard._resolve_blocking",
+                return_value=("93.184.216.34",),
+            ):
+                urls = await download_and_upload_adapter_images(
+                    image_urls=[("alt", "https://pinned.example.test/img.png")],
+                    org_id="org-1",
+                    kb_slug="kb",
+                    image_store=store,
+                    http_client=client,
+                    pin_transport=transport,
+                )
+        assert len(urls) == 1
+        assert transport._pinned.get("pinned.example.test") == "93.184.216.34"
+
+    async def test_pipeline_works_without_pin_transport(self) -> None:
+        """Backwards-compatible path: no ``pin_transport`` kwarg
+        means guard runs, GET fires normally, nothing gets pinned."""
+
+        store = _mock_image_store()
+        async with _http_client(
+            responses={
+                "https://example.com/ok.png": httpx.Response(200, content=_PNG_BYTES),
+            }
+        ) as client:
+            urls = await download_and_upload_adapter_images(
+                image_urls=[("alt", "https://example.com/ok.png")],
+                org_id="org-1",
+                kb_slug="kb",
+                image_store=store,
+                http_client=client,
+            )
+        assert len(urls) == 1
+
     async def test_parsed_and_url_images_combined(self) -> None:
         store = _mock_image_store()
         async with _http_client(
@@ -266,9 +456,7 @@ class TestAdapterParsedImages:
                 image_store=store,
                 http_client=client,
                 parsed_images=[
-                    ParsedImage(
-                        data=b"bogus", ext="png", source_id="report.pdf#element-42"
-                    ),
+                    ParsedImage(data=b"bogus", ext="png", source_id="report.pdf#element-42"),
                 ],
             )
         assert urls == []  # invalid content is rejected; exercise source_id path
@@ -336,9 +524,7 @@ class TestCrawlImages:
         media: list[dict[str, Any]] = [{"src": "/assets/img.png"}]
         async with _http_client(
             responses={
-                "https://example.com/assets/img.png": httpx.Response(
-                    200, content=_PNG_BYTES
-                ),
+                "https://example.com/assets/img.png": httpx.Response(200, content=_PNG_BYTES),
             }
         ) as client:
             urls = await download_and_upload_crawl_images(

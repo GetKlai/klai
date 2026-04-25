@@ -1,14 +1,36 @@
 """Tests for WebcrawlerConfig validation — SPEC-CRAWL-003 REQ-1, AC-12.
 
 All tests named after the Test Plan in the SPEC.
+
+SPEC-SEC-SSRF-001 note: these tests use placeholder hostnames like
+``wiki.example.com`` that do not resolve in CI's sandboxed network.
+The autouse fixture below stubs the SSRF validator's blocking
+resolver to a public IP so these pre-existing tests keep exercising
+their own canary / fingerprint / selector validation contracts —
+the SSRF reject-list itself is covered by ``test_connectors_ssrf.py``.
 """
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
+from klai_image_storage.url_guard import _reset_dns_cache
 from pydantic import ValidationError
 
 from app.api.connectors import WebcrawlerConfig
+
+
+@pytest.fixture(autouse=True)
+def _stub_dns_resolver():
+    """Make ``wiki.example.com`` etc. look like a public hostname."""
+
+    _reset_dns_cache()
+    with patch(
+        "klai_image_storage.url_guard._resolve_blocking",
+        return_value=("93.184.216.34",),
+    ):
+        yield
 
 
 class TestWebcrawlerConfigCanaryXOR:

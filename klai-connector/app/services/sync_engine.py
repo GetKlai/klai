@@ -7,6 +7,34 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
+from gidgethub import BadRequest
+from klai_image_storage import (
+    ImageStore,
+    ParsedImage,
+    PinnedResolverTransport,
+    download_and_upload_adapter_images,
+)
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from app.adapters.base import DocumentRef
+from app.adapters.oauth_base import OAuthReconnectRequiredError
+from app.adapters.registry import AdapterRegistry
+from app.clients.knowledge_ingest import CrawlSyncClient, KnowledgeIngestClient
+from app.core.enums import SyncStatus
+from app.core.logging import get_logger
+from app.models.sync_run import SyncRun
+from app.services.parser import parse_document_with_images
+from app.services.portal_client import PortalClient
+from app.services.url_guard import (
+    PersistedUrlRejectedError,
+    validate_web_crawler_config_strict,
+)
+
+logger = get_logger(__name__)
+
+
 # MIME → filename extension map for Unstructured parser output. Kept
 # local to the connector because the shared lib intentionally does not
 # know the parser's envelope format.
@@ -22,28 +50,6 @@ _PARSER_MIME_EXT: dict[str, str] = {
 def _ext_from_parser_mime(mime: str) -> str:
     """Return the extension for a parser-provided MIME type, default ``png``."""
     return _PARSER_MIME_EXT.get(mime, "png")
-
-import httpx
-from gidgethub import BadRequest
-from klai_image_storage import (
-    ImageStore,
-    ParsedImage,
-    download_and_upload_adapter_images,
-)
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
-from app.adapters.base import DocumentRef
-from app.adapters.oauth_base import OAuthReconnectRequiredError
-from app.adapters.registry import AdapterRegistry
-from app.clients.knowledge_ingest import CrawlSyncClient, KnowledgeIngestClient
-from app.core.enums import SyncStatus
-from app.core.logging import get_logger
-from app.models.sync_run import SyncRun
-from app.services.parser import parse_document_with_images
-from app.services.portal_client import PortalClient
-
-logger = get_logger(__name__)
 
 
 class SyncEngine:
@@ -83,7 +89,23 @@ class SyncEngine:
         self._ingest_client = ingest_client
         self._portal_client = portal_client
         self._image_store = image_store
-        self._image_http = httpx.AsyncClient(timeout=30.0) if image_store else None
+        # SPEC-SEC-SSRF-001 REQ-7.4 / REQ-7.6 / AC-23: wrap the image
+        # http client in a ``PinnedResolverTransport`` so every adapter
+        # image fetch (Notion / Confluence / GitHub / Airtable) inherits
+        # DNS-rebinding defence without per-adapter boilerplate. The
+        # guard call in klai_image_storage.pipeline runs first and
+        # populates the transport's pin map via ``_image_transport``
+        # below. Unpinned hosts still fall through to normal DNS, so
+        # tests that don't seed pins keep working.
+        self._image_transport: PinnedResolverTransport | None
+        if image_store:
+            self._image_transport = PinnedResolverTransport()
+            self._image_http = httpx.AsyncClient(
+                transport=self._image_transport, timeout=30.0,
+            )
+        else:
+            self._image_transport = None
+            self._image_http = None
         self._crawl_sync_client = crawl_sync_client
         self._global_semaphore = asyncio.Semaphore(3)
         self._connector_locks: dict[uuid.UUID, asyncio.Lock] = {}
@@ -356,7 +378,7 @@ class SyncEngine:
                 # cause is user-state, not our bug.
                 status = SyncStatus.AUTH_ERROR
                 error_details.append({"error": str(err), "reason": "reconnect_required"})
-                # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
+                # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure  # noqa: E501
                 logger.warning(
                     "OAuth reconnect required for connector %s",
                     connector_id,
@@ -371,6 +393,29 @@ class SyncEngine:
                     "Sync failed for connector %s",
                     connector_id,
                     extra={"connector_id": str(connector_id)},
+                )
+
+            except PersistedUrlRejectedError as err:
+                # SPEC-SEC-SSRF-001 REQ-8.4 / AC-21: legacy connector
+                # row stored an SSRF-unsafe URL. Mark the sync failed
+                # with the stable error code so ops dashboards and
+                # regression tests can query it. No Atlassian SDK
+                # client or HTTP request was issued — the guard fired
+                # inside ``_extract_config``.
+                status = SyncStatus.FAILED
+                error_details.append({
+                    "error": err.error_code,
+                    "hostname": err.hostname or "",
+                    "reason": str(err),
+                })
+                logger.warning(
+                    "Sync blocked for connector %s: persisted URL failed SSRF guard",
+                    connector_id,
+                    extra={
+                        "connector_id": str(connector_id),
+                        "error_code": err.error_code,
+                        "hostname": err.hostname,
+                    },
                 )
 
             except Exception as err:
@@ -468,6 +513,19 @@ class SyncEngine:
                 return
 
             try:
+                # SPEC-SEC-SSRF-001 REQ-2.4 / AC-9: re-validate the
+                # persisted web_crawler config BEFORE delegating to
+                # knowledge-ingest. Legacy rows predating the portal
+                # validator (Fase 5) may still hold an SSRF-unsafe
+                # base_url / canary_url. On rejection
+                # ``PersistedUrlRejectedError`` propagates to the
+                # common except handler below, which marks the sync
+                # run failed with ``error="ssrf_blocked_persisted_url"``
+                # — ``crawl_sync`` / ``crawl_site`` are never invoked.
+                validate_web_crawler_config_strict(
+                    portal_config.config,
+                    connector_id=str(connector_id),
+                )
                 # REQ-03.1: submit the config (connector_id only — no cookies).
                 enqueue_resp = await self._crawl_sync_client.crawl_sync(
                     connector_id=str(connector_id),
@@ -544,6 +602,29 @@ class SyncEngine:
                                 "remote_job_id": remote_job_id,
                             },
                         ]
+
+            except PersistedUrlRejectedError as ssrf_err:
+                # SPEC-SEC-SSRF-001 REQ-2.4 / AC-9: legacy config failed
+                # the SSRF guard. Do NOT delegate to knowledge-ingest.
+                # The stable error code lets ops dashboards and the
+                # regression suite query persisted-URL rejections
+                # separately from network / validation failures.
+                status = SyncStatus.FAILED
+                error_details = [
+                    {
+                        "error": ssrf_err.error_code,
+                        "hostname": ssrf_err.hostname or "",
+                        "reason": str(ssrf_err),
+                    },
+                ]
+                logger.warning(
+                    "web_crawler_delegation_blocked_ssrf",
+                    extra={
+                        "connector_id": str(connector_id),
+                        "error_code": ssrf_err.error_code,
+                        "hostname": ssrf_err.hostname,
+                    },
+                )
 
             except httpx.HTTPStatusError as enqueue_err:
                 # REQ-03.5: non-2xx from /crawl/sync → single failed row, no retry.
@@ -666,6 +747,7 @@ class SyncEngine:
             image_store=self._image_store,
             http_client=self._image_http,
             parsed_images=decoded_parsed,
+            pin_transport=self._image_transport,
         )
 
     async def _fail_sync_run(self, sync_run_id: uuid.UUID, error_message: str) -> None:

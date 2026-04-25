@@ -35,6 +35,11 @@ from klai_image_storage.storage import (
     MAX_IMAGE_SIZE,
     MAX_IMAGES_PER_DOCUMENT,
 )
+from klai_image_storage.url_guard import (
+    PinnedResolverTransport,
+    SsrfBlockedError,
+    validate_image_url,
+)
 from klai_image_storage.utils import (
     dedupe_image_urls,
     is_valid_image_src,
@@ -77,19 +82,62 @@ async def _download_validate_upload(
     image_store: ImageStore,
     org_id: str,
     kb_slug: str,
+    pin_transport: PinnedResolverTransport | None = None,
 ) -> str | None:
     """Fetch *url*, validate magic bytes, upload to S3, return the public URL.
 
     Returns the public URL on success, ``None`` on any failure. All
     failure paths log with the ``url`` field so production can correlate.
 
+    Args:
+        url: Image URL to fetch.
+        http_client: httpx client that owns its own transport.
+        image_store: S3 store client.
+        org_id / kb_slug: Tenant context surfaced in log events.
+        pin_transport: Optional :class:`PinnedResolverTransport` to
+            seed with the validator's resolved IP before the GET.
+            When provided, the fetch connects to the exact IP the
+            guard accepted (closes the DNS-rebinding TOCTOU window,
+            REQ-7.4). When ``None``, the guard has still run and
+            the 60 s DNS cache narrows the window even without the
+            transport.
+
     Exception policy:
+    - :class:`SsrfBlockedError` (REQ-7.2) → ``warning`` with stable
+      key ``adapter_image_ssrf_blocked`` and ``org_id``/``kb_slug``
+      context. No HTTP request is made. A single image rejection
+      never halts a document's ingest (AC-15).
     - ``httpx.HTTPError`` (connect, timeout, read, decode) → ``warning``,
       no traceback. These are expected when crawling hostile or dead
       pages.
     - any other ``Exception`` on the upload leg → ``exception``, with
       traceback. Unexpected — e.g. S3 layer crash, mock mis-set in tests.
     """
+    # REQ-7.2 / AC-15 through AC-18: validate the image URL before ANY network
+    # I/O. Runs before status checks, magic-byte validation, and the
+    # http_client.get() call so docker-internal hosts are never probed
+    # even for their TCP handshake.
+    try:
+        validated = await validate_image_url(url)
+    except SsrfBlockedError as exc:
+        logger.warning(
+            "adapter_image_ssrf_blocked",
+            url=url.split("?", 1)[0],
+            hostname=exc.hostname,
+            reason=exc.reason,
+            org_id=org_id,
+            kb_slug=kb_slug,
+        )
+        return None
+
+    # REQ-7.4 / AC-23: seed the caller-provided transport's pin map
+    # with the resolved IP so the GET targets the exact address the
+    # guard accepted. Explicit kwarg is preferred over reaching into
+    # http_client internals — the API contract is clear and httpx
+    # version drift cannot silently disable pinning.
+    if pin_transport is not None:
+        pin_transport.pin(validated.hostname, validated.preferred_ip)
+
     try:
         resp = await http_client.get(url)
     except httpx.HTTPError as exc:
@@ -118,9 +166,7 @@ async def _download_validate_upload(
         return None
 
     try:
-        result = await image_store.upload_image(
-            org_id, kb_slug, data, _ext_from_url(url)
-        )
+        result = await image_store.upload_image(org_id, kb_slug, data, _ext_from_url(url))
     except Exception:
         logger.exception("image_upload_failed", url=url)
         return None
@@ -142,9 +188,7 @@ async def _upload_parsed_image(
     to a specific parsed element (document path, Notion block ID, ...).
     """
     if len(image.data) > MAX_IMAGE_SIZE:
-        logger.warning(
-            "parsed_image_too_large", source_id=image.source_id, size=len(image.data)
-        )
+        logger.warning("parsed_image_too_large", source_id=image.source_id, size=len(image.data))
         return None
 
     if not image_store.validate_image(image.data):
@@ -152,9 +196,7 @@ async def _upload_parsed_image(
         return None
 
     try:
-        result = await image_store.upload_image(
-            org_id, kb_slug, image.data, image.ext
-        )
+        result = await image_store.upload_image(org_id, kb_slug, image.data, image.ext)
     except Exception:
         logger.exception("parsed_image_upload_failed", source_id=image.source_id)
         return None
@@ -174,6 +216,7 @@ async def download_and_upload_adapter_images(
     image_store: ImageStore,
     http_client: httpx.AsyncClient,
     parsed_images: list[ParsedImage] | None = None,
+    pin_transport: PinnedResolverTransport | None = None,
 ) -> list[str]:
     """Upload images for a connector-adapter document.
 
@@ -189,6 +232,10 @@ async def download_and_upload_adapter_images(
             document parser (e.g. Unstructured for PDF/DOCX). The
             caller is responsible for the base64 decode and the
             MIME-to-extension mapping; see :class:`ParsedImage`.
+        pin_transport: Optional :class:`PinnedResolverTransport` paired
+            with *http_client* — when provided, the SSRF guard's
+            resolved IP is registered so the actual GET connects to
+            that exact address. See REQ-7.4 / AC-23.
 
     Returns:
         List of public URLs for successfully uploaded images, in the
@@ -200,9 +247,7 @@ async def download_and_upload_adapter_images(
     for image in parsed_images or []:
         if remaining <= 0:
             break
-        public_url = await _upload_parsed_image(
-            image, image_store=image_store, org_id=org_id, kb_slug=kb_slug
-        )
+        public_url = await _upload_parsed_image(image, image_store=image_store, org_id=org_id, kb_slug=kb_slug)
         if public_url is not None:
             uploaded_urls.append(public_url)
             remaining -= 1
@@ -216,6 +261,7 @@ async def download_and_upload_adapter_images(
             image_store=image_store,
             org_id=org_id,
             kb_slug=kb_slug,
+            pin_transport=pin_transport,
         )
         if public_url is not None:
             uploaded_urls.append(public_url)
@@ -237,6 +283,7 @@ async def download_and_upload_crawl_images(
     kb_slug: str,
     image_store: ImageStore,
     http_client: httpx.AsyncClient,
+    pin_transport: PinnedResolverTransport | None = None,
 ) -> list[str]:
     """Upload images for a web-crawled page.
 
@@ -253,6 +300,9 @@ async def download_and_upload_crawl_images(
         image_store: S3 client to upload into.
         http_client: Async HTTP client used for image downloads. The
             caller owns its lifecycle.
+        pin_transport: Optional :class:`PinnedResolverTransport` paired
+            with *http_client* — see the adapter orchestrator docs
+            for the REQ-7.4 / AC-23 rationale.
 
     Returns:
         List of public URLs for successfully uploaded images, in order
@@ -277,6 +327,7 @@ async def download_and_upload_crawl_images(
             image_store=image_store,
             org_id=org_id,
             kb_slug=kb_slug,
+            pin_transport=pin_transport,
         )
         if public_url is not None:
             uploaded_urls.append(public_url)
