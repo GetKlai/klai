@@ -13,6 +13,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 # Repo-mirror layout: /repo/klai-libs/..., /repo/klai-portal/backend/...
 WORKDIR /repo
 COPY klai-libs/connector-credentials klai-libs/connector-credentials
+COPY klai-libs/image-storage klai-libs/image-storage
 COPY klai-portal/backend/pyproject.toml klai-portal/backend/pyproject.toml
 COPY klai-portal/backend/uv.lock klai-portal/backend/uv.lock
 
