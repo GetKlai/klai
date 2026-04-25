@@ -13,7 +13,9 @@ import os
 # inside a test module works out of the box.
 _DEFAULTS: dict[str, str] = {
     "POSTGRES_DSN": "postgresql+asyncpg://test:test@localhost:5432/scribe_test",
-    "WHISPER_SERVER_URL": "http://transcription-service.test",
+    # Must satisfy the allowlist in `app.core.config._WHISPER_ALLOWED_HOSTS`
+    # (SPEC-SEC-HYGIENE-001 REQ-37.1). `whisper-server` is in the allowlist.
+    "WHISPER_SERVER_URL": "http://whisper-server:8080",
     "WHISPER_PROVIDER_NAME": "vexa-transcription-service",
     "STT_PROVIDER": "whisper_http",
     "ZITADEL_ISSUER": "https://auth.test.local",
