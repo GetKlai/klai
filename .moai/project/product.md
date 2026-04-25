@@ -52,7 +52,7 @@ Bot-assisted meeting transcription via Vexa integration. A Vexa bot joins Google
 - Post-meeting batch transcription via Whisper Server (no real-time overhead)
 - Speaker attribution via Vexa's DOM-based speaking-indicator detection
 - EU-only audio processing -- audio never leaves Klai infrastructure
-- Calendar invite parsing via IMAP listener (meet@getklai.com)
+- Calendar invite parsing via IMAP listener (meet@getklai.com), DKIM/SPF/ARC-verified per SPEC-SEC-IMAP-001 — only invites whose RFC-5322 From identity is cryptographically verified can schedule a bot, preventing spoofed-organizer attacks against a customer's tenant budget
 - Consent notice displayed and recorded before any bot is dispatched
 
 ### Product Entitlements & Plans
