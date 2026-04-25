@@ -223,9 +223,7 @@ class TestMembershipPath:
 
 
 class TestJwtPath:
-    async def test_returns_200_when_jwt_matches_claimed_identity(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_returns_200_when_jwt_matches_claimed_identity(self, monkeypatch: pytest.MonkeyPatch) -> None:
         redis = _make_redis_mock()
         monkeypatch.setattr("app.api.internal.get_redis_pool", AsyncMock(return_value=redis))
         monkeypatch.setattr("app.api.internal._check_rate_limit_internal", AsyncMock())
@@ -302,9 +300,7 @@ class TestCachingBehaviour:
         # Pre-seed the Redis cache with a verified entry.
         redis = _make_redis_mock()
         cache_key = "identity_verify:scribe:u-1:o-1"
-        redis._store[cache_key] = json.dumps(
-            {"user_id": "u-1", "org_id": "o-1", "evidence": "jwt"}
-        )
+        redis._store[cache_key] = json.dumps({"user_id": "u-1", "org_id": "o-1", "evidence": "jwt"})
         monkeypatch.setattr("app.api.internal.get_redis_pool", AsyncMock(return_value=redis))
         monkeypatch.setattr("app.api.internal._check_rate_limit_internal", AsyncMock())
 
@@ -383,9 +379,7 @@ class TestRedisFailureMode:
         body = json.loads(response.body)
         assert body["reason"] == "cache_unavailable"
 
-    async def test_returns_503_when_redis_set_raises_after_verified(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_returns_503_when_redis_set_raises_after_verified(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Cache miss + DB allow + Redis SET fails → MUST fail closed (REQ-1.6).
         redis = _make_redis_mock()
         redis.set = AsyncMock(side_effect=RedisError("connection refused"))
