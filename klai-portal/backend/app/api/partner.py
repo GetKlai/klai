@@ -467,9 +467,10 @@ async def widget_config(
         "session_expires_at": expires_at.isoformat(),
     }
 
+    # REQ-2.2: NEVER set Access-Control-Allow-Credentials for widget endpoints.
+    # Widget traffic uses credentials: 'omit' — no BFF session cookie involved.
     headers = {
         "Access-Control-Allow-Origin": origin,
-        "Access-Control-Allow-Credentials": "true",
         "Vary": "Origin",
     }
 
@@ -505,11 +506,12 @@ async def widget_config_preflight(
     if not origin or not origin_allowed(origin, allowed_origins):
         return Response(status_code=204)
 
+    # REQ-2.2: NEVER set Access-Control-Allow-Credentials for widget endpoints.
+    # Widget traffic uses credentials: 'omit' — no BFF session cookie involved.
     headers = {
         "Access-Control-Allow-Origin": origin,
         "Access-Control-Allow-Methods": "GET, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, Authorization",
-        "Access-Control-Allow-Credentials": "true",
         "Access-Control-Max-Age": "86400",
         "Vary": "Origin",
     }

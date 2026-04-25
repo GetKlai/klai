@@ -30,28 +30,56 @@ logger = structlog.get_logger()
 # Methods considered "safe" — never mutate server state and are exempt from CSRF.
 _CSRF_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
-# Route prefixes that intentionally operate without a session — e.g. the OIDC
-# flow itself, which is what creates the session. These are always CSRF-exempt.
+# Route prefixes that intentionally operate without a session.
+# Each entry carries a rationale comment per REQ-4.1 (SPEC-SEC-CORS-001).
+# The CORS allowlist (REQ-1) is the browser-side gate that makes these
+# exemptions safe: cross-origin credentialed probing is blocked before any
+# request reaches these endpoints (AC-2, AC-7).
 _CSRF_EXEMPT_PREFIXES: tuple[str, ...] = (
+    # pre-session: OIDC flow INITIATES the session — no BFF cookie exists yet.
+    # REQ-1 / AC-2 ensures cross-origin browsers cannot probe this pre-session flow.
     "/api/auth/oidc/start",
+    # pre-session: OIDC callback COMPLETES the session — no BFF cookie yet.
+    # REQ-1 / AC-2 ensures cross-origin browsers cannot probe this pre-session flow.
     "/api/auth/oidc/callback",
+    # pre-session: Zitadel IDP intent start (Google/Microsoft SSO redirect).
+    # No BFF session exists; Zitadel redirects back after external IDP auth. REQ-1 / AC-2.
     "/api/auth/idp-intent",
+    # pre-session: Zitadel IDP intent callback — finalises external IDP login.
+    # No BFF session yet; same pre-session condition as /api/auth/idp-intent. REQ-1 / AC-2.
     "/api/auth/idp-callback",
     # Zitadel Login V2 finishers — called from my.getklai.com/login without a
     # portal BFF session. A stale cookie from a previous BFF login would
     # otherwise cause the CSRF check to reject the password/TOTP finish.
+    # REQ-1 REQ-4.3 — CORS allowlist (REQ-1) is the browser-side defense; AC-2.
     "/api/auth/login",
+    # Zitadel Login V2 TOTP finisher — same pre-session rationale as /api/auth/login.
+    # REQ-1 REQ-4.3 — CORS allowlist is the browser-side defense; AC-2.
     "/api/auth/totp-login",
+    # pre-session: SSO cookie exchange finaliser; uses klai_sso cookie, not BFF.
+    # No BFF csrf_token present; pre-session by construction. REQ-1 / AC-2.
     "/api/auth/sso-complete",
+    # signup: new users have no BFF session or csrf_token yet. pre-session.
+    # REQ-1 REQ-4.3 — CORS allowlist (REQ-1) blocks cross-origin probing; AC-2.
     "/api/signup",
+    # health probe: liveness/readiness probe, GET-only, not state-changing.
+    # no session required; health check has no side effects. REQ-1 / AC-7.
     "/api/health",
+    # no session: reserved prefix for intentionally public endpoints (none in use today).
+    # REQ-1 / AC-7 — CORS allowlist blocks cross-origin credential probing.
     "/api/public/",
-    # Web-vitals beacon: navigator.sendBeacon cannot set X-CSRF-Token, so the
-    # endpoint is intentionally unauthenticated and CSRF-exempt.
+    # sendBeacon: navigator.sendBeacon cannot set X-CSRF-Token custom headers,
+    # so the endpoint is intentionally unauthenticated and CSRF-exempt. REQ-4 / AC-7.
     "/api/perf",
+    # internal: service-to-service surface authenticated by X-Internal-Secret,
+    # not the BFF cookie. No session; CSRF is a cookie-based threat. REQ-3.1 / AC-7.
     "/internal/",
+    # partner: partner API endpoints authenticated by Bearer pk_live_... keys,
+    # not the BFF cookie. No session; CSRF is a cookie-based threat. REQ-3.1 / AC-9 / AC-11.
     "/partner/",
-    "/widget/",
+    # /widget/ prefix has NO mounted handlers in portal-api (audited 2026-04-25:
+    # grep for prefix="/widget" returns zero results). Removed per REQ-4 audit.
+    # Widget traffic now lives under /partner/v1/widget-config (see partner CORS REQ-2).
 )
 
 
