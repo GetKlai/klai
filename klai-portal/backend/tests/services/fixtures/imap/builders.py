@@ -122,3 +122,29 @@ def dkim_sign(raw: bytes, signing_domain: str, selector: str = "test") -> bytes:
         include_headers=[b"From", b"To", b"Subject", b"Date", b"Message-ID"],
     )
     return sig + raw
+
+
+def arc_sign(
+    raw: bytes,
+    sealer_domain: str,
+    authserv_id: str,
+    selector: str = "test",
+) -> bytes:
+    """Prepend a real ARC-Seal + ARC-Message-Signature + ARC-Authentication-Results.
+
+    Uses the same throwaway RSA key that ``dkim_sign`` uses for the sealing
+    domain. The inner ``ARC-Authentication-Results`` is built by
+    ``dkim.arc_sign`` from any pre-existing ``Authentication-Results``
+    headers in ``raw`` whose authserv-id matches ``authserv_id`` — caller
+    should include such a header to model an upstream-authenticated forward.
+    """
+    k = key_for(sealer_domain, selector)
+    arc_headers = dkim.arc_sign(
+        message=raw,
+        selector=k.selector,
+        domain=k.domain,
+        privkey=k.private_pem,
+        srv_id=authserv_id.encode(),
+        include_headers=[b"From", b"To", b"Subject", b"Date", b"Message-ID"],
+    )
+    return b"".join(arc_headers) + raw
