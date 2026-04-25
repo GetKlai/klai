@@ -77,27 +77,56 @@ def test_no_ics_in_email() -> None:
     assert parts == []
 
 
+def _make_verified_result(raw_email: bytes, from_addr: str):
+    """Build a passing MailAuthResult for tests that isolate the post-auth flow."""
+    from app.services.mail_auth import ArcResult, DkimResult, MailAuthResult, SpfResult
+
+    return MailAuthResult(
+        dkim_result=DkimResult(present=True, valid=True, d="example.com", aligned=True),
+        spf_result=SpfResult(result="pass", smtp_mailfrom_domain="example.com", aligned=True),
+        arc_result=ArcResult(),
+        from_header=from_addr,
+        from_domain="example.com",
+        message_id="<test@example.com>",
+        verified_from=from_addr,
+        reason="",
+        parsed_message=email.message_from_bytes(raw_email),
+    )
+
+
 @pytest.mark.asyncio
 async def test_process_email_with_valid_invite() -> None:
-    """A valid .ics email triggers tenant lookup and scheduling."""
+    """A mail-auth-verified .ics email triggers tenant lookup and scheduling.
+
+    SPEC-SEC-IMAP-001: ``find_tenant`` now receives ``verified_from`` (the
+    DKIM-verified RFC-5322 From address), NOT the ICS ``ORGANIZER`` field.
+    ``verify_mail_auth`` is mocked here so this test stays focused on the
+    ICS-extraction / tenant-lookup path; the crypto path is covered by
+    ``tests/services/test_mail_auth.py`` + ``tests/services/test_imap_listener.py``.
+    """
     ics_bytes = (FIXTURES / "google_meet.ics").read_bytes()
     raw_email = _make_email_with_ics(ics_bytes)
+    verified = _make_verified_result(raw_email, "calendar@example.com")
 
     mock_imap = MagicMock()
+    mock_imap.fetch = MagicMock(return_value=("OK", [(b"1", raw_email)]))
 
     with (
-        patch("app.services.imap_listener.asyncio.to_thread") as mock_to_thread,
+        patch(
+            "app.services.imap_listener.verify_mail_auth",
+            new_callable=AsyncMock,
+            return_value=verified,
+        ),
         patch("app.services.imap_listener.find_tenant", new_callable=AsyncMock) as mock_find,
         patch("app.services.imap_listener.schedule_invite", new_callable=AsyncMock) as mock_schedule,
     ):
-        # imap.fetch returns email data
-        mock_to_thread.return_value = ("OK", [(b"1", raw_email)])
-
         mock_find.return_value = ("user-123", 42)
 
         await _process_email(mock_imap, b"1")
 
-        mock_find.assert_awaited_once_with("alice@example.com")
+        # REQ-5.2: find_tenant is called with verified_from (From header),
+        # not with the ICS ORGANIZER field ("alice@example.com" in google_meet.ics).
+        mock_find.assert_awaited_once_with("calendar@example.com")
         mock_schedule.assert_awaited_once()
 
 
@@ -145,18 +174,26 @@ async def test_poll_once_marks_emails_seen() -> None:
 
 @pytest.mark.asyncio
 async def test_graceful_when_no_ics() -> None:
-    """An email without .ics is processed gracefully (no crash)."""
+    """A mail-auth-verified email without .ics is processed gracefully (no crash).
+
+    Post-SPEC-SEC-IMAP-001: mail-auth MUST pass before we even look for ICS parts.
+    This test mocks verify_mail_auth to isolate the "no ICS" branch.
+    """
     raw_email = MIMEText("Just a plain email").as_bytes()
+    verified = _make_verified_result(raw_email, "sender@example.com")
 
     mock_imap = MagicMock()
+    mock_imap.fetch = MagicMock(return_value=("OK", [(b"1", raw_email)]))
 
     with (
-        patch("app.services.imap_listener.asyncio.to_thread") as mock_to_thread,
+        patch(
+            "app.services.imap_listener.verify_mail_auth",
+            new_callable=AsyncMock,
+            return_value=verified,
+        ),
         patch("app.services.imap_listener.find_tenant", new_callable=AsyncMock) as mock_find,
         patch("app.services.imap_listener.schedule_invite", new_callable=AsyncMock) as mock_schedule,
     ):
-        mock_to_thread.return_value = ("OK", [(b"1", raw_email)])
-
         await _process_email(mock_imap, b"1")
 
         mock_find.assert_not_awaited()
