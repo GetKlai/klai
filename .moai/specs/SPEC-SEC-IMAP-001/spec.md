@@ -1,9 +1,9 @@
 ---
 id: SPEC-SEC-IMAP-001
-version: 0.2.0
-status: draft
+version: 0.3.0
+status: shipped
 created: 2026-04-24
-updated: 2026-04-24
+updated: 2026-04-25
 author: Mark Vletter
 priority: high
 tracker: SPEC-SEC-AUDIT-2026-04
@@ -12,6 +12,47 @@ tracker: SPEC-SEC-AUDIT-2026-04
 # SPEC-SEC-IMAP-001: IMAP Listener DKIM/SPF/ARC Enforcement
 
 ## HISTORY
+
+### v0.3.0 (2026-04-25) — POST-SHIP CORRECTIONS
+
+The implementation shipped in PRs #165, #172, #174, #175. Live verification on
+core-01 against a real captured invite uncovered three corrections to the
+research.md mental model — recorded here so the SPEC matches reality:
+
+- **The trusted upstream relay is `shared199.cloud86-host.io`, NOT
+  `mail.getklai.com`.** Klai's mailbox is hosted on cloud86; their MX
+  stamps `Authentication-Results` under that authserv-id. REQ-2.4's
+  trust-boundary filter targets that string. The default for
+  `imap_authserv_id` is the cloud86 hostname; the SPEC's references to
+  `mail.getklai.com` below are the operator-facing alias and remain
+  conceptually correct, but the wire-level authserv-id is cloud86's.
+- **ARC fallback is the hot path, not a cold one.** Cloud86's amavis
+  layer modifies the message body on forward, breaking the original
+  upstream DKIM crypto for every inbound invite. Direct DKIM=pass
+  alignment (REQ-1.2) is therefore rare in production; ARC fallback
+  (REQ-3) carries every legitimate accept. `imap_trusted_arc_sealers`
+  must include `getklai.com` because cloud86 ARC-seals every inbound
+  message under our domain — that seal is the trust boundary at the
+  IMAP boundary.
+- **`dkim.ARC.verify()` does NOT populate ``ARC.domain``** for
+  verification flows; the sealing domain lives in
+  ``results[*]['as-domain']``. Implementation reads the latter via the
+  `_outermost_arc_sealer` helper. A naive read of `ARC.domain` returns
+  `None` for every legitimately forwarded invite — silent
+  `arc_untrusted_sealer` rejection. Caught only by live verification;
+  synthetic test mocks agreed with the wrong assumption.
+
+Companion changes:
+- `Settings._require_imap_authserv_id_when_listener_enabled` model_validator
+  fails-loud at startup if IMAP is enabled and the authserv-id is empty.
+- `TestAC5_RealArcCrypto` integration tests exercise `dkim.arc_sign` and
+  `dkim.arc_verify` end-to-end (no mocks) so a future regression on the
+  ARC.domain / results-list contract is caught locally.
+
+Operator note: any time the upstream mail-host changes, both
+`imap_authserv_id` and (potentially) `imap_trusted_arc_sealers` must
+be reviewed. There is no automatic detection — the model_validator only
+catches an explicit-empty value, not silent rot of a stale default.
 
 ### v0.2.0 (2026-04-24)
 - Expanded from stub via `/moai plan SPEC-SEC-IMAP-001`
