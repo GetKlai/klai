@@ -312,6 +312,13 @@ services:
     ports:
       - "127.0.0.1:8001:8000"
     env_file: ./klai-mailer/.env
+    environment:
+      # Cross-service shared secret — single source of truth in /opt/klai/.env.
+      # Portal-api sends `X-Internal-Secret: ${PORTAL_API_INTERNAL_SECRET}` when
+      # calling /internal/send; mailer compares via hmac.compare_digest
+      # (SPEC-SEC-MAILER-INJECTION-001 REQ-8). Wiring via `environment:` instead
+      # of duplicating into klai-mailer/.env keeps rotation atomic.
+      INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
     networks:
       - klai-net
 
