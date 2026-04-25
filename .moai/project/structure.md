@@ -68,7 +68,9 @@ klai-portal/
 │   │   ├── services/          # Business logic
 │   │   │   ├── zitadel.py     # Zitadel API client
 │   │   │   ├── vexa.py        # Vexa meeting bot client
-│   │   │   └── bot_poller.py  # Background meeting bot polling
+│   │   │   ├── bot_poller.py  # Background meeting bot polling
+│   │   │   ├── imap_listener.py # Calendar-invite IMAP listener (gates on mail-auth)
+│   │   │   └── mail_auth.py   # DKIM/SPF/ARC verification (SPEC-SEC-IMAP-001)
 │   │   └── core/
 │   │       └── config.py      # Pydantic settings
 │   ├── alembic/               # Database migrations
