@@ -1190,3 +1190,289 @@ async def get_effective_templates(
 
     await _audit_internal_call(request, org_id=org.id)
     return TemplatesEffectiveResponse(instructions=instructions)
+
+
+# ---------------------------------------------------------------------------
+# SPEC-SEC-IDENTITY-ASSERT-001 REQ-1: /internal/identity/verify
+# ---------------------------------------------------------------------------
+#
+# Source-of-truth for "is the claimed (user, org) tuple real?". Every
+# Klai service that carries a tenant or user identity claim consults
+# this endpoint via the shared library at klai-libs/identity-assert/.
+#
+# The endpoint is the THIN HTTP wrapper; verification logic lives in
+# app.services.identity_verifier and the Redis cache lives in
+# app.services.identity_verify_cache. This separation means service
+# layer is unit-testable without spinning up a TestClient, and the
+# cache layer is swappable in isolation.
+
+
+class IdentityVerifyRequest(BaseModel):
+    """Request body for POST /internal/identity/verify (REQ-1.1)."""
+
+    caller_service: str
+    claimed_user_id: str
+    claimed_org_id: str
+    bearer_jwt: str | None = None
+
+
+class IdentityVerifySuccess(BaseModel):
+    """200 response when the claim is verified."""
+
+    verified: Literal[True] = True
+    user_id: str
+    org_id: str
+    cache_ttl_seconds: int
+    evidence: Literal["jwt", "membership"]
+
+
+class IdentityVerifyDeny(BaseModel):
+    """403/400/503 response body when the claim is denied or unverifiable."""
+
+    verified: Literal[False] = False
+    reason: str
+
+
+def _hash_zitadel_id(value: str) -> str:
+    """16-hex-char SHA-256 prefix.
+
+    Same convention as ``_hash_sub`` in
+    ``klai-retrieval-api/retrieval_api/middleware/auth.py``. Keeps
+    structlog entries free of raw UUIDs / Zitadel IDs (REQ-1.7).
+    """
+
+    import hashlib  # local import to avoid touching module-level imports
+
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+
+def _get_identity_jwks_resolver() -> "object":
+    """Return the process-wide PyJWKClient for end-user JWT validation.
+
+    Reuses the same Zitadel JWKS endpoint as bff_oidc — Zitadel signs all
+    tokens (id_tokens AND access_tokens) with the same key set. We do NOT
+    reuse ``app.services.bff_oidc._get_jwks_client`` directly because that
+    helper is private; instead we instantiate our own client backed by the
+    same URL so the two don't share cache state (avoids contamination if
+    bff_oidc rotates its client for any reason).
+    """
+
+    from jwt import PyJWKClient  # local import keeps optional dep top-level out
+
+    global _identity_jwks_client
+    if _identity_jwks_client is None:
+        _identity_jwks_client = PyJWKClient(
+            f"{settings.zitadel_base_url}/oauth/v2/keys",
+            cache_keys=True,
+            max_cached_keys=16,
+            lifespan=3600,
+        )
+    return _identity_jwks_client
+
+
+_identity_jwks_client: "object | None" = None
+
+
+@router.post(
+    "/identity/verify",
+    response_model=None,  # union response — FastAPI serialises via the explicit Response object
+)
+async def verify_identity(
+    request: Request,
+    body: IdentityVerifyRequest,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Verify a service-asserted identity claim against portal source-of-truth.
+
+    Implements SPEC-SEC-IDENTITY-ASSERT-001 REQ-1. See the SPEC and
+    ``app/services/identity_verifier.py`` for the contract; this handler is
+    the HTTP layer + cache + structured-log wrapper.
+
+    Failure modes (REQ-1.2 / 1.3 / 1.4 / 1.6):
+
+    - ``unknown_caller_service`` → HTTP 400 (caller is misconfigured; loud
+      failure rather than silent rate-limit consumption).
+    - ``invalid_jwt`` → HTTP 403 (the caller forwarded a JWT that fails
+      signature/exp validation; never falls back to membership — REQ-1.8).
+    - ``jwt_identity_mismatch`` → HTTP 403 (the JWT is valid but its sub /
+      resourceowner do not match the claimed tuple).
+    - ``no_membership`` → HTTP 403 (membership lookup found no active
+      ``portal_users`` row).
+    - ``cache_unavailable`` → HTTP 503 (Redis call failed; auth-class
+      control fails closed — REQ-1.6).
+    """
+
+    from app.services.identity_verifier import (
+        KNOWN_CALLER_SERVICES,
+        verify_identity_claim,
+    )
+    from app.services.identity_verify_cache import (
+        CacheUnavailable,
+        cache_verified_decision,
+        get_cached_decision,
+    )
+
+    await _require_internal_token(request)
+
+    # REQ-1.2: unknown caller_service is a 400 (not silenced into rate-limit).
+    if body.caller_service not in KNOWN_CALLER_SERVICES:
+        await _audit_internal_call(request, org_id=0)
+        structlog_logger.warning(
+            "identity_verify_decision",
+            caller_service=body.caller_service,
+            claimed_user_id_hash=_hash_zitadel_id(body.claimed_user_id),
+            claimed_org_id=body.claimed_org_id,
+            verified=False,
+            reason="unknown_caller_service",
+        )
+        return Response(
+            content=IdentityVerifyDeny(reason="unknown_caller_service").model_dump_json(),
+            status_code=status.HTTP_400_BAD_REQUEST,
+            media_type="application/json",
+        )
+
+    # REQ-1.5: cache lookup before any DB or JWT work.
+    redis_pool = await get_redis_pool()
+    cache_user_id_hash = _hash_zitadel_id(body.claimed_user_id)
+
+    if redis_pool is None:
+        # No Redis → fail closed (REQ-1.6). This branch is hit when the pool
+        # was never initialised; transient errors are caught by CacheUnavailable.
+        await _audit_internal_call(request, org_id=0)
+        structlog_logger.warning(
+            "identity_verify_decision",
+            caller_service=body.caller_service,
+            claimed_user_id_hash=cache_user_id_hash,
+            claimed_org_id=body.claimed_org_id,
+            verified=False,
+            reason="cache_unavailable",
+        )
+        return Response(
+            content=IdentityVerifyDeny(reason="cache_unavailable").model_dump_json(),
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            media_type="application/json",
+        )
+
+    try:
+        cached = await get_cached_decision(
+            redis=redis_pool,
+            caller_service=body.caller_service,
+            claimed_user_id=body.claimed_user_id,
+            claimed_org_id=body.claimed_org_id,
+        )
+    except CacheUnavailable:
+        await _audit_internal_call(request, org_id=0)
+        structlog_logger.warning(
+            "identity_verify_decision",
+            caller_service=body.caller_service,
+            claimed_user_id_hash=cache_user_id_hash,
+            claimed_org_id=body.claimed_org_id,
+            verified=False,
+            reason="cache_unavailable",
+        )
+        return Response(
+            content=IdentityVerifyDeny(reason="cache_unavailable").model_dump_json(),
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            media_type="application/json",
+        )
+
+    if cached is not None and cached.evidence is not None and cached.user_id is not None and cached.org_id is not None:
+        await _audit_internal_call(request, org_id=0)
+        structlog_logger.info(
+            "identity_verify_decision",
+            caller_service=body.caller_service,
+            claimed_user_id_hash=cache_user_id_hash,
+            claimed_org_id=body.claimed_org_id,
+            verified=True,
+            evidence=cached.evidence,
+            cache_hit=True,
+        )
+        return Response(
+            content=IdentityVerifySuccess(
+                user_id=cached.user_id,
+                org_id=cached.org_id,
+                cache_ttl_seconds=60,
+                evidence=cached.evidence,
+            ).model_dump_json(),
+            status_code=status.HTTP_200_OK,
+            media_type="application/json",
+        )
+
+    # Cache miss: run the verifier.
+    decision = await verify_identity_claim(
+        db=db,
+        jwks_resolver=_get_identity_jwks_resolver(),  # type: ignore[arg-type]
+        caller_service=body.caller_service,
+        claimed_user_id=body.claimed_user_id,
+        claimed_org_id=body.claimed_org_id,
+        bearer_jwt=body.bearer_jwt,
+    )
+
+    if not decision.verified:
+        await _audit_internal_call(request, org_id=0)
+        structlog_logger.warning(
+            "identity_verify_decision",
+            caller_service=body.caller_service,
+            claimed_user_id_hash=cache_user_id_hash,
+            claimed_org_id=body.claimed_org_id,
+            verified=False,
+            reason=decision.reason,
+            cache_hit=False,
+        )
+        return Response(
+            content=IdentityVerifyDeny(reason=decision.reason or "unknown").model_dump_json(),
+            status_code=status.HTTP_403_FORBIDDEN,
+            media_type="application/json",
+        )
+
+    # Verified: cache and return 200.
+    try:
+        await cache_verified_decision(
+            redis=redis_pool,
+            caller_service=body.caller_service,
+            claimed_user_id=body.claimed_user_id,
+            claimed_org_id=body.claimed_org_id,
+            decision=decision,
+        )
+    except CacheUnavailable:
+        # Cache write failed AFTER a successful verification. We MUST NOT
+        # return the verified decision — see REQ-1.6 "auth-class control
+        # must not silently downgrade". A flap that disables the cache
+        # would amplify DB load on the next call; failing this single
+        # request closes that loop.
+        await _audit_internal_call(request, org_id=0)
+        structlog_logger.warning(
+            "identity_verify_decision",
+            caller_service=body.caller_service,
+            claimed_user_id_hash=cache_user_id_hash,
+            claimed_org_id=body.claimed_org_id,
+            verified=False,
+            reason="cache_unavailable",
+        )
+        return Response(
+            content=IdentityVerifyDeny(reason="cache_unavailable").model_dump_json(),
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            media_type="application/json",
+        )
+
+    await _audit_internal_call(request, org_id=0)
+    assert decision.user_id is not None and decision.org_id is not None and decision.evidence is not None
+    structlog_logger.info(
+        "identity_verify_decision",
+        caller_service=body.caller_service,
+        claimed_user_id_hash=cache_user_id_hash,
+        claimed_org_id=body.claimed_org_id,
+        verified=True,
+        evidence=decision.evidence,
+        cache_hit=False,
+    )
+    return Response(
+        content=IdentityVerifySuccess(
+            user_id=decision.user_id,
+            org_id=decision.org_id,
+            cache_ttl_seconds=60,
+            evidence=decision.evidence,
+        ).model_dump_json(),
+        status_code=status.HTTP_200_OK,
+        media_type="application/json",
+    )
