@@ -178,7 +178,7 @@ groups:
           service_group: portal-api
         annotations:
           summary: 'portal-api fail-open MFA bypasses > 10/min'
-          runbook_url: 'docs/runbooks/mfa-check-failed.md#fail-open-burst'
+          runbook_url: 'docs/runbooks/mfa-check-failed.md#triage-fail-open-burst-alert'
           description: |
             More than 10 ``mfa_check_failed`` events with ``outcome=fail-open``
             fired in the last minute. Each event represents a login that
