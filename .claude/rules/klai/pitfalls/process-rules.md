@@ -291,3 +291,60 @@ self-documenting about the expected prod value if SOPS drift occurs.
 The same-shape generalisation: **trust the container env, not the
 config source.** Any "silent fallback to a code default" in a migration
 off a blanket-inherit pattern is a latent bug.
+
+## scribe-deploy-no-alembic (HIGH)
+The `scribe-api.yml` GitHub Action does `docker compose up -d` only —
+it does NOT run `alembic upgrade head`. The Dockerfile CMD is
+`uvicorn`, no migrate step in the entrypoint either. New migrations
+land in the image but are not applied to the DB on deploy.
+
+**What it looks like in production**: app starts, any code path that
+references the new column raises `asyncpg.exceptions.UndefinedColumnError`.
+If wrapped in try/except (e.g. lifespan startup hooks), it logs a warning
+and the rest of the app keeps working — you only notice when the new
+feature silently does nothing. If NOT wrapped, the request fails with
+a 500.
+
+**SPEC-SEC-HYGIENE-001 scribe-slice (2026-04-27)** got bitten by this:
+migration `0007_c5f9e3a4` (adds `error_reason`) shipped in the image but
+not applied. Reaper-on-startup logged `scribe_startup_reaper_failed` with
+the `UndefinedColumnError`. The lifespan try/except caught it, app stayed
+up, but the new feature was dormant until manual `docker exec
+klai-core-scribe-api-1 alembic upgrade head` + container restart.
+
+**Prevention**:
+1. Any scribe SPEC that adds a migration MUST include in its acceptance
+   criteria: "after CI deploy completes, run `docker exec
+   klai-core-scribe-api-1 alembic upgrade head` and restart the
+   container" — and put that in the PR body so the merger doesn't forget.
+2. Better long-term fix: add a step to `scribe-api.yml` after `docker
+   compose up -d`:
+   ```yaml
+   - name: Apply alembic migrations
+     uses: appleboy/ssh-action@v1
+     with:
+       script: |
+         docker exec klai-core-scribe-api-1 alembic upgrade head
+   ```
+   Or move it into the Dockerfile CMD (`alembic upgrade head && exec uvicorn ...`).
+3. **General rule for all klai services with their own deploy workflow**:
+   grep the `.github/workflows/<service>.yml` for `alembic` BEFORE landing
+   any migration. If absent, use option 1 (manual + PR-body reminder) as
+   a stopgap and file a follow-up SPEC for option 2.
+
+**Audit (2026-04-27)** — verified by greping `Dockerfile` ENTRYPOINT/CMD
+across services:
+
+| Service | Auto-migrates on container start? |
+|---|---|
+| portal-api | YES — `entrypoint.sh` runs `alembic upgrade head` then exec's uvicorn |
+| scribe-api | NO — `CMD uvicorn …` only |
+| klai-connector | NO — `CMD uvicorn …` only |
+| klai-mailer | NO — `CMD uvicorn …` only |
+| klai-knowledge-mcp | NO — `CMD python main.py` only |
+| klai-knowledge-ingest | NO — `CMD uvicorn …` only |
+| klai-retrieval-api | NO — `CMD uvicorn …` only |
+
+Every service except portal-api needs the manual-migrate step or an
+entrypoint port. The portal-api `entrypoint.sh` (introduced by
+SPEC-CHAT-TEMPLATES-CLEANUP-001) is the canonical pattern to copy.
