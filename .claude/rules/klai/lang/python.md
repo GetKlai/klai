@@ -33,7 +33,7 @@ app.add_middleware(RequestContextMiddleware)   # middle: runs 2nd
 app.add_middleware(CORSMiddleware, ...)        # outermost: runs 1st — wraps all 401s with CORS headers
 ```
 
-**Prevention:** AuthGuard MUST be registered before CORSMiddleware. If it is registered after (= outermost), 401 responses bypass CORS and browsers block them silently.
+**Prevention:** AuthGuard MUST be registered before CORSMiddleware. If it is registered after (= outermost), 401 responses bypass CORS and browsers block them silently. Mechanically enforced by `rules/cors_middleware_last.yml` per SPEC-SEC-CORS-001 REQ-6 — every klai FastAPI service workflow (portal-api, klai-connector, retrieval-api, scribe-api, knowledge-ingest, klai-mailer, klai-knowledge-mcp, klai-focus/research-api) runs the lint via `ast-grep/action` on every PR that touches its entry module. The lint fires on both the simple sibling case and the nested-if case (klai-connector pattern, where CORS lived inside `if allowed_origins:`).
 
 ## Refactoring safety
 - Run `ruff check` after each refactor step, not only at the end.
