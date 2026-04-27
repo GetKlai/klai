@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -96,16 +97,23 @@ app.mount("/metrics", make_asgi_app())
 
 @app.get("/health")
 async def health():
-    """Check reachability of TEI, Qdrant, and LiteLLM."""
+    """Check reachability of TEI, Qdrant, LiteLLM, and (optionally) FalkorDB.
+
+    SPEC-SEC-HYGIENE-001 REQ-39: dependency failures MUST NOT leak internal
+    topology (hostnames, IPs, error strings) to unauthenticated callers, and
+    sync clients MUST NOT block the asyncio event loop. The exception detail
+    is preserved in structured logs via ``exc_info=True``.
+    """
     checks: dict[str, str] = {}
 
     # TEI (dense embeddings, port 7997 on gpu-01)
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
             resp = await client.get(f"{settings.tei_url}/health")
-            checks["tei"] = "ok" if resp.status_code == 200 else f"status={resp.status_code}"
-    except Exception as exc:
-        checks["tei"] = f"error: {exc}"
+            checks["tei"] = "ok" if resp.status_code == 200 else "error"
+    except Exception:
+        logger.warning("health_check_failed: tei", exc_info=True)
+        checks["tei"] = "error"
 
     # Qdrant
     try:
@@ -122,8 +130,9 @@ async def health():
             )
         await qc.get_collections()
         checks["qdrant"] = "ok"
-    except Exception as exc:
-        checks["qdrant"] = f"error: {exc}"
+    except Exception:
+        logger.warning("health_check_failed: qdrant", exc_info=True)
+        checks["qdrant"] = "error"
 
     # LiteLLM
     try:
@@ -132,24 +141,34 @@ async def health():
             if settings.litellm_api_key:
                 headers["Authorization"] = f"Bearer {settings.litellm_api_key}"
             resp = await client.get(f"{settings.litellm_url}/health/liveliness", headers=headers)
-            checks["litellm"] = "ok" if resp.status_code == 200 else f"status={resp.status_code}"
-    except Exception as exc:
-        checks["litellm"] = f"error: {exc}"
+            checks["litellm"] = "ok" if resp.status_code == 200 else "error"
+    except Exception:
+        logger.warning("health_check_failed: litellm", exc_info=True)
+        checks["litellm"] = "error"
 
-    # FalkorDB — only checked when Graphiti is enabled (AC-12)
+    # FalkorDB — only checked when Graphiti is enabled (AC-12).
+    # REQ-39.1: ``db.connection.ping()`` is the falkordb sync client; running
+    # it directly in an async handler blocks the event loop (Caddy polls
+    # /health every ~10 s). Hop into the default thread pool via
+    # ``asyncio.to_thread`` so concurrent /health probes and live retrieve
+    # traffic are not stalled on the ping round-trip.
     if settings.graphiti_enabled:
         try:
             from falkordb import FalkorDB
 
             db = FalkorDB(host=settings.falkordb_host, port=settings.falkordb_port)
-            db.connection.ping()
+            await asyncio.to_thread(db.connection.ping)
             checks["falkordb"] = "ok"
-        except Exception as exc:
-            checks["falkordb"] = f"error: {exc}"
+        except Exception:
+            logger.warning("health_check_failed: falkordb", exc_info=True)
+            checks["falkordb"] = "error"
 
     all_ok = all(v == "ok" for v in checks.values())
     status_code = 200 if all_ok else 503
 
     from fastapi.responses import JSONResponse
 
-    return JSONResponse(content={"status": "ok" if all_ok else "degraded", **checks}, status_code=status_code)
+    return JSONResponse(
+        content={"status": "ok" if all_ok else "degraded", **checks},
+        status_code=status_code,
+    )
