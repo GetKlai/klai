@@ -47,6 +47,17 @@ _RATIONALE_KEYWORDS = {
 # SPECs that grow more than 9 requirement groups or 99 acceptance criteria).
 _REQ_AC_PATTERN = re.compile(r"\b(REQ-\d+(?:\.\d+)?|AC-\d+)\b")
 
+# Canonical trailing-line format enforced across all entries to prevent
+# review-fatigue drift. Matches lines like:
+#   # REQ-1.2 / AC-2
+#   # REQ-3.1 / AC-9, AC-11
+#   # REQ-4.3 / AC-2
+# The whole comment block is allowed to contain free-form rationale, but the
+# LAST comment line within the lookback window must match this exact shape.
+_CANONICAL_TRAILING_PATTERN = re.compile(
+    r"^#\s*REQ-\d+(?:\.\d+)?\s*/\s*AC-\d+(?:\s*,\s*AC-\d+)*\s*$"
+)
+
 # Maximum number of lines above the literal to search
 _LOOKBACK = 5
 
@@ -157,5 +168,52 @@ def test_csrf_exempt_prefixes_have_rationale() -> None:
         pytest.fail(
             "The following _CSRF_EXEMPT_PREFIXES entries lack inline rationale "
             "(REQ-4.1 / REQ-4.2 / AC-12):\n"
+            + "\n".join(failures)
+        )
+
+
+def test_csrf_exempt_rationale_format_is_canonical() -> None:
+    """REQ-4.1 follow-up: enforce the canonical trailing-line format.
+
+    Each entry's comment block MUST end (within the 5-line lookback) with a
+    standalone line like ``# REQ-X.Y / AC-Z`` or ``# REQ-X.Y / AC-A, AC-B``.
+
+    The free-form rationale lines above are unconstrained; only the trailing
+    line is canonical. This prevents the format drift the reviewer flagged
+    in PR #180 simplify-pass (e.g. mixing ``REQ-1 / AC-2`` with ``REQ-1
+    REQ-4.3 — narrative ... AC-2`` made it impossible to grep for
+    "every entry that references REQ-3.1").
+    """
+    assert _SESSION_PY.exists(), f"session.py not found at {_SESSION_PY}"
+
+    source = _SESSION_PY.read_text(encoding="utf-8")
+    source_lines = source.splitlines()
+    tree = ast.parse(source, filename=str(_SESSION_PY))
+
+    prefixes = _extract_prefixes_with_lines(source, tree)
+    assert prefixes, "Could not find _CSRF_EXEMPT_PREFIXES in session.py"
+
+    failures: list[str] = []
+
+    for prefix_value, lineno in prefixes:
+        comments = _preceding_comment_lines(source_lines, lineno)
+        if not comments:
+            failures.append(
+                f"  Prefix {prefix_value!r} (line {lineno}): no comment block."
+            )
+            continue
+
+        last_line = comments[-1]
+        if not _CANONICAL_TRAILING_PATTERN.match(last_line):
+            failures.append(
+                f"  Prefix {prefix_value!r} (line {lineno}): trailing comment "
+                f"line is not canonical. Expected `# REQ-X.Y / AC-Z` (or "
+                f"`AC-A, AC-B` for multiple ACs). Got: {last_line!r}"
+            )
+
+    if failures:
+        pytest.fail(
+            "The following _CSRF_EXEMPT_PREFIXES entries do not end with a "
+            "canonical `# REQ-X.Y / AC-Z` trailing comment line:\n"
             + "\n".join(failures)
         )

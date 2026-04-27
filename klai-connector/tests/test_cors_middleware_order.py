@@ -130,14 +130,14 @@ class TestCorsWraps401:
 
     _ALLOWED_ORIGIN = "http://localhost:5174"
 
-    @pytest.fixture(autouse=True)
-    def _setup_client(self) -> None:
+    @pytest.fixture(scope="class")
+    def client(self) -> TestClient:
         app = _build_test_app(cors_origins=self._ALLOWED_ORIGIN)
-        self._client = TestClient(app, raise_server_exceptions=True)
+        return TestClient(app, raise_server_exceptions=True)
 
-    def test_401_carries_access_control_allow_origin(self) -> None:
+    def test_401_carries_access_control_allow_origin(self, client: TestClient) -> None:
         """GET /api/v1/connectors without auth returns 401 with ACAO for allowed origin."""
-        resp = self._client.get(
+        resp = client.get(
             "/api/v1/connectors",
             headers={"Origin": self._ALLOWED_ORIGIN},
         )
@@ -147,9 +147,9 @@ class TestCorsWraps401:
             "(CORSMiddleware must be outermost per SPEC-SEC-CORS-001 REQ-6.4)"
         )
 
-    def test_401_carries_vary_origin(self) -> None:
+    def test_401_carries_vary_origin(self, client: TestClient) -> None:
         """The Vary: Origin header is present on the 401 response."""
-        resp = self._client.get(
+        resp = client.get(
             "/api/v1/connectors",
             headers={"Origin": self._ALLOWED_ORIGIN},
         )
@@ -164,14 +164,14 @@ class TestCorsBlocksEvilOrigin:
     _ALLOWED_ORIGIN = "http://localhost:5174"
     _EVIL_ORIGIN = "https://evil.example"
 
-    @pytest.fixture(autouse=True)
-    def _setup_client(self) -> None:
+    @pytest.fixture(scope="class")
+    def client(self) -> TestClient:
         app = _build_test_app(cors_origins=self._ALLOWED_ORIGIN)
-        self._client = TestClient(app, raise_server_exceptions=True)
+        return TestClient(app, raise_server_exceptions=True)
 
-    def test_401_does_not_carry_acao_for_evil_origin(self) -> None:
+    def test_401_does_not_carry_acao_for_evil_origin(self, client: TestClient) -> None:
         """401 from an unlisted origin must NOT echo Access-Control-Allow-Origin."""
-        resp = self._client.get(
+        resp = client.get(
             "/api/v1/connectors",
             headers={"Origin": self._EVIL_ORIGIN},
         )
