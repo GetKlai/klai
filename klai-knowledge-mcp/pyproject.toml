@@ -7,13 +7,22 @@ dependencies = [
     "httpx>=0.27.0",
     "uvicorn[standard]>=0.30.0",
     "structlog>=25.0",
+    # SPEC-SEC-IDENTITY-ASSERT-001 REQ-7.4: identity verification helper
+    # consumed by save_personal_knowledge / save_org_knowledge / save_to_docs.
+    # Editable install — mirrors klai-image-storage pattern in knowledge-ingest.
+    "klai-identity-assert",
 ]
 
 [project.optional-dependencies]
 dev = [
     "ruff>=0.8",
     "pyright>=1.1",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
 ]
+
+[tool.uv.sources]
+klai-identity-assert = { path = "../klai-libs/identity-assert", editable = true }
 
 [tool.ruff]
 line-length = 100
