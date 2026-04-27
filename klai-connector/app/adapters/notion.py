@@ -29,6 +29,18 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 
+# child_page/child_database blocks produce "child_page:Title" strings via
+# extract_block_text — useless in a KB chunk. The Notion API returns them
+# with has_children=False (they are references, not containers), so
+# fetch_blocks_recursive never enters them. Skip the pointer text.
+_SKIP_BLOCK_TYPES = frozenset({"child_page", "child_database"})
+
+# Media block types whose extract_block_text output is "{type}:{url}".
+# The URLs are Notion-hosted S3 presigned URLs that expire in ~1h and
+# produce garbage when chunked. Captions are useful; URLs are not.
+_MEDIA_BLOCK_TYPES = frozenset({"image", "video", "file", "pdf"})
+
+
 class NotionAdapter(BaseAdapter):
     """Notion connector adapter.
 
@@ -348,16 +360,8 @@ def _flatten_block_texts(blocks: list[dict[str, Any]]) -> list[str]:
     Returns:
         Flat list of non-empty text strings.
     """
-    # child_page/child_database blocks produce "child_page:Title" strings
-    # via extract_block_text — useless in a KB chunk.  The Notion API returns
-    # them with has_children=False (they are references, not containers), so
-    # fetch_blocks_recursive never enters them.  Skip the pointer text.
-    _SKIP_BLOCK_TYPES = {"child_page", "child_database"}
-    # Media block types whose extract_block_text output is "{type}:{url}".
-    # The URLs are Notion-hosted S3 presigned URLs that expire in ~1h and
-    # produce garbage when chunked.  Captions are useful; URLs are not.
-    _MEDIA_BLOCK_TYPES = {"image", "video", "file", "pdf"}
-
+    # _SKIP_BLOCK_TYPES + _MEDIA_BLOCK_TYPES are module-level constants —
+    # see top of file for the rationale.
     texts: list[str] = []
     for block in blocks:
         block_type = block.get("type", "")
