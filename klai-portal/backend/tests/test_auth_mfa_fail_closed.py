@@ -442,6 +442,54 @@ async def test_required_has_any_mfa_request_error_returns_503(respx_zitadel: res
 
 
 # ---------------------------------------------------------------------------
+# Scenario 7b — orphan PortalOrg FK → fail-open + emit warning
+# Pre-existing silent fall-back was hiding data-integrity bugs (e.g. soft-
+# deleted org). We keep fail-open semantics but make it observable.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_portal_user_orphan_org_proceeds_documented_fail_open(
+    respx_zitadel: respx.MockRouter,
+) -> None:
+    respx_zitadel.post("/v2/users").mock(
+        return_value=httpx.Response(
+            200, json={"result": [{"userId": "uid-orphan", "details": {"resourceOwner": "zorg-orphan"}}]}
+        )
+    )
+    respx_zitadel.get("/v2/users/uid-orphan/authentication_methods").mock(
+        return_value=httpx.Response(200, json={"authMethodTypes": []})
+    )
+    respx_zitadel.post("/v2/sessions").mock(return_value=httpx.Response(200, json=_session_ok()))
+    respx_zitadel.post(url__regex=r"/v2/oidc/auth_requests/.+").mock(
+        return_value=httpx.Response(200, json={"callbackUrl": "https://chat.getklai.com/cb"})
+    )
+
+    # portal_user exists, but db.get(PortalOrg, ...) returns None (orphan FK).
+    db = _make_db_mock(
+        portal_user_org_id=99,
+        portal_user_zitadel_id="uid-orphan",
+        org_mfa_policy=None,  # forces db.get to return None
+    )
+    response = MagicMock()
+    audit_patch, emit_patch = _audit_emit_patches()
+
+    with capture_logs() as captured, audit_patch, emit_patch:
+        result = await login(body=_make_login_body(), response=response, db=db)
+
+    # Login succeeds (fail-open) and a session cookie is minted
+    assert result is not None
+    response.set_cookie.assert_called_once()
+
+    events = _mfa_events(captured)
+    assert len(events) == 1
+    assert events[0]["reason"] == "db_lookup_failed"
+    assert events[0]["mfa_policy"] == "optional"
+    assert events[0]["outcome"] == "fail-open"
+    assert events[0]["log_level"] == "warning"
+
+
+# ---------------------------------------------------------------------------
 # Run-phase addition (REQ-1.6) — unexpected exception type still fails closed
 # ---------------------------------------------------------------------------
 

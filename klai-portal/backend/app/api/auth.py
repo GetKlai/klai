@@ -287,6 +287,10 @@ async def _resolve_and_enforce_mfa(
     Fail-open paths (login proceeds):
         - portal_user lookup raised — cannot map email to org; preserve
           provisioning grace (REQ-3.2 fail-open arm).
+        - portal_user found but PortalOrg row is missing (orphan FK — deleted
+          or soft-deleted org). We log + fail-open since this is data-integrity,
+          not infrastructure failure, and a real user with a stale org should
+          not be locked out without observability.
         - ``mfa_policy in {"optional", "recommended"}`` regardless of
           ``has_any_mfa`` outcome — orgs that have not opted into enforcement
           accept availability over security at login time (REQ-3).
@@ -332,6 +336,21 @@ async def _resolve_and_enforce_mfa(
             level="error",
         )
         raise _mfa_unavailable()
+
+    if portal_user is not None and org is None:
+        # Orphan FK: portal_user.org_id points at a row that does not exist
+        # (deleted org, soft-deleted row, migration rollback). Pre-existing
+        # behaviour silently fell back to mfa_policy="optional" without any
+        # signal — that hid data-integrity bugs from operators. We keep the
+        # fail-open semantics (the user should still be able to log in) but
+        # emit a warning so the orphan is observable in Grafana.
+        _emit_mfa_check_failed(
+            reason="db_lookup_failed",
+            mfa_policy="optional",
+            outcome="fail-open",
+            email=email,
+            level="warning",
+        )
 
     mfa_policy = org.mfa_policy if org else "optional"
     if mfa_policy != "required":
@@ -562,7 +581,11 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
         try:
             has_totp = await zitadel.has_totp(zitadel_user_id, org_id_zitadel)
         except (httpx.HTTPStatusError, httpx.RequestError):
-            logger.warning("has_totp_check_failed -- defaulting to no-totp prompt", exc_info=True)
+            # has_totp drives only the UI prompt; failure here is fail-open
+            # (user falls through to password-only screen). We use structlog
+            # explicitly because portal-logging-py rules require it for any
+            # NEW log statement, and this catch is added by SPEC-SEC-MFA-001.
+            _slog.warning("has_totp_check_failed", exc_info=True)
             has_totp = False
 
     # 2. Create a Zitadel session by checking email + password
