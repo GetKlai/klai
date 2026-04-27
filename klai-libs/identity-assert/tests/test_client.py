@@ -320,13 +320,23 @@ async def test_verify_propagates_x_request_id(fake_user_id: str, fake_org_id: st
     assert isinstance(headers, dict)
     headers_dict = cast("dict[str, str]", headers)
     assert headers_dict.get("x-request-id") == "trace-abc-123"
-    assert headers_dict.get("x-internal-secret") == INTERNAL_SECRET
+    # Authorization header carries the shared INTERNAL_SECRET (matches
+    # portal-api's _require_internal_token convention).
+    assert headers_dict.get("authorization") == f"Bearer {INTERNAL_SECRET}"
     await asserter.aclose()
 
 
-async def test_verify_includes_internal_secret_header(
+async def test_verify_uses_authorization_bearer_for_internal_secret(
     fake_user_id: str, fake_org_id: str
 ) -> None:
+    """portal-api's /internal/* contract expects ``Authorization: Bearer <secret>``.
+
+    This is intentionally NOT a custom ``X-Internal-Secret`` header — that
+    convention is for callees of portal-api (knowledge-ingest, retrieval-api),
+    not callers OF portal-api. Drift between the two would make the call
+    fail with HTTP 401.
+    """
+
     capture: dict[str, object] = {}
     transport = _mock_portal(
         body={
@@ -350,7 +360,10 @@ async def test_verify_includes_internal_secret_header(
     headers = capture["headers"]
     assert isinstance(headers, dict)
     headers_dict = cast("dict[str, str]", headers)
-    assert headers_dict["x-internal-secret"] == INTERNAL_SECRET
+    assert headers_dict["authorization"] == f"Bearer {INTERNAL_SECRET}"
+    # X-Internal-Secret must NOT be set — that's the wrong convention for
+    # portal-api's /internal/* surface.
+    assert "x-internal-secret" not in headers_dict
     assert "/internal/identity/verify" in str(capture["url"])
     await asserter.aclose()
 

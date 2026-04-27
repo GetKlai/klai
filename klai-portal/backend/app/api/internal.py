@@ -30,6 +30,7 @@ from bson import ObjectId
 from bson.errors import InvalidId
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response
+from jwt import PyJWKClient
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
 from redis.exceptions import RedisError
@@ -1246,7 +1247,10 @@ def _hash_zitadel_id(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
 
 
-def _get_identity_jwks_resolver() -> "object":
+_identity_jwks_client: PyJWKClient | None = None
+
+
+def _get_identity_jwks_resolver() -> PyJWKClient:
     """Return the process-wide PyJWKClient for end-user JWT validation.
 
     Reuses the same Zitadel JWKS endpoint as bff_oidc — Zitadel signs all
@@ -1257,8 +1261,6 @@ def _get_identity_jwks_resolver() -> "object":
     bff_oidc rotates its client for any reason).
     """
 
-    from jwt import PyJWKClient  # local import keeps optional dep top-level out
-
     global _identity_jwks_client
     if _identity_jwks_client is None:
         _identity_jwks_client = PyJWKClient(
@@ -1268,9 +1270,6 @@ def _get_identity_jwks_resolver() -> "object":
             lifespan=3600,
         )
     return _identity_jwks_client
-
-
-_identity_jwks_client: "object | None" = None
 
 
 @router.post(
@@ -1359,6 +1358,7 @@ async def verify_identity(
             caller_service=body.caller_service,
             claimed_user_id=body.claimed_user_id,
             claimed_org_id=body.claimed_org_id,
+            bearer_jwt=body.bearer_jwt,
         )
     except CacheUnavailable:
         await _audit_internal_call(request, org_id=0)
@@ -1401,7 +1401,7 @@ async def verify_identity(
     # Cache miss: run the verifier.
     decision = await verify_identity_claim(
         db=db,
-        jwks_resolver=_get_identity_jwks_resolver(),  # type: ignore[arg-type]
+        jwks_resolver=_get_identity_jwks_resolver(),
         caller_service=body.caller_service,
         claimed_user_id=body.claimed_user_id,
         claimed_org_id=body.claimed_org_id,

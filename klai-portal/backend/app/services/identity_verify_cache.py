@@ -2,8 +2,19 @@
 
 SPEC-SEC-IDENTITY-ASSERT-001 REQ-1.5 / REQ-1.6:
 
-- Cache successful verifications for 60 seconds, keyed on
-  ``(caller_service, claimed_user_id, claimed_org_id, evidence)``.
+- Cache successful verifications for 60 seconds, keyed strictly on the
+  ``(caller_service, claimed_user_id, claimed_org_id, evidence)`` tuple
+  per REQ-1.5. The fourth coordinate keeps JWT-evidence and
+  membership-evidence cache entries distinct so the ``evidence`` field
+  in each response honestly reflects what was actually verified for that
+  call (a membership-fallback request must NOT silently get a JWT-evidence
+  cached value, or the audit signal would lie).
+- The evidence dimension at lookup time is determined deterministically
+  by ``bearer_jwt`` presence: a JWT-bearing request can only ever return
+  ``evidence="jwt"`` (REQ-1.3 requires JWT validation when bearer_jwt is
+  set; REQ-1.8 forbids fallthrough to membership when JWT is invalid).
+  An ``bearer_jwt=None`` request can only return ``evidence="membership"``
+  (REQ-1.4). So lookup keying on the same dimension is correct.
 - Cache hits skip both DB and JWT signature re-check — the cached evidence
   is the authoritative answer for the TTL window.
 - Denials are NEVER cached (matches consumer-side behaviour and prevents
@@ -25,7 +36,7 @@ from typing import TYPE_CHECKING
 
 from redis.exceptions import RedisError
 
-from app.services.identity_verifier import VerifyDecision
+from app.services.identity_verifier import Evidence, VerifyDecision
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -44,17 +55,33 @@ class CacheUnavailable(Exception):
     """Redis call failed and the endpoint MUST fail closed (HTTP 503)."""
 
 
-def _build_key(*, caller_service: str, claimed_user_id: str, claimed_org_id: str) -> str:
-    """Build a Redis key from the verifier inputs.
+def evidence_for_lookup(*, bearer_jwt: str | None) -> Evidence:
+    """Determine the evidence dimension for a cache lookup deterministically.
 
-    Note: ``evidence`` is part of the cached *value*, not the key. The key
-    spans both JWT and membership outcomes for the same tuple — whichever
-    decision lands first wins for the TTL window. This is deliberate: a
-    successful JWT verification does not weaken when followed by a
-    membership-only call (the user's permissions are unchanged).
+    REQ-1.3 forces JWT-bearing requests onto the JWT path; REQ-1.4 forces
+    JWT-less requests onto the membership path. The two paths never cross
+    (REQ-1.8 specifically forbids invalid-JWT fallthrough), so the lookup
+    can pick the dimension from ``bearer_jwt`` presence alone — without
+    consulting the cache or DB.
     """
 
-    return f"{_KEY_PREFIX}{caller_service}:{claimed_user_id}:{claimed_org_id}"
+    return "jwt" if bearer_jwt is not None else "membership"
+
+
+def _build_key(
+    *,
+    caller_service: str,
+    claimed_user_id: str,
+    claimed_org_id: str,
+    evidence: Evidence,
+) -> str:
+    """Build a Redis key from the full verifier tuple including evidence.
+
+    Including ``evidence`` makes JWT- and membership-evidence cache entries
+    distinct — see module docstring for the integrity rationale.
+    """
+
+    return f"{_KEY_PREFIX}{caller_service}:{claimed_user_id}:{claimed_org_id}:{evidence}"
 
 
 async def get_cached_decision(
@@ -63,8 +90,13 @@ async def get_cached_decision(
     caller_service: str,
     claimed_user_id: str,
     claimed_org_id: str,
+    bearer_jwt: str | None,
 ) -> VerifyDecision | None:
     """Return a cached verified decision, or ``None`` on miss.
+
+    The evidence dimension is derived from ``bearer_jwt`` presence (see
+    :func:`evidence_for_lookup`). Callers do NOT pass evidence directly —
+    the key contract is: same input → same lookup, deterministically.
 
     Raises
     ------
@@ -76,6 +108,7 @@ async def get_cached_decision(
         caller_service=caller_service,
         claimed_user_id=claimed_user_id,
         claimed_org_id=claimed_org_id,
+        evidence=evidence_for_lookup(bearer_jwt=bearer_jwt),
     )
     try:
         raw: bytes | str | None = await redis.get(key)
@@ -130,6 +163,7 @@ async def cache_verified_decision(
         caller_service=caller_service,
         claimed_user_id=claimed_user_id,
         claimed_org_id=claimed_org_id,
+        evidence=decision.evidence,
     )
     payload = json.dumps(
         {
