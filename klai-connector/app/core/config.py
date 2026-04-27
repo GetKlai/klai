@@ -62,6 +62,18 @@ class Settings(BaseSettings):
     garage_bucket: str = "klai-images"
     garage_region: str = "garage"
 
+    # Per-org rate limit (SPEC-SEC-HYGIENE-001 HY-32). Empty redis_url
+    # disables the feature — rate-limit checks become no-ops and
+    # connector.py routes accept every request. Defaults are env-tunable;
+    # see PR for source-of-research on the chosen values:
+    #   read  120/min ≈ Auth0 free tier; well above admin browsing volume
+    #   write  30/min  3× SPEC literal; ≪ Heroku 75/min, supports
+    #                  bulk-onboarding admins without pinching, still
+    #                  caps unbounded row creation at 1800/hour.
+    redis_url: str = ""
+    connector_rl_read_per_min: int = 120
+    connector_rl_write_per_min: int = 30
+
     # Optional
     log_level: str = "INFO"
 
