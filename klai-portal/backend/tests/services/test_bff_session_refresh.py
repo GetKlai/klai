@@ -67,7 +67,7 @@ def service(monkeypatch: pytest.MonkeyPatch, fake_redis: AsyncMock) -> SessionSe
     return svc
 
 
-async def _seed_session(service: SessionService, *, expires_at: int, access_token: str = "at-initial") -> SessionRecord:  # noqa: S107
+async def _seed_session(service: SessionService, *, expires_at: int, access_token: str = "at-initial") -> SessionRecord:
     return await service.create(
         zitadel_user_id="user-1",
         org_id=1,
