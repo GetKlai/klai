@@ -147,12 +147,24 @@ deploy/
 klai-scribe/
 ├── scribe-api/                # Transcription management API (FastAPI)
 │   ├── app/                   # Application code
+│   │   ├── services/          # audio_storage, janitor (orphan sweep),
+│   │   │                      # reaper (stranded-row recovery on startup)
+│   │   ├── core/              # auth (Zitadel JWT + sub regex), config
+│   │   └── api/               # health (sanitised 503 on whisper failure),
+│   │                          # transcribe
 │   ├── tests/
 │   └── pyproject.toml
 ├── whisper-server/            # Self-hosted Whisper inference server
 │   └── pyproject.toml
 └── scripts/                   # Utility scripts
 ```
+
+Scribe hardening landed in SPEC-SEC-HYGIENE-001 (scribe-slice, 2026-04-27):
+path-traversal helper for audio paths, Zitadel `sub` charset whitelist,
+worker-startup reaper for stranded `processing` rows, finalize-order
+inversion + orphan-audio janitor, `whisper_server_url` allowlist validator
+with sanitised `/health` body, and an MX:WARN annotation on the CORS
+registration site.
 
 ---
 

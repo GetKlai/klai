@@ -1,9 +1,9 @@
 ---
 id: SPEC-SEC-HYGIENE-001
-version: 0.3.0
-status: draft
+version: 0.4.0
+status: in-progress
 created: 2026-04-24
-updated: 2026-04-24
+updated: 2026-04-27
 author: Mark Vletter
 priority: low
 tracker: SPEC-SEC-AUDIT-2026-04
@@ -21,6 +21,21 @@ tracker: SPEC-SEC-AUDIT-2026-04
 > one PR or five is a call for /run.
 
 ## HISTORY
+
+### v0.4.0 (2026-04-27) — scribe-slice shipped
+- Shipped HY-33..HY-38 (klai-scribe slice) via PR #179, merge commit `4463bb3d`.
+- Production deploy verified on core-01: container running new image, alembic
+  upgraded `0006 → 0007_c5f9e3a4` (manual `docker exec` since the scribe-api
+  CI workflow does not run alembic), `/health` returns 200, reaper succeeded
+  on second startup (first startup logged `scribe_startup_reaper_failed` as
+  expected before the migration applied — caught by the lifespan try/except).
+- Status flipped `draft → in-progress` since one of five planned slices has
+  shipped. Remaining slices (portal HY-19..HY-28, connector HY-30..HY-32,
+  retrieval HY-39..HY-44, MCP HY-45..HY-48, mailer HY-49..HY-50) stay
+  outstanding and may be split into per-service follow-up SPECs per
+  Out-of-Scope §v0.3.0.
+- See `.moai/specs/SPEC-SEC-HYGIENE-001/progress.md` for the AC checklist
+  with implementation notes and deploy verification chain.
 
 ### v0.3.0 (2026-04-24)
 - Expanded scope to absorb 21 additional findings from the internal-wave review
