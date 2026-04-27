@@ -181,7 +181,8 @@ class KlaiCORSMiddleware(CORSMiddleware):
         response = super().preflight_response(request_headers)
         origin = request_headers.get("origin", "")
         if origin and not self.is_allowed_origin(origin):
-            response.headers.pop("access-control-allow-credentials", None)
+            if "access-control-allow-credentials" in response.headers:
+                del response.headers["access-control-allow-credentials"]
         return response
 
     # @MX:NOTE: REQ-1.5 enforcement for simple/actual cross-origin requests.
