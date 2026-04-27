@@ -35,14 +35,14 @@ from app.api.internal import IdentityVerifyRequest, verify_identity
 
 
 @contextmanager
-def _patched_internal_settings(monkeypatch: pytest.MonkeyPatch, *, secret: str = "test-secret"):  # noqa: S107
+def _patched_internal_settings(monkeypatch: pytest.MonkeyPatch, *, secret: str = "test-secret"):
     from app.api import internal as internal_mod
 
     monkeypatch.setattr(internal_mod.settings, "internal_secret", secret)
     yield
 
 
-def _make_request(*, token: str = "test-secret", caller_ip: str = "172.18.0.5") -> MagicMock:  # noqa: S107
+def _make_request(*, token: str = "test-secret", caller_ip: str = "172.18.0.5") -> MagicMock:
     """Mock FastAPI Request that satisfies _require_internal_token + audit context."""
     request = MagicMock()
     headers = {"Authorization": f"Bearer {token}"}
@@ -297,9 +297,11 @@ class TestJwtPath:
 
 class TestCachingBehaviour:
     async def test_cache_hit_skips_db_and_jwt(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # Pre-seed the Redis cache with a verified entry.
+        # Pre-seed the Redis cache with a verified JWT-evidence entry.
+        # Cache key includes evidence dimension (REQ-1.5) so a JWT-bearing
+        # request looks up the JWT-evidence entry deterministically.
         redis = _make_redis_mock()
-        cache_key = "identity_verify:scribe:u-1:o-1"
+        cache_key = "identity_verify:scribe:u-1:o-1:jwt"
         redis._store[cache_key] = json.dumps({"user_id": "u-1", "org_id": "o-1", "evidence": "jwt"})
         monkeypatch.setattr("app.api.internal.get_redis_pool", AsyncMock(return_value=redis))
         monkeypatch.setattr("app.api.internal._check_rate_limit_internal", AsyncMock())
@@ -328,6 +330,79 @@ class TestCachingBehaviour:
         # AC-5e: cache hit MUST NOT trigger DB or JWT signature re-check.
         db.execute.assert_not_called()
         jwt_decode.assert_not_called()
+
+    async def test_jwt_cache_entry_does_not_serve_membership_request(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """REQ-1.5 strict keying: a JWT-evidence cache entry MUST NOT serve a
+        membership-evidence (bearer_jwt=None) lookup.
+
+        Honest audit: a request that did not forward a JWT must never see
+        ``evidence="jwt"`` in the response, otherwise the audit signal lies
+        about which check actually fired.
+        """
+        # Seed a JWT-evidence entry only.
+        redis = _make_redis_mock()
+        redis._store["identity_verify:scribe:u-1:o-1:jwt"] = json.dumps(
+            {"user_id": "u-1", "org_id": "o-1", "evidence": "jwt"}
+        )
+        monkeypatch.setattr("app.api.internal.get_redis_pool", AsyncMock(return_value=redis))
+        monkeypatch.setattr("app.api.internal._check_rate_limit_internal", AsyncMock())
+        _patch_jwks_resolver(monkeypatch)
+
+        # Request comes in with bearer_jwt=None — membership lookup expected.
+        with _patched_internal_settings(monkeypatch):
+            response = await verify_identity(
+                request=_make_request(),
+                body=IdentityVerifyRequest(
+                    caller_service="scribe",
+                    claimed_user_id="u-1",
+                    claimed_org_id="o-1",
+                    bearer_jwt=None,
+                ),
+                db=_success_db_mock(),
+            )
+
+        assert response.status_code == http_status.HTTP_200_OK
+        body = json.loads(response.body)
+        # The JWT-cached value must NOT have been served — fresh membership
+        # lookup ran, so evidence must be membership.
+        assert body["evidence"] == "membership"
+
+    async def test_membership_cache_entry_does_not_serve_jwt_request(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Symmetric counterpart to the JWT-vs-membership isolation test above."""
+        redis = _make_redis_mock()
+        redis._store["identity_verify:scribe:u-1:o-1:membership"] = json.dumps(
+            {"user_id": "u-1", "org_id": "o-1", "evidence": "membership"}
+        )
+        monkeypatch.setattr("app.api.internal.get_redis_pool", AsyncMock(return_value=redis))
+        monkeypatch.setattr("app.api.internal._check_rate_limit_internal", AsyncMock())
+        _patch_jwks_resolver(monkeypatch)
+        monkeypatch.setattr(
+            "app.services.identity_verifier.jwt.decode",
+            lambda *_args, **_kwargs: {
+                "sub": "u-1",
+                "iss": "https://zitadel.example.com",
+                "exp": 9999999999,
+                "urn:zitadel:iam:user:resourceowner:id": "o-1",
+            },
+        )
+
+        with _patched_internal_settings(monkeypatch):
+            response = await verify_identity(
+                request=_make_request(),
+                body=IdentityVerifyRequest(
+                    caller_service="scribe",
+                    claimed_user_id="u-1",
+                    claimed_org_id="o-1",
+                    bearer_jwt="some.jwt.value",
+                ),
+                db=_success_db_mock(),
+            )
+
+        assert response.status_code == http_status.HTTP_200_OK
+        body = json.loads(response.body)
+        # Fresh JWT validation ran, so evidence must be jwt — not the
+        # cached membership entry.
+        assert body["evidence"] == "jwt"
 
 
 # ---------------------------------------------------------------------------

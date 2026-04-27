@@ -186,8 +186,14 @@ class IdentityAsserter:
             "claimed_org_id": claimed_org_id,
             "bearer_jwt": bearer_jwt,
         }
+        # portal-api's /internal/* endpoints carry the shared INTERNAL_SECRET in
+        # ``Authorization: Bearer ...`` (see _require_internal_token in
+        # klai-portal/backend/app/api/internal.py). We follow that contract here.
+        # Custom ``X-Internal-Secret`` is the convention used by callees of
+        # portal-api (knowledge-ingest, retrieval-api), not by callers OF
+        # portal-api — different direction, different header.
         headers: dict[str, str] = {
-            "X-Internal-Secret": self._internal_secret,
+            "Authorization": f"Bearer {self._internal_secret}",
             "Content-Type": "application/json",
         }
         if request_headers is not None:
