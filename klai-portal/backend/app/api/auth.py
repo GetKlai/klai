@@ -230,6 +230,13 @@ _MFA_503_DETAIL = "Authentication service temporarily unavailable, please retry 
 _MFA_503_HEADERS = {"Retry-After": "5"}
 
 
+# @MX:ANCHOR: Single source of truth for the SPEC-SEC-MFA-001 fail-closed 503.
+# @MX:REASON: fan_in=6 — both login() pre-auth raises and every fail-closed
+#   branch in _resolve_and_enforce_mfa raise via this helper. Changing the
+#   detail or Retry-After header here shifts contract for every fail-closed
+#   path at once. Coordinate with frontend and the Grafana mfa_check_failed
+#   alert annotation before touching.
+# @MX:SPEC: SPEC-SEC-MFA-001
 def _mfa_unavailable() -> HTTPException:
     """Return the 503 raised when MFA enforcement cannot complete (SPEC-SEC-MFA-001)."""
     return HTTPException(
@@ -239,6 +246,14 @@ def _mfa_unavailable() -> HTTPException:
     )
 
 
+# @MX:ANCHOR: Single emit point for the structured `mfa_check_failed` event.
+# @MX:REASON: fan_in=8 — every Zitadel/DB failure leg in login() and
+#   _resolve_and_enforce_mfa funnels through this helper. The fields it
+#   produces (reason, mfa_policy, zitadel_status, email_hash, outcome, log_level)
+#   are the schema consumed by Grafana alerts (portal-mfa-rules.yaml) and
+#   docs/runbooks/mfa-check-failed.md. Adding a field is fine; renaming or
+#   removing breaks alerting.
+# @MX:SPEC: SPEC-SEC-MFA-001
 def _emit_mfa_check_failed(
     *,
     reason: str,

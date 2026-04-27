@@ -1,17 +1,25 @@
 ---
 id: SPEC-SEC-MFA-001
-version: 0.2.0
-status: draft
+version: 0.3.0
+status: completed
 created: 2026-04-24
-updated: 2026-04-24
+updated: 2026-04-27
 author: Mark Vletter
 priority: high
 tracker: SPEC-SEC-AUDIT-2026-04
+lifecycle: spec-first
 ---
 
 # SPEC-SEC-MFA-001: MFA Fail-Closed in Login Flow
 
 ## HISTORY
+
+### v0.3.0 (2026-04-27)
+- Implementation completed via `/moai run` + `/moai sync` cycle on branch
+  `feature/SPEC-SEC-MFA-001` (commits 623e4aa6 + b08f26d1 + sync commit).
+- Status: draft → completed (Level 1 spec-first lifecycle).
+- See § Implementation Notes for divergences, deferred items and the
+  Cornelis audit closure mapping.
 
 ### v0.2.0 (2026-04-24)
 - Expanded stub to full EARS-format SPEC via `/moai plan SPEC-SEC-MFA-001`
@@ -435,3 +443,107 @@ the NEW behaviour.
 - Source under change:
   - [klai-portal/backend/app/api/auth.py](../../../klai-portal/backend/app/api/auth.py)
   - [klai-portal/backend/app/services/zitadel.py](../../../klai-portal/backend/app/services/zitadel.py)
+
+---
+
+## Implementation Notes (v0.3.0 — 2026-04-27)
+
+This section is appended at the close of the Level 1 (spec-first) lifecycle
+to record what was actually built versus what was planned. It is the
+canonical answer to "did this SPEC ship?" and to "where did it diverge
+from the plan?".
+
+### Status
+
+- Branch: `feature/SPEC-SEC-MFA-001`
+- Commits:
+  - `623e4aa6` — fix(portal-api,sec): MFA fail-closed enforcement
+  - `b08f26d1` — fix(portal-api,sec): MFA polish — structlog + orphan-org visibility
+  - sync commit (this commit) — docs(sync): SPEC status + MX anchors + CHANGELOG
+- Verification at sync time: pytest 1160 passed (23 auth-specific), ruff
+  clean, pyright 0/0/0.
+
+### Coverage of REQ-1..REQ-5
+
+| REQ | Outcome |
+|---|---|
+| REQ-1.1..1.7 | Implemented in `_resolve_and_enforce_mfa` + login pre-auth split. Verified in `test_auth_mfa_fail_closed.py` scenarios 1, 4, 8, plus REQ-1.6 generic-Exception variant. |
+| REQ-2.1..2.7 | Implemented via split pre-auth try in `login()`. 4xx-as-not-found preserved (scenario 6 + comment). REQ-2.2 RequestError variant added as Run-phase test. |
+| REQ-3.1..3.7 | Implemented per the SPEC's clarified short-circuit reading: `has_any_mfa` is not called under `mfa_policy in {"optional", "recommended"}`, so the fail-open warning fires only when the lookup is actually attempted (DB path). REQ-3.4 recommended variant covered. REQ-3.7 SPEC-cross-reference comment added. |
+| REQ-4.1..4.4 | `_emit_mfa_check_failed` helper emits structlog event with all fields. Email is sha256-hashed; `request_id` is auto-bound by `LoggingContextMiddleware`. |
+| REQ-4.5..4.7 | Grafana alerts and runbook delivered (see Divergences below for path correction). |
+| REQ-5.1..5.5 | New module `tests/test_auth_mfa_fail_closed.py` with 13 respx-backed scenarios. caplog/`structlog.testing.capture_logs()` assertions on every fail-closed scenario. |
+| REQ-5.6 | **Partial**. The MFA enforcement block (helpers and login refactor) has full branch coverage. The "overall ≥85% on `app.api.auth`" target is **not met** (current 64%, pre-existing) because other endpoints in the same file (TOTP setup, IDP intent, password reset, sso_complete) lack tests. Closing this gap requires adding tests for endpoints unrelated to MFA — out of scope per the `minimal-changes` pitfall. **Recommended follow-up SPEC**: `auth.py` coverage hardening for the remaining endpoints. |
+| REQ-5.7 | The new test module uses `respx` against the real `ZitadelClient` instance — no `MagicMock` on `app.api.auth.zitadel`. Existing `TestMFAPolicyEnforcement` retains the legacy `patch(...)` style for the three regression tests that survived REQ-5.3. |
+
+### Divergences from spec.md plan
+
+1. **Grafana alert path correction.** spec.md REQ-4.5/4.7 specified
+   `klai-infra/deploy/grafana/alerts/mfa-check-failed.yaml`. Actual path:
+   `deploy/grafana/provisioning/alerting/portal-mfa-rules.yaml` in the
+   superproject. Reason: Grafana provisioning is owned by the superproject's
+   `deploy/grafana/` tree, not by the `klai-infra` submodule (the submodule
+   only contains host-level deploy scripts). No submodule pin bump was
+   needed. The runbook
+   [docs/runbooks/mfa-check-failed.md](../../../docs/runbooks/mfa-check-failed.md)
+   was created in the superproject `docs/runbooks/` directory matching the
+   existing convention.
+
+2. **respx as new dev dependency.** spec.md REQ-5.1 said respx was already
+   a dev dependency of `klai-portal/backend`. It was not. Added
+   `respx>=0.22` to both `[project.optional-dependencies] dev` and
+   `[dependency-groups] dev` in `klai-portal/backend/pyproject.toml`.
+   `uv.lock` regenerated.
+
+3. **Run-phase test additions.** Acceptance scenarios noted three "Run-phase
+   addition" cases that were not in the original 8-scenario block: REQ-1.6
+   (generic Exception during `has_any_mfa`), REQ-2.2 (`find_user_by_email`
+   `RequestError`), REQ-3.4 (`mfa_policy="recommended"` behaves like
+   optional). All three were added during Run.
+
+4. **Orphan PortalOrg FK observability** (post-initial polish). Self-review
+   surfaced an edge case the SPEC did not explicitly cover: `db.scalar`
+   returns a `PortalUser`, but `db.get(PortalOrg, ...)` returns `None`
+   (deleted/soft-deleted org while the FK still points at it). Pre-existing
+   behaviour silently fell back to `mfa_policy="optional"` with no signal.
+   Added an explicit branch in `_resolve_and_enforce_mfa` that keeps
+   fail-open semantics (the user logs in) but emits `mfa_check_failed`
+   warning so the orphan is visible in Grafana. New test:
+   `test_portal_user_orphan_org_proceeds_documented_fail_open`.
+
+5. **Logger choice for `has_totp` fail-open warning.** Switched from stdlib
+   `logger.warning` to `_slog.warning` to honour
+   `.claude/rules/klai/projects/portal-logging-py.md`'s "structlog for new
+   log statements" rule.
+
+### Out-of-test verification (deferred to deploy / post-merge)
+
+These items from acceptance.md "Out-of-test verification" cannot be
+discharged by unit tests; they will be confirmed during the post-merge
+deploy on core-01:
+
+- Grafana alert rules load on production Grafana (after PR merge triggers
+  `alerting-check.yml` workflow; manual visual check in Grafana UI under
+  Alerting → mfa-check-failed).
+- LogsQL query
+  (`service:portal-api event:mfa_check_failed`) returns the expected
+  schema in production VictoriaLogs.
+- Runbook reachable from alert annotation (Grafana alert detail view shows
+  the `runbook_url` link).
+- Manual code-review of the final `auth.py::login` handler against the
+  fail-open path catalogue in research.md §4 — performed during this sync
+  phase: only FO-1-4xx (well-formed not-found), FO-2 (has_totp UI flag) and
+  FO-4 (portal_user not in portal — provisioning grace) remain as
+  documented fail-open paths under `mfa_policy="optional"` orgs. All other
+  fail-open holes are closed.
+
+### Cornelis audit closure
+
+This SPEC closes the following entries in
+[SPEC-SEC-AUDIT-2026-04](../SPEC-SEC-AUDIT-2026-04/spec.md):
+
+- **#11** — `has_any_mfa` HTTPStatusError fail-open (`user_has_mfa = True`).
+  Resolved: 503 + `Retry-After: 5`.
+- **#12** — `find_user_by_email` failure leaving `zitadel_user_id = None`
+  → MFA block skipped. Resolved: pre-auth try split; 5xx ≥500 escalates
+  to 503 BEFORE `create_session_with_password` runs.
