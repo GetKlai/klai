@@ -308,9 +308,7 @@ async def test_find_user_by_email_no_results_continues_to_password_check(
     not infrastructure failure. Login proceeds to password-check which fails 401.
     """
     respx_zitadel.post("/v2/users").mock(return_value=httpx.Response(200, json={"result": []}))
-    respx_zitadel.post("/v2/sessions").mock(
-        return_value=httpx.Response(401, json={"error": "invalid credentials"})
-    )
+    respx_zitadel.post("/v2/sessions").mock(return_value=httpx.Response(401, json={"error": "invalid credentials"}))
 
     db = _make_db_mock()
     response = MagicMock()
@@ -516,8 +514,11 @@ async def test_required_has_any_mfa_generic_exception_returns_503(respx_zitadel:
     # only swaps a single coroutine at the client level — REQ-5.7 compliant in spirit).
     from app.services.zitadel import zitadel as zitadel_singleton
 
-    with capture_logs() as captured, audit_patch, emit_patch, patch.object(
-        zitadel_singleton, "has_any_mfa", AsyncMock(side_effect=RuntimeError("kernel panic"))
+    with (
+        capture_logs() as captured,
+        audit_patch,
+        emit_patch,
+        patch.object(zitadel_singleton, "has_any_mfa", AsyncMock(side_effect=RuntimeError("kernel panic"))),
     ):
         with pytest.raises(HTTPException) as exc:
             await login(body=_make_login_body(), response=response, db=db)
@@ -543,9 +544,7 @@ async def test_required_has_any_mfa_generic_exception_returns_503(respx_zitadel:
 async def test_find_user_by_email_request_error_returns_503(respx_zitadel: respx.MockRouter) -> None:
     """REQ-2.2 — connection failure during find_user_by_email still fail-closes."""
     respx_zitadel.post("/v2/users").mock(side_effect=httpx.ConnectError("Connection refused"))
-    sessions = respx_zitadel.post("/v2/sessions").mock(
-        return_value=httpx.Response(200, json=_session_ok())
-    )
+    sessions = respx_zitadel.post("/v2/sessions").mock(return_value=httpx.Response(200, json=_session_ok()))
 
     db = _make_db_mock()
     response = MagicMock()

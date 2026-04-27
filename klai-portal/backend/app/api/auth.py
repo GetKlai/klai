@@ -221,7 +221,6 @@ async def _finalize_and_set_cookie(
     return LoginResponse(callback_url=_validate_callback_url(callback_url))
 
 
-
 # ---------------------------------------------------------------------------
 # SPEC-SEC-MFA-001: MFA fail-closed enforcement helpers
 # ---------------------------------------------------------------------------
@@ -313,9 +312,7 @@ async def _resolve_and_enforce_mfa(
     portal_user: PortalUser | None = None
     db_failure: str | None = None
     try:
-        portal_user = await db.scalar(
-            select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id)
-        )
+        portal_user = await db.scalar(select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id))
     except Exception:
         db_failure = "portal_user"
         logger.warning("portal_user lookup failed", exc_info=True)
