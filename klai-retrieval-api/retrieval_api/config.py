@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     portal_events_user: str = "klai"
     portal_events_password: str = ""
     portal_events_db: str = "klai"
+    # SPEC-SEC-HYGIENE-001 REQ-40: cap on the in-flight `_pending` task set
+    # in services/events.py. Under a flood (Redis fail-open + retrieval
+    # spike) unbounded growth would OOM the worker. 1000 is generous
+    # headroom for normal traffic; tune via the env var.
+    retrieval_events_max_pending: int = 1000
 
     # SPEC-SEC-010 — Authentication and request hardening
     # Shared secret for internal service-to-service calls (portal-api, research-api, LiteLLM hook).

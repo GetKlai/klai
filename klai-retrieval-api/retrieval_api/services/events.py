@@ -6,22 +6,36 @@ resolved automatically from the Zitadel ``tenant_id`` using a sub-query.
 
 Pool lifecycle is managed by the FastAPI lifespan (init_pool / close_pool).
 Connection params are taken from individual settings (no DSN parsing needed).
+
+SPEC-SEC-HYGIENE-001 REQ-40: ``_pending`` is capped at
+``settings.retrieval_events_max_pending`` (default 1000). When the cap is
+hit ``emit_event`` drops the new event, increments
+``retrieval_events_dropped_total`` and emits a rate-limited
+``retrieval_events_cap_hit`` warning so operators see the back-pressure
+without flooding the log pipeline.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import time
 
 import asyncpg
 import structlog
 
 from retrieval_api.config import settings
+from retrieval_api.metrics import retrieval_events_dropped_total
 
 logger = structlog.get_logger()
 
 _pool: asyncpg.Pool | None = None
 _pending: set[asyncio.Task] = set()
+
+# REQ-40.2: rate-limit cap-hit warnings to ~1/min so a flood of drops
+# cannot itself flood the log pipeline.
+_CAP_LOG_INTERVAL_SECONDS = 60.0
+_last_cap_log_time: float = 0.0
 
 _INSERT_SQL = """
     INSERT INTO product_events (event_type, org_id, user_id, properties)
@@ -92,6 +106,24 @@ def emit_event(
                 tenant_id=tenant_id,
                 exc_info=True,
             )
+
+    # SPEC-SEC-HYGIENE-001 REQ-40.1: bounded pending set. Drop new events
+    # rather than letting the in-flight task set grow without limit when
+    # the insert pipeline can't keep up (e.g. portal DB blip + traffic
+    # spike). Drops are observable via Prometheus + a rate-limited log.
+    if len(_pending) >= settings.retrieval_events_max_pending:
+        retrieval_events_dropped_total.inc()
+        global _last_cap_log_time
+        now = time.monotonic()
+        if now - _last_cap_log_time >= _CAP_LOG_INTERVAL_SECONDS:
+            _last_cap_log_time = now
+            logger.warning(
+                "retrieval_events_cap_hit",
+                pending=len(_pending),
+                cap=settings.retrieval_events_max_pending,
+                event_type=event_type,
+            )
+        return
 
     try:
         task = asyncio.create_task(_insert())
