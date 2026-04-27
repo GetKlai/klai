@@ -22,6 +22,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # SPEC-SEC-HYGIENE-001 REQ-35.1 — reap stranded `processing` rows left
     # behind by the previous worker (OOM, container kill, crash). Best-effort:
     # an exception here MUST NOT prevent app startup, only get logged.
+    #
+    # When N replicas start simultaneously, all N race on the same rows.
+    # SQLAlchemy retries on row-lock conflict; the net effect is correct
+    # but wastes a tiny amount of work. Scribe runs single-replica today;
+    # if that changes, consider an advisory lock or a leader election.
     try:
         async with AsyncSessionLocal() as session:
             count = await reap_stranded(
@@ -31,6 +36,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.warning("scribe_startup_reaped", count=count)
     except Exception:
         logger.warning("scribe_startup_reaper_failed", exc_info=True)
+
+    # TODO(SPEC-SEC-HYGIENE-001 REQ-36.2 follow-up): wire `janitor.sweep_orphans`
+    # as a periodic task (asyncio.create_task with a 1h sleep, or a separate
+    # APScheduler job) so the orphan-cleanup actually runs in production.
+    # The function is currently only callable on-demand; this slice intentionally
+    # skipped scheduling per the SPEC scope discussion.
 
     yield
 

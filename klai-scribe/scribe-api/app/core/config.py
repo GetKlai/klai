@@ -61,7 +61,11 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # SPEC-SEC-HYGIENE-001 REQ-35.1 — stranded-row reaper config.
-    scribe_stranded_timeout_min: int = 30
+    # 60 min default: longer than every realistic scribe transcription
+    # (typical meeting is 30-60 min, with worst-case ~90 min) so the reaper
+    # cannot false-reap a still-running job. SPEC suggested 30 min; raised
+    # to 60 after considering the false-reap UX risk in `reaper.py`.
+    scribe_stranded_timeout_min: int = 60
 
     # SPEC-SEC-HYGIENE-001 REQ-36.2 — orphan-audio janitor config.
     scribe_janitor_grace_hours: int = 24
