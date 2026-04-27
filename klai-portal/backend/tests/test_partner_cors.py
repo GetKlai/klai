@@ -67,9 +67,7 @@ def _make_request(
     return req
 
 
-def _make_db_chain(
-    widget: FakeWidget | None, org: FakeOrg | None, kb_ids: list[int]
-) -> AsyncMock:
+def _make_db_chain(widget: FakeWidget | None, org: FakeOrg | None, kb_ids: list[int]) -> AsyncMock:
     db = AsyncMock()
 
     widget_result = MagicMock()
@@ -120,15 +118,9 @@ async def test_partner_cors_widget_origin_no_credentials() -> None:
     acac = response.headers.get("access-control-allow-credentials", "")
     vary = response.headers.get("vary", "")
 
-    assert acao == "https://customer.example", (
-        f"ACAO must echo https://customer.example, got {acao!r} (AC-9)"
-    )
-    assert acac.lower() != "true", (
-        f"ACAC must NOT be true for widget endpoint, got {acac!r} (AC-9 / REQ-2.2)"
-    )
-    assert "origin" in vary.lower(), (
-        f"Vary must include Origin for cache correctness, got {vary!r} (AC-9 / REQ-2.3)"
-    )
+    assert acao == "https://customer.example", f"ACAO must echo https://customer.example, got {acao!r} (AC-9)"
+    assert acac.lower() != "true", f"ACAC must NOT be true for widget endpoint, got {acac!r} (AC-9 / REQ-2.2)"
+    assert "origin" in vary.lower(), f"Vary must include Origin for cache correctness, got {vary!r} (AC-9 / REQ-2.3)"
 
 
 @pytest.mark.asyncio
@@ -147,21 +139,15 @@ async def test_partner_cors_preflight_no_credentials() -> None:
 
     request = _make_request(origin="https://customer.example")
 
-    response = await widget_config_preflight(
-        id=widget.widget_id, request=request, db=db
-    )
+    response = await widget_config_preflight(id=widget.widget_id, request=request, db=db)
 
     assert response.status_code == 204
 
     acao = response.headers.get("access-control-allow-origin", "")
     acac = response.headers.get("access-control-allow-credentials", "")
 
-    assert acao == "https://customer.example", (
-        f"ACAO must echo origin in preflight, got {acao!r} (AC-9 preflight)"
-    )
-    assert acac.lower() != "true", (
-        f"ACAC must NOT be true in preflight, got {acac!r} (AC-9 / REQ-2.2)"
-    )
+    assert acao == "https://customer.example", f"ACAO must echo origin in preflight, got {acao!r} (AC-9 preflight)"
+    assert acac.lower() != "true", f"ACAC must NOT be true in preflight, got {acac!r} (AC-9 / REQ-2.2)"
 
 
 # ---------------------------------------------------------------------------
@@ -192,17 +178,11 @@ async def test_partner_cors_blocks_unlisted_origin() -> None:
 
         response = await widget_config(id=widget.widget_id, request=request, db=db)
 
-    assert response.status_code == 403, (
-        f"Expected 403 for unlisted origin, got {response.status_code} (AC-10)"
-    )
-    assert b"Origin not allowed" in response.body, (
-        "Response body must contain 'Origin not allowed' (AC-10)"
-    )
+    assert response.status_code == 403, f"Expected 403 for unlisted origin, got {response.status_code} (AC-10)"
+    assert b"Origin not allowed" in response.body, "Response body must contain 'Origin not allowed' (AC-10)"
 
     acao = response.headers.get("access-control-allow-origin", "")
-    assert acao != "https://evil.example", (
-        f"ACAO must NOT echo evil.example, got {acao!r} (AC-10)"
-    )
+    assert acao != "https://evil.example", f"ACAO must NOT echo evil.example, got {acao!r} (AC-10)"
     assert acao != "*", "ACAO must NOT be wildcard (AC-10)"
 
 
@@ -236,6 +216,5 @@ async def test_bff_cookie_rejected_on_partner_endpoint() -> None:
         )
 
     assert exc_info.value.status_code == 401, (
-        f"Expected 401 for cookie-only partner request, "
-        f"got {exc_info.value.status_code} (AC-11)"
+        f"Expected 401 for cookie-only partner request, got {exc_info.value.status_code} (AC-11)"
     )

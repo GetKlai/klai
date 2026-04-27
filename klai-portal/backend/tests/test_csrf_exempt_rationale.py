@@ -22,12 +22,7 @@ import pytest
 # Configuration
 # ---------------------------------------------------------------------------
 
-_SESSION_PY = (
-    pathlib.Path(__file__).parent.parent
-    / "app"
-    / "middleware"
-    / "session.py"
-)
+_SESSION_PY = pathlib.Path(__file__).parent.parent / "app" / "middleware" / "session.py"
 
 # At least one of these keywords must appear in a preceding comment (AC-12)
 _RATIONALE_KEYWORDS = {
@@ -54,9 +49,7 @@ _REQ_AC_PATTERN = re.compile(r"\b(REQ-\d+(?:\.\d+)?|AC-\d+)\b")
 #   # REQ-4.3 / AC-2
 # The whole comment block is allowed to contain free-form rationale, but the
 # LAST comment line within the lookback window must match this exact shape.
-_CANONICAL_TRAILING_PATTERN = re.compile(
-    r"^#\s*REQ-\d+(?:\.\d+)?\s*/\s*AC-\d+(?:\s*,\s*AC-\d+)*\s*$"
-)
+_CANONICAL_TRAILING_PATTERN = re.compile(r"^#\s*REQ-\d+(?:\.\d+)?\s*/\s*AC-\d+(?:\s*,\s*AC-\d+)*\s*$")
 
 # Maximum number of lines above the literal to search
 _LOOKBACK = 5
@@ -140,10 +133,7 @@ def test_csrf_exempt_prefixes_have_rationale() -> None:
         comments = _preceding_comment_lines(source_lines, lineno)
 
         if not comments:
-            failures.append(
-                f"  Prefix {prefix_value!r} (line {lineno}): "
-                "no comment found within 5 lines above"
-            )
+            failures.append(f"  Prefix {prefix_value!r} (line {lineno}): no comment found within 5 lines above")
             continue
 
         combined = " ".join(comments)
@@ -167,8 +157,7 @@ def test_csrf_exempt_prefixes_have_rationale() -> None:
     if failures:
         pytest.fail(
             "The following _CSRF_EXEMPT_PREFIXES entries lack inline rationale "
-            "(REQ-4.1 / REQ-4.2 / AC-12):\n"
-            + "\n".join(failures)
+            "(REQ-4.1 / REQ-4.2 / AC-12):\n" + "\n".join(failures)
         )
 
 
@@ -198,9 +187,7 @@ def test_csrf_exempt_rationale_format_is_canonical() -> None:
     for prefix_value, lineno in prefixes:
         comments = _preceding_comment_lines(source_lines, lineno)
         if not comments:
-            failures.append(
-                f"  Prefix {prefix_value!r} (line {lineno}): no comment block."
-            )
+            failures.append(f"  Prefix {prefix_value!r} (line {lineno}): no comment block.")
             continue
 
         last_line = comments[-1]
@@ -214,6 +201,5 @@ def test_csrf_exempt_rationale_format_is_canonical() -> None:
     if failures:
         pytest.fail(
             "The following _CSRF_EXEMPT_PREFIXES entries do not end with a "
-            "canonical `# REQ-X.Y / AC-Z` trailing comment line:\n"
-            + "\n".join(failures)
+            "canonical `# REQ-X.Y / AC-Z` trailing comment line:\n" + "\n".join(failures)
         )

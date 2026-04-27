@@ -100,9 +100,7 @@ def test_cors_blocks_evil_origin_on_api_me(cors_client: TestClient) -> None:
     acao = resp.headers.get("access-control-allow-origin", "")
     acac = resp.headers.get("access-control-allow-credentials", "")
 
-    assert acao != "https://evil.example", (
-        "ACAO must NOT be echoed for https://evil.example (AC-1)"
-    )
+    assert acao != "https://evil.example", "ACAO must NOT be echoed for https://evil.example (AC-1)"
     assert acao != "*", "ACAO must NOT be wildcard (AC-1)"
     assert acac.lower() != "true", "ACAC must NOT be true for evil.example (AC-1)"
 
@@ -153,15 +151,9 @@ def test_cors_allows_first_party_on_api_me(cors_client: TestClient) -> None:
     acac = resp.headers.get("access-control-allow-credentials", "")
     vary = resp.headers.get("vary", "")
 
-    assert acao == "https://my.getklai.com", (
-        f"ACAO must echo https://my.getklai.com, got {acao!r} (AC-3)"
-    )
-    assert acac.lower() == "true", (
-        f"ACAC must be true for first-party origin, got {acac!r} (AC-3)"
-    )
-    assert "origin" in vary.lower(), (
-        f"Vary must include Origin, got {vary!r} (AC-3)"
-    )
+    assert acao == "https://my.getklai.com", f"ACAO must echo https://my.getklai.com, got {acao!r} (AC-3)"
+    assert acac.lower() == "true", f"ACAC must be true for first-party origin, got {acac!r} (AC-3)"
+    assert "origin" in vary.lower(), f"Vary must include Origin, got {vary!r} (AC-3)"
 
 
 # ---------------------------------------------------------------------------
@@ -180,9 +172,7 @@ def test_cors_allows_tenant_subdomain_on_api_me(cors_client: TestClient) -> None
     )
 
     acao = resp.headers.get("access-control-allow-origin", "")
-    assert acao == "https://acme.getklai.com", (
-        f"ACAO must echo acme.getklai.com, got {acao!r} (AC-4a)"
-    )
+    assert acao == "https://acme.getklai.com", f"ACAO must echo acme.getklai.com, got {acao!r} (AC-4a)"
 
 
 def test_cors_rejects_multi_label_subdomain(cors_client: TestClient) -> None:
@@ -196,9 +186,7 @@ def test_cors_rejects_multi_label_subdomain(cors_client: TestClient) -> None:
     )
 
     acao = resp.headers.get("access-control-allow-origin", "")
-    assert acao != "https://evil.my.getklai.com", (
-        "ACAO must NOT echo evil.my.getklai.com (multi-label) (AC-4b)"
-    )
+    assert acao != "https://evil.my.getklai.com", "ACAO must NOT echo evil.my.getklai.com (multi-label) (AC-4b)"
     assert acao != "*", "ACAO must NOT be wildcard (AC-4b)"
 
 
@@ -218,9 +206,7 @@ def test_cors_rejects_plaintext_http_getklai(cors_client: TestClient) -> None:
     )
 
     acao = resp.headers.get("access-control-allow-origin", "")
-    assert acao != "http://getklai.com", (
-        f"ACAO must NOT echo plaintext http://getklai.com, got {acao!r} (AC-5)"
-    )
+    assert acao != "http://getklai.com", f"ACAO must NOT echo plaintext http://getklai.com, got {acao!r} (AC-5)"
     assert acao != "*", "ACAO must NOT be wildcard (AC-5)"
 
 
@@ -242,12 +228,8 @@ def test_cors_allows_dev_origin_localhost_5174(cors_client: TestClient) -> None:
     acao = resp.headers.get("access-control-allow-origin", "")
     acac = resp.headers.get("access-control-allow-credentials", "")
 
-    assert acao == "http://localhost:5174", (
-        f"ACAO must echo http://localhost:5174, got {acao!r} (AC-6)"
-    )
-    assert acac.lower() == "true", (
-        f"ACAC must be true for localhost dev origin, got {acac!r} (AC-6)"
-    )
+    assert acao == "http://localhost:5174", f"ACAO must echo http://localhost:5174, got {acao!r} (AC-6)"
+    assert acac.lower() == "true", f"ACAC must be true for localhost dev origin, got {acac!r} (AC-6)"
 
 
 # ---------------------------------------------------------------------------
@@ -271,9 +253,7 @@ _TEST_PATHS = [
 
 @pytest.mark.parametrize("path", _TEST_PATHS)
 @pytest.mark.parametrize("origin", _ATTACKER_ORIGINS)
-def test_cors_no_unlisted_origin_echo(
-    cors_client: TestClient, path: str, origin: str
-) -> None:
+def test_cors_no_unlisted_origin_echo(cors_client: TestClient, path: str, origin: str) -> None:
     """AC-7: Preflights from attacker origins never echo ACAO on any path.
 
     REQ-1 (group) — no attacker origin x path combination echoes ACAO.
@@ -287,12 +267,8 @@ def test_cors_no_unlisted_origin_echo(
     )
 
     acao = resp.headers.get("access-control-allow-origin", "")
-    assert acao != origin, (
-        f"ACAO must NOT echo {origin!r} on {path!r} (AC-7)"
-    )
-    assert acao != "*", (
-        f"ACAO must NOT be wildcard for {origin!r} on {path!r} (AC-7)"
-    )
+    assert acao != origin, f"ACAO must NOT echo {origin!r} on {path!r} (AC-7)"
+    assert acao != "*", f"ACAO must NOT be wildcard for {origin!r} on {path!r} (AC-7)"
 
 
 # ---------------------------------------------------------------------------
@@ -321,8 +297,7 @@ def test_acac_never_with_wildcard_origin(cors_client: TestClient) -> None:
 
         if acac.lower() == "true":
             assert acao not in ("", "*"), (
-                f"ACAC=true on {path!r} with origin={origin!r} "
-                f"but ACAO={acao!r} - must be a concrete origin (AC-8)"
+                f"ACAC=true on {path!r} with origin={origin!r} but ACAO={acao!r} - must be a concrete origin (AC-8)"
             )
 
 
@@ -373,17 +348,14 @@ def test_cors_rejected_preflight_emits_structlog_event(
 
     rejected = [e for e in captured_events if e.get("event") == "cors_origin_rejected"]
     assert len(rejected) >= 1, (
-        f"Expected event='cors_origin_rejected' in structlog, "
-        f"got events: {[e.get('event') for e in captured_events]}"
+        f"Expected event='cors_origin_rejected' in structlog, got events: {[e.get('event') for e in captured_events]}"
     )
 
     evt = rejected[0]
     assert evt.get("origin") == "https://evil.example", (
         f"origin field must be 'https://evil.example', got {evt.get('origin')!r}"
     )
-    assert evt.get("path") == "/api/me", (
-        f"path field must be '/api/me', got {evt.get('path')!r}"
-    )
+    assert evt.get("path") == "/api/me", f"path field must be '/api/me', got {evt.get('path')!r}"
     assert "request_id" in evt, "request_id field must be present in event"
     assert evt.get("kind") == "preflight", (
         f"kind field must be 'preflight' for OPTIONS request, got {evt.get('kind')!r}"
@@ -404,9 +376,7 @@ def test_cors_rejected_simple_request_emits_structlog_event(
 
     captured_events: list[dict[str, Any]] = []
 
-    def _capture_processor(
-        logger: Any, method: str, event_dict: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _capture_processor(logger: Any, method: str, event_dict: dict[str, Any]) -> dict[str, Any]:
         captured_events.append(dict(event_dict))
         raise sl.DropEvent()
 
@@ -427,11 +397,7 @@ def test_cors_rejected_simple_request_emits_structlog_event(
     finally:
         sl.reset_defaults()
 
-    rejected = [
-        e
-        for e in captured_events
-        if e.get("event") == "cors_origin_rejected" and e.get("kind") == "simple"
-    ]
+    rejected = [e for e in captured_events if e.get("event") == "cors_origin_rejected" and e.get("kind") == "simple"]
     assert len(rejected) >= 1, (
         f"Expected event='cors_origin_rejected' kind='simple' in structlog, "
         f"got events: {[(e.get('event'), e.get('kind')) for e in captured_events]}"

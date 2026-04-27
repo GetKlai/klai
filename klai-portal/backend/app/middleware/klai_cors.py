@@ -159,9 +159,7 @@ class KlaiCORSMiddleware(CORSMiddleware):
 
         if origin and not self.is_allowed_origin(origin):
             method = scope.get("method", "")
-            is_preflight = (
-                method == "OPTIONS" and "access-control-request-method" in headers
-            )
+            is_preflight = method == "OPTIONS" and "access-control-request-method" in headers
             logger.info(
                 "cors_origin_rejected",
                 origin=origin[:256],
