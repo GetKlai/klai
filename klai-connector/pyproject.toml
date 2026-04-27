@@ -29,6 +29,7 @@ dependencies = [
     "pyairtable>=3.3.0",
     "atlassian-python-api>=4.0.7",
     "html2text>=2025.4.15",
+    "redis>=5.0",
 ]
 
 [tool.uv.sources]
