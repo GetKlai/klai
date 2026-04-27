@@ -29,6 +29,7 @@ from app.services.mail_auth import (
     verify_mail_auth,
 )
 from tests.services.fixtures.imap.builders import (
+    arc_sign,
     build_email,
     dkim_sign,
     key_for,
@@ -82,6 +83,59 @@ class TestAlignmentHelpers:
     )
     def test_distinct_slds_under_public_suffix_do_not_align(self, a: str, b: str) -> None:
         assert _aligned(a, b) is False
+
+
+class TestSettingsImapAuthservIdValidator:
+    """SPEC-SEC-IMAP-001: the Settings model_validator that catches empty
+    ``imap_authserv_id`` when the IMAP listener is enabled.
+
+    Lives here (not in a config-specific suite) because the validator is
+    SPEC-SEC-IMAP-001 scope and the doc-string references this file.
+    """
+
+    def test_listener_disabled_does_not_require_authserv_id(self) -> None:
+        from app.core.config import Settings
+
+        # No imap_host / imap_username → listener inactive → validator skipped.
+        s = Settings(imap_host=None, imap_username=None, imap_authserv_id="")
+        assert s.imap_host is None
+
+    def test_listener_enabled_with_empty_authserv_id_fails_loud(self) -> None:
+        from pydantic import ValidationError
+
+        from app.core.config import Settings
+
+        with pytest.raises(ValidationError, match="PORTAL_API_IMAP_AUTHSERV_ID"):
+            Settings(
+                imap_host="imap.example.com",
+                imap_username="meet@example.com",
+                imap_password="secret",
+                imap_authserv_id="",
+            )
+
+    def test_listener_enabled_with_whitespace_authserv_id_fails_loud(self) -> None:
+        from pydantic import ValidationError
+
+        from app.core.config import Settings
+
+        with pytest.raises(ValidationError, match="PORTAL_API_IMAP_AUTHSERV_ID"):
+            Settings(
+                imap_host="imap.example.com",
+                imap_username="meet@example.com",
+                imap_password="secret",
+                imap_authserv_id="   ",
+            )
+
+    def test_listener_enabled_with_authserv_id_succeeds(self) -> None:
+        from app.core.config import Settings
+
+        s = Settings(
+            imap_host="imap.example.com",
+            imap_username="meet@example.com",
+            imap_password="secret",
+            imap_authserv_id="my-relay.example",
+        )
+        assert s.imap_authserv_id == "my-relay.example"
 
 
 class TestArcSealerExtraction:
@@ -217,6 +271,81 @@ class TestAC3AC4_DkimValidAligned:
 
         assert result.verified_from == "user@mail.customer.nl"
         assert result.dkim_result.aligned is True
+
+
+# ---------- AC-5 (real crypto): integration test for the ARC accept path -
+
+
+class TestAC5_RealArcCrypto:
+    """End-to-end ARC validation with no mocks — exercises ``dkim.arc_sign``
+    plus ``dkim.arc_verify`` and the real ``_outermost_arc_sealer`` extraction.
+
+    Catches the April 2026 production regression where mocked tests agreed
+    with a wrong assumption about ``dkim.ARC.verify()``'s API surface
+    (sealer was being read from ``ARC.domain`` instead of from the results
+    list, returning ``None`` for every legitimately forwarded invite).
+    """
+
+    @pytest.mark.asyncio
+    async def test_real_arc_chain_validates_and_accepts(self) -> None:
+        sealer_key = key_for("getklai.com")
+        raw = build_email(
+            from_addr="boss@customer.nl",
+            extra_headers=[
+                # Upstream MX authenticated and stamped — arc_sign will
+                # copy this into the ARC-Authentication-Results header.
+                (
+                    "Authentication-Results",
+                    "upstream-relay.test; dkim=pass header.d=customer.nl; spf=pass smtp.mailfrom=boss@customer.nl",
+                ),
+            ],
+        )
+        # No DKIM-Signature on the raw bytes → force ARC-only acceptance,
+        # which is the production hot path (cloud86 strips DKIM on forward).
+        signed = arc_sign(raw, sealer_domain="getklai.com", authserv_id="upstream-relay.test")
+
+        result = await verify_mail_auth(
+            signed,
+            dnsfunc=make_dnsfunc(sealer_key),
+            trusted_arc_sealers=["getklai.com"],
+            authserv_id="upstream-relay.test",
+        )
+
+        assert result.verified_from == "boss@customer.nl"
+        assert result.reason == ""
+        assert result.arc_result.present is True
+        assert result.arc_result.valid is True
+        # The bug-bearing line: this assertion fails with sealer=None when
+        # the wrapper reads from ``ARC.domain`` instead of results list.
+        assert result.arc_result.sealer == "getklai.com"
+        assert result.arc_result.trusted is True
+        assert result.arc_result.aligned_from_domain is True
+
+    @pytest.mark.asyncio
+    async def test_real_arc_untrusted_sealer_rejects(self) -> None:
+        sealer_key = key_for("weird-provider.example")
+        raw = build_email(
+            from_addr="boss@customer.nl",
+            extra_headers=[
+                (
+                    "Authentication-Results",
+                    "upstream-relay.test; dkim=pass header.d=customer.nl",
+                ),
+            ],
+        )
+        signed = arc_sign(raw, sealer_domain="weird-provider.example", authserv_id="upstream-relay.test")
+
+        result = await verify_mail_auth(
+            signed,
+            dnsfunc=make_dnsfunc(sealer_key),
+            trusted_arc_sealers=["getklai.com", "google.com"],  # weird-provider NOT in list
+            authserv_id="upstream-relay.test",
+        )
+
+        assert result.verified_from is None
+        assert result.reason == "arc_untrusted_sealer"
+        assert result.arc_result.sealer == "weird-provider.example"
+        assert result.arc_result.trusted is False
 
 
 # ---------- AC-5: Valid ARC from trusted sealer (forwarded) ---------------

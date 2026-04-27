@@ -308,5 +308,31 @@ class Settings(BaseSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def _require_imap_authserv_id_when_listener_enabled(self) -> "Settings":
+        """SPEC-SEC-IMAP-001: when the IMAP listener is enabled, the upstream
+        relay's authserv-id MUST be explicitly set.
+
+        An empty value silently breaks SPF observability (REQ-2.1), and a
+        wrong default (e.g. left over from an earlier hosting provider after
+        a migration) leaves the SPF check searching for a header that the
+        new relay never stamps. This validator catches the explicit-empty
+        case at startup; operators must still review the default after any
+        mail-host change to avoid silent default rot.
+
+        IMAP is considered enabled iff both ``imap_host`` and ``imap_username``
+        are set — matches the assertion in
+        :func:`app.services.imap_listener._poll_once`.
+        """
+        listener_enabled = bool(self.imap_host) and bool(self.imap_username)
+        if listener_enabled and not (self.imap_authserv_id and self.imap_authserv_id.strip()):
+            raise ValueError(
+                "Missing required: PORTAL_API_IMAP_AUTHSERV_ID (SPEC-SEC-IMAP-001). "
+                "Set it to the authserv-id stamped by your trusted upstream mail relay; "
+                "inspect Authentication-Results headers in a recent message at "
+                "meet@getklai.com to find the correct value."
+            )
+        return self
+
 
 settings = Settings()  # type: ignore[call-arg]  # pydantic-settings reads required fields from env
