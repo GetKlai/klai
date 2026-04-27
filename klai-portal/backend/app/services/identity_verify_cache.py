@@ -131,11 +131,12 @@ async def get_cached_decision(
     evidence = payload.get("evidence")
     user_id = payload.get("user_id")
     org_id = payload.get("org_id")
+    org_slug = payload.get("org_slug")
     if evidence not in ("jwt", "membership"):
         return None
-    if not isinstance(user_id, str) or not isinstance(org_id, str):
+    if not isinstance(user_id, str) or not isinstance(org_id, str) or not isinstance(org_slug, str):
         return None
-    return VerifyDecision.allow(user_id=user_id, org_id=org_id, evidence=evidence)
+    return VerifyDecision.allow(user_id=user_id, org_id=org_id, org_slug=org_slug, evidence=evidence)
 
 
 async def cache_verified_decision(
@@ -157,7 +158,13 @@ async def cache_verified_decision(
         DB load for every subsequent call.
     """
 
-    if not decision.verified or decision.evidence is None or decision.user_id is None or decision.org_id is None:
+    if (
+        not decision.verified
+        or decision.evidence is None
+        or decision.user_id is None
+        or decision.org_id is None
+        or decision.org_slug is None
+    ):
         return
     key = _build_key(
         caller_service=caller_service,
@@ -169,6 +176,7 @@ async def cache_verified_decision(
         {
             "user_id": decision.user_id,
             "org_id": decision.org_id,
+            "org_slug": decision.org_slug,
             "evidence": decision.evidence,
         }
     )

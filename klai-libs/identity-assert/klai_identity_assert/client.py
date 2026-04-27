@@ -49,8 +49,8 @@ _DEFAULT_CACHE_TTL_SECONDS = 60.0
 def _interpret_response(payload: Any) -> VerifyResult:
     """Map a JSON body from /internal/identity/verify to a VerifyResult.
 
-    Defensive parser: the portal contract is fixed (REQ-1.1) but the consumer
-    is the second line of defence. Unknown shapes fail closed.
+    Defensive parser: the portal contract is fixed (REQ-1.1 / REQ-2.6) but
+    the consumer is the second line of defence. Unknown shapes fail closed.
     """
 
     if not isinstance(payload, dict):
@@ -66,6 +66,7 @@ def _interpret_response(payload: Any) -> VerifyResult:
             "invalid_jwt",
             "jwt_identity_mismatch",
             "no_membership",
+            "org_slug_mismatch",
             "cache_unavailable",
         )
         if isinstance(reason, str) and reason in known:
@@ -74,12 +75,13 @@ def _interpret_response(payload: Any) -> VerifyResult:
 
     user_id = body.get("user_id")
     org_id = body.get("org_id")
+    org_slug = body.get("org_slug")
     evidence = body.get("evidence")
-    if not isinstance(user_id, str) or not isinstance(org_id, str):
+    if not isinstance(user_id, str) or not isinstance(org_id, str) or not isinstance(org_slug, str):
         return VerifyResult.deny("portal_unreachable")
     if evidence not in ("jwt", "membership"):
         return VerifyResult.deny("portal_unreachable")
-    return VerifyResult.allow(user_id=user_id, org_id=org_id, evidence=evidence)
+    return VerifyResult.allow(user_id=user_id, org_id=org_id, org_slug=org_slug, evidence=evidence)
 
 
 class IdentityAsserter:
@@ -135,9 +137,19 @@ class IdentityAsserter:
         claimed_user_id: str,
         claimed_org_id: str,
         bearer_jwt: str | None,
+        claimed_org_slug: str | None = None,
         request_headers: Mapping[str, str] | None = None,
     ) -> VerifyResult:
         """Verify a claimed identity against portal-api.
+
+        ``claimed_org_slug`` (REQ-2.6) is optional. When provided, the portal
+        cross-checks against the canonical ``portal_orgs.slug`` for the
+        verified org; mismatch yields ``org_slug_mismatch``. The library
+        cache uses the same key regardless of ``claimed_org_slug`` because
+        the canonical slug is a stable function of ``org_id`` — a cached
+        verified result carries the canonical slug, and a new call with a
+        different ``claimed_org_slug`` is checked against that cached value
+        without going to the portal.
 
         Returns
         -------
@@ -169,6 +181,26 @@ class IdentityAsserter:
             bearer_jwt=bearer_jwt,
         )
         if cached is not None:
+            # REQ-2.6: even on cache hit, the asserted slug must match the
+            # canonical one we resolved at first verification. The canonical
+            # slug is stable across the cache TTL so we can deny without a
+            # portal round-trip.
+            if (
+                claimed_org_slug is not None
+                and cached.org_slug is not None
+                and claimed_org_slug != cached.org_slug
+            ):
+                with measure_latency() as latency:
+                    pass
+                deny = VerifyResult.deny("org_slug_mismatch")
+                emit_call(
+                    caller_service=caller_service,
+                    claimed_user_id=claimed_user_id,
+                    claimed_org_id=claimed_org_id,
+                    result=deny,
+                    latency_ms=latency["latency_ms"],
+                )
+                return deny
             with measure_latency() as latency:
                 pass
             emit_call(
@@ -185,6 +217,7 @@ class IdentityAsserter:
             "claimed_user_id": claimed_user_id,
             "claimed_org_id": claimed_org_id,
             "bearer_jwt": bearer_jwt,
+            "claimed_org_slug": claimed_org_slug,
         }
         # portal-api's /internal/* endpoints carry the shared INTERNAL_SECRET in
         # ``Authorization: Bearer ...`` (see _require_internal_token in
@@ -277,6 +310,7 @@ class IdentityAsserter:
         claimed_user_id: str,
         claimed_org_id: str,
         bearer_jwt: str | None,
+        claimed_org_slug: str | None = None,
         request_headers: Mapping[str, str] | None = None,
     ) -> VerifyResult:
         """Like :meth:`verify` but raises on every non-verified outcome.
@@ -286,7 +320,8 @@ class IdentityAsserter:
         - :class:`~klai_identity_assert.exceptions.PortalUnreachable` for
           network errors and ``portal_unreachable``-coded results.
         - :class:`~klai_identity_assert.exceptions.IdentityDenied` for every
-          other denial (``no_membership``, ``jwt_identity_mismatch``, etc.).
+          other denial (``no_membership``, ``jwt_identity_mismatch``,
+          ``org_slug_mismatch``, etc.).
 
         Use this when the calling site prefers an early-return-via-raise
         pattern. Default :meth:`verify` is the recommended path.
@@ -297,6 +332,7 @@ class IdentityAsserter:
             claimed_user_id=claimed_user_id,
             claimed_org_id=claimed_org_id,
             bearer_jwt=bearer_jwt,
+            claimed_org_slug=claimed_org_slug,
             request_headers=request_headers,
         )
         if result.verified:
