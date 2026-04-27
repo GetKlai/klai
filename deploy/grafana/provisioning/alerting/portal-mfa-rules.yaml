@@ -1,0 +1,215 @@
+# SPEC-SEC-MFA-001 R4 — portal-api MFA enforcement health alerts (LogsQL via VictoriaLogs).
+#
+# Routed via spec=SPEC-SEC-MFA-001 → klai-ops-alerts-email (severity warning + critical).
+#
+#   R1  mfa_check_failed_rate_high       WARN  >1 mfa_check_failed/min sustained 5m
+#   R2  mfa_check_failed_fail_open_burst CRIT  >10 fail-open events in any 1m window
+#
+# These alerts surface the SPEC's deliberate trade-off: under
+# mfa_policy="optional" we still log mfa_check_failed warnings whenever a
+# Zitadel or DB lookup fails, so the failure-rate is observable. Under
+# mfa_policy="required" the same code path returns 503 to the caller (also
+# emitted as mfa_check_failed), so a sustained spike of either kind is
+# operationally interesting:
+#
+#   - high-rate (R1):   Zitadel availability problem OR a wave of provisioning-
+#                       race users — investigate before the 503s ripple to
+#                       customer support tickets.
+#   - fail-open burst (R2): Many simultaneous fail-opens means many users were
+#                       silently let through MFA enforcement they would have
+#                       failed under "required". The most likely cause is a
+#                       Zitadel-wide outage; the second-most-likely is a
+#                       policy mis-configuration. Either way it is a security
+#                       investigation, not just availability.
+#
+# Pitfall avoidance (matches portal-api-rules.yaml conventions):
+#   - Always go through `reduce` between LogsQL output and SSE math.
+#   - execErrState: OK — VictoriaLogs plugin sometimes trips "long vs wide"
+#     errors on stats reduce chains; miss-on-hiccup beats false-page.
+#   - Single-value LogsQL stats result + `reduce: last` returns the scalar.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: sec-mfa-001-portal-api
+    folder: Klai
+    interval: 1m
+    rules:
+
+      # ── R1: mfa_check_failed_rate_high ──────────────────────────────────
+      # Fires when the rate of mfa_check_failed events exceeds 1/min averaged
+      # over the last 5 minutes (i.e. 5 or more events in the window).
+      # SPEC-SEC-MFA-001 REQ-4.5.
+      - uid: sec-mfa-001-mfa-check-failed-rate-high
+        title: mfa_check_failed_rate_high
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: '_time:5m service:portal-api event:mfa_check_failed | stats count() as n'
+              queryType: instant
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [5], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        keepFiringFor: 10m
+        isPaused: false
+        labels:
+          severity: warning
+          spec: SPEC-SEC-MFA-001
+          service_group: portal-api
+        annotations:
+          summary: 'portal-api MFA check failures > 1/min sustained for 5m'
+          runbook_url: 'docs/runbooks/mfa-check-failed.md'
+          description: |
+            More than 5 ``mfa_check_failed`` events were emitted by portal-api
+            in the last 5 minutes (≈ >1/min sustained). Either Zitadel is
+            flapping (5xx on /v2/users or /authentication_methods) or the
+            portal-api ↔ portal-db connection is degraded (RLS GUC leak,
+            pool exhaustion). Under mfa_policy="required" each event also
+            corresponds to an HTTP 503 returned to a real user, so triage
+            quickly.
+
+            Triage:
+              1. VictoriaLogs query in Grafana → Explore:
+                   _time:5m service:portal-api event:mfa_check_failed
+                     | stats by (reason, mfa_policy, outcome) count()
+                 Group by `reason` to identify the failing leg
+                 (find_user_by_email_5xx / has_any_mfa_5xx / db_lookup_failed /
+                 unexpected) and by `outcome` (503 vs fail-open).
+              2. If `reason` is dominated by has_any_mfa_5xx or
+                 find_user_by_email_5xx → check Zitadel health:
+                   curl -fsS https://auth.getklai.com/debug/healthz
+                 + check `service:zitadel level:error` in VictoriaLogs.
+              3. If `reason` is dominated by db_lookup_failed →
+                 check portal-api DB pool stats and recent RLS guard logs:
+                   _time:15m service:portal-api ("RLS:" OR "InsufficientPrivilege")
+              4. Confirm user impact: any of the events with outcome=503 is a
+                 real user denied login; respond to support tickets if open.
+
+      # ── R2: mfa_check_failed_fail_open_burst ─────────────────────────────
+      # Higher-severity: a burst of fail-open events suggests either a
+      # Zitadel-wide outage affecting many optional-policy orgs, OR an active
+      # bypass attempt combined with a policy mis-configuration. Either is a
+      # security investigation, not just availability.
+      # SPEC-SEC-MFA-001 REQ-4.6.
+      - uid: sec-mfa-001-mfa-check-failed-fail-open-burst
+        title: mfa_check_failed_fail_open_burst
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 60
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: '_time:1m service:portal-api event:mfa_check_failed outcome:fail-open | stats count() as n'
+              queryType: instant
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 60
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 60
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [10], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 1m
+        keepFiringFor: 5m
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-SEC-MFA-001
+          service_group: portal-api
+        annotations:
+          summary: 'portal-api fail-open MFA bypasses > 10/min'
+          runbook_url: 'docs/runbooks/mfa-check-failed.md#triage-fail-open-burst-alert'
+          description: |
+            More than 10 ``mfa_check_failed`` events with ``outcome=fail-open``
+            fired in the last minute. Each event represents a login that
+            *could* have been silently let through without MFA enforcement
+            because the org's policy is optional/recommended (or because the
+            portal_user lookup raised and we cannot determine policy).
+
+            This is significant because:
+              - A Zitadel-wide outage will cause every login to log this. If
+                the rate is elevated and Zitadel is flapping → confirm and
+                wait for recovery; do NOT change `mfa_policy="required"` for
+                a fix-forward.
+              - A small number of fail-opens at any time is normal. A burst
+                indicates either an outage OR a security event:
+                  · An attacker enumerating accounts during a Zitadel hiccup
+                    in the hope of a policy mis-config.
+                  · A recent code or config change broke the lookup path
+                    (regression — check recent merges).
+
+            Triage:
+              1. Check the alert R1 (mfa_check_failed_rate_high) — if both
+                 are firing, the underlying cause is shared. Triage R1 first.
+              2. Filter for the impacted orgs:
+                   _time:5m service:portal-api event:mfa_check_failed outcome:fail-open
+                     | stats by (mfa_policy, reason) count()
+                 If a single `reason=db_lookup_failed` dominates → DB problem
+                 affecting our ability to determine policy at all.
+              3. Cross-check Zitadel health (see R1 step 2). A burst that
+                 correlates with Zitadel 5xx is the expected, documented
+                 failure mode — not a security incident.
+              4. If Zitadel is healthy and the burst persists → escalate to
+                 security on-call; consider temporary
+                 `auth_dev_mode=False` shut-off / rate-limit at Caddy if a
+                 bypass attempt is suspected.
