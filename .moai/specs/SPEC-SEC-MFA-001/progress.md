@@ -59,6 +59,26 @@
 - docs/runbooks/mfa-check-failed.md — NEW
 - .moai/specs/SPEC-SEC-MFA-001/{progress.md,tasks.md} — workflow tracking
 
+### Polish pass (2026-04-27)
+
+After the initial commit (623e4aa6) a self-review surfaced two nits + one
+documentation gap; all addressed in a follow-up commit on the same branch:
+
+1. **Logger consistency** — `has_totp_check_failed` warning switched from
+   stdlib `logger.warning` to `_slog.warning` to honour
+   `.claude/rules/klai/projects/portal-logging-py.md`'s "structlog for new
+   log statements" rule.
+2. **Orphan PortalOrg FK** — added explicit branch in
+   `_resolve_and_enforce_mfa` for `portal_user is not None and org is None`
+   (the org row was deleted/soft-deleted while the FK still pointed at it).
+   Pre-existing behaviour silently fell back to `mfa_policy="optional"`;
+   we keep fail-open semantics but emit `mfa_check_failed` warning so the
+   data-integrity bug is observable in Grafana.
+3. **Coverage gap (REQ-5.6)** — explicitly documented as a deferred
+   follow-up below; no code change.
+
+New test added: `test_portal_user_orphan_org_proceeds_documented_fail_open`.
+
 ### Known limitations / deferred
 
 - **Coverage gap on auth.py overall (64% vs SPEC's 85% target)**: The gap is
@@ -67,13 +87,14 @@
   modules. Closing the gap requires testing untouched endpoints — out of
   scope for SPEC-SEC-MFA-001 per the `minimal-changes` pitfall. The MFA
   enforcement block itself (the SPEC's actual concern) has full branch
-  coverage.
+  coverage. Recommended follow-up: track in a separate SPEC for `auth.py`
+  coverage hardening (TOTP setup, IDP intent, password reset, sso_complete).
 - **Submodule pin bump (T-013)**: not required — Grafana provisioning is in
   the superproject, not in klai-infra.
 
 ### Verification
 
-- pytest tests/test_auth_mfa_fail_closed.py tests/test_auth_security.py: 22/22 passed
-- pytest (full backend): 1156 passed
+- pytest tests/test_auth_mfa_fail_closed.py tests/test_auth_security.py: 23/23 passed
+- pytest (full backend): 1160 passed
 - uv run ruff check app/api/auth.py tests/...: clean
 - uv run --with pyright pyright app/api/auth.py: 0/0/0

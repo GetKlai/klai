@@ -18,7 +18,8 @@ Mode: TDD (RED-GREEN-REFACTOR per task)
 | T-011 | Add Grafana alert YAML in deploy/grafana/provisioning/alerting/portal-mfa-rules.yaml (path corrected from SPEC; Grafana lives in superproject, not klai-infra) | REQ-4.5, 4.6, 4.7 | — | deploy/grafana/provisioning/alerting/portal-mfa-rules.yaml | done |
 | T-012 | Add runbook docs/runbooks/mfa-check-failed.md | REQ-4.7 | T-011 | docs/runbooks/mfa-check-failed.md | done |
 | T-013 | Bump klai-infra submodule pin | n/a | — | — | not needed (Grafana lives in superproject) |
-| T-014 | Conventional commits + push + draft PR | (git_strategy personal) | T-009..T-012 | — | pending |
+| T-014 | Conventional commits + push + draft PR | (git_strategy personal) | T-009..T-012 | — | done (commit 623e4aa6 + polish commit, branch pushed) |
+| T-015 | Polish pass: structlog for has_totp warning + orphan PortalOrg fail-open + visibility test | self-review | T-014 | klai-portal/backend/app/api/auth.py, klai-portal/backend/tests/test_auth_mfa_fail_closed.py, .moai/specs/SPEC-SEC-MFA-001/progress.md | done |
 
 ### Coverage map (acceptance.md → tasks)
 
