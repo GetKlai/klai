@@ -1,8 +1,12 @@
-"""Tests for the SSRF guard used by URL + YouTube source extractors.
+"""Tests for the SSRF guard used by the URL source extractor.
 
 SPEC-KB-SOURCES-001 D6 + R2.1 + R5.3 — block any URL that resolves to
 rfc1918, link-local, loopback, IPv6 loopback/link-local/ULA, or known
 docker-internal hostnames BEFORE any outbound fetch.
+
+YouTube extractor was removed in SPEC-KB-YOUTUBE-REMOVE-001; the SSRF
+guard remains relevant because the URL extractor still consumes
+arbitrary user-supplied URLs.
 """
 
 from __future__ import annotations
