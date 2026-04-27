@@ -290,10 +290,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # scanners: vuln-only — secret scanning is handled separately by
+      # Semgrep and Gitleaks against our SOURCE code. Trivy's secret scanner
+      # runs against the BUILT image and matches strings in third-party
+      # Python libraries shipped under /repo/.../site-packages. yt-dlp's
+      # site-extractor modules embed dozens of public API tokens for
+      # streaming services (NBC, Vice, ESPN, Shahid, …) that consistently
+      # flag as CRITICAL aws-access-key-id / HIGH jwt-token hits — false
+      # positives that clutter the GitHub Security tab and break this job.
+      # Vulnerability scanning (the actual reason this job exists per
+      # .claude/rules/klai/infra/deploy.md) runs unchanged: severity
+      # CRITICAL+HIGH, ignore-unfixed, fail-on-find.
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: ghcr.io/getklai/portal-api:${{ github.sha }}
+          scanners: 'vuln'
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'

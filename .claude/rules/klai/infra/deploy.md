@@ -96,6 +96,15 @@ Docker images: grouped manual PR. Trigger: `gh workflow run renovate.yml`.
 ## Trivy scanning
 Every Docker build workflow needs `scan` job after `build-push` with `security-events: write`.
 
+**Vulnerability scanning only — set `scanners: 'vuln'` on the trivy-action.**
+Built images contain third-party Python/JS libraries that embed public API
+tokens in their source files (e.g. yt-dlp's per-streaming-service extractors
+hardcode NBC, Vice, ESPN, Shahid tokens). Trivy's secret scanner classifies
+those as CRITICAL `aws-access-key-id` / HIGH `jwt-token` and breaks the scan
+job — false positives, every time. Source-level secret scanning is covered
+separately by Semgrep (`SAST — Semgrep` workflow) and Gitleaks. If a service
+ever needs a CVE allowlist, prefer a `.trivyignore` over disabling the gate.
+
 ## No manual server edits (CRIT)
 Never edit compose/env on server — repo is source of truth. CI overwrites on next push.
 
