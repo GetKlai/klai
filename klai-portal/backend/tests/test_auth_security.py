@@ -403,7 +403,14 @@ class TestMFAPolicyEnforcement:
 
     @pytest.mark.asyncio
     async def test_mfa_policy_lookup_failure_defaults_to_optional(self) -> None:
-        """If the portal_user/org DB lookup fails, MFA enforcement defaults to optional (fail-open)."""
+        """If portal_user lookup itself raises, MFA enforcement defaults to optional (fail-open).
+
+        SPEC-SEC-MFA-001 REQ-5.4 narrowed: this test covers ONLY the
+        "portal_user lookup raised" arm — the call returns ``None`` semantics.
+        The complementary "portal_user found but PortalOrg fetch raises" arm
+        is fail-CLOSED and is covered by
+        ``test_auth_mfa_fail_closed.py::test_portal_user_found_org_fetch_raises_returns_503``.
+        """
         from app.api.auth import LoginRequest, login
 
         body = LoginRequest(email="user@test.com", password="pass123", auth_request_id="ar-mfa-4")
@@ -421,46 +428,19 @@ class TestMFAPolicyEnforcement:
             mock_zitadel.create_session_with_password = AsyncMock(return_value=_make_session_response())
             mock_zitadel.finalize_auth_request = AsyncMock(return_value="https://chat.getklai.com/callback")
 
-            # DB throws on portal_user lookup
+            # DB throws on portal_user lookup — cannot map email to org → fail-open
             db.scalar = AsyncMock(side_effect=Exception("DB connection lost"))
             db.get = AsyncMock(return_value=None)
 
             mock_audit.log_event = AsyncMock()
 
-            # Should NOT raise -- fail-open means login proceeds
+            # Should NOT raise -- fail-open means login proceeds (provisioning grace)
             result = await login(body=body, response=response, db=db)
             assert result is not None
 
-    @pytest.mark.asyncio
-    async def test_mfa_check_failure_defaults_to_pass(self) -> None:
-        """If has_any_mfa raises HTTPStatusError, login proceeds (fail-open)."""
-        from app.api.auth import LoginRequest, login
-
-        body = LoginRequest(email="user@test.com", password="pass123", auth_request_id="ar-mfa-5")
-        response = MagicMock()
-        db = AsyncMock()
-
-        with (
-            patch("app.api.auth.zitadel") as mock_zitadel,
-            patch("app.api.auth.audit") as mock_audit,
-            patch("app.api.auth.emit_event"),
-            patch("app.api.auth.select"),
-        ):
-            mock_zitadel.find_user_by_email = AsyncMock(return_value=("uid-mfa5", "zorg-mfa5"))
-            mock_zitadel.has_totp = AsyncMock(return_value=False)
-            mock_zitadel.create_session_with_password = AsyncMock(return_value=_make_session_response())
-            mock_zitadel.finalize_auth_request = AsyncMock(return_value="https://chat.getklai.com/callback")
-            mock_zitadel.has_any_mfa = AsyncMock(side_effect=_make_http_error(500))
-
-            mock_portal_user = MagicMock()
-            mock_portal_user.org_id = 10
-            mock_org = MagicMock()
-            mock_org.mfa_policy = "required"
-            db.scalar = AsyncMock(return_value=mock_portal_user)
-            db.get = AsyncMock(return_value=mock_org)
-
-            mock_audit.log_event = AsyncMock()
-
-            # Should NOT raise 403 -- has_any_mfa failure = fail-open
-            result = await login(body=body, response=response, db=db)
-            assert result is not None
+    # SPEC-SEC-MFA-001 REQ-5.3: ``test_mfa_check_failure_defaults_to_pass`` is
+    # intentionally REMOVED. The fail-open behaviour it documented (has_any_mfa
+    # 5xx => user_has_mfa = True) is now an anti-pattern: under
+    # ``mfa_policy="required"`` we fail-CLOSED with HTTP 503 instead.
+    # Replacement coverage lives in
+    # ``test_auth_mfa_fail_closed.py::test_required_has_any_mfa_500_returns_503``.

@@ -1,5 +1,89 @@
 # Changelog
 
+## [Unreleased] — 2026-04-27 — SPEC-SEC-MFA-001: MFA fail-closed in login flow
+
+Closes SPEC-SEC-AUDIT-2026-04 findings #11 and #12 (Cornelis audit
+2026-04-22). The portal-api login handler now refuses login with HTTP 503 +
+`Retry-After: 5` whenever the MFA enforcement check cannot complete under
+`mfa_policy="required"`, instead of silently bypassing MFA. Documented
+fail-open behaviour is preserved under `mfa_policy="optional"` /
+`"recommended"`.
+
+### Fixed (security)
+
+- **`klai-portal/backend/app/api/auth.py::login`** — replaced the
+  `user_has_mfa = True` fallback with an explicit fail-closed branch.
+  `has_any_mfa` raising `httpx.HTTPStatusError`, `httpx.RequestError`, or
+  any unexpected exception now raises `HTTPException(503, …, headers={"Retry-After": "5"})`
+  before any cookie or session artefact is created.
+- **Pre-auth try split** — `find_user_by_email` 5xx and `RequestError` now
+  surface as 503 BEFORE `create_session_with_password` runs. 4xx is still
+  treated as "well-formed not found" and the password check returns 401.
+  This closes the finding-#12 path where `zitadel_user_id` could remain
+  `None` and silently skip the MFA enforcement block.
+- **DB-lookup splits** — `portal_user` lookup raise still fail-opens
+  (provisioning grace), but `portal_user found + PortalOrg fetch raise`
+  now fail-closes 503 rather than silently downgrading to optional.
+- **Orphan `PortalOrg` FK** — `portal_user.org_id` pointing at a missing
+  org now emits a `mfa_check_failed` warning while preserving fail-open
+  semantics. Pre-existing behaviour was a silent fall-back, hiding
+  data-integrity bugs.
+
+### Added
+
+- **`klai-portal/backend/app/api/auth.py`** — three helpers:
+  - `_mfa_unavailable()` — single source of truth for the 503 response.
+  - `_emit_mfa_check_failed()` — structured structlog event emitter (fields:
+    `reason`, `mfa_policy`, `zitadel_status`, `email_hash` (sha256), `outcome`).
+    Email is never logged in plaintext.
+  - `_resolve_and_enforce_mfa()` — extracted MFA enforcement block, fully
+    branch-tested.
+- **`klai-portal/backend/tests/test_auth_mfa_fail_closed.py`** (NEW) — 13
+  respx-mocked scenarios exercising every fail-closed and documented
+  fail-open branch. Uses respx against the real `ZitadelClient` instance
+  (not `MagicMock` on `app.api.auth.zitadel`), per REQ-5.7.
+- **`klai-portal/backend/pyproject.toml`** — `respx>=0.22` added to dev
+  dependency group.
+- **`deploy/grafana/provisioning/alerting/portal-mfa-rules.yaml`** (NEW) —
+  two LogsQL alerts: rate >1/min sustained 5m (warning) and fail-open
+  burst >10/min (critical), both linking to the runbook below.
+- **`docs/runbooks/mfa-check-failed.md`** (NEW) — triage steps for both
+  alerts, including security-escalation criteria.
+- **`@MX:ANCHOR`** annotations on `_mfa_unavailable` and
+  `_emit_mfa_check_failed` documenting the cross-component contracts
+  (Grafana alert schema + runbook + frontend 503 expectations).
+
+### Changed
+
+- **`klai-portal/backend/tests/test_auth_security.py`** — `TestMFAPolicyEnforcement`
+  narrowed:
+  - `test_mfa_check_failure_defaults_to_pass` — **deleted** (REQ-5.3); the
+    fail-open behaviour it asserted is now an anti-pattern.
+  - `test_mfa_policy_lookup_failure_defaults_to_optional` — narrowed to
+    cover only the "portal_user lookup raised" arm; the
+    "portal_user found + org fetch raises" arm is now covered by the new
+    fail-closed test module.
+
+### Operational notes
+
+- **Behaviour change for production users in required-MFA orgs.** During a
+  Zitadel restart flap (5xx window) login now returns 503 + `Retry-After: 5`
+  instead of silently letting the user through without MFA. Users retry
+  within seconds. The portal frontend already handles 502 with a generic
+  "try again later" message; 503 surfaces identically.
+- **Grafana alerts go live with this PR.** `alerting-check.yml` will
+  validate the YAML on merge; the alerts appear under "Klai → sec-mfa-001-portal-api"
+  group after the next Grafana provisioning reload.
+- **No DB migration required.** No new env vars. No backward-incompatible
+  API contract changes.
+- **Coverage gap** (deferred): overall coverage on `klai-portal/backend/app/api/auth.py`
+  is 64% (target 85%), unchanged from before. The MFA enforcement block
+  itself has full branch coverage. Closing the overall gap requires testing
+  unrelated endpoints (TOTP setup, IDP intent, password reset, sso_complete)
+  and is recommended as a follow-up SPEC.
+
+---
+
 ## [Unreleased] — 2026-04-22 — SPEC-INFRA-005: Stateful service persistence hardening
 
 Triggered by the 2026-04-19 FalkorDB graph data loss incident

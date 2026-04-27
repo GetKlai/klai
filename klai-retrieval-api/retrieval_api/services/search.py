@@ -111,22 +111,74 @@ def _scope_filter(request: RetrieveRequest) -> list[FieldCondition | Filter]:
     return conditions
 
 
+def _notebook_filter(request: RetrieveRequest) -> list[FieldCondition | Filter]:
+    """Build the must_conditions list for ``_search_notebook``.
+
+    SPEC-SEC-IDENTITY-ASSERT-001 REQ-5: extends the previous tenant-only
+    scope with a personal-vs-team visibility gate symmetric to
+    ``_search_knowledge``'s ``visibility=private`` filter. Chunks carry a
+    ``notebook_visibility`` payload field at ingest time (written by
+    klai-focus/research-api's qdrant_store).
+
+    Visibility logic:
+
+    - Team notebooks: the chunk has ``notebook_visibility="org"`` and is
+      readable by every user in the tenant — no owner check. ``"org"``
+      mirrors ``Notebook.scope`` in research-api so no translation layer
+      sits between the DB record and the Qdrant payload.
+    - Personal notebooks: the chunk has ``notebook_visibility="personal"``
+      and is readable only when ``owner_user_id`` matches the requester.
+
+    The ``Filter(should=[...])`` block is the OR of the two branches: a
+    chunk passes when EITHER the team-leg matches OR the personal-leg
+    matches. Chunks with no payload field (legacy, pre-migration) match
+    neither leg and are filtered out — fail-secure default.
+    """
+
+    conditions: list[FieldCondition | Filter] = [
+        FieldCondition(key="tenant_id", match=MatchValue(value=request.org_id)),
+    ]
+    if request.notebook_id:
+        conditions.append(
+            FieldCondition(key="notebook_id", match=MatchValue(value=request.notebook_id))
+        )
+
+    # Visibility gate. user_id is required at the endpoint when notebook scope
+    # is requested (REQ-5.2), so callers reaching this function with no user_id
+    # are programmer errors — the personal-leg simply can't fire without it.
+    visibility_branches: list[FieldCondition | Filter] = [
+        FieldCondition(key="notebook_visibility", match=MatchValue(value="org")),
+    ]
+    if request.user_id:
+        visibility_branches.append(
+            Filter(
+                must=[
+                    FieldCondition(key="notebook_visibility", match=MatchValue(value="personal")),
+                    FieldCondition(key="owner_user_id", match=MatchValue(value=request.user_id)),
+                ]
+            )
+        )
+    conditions.append(Filter(should=visibility_branches))
+
+    conditions.append(_invalid_at_filter())
+    return conditions
+
+
 async def _search_notebook(
     query_vector: list[float],
     request: RetrieveRequest,
     candidates: int,
 ) -> list[dict]:
-    """Dense cosine search on klai_focus collection (single unnamed vector)."""
+    """Dense cosine search on klai_focus collection (single unnamed vector).
+
+    Filter logic delegated to :func:`_notebook_filter`. SPEC-SEC-IDENTITY-ASSERT-001
+    REQ-5 enforces a visibility gate (``notebook_visibility`` payload + symmetric
+    ``owner_user_id`` filter) so a user cannot read a peer's personal notebook
+    just because both belong to the same tenant (AC-4).
+    """
     client = _get_client()
 
-    must_conditions: list[FieldCondition | Filter] = [
-        FieldCondition(key="tenant_id", match=MatchValue(value=request.org_id)),
-    ]
-    if request.notebook_id:
-        must_conditions.append(
-            FieldCondition(key="notebook_id", match=MatchValue(value=request.notebook_id))
-        )
-    must_conditions.append(_invalid_at_filter())
+    must_conditions = _notebook_filter(request)
 
     try:
         result = await asyncio.wait_for(

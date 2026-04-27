@@ -56,8 +56,17 @@ def ensure_collection() -> None:
         else:
             raise
 
-    # Create payload indexes (idempotent)
-    for field_name in ("tenant_id", "notebook_id", "source_id"):
+    # Create payload indexes (idempotent). notebook_visibility / owner_user_id
+    # were added by SPEC-SEC-IDENTITY-ASSERT-001 REQ-5 — index both so the
+    # personal-vs-team gate in retrieval-api's _search_notebook stays cheap
+    # at query time.
+    for field_name in (
+        "tenant_id",
+        "notebook_id",
+        "source_id",
+        "notebook_visibility",
+        "owner_user_id",
+    ):
         try:
             client.create_payload_index(
                 collection_name=collection_name,
@@ -75,6 +84,13 @@ def upsert_chunks(
     """
     Upsert chunk vectors into the klai_focus collection.
     Point ID is a deterministic UUID derived from chunk_id via uuid5.
+
+    SPEC-SEC-IDENTITY-ASSERT-001 REQ-5: every chunk MUST carry
+    ``notebook_visibility`` and ``owner_user_id`` so retrieval-api's
+    ``_search_notebook`` can enforce the personal-vs-team gate without a
+    DB roundtrip. Both values come from the parent Notebook record and
+    are passed via ``chunk_data`` by the ingestion layer (see
+    ``app/services/ingestion.py``).
     """
     client = get_client()
     points = []
@@ -94,6 +110,12 @@ def upsert_chunks(
                     "chunk_index": chunk_data.get("chunk_index", 0),
                     "metadata": chunk_data.get("metadata") or {},
                     "created_at": datetime.now(timezone.utc).isoformat(),
+                    # SPEC-SEC-IDENTITY-ASSERT-001 REQ-5: visibility + owner.
+                    # Required keys — KeyError here means the ingestion layer
+                    # did not look up the notebook scope, which is a programmer
+                    # error worth crashing the ingest job over.
+                    "notebook_visibility": chunk_data["notebook_visibility"],
+                    "owner_user_id": chunk_data["owner_user_id"],
                 },
             )
         )

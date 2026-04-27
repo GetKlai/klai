@@ -88,7 +88,7 @@ def redis_pool():
 
 def _make_request(
     *,
-    token: str | None = "secret-42",  # noqa: S107 — test fixture token, not a real secret
+    token: str | None = "secret-42",
     caller_ip: str | None = "172.18.0.5",
     xff: str | None = None,
     method: str = "GET",
