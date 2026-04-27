@@ -40,6 +40,7 @@ import json
 import logging
 import secrets
 import time
+from typing import Any
 from urllib.parse import quote, urlparse
 
 import httpx
@@ -245,14 +246,54 @@ def _mfa_unavailable() -> HTTPException:
     )
 
 
-# @MX:ANCHOR: Single emit point for the structured `mfa_check_failed` event.
-# @MX:REASON: fan_in=8 — every Zitadel/DB failure leg in login() and
-#   _resolve_and_enforce_mfa funnels through this helper. The fields it
-#   produces (reason, mfa_policy, zitadel_status, email_hash, outcome, log_level)
-#   are the schema consumed by Grafana alerts (portal-mfa-rules.yaml) and
-#   docs/runbooks/mfa-check-failed.md. Adding a field is fine; renaming or
-#   removing breaks alerting.
-# @MX:SPEC: SPEC-SEC-MFA-001
+# @MX:ANCHOR: Single emit point for any structured auth-flow failure event.
+# @MX:REASON: fan_in projected ≥20 across SPEC-SEC-MFA-001 and SPEC-SEC-AUTH-
+#   COVERAGE-001. Every Zitadel/DB failure leg in login(), _resolve_and_enforce_mfa,
+#   totp_login, totp_setup, totp_confirm, idp_intent, idp_callback,
+#   password_reset, password_set, sso_complete, passkey_*, email_otp_*,
+#   verify_email funnels through here. The kwargs produced (event, reason,
+#   outcome, zitadel_status, email_hash, log_level + ad-hoc fields) are the
+#   schema consumed by Grafana alerts and the mfa-check-failed runbook.
+#   Adding a field is fine; renaming or removing the existing fields breaks
+#   alerting and on-call queries.
+# @MX:SPEC: SPEC-SEC-AUTH-COVERAGE-001 (predecessor: SPEC-SEC-MFA-001)
+def _emit_auth_event(
+    event: str,
+    *,
+    reason: str,
+    outcome: str,
+    level: str = "warning",
+    email: str | None = None,
+    email_hash: str | None = None,
+    zitadel_status: int | None = None,
+    **fields: Any,
+) -> None:
+    """Emit a structured auth-flow event via structlog (SPEC-SEC-AUTH-COVERAGE-001 REQ-5.1).
+
+    Generalisation of ``_emit_mfa_check_failed``: the event name is a parameter,
+    so any auth endpoint can emit a queryable failure event with the same
+    schema as ``mfa_check_failed``.
+
+    Privacy: pass either ``email`` (raw, sha256-hashed inside) or
+    ``email_hash`` (pre-hashed). Plaintext email is NEVER emitted (REQ-5.2).
+
+    Routing: ``request_id`` is auto-bound by structlog contextvars from
+    ``LoggingContextMiddleware``; no manual propagation needed.
+    """
+    if email is not None and email_hash is None:
+        email_hash = hashlib.sha256(email.lower().encode("utf-8")).hexdigest()
+    log_method = getattr(_slog, level, _slog.warning)
+    payload: dict[str, Any] = {
+        "reason": reason,
+        "outcome": outcome,
+        "zitadel_status": zitadel_status,
+        **fields,
+    }
+    if email_hash is not None:
+        payload["email_hash"] = email_hash
+    log_method(event, **payload)
+
+
 def _emit_mfa_check_failed(
     *,
     reason: str,
@@ -262,21 +303,21 @@ def _emit_mfa_check_failed(
     zitadel_status: int | None = None,
     level: str = "warning",
 ) -> None:
-    """Emit a structured ``mfa_check_failed`` event (SPEC-SEC-MFA-001 REQ-4).
+    """Emit the SPEC-SEC-MFA-001 ``mfa_check_failed`` event.
 
-    Email is sha256-hashed before logging — never the plaintext email.
-    ``request_id`` is auto-bound by structlog contextvars from
-    ``LoggingContextMiddleware``; no manual propagation needed.
+    Thin backward-compatible wrapper around ``_emit_auth_event`` —
+    preserved as a stable public-call surface so SPEC-SEC-MFA-001 callers
+    remain unchanged. New auth endpoints SHOULD call ``_emit_auth_event``
+    directly with their own event name.
     """
-    email_hash = hashlib.sha256(email.lower().encode("utf-8")).hexdigest()
-    log_method = getattr(_slog, level, _slog.warning)
-    log_method(
+    _emit_auth_event(
         "mfa_check_failed",
         reason=reason,
-        mfa_policy=mfa_policy,
-        zitadel_status=zitadel_status,
-        email_hash=email_hash,
         outcome=outcome,
+        level=level,
+        email=email,
+        zitadel_status=zitadel_status,
+        mfa_policy=mfa_policy,
     )
 
 
