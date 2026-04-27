@@ -9,7 +9,7 @@ See SPEC-SEC-HYGIENE-001 REQ-35.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -26,7 +26,7 @@ def _record(
     return SimpleNamespace(
         id=txn_id,
         status=status,
-        created_at=datetime.utcnow() - timedelta(minutes=minutes_ago),
+        created_at=datetime.now(UTC) - timedelta(minutes=minutes_ago),
         audio_path=audio_path,
         error_reason=None,
     )

@@ -147,9 +147,19 @@ async def transcribe(
     loop = asyncio.get_event_loop()
     wav_bytes = await loop.run_in_executor(None, normalize_audio, raw, filename)
 
-    # Generate ID and save audio to disk FIRST
+    # Generate ID and save audio to disk FIRST.
+    # SPEC-SEC-HYGIENE-001 REQ-33.1: `_safe_audio_path` raises ValueError on
+    # malformed user_id / txn_id. With HY-34 in place upstream this is purely
+    # defense-in-depth (auth.get_current_user_id already rejects malformed
+    # sub), but the SPEC asks the caller to map ValueError → 400.
     txn_id = "txn_" + uuid.uuid4().hex
-    audio_path = await loop.run_in_executor(None, save_audio, user_id, txn_id, wav_bytes)
+    try:
+        audio_path = await loop.run_in_executor(None, save_audio, user_id, txn_id, wav_bytes)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ongeldige opslaglocatie",
+        ) from exc
 
     # Create DB record with status=processing
     record = Transcription(

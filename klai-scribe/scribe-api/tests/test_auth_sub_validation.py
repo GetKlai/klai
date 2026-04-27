@@ -10,6 +10,7 @@ is that the regex check fires regardless of whether decode succeeded.
 from __future__ import annotations
 
 import pytest
+import structlog
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 
@@ -126,3 +127,42 @@ async def test_missing_sub_claim_rejected(patch_jwt) -> None:
     with pytest.raises(HTTPException) as exc_info:
         await get_current_user_id(creds)
     assert exc_info.value.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Observability — `zitadel_sub_rejected` event so a 401 spike can be traced.
+# ---------------------------------------------------------------------------
+
+async def test_malformed_sub_emits_structlog_event(patch_jwt) -> None:
+    """Operator MUST be able to grep VictoriaLogs for `zitadel_sub_rejected`
+    when investigating a 401 spike. The event MUST NOT contain the raw sub
+    value (PII / attacker-controlled), only its length for triage."""
+    from app.core.auth import get_current_user_id
+
+    bad_sub = "../evil/path"
+    patch_jwt(bad_sub)
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="fake")
+
+    with structlog.testing.capture_logs() as cap_logs:
+        with pytest.raises(HTTPException):
+            await get_current_user_id(creds)
+
+    events = [log for log in cap_logs if log.get("event") == "zitadel_sub_rejected"]
+    assert len(events) == 1
+    assert events[0]["sub_length"] == len(bad_sub)
+    # The raw value MUST NOT be in the log payload.
+    assert all(bad_sub not in str(v) for v in events[0].values() if isinstance(v, str))
+
+
+async def test_legitimate_sub_does_not_emit_rejection_event(patch_jwt) -> None:
+    """Sanity: a normal sub does NOT trigger the rejection event."""
+    from app.core.auth import get_current_user_id
+
+    patch_jwt("269462541789364226")
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="fake")
+
+    with structlog.testing.capture_logs() as cap_logs:
+        await get_current_user_id(creds)
+
+    events = [log for log in cap_logs if log.get("event") == "zitadel_sub_rejected"]
+    assert events == []
