@@ -817,8 +817,12 @@ services:
       KNOWLEDGE_INGEST_URL: http://knowledge-ingest:8000
       KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
       PERSONAL_KB_NAME: personal
-      # DEFAULT_ORG_SLUG can be set per-tenant if running a dedicated instance;
-      # leave unset when X-Org-Slug is always sent by LibreChat.
+      # SPEC-SEC-IDENTITY-ASSERT-001 REQ-2: caller-asserted X-User-ID /
+      # X-Org-ID / X-Org-Slug headers are no longer trusted. The MCP calls
+      # portal-api /internal/identity/verify and only forwards the verified
+      # identity to upstream services (knowledge-ingest, klai-docs).
+      PORTAL_API_URL: http://portal-api:8010
+      PORTAL_INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
     networks:
       - klai-net
     depends_on:
