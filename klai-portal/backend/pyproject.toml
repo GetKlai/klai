@@ -59,6 +59,11 @@ dev = [
     "httpx>=0.28",
     "ruff>=0.15",
     "pyright>=1.1.408",
+    # SPEC-SEC-IDENTITY-ASSERT-001: contract test only — portal-api does not
+    # import the library at runtime. Mirrors [project.optional-dependencies]
+    # dev so both ``uv run pytest`` (CI, picks dependency-groups) and
+    # ``uv pip install .[dev]`` (local) install it.
+    "klai-identity-assert",
 ]
 
 [tool.pytest.ini_options]
