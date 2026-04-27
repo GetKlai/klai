@@ -11,7 +11,7 @@ Test files MUST live at:
 - `klai-portal/backend/tests/test_csrf_exempt_rationale.py` (AC-12)
 - `klai-connector/tests/test_cors_middleware_order.py` (AC-15)
 - `klai-retrieval-api/tests/test_cors_presence.py` (AC-16, AC-17)
-- `.claude/lint/tests/test_cors_middleware_last_lint.py` (AC-18)
+- `rules/tests/test_cors_middleware_last_lint.py` (AC-18)
 
 ## AC-1: Cross-origin GET /api/me from evil.example is blocked
 
@@ -239,8 +239,9 @@ findings (Finding III, Finding IV) and the repo-wide lint gate (REQ-6, REQ-7).
 
 ## AC-18: ast-grep / CI lint catches CORSMiddleware-not-last regressions
 
-- **GIVEN** an ast-grep pattern rule (`.claude/lint/cors_middleware_last.yml` or
-  equivalent location) that matches any file containing
+- **GIVEN** an ast-grep pattern rule (`rules/cors_middleware_last.yml`,
+  matching the existing repo precedent `rules/no-exec-run.yml` discovered via
+  repo-root `sgconfig.yml`) that matches any file containing
   `app.add_middleware(CORSMiddleware, ...)` followed — in source order — by
   another `app.add_middleware(...)` call for the same `app` binding
 - **WHEN** the CI pipeline runs the lint on a pull request that modifies any
@@ -249,12 +250,12 @@ findings (Finding III, Finding IV) and the repo-wide lint gate (REQ-6, REQ-7).
   **THE** lint **SHALL** exit non-zero AND report the offending file and line
   when a regression is introduced.
 - **Synthetic regression test:** A fixture file in
-  `.claude/lint/tests/fixtures/bad_middleware_order.py` SHALL register
+  `rules/tests/fixtures/bad_middleware_order.py` SHALL register
   CORSMiddleware first and Auth middleware after. A pytest case SHALL invoke
   the lint on this fixture and assert a non-zero exit code AND an error message
   naming the fixture file.
 - **Positive test:** A fixture file in
-  `.claude/lint/tests/fixtures/good_middleware_order.py` SHALL register Auth
+  `rules/tests/fixtures/good_middleware_order.py` SHALL register Auth
   first and CORSMiddleware last. A pytest case SHALL invoke the lint on this
   fixture and assert exit code 0.
 - **CI wiring:** The lint SHALL be wired into the repo's CI workflow
@@ -300,5 +301,5 @@ klai-portal/backend/tests/test_partner_cors.py
 klai-portal/backend/tests/test_csrf_exempt_rationale.py
 klai-connector/tests/test_cors_middleware_order.py
 klai-retrieval-api/tests/test_cors_presence.py
-.claude/lint/tests/test_cors_middleware_last_lint.py` and pass in CI before
+rules/tests/test_cors_middleware_last_lint.py` and pass in CI before
 this SPEC can be marked `status: done`.

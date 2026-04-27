@@ -1,8 +1,30 @@
 from pathlib import Path
+from urllib.parse import urlparse
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _ENV_FILE = Path(__file__).parent.parent.parent / ".env"
+
+
+# SPEC-SEC-HYGIENE-001 REQ-37.1 — explicit allowlist for `whisper_server_url`.
+# Operator-controlled config, NOT user-supplied at request time. The threat
+# model is operator typo / env drift turning the unauthenticated /health
+# endpoint into an SSRF probe. Allowlist (not blocklist) so an unrecognised
+# host fails at boot rather than silently shipping.
+#
+# Bridge IP `172.18.0.1` is the docker0 gateway used in current prod to
+# reach the cross-stack `whisper-server` on the gpu-01 host. Documented
+# inline so the `validator-env-parity` pitfall does not re-bite.
+_WHISPER_ALLOWED_HOSTS = frozenset(
+    {
+        "whisper",
+        "whisper-server",
+        "localhost",
+        "127.0.0.1",
+        "172.18.0.1",
+    }
+)
 
 
 class Settings(BaseSettings):
@@ -38,9 +60,48 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
+    # SPEC-SEC-HYGIENE-001 REQ-35.1 — stranded-row reaper config.
+    # 60 min default: longer than every realistic scribe transcription
+    # (typical meeting is 30-60 min, with worst-case ~90 min) so the reaper
+    # cannot false-reap a still-running job. SPEC suggested 30 min; raised
+    # to 60 after considering the false-reap UX risk in `reaper.py`.
+    scribe_stranded_timeout_min: int = 60
+
+    # SPEC-SEC-HYGIENE-001 REQ-36.2 — orphan-audio janitor config.
+    scribe_janitor_grace_hours: int = 24
+
     @property
     def max_upload_bytes(self) -> int:
         return self.max_upload_mb * 1024 * 1024
+
+    @field_validator("whisper_server_url", mode="after")
+    @classmethod
+    def _check_whisper_server_url(cls, v: str) -> str:
+        """SSRF landmine guard. See SPEC-SEC-HYGIENE-001 REQ-37.1.
+
+        `/health` is unauthenticated, so an operator typo here turns it
+        into an SSRF probe. Reject at boot rather than silently shipping.
+        """
+        try:
+            parsed = urlparse(v)
+        except Exception as exc:
+            raise ValueError(f"whisper_server_url: unparseable ({exc})") from exc
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError(
+                f"whisper_server_url: scheme must be http or https, got {parsed.scheme!r}"
+            )
+        host = (parsed.hostname or "").lower().rstrip(".")
+        if not host:
+            raise ValueError("whisper_server_url: missing hostname")
+        if host in _WHISPER_ALLOWED_HOSTS:
+            return v
+        if host.endswith(".getklai.com"):
+            return v
+        raise ValueError(
+            f"whisper_server_url: hostname {host!r} not in allowlist "
+            f"({sorted(_WHISPER_ALLOWED_HOSTS)} or *.getklai.com). "
+            f"See SPEC-SEC-HYGIENE-001 REQ-37.1."
+        )
 
 
 settings = Settings()
