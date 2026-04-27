@@ -9,7 +9,7 @@ from klai_identity_assert.cache import IdentityCache, _fingerprint_jwt  # pyrigh
 
 
 def _verified() -> VerifyResult:
-    return VerifyResult.allow(user_id="u-1", org_id="o-1", evidence="jwt")
+    return VerifyResult.allow(user_id="u-1", org_id="o-1", org_slug="acme", evidence="jwt")
 
 
 def test_get_returns_none_on_miss() -> None:
@@ -46,6 +46,7 @@ def test_put_then_get_returns_cached_with_cached_flag_true() -> None:
     assert cached.verified is True
     assert cached.cached is True
     assert cached.user_id == "u-1"
+    assert cached.org_slug == "acme"
     assert cached.evidence == "jwt"
 
 
