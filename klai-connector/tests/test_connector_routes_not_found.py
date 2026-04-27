@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -38,6 +39,7 @@ from fastapi.testclient import TestClient
 from app.core.database import get_session
 from app.models.connector import Connector
 from app.routes.connectors import router as connectors_router
+from app.routes.deps import get_redis_client, get_settings
 
 _FAKE_UUID = uuid.UUID("00000000-0000-0000-0000-000000000000")
 _SELF_ORG = "org-self"
@@ -90,6 +92,18 @@ def _build_client(
         yield _FakeSession(session_result)
 
     app.dependency_overrides[get_session] = _override_get_session
+    # The connector routes added rate-limit deps in HY-32. Override
+    # get_settings + get_redis_client so the rate-limit dep does not try
+    # to read missing env vars or contact Redis. Empty redis_url disables
+    # the feature; the rate-limit check returns True without touching the
+    # client.
+    app.dependency_overrides[get_settings] = lambda: SimpleNamespace(
+        connector_rl_read_per_min=0,
+        connector_rl_write_per_min=0,
+        redis_url="",
+    )
+    app.dependency_overrides[get_redis_client] = lambda: None
+
     monkeypatch.setattr(
         "app.routes.connectors.get_org_id", lambda _request: org_id
     )

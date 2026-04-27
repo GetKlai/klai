@@ -115,11 +115,15 @@ def _extract_markdown(page: dict[str, Any]) -> str:
     crawl4ai may surface markdown either as a string, a dict with
     ``fit_markdown`` / ``raw_markdown`` keys, or under a ``markdown_v2``
     key — handle all three shapes.
+
+    pyright strict-mode noise on dict[str, Any].get() is suppressed at
+    this boundary — JSON parsing is intentionally untyped.
     """
+    # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType, reportUnknownArgumentType]
     md = page.get("markdown")
     if isinstance(md, dict):
-        fit = md.get("fit_markdown") or ""
-        raw = md.get("raw_markdown") or ""
+        fit = str(md.get("fit_markdown") or "")
+        raw = str(md.get("raw_markdown") or "")
     elif isinstance(md, str):
         fit = ""
         raw = md
@@ -127,10 +131,11 @@ def _extract_markdown(page: dict[str, Any]) -> str:
         fit, raw = "", ""
 
     md_v2 = page.get("markdown_v2") or {}
-    if not fit:
-        fit = md_v2.get("fit_markdown") or ""
-    if not raw:
-        raw = md_v2.get("raw_markdown") or ""
+    if isinstance(md_v2, dict):
+        if not fit:
+            fit = str(md_v2.get("fit_markdown") or "")
+        if not raw:
+            raw = str(md_v2.get("raw_markdown") or "")
     return fit or raw
 
 
@@ -157,11 +162,16 @@ async def _fetch_page_markdown(
             headers=headers,
         )
         resp.raise_for_status()
-        data = resp.json()
+        data: dict[str, Any] = resp.json()
 
-    results = data.get("results") or []
-    if isinstance(results, dict):
-        results = [results]
+    raw_results: Any = data.get("results") or []
+    results: list[dict[str, Any]]
+    if isinstance(raw_results, dict):
+        results = [raw_results]
+    elif isinstance(raw_results, list):
+        results = raw_results
+    else:
+        results = []
     if not results:
         return ""
     return _extract_markdown(results[0])
