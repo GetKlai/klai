@@ -68,7 +68,7 @@ def mock_db() -> AsyncMock:
     return db
 
 
-def _signed_jwt(*, sub: str, resourceowner: str, secret: str = "hmac-secret", **extra: Any) -> str:  # noqa: S107
+def _signed_jwt(*, sub: str, resourceowner: str, secret: str = "hmac-secret", **extra: Any) -> str:
     """Sign a fake Zitadel JWT with HS256 for tests.
 
     The verifier configures jwt.decode for RS256 only — so any HS256 token
