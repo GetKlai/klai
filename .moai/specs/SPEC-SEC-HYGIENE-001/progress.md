@@ -32,9 +32,27 @@
 ### Risks / Follow-ups
 
 - **R-37**: `/health` now returns 503 (was 200/degraded) when whisper is unreachable. Status.getklai.com config must be updated to interpret 503 as a degraded but expected state — coordinated with monitoring update.
-- **R-35-migration**: alembic migration `0007` must be applied before this code deploys (otherwise `error_reason` column is missing → reaper UPDATE fails). Standard alembic flow handles this in CI.
+- **R-35-migration**: alembic migration `0007` must be applied before this code deploys (otherwise `error_reason` column is missing → reaper UPDATE fails). **WRONG assumption** — see "Lessons learned" below; the scribe-api CI workflow does NOT run alembic. Migration was applied manually post-deploy.
 - **R-37-prod**: prod env `WHISPER_SERVER_URL=http://172.18.0.1:8000` is in the allowlist (verified). No env-parity action needed.
 - **datetime.utcnow() deprecation**: pre-existing in scribe model + transcribe handler. Not addressed in this slice (out of scope, would touch unchanged code).
+
+### Status: SHIPPED (2026-04-27)
+
+- Polish commit `de6d8da9` (adversarial review pass): tightened 7 issues found in self-review, see commit body.
+- Merge commit on main: `4463bb3d` (PR #179, admin-bypass since branch protection requires reviewer).
+- GitHub Action `scribe-api.yml` run `24980535397`: build + push + deploy + Trivy scan all green.
+- Container on core-01: started `2026-04-27T06:46:31Z`, restarted `2026-04-27T06:49:51Z` after migration.
+- Alembic state: `0007_c5f9e3a4 (head)` applied via `docker exec klai-core-scribe-api-1 alembic upgrade head`.
+- DB column verified: `scribe.transcriptions.error_reason character varying(64)` present, nullable.
+- Reaper success on restart: 0 occurrences of `scribe_startup_reaper_failed` in logs after the migration applied.
+- `/health` probe: HTTP 200, body `{"status":"ok","whisper_server":"ok"}`.
+- Predicted-failure path observed live: first startup (06:46:31Z) logged `scribe_startup_reaper_failed` with `UndefinedColumnError: column transcriptions.error_reason does not exist` — exactly the scenario the lifespan try/except was designed to handle. App stayed up serving normal traffic; reaper was dormant until migration + restart.
+
+### Lessons learned
+
+- **scribe-api deploy pipeline does not run alembic**. The `Dockerfile` CMD is `uvicorn` only; the GitHub Action does `docker pull + compose up -d`. New migrations require manual `docker exec ... alembic upgrade head` after deploy. Captured as a pitfall entry in `.claude/rules/klai/pitfalls/process-rules.md` so future SPECs touching scribe schema don't get bitten the same way.
+- **Best-effort lifespan migration handler worked as designed**. Wrapping `reap_stranded` in try/except in `app.lifespan` meant the missing-column condition logged a warning but did not block app startup. Validated live during this deploy.
+- **Optie B (allowlist set + `*.getklai.com` suffix) is the right shape** for operator-controlled outbound URL configs. Different threat model than `validate_url` (user-supplied URLs) — that one blocks internal hosts; this one only allows them. Codify this distinction in any future "outbound URL config" SPEC.
 
 ---
 
