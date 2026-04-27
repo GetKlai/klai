@@ -27,3 +27,8 @@ class Transcription(Base):
     recording_type = Column(VARCHAR(32), nullable=True)
     segments_json = Column(JSON, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=datetime.utcnow)
+    # SPEC-SEC-HYGIENE-001 REQ-35 — populated by the stranded-row reaper
+    # (`app.services.reaper.reap_stranded`) when a row is flipped from
+    # `processing` to `failed` after worker restart. Nullable: legitimate
+    # transitions to `failed` (whisper error during transcribe) leave it null.
+    error_reason = Column(VARCHAR(64), nullable=True)
