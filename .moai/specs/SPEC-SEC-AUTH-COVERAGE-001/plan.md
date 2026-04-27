@@ -218,10 +218,24 @@ focused session per cycle:
 | E | 8 | password_reset, password_set | Includes nosemgrep removal |
 | F | 4 | sso_complete | Smallest |
 | G | 0 (or 2-3 if coverage gap) | Anchors, logger sweep, coverage report | Final pass |
-| **TOTAL** | **~42 scenarios** | **8 endpoint bodies + 4 new test files + 1 helper module** | |
+| **TOTAL (v0.1.0)** | **~42 scenarios** | **8 endpoint bodies + 4 new test files + 1 helper module** | |
 
 If pytest --cov shows a gap after Cycle F, Cycle G adds 2-3 scenarios.
-Total can stretch to ~45 scenarios.
+
+### v0.2.0 cycle additions (scope expansion)
+
+Three additional cycles for the 6 endpoints brought into scope:
+
+| Cycle | Endpoints | Test scenarios | Notes |
+|---|---|---|---|
+| H | `passkey_setup`, `passkey_confirm` | 4 | Copy-paste TOTP pattern |
+| I | `email_otp_setup`, `email_otp_confirm`, `email_otp_resend` | 6 | New `resend` shape |
+| J | `verify_email`, `idp_intent_signup`, `idp_signup_callback` | 10 | verify_email slot + signup variant |
+| **+TOTAL v0.2.0** | **6 endpoints** | **+20 scenarios** | |
+
+Cycles H/I/J slot in parallel with C/D/E/F (independent). Cycle G stays
+final-pass. Total post-expansion: ~62-70 scenarios across 6 test files +
+1 helper module + 14 endpoint refactors.
 
 ---
 

@@ -24,14 +24,28 @@ the eight that close the REQ-5.6 coverage gap from SPEC-SEC-MFA-001:
 | `password_reset` | `POST /api/auth/password/reset` | reset email | ✅ |
 | `password_set` | `POST /api/auth/password/set` | reset commit | ✅ |
 | `sso_complete` | `POST /api/auth/sso-complete` | SSO cookie reuse | ✅ |
-| `passkey_setup` / `passkey_confirm` | `POST /api/auth/passkey/...` | passkey enrolment | ❌ deferred (separate follow-up) |
-| `email_otp_setup` / `email_otp_confirm` / `email_otp_resend` | `POST /api/auth/email-otp/...` | email OTP flow | ❌ deferred |
-| `verify_email` | `POST /api/auth/verify-email` | email verification | ❌ deferred |
-| `idp_intent_signup` / `idp_signup_callback` | `POST/GET /api/auth/idp-intent-signup`, `/api/auth/idp-signup-callback` | IDP signup variant | ❌ deferred (signup flow is its own SPEC scope) |
+| `passkey_setup` / `passkey_confirm` | `POST /api/auth/passkey/...` | passkey enrolment | ✅ (added v0.2.0) |
+| `email_otp_setup` / `email_otp_confirm` / `email_otp_resend` | `POST /api/auth/email-otp/...` | email OTP flow | ✅ (added v0.2.0) |
+| `verify_email` | `POST /api/auth/verify-email` | email verification | ✅ (added v0.2.0) |
+| `idp_intent_signup` / `idp_signup_callback` | `POST/GET /api/auth/idp-intent-signup`, `/api/auth/idp-signup-callback` | IDP signup variant | ✅ (added v0.2.0) |
 
-The deferred endpoints will be folded into a future SPEC if the coverage
-gap on them remains material after this SPEC lands. They are deferred,
-not ignored.
+### v0.2.0 scope expansion rationale (2026-04-27)
+
+v0.1.0 deferred 6 endpoints. Self-review showed the deferral arguments
+did not survive scrutiny:
+
+- **passkey_setup/confirm**: same Zitadel-5xx fail-mode and audit-log gap
+  as TOTP enrolment. Excluding it would create a coverage island next
+  to a covered sibling.
+- **email_otp_confirm**: same brute-force surface as `totp_confirm`
+  (6-digit code). Same fail-open risk under Zitadel 5xx.
+- **verify_email**: security-critical one-shot. Fail-open under Zitadel
+  flap = unverified-account validation bypass.
+- **idp_intent_signup / idp_signup_callback**: live in `auth.py`,
+  structurally identical to `idp_callback`. Skipping leaves a coverage
+  island in the same flow class.
+
+All 14 in-scope endpoints are now covered. No deferrals remain.
 
 ---
 
