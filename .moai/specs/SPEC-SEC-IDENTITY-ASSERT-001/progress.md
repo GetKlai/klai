@@ -25,11 +25,38 @@
 
 | REQ | Status | Tests | Notes |
 |---|---|---|---|
-| REQ-1 | ✅ | 20 | `/internal/identity/verify` endpoint; service + Redis cache + structlog |
-| REQ-5 | ✅ | 17 | `_notebook_filter` + ingest payload + retrieval guard |
+| REQ-1 | ✅ | 22 | `/internal/identity/verify` endpoint; service + Redis cache (REQ-1.5 strict, evidence in key) + structlog |
+| REQ-5 | ✅ | 17 | `_notebook_filter` + ingest payload + retrieval guard + backfill script |
 | REQ-7 | ✅ | 39 | `klai-libs/identity-assert/` shared library |
+| Contract | ✅ | 5 | End-to-end library↔endpoint via in-process ASGI; allowlist drift guard |
 
-Total: **76 tests passing** for SPEC-SEC-IDENTITY-ASSERT-001 in this branch.
+Total: **83 tests passing** for SPEC-SEC-IDENTITY-ASSERT-001 in this branch.
+
+### Cleanup pass (2026-04-27)
+
+After the initial Phase A landing, a self-review uncovered:
+
+- **Cache-key looseness**: portal cache keyed on `(caller_service, user_id, org_id)`
+  without the SPEC-mandated `evidence` dimension. Fixed: cache key now
+  follows REQ-1.5 strictly. Two new tests verify a JWT-evidence cache
+  entry does NOT serve a membership-evidence lookup (and vice versa) so
+  the `evidence` field in each response honestly reflects what was
+  verified.
+- **`PyJWKClient` typing punt**: the JWKS resolver was annotated `-> "object"`
+  with a local `from jwt import PyJWKClient` and a `# type: ignore[arg-type]`
+  at the call site. Cleaned: top-level import, proper `PyJWKClient` type
+  annotation, `JwksResolver` protocol made `runtime_checkable`.
+- **Missing end-to-end contract test**: the library and endpoint tests
+  used independent mocks. A new `test_identity_verify_contract.py` runs
+  the real library against the real endpoint via `httpx.ASGITransport`.
+  The test caught a real bug — the library sent `X-Internal-Secret` but
+  portal-api's `/internal/*` surface expects `Authorization: Bearer
+  <secret>`. Library fixed; tests updated to assert the correct header.
+- **`# noqa: S107` cleanup**: replaced inline ignores with a per-file
+  rule in `tool.ruff.lint.per-file-ignores` for `tests/*`.
+- **Backfill script**: `klai-focus/research-api/scripts/backfill_notebook_visibility.py`
+  added — idempotent, dry-run/execute modes, uses Qdrant `IsEmptyCondition`
+  to skip already-backfilled chunks.
 
 ### Out of scope for this branch (deferred to Phase B / C / D)
 

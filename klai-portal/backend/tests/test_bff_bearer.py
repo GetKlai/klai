@@ -84,7 +84,7 @@ def app() -> FastAPI:
     return app
 
 
-async def _make_session(wire_redis: AsyncMock, access_token: str = "live-at") -> str:  # noqa: S107
+async def _make_session(wire_redis: AsyncMock, access_token: str = "live-at") -> str:
     svc = SessionService()
     svc._fernet = None
     record = await svc.create(

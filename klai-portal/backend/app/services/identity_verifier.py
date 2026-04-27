@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, Protocol, runtime_checkable
 
 import jwt
 from sqlalchemy import select
@@ -142,16 +142,16 @@ def _decode_user_jwt(bearer_jwt: str, jwks_resolver: JwksResolver) -> dict[str, 
         return None
 
 
-class JwksResolver:
-    """Minimal duck-typing protocol for ``PyJWKClient``.
+@runtime_checkable
+class JwksResolver(Protocol):
+    """Structural type for any object that resolves a JWT signing key.
 
-    Defining this lets tests inject a fake without depending on jwt internals.
-    Production passes ``app.services.bff_oidc._get_jwks_client()`` which
-    returns a real ``PyJWKClient``.
+    The production implementation is ``jwt.PyJWKClient`` (instantiated by
+    ``_get_identity_jwks_resolver`` in ``app.api.internal``). Tests inject
+    a fake conforming to this protocol — no inheritance required.
     """
 
-    def get_signing_key_from_jwt(self, _token: str) -> Any:  # pragma: no cover - protocol
-        raise NotImplementedError
+    def get_signing_key_from_jwt(self, token: str, /) -> Any: ...
 
 
 # ---------------------------------------------------------------------------
