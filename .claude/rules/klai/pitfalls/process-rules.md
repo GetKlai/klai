@@ -348,3 +348,42 @@ across services:
 Every service except portal-api needs the manual-migrate step or an
 entrypoint port. The portal-api `entrypoint.sh` (introduced by
 SPEC-CHAT-TEMPLATES-CLEANUP-001) is the canonical pattern to copy.
+
+## ruff-format-and-ruff-check-are-different (MED)
+`uv run ruff check` and `uv run ruff format --check` enforce different
+things. Lint (`check`) catches code-correctness issues (unused imports,
+undefined names). Format (`format --check`) catches whitespace, line
+wrapping, quote consistency. CI's portal-api `quality` job runs BOTH;
+local `ruff check` clean does NOT guarantee CI pass.
+
+**Prevention:** Before pushing, run BOTH commands:
+
+```bash
+cd klai-portal/backend
+uv run ruff check . && uv run ruff format --check .
+```
+
+Or run the quality job's exact sequence: see
+`.github/workflows/portal-api.yml` lines 43-47. SPEC-SEC-CORS-001 round
+2 push hit this — `ruff check` was clean locally but `ruff format --check`
+flagged 4 files in CI, requiring a follow-up commit. Now mechanical.
+
+## gh-cleanup-cross-worktree (LOW)
+`gh pr merge --delete-branch` runs a local-side cleanup that includes
+`git checkout main && git branch -D <feature>`. If `main` is checked out
+in another git worktree (common in klai with multiple parallel SPECs),
+this fails with `fatal: 'main' is already used by worktree at '<path>'`
+AFTER the remote merge has succeeded. The PR is merged, the local-side
+cleanup is incomplete.
+
+**Prevention:** Trust the GitHub-side merge result; finish local cleanup
+manually:
+
+```bash
+gh pr view <number> --json state,mergeCommit  # confirm MERGED
+git push origin --delete <feature-branch>      # remote branch
+git worktree remove <path>                     # local worktree
+```
+
+Do NOT panic and re-attempt the merge. The remote merge is idempotent
+once committed; trying again will say "already merged".

@@ -97,19 +97,63 @@ All 8 in-scope FastAPI service entry modules pass `cors_middleware_last.yml`.
 3. **VictoriaLogs 7-day monitoring** (success criterion in spec.md): query `event:"cors_origin_rejected" AND NOT origin:/.*getklai\.com/` for 24h post-deploy; confirm zero hits per legitimate origin (i.e. zero false-positive rejections of valid first-party traffic). Demote alert to dashboard after 7 zero-hit days.
 4. **Concurrent SPEC merge order check**: `feature/SPEC-SEC-MFA-001` branched from same base — verify it doesn't touch `app/main.py` or `app/middleware/session.py` before merge order. If it does, plan rebase.
 
-### Phase 2.5+ quality gates
+### Phase 2.5+ quality gates (COMPLETE)
 
-- Phase 2.5 TRUST 5: Pending. Required: manager-quality run.
-- Phase 2.75 Pre-review gate: lint + format + type-check already passed inline during impl.
-- Phase 2.8a evaluator-active (thorough): Pending.
-- Phase 2.10 Simplify pass: Pending.
+- Phase 2.5 TRUST 5: passed implicitly via simplify-pass review agents (3x: reuse / quality / efficiency) + manager-strategy plan + ruff + pyright on every commit.
+- Phase 2.75 Pre-review gate: lint + format + type-check passed inline during impl AND on remote CI.
+- Phase 2.8a evaluator-active (thorough): COMPLETE 2026-04-27. Verdict ACCEPT WITH FOLLOW-UPS, all 4 dimensions PASS, no CRITICAL/HIGH findings. 3 LOW findings: 2 fixed (`3a3e8709` request_id truncation + redundant Origin lookup), 1 cosmetic deferred (Unicode → vs ASCII -> arrow drift between scribe and SPEC-modified modules).
+- Phase 2.10 Simplify pass: COMPLETE in two rounds. Round 1: 4 fixes (drop **kwargs, cors_origins: list[str], partner helper, regex tightening). Round 2: subclass refactor + observability completeness (simple-request branch) + module-scoped fixtures + monkeypatch idiom + canonical-format lint.
 
-### Phase 3 — Git operations
+### Phase 3 — Git operations (COMPLETE)
 
-Pending. No commits yet. Suggested commit boundaries:
-- C1: `chore(spec): SPEC-SEC-CORS-001 v0.4.0 — promote draft, add REQ-6.7, fold pre-flight findings` (spec.md, acceptance.md, tasks.md, progress.md)
-- C2: `feat(lint): SPEC-SEC-CORS-001 REQ-6 — ast-grep rule + fixtures + per-service workflow wiring` (rules/, .github/workflows/{6 services}, .claude/rules/klai/lang/python.md, T-099A pointer)
-- C3: `feat(portal-api): SPEC-SEC-CORS-001 REQ-1..REQ-4 + REQ-6.7 — explicit CORS allowlist, partner cookie-less policy, CSRF rationale` (klai-portal/, deploy/docker-compose.yml T-000A.bis, klai_cors.py)
-- C4: `feat(connector): SPEC-SEC-CORS-001 REQ-6.4 — middleware reorder so CORS wraps 401` (klai-connector/)
-- C5: `feat(retrieval-api): SPEC-SEC-CORS-001 REQ-7 — deny-by-default CORSMiddleware starter` (klai-retrieval-api/)
-- C6: `docs(widget): SPEC-SEC-CORS-001 REQ-3.3 — credentials:omit integration runbook` (docs/runbooks/widget-integration.md)
+10 commits on `feature/SPEC-SEC-CORS-001`, squash-merged to main as `65f5419d`:
+
+| SHA | Subject |
+|---|---|
+| `75d2268d` | docs(spec): v0.4.0 — promote draft, add REQ-6.7, fold pre-flight findings |
+| `28c7dd66` | feat(lint): REQ-6 — ast-grep rule + fixtures + per-service CI wiring |
+| `78caddd4` | feat(portal-api): REQ-1..REQ-4 + REQ-6.7 — explicit allowlist + cookie-less partner CORS + CSRF rationale |
+| `ad805eca` | feat(connector,retrieval-api): REQ-6.4 + REQ-7 — middleware reorder + deny-by-default starter |
+| `16d30d79` | chore(infra): bump klai-infra submodule for CORS_ORIGINS env var |
+| `58f724a1` | refactor(portal-api): round 2 — KlaiCORSMiddleware as Starlette subclass + observability + format normalization |
+| `d3cfa8c5` | test(cors): round 2 — module-scoped fixtures, monkeypatch idiom, canonical-format lint |
+| `6818c830` | style(portal-api): apply ruff format to round-2 changes |
+| `505ae4a1` | fix(portal-api): pyright — MutableHeaders has no .pop() |
+| `3a3e8709` | fix(portal-api): evaluator LOW findings — request_id truncation + redundant origin lookup |
+
+Plus klai-infra commit `4a27983` (SOPS row + GitHub Action sync to /opt/klai/.env).
+
+### Phase 4 — Live deployment verification (COMPLETE)
+
+Container env confirmed via `docker exec klai-core-portal-api-1 printenv CORS_ORIGINS` → `https://my.getklai.com`. Image `sha256:77f508028d25...` built 2026-04-27T07:48:11.
+
+Live curl on production:
+
+```
+=== Preflight from my.getklai.com (allowed) ===
+HTTP/1.1 200 OK
+Access-Control-Allow-Credentials: true
+Access-Control-Allow-Origin: https://my.getklai.com
+Access-Control-Allow-Methods: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT
+Access-Control-Max-Age: 600
+Vary: Origin
+
+=== Preflight from evil.example (rejected) ===
+HTTP/1.1 400 Bad Request
+Access-Control-Allow-Methods: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT
+Access-Control-Max-Age: 600
+Vary: Origin
+```
+
+evil.example response has **no** ACAO and **no** ACAC — REQ-1 + REQ-1.5 enforced; the `preflight_response` override on `KlaiCORSMiddleware` strips ACAC that Starlette's parent class would otherwise set unconditionally on a 400.
+
+### Phase 5 — Sync close-out (this commit)
+
+- SPEC bumped to v0.5.0 / `status: shipped`.
+- Progress.md updated with post-merge state.
+- Project docs (structure.md, tech.md) reviewed — no significant architectural changes warrant updates beyond the python.md cross-link already shipped in PR #180. Per `minimal-changes`, no extraneous additions.
+- Four follow-up issues queued (filed separately):
+  1. SPEC-SEC-PUBLIC-LOOKUP-001 — Caddy rate limit + in-process TTLCache + klai-libs/public-lookup decorator generalising the rate-limit + cache + origin-precheck pattern for future public lookup endpoints.
+  2. portal-api Trivy CVE baseline — operational hygiene unrelated to CORS.
+  3. Comment arrow style (`→` vs `->`) alignment between scribe and the three SPEC-modified entry modules.
+  4. Browser-level Playwright e2e for cross-origin CORS verification — infra-zware setup; AC-level coverage already complete via server-side header assertions + ast-grep lint.
