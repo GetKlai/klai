@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_session
 from app.core.logging import get_logger
 from app.models.connector import Connector
-from app.routes.deps import get_org_id
+from app.routes.deps import enforce_org_rate_limit, get_org_id
 from app.schemas.connector import ConnectorCreate, ConnectorResponse, ConnectorUpdate
 
 logger = get_logger(__name__)
@@ -17,7 +17,12 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/connectors", tags=["connectors"])
 
 
-@router.post("", status_code=201, response_model=ConnectorResponse)
+@router.post(
+    "",
+    status_code=201,
+    response_model=ConnectorResponse,
+    dependencies=[Depends(enforce_org_rate_limit("write"))],
+)
 async def create_connector(
     body: ConnectorCreate,
     request: Request,
@@ -49,7 +54,11 @@ async def create_connector(
     return connector
 
 
-@router.get("", response_model=list[ConnectorResponse])
+@router.get(
+    "",
+    response_model=list[ConnectorResponse],
+    dependencies=[Depends(enforce_org_rate_limit("read"))],
+)
 async def list_connectors(
     request: Request,
     session: AsyncSession = Depends(get_session),
@@ -62,7 +71,11 @@ async def list_connectors(
     return list(result.scalars().all())
 
 
-@router.get("/{connector_id}", response_model=ConnectorResponse)
+@router.get(
+    "/{connector_id}",
+    response_model=ConnectorResponse,
+    dependencies=[Depends(enforce_org_rate_limit("read"))],
+)
 async def get_connector(
     connector_id: uuid.UUID,
     request: Request,
@@ -76,7 +89,11 @@ async def get_connector(
     return connector
 
 
-@router.put("/{connector_id}", response_model=ConnectorResponse)
+@router.put(
+    "/{connector_id}",
+    response_model=ConnectorResponse,
+    dependencies=[Depends(enforce_org_rate_limit("write"))],
+)
 async def update_connector(
     connector_id: uuid.UUID,
     body: ConnectorUpdate,
@@ -108,7 +125,11 @@ async def update_connector(
     return connector
 
 
-@router.delete("/{connector_id}", status_code=204)
+@router.delete(
+    "/{connector_id}",
+    status_code=204,
+    dependencies=[Depends(enforce_org_rate_limit("write"))],
+)
 async def delete_connector(
     connector_id: uuid.UUID,
     request: Request,
