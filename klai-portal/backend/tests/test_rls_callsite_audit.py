@@ -87,7 +87,9 @@ ALLOWED_HELPER_FUNCTIONS: frozenset[str] = frozenset(
         "_get_non_system_group_or_404",
         # app/api/app_knowledge_sources.py — SPEC-KB-SOURCES-001. Takes org
         # parameter; only called after _get_caller_org runs set_tenant at
-        # the route level (add_url_source / add_youtube_source / add_text_source).
+        # the route level (add_url_source / add_text_source). The YouTube
+        # route was removed in SPEC-KB-YOUTUBE-REMOVE-001 — its 410 stub
+        # never reaches this helper.
         "_get_writable_kb_or_raise",
         # app/api/knowledge_bases.py — org-scoped helper.
         "_get_kb_or_404_by_id",
