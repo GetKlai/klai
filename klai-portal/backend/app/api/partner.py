@@ -380,6 +380,47 @@ async def append_knowledge(
 
 
 # ---------------------------------------------------------------------------
+# Widget CORS header builder
+#
+# SPEC-SEC-CORS-001 REQ-2.2 — partner widget endpoints SHALL NEVER set
+# Access-Control-Allow-Credentials: true. Widget traffic authenticates via
+# Bearer JWT in the Authorization header; cookies are not involved. The
+# helper centralises this contract so the GET and OPTIONS handlers can
+# never drift apart.
+# ---------------------------------------------------------------------------
+
+
+def _widget_cors_headers(origin: str, *, preflight: bool) -> dict[str, str]:
+    """Build the CORS response headers for /partner/v1/widget-config.
+
+    The actual server-side origin gate is the per-widget `allowed_origins`
+    check upstream of this call (see ``origin_allowed`` in
+    ``app.services.widget_auth``). This helper only constructs the response
+    headers once that gate has approved the request.
+
+    Parameters
+    ----------
+    origin:
+        The request Origin header value, already validated against the
+        widget's allowed_origins list. The caller MUST NOT pass an
+        unvalidated origin — that is the upstream check's responsibility.
+    preflight:
+        When True, includes the preflight-only headers (Allow-Methods,
+        Allow-Headers, Max-Age). When False, returns the minimal set for
+        an actual response.
+    """
+    headers: dict[str, str] = {
+        "Access-Control-Allow-Origin": origin,
+        "Vary": "Origin",
+    }
+    if preflight:
+        headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        headers["Access-Control-Max-Age"] = "86400"
+    return headers
+
+
+# ---------------------------------------------------------------------------
 # GET /partner/v1/widget-config  (SPEC-WIDGET-001 Task 2)
 # Public endpoint — NO auth dependency
 # ---------------------------------------------------------------------------
@@ -467,18 +508,11 @@ async def widget_config(
         "session_expires_at": expires_at.isoformat(),
     }
 
-    # REQ-2.2: NEVER set Access-Control-Allow-Credentials for widget endpoints.
-    # Widget traffic uses credentials: 'omit' — no BFF session cookie involved.
-    headers = {
-        "Access-Control-Allow-Origin": origin,
-        "Vary": "Origin",
-    }
-
     return Response(
         content=json.dumps(body),
         status_code=200,
         media_type="application/json",
-        headers=headers,
+        headers=_widget_cors_headers(origin, preflight=False),
     )
 
 
@@ -492,6 +526,17 @@ async def widget_config_preflight(
 
     SPEC-WIDGET-001: Return 204 with CORS headers for valid origins.
     Returns CORS headers without verifying JWT secret (preflight only).
+
+    @MX:WARN: DB read precedes the origin allowlist check. A cross-origin
+    attacker probing this endpoint with rotating origins causes one DB hit
+    per attempt. Browsers cache rejected preflights only briefly so the
+    cost can compound under sustained probing.
+    @MX:REASON: Origin validation must read ``widget.allowed_origins`` from
+    the DB; we cannot decide without that read. A future SPEC may add a
+    ``widget_id -> allowed_origins`` cache (60s TTL in Redis) — see PR #180
+    follow-up. Preserved as pre-existing pattern under SPEC-SEC-CORS-001
+    minimal-changes scope.
+    @MX:SPEC: SPEC-WIDGET-001
     """
     result = await db.execute(select(Widget).where(Widget.widget_id == id))
     widget_row = result.scalar_one_or_none()
@@ -506,14 +551,7 @@ async def widget_config_preflight(
     if not origin or not origin_allowed(origin, allowed_origins):
         return Response(status_code=204)
 
-    # REQ-2.2: NEVER set Access-Control-Allow-Credentials for widget endpoints.
-    # Widget traffic uses credentials: 'omit' — no BFF session cookie involved.
-    headers = {
-        "Access-Control-Allow-Origin": origin,
-        "Access-Control-Allow-Methods": "GET, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization",
-        "Access-Control-Max-Age": "86400",
-        "Vary": "Origin",
-    }
-
-    return Response(status_code=204, headers=headers)
+    return Response(
+        status_code=204,
+        headers=_widget_cors_headers(origin, preflight=True),
+    )
