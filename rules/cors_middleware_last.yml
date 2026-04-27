@@ -1,0 +1,81 @@
+# SPEC-SEC-CORS-001 REQ-6 — CORSMiddleware MUST be the LAST add_middleware call
+# in every klai FastAPI service entry module.
+#
+# Why: Starlette registers middlewares in REVERSE execution order. The last
+# add_middleware call is the OUTERMOST middleware on the response. If
+# CORSMiddleware is not the last one, error responses emitted by inner
+# auth/session middleware bypass CORS and cross-origin browsers see opaque
+# failures. See:
+#   .claude/rules/klai/lang/python.md — "Starlette middleware registration order"
+#   SPEC-SEC-CORS-001 REQ-6 (defense-in-depth lint enforcement)
+#
+# Special case — knowledge-mcp uses `mcp.streamable_http_app()` from FastMCP and
+# has no `app.add_middleware(...)` call site. The rule cannot match anything
+# there; the lint step is wired into klai-knowledge-mcp.yml for symmetry but
+# passes trivially. Same applies to any service that registers no middleware
+# at all (knowledge-ingest, klai-mailer today).
+#
+# Why the rule has TWO branches under `any:`:
+# (1) The simple sibling case — CORS and the next add_middleware are both
+#     module-level (or both inside the same function body). ast-grep's
+#     relational `precedes` walks siblings within a shared parent.
+# (2) The nested-if case — klai-connector wraps CORSMiddleware registration in
+#     `if allowed_origins:` while Auth/RequestContext stay at function scope.
+#     The `inside: { kind: if_statement, ... }` clause walks UP from the CORS
+#     call to the enclosing if/with/try block, then `precedes:` looks for any
+#     subsequent add_middleware sibling at the surrounding scope.
+# Both branches exit non-zero on the same logical bug; only one needs to fire.
+
+id: cors-middleware-must-be-last
+language: python
+severity: error
+message: |
+  CORSMiddleware MUST be the last `app.add_middleware(...)` call in this file.
+  Another `add_middleware(...)` call appears AFTER CORSMiddleware in source order,
+  which means it is OUTER to CORS at runtime. Errors emitted by that outer
+  middleware bypass CORS and cross-origin browsers see opaque network failures.
+  Move the CORSMiddleware registration to be the LAST `add_middleware(...)`
+  call in this module.
+  See SPEC-SEC-CORS-001 REQ-6 and .claude/rules/klai/lang/python.md.
+
+rule:
+  any:
+    # Branch 1: CORS and the next add_middleware are siblings in the same scope.
+    - kind: expression_statement
+      has:
+        pattern: $APP.add_middleware(CORSMiddleware, $$$ARGS)
+      precedes:
+        kind: expression_statement
+        has:
+          pattern: $APP.add_middleware($$$REST)
+        stopBy: end
+    # Branch 2: CORS is wrapped in an if/with/try block; the next add_middleware
+    # lives at the enclosing scope.
+    - kind: expression_statement
+      has:
+        pattern: $APP.add_middleware(CORSMiddleware, $$$ARGS)
+      inside:
+        any:
+          - kind: if_statement
+          - kind: with_statement
+          - kind: try_statement
+        stopBy: end
+        precedes:
+          kind: expression_statement
+          has:
+            pattern: $APP.add_middleware($$$REST)
+          stopBy: end
+
+# REQ-6.3 — services listed in the SPEC (entry modules) plus lint test fixtures.
+# Each service's entry module is checked against this rule on every PR that
+# touches it; see .github/workflows/<service>.yml for the per-service wiring.
+files:
+  - klai-portal/backend/app/main.py
+  - klai-connector/app/main.py
+  - klai-retrieval-api/retrieval_api/main.py
+  - klai-scribe/scribe-api/app/main.py
+  - klai-knowledge-ingest/knowledge_ingest/app.py
+  - klai-mailer/app/main.py
+  - klai-knowledge-mcp/main.py
+  - klai-focus/research-api/app/main.py
+  - rules/tests/fixtures/*.py
