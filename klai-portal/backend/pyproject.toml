@@ -36,6 +36,7 @@ dependencies = [
 [tool.uv.sources]
 klai-connector-credentials = { path = "../../klai-libs/connector-credentials", editable = true }
 klai-image-storage = { path = "../../klai-libs/image-storage", editable = true }
+klai-identity-assert = { path = "../../klai-libs/identity-assert", editable = true }
 
 [project.optional-dependencies]
 dev = [
@@ -44,6 +45,11 @@ dev = [
     "httpx>=0.28",
     "ruff>=0.15",
     "pyright>=1.1.408",
+    # SPEC-SEC-IDENTITY-ASSERT-001: contract test exercises the real library
+    # against the real /internal/identity/verify endpoint via ASGITransport.
+    # Test-only dep — portal-api itself does not import the library
+    # (portal-api SERVES the endpoint, doesn't call it).
+    "klai-identity-assert",
 ]
 
 [dependency-groups]
@@ -81,4 +87,7 @@ max-complexity = 15
 
 [tool.ruff.lint.per-file-ignores]
 "alembic/*" = ["UP", "I", "E501"]  # auto-generated migrations, don't enforce style
-"tests/*" = ["S106"]  # hardcoded "passwords" in test fixtures (e.g. access_token="at-1") are fake tokens
+# tests/*: hardcoded "passwords" in test fixtures are fake tokens —
+# S105 already global-ignored, S106 covers module-level kwargs, S107
+# covers function default arguments (e.g. token: str = "test-secret").
+"tests/*" = ["S106", "S107"]
