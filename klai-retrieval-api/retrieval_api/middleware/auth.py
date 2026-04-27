@@ -157,7 +157,11 @@ async def _fetch_jwks() -> dict[str, Any]:
     import httpx  # local import keeps the middleware cheap to load at startup
 
     jwks_url = f"{settings.zitadel_issuer}/oauth/v2/keys"
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    # SPEC-SEC-HYGIENE-001 REQ-44.3: cap the JWKS fetch timeout at 3 s
+    # (down from 10 s). Zitadel's JWKS endpoint responds sub-second; a
+    # 10 s ceiling left workers exposed to slow-loris on the JWKS host
+    # for longer than necessary.
+    async with httpx.AsyncClient(timeout=3.0) as client:
         resp = await client.get(jwks_url)
         resp.raise_for_status()
         return resp.json()

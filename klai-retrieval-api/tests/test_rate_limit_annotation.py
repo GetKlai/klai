@@ -30,8 +30,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import pytest
-
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _RL = _REPO_ROOT / "retrieval_api" / "services" / "rate_limit.py"
 
@@ -142,7 +140,7 @@ async def test_rate_limit_fails_open_when_redis_pipeline_raises(monkeypatch):
             raise ConnectionError("simulated redis outage")
 
     class _RaisingPool:
-        def pipeline(self, transaction: bool = True):  # noqa: ARG002
+        def pipeline(self, transaction: bool = True):
             return _RaisingPipeline()
 
     async def _fake_pool(_url: str):

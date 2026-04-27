@@ -129,7 +129,18 @@ class Settings(BaseSettings):
 
     @property
     def jwt_auth_enabled(self) -> bool:
-        """True when both Zitadel issuer and audience are configured."""
+        """True when both Zitadel issuer and audience are configured.
+
+        SPEC-SEC-HYGIENE-001 REQ-44.2 / REQ-44.6: the SPEC asks for a
+        startup validator that fails when ``jwt_auth_enabled=True AND
+        jwks_url=""``. That failure mode is **unreachable by construction**
+        in retrieval-api because there is no separate ``jwks_url`` field —
+        it is derived inside ``middleware.auth._fetch_jwks`` as
+        ``f"{zitadel_issuer}/oauth/v2/keys"``. ``jwt_auth_enabled`` is
+        True only when ``zitadel_issuer`` is non-empty, so the JWKS URL
+        cannot be empty when JWT auth is enabled. No validator is needed;
+        this docstring serves as the SPEC's "documented acceptance".
+        """
         return bool(
             self.zitadel_issuer
             and self.zitadel_issuer.strip()

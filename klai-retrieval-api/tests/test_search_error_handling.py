@@ -221,7 +221,7 @@ def test_ruff_try_rules_pass_on_search_py():
     HYGIENE-001 REQ-43 scope (e.g. E402 caused by the
     ``warnings.filterwarnings`` call positioned before late imports).
     """
-    result = subprocess.run(
+    result = subprocess.run(  # noqa: S603 — invocation args are controlled within this test
         [sys.executable, "-m", "ruff", "check", "--select", "TRY", str(_SEARCH_PY)],
         cwd=_REPO_ROOT,
         capture_output=True,
