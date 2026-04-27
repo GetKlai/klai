@@ -160,11 +160,13 @@ class KlaiCORSMiddleware(CORSMiddleware):
         if origin and not self.is_allowed_origin(origin):
             method = scope.get("method", "")
             is_preflight = method == "OPTIONS" and "access-control-request-method" in headers
+            # Truncate both attacker-controlled fields to bounded lengths to
+            # prevent log-bloat. UUIDs are 36 chars; 64 is generous headroom.
             logger.info(
                 "cors_origin_rejected",
                 origin=origin[:256],
                 path=scope.get("path", ""),
-                request_id=headers.get("x-request-id") or "unknown",
+                request_id=(headers.get("x-request-id") or "unknown")[:64],
                 kind="preflight" if is_preflight else "simple",
             )
 
@@ -201,7 +203,8 @@ class KlaiCORSMiddleware(CORSMiddleware):
             await send(message)
             return
 
-        origin = request_headers.get("Origin") or request_headers.get("origin") or ""
+        # Starlette Headers is case-insensitive — single lookup suffices.
+        origin = request_headers.get("origin", "")
         if not origin or not self.is_allowed_origin(origin):
             message.setdefault("headers", [])
             headers = MutableHeaders(scope=message)
