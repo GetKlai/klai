@@ -1,9 +1,9 @@
 ---
 id: SPEC-SEC-IDENTITY-ASSERT-001
-version: 0.2.0
-status: draft
+version: 0.3.0
+status: in-progress
 created: 2026-04-24
-updated: 2026-04-24
+updated: 2026-04-27
 author: Mark Vletter
 priority: critical
 tracker: SPEC-SEC-AUDIT-2026-04
@@ -12,6 +12,45 @@ tracker: SPEC-SEC-AUDIT-2026-04
 # SPEC-SEC-IDENTITY-ASSERT-001: Verify Caller-Asserted Identity on Service-to-Service Calls
 
 ## HISTORY
+
+### v0.3.0 (2026-04-27) — Phase A landed
+
+Phase A delivered via PR #178 on `feature/SPEC-SEC-IDENTITY-ASSERT-001`:
+
+- **REQ-1** — `POST /internal/identity/verify` endpoint shipped on portal-api.
+  Service layer (`app/services/identity_verifier.py`) and Redis cache layer
+  (`app/services/identity_verify_cache.py`) split for unit-testability. JWT
+  validation reuses Zitadel JWKS via an independent `PyJWKClient`. 27 tests:
+  20 endpoint + 5 contract + 2 cache-evidence-isolation.
+- **REQ-5** — `_search_notebook` symmetric-with-knowledge filter + ingest
+  payload + endpoint guard. Three-service touch (klai-focus ingest,
+  klai-retrieval-api search, klai-retrieval-api endpoint). 17 tests:
+  6 new + 11 unchanged scope_filter.
+- **REQ-7** — `klai-libs/identity-assert/` shared library with
+  `IdentityAsserter`, in-process LRU cache (60 s TTL), structlog telemetry,
+  fail-closed contract. 39 tests.
+- **Backfill script** — `klai-focus/research-api/scripts/backfill_notebook_visibility.py`
+  added so historical klai_focus chunks (pre-REQ-5) get the new payload
+  fields applied before retrieval starts filtering them out.
+- **Architectural decisions resolved** during Phase A:
+  - End-user JWT forwarding header: `Authorization: Bearer <jwt>` (matches
+    `klai-retrieval-api/middleware/auth.py` precedent).
+  - REQ-4 path: REQ-4.2 (global verify) when REQ-4 ships in Phase B —
+    `/admin/retrieve` split is YAGNI until a true admin/diagnostic caller
+    appears. SPEC REQ-4.5 forbids the admin-flag-on-internal-secret hybrid.
+  - `notebook_visibility` storage: Qdrant payload field, value mirrors
+    `Notebook.scope` ∈ {"personal", "org"} — no translation layer.
+- **Contract drift caught and fixed** during Phase A: the library originally
+  sent the shared INTERNAL_SECRET in a custom `X-Internal-Secret` header,
+  but portal-api's `/internal/*` surface uses `Authorization: Bearer
+  <secret>` per `_require_internal_token`. The end-to-end contract test
+  caught this before merge; library now uses the correct header.
+
+Phase A is independently revertable per service via the
+`IDENTITY_VERIFY_MODE=off` flag documented in research.md §5.1. Status moves
+from `draft` to `in-progress` because the SPEC has consumers but is not
+yet fully delivered (REQ-2/3/4/6 outstanding, see Phase B/C/D in
+`progress.md`).
 
 ### v0.2.0 (2026-04-24)
 - Expanded from stub into full EARS-format SPEC with research.md + acceptance.md
