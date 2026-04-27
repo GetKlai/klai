@@ -1,9 +1,9 @@
 ---
 id: SPEC-SEC-CORS-001
-version: 0.4.0
-status: in_progress
+version: 0.5.0
+status: shipped
 created: 2026-04-24
-updated: 2026-04-25
+updated: 2026-04-27
 author: Mark Vletter
 priority: critical
 tracker: SPEC-SEC-AUDIT-2026-04
@@ -12,6 +12,76 @@ tracker: SPEC-SEC-AUDIT-2026-04
 # SPEC-SEC-CORS-001: CORS Allowlist + CSRF-Exempt Scope Review
 
 ## HISTORY
+
+### v0.5.0 (2026-04-27) — POST-SHIP CLOSE-OUT
+
+PR #180 squash-merged to main as commit `65f5419d`. New portal-api,
+klai-connector, klai-retrieval-api images built and deployed to core-01
+the same morning. Live verification on `https://my.getklai.com`:
+
+- `OPTIONS /api/me` with `Origin: https://my.getklai.com` returns HTTP
+  200 with `Access-Control-Allow-Origin: https://my.getklai.com` +
+  `Access-Control-Allow-Credentials: true` + `Vary: Origin`. Legit
+  first-party traffic intact.
+- `OPTIONS /api/me` with `Origin: https://evil.example` returns HTTP
+  400 with **no** `Access-Control-Allow-Origin` and **no**
+  `Access-Control-Allow-Credentials`. REQ-1 + REQ-1.5 enforced; the
+  ACAC strip override on `KlaiCORSMiddleware.preflight_response`
+  works as designed.
+
+Round-2 simplify-pass landed as commits `58f724a1`, `d3cfa8c5`,
+`6818c830`, `505ae4a1`, `3a3e8709` (all squashed into the merge):
+
+- KlaiCORSMiddleware refactored to a thin Starlette CORSMiddleware
+  subclass (~145 → ~100 lines, leans on parent for header logic).
+- AC-13 observability extended to simple-request rejections (was
+  preflight-only).
+- Module-scoped `cors_client` fixture cuts test runtime in half.
+- pytest `monkeypatch` replaces manual try/finally in AC-14 test.
+- Partner CORS-header dict extracted into `_widget_cors_headers`
+  helper.
+- `_CSRF_EXEMPT_PREFIXES` rationale lines normalised to canonical
+  `# REQ-X.Y / AC-Z` trailing format with a new mechanical lint
+  (`test_csrf_exempt_rationale_format_is_canonical`).
+- @MX:ANCHOR/@MX:NOTE annotations added on klai_cors.py overrides
+  and _compile_first_party_regex; @MX:WARN on widget_config_preflight
+  documenting the pre-existing DB-before-origin pattern.
+
+Phase 2.8a evaluator-active (thorough harness) returned ACCEPT WITH
+FOLLOW-UPS, all 4 dimensions PASS, no CRITICAL or HIGH findings. Three
+LOW findings; two were fixed in `3a3e8709` (request_id truncation +
+redundant case-variant Origin lookup). The third (Unicode `→` vs ASCII
+`->` arrow drift between scribe and the three SPEC-modified modules)
+is cosmetic and tracked as a follow-up issue.
+
+Pre-existing portal-api Trivy CVE pattern (every recent main build
+fails the same scan job) is unrelated to this SPEC and was not
+introduced by it. Tracked separately.
+
+Final scoreboard:
+- 18/18 ACs PASS (server-side + lint + CI wiring)
+- 70 new tests, all green; full portal-api suite 1187 / 0 fail
+- ast-grep `cors_middleware_last.yml` exits 0 on all 8 in-scope
+  service entry modules
+- ruff format + pyright clean
+- klai-infra commit `4a27983` deployed `CORS_ORIGINS=https://my.getklai.com`
+  to `/opt/klai/.env` ahead of the validator change (validator-env-parity
+  preflight observed)
+
+Outstanding follow-ups (filed as separate issues, not blocking):
+1. SPEC-SEC-PUBLIC-LOOKUP-001: Caddy per-IP rate limit on
+   `/partner/v1/widget-config` + in-process `TTLCache` on
+   `widget_id → allowed_origins` with write-through invalidation,
+   plus `klai-libs/public-lookup` decorator generalising rate-limit
+   + cache + origin-precheck for future public lookup endpoints.
+2. portal-api Trivy CVE baseline — operational hygiene.
+3. Comment arrow style alignment (`→` vs `->`) across scribe and
+   the three SPEC-modified entry modules.
+4. Browser-level Playwright e2e for cross-origin CORS verification —
+   infra-zware setup; AC-level coverage already complete via
+   server-side header assertions + ast-grep lint.
+
+### v0.4.0 (2026-04-25)
 
 ### v0.4.0 (2026-04-25)
 - Phase 1 (manager-strategy) verified all research.md findings against current
