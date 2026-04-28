@@ -23,7 +23,8 @@ klai-mono/                     # Monorepo root (GetKlai/klai)
 ├── klai-retrieval-api/             # Hybrid retrieval service (vector + graph)
 ├── klai-libs/                      # Shared editable Python libraries
 │   ├── image-storage/         # Image pipeline + canonical SSRF guard (SPEC-KB-IMAGE-002, SPEC-SEC-SSRF-001)
-│   └── connector-credentials/ # Tenant-scoped encrypted credential store
+│   ├── connector-credentials/ # Tenant-scoped encrypted credential store
+│   └── identity-assert/       # Service-to-service identity verification (SPEC-SEC-IDENTITY-ASSERT-001)
 ├── scripts/                   # Shared utilities and deploy scripts
 ├── docs/                      # Project documentation (specs, architecture, runbooks)
 ├── .claude/                   # Claude Code assets (agents, rules, commands, skills)
