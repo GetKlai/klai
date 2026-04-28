@@ -33,6 +33,8 @@ def _mock_settings():
         mock.librechat_host_data_path = "/opt/klai/librechat-data"
         mock.librechat_container_data_path = "/tmp/test-librechat-data"  # noqa: S108
         mock.mongodb_container_name = "mongodb"
+        # SPEC-SEC-INTERNAL-001 REQ-2.3: configurable cache key pattern.
+        mock.librechat_cache_key_pattern = "configs:*"
         yield mock
 
 
@@ -239,27 +241,57 @@ class TestCharacterizeReloadCaddy:
                 _reload_caddy()
 
 
-def _mock_redis_sync_client():
-    """Factory: redis.Redis replacement supporting `with _redis_sync_client() as c`."""
+def _mock_redis_sync_client(*, keys: list[str] | None = None, scan_raises: Exception | None = None):
+    """Factory: redis.Redis replacement supporting ``with _redis_sync_client() as c``.
+
+    Implements ``scan_iter`` and ``unlink`` so the tests can pin the
+    SPEC-SEC-INTERNAL-001 REQ-2 SCAN/UNLINK behaviour. ``keys`` are returned
+    by ``scan_iter`` regardless of the requested match pattern (the test
+    fixes the pattern). ``flushall`` is also stubbed and asserted-not-called
+    by tests as a regression-guard against falling back to FLUSHALL.
+    """
+    yielded = list(keys or [])
+    unlinked: list[tuple[str, ...]] = []
+
+    def _scan_iter(match: str, count: int = 100):
+        if scan_raises is not None:
+            raise scan_raises
+        return iter(yielded)
+
+    def _unlink(*ks: str) -> int:
+        unlinked.append(tuple(ks))
+        return len(ks)
+
     client = MagicMock()
     client.__enter__ = MagicMock(return_value=client)
     client.__exit__ = MagicMock(return_value=False)
-    client.flushall = MagicMock()
+    client.scan_iter = MagicMock(side_effect=_scan_iter)
+    client.unlink = MagicMock(side_effect=_unlink)
+    client.flushall = MagicMock(side_effect=AssertionError(
+        "FLUSHALL must never be called -- SPEC-SEC-INTERNAL-001 REQ-2",
+    ))
     client.close = MagicMock()
+    client._unlinked = unlinked  # noqa: SLF001 -- test-only attribute
     return MagicMock(return_value=client), client
 
 
 class TestCharacterizeFlushRedisAndRestartLibrechat:
     """_flush_redis_and_restart_librechat: Redis protocol + container restart.
 
-    Pinned so we never regress back to `redis_container.exec_run([FLUSHALL])` —
-    that path 403s under docker-socket-proxy (SEC-021).
+    SPEC-SEC-INTERNAL-001 REQ-2 + AC-2: invalidation goes through SCAN+UNLINK
+    on the configured key pattern (``configs:*``), NOT FLUSHALL. Pinned so we
+    never regress back to a blanket cache wipe (which would clobber unrelated
+    keys -- rate-limit buckets, SSO cache, partner-API state) and never to
+    ``redis_container.exec_run([FLUSHALL])`` (which 403s under
+    docker-socket-proxy, SEC-021).
     """
 
-    def test_flushes_redis_over_protocol_then_restarts_container(self):
+    def test_invalidates_via_scan_unlink_then_restarts_container(self):
         from app.services.provisioning import _flush_redis_and_restart_librechat
 
-        redis_factory, redis_client = _mock_redis_sync_client()
+        redis_factory, redis_client = _mock_redis_sync_client(
+            keys=["configs:librechat-config", "configs:librechat-config:acme"],
+        )
         container = MagicMock()
         container.status = "running"
 
@@ -270,22 +302,28 @@ class TestCharacterizeFlushRedisAndRestartLibrechat:
             mock_docker.from_env.return_value.containers.get.return_value = container
             _flush_redis_and_restart_librechat("acme")
 
-        redis_client.flushall.assert_called_once()
-        # Docker is still used — but only for container restart, never exec.
+        # SCAN with the configured pattern, batched UNLINK call, no FLUSHALL.
+        redis_client.scan_iter.assert_called_once()
+        scan_kwargs = redis_client.scan_iter.call_args.kwargs
+        assert scan_kwargs["match"] == "configs:*"
+        assert redis_client._unlinked == [("configs:librechat-config", "configs:librechat-config:acme")]
+        redis_client.flushall.assert_not_called()
+
         mock_docker.from_env.return_value.containers.get.assert_called_once_with("librechat-acme")
         container.restart.assert_called_once_with(timeout=10)
 
     def test_redis_failure_raises_without_touching_container(self):
-        """Fail-loud: a failed FLUSHALL means LibreChat keeps serving the
-        cached yaml while the operator thinks the change landed. Previously
+        """Fail-loud: a failed cache invalidation means LibreChat keeps serving
+        the stale yaml while the operator thinks the change landed. Previously
         this was a warning-and-continue. Now the helper raises so the caller
         (provisioning orchestrator / mcp_servers restart task) sees the
         failure and can surface it.
         """
         from app.services.provisioning import _flush_redis_and_restart_librechat
 
-        redis_factory, redis_client = _mock_redis_sync_client()
-        redis_client.flushall.side_effect = RedisError("connection refused")
+        redis_factory, redis_client = _mock_redis_sync_client(
+            scan_raises=RedisError("connection refused"),
+        )
 
         container = MagicMock()
         container.status = "running"
@@ -298,9 +336,10 @@ class TestCharacterizeFlushRedisAndRestartLibrechat:
             mock_docker.from_env.return_value.containers.get.return_value = container
             _flush_redis_and_restart_librechat("acme")
 
-        # Container restart must NOT run when Redis flush failed — we don't
+        # Container restart must NOT run when invalidation failed -- we don't
         # want to bounce the tenant's LibreChat on a failed config update.
         container.restart.assert_not_called()
+        redis_client.flushall.assert_not_called()
 
     def test_container_health_check_timeout_raises(self):
         """If the container doesn't reach 'running' state within the grace
