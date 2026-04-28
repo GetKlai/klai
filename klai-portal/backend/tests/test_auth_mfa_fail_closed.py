@@ -12,115 +12,28 @@ All Zitadel HTTP calls are mocked via ``respx`` against the real
 
 from __future__ import annotations
 
-import hashlib
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 import respx
+from auth_test_helpers import (
+    _audit_emit_patches,
+    _expected_email_hash,
+    _make_db_mock,
+    _make_login_body,
+    _mfa_events,
+    _session_ok,
+)
 from fastapi import HTTPException
 from helpers import make_request
-from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
 
-from app.api.auth import LoginRequest, login
-from app.core.config import settings
-from app.models.portal import PortalOrg, PortalUser
+from app.api.auth import login
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def respx_zitadel():
-    """Mock the Zitadel HTTP surface against ``settings.zitadel_base_url``.
-
-    Uses ``assert_all_called=False`` so individual scenarios can omit endpoints
-    that should not be hit (e.g. scenario 2 expects ``/v2/sessions`` to receive
-    zero calls).
-    """
-    with respx.mock(base_url=settings.zitadel_base_url, assert_all_called=False) as router:
-        yield router
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-_TEST_EMAIL = "alice@acme.com"
-
-
-def _make_login_body(email: str = _TEST_EMAIL) -> LoginRequest:
-    return LoginRequest(
-        email=email,
-        password="correct-horse-battery-staple",
-        auth_request_id="ar-mfa-fc-1",
-    )
-
-
-def _expected_email_hash(email: str = _TEST_EMAIL) -> str:
-    return hashlib.sha256(email.lower().encode("utf-8")).hexdigest()
-
-
-def _session_ok() -> dict[str, Any]:
-    return {"sessionId": "sess-abc", "sessionToken": "tok-xyz"}
-
-
-def _make_db_mock(
-    *,
-    portal_user_org_id: int | None = 10,
-    portal_user_zitadel_id: str = "uid-req",
-    org_mfa_policy: str | None = "required",
-    scalar_side_effect: Exception | None = None,
-    get_side_effect: Exception | None = None,
-) -> AsyncMock:
-    """Return an ``AsyncMock(spec=AsyncSession)`` wired for MFA-lookup tests.
-
-    - ``portal_user_org_id=None`` => ``db.scalar`` returns ``None`` (user not in portal).
-    - ``scalar_side_effect`` => ``db.scalar`` raises (DB lookup failure).
-    - ``org_mfa_policy=None`` => ``db.get`` returns ``None`` (org missing).
-    - ``get_side_effect`` => ``db.get`` raises (org fetch failure).
-    """
-    db = AsyncMock(spec=AsyncSession)
-    db.add = MagicMock()  # SQLAlchemy Session.add is sync; AsyncMock would coerce it
-
-    if scalar_side_effect is not None:
-        db.scalar = AsyncMock(side_effect=scalar_side_effect)
-    elif portal_user_org_id is None:
-        db.scalar = AsyncMock(return_value=None)
-    else:
-        portal_user = MagicMock(spec=PortalUser)
-        portal_user.org_id = portal_user_org_id
-        portal_user.zitadel_user_id = portal_user_zitadel_id
-        db.scalar = AsyncMock(return_value=portal_user)
-
-    if get_side_effect is not None:
-        db.get = AsyncMock(side_effect=get_side_effect)
-    elif org_mfa_policy is None:
-        db.get = AsyncMock(return_value=None)
-    else:
-        org = MagicMock(spec=PortalOrg)
-        org.id = portal_user_org_id or 10
-        org.mfa_policy = org_mfa_policy
-        db.get = AsyncMock(return_value=org)
-
-    return db
-
-
-def _audit_emit_patches() -> tuple[Any, Any]:
-    """Suppress audit + analytics side effects without mocking the zitadel module."""
-    return (
-        patch("app.api.auth.audit.log_event", AsyncMock()),
-        patch("app.api.auth.emit_event", MagicMock()),
-    )
-
-
-def _mfa_events(captured: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return only the ``mfa_check_failed`` records from a structlog capture."""
-    return [e for e in captured if e.get("event") == "mfa_check_failed"]
-
+# `respx_zitadel` is auto-discovered as a fixture via tests/conftest.py
+# (re-exported from auth_test_helpers). No import needed here.
 
 # ---------------------------------------------------------------------------
 # Scenario 1 — mfa_policy=required + has_any_mfa 500 → 503 (REQ-1.1, 1.3, 1.4, 1.5, 4.1, 4.2)

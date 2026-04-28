@@ -1,9 +1,9 @@
 ---
 id: SPEC-SEC-IDENTITY-ASSERT-001
-version: 0.3.0
-status: in-progress
+version: 0.4.0
+status: done
 created: 2026-04-24
-updated: 2026-04-27
+updated: 2026-04-28
 author: Mark Vletter
 priority: critical
 tracker: SPEC-SEC-AUDIT-2026-04
@@ -12,6 +12,79 @@ tracker: SPEC-SEC-AUDIT-2026-04
 # SPEC-SEC-IDENTITY-ASSERT-001: Verify Caller-Asserted Identity on Service-to-Service Calls
 
 ## HISTORY
+
+### v0.4.0 (2026-04-28) — Phase B + C + D landed; SPEC done
+
+All four phases delivered to `main` and live on core-01:
+
+- **Phase B (PR #190, 2026-04-28)** — REQ-2 (knowledge-mcp) + REQ-2.6
+  endpoint+library extension. Knowledge-mcp now consumes
+  `klai-libs/identity-assert`, drops the caller-asserted
+  X-User-ID/X-Org-ID/X-Org-Slug forwarding, reads end-user JWT from
+  `Authorization: Bearer`, and forwards verified identity to
+  knowledge-ingest and klai-docs. The Phase A `/internal/identity/verify`
+  endpoint and library were extended with `claimed_org_slug` input +
+  canonical `org_slug` output (new deny code `org_slug_mismatch`).
+
+- **Phase C (PR #192, 2026-04-28)** — REQ-3 (scribe). Scribe's
+  `POST /v1/transcriptions/{id}/ingest` no longer accepts `org_id` in
+  the request body — the tenant is derived from the authenticated JWT's
+  `resourceowner` claim. No portal verify call: scribe already validates
+  JWT signatures locally, so resourceowner is cryptographically authentic.
+  Schema-level closure of the S1 finding.
+
+- **Phase D (PR #193, 2026-04-28)** — REQ-4 + REQ-6 (retrieval-api +
+  emit_event). Internal-secret callers no longer bypass the
+  body-identity guard: `verify_body_identity` is now async and calls
+  portal-api `/internal/identity/verify` for any internal-secret caller
+  whose body carries a user_id, with required `X-Caller-Service` header.
+  `emit_event` in `api/retrieve.py` sources tenant_id and user_id from
+  `request.state.verified_caller`, never from the request body.
+
+**Findings closed**:
+
+| Finding | Severity | Phase | Closure |
+|---|---|---|---|
+| M1 + D1 (knowledge-mcp + klai-docs spoof chain) | CRITICAL | B | Verify-before-forward in knowledge-mcp; verified identity flows downstream |
+| S1 (scribe body.org_id cross-tenant write) | CRITICAL | C | `org_id` removed from `IngestToKBRequest` schema |
+| R1 (retrieval-api internal-secret bypass) | CRITICAL | D | `verify_body_identity` async + global verify per REQ-4.2 |
+| R2 (`_search_notebook` user_id filter) | HIGH | A | Symmetric filter + ingest payload + retrieval guard |
+| R3 (emit_event poisoning) | MEDIUM | D | Sources tenant from `request.state.verified_caller` |
+
+**Decisions revised during implementation** (versus original spec):
+
+- `IDENTITY_VERIFY_MODE` rollback flag dropped (Phase B sparring): the
+  library already fails closed on portal outage and `git revert` is the
+  standard rollback. Adding a flag would have shipped the spoof
+  primitive as a configurable option — exactly what this SPEC closes.
+- REQ-2.5 JWT-refresh retry on `invalid_jwt` dropped (Phase B sparring):
+  a `bearer_jwt=None` membership-only fallback is *weaker* security
+  than a JWT one. Token refresh races are a LibreChat responsibility,
+  tracked under `klai-librechat-patch`.
+- Scribe: REQ-3.5 fast path is the only path (Phase C). Scribe validates
+  JWT signatures locally — no portal verify call needed for the
+  JWT-derived org_id.
+
+**Live verification** (2026-04-28 on core-01):
+
+- knowledge-mcp + scribe-api + retrieval-api containers running stable
+  since deploy (no restart loops, no startup errors)
+- End-to-end verify call from knowledge-mcp container: 26.14 ms latency,
+  matching `request_id` propagated to portal `identity_verify_decision`
+  log
+- End-to-end verify call from retrieval-api container: 9.24 ms latency
+- Library invariants preserved: hashed user_id in logs, denials never
+  cached, `KNOWN_CALLER_SERVICES` allowlist matches portal allowlist
+- Cross-service trace correlation working via `X-Request-ID`
+- Scribe schema closure verified live: `IngestToKBRequest.fields ==
+  ['kb_slug']`
+
+Total tests across all 4 phases: **180+ passing** (Phase A 83, Phase B
++38, Phase C +8, Phase D +13, plus regression coverage).
+
+Status: **done**. Follow-ups (klai-docs `requireAuthOrService` rewrite,
+`klai-librechat-patch` JWT-refresh proactivity) tracked separately and
+no longer urgent — every upstream caller now forwards verified identity.
 
 ### v0.3.0 (2026-04-27) — Phase A landed
 
