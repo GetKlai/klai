@@ -37,9 +37,7 @@ def _zitadel_400_error() -> httpx.HTTPStatusError:
 # ---------------------------------------------------------------------------
 
 
-async def test_cross_replica_lockout_at_attempt_5(
-    fake_redis: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_cross_replica_lockout_at_attempt_5(fake_redis: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """5th wrong TOTP returns 429 regardless of how attempts are distributed
     across replicas. The Redis-backed atomic counter is the proof.
     """
@@ -75,9 +73,7 @@ async def test_cross_replica_lockout_at_attempt_5(
             except HTTPException as exc:
                 statuses.append(exc.status_code)
 
-    assert statuses == [400, 400, 400, 400, 429], (
-        f"expected 4 invalid-code rejections then 429 lockout, got {statuses}"
-    )
+    assert statuses == [400, 400, 400, 400, 429], f"expected 4 invalid-code rejections then 429 lockout, got {statuses}"
 
     # REQ-1.5: both Redis keys deleted after lockout
     assert await fake_redis.exists(f"{_TOTP_PENDING_KEY_PREFIX}{temp_token}") == 0
@@ -170,9 +166,7 @@ async def test_redis_unavailable_fails_closed_when_pool_is_none(
     assert any(e.get("log_level") == "error" for e in unavail)
 
 
-async def test_redis_connection_error_during_get_fails_closed(
-    fake_redis: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_redis_connection_error_during_get_fails_closed(fake_redis: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """REQ-1.7 second case: Redis is configured but raises mid-call → 503."""
     import redis.exceptions as redis_exc
 

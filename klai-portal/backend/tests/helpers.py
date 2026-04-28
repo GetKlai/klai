@@ -137,9 +137,7 @@ def make_request(
         "query_string": b"",
         "scheme": "http",
         "server": ("testserver", 80),
-        "headers": [
-            (k.lower().encode(), v.encode()) for k, v in (headers or {}).items()
-        ],
+        "headers": [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()],
         "client": client,
     }
     return Request(scope)

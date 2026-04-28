@@ -32,9 +32,7 @@ def _session_ok() -> dict[str, str]:
     return {"sessionId": "sess-happy", "sessionToken": "tok-happy"}
 
 
-async def test_password_totp_login_happy_path(
-    fake_redis: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_password_totp_login_happy_path(fake_redis: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """Step-by-step trace of the dual-call login flow.
 
     Assertions cover the SPEC-SEC-SESSION-001 invariants:
@@ -46,9 +44,7 @@ async def test_password_totp_login_happy_path(
       happy path.
     """
     # -- Step 1: POST /api/auth/login --------------------------------------
-    body = LoginRequest(
-        email="alice@acme.com", password="correct horse", auth_request_id="ar-happy-1"
-    )
+    body = LoginRequest(email="alice@acme.com", password="correct horse", auth_request_id="ar-happy-1")
     response = MagicMock(spec=Response)
     db = AsyncMock(spec=AsyncSession)
 
@@ -93,9 +89,7 @@ async def test_password_totp_login_happy_path(
     assert counter == "0", f"failure counter must start at 0, got {counter!r}"
 
     # -- Step 2: POST /api/auth/totp-login --------------------------------
-    totp_body = TOTPLoginRequest(
-        temp_token=temp_token, code="123456", auth_request_id="ar-happy-1"
-    )
+    totp_body = TOTPLoginRequest(temp_token=temp_token, code="123456", auth_request_id="ar-happy-1")
 
     with (
         capture_logs() as captured_totp,
