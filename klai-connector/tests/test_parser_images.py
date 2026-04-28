@@ -66,7 +66,7 @@ class TestKnowledgeIngestClientImageUrls:
         """image_urls should be added to the extra dict in the payload."""
         from app.clients.knowledge_ingest import KnowledgeIngestClient
 
-        client = KnowledgeIngestClient(base_url="http://fake:8100")
+        client = KnowledgeIngestClient(base_url="http://fake:8100", internal_secret="test-secret-12345")
 
         # Access the internal payload building logic by inspecting what would be sent.
         # We test indirectly via the public method signature accepting image_urls.
