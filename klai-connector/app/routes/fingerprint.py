@@ -31,7 +31,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from app.core.config import Settings
-from app.routes.sync import _require_portal_call
+from app.routes.sync import _require_portal_call  # pyright: ignore[reportPrivateUsage]
 from app.services.content_fingerprint import compute_content_fingerprint
 
 # structlog directly (not app.core.logging.get_logger which returns stdlib
@@ -115,23 +115,22 @@ def _extract_markdown(page: dict[str, Any]) -> str:
     crawl4ai may surface markdown either as a string, a dict with
     ``fit_markdown`` / ``raw_markdown`` keys, or under a ``markdown_v2``
     key — handle all three shapes.
-
-    pyright strict-mode noise on dict[str, Any].get() is suppressed at
-    this boundary — JSON parsing is intentionally untyped.
     """
-    # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType, reportUnknownArgumentType]
-    md = page.get("markdown")
-    if isinstance(md, dict):
-        fit = str(md.get("fit_markdown") or "")
-        raw = str(md.get("raw_markdown") or "")
-    elif isinstance(md, str):
-        fit = ""
-        raw = md
-    else:
-        fit, raw = "", ""
+    md_raw: Any = page.get("markdown")
+    fit: str = ""
+    raw: str = ""
+    if isinstance(md_raw, dict):
+        # pyright: ignore[reportUnknownVariableType] — dict[str, Any]
+        # value types are intentionally unknown at the JSON boundary.
+        md_dict: dict[str, Any] = md_raw  # pyright: ignore[reportUnknownVariableType]
+        fit = str(md_dict.get("fit_markdown") or "")
+        raw = str(md_dict.get("raw_markdown") or "")
+    elif isinstance(md_raw, str):
+        raw = md_raw
 
-    md_v2 = page.get("markdown_v2") or {}
-    if isinstance(md_v2, dict):
+    md_v2_raw: Any = page.get("markdown_v2") or {}
+    if isinstance(md_v2_raw, dict):
+        md_v2: dict[str, Any] = md_v2_raw  # pyright: ignore[reportUnknownVariableType]
         if not fit:
             fit = str(md_v2.get("fit_markdown") or "")
         if not raw:
@@ -169,7 +168,7 @@ async def _fetch_page_markdown(
     if isinstance(raw_results, dict):
         results = [raw_results]
     elif isinstance(raw_results, list):
-        results = raw_results
+        results = raw_results  # pyright: ignore[reportUnknownVariableType]
     else:
         results = []
     if not results:

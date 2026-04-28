@@ -1,12 +1,12 @@
-"""App-facing routes for URL / YouTube / Text sources (SPEC-KB-SOURCES-001).
+"""App-facing routes for URL / Text sources (SPEC-KB-SOURCES-001).
 
-Three thin routes under ``/api/app/knowledge-bases/{kb_slug}/sources/{type}``
+Two thin routes under ``/api/app/knowledge-bases/{kb_slug}/sources/{type}``
 that each:
 
 1. Authenticate the caller via ``_get_caller_org`` (Zitadel bearer).
 2. Resolve the KB in the caller's org (RLS-scoped) and assert write access.
 3. Enforce the per-KB item quota via ``assert_can_add_item_to_kb``.
-4. Run the matching extractor (URL → crawl4ai, YouTube → transcript, Text → normalise).
+4. Run the matching extractor (URL → crawl4ai, Text → normalise).
 5. Forward the extracted (title, content) pair to
    ``POST http://knowledge-ingest:8000/ingest/v1/document`` via
    ``knowledge_ingest_client.ingest_document``.
@@ -14,16 +14,21 @@ that each:
 Error mapping follows SPEC D8. Structured logs include ``org_id``, ``kb_slug``,
 ``source_type``, ``duration_ms``, and hostname — NEVER the full URL (query
 strings can leak tokens; SPEC R7.2).
+
+The ``/sources/youtube`` route is retained as an HTTP 410 stub
+(SPEC-KB-YOUTUBE-REMOVE-001) so any forgotten hard-coded caller surfaces
+loudly in VictoriaLogs rather than silently 404'ing.
 """
 
 from __future__ import annotations
 
 import time
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -41,11 +46,9 @@ from app.services.source_extractors.exceptions import (
     InvalidUrlError,
     SourceFetchError,
     SSRFBlockedError,
-    UnsupportedSourceError,
 )
 from app.services.source_extractors.text import extract_text
 from app.services.source_extractors.url import extract_url
-from app.services.source_extractors.youtube import extract_youtube
 
 logger = structlog.get_logger()
 
@@ -58,10 +61,6 @@ _WRITE_ROLES = frozenset({"contributor", "owner"})
 
 
 class UrlSourceRequest(BaseModel):
-    url: str = Field(min_length=1, max_length=2048)
-
-
-class YouTubeSourceRequest(BaseModel):
     url: str = Field(min_length=1, max_length=2048)
 
 
@@ -228,59 +227,40 @@ async def add_url_source(
 
 @router.post(
     "/knowledge-bases/{kb_slug}/sources/youtube",
-    response_model=SourceIngestedResponse,
-    status_code=status.HTTP_201_CREATED,
+    status_code=status.HTTP_410_GONE,
 )
 async def add_youtube_source(
     kb_slug: str,
-    body: YouTubeSourceRequest,
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
-) -> SourceIngestedResponse:
-    """Fetch the transcript of a YouTube video and ingest it."""
-    start = time.monotonic()
+) -> dict[str, Any]:
+    """SPEC-KB-YOUTUBE-REMOVE-001: removed route, returns HTTP 410 Gone.
+
+    YouTube ingest was disabled in SPEC-KB-SOURCES-001 v1.4.0 (UI tile
+    pulled) and v1.5.0 (UI tile gone). The backend route stayed live as a
+    "single-PR restore". In practice YouTube continued blocking core-01's
+    datacenter IP and the residential-proxy fallback was never configured,
+    so every real call returned 502. This SPEC removes the dead path.
+
+    Auth still loads so the structlog event carries ``org_id`` for the
+    caller — that lets us spot which tenant still has the route hard-coded.
+    No upstream call, no extractor import, no quota burn.
+    """
+
     caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_writable_kb_or_raise(kb_slug, caller_id, org, db)
-
-    try:
-        title, content, source_ref = await extract_youtube(body.url)
-    except InvalidUrlError as exc:
-        raise HTTPException(status_code=400, detail="Not a valid YouTube URL") from exc
-    except UnsupportedSourceError as exc:
-        raise HTTPException(
-            status_code=422,
-            detail="This video has no transcript available",
-        ) from exc
-    except SourceFetchError as exc:
-        # YouTube refused our request (IP block / rate limit / transient
-        # failure). Distinct from UnsupportedSource — this is retryable
-        # and NOT the user's fault.
-        raise HTTPException(
-            status_code=502,
-            detail="Could not reach YouTube — try again",
-        ) from exc
-
-    # video_id is the portion after "youtube:" in source_ref (R3.5).
-    video_id = source_ref.removeprefix("youtube:")
-    artifact_id = await _forward_ingest(
-        org=org,
-        kb=kb,
-        title=title,
-        content=content,
-        source_type="youtube",
-        content_type="youtube_transcript",
-        source_ref=source_ref,
-        extra={"source_url": body.url, "video_id": video_id},
-    )
-    logger.info(
-        "source_ingested",
+    user_agent = request.headers.get("user-agent", "")
+    logger.warning(
+        "youtube_ingest_called_after_removal",
         org_id=org.zitadel_org_id,
         kb_slug=kb_slug,
-        source_type="youtube",
-        video_id=video_id,
-        duration_ms=int((time.monotonic() - start) * 1000),
+        caller_id=caller_id,
+        user_agent=user_agent[:200],  # truncate to keep log entries small
     )
-    return SourceIngestedResponse(artifact_id=artifact_id, source_ref=source_ref, source_type="youtube")
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="youtube_ingest_removed",
+    )
 
 
 @router.post(

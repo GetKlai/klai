@@ -15,6 +15,12 @@ SPEC-SEC-IDENTITY-ASSERT-001 acceptance coverage:
 - AC-5g: redis down   → 503 + reason='cache_unavailable'
 - REQ-1.2: unknown caller_service → 400 + reason='unknown_caller_service'
 - REQ-1.7: structlog identity_verify_decision emitted with hashed user_id
+
+REQ-2.6 (Phase B):
+- claimed_org_slug missing → success body still carries canonical org_slug
+- claimed_org_slug matches → 200 + canonical slug
+- claimed_org_slug mismatches (cache miss) → 403 + reason='org_slug_mismatch'
+- claimed_org_slug mismatches (cache hit) → 403 without DB round trip
 """
 
 from __future__ import annotations
@@ -83,11 +89,16 @@ def _make_redis_mock() -> AsyncMock:
     return redis
 
 
-def _success_db_mock() -> AsyncMock:
-    """DB mock that returns a row from any execute() — simulates active membership."""
+def _success_db_mock(slug: str = "acme") -> AsyncMock:
+    """DB mock that returns a slug from any execute() call.
+
+    Both code paths in identity_verifier (the JWT slug lookup and the
+    membership lookup with embedded slug) use ``scalar_one_or_none()``
+    — a single mock satisfies both.
+    """
     db = AsyncMock()
     result = MagicMock()
-    result.scalar_one_or_none = MagicMock(return_value=42)
+    result.scalar_one_or_none = MagicMock(return_value=slug)
     db.execute = AsyncMock(return_value=result)
     return db
 
@@ -188,6 +199,7 @@ class TestMembershipPath:
         assert body["evidence"] == "membership"
         assert body["user_id"] == "u-1"
         assert body["org_id"] == "o-1"
+        assert body["org_slug"] == "acme"
         assert body["cache_ttl_seconds"] == 60
 
         # Verified result MUST be cached (REQ-1.5).
@@ -254,6 +266,7 @@ class TestJwtPath:
         body = json.loads(response.body)
         assert body["verified"] is True
         assert body["evidence"] == "jwt"
+        assert body["org_slug"] == "acme"
         assert body["cache_ttl_seconds"] == 60
 
     async def test_returns_403_when_jwt_sub_mismatches(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -302,7 +315,7 @@ class TestCachingBehaviour:
         # request looks up the JWT-evidence entry deterministically.
         redis = _make_redis_mock()
         cache_key = "identity_verify:scribe:u-1:o-1:jwt"
-        redis._store[cache_key] = json.dumps({"user_id": "u-1", "org_id": "o-1", "evidence": "jwt"})
+        redis._store[cache_key] = json.dumps({"user_id": "u-1", "org_id": "o-1", "org_slug": "acme", "evidence": "jwt"})
         monkeypatch.setattr("app.api.internal.get_redis_pool", AsyncMock(return_value=redis))
         monkeypatch.setattr("app.api.internal._check_rate_limit_internal", AsyncMock())
 
@@ -327,6 +340,7 @@ class TestCachingBehaviour:
         body = json.loads(response.body)
         assert body["verified"] is True
         assert body["evidence"] == "jwt"
+        assert body["org_slug"] == "acme"
         # AC-5e: cache hit MUST NOT trigger DB or JWT signature re-check.
         db.execute.assert_not_called()
         jwt_decode.assert_not_called()
@@ -342,7 +356,7 @@ class TestCachingBehaviour:
         # Seed a JWT-evidence entry only.
         redis = _make_redis_mock()
         redis._store["identity_verify:scribe:u-1:o-1:jwt"] = json.dumps(
-            {"user_id": "u-1", "org_id": "o-1", "evidence": "jwt"}
+            {"user_id": "u-1", "org_id": "o-1", "org_slug": "acme", "evidence": "jwt"}
         )
         monkeypatch.setattr("app.api.internal.get_redis_pool", AsyncMock(return_value=redis))
         monkeypatch.setattr("app.api.internal._check_rate_limit_internal", AsyncMock())
@@ -371,7 +385,7 @@ class TestCachingBehaviour:
         """Symmetric counterpart to the JWT-vs-membership isolation test above."""
         redis = _make_redis_mock()
         redis._store["identity_verify:scribe:u-1:o-1:membership"] = json.dumps(
-            {"user_id": "u-1", "org_id": "o-1", "evidence": "membership"}
+            {"user_id": "u-1", "org_id": "o-1", "org_slug": "acme", "evidence": "membership"}
         )
         monkeypatch.setattr("app.api.internal.get_redis_pool", AsyncMock(return_value=redis))
         monkeypatch.setattr("app.api.internal._check_rate_limit_internal", AsyncMock())
@@ -479,3 +493,123 @@ class TestRedisFailureMode:
         assert response.status_code == http_status.HTTP_503_SERVICE_UNAVAILABLE
         body = json.loads(response.body)
         assert body["reason"] == "cache_unavailable"
+
+
+# ---------------------------------------------------------------------------
+# REQ-2.6: claimed_org_slug check
+# ---------------------------------------------------------------------------
+
+
+class TestOrgSlugCheck:
+    """REQ-2.6: claimed_org_slug must match canonical portal_orgs.slug.
+
+    Knowledge-mcp asserts X-Org-Slug forwarded by LibreChat. The endpoint
+    cross-checks against the slug authoritatively resolved for the verified
+    org_id; mismatch yields 403 org_slug_mismatch.
+    """
+
+    async def test_returns_200_with_canonical_slug_when_no_claim(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # claimed_org_slug=None → endpoint still returns the canonical slug
+        # so cache hits can re-check it without going back to the DB.
+        redis = _make_redis_mock()
+        monkeypatch.setattr("app.api.internal.get_redis_pool", AsyncMock(return_value=redis))
+        monkeypatch.setattr("app.api.internal._check_rate_limit_internal", AsyncMock())
+
+        with _patched_internal_settings(monkeypatch):
+            response = await verify_identity(
+                request=_make_request(),
+                body=IdentityVerifyRequest(
+                    caller_service="knowledge-mcp",
+                    claimed_user_id="u-1",
+                    claimed_org_id="o-1",
+                    bearer_jwt=None,
+                    claimed_org_slug=None,
+                ),
+                db=_success_db_mock(slug="acme"),
+            )
+
+        assert response.status_code == http_status.HTTP_200_OK
+        body = json.loads(response.body)
+        assert body["org_slug"] == "acme"
+
+    async def test_returns_200_when_claimed_slug_matches(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        redis = _make_redis_mock()
+        monkeypatch.setattr("app.api.internal.get_redis_pool", AsyncMock(return_value=redis))
+        monkeypatch.setattr("app.api.internal._check_rate_limit_internal", AsyncMock())
+
+        with _patched_internal_settings(monkeypatch):
+            response = await verify_identity(
+                request=_make_request(),
+                body=IdentityVerifyRequest(
+                    caller_service="knowledge-mcp",
+                    claimed_user_id="u-1",
+                    claimed_org_id="o-1",
+                    bearer_jwt=None,
+                    claimed_org_slug="acme",
+                ),
+                db=_success_db_mock(slug="acme"),
+            )
+
+        assert response.status_code == http_status.HTTP_200_OK
+        body = json.loads(response.body)
+        assert body["verified"] is True
+        assert body["org_slug"] == "acme"
+
+    async def test_returns_403_when_claimed_slug_mismatches_on_cache_miss(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # LibreChat forwards a slug that does not belong to the verified
+        # org → reject with org_slug_mismatch. Verified result is NOT cached.
+        redis = _make_redis_mock()
+        monkeypatch.setattr("app.api.internal.get_redis_pool", AsyncMock(return_value=redis))
+        monkeypatch.setattr("app.api.internal._check_rate_limit_internal", AsyncMock())
+
+        with _patched_internal_settings(monkeypatch):
+            response = await verify_identity(
+                request=_make_request(),
+                body=IdentityVerifyRequest(
+                    caller_service="knowledge-mcp",
+                    claimed_user_id="u-1",
+                    claimed_org_id="o-1",
+                    bearer_jwt=None,
+                    claimed_org_slug="impostor-slug",
+                ),
+                db=_success_db_mock(slug="acme"),
+            )
+
+        assert response.status_code == http_status.HTTP_403_FORBIDDEN
+        body = json.loads(response.body)
+        assert body == {"verified": False, "reason": "org_slug_mismatch"}
+        # Denials never go in the cache (REQ-1.5).
+        redis.set.assert_not_awaited()
+
+    async def test_returns_403_when_claimed_slug_mismatches_on_cache_hit(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Cached entry has canonical slug "acme"; new request asserts
+        # "impostor-slug" → reject without going to DB.
+        redis = _make_redis_mock()
+        redis._store["identity_verify:knowledge-mcp:u-1:o-1:membership"] = json.dumps(
+            {"user_id": "u-1", "org_id": "o-1", "org_slug": "acme", "evidence": "membership"}
+        )
+        monkeypatch.setattr("app.api.internal.get_redis_pool", AsyncMock(return_value=redis))
+        monkeypatch.setattr("app.api.internal._check_rate_limit_internal", AsyncMock())
+
+        # Spy: DB must NOT be touched on a cache-hit slug-mismatch deny.
+        db = _success_db_mock(slug="acme")
+
+        with _patched_internal_settings(monkeypatch):
+            response = await verify_identity(
+                request=_make_request(),
+                body=IdentityVerifyRequest(
+                    caller_service="knowledge-mcp",
+                    claimed_user_id="u-1",
+                    claimed_org_id="o-1",
+                    bearer_jwt=None,
+                    claimed_org_slug="impostor-slug",
+                ),
+                db=db,
+            )
+
+        assert response.status_code == http_status.HTTP_403_FORBIDDEN
+        body = json.loads(response.body)
+        assert body == {"verified": False, "reason": "org_slug_mismatch"}
+        db.execute.assert_not_called()

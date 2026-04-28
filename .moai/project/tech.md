@@ -28,7 +28,6 @@ Klai is a multi-service TypeScript/Python monorepo. The frontend stack is TypeSc
 | Mail authentication (DKIM/SPF/ARC) | authheaders + dkimpy + authres | >=0.16 |
 | Public Suffix List (RFC 7489 alignment) | publicsuffix2 | >=2.2, <3.0 |
 | MongoDB Driver | motor | >=3.6 |
-| YouTube extractor | yt-dlp | >=2026.3 |
 | Linting | ruff | >=0.8 |
 | Type Checking | pyright | >=1.1 |
 | Testing | pytest + pytest-asyncio | >=8 / >=0.24 |
@@ -163,6 +162,17 @@ Klai is a multi-service TypeScript/Python monorepo. The frontend stack is TypeSc
 | JWT | PyJWT[crypto] | >=2.9.0 |
 | S3 Client | minio | >=7.2.0 |
 | Image Validation | filetype | >=1.2.0 |
+| Rate Limit (per-org) | redis (asyncio) | >=5.0 |
+
+**Rate limiting:** Per-org Redis ZSET sliding window for `/api/v1/connectors*`
+routes (SPEC-SEC-HYGIENE-001 HY-32). Empty `REDIS_URL` disables the feature
+(no-op fail-open). Defaults: 120 reads/min/org, 30 writes/min/org —
+both env-tunable. Mirror of `klai-portal/backend/app/services/partner_rate_limit.py`.
+
+**Content fingerprinting:** `/api/v1/compute-fingerprint` is rewired to the
+shared crawl4ai HTTP API (mirror of `klai-knowledge-ingest/knowledge_ingest/
+crawl4ai_client.crawl_page`) since SPEC-CRAWLER-004 Fase F deleted the
+in-process WebCrawlerAdapter. Used by portal canary-fingerprint flow.
 
 ---
 
@@ -196,6 +206,31 @@ structurally prevented because there is only one implementation.
 
 **Purpose:** Tenant-scoped encrypted credential storage for connector
 configs. Consumed by `klai-portal/backend` and `klai-connector`.
+
+### klai-libs/identity-assert
+
+**Purpose:** Shared service-to-service identity verification helper
+(SPEC-SEC-IDENTITY-ASSERT-001). Calls portal-api's
+`POST /internal/identity/verify` endpoint with consumer-side caching
+(60 s TTL, fail-closed). Single implementation across every Python
+consumer that carries a tenant or user identity claim — services do
+not re-implement the contract.
+
+**Consumers:** future Phase B/C/D adopters (`klai-knowledge-mcp`,
+`klai-scribe`, `klai-retrieval-api`). Phase A landed the library +
+endpoint; consumers migrate one PR each.
+
+| Module | Purpose |
+|---|---|
+| `client` | `IdentityAsserter` — async httpx client + LRU cache |
+| `models` | `VerifyResult` frozen dataclass + `KNOWN_CALLER_SERVICES` allowlist |
+| `cache` | In-process TTL cache (privacy boundary: per-process only) |
+| `telemetry` | structlog `identity_assert_call` event with hashed user_id |
+
+| Layer | Technology | Version |
+|-------|-----------|---------|
+| HTTP Client | httpx | >=0.28 |
+| Structured Logging | structlog | >=25.0 |
 
 ---
 

@@ -113,6 +113,7 @@ class IdentityCache:
                 verified=result.verified,
                 user_id=result.user_id,
                 org_id=result.org_id,
+                org_slug=result.org_slug,
                 reason=result.reason,
                 evidence=result.evidence,
                 cached=True,

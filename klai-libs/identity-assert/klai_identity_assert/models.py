@@ -23,6 +23,7 @@ ReasonCode = Literal[
     "invalid_jwt",
     "jwt_identity_mismatch",
     "no_membership",
+    "org_slug_mismatch",
     "cache_unavailable",
     "portal_unreachable",
     "library_misconfigured",
@@ -42,6 +43,12 @@ class VerifyResult:
     user_id, org_id:
         Canonical resolved identity from portal. Both populated when
         ``verified`` is True. Both ``None`` on deny.
+    org_slug:
+        Canonical ``portal_orgs.slug`` for the verified org (REQ-2.6).
+        Always populated on allow — callers SHOULD use this when constructing
+        upstream URLs (e.g. klai-docs ``/api/orgs/{org_slug}/...``) instead
+        of trusting the caller-asserted ``X-Org-Slug`` header. ``None`` on
+        deny.
     reason:
         Stable code on deny (see :data:`ReasonCode`). ``None`` on allow.
     evidence:
@@ -56,6 +63,7 @@ class VerifyResult:
     verified: bool
     user_id: str | None
     org_id: str | None
+    org_slug: str | None
     reason: ReasonCode | None
     evidence: Evidence | None
     cached: bool
@@ -63,7 +71,15 @@ class VerifyResult:
     @classmethod
     def deny(cls, reason: ReasonCode) -> VerifyResult:
         """Construct a non-verified result with a stable reason code."""
-        return cls(verified=False, user_id=None, org_id=None, reason=reason, evidence=None, cached=False)
+        return cls(
+            verified=False,
+            user_id=None,
+            org_id=None,
+            org_slug=None,
+            reason=reason,
+            evidence=None,
+            cached=False,
+        )
 
     @classmethod
     def allow(
@@ -71,6 +87,7 @@ class VerifyResult:
         *,
         user_id: str,
         org_id: str,
+        org_slug: str,
         evidence: Evidence,
         cached: bool = False,
     ) -> VerifyResult:
@@ -79,6 +96,7 @@ class VerifyResult:
             verified=True,
             user_id=user_id,
             org_id=org_id,
+            org_slug=org_slug,
             reason=None,
             evidence=evidence,
             cached=cached,
