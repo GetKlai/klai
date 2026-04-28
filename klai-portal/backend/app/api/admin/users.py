@@ -1,8 +1,9 @@
 """Admin user lifecycle endpoints."""
 
 import logging
+from collections.abc import Mapping
 from datetime import datetime
-from typing import Literal
+from typing import Final, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
@@ -23,6 +24,20 @@ from app.services.zitadel import zitadel
 from . import _get_caller_org, _require_admin, bearer
 
 logger = logging.getLogger(__name__)
+
+# SPEC-SEC-TENANT-001 REQ-2.2: frozen module-level mapping from the portal
+# role (InviteRequest.role Literal) to the Zitadel project-role string used
+# by `zitadel.grant_user_role`. Changes are reviewable in diff and
+# traceable in code search. The mapping is exhaustive for the three accepted
+# values of the Literal — REQ-2.3 enforces this at runtime.
+#
+# Canonical role -> claim mapping is documented in
+# `.claude/rules/klai/platform/zitadel.md` (REQ-3).
+_ZITADEL_ROLE_BY_PORTAL_ROLE: Final[Mapping[str, str]] = {
+    "admin": "org:owner",
+    "group-admin": "org:group-admin",
+    "member": "org:member",
+}
 
 router = APIRouter()
 
@@ -158,11 +173,30 @@ async def invite_user(
 
     zitadel_user_id: str = user_data["userId"]
 
+    # SPEC-SEC-TENANT-001 REQ-2: grant the Zitadel role mapped from body.role,
+    # not the hardcoded org:owner that v0.1 of this handler used regardless
+    # of the admin's choice (finding #10).
+    try:
+        zitadel_role = _ZITADEL_ROLE_BY_PORTAL_ROLE[body.role]
+    except KeyError as exc:
+        # REQ-2.3: pydantic Literal blocks this at parse time; the runtime
+        # check exists to keep the mapping and the InviteRequest schema in
+        # lock-step. Reaching this branch means the schema added a value the
+        # mapping has not — a developer error, not a user-supplied input.
+        logger.exception(
+            "invite_role_not_in_mapping",
+            extra={"portal_role": body.role, "email": body.email},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unsupported role",
+        ) from exc
+
     try:
         await zitadel.grant_user_role(
             org_id=settings.zitadel_portal_org_id,
             user_id=zitadel_user_id,
-            role="org:owner",
+            role=zitadel_role,
         )
     except Exception as exc:
         logger.exception("Role grant failed for invited user %s: %s", body.email, exc)
