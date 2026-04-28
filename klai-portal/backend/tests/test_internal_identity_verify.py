@@ -315,9 +315,7 @@ class TestCachingBehaviour:
         # request looks up the JWT-evidence entry deterministically.
         redis = _make_redis_mock()
         cache_key = "identity_verify:scribe:u-1:o-1:jwt"
-        redis._store[cache_key] = json.dumps(
-            {"user_id": "u-1", "org_id": "o-1", "org_slug": "acme", "evidence": "jwt"}
-        )
+        redis._store[cache_key] = json.dumps({"user_id": "u-1", "org_id": "o-1", "org_slug": "acme", "evidence": "jwt"})
         monkeypatch.setattr("app.api.internal.get_redis_pool", AsyncMock(return_value=redis))
         monkeypatch.setattr("app.api.internal._check_rate_limit_internal", AsyncMock())
 
@@ -585,9 +583,7 @@ class TestOrgSlugCheck:
         # Denials never go in the cache (REQ-1.5).
         redis.set.assert_not_awaited()
 
-    async def test_returns_403_when_claimed_slug_mismatches_on_cache_hit(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_returns_403_when_claimed_slug_mismatches_on_cache_hit(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Cached entry has canonical slug "acme"; new request asserts
         # "impostor-slug" → reject without going to DB.
         redis = _make_redis_mock()
