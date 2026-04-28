@@ -122,3 +122,71 @@ Management API calls without `X-Zitadel-Orgid` succeed but target the service ac
 **Why:** The Zitadel Management API uses `X-Zitadel-Orgid` header to scope operations to a specific org. Without it, the service account's own org (`362757920133283846`) is used as context.
 
 **Prevention:** Always include `X-Zitadel-Orgid: {target_org_id}` in any Management API call that must operate on a specific org.
+
+## Project roles and JWT claims
+
+Canonical mapping between portal `InviteRequest.role` (Pydantic Literal),
+the Zitadel project-role string passed to `grant_user_role`, and the
+JWT `urn:zitadel:iam:org:project:roles` claim a downstream service
+receives. Source of truth for `_extract_role` admin-equivalence audits
+(SPEC-SEC-TENANT-001 REQ-3, REQ-4).
+
+| Portal role | Zitadel grant role | JWT claim shape |
+|---|---|---|
+| `admin` | `org:owner` | `{"org:owner": {}}` |
+| `group-admin` | `org:group-admin` | `{"org:group-admin": {}}` |
+| `member` | `org:member` | `{"org:member": {}}` |
+
+The mapping is implemented as `_ZITADEL_ROLE_BY_PORTAL_ROLE` in
+`klai-portal/backend/app/api/admin/users.py` (frozen module-level
+`Final[Mapping[str, str]]`, REQ-2.2). Adding a new portal role requires
+updating BOTH the InviteRequest Literal AND the mapping AND this table
+in the same change — REQ-2.3 raises HTTP 500 at runtime if the schema
+diverges from the mapping.
+
+### Admin equivalence in retrieval-api
+
+`klai-retrieval-api/retrieval_api/middleware/auth.py::_extract_role`
+treats the following claim values as admin-equivalent for the
+`verify_body_identity` cross-org / cross-user bypass (SPEC-SEC-010
+REQ-3.1):
+
+- `admin` — bare role label, not produced by the invite flow above.
+- `org_admin` — bare role label, not produced by the invite flow above.
+
+Neither value is reachable through the REQ-2 mapping; both are legacy
+guards that pre-date the explicit role mapping. SPEC-SEC-TENANT-001
+REQ-4 audits whether they remain necessary. The mapped roles
+(`org:owner`, `org:group-admin`, `org:member`) are NOT in the
+admin-equivalent set — the cross-org check fires for member-equivalent
+JWTs as expected.
+
+`org:owner` is the natural "admin-ish" candidate but is intentionally
+NOT in the admin-equivalent set. Adding it would silently grant
+admin-bypass to every invited user under the REQ-2 mapping (since
+`portal_role="admin"` maps to `org:owner`). The mapping's design
+keeps the admin label unique to the portal `admin` role; downstream
+admin-equivalence is a separate, smaller-blast-radius decision.
+
+### How to verify the claim shape end-to-end
+
+1. Invite a test user via the portal admin UI with each of the three
+   roles in turn (or via `POST /api/admin/users/invite` against a dev
+   environment).
+2. Have the user complete the invite flow and obtain an access token
+   (e.g. by signing in to the portal and capturing the access_token
+   cookie or by using the OIDC code-exchange directly).
+3. Decode the access token's payload (no signature verification needed
+   for this read-only check):
+   ```bash
+   echo '<jwt>' | cut -d. -f2 | base64 -d 2>/dev/null | jq '."urn:zitadel:iam:org:project:roles"'
+   ```
+4. Expected output for each portal role:
+   - `admin`       -> `{"org:owner": {...}}`
+   - `group-admin` -> `{"org:group-admin": {...}}`
+   - `member`      -> `{"org:member": {...}}`
+
+If the JWT carries a different role key than the mapping predicts, the
+Zitadel project configuration has drifted from the mapping (or vice
+versa). Update the mapping AND this section in the same commit — the
+two MUST stay in lock-step.
