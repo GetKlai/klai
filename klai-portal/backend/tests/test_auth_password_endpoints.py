@@ -13,13 +13,10 @@ Zitadel HTTP mocked via respx against the real ``ZitadelClient`` (REQ-5.7).
 
 from __future__ import annotations
 
-from typing import Any
-from unittest.mock import AsyncMock, patch
-
 import httpx
 import pytest
 import respx
-from auth_test_helpers import _capture_events, _expected_email_hash
+from auth_test_helpers import _audit_log_patch, _capture_events, _expected_email_hash
 from fastapi import HTTPException
 from structlog.testing import capture_logs
 
@@ -31,12 +28,6 @@ from app.api.auth import (
     password_set,
     verify_email,
 )
-
-
-def _audit_log_patch() -> Any:
-    """Return a ``patch()`` for audit.log_event yielding an assertable AsyncMock."""
-    return patch("app.api.auth.audit.log_event", AsyncMock())
-
 
 # ---------------------------------------------------------------------------
 # Scenario P1 — password_reset known email → 204 + audit (REQ-3.1)

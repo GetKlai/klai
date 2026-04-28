@@ -9,13 +9,10 @@ Zitadel HTTP mocked via respx; no MagicMock on ``app.api.auth.zitadel``.
 
 from __future__ import annotations
 
-from typing import Any
-from unittest.mock import AsyncMock, patch
-
 import httpx
 import pytest
 import respx
-from auth_test_helpers import _capture_events
+from auth_test_helpers import _audit_log_patch, _capture_events
 from fastapi import HTTPException
 from structlog.testing import capture_logs
 
@@ -25,11 +22,6 @@ from app.api.auth import (
     email_otp_resend,
     email_otp_setup,
 )
-
-
-def _audit_log_patch() -> Any:
-    return patch("app.api.auth.audit.log_event", AsyncMock())
-
 
 # ---------------------------------------------------------------------------
 # email_otp_setup
