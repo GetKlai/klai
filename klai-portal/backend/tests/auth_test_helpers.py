@@ -79,6 +79,18 @@ def _session_ok() -> dict[str, Any]:
     return {"sessionId": "sess-abc", "sessionToken": "tok-xyz"}
 
 
+def _make_sso_cookie(sid: str = "sess-abc", stk: str = "tok-xyz") -> str:
+    """Produce a Fernet-encrypted klai_sso cookie value for the happy-path
+    sso_complete test scenarios.
+
+    Uses the production ``_encrypt_sso`` helper so the test exercises the
+    real decrypt round-trip, not a hand-rolled stub.
+    """
+    from app.api.auth import _encrypt_sso
+
+    return _encrypt_sso(sid, stk)
+
+
 # ---------------------------------------------------------------------------
 # Async DB-session mock factory
 # ---------------------------------------------------------------------------
