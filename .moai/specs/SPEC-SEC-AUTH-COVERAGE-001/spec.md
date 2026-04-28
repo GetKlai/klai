@@ -1,9 +1,9 @@
 ---
 id: SPEC-SEC-AUTH-COVERAGE-001
-version: 0.2.0
-status: draft
+version: 0.3.0
+status: completed
 created: 2026-04-27
-updated: 2026-04-27
+updated: 2026-04-28
 author: Mark Vletter
 priority: medium
 issue_number: 0
