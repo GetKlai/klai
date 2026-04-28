@@ -67,6 +67,14 @@ async def get_redis_client(
     return _redis_singleton
 
 
+# @MX:ANCHOR: enforce_org_rate_limit — fan_in = 5 (POST/GET-list/GET-by-id/PUT/DELETE
+#   in routes/connectors.py, all via Depends()). Public API boundary for
+#   per-org rate limiting; signature change ripples through every connector route.
+# @MX:REASON: Fail-open contract (REQ-32.3) is invariant — any exception talking
+#   to Redis MUST log connector_rate_limit_redis_unavailable at WARNING with
+#   exc_info=True and allow the request through. Changing this to fail-closed
+#   would convert a Redis outage into a tenant-wide CRUD outage.
+# @MX:SPEC: SPEC-SEC-HYGIENE-001 REQ-32 (HY-32)
 def enforce_org_rate_limit(
     method: Literal["read", "write"],
 ) -> Callable[..., Awaitable[None]]:
