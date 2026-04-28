@@ -137,6 +137,14 @@ _pending_totp = TTLCache(_TOTP_PENDING_TTL)
 # ---------------------------------------------------------------------------
 
 
+# @MX:ANCHOR: Trust boundary for OIDC callback URLs returned by Zitadel.
+# @MX:REASON: fan_in=3 — called from login() pre-finalize, idp_callback,
+#   and sso_complete after every successful finalize. Loosening the
+#   trusted-host check (e.g. allowing wildcards or new domain suffixes)
+#   opens an open-redirect across the entire auth surface. Coordinate
+#   with frontend host config + Caddy redirect rules before changing.
+# @MX:SPEC: SPEC-SEC-AUTH-COVERAGE-001 (defense-in-depth on top of
+#   Zitadel's OIDC client redirect_uri validation)
 def _validate_callback_url(url: str) -> str:
     """Ensure callback_url points to a trusted domain, not an attacker-controlled one.
 
@@ -177,6 +185,15 @@ async def get_current_user_id(
     return user_id
 
 
+# @MX:ANCHOR: Single helper that mints the klai_sso cookie + finalizes
+#   the OIDC auth request. fan_in=3 across login, totp_login, sso_complete.
+# @MX:REASON: All three callers depend on this helper to (a) set
+#   `klai_sso` consistently, (b) handle stale-auth-request 409, and
+#   (c) call _validate_callback_url before redirecting. Changing cookie
+#   attributes (max_age, samesite, domain) here shifts the contract for
+#   every authenticated session. Coordinate with frontend SSO consumers
+#   and the LibreChat iframe flow before touching.
+# @MX:SPEC: SPEC-SEC-AUTH-COVERAGE-001 (predecessor: SPEC-SEC-MFA-001)
 async def _finalize_and_set_cookie(
     response: Response,
     auth_request_id: str,
