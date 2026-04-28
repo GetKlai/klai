@@ -17,7 +17,14 @@ dependencies = [
     # SPEC-SEC-010 — Zitadel JWT validation (matches research-api) + Redis sliding-window rate limiter.
     "python-jose[cryptography]>=3.3",
     "redis>=5.0",
+    # SPEC-SEC-IDENTITY-ASSERT-001 REQ-4 (Phase D): re-verify internal-secret
+    # callers' body identity against portal-api. Editable install — same
+    # pattern as klai-knowledge-mcp (Phase B) and klai-knowledge-ingest.
+    "klai-identity-assert",
 ]
+
+[tool.uv.sources]
+klai-identity-assert = { path = "../klai-libs/identity-assert", editable = true }
 
 [project.optional-dependencies]
 dev = [

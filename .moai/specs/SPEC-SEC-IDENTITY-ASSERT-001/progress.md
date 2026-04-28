@@ -76,8 +76,9 @@ After the initial Phase A landing, a self-review uncovered:
    (knowledge-mcp) + REQ-2.6 endpoint+library extension
 3. ✅ Phase C (`feature/SPEC-SEC-IDENTITY-ASSERT-001-phase-c`): REQ-3
    (scribe) — JWT-derived org_id, no portal verify call
-4. Then: Phase D — REQ-4 + REQ-6 (retrieval-api internal-secret +
-   emit_event verified identity; REQ-6 explicitly depends on REQ-4)
+4. ✅ Phase D (`feature/SPEC-SEC-IDENTITY-ASSERT-001-phase-d`): REQ-4 +
+   REQ-6 (retrieval-api internal-secret callers re-verified against
+   portal-api; emit_event sources tenant from `request.state.verified_caller`)
 
 `IDENTITY_VERIFY_MODE` rollback flag was reconsidered and dropped in
 Phase B — the library already fails closed on portal outage and
@@ -215,3 +216,89 @@ change, no workflow change — REQ-3 is a self-contained app-layer fix.
 
 - **Phase D** (REQ-4 + REQ-6 — retrieval-api + emit_event): see migration
   sequence above.
+
+---
+
+## Phase D — retrieval-api internal-secret hardening (REQ-4 + REQ-6)
+
+- Started: 2026-04-28
+- Branch: `feature/SPEC-SEC-IDENTITY-ASSERT-001-phase-d` (branched from main)
+- Worktree: `C:/Users/markv/stack/02 - Voys/Code/klai-identity-assert-phase-d`
+
+### Phase D architectural decisions
+
+1. **REQ-4.2 (global verify), confirmed.** Per Phase A progress.md decision
+   #2, the internal-secret path runs `verify_body_identity` on every call —
+   no `/admin/retrieve` mount-point split. YAGNI for the hypothetical no-
+   user-context caller; revisit if such a caller appears.
+
+2. **`X-Caller-Service` is required for any internal-secret request whose
+   body carries `user_id`.** Missing → 400 `missing_caller_service`. Unknown
+   value → 400 `unknown_caller_service`. Loud failures rather than routing
+   through portal verify with an empty service identifier.
+
+3. **Existing `verify_body_identity` is now async.** Both call sites
+   (`api/retrieve.py`, `api/chat.py`) await it. The function's contract is
+   unified: every successful exit pins `request.state.verified_caller =
+   VerifyedCaller(user_id, org_id)` so REQ-6's `emit_event` can source
+   tenant identity from a single guaranteed-verified place.
+
+4. **`_get_asserter()` is lazy.** The `IdentityAsserter` is constructed on
+   first internal-secret verify call rather than at module load. Keeps
+   import-time tests cheap; surfaces missing `PORTAL_API_URL` /
+   `PORTAL_INTERNAL_SECRET` config the first time an internal-secret
+   request hits the guard.
+
+5. **Admin bypass preserved.** A JWT caller with `role=admin` legitimately
+   acts on other users' tenants (REQ-3.1/3.2 of SPEC-SEC-010). For admin
+   callers, `verify_body_identity` pins `verified_caller` from the body
+   values (not the JWT's own resourceowner) so `emit_event` reflects the
+   intended target tenant. Internal-secret callers do NOT inherit this
+   bypass — REQ-4.5.
+
+### Delivered
+
+| Component | Change | Tests |
+|---|---|---|
+| `klai-retrieval-api/retrieval_api/middleware/auth.py` | New `VerifiedCaller` dataclass + module-level lazy `_get_asserter()` + async `verify_body_identity` that handles JWT (existing cross-check + `verified_caller` pin) AND internal-secret (X-Caller-Service header check + portal verify + `verified_caller` pin). | +13 identity tests |
+| `klai-retrieval-api/retrieval_api/api/retrieve.py` | `await verify_body_identity(...)` + `emit_event` sources `tenant_id`/`user_id` from `request.state.verified_caller` (REQ-6). Defense-in-depth `product_event_skipped_no_identity` warning when verified pin is unexpectedly absent. | (covered by REQ-4 tests) |
+| `klai-retrieval-api/retrieval_api/api/chat.py` | `await verify_body_identity(...)`. | (covered by REQ-4 tests) |
+| `klai-retrieval-api/retrieval_api/config.py` | New `portal_api_url` + `portal_internal_secret` settings (no validator — `IdentityAsserter` constructor fail-closes at first use). | n/a |
+| `klai-retrieval-api/pyproject.toml` | Editable install of `klai-libs/identity-assert/`. | n/a |
+| `klai-retrieval-api/Dockerfile` | Repo-root build context, mirrors klai-knowledge-mcp Phase B pattern so `../klai-libs/identity-assert` resolves inside the container. | n/a |
+| `.github/workflows/retrieval-api.yml` | `context: .` + `klai-libs/identity-assert/**` path filter; `pull_request` builds skip push/deploy. | n/a |
+| `deploy/docker-compose.yml` | `retrieval-api` service: added `PORTAL_API_URL` + `PORTAL_INTERNAL_SECRET` (latter sourced from existing `PORTAL_API_INTERNAL_SECRET` SOPS entry). | n/a |
+| `tests/test_identity_assert.py` | 13 new tests covering REQ-4.2 missing/unknown `X-Caller-Service`, REQ-4.4 portal deny + portal_unreachable fail-closed, REQ-6 `emit_event` reads from verified pin, AC-6 regression (no `emit_event` row when REQ-4 rejects), JWT-path preservation. | n/a |
+| `tests/conftest.py` | Auto-fixture `_auto_allow_identity_assert` stubs `_get_asserter()` so existing tests (37 in test_auth.py + many in test_api.py) don't try to reach a real portal. Default `client` headers include `X-Caller-Service: knowledge-mcp`. | n/a |
+| `tests/test_auth.py` | Renamed `test_internal_secret_skips_cross_check` → `test_internal_secret_caller_now_verified_against_portal` to reflect REQ-4. | n/a |
+
+### Test results (local, retrieval-api venv)
+
+- `tests/test_identity_assert.py`: 13 / 13 pass
+- `tests/test_auth.py::TestCrossUserOrgGuard`: 5 / 5 pass (regression
+  guard — JWT cross-check still rejects body mismatches)
+- Full `tests/test_auth.py`: 34 pass, 1 pre-existing failure
+  (`test_missing_zitadel_audience_fails_import` expects a validator that
+  does not exist — pre-existing breakage unrelated to Phase D)
+
+### Pre-existing breakage NOT caused by Phase D
+
+- `test_missing_zitadel_audience_fails_import` (test_auth.py): expects
+  `import retrieval_api.config` to fail when `ZITADEL_API_AUDIENCE` is
+  empty. The current validator only requires `INTERNAL_SECRET` and
+  `REDIS_URL`; the audience field has a graceful-degrade comment.
+  Untouched per minimal-changes.
+
+### Follow-up
+
+This is the final phase of SPEC-SEC-IDENTITY-ASSERT-001. After Phase D
+deploys and stabilises, the SPEC moves to `status: done` (separate
+docs sync PR).
+
+The `klai-docs/lib/auth.ts requireAuthOrService` follow-up (per Phase B
+progress.md) is now safe to schedule: every upstream caller of klai-docs
+(only knowledge-mcp today) forwards verified identity post-Phase B. A
+separate SPEC can replace `requireAuthOrService` with its own
+`verify_via_portal` call so klai-docs stops depending on caller
+discipline — but it is no longer urgent, since the only caller is now
+trustworthy.

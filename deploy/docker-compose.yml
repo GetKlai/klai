@@ -743,6 +743,11 @@ services:
       ZITADEL_API_AUDIENCE: ${RETRIEVAL_API_ZITADEL_AUDIENCE:-}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       RATE_LIMIT_RPM: ${RETRIEVAL_API_RATE_LIMIT_RPM:-600}
+      # SPEC-SEC-IDENTITY-ASSERT-001 REQ-4: internal-secret callers'
+      # body-identity claims are re-verified against portal-api before any
+      # retrieval runs. Same pattern as klai-knowledge-mcp (Phase B).
+      PORTAL_API_URL: http://portal-api:8010
+      PORTAL_INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
     networks:
       - klai-net
       - net-postgres
