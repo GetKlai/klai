@@ -236,8 +236,10 @@ suite continues to pass unchanged.
 **REQs covered:** REQ-7.1, REQ-7.2
 
 **Purpose:** The `SyncRun` SQLAlchemy model and `connector.sync_runs`
-table MUST declare `org_id` as a `NOT NULL` integer column with an
-index, as the schema foundation for REQ-7.3 org-scoped filtering.
+table MUST declare `org_id` as a `NOT NULL VARCHAR(255)` column with
+an index, as the schema foundation for REQ-7.3 org-scoped filtering.
+The type matches the existing `Connector.org_id` shape (Zitadel
+resourceowner, set by migration `003_org_id_string`).
 
 **Given:**
 - The Alembic migration adding `org_id` to `sync_runs` has been
@@ -253,13 +255,13 @@ index, as the schema foundation for REQ-7.3 org-scoped filtering.
 **Then:**
 - `grep -n "org_id" klai-connector/app/models/sync_run.py` returns at
   least one line of the form
-  `org_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)`.
-- DB introspection confirms the column exists, is `integer`, is `NOT
-  NULL`, and is indexed (index name `ix_sync_runs_org_id` per the
-  migration).
+  `org_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)`.
+- DB introspection confirms the column exists, is
+  `character varying(255)`, is `NOT NULL`, and is indexed (index name
+  `ix_sync_runs_org_id` per the migration).
 - A model-load test `SyncRun(connector_id=<uuid>, status="running",
-  org_id=101)` instantiates successfully; omitting `org_id` raises
-  `IntegrityError` on flush.
+  org_id="org-a-resourceowner")` instantiates successfully; omitting
+  `org_id` raises `IntegrityError` on flush.
 
 **Failure mode under current code:**
 - The grep returns zero results; model load with `org_id=` kwarg
@@ -280,14 +282,14 @@ list/trigger equivalents) for a run belonging to org B while asserting
 org A via `X-Org-ID` MUST receive HTTP 404 — never 200, never 403.
 
 **Given:**
-- Two connectors seeded in the portal DB:
-  - `conn_A` (id=`11111111-...`, `org_id=101`).
-  - `conn_B` (id=`22222222-...`, `org_id=102`).
+- Two connectors seeded in the connector DB (`connector.connectors`):
+  - `conn_A` (id=`11111111-...`, `org_id="org-a-resourceowner"`).
+  - `conn_B` (id=`22222222-...`, `org_id="org-b-resourceowner"`).
 - Two `SyncRun` rows seeded in the connector DB:
-  - `run_A` (connector_id=`conn_A.id`, org_id=101,
-    status="completed").
-  - `run_B` (connector_id=`conn_B.id`, org_id=102,
-    status="completed").
+  - `run_A` (connector_id=`conn_A.id`,
+    `org_id="org-a-resourceowner"`, status="completed").
+  - `run_B` (connector_id=`conn_B.id`,
+    `org_id="org-b-resourceowner"`, status="completed").
 - REQ-7 implementation has landed: handlers filter on
   `SyncRun.org_id`; `_require_portal_org_id(request)` reads
   `X-Org-ID`.
@@ -296,11 +298,11 @@ org A via `X-Org-ID` MUST receive HTTP 404 — never 200, never 403.
 
 **When (three sub-cases):**
 - **GET detail**: `GET /connectors/{conn_B.id}/syncs/{run_B.id}` with
-  `X-Org-ID: 101` (caller claims org A).
+  `X-Org-ID: org-a-resourceowner` (caller claims org A).
 - **GET list**: `GET /connectors/{conn_B.id}/syncs` with
-  `X-Org-ID: 101`.
+  `X-Org-ID: org-a-resourceowner`.
 - **POST trigger**: `POST /connectors/{conn_B.id}/sync` with
-  `X-Org-ID: 101`.
+  `X-Org-ID: org-a-resourceowner`.
 
 **Then:**
 - All three requests return HTTP 404 with body
@@ -313,12 +315,13 @@ org A via `X-Org-ID` MUST receive HTTP 404 — never 200, never 403.
   `event="sync_missing_org_id"` entries (the header was present),
   and no DB row was created or mutated (verified by
   `SELECT COUNT(*) FROM connector.sync_runs WHERE id =
-  {run_B.id}` → 1 unchanged; no new row with org_id=101).
+  {run_B.id}` → 1 unchanged; no new row with
+  `org_id="org-a-resourceowner"`).
 
 **Positive control:**
-- Same three requests with `X-Org-ID: 102` (the correct org for
-  `conn_B`) return 200 / 200 / 202 respectively. This proves the
-  filter is tenant-scoped, not blanket-blocking.
+- Same three requests with `X-Org-ID: org-b-resourceowner` (the
+  correct org for `conn_B`) return 200 / 200 / 202 respectively. This
+  proves the filter is tenant-scoped, not blanket-blocking.
 
 **Failure mode under current code (pre-REQ-7):**
 - All three requests return 200 / 200 / 202 regardless of
@@ -336,23 +339,31 @@ org A via `X-Org-ID` MUST receive HTTP 404 — never 200, never 403.
 
 **Purpose:** The Alembic migration adding `org_id` to
 `connector.sync_runs` MUST backfill every pre-existing row from the
-parent `portal_connectors.org_id` without leaving any NULLs, so that
-the subsequent `NOT NULL` alter succeeds on real multi-tenant data.
+sibling `connector.connectors.org_id` (intra-DB) without leaving any
+NULLs, so that the subsequent `NOT NULL` alter succeeds on real
+multi-tenant data.
 
 **Given:**
-- Multi-tenant fixture seeded in portal DB:
-  - `portal_connectors` rows: 10 connectors split across orgs 101
-    (5 connectors) and 102 (5 connectors), plus 2 connectors in
-    org 103.
+- Multi-tenant fixture seeded in the connector DB:
+  - `connector.connectors` rows: 10 connectors split across
+    `org_id="org-a-resourceowner"` (5 connectors) and
+    `org_id="org-b-resourceowner"` (5 connectors), plus 2 connectors
+    in `org_id="org-c-resourceowner"`.
 - Connector DB fixture seeded with `connector.sync_runs` rows
   (before migration): at least 3 runs per connector, ~36 rows total,
   all with the current schema (no `org_id` column).
 - Orphan sanity: ONE `sync_runs` row exists for a `connector_id`
-  that is NOT in `portal_connectors` (deleted upstream). The
-  runbook pre-step deletes this orphan before the migration.
+  that is NOT in `connector.connectors` (parent connector deleted
+  upstream). The runbook pre-step deletes this orphan before the
+  migration via
+  `DELETE FROM connector.sync_runs WHERE connector_id NOT IN
+  (SELECT id FROM connector.connectors)`.
 
 **When:**
-- The Alembic migration is applied (see `research.md` §8.6).
+- The Alembic migration is applied. The backfill statement is a
+  single intra-DB UPDATE:
+  `UPDATE connector.sync_runs r SET org_id = c.org_id FROM
+  connector.connectors c WHERE r.connector_id = c.id`.
 
 **Then:**
 - `SELECT COUNT(*) FROM connector.sync_runs WHERE org_id IS NULL`
@@ -361,14 +372,13 @@ the subsequent `NOT NULL` alter succeeds on real multi-tenant data.
   as before the migration MINUS the one orphan deleted by the
   runbook pre-step.
 - For every surviving row: `sync_runs.org_id` matches
-  `portal_connectors.org_id` when joined on `connector_id`.
+  `connector.connectors.org_id` when joined on `connector_id`.
   Verified by a post-migration audit query:
   ```sql
-  SELECT r.id, r.org_id, pc.org_id AS portal_org_id
+  SELECT r.id, r.org_id, c.org_id AS connector_org_id
   FROM connector.sync_runs r
-  -- cross-DB: materialised via runbook script
-  LEFT JOIN portal_connectors pc ON pc.id = r.connector_id
-  WHERE r.org_id IS DISTINCT FROM pc.org_id;
+  LEFT JOIN connector.connectors c ON c.id = r.connector_id
+  WHERE r.org_id IS DISTINCT FROM c.org_id;
   ```
   returns zero rows.
 - The `ALTER COLUMN ... SET NOT NULL` step of the migration
@@ -405,8 +415,8 @@ mandatory. During the transition period, the same call MUST succeed
 **Given (case 8.a — transition period, flag OFF):**
 - Connector config has `sync_require_org_id=False` (default).
 - Portal caller holds `PORTAL_CALLER_SECRET`.
-- `conn_A` exists with `org_id=101`; `run_A` exists tied to
-  `conn_A`.
+- `conn_A` exists with `org_id="org-a-resourceowner"`; `run_A`
+  exists tied to `conn_A`.
 
 **When:**
 - `GET /connectors/{conn_A.id}/syncs` is called with the portal
@@ -438,10 +448,11 @@ mandatory. During the transition period, the same call MUST succeed
   rejecting the request.
 
 **Portal-side control (REQ-8.4, same test file):**
-- `klai_connector_client.trigger_sync(connector_id, org_id=101)`
-  is called with a patched httpx transport. The transport-level
-  assertion confirms the outbound request headers contain
-  `X-Org-ID: 101` AND `Authorization: Bearer <portal-secret>`.
+- `klai_connector_client.trigger_sync(connector_id,
+  org_id="org-a-resourceowner")` is called with a patched httpx
+  transport. The transport-level assertion confirms the outbound
+  request headers contain `X-Org-ID: org-a-resourceowner` AND
+  `Authorization: Bearer <portal-secret>`.
 - Calling the same client method without the `org_id` parameter
   raises `TypeError` (parameter is required, not defaulted) —
   proving portal-side code cannot forget the header.
