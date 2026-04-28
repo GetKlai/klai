@@ -108,27 +108,38 @@ async def test_offboard_user_does_not_wipe_other_org_memberships() -> None:
 @pytest.mark.parametrize(
     ("portal_role", "expected_zitadel_role"),
     [
+        # Admin: a single grant of org:owner. This is the one Zitadel role
+        # the Klai Platform project actually has configured and the only
+        # downstream signal retrieval-api currently honours.
         ("admin", "org:owner"),
-        ("group-admin", "org:group-admin"),
-        ("member", "org:member"),
+        # Non-admins: NO Zitadel grant. portal_users.role is the canonical
+        # authority; the JWT roles claim stays empty so retrieval-api's
+        # _extract_role returns None and the cross-org check fires normally.
+        ("group-admin", None),
+        ("member", None),
     ],
 )
 @pytest.mark.asyncio
 async def test_invite_user_grants_portal_role_to_zitadel(
     portal_role: str,
-    expected_zitadel_role: str,
+    expected_zitadel_role: str | None,
 ) -> None:
-    """REQ-2 / REQ-5.2: invite_user must pass the mapped Zitadel role.
+    """REQ-2 / REQ-5.2 (v0.5.0 / β): invite_user respects the role mapping.
 
-    Pre-fix: every invite (admin / group-admin / member) called
+    Pre-fix (v0.1): every invite (admin / group-admin / member) called
     ``grant_user_role(role="org:owner")``. The portal stored the chosen
     portal role on PortalUser.role correctly, but every Zitadel grant was
     org:owner — a "config-dep CRITICAL" time-bomb because retrieval-api's
     `_extract_role` is one operator-edit away from treating org:owner as
     admin (finding #10).
 
-    Post-fix: a module-level mapping `_ZITADEL_ROLE_BY_PORTAL_ROLE`
-    translates body.role into the Zitadel grant string.
+    Post-fix (v0.5.0 / beta architecture): only `portal_role="admin"`
+    produces a Zitadel grant (`org:owner`). Non-admin invites skip
+    `grant_user_role` entirely — portal_users.role is the canonical
+    authority, and Zitadel is reserved for identity. See
+    SPEC-SEC-TENANT-001 v0.5.0 HISTORY for the rationale and
+    SPEC-SEC-IDENTITY-ASSERT-001 for the eventual gamma migration that
+    replaces JWT-claim admin-bypass with a portal-signed assertion.
     """
     from app.api.admin.users import InviteRequest, invite_user
 
@@ -171,12 +182,20 @@ async def test_invite_user_grants_portal_role_to_zitadel(
         mock_zitadel.grant_user_role = AsyncMock()
         await invite_user(body=body, credentials=mock_credentials, db=mock_db)
 
-    mock_zitadel.grant_user_role.assert_awaited_once()
-    await_args = mock_zitadel.grant_user_role.await_args
-    assert await_args is not None  # narrowed for pyright; also asserted above
-    grant_kwargs = await_args.kwargs
-    assert grant_kwargs["role"] == expected_zitadel_role, (
-        f"REQ-2: invite_user(role={portal_role!r}) granted Zitadel role "
-        f"{grant_kwargs['role']!r}; expected {expected_zitadel_role!r}. "
-        "Pre-fix this was hardcoded to 'org:owner' for every invite."
-    )
+    if expected_zitadel_role is None:
+        # v0.5.0 invariant for non-admins: no Zitadel grant call at all.
+        assert mock_zitadel.grant_user_role.await_count == 0, (
+            f"REQ-2 (v0.5.0 / β): invite_user(role={portal_role!r}) MUST NOT "
+            "call zitadel.grant_user_role. portal_users.role is the canonical "
+            "authority for non-admin roles. The pre-v0.5.0 behaviour granted "
+            "org:owner to every invite — exactly the finding #10 time-bomb."
+        )
+    else:
+        mock_zitadel.grant_user_role.assert_awaited_once()
+        await_args = mock_zitadel.grant_user_role.await_args
+        assert await_args is not None  # narrowed for pyright; also asserted above
+        grant_kwargs = await_args.kwargs
+        assert grant_kwargs["role"] == expected_zitadel_role, (
+            f"REQ-2: invite_user(role={portal_role!r}) granted Zitadel role "
+            f"{grant_kwargs['role']!r}; expected {expected_zitadel_role!r}."
+        )
