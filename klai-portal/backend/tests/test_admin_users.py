@@ -5,6 +5,9 @@ Coverage:
 - REQ-5.1 / A-1: offboard_user must scope the membership delete to the
   caller's org so that a target user's memberships in OTHER tenants
   remain intact (regression for finding #5 — cross-tenant IDOR).
+- REQ-5.2 / A-2: invite_user must pass the Zitadel role string mapped
+  from body.role, not the hardcoded "org:owner" (regression for finding
+  #10 — Zitadel role grant hardcode).
 
 Pure unit tests — no real DB. SQL statements captured via
 ``mock_db.execute.call_args_list`` and compiled to a Postgres-dialect
@@ -96,4 +99,84 @@ async def test_offboard_user_does_not_wipe_other_org_memberships() -> None:
     assert "101" in sql, (
         "membership delete does not bind the caller's org_id literal (REQ-1.1). "
         f"Got SQL: {sql}"
+    )
+
+
+# @MX:ANCHOR REQ-5.2 — must remain coupled to invite_user's grant_user_role call.
+# @MX:REASON: regression guard for finding #10 (Zitadel role hardcoded to
+# "org:owner" regardless of the admin's body.role choice).
+@pytest.mark.parametrize(
+    ("portal_role", "expected_zitadel_role"),
+    [
+        ("admin", "org:owner"),
+        ("group-admin", "org:group-admin"),
+        ("member", "org:member"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_invite_user_grants_portal_role_to_zitadel(
+    portal_role: str,
+    expected_zitadel_role: str,
+) -> None:
+    """REQ-2 / REQ-5.2: invite_user must pass the mapped Zitadel role.
+
+    Pre-fix: every invite (admin / group-admin / member) called
+    ``grant_user_role(role="org:owner")``. The portal stored the chosen
+    portal role on PortalUser.role correctly, but every Zitadel grant was
+    org:owner — a "config-dep CRITICAL" time-bomb because retrieval-api's
+    `_extract_role` is one operator-edit away from treating org:owner as
+    admin (finding #10).
+
+    Post-fix: a module-level mapping `_ZITADEL_ROLE_BY_PORTAL_ROLE`
+    translates body.role into the Zitadel grant string.
+    """
+    from app.api.admin.users import InviteRequest, invite_user
+
+    org = MagicMock()
+    org.id = 101
+    org.seats = 100  # plenty of headroom; do not trip seat limit
+    org.plan = "free"
+
+    caller = MagicMock()
+    caller.role = "admin"
+
+    mock_db = AsyncMock()
+    locked_org_result = MagicMock()
+    locked_org_result.scalar_one.return_value = org
+    mock_db.execute.return_value = locked_org_result
+    mock_db.scalar.return_value = 0  # active_count under seat limit
+
+    mock_credentials = MagicMock()
+
+    body = InviteRequest(
+        email=f"{portal_role}@example.com",
+        first_name="A",
+        last_name="B",
+        role=portal_role,  # type: ignore[arg-type]
+        preferred_language="nl",
+    )
+
+    with (
+        patch("app.api.admin.users._get_caller_org", return_value=("admin-1", org, caller)),
+        patch("app.api.admin.users.zitadel") as mock_zitadel,
+        patch("app.api.admin.users.get_plan_products", return_value=[]),
+        patch(
+            "app.services.default_knowledge_bases.create_default_personal_kb",
+            new=AsyncMock(),
+        ),
+    ):
+        mock_zitadel.invite_user = AsyncMock(
+            return_value={"userId": f"new-user-{portal_role}"}
+        )
+        mock_zitadel.grant_user_role = AsyncMock()
+        await invite_user(body=body, credentials=mock_credentials, db=mock_db)
+
+    mock_zitadel.grant_user_role.assert_awaited_once()
+    await_args = mock_zitadel.grant_user_role.await_args
+    assert await_args is not None  # narrowed for pyright; also asserted above
+    grant_kwargs = await_args.kwargs
+    assert grant_kwargs["role"] == expected_zitadel_role, (
+        f"REQ-2: invite_user(role={portal_role!r}) granted Zitadel role "
+        f"{grant_kwargs['role']!r}; expected {expected_zitadel_role!r}. "
+        "Pre-fix this was hardcoded to 'org:owner' for every invite."
     )
