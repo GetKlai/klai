@@ -243,9 +243,19 @@ The system SHALL audit the admin-bypass in
 `retrieval_api.middleware.auth._extract_role` against the documented REQ-3
 mapping and remove unreachable claim values.
 
-- **REQ-4.1:** THE `_extract_role` function SHALL treat as admin-equivalent
-  only claim values that the REQ-2 mapping can produce. Values that cannot
-  be produced by the portal invite flow SHALL be removed.
+- **REQ-4.1:** THE `_extract_role` function SHALL remove `org_admin`
+  from the admin-equivalent set. It is not produced by any flow in the
+  monorepo (signup, invite, migration scripts) and represents pure
+  attack surface for any future provisioner that ever emits it.
+  THE function SHALL retain `admin` as admin-equivalent: it is not
+  produced by any production flow either, but it is the test-fixture
+  contract that the SPEC-SEC-010 admin-bypass suite depends on. The
+  full retirement of JWT-claim admin-bypass moves to
+  SPEC-SEC-IDENTITY-ASSERT-001 (gamma direction). The function SHALL
+  NOT add `org:owner` to the set under any circumstance: under the
+  v0.5.0 mapping `org:owner` is reachable via every admin invite and
+  every signup, so adding it would re-introduce finding #10 in a more
+  direct form.
 - **REQ-4.2:** IF the set of admin-equivalent claim values changes, THEN the
   change SHALL be reflected in both the code (with an inline comment
   pointing to REQ-3) and the Zitadel rule document, to avoid silent drift.

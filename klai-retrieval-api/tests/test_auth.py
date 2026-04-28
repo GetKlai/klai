@@ -413,6 +413,74 @@ class TestCrossUserOrgGuard:
             )
         assert resp.status_code == 200
 
+    def test_non_admin_jwt_does_not_bypass_cross_org(self):
+        """SPEC-SEC-TENANT-001 REQ-4.1 / REQ-5.3 / A-3 — non-admin JWT cross-org -> 403.
+
+        Under the v0.5.0 mapping, non-admin invites (group-admin, member)
+        receive no Zitadel project-role grant. Their JWTs carry NO
+        ``urn:zitadel:iam:org:project:roles`` claim. ``_extract_role``
+        returns None; ``auth.role`` is None; the cross-org check fires.
+
+        This test pins the contract: a member-shaped JWT (no roles claim)
+        whose ``resourceowner`` differs from the body ``org_id`` MUST
+        receive 403, never 200 by accidental admin-equivalence.
+        """
+        from retrieval_api.main import app
+
+        client = TestClient(app)
+        # role=None ⇒ helper omits the urn:zitadel:iam:org:project:roles key
+        # entirely. This matches the production v0.5.0 shape for invitees
+        # whose portal_users.role is "group-admin" or "member".
+        payload = _make_jwt_payload(
+            sub="user-member-1", resourceowner="org-a", role=None
+        )
+        with _patch_jwt(payload):
+            resp = client.post(
+                "/retrieve",
+                json={
+                    "query": "q",
+                    "org_id": "org-b",
+                    "user_id": "user-member-1",
+                },
+                headers={"Authorization": "Bearer valid"},
+            )
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == {"error": "org_mismatch"}
+
+    def test_org_admin_role_is_no_longer_admin_equivalent(self):
+        """SPEC-SEC-TENANT-001 REQ-4.1 — `org_admin` removed from admin-set.
+
+        Pre-v0.5.0 ``_extract_role`` matched both ``admin`` AND
+        ``org_admin`` as admin-equivalent. The ``org_admin`` branch was
+        unreachable in any production flow but represented a latent
+        attack surface — a future code path that ever produced the key
+        (SCIM provisioner, migration script, manual Zitadel poke) would
+        have silently granted cross-org bypass.
+
+        v0.5.0 REQ-4.1 removes the ``org_admin`` branch. This test pins
+        the removal: a JWT carrying ``{"org_admin": {}}`` whose
+        ``resourceowner`` differs from the body ``org_id`` MUST receive
+        403.
+        """
+        from retrieval_api.main import app
+
+        client = TestClient(app)
+        payload = _make_jwt_payload(
+            sub="user-x", resourceowner="org-a", role="org_admin"
+        )
+        with _patch_jwt(payload):
+            resp = client.post(
+                "/retrieve",
+                json={
+                    "query": "q",
+                    "org_id": "org-b",
+                    "user_id": "user-x",
+                },
+                headers={"Authorization": "Bearer valid"},
+            )
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == {"error": "org_mismatch"}
+
     def test_internal_secret_skips_cross_check(self, client):
         """REQ-3.3 / REQ-8.7: internal secret caller bypasses cross-user/org check."""
         with (
