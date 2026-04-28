@@ -1316,9 +1316,19 @@ async def email_otp_confirm(
 
 @router.post("/auth/idp-intent", response_model=IDPIntentResponse)
 async def idp_intent(body: IDPIntentRequest) -> IDPIntentResponse:
-    """Start a social login flow. Returns the IDP auth URL to redirect the user to."""
+    """Start a social login flow. Returns the IDP auth URL to redirect the user to.
+
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-2.1/2.2: emit audit on success;
+    structured event on unknown_idp / zitadel_5xx / missing_auth_url.
+    """
     known_idps = {settings.zitadel_idp_google_id, settings.zitadel_idp_microsoft_id} - {""}
     if body.idp_id not in known_idps:
+        _emit_auth_event(
+            "idp_intent_failed",
+            reason="unknown_idp",
+            outcome="400",
+            level="warning",
+        )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown IDP")
 
     success_url = f"{settings.portal_url}/api/auth/idp-callback?auth_request_id={body.auth_request_id}"
@@ -1327,7 +1337,14 @@ async def idp_intent(body: IDPIntentRequest) -> IDPIntentResponse:
     try:
         result = await zitadel.create_idp_intent(body.idp_id, success_url, failure_url)
     except httpx.HTTPStatusError as exc:
-        logger.exception("create_idp_intent failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("create_idp_intent_failed", zitadel_status=exc.response.status_code)
+        _emit_auth_event(
+            "idp_intent_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Login failed, please try again later",
@@ -1335,12 +1352,26 @@ async def idp_intent(body: IDPIntentRequest) -> IDPIntentResponse:
 
     auth_url = result.get("authUrl")
     if not auth_url:
-        logger.error("create_idp_intent returned no authUrl: %s", result)
+        _slog.error("create_idp_intent_no_auth_url", result_keys=list(result.keys()))
+        _emit_auth_event(
+            "idp_intent_failed",
+            reason="missing_auth_url",
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Login failed, please try again later",
         )
 
+    await audit.log_event(
+        org_id=0,
+        actor="anonymous",
+        action="auth.idp.intent",
+        resource_type="session",
+        resource_id="pending",
+        details={"idp_id": body.idp_id, "auth_request_id": body.auth_request_id},
+    )
     return IDPIntentResponse(auth_url=auth_url)
 
 
