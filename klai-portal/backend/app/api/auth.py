@@ -552,43 +552,107 @@ _IDP_PENDING_MAX_AGE = 600  # 10 minutes
 
 @router.post("/auth/password/reset", status_code=status.HTTP_204_NO_CONTENT)
 async def password_reset(body: PasswordResetRequest) -> None:
-    """Send a password reset email. Always returns 204 to prevent email enumeration."""
+    """Send a password reset email. Always returns 204 to prevent email enumeration.
+
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-3.1: every call (success OR fail) emits
+    `audit.log_event(action="auth.password.reset")` so compliance can answer
+    "who requested a password reset on date X". Failure paths additionally
+    emit `password_reset_failed` events for ops alerting; the HTTP response
+    stays 204 (anti-enumeration is preserved).
+    """
+    await audit.log_event(
+        org_id=0,
+        actor="anonymous",
+        action="auth.password.reset",
+        resource_type="user",
+        resource_id="unknown",
+        details={"email_hash": hashlib.sha256(body.email.lower().encode("utf-8")).hexdigest()},
+    )
+
     try:
         user_id = await zitadel.find_user_id_by_email(body.email)
     except httpx.HTTPStatusError as exc:
-        logger.exception("find_user_id_by_email failed %s: %s", exc.response.status_code, exc.response.text)
-        return  # fail silently
+        _slog.exception("find_user_id_by_email_failed", zitadel_status=exc.response.status_code)
+        _emit_auth_event(
+            "password_reset_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            email=body.email,
+            outcome="204",
+            level="error",
+        )
+        return  # fail silently — 204 (REQ-3.3)
 
     if not user_id:
-        return  # unknown email — return 204 silently
+        _emit_auth_event(
+            "password_reset_failed",
+            reason="unknown_email",
+            email=body.email,
+            outcome="204",
+            level="warning",
+        )
+        return  # unknown email — return 204 silently (REQ-3.2)
 
     try:
         await zitadel.send_password_reset(user_id)
     except httpx.HTTPStatusError as exc:
-        logger.exception(  # nosemgrep: python-logger-credential-disclosure
-            "send_password_reset failed status=%s", exc.response.status_code
+        _slog.exception("send_password_reset_failed", zitadel_status=exc.response.status_code)
+        _emit_auth_event(
+            "password_reset_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            email=body.email,
+            outcome="204",
+            level="error",
         )
         return  # fail silently
 
 
 @router.post("/auth/password/set", status_code=status.HTTP_204_NO_CONTENT)
 async def password_set(body: PasswordSetRequest) -> None:
-    """Complete a password reset using the code from the reset email."""
+    """Complete a password reset using the code from the reset email.
+
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-3.4..3.6: emit `audit.log_event` on
+    success and `password_set_failed` events on every failure leg.
+    """
     try:
         await zitadel.set_password_with_code(body.user_id, body.code, body.new_password)
     except httpx.HTTPStatusError as exc:
-        logger.exception(  # nosemgrep: python-logger-credential-disclosure
-            "set_password_with_code failed status=%s", exc.response.status_code
-        )
+        _slog.exception("set_password_with_code_failed", zitadel_status=exc.response.status_code)
         if exc.response.status_code in (400, 404, 410):
+            _emit_auth_event(
+                "password_set_failed",
+                reason="expired_link" if exc.response.status_code == 410 else "invalid_code",
+                zitadel_status=exc.response.status_code,
+                actor_user_id=body.user_id,
+                outcome="400",
+                level="warning",
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Link has expired or is invalid, request a new reset link",
             ) from exc
+        _emit_auth_event(
+            "password_set_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            actor_user_id=body.user_id,
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to set password, please try again later",
         ) from exc
+
+    await audit.log_event(
+        org_id=0,
+        actor=body.user_id,
+        action="auth.password.set",
+        resource_type="user",
+        resource_id=body.user_id,
+        details={"reason": "set"},
+    )
 
 
 @router.post("/auth/login", response_model=LoginResponse)
@@ -797,12 +861,19 @@ async def sso_complete(
     Called by the custom login page when it loads inside the LibreChat iframe
     (and by silent-renew iframes from react-oidc-context).
     Returns 401 if no valid SSO session exists (frontend falls back to the login form).
+
+    Failure observability: SPEC-SEC-AUTH-COVERAGE-001 REQ-4 emits
+    ``sso_complete_failed`` events for every 401 leg (no_cookie /
+    cookie_invalid / session_expired). Success is intentionally silent —
+    cookie reuse is non-interactive UX, not an audited action (REQ-4.4).
     """
     if not klai_sso:
+        _emit_auth_event("sso_complete_failed", reason="no_cookie", outcome="401", level="warning")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No SSO session")
 
     session_data = _decrypt_sso(klai_sso)
     if not session_data:
+        _emit_auth_event("sso_complete_failed", reason="cookie_invalid", outcome="401", level="warning")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="SSO cookie invalid")
 
     try:
@@ -812,7 +883,14 @@ async def sso_complete(
             session_token=session_data["stk"],
         )
     except httpx.HTTPStatusError as exc:
-        logger.exception("sso finalize failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("sso_finalize_failed", zitadel_status=exc.response.status_code)
+        _emit_auth_event(
+            "sso_complete_failed",
+            reason="session_expired",
+            zitadel_status=exc.response.status_code,
+            outcome="401",
+            level="warning",
+        )
         # Session expired in Zitadel -- tell the frontend to show the login form
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
