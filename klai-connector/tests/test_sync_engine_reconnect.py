@@ -107,6 +107,7 @@ async def test_oauth_reconnect_required_marks_run_auth_error() -> None:
         registry=registry,
         ingest_client=ingest_client,
         portal_client=portal_client,
+        settings=MagicMock(),
         image_store=None,
         crawl_sync_client=crawl_sync_client,
     )
@@ -169,6 +170,7 @@ async def test_generic_exception_falls_through_to_failed_not_auth_error() -> Non
         registry=registry,
         ingest_client=MagicMock(ingest=AsyncMock()),
         portal_client=portal_client,
+        settings=MagicMock(),
         image_store=None,
         crawl_sync_client=MagicMock(),
     )

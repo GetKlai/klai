@@ -26,6 +26,9 @@ dependencies = [
     "trafilatura>=2.0,<3.0",
     "klai-connector-credentials",
     "klai-image-storage",
+    # SPEC-SEC-INTERNAL-001 REQ-4 + REQ-10: shared secret-scrubbing helpers used
+    # by every upstream-error log/persist call site (incl. sync_run.error_details).
+    "klai-log-utils",
     "pyairtable>=3.3.0",
     "atlassian-python-api>=4.0.7",
     "html2text>=2025.4.15",
@@ -35,6 +38,7 @@ dependencies = [
 [tool.uv.sources]
 klai-connector-credentials = { path = "../klai-libs/connector-credentials", editable = true }
 klai-image-storage = { path = "../klai-libs/image-storage", editable = true }
+klai-log-utils = { path = "../klai-libs/log-utils", editable = true }
 
 [project.optional-dependencies]
 dev = [
