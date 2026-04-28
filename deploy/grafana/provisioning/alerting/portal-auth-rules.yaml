@@ -1,0 +1,223 @@
+# SPEC-SEC-AUTH-COVERAGE-001 follow-through — portal-api auth endpoint health alerts.
+#
+# Routed via spec=SPEC-SEC-AUTH-COVERAGE-001 -> klai-ops-alerts-email.
+#
+#   R1  auth_failure_rate_high      WARN  >2/min sustained 5m across the 16
+#                                         endpoint *_failed events emitted by
+#                                         _emit_auth_event in app/api/auth.py
+#   R2  auth_zitadel_5xx_burst      CRIT  >5 reason=zitadel_5xx events in any
+#                                         1m window (Zitadel-wide outage)
+#
+# Why two alerts:
+#   - SPEC-SEC-AUTH-COVERAGE-001 emits structured *_failed events on every
+#     documented failure leg of all 14 in-scope auth endpoints (totp/passkey/
+#     email_otp/idp/password/sso_complete/verify_email).  Without alerts the
+#     events are queryable in VictoriaLogs but invisible to anyone not
+#     looking — a Zitadel outage or attacker probe would degrade login UX
+#     silently for minutes before support tickets surface it.
+#   - R1 is the broad-net warning: SOMETHING is wrong somewhere in auth.
+#   - R2 is the targeted critical: it specifically isolates Zitadel-side
+#     5xx, the most common operational failure mode that affects multiple
+#     endpoints simultaneously.
+#
+# mfa_check_failed has its own dedicated rules in portal-mfa-rules.yaml
+# (SPEC-SEC-MFA-001) and is intentionally NOT included here — it has
+# different thresholds and a different runbook.
+#
+# Pitfall avoidance (matches portal-mfa-rules.yaml conventions):
+#   - Always go through `reduce` between LogsQL output and SSE math.
+#   - execErrState: OK — VictoriaLogs plugin sometimes trips "long vs wide"
+#     errors on stats reduce chains; miss-on-hiccup beats false-page.
+#   - LogsQL `field:in(a,b,c)` selector keeps the query short and
+#     maintainable when adding new endpoints.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: sec-auth-coverage-001-portal-api
+    folder: Klai
+    interval: 1m
+    rules:
+
+      # ── R1: auth_failure_rate_high ──────────────────────────────────────
+      # Broad warning: sustained burst of any auth endpoint *_failed event.
+      # Threshold: > 10 events in a 5-minute window (≈ > 2/min sustained).
+      # Triage starts by grouping by event + reason to identify the failing
+      # endpoint and root cause.
+      - uid: sec-auth-coverage-001-auth-failure-rate-high
+        title: auth_failure_rate_high
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: |
+                _time:5m service:portal-api event:in(
+                  totp_setup_failed,totp_confirm_failed,totp_login_failed,
+                  passkey_setup_failed,passkey_confirm_failed,
+                  email_otp_setup_failed,email_otp_confirm_failed,email_otp_resend_failed,
+                  idp_intent_failed,idp_intent_signup_failed,
+                  idp_callback_failed,idp_signup_callback_failed,
+                  password_reset_failed,password_set_failed,
+                  sso_complete_failed,verify_email_failed
+                ) | stats count() as n
+              queryType: instant
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [10], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        keepFiringFor: 10m
+        isPaused: false
+        labels:
+          severity: warning
+          spec: SPEC-SEC-AUTH-COVERAGE-001
+          service_group: portal-api
+        annotations:
+          summary: 'portal-api auth endpoint failures > 2/min sustained for 5m'
+          runbook_url: 'docs/runbooks/auth-failure-burst.md'
+          description: |
+            More than 10 auth endpoint ``*_failed`` events were emitted by
+            portal-api in the last 5 minutes (≈ > 2/min sustained). This
+            covers the 16 SPEC-SEC-AUTH-COVERAGE-001 events (totp / passkey
+            / email_otp / idp / password / sso_complete / verify_email).
+            Each event corresponds to a real user hitting a failure on an
+            authentication-flow endpoint — bursts indicate either Zitadel
+            degradation or a regression on a specific endpoint.
+
+            Triage:
+              1. VictoriaLogs query in Grafana → Explore:
+                   _time:5m service:portal-api event:in(totp_setup_failed,...)
+                     | stats by (event, reason, outcome) count()
+                 Identify which (event, reason) pair dominates.
+              2. If multiple events spike together with reason=zitadel_5xx
+                 → check R2 (auth_zitadel_5xx_burst), which is the targeted
+                 alert for this case. Triage R2 first.
+              3. If a single event dominates with reason ≠ zitadel_5xx →
+                 likely a regression on that endpoint specifically. Check
+                 recent merges touching app/api/auth.py for the affected
+                 endpoint.
+              4. Confirm user impact via outcome= field: 4xx outcomes are
+                 client-side errors (often expected — wrong code, wrong
+                 password); 5xx outcomes are real outages.
+
+      # ── R2: auth_zitadel_5xx_burst ───────────────────────────────────────
+      # Targeted critical: a burst of reason=zitadel_5xx events across multiple
+      # endpoints simultaneously is the canonical Zitadel-outage signal. Per-
+      # endpoint thresholds would miss this (each endpoint at 1-2 events/min
+      # is normal); the cross-endpoint burst is what makes it operationally
+      # significant.
+      # Threshold: > 5 events in any 1m window.
+      - uid: sec-auth-coverage-001-auth-zitadel-5xx-burst
+        title: auth_zitadel_5xx_burst
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 60
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: '_time:1m service:portal-api reason:zitadel_5xx | stats count() as n'
+              queryType: instant
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 60
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 60
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [5], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 1m
+        keepFiringFor: 5m
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-SEC-AUTH-COVERAGE-001
+          service_group: portal-api
+        annotations:
+          summary: 'portal-api Zitadel 5xx burst across auth endpoints > 5/min'
+          runbook_url: 'docs/runbooks/auth-failure-burst.md#triage-zitadel-5xx-burst'
+          description: |
+            More than 5 portal-api auth events with ``reason=zitadel_5xx``
+            fired in the last minute. This is the canonical Zitadel-outage
+            signal: a single endpoint degrading 5xx is normal noise, but
+            multiple endpoints simultaneously means Zitadel itself (the
+            upstream IdP) is unhealthy.
+
+            User impact during a Zitadel outage:
+              - login: returns 502 (no fallback path).
+              - totp_login / email_otp_confirm: returns 502.
+              - idp_callback / idp_signup_callback: returns 502 OR 302 to
+                a signed failure_url (per failure leg in auth.py).
+              - password_reset / password_set / verify_email: returns 502.
+
+            Triage:
+              1. Confirm Zitadel is the root cause:
+                   curl -fsS https://auth.getklai.com/debug/healthz
+                 + check ``service:zitadel level:error`` in VictoriaLogs.
+              2. Confirm cross-endpoint spread (rules out one-endpoint
+                 regression):
+                   _time:5m service:portal-api reason:zitadel_5xx
+                     | stats by (event) count()
+                 If only one event has all the failures → it's an endpoint
+                 regression, not Zitadel. Triage as R1 step 3.
+              3. If Zitadel is genuinely down → wait for upstream recovery;
+                 do NOT change auth code. Monitor user-impact tickets.
+              4. If Zitadel is healthy AND the burst persists → check
+                 portal-api ↔ Zitadel network path (DNS, certs, connection
+                 pool exhaustion in httpx client).
