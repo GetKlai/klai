@@ -1,6 +1,6 @@
 ---
 id: SPEC-SEC-TENANT-001
-version: 0.4.0
+version: 0.5.0
 status: draft
 created: 2026-04-24
 updated: 2026-04-28
@@ -12,6 +12,54 @@ tracker: SPEC-SEC-AUDIT-2026-04
 # SPEC-SEC-TENANT-001: Tenant Scoping + Zitadel Role Mapping
 
 ## HISTORY
+
+### v0.5.0 (2026-04-28)
+- **Industry-aligned authority model: portal-as-authorization, IDP-as-identity.**
+  v0.4.0 mapped each portal role (admin/group-admin/member) to a unique
+  Zitadel project-role string and presumed those role-keys were configured
+  on the Klai Platform Zitadel project. Audit of the monorepo (signup.py
+  2x, users.py, migrate-user-to-portal-org.sh, dev fixture in
+  zitadel.py) shows that EVERY production grant_user_role call uses
+  `"org:owner"` only — no script, runbook, or bootstrap registers
+  `org:group-admin` or `org:member`. Implementing v0.4.0 literally
+  would 502-fail every non-admin invite at deploy time.
+- More fundamentally, Zitadel's own guidance is that ZITADEL provides
+  RBAC but no permission handling; applications map Zitadel roles to
+  permissions in their own authority layer. Industry consensus for
+  multi-tenant B2B SaaS aligns: IDP for identity, application (or a
+  centralized authorization service) for authorization. JWT-claim
+  text-matching for cross-tenant decisions is the anti-pattern that
+  finding #10 already exemplifies — adding more role-strings does not
+  remove that fragility, it merely shifts which string is matched.
+- Decision: portal_users.role is the canonical authorization source for
+  all portal-side checks (already true today via `_require_admin`).
+  Zitadel project roles are reserved for the one downstream signal that
+  retrieval-api currently honours: `org:owner` ⇔ portal admin. Non-admin
+  invites receive NO Zitadel project-role grant. The JWT roles claim is
+  empty for them; `_extract_role` returns None; cross-org checks fire
+  as designed (no admin bypass). The longer-term migration path for
+  retrieval-api's admin-bypass — replacing JWT-claim matching with a
+  portal-signed assertion — lives under SPEC-SEC-IDENTITY-ASSERT-001
+  (γ direction).
+- REQ-2.1 / REQ-2.2 / REQ-2.3 rewritten: mapping is
+  `Mapping[str, str | None]`, exhaustive over the InviteRequest Literal,
+  with `None` denoting "no Zitadel grant — portal authority only". A
+  None value short-circuits the grant_user_role call.
+- REQ-2.4 deleted (no Zitadel project-role configuration is required;
+  the only used role-key, `org:owner`, has shipped since SPEC-AUTH-001).
+- REQ-3 doc updated: the table now reflects that group-admin and member
+  produce an empty roles claim. The "admin equivalence" subsection
+  flags retrieval-api's claim-string match as a tech-debt item to be
+  closed by SPEC-SEC-IDENTITY-ASSERT-001 rather than a contract that
+  TENANT-001 hardens.
+- REQ-4 unchanged in shape but tightened: `_extract_role`'s
+  admin-equivalent set MUST drop `org_admin` (unreachable under any
+  invite path, present or post-fix) and explicitly NOT include
+  `org:owner`. The `admin` literal stays only as the dev-fixture
+  contract until γ.
+- Acceptance A-2 rewritten: admin → grant called once with `org:owner`;
+  group-admin and member → grant NOT called.
+- No change to REQ-1, REQ-5.1, REQ-6, REQ-7, REQ-8.
 
 ### v0.4.0 (2026-04-28)
 - **Reconciliation with production schema.** v0.3.0 declared `org_id` on
@@ -134,26 +182,39 @@ caller's `org_id` so that a user's memberships in other tenants are untouched.
 
 ### REQ-2: Role Mapping in invite_user
 
-The system SHALL pass the Zitadel grant role that corresponds to `body.role`
-selected by the inviting admin, rather than the hardcoded `org:owner`.
+The system SHALL ensure that `invite_user` does not grant the same
+Zitadel project role to every invited user regardless of `body.role`.
+Per v0.5.0 architecture (portal-as-authorization, IDP-as-identity),
+only the `admin` portal role results in a Zitadel grant; group-admin
+and member receive none. Their JWT roles claim is empty;
+`_extract_role` returns None; cross-org checks fire normally.
 
-- **REQ-2.1:** WHEN `invite_user` calls `zitadel.grant_user_role`, THE
-  service SHALL select the Zitadel role string from a module-level mapping
-  keyed on `body.role`. The mapping SHALL be exhaustive for the three
-  accepted values of the `InviteRequest.role` Literal (`admin`,
-  `group-admin`, `member`).
+- **REQ-2.1:** WHEN `invite_user` resolves `body.role`, THE service SHALL
+  consult a module-level mapping keyed on the portal role to obtain the
+  optional Zitadel role string. IF the mapping value is a non-empty
+  string, THE service SHALL invoke `zitadel.grant_user_role` with that
+  role exactly once. IF the mapping value is `None`, THE service SHALL
+  NOT invoke `zitadel.grant_user_role` at all and SHALL log a structured
+  event `event="invite_no_zitadel_grant"` with `org_id`, `portal_role`,
+  and `zitadel_user_id` so that the absence-of-grant is observable in
+  VictoriaLogs.
 - **REQ-2.2:** THE mapping SHALL live as a frozen module-level constant
-  (e.g. `_ZITADEL_ROLE_BY_PORTAL_ROLE: Final[Mapping[str, str]]`) so that
-  changes are reviewable in diff and traceable in code search.
+  `_ZITADEL_ROLE_BY_PORTAL_ROLE: Final[Mapping[str, str | None]]`,
+  exhaustive over the three values of the `InviteRequest.role` Literal:
+  - `"admin"` -> `"org:owner"`
+  - `"group-admin"` -> `None`
+  - `"member"` -> `None`
 - **REQ-2.3:** IF `body.role` is not present in the mapping at runtime,
   THEN the service SHALL raise `HTTPException(500, "Unsupported role")`
   rather than falling back to a permissive default. The pydantic Literal
   already guards this at parse time; the runtime check exists to keep
   the mapping and schema in lock-step.
-- **REQ-2.4:** THE mapping SHALL match the role values that Zitadel is
-  configured to accept on the klai project. The canonical list (with
-  rationale for each entry) SHALL be documented in the Zitadel rule file
-  (see REQ-3).
+- **REQ-2.4 (deleted in v0.5.0):** No Zitadel project-role configuration
+  is required by this SPEC. The single role-key used (`org:owner`) has
+  shipped since SPEC-AUTH-001 and is verified by signup.py and
+  migrate-user-to-portal-org.sh continuing to work. Future expansion of
+  Zitadel-side roles, if ever needed, falls under
+  SPEC-SEC-IDENTITY-ASSERT-001 or a successor SPEC.
 
 ### REQ-3: Zitadel Role -> JWT Claim Mapping Documented
 

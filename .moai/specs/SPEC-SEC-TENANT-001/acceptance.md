@@ -52,19 +52,25 @@ memberships in org B.
 
 ---
 
-## A-2: Invite role -> Zitadel grant mapping
+## A-2: Invite role -> Zitadel grant mapping (v0.5.0 — β architecture)
 
 **REQs covered:** REQ-2.1, REQ-2.2, REQ-5.2
 
-**Purpose:** `invite_user` MUST pass the Zitadel role matching the
-admin's chosen portal role, not the hardcoded `org:owner`.
+**Purpose:** `invite_user` MUST grant `org:owner` only when the
+inviting admin selects `role="admin"`. For `group-admin` and `member`,
+NO Zitadel project-role grant is issued — portal_users.role is the
+canonical authority for those non-admin roles. The JWT
+`urn:zitadel:iam:org:project:roles` claim is empty for those users;
+retrieval-api's `_extract_role` returns None; the cross-org check
+fires as designed.
 
 **Given:**
 - Admin `caller` is authenticated against `org_a` and passes
   `_require_admin`.
 - `zitadel.invite_user` is patched to return
   `{"userId": "new-user-<role>"}` without hitting the network.
-- `zitadel.grant_user_role` is patched to capture the `role` argument.
+- `zitadel.grant_user_role` is patched (AsyncMock) so the test can
+  assert on call count and arguments.
 - Seat limit is not reached.
 
 **When (parametrised — one test, three cases):**
@@ -74,30 +80,43 @@ For each `portal_role` in `["admin", "group-admin", "member"]`:
     "role": <portal_role>, "preferred_language": "nl"}`.
 
 **Then:**
-- Response is `200 OK`.
-- `zitadel.grant_user_role` is called exactly once per request.
-- The `role` argument passed to `grant_user_role` matches the REQ-2.2
-  mapping. Expected values (subject to REQ-3 Zitadel-console
-  confirmation during implementation):
-  - `portal_role="admin"`     -> grant `"org:owner"`
-  - `portal_role="group-admin"` -> grant `"org:group-admin"`
-  - `portal_role="member"`    -> grant `"org:member"`
-- In all cases the portal row `portal_users.role` matches `portal_role`.
+- Response is `201 Created`.
+- For `portal_role="admin"`: `zitadel.grant_user_role` is awaited
+  exactly once with `role="org:owner"`.
+- For `portal_role="group-admin"` and `portal_role="member"`:
+  `zitadel.grant_user_role` is NOT awaited at all (call count == 0).
+  A structured event `event="invite_no_zitadel_grant"` is emitted at
+  INFO with `org_id`, `portal_role`, and `zitadel_user_id` so
+  operations can audit the absence-of-grant in VictoriaLogs.
+- In all three cases the portal row `portal_users.role` matches
+  `portal_role`.
 
-**Failure mode under current code:**
-- All three cases pass `role="org:owner"` to `grant_user_role`
-  regardless of input → assertions on member / group-admin cases fail
-  red. This is the regression guard REQ-5.2 requires.
+**Rationale — why `None` for non-admins (β architecture):**
+Zitadel's own guidance — *"ZITADEL only provides RBAC and no
+permission handling"* — together with industry consensus for
+multi-tenant SaaS (IDP for identity, application/centralized authz
+for authorization) lead this SPEC to keep portal_users.role as the
+single source of truth. Granting `org:group-admin` / `org:member` in
+Zitadel would (a) require Zitadel project-role configuration that
+does not exist today, (b) duplicate the portal-side authority into a
+second system that must be kept in sync, and (c) NOT close finding
+#10's text-match bypass in retrieval-api — that bypass migrates to a
+portal-signed assertion under SPEC-SEC-IDENTITY-ASSERT-001 (γ
+direction). Skipping the grant for non-admins eliminates the
+cross-system sync requirement and removes the role-string surface
+that finding #10 already exploited.
+
+**Failure mode under v0.1 / v0.4 / pre-fix code:**
+- v0.1 (production today): all three cases pass `role="org:owner"`
+  to `grant_user_role` — the time-bomb finding #10 describes.
+- v0.4 mapping (admin/group-admin/member -> org:owner/org:group-admin/
+  org:member): would 502 in production for group-admin and member
+  invites because the Zitadel project does not have those role-keys
+  configured.
+- v0.5 mapping (β) is the regression guard for both.
 
 **Test location:**
 `klai-portal/backend/tests/test_admin_users.py::test_invite_user_grants_portal_role_to_zitadel`
-
-**Note on mapping values:** The exact strings are the REQ-3 /
-`research.md` §7 open question. If the Zitadel project does not
-configure a matching key (e.g. `org:group-admin` is not present),
-REQ-2 mapping uses the configured value; the test assertion is
-updated to match. Either way the invariant holds: NO CASE maps to
-`org:owner` except `portal_role="admin"`.
 
 ---
 
