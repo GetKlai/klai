@@ -78,6 +78,7 @@ ReasonCode = Literal[
     "invalid_jwt",
     "jwt_identity_mismatch",
     "no_membership",
+    "org_slug_mismatch",
 ]
 Evidence = Literal["jwt", "membership"]
 
@@ -88,21 +89,34 @@ class VerifyDecision:
 
     Mirrors ``klai_identity_assert.VerifyResult`` at the HTTP boundary —
     the endpoint layer maps this to the JSON body documented in REQ-1.1.
+
+    ``org_slug`` carries the canonical ``portal_orgs.slug`` for the verified
+    org. Knowledge-mcp uses it to satisfy REQ-2.6 (reject when LibreChat-
+    forwarded ``X-Org-Slug`` does not match the org the user is verified for).
+    Always populated on allow; ``None`` on deny.
     """
 
     verified: bool
     user_id: str | None
     org_id: str | None
+    org_slug: str | None
     reason: ReasonCode | None
     evidence: Evidence | None
 
     @classmethod
     def deny(cls, reason: ReasonCode) -> VerifyDecision:
-        return cls(verified=False, user_id=None, org_id=None, reason=reason, evidence=None)
+        return cls(verified=False, user_id=None, org_id=None, org_slug=None, reason=reason, evidence=None)
 
     @classmethod
-    def allow(cls, *, user_id: str, org_id: str, evidence: Evidence) -> VerifyDecision:
-        return cls(verified=True, user_id=user_id, org_id=org_id, reason=None, evidence=evidence)
+    def allow(cls, *, user_id: str, org_id: str, org_slug: str, evidence: Evidence) -> VerifyDecision:
+        return cls(
+            verified=True,
+            user_id=user_id,
+            org_id=org_id,
+            org_slug=org_slug,
+            reason=None,
+            evidence=evidence,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -167,12 +181,18 @@ async def verify_identity_claim(
     claimed_user_id: str,
     claimed_org_id: str,
     bearer_jwt: str | None,
+    claimed_org_slug: str | None = None,
 ) -> VerifyDecision:
     """Resolve a claimed identity to an authoritative allow/deny decision.
 
     The function is HTTP- and cache-agnostic; the endpoint layer wraps it.
     Exceptions thrown here are programmer errors (e.g. DB unreachable) and
     bubble up to the endpoint, which translates them to HTTP 503.
+
+    ``claimed_org_slug`` (REQ-2.6) is optional. When provided, the canonical
+    ``portal_orgs.slug`` for the verified org must match it; mismatch yields
+    ``org_slug_mismatch``. When ``None``, the slug is still resolved and
+    returned so cache hits can perform the check without re-hitting the DB.
     """
 
     if caller_service not in KNOWN_CALLER_SERVICES:
@@ -204,44 +224,58 @@ async def verify_identity_claim(
             )
             return VerifyDecision.deny("jwt_identity_mismatch")
 
+        # JWT is valid + claims match. Resolve canonical org_slug. A valid
+        # Zitadel JWT should always correspond to an existing portal_orgs
+        # row; absence indicates portal-Zitadel sync drift and is treated
+        # as no_membership (fail closed until the platform is reconciled).
+        org_slug = await _resolve_org_slug(db=db, zitadel_org_id=claimed_org_id)
+        if org_slug is None:
+            return VerifyDecision.deny("no_membership")
+        if claimed_org_slug is not None and claimed_org_slug != org_slug:
+            return VerifyDecision.deny("org_slug_mismatch")
         return VerifyDecision.allow(
             user_id=claimed_user_id,
             org_id=claimed_org_id,
+            org_slug=org_slug,
             evidence="jwt",
         )
 
     # bearer_jwt is None → fall through to membership lookup (REQ-1.4).
-    member_exists = await _user_has_active_membership(
+    org_slug = await _resolve_active_membership_org_slug(
         db=db,
         zitadel_user_id=claimed_user_id,
         zitadel_org_id=claimed_org_id,
     )
-    if not member_exists:
+    if org_slug is None:
         return VerifyDecision.deny("no_membership")
+    if claimed_org_slug is not None and claimed_org_slug != org_slug:
+        return VerifyDecision.deny("org_slug_mismatch")
 
     return VerifyDecision.allow(
         user_id=claimed_user_id,
         org_id=claimed_org_id,
+        org_slug=org_slug,
         evidence="membership",
     )
 
 
-async def _user_has_active_membership(
+async def _resolve_active_membership_org_slug(
     *,
     db: AsyncSession,
     zitadel_user_id: str,
     zitadel_org_id: str,
-) -> bool:
-    """Return True iff the (user, org) pair has an active row in portal_users.
+) -> str | None:
+    """Return the canonical ``portal_orgs.slug`` iff the user is an active member.
 
-    The lookup joins ``portal_users`` on ``portal_orgs.zitadel_org_id`` so
-    callers may pass the external Zitadel org ID directly — the integer
-    portal org_id is internal-only and not exposed at this contract.
+    Combines the Phase A active-membership check with the Phase B slug lookup
+    in one query: a single SELECT yields both signals (membership row exists
+    and which slug the org carries). Returns ``None`` when the user has no
+    active membership in the org or the org is soft-deleted.
     """
 
     stmt = (
-        select(PortalUser.id)
-        .join(PortalOrg, PortalUser.org_id == PortalOrg.id)
+        select(PortalOrg.slug)
+        .join(PortalUser, PortalUser.org_id == PortalOrg.id)
         .where(
             PortalUser.zitadel_user_id == zitadel_user_id,
             PortalOrg.zitadel_org_id == zitadel_org_id,
@@ -251,4 +285,29 @@ async def _user_has_active_membership(
         .limit(1)
     )
     result = await db.execute(stmt)
-    return result.scalar_one_or_none() is not None
+    return result.scalar_one_or_none()
+
+
+async def _resolve_org_slug(
+    *,
+    db: AsyncSession,
+    zitadel_org_id: str,
+) -> str | None:
+    """Return the canonical ``portal_orgs.slug`` for an org regardless of caller.
+
+    Used on the JWT path where the JWT proves user-org binding directly and
+    no membership row need be checked; we only need the canonical slug to
+    return alongside the verified result. Returns ``None`` when the org row
+    is missing or soft-deleted.
+    """
+
+    stmt = (
+        select(PortalOrg.slug)
+        .where(
+            PortalOrg.zitadel_org_id == zitadel_org_id,
+            PortalOrg.deleted_at.is_(None),
+        )
+        .limit(1)
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()

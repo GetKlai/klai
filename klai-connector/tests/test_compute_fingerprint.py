@@ -215,6 +215,245 @@ def test_502_body_does_not_leak_internal_topology(
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# HTTP-level integration — exercise the real httpx + crawl4ai response shape
+# ---------------------------------------------------------------------------
+#
+# The other tests in this file patch ``_fetch_page_markdown`` directly,
+# which is great for asserting the route's status-code/leak contract but
+# leaves a gap: a future schema change in crawl4ai's POST /crawl response
+# would not be caught (because the helper never runs in those tests).
+#
+# This test stops one level lower — it replaces ``httpx.AsyncClient`` in
+# the fingerprint module's namespace with a fake that records the request
+# shape and returns a canned response in the actual format crawl4ai 0.8.x
+# emits today. Coverage:
+#   - ``_build_crawl_payload`` produces a payload crawl4ai will accept.
+#   - The POST is made to ``{crawl4ai_api_url}/crawl`` (path correct).
+#   - The Bearer header is sent iff ``crawl4ai_internal_key`` is non-empty.
+#   - ``_extract_markdown`` handles the dict-shaped ``markdown`` field.
+#   - End-to-end: response feeds into ``compute_content_fingerprint`` and
+#     produces a valid 16-hex-char SimHash.
+
+
+class _FakeResponse:
+    """Stub of ``httpx.Response`` — only the methods the helper calls."""
+
+    def __init__(
+        self,
+        *,
+        status_code: int = 200,
+        json_data: dict[str, Any] | None = None,
+    ) -> None:
+        self.status_code = status_code
+        self._json = json_data or {}
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise httpx.HTTPStatusError(
+                f"HTTP {self.status_code}",
+                request=None,  # type: ignore[arg-type]
+                response=None,  # type: ignore[arg-type]
+            )
+
+    def json(self) -> dict[str, Any]:
+        return self._json
+
+
+class _FakeAsyncClient:
+    """Records POST calls; returns a canned response. Async-context-manager
+    just like ``httpx.AsyncClient``.
+    """
+
+    def __init__(
+        self,
+        *,
+        response: _FakeResponse | None = None,
+        raises: Exception | None = None,
+        **_kwargs: Any,
+    ) -> None:
+        self.response = response
+        self.raises = raises
+        self.calls: list[tuple[str, dict[str, Any] | None, dict[str, str] | None]] = []
+
+    async def __aenter__(self) -> _FakeAsyncClient:
+        return self
+
+    async def __aexit__(self, *_args: Any) -> None:
+        return None
+
+    async def post(
+        self,
+        url: str,
+        *,
+        json: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> _FakeResponse:
+        self.calls.append((url, json, headers))
+        if self.raises is not None:
+            raise self.raises
+        assert self.response is not None
+        return self.response
+
+
+def _crawl4ai_single_page_response(url: str, markdown: str) -> dict[str, Any]:
+    """Build a response in the exact shape crawl4ai 0.8.x's POST /crawl emits.
+
+    Mirror of the ``data.get("results", [])`` branch in
+    ``knowledge_ingest.crawl4ai_client._extract_result``.
+    """
+    return {
+        "results": [
+            {
+                "url": url,
+                "markdown": {
+                    "fit_markdown": markdown,
+                    "raw_markdown": markdown,
+                },
+                "html": "<html><body><p>...</p></body></html>",
+                "success": True,
+                "links": {"internal": [], "external": []},
+                "media": {"images": [], "videos": [], "audios": []},
+            }
+        ]
+    }
+
+
+@pytest.mark.parametrize("with_internal_key", [False, True])
+def test_http_level_integration_with_real_crawl4ai_shape(
+    monkeypatch: pytest.MonkeyPatch,
+    with_internal_key: bool,
+) -> None:
+    """End-to-end: route -> _fetch_page_markdown -> httpx -> _extract_markdown
+    -> compute_content_fingerprint, with a real-shaped crawl4ai response.
+
+    Parametrised to cover both auth modes (no key = no Authorization header,
+    key set = Bearer header sent).
+    """
+    captured_clients: list[_FakeAsyncClient] = []
+
+    def _client_factory(*_args: Any, **kwargs: Any) -> _FakeAsyncClient:
+        client = _FakeAsyncClient(
+            response=_FakeResponse(
+                status_code=200,
+                json_data=_crawl4ai_single_page_response(
+                    _PORTAL_TEST_URL, _LONG_MARKDOWN
+                ),
+            ),
+            **kwargs,
+        )
+        captured_clients.append(client)
+        return client
+
+    monkeypatch.setattr(
+        "app.routes.fingerprint.httpx.AsyncClient", _client_factory
+    )
+
+    # Build the test client AFTER patching httpx so the route uses the fake.
+    # Note: we deliberately do NOT call _patch_crawl here — we want
+    # _fetch_page_markdown to run for real and exercise the httpx path.
+    app = FastAPI()
+    app.include_router(fingerprint_router, prefix="/api/v1")
+    monkeypatch.setattr(
+        "app.routes.fingerprint._require_portal_call", lambda _request: None
+    )
+    monkeypatch.setattr(
+        "app.routes.fingerprint.Settings",
+        lambda: SimpleNamespace(
+            crawl4ai_api_url="http://crawl4ai.test:11235",
+            crawl4ai_internal_key="secret-key" if with_internal_key else "",
+        ),
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.post(
+        "/api/v1/compute-fingerprint",
+        json={"url": _PORTAL_TEST_URL},
+    )
+
+    # End-to-end success
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["fingerprint"]) == 16
+    assert int(body["fingerprint"], 16) >= 0  # valid hex
+    assert body["word_count"] >= 20
+
+    # Exactly one POST to crawl4ai
+    assert len(captured_clients) == 1
+    fake = captured_clients[0]
+    assert len(fake.calls) == 1
+    posted_url, payload, headers = fake.calls[0]
+
+    # _build_crawl_payload contract
+    assert posted_url == "http://crawl4ai.test:11235/crawl"
+    assert payload is not None
+    assert payload["urls"] == [_PORTAL_TEST_URL]
+    assert payload["crawler_config"]["type"] == "CrawlerRunConfig"
+    crawl_params = payload["crawler_config"]["params"]
+    assert crawl_params["cache_mode"] == "bypass"
+    assert "nav" in crawl_params["excluded_tags"]
+    assert crawl_params["markdown_generator"]["type"] == "DefaultMarkdownGenerator"
+
+    # Auth header contract
+    if with_internal_key:
+        assert headers == {"Authorization": "Bearer secret-key"}
+    else:
+        assert headers == {}
+
+
+def test_http_level_integration_string_markdown_field(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """crawl4ai sometimes emits ``markdown`` as a string (older response
+    versions or simplified configs). _extract_markdown's branch must
+    cover that shape too — pin it.
+    """
+
+    def _client_factory(*_args: Any, **kwargs: Any) -> _FakeAsyncClient:
+        return _FakeAsyncClient(
+            response=_FakeResponse(
+                status_code=200,
+                json_data={
+                    "results": [
+                        {
+                            "url": _PORTAL_TEST_URL,
+                            "markdown": _LONG_MARKDOWN,  # string, not dict
+                            "html": "",
+                            "success": True,
+                        }
+                    ]
+                },
+            ),
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        "app.routes.fingerprint.httpx.AsyncClient", _client_factory
+    )
+
+    app = FastAPI()
+    app.include_router(fingerprint_router, prefix="/api/v1")
+    monkeypatch.setattr(
+        "app.routes.fingerprint._require_portal_call", lambda _request: None
+    )
+    monkeypatch.setattr(
+        "app.routes.fingerprint.Settings",
+        lambda: SimpleNamespace(
+            crawl4ai_api_url="http://crawl4ai.test:11235",
+            crawl4ai_internal_key="",
+        ),
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.post(
+        "/api/v1/compute-fingerprint",
+        json={"url": _PORTAL_TEST_URL},
+    )
+
+    assert response.status_code == 200, response.text
+    assert len(response.json()["fingerprint"]) == 16
+
+
 def test_source_does_not_import_deleted_webcrawler_module() -> None:
     """REQ-31.1: the dormant ``app.adapters.webcrawler`` import was the
     proximate cause of HY-31. Pin an AST-based static check so a future

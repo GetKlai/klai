@@ -18,7 +18,6 @@ from app.services.source_extractors.exceptions import (
     InvalidUrlError,
     SourceFetchError,
     SSRFBlockedError,
-    UnsupportedSourceError,
 )
 
 # --- Fixtures ---------------------------------------------------------------
@@ -65,7 +64,7 @@ class _CommonPatches:
         quota_ok: bool = True,
         extract_return: tuple | None = None,
         extract_side_effect: Exception | None = None,
-        extract_target: str | None = None,  # "url", "youtube", or None for text
+        extract_target: str | None = None,  # "url" or None for text
         ingest_return: str = "art-1",
         ingest_side_effect: Exception | None = None,
     ) -> None:
@@ -114,14 +113,12 @@ class _CommonPatches:
                 )
             )
 
-        if self.extract_target in {"url", "youtube"}:
-            fn_name = f"extract_{self.extract_target}"
-            target_path = f"app.api.app_knowledge_sources.{fn_name}"
+        if self.extract_target == "url":
             mock_extract = AsyncMock(
                 return_value=self.extract_return,
                 side_effect=self.extract_side_effect,
             )
-            self.stack.enter_context(patch(target_path, mock_extract))
+            self.stack.enter_context(patch("app.api.app_knowledge_sources.extract_url", mock_extract))
 
         self.mock_ingest = AsyncMock(
             return_value=self.ingest_return,
@@ -387,133 +384,62 @@ class TestUrlRoute:
         assert exc.value.status_code == 502
 
 
-# --- YouTube route ----------------------------------------------------------
+# --- YouTube route — REMOVED in SPEC-KB-YOUTUBE-REMOVE-001 ------------------
 
 
-class TestYoutubeRoute:
+class TestYoutubeRouteRemoved:
+    """SPEC-KB-YOUTUBE-REMOVE-001: route returns HTTP 410 ``youtube_ingest_removed``.
+
+    Auth still loads so the structlog event carries ``org_id`` for the
+    caller — that lets us spot which tenant still has the route hard-coded.
+    No upstream call, no extractor, no quota burn.
+    """
+
     @pytest.mark.asyncio
-    async def test_happy_path(self) -> None:
-        from app.api.app_knowledge_sources import YouTubeSourceRequest, add_youtube_source
+    async def test_returns_410_with_stable_detail(self) -> None:
+        from app.api.app_knowledge_sources import add_youtube_source
 
         kb = _make_kb()
         db = _make_db_mock(kb)
+        request = MagicMock()
+        request.headers = {"user-agent": "curl/8.0"}
 
-        with _CommonPatches(
-            extract_target="youtube",
-            extract_return=(
-                "Rick Roll",
-                "never gonna give you up",
-                "youtube:dQw4w9WgXcQ",
-            ),
-            ingest_return="art-yt-1",
-        ) as patches:
-            resp = await add_youtube_source(
-                kb_slug="personal",
-                body=YouTubeSourceRequest(url="https://youtu.be/dQw4w9WgXcQ"),
-                credentials=MagicMock(),
-                db=db,
-            )
-
-        assert resp.source_type == "youtube"
-        assert resp.source_ref == "youtube:dQw4w9WgXcQ"
-        assert patches.mock_ingest is not None
-        payload = patches.mock_ingest.call_args.args[0]
-        assert payload["source_type"] == "youtube"
-        assert payload["content_type"] == "youtube_transcript"
-        assert payload["extra"]["video_id"] == "dQw4w9WgXcQ"
-        assert payload["extra"]["source_url"] == "https://youtu.be/dQw4w9WgXcQ"
-
-    @pytest.mark.asyncio
-    async def test_returns_400_on_invalid_url(self) -> None:
-        from app.api.app_knowledge_sources import YouTubeSourceRequest, add_youtube_source
-
-        kb = _make_kb()
-        db = _make_db_mock(kb)
-
-        with (
-            _CommonPatches(
-                extract_target="youtube",
-                extract_side_effect=InvalidUrlError("nope"),
-            ),
-            pytest.raises(HTTPException) as exc,
-        ):
+        with _CommonPatches(), pytest.raises(HTTPException) as exc:
             await add_youtube_source(
                 kb_slug="personal",
-                body=YouTubeSourceRequest(url="https://vimeo.com/x"),
+                request=request,
                 credentials=MagicMock(),
                 db=db,
             )
-        assert exc.value.status_code == 400
+
+        assert exc.value.status_code == 410
+        assert exc.value.detail == "youtube_ingest_removed"
 
     @pytest.mark.asyncio
-    async def test_returns_422_on_no_transcript(self) -> None:
-        from app.api.app_knowledge_sources import YouTubeSourceRequest, add_youtube_source
+    async def test_does_not_import_yt_dlp(self) -> None:
+        """REQ-3.3: importing the API module MUST NOT pull yt_dlp transitively.
 
-        kb = _make_kb()
-        db = _make_db_mock(kb)
+        Catches accidental re-introduction (e.g. an editor auto-import that
+        re-adds ``from app.services.source_extractors.youtube import ...``).
+        """
 
-        with (
-            _CommonPatches(
-                extract_target="youtube",
-                extract_side_effect=UnsupportedSourceError("no transcript"),
-            ),
-            pytest.raises(HTTPException) as exc,
-        ):
-            await add_youtube_source(
-                kb_slug="personal",
-                body=YouTubeSourceRequest(url="https://youtu.be/noTranscrip"),
-                credentials=MagicMock(),
-                db=db,
-            )
-        assert exc.value.status_code == 422
+        import sys
 
-    @pytest.mark.asyncio
-    async def test_returns_502_on_source_fetch_error(self) -> None:
-        """IP block / rate-limit on YouTube → 502, NOT 422 (SPEC-KB-SOURCES-001 v1.3)."""
-        from app.api.app_knowledge_sources import YouTubeSourceRequest, add_youtube_source
+        # Force a fresh import to not be fooled by an earlier test pulling it in.
+        for mod_name in list(sys.modules):
+            if mod_name == "yt_dlp" or mod_name.startswith("yt_dlp."):
+                del sys.modules[mod_name]
+        sys.modules.pop("app.api.app_knowledge_sources", None)
 
-        kb = _make_kb()
-        db = _make_db_mock(kb)
+        import app.api.app_knowledge_sources  # noqa: F401  -- import-only assertion
 
-        with (
-            _CommonPatches(
-                extract_target="youtube",
-                extract_side_effect=SourceFetchError("YouTube refused the request"),
-            ),
-            pytest.raises(HTTPException) as exc,
-        ):
-            await add_youtube_source(
-                kb_slug="personal",
-                body=YouTubeSourceRequest(url="https://youtu.be/dQw4w9WgXcQ"),
-                credentials=MagicMock(),
-                db=db,
-            )
-        assert exc.value.status_code == 502
-        assert "youtube" in exc.value.detail.lower()
+        assert "yt_dlp" not in sys.modules
 
-    @pytest.mark.asyncio
-    async def test_source_ref_dedup_across_url_variants(self) -> None:
-        """R3.5: same video via different URL shapes hits the same source_ref."""
-        from app.api.app_knowledge_sources import YouTubeSourceRequest, add_youtube_source
 
-        kb = _make_kb()
-        refs: list[str] = []
-        for url in (
-            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-            "https://youtu.be/dQw4w9WgXcQ",
-            "https://m.youtube.com/watch?v=dQw4w9WgXcQ",
-        ):
-            db = _make_db_mock(kb)
-            with _CommonPatches(
-                extract_target="youtube",
-                extract_return=("T", "body", "youtube:dQw4w9WgXcQ"),
-                ingest_return="x",
-            ):
-                resp = await add_youtube_source(
-                    kb_slug="personal",
-                    body=YouTubeSourceRequest(url=url),
-                    credentials=MagicMock(),
-                    db=db,
-                )
-                refs.append(resp.source_ref)
-        assert len(set(refs)) == 1
+class TestYoutubeSourceRequestRemoved:
+    """REQ-4.1: ``YouTubeSourceRequest`` Pydantic class is gone."""
+
+    def test_pydantic_model_no_longer_exported(self) -> None:
+        import app.api.app_knowledge_sources as mod
+
+        assert not hasattr(mod, "YouTubeSourceRequest")

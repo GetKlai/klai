@@ -18,13 +18,27 @@ os.environ.setdefault("ZITADEL_ISSUER", "https://auth.test.local")
 os.environ.setdefault("ZITADEL_API_AUDIENCE", "test-audience")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ.setdefault("RATE_LIMIT_RPM", "600")
+# SPEC-SEC-IDENTITY-ASSERT-001 REQ-4 (Phase D): retrieval-api's auth
+# middleware lazily instantiates an IdentityAsserter at first internal-secret
+# verify call. The asserter requires both portal_base_url and internal_secret;
+# tests use stub values because the asserter itself is monkey-patched in
+# `_auto_allow_identity_assert` below.
+os.environ.setdefault("PORTAL_API_URL", "http://portal-api.test.local:8010")
+os.environ.setdefault("PORTAL_INTERNAL_SECRET", "test-portal-internal-secret")
 
 import pytest
 from fastapi.testclient import TestClient
+from klai_identity_assert import VerifyResult
 
-# Default header that lets all existing TestClient requests pass through the
-# SPEC-SEC-010 auth middleware without each test having to set it explicitly.
-_INTERNAL_HEADER = {"X-Internal-Secret": os.environ["INTERNAL_SECRET"]}
+# Default headers that let all existing TestClient requests pass through the
+# SPEC-SEC-010 auth middleware. SPEC-SEC-IDENTITY-ASSERT-001 REQ-4 also
+# requires X-Caller-Service for internal-secret callers that submit a body
+# user_id; we set a known service here so retrieval flows in the test suite
+# don't have to opt in individually.
+_INTERNAL_HEADER = {
+    "X-Internal-Secret": os.environ["INTERNAL_SECRET"],
+    "X-Caller-Service": "knowledge-mcp",
+}
 
 
 @pytest.fixture(autouse=True)
@@ -42,6 +56,43 @@ def _disable_rate_limit(monkeypatch):
     monkeypatch.setattr(
         "retrieval_api.middleware.auth.check_and_increment",
         _always_allow,
+    )
+
+
+@pytest.fixture(autouse=True)
+def _auto_allow_identity_assert(monkeypatch):
+    """SPEC-SEC-IDENTITY-ASSERT-001 REQ-4: stub the IdentityAsserter so the
+    new verify_body_identity path doesn't try to reach a real portal-api in
+    tests. Each call returns an allow-result that echoes the claimed tuple
+    back as the verified one — this matches what the real portal would do
+    when a (user, org) pair is genuinely valid.
+
+    Tests that need to assert deny / network-failure behaviour patch
+    ``retrieval_api.middleware.auth._get_asserter`` themselves to override
+    this default.
+    """
+
+    class _StubAsserter:
+        async def verify(
+            self,
+            *,
+            caller_service: str,
+            claimed_user_id: str,
+            claimed_org_id: str,
+            bearer_jwt: str | None = None,
+            request_headers: dict | None = None,
+            **_unused,
+        ) -> VerifyResult:
+            return VerifyResult.allow(
+                user_id=claimed_user_id,
+                org_id=claimed_org_id,
+                org_slug="test-slug",
+                evidence="membership",
+            )
+
+    monkeypatch.setattr(
+        "retrieval_api.middleware.auth._get_asserter",
+        lambda: _StubAsserter(),
     )
 
 

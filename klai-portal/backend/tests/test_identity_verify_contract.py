@@ -85,7 +85,11 @@ def portal_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     async def override_get_db() -> AsyncIterator[AsyncMock]:
         db = AsyncMock()
         result = MagicMock()
-        result.scalar_one_or_none = MagicMock(return_value=42)
+        # Returns the canonical slug for both verifier paths:
+        # _resolve_active_membership_org_slug (membership) and
+        # _resolve_org_slug (JWT). Both use scalar_one_or_none()
+        # so a single mock satisfies both code paths in REQ-2.6.
+        result.scalar_one_or_none = MagicMock(return_value="acme")
         db.execute = AsyncMock(return_value=result)
         yield db
 
@@ -167,6 +171,7 @@ async def test_library_membership_path_allows_against_real_endpoint(
     assert result.evidence == "membership"
     assert result.user_id == "u-1"
     assert result.org_id == "o-1"
+    assert result.org_slug == "acme"
     assert result.cached is False  # first call, cache miss
 
 
@@ -199,6 +204,7 @@ async def test_library_jwt_path_allows_against_real_endpoint(
 
     assert result.verified is True, result
     assert result.evidence == "jwt"
+    assert result.org_slug == "acme"
 
 
 # ---------------------------------------------------------------------------
