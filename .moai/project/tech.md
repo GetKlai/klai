@@ -28,7 +28,6 @@ Klai is a multi-service TypeScript/Python monorepo. The frontend stack is TypeSc
 | Mail authentication (DKIM/SPF/ARC) | authheaders + dkimpy + authres | >=0.16 |
 | Public Suffix List (RFC 7489 alignment) | publicsuffix2 | >=2.2, <3.0 |
 | MongoDB Driver | motor | >=3.6 |
-| YouTube extractor | yt-dlp | >=2026.3 |
 | Linting | ruff | >=0.8 |
 | Type Checking | pyright | >=1.1 |
 | Testing | pytest + pytest-asyncio | >=8 / >=0.24 |
@@ -196,6 +195,31 @@ structurally prevented because there is only one implementation.
 
 **Purpose:** Tenant-scoped encrypted credential storage for connector
 configs. Consumed by `klai-portal/backend` and `klai-connector`.
+
+### klai-libs/identity-assert
+
+**Purpose:** Shared service-to-service identity verification helper
+(SPEC-SEC-IDENTITY-ASSERT-001). Calls portal-api's
+`POST /internal/identity/verify` endpoint with consumer-side caching
+(60 s TTL, fail-closed). Single implementation across every Python
+consumer that carries a tenant or user identity claim — services do
+not re-implement the contract.
+
+**Consumers:** future Phase B/C/D adopters (`klai-knowledge-mcp`,
+`klai-scribe`, `klai-retrieval-api`). Phase A landed the library +
+endpoint; consumers migrate one PR each.
+
+| Module | Purpose |
+|---|---|
+| `client` | `IdentityAsserter` — async httpx client + LRU cache |
+| `models` | `VerifyResult` frozen dataclass + `KNOWN_CALLER_SERVICES` allowlist |
+| `cache` | In-process TTL cache (privacy boundary: per-process only) |
+| `telemetry` | structlog `identity_assert_call` event with hashed user_id |
+
+| Layer | Technology | Version |
+|-------|-----------|---------|
+| HTTP Client | httpx | >=0.28 |
+| Structured Logging | structlog | >=25.0 |
 
 ---
 
