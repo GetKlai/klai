@@ -987,20 +987,49 @@ class VerifyEmailRequest(BaseModel):
 
 @router.post("/auth/verify-email", status_code=status.HTTP_204_NO_CONTENT)
 async def verify_email(body: VerifyEmailRequest) -> None:
-    """Verify a user's email address using the code from the verification email."""
+    """Verify a user's email address using the code from the verification email.
+
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-3.8/3.9: emit audit on success;
+    structured event on 4xx (invalid_code/expired_link) and 5xx (zitadel_5xx).
+    """
     try:
         await zitadel.verify_user_email(body.org_id, body.user_id, body.code)
     except httpx.HTTPStatusError as exc:
-        logger.exception("verify_user_email failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("verify_user_email_failed", zitadel_status=exc.response.status_code)
         if exc.response.status_code in (400, 404):
+            _emit_auth_event(
+                "verify_email_failed",
+                reason="expired_link" if exc.response.status_code == 404 else "invalid_code",
+                zitadel_status=exc.response.status_code,
+                actor_user_id=body.user_id,
+                outcome="400",
+                level="warning",
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid or expired verification link.",
             ) from exc
+        _emit_auth_event(
+            "verify_email_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            actor_user_id=body.user_id,
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Verification failed, please try again later.",
         ) from exc
+
+    await audit.log_event(
+        org_id=0,
+        actor=body.user_id,
+        action="auth.email.verified",
+        resource_type="user",
+        resource_id=body.user_id,
+        details={"reason": "verified"},
+    )
 
 
 @router.post("/auth/totp/confirm", status_code=status.HTTP_204_NO_CONTENT)
@@ -1058,18 +1087,37 @@ async def passkey_setup(
     request: Request,
     user_id: str = Depends(get_current_user_id),
 ) -> PasskeySetupResponse:
-    """Start WebAuthn passkey registration. Returns options for navigator.credentials.create()."""
+    """Start WebAuthn passkey registration. Returns options for navigator.credentials.create().
+
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-1.9: emit audit on success, structured event on 5xx.
+    """
     domain = request.headers.get("x-forwarded-host") or request.headers.get("host", settings.domain)
     # Strip port if present
     domain = domain.split(":")[0]
     try:
         result = await zitadel.start_passkey_registration(user_id, domain)
     except httpx.HTTPStatusError as exc:
-        logger.exception("start_passkey_registration failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("start_passkey_registration_failed", zitadel_status=exc.response.status_code)
+        _emit_auth_event(
+            "passkey_setup_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            actor_user_id=user_id,
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to set up passkey, please try again later",
         ) from exc
+    await audit.log_event(
+        org_id=0,
+        actor=user_id,
+        action="auth.passkey.setup",
+        resource_type="user",
+        resource_id=user_id,
+        details={"reason": "initiated"},
+    )
     return PasskeySetupResponse(
         passkey_id=result["passkeyId"],
         options=result.get("publicKeyCredentialCreationOptions", {}),
@@ -1081,50 +1129,110 @@ async def passkey_confirm(
     body: PasskeyConfirmRequest,
     user_id: str = Depends(get_current_user_id),
 ) -> None:
-    """Complete passkey registration by submitting the browser's PublicKeyCredential."""
+    """Complete passkey registration by submitting the browser's PublicKeyCredential.
+
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-1.10: emit audit on success, structured
+    event on 4xx (invalid_attestation) and 5xx (zitadel_5xx).
+    """
     try:
         await zitadel.verify_passkey_registration(
             user_id, body.passkey_id, body.public_key_credential, body.passkey_name
         )
     except httpx.HTTPStatusError as exc:
-        logger.exception("verify_passkey_registration failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("verify_passkey_registration_failed", zitadel_status=exc.response.status_code)
         if exc.response.status_code in (400, 401):
+            _emit_auth_event(
+                "passkey_confirm_failed",
+                reason="invalid_attestation",
+                zitadel_status=exc.response.status_code,
+                actor_user_id=user_id,
+                outcome="400",
+                level="warning",
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Passkey verification failed, please try again",
             ) from exc
+        _emit_auth_event(
+            "passkey_confirm_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            actor_user_id=user_id,
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to set up passkey, please try again later",
         ) from exc
+
+    await audit.log_event(
+        org_id=0,
+        actor=user_id,
+        action="auth.passkey.confirmed",
+        resource_type="user",
+        resource_id=user_id,
+        details={"reason": "activated"},
+    )
 
 
 @router.post("/auth/email-otp/setup", status_code=status.HTTP_204_NO_CONTENT)
 async def email_otp_setup(
     user_id: str = Depends(get_current_user_id),
 ) -> None:
-    """Register email OTP for the user. Zitadel sends a verification code to the user's email."""
+    """Register email OTP for the user. Zitadel sends a verification code to the user's email.
+
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-1.11: emit audit on success, structured event on 5xx.
+    """
     try:
         await zitadel.register_email_otp(user_id)
     except httpx.HTTPStatusError as exc:
-        logger.exception("register_email_otp failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("register_email_otp_failed", zitadel_status=exc.response.status_code)
+        _emit_auth_event(
+            "email_otp_setup_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            actor_user_id=user_id,
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to set up email code, please try again later",
         ) from exc
+
+    await audit.log_event(
+        org_id=0,
+        actor=user_id,
+        action="auth.email-otp.setup",
+        resource_type="user",
+        resource_id=user_id,
+        details={"reason": "initiated"},
+    )
 
 
 @router.post("/auth/email-otp/resend", status_code=status.HTTP_204_NO_CONTENT)
 async def email_otp_resend(
     user_id: str = Depends(get_current_user_id),
 ) -> None:
-    """Resend the email OTP verification code by removing and re-registering the method."""
+    """Resend the email OTP verification code by removing and re-registering the method.
+
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-1.13: emit audit on success, structured event on 5xx.
+    """
     try:
         await zitadel.remove_email_otp(user_id)
     except httpx.HTTPStatusError as exc:
         # If not registered yet, ignore — proceed to register
         if exc.response.status_code != 404:
-            logger.exception("remove_email_otp failed %s: %s", exc.response.status_code, exc.response.text)
+            _slog.exception("remove_email_otp_failed", zitadel_status=exc.response.status_code)
+            _emit_auth_event(
+                "email_otp_resend_failed",
+                reason="zitadel_5xx",
+                zitadel_status=exc.response.status_code,
+                actor_user_id=user_id,
+                outcome="502",
+                level="error",
+            )
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="Failed to resend email code, please try again later",
@@ -1132,11 +1240,28 @@ async def email_otp_resend(
     try:
         await zitadel.register_email_otp(user_id)
     except httpx.HTTPStatusError as exc:
-        logger.exception("register_email_otp (resend) failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("register_email_otp_resend_failed", zitadel_status=exc.response.status_code)
+        _emit_auth_event(
+            "email_otp_resend_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            actor_user_id=user_id,
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to resend email code, please try again later",
         ) from exc
+
+    await audit.log_event(
+        org_id=0,
+        actor=user_id,
+        action="auth.email-otp.resent",
+        resource_type="user",
+        resource_id=user_id,
+        details={"reason": "resent"},
+    )
 
 
 @router.post("/auth/email-otp/confirm", status_code=status.HTTP_204_NO_CONTENT)
@@ -1144,20 +1269,49 @@ async def email_otp_confirm(
     body: EmailOTPConfirmRequest,
     user_id: str = Depends(get_current_user_id),
 ) -> None:
-    """Verify and activate the email OTP using the code sent during setup."""
+    """Verify and activate the email OTP using the code sent during setup.
+
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-1.12: emit audit on success, structured
+    event on 4xx (invalid_code) and 5xx (zitadel_5xx).
+    """
     try:
         await zitadel.verify_email_otp(user_id, body.code)
     except httpx.HTTPStatusError as exc:
-        logger.exception("verify_email_otp failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("verify_email_otp_failed", zitadel_status=exc.response.status_code)
         if exc.response.status_code in (400, 401):
+            _emit_auth_event(
+                "email_otp_confirm_failed",
+                reason="invalid_code",
+                zitadel_status=exc.response.status_code,
+                actor_user_id=user_id,
+                outcome="400",
+                level="warning",
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid code, please try again",
             ) from exc
+        _emit_auth_event(
+            "email_otp_confirm_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            actor_user_id=user_id,
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to confirm email code, please try again later",
         ) from exc
+
+    await audit.log_event(
+        org_id=0,
+        actor=user_id,
+        action="auth.email-otp.confirmed",
+        resource_type="user",
+        resource_id=user_id,
+        details={"reason": "activated"},
+    )
 
 
 @router.post("/auth/idp-intent", response_model=IDPIntentResponse)
@@ -1330,9 +1484,18 @@ async def idp_intent_signup(body: IDPIntentSignupRequest) -> IDPIntentResponse:
     Unlike idp-intent (login), this endpoint does not require an auth_request_id —
     the user is not yet in an OIDC session. After IDP callback we detect new vs
     existing users and branch accordingly.
+
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-2.6: emit audit on success, structured
+    event on unknown_idp / zitadel_5xx / missing_auth_url.
     """
     known_idps = {settings.zitadel_idp_google_id, settings.zitadel_idp_microsoft_id} - {""}
     if body.idp_id not in known_idps:
+        _emit_auth_event(
+            "idp_intent_signup_failed",
+            reason="unknown_idp",
+            outcome="400",
+            level="warning",
+        )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown IDP")
 
     success_url = f"{settings.portal_url}/api/auth/idp-signup-callback?locale={body.locale}"
@@ -1341,7 +1504,14 @@ async def idp_intent_signup(body: IDPIntentSignupRequest) -> IDPIntentResponse:
     try:
         result = await zitadel.create_idp_intent(body.idp_id, success_url, failure_url)
     except httpx.HTTPStatusError as exc:
-        logger.exception("create_idp_intent (signup) failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("create_idp_intent_signup_failed", zitadel_status=exc.response.status_code)
+        _emit_auth_event(
+            "idp_intent_signup_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Signup failed, please try again later",
@@ -1349,12 +1519,26 @@ async def idp_intent_signup(body: IDPIntentSignupRequest) -> IDPIntentResponse:
 
     auth_url = result.get("authUrl")
     if not auth_url:
-        logger.error("create_idp_intent (signup) returned no authUrl: %s", result)
+        _slog.error("create_idp_intent_signup_no_auth_url", result_keys=list(result.keys()))
+        _emit_auth_event(
+            "idp_intent_signup_failed",
+            reason="missing_auth_url",
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Signup failed, please try again later",
         )
 
+    await audit.log_event(
+        org_id=0,
+        actor="anonymous",
+        action="auth.idp.intent_signup",
+        resource_type="session",
+        resource_id="pending",
+        details={"idp_id": body.idp_id, "locale": body.locale},
+    )
     return IDPIntentResponse(auth_url=auth_url)
 
 
