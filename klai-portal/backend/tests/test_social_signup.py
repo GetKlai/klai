@@ -688,7 +688,7 @@ class TestSignupSocial:
                     background_tasks=MagicMock(),
                     db=db,
                     request=make_request(),
-                klai_idp_pending=pending_cookie,
+                    klai_idp_pending=pending_cookie,
                 )
 
         assert exc_info.value.status_code == 409
@@ -715,7 +715,7 @@ class TestSignupSocial:
                     background_tasks=MagicMock(),
                     db=db,
                     request=make_request(),
-                klai_idp_pending=pending_cookie,
+                    klai_idp_pending=pending_cookie,
                 )
 
         assert exc_info.value.status_code == 502
@@ -743,7 +743,7 @@ class TestSignupSocial:
                     background_tasks=MagicMock(),
                     db=db,
                     request=make_request(),
-                klai_idp_pending=pending_cookie,
+                    klai_idp_pending=pending_cookie,
                 )
 
         assert exc_info.value.status_code == 502
@@ -783,7 +783,7 @@ class TestSignupSocial:
                     background_tasks=MagicMock(),
                     db=db,
                     request=make_request(),
-                klai_idp_pending=pending_cookie,
+                    klai_idp_pending=pending_cookie,
                 )
 
         assert exc_info.value.status_code == 502

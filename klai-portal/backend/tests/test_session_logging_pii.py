@@ -67,9 +67,7 @@ def _assert_no_pii(kwargs: dict[str, Any]) -> None:
     ]
     serialized = json.dumps(kwargs, default=repr)
     for needle in forbidden_substrings:
-        assert needle not in serialized, (
-            f"PII leak: {needle!r} appeared in event kwargs:\n{serialized}"
-        )
+        assert needle not in serialized, f"PII leak: {needle!r} appeared in event kwargs:\n{serialized}"
     forbidden_keys = {"user_agent", "raw_ip", "client_ip", "session_id", "session_token"}
     leaked = forbidden_keys & set(kwargs.keys())
     assert not leaked, f"PII leak via kwarg(s) {leaked!r} in event {kwargs!r}"
@@ -80,9 +78,7 @@ def _assert_no_pii(kwargs: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_no_pii_in_totp_lockout_logs(
-    fake_redis: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_no_pii_in_totp_lockout_logs(fake_redis: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """Drive a token to the 5-failure lockout and inspect the structlog
     kwargs the production code passed to ``_slog.warning``."""
     from app.api.auth import TOTPLoginRequest, _totp_pending_create, totp_login
@@ -113,12 +109,9 @@ async def test_no_pii_in_totp_lockout_logs(
 
     # Find the lockout call (others may exist for other unrelated emits)
     lockout_calls = [
-        call for call in mock_slog.warning.call_args_list
-        if call.args and call.args[0] == "totp_pending_lockout"
+        call for call in mock_slog.warning.call_args_list if call.args and call.args[0] == "totp_pending_lockout"
     ]
-    assert len(lockout_calls) == 1, (
-        f"expected 1 totp_pending_lockout emit, got {mock_slog.warning.call_args_list}"
-    )
+    assert len(lockout_calls) == 1, f"expected 1 totp_pending_lockout emit, got {mock_slog.warning.call_args_list}"
 
     kwargs = lockout_calls[0].kwargs
     assert kwargs["failures"] == 5
@@ -159,7 +152,8 @@ def test_no_pii_in_binding_mismatch_logs(monkeypatch: pytest.MonkeyPatch) -> Non
         _verify_idp_pending_binding(payload, request)
 
     mismatch_calls = [
-        call for call in mock_slog.warning.call_args_list
+        call
+        for call in mock_slog.warning.call_args_list
         if call.args and call.args[0] == "idp_pending_binding_mismatch"
     ]
     assert len(mismatch_calls) == 1

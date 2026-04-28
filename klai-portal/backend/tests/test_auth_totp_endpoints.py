@@ -161,9 +161,7 @@ async def test_totp_confirm_zitadel_5xx(respx_zitadel: respx.MockRouter) -> None
 
 
 @pytest.mark.asyncio
-async def test_totp_login_expired_token(
-    respx_zitadel: respx.MockRouter, fake_redis: Any
-) -> None:
+async def test_totp_login_expired_token(respx_zitadel: respx.MockRouter, fake_redis: Any) -> None:
     """REQ-1.8 — unknown temp_token → 400 + event with reason=expired_token.
 
     The ``fake_redis`` fixture installs a reachable empty Redis. Without
@@ -189,9 +187,7 @@ async def test_totp_login_expired_token(
 
 
 @pytest.mark.asyncio
-async def test_totp_login_already_locked_returns_expired(
-    respx_zitadel: respx.MockRouter, fake_redis: Any
-) -> None:
+async def test_totp_login_already_locked_returns_expired(respx_zitadel: respx.MockRouter, fake_redis: Any) -> None:
     """SPEC-SEC-SESSION-001 supersedes REQ-1.7's immediate-lockout leg.
 
     Pre-Redis behaviour: a token whose in-memory ``failures`` reached MAX
@@ -222,9 +218,7 @@ async def test_totp_login_already_locked_returns_expired(
 
 
 @pytest.mark.asyncio
-async def test_totp_login_invalid_code_first_failure(
-    respx_zitadel: respx.MockRouter, fake_redis: Any
-) -> None:
+async def test_totp_login_invalid_code_first_failure(respx_zitadel: respx.MockRouter, fake_redis: Any) -> None:
     """REQ-1.6 — wrong code (1st failure) → 400 + emit + audit, failures=1."""
     respx_zitadel.route().mock(return_value=httpx.Response(401, json={"error": "bad code"}))
     temp_token = await _put_pending(fake_redis, failures=0)
@@ -250,9 +244,7 @@ async def test_totp_login_invalid_code_first_failure(
 
 
 @pytest.mark.asyncio
-async def test_totp_login_invalid_code_lockout(
-    respx_zitadel: respx.MockRouter, fake_redis: Any
-) -> None:
+async def test_totp_login_invalid_code_lockout(respx_zitadel: respx.MockRouter, fake_redis: Any) -> None:
     """REQ-1.7 — wrong code that pushes failures to MAX → 429 + lockout event."""
     respx_zitadel.route().mock(return_value=httpx.Response(401, json={"error": "bad code"}))
     temp_token = await _put_pending(fake_redis, failures=_TOTP_MAX_FAILURES - 1)
@@ -277,9 +269,7 @@ async def test_totp_login_invalid_code_lockout(
 
 
 @pytest.mark.asyncio
-async def test_totp_login_zitadel_5xx(
-    respx_zitadel: respx.MockRouter, fake_redis: Any
-) -> None:
+async def test_totp_login_zitadel_5xx(respx_zitadel: respx.MockRouter, fake_redis: Any) -> None:
     """REQ-1.8 — zitadel 5xx → 502 + event."""
     respx_zitadel.route().mock(return_value=httpx.Response(502, json={"error": "bad gw"}))
     temp_token = await _put_pending(fake_redis, failures=0)
