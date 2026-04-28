@@ -387,3 +387,66 @@ git worktree remove <path>                     # local worktree
 
 Do NOT panic and re-attempt the merge. The remote merge is idempotent
 once committed; trying again will say "already merged".
+
+## sops-roundtrip-line-count-check (HIGH)
+A SOPS edit done via the documented `decrypt → modify → encrypt` workflow
+can silently DROP entries from the encrypted dotenv file. Specifically:
+
+- `sops --decrypt --input-type dotenv --output-type dotenv` strips comments
+  and blank lines that have no `KEY=VALUE` shape.
+- Some KEY=VALUE lines with edge-case formatting (multi-line values, trailing
+  whitespace inside encrypted content, age-version transitions) decrypt to
+  a different number of lines than the source.
+- After `--encrypt`, the resulting file has fewer entries than the original.
+
+The deploy-side sync workflow on klai-infra catches *some* of this via its
+"keys-removed" guard, but it only fires AFTER the file is pushed and CI
+runs — by which time the local SOPS file already has the regression and
+unrelated commits would compound the loss.
+
+Two real incidents in the audit-response sprint:
+
+1. The **first MONEYBIRD_WEBHOOK_TOKEN add** (klai-infra `6d73cb98`) —
+   author appended one line, but decrypt-encrypt roundtrip dropped
+   `KUMA_TOKEN_RESEARCH_API` and `RESEARCH_API_ZITADEL_AUDIENCE`.
+   GitHub sync workflow refused to deploy with `keys would be REMOVED`
+   error. Force-push of a fresh roundtrip fixed it.
+2. **#170 ENVFILE-SCOPE migration** — three vars dropped on a SOPS edit
+   that was supposed to be pure additive.
+
+**Prevention:**
+
+1. **Always do a roundtrip line-count check on the server** as part of
+   the SOPS edit workflow. Modify the standard sequence:
+
+   ```bash
+   ssh core-01 "
+     cd /tmp/klai-sops &&
+     SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --decrypt --input-type dotenv --output-type dotenv core-01/.env.sops > core-01/.new.env
+     OLD=\$(wc -l < core-01/.new.env)
+     # ... your sed/append modification here ...
+     EXPECTED_DELTA=1   # +1 if adding a single var, 0 if rotating
+     SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --encrypt --input-type dotenv --output-type dotenv core-01/.new.env > core-01/.env.sops
+     ROUNDTRIP=\$(SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --decrypt --input-type dotenv --output-type dotenv core-01/.env.sops | wc -l)
+     # Compare against /opt/klai/.env (the live, authoritative file) PLUS expected delta:
+     LIVE=\$(wc -l < /opt/klai/.env)
+     EXPECTED=\$((LIVE + EXPECTED_DELTA))
+     if [ \"\$ROUNDTRIP\" -ne \"\$EXPECTED\" ]; then
+       echo \"REFUSING — roundtrip=\$ROUNDTRIP expected=\$EXPECTED (live=\$LIVE delta=\$EXPECTED_DELTA)\"
+       exit 1
+     fi
+   "
+   ```
+
+2. When a roundtrip diverges from expectation, **rebuild the SOPS file
+   from `/opt/klai/.env`** (the live authoritative source) plus your
+   additions, instead of trying to patch the broken decrypt output.
+   This is what fixed both incidents above.
+
+3. Treat the klai-infra GitHub sync workflow's `keys-would-be-REMOVED`
+   error as a HARD STOP, never as a warning to bypass. Force-pushing
+   with `--allow-removal` was considered and rejected for incident #1
+   precisely because the operator could not enumerate which 161-vs-162
+   line was the regression — a known-good rebuild is always cheaper.
+
+See `.claude/rules/klai/infra/sops-env.md` for the full SOPS workflow.
