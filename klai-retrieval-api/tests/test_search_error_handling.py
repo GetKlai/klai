@@ -169,8 +169,12 @@ async def test_search_logs_exception_with_traceback_on_qdrant_failure(monkeypatc
 
     class _Req:
         # Minimal duck-typed request — `_search_notebook` only reads these.
+        # user_id is read by the SPEC-SEC-IDENTITY-ASSERT-001 visibility gate
+        # in `_notebook_filter`; None disables the personal-leg, which is
+        # fine for this exception-path test.
         notebook_id = "nb-1"
         org_id = "org-xyz"
+        user_id = None
 
     with pytest.raises(TimeoutError):
         await search._search_notebook([0.1] * 8, _Req(), candidates=10)
