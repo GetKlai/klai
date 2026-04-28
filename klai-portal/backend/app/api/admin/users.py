@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.plans import get_plan_products
-from app.models.groups import PortalGroupMembership
+from app.models.groups import PortalGroup, PortalGroupMembership
 from app.models.portal import PortalOrg, PortalUser
 from app.models.products import PortalUserProduct
 from app.services.audit import log_event
@@ -432,8 +432,25 @@ async def offboard_user(
     if user.status == "offboarded":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User has already been offboarded")
 
-    # Cascade: remove group memberships and product assignments
-    await db.execute(delete(PortalGroupMembership).where(PortalGroupMembership.zitadel_user_id == zitadel_user_id))
+    # Cascade: remove group memberships and product assignments.
+    #
+    # SPEC-SEC-TENANT-001 REQ-1: scope the membership delete to the caller's
+    # org via PortalGroup.org_id. PortalGroupMembership has no org_id column
+    # (tenancy inherits via the parent group's FK), so a delete keyed only on
+    # zitadel_user_id wipes the user's memberships in EVERY tenant they belong
+    # to. The subselect constrains the rows to groups owned by the caller's
+    # org. Memberships in other orgs are left untouched.
+    membership_delete_result = await db.execute(
+        delete(PortalGroupMembership).where(
+            PortalGroupMembership.zitadel_user_id == zitadel_user_id,
+            PortalGroupMembership.group_id.in_(
+                select(PortalGroup.id).where(PortalGroup.org_id == org.id)
+            ),
+        )
+    )
+    # AsyncSession.execute() is typed as Result[Any]; the rowcount attribute
+    # is only on CursorResult, hence getattr with a 0 default to satisfy pyright.
+    memberships_removed_count = getattr(membership_delete_result, "rowcount", 0) or 0
     await db.execute(
         delete(PortalUserProduct).where(
             PortalUserProduct.zitadel_user_id == zitadel_user_id,
@@ -442,6 +459,17 @@ async def offboard_user(
     )
 
     user.status = "offboarded"
+    # SPEC-SEC-TENANT-001 REQ-1.4: structured event for VictoriaLogs audit so
+    # any future cross-tenant regression is queryable.
+    logger.info(
+        "user_offboarded",
+        extra={
+            "event": "user_offboarded",
+            "org_id": org.id,
+            "zitadel_user_id": zitadel_user_id,
+            "memberships_removed_count": memberships_removed_count,
+        },
+    )
     await log_event(
         org_id=org.id,
         actor=caller_id,
