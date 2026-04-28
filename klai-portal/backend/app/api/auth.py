@@ -328,9 +328,14 @@ async def _resolve_and_enforce_mfa(
     if db_failure == "portal_user":
         # REQ-3.2 fail-open arm: cannot map email to portal-org; if we 503'd
         # here every brand-new tenant before provisioning would be locked out.
+        # mfa_policy="unresolved" per SPEC REQ-4.1 — the lookup itself failed,
+        # so we cannot honestly claim the policy is "optional"; we are forcing
+        # optional behaviour as the deliberate fail-open trade-off, but
+        # operators triaging in Grafana need to distinguish that from a
+        # genuinely-resolved optional policy.
         _emit_mfa_check_failed(
             reason="db_lookup_failed",
-            mfa_policy="optional",
+            mfa_policy="unresolved",
             outcome="fail-open",
             email=email,
             level="warning",
@@ -356,9 +361,12 @@ async def _resolve_and_enforce_mfa(
         # signal — that hid data-integrity bugs from operators. We keep the
         # fail-open semantics (the user should still be able to log in) but
         # emit a warning so the orphan is observable in Grafana.
+        # mfa_policy="unresolved" per SPEC REQ-4.1 — the org row is gone, so
+        # the policy could not be resolved. The handler still applies optional
+        # behaviour (no enforcement) as the documented fail-open path.
         _emit_mfa_check_failed(
             reason="db_lookup_failed",
-            mfa_policy="optional",
+            mfa_policy="unresolved",
             outcome="fail-open",
             email=email,
             level="warning",

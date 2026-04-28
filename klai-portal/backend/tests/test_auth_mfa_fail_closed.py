@@ -398,7 +398,10 @@ async def test_portal_user_lookup_raises_proceeds_documented_fail_open(
     events = _mfa_events(captured)
     assert len(events) == 1
     assert events[0]["reason"] == "db_lookup_failed"
-    assert events[0]["mfa_policy"] == "optional"
+    # SPEC REQ-4.1: mfa_policy is "unresolved" when the lookup itself failed —
+    # the handler defaults to optional behaviour (fail-open) but cannot honestly
+    # claim the policy was resolved.
+    assert events[0]["mfa_policy"] == "unresolved"
     assert events[0]["outcome"] == "fail-open"
     assert events[0]["log_level"] == "warning"
 
@@ -482,7 +485,9 @@ async def test_portal_user_orphan_org_proceeds_documented_fail_open(
     events = _mfa_events(captured)
     assert len(events) == 1
     assert events[0]["reason"] == "db_lookup_failed"
-    assert events[0]["mfa_policy"] == "optional"
+    # SPEC REQ-4.1: orphan org → policy unresolved. Handler still applies
+    # optional behaviour (fail-open) but the field reflects resolution status.
+    assert events[0]["mfa_policy"] == "unresolved"
     assert events[0]["outcome"] == "fail-open"
     assert events[0]["log_level"] == "warning"
 
