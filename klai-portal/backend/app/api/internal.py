@@ -77,24 +77,12 @@ _AUDIT_INSERT_SQL = text(
 )
 
 
-def _resolve_caller_ip(request: Request) -> str:
-    """Resolve caller IP for rate-limit key and audit row.
-
-    SPEC-SEC-005 REQ-1.6: priority order
-    1. Right-most entry of X-Forwarded-For from the immediate trusted upstream (Caddy).
-       The right-most entry is the IP the immediate upstream saw (attacker-supplied
-       left entries are ignored).
-    2. request.client.host.
-    3. Literal "unknown" when neither is available (e.g. synthetic ASGI scope).
-    """
-    xff = request.headers.get("x-forwarded-for", "")
-    if xff:
-        parts = [p.strip() for p in xff.split(",") if p.strip()]
-        if parts:
-            return parts[-1]
-    if request.client and request.client.host:
-        return request.client.host
-    return "unknown"
+# SPEC-SEC-SESSION-001: caller-IP resolution moved to ``app.services.request_ip``
+# once a third callsite (``app.api.auth`` for IDP-pending cookie binding)
+# joined the existing internal-rate-limit and internal-audit consumers. The
+# alias below preserves the private name so all in-module callsites and the
+# ``test_internal_hardening`` patch surface stay unchanged.
+from app.services.request_ip import resolve_caller_ip as _resolve_caller_ip  # noqa: E402
 
 
 async def _check_rate_limit_internal(caller_ip: str) -> None:
