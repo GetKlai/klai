@@ -59,6 +59,7 @@ async def test_verify_returns_allow_on_jwt_evidence(fake_user_id: str, fake_org_
             "verified": True,
             "user_id": fake_user_id,
             "org_id": fake_org_id,
+            "org_slug": "acme",
             "cache_ttl_seconds": 60,
             "evidence": "jwt",
         },
@@ -75,6 +76,7 @@ async def test_verify_returns_allow_on_jwt_evidence(fake_user_id: str, fake_org_
     assert result.verified is True
     assert result.user_id == fake_user_id
     assert result.org_id == fake_org_id
+    assert result.org_slug == "acme"
     assert result.evidence == "jwt"
     assert result.cached is False
     await asserter.aclose()
@@ -88,6 +90,7 @@ async def test_verify_returns_allow_on_membership_evidence(
             "verified": True,
             "user_id": fake_user_id,
             "org_id": fake_org_id,
+            "org_slug": "acme",
             "cache_ttl_seconds": 60,
             "evidence": "membership",
         },
@@ -103,6 +106,7 @@ async def test_verify_returns_allow_on_membership_evidence(
 
     assert result.verified is True
     assert result.evidence == "membership"
+    assert result.org_slug == "acme"
     await asserter.aclose()
 
 
@@ -239,6 +243,7 @@ async def test_verify_caches_allow_results(
                 "verified": True,
                 "user_id": fake_user_id,
                 "org_id": fake_org_id,
+                "org_slug": "acme",
                 "cache_ttl_seconds": 60,
                 "evidence": "jwt",
             },
@@ -301,6 +306,7 @@ async def test_verify_propagates_x_request_id(fake_user_id: str, fake_org_id: st
             "verified": True,
             "user_id": fake_user_id,
             "org_id": fake_org_id,
+            "org_slug": "acme",
             "cache_ttl_seconds": 60,
             "evidence": "membership",
         },
@@ -343,6 +349,7 @@ async def test_verify_uses_authorization_bearer_for_internal_secret(
             "verified": True,
             "user_id": fake_user_id,
             "org_id": fake_org_id,
+            "org_slug": "acme",
             "cache_ttl_seconds": 60,
             "evidence": "jwt",
         },
@@ -376,6 +383,7 @@ async def test_verify_or_raise_returns_on_allow(
             "verified": True,
             "user_id": fake_user_id,
             "org_id": fake_org_id,
+            "org_slug": "acme",
             "cache_ttl_seconds": 60,
             "evidence": "jwt",
         },
@@ -453,6 +461,7 @@ async def test_aclose_owns_only_constructed_client(
             "verified": True,
             "user_id": fake_user_id,
             "org_id": fake_org_id,
+            "org_slug": "acme",
             "cache_ttl_seconds": 60,
             "evidence": "jwt",
         },
@@ -488,6 +497,7 @@ async def test_verify_request_body_shape(fake_user_id: str, fake_org_id: str) ->
             "verified": True,
             "user_id": fake_user_id,
             "org_id": fake_org_id,
+            "org_slug": "acme",
             "cache_ttl_seconds": 60,
             "evidence": "jwt",
         },
@@ -509,6 +519,121 @@ async def test_verify_request_body_shape(fake_user_id: str, fake_org_id: str) ->
     assert body["claimed_user_id"] == fake_user_id
     assert body["claimed_org_id"] == fake_org_id
     assert body["bearer_jwt"] == "jwt-1"
+    # claimed_org_slug defaults to None when caller does not assert one.
+    assert body["claimed_org_slug"] is None
+    await asserter.aclose()
+
+
+async def test_verify_request_body_carries_claimed_org_slug(
+    fake_user_id: str, fake_org_id: str
+) -> None:
+    """REQ-2.6: when caller passes claimed_org_slug, it lands in the request body."""
+    capture: dict[str, object] = {}
+    transport = _mock_portal(
+        body={
+            "verified": True,
+            "user_id": fake_user_id,
+            "org_id": fake_org_id,
+            "org_slug": "acme",
+            "cache_ttl_seconds": 60,
+            "evidence": "jwt",
+        },
+        capture=capture,
+    )
+    asserter = await _build_asserter(transport)
+
+    await asserter.verify(
+        caller_service="knowledge-mcp",
+        claimed_user_id=fake_user_id,
+        claimed_org_id=fake_org_id,
+        bearer_jwt="jwt-1",
+        claimed_org_slug="acme",
+    )
+
+    import json as _json
+
+    body = _json.loads(str(capture["body"]))
+    assert body["claimed_org_slug"] == "acme"
+    await asserter.aclose()
+
+
+async def test_verify_returns_deny_on_org_slug_mismatch(
+    fake_user_id: str, fake_org_id: str
+) -> None:
+    """REQ-2.6: portal returns 403 + reason='org_slug_mismatch' → library surfaces it."""
+    transport = _mock_portal(
+        status_code=403,
+        body={"verified": False, "reason": "org_slug_mismatch"},
+    )
+    asserter = await _build_asserter(transport)
+
+    result = await asserter.verify(
+        caller_service="knowledge-mcp",
+        claimed_user_id=fake_user_id,
+        claimed_org_id=fake_org_id,
+        bearer_jwt=None,
+        claimed_org_slug="impostor-slug",
+    )
+
+    assert result.verified is False
+    assert result.reason == "org_slug_mismatch"
+    assert result.user_id is None
+    assert result.org_slug is None
+    await asserter.aclose()
+
+
+async def test_verify_cache_hit_denies_on_slug_mismatch_without_portal_call(
+    fake_user_id: str, fake_org_id: str
+) -> None:
+    """REQ-2.6: a cached verified result already carries the canonical slug.
+
+    A subsequent call with a mismatching ``claimed_org_slug`` MUST be denied
+    by the library without re-hitting the portal — the canonical slug is
+    stable across the cache TTL.
+    """
+    call_count = {"value": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        call_count["value"] += 1
+        return httpx.Response(
+            200,
+            json={
+                "verified": True,
+                "user_id": fake_user_id,
+                "org_id": fake_org_id,
+                "org_slug": "acme",
+                "cache_ttl_seconds": 60,
+                "evidence": "membership",
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    asserter = await _build_asserter(transport)
+
+    # First call: warms the cache with canonical slug "acme".
+    first = await asserter.verify(
+        caller_service="knowledge-mcp",
+        claimed_user_id=fake_user_id,
+        claimed_org_id=fake_org_id,
+        bearer_jwt=None,
+        claimed_org_slug="acme",
+    )
+    assert first.verified is True
+    assert first.org_slug == "acme"
+
+    # Second call: same tuple, but caller asserts a different slug. Must
+    # deny without invoking the portal again.
+    second = await asserter.verify(
+        caller_service="knowledge-mcp",
+        claimed_user_id=fake_user_id,
+        claimed_org_id=fake_org_id,
+        bearer_jwt=None,
+        claimed_org_slug="impostor-slug",
+    )
+
+    assert second.verified is False
+    assert second.reason == "org_slug_mismatch"
+    assert call_count["value"] == 1, "second call should NOT have hit portal"
     await asserter.aclose()
 
 

@@ -32,7 +32,7 @@ def test_measure_latency_populates_field() -> None:
 
 
 def test_emit_call_logs_event_with_required_fields_on_allow() -> None:
-    result = VerifyResult.allow(user_id="u-1", org_id="o-1", evidence="jwt")
+    result = VerifyResult.allow(user_id="u-1", org_id="o-1", org_slug="acme", evidence="jwt")
 
     with capture_logs() as captured:
         emit_call(

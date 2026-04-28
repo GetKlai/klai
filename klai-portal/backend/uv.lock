@@ -601,6 +601,36 @@ dev = [
 ]
 
 [[package]]
+name = "klai-identity-assert"
+version = "0.1.0"
+source = { editable = "../../klai-libs/identity-assert" }
+dependencies = [
+    { name = "httpx" },
+    { name = "structlog" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.390" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1" },
+    { name = "respx", marker = "extra == 'dev'", specifier = ">=0.22" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
+    { name = "structlog", specifier = ">=25.0" },
+]
+provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pyright", specifier = ">=1.1.390" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "pytest-asyncio", specifier = ">=1" },
+    { name = "respx", specifier = ">=0.22" },
+    { name = "ruff", specifier = ">=0.8" },
+]
+
+[[package]]
 name = "klai-image-storage"
 version = "0.1.0"
 source = { editable = "../../klai-libs/image-storage" }
@@ -665,6 +695,7 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "httpx" },
+    { name = "klai-identity-assert" },
     { name = "pyright" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -675,6 +706,7 @@ dev = [
 [package.dev-dependencies]
 dev = [
     { name = "httpx" },
+    { name = "klai-identity-assert" },
     { name = "pyright" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -694,6 +726,7 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28" },
     { name = "icalendar", specifier = ">=6.1.0,<8.0" },
     { name = "klai-connector-credentials", editable = "../../klai-libs/connector-credentials" },
+    { name = "klai-identity-assert", marker = "extra == 'dev'", editable = "../../klai-libs/identity-assert" },
     { name = "klai-image-storage", editable = "../../klai-libs/image-storage" },
     { name = "motor", specifier = ">=3.7" },
     { name = "prometheus-client", specifier = ">=0.25,<1.0" },
@@ -719,6 +752,7 @@ provides-extras = ["dev"]
 [package.metadata.requires-dev]
 dev = [
     { name = "httpx", specifier = ">=0.28" },
+    { name = "klai-identity-assert", editable = "../../klai-libs/identity-assert" },
     { name = "pyright", specifier = ">=1.1.408" },
     { name = "pytest", specifier = ">=9" },
     { name = "pytest-asyncio", specifier = ">=1" },
