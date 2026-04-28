@@ -74,7 +74,8 @@ After the initial Phase A landing, a self-review uncovered:
 1. ✅ Phase A (`feature/SPEC-SEC-IDENTITY-ASSERT-001`): REQ-1 + REQ-7 + REQ-5
 2. ✅ Phase B (`feature/SPEC-SEC-IDENTITY-ASSERT-001-phase-b`): REQ-2
    (knowledge-mcp) + REQ-2.6 endpoint+library extension
-3. Then: Phase C — REQ-3 (scribe) — independent consumer
+3. ✅ Phase C (`feature/SPEC-SEC-IDENTITY-ASSERT-001-phase-c`): REQ-3
+   (scribe) — JWT-derived org_id, no portal verify call
 4. Then: Phase D — REQ-4 + REQ-6 (retrieval-api internal-secret +
    emit_event verified identity; REQ-6 explicitly depends on REQ-4)
 
@@ -162,3 +163,55 @@ tests up belongs to a SPEC-TAXONOMY-001 follow-up, not this SPEC.
   klai-docs stops depending on its caller's discipline.
 - **Phase C** (REQ-3 — scribe), **Phase D** (REQ-4 + REQ-6 —
   retrieval-api + emit_event): see migration sequence above.
+
+---
+
+## Phase C — scribe-api consumer migration (REQ-3)
+
+- Started: 2026-04-28
+- Branch: `feature/SPEC-SEC-IDENTITY-ASSERT-001-phase-c` (branched from main)
+- Worktree: `C:/Users/markv/stack/02 - Voys/Code/klai-identity-assert-phase-c`
+
+### Phase C architectural decisions
+
+1. **JWT resourceowner is sufficient — no portal verify call.** Per Phase A
+   progress.md decision #4 ("primary org from JWT's resourceowner claim,
+   preferred — zero extra roundtrip"). Scribe already validates JWT
+   signatures against Zitadel JWKS in `app.core.auth`; the resourceowner
+   claim cannot be tampered without invalidating the signature, so the
+   value is cryptographically authentic. Calling portal-api `/internal/identity/verify`
+   on top would be redundant for the JWT-validating consumer.
+
+   This means scribe does **not** depend on `klai-libs/identity-assert`
+   in Phase C. REQ-7.4's editable install is skipped for scribe.
+
+2. **Drop `org_id` from `IngestToKBRequest` schema entirely.** No
+   transition window with `extra="ignore"` (REQ-3.1's one-sprint window
+   is moot pre-prod). The schema-level closure is the cleanest fix for
+   the S1 cross-tenant write primitive.
+
+3. **No fast-path-vs-general-path branching.** REQ-3.5 describes a
+   "fast path" (skip portal verify when JWT has resourceowner AND user
+   has exactly one membership matching). Scribe doesn't have visibility
+   into membership counts and doesn't need to — the JWT signature itself
+   is the proof. So the "fast path" is the only path. Cleaner code,
+   identical security properties for a JWT-validating consumer.
+
+### Delivered
+
+| Component | Change | Tests |
+|---|---|---|
+| `klai-scribe/scribe-api/app/core/auth.py` | New `CallerIdentity` dataclass + `get_authenticated_caller` dependency that returns `(user_id, org_id)` from a verified Zitadel JWT. Existing `get_current_user_id` shares the new `_decode_zitadel_token` helper. 403 `no_active_org_membership` when JWT lacks `resourceowner` (REQ-3.4). | +5 auth tests |
+| `klai-scribe/scribe-api/app/api/transcribe.py` | `IngestToKBRequest.org_id` field removed (REQ-3.1). `ingest_transcription_to_kb` handler swaps `Depends(get_current_user_id)` for `Depends(get_authenticated_caller)`; passes `caller.org_id` to `ingest_scribe_transcript`. | +3 schema/handler tests |
+
+Total Phase C tests: **8 new**. Existing scribe tests unchanged (the new
+`get_authenticated_caller` is additive; `get_current_user_id` still works
+for endpoints that don't need org_id).
+
+No klai-libs/identity-assert dependency, no Dockerfile change, no compose
+change, no workflow change — REQ-3 is a self-contained app-layer fix.
+
+### Follow-up tracked outside Phase C
+
+- **Phase D** (REQ-4 + REQ-6 — retrieval-api + emit_event): see migration
+  sequence above.
