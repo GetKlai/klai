@@ -180,9 +180,93 @@ chain. All green; ruff clean on touched files.
   set `REDIS_URL` in `klai-infra/core-01/.env.sops` AND add it to the
   connector environment block in `deploy/docker-compose.yml`. Fail-open
   semantics mean partial rollouts don't break.
-- CI: investigate why ruff F821 didn't flag the HY-30 bug before merge.
-  The pyproject.toml selects "F" (which includes F821) — local
-  `ruff check` catches it. The gap is somewhere in the CI workflow
-  that runs lint on connector PRs. SPEC-SEC-CORS-001 added a
-  `klai-connector.yml` workflow on main; the F821 gap may already be
-  closed by it (verify with the next CI run).
+
+---
+
+## SPEC-SEC-HYGIENE-001 Progress — connector-slice followup (2026-04-28)
+
+Branch: `feature/SPEC-SEC-HYGIENE-001-connector-followup` →
+merge `6e92f68d` direct to main. Closes three real gaps flagged at the
+end of the connector slice.
+
+### REQ-30.3 mechanically closed (commit `e7967255`)
+
+The original HY-30 commit only pinned the pyproject contract via
+`test_ruff_config.py`; CI never executed `ruff check`. Followup adds a
+`quality` job to `.github/workflows/klai-connector.yml`:
+- `uv sync --group dev` + `uv run ruff check .` (mirror of portal-api.yml)
+- `build-push` depends on `quality` so a lint failure blocks deploy
+- `ruff format --check` intentionally NOT enforced — connector has
+  never been ruff-formatted (~36 files), separate format-the-world PR
+
+To make the step pass on the existing tree, 5 pre-existing ruff errors
+were fixed in the same commit (none functional, all conform to the
+already-configured rule set):
+- `app/adapters/notion.py`: moved `_SKIP_BLOCK_TYPES` +
+  `_MEDIA_BLOCK_TYPES` from function-local to module-level frozensets
+  (silences N806).
+- `app/core/enums.py`: `SyncStatus(str, enum.Enum)` →
+  `SyncStatus(enum.StrEnum)`. Python 3.11+ drop-in equivalent. Verified
+  safe by grepping all 24 callsites: every site uses `==`, assignment
+  to `Mapped[str]`, or as a structlog kwarg; no `f"{status}"` or
+  `str(status)` that would surface the differing `__str__` output.
+- `app/models/connector.py`: split the 122-char `updated_at`
+  mapped_column across lines (E501).
+- 4 alembic migration files: import-block reordering (auto-fixed).
+
+CI verification: first run on main completed success in 4m9s. REQ-30.3
+is now actually enforced.
+
+### HY-31 HTTP-niveau dekking (commit `0770056e`)
+
+The original HY-31 tests patched `_fetch_page_markdown` directly,
+which left a gap: a future schema change in crawl4ai's `POST /crawl`
+response shape would not be caught. Followup adds three integration
+tests in `tests/test_compute_fingerprint.py` that replace
+`httpx.AsyncClient` itself in the fingerprint module's namespace and
+feed canned responses in the exact shape crawl4ai 0.8.x emits today:
+
+- `test_http_level_integration_with_real_crawl4ai_shape` (parametrised
+  over `with_internal_key` True/False) — drives a 200 response with
+  dict-shaped `markdown`. Asserts: end-to-end 200 + valid 16-char hex
+  fingerprint, exactly one POST to `{crawl4ai_api_url}/crawl`, full
+  request payload shape (`urls`, `crawler_config.type`, `cache_mode`,
+  `excluded_tags`, `markdown_generator`), `Authorization: Bearer`
+  header iff `crawl4ai_internal_key` is set.
+- `test_http_level_integration_string_markdown_field` — drives the
+  alternate shape where `markdown` is a bare string. Pins
+  `_extract_markdown`'s str-branch.
+
+Pyright strict cleanup on `routes/fingerprint.py` in the same commit:
+explicit local annotations (`md_raw: Any`, `md_dict: dict[str, Any]`,
+`md_v2: dict[str, Any]`) + per-line
+`# pyright: ignore[reportUnknownVariableType]` on the intentionally-
+unknown JSON value boundaries. 11 → 0 strict warnings.
+
+Final fingerprint test count: 14 (was 11).
+
+### AC-32 default-deviation documented (commit `7833fe6f`)
+
+REQ-32.2 says the per-org limit "SHALL default to 60 reads/min and
+10 writes/min". The shipped defaults in `app/core/config.py` are
+120/30 — research-driven during /run, ratified by the project owner.
+Added an "Implementation note" to AC-32 in acceptance.md documenting:
+- the deviation (literal 60/10 → shipped 120/30)
+- the industry research backing it (Auth0 120/min, Heroku 75/min,
+  Slack Admin Oversight 1200/min)
+- that the AC test sets limits to 60/10 via env override so the
+  SPEC-literal boundaries are still exercised verbatim
+- the env knobs (`CONNECTOR_RL_READ_PER_MIN` / `WRITE_PER_MIN`)
+
+### Sync-phase additions (this commit)
+
+- `@MX:ANCHOR` + `@MX:REASON` on `enforce_org_rate_limit` in
+  `app/routes/deps.py`. Fan_in = 5 (POST/GET-list/GET-by-id/PUT/DELETE
+  routes in `connectors.py`, all via `Depends()`). Per MX protocol P1
+  rule, this was a blocking violation until now — closed.
+- `tech.md` `## Klai Connector` section gains `redis (asyncio) >=5.0`
+  row + a "Rate limiting" + "Content fingerprinting" note for
+  discoverability.
+
+No code or behavioural change in the sync commit — pure annotation +
+documentation.
