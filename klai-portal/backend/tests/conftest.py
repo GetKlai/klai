@@ -44,7 +44,18 @@ os.environ.setdefault("PORTAL_SECRETS_KEY", "0" * 64)  # 64-char hex; test place
 os.environ.setdefault("ENCRYPTION_KEY", "1" * 64)  # 64-char hex; test placeholder only
 os.environ.setdefault("VEXA_WEBHOOK_SECRET", "test-vexa-webhook-secret")  # SEC-013 F-033
 os.environ.setdefault("MONEYBIRD_WEBHOOK_TOKEN", "test-moneybird-webhook-token")  # SPEC-SEC-WEBHOOK-001 REQ-3
+os.environ.setdefault("ZITADEL_IDP_GOOGLE_ID", "test-google-idp-id")  # SPEC-SEC-AUTH-COVERAGE-001 REQ-2.6
+os.environ.setdefault("ZITADEL_IDP_MICROSOFT_ID", "test-microsoft-idp-id")  # SPEC-SEC-AUTH-COVERAGE-001 REQ-2.6
 
+# ---------------------------------------------------------------------------
+# Auto-discoverable fixtures (SPEC-SEC-AUTH-COVERAGE-001 REQ-5.6)
+#
+# Re-export the respx_zitadel fixture from auth_test_helpers so all auth
+# endpoint test modules pick it up via pytest's conftest discovery without
+# needing to import + alias it (the import-style triggers F811 redefinition
+# warnings when test functions take it as a parameter).
+# ---------------------------------------------------------------------------
+from auth_test_helpers import respx_zitadel  # noqa: E402, F401
 
 # ---------------------------------------------------------------------------
 # Shared fakeredis fixture for SPEC-SEC-SESSION-001 + future Redis-backed code
