@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user_id
+from app.core.auth import CallerIdentity, get_authenticated_caller, get_current_user_id
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.transcription import Transcription
@@ -432,8 +432,16 @@ async def summarize_transcription(
 # -- POST /v1/transcriptions/{id}/ingest --------------------------------------
 
 class IngestToKBRequest(BaseModel):
+    """Body schema for transcription-to-KB ingest.
+
+    SPEC-SEC-IDENTITY-ASSERT-001 REQ-3.1: ``org_id`` was removed. The
+    target tenant is derived from the authenticated user's JWT
+    ``resourceowner`` claim (see ``get_authenticated_caller``) — a body
+    field would let any caller with a valid JWT push into any org's KB
+    (the S1 finding in spec.md).
+    """
+
     kb_slug: str
-    org_id: str
 
 
 class IngestToKBResponse(BaseModel):
@@ -445,16 +453,21 @@ class IngestToKBResponse(BaseModel):
 async def ingest_transcription_to_kb(
     txn_id: str,
     body: IngestToKBRequest,
-    user_id: str = Depends(get_current_user_id),
+    caller: CallerIdentity = Depends(get_authenticated_caller),
     db: AsyncSession = Depends(get_db),
 ) -> IngestToKBResponse:
-    """Add a transcription to a knowledge base."""
-    from app.services.knowledge_adapter import ingest_scribe_transcript  # noqa: PLC0415
+    """Add a transcription to the authenticated user's primary-org KB.
+
+    Tenant identity (``org_id``) is sourced from the JWT's resourceowner
+    claim — never from the request body. Transcription ownership is still
+    enforced by ``Transcription.user_id == caller.user_id``.
+    """
+    from app.services.knowledge_adapter import ingest_scribe_transcript
 
     result = await db.execute(
         select(Transcription).where(
             Transcription.id == txn_id,
-            Transcription.user_id == user_id,
+            Transcription.user_id == caller.user_id,
         )
     )
     record = result.scalar_one_or_none()
@@ -462,7 +475,7 @@ async def ingest_transcription_to_kb(
         raise HTTPException(status_code=404, detail="Transcript niet gevonden")
 
     artifact_id = await ingest_scribe_transcript(
-        org_id=body.org_id,
+        org_id=caller.org_id,
         kb_slug=body.kb_slug,
         transcription=record,
     )
