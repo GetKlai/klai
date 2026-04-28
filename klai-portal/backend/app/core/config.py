@@ -154,14 +154,6 @@ class Settings(BaseSettings):
     # Same endpoint that klai-knowledge-ingest and klai-connector already target.
     crawl4ai_api_url: str = "http://crawl4ai:11235"
 
-    # Optional residential proxy for YouTube transcript fetches (SPEC-KB-SOURCES-001
-    # D5 follow-up). When set, the YouTube extractor retries via this proxy when
-    # YouTube refuses the datacenter IP (RequestBlocked / IpBlocked). Empty = direct
-    # fetch only, and an IP-block surfaces as a 502 "could not reach YouTube".
-    # Format: full proxy URL including scheme + credentials, e.g.
-    # "http://user:pass@p.webshare.io:9999".
-    youtube_proxy_url: str = ""
-
     # Redis (used for retrieval logs and feedback idempotency -- SPEC-KB-015)
     redis_url: str = ""
 
@@ -244,15 +236,12 @@ class Settings(BaseSettings):
     # When empty, widget endpoints return 503.
     widget_jwt_secret: str = ""  # PORTAL_API_WIDGET_JWT_SECRET
 
-    # CORS — static origins + wildcard regex for tenant subdomains
-    # SECURITY-CRITICAL: This regex controls which origins can make credentialed
-    # cross-origin requests. A permissive pattern (e.g. .*) would allow any site
-    # to call the API with the user's cookies. Review carefully before modifying.
+    # CORS — explicit allowlist of trusted origins for credentialed requests.
+    # SPEC-SEC-CORS-001 REQ-1.6: cors_allow_origin_regex removed. The runtime
+    # CORS check is the fixed first-party regex in KlaiCORSMiddleware (REQ-1.2)
+    # UNION this comma-separated list. Add explicit origins here for dev/staging
+    # (e.g. http://localhost:5174). Do NOT add wildcard patterns.
     cors_origins: str = "http://localhost:5174"
-    # Allow any origin so public widget endpoints (SPEC-WIDGET-001) pass CORS preflight.
-    # Actual security is enforced server-side: portal routes require JWT auth;
-    # widget routes enforce origin via origin_allowed() in the handler.
-    cors_allow_origin_regex: str = r".*"
 
     @property
     def portal_url(self) -> str:

@@ -15,6 +15,11 @@ on:
       - 'klai-knowledge-mcp/**'
       - 'klai-libs/identity-assert/**'
       - '.github/workflows/klai-knowledge-mcp.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'klai-knowledge-mcp/**'
+      - '.github/workflows/klai-knowledge-mcp.yml'
   workflow_dispatch:
 
 permissions:
@@ -32,6 +37,19 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+
+      # SPEC-SEC-CORS-001 REQ-6 — CORSMiddleware must be the LAST add_middleware
+      # call in this service's entry module. Rule lives at
+      # rules/cors_middleware_last.yml, configured by sgconfig.yml at repo root.
+      # `uses:` steps ignore the job's defaults.run.working-directory and run
+      # from $GITHUB_WORKSPACE, so the relative paths resolve correctly.
+      # Note: klai-knowledge-mcp uses FastMCP streamable_http_app() which has no
+      # add_middleware calls — this step is a vacuous-pass per REQ-6.3 note.
+      - name: Guard — CORSMiddleware must be last (SPEC-SEC-CORS-001 REQ-6)
+        uses: ast-grep/action@cf62e780f0c88301228978d593a7784427a097a6  # v1.5.0
+        with:
+          config: sgconfig.yml
+          paths: klai-knowledge-mcp/main.py
 
       - name: Log in to GHCR
         uses: docker/login-action@v4

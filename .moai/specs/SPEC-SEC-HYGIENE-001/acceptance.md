@@ -473,6 +473,21 @@ minute or 60 read requests per minute.
 
 **Covers:** REQ-32.1, REQ-32.2, REQ-32.3, REQ-32.4.
 
+**Implementation note (default deviation, ratified during /run):**
+The shipped defaults in `app/core/config.py` are **120 reads/min/org**
+and **30 writes/min/org** — higher than the SPEC literal (60/10) at
+REQ-32.2. Rationale: industry references for admin/management APIs
+cluster around 75-1200 req/min/org (Auth0 Management API: 120/min
+free tier, Heroku Platform API: 75/min, Slack Admin Oversight: 1200/min);
+10 writes/min would pinch legitimate admin onboarding flows that
+configure 5+ connectors back-to-back, especially with React strict
+mode double-firing in dev. The values are env-tunable via
+`CONNECTOR_RL_READ_PER_MIN` / `CONNECTOR_RL_WRITE_PER_MIN` and the
+acceptance test itself sets them to the SPEC literal (60/10) so it
+exercises the SPEC-described boundaries verbatim — no test rewrite is
+needed if defaults change. Step 1 above ("10 POSTs in succession")
+exercises the 10-write boundary regardless of prod default.
+
 ---
 
 ## klai-scribe hygiene ACs

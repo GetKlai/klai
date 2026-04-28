@@ -291,3 +291,99 @@ self-documenting about the expected prod value if SOPS drift occurs.
 The same-shape generalisation: **trust the container env, not the
 config source.** Any "silent fallback to a code default" in a migration
 off a blanket-inherit pattern is a latent bug.
+
+## scribe-deploy-no-alembic (HIGH)
+The `scribe-api.yml` GitHub Action does `docker compose up -d` only —
+it does NOT run `alembic upgrade head`. The Dockerfile CMD is
+`uvicorn`, no migrate step in the entrypoint either. New migrations
+land in the image but are not applied to the DB on deploy.
+
+**What it looks like in production**: app starts, any code path that
+references the new column raises `asyncpg.exceptions.UndefinedColumnError`.
+If wrapped in try/except (e.g. lifespan startup hooks), it logs a warning
+and the rest of the app keeps working — you only notice when the new
+feature silently does nothing. If NOT wrapped, the request fails with
+a 500.
+
+**SPEC-SEC-HYGIENE-001 scribe-slice (2026-04-27)** got bitten by this:
+migration `0007_c5f9e3a4` (adds `error_reason`) shipped in the image but
+not applied. Reaper-on-startup logged `scribe_startup_reaper_failed` with
+the `UndefinedColumnError`. The lifespan try/except caught it, app stayed
+up, but the new feature was dormant until manual `docker exec
+klai-core-scribe-api-1 alembic upgrade head` + container restart.
+
+**Prevention**:
+1. Any scribe SPEC that adds a migration MUST include in its acceptance
+   criteria: "after CI deploy completes, run `docker exec
+   klai-core-scribe-api-1 alembic upgrade head` and restart the
+   container" — and put that in the PR body so the merger doesn't forget.
+2. Better long-term fix: add a step to `scribe-api.yml` after `docker
+   compose up -d`:
+   ```yaml
+   - name: Apply alembic migrations
+     uses: appleboy/ssh-action@v1
+     with:
+       script: |
+         docker exec klai-core-scribe-api-1 alembic upgrade head
+   ```
+   Or move it into the Dockerfile CMD (`alembic upgrade head && exec uvicorn ...`).
+3. **General rule for all klai services with their own deploy workflow**:
+   grep the `.github/workflows/<service>.yml` for `alembic` BEFORE landing
+   any migration. If absent, use option 1 (manual + PR-body reminder) as
+   a stopgap and file a follow-up SPEC for option 2.
+
+**Audit (2026-04-27)** — verified by greping `Dockerfile` ENTRYPOINT/CMD
+across services:
+
+| Service | Auto-migrates on container start? |
+|---|---|
+| portal-api | YES — `entrypoint.sh` runs `alembic upgrade head` then exec's uvicorn |
+| scribe-api | NO — `CMD uvicorn …` only |
+| klai-connector | NO — `CMD uvicorn …` only |
+| klai-mailer | NO — `CMD uvicorn …` only |
+| klai-knowledge-mcp | NO — `CMD python main.py` only |
+| klai-knowledge-ingest | NO — `CMD uvicorn …` only |
+| klai-retrieval-api | NO — `CMD uvicorn …` only |
+
+Every service except portal-api needs the manual-migrate step or an
+entrypoint port. The portal-api `entrypoint.sh` (introduced by
+SPEC-CHAT-TEMPLATES-CLEANUP-001) is the canonical pattern to copy.
+
+## ruff-format-and-ruff-check-are-different (MED)
+`uv run ruff check` and `uv run ruff format --check` enforce different
+things. Lint (`check`) catches code-correctness issues (unused imports,
+undefined names). Format (`format --check`) catches whitespace, line
+wrapping, quote consistency. CI's portal-api `quality` job runs BOTH;
+local `ruff check` clean does NOT guarantee CI pass.
+
+**Prevention:** Before pushing, run BOTH commands:
+
+```bash
+cd klai-portal/backend
+uv run ruff check . && uv run ruff format --check .
+```
+
+Or run the quality job's exact sequence: see
+`.github/workflows/portal-api.yml` lines 43-47. SPEC-SEC-CORS-001 round
+2 push hit this — `ruff check` was clean locally but `ruff format --check`
+flagged 4 files in CI, requiring a follow-up commit. Now mechanical.
+
+## gh-cleanup-cross-worktree (LOW)
+`gh pr merge --delete-branch` runs a local-side cleanup that includes
+`git checkout main && git branch -D <feature>`. If `main` is checked out
+in another git worktree (common in klai with multiple parallel SPECs),
+this fails with `fatal: 'main' is already used by worktree at '<path>'`
+AFTER the remote merge has succeeded. The PR is merged, the local-side
+cleanup is incomplete.
+
+**Prevention:** Trust the GitHub-side merge result; finish local cleanup
+manually:
+
+```bash
+gh pr view <number> --json state,mergeCommit  # confirm MERGED
+git push origin --delete <feature-branch>      # remote branch
+git worktree remove <path>                     # local worktree
+```
+
+Do NOT panic and re-attempt the merge. The remote merge is idempotent
+once committed; trying again will say "already merged".
