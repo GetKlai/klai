@@ -13,6 +13,14 @@ type: tracker
 
 ## HISTORY
 
+### v0.5.0 (2026-04-28, late)
+- SPEC-SEC-AUTH-COVERAGE-001 fully shipped: implementation (#195) + alerts/runbook/CHANGELOG follow-through (#198), both deployed to core-01.
+  - 14 in-scope auth.py endpoints (totp / passkey / email_otp / idp / password / sso_complete / verify_email) now emit structured `*_failed` events on every documented failure leg + `audit.log_event` on state-changing successes.
+  - 16 distinct events covered by 2 new Grafana alerts (`auth_failure_rate_high` warning, `auth_zitadel_5xx_burst` critical) with triage runbook `docs/runbooks/auth-failure-burst.md`.
+  - 74 new tests, 80% line coverage on `app.api.auth` (REQ-5.5 PARTIAL — 5% gap in shared helpers documented as follow-up scope, not blocking).
+- Live status table updated: 10 of 13 tracked SPECs shipped (was 9 of 12 + 1 NEW queued).
+- Estimate revised: 6-10 PRs remaining (was 8-12).
+
 ### v0.4.0 (2026-04-28)
 - 4-day implementation sprint progressed to ~75% of original audit-response scope
 - 9 of 12 original SPECs reach `shipped` or majority-shipped state (see Live Status)
@@ -70,7 +78,7 @@ Implementation teams should read the linked sub-SPEC, not this tracker, when pic
 
 ---
 
-## Live status (2026-04-28)
+## Live status (2026-04-28, late)
 
 | SPEC | Prio | Status | PRs |
 |---|---|---|---|
@@ -86,10 +94,10 @@ Implementation teams should read the linked sub-SPEC, not this tracker, when pic
 | SPEC-SEC-SESSION-001 | P2 | **queued** | — |
 | SPEC-SEC-INTERNAL-001 | P2 | **queued** | — |
 | SPEC-SEC-HYGIENE-001 | P3 | **partial** (scribe slice #179 + retrieval slice #188 open; connector / portal / knowledge-mcp slices queued) | #179 + #188 (open) |
-| **SPEC-SEC-AUTH-COVERAGE-001** *(NEW)* | P0 | **plan shipped, run queued** | #184 plan + #186 v0.2 expansion |
+| SPEC-SEC-AUTH-COVERAGE-001 | P0 | **shipped** | #184 plan + #186 v0.2 + #195 run + #198 alerts/runbook/CHANGELOG |
 
-**Implementation rate:** ~26 PRs merged in 4 days (audit-response only).
-**Remaining:** ~8-12 PRs to close all 12 originals + the new AUTH-COVERAGE.
+**Implementation rate:** ~28 PRs merged in 4 days (audit-response only).
+**Remaining:** ~6-10 PRs to close the 3 fully-queued originals + IDENTITY-ASSERT-001 residue + HYGIENE-001 slices.
 
 ---
 
