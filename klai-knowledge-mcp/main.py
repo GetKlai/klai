@@ -7,8 +7,12 @@ MCP server that lets LibreChat agents save content to:
 
 Transport: streamable-http (LibreChat v0.8.4+)
 Auth:      service token forwarded to klai-docs as X-Internal-Secret
-Identity:  X-User-ID, X-Org-ID, X-Org-Slug request headers injected by
-           LibreChat config; accessed per-call via FastMCP Context parameter.
+Identity:  X-User-ID, X-Org-ID, X-Org-Slug, Authorization: Bearer <user_jwt>
+           injected by LibreChat config; the (X-User-ID, X-Org-ID, X-Org-Slug)
+           tuple is *claimed* and MUST be cross-checked against portal-api's
+           /internal/identity/verify before any upstream call. Verified
+           values flow downstream — caller-asserted values never do.
+           See SPEC-SEC-IDENTITY-ASSERT-001 REQ-2.
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ from datetime import date
 from typing import Literal, get_args
 
 import httpx
+from klai_identity_assert import IdentityAsserter, VerifyResult
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
@@ -36,8 +41,11 @@ KLAI_DOCS_API_BASE = os.environ["KLAI_DOCS_API_BASE"]  # http://docs-app:3000
 DOCS_INTERNAL_SECRET = os.environ["DOCS_INTERNAL_SECRET"]
 KNOWLEDGE_INGEST_URL = os.environ["KNOWLEDGE_INGEST_URL"]  # http://knowledge-ingest:8000
 KNOWLEDGE_INGEST_SECRET = os.getenv("KNOWLEDGE_INGEST_SECRET", "")
+# SPEC-SEC-IDENTITY-ASSERT-001 REQ-2: portal-api /internal/identity/verify
+# coordinates. Both required at startup — fail-closed if missing.
+PORTAL_API_URL = os.environ["PORTAL_API_URL"]
+PORTAL_INTERNAL_SECRET = os.environ["PORTAL_INTERNAL_SECRET"]
 _INTERNAL_SECRET_HEADER = "X-Internal-Secret"
-DEFAULT_ORG_SLUG = os.getenv("DEFAULT_ORG_SLUG", "")
 
 # Path validation patterns
 _KB_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -50,6 +58,11 @@ _ERR_SAVE = (
     "Er is een fout opgetreden bij het opslaan. Probeer het opnieuw.\n"
     "(An error occurred while saving. Please try again.)"
 )
+_ERR_IDENTITY_REJECTED = (
+    "Toegang geweigerd. Controleer of je de juiste organisatie en gebruiker bent.\n"
+    "(Identity verification failed. The reason code is in the server logs — "
+    "the MCP intentionally does not echo it to the client.)"
+)
 _ERR_ASSERTION_MODE = (
     "Error: invalid assertion_mode '{}'. "
     f"Valid values: {', '.join(sorted(VALID_ASSERTION_MODES))}"
@@ -57,32 +70,45 @@ _ERR_ASSERTION_MODE = (
 
 
 # -- Identity -----------------------------------------------------------------
+# SEC: asserted — values lifted from caller-controlled headers; MUST be
+# verified via portal-api /internal/identity/verify before any upstream use
+# (REQ-2.4). Storing this as a distinct type from VerifyResult keeps the
+# claimed-vs-verified distinction visible in every call site.
 @dataclass(frozen=True, slots=True)
-class Identity:
-    """User/org identity extracted from request headers."""
-
+class _ClaimedIdentity:
     user_id: str
     org_id: str
     org_slug: str
 
 
-# @MX:NOTE _get_identity — headers injected by LibreChat config;
-# X-User-ID = LibreChat MongoDB user ID = same as data["user"] in LiteLLM hook
-def _get_identity(ctx: Context) -> Identity:
-    """Extract identity headers from the FastMCP request context.
+def _request_headers(ctx: Context):
+    """Return the headers from the FastMCP request context.
 
-    Raises ValueError when required headers are absent.
+    FastMCP types ``request_context.request`` as Optional; in practice every
+    tool invocation comes from an HTTP request, so ``None`` would indicate a
+    programming error elsewhere. Fail loud rather than silently coerce —
+    and centralise the guard so individual call sites stay readable.
     """
-    headers = ctx.request_context.request.headers
+    request = ctx.request_context.request
+    if request is None:
+        raise RuntimeError("Tool invoked outside an HTTP request context")
+    return request.headers
+
+
+def _get_claimed_identity(ctx: Context) -> _ClaimedIdentity:
+    """Extract the caller-asserted identity tuple from request headers.
+
+    REQ-2.4: this returns a *claim*, never trusted on its own. Every call site
+    pairs this with ``_verify_identity`` before forwarding upstream. The
+    DEFAULT_ORG_SLUG fallback (REQ-2.6) has been removed — a missing
+    X-Org-Slug header is now a hard error, no silent identity downgrade.
+
+    Raises ValueError when any of the three required headers is absent.
+    """
+    headers = _request_headers(ctx)
     user_id = headers.get("x-user-id", "")
     org_id = headers.get("x-org-id", "")
-    org_slug = headers.get("x-org-slug") or DEFAULT_ORG_SLUG
-    if not headers.get("x-org-slug"):
-        logger.warning(
-            "X-Org-Slug header missing; falling back to DEFAULT_ORG_SLUG=%r. "
-            "Check LibreChat header forwarding config.",
-            DEFAULT_ORG_SLUG,
-        )
+    org_slug = headers.get("x-org-slug", "")
 
     if not user_id:
         raise ValueError(
@@ -94,7 +120,28 @@ def _get_identity(ctx: Context) -> Identity:
             "X-Org-ID header is missing. "
             "Ensure LibreChat forwards identity headers to this MCP server."
         )
-    return Identity(user_id=user_id, org_id=org_id, org_slug=org_slug)
+    if not org_slug:
+        raise ValueError(
+            "X-Org-Slug header is missing. "
+            "Ensure LibreChat forwards identity headers to this MCP server."
+        )
+    return _ClaimedIdentity(user_id=user_id, org_id=org_id, org_slug=org_slug)
+
+
+def _extract_user_jwt(ctx: Context) -> str | None:
+    """Pull the end-user Zitadel JWT from ``Authorization: Bearer <jwt>``.
+
+    Returns ``None`` when the header is absent or malformed — the verify
+    call then falls back to the membership path (REQ-2.5 without retry: a
+    deny is a deny, no second call). The shared ``X-Internal-Secret`` is a
+    different header on incoming traffic and is unrelated to this JWT.
+    """
+    headers = _request_headers(ctx)
+    auth = headers.get("authorization", "")
+    if not auth.lower().startswith("bearer "):
+        return None
+    token = auth.split(" ", 1)[1].strip()
+    return token or None
 
 
 def _validate_incoming_secret(ctx: Context) -> None:
@@ -105,10 +152,56 @@ def _validate_incoming_secret(ctx: Context) -> None:
     """
     if not KNOWLEDGE_INGEST_SECRET:
         return
-    headers = ctx.request_context.request.headers
+    headers = _request_headers(ctx)
     provided = headers.get(_INTERNAL_SECRET_HEADER.lower(), "")
     if not provided or not hmac.compare_digest(provided, KNOWLEDGE_INGEST_SECRET):
         raise ValueError("Invalid or missing X-Internal-Secret header.")
+
+
+# -- Identity verification ---------------------------------------------------
+# Module-level singleton: the IdentityAsserter pools an httpx.AsyncClient and
+# carries a per-process LRU cache, so it MUST be reused across tool calls.
+_asserter = IdentityAsserter(
+    portal_base_url=PORTAL_API_URL,
+    internal_secret=PORTAL_INTERNAL_SECRET,
+)
+
+
+async def _verify_identity(ctx: Context, claimed: _ClaimedIdentity) -> VerifyResult:
+    """Call portal-api /internal/identity/verify for the claimed tuple.
+
+    Forwards the end-user JWT (when present) so verify can do the strong
+    sub/resourceowner check. When no JWT is forwarded, the portal falls back
+    to a membership lookup. Either path proves the claimed user genuinely
+    belongs to the claimed org — the only way to neutralise the M1 + D1
+    chain in spec.md.
+    """
+    bearer_jwt = _extract_user_jwt(ctx)
+    request_headers = dict(_request_headers(ctx))
+    return await _asserter.verify(
+        caller_service="knowledge-mcp",
+        claimed_user_id=claimed.user_id,
+        claimed_org_id=claimed.org_id,
+        bearer_jwt=bearer_jwt,
+        claimed_org_slug=claimed.org_slug,
+        request_headers=request_headers,
+    )
+
+
+def _log_identity_deny(claimed: _ClaimedIdentity, result: VerifyResult) -> None:
+    """Server-side log of why a call was rejected.
+
+    REQ-2.2: the reason code stays in logs only — never echoed to the MCP
+    client (information-leak prevention).
+    """
+    logger.warning(
+        "knowledge_mcp_identity_rejected: reason=%s claimed_user_id=%s "
+        "claimed_org_id=%s claimed_org_slug=%s",
+        result.reason,
+        claimed.user_id,
+        claimed.org_id,
+        claimed.org_slug,
+    )
 
 
 # -- Helpers ------------------------------------------------------------------
@@ -222,29 +315,35 @@ async def save_personal_knowledge(
 ) -> str:
     try:
         _validate_incoming_secret(ctx)
-        identity = _get_identity(ctx)
+        claimed = _get_claimed_identity(ctx)
     except ValueError as exc:
         return f"Error: {exc}"
+
+    verified = await _verify_identity(ctx, claimed)
+    if not verified.verified:
+        _log_identity_deny(claimed, verified)
+        return _ERR_IDENTITY_REJECTED
 
     if not assertion_mode:
         assertion_mode = "factual"
     elif assertion_mode not in VALID_ASSERTION_MODES:
         return _ERR_ASSERTION_MODE.format(assertion_mode)
 
+    assert verified.user_id is not None and verified.org_id is not None
     ok = await _save_to_ingest(
-        org_id=identity.org_id,
-        kb_slug=f"personal-{identity.user_id}",
+        org_id=verified.org_id,
+        kb_slug=f"personal-{verified.user_id}",
         title=title,
         content=content,
         assertion_mode=assertion_mode,
         tags=tags,
         source_note=source_note,
-        user_id=identity.user_id,
+        user_id=verified.user_id,
     )
     if not ok:
         return _ERR_SAVE
 
-    return f"\u2713 Opgeslagen in jouw persoonlijke kennisbank: {title}"
+    return f"✓ Opgeslagen in jouw persoonlijke kennisbank: {title}"
 
 
 # -- Tool: save_org_knowledge -------------------------------------------------
@@ -274,17 +373,23 @@ async def save_org_knowledge(
 ) -> str:
     try:
         _validate_incoming_secret(ctx)
-        identity = _get_identity(ctx)
+        claimed = _get_claimed_identity(ctx)
     except ValueError as exc:
         return f"Error: {exc}"
+
+    verified = await _verify_identity(ctx, claimed)
+    if not verified.verified:
+        _log_identity_deny(claimed, verified)
+        return _ERR_IDENTITY_REJECTED
 
     if not assertion_mode:
         assertion_mode = "factual"
     elif assertion_mode not in VALID_ASSERTION_MODES:
         return _ERR_ASSERTION_MODE.format(assertion_mode)
 
+    assert verified.org_id is not None
     ok = await _save_to_ingest(
-        org_id=identity.org_id,
+        org_id=verified.org_id,
         kb_slug="org",
         title=title,
         content=content,
@@ -295,7 +400,7 @@ async def save_org_knowledge(
     if not ok:
         return _ERR_SAVE
 
-    return f"\u2713 Opgeslagen in de organisatie-kennisbank: {title}"
+    return f"✓ Opgeslagen in de organisatie-kennisbank: {title}"
 
 
 # -- Tool: save_to_docs -------------------------------------------------------
@@ -324,9 +429,14 @@ async def save_to_docs(
 ) -> str:
     try:
         _validate_incoming_secret(ctx)
-        identity = _get_identity(ctx)
+        claimed = _get_claimed_identity(ctx)
     except ValueError as exc:
         return f"Error: {exc}"
+
+    verified = await _verify_identity(ctx, claimed)
+    if not verified.verified:
+        _log_identity_deny(claimed, verified)
+        return _ERR_IDENTITY_REJECTED
 
     # V009: reject path traversal in caller-supplied KB coordinates
     if kb_name is not None and not _KB_NAME_PATTERN.match(kb_name):
@@ -338,9 +448,14 @@ async def save_to_docs(
         if ".." in page_path or "\\" in page_path or page_path.startswith("/"):
             return "Error: page_path contains invalid path components."
 
-    org_slug = identity.org_slug
-    if not org_slug:
-        return "Error: X-Org-Slug header missing and DEFAULT_ORG_SLUG not set."
+    # REQ-2.3 / REQ-2.6: outgoing klai-docs URL uses canonical slug from
+    # portal verify response, not the LibreChat-asserted X-Org-Slug.
+    assert (
+        verified.user_id is not None
+        and verified.org_id is not None
+        and verified.org_slug is not None
+    )
+    org_slug = verified.org_slug
 
     # Resolve KB name — always fetch list to validate, auto-select if only one
     try:
@@ -349,8 +464,8 @@ async def save_to_docs(
                 f"{KLAI_DOCS_API_BASE}/api/orgs/{org_slug}/kbs",
                 headers={
                     _INTERNAL_SECRET_HEADER: DOCS_INTERNAL_SECRET,
-                    "X-User-ID": identity.user_id,
-                    "X-Org-ID": identity.org_id,
+                    "X-User-ID": verified.user_id,
+                    "X-Org-ID": verified.org_id,
                 },
             )
     except httpx.RequestError as exc:
@@ -360,7 +475,10 @@ async def save_to_docs(
     if resp.status_code != 200:
         logger.error(
             "KB list fetch returned %d: %s (org_slug=%s, org_id=%s)",
-            resp.status_code, resp.text[:200], org_slug, identity.org_id,
+            resp.status_code,
+            resp.text[:200],
+            org_slug,
+            verified.org_id,
         )
         return _ERR_SAVE
 
@@ -374,18 +492,14 @@ async def save_to_docs(
         if len(kbs) == 1:
             kb_name = valid_slugs[0]
         else:
-            options = ", ".join(
-                f"{kb.get('slug', '?')} ({kb.get('name', '')})" for kb in kbs
-            )
+            options = ", ".join(f"{kb.get('slug', '?')} ({kb.get('name', '')})" for kb in kbs)
             return (
                 f"Meerdere kennisbanken beschikbaar: {options}. "
                 "Geef de slug op als kb_name bij de volgende aanroep."
             )
     elif kb_name not in valid_slugs:
         options = ", ".join(valid_slugs)
-        return (
-            f"Onbekende kb_name '{kb_name}'. Geldige slugs: {options}."
-        )
+        return f"Onbekende kb_name '{kb_name}'. Geldige slugs: {options}."
 
     # Build page path if not provided — land in inbox/ for manual organisation later
     if page_path is None:
@@ -407,7 +521,7 @@ async def save_to_docs(
             "superseded_by": None,
             "confidence": "medium",
             "derived_from": [],
-            "created_by": identity.user_id,
+            "created_by": verified.user_id,
             "system_time": today,
         },
     }
@@ -419,8 +533,8 @@ async def save_to_docs(
                 json=request_body,
                 headers={
                     _INTERNAL_SECRET_HEADER: DOCS_INTERNAL_SECRET,
-                    "X-User-ID": identity.user_id,
-                    "X-Org-ID": identity.org_id,
+                    "X-User-ID": verified.user_id,
+                    "X-Org-ID": verified.org_id,
                     "Content-Type": "application/json",
                 },
             )
@@ -430,7 +544,7 @@ async def save_to_docs(
     if resp.status_code not in (200, 201):
         return f"Error: klai-docs returned HTTP {resp.status_code}. Details: {resp.text[:300]}"
 
-    return f"\u2713 Opgeslagen in kennisbank **{kb_name}**: {title} (pad: {page_path})"
+    return f"✓ Opgeslagen in kennisbank **{kb_name}**: {title} (pad: {page_path})"
 
 
 # -- ASGI app -----------------------------------------------------------------
