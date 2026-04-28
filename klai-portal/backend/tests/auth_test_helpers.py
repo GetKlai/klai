@@ -145,14 +145,27 @@ def _make_db_mock(
 def _audit_emit_patches() -> tuple[Any, Any]:
     """Suppress audit + analytics side effects without mocking the zitadel module.
 
-    Used by every endpoint test to silence ``audit.log_event`` and
-    ``emit_event`` calls so tests focus on the endpoint's own observability
-    surface (structured events) rather than re-asserting audit-log behaviour.
+    Used by tests that DO NOT need to assert on audit-log calls — the
+    patches are entered and discarded.
     """
     return (
         patch("app.api.auth.audit.log_event", AsyncMock()),
         patch("app.api.auth.emit_event", MagicMock()),
     )
+
+
+def _audit_log_patch() -> Any:
+    """Return an assertable ``patch()`` for ``audit.log_event``.
+
+    Use as ``with _audit_log_patch() as audit_log:`` — ``audit_log`` is the
+    AsyncMock that replaced ``audit.log_event`` and can be asserted on
+    (``audit_log.assert_called_once()`` / ``audit_log.call_args.kwargs``).
+
+    This is the assertable counterpart of ``_audit_emit_patches`` — use
+    that helper when you only need to silence the call, this one when
+    you need to verify it.
+    """
+    return patch("app.api.auth.audit.log_event", AsyncMock())
 
 
 # ---------------------------------------------------------------------------

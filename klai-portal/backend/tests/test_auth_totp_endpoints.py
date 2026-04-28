@@ -15,13 +15,12 @@ Zitadel HTTP mocked via respx against the real ``ZitadelClient`` (REQ-5.7).
 
 from __future__ import annotations
 
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 import respx
-from auth_test_helpers import _capture_events
+from auth_test_helpers import _audit_log_patch, _capture_events
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
@@ -35,10 +34,6 @@ from app.api.auth import (
     totp_login,
     totp_setup,
 )
-
-
-def _audit_log_patch() -> Any:
-    return patch("app.api.auth.audit.log_event", AsyncMock())
 
 
 def _put_pending(failures: int = 0) -> str:

@@ -1411,24 +1411,49 @@ async def idp_callback(
     try:
         session = await zitadel.create_session_with_idp_intent(id, token)
     except httpx.HTTPStatusError as exc:
-        logger.exception("create_session_with_idp_intent failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("idp_callback_create_session_failed", zitadel_status=exc.response.status_code)
+        _emit_auth_event(
+            "idp_callback_failed",
+            reason="session_creation_5xx",
+            zitadel_status=exc.response.status_code,
+            outcome="302→failure_url",
+            level="error",
+        )
         return RedirectResponse(url=failure_url, status_code=302)
     except Exception:
-        logger.exception("create_session_with_idp_intent failed (non-HTTP)")
+        _slog.exception("idp_callback_create_session_failed_unexpected")
+        _emit_auth_event(
+            "idp_callback_failed",
+            reason="session_creation_unexpected",
+            outcome="302→failure_url",
+            level="error",
+        )
         return RedirectResponse(url=failure_url, status_code=302)
 
     session_id: str | None = session.get("sessionId")
     session_token: str | None = session.get("sessionToken")
 
     if not session_id or not session_token:
-        logger.error("create_session_with_idp_intent returned no session: %s", session)
+        _slog.error("idp_callback_no_session_in_response", session_keys=list(session.keys()))
+        _emit_auth_event(
+            "idp_callback_failed",
+            reason="missing_session",
+            outcome="302→failure_url",
+            level="error",
+        )
         return RedirectResponse(url=failure_url, status_code=302)
 
-    # Fetch user identity from the session
+    # Fetch user identity from the session — fail-soft: empty values continue.
     try:
         details = await zitadel.get_session_details(session_id, session_token)
     except Exception:
-        logger.exception("get_session_details failed — continuing without auto-provision")
+        _slog.exception("idp_callback_get_session_details_failed")
+        _emit_auth_event(
+            "idp_callback_failed",
+            reason="get_session_details_failed",
+            outcome="continue-degraded",
+            level="warning",
+        )
         details = {"zitadel_user_id": "", "email": ""}
 
     zitadel_user_id = details.get("zitadel_user_id", "")
@@ -1503,7 +1528,14 @@ async def idp_callback(
             session_token=session_token,
         )
     except httpx.HTTPStatusError as exc:
-        logger.exception("idp finalize_auth_request failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("idp_callback_finalize_failed", zitadel_status=exc.response.status_code)
+        _emit_auth_event(
+            "idp_callback_failed",
+            reason="finalize_5xx",
+            zitadel_status=exc.response.status_code,
+            outcome="302→failure_url",
+            level="error",
+        )
         return RedirectResponse(url=failure_url, status_code=302)
 
     redirect = RedirectResponse(url=_validate_callback_url(callback_url), status_code=302)
@@ -1517,6 +1549,16 @@ async def idp_callback(
         max_age=settings.sso_cookie_max_age,
     )
     emit_event("login", user_id=zitadel_user_id or None, properties={"method": "idp"})
+    # SPEC-SEC-AUTH-COVERAGE-001 REQ-2.3: audit log on successful IDP callback completion
+    if zitadel_user_id:
+        await audit.log_event(
+            org_id=0,
+            actor=zitadel_user_id,
+            action="auth.login.idp",
+            resource_type="session",
+            resource_id=session_id,
+            details={"method": "idp"},
+        )
     return redirect
 
 
@@ -1609,14 +1651,21 @@ async def idp_signup_callback(
     locale = locale if locale in _SUPPORTED_LOCALES else "nl"
     failure_url = f"{settings.portal_url}/{locale}/signup?error=idp_failed"
 
+    # SPEC-SEC-AUTH-COVERAGE-001 REQ-2.7: every failure leg below emits a
+    # structured idp_signup_callback_failed event before the 302-to-failure_url.
+    # Existing-user happy path emits audit.log_event(auth.signup.idp.existing).
+
     # 1. Retrieve the IDP intent to get user info and optional Zitadel userId
     try:
         intent_data = await zitadel.retrieve_idp_intent(id, token)
     except httpx.HTTPStatusError as exc:
-        logger.exception(
-            "idp_signup_callback retrieve_idp_intent failed %s: %s",
-            exc.response.status_code,
-            exc.response.text,
+        _slog.exception("idp_signup_callback_retrieve_intent_failed", zitadel_status=exc.response.status_code)
+        _emit_auth_event(
+            "idp_signup_callback_failed",
+            reason="retrieve_intent_5xx",
+            zitadel_status=exc.response.status_code,
+            outcome="302→failure_url",
+            level="error",
         )
         return RedirectResponse(url=failure_url, status_code=302)
 
@@ -1626,16 +1675,25 @@ async def idp_signup_callback(
     if not idp_user_id:
         try:
             idp_user_id = await zitadel.create_zitadel_user_from_idp(intent_data, settings.zitadel_portal_org_id)
-            logger.info("idp_signup_callback: created Zitadel user %s from IDP", idp_user_id)
+            _slog.info("idp_signup_callback_user_created", zitadel_user_id=idp_user_id)
         except httpx.HTTPStatusError as exc:
-            logger.exception(
-                "idp_signup_callback create_zitadel_user failed %s: %s",
-                exc.response.status_code,
-                exc.response.text,
+            _slog.exception("idp_signup_callback_create_user_failed", zitadel_status=exc.response.status_code)
+            _emit_auth_event(
+                "idp_signup_callback_failed",
+                reason="create_user_5xx",
+                zitadel_status=exc.response.status_code,
+                outcome="302→failure_url",
+                level="error",
             )
             return RedirectResponse(url=failure_url, status_code=302)
         except Exception:
-            logger.exception("idp_signup_callback create_zitadel_user failed")
+            _slog.exception("idp_signup_callback_create_user_failed_unexpected")
+            _emit_auth_event(
+                "idp_signup_callback_failed",
+                reason="create_user_unexpected",
+                outcome="302→failure_url",
+                level="error",
+            )
             return RedirectResponse(url=failure_url, status_code=302)
 
     # 1c. Create Zitadel session with the resolved user_id + IDP intent.
@@ -1652,38 +1710,54 @@ async def idp_signup_callback(
         except httpx.HTTPStatusError as exc:
             last_exc = exc
             if exc.response.status_code == 404 and attempt < 3:
-                logger.warning(
-                    "idp_signup_callback create_session 404 on attempt %d, retrying",
-                    attempt + 1,
+                _slog.warning(
+                    "idp_signup_callback_create_session_404_retry",
+                    attempt=attempt + 1,
                 )
                 continue
-            logger.exception(
-                "idp_signup_callback create_session failed %s: %s",
-                exc.response.status_code,
-                exc.response.text,
+            _slog.exception("idp_signup_callback_create_session_failed", zitadel_status=exc.response.status_code)
+            _emit_auth_event(
+                "idp_signup_callback_failed",
+                reason="create_session_5xx",
+                zitadel_status=exc.response.status_code,
+                attempts=attempt + 1,
+                outcome="302→failure_url",
+                level="error",
             )
             return RedirectResponse(url=failure_url, status_code=302)
     if session is None:
-        logger.error(
-            "idp_signup_callback create_session failed after retries: %s",
-            last_exc,
+        _slog.error("idp_signup_callback_create_session_retries_exhausted", last_exc=str(last_exc))
+        _emit_auth_event(
+            "idp_signup_callback_failed",
+            reason="create_session_retries_exhausted",
+            outcome="302→failure_url",
+            level="error",
         )
         return RedirectResponse(url=failure_url, status_code=302)
 
     session_id: str | None = session.get("sessionId")
     session_token: str | None = session.get("sessionToken")
     if not session_id or not session_token:
-        logger.error("idp_signup_callback: no session in response: %s", session)
+        _slog.error("idp_signup_callback_no_session_in_response", session_keys=list(session.keys()))
+        _emit_auth_event(
+            "idp_signup_callback_failed",
+            reason="missing_session",
+            outcome="302→failure_url",
+            level="error",
+        )
         return RedirectResponse(url=failure_url, status_code=302)
 
     # 2. Fetch full session to get the Zitadel user ID and IDP profile
     try:
         session_detail = await zitadel.get_session(session_id, session_token)
     except httpx.HTTPStatusError as exc:
-        logger.exception(
-            "idp_signup_callback get_session failed %s: %s",
-            exc.response.status_code,
-            exc.response.text,
+        _slog.exception("idp_signup_callback_get_session_failed", zitadel_status=exc.response.status_code)
+        _emit_auth_event(
+            "idp_signup_callback_failed",
+            reason="get_session_5xx",
+            zitadel_status=exc.response.status_code,
+            outcome="302→failure_url",
+            level="error",
         )
         return RedirectResponse(url=failure_url, status_code=302)
 
@@ -1692,7 +1766,13 @@ async def idp_signup_callback(
     user_factor = factors.get("user", {})
     zitadel_user_id: str = user_factor.get("id", "")
     if not zitadel_user_id:
-        logger.error("idp_signup_callback: no user.id in session factors: %s", session_detail)
+        _slog.error("idp_signup_callback_no_user_id_in_factors")
+        _emit_auth_event(
+            "idp_signup_callback_failed",
+            reason="missing_user_id",
+            outcome="302→failure_url",
+            level="error",
+        )
         return RedirectResponse(url=failure_url, status_code=302)
 
     # Extract IDP display name + email for the social form pre-fill (non-sensitive)
@@ -1708,7 +1788,7 @@ async def idp_signup_callback(
 
     if existing_user is not None:
         # Existing user — just log them in via the SSO cookie
-        logger.info("idp_signup_callback: existing user %s, setting SSO cookie", zitadel_user_id)
+        _slog.info("idp_signup_callback_existing_user_login", zitadel_user_id=zitadel_user_id)
         response = RedirectResponse(url=f"{settings.portal_url}/", status_code=302)
         response.set_cookie(
             key="klai_sso",
@@ -1720,6 +1800,16 @@ async def idp_signup_callback(
             max_age=settings.sso_cookie_max_age,
         )
         emit_event("login", user_id=zitadel_user_id, properties={"method": "idp"})
+        # SPEC-SEC-AUTH-COVERAGE-001 REQ-2.7: audit log on successful existing-
+        # user IDP signup-callback (existing portal_user → SSO cookie path)
+        await audit.log_event(
+            org_id=existing_user.org_id,
+            actor=zitadel_user_id,
+            action="auth.signup.idp.existing_login",
+            resource_type="session",
+            resource_id=session_id,
+            details={"method": "idp"},
+        )
         return response
 
     # 4. New user — store pending session in encrypted cookie, redirect to company name form
