@@ -20,6 +20,7 @@ import httpx
 import pytest
 import respx
 from fastapi import HTTPException
+from helpers import make_request
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
 
@@ -144,7 +145,7 @@ async def test_required_has_any_mfa_500_returns_503(respx_zitadel: respx.MockRou
 
     with capture_logs() as captured, audit_patch, emit_patch:
         with pytest.raises(HTTPException) as exc:
-            await login(body=_make_login_body(), response=response, db=db)
+            await login(body=_make_login_body(), response=response, request=make_request(), db=db)
 
     assert exc.value.status_code == 503
     assert exc.value.headers["Retry-After"] == "5"
@@ -177,7 +178,7 @@ async def test_find_user_by_email_500_returns_503(respx_zitadel: respx.MockRoute
 
     with capture_logs() as captured, audit_patch, emit_patch:
         with pytest.raises(HTTPException) as exc:
-            await login(body=_make_login_body(), response=response, db=db)
+            await login(body=_make_login_body(), response=response, request=make_request(), db=db)
 
     assert exc.value.status_code == 503
     assert exc.value.headers["Retry-After"] == "5"
@@ -220,7 +221,7 @@ async def test_optional_has_any_mfa_500_proceeds_no_event(respx_zitadel: respx.M
     audit_patch, emit_patch = _audit_emit_patches()
 
     with capture_logs() as captured, audit_patch, emit_patch:
-        result = await login(body=_make_login_body(), response=response, db=db)
+        result = await login(body=_make_login_body(), response=response, request=make_request(), db=db)
 
     assert result is not None
     # Under mfa_policy="optional" the `if mfa_policy == "required":` guard
@@ -239,6 +240,7 @@ async def test_optional_has_any_mfa_500_proceeds_no_event(respx_zitadel: respx.M
 @pytest.mark.asyncio
 async def test_happy_path_required_with_totp_enrolled_returns_totp_required(
     respx_zitadel: respx.MockRouter,
+    fake_redis: Any,
 ) -> None:
     respx_zitadel.post("/v2/users").mock(
         return_value=httpx.Response(
@@ -255,7 +257,7 @@ async def test_happy_path_required_with_totp_enrolled_returns_totp_required(
     audit_patch, emit_patch = _audit_emit_patches()
 
     with capture_logs() as captured, audit_patch, emit_patch:
-        result = await login(body=_make_login_body(), response=response, db=db)
+        result = await login(body=_make_login_body(), response=response, request=make_request(), db=db)
 
     assert result.status == "totp_required"
     assert result.temp_token  # non-empty opaque token
@@ -288,7 +290,7 @@ async def test_happy_path_optional_no_mfa_sets_cookie(respx_zitadel: respx.MockR
     audit_patch, emit_patch = _audit_emit_patches()
 
     with capture_logs() as captured, audit_patch, emit_patch:
-        result = await login(body=_make_login_body(), response=response, db=db)
+        result = await login(body=_make_login_body(), response=response, request=make_request(), db=db)
 
     assert result.status == "ok"
     response.set_cookie.assert_called_once()  # session cookie minted by _finalize_and_set_cookie
@@ -316,7 +318,7 @@ async def test_find_user_by_email_no_results_continues_to_password_check(
 
     with capture_logs() as captured, audit_patch, emit_patch:
         with pytest.raises(HTTPException) as exc:
-            await login(body=_make_login_body(), response=response, db=db)
+            await login(body=_make_login_body(), response=response, request=make_request(), db=db)
 
     assert exc.value.status_code == 401
     assert "incorrect" in str(exc.value.detail).lower()
@@ -349,7 +351,7 @@ async def test_portal_user_found_org_fetch_raises_returns_503(respx_zitadel: res
 
     with capture_logs() as captured, audit_patch, emit_patch:
         with pytest.raises(HTTPException) as exc:
-            await login(body=_make_login_body(), response=response, db=db)
+            await login(body=_make_login_body(), response=response, request=make_request(), db=db)
 
     assert exc.value.status_code == 503
     assert exc.value.headers["Retry-After"] == "5"
@@ -390,7 +392,7 @@ async def test_portal_user_lookup_raises_proceeds_documented_fail_open(
     audit_patch, emit_patch = _audit_emit_patches()
 
     with capture_logs() as captured, audit_patch, emit_patch:
-        result = await login(body=_make_login_body(), response=response, db=db)
+        result = await login(body=_make_login_body(), response=response, request=make_request(), db=db)
 
     assert result is not None
     response.set_cookie.assert_called_once()
@@ -429,7 +431,7 @@ async def test_required_has_any_mfa_request_error_returns_503(respx_zitadel: res
 
     with capture_logs() as captured, audit_patch, emit_patch:
         with pytest.raises(HTTPException) as exc:
-            await login(body=_make_login_body(), response=response, db=db)
+            await login(body=_make_login_body(), response=response, request=make_request(), db=db)
 
     assert exc.value.status_code == 503
     assert exc.value.headers["Retry-After"] == "5"
@@ -476,7 +478,7 @@ async def test_portal_user_orphan_org_proceeds_documented_fail_open(
     audit_patch, emit_patch = _audit_emit_patches()
 
     with capture_logs() as captured, audit_patch, emit_patch:
-        result = await login(body=_make_login_body(), response=response, db=db)
+        result = await login(body=_make_login_body(), response=response, request=make_request(), db=db)
 
     # Login succeeds (fail-open) and a session cookie is minted
     assert result is not None
@@ -526,7 +528,7 @@ async def test_required_has_any_mfa_generic_exception_returns_503(respx_zitadel:
         patch.object(zitadel_singleton, "has_any_mfa", AsyncMock(side_effect=RuntimeError("kernel panic"))),
     ):
         with pytest.raises(HTTPException) as exc:
-            await login(body=_make_login_body(), response=response, db=db)
+            await login(body=_make_login_body(), response=response, request=make_request(), db=db)
 
     assert exc.value.status_code == 503
     assert exc.value.headers["Retry-After"] == "5"
@@ -557,7 +559,7 @@ async def test_find_user_by_email_request_error_returns_503(respx_zitadel: respx
 
     with capture_logs() as captured, audit_patch, emit_patch:
         with pytest.raises(HTTPException) as exc:
-            await login(body=_make_login_body(), response=response, db=db)
+            await login(body=_make_login_body(), response=response, request=make_request(), db=db)
 
     assert exc.value.status_code == 503
     assert exc.value.headers["Retry-After"] == "5"
@@ -599,7 +601,7 @@ async def test_recommended_policy_behaves_like_optional(respx_zitadel: respx.Moc
     audit_patch, emit_patch = _audit_emit_patches()
 
     with capture_logs() as captured, audit_patch, emit_patch:
-        result = await login(body=_make_login_body(), response=response, db=db)
+        result = await login(body=_make_login_body(), response=response, request=make_request(), db=db)
 
     assert result.status == "ok"
     response.set_cookie.assert_called_once()

@@ -2,6 +2,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import structlog
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
 
@@ -15,6 +16,7 @@ from app.api.app_gaps import router as app_gaps_router
 from app.api.app_knowledge_bases import router as app_knowledge_bases_router
 from app.api.app_knowledge_sources import router as app_knowledge_sources_router
 from app.api.app_templates import router as app_templates_router
+from app.api.auth import _get_sso_fernet
 from app.api.auth import router as auth_router
 from app.api.billing import router as billing_router
 from app.api.connectors import router as connectors_router
@@ -45,6 +47,7 @@ from app.services.zitadel import zitadel
 setup_logging("portal-api")
 
 logger = logging.getLogger(__name__)
+_slog = structlog.get_logger()
 
 
 async def _run_stuck_detector() -> None:
@@ -68,6 +71,22 @@ async def _run_stuck_detector() -> None:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     import asyncio
 
+    # SPEC-SEC-SESSION-001 REQ-4: validate SSO_COOKIE_KEY in BOTH dev and prod
+    # modes, before any other startup work. Empty / unset key aborts the
+    # process so a misconfigured deployment is caught at deploy time, not on
+    # the first cookie operation. Calling _get_sso_fernet() also exercises
+    # the Fernet construction path that will later issue/verify cookies, so
+    # malformed keys (wrong length, non-base64) abort here too.
+    try:
+        _get_sso_fernet()
+    except RuntimeError:
+        _slog.critical(
+            "sso_cookie_key_missing_startup_abort",
+            env_var="SSO_COOKIE_KEY",
+            sops_path="klai-infra/core-01/.env.sops",
+        )
+        raise
+
     if settings.is_auth_dev_mode:
         # ── Dev mode: skip Zitadel, loud warnings ────────────────────────
         logger.critical(
@@ -84,12 +103,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
             raise SystemExit(1)
     else:
-        # ── Production mode: validate secrets exist ──────────────────────
+        # ── Production mode: validate remaining secrets exist ────────────
+        # SSO_COOKIE_KEY is handled above by _get_sso_fernet(); listing it
+        # here too would double-log the same misconfiguration.
         missing = []
         if not settings.zitadel_pat:
             missing.append("ZITADEL_PAT")
-        if not settings.sso_cookie_key:
-            missing.append("SSO_COOKIE_KEY")
         if not settings.portal_secrets_key:
             missing.append("PORTAL_SECRETS_KEY")
         if not settings.encryption_key:
