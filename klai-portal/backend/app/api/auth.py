@@ -40,6 +40,7 @@ import json
 import logging
 import secrets
 import time
+from typing import Any
 from urllib.parse import quote, urlparse
 
 import httpx
@@ -136,6 +137,14 @@ _pending_totp = TTLCache(_TOTP_PENDING_TTL)
 # ---------------------------------------------------------------------------
 
 
+# @MX:ANCHOR: Trust boundary for OIDC callback URLs returned by Zitadel.
+# @MX:REASON: fan_in=3 — called from login() pre-finalize, idp_callback,
+#   and sso_complete after every successful finalize. Loosening the
+#   trusted-host check (e.g. allowing wildcards or new domain suffixes)
+#   opens an open-redirect across the entire auth surface. Coordinate
+#   with frontend host config + Caddy redirect rules before changing.
+# @MX:SPEC: SPEC-SEC-AUTH-COVERAGE-001 (defense-in-depth on top of
+#   Zitadel's OIDC client redirect_uri validation)
 def _validate_callback_url(url: str) -> str:
     """Ensure callback_url points to a trusted domain, not an attacker-controlled one.
 
@@ -176,6 +185,15 @@ async def get_current_user_id(
     return user_id
 
 
+# @MX:ANCHOR: Single helper that mints the klai_sso cookie + finalizes
+#   the OIDC auth request. fan_in=3 across login, totp_login, sso_complete.
+# @MX:REASON: All three callers depend on this helper to (a) set
+#   `klai_sso` consistently, (b) handle stale-auth-request 409, and
+#   (c) call _validate_callback_url before redirecting. Changing cookie
+#   attributes (max_age, samesite, domain) here shifts the contract for
+#   every authenticated session. Coordinate with frontend SSO consumers
+#   and the LibreChat iframe flow before touching.
+# @MX:SPEC: SPEC-SEC-AUTH-COVERAGE-001 (predecessor: SPEC-SEC-MFA-001)
 async def _finalize_and_set_cookie(
     response: Response,
     auth_request_id: str,
@@ -245,14 +263,54 @@ def _mfa_unavailable() -> HTTPException:
     )
 
 
-# @MX:ANCHOR: Single emit point for the structured `mfa_check_failed` event.
-# @MX:REASON: fan_in=8 — every Zitadel/DB failure leg in login() and
-#   _resolve_and_enforce_mfa funnels through this helper. The fields it
-#   produces (reason, mfa_policy, zitadel_status, email_hash, outcome, log_level)
-#   are the schema consumed by Grafana alerts (portal-mfa-rules.yaml) and
-#   docs/runbooks/mfa-check-failed.md. Adding a field is fine; renaming or
-#   removing breaks alerting.
-# @MX:SPEC: SPEC-SEC-MFA-001
+# @MX:ANCHOR: Single emit point for any structured auth-flow failure event.
+# @MX:REASON: fan_in projected ≥20 across SPEC-SEC-MFA-001 and SPEC-SEC-AUTH-
+#   COVERAGE-001. Every Zitadel/DB failure leg in login(), _resolve_and_enforce_mfa,
+#   totp_login, totp_setup, totp_confirm, idp_intent, idp_callback,
+#   password_reset, password_set, sso_complete, passkey_*, email_otp_*,
+#   verify_email funnels through here. The kwargs produced (event, reason,
+#   outcome, zitadel_status, email_hash, log_level + ad-hoc fields) are the
+#   schema consumed by Grafana alerts and the mfa-check-failed runbook.
+#   Adding a field is fine; renaming or removing the existing fields breaks
+#   alerting and on-call queries.
+# @MX:SPEC: SPEC-SEC-AUTH-COVERAGE-001 (predecessor: SPEC-SEC-MFA-001)
+def _emit_auth_event(
+    event: str,
+    *,
+    reason: str,
+    outcome: str,
+    level: str = "warning",
+    email: str | None = None,
+    email_hash: str | None = None,
+    zitadel_status: int | None = None,
+    **fields: Any,
+) -> None:
+    """Emit a structured auth-flow event via structlog (SPEC-SEC-AUTH-COVERAGE-001 REQ-5.1).
+
+    Generalisation of ``_emit_mfa_check_failed``: the event name is a parameter,
+    so any auth endpoint can emit a queryable failure event with the same
+    schema as ``mfa_check_failed``.
+
+    Privacy: pass either ``email`` (raw, sha256-hashed inside) or
+    ``email_hash`` (pre-hashed). Plaintext email is NEVER emitted (REQ-5.2).
+
+    Routing: ``request_id`` is auto-bound by structlog contextvars from
+    ``LoggingContextMiddleware``; no manual propagation needed.
+    """
+    if email is not None and email_hash is None:
+        email_hash = hashlib.sha256(email.lower().encode("utf-8")).hexdigest()
+    log_method = getattr(_slog, level, _slog.warning)
+    payload: dict[str, Any] = {
+        "reason": reason,
+        "outcome": outcome,
+        "zitadel_status": zitadel_status,
+        **fields,
+    }
+    if email_hash is not None:
+        payload["email_hash"] = email_hash
+    log_method(event, **payload)
+
+
 def _emit_mfa_check_failed(
     *,
     reason: str,
@@ -262,21 +320,21 @@ def _emit_mfa_check_failed(
     zitadel_status: int | None = None,
     level: str = "warning",
 ) -> None:
-    """Emit a structured ``mfa_check_failed`` event (SPEC-SEC-MFA-001 REQ-4).
+    """Emit the SPEC-SEC-MFA-001 ``mfa_check_failed`` event.
 
-    Email is sha256-hashed before logging — never the plaintext email.
-    ``request_id`` is auto-bound by structlog contextvars from
-    ``LoggingContextMiddleware``; no manual propagation needed.
+    Thin backward-compatible wrapper around ``_emit_auth_event`` —
+    preserved as a stable public-call surface so SPEC-SEC-MFA-001 callers
+    remain unchanged. New auth endpoints SHOULD call ``_emit_auth_event``
+    directly with their own event name.
     """
-    email_hash = hashlib.sha256(email.lower().encode("utf-8")).hexdigest()
-    log_method = getattr(_slog, level, _slog.warning)
-    log_method(
+    _emit_auth_event(
         "mfa_check_failed",
         reason=reason,
-        mfa_policy=mfa_policy,
-        zitadel_status=zitadel_status,
-        email_hash=email_hash,
         outcome=outcome,
+        level=level,
+        email=email,
+        zitadel_status=zitadel_status,
+        mfa_policy=mfa_policy,
     )
 
 
@@ -519,43 +577,107 @@ _IDP_PENDING_MAX_AGE = 600  # 10 minutes
 
 @router.post("/auth/password/reset", status_code=status.HTTP_204_NO_CONTENT)
 async def password_reset(body: PasswordResetRequest) -> None:
-    """Send a password reset email. Always returns 204 to prevent email enumeration."""
+    """Send a password reset email. Always returns 204 to prevent email enumeration.
+
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-3.1: every call (success OR fail) emits
+    `audit.log_event(action="auth.password.reset")` so compliance can answer
+    "who requested a password reset on date X". Failure paths additionally
+    emit `password_reset_failed` events for ops alerting; the HTTP response
+    stays 204 (anti-enumeration is preserved).
+    """
+    await audit.log_event(
+        org_id=0,
+        actor="anonymous",
+        action="auth.password.reset",
+        resource_type="user",
+        resource_id="unknown",
+        details={"email_hash": hashlib.sha256(body.email.lower().encode("utf-8")).hexdigest()},
+    )
+
     try:
         user_id = await zitadel.find_user_id_by_email(body.email)
     except httpx.HTTPStatusError as exc:
-        logger.exception("find_user_id_by_email failed %s: %s", exc.response.status_code, exc.response.text)
-        return  # fail silently
+        _slog.exception("find_user_id_by_email_failed", zitadel_status=exc.response.status_code)
+        _emit_auth_event(
+            "password_reset_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            email=body.email,
+            outcome="204",
+            level="error",
+        )
+        return  # fail silently — 204 (REQ-3.3)
 
     if not user_id:
-        return  # unknown email — return 204 silently
+        _emit_auth_event(
+            "password_reset_failed",
+            reason="unknown_email",
+            email=body.email,
+            outcome="204",
+            level="warning",
+        )
+        return  # unknown email — return 204 silently (REQ-3.2)
 
     try:
         await zitadel.send_password_reset(user_id)
     except httpx.HTTPStatusError as exc:
-        logger.exception(  # nosemgrep: python-logger-credential-disclosure
-            "send_password_reset failed status=%s", exc.response.status_code
+        _slog.exception("send_password_reset_failed", zitadel_status=exc.response.status_code)
+        _emit_auth_event(
+            "password_reset_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            email=body.email,
+            outcome="204",
+            level="error",
         )
         return  # fail silently
 
 
 @router.post("/auth/password/set", status_code=status.HTTP_204_NO_CONTENT)
 async def password_set(body: PasswordSetRequest) -> None:
-    """Complete a password reset using the code from the reset email."""
+    """Complete a password reset using the code from the reset email.
+
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-3.4..3.6: emit `audit.log_event` on
+    success and `password_set_failed` events on every failure leg.
+    """
     try:
         await zitadel.set_password_with_code(body.user_id, body.code, body.new_password)
     except httpx.HTTPStatusError as exc:
-        logger.exception(  # nosemgrep: python-logger-credential-disclosure
-            "set_password_with_code failed status=%s", exc.response.status_code
-        )
+        _slog.exception("set_password_with_code_failed", zitadel_status=exc.response.status_code)
         if exc.response.status_code in (400, 404, 410):
+            _emit_auth_event(
+                "password_set_failed",
+                reason="expired_link" if exc.response.status_code == 410 else "invalid_code",
+                zitadel_status=exc.response.status_code,
+                actor_user_id=body.user_id,
+                outcome="400",
+                level="warning",
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Link has expired or is invalid, request a new reset link",
             ) from exc
+        _emit_auth_event(
+            "password_set_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            actor_user_id=body.user_id,
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to set password, please try again later",
         ) from exc
+
+    await audit.log_event(
+        org_id=0,
+        actor=body.user_id,
+        action="auth.password.set",
+        resource_type="user",
+        resource_id=body.user_id,
+        details={"reason": "set"},
+    )
 
 
 @router.post("/auth/login", response_model=LoginResponse)
@@ -679,9 +801,21 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
 
 @router.post("/auth/totp-login", response_model=LoginResponse)
 async def totp_login(body: TOTPLoginRequest, response: Response, db: AsyncSession = Depends(get_db)) -> LoginResponse:
-    """Complete login by providing a TOTP code after password was accepted."""
+    """Complete login by providing a TOTP code after password was accepted.
+
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-1.6/1.7/1.8: every failure leg
+    (expired_token, lockout-immediate, invalid_code, lockout-after-fail,
+    zitadel_5xx) emits a ``totp_login_failed`` structured event in addition
+    to the existing ``audit.log_event(action="auth.totp.failed")`` call.
+    """
     pending = _pending_totp.get(body.temp_token)
     if not pending:
+        _emit_auth_event(
+            "totp_login_failed",
+            reason="expired_token",
+            outcome="400",
+            level="warning",
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Session expired, please log in again",
@@ -690,6 +824,13 @@ async def totp_login(body: TOTPLoginRequest, response: Response, db: AsyncSessio
     # Reject immediately if the token is already locked out
     if pending["failures"] >= _TOTP_MAX_FAILURES:
         _pending_totp.pop(body.temp_token)
+        _emit_auth_event(
+            "totp_login_failed",
+            reason="lockout",
+            failures=pending["failures"],
+            outcome="429",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many failed attempts, please log in again",
@@ -703,7 +844,7 @@ async def totp_login(body: TOTPLoginRequest, response: Response, db: AsyncSessio
             code=body.code,
         )
     except httpx.HTTPStatusError as exc:
-        logger.exception("update_session_with_totp failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("update_session_with_totp_failed", zitadel_status=exc.response.status_code)
         if exc.response.status_code in (400, 401):
             pending["failures"] += 1
             await audit.log_event(
@@ -716,14 +857,37 @@ async def totp_login(body: TOTPLoginRequest, response: Response, db: AsyncSessio
             )
             if pending["failures"] >= _TOTP_MAX_FAILURES:
                 _pending_totp.pop(body.temp_token)
+                _emit_auth_event(
+                    "totp_login_failed",
+                    reason="lockout",
+                    failures=pending["failures"],
+                    zitadel_status=exc.response.status_code,
+                    outcome="429",
+                    level="error",
+                )
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                     detail="Too many failed attempts, please log in again",
                 ) from exc
+            _emit_auth_event(
+                "totp_login_failed",
+                reason="invalid_code",
+                failures=pending["failures"],
+                zitadel_status=exc.response.status_code,
+                outcome="400",
+                level="warning",
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid code, please try again",
             ) from exc
+        _emit_auth_event(
+            "totp_login_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Verification failed, please try again later",
@@ -764,12 +928,19 @@ async def sso_complete(
     Called by the custom login page when it loads inside the LibreChat iframe
     (and by silent-renew iframes from react-oidc-context).
     Returns 401 if no valid SSO session exists (frontend falls back to the login form).
+
+    Failure observability: SPEC-SEC-AUTH-COVERAGE-001 REQ-4 emits
+    ``sso_complete_failed`` events for every 401 leg (no_cookie /
+    cookie_invalid / session_expired). Success is intentionally silent —
+    cookie reuse is non-interactive UX, not an audited action (REQ-4.4).
     """
     if not klai_sso:
+        _emit_auth_event("sso_complete_failed", reason="no_cookie", outcome="401", level="warning")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No SSO session")
 
     session_data = _decrypt_sso(klai_sso)
     if not session_data:
+        _emit_auth_event("sso_complete_failed", reason="cookie_invalid", outcome="401", level="warning")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="SSO cookie invalid")
 
     try:
@@ -779,7 +950,14 @@ async def sso_complete(
             session_token=session_data["stk"],
         )
     except httpx.HTTPStatusError as exc:
-        logger.exception("sso finalize failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("sso_finalize_failed", zitadel_status=exc.response.status_code)
+        _emit_auth_event(
+            "sso_complete_failed",
+            reason="session_expired",
+            zitadel_status=exc.response.status_code,
+            outcome="401",
+            level="warning",
+        )
         # Session expired in Zitadel -- tell the frontend to show the login form
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -793,16 +971,36 @@ async def sso_complete(
 async def totp_setup(
     user_id: str = Depends(get_current_user_id),
 ) -> TOTPSetupResponse:
-    """Initiate TOTP registration for the logged-in user. Returns QR URI and secret."""
+    """Initiate TOTP registration for the logged-in user. Returns QR URI and secret.
+
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-1.1/1.2: emit audit on success, structured
+    event on 5xx.
+    """
     try:
         result = await zitadel.register_user_totp(user_id)
     except httpx.HTTPStatusError as exc:
-        logger.exception("register_user_totp failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("register_user_totp_failed", zitadel_status=exc.response.status_code)
+        _emit_auth_event(
+            "totp_setup_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            actor_user_id=user_id,
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to set up 2FA, please try again later",
         ) from exc
 
+    await audit.log_event(
+        org_id=0,
+        actor=user_id,
+        action="auth.totp.setup",
+        resource_type="user",
+        resource_id=user_id,
+        details={"reason": "initiated"},
+    )
     return TOTPSetupResponse(uri=result["uri"], secret=result["totpSecret"])
 
 
@@ -814,20 +1012,49 @@ class VerifyEmailRequest(BaseModel):
 
 @router.post("/auth/verify-email", status_code=status.HTTP_204_NO_CONTENT)
 async def verify_email(body: VerifyEmailRequest) -> None:
-    """Verify a user's email address using the code from the verification email."""
+    """Verify a user's email address using the code from the verification email.
+
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-3.8/3.9: emit audit on success;
+    structured event on 4xx (invalid_code/expired_link) and 5xx (zitadel_5xx).
+    """
     try:
         await zitadel.verify_user_email(body.org_id, body.user_id, body.code)
     except httpx.HTTPStatusError as exc:
-        logger.exception("verify_user_email failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("verify_user_email_failed", zitadel_status=exc.response.status_code)
         if exc.response.status_code in (400, 404):
+            _emit_auth_event(
+                "verify_email_failed",
+                reason="expired_link" if exc.response.status_code == 404 else "invalid_code",
+                zitadel_status=exc.response.status_code,
+                actor_user_id=body.user_id,
+                outcome="400",
+                level="warning",
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid or expired verification link.",
             ) from exc
+        _emit_auth_event(
+            "verify_email_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            actor_user_id=body.user_id,
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Verification failed, please try again later.",
         ) from exc
+
+    await audit.log_event(
+        org_id=0,
+        actor=body.user_id,
+        action="auth.email.verified",
+        resource_type="user",
+        resource_id=body.user_id,
+        details={"reason": "verified"},
+    )
 
 
 @router.post("/auth/totp/confirm", status_code=status.HTTP_204_NO_CONTENT)
@@ -835,20 +1062,49 @@ async def totp_confirm(
     body: TOTPConfirmRequest,
     user_id: str = Depends(get_current_user_id),
 ) -> None:
-    """Verify and activate the TOTP registration."""
+    """Verify and activate the TOTP registration.
+
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-1.3/1.4/1.5: emit audit on success,
+    structured event on 4xx (invalid_code) and 5xx (zitadel_5xx).
+    """
     try:
         await zitadel.verify_user_totp(user_id, body.code)
     except httpx.HTTPStatusError as exc:
-        logger.exception("verify_user_totp failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("verify_user_totp_failed", zitadel_status=exc.response.status_code)
         if exc.response.status_code in (400, 401):
+            _emit_auth_event(
+                "totp_confirm_failed",
+                reason="invalid_code",
+                zitadel_status=exc.response.status_code,
+                actor_user_id=user_id,
+                outcome="400",
+                level="warning",
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid code, please try again",
             ) from exc
+        _emit_auth_event(
+            "totp_confirm_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            actor_user_id=user_id,
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to confirm 2FA, please try again later",
         ) from exc
+
+    await audit.log_event(
+        org_id=0,
+        actor=user_id,
+        action="auth.totp.confirmed",
+        resource_type="user",
+        resource_id=user_id,
+        details={"reason": "activated"},
+    )
 
 
 @router.post("/auth/passkey/setup", response_model=PasskeySetupResponse)
@@ -856,18 +1112,37 @@ async def passkey_setup(
     request: Request,
     user_id: str = Depends(get_current_user_id),
 ) -> PasskeySetupResponse:
-    """Start WebAuthn passkey registration. Returns options for navigator.credentials.create()."""
+    """Start WebAuthn passkey registration. Returns options for navigator.credentials.create().
+
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-1.9: emit audit on success, structured event on 5xx.
+    """
     domain = request.headers.get("x-forwarded-host") or request.headers.get("host", settings.domain)
     # Strip port if present
     domain = domain.split(":")[0]
     try:
         result = await zitadel.start_passkey_registration(user_id, domain)
     except httpx.HTTPStatusError as exc:
-        logger.exception("start_passkey_registration failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("start_passkey_registration_failed", zitadel_status=exc.response.status_code)
+        _emit_auth_event(
+            "passkey_setup_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            actor_user_id=user_id,
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to set up passkey, please try again later",
         ) from exc
+    await audit.log_event(
+        org_id=0,
+        actor=user_id,
+        action="auth.passkey.setup",
+        resource_type="user",
+        resource_id=user_id,
+        details={"reason": "initiated"},
+    )
     return PasskeySetupResponse(
         passkey_id=result["passkeyId"],
         options=result.get("publicKeyCredentialCreationOptions", {}),
@@ -879,50 +1154,110 @@ async def passkey_confirm(
     body: PasskeyConfirmRequest,
     user_id: str = Depends(get_current_user_id),
 ) -> None:
-    """Complete passkey registration by submitting the browser's PublicKeyCredential."""
+    """Complete passkey registration by submitting the browser's PublicKeyCredential.
+
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-1.10: emit audit on success, structured
+    event on 4xx (invalid_attestation) and 5xx (zitadel_5xx).
+    """
     try:
         await zitadel.verify_passkey_registration(
             user_id, body.passkey_id, body.public_key_credential, body.passkey_name
         )
     except httpx.HTTPStatusError as exc:
-        logger.exception("verify_passkey_registration failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("verify_passkey_registration_failed", zitadel_status=exc.response.status_code)
         if exc.response.status_code in (400, 401):
+            _emit_auth_event(
+                "passkey_confirm_failed",
+                reason="invalid_attestation",
+                zitadel_status=exc.response.status_code,
+                actor_user_id=user_id,
+                outcome="400",
+                level="warning",
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Passkey verification failed, please try again",
             ) from exc
+        _emit_auth_event(
+            "passkey_confirm_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            actor_user_id=user_id,
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to set up passkey, please try again later",
         ) from exc
+
+    await audit.log_event(
+        org_id=0,
+        actor=user_id,
+        action="auth.passkey.confirmed",
+        resource_type="user",
+        resource_id=user_id,
+        details={"reason": "activated"},
+    )
 
 
 @router.post("/auth/email-otp/setup", status_code=status.HTTP_204_NO_CONTENT)
 async def email_otp_setup(
     user_id: str = Depends(get_current_user_id),
 ) -> None:
-    """Register email OTP for the user. Zitadel sends a verification code to the user's email."""
+    """Register email OTP for the user. Zitadel sends a verification code to the user's email.
+
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-1.11: emit audit on success, structured event on 5xx.
+    """
     try:
         await zitadel.register_email_otp(user_id)
     except httpx.HTTPStatusError as exc:
-        logger.exception("register_email_otp failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("register_email_otp_failed", zitadel_status=exc.response.status_code)
+        _emit_auth_event(
+            "email_otp_setup_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            actor_user_id=user_id,
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to set up email code, please try again later",
         ) from exc
+
+    await audit.log_event(
+        org_id=0,
+        actor=user_id,
+        action="auth.email-otp.setup",
+        resource_type="user",
+        resource_id=user_id,
+        details={"reason": "initiated"},
+    )
 
 
 @router.post("/auth/email-otp/resend", status_code=status.HTTP_204_NO_CONTENT)
 async def email_otp_resend(
     user_id: str = Depends(get_current_user_id),
 ) -> None:
-    """Resend the email OTP verification code by removing and re-registering the method."""
+    """Resend the email OTP verification code by removing and re-registering the method.
+
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-1.13: emit audit on success, structured event on 5xx.
+    """
     try:
         await zitadel.remove_email_otp(user_id)
     except httpx.HTTPStatusError as exc:
         # If not registered yet, ignore — proceed to register
         if exc.response.status_code != 404:
-            logger.exception("remove_email_otp failed %s: %s", exc.response.status_code, exc.response.text)
+            _slog.exception("remove_email_otp_failed", zitadel_status=exc.response.status_code)
+            _emit_auth_event(
+                "email_otp_resend_failed",
+                reason="zitadel_5xx",
+                zitadel_status=exc.response.status_code,
+                actor_user_id=user_id,
+                outcome="502",
+                level="error",
+            )
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="Failed to resend email code, please try again later",
@@ -930,11 +1265,28 @@ async def email_otp_resend(
     try:
         await zitadel.register_email_otp(user_id)
     except httpx.HTTPStatusError as exc:
-        logger.exception("register_email_otp (resend) failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("register_email_otp_resend_failed", zitadel_status=exc.response.status_code)
+        _emit_auth_event(
+            "email_otp_resend_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            actor_user_id=user_id,
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to resend email code, please try again later",
         ) from exc
+
+    await audit.log_event(
+        org_id=0,
+        actor=user_id,
+        action="auth.email-otp.resent",
+        resource_type="user",
+        resource_id=user_id,
+        details={"reason": "resent"},
+    )
 
 
 @router.post("/auth/email-otp/confirm", status_code=status.HTTP_204_NO_CONTENT)
@@ -942,27 +1294,66 @@ async def email_otp_confirm(
     body: EmailOTPConfirmRequest,
     user_id: str = Depends(get_current_user_id),
 ) -> None:
-    """Verify and activate the email OTP using the code sent during setup."""
+    """Verify and activate the email OTP using the code sent during setup.
+
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-1.12: emit audit on success, structured
+    event on 4xx (invalid_code) and 5xx (zitadel_5xx).
+    """
     try:
         await zitadel.verify_email_otp(user_id, body.code)
     except httpx.HTTPStatusError as exc:
-        logger.exception("verify_email_otp failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("verify_email_otp_failed", zitadel_status=exc.response.status_code)
         if exc.response.status_code in (400, 401):
+            _emit_auth_event(
+                "email_otp_confirm_failed",
+                reason="invalid_code",
+                zitadel_status=exc.response.status_code,
+                actor_user_id=user_id,
+                outcome="400",
+                level="warning",
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid code, please try again",
             ) from exc
+        _emit_auth_event(
+            "email_otp_confirm_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            actor_user_id=user_id,
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to confirm email code, please try again later",
         ) from exc
 
+    await audit.log_event(
+        org_id=0,
+        actor=user_id,
+        action="auth.email-otp.confirmed",
+        resource_type="user",
+        resource_id=user_id,
+        details={"reason": "activated"},
+    )
+
 
 @router.post("/auth/idp-intent", response_model=IDPIntentResponse)
 async def idp_intent(body: IDPIntentRequest) -> IDPIntentResponse:
-    """Start a social login flow. Returns the IDP auth URL to redirect the user to."""
+    """Start a social login flow. Returns the IDP auth URL to redirect the user to.
+
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-2.1/2.2: emit audit on success;
+    structured event on unknown_idp / zitadel_5xx / missing_auth_url.
+    """
     known_idps = {settings.zitadel_idp_google_id, settings.zitadel_idp_microsoft_id} - {""}
     if body.idp_id not in known_idps:
+        _emit_auth_event(
+            "idp_intent_failed",
+            reason="unknown_idp",
+            outcome="400",
+            level="warning",
+        )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown IDP")
 
     success_url = f"{settings.portal_url}/api/auth/idp-callback?auth_request_id={body.auth_request_id}"
@@ -971,7 +1362,14 @@ async def idp_intent(body: IDPIntentRequest) -> IDPIntentResponse:
     try:
         result = await zitadel.create_idp_intent(body.idp_id, success_url, failure_url)
     except httpx.HTTPStatusError as exc:
-        logger.exception("create_idp_intent failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("create_idp_intent_failed", zitadel_status=exc.response.status_code)
+        _emit_auth_event(
+            "idp_intent_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Login failed, please try again later",
@@ -979,12 +1377,26 @@ async def idp_intent(body: IDPIntentRequest) -> IDPIntentResponse:
 
     auth_url = result.get("authUrl")
     if not auth_url:
-        logger.error("create_idp_intent returned no authUrl: %s", result)
+        _slog.error("create_idp_intent_no_auth_url", result_keys=list(result.keys()))
+        _emit_auth_event(
+            "idp_intent_failed",
+            reason="missing_auth_url",
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Login failed, please try again later",
         )
 
+    await audit.log_event(
+        org_id=0,
+        actor="anonymous",
+        action="auth.idp.intent",
+        resource_type="session",
+        resource_id="pending",
+        details={"idp_id": body.idp_id, "auth_request_id": body.auth_request_id},
+    )
     return IDPIntentResponse(auth_url=auth_url)
 
 
@@ -1007,24 +1419,49 @@ async def idp_callback(
     try:
         session = await zitadel.create_session_with_idp_intent(id, token)
     except httpx.HTTPStatusError as exc:
-        logger.exception("create_session_with_idp_intent failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("idp_callback_create_session_failed", zitadel_status=exc.response.status_code)
+        _emit_auth_event(
+            "idp_callback_failed",
+            reason="session_creation_5xx",
+            zitadel_status=exc.response.status_code,
+            outcome="302→failure_url",
+            level="error",
+        )
         return RedirectResponse(url=failure_url, status_code=302)
     except Exception:
-        logger.exception("create_session_with_idp_intent failed (non-HTTP)")
+        _slog.exception("idp_callback_create_session_failed_unexpected")
+        _emit_auth_event(
+            "idp_callback_failed",
+            reason="session_creation_unexpected",
+            outcome="302→failure_url",
+            level="error",
+        )
         return RedirectResponse(url=failure_url, status_code=302)
 
     session_id: str | None = session.get("sessionId")
     session_token: str | None = session.get("sessionToken")
 
     if not session_id or not session_token:
-        logger.error("create_session_with_idp_intent returned no session: %s", session)
+        _slog.error("idp_callback_no_session_in_response", session_keys=list(session.keys()))
+        _emit_auth_event(
+            "idp_callback_failed",
+            reason="missing_session",
+            outcome="302→failure_url",
+            level="error",
+        )
         return RedirectResponse(url=failure_url, status_code=302)
 
-    # Fetch user identity from the session
+    # Fetch user identity from the session — fail-soft: empty values continue.
     try:
         details = await zitadel.get_session_details(session_id, session_token)
     except Exception:
-        logger.exception("get_session_details failed — continuing without auto-provision")
+        _slog.exception("idp_callback_get_session_details_failed")
+        _emit_auth_event(
+            "idp_callback_failed",
+            reason="get_session_details_failed",
+            outcome="continue-degraded",
+            level="warning",
+        )
         details = {"zitadel_user_id": "", "email": ""}
 
     zitadel_user_id = details.get("zitadel_user_id", "")
@@ -1099,7 +1536,14 @@ async def idp_callback(
             session_token=session_token,
         )
     except httpx.HTTPStatusError as exc:
-        logger.exception("idp finalize_auth_request failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("idp_callback_finalize_failed", zitadel_status=exc.response.status_code)
+        _emit_auth_event(
+            "idp_callback_failed",
+            reason="finalize_5xx",
+            zitadel_status=exc.response.status_code,
+            outcome="302→failure_url",
+            level="error",
+        )
         return RedirectResponse(url=failure_url, status_code=302)
 
     redirect = RedirectResponse(url=_validate_callback_url(callback_url), status_code=302)
@@ -1113,6 +1557,16 @@ async def idp_callback(
         max_age=settings.sso_cookie_max_age,
     )
     emit_event("login", user_id=zitadel_user_id or None, properties={"method": "idp"})
+    # SPEC-SEC-AUTH-COVERAGE-001 REQ-2.3: audit log on successful IDP callback completion
+    if zitadel_user_id:
+        await audit.log_event(
+            org_id=0,
+            actor=zitadel_user_id,
+            action="auth.login.idp",
+            resource_type="session",
+            resource_id=session_id,
+            details={"method": "idp"},
+        )
     return redirect
 
 
@@ -1128,9 +1582,18 @@ async def idp_intent_signup(body: IDPIntentSignupRequest) -> IDPIntentResponse:
     Unlike idp-intent (login), this endpoint does not require an auth_request_id —
     the user is not yet in an OIDC session. After IDP callback we detect new vs
     existing users and branch accordingly.
+
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-2.6: emit audit on success, structured
+    event on unknown_idp / zitadel_5xx / missing_auth_url.
     """
     known_idps = {settings.zitadel_idp_google_id, settings.zitadel_idp_microsoft_id} - {""}
     if body.idp_id not in known_idps:
+        _emit_auth_event(
+            "idp_intent_signup_failed",
+            reason="unknown_idp",
+            outcome="400",
+            level="warning",
+        )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown IDP")
 
     success_url = f"{settings.portal_url}/api/auth/idp-signup-callback?locale={body.locale}"
@@ -1139,7 +1602,14 @@ async def idp_intent_signup(body: IDPIntentSignupRequest) -> IDPIntentResponse:
     try:
         result = await zitadel.create_idp_intent(body.idp_id, success_url, failure_url)
     except httpx.HTTPStatusError as exc:
-        logger.exception("create_idp_intent (signup) failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("create_idp_intent_signup_failed", zitadel_status=exc.response.status_code)
+        _emit_auth_event(
+            "idp_intent_signup_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Signup failed, please try again later",
@@ -1147,12 +1617,26 @@ async def idp_intent_signup(body: IDPIntentSignupRequest) -> IDPIntentResponse:
 
     auth_url = result.get("authUrl")
     if not auth_url:
-        logger.error("create_idp_intent (signup) returned no authUrl: %s", result)
+        _slog.error("create_idp_intent_signup_no_auth_url", result_keys=list(result.keys()))
+        _emit_auth_event(
+            "idp_intent_signup_failed",
+            reason="missing_auth_url",
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Signup failed, please try again later",
         )
 
+    await audit.log_event(
+        org_id=0,
+        actor="anonymous",
+        action="auth.idp.intent_signup",
+        resource_type="session",
+        resource_id="pending",
+        details={"idp_id": body.idp_id, "locale": body.locale},
+    )
     return IDPIntentResponse(auth_url=auth_url)
 
 
@@ -1175,14 +1659,21 @@ async def idp_signup_callback(
     locale = locale if locale in _SUPPORTED_LOCALES else "nl"
     failure_url = f"{settings.portal_url}/{locale}/signup?error=idp_failed"
 
+    # SPEC-SEC-AUTH-COVERAGE-001 REQ-2.7: every failure leg below emits a
+    # structured idp_signup_callback_failed event before the 302-to-failure_url.
+    # Existing-user happy path emits audit.log_event(auth.signup.idp.existing).
+
     # 1. Retrieve the IDP intent to get user info and optional Zitadel userId
     try:
         intent_data = await zitadel.retrieve_idp_intent(id, token)
     except httpx.HTTPStatusError as exc:
-        logger.exception(
-            "idp_signup_callback retrieve_idp_intent failed %s: %s",
-            exc.response.status_code,
-            exc.response.text,
+        _slog.exception("idp_signup_callback_retrieve_intent_failed", zitadel_status=exc.response.status_code)
+        _emit_auth_event(
+            "idp_signup_callback_failed",
+            reason="retrieve_intent_5xx",
+            zitadel_status=exc.response.status_code,
+            outcome="302→failure_url",
+            level="error",
         )
         return RedirectResponse(url=failure_url, status_code=302)
 
@@ -1192,16 +1683,25 @@ async def idp_signup_callback(
     if not idp_user_id:
         try:
             idp_user_id = await zitadel.create_zitadel_user_from_idp(intent_data, settings.zitadel_portal_org_id)
-            logger.info("idp_signup_callback: created Zitadel user %s from IDP", idp_user_id)
+            _slog.info("idp_signup_callback_user_created", zitadel_user_id=idp_user_id)
         except httpx.HTTPStatusError as exc:
-            logger.exception(
-                "idp_signup_callback create_zitadel_user failed %s: %s",
-                exc.response.status_code,
-                exc.response.text,
+            _slog.exception("idp_signup_callback_create_user_failed", zitadel_status=exc.response.status_code)
+            _emit_auth_event(
+                "idp_signup_callback_failed",
+                reason="create_user_5xx",
+                zitadel_status=exc.response.status_code,
+                outcome="302→failure_url",
+                level="error",
             )
             return RedirectResponse(url=failure_url, status_code=302)
         except Exception:
-            logger.exception("idp_signup_callback create_zitadel_user failed")
+            _slog.exception("idp_signup_callback_create_user_failed_unexpected")
+            _emit_auth_event(
+                "idp_signup_callback_failed",
+                reason="create_user_unexpected",
+                outcome="302→failure_url",
+                level="error",
+            )
             return RedirectResponse(url=failure_url, status_code=302)
 
     # 1c. Create Zitadel session with the resolved user_id + IDP intent.
@@ -1218,38 +1718,54 @@ async def idp_signup_callback(
         except httpx.HTTPStatusError as exc:
             last_exc = exc
             if exc.response.status_code == 404 and attempt < 3:
-                logger.warning(
-                    "idp_signup_callback create_session 404 on attempt %d, retrying",
-                    attempt + 1,
+                _slog.warning(
+                    "idp_signup_callback_create_session_404_retry",
+                    attempt=attempt + 1,
                 )
                 continue
-            logger.exception(
-                "idp_signup_callback create_session failed %s: %s",
-                exc.response.status_code,
-                exc.response.text,
+            _slog.exception("idp_signup_callback_create_session_failed", zitadel_status=exc.response.status_code)
+            _emit_auth_event(
+                "idp_signup_callback_failed",
+                reason="create_session_5xx",
+                zitadel_status=exc.response.status_code,
+                attempts=attempt + 1,
+                outcome="302→failure_url",
+                level="error",
             )
             return RedirectResponse(url=failure_url, status_code=302)
     if session is None:
-        logger.error(
-            "idp_signup_callback create_session failed after retries: %s",
-            last_exc,
+        _slog.error("idp_signup_callback_create_session_retries_exhausted", last_exc=str(last_exc))
+        _emit_auth_event(
+            "idp_signup_callback_failed",
+            reason="create_session_retries_exhausted",
+            outcome="302→failure_url",
+            level="error",
         )
         return RedirectResponse(url=failure_url, status_code=302)
 
     session_id: str | None = session.get("sessionId")
     session_token: str | None = session.get("sessionToken")
     if not session_id or not session_token:
-        logger.error("idp_signup_callback: no session in response: %s", session)
+        _slog.error("idp_signup_callback_no_session_in_response", session_keys=list(session.keys()))
+        _emit_auth_event(
+            "idp_signup_callback_failed",
+            reason="missing_session",
+            outcome="302→failure_url",
+            level="error",
+        )
         return RedirectResponse(url=failure_url, status_code=302)
 
     # 2. Fetch full session to get the Zitadel user ID and IDP profile
     try:
         session_detail = await zitadel.get_session(session_id, session_token)
     except httpx.HTTPStatusError as exc:
-        logger.exception(
-            "idp_signup_callback get_session failed %s: %s",
-            exc.response.status_code,
-            exc.response.text,
+        _slog.exception("idp_signup_callback_get_session_failed", zitadel_status=exc.response.status_code)
+        _emit_auth_event(
+            "idp_signup_callback_failed",
+            reason="get_session_5xx",
+            zitadel_status=exc.response.status_code,
+            outcome="302→failure_url",
+            level="error",
         )
         return RedirectResponse(url=failure_url, status_code=302)
 
@@ -1258,7 +1774,13 @@ async def idp_signup_callback(
     user_factor = factors.get("user", {})
     zitadel_user_id: str = user_factor.get("id", "")
     if not zitadel_user_id:
-        logger.error("idp_signup_callback: no user.id in session factors: %s", session_detail)
+        _slog.error("idp_signup_callback_no_user_id_in_factors")
+        _emit_auth_event(
+            "idp_signup_callback_failed",
+            reason="missing_user_id",
+            outcome="302→failure_url",
+            level="error",
+        )
         return RedirectResponse(url=failure_url, status_code=302)
 
     # Extract IDP display name + email for the social form pre-fill (non-sensitive)
@@ -1274,7 +1796,7 @@ async def idp_signup_callback(
 
     if existing_user is not None:
         # Existing user — just log them in via the SSO cookie
-        logger.info("idp_signup_callback: existing user %s, setting SSO cookie", zitadel_user_id)
+        _slog.info("idp_signup_callback_existing_user_login", zitadel_user_id=zitadel_user_id)
         response = RedirectResponse(url=f"{settings.portal_url}/", status_code=302)
         response.set_cookie(
             key="klai_sso",
@@ -1286,6 +1808,16 @@ async def idp_signup_callback(
             max_age=settings.sso_cookie_max_age,
         )
         emit_event("login", user_id=zitadel_user_id, properties={"method": "idp"})
+        # SPEC-SEC-AUTH-COVERAGE-001 REQ-2.7: audit log on successful existing-
+        # user IDP signup-callback (existing portal_user → SSO cookie path)
+        await audit.log_event(
+            org_id=existing_user.org_id,
+            actor=zitadel_user_id,
+            action="auth.signup.idp.existing_login",
+            resource_type="session",
+            resource_id=session_id,
+            details={"method": "idp"},
+        )
         return response
 
     # 4. New user — store pending session in encrypted cookie, redirect to company name form
