@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI
 from prometheus_client import make_asgi_app
+from starlette.middleware.cors import CORSMiddleware
 
 from retrieval_api.api.chat import router as chat_router
 from retrieval_api.api.retrieve import router as retrieve_router
@@ -57,12 +58,35 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="retrieval-api", version="1.0.0", lifespan=lifespan)
-# SPEC-SEC-010 REQ-1.4: Starlette middleware runs in LIFO order — the last-added
-# middleware is the OUTERMOST and runs FIRST. We want RequestContextMiddleware to
-# bind `request_id` on the structlog context BEFORE AuthMiddleware emits its first
-# log line, so add AuthMiddleware first (inner) then RequestContextMiddleware (outer).
+
+# Middleware registration order: last-added runs FIRST on the request
+# (Starlette LIFO — see .claude/rules/klai/lang/python.md and
+# SPEC-SEC-CORS-001 REQ-7). Desired execution: CORS (outermost, wraps 401
+# with CORS headers, handles preflight) -> RequestContext (logging) ->
+# Auth (reject missing header) -> route. So we register in reverse:
+# Auth, RequestContext, CORS.
+#
+# Deny-by-default starter — retrieval-api is on klai-net only today (no
+# Caddy route), but a future browser exposure would silently inherit no
+# CORS policy and immediately be cross-origin-credentialed-probable.
+# SPEC-SEC-CORS-001 REQ-7 forces an explicit empty allowlist now so that
+# any future Caddy exposure must update the allowlist explicitly.
+
+# SPEC-SEC-010 REQ-1.4: AuthMiddleware first (innermost); RequestContext
+# wraps it so request_id is bound before AuthMiddleware emits its first log.
 app.add_middleware(AuthMiddleware)
 app.add_middleware(RequestContextMiddleware)
+
+# CORSMiddleware registered LAST (outermost) per SPEC-SEC-CORS-001 REQ-7.
+# Empty allowlist = deny-by-default; allow_credentials=False for safety.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[],
+    allow_origin_regex=None,
+    allow_credentials=False,
+    allow_methods=[],
+    allow_headers=[],
+)
 app.include_router(retrieve_router, prefix="")
 app.include_router(chat_router, prefix="")
 

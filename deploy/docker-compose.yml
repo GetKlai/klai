@@ -346,6 +346,19 @@ services:
       DOMAIN: ${DOMAIN}
       FRONTEND_URL: ${FRONTEND_URL:-}
       DOCKER_HOST: tcp://docker-socket-proxy:2375
+      # SPEC-SEC-CORS-001 REQ-1 — explicit credentialed CORS allowlist for
+      # portal-api. Today (pre-SPEC) the in-code default is "http://localhost:5174"
+      # and the prod compose did not pass CORS_ORIGINS at all, so the wildcard
+      # regex r".*" was the only thing keeping prod browsers from my.getklai.com
+      # working. Once REQ-1 lands and removes the wildcard, prod browsers from
+      # my.getklai.com would receive no Access-Control-Allow-Origin header
+      # without this var. Same-deploy regression class as
+      # SPEC-SEC-WEBHOOK-001 / SPEC-SEC-ENVFILE-SCOPE-001.
+      # ${DOMAIN} resolves to "getklai.com" in prod; widget.${DOMAIN} matches
+      # the existing api-gateway widget host. The dynamic single-label
+      # tenant-subdomain pattern (acme.getklai.com) is matched by the
+      # compiled regex inside config.py, NOT by this list.
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://my.${DOMAIN}}
       # ─── Database (portal schema) ───────────────────────────────
       DATABASE_URL: postgresql+asyncpg://portal_api:${PORTAL_API_DB_PASSWORD}@postgres:5432/klai
       # ─── Auth — Zitadel ─────────────────────────────────────────

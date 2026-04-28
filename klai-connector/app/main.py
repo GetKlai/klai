@@ -176,7 +176,22 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="klai-connector", version="0.1.0", lifespan=lifespan)
 
-    # CORS — allow portal frontend origin(s) to call the connector API
+    # Middleware registration order: last-added runs FIRST on the request
+    # (Starlette LIFO — see .claude/rules/klai/lang/python.md and
+    # SPEC-SEC-CORS-001 REQ-6). Desired execution: CORS (outermost, wraps 401
+    # with CORS headers, handles preflight) -> RequestContext (logging) ->
+    # Auth (reject missing header) -> route. So we register in reverse:
+    # Auth, RequestContext, CORS.
+
+    # Auth middleware (excludes /health internally)
+    app.add_middleware(AuthMiddleware, settings=settings)
+
+    # Request context middleware (binds request_id, org_id to structlog)
+    app.add_middleware(RequestContextMiddleware)
+
+    # CORS — allow portal frontend origin(s) to call the connector API.
+    # Must be registered LAST so it is the outermost layer and wraps 401
+    # responses with Access-Control-Allow-Origin (SPEC-SEC-CORS-001 REQ-6.4).
     allowed_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
     if allowed_origins:
         app.add_middleware(
@@ -185,12 +200,6 @@ def create_app() -> FastAPI:
             allow_methods=["GET", "POST", "PUT", "DELETE"],
             allow_headers=["Authorization", "Content-Type"],
         )
-
-    # Auth middleware (excludes /health internally)
-    app.add_middleware(AuthMiddleware, settings=settings)
-
-    # Request context middleware (binds request_id, org_id to structlog)
-    app.add_middleware(RequestContextMiddleware)
 
     # Routes
     app.include_router(health_router)

@@ -8,6 +8,13 @@ on:
       - 'klai-libs/connector-credentials/**'
       - 'klai-libs/image-storage/**'
       - '.github/workflows/klai-connector.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'klai-connector/**'
+      - 'klai-libs/connector-credentials/**'
+      - 'klai-libs/image-storage/**'
+      - '.github/workflows/klai-connector.yml'
   workflow_dispatch:
 
 permissions:
@@ -20,11 +27,51 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  build-push:
+  # SPEC-SEC-HYGIENE-001 REQ-30.3 — ruff F821 (and the rest of the
+  # configured rule set) MUST run on klai-connector code so a future
+  # NameError landmine like the original HY-30 bug fails CI. The
+  # build-push job below depends on quality, so a lint failure blocks
+  # the deploy. Mirrors the pattern in portal-api.yml.
+  quality:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: klai-connector
 
     steps:
       - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      # NOTE: `ruff format --check` is intentionally NOT enforced yet —
+      # the connector has never been ruff-formatted (~36 files would
+      # change). Add it once a separate format-the-world PR lands.
+
+  build-push:
+    runs-on: ubuntu-latest
+    needs: quality
+
+    steps:
+      - uses: actions/checkout@v6
+
+      # SPEC-SEC-CORS-001 REQ-6 — CORSMiddleware must be the LAST add_middleware
+      # call in this service's entry module. Rule lives at
+      # rules/cors_middleware_last.yml, configured by sgconfig.yml at repo root.
+      # `uses:` steps ignore the job's defaults.run.working-directory and run
+      # from $GITHUB_WORKSPACE, so the relative paths resolve correctly.
+      - name: Guard — CORSMiddleware must be last (SPEC-SEC-CORS-001 REQ-6)
+        uses: ast-grep/action@cf62e780f0c88301228978d593a7784427a097a6  # v1.5.0
+        with:
+          config: sgconfig.yml
+          paths: klai-connector/app/main.py
 
       - name: Log in to GHCR
         uses: docker/login-action@v4

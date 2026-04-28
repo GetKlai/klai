@@ -3,7 +3,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
 from app.api import me, signup
@@ -34,6 +33,7 @@ from app.api.vitals import router as vitals_router
 from app.api.webhooks import router as webhooks_router
 from app.core.config import settings
 from app.logging_setup import setup_logging
+from app.middleware.klai_cors import KlaiCORSMiddleware
 from app.middleware.logging_context import LoggingContextMiddleware
 from app.middleware.session import SessionMiddleware
 from app.services.bot_poller import poll_loop
@@ -177,14 +177,18 @@ app = FastAPI(
     openapi_url="/openapi.json" if settings.debug else None,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
-    allow_origin_regex=settings.cors_allow_origin_regex,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Middleware registration order: last-added runs FIRST on the request (Starlette LIFO).
+# Desired execution order (outer -> inner):
+#   KlaiCORSMiddleware (outermost: handles preflights, wraps 401/403 with CORS headers)
+#   -> no_cache_authenticated (@http decorator)
+#   -> LoggingContextMiddleware (binds request_id, org_id, user_id to structlog)
+#   -> SessionMiddleware (resolves BFF session cookie + CSRF check)
+#   -> route handler
+# So we register in reverse: SessionMiddleware first (inner), CORS last (outer).
+# REQ-6.7 (SPEC-SEC-CORS-001): CORS must be the LAST add_middleware call so that
+# CSRF-reject 403s from SessionMiddleware carry CORS headers to cross-origin browsers.
+app.add_middleware(SessionMiddleware)
+app.add_middleware(LoggingContextMiddleware)
 
 
 @app.middleware("http")
@@ -196,11 +200,13 @@ async def no_cache_authenticated(request: Request, call_next: object) -> Respons
     return response
 
 
-app.add_middleware(LoggingContextMiddleware)
-# SessionMiddleware runs BEFORE LoggingContextMiddleware (Starlette executes in
-# reverse registration order), so org_id / user_id from the BFF session land in
-# every log entry.
-app.add_middleware(SessionMiddleware)
+app.add_middleware(
+    KlaiCORSMiddleware,
+    cors_origins=settings.cors_origins_list,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 from app.api.auth_bff import router as auth_bff_router  # noqa: E402
 

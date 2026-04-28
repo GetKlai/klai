@@ -1,9 +1,9 @@
 ---
 id: SPEC-SEC-HYGIENE-001
-version: 0.3.0
-status: draft
+version: 0.5.0
+status: in-progress
 created: 2026-04-24
-updated: 2026-04-24
+updated: 2026-04-28
 author: Mark Vletter
 priority: low
 tracker: SPEC-SEC-AUDIT-2026-04
@@ -21,6 +21,64 @@ tracker: SPEC-SEC-AUDIT-2026-04
 > one PR or five is a call for /run.
 
 ## HISTORY
+
+### v0.5.0 (2026-04-28) — connector slice closed-out (followup landed)
+
+Followup PR landed direct-to-main as 3 commits + merge `6e92f68d`:
+- `e7967255` — REQ-30.3 mechanically closed: `quality` job added to
+  `.github/workflows/klai-connector.yml` runs `uv run ruff check .`
+  and blocks `build-push` on failure. CI ran green on first push to
+  main (4m9s). Plus 9 small lint-debt fixes (notion.py constants moved
+  to module scope, `SyncStatus` → `enum.StrEnum`, alembic import order,
+  models/connector.py E501) so the new step passes on the existing
+  tree without scope creep into untouched code.
+- `0770056e` — HY-31 HTTP-niveau dekking: 3 new integration tests in
+  `tests/test_compute_fingerprint.py` replace `httpx.AsyncClient` itself
+  (vs the original tests which patched `_fetch_page_markdown`). Pin the
+  POST `/crawl` payload shape, the Bearer-header contract (parametrized
+  over `crawl4ai_internal_key` set/unset), and the dict/string
+  `markdown` response branches. Plus pyright strict cleanup on
+  `routes/fingerprint.py`: 11 → 0 strict warnings via explicit local
+  annotations + per-line `# pyright: ignore[reportUnknownVariableType]`
+  on JSON-boundary unknowns.
+- `7833fe6f` — AC-32 implementation note documenting the rate-limit
+  default-deviation (shipped 120/30 vs SPEC literal 60/10), with the
+  /run research backing (Auth0 120, Heroku 75, Slack 1200) and a
+  reminder that the AC test itself sets limits to 60/10 via env
+  override so the SPEC-literal boundaries are still exercised.
+
+CI/quality state on main after followup:
+- `Build and push klai-connector` workflow: completed success, includes
+  the new `quality` job.
+- Ruff clean across the whole connector tree (was 5 pre-existing errors
+  before followup).
+- Pyright strict on `routes/fingerprint.py`: 0 errors (was 11).
+- Connector test count: 305 passing + 11 pre-existing `_image_transport`
+  failures (image-storage scope, separate SPEC).
+
+Status remains `in-progress`: connector slice fully closed-out; scribe
+slice already shipped at v0.4.0; remaining slices (portal HY-19..HY-28,
+retrieval HY-39..HY-44, MCP HY-45..HY-48, mailer HY-49..HY-50) still
+outstanding.
+
+### v0.4.0 (2026-04-27) — scribe + connector slices shipped
+- **Scribe slice** (HY-33..HY-38) shipped via PR #179, merge commit `4463bb3d`.
+  Production deploy verified on core-01: container running new image, alembic
+  upgraded `0006 → 0007_c5f9e3a4` (manual `docker exec` since the scribe-api
+  CI workflow does not run alembic), `/health` returns 200, reaper succeeded
+  on second startup (first startup logged `scribe_startup_reaper_failed` as
+  expected before the migration applied — caught by the lifespan try/except).
+- **Connector slice** (HY-30..HY-32) shipped as direct commits on main:
+  `10715d18` (HY-30 HTTPException + ruff F821 contract), `e4ddaa8b` (HY-31
+  compute-fingerprint rewire to crawl4ai), `e7efe1db` (HY-32 per-org Redis
+  sliding-window rate limit). Pushed without a PR/merge commit.
+- Status flipped `draft → in-progress`: 9 of 29 findings shipped (6 scribe + 3
+  connector). Remaining slices (portal HY-19..HY-28, retrieval HY-39..HY-44,
+  MCP HY-45..HY-48, mailer HY-49..HY-50) stay outstanding and may be split
+  into per-service follow-up SPECs per Out-of-Scope §v0.3.0.
+- See `.moai/specs/SPEC-SEC-HYGIENE-001/progress.md` for both per-slice
+  checklists with implementation notes and (for scribe) deploy verification
+  chain.
 
 ### v0.3.0 (2026-04-24)
 - Expanded scope to absorb 21 additional findings from the internal-wave review
