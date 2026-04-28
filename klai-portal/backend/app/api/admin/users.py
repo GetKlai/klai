@@ -25,18 +25,24 @@ from . import _get_caller_org, _require_admin, bearer
 
 logger = logging.getLogger(__name__)
 
-# SPEC-SEC-TENANT-001 REQ-2.2: frozen module-level mapping from the portal
-# role (InviteRequest.role Literal) to the Zitadel project-role string used
-# by `zitadel.grant_user_role`. Changes are reviewable in diff and
-# traceable in code search. The mapping is exhaustive for the three accepted
-# values of the Literal — REQ-2.3 enforces this at runtime.
+# SPEC-SEC-TENANT-001 REQ-2.2 (v0.5.0 / β): frozen module-level mapping from
+# the portal role (InviteRequest.role Literal) to the optional Zitadel
+# project-role string used by `zitadel.grant_user_role`. The mapping is
+# exhaustive for the three accepted values of the Literal — REQ-2.3
+# enforces this at runtime.
 #
-# Canonical role -> claim mapping is documented in
-# `.claude/rules/klai/platform/zitadel.md` (REQ-3).
-_ZITADEL_ROLE_BY_PORTAL_ROLE: Final[Mapping[str, str]] = {
+# Authority model: portal_users.role is the canonical source for portal-side
+# authorization (admin / group-admin / member). Zitadel project roles are
+# reserved for the one downstream signal that retrieval-api currently
+# honours (org:owner ⇔ portal admin). Non-admin invites receive NO Zitadel
+# grant; their JWT roles claim is empty and `_extract_role` returns None.
+#
+# Canonical doc + verification recipe:
+# `.claude/rules/klai/platform/zitadel.md` "Project roles and JWT claims".
+_ZITADEL_ROLE_BY_PORTAL_ROLE: Final[Mapping[str, str | None]] = {
     "admin": "org:owner",
-    "group-admin": "org:group-admin",
-    "member": "org:member",
+    "group-admin": None,
+    "member": None,
 }
 
 router = APIRouter()
@@ -173,9 +179,11 @@ async def invite_user(
 
     zitadel_user_id: str = user_data["userId"]
 
-    # SPEC-SEC-TENANT-001 REQ-2: grant the Zitadel role mapped from body.role,
-    # not the hardcoded org:owner that v0.1 of this handler used regardless
-    # of the admin's choice (finding #10).
+    # SPEC-SEC-TENANT-001 REQ-2 (v0.5.0 / β): only portal_role="admin" gets a
+    # Zitadel grant; group-admin and member rely on portal_users.role for
+    # authorization. v0.1 hardcoded role="org:owner" for every invite — the
+    # finding #10 time-bomb. v0.5.0 keeps the admin grant as before and
+    # explicitly skips the Zitadel call for non-admins.
     try:
         zitadel_role = _ZITADEL_ROLE_BY_PORTAL_ROLE[body.role]
     except KeyError as exc:
@@ -192,18 +200,32 @@ async def invite_user(
             detail="Unsupported role",
         ) from exc
 
-    try:
-        await zitadel.grant_user_role(
-            org_id=settings.zitadel_portal_org_id,
-            user_id=zitadel_user_id,
-            role=zitadel_role,
+    if zitadel_role is None:
+        # REQ-2.1 observability: structured event so the absence-of-grant is
+        # queryable in VictoriaLogs (e.g. confirm zero org:* grants land for
+        # non-admin invites in production).
+        logger.info(
+            "invite_no_zitadel_grant",
+            extra={
+                "event": "invite_no_zitadel_grant",
+                "org_id": org.id,
+                "portal_role": body.role,
+                "zitadel_user_id": zitadel_user_id,
+            },
         )
-    except Exception as exc:
-        logger.exception("Role grant failed for invited user %s: %s", body.email, exc)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to assign project role: {exc}",
-        ) from exc
+    else:
+        try:
+            await zitadel.grant_user_role(
+                org_id=settings.zitadel_portal_org_id,
+                user_id=zitadel_user_id,
+                role=zitadel_role,
+            )
+        except Exception as exc:
+            logger.exception("Role grant failed for invited user %s: %s", body.email, exc)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Failed to assign project role: {exc}",
+            ) from exc
 
     user_row = PortalUser(
         zitadel_user_id=zitadel_user_id,
