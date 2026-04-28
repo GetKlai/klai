@@ -5,6 +5,15 @@ on:
     branches: [main]
     paths:
       - 'klai-knowledge-mcp/**'
+      # SPEC-SEC-IDENTITY-ASSERT-001 Phase B: knowledge-mcp consumes
+      # klai-libs/identity-assert as a path-dep, so library changes need
+      # to retrigger this image build.
+      - 'klai-libs/identity-assert/**'
+      - '.github/workflows/klai-knowledge-mcp.yml'
+  pull_request:
+    paths:
+      - 'klai-knowledge-mcp/**'
+      - 'klai-libs/identity-assert/**'
       - '.github/workflows/klai-knowledge-mcp.yml'
   workflow_dispatch:
 
@@ -37,8 +46,12 @@ jobs:
       - name: Build and push klai-knowledge-mcp
         uses: docker/build-push-action@v7
         with:
-          context: ./klai-knowledge-mcp
-          push: true
+          # SPEC-SEC-IDENTITY-ASSERT-001 Phase B: build context is the repo
+          # root so klai-libs/identity-assert is reachable as a Docker COPY
+          # source. Same pattern as klai-knowledge-ingest.
+          context: .
+          file: klai-knowledge-mcp/Dockerfile
+          push: ${{ github.event_name == 'push' }}
           tags: |
             ghcr.io/getklai/klai-knowledge-mcp:latest
             ghcr.io/getklai/klai-knowledge-mcp:${{ github.sha }}
@@ -46,6 +59,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Deploy to core-01
+        if: github.event_name == 'push'
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.CORE01_HOST }}
@@ -60,6 +74,7 @@ jobs:
 
   scan:
     needs: build-push
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       security-events: write

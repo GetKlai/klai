@@ -389,9 +389,7 @@ class TestOrgSlugCheck:
         assert decision.verified is True
         assert decision.org_slug == "acme"
 
-    async def test_jwt_path_denies_on_slug_mismatch(
-        self, mock_db: AsyncMock, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_jwt_path_denies_on_slug_mismatch(self, mock_db: AsyncMock, monkeypatch: pytest.MonkeyPatch) -> None:
         # JWT verifies user-org binding correctly, but the LibreChat-asserted
         # X-Org-Slug names a different org's slug — REQ-2.6 says reject.
         monkeypatch.setattr(
