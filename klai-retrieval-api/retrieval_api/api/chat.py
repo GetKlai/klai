@@ -28,8 +28,11 @@ async def chat(req: RetrieveRequest, request: Request) -> EventSourceResponse:
     if req.scope == "notebook" and not req.notebook_id:
         raise HTTPException(status_code=400, detail="notebook_id required for scope=notebook")
 
-    # SPEC-SEC-010 REQ-3: cross-user / cross-org guard (JWT path only).
-    verify_body_identity(request, req.org_id, req.user_id)
+    # SPEC-SEC-010 REQ-3 + SPEC-SEC-IDENTITY-ASSERT-001 REQ-4: cross-user /
+    # cross-org guard. JWT callers are matched against their JWT claims;
+    # internal-secret callers are re-verified against portal-api so the
+    # internal-secret bypass no longer admits arbitrary body identities.
+    await verify_body_identity(request, req.org_id, req.user_id)
 
     async def event_generator():
         t0 = time.perf_counter()
@@ -55,9 +58,7 @@ async def chat(req: RetrieveRequest, request: Request) -> EventSourceResponse:
             return
 
         # 4. Search
-        raw_results = await search.hybrid_search(
-            query_vector, req, settings.retrieval_candidates
-        )
+        raw_results = await search.hybrid_search(query_vector, req, settings.retrieval_candidates)
 
         # 5. Rerank (skip for notebook scope)
         if req.scope != "notebook" and raw_results:
@@ -82,9 +83,7 @@ async def chat(req: RetrieveRequest, request: Request) -> EventSourceResponse:
         )
 
         # 6. Stream synthesis
-        async for item in synthesis.synthesize(
-            query_resolved, reranked, req.conversation_history
-        ):
+        async for item in synthesis.synthesize(query_resolved, reranked, req.conversation_history):
             if isinstance(item, str):
                 yield json.dumps({"type": "token", "content": item})
             elif isinstance(item, dict):

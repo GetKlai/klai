@@ -1,16 +1,36 @@
+# SPEC-SEC-IDENTITY-ASSERT-001 Phase D: build context is the repo root and
+# the image mirrors the repo layout under /repo so the path-dep
+# `../klai-libs/identity-assert` resolves WITHIN the container too. Same
+# pattern as klai-knowledge-mcp (Phase B) and klai-knowledge-ingest.
+
 FROM python:3.12-slim
 
-WORKDIR /app
+# uv from the official distroless image
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
-COPY pyproject.toml .
-RUN pip install uv && uv pip install --system -e .
+# Non-root user (created before COPY so file ownership is right from the start)
+RUN useradd --create-home --uid 1000 --shell /bin/bash app
 
-COPY retrieval_api/ ./retrieval_api/
-COPY scripts/ ./scripts/
+# Repo-mirror layout — klai-libs path-deps must resolve from the workspace root
+WORKDIR /repo
+COPY --chown=app:app klai-libs/identity-assert klai-libs/identity-assert
+COPY --chown=app:app klai-retrieval-api/pyproject.toml klai-retrieval-api/pyproject.toml
 
-RUN adduser --disabled-password --gecos "" klai
+WORKDIR /repo/klai-retrieval-api
 
-USER klai
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
+
+# `uv pip install -e .` instead of `uv sync --frozen` because retrieval-api
+# does not commit a uv.lock today (existing convention); we keep the existing
+# Dockerfile resolution behaviour and only add the klai-libs source layout.
+RUN uv pip install --system -e .
+
+COPY --chown=app:app klai-retrieval-api/retrieval_api retrieval_api
+COPY --chown=app:app klai-retrieval-api/scripts scripts
+
+USER app
 
 # SPEC-SEC-WEBHOOK-001 REQ-1.6: --proxy-headers + allow-ips=127.0.0.1 for internal
 # services. retrieval-api is reached service-to-service on klai-net (portal-api,

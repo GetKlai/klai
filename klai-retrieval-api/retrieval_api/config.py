@@ -82,6 +82,17 @@ class Settings(BaseSettings):
     # Redis URL for the rate limiter (REQ-4.1). Fail-open when unreachable (REQ-4.5).
     redis_url: str = ""
 
+    # SPEC-SEC-IDENTITY-ASSERT-001 REQ-4 — Phase D
+    # When an internal-secret caller submits a body with org_id / user_id, the
+    # retrieval-api re-asserts the (user, org) tuple against portal-api's
+    # /internal/identity/verify before running any retrieval. Both vars are
+    # required at startup — the IdentityAsserter constructor in
+    # retrieval_api.middleware.auth fails-closed if either is empty, so the
+    # service refuses to boot rather than silently routing internal-secret
+    # traffic through the old "trust the body" path.
+    portal_api_url: str = ""
+    portal_internal_secret: str = ""
+
     @model_validator(mode="after")
     def _validate_security_settings(self) -> Settings:
         """REQ-1.1 / REQ-5.2: fail-closed on missing required security config.

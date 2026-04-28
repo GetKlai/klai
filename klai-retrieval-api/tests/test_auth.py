@@ -413,8 +413,16 @@ class TestCrossUserOrgGuard:
             )
         assert resp.status_code == 200
 
-    def test_internal_secret_skips_cross_check(self, client):
-        """REQ-3.3 / REQ-8.7: internal secret caller bypasses cross-user/org check."""
+    def test_internal_secret_caller_now_verified_against_portal(self, client):
+        """SPEC-SEC-IDENTITY-ASSERT-001 REQ-4: internal-secret callers no
+        longer bypass the body-identity guard. They are re-verified against
+        portal-api with the X-Caller-Service header.
+
+        The conftest auto-mock returns allow for any (user, org) tuple, so
+        this test asserts the happy-path flow still completes — the real
+        guard's failure modes are exercised in
+        ``tests/test_identity_assert.py``.
+        """
         with (
             patch(
                 "retrieval_api.api.retrieve.coreference.resolve",
