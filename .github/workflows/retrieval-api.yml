@@ -5,11 +5,16 @@ on:
     branches: [main]
     paths:
       - 'klai-retrieval-api/**'
+      # SPEC-SEC-IDENTITY-ASSERT-001 Phase D: retrieval-api consumes
+      # klai-libs/identity-assert as a path-dep; library updates retrigger
+      # this image build.
+      - 'klai-libs/identity-assert/**'
       - '.github/workflows/retrieval-api.yml'
   pull_request:
     branches: [main]
     paths:
       - 'klai-retrieval-api/**'
+      - 'klai-libs/identity-assert/**'
       - '.github/workflows/retrieval-api.yml'
   workflow_dispatch:
 
@@ -53,8 +58,12 @@ jobs:
       - name: Build and push retrieval-api
         uses: docker/build-push-action@v7
         with:
-          context: ./klai-retrieval-api
-          push: true
+          # SPEC-SEC-IDENTITY-ASSERT-001 Phase D: build context is the repo
+          # root so klai-libs/identity-assert is reachable as a Docker COPY
+          # source. Same pattern as klai-knowledge-mcp (Phase B).
+          context: .
+          file: klai-retrieval-api/Dockerfile
+          push: ${{ github.event_name == 'push' }}
           tags: |
             ghcr.io/getklai/retrieval-api:latest
             ghcr.io/getklai/retrieval-api:${{ github.sha }}
@@ -62,6 +71,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Deploy to core-01
+        if: github.event_name == 'push'
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.CORE01_HOST }}
@@ -77,6 +87,7 @@ jobs:
 
   scan:
     needs: build-push
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       security-events: write
