@@ -60,7 +60,34 @@ BEGIN
     END;
 END $$;
 
-SELECT '=== Test 7: cleanup ===' AS test;
+SELECT '=== Test 7 (SPEC-SEC-TENANT-001 REQ-6.1): portal_group_kb_access without tenant context — expect ERROR 42501 ===' AS test;
+-- portal_group_kb_access is a category-D pure-tenant junction table
+-- (membership-of-group ↔ access-to-kb). REQ-6.1 verifies — does not
+-- assume — that RLS is the working defence-in-depth layer for the
+-- offboard cross-tenant scenario. A direct SELECT without tenant GUC
+-- MUST raise insufficient_privilege.
+DO $$
+BEGIN
+    BEGIN
+        PERFORM COUNT(*) FROM portal_group_kb_access;
+        RAISE EXCEPTION 'RLS SMOKE FAILURE: SELECT on portal_group_kb_access without tenant context did not raise';
+    EXCEPTION WHEN insufficient_privilege THEN
+        RAISE NOTICE 'OK: portal_group_kb_access raised insufficient_privilege as expected (REQ-6.1)';
+    END;
+END $$;
+
+-- SPEC-SEC-TENANT-001 REQ-6.2: portal_group_memberships intentionally
+-- carries NO RLS policy. Membership rows inherit their tenant via the
+-- parent group's FK (PortalGroup.org_id). The code-layer guard for the
+-- offboard cross-tenant scenario is the org-scoped subselect in
+-- klai-portal/backend/app/api/admin/users.py::offboard_user (REQ-1) —
+-- pinned by tests/test_admin_users.py::
+-- test_offboard_user_does_not_wipe_other_org_memberships (REQ-5.1).
+-- Do NOT add an RLS policy on portal_group_memberships under this SPEC.
+-- If the table ever gains an org_id column, that is a separate
+-- schema-change SPEC + RLS-upgrade migration.
+
+SELECT '=== Test 8: cleanup ===' AS test;
 SELECT set_config('app.current_org_id', '', false);
 SELECT set_config('app.cross_org_admin', '', false);
 
