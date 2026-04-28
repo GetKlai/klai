@@ -120,58 +120,79 @@ that finding #10 already exploited.
 
 ---
 
-## A-3: Cross-org request from a member JWT returns 403
+## A-3: Cross-org request from a non-admin JWT returns 403 (v0.5.0)
 
 **REQs covered:** REQ-4.1, REQ-4.3, REQ-4.4, REQ-5.3
 
-**Purpose:** A user invited with `role="member"` MUST NOT trigger the
-admin bypass in retrieval-api's `verify_body_identity`. A body
-carrying a different `org_id` than the JWT's `resourceowner` MUST
-return HTTP 403.
+**Purpose:** A user invited with `role="member"` (or `group-admin`)
+MUST NOT trigger the admin bypass in retrieval-api's
+`verify_body_identity`. A body carrying a different `org_id` than the
+JWT's `resourceowner` MUST return HTTP 403.
+
+**v0.5.0 / β note on JWT shape:** Under the v0.5.0 mapping, non-admin
+invites receive NO Zitadel project-role grant. Their JWTs therefore
+carry NO `urn:zitadel:iam:org:project:roles` claim (or carry it as
+`{}` / `null` depending on Zitadel emission shape). `_extract_role`
+returns `None`; `auth.role` is `None` (not `"admin"`); the cross-org
+check fires.
 
 **Given:**
-- retrieval-api is running against a mocked JWKS with a test
-  `RS256` key.
-- A JWT is issued with:
+- retrieval-api is running with the `_decode_jwt` helper patched
+  (no real JWKS / network).
+- A JWT payload is constructed with:
   - `sub="user-member-1"`
-  - `resourceowner="101"` (org A)
-  - `"urn:zitadel:iam:org:project:roles": {"org:member": {}}`
-    (the REQ-2 mapping for portal role `member`).
+  - `resourceowner="org-a"` (org A; opaque Zitadel resourceowner)
+  - **NO `urn:zitadel:iam:org:project:roles` claim** (β: member
+    receives no grant)
   - `aud=<settings.zitadel_api_audience>`, `iss=<settings.zitadel_issuer>`.
 - Internal-secret auth is NOT used for this request.
 
 **When:**
 - `POST /retrieve` (or any endpoint calling `verify_body_identity`)
   with `Authorization: Bearer <jwt>` and body
-  `{"org_id": "102", "user_id": "user-member-1", ...}`.
+  `{"org_id": "org-b", "user_id": "user-member-1", ...}`.
 
 **Then:**
 - Response is `403 Forbidden`.
 - Response body contains `{"error": "org_mismatch"}` (per
-  `verify_body_identity` line 352).
+  `verify_body_identity`).
 - Metric `cross_org_rejected_total` incremented by 1.
 - Structured log `event="cross_org_rejected"` emitted with
   `reason="org_mismatch"`, `auth_method="jwt"`, truncated `jwt_sub_hash`.
 
-**Negative case (guard):**
-- Same request but with JWT carrying
-  `"urn:zitadel:iam:org:project:roles": {"admin": {}}` → response is
+**Negative case (control — admin still bypasses):**
+- Same request but with JWT carrying the test-fixture admin shape
+  `urn:zitadel:iam:org:project:roles: {"admin": {}}` → response is
   `200 OK` (admin bypass is the SPEC-SEC-010 REQ-3.1 behaviour and
   is intentional for genuine admins). This is the control case
-  confirming the bypass still works as specified for actual admin
-  roles.
+  confirming the bypass still works for `_extract_role` "admin"
+  match. Production admin users do NOT carry this shape today
+  (they carry `{"org:owner": {}}`); the test fixture is the only
+  reachable consumer of the admin-match branch — see
+  `_extract_role` docstring for the full v0.5.0 audit and the
+  SPEC-SEC-IDENTITY-ASSERT-001 (γ) migration plan.
 
-**Failure mode under current code (when combined with A-2 defect):**
-- Because current code grants `org:owner` for every invite, the JWT
-  for a nominal "member" would carry `{"org:owner": {}}`.
-  `_extract_role` returns `"org:owner"` (not `"admin"` today), so
-  today the 403 still fires — but only by chance. If an operator
-  ever adds `"org:owner"` to the bypass set, the cross-org check is
-  silently removed. REQ-4.1 + REQ-4.4 lock the bypass set to values
-  the mapping can reach AND test that `member` never hits the bypass.
+**Negative case (guard — `org_admin` removed):**
+- Same request but with JWT carrying
+  `urn:zitadel:iam:org:project:roles: {"org_admin": {}}` → response
+  is `403 Forbidden`. REQ-4.1 v0.5.0 removed `org_admin` from the
+  admin-equivalent set: it was never produced by any production
+  flow and is no longer a bypass candidate. This case asserts the
+  removal landed.
+
+**Failure mode under pre-v0.5.0 code:**
+- Pre-fix `_extract_role` matched both `admin` AND `org_admin` as
+  admin-equivalent. The `org_admin` branch was unreachable in
+  production but represented a latent attack surface — any future
+  code path that ever produced `org_admin` (e.g. a SCIM provisioner,
+  a migration script) would have silently granted admin-bypass to
+  non-admin users. v0.5.0 removes the unreachable branch; the
+  control case in this acceptance asserts the removal.
 
 **Test location:**
-`klai-retrieval-api/tests/test_auth_middleware.py::test_verify_body_identity_rejects_cross_org_for_member_role`
+`klai-retrieval-api/tests/test_auth.py::TestCrossUserOrgGuard::test_non_admin_jwt_does_not_bypass_cross_org`
+and
+`klai-retrieval-api/tests/test_auth.py::TestCrossUserOrgGuard::test_org_admin_role_is_no_longer_admin_equivalent`
 
 ---
 
