@@ -776,9 +776,21 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
 
 @router.post("/auth/totp-login", response_model=LoginResponse)
 async def totp_login(body: TOTPLoginRequest, response: Response, db: AsyncSession = Depends(get_db)) -> LoginResponse:
-    """Complete login by providing a TOTP code after password was accepted."""
+    """Complete login by providing a TOTP code after password was accepted.
+
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-1.6/1.7/1.8: every failure leg
+    (expired_token, lockout-immediate, invalid_code, lockout-after-fail,
+    zitadel_5xx) emits a ``totp_login_failed`` structured event in addition
+    to the existing ``audit.log_event(action="auth.totp.failed")`` call.
+    """
     pending = _pending_totp.get(body.temp_token)
     if not pending:
+        _emit_auth_event(
+            "totp_login_failed",
+            reason="expired_token",
+            outcome="400",
+            level="warning",
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Session expired, please log in again",
@@ -787,6 +799,13 @@ async def totp_login(body: TOTPLoginRequest, response: Response, db: AsyncSessio
     # Reject immediately if the token is already locked out
     if pending["failures"] >= _TOTP_MAX_FAILURES:
         _pending_totp.pop(body.temp_token)
+        _emit_auth_event(
+            "totp_login_failed",
+            reason="lockout",
+            failures=pending["failures"],
+            outcome="429",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many failed attempts, please log in again",
@@ -800,7 +819,7 @@ async def totp_login(body: TOTPLoginRequest, response: Response, db: AsyncSessio
             code=body.code,
         )
     except httpx.HTTPStatusError as exc:
-        logger.exception("update_session_with_totp failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("update_session_with_totp_failed", zitadel_status=exc.response.status_code)
         if exc.response.status_code in (400, 401):
             pending["failures"] += 1
             await audit.log_event(
@@ -813,14 +832,37 @@ async def totp_login(body: TOTPLoginRequest, response: Response, db: AsyncSessio
             )
             if pending["failures"] >= _TOTP_MAX_FAILURES:
                 _pending_totp.pop(body.temp_token)
+                _emit_auth_event(
+                    "totp_login_failed",
+                    reason="lockout",
+                    failures=pending["failures"],
+                    zitadel_status=exc.response.status_code,
+                    outcome="429",
+                    level="error",
+                )
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                     detail="Too many failed attempts, please log in again",
                 ) from exc
+            _emit_auth_event(
+                "totp_login_failed",
+                reason="invalid_code",
+                failures=pending["failures"],
+                zitadel_status=exc.response.status_code,
+                outcome="400",
+                level="warning",
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid code, please try again",
             ) from exc
+        _emit_auth_event(
+            "totp_login_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Verification failed, please try again later",
@@ -904,16 +946,36 @@ async def sso_complete(
 async def totp_setup(
     user_id: str = Depends(get_current_user_id),
 ) -> TOTPSetupResponse:
-    """Initiate TOTP registration for the logged-in user. Returns QR URI and secret."""
+    """Initiate TOTP registration for the logged-in user. Returns QR URI and secret.
+
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-1.1/1.2: emit audit on success, structured
+    event on 5xx.
+    """
     try:
         result = await zitadel.register_user_totp(user_id)
     except httpx.HTTPStatusError as exc:
-        logger.exception("register_user_totp failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("register_user_totp_failed", zitadel_status=exc.response.status_code)
+        _emit_auth_event(
+            "totp_setup_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            actor_user_id=user_id,
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to set up 2FA, please try again later",
         ) from exc
 
+    await audit.log_event(
+        org_id=0,
+        actor=user_id,
+        action="auth.totp.setup",
+        resource_type="user",
+        resource_id=user_id,
+        details={"reason": "initiated"},
+    )
     return TOTPSetupResponse(uri=result["uri"], secret=result["totpSecret"])
 
 
@@ -946,20 +1008,49 @@ async def totp_confirm(
     body: TOTPConfirmRequest,
     user_id: str = Depends(get_current_user_id),
 ) -> None:
-    """Verify and activate the TOTP registration."""
+    """Verify and activate the TOTP registration.
+
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-1.3/1.4/1.5: emit audit on success,
+    structured event on 4xx (invalid_code) and 5xx (zitadel_5xx).
+    """
     try:
         await zitadel.verify_user_totp(user_id, body.code)
     except httpx.HTTPStatusError as exc:
-        logger.exception("verify_user_totp failed %s: %s", exc.response.status_code, exc.response.text)
+        _slog.exception("verify_user_totp_failed", zitadel_status=exc.response.status_code)
         if exc.response.status_code in (400, 401):
+            _emit_auth_event(
+                "totp_confirm_failed",
+                reason="invalid_code",
+                zitadel_status=exc.response.status_code,
+                actor_user_id=user_id,
+                outcome="400",
+                level="warning",
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid code, please try again",
             ) from exc
+        _emit_auth_event(
+            "totp_confirm_failed",
+            reason="zitadel_5xx",
+            zitadel_status=exc.response.status_code,
+            actor_user_id=user_id,
+            outcome="502",
+            level="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to confirm 2FA, please try again later",
         ) from exc
+
+    await audit.log_event(
+        org_id=0,
+        actor=user_id,
+        action="auth.totp.confirmed",
+        resource_type="user",
+        resource_id=user_id,
+        details={"reason": "activated"},
+    )
 
 
 @router.post("/auth/passkey/setup", response_model=PasskeySetupResponse)
