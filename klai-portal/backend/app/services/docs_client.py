@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.trace import get_trace_headers
+from app.utils.response_sanitizer import sanitize_response_body  # SPEC-SEC-INTERNAL-001 REQ-4
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +102,7 @@ async def deprovision_kb(org_slug: str, kb_slug: str) -> None:
                 org_slug,
                 kb_slug,
                 exc.response.status_code,
-                exc.response.text[:500],
+                sanitize_response_body(exc, max_len=500),
             )
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
@@ -135,7 +136,7 @@ async def provision_and_store(
             "Gitea provisioning failed for KB slug=%s: %s %s",
             kb_slug,
             exc.response.status_code,
-            exc.response.text[:500],
+            sanitize_response_body(exc, max_len=500),
         )
         await db.rollback()
         raise HTTPException(

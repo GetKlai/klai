@@ -41,9 +41,19 @@ def extract_secret_values(settings_obj: object) -> set[str]:
 
 
 def _enumerate_field_names(obj: object) -> list[str]:
-    """Best-effort field enumeration covering pydantic + plain objects."""
-    # Pydantic v2: BaseSettings.model_fields is a dict[str, FieldInfo].
-    model_fields: Any = getattr(obj, "model_fields", None)
+    """Best-effort field enumeration covering pydantic + plain objects.
+
+    Pydantic v2.11 deprecates instance-level ``model_fields`` access in
+    favour of ``type(obj).model_fields``. We try the class first and fall
+    back to the instance attribute so this works against pre-2.11 codebases
+    AND plain (non-pydantic) namespaces.
+    """
+    # Pydantic v2: BaseSettings.model_fields is a dict[str, FieldInfo] on the class.
+    model_fields: Any = getattr(type(obj), "model_fields", None)
+    if not isinstance(model_fields, dict):
+        # Pre-2.11 compatibility: instance-level access still works.
+        model_fields = getattr(obj, "model_fields", None)
+
     if isinstance(model_fields, dict):
         keys: list[str] = []
         for raw_key in model_fields:  # type: ignore[reportUnknownVariableType]

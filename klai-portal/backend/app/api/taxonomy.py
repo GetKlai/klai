@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
+from log_utils import verify_shared_secret  # SPEC-SEC-INTERNAL-001 REQ-1.1
 from pydantic import BaseModel
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -397,11 +398,22 @@ async def list_taxonomy_proposals(
 
 
 def _require_internal_token(request: Request) -> None:
-    """Reject requests without the correct internal shared secret."""
+    """Reject requests without the correct internal shared secret.
+
+    SPEC-SEC-INTERNAL-001 REQ-1.1: constant-time comparison via
+    ``verify_shared_secret`` -- the canonical inbound-secret helper from
+    ``klai-log-utils``. The previous string-equality check leaked a
+    length/prefix timing channel.
+
+    REQ-1.4: empty configured secret short-circuits to 503 BEFORE any
+    comparison runs, so the constant-time guarantee is never invoked on
+    a misconfigured fail-closed path.
+    """
     if not settings.internal_secret:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Internal API not configured")
     token = request.headers.get("Authorization", "")
-    if token != f"Bearer {settings.internal_secret}":
+    expected = f"Bearer {settings.internal_secret}"
+    if not verify_shared_secret(token, expected):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
 
 
