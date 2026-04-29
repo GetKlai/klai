@@ -372,11 +372,25 @@ async def _get_tenant_slug_allowlist() -> set[str]:
         return slugs
 
 
+# @MX:ANCHOR: tenant-slug allowlist invalidator. fan_in = 4 — called from
+#   signup.signup, signup.signup_social, provisioning.orchestrator (soft-delete),
+#   and admin.retry_provisioning (un-soft-delete). Adding a NEW slug-mutating
+#   path WITHOUT calling this helper is a silent regression: the
+#   _validate_callback_url allowlist will lag the DB by up to 60s, blocking
+#   the legitimate post-signup redirect for new tenants and (mirror case)
+#   accepting redirects to soft-deleted slugs for up to 60s.
+# @MX:REASON: 60s TTL is the correctness floor — missing an invalidation site
+#   self-heals within a minute, so this is not a security boundary, it is a
+#   UX / freshness guarantee. Future modifications must preserve the
+#   global-state mutation pattern (cache + expiry) so a new slug-write site
+#   only needs to add a single line `invalidate_tenant_slug_cache()` rather
+#   than thread a cache handle through.
+# @MX:SPEC: SPEC-SEC-HYGIENE-001 REQ-20.2
 def invalidate_tenant_slug_cache() -> None:
     """SPEC-SEC-HYGIENE-001 REQ-20.2: explicit cache-invalidation hook.
 
     Call from sites that mutate the active-tenant-slug set:
-    - signup.py after a fresh PortalOrg insert
+    - signup.py after a fresh PortalOrg insert (both /signup and /signup/social)
     - provisioning/orchestrator.py after a soft-delete (deleted_at = now)
     - admin/retry_provisioning.py after un-soft-delete (deleted_at = None)
 

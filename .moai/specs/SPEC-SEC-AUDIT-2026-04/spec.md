@@ -13,6 +13,24 @@ type: tracker
 
 ## HISTORY
 
+### v0.8.0 (2026-04-29) — HYGIENE-001 portal slice in flight
+
+SPEC-SEC-HYGIENE-001 portal-slice (HY-19, HY-20, HY-21, HY-22, HY-23,
+HY-24, HY-27, HY-28) opened as PR #209 against `main` from
+`feature/SPEC-SEC-HYGIENE-001-claude`. All 8 v0.2.0 P3 findings from
+the original Cornelis 2026-04-22 audit ship in a single PR per the
+v0.2.0 single-PR assumption. 12 commits; 1317 / 1317 backend tests
+green; ruff + pyright clean.
+
+Live status row updated: HYGIENE-001 now lists the portal slice
+explicitly. Outstanding: knowledge-mcp (HY-45..HY-48), mailer
+(HY-49..HY-50), and the open retrieval-slice PR #188.
+
+P3 finding verdicts (#19-#28) remain `VERIFIED` — the verdict column
+captures the audit's confirmation of the finding, not the
+implementation status. Implementation status lives in the SPEC's own
+HISTORY (see SPEC-SEC-HYGIENE-001 v0.6.0).
+
 ### v0.7.0 (2026-04-29, late)
 - SPEC-SEC-INTERNAL-001 fully shipped (#201): service-wide internal-secret
   surface hardening across portal-api / klai-mailer / klai-connector /
@@ -145,7 +163,7 @@ Implementation teams should read the linked sub-SPEC, not this tracker, when pic
 | SPEC-SEC-ENVFILE-SCOPE-001 | P1 | **shipped** | #163 + #170 (3-vars-dropped fix) + #171 close-out |
 | SPEC-SEC-SESSION-001 | P2 | **shipped** | #197 + close-out (alerts/CHANGELOG) |
 | SPEC-SEC-INTERNAL-001 | P2 | **shipped** | #201 + close-out (CHANGELOG / pitfalls / tracker) |
-| SPEC-SEC-HYGIENE-001 | P3 | **partial** (scribe slice #179 + retrieval slice #188 open; connector / portal / knowledge-mcp slices queued) | #179 + #188 (open) |
+| SPEC-SEC-HYGIENE-001 | P3 | **partial** (scribe + connector slices shipped; portal slice #209 + retrieval slice #188 open; knowledge-mcp + mailer slices queued) | #179 + connector follow-ups + #188 (open) + #209 (open) |
 | SPEC-SEC-AUTH-COVERAGE-001 | P0 | **shipped** | #184 plan + #186 v0.2 + #195 run + #198 alerts/runbook/CHANGELOG |
 
 **Implementation rate:** ~31 PRs merged in 6 days (audit-response only).
