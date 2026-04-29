@@ -271,8 +271,13 @@ async def _totp_pending_get(token: str) -> dict[str, str] | None:
     the token is unknown or already expired."""
     pool = cast("aioredis.Redis", await _get_totp_redis_or_503(phase="get"))
     try:
-        # Same redis-py stub regression as ``_totp_pending_create``:
-        # ``Redis.hgetall`` is awaitable in the asyncio variant.
+        # redis-py async stubs treat ``Redis.hgetall`` as the sync
+        # ``dict[Unknown, Unknown]`` return type; the runtime override on
+        # ``redis.asyncio.Redis`` is awaitable. ``hset`` had the same
+        # stub gap pre-pipeline-refactor; after that refactor the call
+        # is queued via ``pipeline()`` and pyright is happy. ``hgetall``
+        # is the only remaining direct-call site that needs the
+        # suppression.
         data = await pool.hgetall(  # pyright: ignore[reportGeneralTypeIssues]
             f"{_TOTP_PENDING_KEY_PREFIX}{token}"
         )
