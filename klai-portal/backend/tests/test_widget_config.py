@@ -46,6 +46,11 @@ class FakeWidget:
 class FakeOrg:
     id: int = 42
     zitadel_org_id: str = "zitadel-org-123"
+    # SPEC-SEC-HYGIENE-001 REQ-24.4: slug is read by partner.py to derive
+    # the per-tenant widget JWT signing key (HKDF). Test patches
+    # generate_session_token directly, so the actual value here is not
+    # signature-relevant — but it must exist to satisfy the call site.
+    slug: str = "test"
 
 
 def _make_request(origin: str | None = "https://example.com") -> MagicMock:
