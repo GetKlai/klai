@@ -339,9 +339,7 @@ _tenant_slug_cache_lock: asyncio.Lock | None = None
 async def _load_tenant_slugs_from_db() -> set[str]:
     """Read the active-slug set from portal_orgs (deleted_at IS NULL)."""
     async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(PortalOrg.slug).where(PortalOrg.deleted_at.is_(None))
-        )
+        result = await db.execute(select(PortalOrg.slug).where(PortalOrg.deleted_at.is_(None)))
         return {row[0] for row in result.all() if row[0]}
 
 

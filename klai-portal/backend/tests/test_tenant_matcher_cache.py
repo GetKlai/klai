@@ -67,7 +67,8 @@ async def test_expired_cache_re_fetches_after_downgrade() -> None:
     with (
         patch.object(tenant_matcher, "zitadel", mock_zitadel),
         patch.object(
-            tenant_matcher, "AsyncSessionLocal",
+            tenant_matcher,
+            "AsyncSessionLocal",
             return_value=_mock_session_with_org("professional"),
         ),
     ):
@@ -84,14 +85,14 @@ async def test_expired_cache_re_fetches_after_downgrade() -> None:
     with (
         patch.object(tenant_matcher, "zitadel", mock_zitadel),
         patch.object(
-            tenant_matcher, "AsyncSessionLocal",
+            tenant_matcher,
+            "AsyncSessionLocal",
             return_value=_mock_session_with_org("free"),
         ),
     ):
         result2 = await find_tenant("alice@example.com")
     assert result2 is None, (
-        "Cache expired before the second call; a downgraded plan must "
-        "make find_tenant return None on the next request."
+        "Cache expired before the second call; a downgraded plan must make find_tenant return None on the next request."
     )
     # Zitadel was called twice — once for the populated entry, once after expiry.
     assert mock_zitadel.find_user_by_email.await_count == 2

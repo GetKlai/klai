@@ -60,9 +60,7 @@ async def test_unknown_subdomain_raises_502() -> None:
     """
     with _patch_allowlist({"voys", "getklai"}):
         with pytest.raises(HTTPException) as exc_info:
-            await auth_module._validate_callback_url(
-                "https://dangling.getklai.com/x"
-            )
+            await auth_module._validate_callback_url("https://dangling.getklai.com/x")
     assert exc_info.value.status_code == 502
     assert exc_info.value.detail == "Login failed, please try again later"
 
