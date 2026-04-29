@@ -83,6 +83,10 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 pythonpath = [".", "tests"]
+markers = [
+    "benchmark: constant-time regression benchmarks (run with: pytest -m benchmark)",
+]
+addopts = "-m 'not benchmark'"
 
 [tool.ruff]
 line-length = 120
