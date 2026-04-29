@@ -66,3 +66,11 @@ cross_org_rejected_total = Counter(
     "retrieval_api_cross_org_rejected_total",
     "Requests rejected because body org_id != JWT resourceowner",
 )
+
+# SPEC-SEC-HYGIENE-001 REQ-40 — events that overflow the bounded
+# ``services.events._pending`` set are dropped to prevent OOM during
+# flood conditions; this counter makes drops observable in Prometheus.
+retrieval_events_dropped_total = Counter(
+    "retrieval_events_dropped_total",
+    "Product events dropped because the pending-tasks cap was reached",
+)

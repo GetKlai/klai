@@ -176,8 +176,10 @@ async def retrieve(req: RetrieveRequest, request: Request) -> RetrieveResponse:
                 graph_results_count = len(graph_results)
                 if graph_results:
                     raw_results = _rrf_merge(raw_results, graph_results)
-            except Exception as exc:
-                logger.warning("Graph search task failed", error=str(exc))
+            except Exception:
+                # SPEC-SEC-HYGIENE-001 REQ-43.3: exc_info=True preserves the
+                # traceback that the previous `error=str(exc)` dropped (TRY401).
+                logger.warning("Graph search task failed", exc_info=True)
 
         candidates_retrieved = len(raw_results)
         decision_record["search_candidates_count"] = candidates_retrieved

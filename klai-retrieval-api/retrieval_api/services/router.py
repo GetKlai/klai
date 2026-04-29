@@ -52,8 +52,10 @@ async def fetch_source_catalog(org_id: str) -> list[KBEntry]:
             for hit in result.hits
             if hit.value  # skip empty/null labels
         ]
-    except Exception as exc:
-        logger.warning("router_facet_failed", org_id=org_id, error=str(exc))
+    except Exception:
+        # SPEC-SEC-HYGIENE-001 REQ-43.3: exc_info=True preserves the
+        # traceback that the previous `error=str(exc)` dropped (TRY401).
+        logger.warning("router_facet_failed", org_id=org_id, exc_info=True)
         entries = []
 
     _catalog_cache[org_id] = (entries, time.monotonic())

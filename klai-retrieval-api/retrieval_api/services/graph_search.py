@@ -83,8 +83,10 @@ async def search(query: str, org_id: str, top_k: int = 20) -> list[dict]:
             timeout_s=settings.graph_search_timeout,
         )
         return []
-    except Exception as exc:
-        logger.warning("graph_search_failed", org_id=org_id, error=str(exc))
+    except Exception:
+        # SPEC-SEC-HYGIENE-001 REQ-43.3: exc_info=True preserves the
+        # traceback that the previous `error=str(exc)` dropped (TRY401).
+        logger.warning("graph_search_failed", org_id=org_id, exc_info=True)
         return []
 
 
