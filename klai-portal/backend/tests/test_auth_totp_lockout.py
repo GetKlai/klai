@@ -186,6 +186,156 @@ async def test_redis_connection_error_during_get_fails_closed(fake_redis: Any, m
     assert exc_info.value.status_code == 503
 
 
+async def test_redis_connection_error_during_create_fails_closed(
+    fake_redis: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REQ-1.7 + REQ-5.3: a ``ConnectionError`` raised by the pipeline
+    transaction during ``_totp_pending_create`` is mapped to HTTP 503 +
+    ``totp_pending_redis_unavailable`` event with ``phase=create``.
+
+    The pipeline replaces the legacy sequential ``HSET`` + ``EXPIRE``
+    pair (closes the orphan-hash window on portal-api crash mid-create);
+    the fail-closed contract still applies when the pipeline itself
+    cannot reach Redis.
+    """
+    import redis.exceptions as redis_exc
+
+    from app.api.auth import _totp_pending_create
+
+    class _BoomPipeline:
+        def __init__(self) -> None:
+            self.queued: list[str] = []
+
+        def hset(self, *_a: Any, **_kw: Any) -> _BoomPipeline:
+            self.queued.append("hset")
+            return self
+
+        def expire(self, *_a: Any, **_kw: Any) -> _BoomPipeline:
+            self.queued.append("expire")
+            return self
+
+        def set(self, *_a: Any, **_kw: Any) -> _BoomPipeline:
+            self.queued.append("set")
+            return self
+
+        async def execute(self) -> Any:
+            raise redis_exc.ConnectionError("network down mid-pipeline")
+
+        async def __aenter__(self) -> _BoomPipeline:
+            return self
+
+        async def __aexit__(self, *_a: Any) -> None:
+            return None
+
+    monkeypatch.setattr(fake_redis, "pipeline", lambda *_a, **_kw: _BoomPipeline())
+
+    with capture_logs() as captured:
+        with pytest.raises(HTTPException) as exc_info:
+            await _totp_pending_create(
+                session_id="sess-x",
+                session_token="tok-x",
+                ua_hash="",
+                ip_subnet="0.0.0.0",  # noqa: S104 — placeholder, not a network bind
+            )
+
+    assert exc_info.value.status_code == 503
+    unavail = [e for e in captured if e.get("event") == "totp_pending_redis_unavailable"]
+    assert any(e.get("phase") == "create" for e in unavail)
+
+
+async def test_redis_connection_error_during_incr_fails_closed(
+    fake_redis: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REQ-1.7: ``INCR`` failing mid-flight on a wrong TOTP code → 503.
+
+    This is the worst-case leg from a UX perspective: the user already
+    submitted a (wrong) code, so the audit log fires for ``invalid_code``
+    and THEN Redis fails on the counter increment. Fail-CLOSED still
+    applies — opening the door would let an attacker dodge the brute-force
+    counter by saturating Redis network capacity.
+    """
+    import redis.exceptions as redis_exc
+
+    from app.api.auth import TOTPLoginRequest, _totp_pending_create, totp_login
+
+    temp_token = await _totp_pending_create(
+        session_id="sess-incr",
+        session_token="tok-incr",
+        ua_hash="",
+        ip_subnet="0.0.0.0",  # noqa: S104 — placeholder, not a network bind
+    )
+
+    monkeypatch.setattr(
+        "app.api.auth.zitadel.update_session_with_totp",
+        AsyncMock(side_effect=_zitadel_400_error()),
+    )
+    monkeypatch.setattr("app.api.auth.audit.log_event", AsyncMock())
+
+    async def _boom_incr(*_a: Any, **_kw: Any) -> Any:
+        raise redis_exc.ConnectionError("network down mid-incr")
+
+    monkeypatch.setattr(fake_redis, "incr", _boom_incr)
+
+    body = TOTPLoginRequest(temp_token=temp_token, code="000000", auth_request_id="ar-incr")
+    db = AsyncMock(spec=AsyncSession)
+
+    with capture_logs() as captured:
+        with pytest.raises(HTTPException) as exc_info:
+            await totp_login(body=body, response=Response(), db=db)
+
+    assert exc_info.value.status_code == 503
+    unavail = [e for e in captured if e.get("event") == "totp_pending_redis_unavailable"]
+    assert any(e.get("phase") == "incr" for e in unavail)
+
+
+async def test_redis_connection_error_during_delete_fails_closed(
+    fake_redis: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REQ-1.7: ``DEL`` failing during cleanup after a successful TOTP
+    verification → 503 (the SSO cookie is NOT minted).
+
+    Unlike a successful flow, this scenario leaves a stranded
+    ``totp_pending`` hash in Redis. That hash will eventually expire via
+    its TTL; the user retries from the password screen. The trade-off
+    is documented under SPEC §Fail modes — opening the door (returning
+    success despite the failed cleanup) would re-introduce a window
+    where the same token could be reused, which is the very property
+    REQ-1.6 demands we close.
+    """
+    import redis.exceptions as redis_exc
+
+    from app.api.auth import TOTPLoginRequest, _totp_pending_create, totp_login
+
+    temp_token = await _totp_pending_create(
+        session_id="sess-del",
+        session_token="tok-del",
+        ua_hash="",
+        ip_subnet="0.0.0.0",  # noqa: S104 — placeholder, not a network bind
+    )
+
+    monkeypatch.setattr(
+        "app.api.auth.zitadel.update_session_with_totp",
+        AsyncMock(return_value={"sessionId": "sess-del", "sessionToken": "tok-del-renewed"}),
+    )
+    monkeypatch.setattr("app.api.auth.audit.log_event", AsyncMock())
+
+    async def _boom_delete(*_a: Any, **_kw: Any) -> Any:
+        raise redis_exc.ConnectionError("network down mid-delete")
+
+    monkeypatch.setattr(fake_redis, "delete", _boom_delete)
+
+    body = TOTPLoginRequest(temp_token=temp_token, code="123456", auth_request_id="ar-del")
+    db = AsyncMock(spec=AsyncSession)
+
+    with capture_logs() as captured:
+        with pytest.raises(HTTPException) as exc_info:
+            await totp_login(body=body, response=Response(), db=db)
+
+    assert exc_info.value.status_code == 503
+    unavail = [e for e in captured if e.get("event") == "totp_pending_redis_unavailable"]
+    assert any(e.get("phase") == "delete" for e in unavail)
+
+
 # ---------------------------------------------------------------------------
 # REQ-1.8 — in-memory global removed
 # ---------------------------------------------------------------------------
