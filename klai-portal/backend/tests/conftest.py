@@ -55,8 +55,6 @@ os.environ.setdefault("ZITADEL_IDP_MICROSOFT_ID", "test-microsoft-idp-id")  # SP
 # needing to import + alias it (the import-style triggers F811 redefinition
 # warnings when test functions take it as a parameter).
 # ---------------------------------------------------------------------------
-from auth_test_helpers import respx_zitadel  # noqa: E402, F401
-
 # ---------------------------------------------------------------------------
 # SPEC-SEC-HYGIENE-001 REQ-20: pre-populate the tenant-slug allowlist cache
 # so existing login/audit tests that exercise `_validate_callback_url`
@@ -66,6 +64,8 @@ from auth_test_helpers import respx_zitadel  # noqa: E402, F401
 # `auth_module.invalidate_tenant_slug_cache()` in their own fixtures.
 # ---------------------------------------------------------------------------
 import math  # noqa: E402
+
+from auth_test_helpers import respx_zitadel  # noqa: E402, F401
 
 from app.api import auth as _auth_module  # noqa: E402
 
