@@ -16,7 +16,14 @@ dependencies = [
     "python-magic>=0.4",
     "pydub>=0.25",
     "structlog>=25.0",
+    # SPEC-SEC-INTERNAL-001 REQ-4: shared sanitize_response_body helper used by
+    # the transcription-service error log path so a reflected
+    # KNOWLEDGE_INGEST_SECRET / litellm_master_key never lands in VictoriaLogs.
+    "klai-log-utils",
 ]
+
+[tool.uv.sources]
+klai-log-utils = { path = "../../klai-libs/log-utils", editable = true }
 
 [project.optional-dependencies]
 dev = [

@@ -85,20 +85,52 @@ _AUDIT_INSERT_SQL = text(
 from app.services.request_ip import resolve_caller_ip as _resolve_caller_ip  # noqa: E402
 
 
+def _rate_limit_backend_unavailable(caller_ip: str, reason: str, *, exc_info: bool = False) -> None:
+    """Apply the configured fail-mode for an unavailable rate-limit backend.
+
+    SPEC-SEC-INTERNAL-001 REQ-5.2 / REQ-5.3 / AC-5: ``closed`` raises 503 so the
+    blast-radius of a Redis outage is bounded; ``open`` preserves the
+    legacy SEC-005 REQ-1.3 fail-open behaviour for environments that
+    prioritise availability over rate-limit enforcement (staging / dev).
+
+    ``exc_info`` is forwarded only when the caller is inside an active
+    exception handler (the ``except Exception:`` branch in
+    ``_check_rate_limit_internal``); the ``redis_pool is None`` branch
+    has no exception context and passes ``exc_info=False``.
+    """
+    if settings.internal_rate_limit_fail_mode == "closed":
+        structlog_logger.warning(
+            "internal_rate_limit_fail_closed",
+            caller_ip=caller_ip,
+            reason=reason,
+            exc_info=exc_info,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Internal rate limit backend unavailable",
+        )
+    structlog_logger.warning(
+        "internal_rate_limit_redis_unavailable",
+        caller_ip=caller_ip,
+        reason=reason,
+        exc_info=exc_info,
+    )
+
+
 async def _check_rate_limit_internal(caller_ip: str) -> None:
     """SPEC-SEC-005 REQ-1: per-caller-IP sliding-window rate limit for /internal/*.
 
     Reuses the partner_rate_limit sliding-window primitive with a distinct key
-    namespace (internal_rl:<caller_ip>). Fails open on Redis errors per REQ-1.3.
-    Raises HTTPException 429 with Retry-After header when the ceiling is exceeded.
+    namespace (internal_rl:<caller_ip>). Backend-unavailable behaviour is
+    governed by SPEC-SEC-INTERNAL-001 REQ-5 via
+    ``settings.internal_rate_limit_fail_mode`` -- ``closed`` (production
+    default) raises HTTP 503; ``open`` (staging / dev) falls through.
+    Raises HTTPException 429 with Retry-After header when the ceiling
+    is exceeded under the normal Redis-available path.
     """
     redis_pool = await get_redis_pool()
     if redis_pool is None:
-        structlog_logger.warning(
-            "internal_rate_limit_redis_unavailable",
-            caller_ip=caller_ip,
-            reason="redis_pool_none",
-        )
+        _rate_limit_backend_unavailable(caller_ip, reason="redis_pool_none")
         return
 
     try:
@@ -108,14 +140,7 @@ async def _check_rate_limit_internal(caller_ip: str) -> None:
             settings.internal_rate_limit_rpm,
         )
     except Exception:
-        # Fail-open on any Redis-side error. Log as warning so monitoring can alert
-        # on degraded protection without breaking live internal traffic.
-        structlog_logger.warning(
-            "internal_rate_limit_redis_unavailable",
-            caller_ip=caller_ip,
-            reason="redis_exception",
-            exc_info=True,
-        )
+        _rate_limit_backend_unavailable(caller_ip, reason="redis_exception", exc_info=True)
         return
 
     if not allowed:
@@ -1041,15 +1066,21 @@ async def regenerate_librechat_configs(
         await _audit_internal_call(request, org_id=0)
         return RegenerateResponse(tenants_updated=updated, errors=errors)
 
-    # Step 2: Flush Redis directly via protocol (NOT docker exec).
-    # SEC-021 routes the Docker API through docker-socket-proxy, which denies
-    # /exec/*/start by design. Portal-api sits on klai-net with redis, so we
-    # talk Redis protocol straight to it — cleaner AND doesn't require EXEC=1.
+    # Step 2: Targeted invalidation of the LibreChat config cache via protocol
+    # (NOT docker exec -- SEC-021 docker-socket-proxy denies /exec/*/start).
     #
-    # FLUSHALL is critical: librechat.yaml is cached in Redis with no TTL
-    # (see platform/librechat.md), so a silent failure here leaves every
-    # tenant reading stale yaml forever. We surface the failure in the
-    # response `errors` list AND log a warning so both CI and operators see it.
+    # SPEC-SEC-INTERNAL-001 REQ-2: this previously called FLUSHALL, which
+    # cleared every key in the Redis namespace -- including unrelated rate-limit
+    # buckets, SSO cache rows, and partner-API state for every tenant. We now
+    # SCAN MATCH the configured pattern (``configs:*`` by default per REQ-2.3,
+    # tunable via ``LIBRECHAT_CACHE_KEY_PATTERN``) and UNLINK each match in
+    # batches. UNLINK is non-blocking; SCAN with ``count=100`` keeps memory
+    # bounded on large key spaces.
+    #
+    # Failure-mode: if cache invalidation raises, we still continue to the
+    # container-restart step (REQ-2.5) -- LibreChat re-reads the yaml from
+    # disk on startup, so the restart is the belt-and-braces recovery for a
+    # partial invalidation.
     try:
         redis_client = aioredis.Redis(
             host=settings.redis_host,
@@ -1058,11 +1089,28 @@ async def regenerate_librechat_configs(
             decode_responses=True,
         )
         async with redis_client:
-            await redis_client.flushall()
-        logger.info("Redis FLUSHALL completed")
+            cache_pattern = settings.librechat_cache_key_pattern
+            deleted = 0
+            batch: list[str] = []
+            async for key in redis_client.scan_iter(match=cache_pattern, count=100):
+                batch.append(key)
+                if len(batch) >= 100:
+                    deleted += await redis_client.unlink(*batch)
+                    batch.clear()
+            if batch:
+                deleted += await redis_client.unlink(*batch)
+        structlog_logger.info(
+            "librechat_cache_invalidated",
+            pattern=cache_pattern,
+            deleted=deleted,
+        )
     except RedisError as exc:
-        logger.warning("Redis FLUSHALL failed: %s", exc)
-        errors.append(f"redis-flushall: {exc}")
+        structlog_logger.warning(
+            "librechat_cache_invalidation_failed",
+            pattern=settings.librechat_cache_key_pattern,
+            exc_info=True,
+        )
+        errors.append(f"redis-cache-invalidation: {exc}")
 
     # Step 3: Restart all tenant containers via docker-socket-proxy.
     # Only /containers/{id}/restart is called here — allowed by CONTAINERS=1 + POST=1.

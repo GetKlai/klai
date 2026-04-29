@@ -1,9 +1,9 @@
 ---
 id: SPEC-SEC-INTERNAL-001
-version: 0.3.0
-status: draft
+version: 0.4.0
+status: done
 created: 2026-04-24
-updated: 2026-04-24
+updated: 2026-04-28
 author: Mark Vletter
 priority: high
 tracker: SPEC-SEC-AUDIT-2026-04
@@ -12,6 +12,51 @@ tracker: SPEC-SEC-AUDIT-2026-04
 # SPEC-SEC-INTERNAL-001: Internal-Secret Surface Hardening
 
 ## HISTORY
+
+### v0.4.0 (2026-04-28) -- IMPLEMENTED
+
+Six-batch implementation landed on branch `feature/SPEC-SEC-INTERNAL-001`:
+
+- **B0** -- `klai-libs/log-utils/` shared package (commit `7196ff8e`).
+  Public API: `sanitize_response_body`, `sanitize_from_settings`,
+  `extract_secret_values`, `verify_shared_secret`. 29 tests, ruff +
+  pyright strict clean, `py.typed` marker for downstream consumers.
+- **B1** -- portal-api hardening (commit `92ab9930`). Taxonomy
+  compare-digest (REQ-1.1), SCAN/UNLINK replacement for FLUSHALL
+  (REQ-2), BFF proxy header blocklist + regex catch-all (REQ-3),
+  configurable rate-limit fail-mode (REQ-5), and 28-site REQ-4 sweep.
+  1198 portal-api tests passing.
+- **B2** -- knowledge-mcp hardening (commit `c081e777`). No upstream
+  body echoed to MCP tool return (REQ-8), fail-closed startup on
+  empty `KNOWLEDGE_INGEST_SECRET` / `DOCS_INTERNAL_SECRET` /
+  `PORTAL_INTERNAL_SECRET` (REQ-9.5), constant-time inbound compare
+  via shared lib (REQ-1.5), REQ-4 sweep.
+- **B3** -- connector hardening (commit `99cf0cf7`). Fail-closed
+  Settings validators on `knowledge_ingest_secret` /
+  `portal_internal_secret` (REQ-9.3), runtime guards on
+  `PortalClient._headers()` and `KnowledgeIngestClient.__init__`
+  catching `Settings.model_construct()` bypass, REQ-10
+  `sync_run.error_details` sanitization, REQ-4 sweep.
+- **B4** -- scribe-api hardening (commit `c72066e5`). Fail-closed
+  validator on `knowledge_ingest_secret` (REQ-9.4), removal of
+  `if settings.knowledge_ingest_secret:` silent-omit guard,
+  REQ-4 sweep on the transcription-service log path.
+- **B5** -- ast-grep cross-service rule (commit `583cdb0d`). Four
+  rule files (LHS / RHS variants for `==` / `!=`) with
+  `kind: identifier` constraint to skip false-positive
+  `Model.field == ...` matches. Wired into all five service CI
+  workflows. Regression fixture at
+  `.github/test-fixtures/sec-internal-001/regression.py` exercises
+  the rule and validates AC-1.2.
+
+Out of scope for this implementation, deferred to a follow-up:
+- AC-9.7 GitHub Actions boot-matrix that boots each service in
+  Docker with each secret env var set to `""` in turn. The unit-test
+  side (`test_sec_internal_001.py` in each service) covers the
+  fail-closed contract via subprocess for knowledge-mcp and via
+  `pydantic.ValidationError` assertions for portal-api / connector /
+  scribe-api / mailer. A docker-compose-based boot-matrix can ship
+  in a follow-up SPEC.
 
 > **Amendment notice (v0.3.0)**: The concurrent audits on klai-mailer,
 > klai-connector, klai-scribe, and klai-knowledge-mcp have completed. They
