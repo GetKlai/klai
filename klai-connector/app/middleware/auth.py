@@ -87,15 +87,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
         self._client_id = settings.zitadel_client_id
         self._client_secret = settings.zitadel_client_secret
         self._portal_secret = settings.portal_caller_secret
+        # SPEC-SEC-AUDIT-2026-04 B2: Settings._require_zitadel_api_audience
+        # guarantees this is non-empty at startup (fail-closed). The conditional
+        # warn-only fallback that allowed empty audience has been removed.
         self._expected_audience = settings.zitadel_api_audience
-        if not self._expected_audience:
-            # SPEC-SEC-008 F-017 defense-in-depth: `aud` check falls back to
-            # warn-only when the audience is unconfigured. Surface the gap at
-            # startup so the warning is not lost in per-request noise.
-            logger.warning(
-                "zitadel_api_audience is empty — introspected tokens will NOT be audience-checked. "
-                "Set ZITADEL_API_AUDIENCE for defense-in-depth (SPEC-SEC-008 F-017)."
-            )
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         """Process the request through authentication."""
@@ -128,9 +123,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
             claims = await self._introspect(token)
             if claims is None:
                 return JSONResponse({"error": "unauthorized"}, status_code=401)
-            # SPEC-SEC-008 F-017: verify `aud` BEFORE writing to cache so a
-            # wrong-audience token is never cached as valid.
-            if self._expected_audience and not _audience_matches(claims.get("aud"), self._expected_audience):
+            # SPEC-SEC-008 F-017 / SPEC-SEC-AUDIT-2026-04 B2: verify `aud` BEFORE
+            # writing to cache so a wrong-audience token is never cached as valid.
+            # The audience is always non-empty (guaranteed by Settings validator).
+            if not _audience_matches(claims.get("aud"), self._expected_audience):
                 logger.warning(
                     "Rejecting token with unexpected audience",
                     extra={"expected_aud": self._expected_audience},
