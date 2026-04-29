@@ -52,6 +52,12 @@ COPY klai-scribe/scribe-api/alembic.ini alembic.ini
 # --proxy-headers). Copied from repo root scripts/ directory.
 COPY scripts/uvicorn-launch.sh /app/scripts/uvicorn-launch.sh
 RUN chmod +x /app/scripts/uvicorn-launch.sh
+# SPEC-SEC-AUDIT-2026-04 C5 / SPEC-SEC-HYGIENE-001: container entrypoint runs
+# alembic upgrade head before starting uvicorn so that new migrations are
+# applied automatically on every deploy. Mirrors the portal-api pattern.
+# See scribe-deploy-no-alembic pitfall in .claude/rules/klai/pitfalls/process-rules.md.
+COPY klai-scribe/scribe-api/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 RUN adduser --disabled-password --gecos "" klai && \
     mkdir -p /data/audio && chown klai:klai /data/audio
@@ -60,9 +66,7 @@ EXPOSE 8020
 
 USER klai
 
-# SPEC-SEC-WEBHOOK-001 REQ-1.6 + REQ-6: shared launcher resolves Caddy IP at
-# start time and passes --proxy-headers --forwarded-allow-ips=<resolved>.
-# scribe-api is internal-only (klai-net via portal-api BFF proxy), so DNS
-# lookup falls back to 127.0.0.1 — the correct safe default for an internal
-# service.
-CMD ["/app/scripts/uvicorn-launch.sh", "app.main:app", "--host", "0.0.0.0", "--port", "8020"]
+# SPEC-SEC-AUDIT-2026-04 C5: entrypoint.sh runs alembic upgrade head then
+# delegates to the shared uvicorn-launch.sh (Caddy IP resolution +
+# --proxy-headers). No CMD needed — entrypoint.sh is the sole startup path.
+ENTRYPOINT ["/app/entrypoint.sh"]

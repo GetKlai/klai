@@ -332,22 +332,23 @@ klai-core-scribe-api-1 alembic upgrade head` + container restart.
    any migration. If absent, use option 1 (manual + PR-body reminder) as
    a stopgap and file a follow-up SPEC for option 2.
 
-**Audit (2026-04-27)** — verified by greping `Dockerfile` ENTRYPOINT/CMD
+**Audit (2026-04-27, updated 2026-04-29)** — verified by greping `Dockerfile` ENTRYPOINT/CMD
 across services:
 
 | Service | Auto-migrates on container start? |
 |---|---|
 | portal-api | YES — `entrypoint.sh` runs `alembic upgrade head` then exec's uvicorn |
-| scribe-api | NO — `CMD uvicorn …` only |
+| scribe-api | YES — `entrypoint.sh` added by SPEC-SEC-AUDIT-2026-04 C5 (PR fix/scribe-c5-alembic-auto-migrate) |
 | klai-connector | NO — `CMD uvicorn …` only |
 | klai-mailer | NO — `CMD uvicorn …` only |
 | klai-knowledge-mcp | NO — `CMD python main.py` only |
 | klai-knowledge-ingest | NO — `CMD uvicorn …` only |
 | klai-retrieval-api | NO — `CMD uvicorn …` only |
 
-Every service except portal-api needs the manual-migrate step or an
-entrypoint port. The portal-api `entrypoint.sh` (introduced by
-SPEC-CHAT-TEMPLATES-CLEANUP-001) is the canonical pattern to copy.
+The remaining 5 services without auto-migration are tracked in
+SPEC-DEPLOY-AUTO-MIGRATE-001 as follow-up work. The portal-api and scribe-api
+`entrypoint.sh` pattern (introduced by SPEC-CHAT-TEMPLATES-CLEANUP-001 and
+SPEC-SEC-AUDIT-2026-04 C5 respectively) is the canonical template to copy.
 
 ## ruff-format-and-ruff-check-are-different (MED)
 `uv run ruff check` and `uv run ruff format --check` enforce different

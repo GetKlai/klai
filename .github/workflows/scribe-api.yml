@@ -84,6 +84,9 @@ jobs:
             source /opt/klai/.env
             echo "$GHCR_READ_PAT" | docker login ghcr.io -u mvletter --password-stdin
             docker pull ghcr.io/getklai/scribe-api:latest
+            # SPEC-SEC-AUDIT-2026-04 C5: alembic upgrade head is now run
+            # automatically by /app/entrypoint.sh at container start. No manual
+            # migration step needed here. See klai-scribe/scribe-api/entrypoint.sh.
             cd /opt/klai && docker compose up -d scribe-api
 
   scan:
