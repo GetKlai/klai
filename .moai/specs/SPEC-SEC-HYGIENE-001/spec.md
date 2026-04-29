@@ -1,6 +1,6 @@
 ---
 id: SPEC-SEC-HYGIENE-001
-version: 0.7.0
+version: 0.7.1
 status: done
 created: 2026-04-24
 updated: 2026-04-29
@@ -21,6 +21,39 @@ tracker: SPEC-SEC-AUDIT-2026-04
 > one PR or five is a call for /run.
 
 ## HISTORY
+
+### v0.7.1 (2026-04-29) — REQ-20.4 hotfix after prod outage
+
+REQ-20 shipped in commit `6bd07440` and was deployed to prod ~13:35 UTC
+on 2026-04-29. Within the deploy window every TOTP-completing OIDC login
+started failing with `502 Bad Gateway` and `callback_url_subdomain_not_allowlisted`
+in the logs. Root cause: REQ-20.1 enumerated the bare-apex case and the
+tenant-subdomain case but missed the canonical-login-domain case
+(`my.getklai.com`, the FRONTEND_URL host per SPEC-AUTH-008). After
+successful TOTP, Zitadel always redirects through the FRONTEND_URL host
+first; that hostname's first label is `my`, which is not a tenant slug,
+so the allowlist rejected every login.
+
+**Fix landed in this commit (REQ-20.4 below):** new helper
+`_system_callback_hosts()` derives the trusted-non-tenant host set from
+`settings.domain` (apex) AND `urlparse(settings.frontend_url).hostname`
+(login domain). The validator consults that set before the slug
+allowlist, so the FRONTEND_URL host always passes regardless of whether
+a tenant happens to share its label. Test coverage extended in
+`tests/test_validate_callback_url.py` — the original REQ-20 PR had test
+coverage on REQ-20.1/.2/.3 but never asserted that ``my.getklai.com``
+(the FRONTEND_URL host) passes, which is why CI did not catch the
+regression. The hotfix adds 4 helper-composition tests + 3 validator
+tests (FRONTEND_URL host pass, label-overlap invariant, apex-lookalike
+rejection). Pitfall captured under
+`allowlist-must-enumerate-all-host-classes` in `process-rules.md`.
+
+The pop-ordering bug in `totp_login` (`_pending_totp.pop()` runs before
+`_finalize_and_set_cookie`, so any 502 from finalize wipes the TOTP
+session and the retry sees `400 Session expired`) is **not** part of
+this hotfix — it is a UX-fidelity issue, not a security/correctness
+issue, and a clean fix interacts with one-time-code semantics. Tracked
+as a follow-up.
 
 ### v0.7.0 (2026-04-29) — mailer slice covered, SPEC closed out
 
@@ -584,6 +617,29 @@ a second, tenant-explicit layer.
   `auth.py:150` SHALL be preserved unchanged — they remain the local-dev
   escape hatch and are safe because Zitadel registers them explicitly
   as dev redirect URIs.
+- **REQ-20.4 (hotfix v0.7.1):** The validator SHALL accept hostnames in
+  the **system-host set** before consulting the tenant-slug allowlist.
+  The system-host set SHALL be derived once at process start (and cached
+  via `functools.lru_cache`) from settings, containing:
+  - `settings.domain` — the bare apex (e.g. `getklai.com`).
+  - `urlparse(settings.frontend_url).hostname` — the canonical login
+    domain (e.g. `my.getklai.com`), which is where Zitadel redirects
+    through after every successful auth per SPEC-AUTH-008 and
+    `portal-backend.md` FRONTEND_URL rule.
+
+  This requirement codifies the rule that the callback-URL allowlist
+  must enumerate ALL legitimate hostname classes — not only user-tenant
+  ones. The system-host set is intentionally derived from settings
+  (not hardcoded strings) so dev / staging / prod URLs all work without
+  code changes, and so a future `FRONTEND_URL` rename automatically
+  updates the allowlist.
+
+  **Anti-regression:** any future change that adds a new hostname class
+  to OIDC callback flows (e.g. a second portal domain, an admin-console
+  host) MUST extend `_system_callback_hosts()` AND add a corresponding
+  acceptance scenario AND a test case in `test_callback_url_allowlist.py`
+  before the new host can ship. See
+  `allowlist-must-enumerate-all-host-classes` in `process-rules.md`.
 
 ### Finding #21 — `_safe_return_to` backslash and percent-decode
 
