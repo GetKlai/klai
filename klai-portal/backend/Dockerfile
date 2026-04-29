@@ -59,6 +59,10 @@ COPY klai-portal/backend/alembic alembic
 COPY klai-portal/backend/alembic.ini alembic.ini
 COPY klai-portal/backend/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
+# SPEC-SEC-WEBHOOK-001 REQ-6: shared uvicorn launcher (Caddy IP resolution +
+# --proxy-headers). Copied from repo root scripts/ directory.
+COPY scripts/uvicorn-launch.sh /app/scripts/uvicorn-launch.sh
+RUN chmod +x /app/scripts/uvicorn-launch.sh
 
 RUN adduser --disabled-password --gecos "" klai
 
