@@ -73,6 +73,11 @@ class Settings(BaseSettings):
     sso_cookie_key: str = ""  # PORTAL_API_SSO_COOKIE_KEY
     sso_cookie_max_age: int = 7776000  # 90 days; Zitadel session lifetime is the real authority
 
+    # SPEC-SEC-SESSION-001 REQ-1.1: TTL for the Redis-backed TOTP pending-login
+    # state. Default 300 s preserves the legacy in-memory ``_pending_totp``
+    # window. Tunable so ops can compress it without code changes.
+    totp_pending_ttl_seconds: int = 300
+
     # BFF — Backend-for-Frontend session auth (SPEC-AUTH-008)
     # Fernet key for encrypting BFF session records at rest in Redis.
     # Falls back to sso_cookie_key when unset — single key during the rollout.
@@ -153,14 +158,6 @@ class Settings(BaseSettings):
     # crawl4ai HTTP service — used by the URL source extractor (SPEC-KB-SOURCES-001).
     # Same endpoint that klai-knowledge-ingest and klai-connector already target.
     crawl4ai_api_url: str = "http://crawl4ai:11235"
-
-    # Optional residential proxy for YouTube transcript fetches (SPEC-KB-SOURCES-001
-    # D5 follow-up). When set, the YouTube extractor retries via this proxy when
-    # YouTube refuses the datacenter IP (RequestBlocked / IpBlocked). Empty = direct
-    # fetch only, and an IP-block surfaces as a 502 "could not reach YouTube".
-    # Format: full proxy URL including scheme + credentials, e.g.
-    # "http://user:pass@p.webshare.io:9999".
-    youtube_proxy_url: str = ""
 
     # Redis (used for retrieval logs and feedback idempotency -- SPEC-KB-015)
     redis_url: str = ""

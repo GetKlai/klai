@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 from fastapi import HTTPException
+from helpers import make_request
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -71,7 +72,7 @@ class TestAuthAuditLogging:
 
                 mock_audit.log_event = AsyncMock()
 
-                await login(body=body, response=response, db=db)
+                await login(body=body, response=response, request=make_request(), db=db)
 
             # Verify audit.log_event was called with action="auth.login"
             mock_audit.log_event.assert_called()
@@ -101,7 +102,7 @@ class TestAuthAuditLogging:
             mock_audit.log_event = AsyncMock()
 
             with pytest.raises(Exception) as exc_info:
-                await login(body=body, response=response, db=db)
+                await login(body=body, response=response, request=make_request(), db=db)
 
             assert exc_info.value.status_code == 401  # type: ignore[union-attr]
 
@@ -168,17 +169,16 @@ class TestAuthAuditLogging:
             assert call.kwargs.get("org_id") == 8, "audit must carry real org_id, not sentinel 0"
 
     @pytest.mark.asyncio
-    async def test_totp_login_writes_auth_login_totp(self) -> None:
+    async def test_totp_login_writes_auth_login_totp(self, fake_redis) -> None:
         """After a successful TOTP verification, audit must log action='auth.login.totp'."""
-        from app.api.auth import TOTPLoginRequest, _pending_totp, totp_login
+        from app.api.auth import TOTPLoginRequest, _totp_pending_create, totp_login
 
-        # Pre-populate the TOTP pending cache
-        temp_token = _pending_totp.put(
-            {
-                "session_id": "sess-totp",
-                "session_token": "tok-totp",
-                "failures": 0,
-            }
+        # Pre-populate the Redis-backed TOTP pending state (SPEC-SEC-SESSION-001 REQ-1)
+        temp_token = await _totp_pending_create(
+            session_id="sess-totp",
+            session_token="tok-totp",
+            ua_hash="",
+            ip_subnet="0.0.0.0",  # noqa: S104 — placeholder, not a network bind
         )
         body = TOTPLoginRequest(temp_token=temp_token, code="123456", auth_request_id="ar-totp")
         response = MagicMock()
@@ -212,16 +212,15 @@ class TestAuthAuditLogging:
             assert found, "Expected audit.log_event called with action='auth.login.totp'"
 
     @pytest.mark.asyncio
-    async def test_totp_failed_writes_audit_totp_failed(self) -> None:
+    async def test_totp_failed_writes_audit_totp_failed(self, fake_redis) -> None:
         """When TOTP verification fails (400), audit must log action='auth.totp.failed'."""
-        from app.api.auth import TOTPLoginRequest, _pending_totp, totp_login
+        from app.api.auth import TOTPLoginRequest, _totp_pending_create, totp_login
 
-        temp_token = _pending_totp.put(
-            {
-                "session_id": "sess-totp-2",
-                "session_token": "tok-totp-2",
-                "failures": 0,
-            }
+        temp_token = await _totp_pending_create(
+            session_id="sess-totp-2",
+            session_token="tok-totp-2",
+            ua_hash="",
+            ip_subnet="0.0.0.0",  # noqa: S104 — placeholder, not a network bind
         )
         body = TOTPLoginRequest(temp_token=temp_token, code="000000", auth_request_id="ar-totp-2")
         response = MagicMock()
@@ -282,7 +281,7 @@ class TestAuthAuditLogging:
                 mock_audit.log_event = AsyncMock(side_effect=Exception("audit DB down"))
 
                 # Should not raise -- login must succeed despite audit failure
-                result = await login(body=body, response=response, db=db)
+                result = await login(body=body, response=response, request=make_request(), db=db)
                 assert result is not None
 
 
@@ -325,13 +324,13 @@ class TestMFAPolicyEnforcement:
             mock_audit.log_event = AsyncMock()
 
             with pytest.raises(Exception) as exc_info:
-                await login(body=body, response=response, db=db)
+                await login(body=body, response=response, request=make_request(), db=db)
 
             assert exc_info.value.status_code == 403  # type: ignore[union-attr]
             assert "MFA required" in str(exc_info.value.detail)  # type: ignore[union-attr]
 
     @pytest.mark.asyncio
-    async def test_mfa_required_with_mfa_enrolled_proceeds(self) -> None:
+    async def test_mfa_required_with_mfa_enrolled_proceeds(self, fake_redis) -> None:
         """When org.mfa_policy='required' and user has MFA, login proceeds normally."""
         from app.api.auth import LoginRequest, login
 
@@ -362,7 +361,7 @@ class TestMFAPolicyEnforcement:
 
             # Should NOT raise 403 -- user has MFA enrolled
             # (will return totp_required since has_totp=True)
-            result = await login(body=body, response=response, db=db)
+            result = await login(body=body, response=response, request=make_request(), db=db)
             assert result.status == "totp_required"
 
     @pytest.mark.asyncio
@@ -395,7 +394,7 @@ class TestMFAPolicyEnforcement:
 
             mock_audit.log_event = AsyncMock()
 
-            result = await login(body=body, response=response, db=db)
+            result = await login(body=body, response=response, request=make_request(), db=db)
             # Login should succeed -- no 403
             assert result is not None
             # has_any_mfa should NOT have been called
@@ -435,7 +434,7 @@ class TestMFAPolicyEnforcement:
             mock_audit.log_event = AsyncMock()
 
             # Should NOT raise -- fail-open means login proceeds (provisioning grace)
-            result = await login(body=body, response=response, db=db)
+            result = await login(body=body, response=response, request=make_request(), db=db)
             assert result is not None
 
     # SPEC-SEC-MFA-001 REQ-5.3: ``test_mfa_check_failure_defaults_to_pass`` is

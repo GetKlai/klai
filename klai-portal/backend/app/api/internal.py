@@ -77,24 +77,12 @@ _AUDIT_INSERT_SQL = text(
 )
 
 
-def _resolve_caller_ip(request: Request) -> str:
-    """Resolve caller IP for rate-limit key and audit row.
-
-    SPEC-SEC-005 REQ-1.6: priority order
-    1. Right-most entry of X-Forwarded-For from the immediate trusted upstream (Caddy).
-       The right-most entry is the IP the immediate upstream saw (attacker-supplied
-       left entries are ignored).
-    2. request.client.host.
-    3. Literal "unknown" when neither is available (e.g. synthetic ASGI scope).
-    """
-    xff = request.headers.get("x-forwarded-for", "")
-    if xff:
-        parts = [p.strip() for p in xff.split(",") if p.strip()]
-        if parts:
-            return parts[-1]
-    if request.client and request.client.host:
-        return request.client.host
-    return "unknown"
+# SPEC-SEC-SESSION-001: caller-IP resolution moved to ``app.services.request_ip``
+# once a third callsite (``app.api.auth`` for IDP-pending cookie binding)
+# joined the existing internal-rate-limit and internal-audit consumers. The
+# alias below preserves the private name so all in-module callsites and the
+# ``test_internal_hardening`` patch surface stay unchanged.
+from app.services.request_ip import resolve_caller_ip as _resolve_caller_ip  # noqa: E402
 
 
 async def _check_rate_limit_internal(caller_ip: str) -> None:
@@ -1209,20 +1197,37 @@ async def get_effective_templates(
 
 
 class IdentityVerifyRequest(BaseModel):
-    """Request body for POST /internal/identity/verify (REQ-1.1)."""
+    """Request body for POST /internal/identity/verify (REQ-1.1).
+
+    ``claimed_org_slug`` is REQ-2.6: when present, the canonical
+    ``portal_orgs.slug`` for the verified org must match the value the caller
+    asserts (typically forwarded from a service-to-service ``X-Org-Slug``
+    header). Mismatch yields ``org_slug_mismatch``. When absent, the slug is
+    not checked but is still returned in the success body so callers can
+    construct upstream URLs from a verified value rather than the caller-
+    asserted header.
+    """
 
     caller_service: str
     claimed_user_id: str
     claimed_org_id: str
     bearer_jwt: str | None = None
+    claimed_org_slug: str | None = None
 
 
 class IdentityVerifySuccess(BaseModel):
-    """200 response when the claim is verified."""
+    """200 response when the claim is verified.
+
+    ``org_slug`` is the canonical ``portal_orgs.slug`` for the verified org
+    (REQ-2.6). Always populated — callers SHOULD use this value when building
+    upstream URLs (e.g. klai-docs ``/api/orgs/{org_slug}/...``) instead of the
+    caller-asserted ``X-Org-Slug`` header.
+    """
 
     verified: Literal[True] = True
     user_id: str
     org_id: str
+    org_slug: str
     cache_ttl_seconds: int
     evidence: Literal["jwt", "membership"]
 
@@ -1287,7 +1292,7 @@ async def verify_identity(
     ``app/services/identity_verifier.py`` for the contract; this handler is
     the HTTP layer + cache + structured-log wrapper.
 
-    Failure modes (REQ-1.2 / 1.3 / 1.4 / 1.6):
+    Failure modes (REQ-1.2 / 1.3 / 1.4 / 1.6 / 2.6):
 
     - ``unknown_caller_service`` → HTTP 400 (caller is misconfigured; loud
       failure rather than silent rate-limit consumption).
@@ -1297,6 +1302,8 @@ async def verify_identity(
       resourceowner do not match the claimed tuple).
     - ``no_membership`` → HTTP 403 (membership lookup found no active
       ``portal_users`` row).
+    - ``org_slug_mismatch`` → HTTP 403 (REQ-2.6: ``claimed_org_slug`` does
+      not match the canonical ``portal_orgs.slug`` for the verified org).
     - ``cache_unavailable`` → HTTP 503 (Redis call failed; auth-class
       control fails closed — REQ-1.6).
     """
@@ -1376,7 +1383,34 @@ async def verify_identity(
             media_type="application/json",
         )
 
-    if cached is not None and cached.evidence is not None and cached.user_id is not None and cached.org_id is not None:
+    if (
+        cached is not None
+        and cached.evidence is not None
+        and cached.user_id is not None
+        and cached.org_id is not None
+        and cached.org_slug is not None
+    ):
+        # REQ-2.6: even on a cache hit, an asserted ``claimed_org_slug`` must
+        # still match the canonical slug we resolved at first verification.
+        # The slug for a given org_id is stable within the 60s TTL so the
+        # cached value is authoritative — no need to re-hit the DB.
+        if body.claimed_org_slug is not None and body.claimed_org_slug != cached.org_slug:
+            await _audit_internal_call(request, org_id=0)
+            structlog_logger.warning(
+                "identity_verify_decision",
+                caller_service=body.caller_service,
+                claimed_user_id_hash=cache_user_id_hash,
+                claimed_org_id=body.claimed_org_id,
+                verified=False,
+                reason="org_slug_mismatch",
+                cache_hit=True,
+            )
+            return Response(
+                content=IdentityVerifyDeny(reason="org_slug_mismatch").model_dump_json(),
+                status_code=status.HTTP_403_FORBIDDEN,
+                media_type="application/json",
+            )
+
         await _audit_internal_call(request, org_id=0)
         structlog_logger.info(
             "identity_verify_decision",
@@ -1391,6 +1425,7 @@ async def verify_identity(
             content=IdentityVerifySuccess(
                 user_id=cached.user_id,
                 org_id=cached.org_id,
+                org_slug=cached.org_slug,
                 cache_ttl_seconds=60,
                 evidence=cached.evidence,
             ).model_dump_json(),
@@ -1406,6 +1441,7 @@ async def verify_identity(
         claimed_user_id=body.claimed_user_id,
         claimed_org_id=body.claimed_org_id,
         bearer_jwt=body.bearer_jwt,
+        claimed_org_slug=body.claimed_org_slug,
     )
 
     if not decision.verified:
@@ -1456,7 +1492,12 @@ async def verify_identity(
         )
 
     await _audit_internal_call(request, org_id=0)
-    assert decision.user_id is not None and decision.org_id is not None and decision.evidence is not None
+    assert (
+        decision.user_id is not None
+        and decision.org_id is not None
+        and decision.org_slug is not None
+        and decision.evidence is not None
+    )
     structlog_logger.info(
         "identity_verify_decision",
         caller_service=body.caller_service,
@@ -1470,6 +1511,7 @@ async def verify_identity(
         content=IdentityVerifySuccess(
             user_id=decision.user_id,
             org_id=decision.org_id,
+            org_slug=decision.org_slug,
             cache_ttl_seconds=60,
             evidence=decision.evidence,
         ).model_dump_json(),

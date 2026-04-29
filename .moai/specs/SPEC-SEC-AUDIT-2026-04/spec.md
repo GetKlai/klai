@@ -1,9 +1,9 @@
 ---
 id: SPEC-SEC-AUDIT-2026-04
-version: 0.3.0
+version: 0.4.0
 status: draft
 created: 2026-04-24
-updated: 2026-04-24
+updated: 2026-04-28
 author: Mark Vletter
 priority: critical
 type: tracker
@@ -12,6 +12,30 @@ type: tracker
 # SPEC-SEC-AUDIT-2026-04: Security Audit Response Tracker
 
 ## HISTORY
+
+### v0.5.0 (2026-04-28, late)
+- SPEC-SEC-AUTH-COVERAGE-001 fully shipped: implementation (#195) + alerts/runbook/CHANGELOG follow-through (#198), both deployed to core-01.
+  - 14 in-scope auth.py endpoints (totp / passkey / email_otp / idp / password / sso_complete / verify_email) now emit structured `*_failed` events on every documented failure leg + `audit.log_event` on state-changing successes.
+  - 16 distinct events covered by 2 new Grafana alerts (`auth_failure_rate_high` warning, `auth_zitadel_5xx_burst` critical) with triage runbook `docs/runbooks/auth-failure-burst.md`.
+  - 74 new tests, 80% line coverage on `app.api.auth` (REQ-5.5 PARTIAL — 5% gap in shared helpers documented as follow-up scope, not blocking).
+- Live status table updated: 10 of 13 tracked SPECs shipped (was 9 of 12 + 1 NEW queued).
+- Estimate revised: 6-10 PRs remaining (was 8-12).
+
+### v0.4.0 (2026-04-28)
+- 4-day implementation sprint progressed to ~75% of original audit-response scope
+- 9 of 12 original SPECs reach `shipped` or majority-shipped state (see Live Status)
+- 4 SPECs still queued or in-flight: IDENTITY-ASSERT-001 Phase B residue
+  (REQ-3 / REQ-4 / REQ-6), TENANT-001, SESSION-001, INTERNAL-001
+- HYGIENE-001 split into 5 per-service slices: 2 shipped (scribe + retrieval),
+  3 queued (connector, portal, knowledge-mcp)
+- 1 new SPEC added during execution: SPEC-SEC-AUTH-COVERAGE-001 — derived
+  from MFA-001 implementation review when reviewer noticed similar
+  fail-closed gaps elsewhere in `auth.py`
+- 1 prod incident captured: portal-api 502 from #150 because the Moneybird
+  validator landed before its env var existed in SOPS — root cause now
+  encoded as pitfall `validator-env-parity (HIGH)` in
+  `.claude/rules/klai/pitfalls/process-rules.md`
+- Estimate: 8-12 PRs remaining to fully close the audit response
 
 ### v0.3.0 (2026-04-24)
 - All amendments promised in v0.2.0 have landed in the referenced SPECs
@@ -51,6 +75,29 @@ Each finding is mapped to exactly one remediation SPEC, grouped by fix-locality 
 severity) to minimise merge conflicts and enable parallel execution.
 
 Implementation teams should read the linked sub-SPEC, not this tracker, when picking up work.
+
+---
+
+## Live status (2026-04-28, late)
+
+| SPEC | Prio | Status | PRs |
+|---|---|---|---|
+| SPEC-SEC-WEBHOOK-001 | P0 | **shipped** (95% — REQ-5.4 + REQ-6 wrapper open as tail) | #155 #157 #159 #161 #150-revert #156 |
+| SPEC-SEC-SSRF-001 | P0 | **shipped** | #167 |
+| SPEC-SEC-CORS-001 | P0 | **shipped** | #180 + #185 close-out |
+| SPEC-SEC-MAILER-INJECTION-001 | P0 | **shipped** | #168 + #173 mailer compose env |
+| SPEC-SEC-IDENTITY-ASSERT-001 | P0 | **partial** (Phase A shipped #178; Phase B in flight #190 covers REQ-2 only — REQ-3/4/6 queued) | #178 + #190 (open) |
+| SPEC-SEC-TENANT-001 | P1 | **queued** | — |
+| SPEC-SEC-IMAP-001 | P1 | **shipped** | #165 #172 #174 #176 #177 |
+| SPEC-SEC-MFA-001 | P1 | **shipped** | #181 + #189 db-failure-events refactor |
+| SPEC-SEC-ENVFILE-SCOPE-001 | P1 | **shipped** | #163 + #170 (3-vars-dropped fix) + #171 close-out |
+| SPEC-SEC-SESSION-001 | P2 | **queued** | — |
+| SPEC-SEC-INTERNAL-001 | P2 | **queued** | — |
+| SPEC-SEC-HYGIENE-001 | P3 | **partial** (scribe slice #179 + retrieval slice #188 open; connector / portal / knowledge-mcp slices queued) | #179 + #188 (open) |
+| SPEC-SEC-AUTH-COVERAGE-001 | P0 | **shipped** | #184 plan + #186 v0.2 + #195 run + #198 alerts/runbook/CHANGELOG |
+
+**Implementation rate:** ~28 PRs merged in 4 days (audit-response only).
+**Remaining:** ~6-10 PRs to close the 3 fully-queued originals + IDENTITY-ASSERT-001 residue + HYGIENE-001 slices.
 
 ---
 

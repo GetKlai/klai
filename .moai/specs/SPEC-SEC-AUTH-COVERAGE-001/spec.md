@@ -1,9 +1,9 @@
 ---
 id: SPEC-SEC-AUTH-COVERAGE-001
-version: 0.1.0
-status: draft
+version: 0.3.0
+status: completed
 created: 2026-04-27
-updated: 2026-04-27
+updated: 2026-04-28
 author: Mark Vletter
 priority: medium
 issue_number: 0
@@ -16,15 +16,35 @@ predecessor: SPEC-SEC-MFA-001
 
 ## HISTORY
 
+### v0.2.0 (2026-04-27, later same day)
+- **Scope expanded from 8 to 14 endpoints.** The original v0.1.0 deferred
+  passkey × 2, email_otp × 3, verify_email, and idp_signup × 2 with
+  hand-wave reasons ("separate follow-up", "same flow class"). Self-review
+  surfaced that the deferral arguments did not survive scrutiny: the same
+  Cornelis-audit context that drives MFA-001 / this SPEC applies equally
+  to those 6 endpoints. Specifically: passkey-confirm and email-otp-confirm
+  have the SAME brute-force surface as totp-confirm; verify_email is a
+  one-shot security gate; idp_signup callback is structurally identical
+  to idp_callback — testing one without the other leaves a coverage island.
+- Endpoints added in scope: `passkey_setup`, `passkey_confirm`,
+  `email_otp_setup`, `email_otp_confirm`, `email_otp_resend`,
+  `verify_email`, `idp_intent_signup`, `idp_signup_callback`.
+- REQ structure restructured (still 5 REQs) so all 14 endpoints fit:
+  REQ-1 expanded to "MFA enrollment family" (TOTP + passkey + email_otp =
+  7 endpoints); REQ-2 expanded to "session-reuse + TOTP login";
+  REQ-3 expanded to "IDP login + signup flows"; REQ-4 expanded to
+  "password reset/set + verify_email"; REQ-5 (cross-cutting) unchanged.
+- Test scenarios projection: ~70 (was ~42).
+
 ### v0.1.0 (2026-04-27)
 - Initial draft created via `/moai plan SPEC-SEC-AUTH-COVERAGE-001`.
 - Closes the deferred REQ-5.6 from
   [SPEC-SEC-MFA-001](../SPEC-SEC-MFA-001/spec.md): bring overall coverage
   on `klai-portal/backend/app/api/auth.py` to ≥85%.
 - Propagates the structlog + structured-event + @MX:ANCHOR patterns
-  established by SPEC-SEC-MFA-001 to the eight remaining in-scope auth
-  endpoints (totp_setup, totp_confirm, totp_login, idp_intent,
-  idp_callback, password_reset, password_set, sso_complete).
+  established by SPEC-SEC-MFA-001 to eight initial in-scope auth
+  endpoints. Six additional endpoints were initially deferred — see v0.2.0
+  for the rationale why that deferral did not hold.
 - Cornelis-audit findings on these endpoints (#13, #15, #16, A4) are
   out of scope — tracked by SPEC-SEC-SESSION-001 and SPEC-SEC-INTERNAL-001.
 
@@ -67,19 +87,23 @@ sibling endpoints in the same file.
 ## Environment
 
 - **Service**: `klai-portal/backend` (Python 3.13, FastAPI, SQLAlchemy async).
-- **Files in scope**:
-  - `klai-portal/backend/app/api/auth.py` — 8 endpoint handlers, 16 log-statement migrations, helper extraction.
+- **Files in scope (v0.2.0 — 14 endpoints)**:
+  - `klai-portal/backend/app/api/auth.py` — 14 endpoint handlers, ~22 log-statement migrations, helper extraction.
   - `klai-portal/backend/tests/test_auth_totp_endpoints.py` — NEW (totp_setup, totp_confirm, totp_login).
-  - `klai-portal/backend/tests/test_auth_idp_endpoints.py` — NEW (idp_intent, idp_callback failure paths).
-  - `klai-portal/backend/tests/test_auth_password_endpoints.py` — NEW (password_reset, password_set).
+  - `klai-portal/backend/tests/test_auth_passkey_endpoints.py` — NEW (passkey_setup, passkey_confirm).
+  - `klai-portal/backend/tests/test_auth_email_otp_endpoints.py` — NEW (email_otp_setup, email_otp_confirm, email_otp_resend).
+  - `klai-portal/backend/tests/test_auth_idp_endpoints.py` — NEW (idp_intent, idp_callback, idp_intent_signup, idp_signup_callback).
+  - `klai-portal/backend/tests/test_auth_password_endpoints.py` — NEW (password_reset, password_set, verify_email).
   - `klai-portal/backend/tests/test_auth_sso_endpoints.py` — NEW (sso_complete).
-  - `klai-portal/backend/tests/auth_test_helpers.py` — NEW shared module (request-body factories, db-mock factories, respx fixture, `_audit_emit_patches`, `_mfa_events`-style filter).
+  - `klai-portal/backend/tests/auth_test_helpers.py` — NEW shared module (request-body factories, db-mock factories, respx fixture, `_audit_emit_patches`, `_capture_events` filter).
   - `klai-portal/backend/tests/test_auth_mfa_fail_closed.py` — REFACTOR to import shared helpers.
+  - `klai-portal/backend/tests/test_idp_callback_provision.py` — UNCHANGED (existing focus on auto-provision happy path; complemented by new `test_auth_idp_endpoints.py` failure-path scenarios).
 - **Out of scope** (explicit non-goals):
-  - `passkey_setup`, `passkey_confirm` (deferred to a separate follow-up).
-  - `email_otp_setup`, `email_otp_confirm`, `email_otp_resend`, `verify_email` (deferred — same flow class).
-  - `idp_intent_signup`, `idp_signup_callback` (signup flow, separate scope).
-  - Cornelis-audit findings #13, #15, #16, A4 (tracked by SPEC-SEC-SESSION-001 and SPEC-SEC-INTERNAL-001).
+  - Cornelis-audit findings #13 (TOTP counter per-instance), #15 (idp cookie binding), #16 (Fernet key regen), A4 (`exc.response.text` log reflection) — tracked by SPEC-SEC-SESSION-001 and SPEC-SEC-INTERNAL-001 respectively.
+  - Behavioural changes to any of the 14 endpoints (this SPEC is purely additive: tests + observability + audit log + helper extraction).
+  - Frontend changes — failure events are server-side observability only.
+  - Grafana alert definitions for the new events — added later if rate justifies.
+  - Storage-side PII (email plaintext in `portal_users.email`) — separate column-level encryption SPEC.
 - **Identity provider**: Zitadel (auth.getklai.com), service account `portal-api`.
 - **Observability**: structlog JSON → Alloy → VictoriaLogs; Grafana for alerts.
 
@@ -250,11 +274,71 @@ to honour the SPEC-SEC-MFA-001 pattern set:
 
 - **REQ-5.1**: A new helper `_emit_auth_event(event: str, *, reason: str, outcome: str, level: str = "warning", **fields: Any) -> None` SHALL be added to `auth.py`. It is a generalisation of `_emit_mfa_check_failed` — instead of a fixed event name, it takes one as a parameter. `_emit_mfa_check_failed` SHALL be reimplemented as a thin wrapper that calls `_emit_auth_event("mfa_check_failed", …)`.
 - **REQ-5.2**: Email values passed via the `email` keyword SHALL be sha256-hashed inside the helper into an `email_hash` field; raw emails MUST NEVER appear in the emitted event. The helper SHALL accept `email_hash` directly as an alternative for callers who already hashed.
-- **REQ-5.3**: Every stdlib `logger.*` call site in the eight in-scope endpoints SHALL be migrated to `_slog.*` per `portal-logging-py.md`. The `# nosemgrep: python-logger-credential-disclosure` annotations on `password_reset` and `password_set` SHALL be REMOVED post-migration (structlog removes the false-positive trigger).
-- **REQ-5.4**: `@MX:ANCHOR` tags SHALL be added to `_finalize_and_set_cookie` (fan_in=3), `_validate_callback_url` (fan_in=3), and the new `_emit_auth_event` (projected fan_in≥15). Each MUST include `@MX:REASON` and `@MX:SPEC: SPEC-SEC-AUTH-COVERAGE-001` sub-lines.
+- **REQ-5.3**: Every stdlib `logger.*` call site in ALL 14 in-scope endpoints SHALL be migrated to `_slog.*` per `portal-logging-py.md`. The `# nosemgrep: python-logger-credential-disclosure` annotations on `password_reset` and `password_set` SHALL be REMOVED post-migration (structlog removes the false-positive trigger).
+- **REQ-5.4**: `@MX:ANCHOR` tags SHALL be added to `_finalize_and_set_cookie` (fan_in=3), `_validate_callback_url` (fan_in=3), and the new `_emit_auth_event` (projected fan_in≥20 after v0.2.0 scope expansion). Each MUST include `@MX:REASON` and `@MX:SPEC: SPEC-SEC-AUTH-COVERAGE-001` sub-lines.
 - **REQ-5.5**: `pytest --cov=app.api.auth --cov-branch --cov-fail-under=85` SHALL pass on this SPEC's branch. Branch coverage SHALL be ≥95%.
 - **REQ-5.6**: A shared test-helper module `tests/auth_test_helpers.py` SHALL be created exposing the request-body factories, DB mock factory, respx fixture, audit-emit patches, and event-filter helper. `tests/test_auth_mfa_fail_closed.py` SHALL be refactored to import from this module (no behaviour change, only de-duplication).
 - **REQ-5.7**: All new tests SHALL use respx against the real `ZitadelClient` (REQ-5.7 from SPEC-SEC-MFA-001) — no `MagicMock` on `app.api.auth.zitadel`. Existing legacy tests in `test_auth_security.py` keep their patch-based pattern unchanged.
+
+---
+
+## Scope expansion v0.2.0 — additional sub-requirements
+
+The 6 endpoints added in scope at v0.2.0 (see HISTORY) extend REQs 1–3 with
+the following sub-requirements. The naming convention, schema, and gate
+criteria remain identical to those in the parent REQ.
+
+### REQ-1 extension — Passkey + Email OTP enrollment
+
+- **REQ-1.9** (`passkey_setup`): WHEN `passkey_setup` succeeds, emit
+  `audit.log_event(action="auth.passkey.setup", actor=user_id, …)`.
+  WHEN it fails 5xx, emit `_emit_auth_event("passkey_setup_failed", reason="zitadel_5xx", actor_user_id=<id>, outcome="502", level="error")`.
+- **REQ-1.10** (`passkey_confirm`): WHEN it succeeds, emit
+  `audit.log_event(action="auth.passkey.confirmed", actor=user_id, …)`.
+  WHEN it fails 4xx (invalid attestation), emit
+  `_emit_auth_event("passkey_confirm_failed", reason="invalid_attestation", outcome="400", level="warning")`.
+  WHEN 5xx, `reason="zitadel_5xx"`, `outcome="502"`, `level="error"`.
+- **REQ-1.11** (`email_otp_setup`): WHEN it succeeds, emit
+  `audit.log_event(action="auth.email-otp.setup", actor=user_id, …)`.
+  WHEN it fails 5xx, emit `_emit_auth_event("email_otp_setup_failed", reason="zitadel_5xx", outcome="502", level="error")`.
+- **REQ-1.12** (`email_otp_confirm`): WHEN it succeeds, emit
+  `audit.log_event(action="auth.email-otp.confirmed", actor=user_id, …)`.
+  WHEN it fails 4xx (wrong code), emit
+  `_emit_auth_event("email_otp_confirm_failed", reason="invalid_code", actor_user_id=<id>, outcome="400", level="warning")`.
+  WHEN 5xx, `reason="zitadel_5xx"`, `outcome="502"`, `level="error"`.
+- **REQ-1.13** (`email_otp_resend`): WHEN it succeeds, emit
+  `audit.log_event(action="auth.email-otp.resent", actor=user_id, …)`.
+  WHEN it fails 5xx, emit `_emit_auth_event("email_otp_resend_failed", reason="zitadel_5xx", outcome="502", level="error")`.
+- **REQ-1.14**: New test files
+  `tests/test_auth_passkey_endpoints.py` (≥4 scenarios: setup happy/5xx, confirm happy/invalid/5xx) and
+  `tests/test_auth_email_otp_endpoints.py` (≥6 scenarios: setup happy/5xx, confirm happy/invalid/5xx, resend happy/5xx) SHALL be created.
+
+### REQ-2 extension — IDP signup flows
+
+- **REQ-2.6** (`idp_intent_signup`): WHEN it succeeds, emit
+  `audit.log_event(action="auth.idp.intent_signup", actor="anonymous", details={"idp_id": <id>, "auth_request_id": <id>})`.
+  WHEN it fails (unknown IDP, Zitadel 5xx), emit
+  `_emit_auth_event("idp_intent_signup_failed", reason="unknown_idp"|"zitadel_5xx", …, outcome="400"|"502", level=<warning|error>)`.
+- **REQ-2.7** (`idp_signup_callback`): WHEN session creation succeeds AND the new portal_users row is provisioned, emit
+  `audit.log_event(action="auth.signup.idp", actor=zitadel_user_id, details={"method": "idp", "auto_provisioned": true})`.
+  WHEN any leg fails, emit
+  `_emit_auth_event("idp_signup_callback_failed", reason=<leg>, …, outcome="302→failure_url", level="error")`.
+- **REQ-2.8**: `tests/test_auth_idp_endpoints.py` (extending REQ-2.5 scope) SHALL contain ≥6 scenarios for signup flows: intent-signup happy + unknown_idp + 5xx; callback-signup happy (auto-provision) + session_5xx + finalize_5xx.
+
+### REQ-3 extension — Email verification
+
+- **REQ-3.8** (`verify_email`): WHEN it succeeds, emit
+  `audit.log_event(action="auth.email.verified", actor=user_id, details={"reason": "verified"})`.
+  WHEN it fails 4xx (invalid/expired code), emit
+  `_emit_auth_event("verify_email_failed", reason="invalid_code"|"expired_link", actor_user_id=<id>, outcome="400", level="warning")`.
+  WHEN 5xx, emit `_emit_auth_event("verify_email_failed", reason="zitadel_5xx", zitadel_status=<int>, outcome="502", level="error")`.
+- **REQ-3.9**: `tests/test_auth_password_endpoints.py` (extending REQ-3.7 scope) SHALL contain ≥4 scenarios for verify_email: happy + invalid + expired + 5xx.
+
+### REQ-5.5 amendment
+
+The coverage threshold of ≥85% line and ≥95% branch applies to the full
+14-endpoint scope. With the additional ~28 scenarios, projected coverage
+is ~88-92% line, ~96-98% branch.
 
 ---
 

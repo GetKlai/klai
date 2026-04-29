@@ -27,8 +27,37 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  # SPEC-SEC-HYGIENE-001 REQ-30.3 — ruff F821 (and the rest of the
+  # configured rule set) MUST run on klai-connector code so a future
+  # NameError landmine like the original HY-30 bug fails CI. The
+  # build-push job below depends on quality, so a lint failure blocks
+  # the deploy. Mirrors the pattern in portal-api.yml.
+  quality:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: klai-connector
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      # NOTE: `ruff format --check` is intentionally NOT enforced yet —
+      # the connector has never been ruff-formatted (~36 files would
+      # change). Add it once a separate format-the-world PR lands.
+
   build-push:
     runs-on: ubuntu-latest
+    needs: quality
 
     steps:
       - uses: actions/checkout@v6

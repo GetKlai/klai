@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from klai_image_storage import (
     ParsedImage,
+)
+from klai_image_storage import (
     download_and_upload_adapter_images as download_and_upload_images,
 )
 
