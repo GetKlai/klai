@@ -61,7 +61,11 @@ jobs:
       - name: Build and push scribe-api
         uses: docker/build-push-action@v7
         with:
-          context: ./klai-scribe/scribe-api
+          # SPEC-SEC-INTERNAL-001 B4: build context is repo root so the
+          # Dockerfile can COPY the shared klai-libs/log-utils path-dep.
+          # Same pattern as klai-knowledge-mcp / klai-connector / portal-api.
+          context: .
+          file: klai-scribe/scribe-api/Dockerfile
           push: true
           tags: |
             ghcr.io/getklai/scribe-api:latest
