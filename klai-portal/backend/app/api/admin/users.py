@@ -499,9 +499,7 @@ async def offboard_user(
     membership_delete_result = await db.execute(
         delete(PortalGroupMembership).where(
             PortalGroupMembership.zitadel_user_id == zitadel_user_id,
-            PortalGroupMembership.group_id.in_(
-                select(PortalGroup.id).where(PortalGroup.org_id == org.id)
-            ),
+            PortalGroupMembership.group_id.in_(select(PortalGroup.id).where(PortalGroup.org_id == org.id)),
         )
     )
     # AsyncSession.execute() is typed as Result[Any]; the rowcount attribute

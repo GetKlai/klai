@@ -92,14 +92,8 @@ async def test_offboard_user_does_not_wipe_other_org_memberships() -> None:
     # PortalGroup join. Pattern A (subselect on portal_groups.org_id) and
     # Pattern B (select ids first, then delete) both produce SQL containing
     # 'portal_groups' AND a literal '101' (the caller's org_id) in the WHERE.
-    assert "portal_groups" in sql, (
-        "membership delete is not org-scoped via PortalGroup join (REQ-1.2). "
-        f"Got SQL: {sql}"
-    )
-    assert "101" in sql, (
-        "membership delete does not bind the caller's org_id literal (REQ-1.1). "
-        f"Got SQL: {sql}"
-    )
+    assert "portal_groups" in sql, f"membership delete is not org-scoped via PortalGroup join (REQ-1.2). Got SQL: {sql}"
+    assert "101" in sql, f"membership delete does not bind the caller's org_id literal (REQ-1.1). Got SQL: {sql}"
 
 
 # @MX:ANCHOR REQ-5.2 — must remain coupled to invite_user's grant_user_role call.
@@ -176,9 +170,7 @@ async def test_invite_user_grants_portal_role_to_zitadel(
             new=AsyncMock(),
         ),
     ):
-        mock_zitadel.invite_user = AsyncMock(
-            return_value={"userId": f"new-user-{portal_role}"}
-        )
+        mock_zitadel.invite_user = AsyncMock(return_value={"userId": f"new-user-{portal_role}"})
         mock_zitadel.grant_user_role = AsyncMock()
         await invite_user(body=body, credentials=mock_credentials, db=mock_db)
 
