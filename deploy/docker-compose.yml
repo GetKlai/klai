@@ -346,6 +346,11 @@ services:
       DOMAIN: ${DOMAIN}
       FRONTEND_URL: ${FRONTEND_URL:-}
       DOCKER_HOST: tcp://docker-socket-proxy:2375
+      # SPEC-SEC-HYGIENE-001 REQ-28.4: explicit deployment-environment marker.
+      # Pydantic Settings reads PORTAL_ENV; the in-code default is "production"
+      # (REQ-28.2). The validator at config.py:_no_debug_in_production refuses
+      # to boot if DEBUG=true is set together with PORTAL_ENV=production.
+      PORTAL_ENV: ${PORTAL_ENV:-production}
       # SPEC-SEC-CORS-001 REQ-1 — explicit credentialed CORS allowlist for
       # portal-api. Today (pre-SPEC) the in-code default is "http://localhost:5174"
       # and the prod compose did not pass CORS_ORIGINS at all, so the wildcard
