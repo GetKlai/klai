@@ -1,4 +1,4 @@
-"""SPEC-SEC-TENANT-001 A-6 + A-8 — sync-route org scoping (v0.5.0 / β).
+"""SPEC-SEC-TENANT-001 A-6 + A-8 — sync-route org scoping (v0.5.0–v0.6.1).
 
 Coverage:
 - A-6: cross-tenant ``GET /syncs/{run_id}`` returns 404, never 200/403.
@@ -7,6 +7,11 @@ Coverage:
   with legacy connector_id-only filter.
 - A-8 case 8.b: missing ``X-Org-ID`` after transition (flag ON) returns
   HTTP 400 with ``{"detail": "X-Org-ID header required"}``.
+- A-8 case 8.c (v0.6.1 regression): production default ``sync_require_org_id=True``
+  — a request without ``X-Org-ID`` must be rejected. Guards against any
+  future code path that silently resets the default to ``False``.
+- Settings default assertion: ``Settings.model_fields["sync_require_org_id"].default``
+  must be ``True`` (SPEC-SEC-AUDIT-2026-04 C2).
 
 Test design follows the FakeSession pattern from
 ``test_connector_routes_not_found.py`` — no real Postgres, no real
@@ -263,3 +268,43 @@ def test_trigger_sync_missing_org_id_returns_400_regardless_of_flag(
     assert resp.status_code == 400, (
         f"trigger_sync without X-Org-ID must 400 (cannot create NOT NULL row), got {resp.status_code}: {resp.text}"
     )
+
+
+# ---------------------------------------------------------------------------
+# A-8 case 8.c — production default enforced (SPEC-SEC-AUDIT-2026-04 C2)
+# ---------------------------------------------------------------------------
+
+
+def test_sync_require_org_id_settings_default_is_true() -> None:
+    """SPEC-SEC-AUDIT-2026-04 C2 / REQ-8.5: transition flag must be True by default.
+
+    Guards the config.py default from regressing to False. Checks the
+    pydantic field default directly — no subprocess, no env override.
+    """
+    from app.core.config import Settings
+
+    default = Settings.model_fields["sync_require_org_id"].default
+    assert default is True, (
+        f"sync_require_org_id default must be True (transition closed per REQ-8.5), got {default!r}"
+    )
+
+
+def test_sync_request_without_org_id_returns_400(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SPEC-SEC-AUDIT-2026-04 C2 regression: production default rejects missing X-Org-ID.
+
+    Uses the enforced default (True) directly so this test catches any
+    future code path that passes sync_require_org_id=False implicitly.
+    Mirrors case 8.b but named for audit traceability.
+    """
+    client = _build_client(
+        monkeypatch,
+        session=_FakeSession(rows=[]),
+        sync_require_org_id=True,  # production default post REQ-8.5 flip (2026-04-29)
+    )
+
+    resp = client.get(f"/api/v1/connectors/{_CONN_A}/syncs")
+
+    assert resp.status_code == 400, (
+        f"sync route without X-Org-ID must 400 under enforced default, got {resp.status_code}: {resp.text}"
+    )
+    assert resp.json() == {"detail": "X-Org-ID header required"}

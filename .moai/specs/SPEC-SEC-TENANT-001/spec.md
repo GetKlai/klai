@@ -1,6 +1,6 @@
 ---
 id: SPEC-SEC-TENANT-001
-version: 0.5.1
+version: 0.6.1
 status: draft
 created: 2026-04-24
 updated: 2026-04-29
@@ -12,6 +12,19 @@ tracker: SPEC-SEC-AUDIT-2026-04
 # SPEC-SEC-TENANT-001: Tenant Scoping + Zitadel Role Mapping
 
 ## HISTORY
+
+### v0.6.1 (2026-04-29)
+- **Transition flag flipped to True; cross-tenant blast-radius window closed.**
+  `sync_require_org_id` default changed from `False` to `True` in
+  `klai-connector/app/core/config.py`. Portal-api has been sending
+  `X-Org-ID` on every sync call since PR #206 merged (>2 weeks dwell
+  time). All `/sync/*` routes now return HTTP 400 on missing header
+  without the `SYNC_REQUIRE_ORG_ID=true` env override. SPEC-SEC-AUDIT-2026-04
+  finding C2 resolved. Two new tests added:
+  `test_sync_require_org_id_settings_default_is_true` (guards the config
+  default via pydantic field inspection) and
+  `test_sync_request_without_org_id_returns_400` (confirms 400 under
+  the enforced default). Lands on PR fixing SPEC-SEC-AUDIT-2026-04 C2.
 
 ### v0.5.1 (2026-04-29)
 - **No backfill on migration 006.** v0.5.0 declared an intra-DB
