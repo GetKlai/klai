@@ -26,7 +26,7 @@ import httpx
 import structlog
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, HTTPException, Request, Response, status
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import invalidate_tenant_slug_cache
@@ -43,6 +43,26 @@ from app.services.zitadel import zitadel
 logger = logging.getLogger(__name__)
 _slog = structlog.get_logger()
 
+# SPEC-SEC-HYGIENE-001 REQ-22: zxcvbn-backed password-strength check.
+# Pure Python (no native extensions); MIT-licensed. If the import ever
+# fails (misconfigured deployment, future drop), fall back to length-only
+# at REQ-22.4. _ZXCVBN_AVAILABLE is module-level so tests can monkey-patch
+# the unavailable path without breaking the import.
+try:
+    from zxcvbn import zxcvbn as _zxcvbn
+
+    _ZXCVBN_AVAILABLE = True
+except ImportError:
+    _zxcvbn = None  # type: ignore[assignment]
+    _ZXCVBN_AVAILABLE = False
+    logger.exception("zxcvbn_unavailable_falling_back_to_length_check")
+
+# REQ-22.1: zxcvbn 0-4 scale; reject score < 3.
+_ZXCVBN_MIN_SCORE = 3
+_PASSWORD_TOO_WEAK_MSG = (
+    "Wachtwoord is te zwak. Kies een langer of minder voorspelbaar wachtwoord."
+)
+
 _IDP_PENDING_COOKIE = "klai_idp_pending"
 _IDP_PENDING_MAX_AGE = 600  # 10 minutes — must match auth.py
 
@@ -57,13 +77,6 @@ class SignupRequest(BaseModel):
     company_name: str
     preferred_language: str = "nl"
 
-    @field_validator("password")
-    @classmethod
-    def password_strength(cls, v: str) -> str:
-        if len(v) < 12:
-            raise ValueError("Wachtwoord moet minimaal 12 tekens bevatten")
-        return v
-
     @field_validator("company_name", "first_name", "last_name")
     @classmethod
     def not_empty(cls, v: str) -> str:
@@ -75,6 +88,34 @@ class SignupRequest(BaseModel):
     @classmethod
     def valid_language(cls, v: str) -> str:
         return v if v in ("nl", "en") else "nl"
+
+    @model_validator(mode="after")
+    def password_strength(self) -> "SignupRequest":
+        """SPEC-SEC-HYGIENE-001 REQ-22: length floor + zxcvbn score floor.
+
+        REQ-22.2: minimum length of 12 characters is the FIRST gate (fast
+        path; zxcvbn is only invoked if length passes).
+
+        REQ-22.1, REQ-22.3: zxcvbn is invoked with the user's email,
+        first_name, last_name, and company_name as ``user_inputs`` so a
+        password derived from the user's own PII (e.g. "Voys2026Klai" for
+        company "Voys") scores low against itself.
+
+        REQ-22.4: if zxcvbn is unavailable (import failed at module load —
+        misconfigured deployment), fall back to the length-only check and
+        rely on the module-load error log to surface the degradation.
+        """
+        if len(self.password) < 12:
+            raise ValueError("Wachtwoord moet minimaal 12 tekens bevatten")
+        if not _ZXCVBN_AVAILABLE or _zxcvbn is None:
+            return self
+        result = _zxcvbn(
+            self.password,
+            user_inputs=[self.email, self.first_name, self.last_name, self.company_name],
+        )
+        if int(result.get("score", 0)) < _ZXCVBN_MIN_SCORE:
+            raise ValueError(_PASSWORD_TOO_WEAK_MSG)
+        return self
 
 
 class SignupResponse(BaseModel):
