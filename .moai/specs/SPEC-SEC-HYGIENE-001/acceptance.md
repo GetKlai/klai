@@ -335,16 +335,22 @@ for compose).
 
 ## Summary (v0.2.0)
 
-| Finding | Test file | Requirements covered |
-|---|---|---|
-| #19 | `test_signup_rate_limit.py` | REQ-19.1-19.5 |
-| #20 | `test_validate_callback_url.py` | REQ-20.1-20.3 |
-| #21 | `test_auth_bff_return_to.py` | REQ-21.1-21.4 |
-| #22 | `test_signup_password_strength.py` | REQ-22.1-22.4 |
-| #23 | `test_widget_config_docs.py` | REQ-23.1-23.3 |
-| #24 | `test_widget_jwt_per_tenant.py` | REQ-24.1, 24.2, 24.4, 24.5 |
-| #27 | `test_tenant_matcher_cache.py` | REQ-27.1-27.3 |
-| #28 | `test_docs_gating.py` | REQ-28.1-28.4 |
+> **Implementation status:** all 8 portal-slice ACs landed on
+> branch `feature/SPEC-SEC-HYGIENE-001-portal-v03` (one commit per
+> finding). Status detail, commit hashes, and test counts are tracked
+> in `progress.md` § "portal-slice (HY-19..HY-28)". Findings #25 and
+> #26 do not exist in this SPEC — the table jumps from #24 to #27.
+
+| Finding | Test file | Requirements covered | Status |
+|---|---|---|---|
+| #19 | `test_signup_rate_limit.py` | REQ-19.1-19.5 | shipped |
+| #20 | `test_validate_callback_url.py` | REQ-20.1-20.3 | shipped |
+| #21 | `test_auth_bff_return_to.py` | REQ-21.1-21.4 | shipped |
+| #22 | `test_signup_password_strength.py` | REQ-22.1-22.4 | shipped |
+| #23 | `test_widget_config_docs.py` | REQ-23.1-23.3 | shipped |
+| #24 | `test_widget_jwt_per_tenant.py` | REQ-24.1, 24.2, 24.4, 24.5 | shipped |
+| #27 | `test_tenant_matcher_cache.py` | REQ-27.1-27.3 | shipped |
+| #28 | `test_docs_gating.py` | REQ-28.1-28.4 | shipped |
 
 Each file is a new regression test that would have flagged the
 original finding. Per CLAUDE.md Rule 4 (Reproduction-First Bug Fix),
