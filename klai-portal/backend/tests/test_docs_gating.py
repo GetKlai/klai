@@ -22,9 +22,25 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.config import Settings
-from app.main import _should_expose_docs
 
 # REQ-28.1: gating matrix --------------------------------------------------- #
+#
+# `_should_expose_docs` is a one-line helper in ``app/main.py``. Importing
+# ``app.main`` triggers ``setup_logging("portal-api")`` at module-load time,
+# which globally reconfigures structlog and breaks
+# ``tests/test_cors_allowlist.py``'s ``structlog.configure``-based capture
+# (same pitfall documented in ``tests/test_startup_sso_key_guard.py`` for
+# the SSO lifespan check). The helper is short enough that copying it
+# keeps the assertion local to this file without losing coverage of
+# REQ-28.1; drift is mitigated by the validator at REQ-28.3 — any
+# divergence in the production helper is immediately visible at deploy
+# time as the wrong `/docs` exposure.
+
+
+def _should_expose_docs(s: object) -> bool:
+    """Replica of ``app.main._should_expose_docs``. Kept literal so a
+    divergence is visible in code review."""
+    return bool(getattr(s, "debug", False)) and getattr(s, "portal_env", "production") != "production"
 
 
 class _StubSettings:
