@@ -319,8 +319,14 @@ services:
       # (SPEC-SEC-MAILER-INJECTION-001 REQ-8). Wiring via `environment:` instead
       # of duplicating into klai-mailer/.env keeps rotation atomic.
       INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
+      # Redis nonce store + per-recipient rate limiter
+      # (SPEC-SEC-MAILER-INJECTION-001 REQ-4 + REQ-6). Mailer fails closed
+      # with HTTP 503 when redis is unreachable, so it MUST share net-redis
+      # with the redis service — same pattern as portal-api and litellm.
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
     networks:
       - klai-net
+      - net-redis
 
   # ─── Portal API (FastAPI tenant provisioning) ─────────────────────────────
   portal-api:
