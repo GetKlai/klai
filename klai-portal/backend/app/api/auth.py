@@ -130,6 +130,14 @@ class TTLCache:
 # ---------------------------------------------------------------------------
 
 
+# @MX:ANCHOR: SSO Fernet cipher accessor — fail-closed on missing SSO_COOKIE_KEY
+# @MX:REASON: fan_in=4 (lifespan startup guard + _encrypt_sso + _decrypt_sso +
+#   idp_signup_callback pending-cookie issue). A regression here breaks every
+#   authenticated klai_sso session AND every social-signup pending cookie.
+#   The removed ``Fernet.generate_key()`` fallback must never come back —
+#   per-replica ephemeral keys would silently invalidate every outstanding
+#   cookie on each restart.
+# @MX:SPEC: SPEC-SEC-SESSION-001 REQ-3
 @lru_cache(maxsize=1)
 def _get_sso_fernet() -> Fernet:
     """Return the cached SSO Fernet cipher.

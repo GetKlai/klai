@@ -52,6 +52,15 @@ def resolve_caller_ip(request: Request) -> str:
     return _UNKNOWN
 
 
+# @MX:ANCHOR: caller-IP /24 (IPv4) or /48 (IPv6) subnet derivation for cookie binding
+# @MX:REASON: fan_in=3 (auth.py login TOTP-pending issue, auth.py
+#   idp_signup_callback issue, signup.py _verify_idp_pending_binding consume).
+#   All three callsites depend on this returning a subnet that is stable across
+#   carrier handoffs but unique across distinct networks. The IPv4-mapped IPv6
+#   unwrap (lines 79-80) is security-critical — without it every dual-stack
+#   v4-mapped caller globally resolves to ``::`` and the cookie binding
+#   collapses to a no-op for that traffic class. v0.3.1 history.
+# @MX:SPEC: SPEC-SEC-SESSION-001 REQ-2.3
 def resolve_caller_ip_subnet(request: Request) -> str:
     """Return the binding-subnet network address for the caller.
 
