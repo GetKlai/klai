@@ -1,5 +1,81 @@
 # Changelog
 
+## [Unreleased] — 2026-04-28 — SPEC-SEC-AUTH-COVERAGE-001: auth.py coverage + observability hardening (14 endpoints)
+
+Companion to SPEC-SEC-MFA-001. Same Cornelis-audit context (2026-04-22)
+applied to all 14 in-scope auth.py endpoints beyond `login`: every
+documented failure leg now emits a structured event, every state-changing
+success emits an audit log, and 74 new tests verify both.
+
+### Added (security observability)
+
+- **`klai-portal/backend/app/api/auth.py::_emit_auth_event`** — generalized
+  helper for structured auth-event emission. Privacy-safe (sha256 email
+  hashing via `email_hash`), structlog-based, fan_in ≥ 14. Replaces the
+  single-purpose `_emit_mfa_check_failed` (now a thin wrapper for
+  back-compat).
+- **16 structured `*_failed` events** emitted across 14 endpoints —
+  `totp_setup_failed`, `totp_confirm_failed`, `totp_login_failed`,
+  `passkey_setup_failed`, `passkey_confirm_failed`,
+  `email_otp_setup_failed`, `email_otp_confirm_failed`,
+  `email_otp_resend_failed`, `idp_intent_failed`,
+  `idp_intent_signup_failed`, `idp_callback_failed`,
+  `idp_signup_callback_failed`, `password_reset_failed`,
+  `password_set_failed`, `sso_complete_failed`, `verify_email_failed`.
+  Common shape: `{event, reason, outcome, zitadel_status, email_hash, level}`.
+- **`audit.log_event`** on every state-changing success: `auth.totp.setup`,
+  `auth.totp.confirmed`, `auth.totp.login`, `auth.passkey.setup`,
+  `auth.passkey.confirmed`, `auth.email-otp.setup`,
+  `auth.email-otp.confirmed`, `auth.email-otp.resent`, `auth.password.reset`,
+  `auth.password.set`, `auth.login.idp`, `auth.signup.idp`,
+  `auth.sso.completed`, `auth.email.verified`. Closes the audit-trail gap
+  flagged by Cornelis.
+- **`klai-portal/backend/tests/auth_test_helpers.py`** (NEW) — shared
+  fixtures and patches: `respx_zitadel`, `_make_login_body`,
+  `_expected_email_hash`, `_session_ok`, `_make_sso_cookie`, `_make_db_mock`,
+  `_audit_log_patch`, `_capture_events`. Replaces 5 duplicate
+  `_audit_log_patch` definitions across test files (DRY refactor in polish
+  round closed REQ-5.6 regression).
+- **74 new test scenarios** across 7 test files covering all 14 endpoints
+  via `respx`-mocked Zitadel HTTP layer (no `MagicMock` on
+  `app.api.auth.zitadel` per REQ-5.7).
+- **5 `@MX:ANCHOR` tags** on helpers with fan_in ≥ 3:
+  `_emit_auth_event`, `_mfa_unavailable`, `_emit_mfa_check_failed`,
+  `_finalize_and_set_cookie`, `_validate_callback_url`.
+- **`deploy/grafana/provisioning/alerting/portal-auth-rules.yaml`** (NEW) —
+  two LogsQL alerts on the new events:
+  - R1 `auth_failure_rate_high` (warning): > 10 events/5m across the 16
+    endpoint events.
+  - R2 `auth_zitadel_5xx_burst` (critical): > 5 `reason=zitadel_5xx`
+    events/1m (canonical Zitadel-outage signal).
+- **`docs/runbooks/auth-failure-burst.md`** (NEW) — triage runbook for R1
+  and R2: event taxonomy, cross-endpoint spread analysis, brute-force
+  probe detection via `email_hash` distribution, Zitadel-outage handling.
+
+### Changed
+
+- **`logger.*` → `_slog.*` migration** for all 14 in-scope endpoints
+  (REQ-5.3). Remaining 7 stdlib `logger.*` calls in shared helpers
+  (`get_current_user_id`, `_validate_callback_url`, `_decrypt_sso`,
+  `_finalize_and_set_cookie` cookie-set branch) are out-of-scope per the
+  endpoint-only contract.
+- **`klai-portal/backend/tests/conftest.py`** — re-exports `respx_zitadel`
+  fixture for pytest auto-discovery; adds defaults for
+  `ZITADEL_IDP_GOOGLE_ID`, `ZITADEL_IDP_MICROSOFT_ID`,
+  `MONEYBIRD_WEBHOOK_TOKEN`, `VEXA_WEBHOOK_SECRET` so cross-cutting tests
+  pass without a live `.env`.
+- **`klai-portal/backend/pyproject.toml`** — adds `respx>=0.22` to dev
+  dependency-group.
+
+### Coverage
+
+- `app.api.auth` line coverage: **64% → 80%** (+16% delta).
+- REQ-5.5 PARTIAL (target was ≥85%): the remaining 5% gap is in shared
+  helpers (`_finalize_and_set_cookie` error legs, `_validate_callback_url`
+  localhost / untrusted-host branches, `_decrypt_sso` exception path),
+  not in endpoint observability. Every documented failure leg of every
+  in-scope endpoint has a test.
+
 ## [Unreleased] — 2026-04-27 — SPEC-SEC-MFA-001: MFA fail-closed in login flow
 
 Closes SPEC-SEC-AUDIT-2026-04 findings #11 and #12 (Cornelis audit
