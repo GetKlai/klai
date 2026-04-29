@@ -53,16 +53,11 @@ class Settings(BaseSettings):
     portal_internal_secret: str = ""
     portal_caller_secret: str = ""  # Secret portal sends TO klai-connector (must match portal's KLAI_CONNECTOR_SECRET)
 
-    # SPEC-SEC-TENANT-001 REQ-7.6 (v0.5.0): transition-period flag for the
-    # X-Org-ID header that portal-side REQ-8.1 starts injecting. When False
-    # (default during deploy), missing headers degrade to a WARN log
-    # ``event="sync_missing_org_id"`` and the route proceeds without org
-    # scoping (backward-compatible). When flipped to True (after the portal
-    # deploy lands and VictoriaLogs shows zero ``sync_missing_org_id`` events
-    # for the agreed dwell time), missing headers return HTTP 400. Set via
-    # SOPS env (``SYNC_REQUIRE_ORG_ID=true``) once the portal-side rollout
-    # has soaked. See SPEC REQ-8.5 for the deploy-order runbook.
-    sync_require_org_id: bool = False
+    # Enforced per SPEC-SEC-TENANT-001 REQ-8.5; flipped from transition default 2026-04-29.
+    # Portal-api has been sending X-Org-ID on every sync call since PR #206 (>2 weeks dwell).
+    # Missing headers now return HTTP 400 (fail-closed). WARN ``event="sync_missing_org_id"``
+    # still fires before the 400 for VictoriaLogs visibility.
+    sync_require_org_id: bool = True
 
     # Google Drive OAuth (SPEC-KB-025)
     google_drive_client_id: str = ""  # empty = connector disabled
