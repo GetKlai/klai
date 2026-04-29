@@ -57,7 +57,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.bearer import bearer  # BFF Phase A4 — session-aware bearer shim
 from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import AsyncSessionLocal, get_db
 from app.models.portal import PortalOrg, PortalOrgAllowedDomain, PortalUser
 from app.services import audit
 from app.services.bff_session import SessionService
@@ -325,31 +325,122 @@ async def _totp_pending_delete(token: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+# SPEC-SEC-HYGIENE-001 REQ-20.2: in-process cache of active tenant slugs.
+# Refreshed via the 60-second TTL OR explicit invalidate_tenant_slug_cache()
+# from tenant create / soft-delete sites (signup.py, orchestrator.py,
+# retry_provisioning.py). The TTL is the correctness floor — if an
+# explicit invalidation site is missed, the cache self-heals within 60s.
+_TENANT_SLUG_CACHE_TTL_SECONDS = 60
+_tenant_slug_cache: set[str] | None = None
+_tenant_slug_cache_expiry: float = 0.0
+_tenant_slug_cache_lock: asyncio.Lock | None = None
+
+
+async def _load_tenant_slugs_from_db() -> set[str]:
+    """Read the active-slug set from portal_orgs (deleted_at IS NULL)."""
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(PortalOrg.slug).where(PortalOrg.deleted_at.is_(None))
+        )
+        return {row[0] for row in result.all() if row[0]}
+
+
+async def _get_tenant_slug_allowlist() -> set[str]:
+    """SPEC-SEC-HYGIENE-001 REQ-20.2: cached active-tenant-slug allowlist.
+
+    Cache TTL: 60s. Cache miss triggers a DB read AND emits the structlog
+    event ``tenant_slug_allowlist_cache_miss`` for observability. The
+    in-process lock ensures only one DB read fires per cold-cache window.
+    """
+    global _tenant_slug_cache, _tenant_slug_cache_expiry, _tenant_slug_cache_lock
+    now = time.time()
+    if _tenant_slug_cache is not None and now < _tenant_slug_cache_expiry:
+        return _tenant_slug_cache
+
+    if _tenant_slug_cache_lock is None:
+        _tenant_slug_cache_lock = asyncio.Lock()
+
+    async with _tenant_slug_cache_lock:
+        # Double-check after acquiring the lock — another coroutine may
+        # have refreshed the cache while we were waiting.
+        now = time.time()
+        if _tenant_slug_cache is not None and now < _tenant_slug_cache_expiry:
+            return _tenant_slug_cache
+
+        logger.info("tenant_slug_allowlist_cache_miss")
+        slugs = await _load_tenant_slugs_from_db()
+        _tenant_slug_cache = slugs
+        _tenant_slug_cache_expiry = time.time() + _TENANT_SLUG_CACHE_TTL_SECONDS
+        return slugs
+
+
+def invalidate_tenant_slug_cache() -> None:
+    """SPEC-SEC-HYGIENE-001 REQ-20.2: explicit cache-invalidation hook.
+
+    Call from sites that mutate the active-tenant-slug set:
+    - signup.py after a fresh PortalOrg insert
+    - provisioning/orchestrator.py after a soft-delete (deleted_at = now)
+    - admin/retry_provisioning.py after un-soft-delete (deleted_at = None)
+
+    The 60s TTL is the correctness floor; missing a site self-heals
+    within a minute.
+    """
+    global _tenant_slug_cache, _tenant_slug_cache_expiry
+    _tenant_slug_cache = None
+    _tenant_slug_cache_expiry = 0.0
+
+
 # @MX:ANCHOR: Trust boundary for OIDC callback URLs returned by Zitadel.
 # @MX:REASON: fan_in=3 — called from login() pre-finalize, idp_callback,
 #   and sso_complete after every successful finalize. Loosening the
 #   trusted-host check (e.g. allowing wildcards or new domain suffixes)
 #   opens an open-redirect across the entire auth surface. Coordinate
 #   with frontend host config + Caddy redirect rules before changing.
-# @MX:SPEC: SPEC-SEC-AUTH-COVERAGE-001 (defense-in-depth on top of
-#   Zitadel's OIDC client redirect_uri validation)
-def _validate_callback_url(url: str) -> str:
-    """Ensure callback_url points to a trusted domain, not an attacker-controlled one.
+# @MX:SPEC: SPEC-SEC-AUTH-COVERAGE-001 + SPEC-SEC-HYGIENE-001 REQ-20
+#   (subdomain allowlist on top of the .{domain} suffix check, on top
+#   of Zitadel's OIDC client redirect_uri validation)
+async def _validate_callback_url(url: str) -> str:
+    """Ensure callback_url points to a trusted, currently-active tenant subdomain.
 
-    localhost/127.0.0.1 are allowed because they are registered as valid redirect URIs
-    in the Zitadel OIDC app (dev mode). Zitadel itself validates the redirect_uri against
-    the registered list before returning the callback_url, so this is defense-in-depth only.
+    localhost / 127.0.0.1 are allowed (REQ-20.3) because they are registered as
+    valid redirect URIs in the Zitadel OIDC app (dev mode). Zitadel itself
+    validates the redirect_uri against the registered list before returning
+    the callback_url, so this is defense-in-depth only.
+
+    SPEC-SEC-HYGIENE-001 REQ-20.1 hardens the .{domain} suffix check by
+    additionally requiring the first subdomain label to appear in the
+    active-tenant slug allowlist — preventing dangling-DNS or
+    abandoned-tenant subdomains from acting as open-redirect targets.
     """
     try:
         hostname = urlparse(url).hostname or ""
     except Exception:
         hostname = ""
-    # Allow localhost for local development — Zitadel validates redirect URIs at the OIDC layer
+    # REQ-20.3: localhost short-circuit preserved unchanged.
     if hostname in ("localhost", "127.0.0.1"):
         return url
     trusted = settings.domain  # getklai.com
-    if not (hostname == trusted or hostname.endswith(f".{trusted}")):
+    # Bare apex passes — used by the SPA itself.
+    if hostname == trusted:
+        return url
+    # Anything outside .{domain} is rejected before we hit the allowlist.
+    if not hostname.endswith(f".{trusted}"):
         logger.error("callback_url failed validation: %r", url)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Login failed, please try again later",
+        )
+    # REQ-20.1: subdomain label MUST be in the active allowlist.
+    suffix = f".{trusted}"
+    subdomain = hostname[: -len(suffix)]
+    # Take the first label (e.g. "voys" from "voys.subsection.getklai.com").
+    first_label = subdomain.split(".")[0] if subdomain else ""
+    allowed_slugs = await _get_tenant_slug_allowlist()
+    if first_label not in allowed_slugs:
+        logger.error(
+            "callback_url_subdomain_not_allowlisted",
+            extra={"hostname": hostname},
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Login failed, please try again later",
@@ -424,7 +515,7 @@ async def _finalize_and_set_cookie(
         samesite="lax",
         max_age=settings.sso_cookie_max_age,
     )
-    return LoginResponse(callback_url=_validate_callback_url(callback_url))
+    return LoginResponse(callback_url=await _validate_callback_url(callback_url))
 
 
 # ---------------------------------------------------------------------------
@@ -1164,7 +1255,7 @@ async def sso_complete(
             detail="SSO session no longer valid",
         ) from exc
 
-    return LoginResponse(callback_url=_validate_callback_url(callback_url))
+    return LoginResponse(callback_url=await _validate_callback_url(callback_url))
 
 
 @router.post("/auth/totp/setup", response_model=TOTPSetupResponse)
@@ -1746,7 +1837,7 @@ async def idp_callback(
         )
         return RedirectResponse(url=failure_url, status_code=302)
 
-    redirect = RedirectResponse(url=_validate_callback_url(callback_url), status_code=302)
+    redirect = RedirectResponse(url=await _validate_callback_url(callback_url), status_code=302)
     redirect.set_cookie(
         key="klai_sso",
         value=_encrypt_sso(session_id, session_token),
