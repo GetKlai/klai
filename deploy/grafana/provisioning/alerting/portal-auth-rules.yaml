@@ -45,7 +45,7 @@ groups:
       # Threshold: > 10 events in a 5-minute window (≈ > 2/min sustained).
       # Triage starts by grouping by event + reason to identify the failing
       # endpoint and root cause.
-      - uid: sec-auth-coverage-001-auth-failure-rate-high
+      - uid: sec-authcov-001-failure-rate-high
         title: auth_failure_rate_high
         condition: threshold
         data:
@@ -139,7 +139,7 @@ groups:
       # is normal); the cross-endpoint burst is what makes it operationally
       # significant.
       # Threshold: > 5 events in any 1m window.
-      - uid: sec-auth-coverage-001-auth-zitadel-5xx-burst
+      - uid: sec-authcov-001-zitadel-5xx-burst
         title: auth_zitadel_5xx_burst
         condition: threshold
         data:
