@@ -62,6 +62,15 @@ class Settings(BaseSettings):
     knowledge_ingest_url: str = "http://knowledge-ingest:8000"
     knowledge_ingest_secret: str = ""
 
+    # Portal-api identity-verify (SPEC-SEC-AUDIT-2026-04 B1)
+    # Used by IdentityAsserter in app.core.auth to replace JWT resourceowner
+    # trust with a membership-backed lookup. Both vars are required at startup;
+    # the validator below fires before the first request so a missing env var
+    # produces a clear error rather than a runtime 403 storm.
+    # deploy/docker-compose.yml wires PORTAL_API_INTERNAL_SECRET → PORTAL_INTERNAL_SECRET.
+    portal_api_url: str = "http://portal-api:8010"
+    portal_internal_secret: str = ""
+
     log_level: str = "INFO"
 
     # SPEC-SEC-HYGIENE-001 REQ-35.1 — stranded-row reaper config.
@@ -92,6 +101,28 @@ class Settings(BaseSettings):
                 "KNOWLEDGE_INGEST_SECRET must be a non-empty string. "
                 "scribe-api authenticates outbound /ingest calls with this header. "
                 "SPEC-SEC-INTERNAL-001 REQ-9.4."
+            )
+        return v
+
+    @field_validator("portal_internal_secret", mode="after")
+    @classmethod
+    def _require_portal_internal_secret(cls, v: str) -> str:
+        """SPEC-SEC-AUDIT-2026-04 B1: portal identity-verify must be reachable.
+
+        scribe-api calls /internal/identity/verify on portal-api to derive the
+        canonical org_id from the authenticated user's JWT sub. An empty secret
+        means every request would be rejected by portal's _require_internal_token
+        guard — fail at startup instead of at first request.
+
+        deploy/docker-compose.yml wires PORTAL_API_INTERNAL_SECRET here;
+        that key already exists in SOPS for knowledge-mcp, retrieval-api, mailer.
+        See validator-env-parity pitfall in .claude/rules/klai/pitfalls/.
+        """
+        if not v:
+            raise ValueError(
+                "PORTAL_INTERNAL_SECRET must be a non-empty string. "
+                "scribe-api uses this to authenticate portal /internal/identity/verify calls. "
+                "SPEC-SEC-AUDIT-2026-04 B1."
             )
         return v
 

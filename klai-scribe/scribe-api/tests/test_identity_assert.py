@@ -1,18 +1,34 @@
-"""SPEC-SEC-IDENTITY-ASSERT-001 REQ-3 tests for klai-scribe ingest endpoint.
+"""SPEC-SEC-AUDIT-2026-04 B1 tests for klai-scribe identity resolution.
 
-Closes the S1 finding in spec.md: ``POST /v1/transcriptions/{id}/ingest``
-no longer accepts ``org_id`` in the request body. The tenant is derived
-from the authenticated JWT's ``resourceowner`` claim, so a caller cannot
-push their transcript into another org's knowledge base by editing the
-request body.
+Fixes the B1 re-audit finding: ``get_authenticated_caller`` previously trusted
+the JWT ``resourceowner`` claim as the authoritative org, violating the
+``klai/platform/zitadel.md`` rule ("Never use resourceowner — not always
+present. Use sub → portal_users → portal_orgs join for reliable org
+resolution.").
 
-Acceptance coverage:
+The fix replaces the resourceowner fast-path with a portal
+``/internal/identity/verify`` call via ``klai-identity-assert``. The JWT's
+``sub`` claim is used as ``claimed_user_id`` and the ``resourceowner`` (if
+present) as ``claimed_org_id``; portal returns the canonical ``org_id`` from
+``portal_users`` / ``portal_orgs``.
 
-- AC-2: cross-org ingest attempt is rejected (no body.org_id to attempt
-  the cross-org with — schema-level closure).
-- REQ-3.4: JWT without ``resourceowner`` → 403 ``no_active_org_membership``.
-- REQ-3.5 fast path: JWT with ``resourceowner`` → ``ingest_scribe_transcript``
-  receives that org_id directly, no portal-api round trip.
+Acceptance coverage (B1):
+
+- CROSS-TENANT: a JWT whose ``resourceowner`` points at org-A but portal
+  lookup resolves to org-B → ``org_id`` in CallerIdentity is org-B (portal
+  wins, not the claim).
+- PORTAL-404: portal returns ``no_membership`` → 403 ``unknown_user``.
+- PORTAL-5XX: portal is unreachable → 503 ``portal_unreachable`` (fail-closed).
+- EMPTY-RESOURCEOWNER: JWT without resourceowner → portal is still called with
+  ``claimed_org_id=""``; portal returns the canonical org from the membership
+  lookup (bearer_jwt path).
+- HAPPY-PATH: JWT verifies, portal lookup returns canonical org → CallerIdentity
+  carries portal's org_id.
+
+Legacy coverage (REQ-3 from original SPEC-SEC-IDENTITY-ASSERT-001, kept for
+regression detection):
+
+- AC-2: cross-org ingest attempt is rejected (schema-level closure, no body.org_id).
 - AC-7 partial: legitimate flow still works after migration.
 """
 
@@ -23,6 +39,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
+from klai_identity_assert import VerifyResult
 
 # ---------------------------------------------------------------------------
 # JWT decode stubs (same shape as test_auth_sub_validation.py)
@@ -60,7 +77,7 @@ def patch_jwt(monkeypatch):
     return _set_payload
 
 
-_STUB_JWT = "stub.jwt.value"  # noqa: S105 — placeholder for monkey-patched decode
+_STUB_JWT = "stub.jwt.value"  # placeholder for monkey-patched decode
 
 
 def _credentials(value: str = _STUB_JWT) -> HTTPAuthorizationCredentials:
@@ -73,16 +90,64 @@ def _credentials(value: str = _STUB_JWT) -> HTTPAuthorizationCredentials:
 # ---------------------------------------------------------------------------
 
 
-class TestAuthenticatedCaller:
-    """REQ-3.5: trust the JWT ``resourceowner`` claim directly."""
+class TestAuthenticatedCallerPortalVerify:
+    """SPEC-SEC-AUDIT-2026-04 B1: get_authenticated_caller uses portal verify.
 
-    async def test_returns_user_id_and_org_id_from_jwt(self, patch_jwt) -> None:
+    The org_id in CallerIdentity is always resolved by portal-api, never
+    trusted from the JWT resourceowner claim.
+    """
+
+    @pytest.fixture
+    def portal_verify_allow(self, monkeypatch):
+        """Stub IdentityAsserter.verify to return a successful allow result."""
+
+        async def _fake_verify(self_inner, **kwargs):
+            return VerifyResult.allow(
+                user_id=kwargs["claimed_user_id"],
+                org_id="portal-resolved-org",
+                org_slug="portal-resolved-slug",
+                evidence="membership",
+            )
+
+        monkeypatch.setattr(
+            "app.core.auth.IdentityAsserter.verify",
+            _fake_verify,
+        )
+
+    @pytest.fixture
+    def portal_verify_deny_no_membership(self, monkeypatch):
+        """Stub IdentityAsserter.verify to return no_membership denial."""
+
+        async def _fake_verify(self_inner, **kwargs):
+            return VerifyResult.deny("no_membership")
+
+        monkeypatch.setattr(
+            "app.core.auth.IdentityAsserter.verify",
+            _fake_verify,
+        )
+
+    @pytest.fixture
+    def portal_verify_unreachable(self, monkeypatch):
+        """Stub IdentityAsserter.verify to return portal_unreachable denial."""
+
+        async def _fake_verify(self_inner, **kwargs):
+            return VerifyResult.deny("portal_unreachable")
+
+        monkeypatch.setattr(
+            "app.core.auth.IdentityAsserter.verify",
+            _fake_verify,
+        )
+
+    async def test_happy_path_returns_portal_org_id(
+        self, patch_jwt, portal_verify_allow
+    ) -> None:
+        """HAPPY-PATH: portal-resolved org_id is used, not the JWT claim."""
         from app.core.auth import CallerIdentity, get_authenticated_caller
 
         patch_jwt(
             {
                 "sub": "user-aaaa",
-                "urn:zitadel:iam:user:resourceowner:id": "org-xxxx",
+                "urn:zitadel:iam:user:resourceowner:id": "jwt-claim-org",
             }
         )
 
@@ -90,61 +155,125 @@ class TestAuthenticatedCaller:
 
         assert isinstance(caller, CallerIdentity)
         assert caller.user_id == "user-aaaa"
-        assert caller.org_id == "org-xxxx"
+        # Portal's answer overrides the JWT claim.
+        assert caller.org_id == "portal-resolved-org"
 
-    async def test_returns_403_when_resourceowner_claim_missing(self, patch_jwt) -> None:
-        # REQ-3.4: a user without an active org membership in Zitadel has
-        # no resourceowner in their JWT. Endpoint MUST refuse — silently
-        # downgrading to a default org would re-introduce the S1 chain.
-        from app.core.auth import get_authenticated_caller
+    async def test_cross_tenant_token_confusion_is_closed(
+        self, patch_jwt, monkeypatch
+    ) -> None:
+        """CROSS-TENANT (the B1 finding): JWT resourceowner differs from portal org.
 
-        patch_jwt({"sub": "user-aaaa"})  # no resourceowner
+        A multi-org user's token carries ``resourceowner=org-A``. If scribe
+        trusted that directly, the transcript would land in org-A's KB even
+        though the user's current active membership is org-B. Portal's lookup
+        returns org-B, which is what CallerIdentity MUST carry.
+        """
+        from klai_identity_assert import IdentityAsserter
 
-        with pytest.raises(HTTPException) as exc_info:
-            await get_authenticated_caller(credentials=_credentials())
+        from app.core.auth import CallerIdentity, get_authenticated_caller
 
-        assert exc_info.value.status_code == 403
-        assert exc_info.value.detail == "no_active_org_membership"
+        resourceowner_in_jwt = "org-A-from-jwt-claim"
+        portal_canonical_org = "org-B-from-portal-lookup"
 
-    async def test_returns_403_when_resourceowner_is_empty_string(self, patch_jwt) -> None:
-        # Defensive: an explicit empty string is treated identically to
-        # absent — no silent fallback.
-        from app.core.auth import get_authenticated_caller
+        captured_claimed_org = {}
 
-        patch_jwt(
-            {
-                "sub": "user-aaaa",
-                "urn:zitadel:iam:user:resourceowner:id": "",
-            }
-        )
+        async def _fake_verify(self_inner, **kwargs):
+            # Record what was passed as the claim so we can verify it came
+            # from the JWT's resourceowner (used as a hint, not as truth).
+            captured_claimed_org["claimed_org_id"] = kwargs.get("claimed_org_id")
+            # Portal returns a DIFFERENT org than what the JWT carries.
+            return VerifyResult.allow(
+                user_id=kwargs["claimed_user_id"],
+                org_id=portal_canonical_org,
+                org_slug="org-b-slug",
+                evidence="membership",
+            )
 
-        with pytest.raises(HTTPException) as exc_info:
-            await get_authenticated_caller(credentials=_credentials())
-
-        assert exc_info.value.status_code == 403
-        assert exc_info.value.detail == "no_active_org_membership"
-
-    async def test_returns_403_when_resourceowner_is_not_a_string(self, patch_jwt) -> None:
-        # Defensive against malformed JWT payload — type narrows before
-        # any handler sees the value.
-        from app.core.auth import get_authenticated_caller
+        monkeypatch.setattr(IdentityAsserter, "verify", _fake_verify)
 
         patch_jwt(
             {
-                "sub": "user-aaaa",
-                "urn:zitadel:iam:user:resourceowner:id": ["org-x", "org-y"],
+                "sub": "user-multi-org",
+                "urn:zitadel:iam:user:resourceowner:id": resourceowner_in_jwt,
             }
         )
+
+        caller = await get_authenticated_caller(credentials=_credentials())
+
+        assert isinstance(caller, CallerIdentity)
+        assert caller.user_id == "user-multi-org"
+        # The CRITICAL assertion: org_id is portal's canonical answer,
+        # not the JWT resourceowner. This is the B1 fix.
+        assert caller.org_id == portal_canonical_org
+        assert caller.org_id != resourceowner_in_jwt
+
+    async def test_portal_no_membership_returns_403_unknown_user(
+        self, patch_jwt, portal_verify_deny_no_membership
+    ) -> None:
+        """PORTAL-404: user not found in portal_users → 403 unknown_user."""
+        from app.core.auth import get_authenticated_caller
+
+        patch_jwt({"sub": "user-not-in-portal"})
 
         with pytest.raises(HTTPException) as exc_info:
             await get_authenticated_caller(credentials=_credentials())
 
         assert exc_info.value.status_code == 403
+        assert exc_info.value.detail == "unknown_user"
+
+    async def test_portal_unreachable_returns_503(
+        self, patch_jwt, portal_verify_unreachable
+    ) -> None:
+        """PORTAL-5XX: fail-closed — portal unreachable → 503 portal_unreachable."""
+        from app.core.auth import get_authenticated_caller
+
+        patch_jwt({"sub": "user-aaaa"})
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_authenticated_caller(credentials=_credentials())
+
+        assert exc_info.value.status_code == 503
+        assert exc_info.value.detail == "portal_unreachable"
+
+    async def test_empty_resourceowner_still_calls_portal(
+        self, patch_jwt, monkeypatch
+    ) -> None:
+        """EMPTY-RESOURCEOWNER: JWT without resourceowner still resolves via portal.
+
+        The old code raised 403 immediately. The new code passes claimed_org_id=""
+        and lets portal do the membership lookup using the bearer_jwt path.
+        """
+        from klai_identity_assert import IdentityAsserter
+
+        from app.core.auth import CallerIdentity, get_authenticated_caller
+
+        portal_was_called = {}
+
+        async def _fake_verify(self_inner, **kwargs):
+            portal_was_called["yes"] = True
+            portal_was_called["claimed_org_id"] = kwargs.get("claimed_org_id")
+            return VerifyResult.allow(
+                user_id=kwargs["claimed_user_id"],
+                org_id="portal-org-from-membership",
+                org_slug="org-slug",
+                evidence="membership",
+            )
+
+        monkeypatch.setattr(IdentityAsserter, "verify", _fake_verify)
+
+        # JWT has no resourceowner claim at all.
+        patch_jwt({"sub": "user-aaaa"})
+
+        caller = await get_authenticated_caller(credentials=_credentials())
+
+        assert portal_was_called.get("yes"), (
+            "portal.verify must be called even without resourceowner"
+        )
+        assert isinstance(caller, CallerIdentity)
+        assert caller.org_id == "portal-org-from-membership"
 
     async def test_returns_401_when_sub_claim_malformed(self, patch_jwt) -> None:
-        # The HY-34 sub-charset whitelist (existing behaviour) MUST still
-        # fire on the new dependency — defense-in-depth shared between
-        # both call paths.
+        """HY-34 sub-charset whitelist fires before the portal call."""
         from app.core.auth import get_authenticated_caller
 
         patch_jwt(
