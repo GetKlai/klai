@@ -30,6 +30,19 @@ from app.signature import REPLAY_WINDOW_SECONDS
 
 logger = logging.getLogger(__name__)
 
+
+class NonceReplayError(Exception):
+    """Raised when `(t, v1)` has been seen within the replay window."""
+
+
+class RedisUnavailableError(Exception):
+    """Raised when the Redis call failed (connection, timeout, etc.).
+
+    Also raised when ``REDIS_URL`` is structurally invalid — see
+    ``get_redis`` for the translation rationale.
+    """
+
+
 # Module-level client — settable from tests via set_redis_client().
 _redis_client: Any = None
 
@@ -47,27 +60,50 @@ def reset_redis_client() -> None:
 
 
 def get_redis() -> Any:
-    """Return the module-level redis asyncio client, creating it lazily."""
+    """Return the module-level redis asyncio client, creating it lazily.
+
+    Uses ``parse_redis_url`` instead of ``redis_asyncio.from_url`` because
+    the latter delegates to ``urllib.parse.urlparse``, which raises
+    ``ValueError("Port could not be cast")`` on URLs whose password
+    contains reserved characters (``:``, ``/``, ``+``, ``@``) that the
+    operator forgot to percent-encode in SOPS. By peeling the userinfo
+    off structurally and passing fields as kwargs to
+    ``redis_asyncio.Redis``, the password is treated as opaque bytes.
+    See ``app/redis_url.py`` for the full rationale.
+
+    A structurally-broken URL (no scheme, no host) raises ``RedisURLError``,
+    which this function translates to ``RedisUnavailableError`` so the
+    /notify handler returns the same 503 it would for a runtime Redis
+    outage. The translation log line ``mailer_redis_url_invalid`` is the
+    operator-visible signal.
+    """
     global _redis_client
     if _redis_client is None:
         # Lazy import so test overrides can install a stub before first use
         # without pulling redis-py into process memory unnecessarily.
         import redis.asyncio as redis_asyncio
-        _redis_client = redis_asyncio.from_url(
-            settings.redis_url,
-            decode_responses=False,
-            socket_timeout=2.0,
-            socket_connect_timeout=2.0,
-        )
+
+        from app.redis_url import RedisURLError, parse_redis_url
+
+        try:
+            parsed = parse_redis_url(settings.redis_url)
+        except RedisURLError as exc:
+            logger.error("mailer_redis_url_invalid: %s", exc)
+            raise RedisUnavailableError(f"REDIS_URL is malformed: {exc}") from exc
+        kwargs: dict[str, Any] = {
+            "host": parsed.host,
+            "port": parsed.port,
+            "username": parsed.username,
+            "password": parsed.password,
+            "db": parsed.db,
+            "decode_responses": False,
+            "socket_timeout": 2.0,
+            "socket_connect_timeout": 2.0,
+        }
+        if parsed.use_ssl:
+            kwargs["ssl"] = True
+        _redis_client = redis_asyncio.Redis(**kwargs)
     return _redis_client
-
-
-class NonceReplayError(Exception):
-    """Raised when `(t, v1)` has been seen within the replay window."""
-
-
-class RedisUnavailableError(Exception):
-    """Raised when the Redis call failed (connection, timeout, etc.)."""
 
 
 def _nonce_key(parts: dict[str, str]) -> str:
