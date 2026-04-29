@@ -435,18 +435,47 @@ async def widget_config(
     """Return widget bootstrap configuration and a short-lived session token.
 
     # @MX:WARN: [AUTO] Public endpoint — no authentication required
-    # @MX:REASON: Origin validated via origin_allowed(); token TTL 1h; no sensitive data returned
-    # @MX:SPEC: SPEC-WIDGET-001 REQ-2
+    # @MX:REASON: Origin check is UX-only (see docstring §"Security model");
+    # the actual security boundary is the HS256 JWT session_token. Token TTL 1h;
+    # no sensitive data returned. SPEC-SEC-HYGIENE-001 REQ-23.
+    # @MX:SPEC: SPEC-WIDGET-001 REQ-2 + SPEC-SEC-HYGIENE-001 REQ-23
 
     SPEC-WIDGET-002: Public endpoint, no API key required.
     - Looks up widget by widget_id (id param) in the widgets table
-    - Validates Origin header against allowed_origins (fail-closed)
+    - Validates Origin header against allowed_origins (UX-gating only — see below)
     - Generates HS256 JWT session token (1 hour TTL)
     - Returns CORS headers for matched origin (never *)
 
+    Security model (SPEC-SEC-HYGIENE-001 REQ-23.1):
+
+    The ``Origin`` header check is **UX-only, not a security boundary.**
+    Auditors flag this finding repeatedly because non-browser clients
+    (curl, custom integrations) can spoof the ``Origin`` header — yes,
+    they can, and that is fine, because:
+
+    - The primary identifier is ``widget_id`` (the URL ``id`` query
+      parameter). It is a public, opaque identifier.
+    - Downstream security (chat completions, KB retrieval) is enforced
+      by the HS256 JWT ``session_token`` returned in the response body.
+      The token carries ``wgt_id``, ``org_id``, and the allowed
+      ``kb_ids`` — it is the actual access-control mechanism.
+    - A non-browser client that spoofs ``Origin`` receives the same
+      scoped session_token any other browser would receive for that
+      widget. They cannot escalate privilege; they can only obtain a
+      token that grants access to exactly the KBs the widget owner has
+      already published.
+    - ``allowed_origins`` therefore controls **browser embedding
+      behaviour** (which origins may render the widget iframe), not
+      API access control.
+
+    Asymmetric signing (ES256/EdDSA) is the structural fix and is
+    tracked separately; until that lands, REQ-24 derives per-tenant
+    HS256 keys via HKDF so a single secret leak does not let an attacker
+    forge tokens cross-tenant.
+
     Error codes:
         404 - widget_id not found
-        403 - missing or disallowed Origin
+        403 - missing or disallowed Origin (UX gate)
         503 - WIDGET_JWT_SECRET not configured
     """
     # Check JWT secret is configured
