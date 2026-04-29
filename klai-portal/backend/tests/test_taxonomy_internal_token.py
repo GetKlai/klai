@@ -86,5 +86,5 @@ def test_source_uses_verify_shared_secret_not_string_equality():
     src = inspect.getsource(tax_mod._require_internal_token)
     assert "verify_shared_secret" in src, "taxonomy._require_internal_token must use verify_shared_secret"
     # Defensive: nobody introduced raw string equality back in.
-    assert "token != f\"Bearer" not in src, "regressed to string-inequality on Bearer token"
-    assert "token == f\"Bearer" not in src, "regressed to string-equality on Bearer token"
+    assert 'token != f"Bearer' not in src, "regressed to string-inequality on Bearer token"
+    assert 'token == f"Bearer' not in src, "regressed to string-equality on Bearer token"

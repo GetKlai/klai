@@ -80,7 +80,9 @@ def _redis_mock(
     client.unlink = AsyncMock(side_effect=unlink)
     # Defensive: a regression to FLUSHALL would silently call this attribute.
     # Make the call fail loud so tests catch it immediately.
-    client.flushall = AsyncMock(side_effect=AssertionError("FLUSHALL must never be called -- SPEC-SEC-INTERNAL-001 REQ-2"))
+    client.flushall = AsyncMock(
+        side_effect=AssertionError("FLUSHALL must never be called -- SPEC-SEC-INTERNAL-001 REQ-2")
+    )
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=None)
     client._unlinked_calls = unlinked
