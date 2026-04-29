@@ -267,9 +267,11 @@ def _mock_redis_sync_client(*, keys: list[str] | None = None, scan_raises: Excep
     client.__exit__ = MagicMock(return_value=False)
     client.scan_iter = MagicMock(side_effect=_scan_iter)
     client.unlink = MagicMock(side_effect=_unlink)
-    client.flushall = MagicMock(side_effect=AssertionError(
-        "FLUSHALL must never be called -- SPEC-SEC-INTERNAL-001 REQ-2",
-    ))
+    client.flushall = MagicMock(
+        side_effect=AssertionError(
+            "FLUSHALL must never be called -- SPEC-SEC-INTERNAL-001 REQ-2",
+        )
+    )
     client.close = MagicMock()
     client._unlinked = unlinked
     return MagicMock(return_value=client), client
