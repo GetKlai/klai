@@ -40,10 +40,12 @@ import json
 import logging
 import secrets
 import time
-from typing import Any
+from functools import lru_cache
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote, urlparse
 
 import httpx
+import redis.exceptions as redis_exc
 import structlog
 from cryptography.fernet import Fernet
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response, status
@@ -58,8 +60,20 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.models.portal import PortalOrg, PortalOrgAllowedDomain, PortalUser
 from app.services import audit
+from app.services.bff_session import SessionService
 from app.services.events import emit_event
+from app.services.redis_client import get_redis_pool
+from app.services.request_ip import resolve_caller_ip_subnet
 from app.services.zitadel import zitadel
+
+if TYPE_CHECKING:
+    import redis.asyncio as aioredis
+
+# SPEC-SEC-SESSION-001 REQ-1.7: transient Redis failures that translate to
+# fail-CLOSED HTTP 503. ConnectionError covers the unreachable case the SPEC
+# names; TimeoutError covers slow-but-eventually-failing networks (still a
+# brute-force ceiling lift if we let it through).
+_REDIS_UNAVAILABLE_ERRORS = (redis_exc.ConnectionError, redis_exc.TimeoutError)
 
 logger = logging.getLogger(__name__)
 _slog = structlog.get_logger()
@@ -104,32 +118,205 @@ class TTLCache:
 # The cookie value contains the Zitadel session_id + session_token, encrypted
 # with a server-side key.  No server-side state is needed -- Zitadel is the
 # authority on whether the session is still valid.
+#
+# SPEC-SEC-SESSION-001 REQ-3: fail-closed initialisation. Refuse to construct
+# the cipher when ``SSO_COOKIE_KEY`` is empty rather than fall back to
+# ``Fernet.generate_key()``. The fallback would mint a per-replica ephemeral
+# key on every restart — cookies issued by replica A would be undecryptable on
+# replica B, and outstanding cookies would silently invalidate on each deploy.
+# Mirror of ``signup.py::_get_fernet``; the two stay in lock-step until a
+# follow-up SPEC consolidates them into ``app/core/sso_crypto.py``.
 # ---------------------------------------------------------------------------
-_fernet = Fernet(settings.sso_cookie_key.encode() if settings.sso_cookie_key else Fernet.generate_key())
+
+
+@lru_cache(maxsize=1)
+def _get_sso_fernet() -> Fernet:
+    """Return the cached SSO Fernet cipher.
+
+    Raises:
+        RuntimeError: when ``settings.sso_cookie_key`` is empty or
+            whitespace-only. The lifespan startup hook in ``app.main`` calls
+            this once so a misconfigured deployment is caught at deploy time
+            rather than on the first cookie operation.
+    """
+    key = settings.sso_cookie_key
+    if not key or not key.strip():
+        raise RuntimeError(
+            "SSO_COOKIE_KEY is not set. "
+            "Configure klai-infra SOPS-encrypted .env (klai-infra/core-01/.env.sops) "
+            "before starting portal-api."
+        )
+    return Fernet(key.encode())
 
 
 def _encrypt_sso(session_id: str, session_token: str) -> str:
     """Encrypt session credentials into an opaque cookie value."""
     payload = json.dumps({"sid": session_id, "stk": session_token}).encode()
-    return _fernet.encrypt(payload).decode()
+    return _get_sso_fernet().encrypt(payload).decode()
 
 
 def _decrypt_sso(cookie_value: str) -> dict | None:
     """Decrypt the SSO cookie.  Returns {"sid": ..., "stk": ...} or None."""
     try:
-        payload = _fernet.decrypt(cookie_value.encode())
+        payload = _get_sso_fernet().decrypt(cookie_value.encode())
         return json.loads(payload)
     except Exception:
         return None
 
 
 # ---------------------------------------------------------------------------
-# Pending TOTP cache
-# After password check, store the session here while waiting for the TOTP code.
+# Pending TOTP state — Redis-backed (SPEC-SEC-SESSION-001 REQ-1)
+#
+# Pre-SPEC, ``_pending_totp = TTLCache(...)`` lived in process memory: each
+# replica kept its own ``failures`` counter, so a 5-failure lockout was
+# really an N*5 lockout when the proxy round-robinned across N replicas.
+# Pending state now lives in Redis; the failure counter is incremented with
+# atomic ``INCR`` so the ceiling is cross-replica consistent.
+#
+# Two keys per token (kept separate so the read-mostly state hash and the
+# write-mostly counter do not contend on the same primitive):
+#   ``totp_pending:<token>``           HASH  session_id, session_token, ua_hash, ip_subnet
+#   ``totp_pending_failures:<token>``  STR   incremented; ``INCR`` returns the new count
+#
+# Both keys carry the same TTL set at create time. ``INCR`` does not refresh
+# the TTL — the counter cannot outlive the session it counts against, so
+# orphan counters cannot survive the state-hash expiry.
 # ---------------------------------------------------------------------------
-_TOTP_PENDING_TTL = 300  # 5 minutes
-_TOTP_MAX_FAILURES = 5  # invalidate token after this many wrong codes
-_pending_totp = TTLCache(_TOTP_PENDING_TTL)
+_TOTP_MAX_FAILURES = 5  # lockout threshold; matches the pre-SPEC ceiling
+_TOTP_PENDING_KEY_PREFIX = "totp_pending:"
+_TOTP_PENDING_FAILURES_PREFIX = "totp_pending_failures:"
+
+
+async def _get_totp_redis_or_503(*, phase: str):
+    """Return the Redis pool, or raise HTTP 503 (REQ-1.7 fail-closed).
+
+    Different threat model from ``partner_rate_limit.check_rate_limit`` which
+    fails OPEN: opening the door on TOTP would lift the brute-force ceiling
+    entirely (the very bug we are closing). The ``phase`` kwarg is for
+    operator forensics — ``totp_pending_redis_unavailable`` log records make
+    it clear which Redis op failed without dumping the token.
+    """
+    try:
+        pool = await get_redis_pool()
+    except _REDIS_UNAVAILABLE_ERRORS:
+        _slog.error(
+            "totp_pending_redis_unavailable",
+            phase=phase,
+            reason="get_pool_raised",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication unavailable, please retry",
+        ) from None
+    if pool is None:
+        _slog.error(
+            "totp_pending_redis_unavailable",
+            phase=phase,
+            reason="redis_pool_none",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication unavailable, please retry",
+        )
+    return pool
+
+
+async def _totp_pending_create(
+    *,
+    session_id: str,
+    session_token: str,
+    ua_hash: str,
+    ip_subnet: str,
+) -> str:
+    """Allocate a fresh ``temp_token`` and store the pending state in Redis.
+
+    The opaque token returned to the client preserves the legacy
+    ``secrets.token_urlsafe(32)`` contract — 256 bits of entropy, URL-safe.
+    Raises HTTP 503 when Redis is unreachable (REQ-1.7).
+    """
+    pool = cast("aioredis.Redis", await _get_totp_redis_or_503(phase="create"))
+    token = secrets.token_urlsafe(32)
+    state_key = f"{_TOTP_PENDING_KEY_PREFIX}{token}"
+    counter_key = f"{_TOTP_PENDING_FAILURES_PREFIX}{token}"
+    ttl = settings.totp_pending_ttl_seconds
+    try:
+        # redis-py stub regression: ``Redis.hset`` is awaitable in the
+        # asyncio variant but typed as sync ``int`` in the inherited
+        # signature. Same workaround would apply to any Redis-async helper
+        # that touched ``hset`` directly.
+        await pool.hset(  # pyright: ignore[reportGeneralTypeIssues]
+            state_key,
+            mapping={
+                "session_id": session_id,
+                "session_token": session_token,
+                "ua_hash": ua_hash,
+                "ip_subnet": ip_subnet,
+            },
+        )
+        await pool.expire(state_key, ttl)
+        # ``SET ... EX`` initialises the counter at 0 with TTL in one round trip.
+        await pool.set(counter_key, 0, ex=ttl)
+    except _REDIS_UNAVAILABLE_ERRORS:
+        _slog.error("totp_pending_redis_unavailable", phase="create", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication unavailable, please retry",
+        ) from None
+    return token
+
+
+async def _totp_pending_get(token: str) -> dict[str, str] | None:
+    """Look up the pending state. Returns the field map, or ``None`` if
+    the token is unknown or already expired."""
+    pool = cast("aioredis.Redis", await _get_totp_redis_or_503(phase="get"))
+    try:
+        # Same redis-py stub regression as ``_totp_pending_create``:
+        # ``Redis.hgetall`` is awaitable in the asyncio variant.
+        data = await pool.hgetall(  # pyright: ignore[reportGeneralTypeIssues]
+            f"{_TOTP_PENDING_KEY_PREFIX}{token}"
+        )
+    except _REDIS_UNAVAILABLE_ERRORS:
+        _slog.error("totp_pending_redis_unavailable", phase="get", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication unavailable, please retry",
+        ) from None
+    return data or None
+
+
+async def _totp_pending_incr_failures(token: str) -> int:
+    """Atomically increment + return the new failure count.
+
+    REQ-1.4: a single-round-trip ``INCR`` is the atomicity primitive that
+    prevents the cross-replica read-modify-write race a naive ``HGET + 1
+    + HSET`` would re-introduce.
+    """
+    pool = cast("aioredis.Redis", await _get_totp_redis_or_503(phase="incr"))
+    try:
+        return await pool.incr(f"{_TOTP_PENDING_FAILURES_PREFIX}{token}")
+    except _REDIS_UNAVAILABLE_ERRORS:
+        _slog.error("totp_pending_redis_unavailable", phase="incr", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication unavailable, please retry",
+        ) from None
+
+
+async def _totp_pending_delete(token: str) -> None:
+    """Drop both the state hash and the counter. Idempotent."""
+    pool = cast("aioredis.Redis", await _get_totp_redis_or_503(phase="delete"))
+    try:
+        await pool.delete(
+            f"{_TOTP_PENDING_KEY_PREFIX}{token}",
+            f"{_TOTP_PENDING_FAILURES_PREFIX}{token}",
+        )
+    except _REDIS_UNAVAILABLE_ERRORS:
+        _slog.error("totp_pending_redis_unavailable", phase="delete", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication unavailable, please retry",
+        ) from None
 
 
 # ---------------------------------------------------------------------------
@@ -681,7 +868,12 @@ async def password_set(body: PasswordSetRequest) -> None:
 
 
 @router.post("/auth/login", response_model=LoginResponse)
-async def login(body: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)) -> LoginResponse:
+async def login(
+    body: LoginRequest,
+    response: Response,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> LoginResponse:
     # 1a. Find Zitadel user by email — SPEC-SEC-MFA-001 REQ-2: split 4xx ↔ 5xx
     zitadel_user_id: str | None = None
     org_id_zitadel: str | None = None
@@ -781,12 +973,19 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
 
     # 3. If the user has TOTP, require a code before finalizing
     if has_totp:
-        temp_token = _pending_totp.put(
-            {
-                "session_id": session["sessionId"],
-                "session_token": session["sessionToken"],
-                "failures": 0,
-            }
+        # SPEC-SEC-SESSION-001 REQ-1.1: store the pending state in Redis
+        # (cross-replica atomic counter) and snapshot UA + IP-subnet so a
+        # follow-up SPEC can add binding-on-consume without a Redis schema
+        # migration. ``ua_hash`` reuses the SHA-256-hex helper from
+        # ``BFFSessionService`` — same primitive as the BFF session-theft
+        # detector, so two surfaces stay in lock-step.
+        ua_hash = SessionService.hash_metadata(request.headers.get("user-agent"))
+        ip_subnet = resolve_caller_ip_subnet(request)
+        temp_token = await _totp_pending_create(
+            session_id=session["sessionId"],
+            session_token=session["sessionToken"],
+            ua_hash=ua_hash,
+            ip_subnet=ip_subnet,
         )
         return LoginResponse(status="totp_required", temp_token=temp_token)
 
@@ -803,12 +1002,19 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
 async def totp_login(body: TOTPLoginRequest, response: Response, db: AsyncSession = Depends(get_db)) -> LoginResponse:
     """Complete login by providing a TOTP code after password was accepted.
 
+    SPEC-SEC-SESSION-001 REQ-1.3..1.6: pending state lives in Redis. The
+    failure counter is incremented atomically with ``INCR`` so the lockout
+    ceiling holds across replicas. Lockout deletes both keys, so the
+    pre-SPEC pre-emptive ``failures >= MAX`` check is redundant — a 6th
+    attempt naturally falls into the ``expired_token`` leg.
+
     SPEC-SEC-AUTH-COVERAGE-001 REQ-1.6/1.7/1.8: every failure leg
-    (expired_token, lockout-immediate, invalid_code, lockout-after-fail,
-    zitadel_5xx) emits a ``totp_login_failed`` structured event in addition
-    to the existing ``audit.log_event(action="auth.totp.failed")`` call.
+    (expired_token, invalid_code, lockout-after-fail, zitadel_5xx) emits a
+    ``totp_login_failed`` structured event in addition to the existing
+    ``audit.log_event(action="auth.totp.failed")`` call. The Redis-rebase
+    drops the never-reached "immediate lockout on entry" leg.
     """
-    pending = _pending_totp.get(body.temp_token)
+    pending = await _totp_pending_get(body.temp_token)
     if not pending:
         _emit_auth_event(
             "totp_login_failed",
@@ -821,21 +1027,6 @@ async def totp_login(body: TOTPLoginRequest, response: Response, db: AsyncSessio
             detail="Session expired, please log in again",
         )
 
-    # Reject immediately if the token is already locked out
-    if pending["failures"] >= _TOTP_MAX_FAILURES:
-        _pending_totp.pop(body.temp_token)
-        _emit_auth_event(
-            "totp_login_failed",
-            reason="lockout",
-            failures=pending["failures"],
-            outcome="429",
-            level="error",
-        )
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many failed attempts, please log in again",
-        )
-
     # Verify TOTP code by updating the session
     try:
         updated = await zitadel.update_session_with_totp(
@@ -846,7 +1037,7 @@ async def totp_login(body: TOTPLoginRequest, response: Response, db: AsyncSessio
     except httpx.HTTPStatusError as exc:
         _slog.exception("update_session_with_totp_failed", zitadel_status=exc.response.status_code)
         if exc.response.status_code in (400, 401):
-            pending["failures"] += 1
+            new_failures = await _totp_pending_incr_failures(body.temp_token)
             await audit.log_event(
                 org_id=0,
                 actor="unknown",
@@ -855,12 +1046,20 @@ async def totp_login(body: TOTPLoginRequest, response: Response, db: AsyncSessio
                 resource_id=pending["session_id"],
                 details={"reason": "invalid_code"},
             )
-            if pending["failures"] >= _TOTP_MAX_FAILURES:
-                _pending_totp.pop(body.temp_token)
+            if new_failures >= _TOTP_MAX_FAILURES:
+                await _totp_pending_delete(body.temp_token)
+                # REQ-5.1 (SPEC-SEC-SESSION-001): token_prefix only — never
+                # the full token, never the session credentials. PII guard
+                # verified by ``test_session_logging_pii``.
+                _slog.warning(
+                    "totp_pending_lockout",
+                    failures=new_failures,
+                    token_prefix=body.temp_token[:8],
+                )
                 _emit_auth_event(
                     "totp_login_failed",
                     reason="lockout",
-                    failures=pending["failures"],
+                    failures=new_failures,
                     zitadel_status=exc.response.status_code,
                     outcome="429",
                     level="error",
@@ -872,7 +1071,7 @@ async def totp_login(body: TOTPLoginRequest, response: Response, db: AsyncSessio
             _emit_auth_event(
                 "totp_login_failed",
                 reason="invalid_code",
-                failures=pending["failures"],
+                failures=new_failures,
                 zitadel_status=exc.response.status_code,
                 outcome="400",
                 level="warning",
@@ -906,8 +1105,8 @@ async def totp_login(body: TOTPLoginRequest, response: Response, db: AsyncSessio
     session_id = updated.get("sessionId", pending["session_id"])
     session_token = updated.get("sessionToken", pending["session_token"])
 
-    # Clean up pending token
-    _pending_totp.pop(body.temp_token)
+    # Clean up pending token (REQ-1.6)
+    await _totp_pending_delete(body.temp_token)
 
     # Finalize and set cookie
     return await _finalize_and_set_cookie(
@@ -1644,6 +1843,7 @@ async def idp_intent_signup(body: IDPIntentSignupRequest) -> IDPIntentResponse:
 async def idp_signup_callback(
     id: str,
     token: str,
+    request: Request,
     locale: str = Query(default="nl"),
     db: AsyncSession = Depends(get_db),
 ) -> RedirectResponse:
@@ -1820,15 +2020,22 @@ async def idp_signup_callback(
         )
         return response
 
-    # 4. New user — store pending session in encrypted cookie, redirect to company name form
+    # 4. New user — store pending session in encrypted cookie, redirect to company name form.
+    # SPEC-SEC-SESSION-001 REQ-2.1: snapshot the issuing browser + IP-subnet
+    # so the consume side (signup_social) can reject a stolen-cookie replay
+    # from a different origin context.
+    pending_ua_hash = SessionService.hash_metadata(request.headers.get("user-agent"))
+    pending_ip_subnet = resolve_caller_ip_subnet(request)
     pending_payload = json.dumps(
         {
             "session_id": session_id,
             "session_token": session_token,
             "zitadel_user_id": zitadel_user_id,
+            "ua_hash": pending_ua_hash,
+            "ip_subnet": pending_ip_subnet,
         }
     ).encode()
-    encrypted_pending = _fernet.encrypt(pending_payload).decode()
+    encrypted_pending = _get_sso_fernet().encrypt(pending_payload).decode()
 
     social_url = (
         f"{settings.portal_url}/{locale}/signup/social"

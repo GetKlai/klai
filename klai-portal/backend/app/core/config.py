@@ -73,6 +73,11 @@ class Settings(BaseSettings):
     sso_cookie_key: str = ""  # PORTAL_API_SSO_COOKIE_KEY
     sso_cookie_max_age: int = 7776000  # 90 days; Zitadel session lifetime is the real authority
 
+    # SPEC-SEC-SESSION-001 REQ-1.1: TTL for the Redis-backed TOTP pending-login
+    # state. Default 300 s preserves the legacy in-memory ``_pending_totp``
+    # window. Tunable so ops can compress it without code changes.
+    totp_pending_ttl_seconds: int = 300
+
     # BFF — Backend-for-Frontend session auth (SPEC-AUTH-008)
     # Fernet key for encrypting BFF session records at rest in Redis.
     # Falls back to sso_cookie_key when unset — single key during the rollout.
