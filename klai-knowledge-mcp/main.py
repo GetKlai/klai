@@ -282,6 +282,44 @@ async def _save_to_ingest(
     return resp.status_code in (200, 201, 202)
 
 
+def _validate_page_path(page_path: str) -> None:
+    """Reject ``page_path`` shapes that try to escape the docs KB tree.
+
+    Conservative-by-default rejection rules (SPEC-SEC-HYGIENE-001 REQ-46.1):
+
+    1. literal ``..``, ``\\``, or leading ``/`` — the historic checks.
+    2. any literal ``%`` character — catches every URL-encoded variant
+       (``%2e%2e``, ``%2E%2E``, ``%2f``, ``%20``, etc.) without needing to
+       enumerate them. The legitimate caller is LibreChat, which generates
+       paths from prose; it has no reason to URL-encode.
+    3. Unicode-NFKC normalisation: if the normalised form contains ``..``,
+       ``\\``, or starts with ``/``, reject. Catches the FULLWIDTH FULL STOP
+       (U+FF0E) and other compatibility-equivalent glyphs that fold to the
+       same codepoints under NFKC.
+
+    Out of scope (REQ-46.2 / REQ-46.3, deferred to follow-up SPEC):
+    overlong UTF-8, IDN homoglyph permutations, and the klai-docs route-
+    handler audit that determines downstream blast radius. This helper is a
+    safe-by-default stub for the hygiene SPEC; the full encoding matrix
+    lands in the split SPEC once the klai-docs audit completes.
+
+    Raises ``ValueError`` on any rejected input. Returns ``None`` on accept.
+    """
+    if ".." in page_path or "\\" in page_path or page_path.startswith("/"):
+        raise ValueError("page_path contains invalid path components")
+    if "%" in page_path:
+        raise ValueError("page_path contains URL-encoded characters; pass the decoded form")
+    import unicodedata
+
+    normalised = unicodedata.normalize("NFKC", page_path)
+    if normalised != page_path and (
+        ".." in normalised or "\\" in normalised or normalised.startswith("/")
+    ):
+        raise ValueError(
+            "page_path contains compatibility-equivalent characters that decode to traversal"
+        )
+
+
 def _slugify(text: str) -> str:
     text = text.lower().strip()
     text = text.encode("ascii", "ignore").decode()  # strip accented chars
@@ -295,8 +333,18 @@ def _slugify(text: str) -> str:
 mcp = FastMCP(
     "klai-knowledge",
     transport_security=TransportSecuritySettings(
-        # Docker-internal service: no external access, DNS rebinding protection not needed.
-        # LibreChat sends Host: klai-knowledge-mcp:8080 which is the Docker service name.
+        # @MX:WARN: DNS-rebinding protection is intentionally disabled below.
+        # @MX:REASON: safe today because the MCP is not internet-reachable —
+        # Caddy has no upstream route to klai-knowledge-mcp; LibreChat reaches
+        # it via the Docker-internal hostname klai-knowledge-mcp:8080. If a
+        # future Caddy config exposes this service on an HTTP upstream, this
+        # flag MUST be flipped back to True before that change ships, or the
+        # MCP becomes vulnerable to DNS-rebinding CSRF on every tool call.
+        # See SPEC-SEC-HYGIENE-001 REQ-45 and the future SPEC-MCP-TRANSPORT-001
+        # for the full transport-hardening contract. The Caddyfile carries a
+        # matching comment listing klai-knowledge-mcp as not internet-reachable
+        # — adding an upstream there without removing that comment is a
+        # reviewer signal.
         enable_dns_rebinding_protection=False,
     ),
     instructions=(
@@ -362,6 +410,17 @@ async def save_personal_knowledge(
         return _ERR_ASSERTION_MODE.format(assertion_mode)
 
     assert verified.user_id is not None and verified.org_id is not None
+    # @MX:NOTE: the personal-KB slug is derived deterministically from the
+    # verified user_id (`f"personal-{...}"`). An attacker who learns a
+    # victim's Zitadel sub can therefore reconstruct the slug. The structural
+    # neutralisation — membership-check between user_id and the KB so that
+    # knowing the slug is not enough — lives in SPEC-SEC-IDENTITY-ASSERT-001
+    # (already shipped; see `_verify_identity` above). SPEC-SEC-HYGIENE-001
+    # REQ-48 documents that the slug FORMAT stays unchanged on purpose:
+    # rotating the derivation strategy would break every existing personal KB
+    # without adding security beyond what IDENTITY-ASSERT-001 already provides.
+    # If a future SPEC migrates to an opaque slug format, that SPEC owns the
+    # data migration path — it is not in this codebase's scope.
     ok = await _save_to_ingest(
         org_id=verified.org_id,
         kb_slug=f"personal-{verified.user_id}",
@@ -477,7 +536,13 @@ async def save_to_docs(
             "Only alphanumeric, hyphens, and underscores are allowed."
         )
     if page_path is not None:
-        if ".." in page_path or "\\" in page_path or page_path.startswith("/"):
+        try:
+            _validate_page_path(page_path)
+        except ValueError:
+            # SPEC-SEC-HYGIENE-001 REQ-46.1: keep the user-facing error
+            # generic — do NOT echo the specific rejection class (literal
+            # vs %-encoded vs NFKC) to avoid handing an attacker a
+            # validator-shape oracle.
             return "Error: page_path contains invalid path components."
 
     # REQ-2.3 / REQ-2.6: outgoing klai-docs URL uses canonical slug from
