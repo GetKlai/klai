@@ -1,7 +1,7 @@
 ---
 id: SPEC-SEC-WEBHOOK-001
-version: 0.3.0
-status: draft
+version: 0.4.0
+status: shipped
 created: 2026-04-24
 updated: 2026-04-24
 author: Mark Vletter
@@ -12,6 +12,11 @@ tracker: SPEC-SEC-AUDIT-2026-04
 # SPEC-SEC-WEBHOOK-001: Webhook Authentication Hardening
 
 ## HISTORY
+
+### v0.4.0 (2026-04-29) — SHIPPED, audit close-out
+- All REQs merged to main as part of SPEC-SEC-AUDIT-2026-04 closure sweep.
+- Merge commits on origin/main: 0fc2fe47, 288e401a, 3d264f30, b48bbdac, 7a14c7be
+- Verified by re-audit (see SPEC-SEC-AUDIT-2026-04 v1.0.0 mission-1 results).
 
 ### v0.3.0 (2026-04-24)
 - Scope expanded from portal-api webhook surface to every klai FastAPI service.

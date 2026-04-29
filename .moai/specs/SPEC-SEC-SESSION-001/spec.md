@@ -13,6 +13,11 @@ tracker: SPEC-SEC-AUDIT-2026-04
 
 ## HISTORY
 
+### v0.3.0 (2026-04-29) — SHIPPED, audit close-out
+- All REQs merged to main as part of SPEC-SEC-AUDIT-2026-04 closure sweep.
+- Merge commits on origin/main: 3b5cd772, f06f0615
+- Verified by re-audit (see SPEC-SEC-AUDIT-2026-04 v1.0.0 mission-1 results).
+
 ### v0.3.1 (2026-04-29) — three latent gaps closed post-ship
 
 After the close-out review (#203) flagged three known limitations on the
