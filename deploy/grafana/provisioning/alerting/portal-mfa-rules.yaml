@@ -126,7 +126,7 @@ groups:
       # bypass attempt combined with a policy mis-configuration. Either is a
       # security investigation, not just availability.
       # SPEC-SEC-MFA-001 REQ-4.6.
-      - uid: sec-mfa-001-mfa-check-failed-fail-open-burst
+      - uid: sec-mfa-001-check-fail-open-burst
         title: mfa_check_failed_fail_open_burst
         condition: threshold
         data:
