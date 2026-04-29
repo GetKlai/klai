@@ -105,8 +105,12 @@ async def _auth_via_session_token(token: str, db: AsyncSession) -> PartnerAuthCo
     # so we need the tenant slug BEFORE we can verify the signature. Peek at
     # the unverified payload to read org_id, look up the slug, then re-decode
     # with signature verification using the derived key. A forged token will
-    # fail the verified decode with InvalidSignatureError.
+    # fail the verified decode with InvalidSignatureError. The unverified
+    # payload is NEVER trusted for authn/authz — it's only used to pick the
+    # right HKDF subkey for the immediately-following verified decode at
+    # `decode_session_token` below.
     try:
+        # nosemgrep: python.jwt.security.unverified-jwt-decode.unverified-jwt-decode
         unverified = jwt.decode(token, options={"verify_signature": False})
     except jwt.InvalidTokenError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR) from exc
