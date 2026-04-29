@@ -1,6 +1,6 @@
 ---
 id: SPEC-SEC-AUDIT-2026-04
-version: 0.6.0
+version: 0.7.0
 status: draft
 created: 2026-04-24
 updated: 2026-04-29
@@ -12,6 +12,45 @@ type: tracker
 # SPEC-SEC-AUDIT-2026-04: Security Audit Response Tracker
 
 ## HISTORY
+
+### v0.7.0 (2026-04-29, late)
+- SPEC-SEC-INTERNAL-001 fully shipped (#201): service-wide internal-secret
+  surface hardening across portal-api / klai-mailer / klai-connector /
+  klai-scribe / klai-knowledge-mcp + new shared library `klai-libs/log-utils/`.
+  Closes findings #14, #18, A2, A3, A4 from the original Cornelis audit
+  PLUS the 7 internal-wave findings catalogued on 2026-04-24.
+  - **B0** new shared lib: 4-symbol public API, 29 tests, ruff + pyright strict.
+  - **B1** portal-api: REQ-1.1 (taxonomy compare-digest), REQ-2 (SCAN/UNLINK
+    replaces FLUSHALL), REQ-3 (BFF proxy header strip + regex catch-all),
+    REQ-5 (rate-limit fail-mode setting, default closed), REQ-4 sweep on
+    ~6 portal log sites that survived the AUTH-COVERAGE-001 structured-events
+    refactor.
+  - **B2** knowledge-mcp: REQ-8 Request-ID return contract (no body to chat UI),
+    REQ-9.5 fail-closed startup, REQ-1.5 verify_shared_secret.
+  - **B3** connector: REQ-9.3 Settings validators + runtime guards on
+    `_headers()` / `__init__`, REQ-10 `sync_runs.error_details` sanitize.
+  - **B4** scribe-api: REQ-9.4 validator, drop silent-omit guard, REQ-4
+    sweep on transcription-service log path. Dockerfile rewritten to
+    repo-root + uv pattern (the previous `uv pip install -r` flow did
+    not read `[tool.uv.sources]`).
+  - **B5** ast-grep cross-service: 4 rule files (LHS / RHS × == / !=)
+    with `kind: identifier` constraint, wired into all 5 service CI
+    workflows. Regression fixture at
+    `.github/test-fixtures/sec-internal-001/regression.py`.
+- Live status table updated: 12 of 13 tracked SPECs shipped (was 11 of 13).
+- Estimate revised: 3-6 PRs remaining (was 4-8).
+- Three new pitfalls captured in
+  `.claude/rules/klai/pitfalls/process-rules.md`:
+  - `astgrep-gitignore-shadowed-rules (HIGH)` — ast-grep silently
+    respects `.gitignore` during rule-dir discovery; rule files matching
+    `*-secret.*` etc. are dropped without an error message.
+  - `uv-pip-install-skips-uv-sources (HIGH)` — `uv pip install -r pyproject.toml`
+    does NOT read `[tool.uv.sources]`; switch the Dockerfile to
+    `uv sync --frozen` to honour path-deps.
+  - `parallel-spec-on-overlapping-log-sites (MED)` — when two SPECs
+    rewrite the same log call sites, the rebase produces large
+    conflicts; prefer the more-thorough version on resolution and
+    coordinate scope before opening a wide log-sweep PR.
 
 ### v0.6.0 (2026-04-29)
 - SPEC-SEC-SESSION-001 shipped: implementation (#197) deployed to core-01
@@ -91,7 +130,7 @@ Implementation teams should read the linked sub-SPEC, not this tracker, when pic
 
 ---
 
-## Live status (2026-04-28, late)
+## Live status (2026-04-29, late)
 
 | SPEC | Prio | Status | PRs |
 |---|---|---|---|
@@ -105,12 +144,12 @@ Implementation teams should read the linked sub-SPEC, not this tracker, when pic
 | SPEC-SEC-MFA-001 | P1 | **shipped** | #181 + #189 db-failure-events refactor |
 | SPEC-SEC-ENVFILE-SCOPE-001 | P1 | **shipped** | #163 + #170 (3-vars-dropped fix) + #171 close-out |
 | SPEC-SEC-SESSION-001 | P2 | **shipped** | #197 + close-out (alerts/CHANGELOG) |
-| SPEC-SEC-INTERNAL-001 | P2 | **queued** | — |
+| SPEC-SEC-INTERNAL-001 | P2 | **shipped** | #201 + close-out (CHANGELOG / pitfalls / tracker) |
 | SPEC-SEC-HYGIENE-001 | P3 | **partial** (scribe slice #179 + retrieval slice #188 open; connector / portal / knowledge-mcp slices queued) | #179 + #188 (open) |
 | SPEC-SEC-AUTH-COVERAGE-001 | P0 | **shipped** | #184 plan + #186 v0.2 + #195 run + #198 alerts/runbook/CHANGELOG |
 
-**Implementation rate:** ~30 PRs merged in 5 days (audit-response only).
-**Remaining:** ~4-8 PRs to close the 2 fully-queued originals (TENANT-001, INTERNAL-001) + IDENTITY-ASSERT-001 residue + HYGIENE-001 slices.
+**Implementation rate:** ~31 PRs merged in 6 days (audit-response only).
+**Remaining:** ~3-6 PRs to close the last fully-queued original (TENANT-001) + IDENTITY-ASSERT-001 residue + HYGIENE-001 slices.
 
 ---
 
