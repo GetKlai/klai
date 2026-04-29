@@ -1,7 +1,7 @@
 ---
 id: SPEC-SEC-HYGIENE-001
-version: 0.6.0
-status: in-progress
+version: 0.7.0
+status: done
 created: 2026-04-24
 updated: 2026-04-29
 author: Mark Vletter
@@ -21,6 +21,61 @@ tracker: SPEC-SEC-AUDIT-2026-04
 > one PR or five is a call for /run.
 
 ## HISTORY
+
+### v0.7.0 (2026-04-29) — mailer slice covered, SPEC closed out
+
+Final HYGIENE-001 close-out. All in-scope findings are now landed on
+`main` or formally deferred. SPEC status flips `in-progress → done`.
+
+**Mailer slice (HY-49 + HY-50): covered by SPEC-SEC-MAILER-INJECTION-001.**
+
+Per REQ-49.4 and REQ-50.4 of this SPEC, HY-49 and HY-50 close as
+"covered" once SPEC-SEC-MAILER-INJECTION-001 lands the equivalent fix.
+That happened in commit `a54499a0` on `main`
+(`feat(mailer): REQ-7 + REQ-10 uniform 401 + strict signature parser`):
+
+- **HY-49 (REQ-49.1/49.2/49.3)** ↔ **MAILER-INJECTION-001 REQ-7**.
+  All Zitadel signature-verification failures now return a byte-
+  identical `401 {"detail": "invalid signature"}` from
+  `_verify_zitadel_signature` in `klai-mailer/app/main.py`. The
+  precise failure reason is preserved in structlog at
+  `mailer_signature_invalid` with a `reason` field
+  (`missing_header`, `malformed_header`, `timestamp_out_of_window`,
+  `hmac_mismatch`, `unknown_vN_field`, `replay`). No
+  `WWW-Authenticate` or other side-channel response headers. See
+  `app/signature.py` for the `SignatureError` sentinel set and
+  `tests/` for AC-6 + AC-8 byte-identity assertions.
+
+- **HY-50 (REQ-50.1/50.2/50.3)** ↔ **MAILER-INJECTION-001 REQ-10**.
+  HY-50 was scoped docs-only ("annotate the parser, no code change
+  today"). REQ-10 went further and *implemented* the strict parser:
+  `_parse_signature_header` in `klai-mailer/app/signature.py` rejects
+  any unknown `vN=` token (e.g. a future `v2=`), rejects headers with
+  more than 5 tokens, and rejects malformed tokens — all surfacing
+  as `unknown_vN_field` and returning the same uniform 401 from
+  REQ-7. The HY-50 worry (silent-accept downgrade attack during a
+  hypothetical v1/v2 transition) is structurally closed, not just
+  annotated. The MX:NOTE that REQ-50.1 asked for is therefore
+  redundant and not added — the reject-by-default parser is the
+  stronger contract.
+
+No code or test change in this SPEC's repo footprint. Doc-only commit.
+
+**Other slices** — already shipped on `main` prior to this close-out:
+
+| Slice | Status | Reference |
+|---|---|---|
+| Portal HY-19..HY-28 | shipped | direct commits on `main` (REQ-19 `8695ef7d`, REQ-20 `6bd07440`, REQ-21 `0d1903f6`, REQ-22 `74bdd261`, REQ-23 `44bf0f08`, REQ-24 `7be258ba`, REQ-27 `838f5a89`, REQ-28 `cf772a76`; REQ-25/REQ-26 not allocated) |
+| Connector HY-30..HY-32 | shipped | v0.5.0 close-out, see HISTORY entry below |
+| Scribe HY-33..HY-38 | shipped | PR #179, merge `4463bb3d`; v0.4.0 close-out below |
+| Retrieval HY-39..HY-44 | shipped | PR #188, merge `99a7571c` |
+| Knowledge-MCP HY-45/46/48 | shipped | v0.6.0 close-out below |
+| Knowledge-MCP HY-47 | deferred | structurally relocated to `SPEC-INGEST-RATELIMIT-001` (see v0.6.0 entry) |
+| Mailer HY-49/HY-50 | covered | this entry (via SPEC-SEC-MAILER-INJECTION-001) |
+
+Of the 29 internal-wave findings, 28 ship as code/docs in this SPEC's
+slices. HY-47 is the only deliberate deferral and has its own
+follow-up SPEC.
 
 ### v0.6.0 (2026-04-29) — knowledge-mcp slice (HY-45/46/48 shipped, HY-47 deferred)
 

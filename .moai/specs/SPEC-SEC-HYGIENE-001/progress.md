@@ -606,3 +606,88 @@ untouched for audit traceability.
 
 Plus `.moai/specs/SPEC-SEC-HYGIENE-001/acceptance.md` (Implementation
 note documenting the HY-47 deferral) and this progress.md update.
+
+---
+
+## SPEC-SEC-HYGIENE-001 Progress — mailer-slice close-out (2026-04-29)
+
+Branch: `docs/SPEC-SEC-HYGIENE-001-closeout` (worktree at
+`klai-hygiene-closeout`, branched from `origin/main` at `3eef95a5`).
+
+Doc-only close-out. No code or test change in this commit. The actual
+mailer hardening that satisfies HY-49 + HY-50 already shipped to `main`
+in commit `a54499a0` under SPEC-SEC-MAILER-INJECTION-001.
+
+### HY-49 — Signature error-taxonomy oracle (covered)
+
+REQ-49.4 says: *"IF SPEC-SEC-MAILER-INJECTION-001 claims this fix in
+its /run, HY-49 is marked as 'covered' in the HYGIENE-001 close-out
+PR."*
+
+MAILER-INJECTION-001 commit `a54499a0` lands REQ-7 (uniform error
+body) and REQ-10 (strict signature parser). Mapping:
+
+- **REQ-49.1** (uniform `401 unauthorized` across every Zitadel
+  signature failure) ↔ MAILER-INJECTION-001 REQ-7.1. Implemented in
+  `klai-mailer/app/main.py` `_verify_zitadel_signature`: catches
+  `SignatureError`, returns `HTTPException(status_code=401,
+  detail="invalid signature")` byte-identical across every failure
+  mode.
+- **REQ-49.2** (precise `verification_phase` preserved in structlog)
+  ↔ REQ-7.2. The `mailer_signature_invalid` event carries a
+  `reason` field with sentinel values (`missing_header`,
+  `malformed_header`, `timestamp_out_of_window`, `hmac_mismatch`,
+  `unknown_vN_field`, `replay`).
+- **REQ-49.3** (regression test asserts byte-identity across all
+  failure modes) ↔ AC-6 in MAILER-INJECTION-001 acceptance.md.
+
+Status: ✅ **covered** by `a54499a0`.
+
+### HY-50 — Permissive signature-version parser (covered, exceeded)
+
+REQ-50.4 says: *"IF SPEC-SEC-MAILER-INJECTION-001 claims this
+documentation item, HY-50 closes as 'covered'."*
+
+HY-50 was scoped docs-only (REQ-50.1 = MX:NOTE annotation, REQ-50.2 =
+"no code change today"). MAILER-INJECTION-001 REQ-10 went further and
+implemented strict rejection of unknown `vN=` fields — `_parse_signature_header`
+in `klai-mailer/app/signature.py` raises `SignatureError(reason="unknown_vN_field")`
+on any non-`t`/`v1` token, on >5 tokens, and on malformed tokens.
+The downgrade-attack window HY-50 worried about is structurally
+closed, not just annotated.
+
+The MX:NOTE that REQ-50.1 specified is therefore not added — the
+strict-by-default parser is the stronger contract and a future
+Zitadel `v2=` rollout will be caught by a forced `SignatureError`,
+not by a comment. If a future operator needs to learn about the
+v1-only verification stance, the `SignatureError` reason sentinel
+itself documents it.
+
+Status: ✅ **covered (and exceeded)** by `a54499a0`.
+
+### Verification
+
+- `git log origin/main --oneline --grep "REQ-7 + REQ-10"` →
+  `a54499a0 feat(mailer): REQ-7 + REQ-10 uniform 401 + strict signature parser`.
+- `git log origin/main` confirms `a54499a0` reachable from `main`
+  (non-merge ancestor, direct commit).
+
+### SPEC overall status
+
+Per the v0.7.0 HISTORY entry in `spec.md`, all 6 slices are now
+either shipped or formally covered:
+
+| Slice | Items | Status |
+|---|---|---|
+| Portal | HY-19..HY-28 (8 items) | shipped on `main` |
+| Connector | HY-30..HY-32 | shipped (v0.5.0 close-out) |
+| Scribe | HY-33..HY-38 | shipped (v0.4.0 close-out, PR #179) |
+| Retrieval | HY-39..HY-44 | shipped (PR #188) |
+| Knowledge-MCP | HY-45/46/48 | shipped (v0.6.0 close-out) |
+| Knowledge-MCP | HY-47 | deferred → `SPEC-INGEST-RATELIMIT-001` |
+| Mailer | HY-49/HY-50 | covered (this commit) |
+
+SPEC frontmatter flipped: `status: in-progress` → `status: done`,
+`version: 0.6.0` → `version: 0.7.0`.
+
+### Status: SHIPPED (close-out only — no code change)
