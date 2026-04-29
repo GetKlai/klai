@@ -104,9 +104,20 @@ async def _auth_via_session_token(token: str, db: AsyncSession) -> PartnerAuthCo
     # SPEC-SEC-HYGIENE-001 REQ-24.2: signing key is HKDF-derived per tenant,
     # so we need the tenant slug BEFORE we can verify the signature. Peek at
     # the unverified payload to read org_id, look up the slug, then re-decode
-    # with signature verification using the derived key. A forged token will
-    # fail the verified decode with InvalidSignatureError.
+    # with signature verification using the derived key at line 126 below.
+    # A forged token fails the verified decode with InvalidSignatureError.
+    #
+    # The unverified peek's only output is `org_id_unverified`, which is used
+    # SOLELY to look up the per-tenant HKDF salt — it is NEVER used for
+    # authorization or any session-state decision. Authorization happens on
+    # the verified `payload` returned by `decode_session_token`.
+    #
+    # Semgrep's `python.jwt.security.unverified-jwt-decode` rule is a static
+    # pattern match that cannot trace through to the verified decode below.
+    # Suppression is correct here; do NOT remove without refactoring to a
+    # kid-based JWT scheme (which is a breaking change for live widget JWTs).
     try:
+        # nosemgrep: python.jwt.security.unverified-jwt-decode.unverified-jwt-decode
         unverified = jwt.decode(token, options={"verify_signature": False})
     except jwt.InvalidTokenError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR) from exc
