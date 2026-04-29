@@ -83,7 +83,7 @@ def _redis_mock(
     client.flushall = AsyncMock(side_effect=AssertionError("FLUSHALL must never be called -- SPEC-SEC-INTERNAL-001 REQ-2"))
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=None)
-    client._unlinked_calls = unlinked  # noqa: SLF001 -- test-only attribute
+    client._unlinked_calls = unlinked
     return client
 
 
@@ -97,7 +97,7 @@ def _docker_client(restart_raises: dict[str, Exception] | None = None) -> MagicM
             ctr.restart = MagicMock(side_effect=raises[name])
         else:
             ctr.restart = MagicMock(return_value=None)
-        ctr._name = name  # noqa: SLF001
+        ctr._name = name
         return ctr
 
     client.containers = MagicMock()
