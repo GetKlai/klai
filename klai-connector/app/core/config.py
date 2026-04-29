@@ -31,7 +31,12 @@ class Settings(BaseSettings):
 
     # Knowledge-ingest
     knowledge_ingest_url: str
-    knowledge_ingest_secret: str = ""  # X-Internal-Secret for service-to-service auth
+    # SPEC-SEC-INTERNAL-001 REQ-9.3: knowledge_ingest_secret is mandatory.
+    # Empty value raises ValidationError at startup -- no silent-omit on the
+    # X-Internal-Secret header anymore. Default kept as empty so the
+    # validator below is the sole gate; pydantic-settings will overwrite from
+    # env, and an empty env (or missing env) trips the validator.
+    knowledge_ingest_secret: str = ""
 
     # CORS — comma-separated list of allowed origins (e.g. https://getklai.com)
     cors_origins: str = ""
@@ -42,7 +47,10 @@ class Settings(BaseSettings):
 
     # Portal control plane (used by klai-connector → portal for config + status callbacks)
     portal_api_url: str = "http://portal-api:8100"
-    portal_internal_secret: str = ""  # Secret klai-connector sends TO portal (must match portal's INTERNAL_SECRET)
+    # SPEC-SEC-INTERNAL-001 REQ-9.3: portal_internal_secret is mandatory.
+    # Empty value raises ValidationError at startup -- PortalClient never
+    # sends "Bearer " (empty) on outbound calls anymore.
+    portal_internal_secret: str = ""
     portal_caller_secret: str = ""  # Secret portal sends TO klai-connector (must match portal's KLAI_CONNECTOR_SECRET)
 
     # Google Drive OAuth (SPEC-KB-025)
@@ -91,4 +99,36 @@ class Settings(BaseSettings):
                 return decoded
         except Exception:
             pass
+        return v
+
+    # ------------------------------------------------------------------
+    # SPEC-SEC-INTERNAL-001 REQ-9.3: fail-closed startup on empty outbound
+    # secrets. Mirrors the SPEC-SEC-MAILER-INJECTION-001 mailer validators.
+    # An ALLOW_EMPTY_OUTBOUND_SECRETS escape hatch (REQ-9.3 exception) is NOT
+    # implemented here -- if it is ever needed for a smoke-test profile, add
+    # a top-level env check that bypasses these validators only when the
+    # explicit flag is set.
+    # ------------------------------------------------------------------
+    @field_validator("knowledge_ingest_secret", mode="after")
+    @classmethod
+    def _require_knowledge_ingest_secret(cls, v: str) -> str:
+        if not v:
+            raise ValueError(
+                "KNOWLEDGE_INGEST_SECRET must be a non-empty string. "
+                "klai-connector authenticates outbound /ingest calls with this header; "
+                "an empty value would silently disable that authentication. "
+                "SPEC-SEC-INTERNAL-001 REQ-9.3."
+            )
+        return v
+
+    @field_validator("portal_internal_secret", mode="after")
+    @classmethod
+    def _require_portal_internal_secret(cls, v: str) -> str:
+        if not v:
+            raise ValueError(
+                "PORTAL_INTERNAL_SECRET must be a non-empty string. "
+                "klai-connector authenticates outbound /internal callbacks with this Bearer; "
+                "an empty value would send `Bearer ` (literal trailing space) on every call. "
+                "SPEC-SEC-INTERNAL-001 REQ-9.3."
+            )
         return v

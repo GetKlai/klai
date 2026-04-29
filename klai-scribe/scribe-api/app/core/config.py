@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     synthesis_model: str = "klai-primary"
 
     # Knowledge-ingest service (for KB ingestion)
+    # SPEC-SEC-INTERNAL-001 REQ-9.4: knowledge_ingest_secret is mandatory.
+    # Empty value raises ValidationError at startup. The previous
+    # ``if settings.knowledge_ingest_secret: headers[...]`` silent-omit
+    # in knowledge_adapter.py is gone; outbound auth is now unconditional.
     knowledge_ingest_url: str = "http://knowledge-ingest:8000"
     knowledge_ingest_secret: str = ""
 
@@ -73,6 +77,23 @@ class Settings(BaseSettings):
     @property
     def max_upload_bytes(self) -> int:
         return self.max_upload_mb * 1024 * 1024
+
+    @field_validator("knowledge_ingest_secret", mode="after")
+    @classmethod
+    def _require_knowledge_ingest_secret(cls, v: str) -> str:
+        """SPEC-SEC-INTERNAL-001 REQ-9.4: outbound auth must never be empty.
+
+        scribe-api authenticates the /ingest/v1/document POST with this header;
+        an empty value would silently disable that authentication. Fail at
+        Settings instantiation instead of at first call.
+        """
+        if not v:
+            raise ValueError(
+                "KNOWLEDGE_INGEST_SECRET must be a non-empty string. "
+                "scribe-api authenticates outbound /ingest calls with this header. "
+                "SPEC-SEC-INTERNAL-001 REQ-9.4."
+            )
+        return v
 
     @field_validator("whisper_server_url", mode="after")
     @classmethod

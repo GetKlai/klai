@@ -676,6 +676,32 @@ dev = [
 ]
 
 [[package]]
+name = "klai-log-utils"
+version = "0.1.0"
+source = { editable = "../../klai-libs/log-utils" }
+dependencies = [
+    { name = "structlog" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28" },
+    { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.390" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
+    { name = "structlog", specifier = ">=25.0" },
+]
+provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "pyright", specifier = ">=1.1.390" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "ruff", specifier = ">=0.8" },
+]
+
+[[package]]
 name = "klai-portal-api"
 version = "0.1.0"
 source = { virtual = "." }
@@ -690,6 +716,7 @@ dependencies = [
     { name = "icalendar" },
     { name = "klai-connector-credentials" },
     { name = "klai-image-storage" },
+    { name = "klai-log-utils" },
     { name = "motor" },
     { name = "prometheus-client" },
     { name = "publicsuffix2" },
@@ -743,6 +770,7 @@ requires-dist = [
     { name = "klai-connector-credentials", editable = "../../klai-libs/connector-credentials" },
     { name = "klai-identity-assert", marker = "extra == 'dev'", editable = "../../klai-libs/identity-assert" },
     { name = "klai-image-storage", editable = "../../klai-libs/image-storage" },
+    { name = "klai-log-utils", editable = "../../klai-libs/log-utils" },
     { name = "motor", specifier = ">=3.7" },
     { name = "prometheus-client", specifier = ">=0.25,<1.0" },
     { name = "publicsuffix2", specifier = ">=2.2,<3.0" },

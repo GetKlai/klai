@@ -80,6 +80,15 @@ class KnowledgeIngestClient:
     """
 
     def __init__(self, base_url: str, internal_secret: str = "") -> None:
+        # SPEC-SEC-INTERNAL-001 REQ-9.3: silent-omit on outbound auth is
+        # eliminated. The Settings validator on knowledge_ingest_secret
+        # enforces non-empty at startup; this constructor guard catches the
+        # Settings.model_construct()-bypass path used in some unit tests.
+        if not internal_secret:
+            raise RuntimeError(
+                "KnowledgeIngestClient cannot run with an empty internal secret -- "
+                "set KNOWLEDGE_INGEST_SECRET (SPEC-SEC-INTERNAL-001 REQ-9.3)."
+            )
         self._internal_secret = internal_secret
         self._client = httpx.AsyncClient(base_url=base_url, timeout=60.0)
 
@@ -114,9 +123,9 @@ class KnowledgeIngestClient:
         Raises:
             httpx.HTTPStatusError: If the ingest endpoint returns an error status.
         """
-        headers: dict[str, str] = {}
-        if self._internal_secret:
-            headers["x-internal-secret"] = self._internal_secret
+        # SPEC-SEC-INTERNAL-001 REQ-9.3: header is unconditional. The
+        # constructor guard above ensures _internal_secret is non-empty.
+        headers: dict[str, str] = {"x-internal-secret": self._internal_secret}
 
         payload = _build_payload(
             org_id=org_id,

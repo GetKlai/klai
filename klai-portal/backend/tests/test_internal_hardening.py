@@ -321,21 +321,25 @@ class TestRateLimit:
         assert "partner_rl:internal_rl:172.18.0.11" in redis_pool._store
 
     @pytest.mark.asyncio
-    async def test_redis_unavailable_fails_open(self):
-        """REQ-1.3 / AC-6: no Redis pool → request is allowed, warning is logged."""
+    async def test_redis_unavailable_fails_open_when_configured(self):
+        """SPEC-SEC-INTERNAL-001 AC-5.3: ``open`` fail-mode preserves SEC-005 REQ-1.3 baseline.
+
+        The default fail-mode is now ``closed`` per AC-5.4. Staging / dev override
+        to ``open`` to keep the SEC-005 fail-open behaviour for availability.
+        """
         from app.api import internal as internal_mod
 
         request = _make_request(token="secret-42")
         with (
-            _settings(internal_secret="secret-42"),
+            _settings(internal_secret="secret-42", internal_rate_limit_fail_mode="open"),
             patch("app.api.internal.get_redis_pool", return_value=None),
         ):
-            # Must NOT raise — fail-open path
+            # Must NOT raise -- fail-open path under explicit ``open`` config.
             await internal_mod._require_internal_token(request)
 
     @pytest.mark.asyncio
-    async def test_redis_raises_fails_open(self):
-        """REQ-1.3 / AC-6: Redis call raising → request is allowed, warning is logged."""
+    async def test_redis_raises_fails_open_when_configured(self):
+        """SPEC-SEC-INTERNAL-001 AC-5.3: Redis exception under ``open`` falls through."""
         from app.api import internal as internal_mod
 
         broken_redis = AsyncMock()
@@ -343,11 +347,49 @@ class TestRateLimit:
 
         request = _make_request(token="secret-42")
         with (
-            _settings(internal_secret="secret-42"),
+            _settings(internal_secret="secret-42", internal_rate_limit_fail_mode="open"),
             patch("app.api.internal.get_redis_pool", return_value=broken_redis),
         ):
             # Must NOT raise
             await internal_mod._require_internal_token(request)
+
+    @pytest.mark.asyncio
+    async def test_redis_unavailable_fails_closed_by_default(self):
+        """SPEC-SEC-INTERNAL-001 AC-5.1 + AC-5.4: default fail-mode is ``closed`` -> 503 on missing pool."""
+        from app.api import internal as internal_mod
+
+        request = _make_request(token="secret-42")
+        with (
+            _settings(internal_secret="secret-42", internal_rate_limit_fail_mode="closed"),
+            patch("app.api.internal.get_redis_pool", return_value=None),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await internal_mod._require_internal_token(request)
+            assert exc.value.status_code == 503
+            assert exc.value.detail == "Internal rate limit backend unavailable"
+
+    @pytest.mark.asyncio
+    async def test_redis_raises_fails_closed_by_default(self):
+        """SPEC-SEC-INTERNAL-001 AC-5.2: Redis exception under ``closed`` -> 503."""
+        from app.api import internal as internal_mod
+
+        broken_redis = AsyncMock()
+        broken_redis.zremrangebyscore = AsyncMock(side_effect=RuntimeError("connection refused"))
+
+        request = _make_request(token="secret-42")
+        with (
+            _settings(internal_secret="secret-42", internal_rate_limit_fail_mode="closed"),
+            patch("app.api.internal.get_redis_pool", return_value=broken_redis),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await internal_mod._require_internal_token(request)
+            assert exc.value.status_code == 503
+
+    def test_settings_default_fail_mode_is_closed(self):
+        """SPEC-SEC-INTERNAL-001 AC-5.4: env-absent default resolves to ``closed``."""
+        from app.core.config import settings
+
+        assert settings.internal_rate_limit_fail_mode == "closed"
 
     @pytest.mark.asyncio
     async def test_ceiling_is_configurable_via_settings(self, redis_pool):
