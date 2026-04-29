@@ -2,13 +2,16 @@
 
 Import directly in test files:
 
-    from helpers import FakeResult, FakeKB, make_partner_auth, setup_db
+    from helpers import FakeResult, FakeKB, make_partner_auth, make_request, setup_db
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
+
+from starlette.requests import Request
 
 # ---------------------------------------------------------------------------
 # Generic DB result mock
@@ -100,3 +103,41 @@ def make_partner_auth(
         kb_access=kb_access if kb_access is not None else {10: "read", 20: "read_write"},
         rate_limit_rpm=60,
     )
+
+
+# ---------------------------------------------------------------------------
+# Synthetic Starlette Request for tests that call FastAPI handlers directly
+# ---------------------------------------------------------------------------
+
+
+def make_request(
+    *,
+    method: str = "POST",
+    path: str = "/",
+    headers: dict[str, str] | None = None,
+    client: tuple[str, int] | None = ("127.0.0.1", 12345),
+) -> Request:
+    """Build a Starlette ``Request`` suitable for in-process handler calls.
+
+    Real FastAPI routing injects a ``Request`` per call. Tests that bypass the
+    router (``await login(...)`` style) need an equivalent. SPEC-SEC-SESSION-001
+    REQ-1.1 made ``request`` a required parameter on ``/auth/login`` so the UA
+    hash + IP-subnet snapshot can be captured.
+
+    Defaults to ``127.0.0.1:12345`` so ``resolve_caller_ip`` returns a parseable
+    address without test setup.
+    """
+    scope: dict[str, Any] = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": method,
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "scheme": "http",
+        "server": ("testserver", 80),
+        "headers": [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()],
+        "client": client,
+    }
+    return Request(scope)
