@@ -102,14 +102,15 @@ async def trigger_sync(
         raise HTTPException(status_code=409, detail="Sync already running for this connector")
 
     if org_id is None:
-        # Transition-period legacy path: portal has not yet rolled out REQ-8.1
-        # X-Org-ID injection. Reject the trigger because we cannot persist a
-        # NOT NULL org_id on the new SyncRun row. (See REQ-7.6: only reads
-        # degrade gracefully; writes require the header.) The WARN was
-        # already emitted by _require_portal_org_id; surface a 400 even when
-        # sync_require_org_id=False so the caller knows the trigger failed
-        # for a deterministic reason rather than silently 500-ing on the
-        # NOT NULL constraint.
+        # SPEC-SEC-TENANT-001 v0.5.1: ``trigger_sync`` rejects missing
+        # X-Org-ID even during the transition period. Persisting a row
+        # without org_id is technically possible (the column is nullable
+        # post-migration 006), but a row that is invisible to every
+        # tenant's per-org filter is effectively orphaned at creation
+        # time — never queryable, never associated with a triggering
+        # caller. Fail-fast at the handler with a deterministic 400
+        # rather than create operational debris. The WARN event was
+        # already emitted by ``_require_portal_org_id``.
         raise HTTPException(
             status_code=400,
             detail="X-Org-ID header required to create a sync run",
