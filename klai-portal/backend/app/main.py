@@ -33,7 +33,7 @@ from app.api.proxy import router as proxy_router
 from app.api.taxonomy import router as taxonomy_router
 from app.api.vitals import router as vitals_router
 from app.api.webhooks import router as webhooks_router
-from app.core.config import settings
+from app.core.config import settings, should_expose_docs
 from app.logging_setup import setup_logging
 from app.middleware.klai_cors import KlaiCORSMiddleware
 from app.middleware.logging_context import LoggingContextMiddleware
@@ -187,25 +187,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await zitadel.close()
 
 
-def _should_expose_docs(s: object) -> bool:
-    """SPEC-SEC-HYGIENE-001 REQ-28.1: dual-gate `/docs` and `/openapi.json`.
-
-    Soft fallback that matches the validator at REQ-28.3: only expose
-    when DEBUG is on AND we are not running with PORTAL_ENV=production.
-    The validator refuses to boot the app at all in the catastrophic
-    combination, so this gate fires only on its own when the validator
-    is bypassed (e.g. monkey-patched in a test).
-    """
-    return bool(getattr(s, "debug", False)) and getattr(s, "portal_env", "production") != "production"
-
-
 app = FastAPI(
     title="Klai Portal API",
     version="0.1.0",
     lifespan=lifespan,
-    docs_url="/docs" if _should_expose_docs(settings) else None,
+    docs_url="/docs" if should_expose_docs(settings) else None,
     redoc_url=None,
-    openapi_url="/openapi.json" if _should_expose_docs(settings) else None,
+    openapi_url="/openapi.json" if should_expose_docs(settings) else None,
 )
 
 # Middleware registration order: last-added runs FIRST on the request (Starlette LIFO).
