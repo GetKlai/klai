@@ -396,6 +396,11 @@ def _clear_retry_cookie(response: Response) -> None:
     )
 
 
+# @MX:NOTE: Open-redirect security boundary on the BFF login flow.
+# @MX:SPEC: SPEC-SEC-HYGIENE-001 REQ-21 (percent-decode + backslash + scheme matrix).
+#   MUST return the ORIGINAL (non-decoded) value on success — callers rely on this
+#   to preserve %-encoded query parameters in legitimate redirect paths. Any future
+#   change that returns the decoded form silently breaks legitimate flows.
 def _safe_return_to(value: str | None) -> str:
     """Return a same-origin path safe for use as an HTTP redirect target.
 
