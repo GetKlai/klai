@@ -270,3 +270,188 @@ Added an "Implementation note" to AC-32 in acceptance.md documenting:
 
 No code or behavioural change in the sync commit — pure annotation +
 documentation.
+
+---
+
+## SPEC-SEC-HYGIENE-001 Progress — portal-slice (HY-19..HY-28, excl. #25/#26 which do not exist)
+
+- Started: 2026-04-29 (close-out of v02 implementation; cherry-picked
+  onto current `origin/main` HEAD `1cd0bb3d`).
+- Worktree: `klai-hygiene-portal-v03` on
+  `feature/SPEC-SEC-HYGIENE-001-portal-v03` (forked from
+  `origin/main` `1cd0bb3d`). The earlier `-portal-v02` branch
+  (forked from the now-stale `d30aeba7`) is preserved as a backup
+  but is NOT the basis for this PR.
+- Slice scope: HY-19, HY-20, HY-21, HY-22, HY-23, HY-24, HY-27, HY-28
+  (klai-portal/backend). Findings #25 and #26 do not exist in the
+  v0.2.0 spec — the table jumps from #24 to #27. HY-30..HY-50 already
+  shipped in earlier slices (connector, scribe, retrieval).
+- Methodology: TDD (RED → GREEN per AC, written and confirmed-failing
+  in the v02 attempt; replayed onto current main here).
+
+### Decisions
+
+- **REQ-19 hardcoded knobs**: `EMAIL_RL_LIMIT = 3` and
+  `EMAIL_RL_WINDOW_SECONDS = 24*60*60` are module-level constants in
+  `app/services/signup_email_rl.py`. No env vars introduced —
+  `validator-env-parity` pitfall does not apply. Existing `redis_pool`
+  reused. Fail-open on Redis unreachable per REQ-19.4.
+- **REQ-20 conftest seed**: tests in the suite assume an active-tenant
+  cache — pre-populating `_tenant_slug_cache` in `tests/conftest.py`
+  with `{chat, voys, getklai, alpha, bravo, test, acme, portal}` keeps
+  every legacy test path off the real DB. `portal` was added during
+  close-out because `test_idp_callback_provision` uses
+  `portal.getklai.com` as the IDP-finalised callback host (regression
+  surfaced when REQ-20 landed on current main).
+- **REQ-21 backslash + percent-decode**: `_safe_return_to` returns
+  `/app` for any input that decodes to a path-traversal or open-redirect
+  shape. Returns the ORIGINAL value on success (REQ-21.3), so a safe
+  `?foo=bar%20baz` is preserved verbatim.
+- **REQ-22 zxcvbn dep**: added `zxcvbn>=4.5,<5.0` to runtime deps
+  (pyproject.toml + uv.lock). Dockerfile uses
+  `uv sync --frozen --no-dev --no-install-project` so image rebuild
+  picks it up automatically. Module-level import inside try/except
+  with `_ZXCVBN_AVAILABLE` flag (REQ-22.4 fallback to length-only on
+  ImportError).
+- **REQ-22 model_validator**: replaced the per-field
+  `password_strength` validator with `@model_validator(mode="after")`
+  so the validator can read sibling fields (`email`, `first_name`,
+  `last_name`, `company_name`) for zxcvbn `user_inputs`.
+- **REQ-23 docs-only**: `widget_config` docstring spells out
+  "Origin = UX-only, not a security boundary; security is widget_id +
+  signed JWT session_token". Single-line `@MX:REASON` comment above
+  the route also references "see docstring". 6 grep-style assertions
+  in `tests/test_widget_config_docs.py`.
+- **REQ-24 HKDF salt**: fixed salt `b"klai-widget-jwt-v1"` (versioned
+  for future rotation), `info=tenant_slug.encode("utf-8")`, output
+  32 bytes for HS256. Determinism explicit in the docstring +
+  enforced by the AC-24 sub-test.
+- **REQ-24 verify path order**: `_auth_via_session_token` peeks the
+  unverified payload to read `org_id`, looks up `org.slug` in
+  `portal_orgs`, then re-decodes with `tenant_slug=org.slug`. A
+  forged token fails the verified decode with `InvalidSignatureError`.
+- **REQ-27 cache TTL → 60s** (Option A): `CACHE_TTL` constant in
+  `app/services/tenant_matcher.py` reduced from `300` to `60`.
+  Module docstring updated with REQ-27.1 reference. No invalidation
+  hook needed (Option B was the alternative).
+- **REQ-28 dual gate**: soft fallback at
+  `app.main._should_expose_docs` (REQ-28.1) returns False unless both
+  `debug=True` AND `portal_env in {"development","staging"}`; hard
+  guard at `Settings._no_debug_in_production` validator (REQ-28.3)
+  refuses to boot when `debug=True AND portal_env="production"`.
+- **REQ-28 env-parity**: both `debug` (default `False`) and
+  `portal_env` (default `"production"`) have safe defaults. The
+  validator NEVER fires on a missing env var — only on the
+  catastrophic explicit pairing. No `klai-infra/core-01/.env.sops`
+  pre-flight required. Inline comment in `config.py` documents this
+  to satisfy `validator-env-parity` pitfall.
+- **PR strategy**: single PR for all 8 ACs.
+
+### AC checklist
+
+- [x] AC-19 (HY-19) — `app/services/signup_email_rl.py` Redis sliding
+  window keyed on sha256(normalised_email); 24h window; fail-open on
+  Redis missing/unavailable. Wired into `signup` BEFORE Zitadel call
+  (REQ-19.5). Commit `6266cb9b`. 10 test functions in
+  `tests/test_signup_rate_limit.py` (16 cases incl. parametrise).
+- [x] AC-20 (HY-20) — `_validate_callback_url` allowlist gate via
+  `_get_tenant_slug_allowlist` cached for 60s; localhost / 127.0.0.1
+  short-circuits preserved (REQ-20.3); generic 502 on rejection.
+  Commit `c0ce89f2`. 7 test functions (parametrised) in
+  `tests/test_validate_callback_url.py`. Test-isolation polish in
+  `938e5241` (yield-fixture restores conftest cache after each
+  callback-URL test).
+- [x] AC-21 (HY-21) — `_safe_return_to` rejects backslash, double
+  forward-slash (after percent-decode), unicode-double-slash, and any
+  input not starting with `/app`. Commit `a3d22e78`. 2 test functions
+  with 12-row parametrise in `tests/test_auth_bff_return_to.py`.
+- [x] AC-22 (HY-22) — `@model_validator(mode="after")` on
+  `SignupRequest.password_strength` — length floor (12) → zxcvbn
+  score floor (3) using all PII fields as `user_inputs`; ImportError
+  fallback to length-only with module-load logger.exception. Commit
+  `b92b34b4`. 5 test functions (incl. fallback sub-test) in
+  `tests/test_signup_password_strength.py`.
+- [x] AC-23 (HY-23) — `widget_config` docstring + `@MX:REASON` line
+  + new tests/test_widget_config_docs.py (6 grep assertions). Commit
+  `7b54cc5d`. Docs-only — no source-code change to `widget_config`.
+- [x] AC-24 (HY-24) — `_derive_tenant_key` HKDF-SHA256 helper +
+  `tenant_slug` parameter on `generate_session_token` /
+  `decode_session_token`. Verifier (`partner_dependencies`) does
+  unverified-peek → org-lookup → re-decode-with-derived-key. Commit
+  `b2d67d34`. 6 test functions (incl. determinism sub-test) in
+  `tests/test_widget_jwt_per_tenant.py`. Existing
+  `partner_dependencies` test fixture updated in `8ee1eea6` to use
+  `generate_session_token` helper instead of raw `jwt.encode`.
+- [x] AC-27 (HY-27) — `tenant_matcher.CACHE_TTL` reduced from `300`
+  to `60`. Commit `178223e2`. 2 test functions
+  (clock-frozen) in `tests/test_tenant_matcher_cache.py`.
+- [x] AC-28 (HY-28) — soft `_should_expose_docs` gate in `app.main`
+  + hard `_no_debug_in_production` validator on `Settings`; new
+  `portal_env` field defaults to `"production"`; `WIDGET_JWT_SECRET`
+  / `PORTAL_ENV` lines in compose. Commit `141b7d57`. 4 test
+  functions covering the 5-row truth table in
+  `tests/test_docs_gating.py`.
+
+### Verification
+
+- `uv run pytest tests/` — **1332 passed**, 2 failed.
+- The 2 failures (`test_cors_rejected_preflight_emits_structlog_event`
+  and `test_cors_rejected_simple_request_emits_structlog_event` in
+  `test_cors_allowlist.py`) are **pre-existing structlog-capture
+  flakes**, not slice-introduced. Verified by:
+  - Both tests pass in isolation (27 cors_allowlist tests green).
+  - Same flake reproduces with all slice tests deselected.
+  - `test_cors_allowlist.py` is byte-identical to `origin/main` (the
+    slice did not touch this file).
+- `uv run ruff check .` — clean.
+- `uv run ruff format --check .` — clean (after the slice-files
+  format normalisation in `dddef1ff`; both ruff-format and ruff-check
+  must pass per `ruff-format-and-ruff-check-are-different` pitfall).
+
+### Risks / Follow-ups
+
+- **R-19-redis-prod**: `signup_email_rl.py` requires `redis_pool` at
+  runtime to actually rate-limit. If Redis is misconfigured in prod,
+  the fail-open path silently allows unlimited signups — but emits
+  `signup_email_rl_redis_unavailable` (and now also
+  `signup_email_rl_redis_call_failed` with traceback per the audit
+  fix). Operations alert on these structlog events to surface latent
+  Redis outages.
+- **R-22-fallback**: if zxcvbn ever fails to import in prod, AC-22
+  protection is silently downgraded to length-only. Module-load
+  `logger.exception("zxcvbn_unavailable_falling_back_to_length_check")`
+  is the operations signal. Add a Grafana alert on this string for
+  long-term observability.
+- **R-24-rotation**: `_HKDF_SALT = b"klai-widget-jwt-v1"` is versioned
+  for an eventual `v2` rotation. Rotating the master secret OR the
+  salt invalidates ALL active widget sessions. Document this in the
+  widget_jwt_secret runbook before any rotation.
+- **R-cors-flake**: the two `test_cors_allowlist` structlog-capture
+  flakes survived the slice and are not a portal-slice issue, but
+  they will still fail CI if the workflow runs the full suite. Open
+  a follow-up issue to stabilise the structlog capture in
+  `test_cors_allowlist.py`.
+
+### Lessons learned
+
+- **Findings #25 and #26 do not exist in this SPEC** (v0.2.0 jumps
+  from #24 to #27). The user's "HY-19..HY-28" range was a continuous
+  shorthand; the actual portal slice is exactly 8 findings. Future
+  slice scoping should refer to the explicit finding list in
+  `spec.md` not numeric ranges.
+- **Cherry-picking onto a moved main surfaces hidden coupling**.
+  Three regressions appeared only after replaying onto `1cd0bb3d`:
+  the `signup_email_rl.py:98` warning needed `exc_info=True` for an
+  audit added on main after v02 was cut; `FakeOrg` needed `slug` for
+  REQ-24's per-tenant key lookup; the conftest allowlist needed
+  `portal` for `test_idp_callback_provision`. None of these were
+  catchable in the v02 worktree because the audit test and
+  idp-callback test were added on main in the interim. Lesson: when
+  a SPEC slice has been parked for >1 week, expect 1-2
+  silent-but-real regressions on rebase and budget time for them.
+- **`ruff format --check` and `ruff check` enforce different things**.
+  The slice files passed `ruff check` in v02 but flagged 7 files in
+  `ruff format --check` here because the v02 commits used line-wrap
+  rules that drift from the configured ruff format profile. Caught
+  by the documented pitfall — fix is mechanical (`uv run ruff format
+  .` + commit).
