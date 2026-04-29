@@ -30,6 +30,9 @@ dependencies = [
     # the Public Suffix List. Transitive via authheaders; pinned explicitly
     # because we import it directly in app/services/mail_auth.py.
     "publicsuffix2>=2.2,<3.0",
+    # SPEC-SEC-HYGIENE-001 REQ-22: zxcvbn password-strength estimator.
+    # MIT-licensed pure-Python port of Dropbox's zxcvbn; no native extensions.
+    "zxcvbn>=4.5,<5.0",
 ]
 
 [tool.uv.sources]
