@@ -15,8 +15,6 @@ constant) use pytest's `monkeypatch` for idempotent cleanup.
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -308,47 +306,45 @@ def test_acac_never_with_wildcard_origin(cors_client: TestClient) -> None:
 
 def test_cors_rejected_preflight_emits_structlog_event(
     cors_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """AC-13: A rejected preflight emits event='cors_origin_rejected' in structlog.
 
     REQ-1 NFR Observability — event includes origin, path, request_id, kind.
     """
-    import structlog as sl
+    from unittest.mock import MagicMock
 
-    captured_events: list[dict[str, Any]] = []
+    # Patch the module-level structlog proxy directly. ``sl.configure`` +
+    # ``capture_logs``-style fixtures are unreliable here: ``setup_logging``
+    # in ``app.main`` runs ``cache_logger_on_first_use=True``, which means
+    # any prior test that imported ``app.api.auth`` (or any other module
+    # whose ``_slog`` resolved on first use) locks the proxy chain to the
+    # full setup_logging pipeline. A subsequent ``sl.configure`` does not
+    # update the cached chain, so events route through the JSON renderer
+    # instead of our capture processor and ``captured_events`` stays empty.
+    # Patching the proxy bypasses the cache entirely.
+    import app.middleware.klai_cors as cors_module
 
-    def _capture_processor(
-        logger: Any,
-        method: str,
-        event_dict: dict[str, Any],
-    ) -> dict[str, Any]:
-        captured_events.append(dict(event_dict))
-        raise sl.DropEvent()
+    mock_logger = MagicMock()
+    monkeypatch.setattr(cors_module, "logger", mock_logger)
 
-    sl.configure(
-        processors=[_capture_processor],
-        wrapper_class=sl.BoundLogger,
-        context_class=dict,
-        logger_factory=sl.PrintLoggerFactory(),
+    resp = cors_client.options(
+        "/api/me",
+        headers={
+            "Origin": "https://evil.example",
+            "Access-Control-Request-Method": "GET",
+            "X-Request-ID": "test-request-id-001",
+        },
     )
-    try:
-        resp = cors_client.options(
-            "/api/me",
-            headers={
-                "Origin": "https://evil.example",
-                "Access-Control-Request-Method": "GET",
-                "X-Request-ID": "test-request-id-001",
-            },
-        )
-    finally:
-        sl.reset_defaults()
 
     acao = resp.headers.get("access-control-allow-origin", "")
     assert acao != "https://evil.example", "Preflight should be rejected (AC-13 setup)"
 
-    rejected = [e for e in captured_events if e.get("event") == "cors_origin_rejected"]
+    rejected = [
+        call.kwargs for call in mock_logger.info.call_args_list if call.args and call.args[0] == "cors_origin_rejected"
+    ]
     assert len(rejected) >= 1, (
-        f"Expected event='cors_origin_rejected' in structlog, got events: {[e.get('event') for e in captured_events]}"
+        f"Expected event='cors_origin_rejected' in logger.info calls, got {mock_logger.info.call_args_list!r}"
     )
 
     evt = rejected[0]
@@ -364,6 +360,7 @@ def test_cors_rejected_preflight_emits_structlog_event(
 
 def test_cors_rejected_simple_request_emits_structlog_event(
     cors_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """AC-13 (simple-request branch): a non-preflight cross-origin request from a
     rejected origin also emits cors_origin_rejected with kind='simple'.
@@ -372,35 +369,32 @@ def test_cors_rejected_simple_request_emits_structlog_event(
     only preflights were logged. Browsers can issue simple cross-origin GET/POST
     without preflights, and we want both probing channels visible to monitoring.
     """
-    import structlog as sl
+    from unittest.mock import MagicMock
 
-    captured_events: list[dict[str, Any]] = []
+    # Same MagicMock-on-proxy pattern as the preflight test above. See
+    # comment there for why ``sl.configure`` + ``capture_logs`` are not
+    # reliable in this codebase.
+    import app.middleware.klai_cors as cors_module
 
-    def _capture_processor(logger: Any, method: str, event_dict: dict[str, Any]) -> dict[str, Any]:
-        captured_events.append(dict(event_dict))
-        raise sl.DropEvent()
+    mock_logger = MagicMock()
+    monkeypatch.setattr(cors_module, "logger", mock_logger)
 
-    sl.configure(
-        processors=[_capture_processor],
-        wrapper_class=sl.BoundLogger,
-        context_class=dict,
-        logger_factory=sl.PrintLoggerFactory(),
+    cors_client.get(
+        "/api/me",
+        headers={
+            "Origin": "https://evil.example",
+            "X-Request-ID": "test-request-id-simple-001",
+        },
     )
-    try:
-        cors_client.get(
-            "/api/me",
-            headers={
-                "Origin": "https://evil.example",
-                "X-Request-ID": "test-request-id-simple-001",
-            },
-        )
-    finally:
-        sl.reset_defaults()
 
-    rejected = [e for e in captured_events if e.get("event") == "cors_origin_rejected" and e.get("kind") == "simple"]
+    rejected = [
+        call.kwargs
+        for call in mock_logger.info.call_args_list
+        if call.args and call.args[0] == "cors_origin_rejected" and call.kwargs.get("kind") == "simple"
+    ]
     assert len(rejected) >= 1, (
-        f"Expected event='cors_origin_rejected' kind='simple' in structlog, "
-        f"got events: {[(e.get('event'), e.get('kind')) for e in captured_events]}"
+        f"Expected event='cors_origin_rejected' kind='simple' in logger.info calls, "
+        f"got {[(c.args, c.kwargs.get('kind')) for c in mock_logger.info.call_args_list]!r}"
     )
 
     evt = rejected[0]
