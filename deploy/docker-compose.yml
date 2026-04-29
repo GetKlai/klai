@@ -881,6 +881,13 @@ services:
       # Knowledge-ingest (KB push of transcripts)
       KNOWLEDGE_INGEST_URL: http://knowledge-ingest:8000
       KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
+      # SPEC-SEC-AUDIT-2026-04 B1: portal identity-verify coordinates.
+      # scribe replaces JWT resourceowner trust with portal lookup so a
+      # multi-org user's token can never route their transcript into the
+      # wrong tenant KB. PORTAL_API_INTERNAL_SECRET already in SOPS;
+      # wired here so the startup validator does not trigger a 502 on deploy.
+      PORTAL_API_URL: http://portal-api:8010
+      PORTAL_INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
     volumes:
       - scribe-audio-data:/data/audio
     networks:
