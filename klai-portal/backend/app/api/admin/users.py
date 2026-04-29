@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Final, Literal
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr
@@ -24,6 +25,13 @@ from app.services.zitadel import zitadel
 from . import _get_caller_org, _require_admin, bearer
 
 logger = logging.getLogger(__name__)
+# Structured-event logger for VictoriaLogs queryability — follows the
+# dual-logger pattern established in app/api/auth.py. Per
+# .claude/rules/klai/projects/portal-logging-py.md, all NEW log statements
+# in this file go via structlog so kwargs land as queryable JSON keys
+# instead of an `extra` blob. The legacy `logger` calls in this file
+# pre-date that rule and remain on stdlib until a dedicated migration.
+_slog = structlog.get_logger()
 
 # SPEC-SEC-TENANT-001 REQ-2.2 (v0.5.0 / β): frozen module-level mapping from
 # the portal role (InviteRequest.role Literal) to the optional Zitadel
@@ -204,14 +212,11 @@ async def invite_user(
         # REQ-2.1 observability: structured event so the absence-of-grant is
         # queryable in VictoriaLogs (e.g. confirm zero org:* grants land for
         # non-admin invites in production).
-        logger.info(
+        _slog.info(
             "invite_no_zitadel_grant",
-            extra={
-                "event": "invite_no_zitadel_grant",
-                "org_id": org.id,
-                "portal_role": body.role,
-                "zitadel_user_id": zitadel_user_id,
-            },
+            org_id=org.id,
+            portal_role=body.role,
+            zitadel_user_id=zitadel_user_id,
         )
     else:
         try:
@@ -514,15 +519,14 @@ async def offboard_user(
 
     user.status = "offboarded"
     # SPEC-SEC-TENANT-001 REQ-1.4: structured event for VictoriaLogs audit so
-    # any future cross-tenant regression is queryable.
-    logger.info(
+    # any future cross-tenant regression is queryable. structlog kwargs land
+    # as top-level JSON keys (queryable as `org_id:<n>`,
+    # `memberships_removed_count:<n>` in LogsQL) — not under an `extra` blob.
+    _slog.info(
         "user_offboarded",
-        extra={
-            "event": "user_offboarded",
-            "org_id": org.id,
-            "zitadel_user_id": zitadel_user_id,
-            "memberships_removed_count": memberships_removed_count,
-        },
+        org_id=org.id,
+        zitadel_user_id=zitadel_user_id,
+        memberships_removed_count=memberships_removed_count,
     )
     await log_event(
         org_id=org.id,
