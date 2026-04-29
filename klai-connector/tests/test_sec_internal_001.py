@@ -24,6 +24,8 @@ _VALID_SETTINGS_KWARGS: dict[str, str] = {
     # The two fields under test default to "" and require fail-closed validators.
     "knowledge_ingest_secret": "test-ingest-secret-12345",
     "portal_internal_secret": "test-portal-secret-12345",
+    # SPEC-SEC-AUDIT-2026-04 B2: audience is now mandatory (model_validator).
+    "zitadel_api_audience": "klai-connector-test-audience",
 }
 
 
@@ -134,10 +136,7 @@ class TestErrorDetailsSanitization:
 
         # Mimic an enqueue_err.response with an upstream body that
         # accidentally reflects the connector's outbound secret.
-        leaked_body = (
-            "Internal server error: invalid X-Internal-Secret "
-            "secret-knowledge-ingest-12345 -- denied"
-        )
+        leaked_body = "Internal server error: invalid X-Internal-Secret secret-knowledge-ingest-12345 -- denied"
         fake_response = SimpleNamespace(text=leaked_body)
         fake_exc = SimpleNamespace(response=fake_response)
 
