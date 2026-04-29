@@ -450,3 +450,88 @@ Two real incidents in the audit-response sprint:
    line was the regression — a known-good rebuild is always cheaper.
 
 See `.claude/rules/klai/infra/sops-env.md` for the full SOPS workflow.
+
+## astgrep-gitignore-shadowed-rules (HIGH)
+ast-grep silently respects `.gitignore` when discovering rule files in
+`ruleDirs`. The repo `.gitignore` carries `*-secret.*`, `*_secret.*`,
+`secret-*.*` and a handful of similar secret-file-hygiene patterns. A
+rule file named `no-string-compare-on-secret.yml` (matching `*-secret.*`)
+is silently dropped: `effectiveRuleCount` stays unchanged in
+`sg scan --inspect summary`, no warning hits stderr, and no parse error
+is reported. The same rule loads fine when invoked via
+`sg scan --rule path/to/file.yml`, which makes the bug very confusing
+to diagnose.
+
+**Symptom.** Your new rule passes a manual `sg scan --rule rules/foo.yml`
+test, but the per-service workflow doesn't fire it. `effectiveRuleCount`
+in `--inspect summary` reflects the existing rule count only.
+SPEC-SEC-INTERNAL-001 (2026-04-29) hit this with rule files named
+`no-string-{compare,neq}-on-secret.yml` and renamed them to
+`no-secret-{eq,neq}-compare.yml` to escape the gitignore filter.
+
+**Prevention.**
+- Before relying on a new rule under `rules/`, run
+  `git check-ignore -v rules/<file>.yml`. If that command prints any
+  matching pattern, rename the file.
+- Prefer prefixes like `no-secret-*-compare.yml` that don't end in
+  `secret.<ext>` / `_secret.<ext>` / `secret-*.<ext>`.
+- Verify rule loading with
+  `uv tool run --from ast-grep-cli sg scan -c sgconfig.yml --inspect entity .`
+  and grep for your rule's `id:` in the output.
+
+## uv-pip-install-skips-uv-sources (HIGH)
+`uv pip install --system -r pyproject.toml` (uv's pip-compatibility mode)
+does NOT read `[tool.uv.sources]`. Path-deps declared as
+`klai-log-utils = { path = "../../klai-libs/log-utils" }` get resolved
+as PyPI lookups and fail with
+`error: Failed to parse entry: 'klai-log-utils'` during the Docker
+build. This is a silent gotcha because `uv sync` (which IS uv-native)
+DOES honour `[tool.uv.sources]`, so the local dev experience works
+fine and only Docker breaks.
+
+**Symptom.** `docker build` fails on the install step with the parse
+error above. SPEC-SEC-INTERNAL-001 (2026-04-29) hit this when scribe-api
+was the only service still on the old `pip install` Dockerfile pattern;
+adding the shared `klai-log-utils` path-dep silently broke its build.
+
+**Prevention.**
+- Switch the Dockerfile to a repo-root build context plus
+  `uv sync --frozen --no-dev --no-install-project` and `COPY` lines
+  for every `klai-libs/*` path-dep the service consumes. Mirror the
+  pattern already used by knowledge-mcp / connector / portal-api.
+- The workflow's `docker/build-push-action` step needs `context: .`
+  and an explicit `file: <service>/Dockerfile` once the context is
+  broadened.
+- After rewriting, smoke-test the Dockerfile locally
+  (`docker build -f <service>/Dockerfile .`) BEFORE pushing — the
+  CI feedback loop is 3-5 min per attempt.
+
+## parallel-spec-on-overlapping-log-sites (MED)
+When two SPECs land on the same call sites in the same file, the rebase
+or merge produces large, repetitive conflicts. SPEC-SEC-INTERNAL-001
+REQ-4 was a 22-site sweep on `klai-portal/backend/app/api/auth.py` that
+rewrote `logger.exception("...", exc.response.status_code, exc.response.text)`
+to `... sanitize_response_body(exc)`. SPEC-SEC-AUTH-COVERAGE-001 (#195)
+landed concurrently and replaced the SAME 22 `logger.exception` calls
+with structured `_slog.exception(...)` + `_emit_auth_event(...)`
+events that don't log the body at all. Result: 20 conflict blocks on
+merge, all of the shape "my sanitize wrapper vs main's structured event".
+
+**Resolution rule.** Take the more-thorough version on each conflict —
+in this case main's structured events, because they already achieve
+REQ-4's goal (no body in the log) AND add observability fields the
+sanitizer does not. The other SPEC's contribution survives in the
+non-conflict zones (a single non-log substring-check site at line 399
+plus the import).
+
+**Prevention.**
+- Before opening a wide log-site sweep, grep `git log --all --oneline`
+  for adjacent SPECs touching the same file, AND check `gh pr list
+  --search "auth.py"` for in-flight branches.
+- If two SPECs MUST sweep the same file in the same week, coordinate
+  scope: one PR carries the structural refactor, the other adapts on
+  top instead of replaying the same edits.
+- Prefer rebase + per-commit conflict resolution for the secondary
+  branch when the primary is already merged; or use a merge commit if
+  the secondary has multiple commits worth preserving (as
+  SPEC-SEC-INTERNAL-001 did to keep its 7 batch-commits readable).
