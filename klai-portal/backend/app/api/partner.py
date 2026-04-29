@@ -518,12 +518,15 @@ async def widget_config(
     kb_rows = kb_result.scalars().all()
     kb_ids = [row.kb_id for row in kb_rows]
 
-    # Generate session token
+    # Generate session token. SPEC-SEC-HYGIENE-001 REQ-24.4: pass tenant_slug
+    # so the signing key is HKDF-derived per tenant — a single-secret leak no
+    # longer lets an attacker forge tokens across tenants.
     session_token = generate_session_token(
         wgt_id=widget_row.widget_id,
         org_id=widget_row.org_id,
         kb_ids=kb_ids,
         secret=settings.widget_jwt_secret,
+        tenant_slug=org.slug,
     )
 
     expires_at = datetime.now(UTC) + timedelta(hours=1)

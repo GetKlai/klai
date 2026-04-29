@@ -51,6 +51,11 @@ class FakeWidget:
 class FakeOrg:
     id: int = 42
     zitadel_org_id: str = "zitadel-org-123"
+    # SPEC-SEC-HYGIENE-001 REQ-24.4: slug needed by widget_config to derive
+    # the per-tenant HKDF signing key. generate_session_token is patched in
+    # this test so the actual signing never happens — the field just needs
+    # to satisfy the call site.
+    slug: str = "test"
 
 
 def _make_request(
