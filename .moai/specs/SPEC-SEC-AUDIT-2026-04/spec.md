@@ -1,9 +1,9 @@
 ---
 id: SPEC-SEC-AUDIT-2026-04
-version: 0.4.0
+version: 0.6.0
 status: draft
 created: 2026-04-24
-updated: 2026-04-28
+updated: 2026-04-29
 author: Mark Vletter
 priority: critical
 type: tracker
@@ -12,6 +12,19 @@ type: tracker
 # SPEC-SEC-AUDIT-2026-04: Security Audit Response Tracker
 
 ## HISTORY
+
+### v0.6.0 (2026-04-29)
+- SPEC-SEC-SESSION-001 shipped: implementation (#197) deployed to core-01
+  same day; close-out PR adds CHANGELOG entry, status promotion to
+  `done`, and two new Grafana alerts (`session_sso_cookie_key_missing` CRIT,
+  `session_totp_redis_unavailable` CRIT) at `portal-session-rules.yaml`.
+  - Findings #13 (TOTP per-instance counter), #15 (`klai_idp_pending`
+    no binding), #16 (`klai_sso` ephemeral-key fallback) closed.
+  - 22 new tests; container restart on core-01 emitted zero
+    `sso_cookie_key_missing_startup_abort` events; 0 errors on
+    `service:portal-api` in the 20-minute post-deploy scan.
+- Live status table updated: 11 of 13 tracked SPECs shipped (was 10 of 13).
+- Estimate revised: 4-8 PRs remaining (was 6-10).
 
 ### v0.5.0 (2026-04-28, late)
 - SPEC-SEC-AUTH-COVERAGE-001 fully shipped: implementation (#195) + alerts/runbook/CHANGELOG follow-through (#198), both deployed to core-01.
@@ -91,13 +104,13 @@ Implementation teams should read the linked sub-SPEC, not this tracker, when pic
 | SPEC-SEC-IMAP-001 | P1 | **shipped** | #165 #172 #174 #176 #177 |
 | SPEC-SEC-MFA-001 | P1 | **shipped** | #181 + #189 db-failure-events refactor |
 | SPEC-SEC-ENVFILE-SCOPE-001 | P1 | **shipped** | #163 + #170 (3-vars-dropped fix) + #171 close-out |
-| SPEC-SEC-SESSION-001 | P2 | **queued** | — |
+| SPEC-SEC-SESSION-001 | P2 | **shipped** | #197 + close-out (alerts/CHANGELOG) |
 | SPEC-SEC-INTERNAL-001 | P2 | **queued** | — |
 | SPEC-SEC-HYGIENE-001 | P3 | **partial** (scribe slice #179 + retrieval slice #188 open; connector / portal / knowledge-mcp slices queued) | #179 + #188 (open) |
 | SPEC-SEC-AUTH-COVERAGE-001 | P0 | **shipped** | #184 plan + #186 v0.2 + #195 run + #198 alerts/runbook/CHANGELOG |
 
-**Implementation rate:** ~28 PRs merged in 4 days (audit-response only).
-**Remaining:** ~6-10 PRs to close the 3 fully-queued originals + IDENTITY-ASSERT-001 residue + HYGIENE-001 slices.
+**Implementation rate:** ~30 PRs merged in 5 days (audit-response only).
+**Remaining:** ~4-8 PRs to close the 2 fully-queued originals (TENANT-001, INTERNAL-001) + IDENTITY-ASSERT-001 residue + HYGIENE-001 slices.
 
 ---
 
