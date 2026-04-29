@@ -48,6 +48,10 @@ ENV PATH="/repo/klai-scribe/scribe-api/.venv/bin:${PATH}" \
 COPY klai-scribe/scribe-api/app app
 COPY klai-scribe/scribe-api/alembic alembic
 COPY klai-scribe/scribe-api/alembic.ini alembic.ini
+# SPEC-SEC-WEBHOOK-001 REQ-6: shared uvicorn launcher (Caddy IP resolution +
+# --proxy-headers). Copied from repo root scripts/ directory.
+COPY scripts/uvicorn-launch.sh /app/scripts/uvicorn-launch.sh
+RUN chmod +x /app/scripts/uvicorn-launch.sh
 
 RUN adduser --disabled-password --gecos "" klai && \
     mkdir -p /data/audio && chown klai:klai /data/audio
@@ -56,9 +60,9 @@ EXPOSE 8020
 
 USER klai
 
-# SPEC-SEC-WEBHOOK-001 REQ-1.6: --proxy-headers + allow-ips=127.0.0.1 for internal
-# services. scribe-api is reached only on klai-net (portal-api BFF proxy); no
-# upstream is trusted to set X-Forwarded-For. request.client.host reflects the
-# TCP peer's container IP, which is the legitimate caller identity for
-# service-to-service rate-limiting.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8020", "--proxy-headers", "--forwarded-allow-ips", "127.0.0.1"]
+# SPEC-SEC-WEBHOOK-001 REQ-1.6 + REQ-6: shared launcher resolves Caddy IP at
+# start time and passes --proxy-headers --forwarded-allow-ips=<resolved>.
+# scribe-api is internal-only (klai-net via portal-api BFF proxy), so DNS
+# lookup falls back to 127.0.0.1 — the correct safe default for an internal
+# service.
+CMD ["/app/scripts/uvicorn-launch.sh", "app.main:app", "--host", "0.0.0.0", "--port", "8020"]
