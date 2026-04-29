@@ -59,9 +59,7 @@ except ImportError:
 
 # REQ-22.1: zxcvbn 0-4 scale; reject score < 3.
 _ZXCVBN_MIN_SCORE = 3
-_PASSWORD_TOO_WEAK_MSG = (
-    "Wachtwoord is te zwak. Kies een langer of minder voorspelbaar wachtwoord."
-)
+_PASSWORD_TOO_WEAK_MSG = "Wachtwoord is te zwak. Kies een langer of minder voorspelbaar wachtwoord."
 
 _IDP_PENDING_COOKIE = "klai_idp_pending"
 _IDP_PENDING_MAX_AGE = 600  # 10 minutes — must match auth.py
