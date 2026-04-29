@@ -6,7 +6,13 @@ integer org_id (FK to portal_orgs.id).
 
 Includes plan check (AC-14a): only plans with the scribe feature are allowed.
 
-Results are cached in-memory with a 5-minute TTL.
+Results are cached in-memory with a 60-second TTL (SPEC-SEC-HYGIENE-001
+REQ-27 Option A). The previous 5-minute TTL meant a tenant downgrading
+from `professional` to `free` could still send invite-bot meeting traffic
+for up to 5 minutes after the downgrade — business-logic hygiene fix.
+Option A (short TTL) was chosen over Option B (explicit invalidate_cache
+hook on the plan-change path) for simplicity; profiling during /run did
+not show measurable Zitadel-load increase from the shorter window.
 """
 
 import logging
@@ -20,7 +26,8 @@ from app.services.zitadel import zitadel
 
 logger = logging.getLogger(__name__)
 
-CACHE_TTL = timedelta(minutes=5)
+# SPEC-SEC-HYGIENE-001 REQ-27.1 Option A: 60-second TTL (was 5 minutes).
+CACHE_TTL = timedelta(seconds=60)
 
 # Plans that include the scribe (invite-bot) feature (AC-14a)
 SCRIBE_PLANS: frozenset[str] = frozenset({"professional", "complete"})
@@ -33,7 +40,7 @@ async def find_tenant(email: str) -> tuple[str, int | None] | None:
     """Resolve an email to (zitadel_user_id, portal_org_id).
 
     Returns None for unknown emails or users on plans without scribe.
-    Results are cached for 5 minutes.
+    Results are cached for 60 seconds (SPEC-SEC-HYGIENE-001 REQ-27).
     """
     now = datetime.now(UTC)
 
