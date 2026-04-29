@@ -311,19 +311,46 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:8001:8000"
-    env_file: ./klai-mailer/.env
+    # SPEC-SEC-AUDIT-2026-04 B3 / SPEC-SEC-ENVFILE-SCOPE-001 — migrated off
+    # env_file: ./klai-mailer/.env. Explicit environment block below scopes
+    # the mailer's process env to exactly what app/config.py reads.
+    # Reverse-check (2026-04-29): PORTAL_ENV and SMTP_FROM diverged from
+    # code defaults in the service .env — both are now declared explicitly.
     environment:
+      # SMTP — credentials from klai-infra/core-01/klai-mailer/.env.sops
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_FROM: ${SMTP_FROM:-noreply@getklai.com}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Klai}
+      SMTP_TLS: ${SMTP_TLS:-true}
+      SMTP_SSL: ${SMTP_SSL:-false}
+      # Zitadel webhook HMAC secret — from klai-infra/core-01/klai-mailer/.env.sops
+      WEBHOOK_SECRET: ${MAILER_WEBHOOK_SECRET}
+      # Branding — prod overrides code defaults (example.com → getklai.com)
+      LOGO_URL: ${LOGO_URL:-https://cdn.getklai.com/klai-logo.png}
+      LOGO_WIDTH: ${LOGO_WIDTH:-61}
+      BRAND_URL: ${BRAND_URL:-https://www.getklai.com}
+      THEME_DIR: ${THEME_DIR:-theme}
       # Cross-service shared secret — single source of truth in /opt/klai/.env.
       # Portal-api sends `X-Internal-Secret: ${PORTAL_API_INTERNAL_SECRET}` when
       # calling /internal/send; mailer compares via hmac.compare_digest
-      # (SPEC-SEC-MAILER-INJECTION-001 REQ-8). Wiring via `environment:` instead
-      # of duplicating into klai-mailer/.env keeps rotation atomic.
+      # (SPEC-SEC-MAILER-INJECTION-001 REQ-8).
       INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
+      # Portal API — locale lookup for email links
+      PORTAL_API_URL: ${MAILER_PORTAL_API_URL:-http://portal-api:8010}
+      PORTAL_INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
       # Redis nonce store + per-recipient rate limiter
       # (SPEC-SEC-MAILER-INJECTION-001 REQ-4 + REQ-6). Mailer fails closed
       # with HTTP 503 when redis is unreachable, so it MUST share net-redis
       # with the redis service — same pattern as portal-api and litellm.
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      # Deployment environment — drives /debug route gate (SPEC-SEC-MAILER-INJECTION-001 REQ-5).
+      # Code default is "development"; prod MUST be "production" to suppress the debug route.
+      # Reverse-check divergence: service .env had PORTAL_ENV=production.
+      PORTAL_ENV: ${PORTAL_ENV:-production}
+      DEBUG: ${MAILER_DEBUG:-false}
     networks:
       - klai-net
       - net-redis
@@ -1258,28 +1285,51 @@ services:
   klai-connector:
     image: ghcr.io/getklai/klai-connector:latest
     restart: unless-stopped
-    env_file: ./klai-connector/.env
+    # SPEC-SEC-AUDIT-2026-04 B3 / SPEC-SEC-ENVFILE-SCOPE-001 — migrated off
+    # env_file: ./klai-connector/.env. Explicit environment block below scopes
+    # the connector's process env to exactly what app/core/config.py reads.
+    # Reverse-check (2026-04-29): PORTAL_API_URL diverged (code default 8100 vs
+    # compose 8010); all other fields were already in the explicit block or have
+    # safe code defaults. No divergences found for vars with in-code defaults.
     environment:
       DATABASE_URL: postgresql+asyncpg://klai:${POSTGRES_PASSWORD}@postgres:5432/klai
       ZITADEL_INTROSPECTION_URL: https://auth.${DOMAIN}/oauth/v2/introspect
+      ZITADEL_CLIENT_ID: ${CONNECTOR_ZITADEL_CLIENT_ID}
+      ZITADEL_CLIENT_SECRET: ${CONNECTOR_ZITADEL_CLIENT_SECRET}
       # SPEC-SEC-008 F-017: defense-in-depth audience check against Zitadel API app
       ZITADEL_API_AUDIENCE: ${KLAI_CONNECTOR_ZITADEL_AUDIENCE:-}
+      # GitHub App credentials for connector adapter
+      GITHUB_APP_ID: ${GITHUB_APP_ID}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY}
+      # Encryption key for connector credential storage (KEK)
+      ENCRYPTION_KEY: ${CONNECTOR_ENCRYPTION_KEY}
       KNOWLEDGE_INGEST_URL: http://knowledge-ingest:8000
       KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
       CRAWL4AI_API_URL: http://crawl4ai:11235
       CRAWL4AI_INTERNAL_KEY: ${CRAWL4AI_INTERNAL_KEY}
+      # PORTAL_API_URL: code default is 8100; prod uses 8010 (portal's public
+      # internal port). Reverse-check divergence: declared explicitly to prevent
+      # regression if code default ever changes.
       PORTAL_API_URL: http://portal-api:8010
       PORTAL_CALLER_SECRET: ${PORTAL_API_KLAI_CONNECTOR_SECRET}
       PORTAL_INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
+      # CORS origins — empty disables CORS (code default); prod .env may set this
+      CORS_ORIGINS: ${CONNECTOR_CORS_ORIGINS:-}
       GARAGE_S3_ENDPOINT: garage:3900
       GARAGE_ACCESS_KEY: ${GARAGE_ACCESS_KEY}
       GARAGE_SECRET_KEY: ${GARAGE_SECRET_KEY}
       GARAGE_BUCKET: ${GARAGE_BUCKET:-klai-images}
       GARAGE_REGION: garage
+      # Google Drive OAuth (SPEC-KB-025) — empty client_id disables the connector
+      GOOGLE_DRIVE_CLIENT_ID: ${GOOGLE_DRIVE_CLIENT_ID:-}
+      GOOGLE_DRIVE_CLIENT_SECRET: ${GOOGLE_DRIVE_CLIENT_SECRET:-}
       # Microsoft 365 OAuth (SPEC-KB-MS-DOCS-001) — empty client_id disables the connector.
       MS_DOCS_CLIENT_ID: ${MS_DOCS_CLIENT_ID:-}
       MS_DOCS_CLIENT_SECRET: ${MS_DOCS_CLIENT_SECRET:-}
       MS_DOCS_TENANT_ID: ${MS_DOCS_TENANT_ID:-common}
+      # Per-org rate limiting (SPEC-SEC-HYGIENE-001 HY-32) — empty disables rate limiting
+      REDIS_URL: ${CONNECTOR_REDIS_URL:-}
+      SYNC_REQUIRE_ORG_ID: ${SYNC_REQUIRE_ORG_ID:-false}
       LOG_LEVEL: INFO
     networks:
       - klai-net
