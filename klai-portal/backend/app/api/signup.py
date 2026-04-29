@@ -20,21 +20,26 @@ import json
 import logging
 import re
 import unicodedata
+from typing import Any
 
 import httpx
+import structlog
 from cryptography.fernet import Fernet, InvalidToken
-from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, HTTPException, Response, status
+from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db, set_tenant
 from app.models.portal import PortalOrg, PortalUser
+from app.services.bff_session import SessionService
 from app.services.events import emit_event
 from app.services.provisioning import provision_tenant
+from app.services.request_ip import resolve_caller_ip_subnet
 from app.services.zitadel import zitadel
 
 logger = logging.getLogger(__name__)
+_slog = structlog.get_logger()
 
 _IDP_PENDING_COOKIE = "klai_idp_pending"
 _IDP_PENDING_MAX_AGE = 600  # 10 minutes — must match auth.py
@@ -240,11 +245,60 @@ def _get_fernet() -> Fernet:
     return Fernet(key.encode())
 
 
+def _verify_idp_pending_binding(payload: dict[str, Any], request: Request) -> None:
+    """SPEC-SEC-SESSION-001 REQ-2.2: enforce browser + IP-subnet binding.
+
+    Compares the ``ua_hash`` and ``ip_subnet`` fields stored in the encrypted
+    ``klai_idp_pending`` cookie against the values derived from the current
+    request. Mismatch → HTTP 403 + structlog ``idp_pending_binding_mismatch``
+    at ``warning`` level. The original cookie is left intact (caller does
+    not delete it) so the legitimate user can resume their flow within the
+    TTL.
+
+    A payload without the binding fields is treated as either pre-deploy
+    legacy or tampered: same 403, no binding metadata to compare.
+
+    Raises:
+        HTTPException(403): on any binding mismatch or missing field.
+    """
+    stored_ua_hash = payload.get("ua_hash")
+    stored_ip_subnet = payload.get("ip_subnet")
+    if stored_ua_hash is None or stored_ip_subnet is None:
+        # No binding fields → cannot verify → reject. PII-safe log: no payload
+        # contents are dumped to avoid leaking session ids on the rare path
+        # where the cookie was tampered with.
+        _slog.warning("idp_pending_binding_mismatch", reason="missing_binding_fields")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Signup session binding mismatch, please start over",
+        )
+
+    current_ua_hash = SessionService.hash_metadata(request.headers.get("user-agent"))
+    current_ip_subnet = resolve_caller_ip_subnet(request)
+
+    if stored_ua_hash != current_ua_hash or stored_ip_subnet != current_ip_subnet:
+        # REQ-2.2: log only the first 8 chars of each hash + the subnet
+        # network address. Never the raw UA, never the raw IP, never the
+        # session credentials.
+        _slog.warning(
+            "idp_pending_binding_mismatch",
+            stored_ua_hash_prefix=stored_ua_hash[:8],
+            current_ua_hash_prefix=current_ua_hash[:8],
+            stored_ip_subnet=stored_ip_subnet,
+            current_ip_subnet=current_ip_subnet,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Signup session binding mismatch, please start over",
+        )
+
+
 @router.post("/signup/social", response_model=SocialSignupResponse, status_code=status.HTTP_201_CREATED)
 async def signup_social(
     body: SocialSignupRequest,
     response: Response,
     background_tasks: BackgroundTasks,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     klai_idp_pending: str | None = Cookie(default=None),
 ) -> SocialSignupResponse:
@@ -268,6 +322,11 @@ async def signup_social(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Social signup session expired. Please try again.",
         ) from exc
+
+    # SPEC-SEC-SESSION-001 REQ-2.5: binding check runs AFTER the Fernet TTL
+    # decrypt succeeds. Mismatch returns 403 with no extra information about
+    # whether the cookie was otherwise valid.
+    _verify_idp_pending_binding(pending, request)
 
     session_id: str = pending.get("session_id", "")
     session_token: str = pending.get("session_token", "")
