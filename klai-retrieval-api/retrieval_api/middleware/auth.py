@@ -38,6 +38,7 @@ from typing import Any
 import structlog
 from fastapi import HTTPException, Request, status
 from jose import ExpiredSignatureError, JWTError, jwt
+from klai_identity_assert import KNOWN_CALLER_SERVICES, IdentityAsserter
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse, Response
 
@@ -80,6 +81,26 @@ class AuthContext:
     sub: str | None
     resourceowner: str | None
     role: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedCaller:
+    """Identity asserted on behalf of an end-user, verified end-to-end.
+
+    SPEC-SEC-IDENTITY-ASSERT-001 REQ-4 + REQ-6: every retrieve / chat call
+    that performs work on behalf of a specific user populates this on
+    ``request.state.verified_caller``. Downstream code (emit_event, audit
+    logs) sources tenant identity from here instead of from the request
+    body — so a tampered body cannot poison product_events even if the
+    middleware-level guard is ever weakened.
+
+    For JWT callers the values come from ``auth.sub`` / ``auth.resourceowner``
+    (already cryptographically verified). For internal-secret callers they
+    come from a portal-api ``/internal/identity/verify`` round-trip.
+    """
+
+    user_id: str
+    org_id: str
 
 
 def _unauthorized(reason: str) -> Response:
@@ -349,50 +370,166 @@ class AuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-def verify_body_identity(request: Request, body_org_id: str, body_user_id: str | None) -> None:
-    """SPEC-SEC-010 REQ-3: cross-user / cross-org guard.
+# Module-level IdentityAsserter — REQ-4. Lazily instantiated on first use so
+# tests that don't exercise the internal-secret verify path don't pay the cost
+# of constructing an httpx.AsyncClient. Empty config raises at instantiation,
+# which surfaces deploy/env mismatches loudly the first time a real internal
+# call hits this guard.
+_asserter: IdentityAsserter | None = None
 
-    Called from route handlers after Pydantic has parsed the body. Skipped when
-    the caller authenticated via internal secret (REQ-3.3) or has the ``admin``
-    role (REQ-3.1 / REQ-3.2).
+
+def _get_asserter() -> IdentityAsserter:
+    global _asserter
+    if _asserter is None:
+        _asserter = IdentityAsserter(
+            portal_base_url=settings.portal_api_url,
+            internal_secret=settings.portal_internal_secret,
+        )
+    return _asserter
+
+
+def _identity_assertion_failed(reason: str) -> HTTPException:
+    """Build a generic 403 for portal-side identity-assertion failures.
+
+    REQ-4.4: never echo the portal's stable reason code to the caller —
+    that information lives in logs, queryable as ``identity_assert_call``
+    in VictoriaLogs.
+    """
+    cross_org_rejected_total.inc()
+    logger.warning(
+        "identity_assertion_failed",
+        reason=reason,
+    )
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={"error": "identity_assertion_failed"},
+    )
+
+
+async def verify_body_identity(
+    request: Request, body_org_id: str, body_user_id: str | None
+) -> None:
+    """Cross-check caller identity against the request body, then pin the verified
+    tuple on ``request.state.verified_caller`` for downstream consumers.
+
+    Two paths, single contract:
+
+    JWT (SPEC-SEC-010 REQ-3):
+        * Skip the cross-check for ``admin`` role (REQ-3.1/3.2).
+        * Reject body-vs-JWT mismatches with 403 ``org_mismatch`` /
+          ``user_mismatch``.
+        * On allow, pin ``VerifiedCaller(auth.sub, auth.resourceowner)``.
+
+    Internal-secret (SPEC-SEC-IDENTITY-ASSERT-001 REQ-4):
+        * REQ-4.2: call portal-api ``/internal/identity/verify`` with
+          ``caller_service`` from the required ``X-Caller-Service`` header
+          and ``(claimed_user_id, claimed_org_id)`` from the body.
+        * Missing / unknown caller-service header → 400 ``missing_caller_service``
+          (loud config error rather than silent fail-open).
+        * Portal deny → 403 ``identity_assertion_failed`` (reason in logs).
+        * On allow, pin ``VerifiedCaller`` from the portal response.
 
     Raises
     ------
+    HTTPException(400)
+        Internal-secret caller did not send ``X-Caller-Service`` or it is
+        not in the library allowlist.
     HTTPException(403)
-        when the JWT principal's identity does not match the body. The response
-        body is minimal (``{"error": "org_mismatch"}`` or ``user_mismatch``) and
-        never echoes the caller-supplied values.
+        JWT cross-check or portal verify rejected the call.
     """
     auth: AuthContext | None = getattr(request.state, "auth", None)
-    if auth is None or auth.method != "jwt":
-        return
-    if auth.role == "admin":
+    if auth is None:
+        # Auth middleware always runs before this; absence is a programming bug.
         return
 
-    if auth.resourceowner is not None and str(body_org_id) != str(auth.resourceowner):
-        cross_org_rejected_total.inc()
+    if auth.method == "jwt":
+        if auth.role == "admin":
+            # Admin bypass (REQ-3.1/3.2): admins legitimately act on other
+            # users' tenants. We pin claim values rather than JWT values
+            # so emit_event reflects the intended target tenant.
+            if body_user_id is not None:
+                request.state.verified_caller = VerifiedCaller(
+                    user_id=str(body_user_id), org_id=str(body_org_id)
+                )
+            return
+
+        if auth.resourceowner is not None and str(body_org_id) != str(auth.resourceowner):
+            cross_org_rejected_total.inc()
+            logger.warning(
+                "cross_org_rejected",
+                reason="org_mismatch",
+                auth_method=auth.method,
+                jwt_sub_hash=_hash_sub(auth.sub or ""),
+                path=request.url.path,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": "org_mismatch"},
+            )
+
+        if body_user_id is not None and auth.sub is not None and str(body_user_id) != str(auth.sub):
+            cross_user_rejected_total.inc()
+            logger.warning(
+                "cross_user_rejected",
+                reason="user_mismatch",
+                auth_method=auth.method,
+                jwt_sub_hash=_hash_sub(auth.sub),
+                path=request.url.path,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": "user_mismatch"},
+            )
+
+        # JWT path verified the (sub, resourceowner) tuple cryptographically;
+        # body matched. Pin auth values as the verified identity.
+        if auth.sub is not None and auth.resourceowner is not None:
+            request.state.verified_caller = VerifiedCaller(
+                user_id=auth.sub, org_id=auth.resourceowner
+            )
+        return
+
+    # auth.method == "internal" — REQ-4.2 portal-side verification.
+    if body_user_id is None:
+        # Bodies that don't carry an end-user claim (admin/diagnostic style
+        # calls that future code paths might add) are out of scope for the
+        # verify-body-identity guard. Today every retrieve/chat caller MUST
+        # supply user_id when the scope requires it (the route validates
+        # this); hitting this branch means a different surface — leave the
+        # verified tuple unpinned and let downstream raise if it tries to
+        # read it.
+        return
+
+    caller_service = request.headers.get("x-caller-service", "").strip()
+    if not caller_service:
         logger.warning(
-            "cross_org_rejected",
-            reason="org_mismatch",
-            auth_method=auth.method,
-            jwt_sub_hash=_hash_sub(auth.sub or ""),
+            "missing_caller_service",
             path=request.url.path,
         )
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": "org_mismatch"},
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "missing_caller_service"},
         )
-
-    if body_user_id is not None and auth.sub is not None and str(body_user_id) != str(auth.sub):
-        cross_user_rejected_total.inc()
+    if caller_service not in KNOWN_CALLER_SERVICES:
         logger.warning(
-            "cross_user_rejected",
-            reason="user_mismatch",
-            auth_method=auth.method,
-            jwt_sub_hash=_hash_sub(auth.sub),
+            "unknown_caller_service",
+            caller_service=caller_service,
             path=request.url.path,
         )
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": "user_mismatch"},
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "unknown_caller_service"},
         )
+
+    asserter = _get_asserter()
+    result = await asserter.verify(
+        caller_service=caller_service,
+        claimed_user_id=str(body_user_id),
+        claimed_org_id=str(body_org_id),
+        bearer_jwt=None,  # internal-secret path: no end-user JWT in the call
+        request_headers=dict(request.headers),
+    )
+    if not result.verified or result.user_id is None or result.org_id is None:
+        raise _identity_assertion_failed(result.reason or "unknown")
+
+    request.state.verified_caller = VerifiedCaller(user_id=result.user_id, org_id=result.org_id)

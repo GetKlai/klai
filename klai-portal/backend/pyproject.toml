@@ -23,7 +23,6 @@ dependencies = [
     "pyjwt>=2.12",
     "klai-connector-credentials",
     "klai-image-storage",
-    "yt-dlp>=2026.3.17",
     # SPEC-SEC-IMAP-001: DKIM/SPF/ARC verification for the IMAP calendar listener.
     # MPL-2.0 license, pure Python, wraps dkimpy + authres.
     "authheaders>=0.16,<1.0",
@@ -51,6 +50,9 @@ dev = [
     # Test-only dep — portal-api itself does not import the library
     # (portal-api SERVES the endpoint, doesn't call it).
     "klai-identity-assert",
+    # SPEC-SEC-SESSION-001 REQ-6: in-memory Redis substitute for TOTP and IDP
+    # pending-cookie regression tests. Implements HSET/INCR/EXPIRE atomically.
+    "fakeredis>=2.26",
 ]
 
 [dependency-groups]
@@ -66,6 +68,9 @@ dev = [
     # dev so both ``uv run pytest`` (CI, picks dependency-groups) and
     # ``uv pip install .[dev]`` (local) install it.
     "klai-identity-assert",
+    # SPEC-SEC-SESSION-001 REQ-6: in-memory Redis substitute for the TOTP +
+    # IDP-pending regression suites. Mirrors [project.optional-dependencies] dev.
+    "fakeredis>=2.26",
 ]
 
 [tool.pytest.ini_options]

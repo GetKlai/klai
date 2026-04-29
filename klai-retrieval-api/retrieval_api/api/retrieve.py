@@ -68,8 +68,13 @@ async def retrieve(req: RetrieveRequest, request: Request) -> RetrieveResponse:
     if req.scope == "notebook" and not req.user_id:
         raise HTTPException(status_code=400, detail="missing_user_id_for_personal_scope")
 
-    # SPEC-SEC-010 REQ-3: cross-user / cross-org guard (JWT path only).
-    verify_body_identity(request, req.org_id, req.user_id)
+    # SPEC-SEC-010 REQ-3 + SPEC-SEC-IDENTITY-ASSERT-001 REQ-4: cross-user /
+    # cross-org guard. JWT callers are matched against their JWT claims;
+    # internal-secret callers are re-verified against portal-api so the
+    # internal-secret bypass no longer admits arbitrary body identities.
+    # On allow this also pins request.state.verified_caller, which is what
+    # emit_event below sources for product_events integrity (REQ-6).
+    await verify_body_identity(request, req.org_id, req.user_id)
 
     t0 = time.perf_counter()
     # @MX:NOTE: [AUTO] Shadow log for parameter tuning (SPEC-KB-021 Change 4).
@@ -356,18 +361,35 @@ async def retrieve(req: RetrieveRequest, request: Request) -> RetrieveResponse:
         retrieval_bypassed=bypassed,
     )
 
-    # SPEC-GRAFANA-METRICS: knowledge.queried event (skip notebook scope — Focus has its own)
+    # SPEC-GRAFANA-METRICS: knowledge.queried event (skip notebook scope — Focus has its own).
+    # SPEC-SEC-IDENTITY-ASSERT-001 REQ-6: tenant_id / user_id MUST come from
+    # the verified-caller pin set by verify_body_identity, never from the
+    # request body. Body fields are caller-supplied; product_events is a
+    # business-metrics contract whose integrity we cannot let any caller
+    # poison.
     if req.scope != "notebook":
-        emit_event(
-            "knowledge.queried",
-            tenant_id=req.org_id,
-            user_id=req.user_id,
-            properties={
-                "scope": req.scope,
-                "had_results": len(chunks_out) > 0,
-                "result_count": len(chunks_out),
-            },
-        )
+        verified = getattr(request.state, "verified_caller", None)
+        if verified is not None:
+            emit_event(
+                "knowledge.queried",
+                tenant_id=verified.org_id,
+                user_id=verified.user_id,
+                properties={
+                    "scope": req.scope,
+                    "had_results": len(chunks_out) > 0,
+                    "result_count": len(chunks_out),
+                },
+            )
+        else:
+            # Defense in depth: should be unreachable because verify_body_identity
+            # always pins the verified tuple on the success path. If we see this
+            # log line in production, a new code path is bypassing the guard.
+            logger.warning(
+                "product_event_skipped_no_identity",
+                event_type="knowledge.queried",
+                scope=req.scope,
+                path=request.url.path,
+            )
 
     return RetrieveResponse(
         query_resolved=query_resolved,
