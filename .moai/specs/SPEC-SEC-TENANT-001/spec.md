@@ -1,7 +1,7 @@
 ---
 id: SPEC-SEC-TENANT-001
 version: 0.5.1
-status: draft
+status: shipped
 created: 2026-04-24
 updated: 2026-04-29
 author: Mark Vletter
@@ -12,6 +12,11 @@ tracker: SPEC-SEC-AUDIT-2026-04
 # SPEC-SEC-TENANT-001: Tenant Scoping + Zitadel Role Mapping
 
 ## HISTORY
+
+### v0.6.0 (2026-04-29) — SHIPPED, audit close-out
+- All REQs merged to main as part of SPEC-SEC-AUDIT-2026-04 closure sweep.
+- Merge commits on origin/main: 9ce7925c, d528eddf
+- Verified by re-audit (see SPEC-SEC-AUDIT-2026-04 v1.0.0 mission-1 results).
 
 ### v0.5.1 (2026-04-29)
 - **No backfill on migration 006.** v0.5.0 declared an intra-DB
