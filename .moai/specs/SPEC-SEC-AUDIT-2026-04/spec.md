@@ -12,6 +12,38 @@ type: tracker
 # SPEC-SEC-AUDIT-2026-04: Security Audit Response Tracker
 
 ## HISTORY
+### v1.0.1 (2026-04-29) — re-audit follow-up
+
+Post-close regression guard. v1.0.0 closed the audit; the re-audit
+identified a single residual gap that is FIXED here without re-opening
+the broader response.
+
+- **B4 (re-audit) — JWT peek-then-verify regression guard.**
+  `klai-portal/backend/app/api/partner_dependencies.py` legitimately
+  uses `jwt.decode(..., options={"verify_signature": False})` to peek
+  at `org_id` BEFORE deriving the per-tenant HKDF signing key
+  (SPEC-SEC-HYGIENE-001 REQ-24). The verified decode follows on line
+  137 via `decode_session_token`. The default
+  `python.jwt.security.unverified-jwt-decode` rule was suppressed via
+  `# nosemgrep:` (#214) because it cannot trace through to the
+  verified decode. That left no positive guard against a future
+  refactor that REMOVES the verified decode and turns the peek into a
+  pure authentication bypass.
+  - Adds custom Semgrep rule `.semgrep/rules/jwt-peek-without-verify.yml`.
+  - Rule fires on any `verify_signature=False` peek that is not
+    followed by one of four recognised verified-decode shapes
+    (`decode_session_token(...)`, `verify_signature=True` re-decode,
+    bare positional-key decode, keyword-form `key=...` decode).
+  - Negative fixtures at `.semgrep/tests/jwt_peek_negative.py` cover
+    all four legitimate shapes — rule must stay silent.
+  - Positive fixtures at `.semgrep/tests/jwt_peek_positive.py` cover
+    three regression shapes (no verify, only error-check, distractors
+    around the peek) — rule must fire on all three.
+  - CI workflow `.github/workflows/semgrep.yml` self-tests the rule
+    on both fixture files on every run, so a future YAML typo or
+    silently-disabled rule fails CI before it can let a real
+    regression through.
+
 ### v1.0.0 (2026-04-29) — CLOSED
 - All 91 findings (28 Cornelis + 63 internal-wave) addressed.
 - 12 sub-SPECs all shipped (see tracker table).
@@ -341,3 +373,15 @@ All SPECs below have full EARS requirements, research.md, and acceptance.md. Rea
   toctou-dns, from-header-trust, hardcoded-zitadel-role, caller-asserted-identity,
   format-string-template-injection, shared-env-file-pattern) — capture via `/klai:retro` in a
   separate session to avoid polluting this tracker
+
+---
+
+## Re-audit follow-up findings
+
+Findings raised after v1.0.0 closed. Each lists the mechanical guard
+that prevents regression — code fixes are tracked in their parent SPEC,
+guards are tracked here.
+
+| ID | Finding | Status | Mechanical guard | Lands in |
+|----|---------|--------|------------------|----------|
+| B4 | `partner_dependencies.py` peek-then-verify uses unverified `jwt.decode` to read `org_id` BEFORE the HKDF-derived verified decode. Default semgrep `unverified-jwt-decode` rule is `nosemgrep`-suppressed; no positive guard against a future refactor that drops the verified decode. | FIXED in v1.0.1 | `.semgrep/rules/jwt-peek-without-verify.yml` — fires on any `verify_signature=False` peek not followed by a recognised verified-decode shape. CI self-tests both positive and negative fixtures every run. | This SPEC v1.0.1 |
