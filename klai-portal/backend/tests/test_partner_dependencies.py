@@ -43,6 +43,14 @@ class FakeKbAccessRow:
 class FakeOrg:
     id: int = 42
     zitadel_org_id: str = "zit-org-42"
+    # SPEC-SEC-HYGIENE-001 REQ-24.2: partner_dependencies.decode_session_token
+    # reads org.slug to derive the per-tenant HKDF signing key. The fake
+    # token below is constructed via `jwt.encode(..., master_secret)` (NOT
+    # the derived key), so the verified-decode path will fail in tests that
+    # don't patch `decode_session_token`. The existing tests in this module
+    # patch the decode helper at module level, so the slug value here is
+    # only required to satisfy the `org.slug` attribute access.
+    slug: str = "test"
 
 
 def _make_request(token: str | None = None) -> MagicMock:
@@ -306,10 +314,16 @@ _TEST_WIDGET_SECRET = "test-widget-secret-at-least-32-bytes-long"
 
 
 def _make_jwt(wgt_id: str = "wgt_abcdef0123456789", org_id: int = 42, kb_ids: list[int] | None = None) -> str:
-    """Encode a widget session JWT using the test settings secret."""
+    """Encode a widget session JWT using the test settings secret.
+
+    SPEC-SEC-HYGIENE-001 REQ-24: tokens are signed with the per-tenant
+    HKDF-derived key, not the bare master secret. The test FakeOrg below
+    has ``slug = "test"`` so we derive against that slug here.
+    """
     import jwt as _jwt
 
     from app.core.config import settings
+    from app.services.widget_auth import _derive_tenant_key
 
     payload = {
         "wgt_id": wgt_id,
@@ -318,7 +332,8 @@ def _make_jwt(wgt_id: str = "wgt_abcdef0123456789", org_id: int = 42, kb_ids: li
     }
     # Use the real secret if configured, otherwise a test stand-in.
     secret = settings.widget_jwt_secret or _TEST_WIDGET_SECRET
-    return _jwt.encode(payload, secret, algorithm="HS256")
+    derived_key = _derive_tenant_key(secret, "test")  # matches FakeOrg.slug
+    return _jwt.encode(payload, derived_key, algorithm="HS256")
 
 
 def _session_patches(widget_secret: str = _TEST_WIDGET_SECRET):

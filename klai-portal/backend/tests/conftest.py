@@ -70,9 +70,10 @@ _auth_module._tenant_slug_cache = {
     "chat",  # test_auth_security login flows
     "voys",  # test_validate_callback_url + general portal tests
     "getklai",
-    "alpha",  # test_widget_jwt_per_tenant (REQ-24, future test)
+    "alpha",  # test_widget_jwt_per_tenant (REQ-24)
     "bravo",
     "test",
     "acme",
+    "portal",  # test_idp_callback_provision uses https://portal.getklai.com
 }
 _auth_module._tenant_slug_cache_expiry = math.inf
