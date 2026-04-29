@@ -27,6 +27,7 @@ from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, HTTPException, 
 from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import invalidate_tenant_slug_cache
 from app.core.config import settings
 from app.core.database import get_db, set_tenant
 from app.models.portal import PortalOrg, PortalUser
@@ -208,6 +209,11 @@ async def signup(
             detail="Creation failed, please try again later",
         ) from exc
 
+    # SPEC-SEC-HYGIENE-001 REQ-20.2: invalidate the tenant-slug cache so the
+    # callback-URL allowlist picks up the new slug immediately (rather than
+    # waiting for the 60s TTL to expire).
+    invalidate_tenant_slug_cache()
+
     logger.info("Provisioning queued for org_id=%d, slug=%s", org_row.id, org_row.slug)
     background_tasks.add_task(provision_tenant, org_row.id)
     emit_event("signup", org_id=org_row.id, user_id=zitadel_user_id, properties={"plan": org_row.plan})
@@ -370,6 +376,9 @@ async def signup_social(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Creation failed, please try again later",
         ) from exc
+
+    # SPEC-SEC-HYGIENE-001 REQ-20.2: invalidate tenant-slug cache (see signup() above).
+    invalidate_tenant_slug_cache()
 
     # 5. Start provisioning
     logger.info("Social signup: provisioning queued for org_id=%d, slug=%s", org_row.id, org_row.slug)
