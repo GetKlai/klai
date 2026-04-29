@@ -505,3 +505,52 @@ Commit: `586d7f36`
   followed by `uv lock` reconciles main's package set with our
   pyproject.toml additions in one step.
 
+### Adversarial review pass (post-close-out)
+
+After the initial close-out (`f4d04b73`) an adversarial-review pass
+caught three real tekortkomingen that landed as three follow-up
+commits:
+
+- **`86e3c09c` — drift-risk closure for the test isolation fix.**
+  The original `aa4b5a1d` workaround replicated `_should_expose_docs`
+  inline in `tests/test_docs_gating.py` to avoid the
+  structlog-collision via `app.main` import. Safe for a one-line
+  helper, but introduces real drift risk if the helper grows or
+  gains a third gating axis (the REQ-28.3 hard validator only
+  catches the `debug=True AND production` combo, not arbitrary
+  divergence). Structural fix: relocate `should_expose_docs` next
+  to its data (`Settings`) in `app/core/config.py`. Both
+  `app/main.py` and the test now import from the same module.
+  Single source of truth, no `setup_logging()` trigger on the test
+  import path. Renamed `_should_expose_docs` → `should_expose_docs`
+  (no underscore) since it's now a public module-level helper.
+- **`6f8deb17` — MX-tag consistency with connector-slice.**
+  `@MX:NOTE` + `@MX:SPEC` on `_derive_tenant_key` (REQ-24.1
+  cryptographic boundary — same `(master, slug)` MUST yield
+  byte-equal output, changing `_HKDF_SALT` silently invalidates
+  every issued JWT) and `_safe_return_to` (REQ-21 open-redirect
+  boundary — MUST return the ORIGINAL non-decoded value on success).
+  `_validate_callback_url` was already MX-annotated for REQ-20 in
+  `63b363d9`, so no additional annotation needed there.
+- **`828dc3a1` — pitfalls captured in the right place.**
+  Two real lessons that originally lived only in this progress.md
+  promoted to `.claude/rules/klai/pitfalls/process-rules.md` as
+  reusable rules: `global-test-state-collision (MED)` (the
+  SPEC-SEC-CORS-001 + REQ-28 collision that surfaced during the
+  merge — solo-green, combined-red, with the relocate-helpers-out-
+  of-app.main resolution rule + reviewer-aimed prevention checklist)
+  and `uvlock-conflict-resolution-via-uv-lock (LOW)` (the
+  `git checkout --theirs uv.lock && uv lock` recipe documented with
+  verification step).
+
+Plus four CodeIndex `remember` observations saved to project memory
+on key decisions: (1) widget JWT HKDF per-tenant signing key, (2)
+peek-before-verify JWT pattern with semgrep-suppression rationale,
+(3) helpers-must-not-live-in-modules-with-setup_logging-side-effects
+rule, (4) /docs and /openapi.json double-gating mechanics. These
+surface in future `recall()` queries by future agents working on the
+same code paths.
+
+Verified: 1334/1334 portal-api tests still green after the three
+follow-ups; ruff check + format both clean.
+
