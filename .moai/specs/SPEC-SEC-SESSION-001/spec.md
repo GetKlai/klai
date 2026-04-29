@@ -1,6 +1,6 @@
 ---
 id: SPEC-SEC-SESSION-001
-version: 0.3.0
+version: 0.3.1
 status: done
 created: 2026-04-24
 updated: 2026-04-29
@@ -12,6 +12,43 @@ tracker: SPEC-SEC-AUDIT-2026-04
 # SPEC-SEC-SESSION-001: Session and Cookie Robustness
 
 ## HISTORY
+
+### v0.3.1 (2026-04-29) — three latent gaps closed post-ship
+
+After the close-out review (#203) flagged three known limitations on the
+shipped implementation. All three closed in a single follow-up PR; no
+behavioural regression and no migration needed.
+
+- **IPv4-mapped IPv6 binding bug** — research §7 had documented this as
+  a "test should include this case", but the production code was
+  actually broken: ``::ffff:1.2.3.4`` resolved to network address
+  ``::`` (the all-zero ``/48``), so every IPv4-mapped caller globally
+  shared the same subnet — effectively no binding for dual-stack proxies
+  that report v4 clients as v4-mapped. ``resolve_caller_ip_subnet`` now
+  unwraps ``ipv4_mapped`` before the prefix decision, landing the
+  binding on the correct embedded ``/24``. Fix is one ``isinstance``
+  check plus one attribute access in ``app/services/request_ip.py``;
+  covered by 13 unit tests in ``tests/test_request_ip.py`` (incl.
+  native v4 vs v4-mapped equality, native v6 not-unwrapped, carrier-
+  handoff inside same v4 ``/24``).
+- **HSET + EXPIRE atomicity in `_totp_pending_create`** — pre-fix the
+  state hash was written first and the TTL was set in a follow-up
+  command, so a portal-api crash in the microsecond window between the
+  two would leak one orphan hash without TTL per crash. Now wrapped in
+  a ``pool.pipeline(transaction=True)`` block so the three writes
+  (HSET + EXPIRE + counter SET-EX) execute as one ``MULTI`` / ``EXEC``
+  — either all land or none do. Fakeredis pipeline support exercised
+  by the existing TOTP regression suite.
+- **Coverage measurement on security-critical paths (acceptance ≥95%)**
+  — added three new fail-closed tests covering ``_totp_pending_create``
+  / ``incr_failures`` / ``delete`` legs of REQ-1.7 (previously only the
+  ``get`` leg had a regression test). Final coverage:
+  ``app/services/request_ip.py`` 100%, ``_verify_idp_pending_binding``
+  100%, all four ``_totp_pending_*`` helpers 100% on both happy and
+  fail-closed paths, ``_get_sso_fernet`` 100%. Dead defensive
+  ``except`` in ``_get_totp_redis_or_503`` removed for clarity
+  (``get_redis_pool`` does not raise; the per-op excepts already cover
+  the surfaceable failure modes).
 
 ### v0.3.0 (2026-04-29) — shipped
 - Implementation merged via PR #197 (squash `298195aa`) and deployed to
