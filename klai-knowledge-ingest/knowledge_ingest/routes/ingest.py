@@ -490,6 +490,19 @@ async def ingest_document(req: IngestRequest) -> dict:
     return {"status": "ok", "chunks": len(texts), "title": title, "artifact_id": artifact_id}
 
 
+# @MX:NOTE: caller-asserted identity contract
+#
+# /ingest accepts org_id + user_id from request body. This is BY-DESIGN
+# safe ONLY because all current callers verify identity upstream:
+# - portal-api: verifies session before forwarding
+# - knowledge-mcp: calls portal-api /internal/identity/verify
+# - scribe-api: calls portal-api /internal/identity/verify (post-B1 fix)
+#
+# Adding a NEW caller? You MUST verify identity upstream before
+# forwarding — OR refactor this route to call /internal/identity/verify
+# itself. Do NOT trust the body fields by default.
+#
+# Reference: SPEC-SEC-AUDIT-2026-04 finding C3.
 @router.post("/ingest/v1/document")
 async def ingest_document_route(req: IngestRequest) -> dict:
     return await ingest_document(req)
