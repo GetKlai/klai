@@ -42,9 +42,9 @@ def test_short_password_rejected_with_length_error() -> None:
 @pytest.mark.parametrize(
     "weak_password",
     [
-        "Password1234",       # zxcvbn score 1
-        "aaaaaaaaaaaa",       # all-same chars, score 0
-        "1234567890ab",       # numeric run + suffix, score 0
+        "Password1234",  # zxcvbn score 1
+        "aaaaaaaaaaaa",  # all-same chars, score 0
+        "1234567890ab",  # numeric run + suffix, score 0
     ],
 )
 def test_weak_password_rejected_by_zxcvbn(weak_password: str) -> None:
@@ -52,9 +52,7 @@ def test_weak_password_rejected_by_zxcvbn(weak_password: str) -> None:
     with pytest.raises(ValidationError) as exc_info:
         SignupRequest(**_payload(weak_password))
     msg = str(exc_info.value)
-    assert "Wachtwoord is te zwak" in msg, (
-        f"Expected the SPEC-mandated Dutch error for {weak_password!r}; got:\n{msg}"
-    )
+    assert "Wachtwoord is te zwak" in msg, f"Expected the SPEC-mandated Dutch error for {weak_password!r}; got:\n{msg}"
 
 
 def test_user_input_context_lowers_score() -> None:
