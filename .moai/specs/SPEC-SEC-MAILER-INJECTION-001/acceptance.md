@@ -186,6 +186,45 @@ raises on all ops. POST a legitimate webhook. Expect HTTP 503 with body
 
 ---
 
+## AC-5.1 (v0.3.1): Redis URL with reserved-character password connects successfully
+
+**Covers:** REQ-6.5
+
+**Background:** Operators commonly omit URL-encoding when copying a
+generated Redis password into SOPS. Before v0.3.1, `redis_asyncio.from_url`
+would raise `ValueError("Port could not be cast")` on first webhook,
+returning HTTP 500 instead of REQ-6.3's contracted 503.
+
+**Setup:** Set `REDIS_URL=redis://:p:hPKBf@redis:6379/0` (password contains
+unescaped `:`). Reset the lazy redis singleton via
+`app.nonce.reset_redis_client()`.
+
+**Action:** Call `app.nonce.get_redis()`.
+
+**Expected:**
+- A `redis.asyncio.Redis` client instance is returned (no exception).
+- The instance was constructed via `redis_asyncio.Redis(host=..., port=...,
+  password='p:hPKBf', db=0, ...)` — i.e. the password kwarg matches the
+  raw password from the URL, byte-for-byte.
+
+**Negative scenario — structurally broken URL:**
+- Set `REDIS_URL=memcached://host:11211` (wrong scheme).
+- Call `get_redis()`.
+- Expect: `RedisUnavailableError` raised with message
+  `"REDIS_URL is malformed: REDIS_URL unsupported scheme: 'memcached'"`.
+- Log line `mailer_redis_url_invalid` emitted at ERROR level.
+- The `_verify_zitadel_signature` handler catches the
+  `RedisUnavailableError` and returns HTTP 503 (REQ-6.3 contract holds
+  for config errors as well as runtime outages).
+
+**Test:** `tests/test_redis_url.py` (17 cases) — happy path, every
+reserved-char regression (`:`, `/`, `+`, `@`, all-combined), structural
+errors, and empty-component normalisation. The single most important
+case is `test_password_with_colon_does_not_become_port` which
+reproduces the 2026-04-29 prod outage shape.
+
+---
+
 ## AC-6: Uniform 401 body for every signature-verification failure
 
 **Covers:** REQ-7.1, REQ-7.2, REQ-10.1
