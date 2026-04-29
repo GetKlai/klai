@@ -334,11 +334,12 @@ class Settings(BaseSettings):
 
         DEBUG=true exposes Swagger UI and OpenAPI surface, and also enables
         `auth_dev_mode` (which bypasses Zitadel) when set together. The soft
-        gate at app.main._should_expose_docs (REQ-28.1) is the runtime fallback;
-        this validator is the hard guard that prevents the catastrophic combo
-        from ever booting. The (debug=True, portal_env="production") pairing
-        is unambiguously a misconfiguration — there is no legitimate reason
-        to ship a production deployment with Swagger exposed.
+        gate at ``should_expose_docs`` below (REQ-28.1) is the runtime
+        fallback; this validator is the hard guard that prevents the
+        catastrophic combo from ever booting. The (debug=True,
+        portal_env="production") pairing is unambiguously a misconfiguration
+        — there is no legitimate reason to ship a production deployment with
+        Swagger exposed.
 
         Env-parity (see pitfall `validator-env-parity`): both PORTAL_ENV and
         DEBUG default to safe values ("production" and False respectively),
@@ -380,6 +381,25 @@ class Settings(BaseSettings):
                 "meet@getklai.com to find the correct value."
             )
         return self
+
+
+def should_expose_docs(s: object) -> bool:
+    """SPEC-SEC-HYGIENE-001 REQ-28.1: dual-gate `/docs` and `/openapi.json`.
+
+    Soft fallback that matches the validator at REQ-28.3: only expose
+    when DEBUG is on AND we are not running with PORTAL_ENV=production.
+    The validator refuses to boot the app at all in the catastrophic
+    combination, so this gate fires only on its own when the validator
+    is bypassed (e.g. monkey-patched in a test).
+
+    Lives in this module (not in app/main.py) so tests can import it
+    without triggering ``setup_logging("portal-api")`` at module-load
+    time — the import side-effect that breaks
+    ``tests/test_cors_allowlist.py``'s ``structlog.configure``-based
+    capture (same trap that ``tests/test_startup_sso_key_guard.py``
+    documents for the SSO lifespan check).
+    """
+    return bool(getattr(s, "debug", False)) and getattr(s, "portal_env", "production") != "production"
 
 
 settings = Settings()  # type: ignore[call-arg]  # pydantic-settings reads required fields from env

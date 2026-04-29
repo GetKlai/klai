@@ -21,30 +21,22 @@ import os
 import pytest
 from pydantic import ValidationError
 
-from app.core.config import Settings
+from app.core.config import Settings, should_expose_docs
 
 # REQ-28.1: gating matrix --------------------------------------------------- #
 #
-# `_should_expose_docs` is a one-line helper in ``app/main.py``. Importing
-# ``app.main`` triggers ``setup_logging("portal-api")`` at module-load time,
-# which globally reconfigures structlog and breaks
+# ``should_expose_docs`` lives in ``app.core.config`` (not in ``app.main``)
+# precisely so the test can import the production helper without triggering
+# ``setup_logging("portal-api")`` at module-load time. Importing ``app.main``
+# would globally reconfigure structlog and break
 # ``tests/test_cors_allowlist.py``'s ``structlog.configure``-based capture
-# (same pitfall documented in ``tests/test_startup_sso_key_guard.py`` for
-# the SSO lifespan check). The helper is short enough that copying it
-# keeps the assertion local to this file without losing coverage of
-# REQ-28.1; drift is mitigated by the validator at REQ-28.3 — any
-# divergence in the production helper is immediately visible at deploy
-# time as the wrong `/docs` exposure.
-
-
-def _should_expose_docs(s: object) -> bool:
-    """Replica of ``app.main._should_expose_docs``. Kept literal so a
-    divergence is visible in code review."""
-    return bool(getattr(s, "debug", False)) and getattr(s, "portal_env", "production") != "production"
+# (same trap that ``tests/test_startup_sso_key_guard.py`` documents for the
+# SSO lifespan check). Production code path: ``app.main`` imports
+# ``should_expose_docs`` from the same module — single source of truth.
 
 
 class _StubSettings:
-    """Minimal duck for `_should_expose_docs` — only reads two attrs."""
+    """Minimal duck for ``should_expose_docs`` — only reads two attrs."""
 
     def __init__(self, debug: bool, portal_env: str) -> None:
         self.debug = debug
@@ -65,7 +57,7 @@ class _StubSettings:
 )
 def test_should_expose_docs(debug: bool, portal_env: str, expected: bool) -> None:
     """REQ-28.1: `/docs` exposed iff debug AND env != production."""
-    assert _should_expose_docs(_StubSettings(debug=debug, portal_env=portal_env)) is expected
+    assert should_expose_docs(_StubSettings(debug=debug, portal_env=portal_env)) is expected
 
 
 # REQ-28.3: hard validator ------------------------------------------------- #
