@@ -54,6 +54,22 @@
         respond 404
     }
 
+    # ─── Services that are NOT internet-reachable ────────────────────────────
+    # The handlers below cover only services that are intentionally exposed
+    # via Caddy. The following services are Docker-internal only — adding an
+    # HTTP upstream for any of them here is a security-review event, not a
+    # routing tweak. SPEC-SEC-HYGIENE-001 REQ-45 lists them:
+    #
+    #   - klai-knowledge-mcp  (Docker-internal MCP for LibreChat; FastMCP
+    #     DNS-rebinding protection is currently disabled because the service
+    #     is not public — see klai-knowledge-mcp/main.py @MX:WARN block. If
+    #     you add an upstream for this service, flip that flag back to True
+    #     in the same commit. Otherwise: leave this comment in place.)
+    #
+    # Removing or shortening this block without updating the matching MX:WARN
+    # in the service code is a SPEC-SEC-HYGIENE-001 violation.
+    # ────────────────────────────────────────────────────────────────────────
+
     # Logs ingest (VictoriaLogs push endpoint for remote Alloy agents)
     @logs-ingest host logs-ingest.{$DOMAIN}
     handle @logs-ingest {

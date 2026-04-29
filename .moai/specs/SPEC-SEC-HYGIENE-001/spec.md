@@ -1,9 +1,9 @@
 ---
 id: SPEC-SEC-HYGIENE-001
-version: 0.5.0
+version: 0.6.0
 status: in-progress
 created: 2026-04-24
-updated: 2026-04-28
+updated: 2026-04-29
 author: Mark Vletter
 priority: low
 tracker: SPEC-SEC-AUDIT-2026-04
@@ -21,6 +21,66 @@ tracker: SPEC-SEC-AUDIT-2026-04
 > one PR or five is a call for /run.
 
 ## HISTORY
+
+### v0.6.0 (2026-04-29) — knowledge-mcp slice (HY-45/46/48 shipped, HY-47 deferred)
+
+3 of 4 knowledge-mcp items closed in worktree
+`feature/SPEC-SEC-HYGIENE-001-mcp` (commit `8e297f59`, branched from
+`origin/main` at `3b5cd772`):
+
+- **HY-45** (REQ-45.1/45.2/45.3): `@MX:WARN` + `@MX:REASON` block
+  above `enable_dns_rebinding_protection=False` in
+  `klai-knowledge-mcp/main.py` — references SPEC-SEC-HYGIENE-001
+  REQ-45 + future SPEC-MCP-TRANSPORT-001. Matching reviewer-signal
+  comment in `deploy/caddy/Caddyfile` lists klai-knowledge-mcp as
+  Docker-internal / not internet-reachable. 2 grep tests in
+  `tests/test_mcp_hygiene.py`.
+- **HY-46** (REQ-46.1, stub-level): new `_validate_page_path` helper
+  in `main.py` rejects literal `..`/`\`/leading `/`, ANY `%` char
+  (catches every URL-encoded variant without enumerating each), and
+  paths whose Unicode-NFKC normalised form differs from the input
+  AND produces traversal characters (catches FULLWIDTH FULL STOP
+  U+FF0E and other compatibility-equivalent glyphs). User-facing
+  error stays generic to avoid handing an attacker a validator-shape
+  oracle. 11 parametrised tests + 1 deferred-scope assertion in
+  `tests/test_page_path_validation.py`. REQ-46.2 (klai-docs route-
+  handler audit) and REQ-46.3 (full encoding matrix incl. overlong
+  UTF-8 + IDN homoglyphs) remain deferred to a follow-up SPEC.
+- **HY-48** (REQ-48.1/48.2/48.3): `@MX:NOTE` block above
+  `kb_slug=f"personal-{verified.user_id}"` in
+  `save_personal_knowledge` references SPEC-SEC-IDENTITY-ASSERT-001
+  (already shipped on main; structural neutralisation lives there)
+  + REQ-48. Slug FORMAT unchanged per REQ-48.2. 2 grep tests + 1
+  format-regression monitor in `tests/test_personal_kb_annotation.py`.
+
+**HY-47 deferred to SPEC-INGEST-RATELIMIT-001.** During /run the
+SPEC's premise was challenged: the AC mentions tools (`list_sources`,
+`add_source`, `query_kb`, `get_page_content`) that don't exist in
+klai-knowledge-mcp today, and tenant-isolation is structurally NOT
+what HY-47 protects (IDENTITY-ASSERT-001 + downstream RLS already do
+that). HY-47 is purely cost / DoS protection, and the structurally
+correct chokepoint is one layer deeper at `klai-knowledge-ingest`,
+where every save (MCP + portal + future callers) flows through.
+Acceptance.md gets an "Implementation note" recording the move; the
+original AC-47 text stays intact for audit traceability. Follow-up
+SPEC ships against `POST /ingest/v1/document` using the same ZSET
+sliding-window pattern as `klai-connector/app/services/rate_limit.py`.
+
+Quality state on slice branch:
+- Pytest: 42 passed (slice tests + adjacent regressions in
+  `test_mcp_security.py`, `test_identity_assert.py`,
+  `test_sec_internal_001.py`).
+- Ruff lint + format: clean on the four touched files.
+- Pre-existing 5 `test_assertion_mode_taxonomy.py` failures verified
+  to also fail on `origin/main` without the slice diff (via
+  `git stash`); not in scope.
+
+Status remains `in-progress`: knowledge-mcp slice fully closed-out
+modulo HY-47 (now tracked separately); scribe + connector slices
+already shipped at v0.4.0/v0.5.0; remaining slices (portal
+HY-19..HY-28, retrieval HY-39..HY-44, mailer HY-49..HY-50) still
+outstanding. HY-47 (rate-limit) ownership transferred to
+`SPEC-INGEST-RATELIMIT-001` (to be opened post-merge).
 
 ### v0.5.0 (2026-04-28) — connector slice closed-out (followup landed)
 
