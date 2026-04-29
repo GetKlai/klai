@@ -196,20 +196,14 @@ async def _get_totp_redis_or_503(*, phase: str):
     entirely (the very bug we are closing). The ``phase`` kwarg is for
     operator forensics — ``totp_pending_redis_unavailable`` log records make
     it clear which Redis op failed without dumping the token.
+
+    ``get_redis_pool`` does not raise — it lazily constructs the connection
+    pool and returns ``None`` only when ``settings.redis_url`` is unset.
+    The actual network failure surfaces on the FIRST per-call op (HSET /
+    HGETALL / INCR / DEL); each helper wraps its own op in a
+    ``_REDIS_UNAVAILABLE_ERRORS`` except.
     """
-    try:
-        pool = await get_redis_pool()
-    except _REDIS_UNAVAILABLE_ERRORS:
-        _slog.error(
-            "totp_pending_redis_unavailable",
-            phase=phase,
-            reason="get_pool_raised",
-            exc_info=True,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Authentication unavailable, please retry",
-        ) from None
+    pool = await get_redis_pool()
     if pool is None:
         _slog.error(
             "totp_pending_redis_unavailable",
@@ -232,6 +226,13 @@ async def _totp_pending_create(
 ) -> str:
     """Allocate a fresh ``temp_token`` and store the pending state in Redis.
 
+    The three Redis writes (state HASH + state TTL + failure counter with
+    its own TTL) execute in a single ``MULTI``/``EXEC`` pipeline so the
+    state hash never lands without a TTL. The naive sequential form
+    (``HSET`` then ``EXPIRE``) leaks one orphan hash per portal-api crash
+    that lands in the microsecond window between the two commands;
+    ``transaction=True`` closes that window.
+
     The opaque token returned to the client preserves the legacy
     ``secrets.token_urlsafe(32)`` contract — 256 bits of entropy, URL-safe.
     Raises HTTP 503 when Redis is unreachable (REQ-1.7).
@@ -242,22 +243,20 @@ async def _totp_pending_create(
     counter_key = f"{_TOTP_PENDING_FAILURES_PREFIX}{token}"
     ttl = settings.totp_pending_ttl_seconds
     try:
-        # redis-py stub regression: ``Redis.hset`` is awaitable in the
-        # asyncio variant but typed as sync ``int`` in the inherited
-        # signature. Same workaround would apply to any Redis-async helper
-        # that touched ``hset`` directly.
-        await pool.hset(  # pyright: ignore[reportGeneralTypeIssues]
-            state_key,
-            mapping={
-                "session_id": session_id,
-                "session_token": session_token,
-                "ua_hash": ua_hash,
-                "ip_subnet": ip_subnet,
-            },
-        )
-        await pool.expire(state_key, ttl)
-        # ``SET ... EX`` initialises the counter at 0 with TTL in one round trip.
-        await pool.set(counter_key, 0, ex=ttl)
+        async with pool.pipeline(transaction=True) as pipe:
+            pipe.hset(
+                state_key,
+                mapping={
+                    "session_id": session_id,
+                    "session_token": session_token,
+                    "ua_hash": ua_hash,
+                    "ip_subnet": ip_subnet,
+                },
+            )
+            pipe.expire(state_key, ttl)
+            # ``SET ... EX`` initialises the counter at 0 with TTL in one round trip.
+            pipe.set(counter_key, 0, ex=ttl)
+            await pipe.execute()
     except _REDIS_UNAVAILABLE_ERRORS:
         _slog.error("totp_pending_redis_unavailable", phase="create", exc_info=True)
         raise HTTPException(

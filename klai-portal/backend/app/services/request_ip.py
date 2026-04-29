@@ -59,19 +59,35 @@ def resolve_caller_ip_subnet(request: Request) -> str:
     ``"unknown"`` when the caller IP is missing or cannot be parsed by
     :mod:`ipaddress`.
 
-    Used by the ``klai_idp_pending`` Fernet cookie binding so a stolen cookie
-    replayed from a different network is rejected, while a mobile user
-    switching cells inside the same carrier prefix is not (the new IP is
-    almost always inside the same ``/24``/``/48``). See SPEC-SEC-SESSION-001
-    research §3.2 for the threat-model rationale.
+    IPv4-mapped IPv6 (``::ffff:a.b.c.d``) is unwrapped to its embedded
+    IPv4 address before the prefix decision so the binding lands on the
+    real ``/24`` of the wrapped v4 instead of the all-zero IPv6 ``/48``
+    that naive ``ip_network`` handling would produce. The naive form is a
+    real security bug — every IPv4-mapped IPv6 caller resolves to
+    ``::`` and binds to a subnet that matches every other IPv4-mapped
+    caller globally, effectively making the binding a no-op for
+    dual-stack proxies that report the v4 client as v4-mapped.
+
+    Used by the ``klai_idp_pending`` Fernet cookie binding so a stolen
+    cookie replayed from a different network is rejected, while a mobile
+    user switching cells inside the same carrier prefix is not (the new
+    IP is almost always inside the same ``/24`` / ``/48``). See
+    SPEC-SEC-SESSION-001 research §3.2 + §7 (open question 3) for the
+    threat-model rationale.
     """
     raw = resolve_caller_ip(request)
     if raw == _UNKNOWN:
         return _UNKNOWN
     try:
-        addr = ipaddress.ip_address(raw)
+        addr: ipaddress._BaseAddress = ipaddress.ip_address(raw)
     except ValueError:
         return _UNKNOWN
+
+    # SPEC-SEC-SESSION-001 research §7: unwrap IPv4-mapped IPv6 so the
+    # binding lands on the embedded /24, not the all-zero /48.
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+
     prefix = _IPV4_BINDING_PREFIX if addr.version == 4 else _IPV6_BINDING_PREFIX
-    network = ipaddress.ip_network(f"{raw}/{prefix}", strict=False)
+    network = ipaddress.ip_network(f"{addr}/{prefix}", strict=False)
     return str(network.network_address)
