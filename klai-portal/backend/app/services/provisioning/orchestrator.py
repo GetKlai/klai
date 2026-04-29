@@ -588,6 +588,14 @@ async def _finalize_failure(
     org.deleted_at = func.now()
     await db.commit()
 
+    # SPEC-SEC-HYGIENE-001 REQ-20.2: invalidate tenant-slug cache so the
+    # callback-URL allowlist no longer accepts this slug. The 60s TTL is
+    # the correctness floor; this explicit invalidation closes the window
+    # immediately on rollback.
+    from app.api.auth import invalidate_tenant_slug_cache
+
+    invalidate_tenant_slug_cache()
+
     await transition_state(
         db,
         org_id,

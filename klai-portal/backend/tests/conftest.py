@@ -86,3 +86,27 @@ async def fake_redis() -> AsyncIterator[Any]:
     finally:
         redis_client._pool_holder["pool"] = original
         await fake.aclose()
+
+
+# ---------------------------------------------------------------------------
+# SPEC-SEC-HYGIENE-001 REQ-20: pre-populate the tenant-slug allowlist cache
+# so existing login/audit tests that exercise `_validate_callback_url`
+# don't trigger a real DB load via `_load_tenant_slugs_from_db`. The set
+# below covers every callback hostname referenced in the test suite.
+# Tests that specifically exercise the cache invalidate it via
+# `auth_module.invalidate_tenant_slug_cache()` in their own fixtures.
+# ---------------------------------------------------------------------------
+import math  # noqa: E402
+
+from app.api import auth as _auth_module  # noqa: E402
+
+_auth_module._tenant_slug_cache = {
+    "chat",  # test_auth_security login flows
+    "voys",  # test_validate_callback_url + general portal tests
+    "getklai",
+    "alpha",  # test_widget_jwt_per_tenant (REQ-24, future test)
+    "bravo",
+    "test",
+    "acme",
+}
+_auth_module._tenant_slug_cache_expiry = math.inf
