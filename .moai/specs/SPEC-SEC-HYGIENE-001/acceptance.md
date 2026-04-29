@@ -973,6 +973,33 @@ rate-limit error.
 
 **Covers:** REQ-47.1, REQ-47.2, REQ-47.3, REQ-47.4, REQ-47.5.
 
+**Implementation note (slice-deviation, knowledge-mcp /run 2026-04-29):**
+HY-47 is NOT shipped at the MCP layer. Two reasons drove the move:
+
+1. The SPEC text talks about `list_sources`, `query_kb`, `get_page_content`,
+   and `add_source` tools — none of which exist in `klai-knowledge-mcp`
+   today. The current MCP exposes only three write tools
+   (`save_personal_knowledge`, `save_org_knowledge`, `save_to_docs`). The
+   read sub-test (steps 1-2) cannot be wired against a tool that does
+   not exist; building a synthetic read tool just to satisfy the SPEC is
+   scope creep that ships a feature with no callers.
+2. The structurally correct location for write rate-limiting is one layer
+   deeper, at `klai-knowledge-ingest`. That service is the choke point
+   every save eventually flows through (today: portal-api + MCP; future:
+   any new caller). A throttle there protects every path including
+   future ones, keys on the same identity tuple (forwarded via
+   `X-User-ID` / `X-Org-ID` headers from MCP), and matches the pattern
+   already used for `partner_rate_limit.py` in portal-api.
+
+Action: HY-47 is deferred from this SPEC and tracked as
+`SPEC-INGEST-RATELIMIT-001` (write-rate-limit on
+`POST /ingest/v1/document`, ZSET sliding-window keyed on
+`(org_id, user_id)`, fail-open on Redis outage — same shape as
+`klai-connector/app/services/rate_limit.py` / SPEC-API-001 REQ-2.4).
+The AC tests in `tests/test_mcp_rate_limit.py` are NOT created in
+this slice. When the follow-up SPEC ships, its acceptance file will
+adapt the matrix above to the real ingest endpoint surface.
+
 ### AC-48 — Personal-KB slug annotation (docs-only)
 
 **Scenario:** The personal-KB slug derivation site carries an
