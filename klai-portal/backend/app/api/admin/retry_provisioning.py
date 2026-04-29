@@ -139,6 +139,12 @@ async def retry_provisioning(
     failed_org.provisioning_status = "queued"
     await db.commit()
 
+    # SPEC-SEC-HYGIENE-001 REQ-20.2: invalidate tenant-slug cache so the
+    # callback-URL allowlist re-accepts the restored slug immediately.
+    from app.api.auth import invalidate_tenant_slug_cache
+
+    invalidate_tenant_slug_cache()
+
     logger.info(
         "provisioning_retry_queued",
         org_id=failed_org.id,
