@@ -535,3 +535,91 @@ plus the import).
   branch when the primary is already merged; or use a merge commit if
   the secondary has multiple commits worth preserving (as
   SPEC-SEC-INTERNAL-001 did to keep its 7 batch-commits readable).
+
+## global-test-state-collision (MED)
+Two SPECs each merge a test file that globally configures structlog
+via `structlog.configure(...)` + `sl.reset_defaults()` in a `try /
+finally`. Each branch is green in isolation. After the second merge,
+the third merger discovers the two test files now coexist and
+collide: one of them imports a production helper from a module that
+runs `setup_logging()` at module-load time, which globally swaps the
+processor pipeline, which makes the OTHER test's
+`structlog.configure`-based capture see no events.
+
+SPEC-SEC-HYGIENE-001 portal-slice (HY-28) hit this exactly:
+`tests/test_docs_gating.py` imported `from app.main import
+_should_expose_docs`. SPEC-SEC-CORS-001 (#180, already on main)
+shipped `tests/test_cors_allowlist.py` with a structlog-capture
+fixture. On their separate branches each had only one of the two
+files, so the conflict only surfaced after the main->portal-v02
+merge. The 1334-test suite regressed from "all green" to "2 failed"
+in `test_cors_allowlist.py`, and bisecting (`pytest tests/test_X.py
+tests/test_cors_allowlist.py` for each candidate) identified
+`test_docs_gating.py` as the breaker.
+
+**Why it slips through review.** Both PRs run their own CI, both
+green. Neither test files reference each other directly. The
+production helper that ties them together (`app.main`) is not on
+either PR's diff.
+
+**Resolution rule.** Move helpers consumed by tests OUT of any
+module that runs `setup_logging()` (or any other module-load
+side-effect that mutates global state) at import time. For
+SPEC-SEC-HYGIENE-001 this meant relocating `should_expose_docs` from
+`app/main.py` to `app/core/config.py`, where the helper lives next to
+its data (`Settings`) AND the import path is side-effect-free for
+tests. The `tests/test_startup_sso_key_guard.py` workaround
+(replicate the helper inline with a "drift mitigated by validator"
+comment) is acceptable for a one-line helper but introduces real
+drift risk for anything more complex — prefer the
+relocate-and-import-once approach when the helper has more than one
+decision branch or might grow.
+
+**Prevention.**
+- For any new test file that uses `structlog.configure()` for
+  capture, add an `# @MX:NOTE: do not import from app.main; this
+  test relies on global structlog state` line on the import block,
+  so reviewers on adjacent PRs see the trap when adding imports.
+- For any production helper that tests need to import: place it in a
+  module that does NOT call `setup_logging()` (or other global
+  config) at module-load time. Common safe homes:
+  `app/core/config.py`, `app/utils/*.py`. Common unsafe home:
+  `app/main.py`.
+- If two SPECs are in flight that each modify global test state,
+  coordinate during /plan: identify the shared global, agree on the
+  relocation, ship the relocation FIRST as a no-behavior-change PR.
+
+## uvlock-conflict-resolution-via-uv-lock (LOW)
+A 3-way merge conflict in `uv.lock` is almost never worth resolving
+by hand. The lock file's structure (TOML with hash-pinned
+dependencies, ordered alphabetically) means even a small upstream
+delta produces dozens of conflict markers across hundreds of lines,
+and a hand-merge can subtly diverge from what the resolver would
+have produced — leaving a passing CI today and a "but our prod
+image differs from local" surprise next week.
+
+**Resolution rule.**
+
+```bash
+git checkout --theirs klai-portal/backend/uv.lock
+cd klai-portal/backend
+uv lock
+git add uv.lock
+```
+
+This takes upstream's lockfile (assumed to be the more-recently-
+audited resolution) and asks `uv` to reconcile any pyproject.toml
+additions on top of it. The output is byte-equal to what `uv lock`
+would produce on a clean checkout.
+
+**Verification.** After the merge commit, `uv sync --group dev`
+reports the EXPECTED diff against the previous environment (e.g.
+"+ zxcvbn==4.5.0" for SPEC-SEC-HYGIENE-001 REQ-22). Any unexpected
+package change (e.g. a major version bump) is a signal that the
+upstream lockfile drifted further than the merge metadata
+suggested — investigate before accepting.
+
+**Prevention.** Same as for any merge conflict: rebase often when
+you know main is moving, and use `git fetch && git log --oneline
+HEAD..origin/main -- klai-portal/backend/pyproject.toml` to see
+upstream pyproject changes before they collide with yours.
