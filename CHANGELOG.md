@@ -1,5 +1,115 @@
 # Changelog
 
+## [Unreleased] — 2026-04-29 — SPEC-SEC-SESSION-001: session and cookie robustness
+
+Closes Cornelis 2026-04-22 audit findings #13 (TOTP per-instance counter),
+#15 (`klai_idp_pending` cookie no origin-context binding), #16 (`klai_sso`
+ephemeral-key fallback on empty `SSO_COOKIE_KEY`). Behavioural changes are
+backward-compatible at the HTTP surface — only the server-side storage
+substrate, the Fernet payload shape, and the lifespan startup-abort path
+change.
+
+### Added (security)
+
+- **`klai-portal/backend/app/api/auth.py::_get_sso_fernet`** —
+  `@lru_cache(maxsize=1)` accessor that raises `RuntimeError` on empty /
+  whitespace `SSO_COOKIE_KEY` instead of falling through to
+  `Fernet.generate_key()`. Mirrors the pattern already used by
+  `signup.py::_get_fernet`. Three callsites migrated (`_encrypt_sso`,
+  `_decrypt_sso`, `idp_signup_callback`'s pending-cookie encrypt site).
+- **`klai-portal/backend/app/api/auth.py::_totp_pending_create` / `_get` /
+  `_incr_failures` / `_delete`** — Redis-backed pending-state primitives
+  using two keys per token: `totp_pending:<token>` (HASH with
+  `session_id`, `session_token`, `ua_hash`, `ip_subnet`) +
+  `totp_pending_failures:<token>` (STRING incremented via atomic `INCR`).
+  Both keys carry the same TTL (`settings.totp_pending_ttl_seconds`,
+  default 300 s). Replaces the in-memory `_pending_totp = TTLCache(...)`
+  which let a 5-failure ceiling become an N×5 ceiling behind a
+  round-robin proxy.
+- **`klai-portal/backend/app/api/signup.py::_verify_idp_pending_binding`** —
+  consume-side check that compares the decrypted Fernet payload's
+  `ua_hash` / `ip_subnet` against values derived from the current
+  request. Mismatch returns HTTP 403 + structlog event; the cookie is
+  preserved so the legitimate user can resume from the same browser
+  within TTL.
+- **`klai-portal/backend/app/services/request_ip.py`** (NEW) — public
+  `resolve_caller_ip` (right-most `X-Forwarded-For` entry from Caddy →
+  `request.client.host` → `"unknown"`) plus `resolve_caller_ip_subnet`
+  (`/24` IPv4, `/48` IPv6). Extracted from `app/api/internal.py` once a
+  third callsite (auth IDP-pending issue + signup-social binding
+  consume) joined the existing internal-rate-limit consumer.
+- **`klai-portal/backend/app/main.py` lifespan SSO check** — calls
+  `_get_sso_fernet()` BEFORE the dev/prod branch so
+  `is_auth_dev_mode=True` no longer bypasses the SSO-key validation
+  (REQ-4.4 closes the silent-on-dev-box failure mode). Empty key emits
+  structlog `critical` event `sso_cookie_key_missing_startup_abort`
+  with `env_var="SSO_COOKIE_KEY"` + `sops_path` BEFORE re-raising, so
+  Alloy captures the abort in VictoriaLogs even though the process is
+  about to exit non-zero.
+- **4 structured events** in VictoriaLogs:
+  `totp_pending_lockout` (warning, on the 5th failed code),
+  `totp_pending_redis_unavailable` (error, fail-CLOSED on Redis outage),
+  `idp_pending_binding_mismatch` (warning, on UA / IP-subnet mismatch),
+  `sso_cookie_key_missing_startup_abort` (critical, on lifespan abort).
+  All events carry prefix-only PII (8-hex hash prefixes, `/24`/`/48`
+  subnet network addresses, 8-char token prefixes) — never raw UA, raw
+  IP, full token, or session credentials. PII guard verified by
+  `tests/test_session_logging_pii.py`.
+- **`deploy/grafana/provisioning/alerting/portal-session-rules.yaml`**
+  (NEW) — two LogsQL alerts on the new events:
+  - R1 `session_sso_cookie_key_missing` (critical): `>= 1` event in any
+    1m window. A single occurrence means a portal-api replica failed to
+    boot due to misconfigured `SSO_COOKIE_KEY` — operators must intervene.
+  - R2 `session_totp_redis_unavailable` (critical): `> 3` events in 1m.
+    Sustained burst means TOTP login is broken (fail-CLOSED kicks in
+    when Redis is unreachable; users see HTTP 503).
+- **22 new tests** across six files: `test_auth_totp_lockout.py`,
+  `test_idp_pending_binding.py`, `test_startup_sso_key_guard.py`,
+  `test_auth_login_happy_path.py`, `test_session_logging_pii.py`, plus
+  request-parameter migrations across `test_auth_security.py`,
+  `test_auth_mfa_fail_closed.py`, `test_social_signup.py`,
+  `test_auth_totp_endpoints.py`, `test_auth_idp_endpoints.py`.
+
+### Changed
+
+- **`SSO_COOKIE_KEY` startup validation moved out of the prod-only
+  missing-vars list in `app/main.py`** — was double-listed there
+  pre-SPEC; the lifespan-level check via `_get_sso_fernet()` is the
+  authoritative guard now. ZITADEL_PAT / PORTAL_SECRETS_KEY /
+  ENCRYPTION_KEY / DATABASE_URL still validated by the prod-only block.
+- **`klai-portal/backend/tests/conftest.py`** — adds the shared
+  `fake_redis` fixture (in-memory `fakeredis.aioredis.FakeRedis` swapped
+  into the `_pool_holder` singleton for one test). All Redis-using auth
+  tests pick it up via fixture parameter.
+- **`klai-portal/backend/tests/helpers.py`** — adds `make_request()`
+  factory that builds a synthetic Starlette `Request` for tests that
+  bypass the FastAPI router. Defaults to `127.0.0.1:12345` so
+  `resolve_caller_ip` returns a parseable address without per-test
+  setup.
+- **`klai-portal/backend/pyproject.toml`** — adds `fakeredis>=2.26` to
+  both dev dep groups (`[project.optional-dependencies]` and
+  `[dependency-groups]`).
+- **`klai-portal/backend/app/core/config.py`** — adds
+  `totp_pending_ttl_seconds: int = 300` setting; default matches the
+  legacy in-memory window. Tunable per environment without code change.
+
+### Removed
+
+- **`_pending_totp = TTLCache(...)` module global** in `app/api/auth.py`.
+  The `TTLCache` class itself remains available as a generic utility
+  (REQ-1.8), but the production TOTP path no longer routes through it.
+- **`Fernet.generate_key()` fallback** at the old `auth.py:106`. There
+  is now no path under which portal-api will issue cookies signed with
+  an ephemeral, per-replica key. Misconfiguration aborts the process.
+
+### Coverage
+
+- 22 dedicated tests across the four security-critical surfaces (Redis
+  TOTP helpers, lifespan SSO guard, IDP-pending binding check, PII
+  redaction). Acceptance scenarios 1-8 from `acceptance.md` all
+  represented; CI `Build and push portal-api / quality` job passed
+  pytest + ruff + pyright + ruff-format on the merged PR.
+
 ## [Unreleased] — 2026-04-28 — SPEC-SEC-AUTH-COVERAGE-001: auth.py coverage + observability hardening (14 endpoints)
 
 Companion to SPEC-SEC-MFA-001. Same Cornelis-audit context (2026-04-22)
