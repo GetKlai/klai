@@ -374,6 +374,19 @@ wheels = [
 ]
 
 [[package]]
+name = "fakeredis"
+version = "2.35.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "redis" },
+    { name = "sortedcontainers" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/43/50/b748233c02fa77e5105238190cc9bb58b852eb1c8b1d0763230d3a5b745a/fakeredis-2.35.1.tar.gz", hash = "sha256:5bae5eba7b9d93cb968944ac40936373cf2397ff71667d4b595df65c3d2e413f", size = 189118 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6f/27/b8b057a23f7777177e92d3a602fd866751b6b45014964548997e92e048fd/fakeredis-2.35.1-py3-none-any.whl", hash = "sha256:67d97e11f562b7870e11e5c30cf182270bfb2dd37f6707dba47cc6d91628d1b9", size = 129678 },
+]
+
+[[package]]
 name = "fastapi"
 version = "0.136.1"
 source = { registry = "https://pypi.org/simple" }
@@ -663,6 +676,32 @@ dev = [
 ]
 
 [[package]]
+name = "klai-log-utils"
+version = "0.1.0"
+source = { editable = "../../klai-libs/log-utils" }
+dependencies = [
+    { name = "structlog" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28" },
+    { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.390" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
+    { name = "structlog", specifier = ">=25.0" },
+]
+provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "pyright", specifier = ">=1.1.390" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "ruff", specifier = ">=0.8" },
+]
+
+[[package]]
 name = "klai-portal-api"
 version = "0.1.0"
 source = { virtual = "." }
@@ -677,6 +716,7 @@ dependencies = [
     { name = "icalendar" },
     { name = "klai-connector-credentials" },
     { name = "klai-image-storage" },
+    { name = "klai-log-utils" },
     { name = "motor" },
     { name = "prometheus-client" },
     { name = "publicsuffix2" },
@@ -694,6 +734,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "fakeredis" },
     { name = "httpx" },
     { name = "klai-identity-assert" },
     { name = "pyright" },
@@ -705,6 +746,7 @@ dev = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "fakeredis" },
     { name = "httpx" },
     { name = "klai-identity-assert" },
     { name = "pyright" },
@@ -721,6 +763,7 @@ requires-dist = [
     { name = "authheaders", specifier = ">=0.16,<1.0" },
     { name = "cryptography", specifier = ">=46.0" },
     { name = "docker", specifier = ">=7.1" },
+    { name = "fakeredis", marker = "extra == 'dev'", specifier = ">=2.26" },
     { name = "fastapi", specifier = ">=0.136" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28" },
@@ -728,6 +771,7 @@ requires-dist = [
     { name = "klai-connector-credentials", editable = "../../klai-libs/connector-credentials" },
     { name = "klai-identity-assert", marker = "extra == 'dev'", editable = "../../klai-libs/identity-assert" },
     { name = "klai-image-storage", editable = "../../klai-libs/image-storage" },
+    { name = "klai-log-utils", editable = "../../klai-libs/log-utils" },
     { name = "motor", specifier = ">=3.7" },
     { name = "prometheus-client", specifier = ">=0.25,<1.0" },
     { name = "publicsuffix2", specifier = ">=2.2,<3.0" },
@@ -751,6 +795,7 @@ provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "fakeredis", specifier = ">=2.26" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "klai-identity-assert", editable = "../../klai-libs/identity-assert" },
     { name = "pyright", specifier = ">=1.1.408" },
@@ -1278,6 +1323,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050 },
+]
+
+[[package]]
+name = "sortedcontainers"
+version = "2.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e8/c4/ba2f8066cceb6f23394729afe52f3bf7adec04bf9ed2c820b39e19299111/sortedcontainers-2.4.0.tar.gz", hash = "sha256:25caa5a06cc30b6b83d11423433f65d1f9d76c4c6a0c90e3379eaa43b9bfdb88", size = 30594 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/32/46/9cb0e58b2deb7f82b84065f37f3bffeb12413f947f9388e4cac22c4621ce/sortedcontainers-2.4.0-py2.py3-none-any.whl", hash = "sha256:a163dcaede0f1c021485e957a39245190e74249897e2ae4b2aa38595db237ee0", size = 29575 },
 ]
 
 [[package]]

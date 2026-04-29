@@ -27,6 +27,7 @@ import structlog
 from jwt import PyJWKClient
 
 from app.core.config import settings
+from app.utils.response_sanitizer import sanitize_response_body  # SPEC-SEC-INTERNAL-001 REQ-4
 
 logger = structlog.get_logger()
 
@@ -183,7 +184,10 @@ async def _token_endpoint_post(data: dict[str, str]) -> TokenSet:
         try:
             body = resp.json()
         except ValueError:
-            body = {"error": "token_endpoint_error", "error_description": resp.text[:200]}
+            body = {
+                "error": "token_endpoint_error",
+                "error_description": sanitize_response_body(resp, max_len=200),
+            }
         logger.warning(
             "bff_oidc_token_exchange_failed",
             status=resp.status_code,

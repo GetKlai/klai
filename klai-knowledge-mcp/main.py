@@ -17,16 +17,17 @@ Identity:  X-User-ID, X-Org-ID, X-Org-Slug, Authorization: Bearer <user_jwt>
 
 from __future__ import annotations
 
-import hmac
 import logging
 import os
 import re
+import uuid
 from dataclasses import dataclass
 from datetime import date
 from typing import Literal, get_args
 
 import httpx
 from klai_identity_assert import IdentityAsserter, VerifyResult
+from log_utils import sanitize_response_body, verify_shared_secret
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
@@ -40,12 +41,40 @@ logger = logging.getLogger(__name__)
 KLAI_DOCS_API_BASE = os.environ["KLAI_DOCS_API_BASE"]  # http://docs-app:3000
 DOCS_INTERNAL_SECRET = os.environ["DOCS_INTERNAL_SECRET"]
 KNOWLEDGE_INGEST_URL = os.environ["KNOWLEDGE_INGEST_URL"]  # http://knowledge-ingest:8000
-KNOWLEDGE_INGEST_SECRET = os.getenv("KNOWLEDGE_INGEST_SECRET", "")
+# SPEC-SEC-INTERNAL-001 REQ-9.5: KNOWLEDGE_INGEST_SECRET is now mandatory.
+# Empty / missing causes module-load failure rather than silently omitting
+# the X-Internal-Secret header on outbound calls (the previous "gradual
+# rollout" path that turned authenticated traffic into unauthenticated).
+KNOWLEDGE_INGEST_SECRET = os.environ["KNOWLEDGE_INGEST_SECRET"]
 # SPEC-SEC-IDENTITY-ASSERT-001 REQ-2: portal-api /internal/identity/verify
-# coordinates. Both required at startup — fail-closed if missing.
+# coordinates. Both required at startup -- fail-closed if missing.
 PORTAL_API_URL = os.environ["PORTAL_API_URL"]
 PORTAL_INTERNAL_SECRET = os.environ["PORTAL_INTERNAL_SECRET"]
+
+# SPEC-SEC-INTERNAL-001 REQ-9.5: enforce non-empty values. ``os.environ[...]``
+# above raises KeyError on missing; the assertions below close the
+# empty-string hole. Module fails to import (process exits non-zero) when
+# any required secret is the empty string.
+_REQ95_HINT = "must be a non-empty string (SPEC-SEC-INTERNAL-001 REQ-9.5)"
+if not DOCS_INTERNAL_SECRET:
+    raise RuntimeError(f"DOCS_INTERNAL_SECRET {_REQ95_HINT}")
+if not KNOWLEDGE_INGEST_SECRET:
+    raise RuntimeError(f"KNOWLEDGE_INGEST_SECRET {_REQ95_HINT}")
+if not PORTAL_INTERNAL_SECRET:
+    raise RuntimeError(f"PORTAL_INTERNAL_SECRET {_REQ95_HINT}")
+
 _INTERNAL_SECRET_HEADER = "X-Internal-Secret"
+
+# SPEC-SEC-INTERNAL-001 REQ-4: secret values to scrub from any upstream
+# response body before logging. Built once at import time -- the values
+# come from os.environ above which is already frozen by the time any
+# request fires. Values shorter than 8 chars are skipped to mirror the
+# library guard (avoid over-redaction of common substrings).
+_KNOWN_SECRETS: frozenset[str] = frozenset(
+    s
+    for s in (DOCS_INTERNAL_SECRET, KNOWLEDGE_INGEST_SECRET, PORTAL_INTERNAL_SECRET)
+    if len(s) >= 8
+)
 
 # Path validation patterns
 _KB_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -147,14 +176,17 @@ def _extract_user_jwt(ctx: Context) -> str | None:
 def _validate_incoming_secret(ctx: Context) -> None:
     """Validate X-Internal-Secret on incoming MCP requests.
 
-    Raises ValueError when the secret is configured but missing or incorrect.
-    No-ops when KNOWLEDGE_INGEST_SECRET is not set (gradual rollout).
+    SPEC-SEC-INTERNAL-001 REQ-1.5 / REQ-1.6: comparison is constant-time via
+    ``log_utils.verify_shared_secret``. REQ-9.5: KNOWLEDGE_INGEST_SECRET is
+    enforced at import time to be non-empty, so the legacy
+    ``if not KNOWLEDGE_INGEST_SECRET: return`` "gradual rollout" branch is
+    gone -- every incoming MCP request MUST carry a valid header.
+
+    Raises ValueError when the header is missing or does not match.
     """
-    if not KNOWLEDGE_INGEST_SECRET:
-        return
     headers = _request_headers(ctx)
     provided = headers.get(_INTERNAL_SECRET_HEADER.lower(), "")
-    if not provided or not hmac.compare_digest(provided, KNOWLEDGE_INGEST_SECRET):
+    if not verify_shared_secret(provided, KNOWLEDGE_INGEST_SECRET):
         raise ValueError("Invalid or missing X-Internal-Secret header.")
 
 
@@ -233,9 +265,9 @@ async def _save_to_ingest(
     if user_id is not None:
         payload["user_id"] = user_id
 
-    headers: dict[str, str] = {}
-    if KNOWLEDGE_INGEST_SECRET:
-        headers[_INTERNAL_SECRET_HEADER] = KNOWLEDGE_INGEST_SECRET
+    # SPEC-SEC-INTERNAL-001 REQ-9.5: header is unconditional. The startup
+    # guard above ensures KNOWLEDGE_INGEST_SECRET is a non-empty string.
+    headers: dict[str, str] = {_INTERNAL_SECRET_HEADER: KNOWLEDGE_INGEST_SECRET}
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -476,7 +508,7 @@ async def save_to_docs(
         logger.error(
             "KB list fetch returned %d: %s (org_slug=%s, org_id=%s)",
             resp.status_code,
-            resp.text[:200],
+            sanitize_response_body(resp, _KNOWN_SECRETS, max_len=200),
             org_slug,
             verified.org_id,
         )
@@ -542,7 +574,26 @@ async def save_to_docs(
         return f"Error: could not reach klai-docs API ({exc})."
 
     if resp.status_code not in (200, 201):
-        return f"Error: klai-docs returned HTTP {resp.status_code}. Details: {resp.text[:300]}"
+        # SPEC-SEC-INTERNAL-001 REQ-8.1 / AC-11.1: the MCP tool return value
+        # ends up verbatim in the LibreChat / ChatGPT-compatible chat UI.
+        # Echoing ``resp.text`` would leak any header the upstream reflected
+        # in its 5xx body (for example DOCS_INTERNAL_SECRET when the docs
+        # service runs FastAPI's ServerErrorMiddleware in debug mode).
+        # Surface a status code + correlation ID; the sanitized upstream
+        # body lands in the structlog stream keyed by the same request_id.
+        request_id = str(uuid.uuid4())
+        logger.error(
+            "save_to_docs upstream returned %d (kb=%s, page=%s, request_id=%s): %s",
+            resp.status_code,
+            kb_name,
+            page_path,
+            request_id,
+            sanitize_response_body(resp, _KNOWN_SECRETS, max_len=512),
+        )
+        return (
+            f"Error saving to docs: upstream returned HTTP {resp.status_code}. "
+            f"Request ID: {request_id}. Operator: check VictoriaLogs."
+        )
 
     return f"✓ Opgeslagen in kennisbank **{kb_name}**: {title} (pad: {page_path})"
 

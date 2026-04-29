@@ -22,8 +22,10 @@ from app.adapters.base import DocumentRef
 from app.adapters.oauth_base import OAuthReconnectRequiredError
 from app.adapters.registry import AdapterRegistry
 from app.clients.knowledge_ingest import CrawlSyncClient, KnowledgeIngestClient
+from app.core.config import Settings
 from app.core.enums import SyncStatus
 from app.core.logging import get_logger
+from app.core.sanitize import sanitize_response_body  # SPEC-SEC-INTERNAL-001 REQ-4 + REQ-10
 from app.models.sync_run import SyncRun
 from app.services.parser import parse_document_with_images
 from app.services.portal_client import PortalClient
@@ -81,6 +83,7 @@ class SyncEngine:
         registry: AdapterRegistry,
         ingest_client: KnowledgeIngestClient,
         portal_client: PortalClient,
+        settings: Settings,
         image_store: ImageStore | None = None,
         crawl_sync_client: CrawlSyncClient | None = None,
     ) -> None:
@@ -88,6 +91,7 @@ class SyncEngine:
         self._registry = registry
         self._ingest_client = ingest_client
         self._portal_client = portal_client
+        self._settings = settings
         self._image_store = image_store
         # SPEC-SEC-SSRF-001 REQ-7.4 / REQ-7.6 / AC-23: wrap the image
         # http client in a ``PinnedResolverTransport`` so every adapter
@@ -628,12 +632,18 @@ class SyncEngine:
 
             except httpx.HTTPStatusError as enqueue_err:
                 # REQ-03.5: non-2xx from /crawl/sync → single failed row, no retry.
+                # SPEC-SEC-INTERNAL-001 REQ-10 + AC-10.1: ``error_details`` is
+                # persisted to JSONB AND forwarded to portal for UI rendering.
+                # Sanitize the upstream body BEFORE persistence so a reflected
+                # KNOWLEDGE_INGEST_SECRET / DOCS_INTERNAL_SECRET / etc. cannot
+                # land in connector.sync_runs.error_details or in the portal
+                # connector-management UI.
                 status = SyncStatus.FAILED
                 error_details = [
                     {
                         "error": f"http_{enqueue_err.response.status_code}",
                         "service": "knowledge-ingest",
-                        "detail": enqueue_err.response.text[:500],
+                        "detail": sanitize_response_body(self._settings, enqueue_err, max_len=500),
                     },
                 ]
                 logger.error(

@@ -4,6 +4,7 @@ from datetime import date, timedelta
 import httpx
 
 from app.core.config import Settings
+from app.utils.response_sanitizer import sanitize_response_body  # SPEC-SEC-INTERNAL-001 REQ-4
 
 logger = logging.getLogger(__name__)
 
@@ -21,14 +22,18 @@ class MoneybirdService:
 
     async def _raise_for_status(self, resp: httpx.Response) -> None:
         if resp.is_error:
+            sanitized = sanitize_response_body(resp, max_len=200)
             logger.error(
                 "Moneybird API %s %s failed: status=%d, body=%s",
                 resp.request.method,
                 resp.request.url.path,
                 resp.status_code,
-                resp.text[:200],
+                sanitized,
             )
-            raise RuntimeError(resp.text)
+            # Raise with the sanitized body too -- the upstream raise message
+            # bubbles into structlog at the caller and used to leak the
+            # Moneybird Bearer token verbatim when the API echoed it back.
+            raise RuntimeError(sanitized)
 
     async def create_contact(
         self,

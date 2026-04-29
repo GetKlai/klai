@@ -108,25 +108,45 @@ def _create_mongodb_tenant_user(slug: str, tenant_password: str) -> None:
 
 
 def _flush_redis_and_restart_librechat(slug: str) -> None:
-    """Flush Redis config cache and restart the LibreChat container for a tenant.
+    """Invalidate the LibreChat config cache and restart the tenant container.
 
     LibreChat caches librechat.yaml in Redis with no TTL (see
-    platform/librechat.md — Redis config caching). FLUSHALL must run before
-    the restart so the container reads the updated config from disk.
+    platform/librechat.md -- Redis config caching). The cache invalidation
+    must run before the restart so the container reads the updated config
+    from disk.
 
-    R-001: FLUSHALL clears all Redis keys including active sessions.
-    Acceptable for config updates; document in UI that changes cause a brief
-    interruption.
+    SPEC-SEC-INTERNAL-001 REQ-2: this previously called FLUSHALL, which
+    cleared every key in Redis -- rate-limit buckets, SSO cache, partner-API
+    state for every tenant. We now SCAN MATCH the configured pattern
+    (``configs:*`` by default per REQ-2.3) and UNLINK each match, which
+    leaves unrelated keys untouched.
 
-    Fail-loud: both the Redis flush and the post-restart health check are
-    hard requirements. A failed flush means LibreChat keeps serving stale
-    yaml and the operator thinks their change landed; a failed health check
-    means the tenant's LibreChat is down and provisioning silently succeeded.
-    Both were previously logged as warnings and ignored. Now they raise.
+    Fail-loud: both the cache invalidation and the post-restart health check
+    are hard requirements. A failed invalidation means LibreChat keeps
+    serving stale yaml and the operator thinks their change landed; a failed
+    health check means the tenant's LibreChat is down and provisioning
+    silently succeeded. Both were previously logged as warnings and ignored.
+    Now they raise.
     """
     with _redis_sync_client() as client:
-        client.flushall()
-    logger.info("redis_flushed", slug=slug)
+        cache_pattern = settings.librechat_cache_key_pattern
+        deleted = 0
+        batch: list[str] = []
+        for key in client.scan_iter(match=cache_pattern, count=100):
+            batch.append(key)
+            if len(batch) >= 100:
+                # The sync redis client returns int from UNLINK; the upstream
+                # type hint widens to ResponseT (Awaitable on the async client).
+                deleted += int(client.unlink(*batch))  # type: ignore[arg-type]
+                batch.clear()
+        if batch:
+            deleted += int(client.unlink(*batch))  # type: ignore[arg-type]
+    logger.info(
+        "librechat_cache_invalidated",
+        slug=slug,
+        pattern=cache_pattern,
+        deleted=deleted,
+    )
 
     # Restart the tenant's LibreChat container. /containers/{id}/restart is
     # allowed by docker-socket-proxy (CONTAINERS=1 + POST=1).

@@ -20,6 +20,7 @@ import pytest
 import respx
 from auth_test_helpers import _audit_log_patch, _capture_events
 from fastapi import HTTPException
+from helpers import make_request
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
 
@@ -335,7 +336,7 @@ async def test_idp_signup_callback_retrieve_intent_5xx() -> None:
             AsyncMock(side_effect=error),
         ),
     ):
-        result = await idp_signup_callback(id="intent-1", token="tok-1", locale="nl", db=db)
+        result = await idp_signup_callback(id="intent-1", token="tok-1", request=make_request(), locale="nl", db=db)
 
     assert result.status_code == 302
     audit_log.assert_not_called()
@@ -367,7 +368,7 @@ async def test_idp_signup_callback_create_session_5xx() -> None:
             AsyncMock(side_effect=error),
         ),
     ):
-        result = await idp_signup_callback(id="intent-2", token="tok-2", locale="nl", db=db)
+        result = await idp_signup_callback(id="intent-2", token="tok-2", request=make_request(), locale="nl", db=db)
 
     assert result.status_code == 302
     audit_log.assert_not_called()
@@ -403,7 +404,7 @@ async def test_idp_signup_callback_get_session_5xx() -> None:
             AsyncMock(side_effect=error),
         ),
     ):
-        result = await idp_signup_callback(id="intent-3", token="tok-3", locale="nl", db=db)
+        result = await idp_signup_callback(id="intent-3", token="tok-3", request=make_request(), locale="nl", db=db)
 
     assert result.status_code == 302
     audit_log.assert_not_called()

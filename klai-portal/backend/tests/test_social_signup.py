@@ -16,6 +16,7 @@ import httpx
 import pytest
 from cryptography.fernet import Fernet
 from fastapi import HTTPException
+from helpers import make_request
 
 # ---------------------------------------------------------------------------
 # Test constants
@@ -42,11 +43,30 @@ def _make_http_error(status_code: int) -> httpx.HTTPStatusError:
     return httpx.HTTPStatusError("err", request=request, response=response)
 
 
-def _encrypt_pending(session_id: str, session_token: str, user_id: str) -> str:
-    """Return a valid Fernet-encrypted klai_idp_pending cookie value."""
+def _encrypt_pending(
+    session_id: str,
+    session_token: str,
+    user_id: str,
+    *,
+    ua_hash: str = "",
+    ip_subnet: str = "127.0.0.0",
+) -> str:
+    """Return a valid Fernet-encrypted klai_idp_pending cookie value.
+
+    SPEC-SEC-SESSION-001 REQ-2.1: payload includes ``ua_hash`` and
+    ``ip_subnet``. Defaults match ``helpers.make_request()`` defaults
+    (no UA header → empty hash; client="127.0.0.1" → "127.0.0.0" /24)
+    so existing happy-path tests keep passing without per-test setup.
+    """
     fernet = Fernet(_FERNET_KEY.encode())
     payload = json.dumps(
-        {"session_id": session_id, "session_token": session_token, "zitadel_user_id": user_id}
+        {
+            "session_id": session_id,
+            "session_token": session_token,
+            "zitadel_user_id": user_id,
+            "ua_hash": ua_hash,
+            "ip_subnet": ip_subnet,
+        }
     ).encode()
     return fernet.encrypt(payload).decode()
 
@@ -243,13 +263,15 @@ class TestIDPSignupCallback:
         with (
             patch("app.api.auth.settings") as mock_settings,
             patch("app.api.auth.zitadel") as mock_zitadel,
-            patch("app.api.auth._fernet") as mock_fernet,
+            patch("app.api.auth._get_sso_fernet") as mock_fernet,
         ):
             _configure_settings_mock(mock_settings)
             _configure_zitadel_mock(mock_zitadel)
-            mock_fernet.encrypt = MagicMock(return_value=b"ENCRYPTED_PENDING")
+            mock_fernet.return_value.encrypt = MagicMock(return_value=b"ENCRYPTED_PENDING")
 
-            response = await idp_signup_callback(id="intent-id", token="intent-token", locale="nl", db=db)
+            response = await idp_signup_callback(
+                id="intent-id", token="intent-token", request=make_request(), locale="nl", db=db
+            )
 
         assert response.status_code == 302
         location = response.headers["location"]
@@ -268,13 +290,15 @@ class TestIDPSignupCallback:
         with (
             patch("app.api.auth.settings") as mock_settings,
             patch("app.api.auth.zitadel") as mock_zitadel,
-            patch("app.api.auth._fernet") as mock_fernet,
+            patch("app.api.auth._get_sso_fernet") as mock_fernet,
         ):
             _configure_settings_mock(mock_settings)
             _configure_zitadel_mock(mock_zitadel)
-            mock_fernet.encrypt = MagicMock(return_value=b"ENCRYPTED_PENDING")
+            mock_fernet.return_value.encrypt = MagicMock(return_value=b"ENCRYPTED_PENDING")
 
-            response = await idp_signup_callback(id="intent-id", token="intent-token", locale="en", db=db)
+            response = await idp_signup_callback(
+                id="intent-id", token="intent-token", request=make_request(), locale="en", db=db
+            )
 
         assert "/en/signup/social" in response.headers["location"]
 
@@ -290,14 +314,16 @@ class TestIDPSignupCallback:
         with (
             patch("app.api.auth.settings") as mock_settings,
             patch("app.api.auth.zitadel") as mock_zitadel,
-            patch("app.api.auth._fernet") as mock_fernet,
+            patch("app.api.auth._get_sso_fernet") as mock_fernet,
             patch("app.api.auth.emit_event") as mock_emit_event,
         ):
             _configure_settings_mock(mock_settings)
             _configure_zitadel_mock(mock_zitadel)
-            mock_fernet.encrypt = MagicMock(return_value=b"ENCRYPTED_SSO")
+            mock_fernet.return_value.encrypt = MagicMock(return_value=b"ENCRYPTED_SSO")
 
-            response = await idp_signup_callback(id="intent-id", token="intent-token", locale="nl", db=db)
+            response = await idp_signup_callback(
+                id="intent-id", token="intent-token", request=make_request(), locale="nl", db=db
+            )
 
         assert response.status_code == 302
         assert response.headers["location"] == f"{_PORTAL_URL}/"
@@ -316,7 +342,7 @@ class TestIDPSignupCallback:
         with (
             patch("app.api.auth.settings") as mock_settings,
             patch("app.api.auth.zitadel") as mock_zitadel,
-            patch("app.api.auth._fernet") as mock_fernet,
+            patch("app.api.auth._get_sso_fernet") as mock_fernet,
         ):
             _configure_settings_mock(mock_settings)
             _configure_zitadel_mock(
@@ -324,9 +350,11 @@ class TestIDPSignupCallback:
                 intent_user_id=None,  # forces create_zitadel_user_from_idp branch
                 create_user_return="new-zitadel-user-999",
             )
-            mock_fernet.encrypt = MagicMock(return_value=b"ENCRYPTED_PENDING")
+            mock_fernet.return_value.encrypt = MagicMock(return_value=b"ENCRYPTED_PENDING")
 
-            response = await idp_signup_callback(id="intent-id", token="intent-token", locale="nl", db=db)
+            response = await idp_signup_callback(
+                id="intent-id", token="intent-token", request=make_request(), locale="nl", db=db
+            )
 
         mock_zitadel.create_zitadel_user_from_idp.assert_awaited_once()
         mock_zitadel.create_session_for_user_idp.assert_awaited()
@@ -349,7 +377,9 @@ class TestIDPSignupCallback:
             _configure_settings_mock(mock_settings)
             _configure_zitadel_mock(mock_zitadel, retrieve_idp_intent_error=_make_http_error(500))
 
-            response = await idp_signup_callback(id="intent-id", token="intent-token", locale="nl", db=db)
+            response = await idp_signup_callback(
+                id="intent-id", token="intent-token", request=make_request(), locale="nl", db=db
+            )
 
         assert response.status_code == 302
         assert "error=idp_failed" in response.headers["location"]
@@ -373,7 +403,9 @@ class TestIDPSignupCallback:
                 create_user_error=_make_http_error(500),
             )
 
-            response = await idp_signup_callback(id="intent-id", token="intent-token", locale="nl", db=db)
+            response = await idp_signup_callback(
+                id="intent-id", token="intent-token", request=make_request(), locale="nl", db=db
+            )
 
         assert response.status_code == 302
         assert "error=idp_failed" in response.headers["location"]
@@ -393,7 +425,9 @@ class TestIDPSignupCallback:
             _configure_settings_mock(mock_settings)
             _configure_zitadel_mock(mock_zitadel, create_session_error=_make_http_error(400))
 
-            response = await idp_signup_callback(id="intent-id", token="intent-token", locale="nl", db=db)
+            response = await idp_signup_callback(
+                id="intent-id", token="intent-token", request=make_request(), locale="nl", db=db
+            )
 
         assert response.status_code == 302
         assert "/nl/signup" in response.headers["location"]
@@ -413,7 +447,7 @@ class TestIDPSignupCallback:
         with (
             patch("app.api.auth.settings") as mock_settings,
             patch("app.api.auth.zitadel") as mock_zitadel,
-            patch("app.api.auth._fernet") as mock_fernet,
+            patch("app.api.auth._get_sso_fernet") as mock_fernet,
             patch("app.api.auth.asyncio.sleep", new_callable=AsyncMock),
         ):
             _configure_settings_mock(mock_settings)
@@ -426,9 +460,11 @@ class TestIDPSignupCallback:
                     session_success,
                 ]
             )
-            mock_fernet.encrypt = MagicMock(return_value=b"ENCRYPTED_PENDING")
+            mock_fernet.return_value.encrypt = MagicMock(return_value=b"ENCRYPTED_PENDING")
 
-            response = await idp_signup_callback(id="intent-id", token="intent-token", locale="nl", db=db)
+            response = await idp_signup_callback(
+                id="intent-id", token="intent-token", request=make_request(), locale="nl", db=db
+            )
 
         assert response.status_code == 302
         assert mock_zitadel.create_session_for_user_idp.await_count == 3
@@ -448,7 +484,9 @@ class TestIDPSignupCallback:
             _configure_settings_mock(mock_settings)
             _configure_zitadel_mock(mock_zitadel, session_return={})  # empty dict, no ids
 
-            response = await idp_signup_callback(id="intent-id", token="intent-token", locale="nl", db=db)
+            response = await idp_signup_callback(
+                id="intent-id", token="intent-token", request=make_request(), locale="nl", db=db
+            )
 
         assert response.status_code == 302
         assert "error=idp_failed" in response.headers["location"]
@@ -468,7 +506,9 @@ class TestIDPSignupCallback:
             _configure_settings_mock(mock_settings)
             _configure_zitadel_mock(mock_zitadel, get_session_error=_make_http_error(500))
 
-            response = await idp_signup_callback(id="intent-id", token="intent-token", locale="nl", db=db)
+            response = await idp_signup_callback(
+                id="intent-id", token="intent-token", request=make_request(), locale="nl", db=db
+            )
 
         assert response.status_code == 302
         assert "error=idp_failed" in response.headers["location"]
@@ -487,7 +527,9 @@ class TestIDPSignupCallback:
             _configure_settings_mock(mock_settings)
             _configure_zitadel_mock(mock_zitadel, session_detail={"session": {"factors": {}}})
 
-            response = await idp_signup_callback(id="intent-id", token="intent-token", locale="nl", db=db)
+            response = await idp_signup_callback(
+                id="intent-id", token="intent-token", request=make_request(), locale="nl", db=db
+            )
 
         assert response.status_code == 302
         assert "error=idp_failed" in response.headers["location"]
@@ -506,7 +548,9 @@ class TestIDPSignupCallback:
             _configure_settings_mock(mock_settings)
             _configure_zitadel_mock(mock_zitadel, retrieve_idp_intent_error=_make_http_error(500))
 
-            response = await idp_signup_callback(id="intent-id", token="intent-token", locale="de", db=db)
+            response = await idp_signup_callback(
+                id="intent-id", token="intent-token", request=make_request(), locale="de", db=db
+            )
 
         # Even when locale="de", failure_url uses "nl"
         assert "/nl/signup" in response.headers["location"]
@@ -572,6 +616,7 @@ class TestSignupSocial:
                 response=response_mock,
                 background_tasks=background_tasks,
                 db=db,
+                request=make_request(),
                 klai_idp_pending=pending_cookie,
             )
 
@@ -595,6 +640,7 @@ class TestSignupSocial:
                 response=response_mock,
                 background_tasks=MagicMock(),
                 db=db,
+                request=make_request(),
                 klai_idp_pending=None,
             )
 
@@ -614,6 +660,7 @@ class TestSignupSocial:
                     response=response_mock,
                     background_tasks=MagicMock(),
                     db=db,
+                    request=make_request(),
                     klai_idp_pending="this-is-not-a-valid-fernet-token",
                 )
 
@@ -640,6 +687,7 @@ class TestSignupSocial:
                     response=self._make_response_mock(),
                     background_tasks=MagicMock(),
                     db=db,
+                    request=make_request(),
                     klai_idp_pending=pending_cookie,
                 )
 
@@ -666,6 +714,7 @@ class TestSignupSocial:
                     response=self._make_response_mock(),
                     background_tasks=MagicMock(),
                     db=db,
+                    request=make_request(),
                     klai_idp_pending=pending_cookie,
                 )
 
@@ -693,6 +742,7 @@ class TestSignupSocial:
                     response=self._make_response_mock(),
                     background_tasks=MagicMock(),
                     db=db,
+                    request=make_request(),
                     klai_idp_pending=pending_cookie,
                 )
 
@@ -732,6 +782,7 @@ class TestSignupSocial:
                     response=self._make_response_mock(),
                     background_tasks=MagicMock(),
                     db=db,
+                    request=make_request(),
                     klai_idp_pending=pending_cookie,
                 )
 
