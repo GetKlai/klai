@@ -651,3 +651,21 @@ Reference: mailer `_validate_incoming_secret` was using `!=` until SPEC-SEC-INTE
 Reference: SPEC-SEC-MAILER-INJECTION-001 — mailer rendered email subjects/bodies via `template.format(**variables)` where keys came from inbound webhook JSON.
 
 **Prevention:** Use `string.Template.safe_substitute` (allows only $-prefixed identifiers, no attribute traversal) or `jinja2` with `autoescape=True` and a sandbox. Add the format-string-injection check to the security-review skill checklist.
+
+## allowlist-must-enumerate-all-host-classes (HIGH)
+A security-allowlist is only as good as the enumeration that built it. When a hardening SPEC introduces a new check on hostnames, identifiers, or any user-facing string, the implementer MUST list **every** legitimate class the field can hold — not just the obvious user-facing class — before the check ships. Missing one class breaks production at deploy time.
+
+Reference: SPEC-SEC-HYGIENE-001 REQ-20 (callback URL subdomain allowlist) shipped on 2026-04-29 with three host classes enumerated (`localhost`, bare apex, tenant-slug) and one missed: the FRONTEND_URL host (`my.getklai.com`). Zitadel always redirects through the FRONTEND_URL host first per SPEC-AUTH-008, so every multi-tenant TOTP login started returning 502 within minutes of deploy. Fixed by REQ-20.4 (system-host bypass derived from `settings.frontend_url`) and `tests/test_callback_url_allowlist.py`. The original PR landed with **zero** dedicated tests on the validator, which is why CI did not catch the regression.
+
+**Prevention checklist for any new allowlist / blocklist / hostname-validator PR:**
+
+1. Before merging, list every hostname / identifier the validator will see in production. Grep the codebase for the field across all services. Enumerate at minimum:
+   - localhost / 127.0.0.1 (dev)
+   - the bare apex domain
+   - any FRONTEND_URL / login domain / admin domain
+   - all currently-active user-tenant subdomains
+   - any third-party-callback domains (Stripe, Vexa, Moneybird, etc.)
+2. Each enumerated class MUST appear either explicitly in the allowlist OR with a documented bypass (a comment on the bypass line + a test asserting the bypass).
+3. The validator MUST have a dedicated test file in `klai-portal/backend/tests/` (or the equivalent service) covering at least one accept-case per enumerated class AND at least two reject-cases (random unknown, lookalike-substring). No "we'll add tests later" merges on auth surfaces — the v0.7.1 hotfix exists because of this exact decision.
+4. Configurable values (`settings.domain`, `settings.frontend_url`, etc.) MUST be derived from settings — never hardcoded strings — so dev / staging / prod work without code changes.
+5. PR description MUST include the rollback command. For validator-style hardening: `git revert <sha> && gh run watch && verify on core-01`. So when the regression hits prod, recovery is one command, not a panic.
