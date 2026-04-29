@@ -101,8 +101,33 @@ async def _auth_via_session_token(token: str, db: AsyncSession) -> PartnerAuthCo
     if not settings.widget_jwt_secret:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
 
+    # SPEC-SEC-HYGIENE-001 REQ-24.2: signing key is HKDF-derived per tenant,
+    # so we need the tenant slug BEFORE we can verify the signature. Peek at
+    # the unverified payload to read org_id, look up the slug, then re-decode
+    # with signature verification using the derived key. A forged token will
+    # fail the verified decode with InvalidSignatureError.
     try:
-        payload = decode_session_token(token, settings.widget_jwt_secret)
+        unverified = jwt.decode(token, options={"verify_signature": False})
+    except jwt.InvalidTokenError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR) from exc
+
+    org_id_unverified: int = unverified.get("org_id", 0)
+    if not org_id_unverified:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
+
+    # Load org for slug + zitadel_org_id and set RLS tenant.
+    org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id_unverified))
+    org = org_result.scalar_one_or_none()
+    if org is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
+
+    # Verified decode using the per-tenant derived key.
+    try:
+        payload = decode_session_token(
+            token,
+            master_secret=settings.widget_jwt_secret,
+            tenant_slug=org.slug,
+        )
     except jwt.ExpiredSignatureError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR) from exc
     except jwt.InvalidTokenError as exc:
@@ -115,11 +140,6 @@ async def _auth_via_session_token(token: str, db: AsyncSession) -> PartnerAuthCo
     if not org_id or not wgt_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
 
-    # Load org for zitadel_org_id and set RLS tenant
-    org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id))
-    org = org_result.scalar_one_or_none()
-    if org is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
     await set_tenant(db, org.id)
 
     # SPEC-SEC-006: DB cross-check widget_kb_access for real-time revocation.
