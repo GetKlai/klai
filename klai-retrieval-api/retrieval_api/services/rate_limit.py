@@ -91,6 +91,17 @@ async def check_and_increment(
             pipe.expire(key, 120)
             await pipe.execute()
         return True, 0
+    # @MX:WARN: fail-open on Redis errors. The branch below returns
+    #     ``(True, 0)`` (allow + no retry) for ANY redis exception,
+    #     bypassing rate-limit enforcement when redis is the failure mode.
+    # @MX:REASON: deliberate availability choice per SPEC-RETRIEVAL-RL-001
+    #     REQ-4.5. retrieval-api sits on the hot path for user queries;
+    #     fail-closed would take the service down whenever redis hiccups,
+    #     which is worse than briefly serving a few unmetered requests.
+    #     A future fail-closed-with-circuit-breaker variant is tracked as
+    #     SPEC-RETRIEVAL-RL-FAILCLOSED-001. Annotated under
+    #     SPEC-SEC-HYGIENE-001 REQ-42 so the next audit sees the rationale
+    #     and does not re-file this as a finding.
     except Exception:
         logger.exception("rate_limiter_degraded", reason="redis_unreachable", key=key)
         return True, 0

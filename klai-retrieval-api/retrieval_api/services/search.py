@@ -191,8 +191,12 @@ async def _search_notebook(
             ),
             timeout=5.0,
         )
-    except (TimeoutError, Exception) as exc:
-        logger.error("qdrant_search_failed", collection=settings.qdrant_focus_collection, error=str(exc))
+    except Exception:
+        # SPEC-SEC-HYGIENE-001 REQ-43: logger.exception preserves the
+        # traceback (TRY400/TRY401); the previous `error=str(exc)` discarded it.
+        logger.exception(
+            "qdrant_search_failed", collection=settings.qdrant_focus_collection
+        )
         raise
 
     return [
@@ -291,8 +295,10 @@ async def _search_knowledge(
             ),
             timeout=5.0,
         )
-    except (TimeoutError, Exception) as exc:
-        logger.error("qdrant_search_failed", collection=settings.qdrant_collection, error=str(exc))
+    except Exception:
+        # SPEC-SEC-HYGIENE-001 REQ-43: logger.exception preserves the
+        # traceback (TRY400/TRY401); the previous `error=str(exc)` discarded it.
+        logger.exception("qdrant_search_failed", collection=settings.qdrant_collection)
         raise
 
     return [
@@ -359,8 +365,11 @@ async def fetch_chunks_by_urls(
             ),
             timeout=3.0,
         )
-    except (TimeoutError, Exception) as exc:
-        logger.warning("link_expand_failed", error=str(exc))
+    except Exception:
+        # SPEC-SEC-HYGIENE-001 REQ-43: link expansion failure is expected on
+        # transient qdrant blips, so warning-level is correct; exc_info=True
+        # preserves the traceback that the previous `error=str(exc)` dropped.
+        logger.warning("link_expand_failed", exc_info=True)
         return []
 
     return [

@@ -40,10 +40,16 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "S", "RUF", "G", "LOG"]
+# SPEC-SEC-HYGIENE-001 REQ-43.4: TRY rules added so future regressions of
+# `logger.error(...)` inside `except` (TRY400) or `error=str(exc)`-style
+# traceback dropping (TRY401) are caught in CI.
+select = ["E", "F", "I", "UP", "B", "S", "RUF", "G", "LOG", "TRY"]
 ignore = [
     "S101",  # assert is fine in tests
     "S105",  # hardcoded passwords — too many false positives on config defaults
+    "TRY003",  # raise-vanilla-args — too noisy for our HTTPException patterns
+    "TRY300",  # try-consider-using-else — stylistic, not a safety issue
+    "TRY301",  # raise-within-try — needed when wrapping/translating exceptions
 ]
 
 [tool.pytest.ini_options]
