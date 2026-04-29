@@ -22,17 +22,25 @@ from app.api import auth as auth_module
 
 @pytest.fixture(autouse=True)
 def _reset_cache() -> object:
-    """Each test starts with a fresh tenant-slug cache, then RESTORES the
-    conftest-populated cache after the test so unrelated tests that ran
-    later (e.g. test_auth_security login flows) still see the populated
-    allowlist they expect.
+    """Each test starts with a fresh tenant-slug cache AND a fresh
+    `_system_callback_hosts` lru_cache, then RESTORES the conftest-populated
+    tenant-slug cache after the test so unrelated tests that run later
+    (e.g. test_auth_security login flows, test_idp_callback_provision)
+    still see the populated allowlist they expect.
+
+    The lru_cache on `_system_callback_hosts` is also cleared on entry AND
+    exit because tests in this file monkeypatch `settings.frontend_url`;
+    leaving a stale cached set after teardown would let the patched value
+    leak into later tests that import the same module.
     """
     saved_cache = auth_module._tenant_slug_cache
     saved_expiry = auth_module._tenant_slug_cache_expiry
     auth_module.invalidate_tenant_slug_cache()
+    auth_module._system_callback_hosts.cache_clear()
     yield
     auth_module._tenant_slug_cache = saved_cache
     auth_module._tenant_slug_cache_expiry = saved_expiry
+    auth_module._system_callback_hosts.cache_clear()
 
 
 def _patch_allowlist(slugs: set[str]) -> patch:
@@ -137,3 +145,110 @@ async def test_invalidate_clears_cache() -> None:
     assert s1 == {"voys"}
     assert s2 == {"voys", "newtenant"}
     assert call_count["n"] == 2
+
+
+# REQ-20.4: system-host bypass (FRONTEND_URL host) ------------------------- #
+#
+# The callback-URL allowlist must enumerate every legitimate hostname class
+# that a Zitadel-issued callback can resolve to. The 2026-04-29 prod outage
+# (see SPEC v0.7.1 HISTORY) was caused by REQ-20.1 covering only
+# tenant-slug + apex + localhost, missing the canonical login domain
+# (FRONTEND_URL host). REQ-20.4 introduces `_system_callback_hosts()` so the
+# bare-apex AND the login-domain pass before the slug allowlist is even
+# consulted.
+
+
+class TestSystemCallbackHosts:
+    """REQ-20.4: composition of the trusted-non-tenant host set."""
+
+    def test_includes_bare_apex(self) -> None:
+        with (
+            patch.object(auth_module.settings, "domain", "getklai.com"),
+            patch.object(auth_module.settings, "frontend_url", "https://my.getklai.com"),
+        ):
+            auth_module._system_callback_hosts.cache_clear()
+            assert "getklai.com" in auth_module._system_callback_hosts()
+
+    def test_includes_frontend_url_host(self) -> None:
+        with (
+            patch.object(auth_module.settings, "domain", "getklai.com"),
+            patch.object(auth_module.settings, "frontend_url", "https://my.getklai.com"),
+        ):
+            auth_module._system_callback_hosts.cache_clear()
+            assert "my.getklai.com" in auth_module._system_callback_hosts()
+
+    def test_returns_frozenset(self) -> None:
+        """Immutable so callers cannot accidentally mutate the cache."""
+        with (
+            patch.object(auth_module.settings, "domain", "getklai.com"),
+            patch.object(auth_module.settings, "frontend_url", "https://my.getklai.com"),
+        ):
+            auth_module._system_callback_hosts.cache_clear()
+            assert isinstance(auth_module._system_callback_hosts(), frozenset)
+
+    def test_handles_empty_frontend_url(self) -> None:
+        """If FRONTEND_URL is unset (dev), only the bare apex is in the set."""
+        with (
+            patch.object(auth_module.settings, "domain", "getklai.com"),
+            patch.object(auth_module.settings, "frontend_url", ""),
+        ):
+            auth_module._system_callback_hosts.cache_clear()
+            assert auth_module._system_callback_hosts() == frozenset({"getklai.com"})
+
+
+@pytest.mark.asyncio
+async def test_frontend_url_host_passes() -> None:
+    """REQ-20.4 regression: ``my.getklai.com`` (FRONTEND_URL host) is the
+    canonical login domain and must always pass even though ``my`` is not a
+    tenant slug.
+
+    Without this case, every TOTP-completing OIDC login fails 502 because
+    Zitadel always redirects through the FRONTEND_URL host first per
+    SPEC-AUTH-008. Originally triggered the 2026-04-29 prod outage.
+    """
+    with (
+        patch.object(auth_module.settings, "domain", "getklai.com"),
+        patch.object(auth_module.settings, "frontend_url", "https://my.getklai.com"),
+    ):
+        auth_module._system_callback_hosts.cache_clear()
+        # Empty slug allowlist on purpose: REQ-20.4 must short-circuit before
+        # the slug check fires. If the system-host bypass regresses, this 502s.
+        with _patch_allowlist(set()):
+            url = "https://my.getklai.com/api/auth/oidc/callback?code=abc"
+            result = await auth_module._validate_callback_url(url)
+        assert result == url
+
+
+@pytest.mark.asyncio
+async def test_frontend_url_host_passes_even_when_label_overlaps_tenant_slug() -> None:
+    """REQ-20.4 invariant: FRONTEND_URL host bypass is host-equality, not
+    label-overlap. Even if a tenant slug ``my`` existed, the bypass would
+    still work — and conversely, a tenant slug must not be able to spoof
+    the login host (``my.foreign.tld`` would still 502 because the host
+    is not in `_system_callback_hosts()`).
+    """
+    with (
+        patch.object(auth_module.settings, "domain", "getklai.com"),
+        patch.object(auth_module.settings, "frontend_url", "https://my.getklai.com"),
+    ):
+        auth_module._system_callback_hosts.cache_clear()
+        # Tenant slug "my" exists — irrelevant for system-host check.
+        with _patch_allowlist({"my", "voys"}):
+            url = "https://my.getklai.com/x"
+            result = await auth_module._validate_callback_url(url)
+        assert result == url
+
+
+@pytest.mark.asyncio
+async def test_apex_lookalike_still_rejected() -> None:
+    """Adversarial: ``getklai.com.attacker.tld`` must not pass even though
+    the bare apex appears as a substring in the hostname."""
+    with (
+        patch.object(auth_module.settings, "domain", "getklai.com"),
+        patch.object(auth_module.settings, "frontend_url", "https://my.getklai.com"),
+    ):
+        auth_module._system_callback_hosts.cache_clear()
+        with _patch_allowlist({"voys"}):
+            with pytest.raises(HTTPException) as exc_info:
+                await auth_module._validate_callback_url("https://getklai.com.attacker.tld/x")
+        assert exc_info.value.status_code == 502
