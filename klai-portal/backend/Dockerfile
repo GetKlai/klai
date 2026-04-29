@@ -14,6 +14,13 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 WORKDIR /repo
 COPY klai-libs/connector-credentials klai-libs/connector-credentials
 COPY klai-libs/image-storage klai-libs/image-storage
+# SPEC-SEC-INTERNAL-001 B1: klai-log-utils path-dep used by app/utils/response_sanitizer.
+COPY klai-libs/log-utils klai-libs/log-utils
+# SPEC-SEC-IDENTITY-ASSERT-001: identity-assert path-dep used by tests.
+# pyproject.toml lists it under [project.optional-dependencies].dev so
+# `uv sync --frozen --no-dev` does NOT install it. Copying anyway is a
+# small overhead and keeps the workspace consistent for future dev-deps.
+COPY klai-libs/identity-assert klai-libs/identity-assert
 COPY klai-portal/backend/pyproject.toml klai-portal/backend/pyproject.toml
 COPY klai-portal/backend/uv.lock klai-portal/backend/uv.lock
 

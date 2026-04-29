@@ -49,6 +49,16 @@ class PortalClient:
         self._secret = settings.portal_internal_secret
 
     def _headers(self) -> dict[str, str]:
+        # SPEC-SEC-INTERNAL-001 REQ-9.3 / AC-9.4: never emit ``Bearer ``
+        # (literal trailing space) on the wire. The startup validator on
+        # Settings enforces non-empty -- this guard is the second layer that
+        # also catches Settings.model_construct() bypass (used in some test
+        # fixtures) so the contract holds even when validation is skipped.
+        if not self._secret:
+            raise RuntimeError(
+                "PortalClient cannot send an empty Bearer secret -- portal_internal_secret "
+                "is empty (SPEC-SEC-INTERNAL-001 REQ-9.3)."
+            )
         return {"Authorization": f"Bearer {self._secret}"}
 
     async def get_connector_config(self, connector_id: uuid.UUID) -> PortalConnectorConfig:

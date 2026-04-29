@@ -18,6 +18,7 @@ injected. Streaming is preserved for SSE chat endpoints.
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator
 from typing import Final
 from urllib.parse import urlencode
@@ -67,6 +68,29 @@ _HOP_BY_HOP: Final[frozenset[str]] = frozenset(
     }
 )
 
+# SPEC-SEC-INTERNAL-001 REQ-3.1: explicit deny-list of secret-bearing headers.
+# A client-supplied value for any of these would otherwise survive the
+# hop-by-hop filter above and reach scribe / docs / retrieval upstreams,
+# which trust them as authenticated. The Authorization header that portal-api
+# injects (REQ-3.4) covers tenant identity; these never need to come from
+# the inbound request.
+_SECRET_HEADER_BLOCKLIST: Final[frozenset[str]] = frozenset(
+    {
+        "x-internal-secret",
+        "x-klai-internal-secret",
+        "x-retrieval-api-internal-secret",
+        "x-scribe-api-internal-secret",
+    }
+)
+
+# SPEC-SEC-INTERNAL-001 REQ-3.2: forward-compatible catch-all for any
+# future secret-bearing header name. Conservatively scoped to names that
+# clearly signal "internal trust boundary" to avoid stripping a
+# legitimate business-domain header that happens to contain ``token``.
+_SECRET_HEADER_REGEX: Final[re.Pattern[str]] = re.compile(
+    r"(?i)^(x-)?(klai-internal|internal-auth|internal-token)",
+)
+
 # Response headers we do NOT pass through to the client. Cookies from upstream
 # must not leak into the portal origin — upstreams are behind the BFF, the
 # client never sets or reads cookies on them directly.
@@ -110,11 +134,34 @@ async def _close_client() -> None:
         _http_client = None
 
 
-def _build_upstream_headers(request: Request, session: SessionContext) -> dict[str, str]:
-    """Copy incoming headers minus hop-by-hop + cookies, inject Bearer."""
+def _build_upstream_headers(
+    request: Request,
+    session: SessionContext,
+    *,
+    service: str,
+) -> dict[str, str]:
+    """Copy incoming headers minus hop-by-hop + cookies, inject Bearer.
+
+    SPEC-SEC-INTERNAL-001 REQ-3:
+    - Hop-by-hop + cookie + authorization (RFC 7230 + portal-injected) dropped.
+    - Secret-bearing client headers stripped via ``_SECRET_HEADER_BLOCKLIST``
+      and ``_SECRET_HEADER_REGEX``. An attempt to inject one is logged at
+      ``info`` with ``event=proxy_header_injection_blocked`` -- the value is
+      never logged.
+    - The strip happens BEFORE the Authorization injection (REQ-3.4), so a
+      client cannot influence the Bearer token that portal-api forwards.
+    """
     headers: dict[str, str] = {}
     for k, v in request.headers.items():
-        if k.lower() in _HOP_BY_HOP:
+        lowered = k.lower()
+        if lowered in _HOP_BY_HOP:
+            continue
+        if lowered in _SECRET_HEADER_BLOCKLIST or _SECRET_HEADER_REGEX.match(lowered):
+            logger.info(
+                "proxy_header_injection_blocked",
+                header=lowered,
+                service=service,
+            )
             continue
         headers[k] = v
     headers["Authorization"] = f"Bearer {session.access_token}"
@@ -159,7 +206,7 @@ async def _proxy(
     if query:
         upstream_url = f"{upstream_url}?{query}"
 
-    headers = _build_upstream_headers(request, session)
+    headers = _build_upstream_headers(request, session, service=service)
     body = await request.body()
 
     client = _get_client()

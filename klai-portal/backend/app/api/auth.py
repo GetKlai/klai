@@ -65,6 +65,7 @@ from app.services.events import emit_event
 from app.services.redis_client import get_redis_pool
 from app.services.request_ip import resolve_caller_ip_subnet
 from app.services.zitadel import zitadel
+from app.utils.response_sanitizer import sanitize_response_body  # SPEC-SEC-INTERNAL-001 REQ-4
 
 if TYPE_CHECKING:
     import redis.asyncio as aioredis
@@ -395,7 +396,7 @@ async def _finalize_and_set_cookie(
             session_token=session_token,
         )
     except httpx.HTTPStatusError as exc:
-        resp_text = exc.response.text
+        resp_text = sanitize_response_body(exc)
         # Auth request already handled (stale browser tab / back button / double-submit)
         if exc.response.status_code == 400 and "already been handled" in resp_text:
             logger.warning("finalize_auth_request: stale auth request %s", auth_request_id)
@@ -926,7 +927,7 @@ async def login(
     try:
         session = await zitadel.create_session_with_password(body.email, body.password)
     except httpx.HTTPStatusError as exc:
-        logger.exception("create_session failed %s: %s", exc.response.status_code, exc.response.text)
+        logger.exception("create_session failed %s: %s", exc.response.status_code, sanitize_response_body(exc))
         if exc.response.status_code in (400, 401, 404, 412):
             await audit.log_event(
                 org_id=0,

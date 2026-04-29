@@ -10,6 +10,7 @@ import time
 import httpx
 
 from app.core.config import settings
+from app.utils.response_sanitizer import sanitize_response_body  # SPEC-SEC-INTERNAL-001 REQ-4
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ class ZitadelClient:
                 response.request.method,
                 response.url.path,
                 response.status_code,
-                response.text[:200],
+                sanitize_response_body(response, max_len=200),
             )
 
     _USERINFO_TTL = 60  # seconds
