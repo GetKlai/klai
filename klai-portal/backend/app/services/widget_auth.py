@@ -39,6 +39,11 @@ _HKDF_SALT = b"klai-widget-jwt-v1"
 _HKDF_LENGTH = 32  # 32 bytes — appropriate for HS256.
 
 
+# @MX:NOTE: Cryptographic security boundary — HKDF-derived per-tenant signing key.
+# @MX:SPEC: SPEC-SEC-HYGIENE-001 REQ-24.1 (HKDF-SHA256, master + slug -> 32-byte HS256 key).
+#   Determinism is the invariant: same (master, slug) MUST yield byte-equal output, and
+#   different slug or different master MUST yield different output. Changing the salt
+#   (`_HKDF_SALT`) or the length silently invalidates every issued widget JWT.
 def _derive_tenant_key(master_secret: str, tenant_slug: str) -> bytes:
     """SPEC-SEC-HYGIENE-001 REQ-24.1: HKDF-SHA256 per-tenant signing key.
 
