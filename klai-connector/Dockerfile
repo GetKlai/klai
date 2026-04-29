@@ -16,6 +16,9 @@ WORKDIR /repo
 COPY klai-libs/connector-credentials klai-libs/connector-credentials
 # SPEC-KB-IMAGE-002 Fase 2: shared image-storage package path-dep
 COPY klai-libs/image-storage klai-libs/image-storage
+# SPEC-SEC-INTERNAL-001 B3: klai-log-utils path-dep (sync_engine.error_details
+# sanitiser + portal_client / knowledge_ingest secret guards).
+COPY klai-libs/log-utils klai-libs/log-utils
 COPY klai-connector/pyproject.toml klai-connector/pyproject.toml
 COPY klai-connector/uv.lock klai-connector/uv.lock
 

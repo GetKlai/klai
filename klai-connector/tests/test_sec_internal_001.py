@@ -8,10 +8,8 @@ PortalClient / KnowledgeIngestClient runtime guards that catch the
 
 from __future__ import annotations
 
-from pydantic import ValidationError
-
 import pytest
-
+from pydantic import ValidationError
 
 _VALID_SETTINGS_KWARGS: dict[str, str] = {
     # Required pydantic-settings fields with no default.
