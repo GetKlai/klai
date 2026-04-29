@@ -278,10 +278,19 @@ class ZitadelClient:
         resp.raise_for_status()
 
     async def find_user_id_by_email(self, email: str) -> str | None:
-        """Return the Zitadel userId for the given email, or None if not found."""
+        """Return the Zitadel userId for the given email, or None if not found.
+
+        Email matching is case-insensitive: Zitadel stores loginName with the
+        original case the user signed up with, but email addresses are
+        case-insensitive per RFC 5321 §2.4. Without IGNORE_CASE, a user typing
+        "steven@..." is silently not found if their loginName is "Steven@...",
+        which breaks the password-reset flow (returns 204 without sending mail).
+        """
         resp = await self._http.post(
             "/v2/users",
-            json={"queries": [{"loginNameQuery": {"loginName": email, "method": "TEXT_QUERY_METHOD_EQUALS"}}]},
+            json={
+                "queries": [{"loginNameQuery": {"loginName": email, "method": "TEXT_QUERY_METHOD_EQUALS_IGNORE_CASE"}}]
+            },
         )
         resp.raise_for_status()
         result = resp.json().get("result", [])
@@ -361,10 +370,16 @@ class ZitadelClient:
     # ── MFA / TOTP ────────────────────────────────────────────────────────────
 
     async def find_user_by_email(self, email: str) -> tuple[str, str] | None:
-        """Return (userId, orgId) for the given email, or None if not found."""
+        """Return (userId, orgId) for the given email, or None if not found.
+
+        Case-insensitive — see find_user_id_by_email for rationale. Used by
+        login + MFA flows where the user types their email manually.
+        """
         resp = await self._http.post(
             "/v2/users",
-            json={"queries": [{"loginNameQuery": {"loginName": email, "method": "TEXT_QUERY_METHOD_EQUALS"}}]},
+            json={
+                "queries": [{"loginNameQuery": {"loginName": email, "method": "TEXT_QUERY_METHOD_EQUALS_IGNORE_CASE"}}]
+            },
         )
         resp.raise_for_status()
         result = resp.json().get("result", [])
