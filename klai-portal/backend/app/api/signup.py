@@ -36,6 +36,7 @@ from app.services.bff_session import SessionService
 from app.services.events import emit_event
 from app.services.provisioning import provision_tenant
 from app.services.request_ip import resolve_caller_ip_subnet
+from app.services.signup_email_rl import check_signup_email_rate_limit
 from app.services.zitadel import zitadel
 
 logger = logging.getLogger(__name__)
@@ -105,6 +106,16 @@ def _to_slug(name: str, suffix: str = "") -> str:
 async def signup(
     body: SignupRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)
 ) -> SignupResponse:
+    # SPEC-SEC-HYGIENE-001 REQ-19.5: per-email rate-limit check runs AFTER
+    # Pydantic validation (so malformed emails never hit Redis) and BEFORE
+    # Zitadel org-creation (so rejected attempts never consume Zitadel quota).
+    # Fail-open on Redis unreachable — see REQ-19.4 + check_signup_email_rate_limit.
+    if not await check_signup_email_rate_limit(body.email):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many signup attempts for this email. Please try again tomorrow.",
+        )
+
     # 1. Create Zitadel org
     try:
         org_data = await zitadel.create_org(_slugify(body.company_name))
