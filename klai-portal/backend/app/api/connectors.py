@@ -576,7 +576,14 @@ async def trigger_sync(
     await assert_can_add_item_to_kb(kb=kb, org=org)
 
     try:
-        sync_run = await klai_connector_client.trigger_sync(connector_id)
+        # SPEC-SEC-TENANT-001 REQ-8.2: pass the authenticated session's
+        # Zitadel resourceowner as X-Org-ID so the connector can filter
+        # the sync run by tenancy. Source MUST be PortalOrg.zitadel_org_id
+        # — never a body field, never a query-string parameter.
+        sync_run = await klai_connector_client.trigger_sync(
+            connector_id,
+            org_id=org.zitadel_org_id,
+        )
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == status.HTTP_409_CONFLICT:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Sync already running") from exc
@@ -622,7 +629,12 @@ async def list_sync_runs(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
 
     try:
-        return await klai_connector_client.get_sync_runs(connector_id, limit=limit)
+        # SPEC-SEC-TENANT-001 REQ-8.2: org_id sourced from PortalOrg.zitadel_org_id.
+        return await klai_connector_client.get_sync_runs(
+            connector_id,
+            org_id=org.zitadel_org_id,
+            limit=limit,
+        )
     except httpx.HTTPError as exc:
         logger.exception("Failed to reach klai-connector for sync history of %s", connector_id)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Sync service unavailable") from exc
