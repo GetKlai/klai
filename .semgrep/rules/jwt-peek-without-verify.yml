@@ -1,0 +1,112 @@
+# SPEC-SEC-AUDIT-2026-04 — finding B4
+#
+# Custom Semgrep rule that catches the HKDF-per-tenant JWT "peek-then-verify"
+# pattern when the verified decode has been removed. The default
+# `python.jwt.security.unverified-jwt-decode` rule is too noisy for klai
+# because partner_dependencies.py legitimately needs an unverified peek to
+# read `org_id` BEFORE deriving the per-tenant signing key — that rule is
+# suppressed via `# nosemgrep` at the call site.
+#
+# This rule is the regression guard. It fires only when an unverified
+# `jwt.decode(..., options={"verify_signature": False})` is NOT followed by
+# any of the recognised verified-decode shapes. If a future refactor removes
+# the verified decode at line 137 of widget_auth.py (or whichever wrapper a
+# new caller uses), the peek becomes a pure authentication bypass and this
+# rule fails CI.
+#
+# The verified-decode follow-throughs we accept (any one suppresses the
+# finding):
+#
+#   1. `decode_session_token(...)` — the canonical klai widget-token wrapper
+#      that lives in `klai-portal/backend/app/services/widget_auth.py` and
+#      enforces signature + algorithm + tenant binding.
+#   2. `jwt.decode(..., options={"verify_signature": True})` — explicit
+#      re-decode with verification enabled. (Pyjwt's default is True, so a
+#      bare `jwt.decode(token, key, ...)` without options also matches via
+#      the bare-decode pattern below.)
+#   3. `jwt.decode($T, $KEY, ...)` — bare positional-key decode. PyJWT
+#      enforces signature when a key argument is provided.
+#   4. `jwt.decode($T, key=$KEY, ...)` — keyword-key form of (3).
+#
+# False-negative bias: we prefer to MISS regressions rather than fire on
+# legitimate code. A reviewer who hits this rule on real peek-then-verify
+# code should add a fifth pattern-not branch for the new wrapper helper —
+# DO NOT loosen the primary `pattern` to fix a false positive, that would
+# weaken the regression guard for unrelated code paths.
+#
+# See:
+#   - SPEC-SEC-HYGIENE-001 REQ-24 (HKDF-per-tenant signing key derivation)
+#   - SPEC-SEC-AUDIT-2026-04 finding B4 (re-audit follow-up)
+#   - klai-portal/backend/app/api/partner_dependencies.py lines 100-130
+#     (canonical peek-then-verify pattern)
+#   - klai-portal/backend/app/services/widget_auth.py:137
+#     (decode_session_token — the verified follow-through)
+
+rules:
+  - id: jwt-peek-without-verify
+    message: |
+      JWT unverified decode (verify_signature=False) is not followed by any
+      recognised verified decode in the same function. The HKDF-per-tenant
+      pattern (SPEC-SEC-HYGIENE-001 REQ-24) requires three steps:
+        1. unverified peek to read org_id / tenant
+        2. derive signing key from the tenant slug (HKDF)
+        3. VERIFIED decode using the derived key
+      If you have removed step 3, this is now an authentication bypass —
+      a forged token will be accepted on its claimed `org_id` value.
+      If you are introducing a new verified-decode wrapper, add it as a
+      pattern-not branch in .semgrep/rules/jwt-peek-without-verify.yml.
+      See SPEC-SEC-AUDIT-2026-04 finding B4.
+    severity: ERROR
+    languages: [python]
+    patterns:
+      # Primary pattern: unverified peek-decode anywhere in the file.
+      - pattern: |
+          $UNVERIFIED = jwt.decode(..., options={"verify_signature": False})
+      # Suppress when followed by `decode_session_token(...)` — the
+      # canonical klai verified wrapper.
+      - pattern-not: |
+          $UNVERIFIED = jwt.decode(..., options={"verify_signature": False})
+          ...
+          decode_session_token(...)
+      - pattern-not: |
+          $UNVERIFIED = jwt.decode(..., options={"verify_signature": False})
+          ...
+          $X = decode_session_token(...)
+      # Suppress when followed by an explicit `verify_signature=True`
+      # re-decode (rare but legal).
+      - pattern-not: |
+          $UNVERIFIED = jwt.decode(..., options={"verify_signature": False})
+          ...
+          jwt.decode(..., options={"verify_signature": True})
+      - pattern-not: |
+          $UNVERIFIED = jwt.decode(..., options={"verify_signature": False})
+          ...
+          $Y = jwt.decode(..., options={"verify_signature": True})
+      # Suppress when followed by a bare-decode that supplies a key
+      # positionally (PyJWT enforces signature when a key is present).
+      - pattern-not: |
+          $UNVERIFIED = jwt.decode(..., options={"verify_signature": False})
+          ...
+          jwt.decode($T, $KEY, ...)
+      - pattern-not: |
+          $UNVERIFIED = jwt.decode(..., options={"verify_signature": False})
+          ...
+          $Y = jwt.decode($T, $KEY, ...)
+      # Suppress when followed by a keyword-form decode `key=...`.
+      - pattern-not: |
+          $UNVERIFIED = jwt.decode(..., options={"verify_signature": False})
+          ...
+          jwt.decode(..., key=$KEY, ...)
+      - pattern-not: |
+          $UNVERIFIED = jwt.decode(..., options={"verify_signature": False})
+          ...
+          $Y = jwt.decode(..., key=$KEY, ...)
+    metadata:
+      category: security
+      cwe: "CWE-345: Insufficient Verification of Data Authenticity"
+      owasp: "A02:2021 - Cryptographic Failures"
+      spec: SPEC-SEC-AUDIT-2026-04
+      finding: B4
+      references:
+        - https://github.com/GetKlai/klai/blob/main/klai-portal/backend/app/api/partner_dependencies.py
+        - https://github.com/GetKlai/klai/blob/main/klai-portal/backend/app/services/widget_auth.py
