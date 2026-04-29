@@ -212,8 +212,16 @@ class Settings(BaseSettings):
     # Whisper server (internal -- for direct post-meeting transcription)
     whisper_server_url: str = "http://whisper-server:8000"
 
-    # Dev mode — enables Swagger UI and /openapi.json; NEVER enable in production
+    # Dev mode — enables Swagger UI and /openapi.json; NEVER enable in production.
+    # Gated on portal_env in app.main (SPEC-SEC-HYGIENE-001 REQ-28.1) and at
+    # Settings construction (REQ-28.3 — see _no_debug_in_production validator).
     debug: bool = False
+
+    # SPEC-SEC-HYGIENE-001 REQ-28.2: explicit deployment-environment marker.
+    # Conservative default "production" so an unset env var on a fresh deploy
+    # does NOT expose /docs by accident. Accepts: "development" | "staging"
+    # | "production". Local-dev .env sets PORTAL_ENV=development.
+    portal_env: str = "production"
 
     # Auth dev mode — bypasses Zitadel authentication for local development.
     # REQUIRES debug=True as additional safeguard. NEVER enable in production.
@@ -316,6 +324,34 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Missing required: MONEYBIRD_WEBHOOK_TOKEN (SPEC-SEC-WEBHOOK-001 REQ-3). "
                 "Set it in SOPS before starting portal-api, or unregister the Moneybird router."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _no_debug_in_production(self) -> "Settings":
+        """SPEC-SEC-HYGIENE-001 REQ-28.3: refuse to boot when DEBUG=true and
+        PORTAL_ENV=production.
+
+        DEBUG=true exposes Swagger UI and OpenAPI surface, and also enables
+        `auth_dev_mode` (which bypasses Zitadel) when set together. The soft
+        gate at app.main._should_expose_docs (REQ-28.1) is the runtime fallback;
+        this validator is the hard guard that prevents the catastrophic combo
+        from ever booting. The (debug=True, portal_env="production") pairing
+        is unambiguously a misconfiguration — there is no legitimate reason
+        to ship a production deployment with Swagger exposed.
+
+        Env-parity (see pitfall `validator-env-parity`): both PORTAL_ENV and
+        DEBUG default to safe values ("production" and False respectively),
+        so this validator NEVER fires on a missing env var — only on the
+        explicit catastrophic pairing. No klai-infra/core-01/.env.sops
+        change is required for this validator to land.
+        """
+        if self.debug and self.portal_env == "production":
+            raise ValueError(
+                "DEBUG=true is forbidden when PORTAL_ENV=production "
+                "(SPEC-SEC-HYGIENE-001 REQ-28.3). Either set PORTAL_ENV "
+                "to 'development' or 'staging' for the deployment that "
+                "needs Swagger UI, or unset DEBUG."
             )
         return self
 
