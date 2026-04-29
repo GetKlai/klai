@@ -14,13 +14,13 @@ Redis. ``_require_portal_call`` is monkey-patched to a no-op so the
 test does not need to thread the portal-secret through the auth
 middleware (that path is covered by ``test_auth_middleware_*.py``).
 
-Implementation note: ``trigger_sync`` rejects missing-X-Org-ID at HTTP
-400 even when ``sync_require_org_id=False`` because the new SyncRun
-row carries a ``NOT NULL org_id`` column — the v0.5.0 v0.5.0
-implementation (this commit) makes that fail-fast deterministic
-instead of letting it 500 inside SQLAlchemy. The transition-period
-graceful degradation in REQ-7.6 therefore applies to READ endpoints
-only, which the tests below pin.
+Implementation note (v0.5.1): ``trigger_sync`` rejects missing-X-Org-ID
+at HTTP 400 even when ``sync_require_org_id=False``. The column itself
+is nullable post-migration 006 (no backfill — historical rows keep
+NULL), but persisting a NEW row with org_id=NULL would create an
+orphan invisible to every tenant's per-org filter. Fail-fast at the
+handler keeps the new-row contract clean. Transition-period graceful
+degradation in REQ-7.6 therefore applies to READ endpoints only.
 """
 
 from __future__ import annotations
@@ -241,13 +241,15 @@ def test_list_sync_runs_missing_org_id_transition_on_returns_400(
 def test_trigger_sync_missing_org_id_returns_400_regardless_of_flag(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """REQ-7.4 + v0.5.0 implementation: trigger requires X-Org-ID always.
+    """REQ-7.4 / v0.5.1: trigger requires X-Org-ID always.
 
-    The new SyncRun row carries a NOT NULL org_id column (REQ-7.1), so
-    the trigger handler cannot create a row without the header. Rather
-    than let SQLAlchemy 500 on the constraint violation, the handler
-    returns a deterministic 400 — the same shape REQ-7.6 mandates for
-    reads after the transition closes. This ensures fail-fast even when
+    Migration 006 made org_id nullable (no backfill — historical rows
+    keep NULL), so a new SyncRun with org_id=NULL would technically
+    succeed at the schema layer. But such a row is invisible to every
+    tenant's per-org filter and effectively orphaned at creation time.
+    The handler fail-fasts with a deterministic 400 to keep the new-row
+    contract clean — same shape REQ-7.6 mandates for reads after the
+    transition closes. This ensures fail-fast even when
     sync_require_org_id is still False.
     """
     client = _build_client(

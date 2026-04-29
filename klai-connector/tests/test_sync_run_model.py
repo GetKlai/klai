@@ -21,18 +21,27 @@ from app.models.sync_run import SyncRun
 
 
 def test_sync_run_model_declares_org_id_column() -> None:
-    """REQ-7.2: org_id is a VARCHAR(255), NOT NULL, indexed."""
+    """REQ-7.2 (v0.5.1): org_id is a VARCHAR(255), nullable, indexed.
+
+    Nullable because migration 006 does NOT backfill historical rows —
+    those keep NULL and fall outside per-org filters. trigger_sync
+    requires X-Org-ID for every new row (REQ-7.4), so the column is
+    effectively NOT NULL on the write path even though the schema
+    constraint is relaxed.
+    """
     column = SyncRun.__table__.c.org_id
 
     assert isinstance(column.type, String), (
-        f"REQ-7.2 (v0.5.0): SyncRun.org_id must be String, got {type(column.type).__name__}. "
-        "Type was reconciled from int to Zitadel-resourceowner string in v0.5.0 to match "
-        "Connector.org_id (migration 003_org_id_string) and PortalOrg.zitadel_org_id."
+        f"REQ-7.2: SyncRun.org_id must be String, got {type(column.type).__name__}. "
+        "Type matches Connector.org_id (migration 003_org_id_string) and PortalOrg.zitadel_org_id."
     )
     assert column.type.length == 255, (
         f"REQ-7.2: SyncRun.org_id length must be 255 to match Connector.org_id, got {column.type.length}."
     )
-    assert column.nullable is False, "REQ-7.1: SyncRun.org_id must be NOT NULL."
+    assert column.nullable is True, (
+        "REQ-7.1 (v0.5.1): SyncRun.org_id is nullable. Historical rows keep NULL "
+        "(no backfill); new rows populated by trigger_sync via X-Org-ID."
+    )
     assert column.index is True, "REQ-7.2: SyncRun.org_id must be indexed."
 
 
