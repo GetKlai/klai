@@ -7,11 +7,28 @@ VALID_ASSERTION_MODES: frozenset[str] = frozenset(get_args(AssertionMode))
 
 
 class IngestRequest(BaseModel):
-    org_id: str          # Zitadel org ID (used as Qdrant tenant scope)
+    # TRUSTED — caller MUST have verified identity before forwarding these fields.
+    # See SPEC-SEC-AUDIT-2026-04 C3 and the @MX:NOTE on the /ingest/v1/document route
+    # handler in routes/ingest.py for the full caller contract.
+    org_id: str = Field(
+        ...,
+        description=(
+            "TRUSTED — caller-asserted Zitadel org ID. "
+            "Caller MUST verify identity upstream before forwarding. "
+            "Reference: SPEC-SEC-AUDIT-2026-04 C3."
+        ),
+    )
     kb_slug: str         # e.g. "personal"
     path: str            # e.g. "my-note.md" (relative within KB)
     content: str = Field(max_length=500_000)  # Full markdown content (with optional frontmatter)
-    user_id: str | None = None  # Set for user-scoped personal KB
+    user_id: str | None = Field(
+        default=None,
+        description=(
+            "TRUSTED — caller-asserted user ID for personal KB scope. "
+            "Caller MUST verify identity upstream before forwarding. "
+            "Reference: SPEC-SEC-AUDIT-2026-04 C3."
+        ),
+    )
     source_type: str | None = None  # e.g. "docs", "connector", "crawl"
     content_type: str = "unknown"  # e.g. "kb_article", "meeting_transcript", "pdf_document"
     skip_chunking: bool = False  # True when adapter provides pre-chunked text
