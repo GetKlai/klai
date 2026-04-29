@@ -43,6 +43,11 @@ class FakeKbAccessRow:
 class FakeOrg:
     id: int = 42
     zitadel_org_id: str = "zit-org-42"
+    # SPEC-SEC-HYGIENE-001 REQ-24: per-tenant widget JWT key derives from
+    # tenant slug, so partner_dependencies needs `org.slug` available on
+    # the row. Hard-coded value mirrors the populated allowlist set in
+    # conftest.py so any downstream callback validation passes too.
+    slug: str = "acme"
 
 
 def _make_request(token: str | None = None) -> MagicMock:
@@ -305,20 +310,31 @@ class FakeWidget:
 _TEST_WIDGET_SECRET = "test-widget-secret-at-least-32-bytes-long"
 
 
-def _make_jwt(wgt_id: str = "wgt_abcdef0123456789", org_id: int = 42, kb_ids: list[int] | None = None) -> str:
-    """Encode a widget session JWT using the test settings secret."""
-    import jwt as _jwt
+def _make_jwt(
+    wgt_id: str = "wgt_abcdef0123456789",
+    org_id: int = 42,
+    kb_ids: list[int] | None = None,
+    tenant_slug: str = "acme",
+) -> str:
+    """Encode a widget session JWT using the production helper.
 
+    SPEC-SEC-HYGIENE-001 REQ-24: tokens are signed with an HKDF-derived
+    per-tenant key, so the test must use the same `generate_session_token`
+    code path as production. `tenant_slug` defaults to ``"acme"`` to match
+    `FakeOrg.slug`, so `partner_dependencies._auth_via_session_token` (which
+    looks up `org.slug` and re-derives the same key) verifies successfully.
+    """
     from app.core.config import settings
+    from app.services.widget_auth import generate_session_token
 
-    payload = {
-        "wgt_id": wgt_id,
-        "org_id": org_id,
-        "kb_ids": kb_ids if kb_ids is not None else [1, 2],
-    }
-    # Use the real secret if configured, otherwise a test stand-in.
     secret = settings.widget_jwt_secret or _TEST_WIDGET_SECRET
-    return _jwt.encode(payload, secret, algorithm="HS256")
+    return generate_session_token(
+        wgt_id=wgt_id,
+        org_id=org_id,
+        kb_ids=kb_ids if kb_ids is not None else [1, 2],
+        secret=secret,
+        tenant_slug=tenant_slug,
+    )
 
 
 def _session_patches(widget_secret: str = _TEST_WIDGET_SECRET):

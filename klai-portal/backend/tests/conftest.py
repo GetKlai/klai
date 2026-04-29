@@ -108,5 +108,6 @@ _auth_module._tenant_slug_cache = {
     "bravo",
     "test",
     "acme",
+    "portal",  # test_idp_callback_provision uses portal.getklai.com as the IDP-finalised callback host
 }
 _auth_module._tenant_slug_cache_expiry = math.inf
