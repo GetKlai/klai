@@ -1,9 +1,9 @@
 ---
 id: SPEC-SEC-TENANT-001
-version: 0.5.0
+version: 0.5.1
 status: draft
 created: 2026-04-24
-updated: 2026-04-28
+updated: 2026-04-29
 author: Mark Vletter
 priority: high
 tracker: SPEC-SEC-AUDIT-2026-04
@@ -12,6 +12,42 @@ tracker: SPEC-SEC-AUDIT-2026-04
 # SPEC-SEC-TENANT-001: Tenant Scoping + Zitadel Role Mapping
 
 ## HISTORY
+
+### v0.5.1 (2026-04-29)
+- **No backfill on migration 006.** v0.5.0 declared an intra-DB
+  ``UPDATE … FROM connector.connectors`` backfill plus a runbook
+  pre-step for orphan cleanup. v0.5.1 drops both. Migration 006 is
+  reduced to ``ADD COLUMN org_id VARCHAR(255) NULL`` plus the
+  ``ix_sync_runs_org_id`` index — pure DDL, no data migration, no
+  pre-flight runbook step. Historical ``sync_runs`` rows keep
+  ``org_id IS NULL`` and fall outside per-org filters; pre-deploy
+  sync history becomes invisible to every tenant after deploy.
+  Acceptable because (a) sync_runs is operational/audit data — no
+  business state lost, (b) ``trigger_sync`` always populates org_id
+  on new rows (handler requires X-Org-ID — see REQ-7.4 and
+  v0.5.1 trigger_sync note below), (c) the cross-DB / orphan-cleanup
+  complexity disappears with no functional cost.
+- **REQ-7.1 / REQ-7.2 nullable:** ``sync_runs.org_id`` is nullable
+  post-migration. ``SyncRun.org_id`` is ``Mapped[str | None]``
+  accordingly. A future SPEC may flip the column to NOT NULL once
+  historical rows age out of retention; until then nullable is the
+  right contract.
+- **REQ-7.6 WRITE-handler refinement:** ``trigger_sync`` returns HTTP
+  400 on missing X-Org-ID **regardless of the transition flag**. The
+  literal v0.5.0 "proceed without filtering" branch would persist a
+  row with org_id=NULL — succeeds at the schema layer (column is
+  nullable per above) but produces an orphaned row invisible to every
+  per-org filter. Fail-fast at the handler keeps the new-row contract
+  clean. WARN ``event="sync_missing_org_id"`` still fires for
+  VictoriaLogs visibility. READ handlers (list_sync_runs,
+  get_sync_run) keep the v0.5.0 graceful degradation.
+- Acceptance A-7 (backfill rowcount verification) is REMOVED. With no
+  backfill there is nothing to verify; migration is pure DDL. A-5,
+  A-6, A-8 unchanged in shape; A-5 now asserts ``column.nullable is
+  True``; A-8 gains a ``test_trigger_sync_missing_org_id_returns_400_regardless_of_flag``
+  case for the WRITE-side refinement.
+- Phase 3 implementation lands on PR #206; this SPEC bump lands on
+  PR #200 to keep the SPEC and shipped behaviour paired.
 
 ### v0.5.0 (2026-04-28)
 - **Industry-aligned authority model: portal-as-authorization, IDP-as-identity.**
@@ -321,57 +357,68 @@ tenant-scoped model.
 
 ### REQ-7: klai-connector SyncRun org_id column + org-scoped handlers
 
-The klai-connector service SHALL add an `org_id: str NOT NULL` column to
-the `SyncRun` model and SHALL filter every sync-route handler query by
-`org_id` sourced from a trusted channel, so that portal-secret possession
-alone cannot read or trigger sync runs across tenants.
+The klai-connector service SHALL add an `org_id` column to the
+`SyncRun` model and SHALL filter every sync-route handler query by
+`org_id` sourced from a trusted channel, so that portal-secret
+possession alone cannot read or trigger sync runs across tenants.
 
-- **REQ-7.1:** THE `connector.sync_runs` table SHALL gain an `org_id
-  VARCHAR(255) NOT NULL` column via a new Alembic migration, consistent
-  with the existing `connector.connectors.org_id` type (set by migration
-  `003_org_id_string`). A backfill step within the same migration SHALL
-  populate existing rows via an intra-DB join against
-  `connector.connectors` through `connector_id`, using
-  `connector.connectors.org_id` (the Zitadel resourceowner string) as
-  the source of truth. The column SHALL be created nullable, backfilled,
-  then altered to `NOT NULL` in a single migration transaction. The
-  intra-DB shape eliminates the cross-DB script described in v0.3.0
-  research §8.6 — the canonical backfill is a single SQL statement:
-  `UPDATE connector.sync_runs r SET org_id = c.org_id FROM
-  connector.connectors c WHERE r.connector_id = c.id`.
-- **REQ-7.2:** THE `SyncRun` SQLAlchemy model
+- **REQ-7.1 (v0.5.1):** THE `connector.sync_runs` table SHALL gain an
+  `org_id VARCHAR(255) NULL` column plus an `ix_sync_runs_org_id`
+  index via a new Alembic migration. Type matches the existing
+  `connector.connectors.org_id` (set by migration `003_org_id_string`)
+  — the Zitadel resourceowner string. **No backfill.** Historical
+  rows pre-date the column and keep `org_id IS NULL`; per-org filters
+  do not match NULL and those rows are invisible to every tenant
+  after deploy. Acceptable because (a) `sync_runs` is operational /
+  audit data — no business state lost, (b) `trigger_sync` populates
+  `org_id` for every NEW row (handler requires X-Org-ID per
+  REQ-7.4 + REQ-2.1 of v0.5.1 trigger_sync rationale below). A
+  future SPEC may flip the column to `NOT NULL` once historical rows
+  age out of retention.
+- **REQ-7.2 (v0.5.1):** THE `SyncRun` SQLAlchemy model
   (`klai-connector/app/models/sync_run.py`) SHALL declare `org_id:
-  Mapped[str] = mapped_column(String(255), nullable=False, index=True)`
-  without a `ForeignKey` — consistent with the existing
-  `connector_id`-no-FK convention documented in the model docstring
-  ("portal is source of truth"), and consistent with the type chosen
-  for `Connector.org_id`.
+  Mapped[str | None] = mapped_column(String(255), nullable=True,
+  index=True)` without a `ForeignKey` — consistent with the existing
+  `connector_id`-no-FK convention ("portal is source of truth") and
+  with the schema constraint chosen in REQ-7.1.
 - **REQ-7.3:** Every handler in `klai-connector/app/routes/sync.py`
   (`trigger_sync`, `list_sync_runs`, `get_sync_run`) SHALL add
-  `SyncRun.org_id == org_id` to its query filter. The `org_id` SHALL be
-  read from a portal-supplied `X-Org-ID` request header by a new
-  helper (`_require_portal_org_id(request) -> str`) that complements
-  the existing `_require_portal_call(request)`. The header value is the
-  Zitadel resourceowner string; the helper performs no further parsing.
-- **REQ-7.4:** THE `trigger_sync` handler SHALL persist `org_id` on the
-  new `SyncRun` row. THE active-sync guard (`SyncRun.status ==
-  SyncStatus.RUNNING` check at `sync.py:47-54`) SHALL also be scoped by
-  `org_id` so that one tenant's running sync cannot block another
+  `SyncRun.org_id == org_id` to its query filter when the asserted
+  `org_id` is present. The `org_id` SHALL be read from a
+  portal-supplied `X-Org-ID` request header by a new helper
+  (`_require_portal_org_id(request, settings) -> str | None`) that
+  complements the existing `_require_portal_call(request)`. The
+  header value is the Zitadel resourceowner string; the helper
+  performs no further parsing.
+- **REQ-7.4:** THE `trigger_sync` handler SHALL persist `org_id` on
+  the new `SyncRun` row. THE active-sync guard (`SyncRun.status ==
+  SyncStatus.RUNNING` check) SHALL also be scoped by `org_id` when
+  asserted so that one tenant's running sync cannot block another
   tenant's trigger attempt.
 - **REQ-7.5:** THE `get_sync_run` handler SHALL return HTTP 404 (not
   403) when the requested `run_id` exists but belongs to a different
   `org_id` — consistent with the "never leak existence" rule in
   `portal-security.md`.
-- **REQ-7.6:** DURING a transition period (one release), IF the
-  `X-Org-ID` header is absent, THEN the connector SHALL log a WARN
-  structured event (`event="sync_missing_org_id"`,
-  `connector_id=<id>`) and SHALL proceed without org filtering, so
-  that a staggered portal-first / connector-second deploy does not
-  break in-flight syncs. AFTER the transition period ends (tracked by
-  a config flag `sync_require_org_id: bool = False`, flipped to
-  `True` in the release following portal deployment of REQ-8), THE
-  connector SHALL return HTTP 400 (`detail="X-Org-ID header required"`)
-  on any portal call missing the header.
+- **REQ-7.6 (v0.5.1 — WRITE / READ asymmetry):** the
+  transition-period semantics differ between READ and WRITE
+  handlers:
+  - READ handlers (`list_sync_runs`, `get_sync_run`): IF the
+    `X-Org-ID` header is absent, THEN the connector SHALL log a WARN
+    structured event (`event="sync_missing_org_id"`,
+    `connector_id=<id>`) and SHALL proceed without org filtering
+    (legacy connector_id-only filter). This gives a portal-first /
+    connector-second deploy a graceful degradation window for
+    in-flight reads. AFTER the transition period ends (tracked by
+    config flag `sync_require_org_id: bool = False`, flipped to
+    `True` post REQ-8 deploy), READ handlers SHALL return HTTP 400
+    on any portal call missing the header.
+  - WRITE handler (`trigger_sync`): SHALL ALWAYS return HTTP 400 on
+    missing `X-Org-ID`, regardless of `sync_require_org_id`. The
+    column being nullable (REQ-7.1) means a NULL row would persist
+    at the schema layer — but such a row is invisible to every
+    per-org filter and effectively orphaned at creation time.
+    Fail-fast at the handler keeps the new-row contract clean. The
+    WARN event still fires for VictoriaLogs visibility.
 - **REQ-7.7:** THE connector SHALL NOT derive `org_id` from the
   `connector_id` itself (e.g. by calling back into the portal to look
   it up). The trust contract is explicit: portal asserts the org by
