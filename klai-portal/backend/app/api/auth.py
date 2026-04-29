@@ -400,6 +400,32 @@ def invalidate_tenant_slug_cache() -> None:
     _tenant_slug_cache_expiry = 0.0
 
 
+@lru_cache(maxsize=1)
+def _system_callback_hosts() -> frozenset[str]:
+    """SPEC-SEC-HYGIENE-001 REQ-20.4: trusted callback hosts that are NOT
+    tenant subdomains.
+
+    The callback-URL allowlist must accept every legitimate hostname class
+    that a Zitadel-issued ``callback_url`` can resolve to:
+
+    - the bare apex (``settings.domain``) — used by the SPA itself
+    - the canonical login domain (``urlparse(settings.frontend_url).hostname``)
+      — Zitadel always redirects through this host first per SPEC-AUTH-008
+      / portal-backend.md ``FRONTEND_URL`` rule
+    - tenant subdomains — handled separately via ``_get_tenant_slug_allowlist``
+
+    Derived from settings, cached for the process lifetime — these settings
+    are deploy-immutable. Synchronous so it can be called from anywhere
+    without an await. Tests that vary settings should call
+    ``_system_callback_hosts.cache_clear()`` after monkeypatching.
+    """
+    hosts: set[str] = {settings.domain}
+    fe_host = urlparse(str(settings.frontend_url)).hostname
+    if fe_host:
+        hosts.add(fe_host)
+    return frozenset(hosts)
+
+
 # @MX:ANCHOR: Trust boundary for OIDC callback URLs returned by Zitadel.
 # @MX:REASON: fan_in=3 — called from login() pre-finalize, idp_callback,
 #   and sso_complete after every successful finalize. Loosening the
@@ -407,20 +433,28 @@ def invalidate_tenant_slug_cache() -> None:
 #   opens an open-redirect across the entire auth surface. Coordinate
 #   with frontend host config + Caddy redirect rules before changing.
 # @MX:SPEC: SPEC-SEC-AUTH-COVERAGE-001 + SPEC-SEC-HYGIENE-001 REQ-20
-#   (subdomain allowlist on top of the .{domain} suffix check, on top
-#   of Zitadel's OIDC client redirect_uri validation)
+#   (REQ-20.1 tenant-slug allowlist on top of .{domain} suffix check,
+#   REQ-20.4 system-host bypass for FRONTEND_URL host, on top of
+#   Zitadel's OIDC client redirect_uri validation)
 async def _validate_callback_url(url: str) -> str:
-    """Ensure callback_url points to a trusted, currently-active tenant subdomain.
+    """Ensure callback_url points to a trusted host.
 
-    localhost / 127.0.0.1 are allowed (REQ-20.3) because they are registered as
-    valid redirect URIs in the Zitadel OIDC app (dev mode). Zitadel itself
-    validates the redirect_uri against the registered list before returning
-    the callback_url, so this is defense-in-depth only.
+    Trusted classes, in evaluation order:
 
-    SPEC-SEC-HYGIENE-001 REQ-20.1 hardens the .{domain} suffix check by
-    additionally requiring the first subdomain label to appear in the
-    active-tenant slug allowlist — preventing dangling-DNS or
-    abandoned-tenant subdomains from acting as open-redirect targets.
+    1. ``localhost`` / ``127.0.0.1`` (REQ-20.3) — registered as valid
+       redirect URIs in the Zitadel OIDC app for dev mode.
+    2. System hosts (REQ-20.4) — the bare apex and the canonical login
+       domain (``settings.frontend_url`` host). Both are non-tenant trusted
+       targets. See ``_system_callback_hosts``.
+    3. Tenant subdomains (REQ-20.1) — first subdomain label of any
+       ``*.{settings.domain}`` host MUST appear in the active-tenant slug
+       allowlist (``portal_orgs.slug WHERE deleted_at IS NULL``). This
+       prevents dangling-DNS or abandoned-tenant subdomains from acting
+       as open-redirect targets.
+
+    Anything else returns 502 with a generic body (no information leak).
+    Zitadel itself validates the registered ``redirect_uri`` list before
+    issuing the callback URL, so this validator is defense-in-depth.
     """
     try:
         hostname = urlparse(url).hostname or ""
@@ -429,11 +463,11 @@ async def _validate_callback_url(url: str) -> str:
     # REQ-20.3: localhost short-circuit preserved unchanged.
     if hostname in ("localhost", "127.0.0.1"):
         return url
-    trusted = settings.domain  # getklai.com
-    # Bare apex passes — used by the SPA itself.
-    if hostname == trusted:
+    # REQ-20.4: bare apex + FRONTEND_URL host — non-tenant trusted hosts.
+    if hostname in _system_callback_hosts():
         return url
-    # Anything outside .{domain} is rejected before we hit the allowlist.
+    trusted = settings.domain  # getklai.com
+    # Anything outside .{domain} is rejected before we hit the slug allowlist.
     if not hostname.endswith(f".{trusted}"):
         logger.error("callback_url failed validation: %r", url)
         raise HTTPException(
