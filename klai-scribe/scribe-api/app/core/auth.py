@@ -2,9 +2,10 @@
 JWT validation for scribe-api.
 
 Validates Zitadel access tokens independently using JWKS from the Zitadel issuer.
-No dependency on portal-api for the JWT path. The `sub` claim is used as
-user_id; the `urn:zitadel:iam:user:resourceowner:id` claim is the primary
-org and is consumed by the SPEC-SEC-IDENTITY-ASSERT-001 REQ-3 ingest path.
+The `sub` claim is used as user_id. The org_id is resolved via portal-api's
+/internal/identity/verify endpoint (SPEC-SEC-AUDIT-2026-04 B1) — NOT from the
+JWT `resourceowner` claim, which can differ from the user's active org for
+multi-org users and would enable cross-tenant ingest.
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ import structlog
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
+from klai_identity_assert import IdentityAsserter
 
 from app.core.config import settings
 
@@ -28,6 +30,18 @@ slog = structlog.get_logger(__name__)
 bearer = HTTPBearer()
 
 _jwks_cache: dict | None = None
+
+# SPEC-SEC-AUDIT-2026-04 B1: module-level singleton — mirrors the pattern in
+# knowledge-mcp and retrieval-api. 60-second LRU cache is built into the
+# library; this single instance is shared across all request coroutines.
+# @MX:ANCHOR: fan_in=every authenticated endpoint
+# @MX:REASON: SPEC-SEC-AUDIT-2026-04 B1 — replaces JWT resourceowner trust.
+# Singleton keeps the LRU cache process-wide; recreating per-request would
+# bypass the cache and hammer portal-api on every call.
+_asserter = IdentityAsserter(
+    portal_base_url=settings.portal_api_url,
+    internal_secret=settings.portal_internal_secret,
+)
 
 # @MX:ANCHOR fan_in=multiple
 # @MX:REASON: SPEC-SEC-HYGIENE-001 REQ-34. The `sub` claim flows downstream
@@ -51,12 +65,13 @@ _ZITADEL_RESOURCEOWNER_CLAIM = "urn:zitadel:iam:user:resourceowner:id"
 
 @dataclass(frozen=True, slots=True)
 class CallerIdentity:
-    """Authenticated caller derived from a verified Zitadel access token.
+    """Authenticated caller with portal-verified identity.
 
-    SPEC-SEC-IDENTITY-ASSERT-001 REQ-3.5: ``org_id`` comes from the JWT's
-    ``resourceowner`` claim. Because the JWT signature is validated here,
-    the caller cannot tamper the value without invalidating the token —
-    so the value is trustworthy directly, no portal-api round-trip needed.
+    SPEC-SEC-AUDIT-2026-04 B1: ``org_id`` is resolved by portal-api's
+    /internal/identity/verify endpoint, NOT from the JWT ``resourceowner``
+    claim. Multi-org users' JWTs may carry a resourceowner that differs from
+    their active org — trusting that claim directly enables cross-tenant ingest.
+    Portal membership lookup is the authoritative source.
     """
 
     user_id: str
@@ -143,18 +158,22 @@ async def get_current_user_id(
 async def get_authenticated_caller(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
 ) -> CallerIdentity:
-    """Return ``(user_id, org_id)`` extracted from a verified Zitadel access token.
+    """Return ``(user_id, org_id)`` from a JWT validated against portal-api.
 
-    SPEC-SEC-IDENTITY-ASSERT-001 REQ-3 / REQ-3.5: instead of trusting an
-    ``org_id`` field in the request body (the S1 finding in spec.md), the
-    handler derives the org from the JWT's ``resourceowner`` claim. The
-    JWT signature is validated against Zitadel JWKS here, so the value is
-    cryptographically authentic — no portal-api round-trip needed for the
-    common case of a user acting in their primary org.
+    SPEC-SEC-AUDIT-2026-04 B1: the JWT signature is verified against Zitadel
+    JWKS to prove the token is authentic, then portal-api's
+    /internal/identity/verify endpoint is called to resolve the canonical
+    org_id from the user's active membership. This closes the cross-tenant
+    gap where a multi-org user's JWT resourceowner claim could differ from
+    their active org and allow cross-tenant ingest.
 
-    A JWT without a ``resourceowner`` claim means the user has no active
-    org membership in Zitadel; the endpoint MUST reject with 403
-    ``no_active_org_membership`` (REQ-3.4).
+    The resourceowner claim is passed to portal as a hint / ``claimed_org_id``
+    but portal's membership lookup is authoritative — the returned org_id
+    is what flows into CallerIdentity, not the claim.
+
+    Error mapping (fail-closed):
+    - portal denies (not a member)  → HTTP 403 ``unknown_user``
+    - portal unreachable             → HTTP 503 ``portal_unreachable``
     """
     try:
         payload = await _decode_zitadel_token(credentials.credentials)
@@ -165,13 +184,27 @@ async def get_authenticated_caller(
             detail="Ongeldig of verlopen token",
         ) from exc
 
-    org_id = payload.get(_ZITADEL_RESOURCEOWNER_CLAIM, "")
-    if not isinstance(org_id, str) or not org_id:
-        # REQ-3.4: a Zitadel user without resourceowner has no active org
-        # membership. Fail closed — the caller cannot pick a tenant
-        # arbitrarily, and we do not silently downgrade to a default org.
+    # Pass resourceowner as an opaque hint; portal membership is authoritative.
+    # @MX:NOTE: _ZITADEL_RESOURCEOWNER_CLAIM kept as hint — do NOT promote to
+    # @MX:LEGACY trust source. SPEC-SEC-AUDIT-2026-04 B1 closed that gap.
+    claimed_org_id = payload.get(_ZITADEL_RESOURCEOWNER_CLAIM) or ""
+
+    result = await _asserter.verify(
+        caller_service="scribe",
+        claimed_user_id=user_id,
+        claimed_org_id=claimed_org_id,
+        bearer_jwt=credentials.credentials,
+    )
+
+    if not result.verified:
+        if result.reason == "portal_unreachable":
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="portal_unreachable",
+            )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="no_active_org_membership",
+            detail="unknown_user",
         )
-    return CallerIdentity(user_id=user_id, org_id=org_id)
+
+    return CallerIdentity(user_id=result.user_id, org_id=result.org_id)
