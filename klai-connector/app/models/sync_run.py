@@ -20,6 +20,17 @@ class SyncRun(Base):
     Columns:
         id: UUID primary key
         connector_id: UUID — portal_connectors.id (no FK; portal is source of truth)
+        org_id: VARCHAR(255) — Zitadel resourceowner; tenant scope for sync routes
+            (SPEC-SEC-TENANT-001 REQ-7.2). Same shape and source of truth as
+            ``Connector.org_id``: the value the portal asserts in the
+            ``X-Org-ID`` header on every sync proxy call. No FK; portal is
+            source of truth (consistent with ``connector_id``).
+
+            Nullable: historical rows (pre-migration 006) keep NULL —
+            no backfill is performed. Those rows fall outside per-org
+            filters and are invisible to all tenants. New rows always
+            populate org_id because ``trigger_sync`` requires the
+            ``X-Org-ID`` header (REQ-7.4).
         status: VARCHAR(20) -- 'running', 'completed', 'failed', 'auth_error', 'pending'
         started_at: TIMESTAMPTZ
         completed_at: TIMESTAMPTZ
@@ -43,6 +54,12 @@ class SyncRun(Base):
         index=True,
         # No ForeignKey — connector_id is a portal UUID, portal is source of truth.
     )
+    # SPEC-SEC-TENANT-001 REQ-7.2 (v0.5.1 / Zitadel-resourceowner string).
+    # Nullable: no backfill on migration 006 — historical rows keep NULL and
+    # are invisible to per-org filters. trigger_sync requires X-Org-ID for
+    # every new row (REQ-7.4), so the column is effectively NOT NULL on the
+    # write path.
+    org_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     started_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
