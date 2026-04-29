@@ -14,6 +14,9 @@ RUN useradd --create-home --uid 1000 --shell /bin/bash app
 # Repo-mirror layout — klai-libs path-deps must resolve from the workspace root
 WORKDIR /repo
 COPY --chown=app:app klai-libs/identity-assert klai-libs/identity-assert
+# SPEC-SEC-INTERNAL-001 B2: klai-log-utils path-dep (sanitize_response_body +
+# verify_shared_secret). Same pattern as identity-assert.
+COPY --chown=app:app klai-libs/log-utils klai-libs/log-utils
 COPY --chown=app:app klai-knowledge-mcp/pyproject.toml klai-knowledge-mcp/pyproject.toml
 COPY --chown=app:app klai-knowledge-mcp/uv.lock klai-knowledge-mcp/uv.lock
 

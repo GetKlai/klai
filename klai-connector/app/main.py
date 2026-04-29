@@ -153,6 +153,7 @@ def create_app() -> FastAPI:
             registry=registry,
             ingest_client=ingest_client,
             portal_client=portal_client,
+            settings=settings,
             image_store=image_store,
             crawl_sync_client=crawl_sync_client,
         )

@@ -117,6 +117,7 @@ def _make_engine(
         registry=registry,
         ingest_client=ingest_client,
         portal_client=portal_client,
+        settings=MagicMock(),
         crawl_sync_client=crawl_sync_client,
     )
     # Shrink poll cadence so the test runs in ms, not seconds.

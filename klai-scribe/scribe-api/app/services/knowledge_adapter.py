@@ -49,9 +49,12 @@ async def ingest_scribe_transcript(
     }
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        headers = {}
-        if settings.knowledge_ingest_secret:
-            headers["X-Internal-Secret"] = settings.knowledge_ingest_secret
+        # SPEC-SEC-INTERNAL-001 REQ-9.4: header is unconditional. The
+        # Settings validator on knowledge_ingest_secret enforces non-empty
+        # at startup; the previous ``if settings.knowledge_ingest_secret:``
+        # silent-omit guard would have allowed unauthenticated traffic
+        # whenever the env var was missing.
+        headers = {"X-Internal-Secret": settings.knowledge_ingest_secret}
         resp = await client.post(
             f"{settings.knowledge_ingest_url}/ingest/v1/document",
             json=payload,
