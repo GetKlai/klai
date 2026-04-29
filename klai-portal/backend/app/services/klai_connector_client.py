@@ -39,11 +39,39 @@ class KlaiConnectorClient:
     Raises httpx.HTTPStatusError on 4xx/5xx responses.
     """
 
-    def _headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {settings.klai_connector_secret}", **get_trace_headers()}
+    def _headers(self, *, org_id: str | None = None) -> dict[str, str]:
+        """Build outbound headers for a klai-connector call.
 
-    async def trigger_sync(self, connector_id: str) -> SyncRunData:
+        SPEC-SEC-TENANT-001 REQ-8.1 / REQ-8.3 (v0.5.0): when ``org_id`` is
+        provided (the Zitadel resourceowner string from
+        ``PortalOrg.zitadel_org_id``), include it as ``X-Org-ID`` so the
+        connector can filter sync routes by tenancy. The portal-caller
+        bearer + trace headers continue to authenticate the channel and
+        propagate request-id correlation.
+
+        ``org_id=None`` is reserved for callsites that do NOT hit a
+        sync-route endpoint (e.g. ``compute_fingerprint``); those continue
+        to send no ``X-Org-ID`` because the connector does not require
+        tenancy on those paths.
+        """
+        headers: dict[str, str] = {
+            "Authorization": f"Bearer {settings.klai_connector_secret}",
+            **get_trace_headers(),
+        }
+        if org_id is not None:
+            headers["X-Org-ID"] = org_id
+        return headers
+
+    async def trigger_sync(self, connector_id: str, *, org_id: str) -> SyncRunData:
         """Trigger an on-demand sync. Returns the created SyncRun (status: running).
+
+        Args:
+            connector_id: Portal connector UUID.
+            org_id: Zitadel resourceowner string (PortalOrg.zitadel_org_id);
+                injected as ``X-Org-ID`` on the outbound request so the
+                connector can filter the sync-runs query by tenancy
+                (SPEC-SEC-TENANT-001 REQ-8.1, keyword-only to make the
+                requirement self-documenting at every callsite).
 
         Raises:
             httpx.HTTPStatusError: On 4xx/5xx from klai-connector.
@@ -51,13 +79,24 @@ class KlaiConnectorClient:
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.post(
                 f"{settings.klai_connector_url}/api/v1/connectors/{connector_id}/sync",
-                headers=self._headers(),
+                headers=self._headers(org_id=org_id),
             )
             response.raise_for_status()
             return SyncRunData(**response.json())
 
-    async def get_sync_runs(self, connector_id: str, limit: int = 20) -> list[SyncRunData]:
+    async def get_sync_runs(
+        self,
+        connector_id: str,
+        *,
+        org_id: str,
+        limit: int = 20,
+    ) -> list[SyncRunData]:
         """Fetch sync history for a connector from klai-connector.
+
+        Args:
+            connector_id: Portal connector UUID.
+            org_id: Zitadel resourceowner string (see ``trigger_sync``).
+            limit: Max rows to return (capped at 100 by the connector).
 
         Raises:
             httpx.HTTPStatusError: On 4xx/5xx from klai-connector.
@@ -66,7 +105,7 @@ class KlaiConnectorClient:
             response = await client.get(
                 f"{settings.klai_connector_url}/api/v1/connectors/{connector_id}/syncs",
                 params={"limit": min(limit, 100)},
-                headers=self._headers(),
+                headers=self._headers(org_id=org_id),
             )
             response.raise_for_status()
             return [SyncRunData(**r) for r in response.json()]
