@@ -1262,8 +1262,10 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://klai:${POSTGRES_PASSWORD}@postgres:5432/klai
       ZITADEL_INTROSPECTION_URL: https://auth.${DOMAIN}/oauth/v2/introspect
-      # SPEC-SEC-008 F-017: defense-in-depth audience check against Zitadel API app
-      ZITADEL_API_AUDIENCE: ${KLAI_CONNECTOR_ZITADEL_AUDIENCE:-}
+      # SPEC-SEC-AUDIT-2026-04 B2: audience verification is now MANDATORY.
+      # KLAI_CONNECTOR_ZITADEL_AUDIENCE must be set in SOPS (verified present).
+      # Empty value causes startup ValidationError (fail-closed).
+      ZITADEL_API_AUDIENCE: ${KLAI_CONNECTOR_ZITADEL_AUDIENCE}
       KNOWLEDGE_INGEST_URL: http://knowledge-ingest:8000
       KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
       CRAWL4AI_API_URL: http://crawl4ai:11235
