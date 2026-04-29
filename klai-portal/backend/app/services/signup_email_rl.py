@@ -95,7 +95,10 @@ async def check_signup_email_rate_limit(
         # REQ-19.4 fail-open. Use stdlib logger.exception so the traceback
         # makes it into VictoriaLogs alongside the structlog event below.
         _stdlib_logger.exception("signup_email_rl_redis_call_failed")
-        logger.warning("signup_email_rl_redis_unavailable", email_sha256=digest)
+        # exc_info=True ensures the structlog event also carries the traceback
+        # — the project's logger-traceback audit forbids bare logger.warning
+        # inside an except block.
+        logger.warning("signup_email_rl_redis_unavailable", email_sha256=digest, exc_info=True)
         return True
 
     if count > max_per_window:
