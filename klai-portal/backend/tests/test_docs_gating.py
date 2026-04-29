@@ -60,6 +60,47 @@ def test_should_expose_docs(debug: bool, portal_env: str, expected: bool) -> Non
     assert should_expose_docs(_StubSettings(debug=debug, portal_env=portal_env)) is expected
 
 
+# Regression guard for the test isolation fix (commit 86e3c09c) ----------- #
+
+
+def test_should_expose_docs_lives_in_config_not_main() -> None:
+    """Regression guard: ``should_expose_docs`` MUST live in ``app.core.config``
+    and MUST NOT be re-introduced to ``app.main``.
+
+    If a future revert or bad merge moves the helper back to ``app.main``,
+    ``tests/test_docs_gating.py`` would have to import from there — which
+    would trigger ``setup_logging("portal-api")`` at module-load time and
+    silently break ``tests/test_cors_allowlist.py``'s
+    ``structlog.configure``-based capture (collision documented in
+    ``.claude/rules/klai/pitfalls/process-rules.md`` as
+    ``global-test-state-collision``).
+
+    This test fails fast if the helper drifts back, well before the CORS
+    test goes red on a merged branch.
+    """
+    from pathlib import Path
+
+    from app.core import config as _config
+
+    assert hasattr(_config, "should_expose_docs"), (
+        "should_expose_docs MUST live in app.core.config (SPEC-SEC-HYGIENE-001 portal-slice 86e3c09c)."
+    )
+
+    # Source-level check: app.main re-imports the helper for its own use,
+    # so attribute-presence (`hasattr`) is True via the import. We grep the
+    # *source file* instead of importing — importing app.main would trigger
+    # setup_logging("portal-api"), which is exactly the trap this guard
+    # exists to prevent.
+    backend_root = Path(__file__).resolve().parent.parent  # tests/ -> backend/
+    main_source = (backend_root / "app" / "main.py").read_text(encoding="utf-8")
+    assert "def should_expose_docs" not in main_source, (
+        "should_expose_docs MUST NOT be defined in app.main — that import "
+        "path triggers setup_logging() and breaks structlog-capture tests. "
+        "See .claude/rules/klai/pitfalls/process-rules.md "
+        "global-test-state-collision."
+    )
+
+
 # REQ-28.3: hard validator ------------------------------------------------- #
 
 
