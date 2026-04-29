@@ -414,9 +414,16 @@ SPEC.
 | `klai-portal/backend/app/api/signup.py` | Verify `ua_hash` + `ip_subnet` on consume; no changes to `_get_fernet` (already correct) | REQ-2.2 |
 | `klai-portal/backend/app/main.py` (lifespan) | Call `_get_sso_fernet()` on startup | REQ-4 |
 | `klai-portal/backend/app/core/config.py` | Add `totp_pending_ttl_seconds: int = 300` setting | REQ-1.1 |
-| `klai-portal/backend/tests/api/test_auth_totp_lockout.py` (new) | REQ-6.1 regression | REQ-6 |
-| `klai-portal/backend/tests/api/test_idp_pending_binding.py` (new) | REQ-6.2 / REQ-6.3 regression | REQ-6 |
-| `klai-portal/backend/tests/api/test_startup_sso_key_guard.py` (new) | REQ-6.4 regression | REQ-6 |
+| `klai-portal/backend/tests/test_auth_totp_lockout.py` (new) | REQ-6.1 regression | REQ-6 |
+| `klai-portal/backend/tests/test_idp_pending_binding.py` (new) | REQ-6.2 / REQ-6.3 regression | REQ-6 |
+| `klai-portal/backend/tests/test_startup_sso_key_guard.py` (new) | REQ-6.4 regression | REQ-6 |
+| `klai-portal/backend/tests/test_request_ip.py` (new, v0.3.1) | IPv4-mapped IPv6 unit tests (research §7) | REQ-2.3 |
+| `klai-portal/backend/tests/test_session_logging_pii.py` (new) | PII guard for the 4 structlog events | REQ-5 |
+| `klai-portal/backend/tests/test_auth_login_happy_path.py` (new) | scenario 5 happy-path TOTP login regression | REQ-6.5 |
+
+NB: actual test files landed at flat ``tests/`` (no ``tests/api/`` sub-package
+in the portal-api repo layout). The original SPEC plan assumed a nested
+layout that does not exist in the codebase; flat layout used instead.
 
 No DB migrations. No frontend changes. No infra changes (Redis is
 already available).
