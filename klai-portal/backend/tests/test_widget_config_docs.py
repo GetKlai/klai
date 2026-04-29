@@ -79,16 +79,10 @@ def test_widget_config_mx_reason_references_docstring() -> None:
     # Inspect the docstring + comment block (next ~30 lines).
     block = "\n".join(lines[func_idx : func_idx + 35])
     # First check the @MX:REASON comment exists in this block.
-    assert "@MX:REASON" in block, (
-        "widget_config block must carry an @MX:REASON comment "
-        "(REQ-23.3)."
-    )
+    assert "@MX:REASON" in block, "widget_config block must carry an @MX:REASON comment (REQ-23.3)."
     # Then check the reason text references the docstring.
     block_lower = block.lower()
-    assert any(
-        phrase in block_lower
-        for phrase in ("ux-only", "ux only", "see docstring", "ux-gating")
-    ), (
+    assert any(phrase in block_lower for phrase in ("ux-only", "ux only", "see docstring", "ux-gating")), (
         "widget_config @MX:REASON / docstring must include a phrase that "
         "ties the Origin check to the docstring's UX-gating clarification "
         "(REQ-23.3). See SPEC-SEC-HYGIENE-001 REQ-23 for accepted phrases."

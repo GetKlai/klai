@@ -81,10 +81,7 @@ async def test_fourth_attempt_blocked() -> None:
     redis_mock = _redis_mock([4])
     with patch("app.services.signup_email_rl.get_redis_pool", AsyncMock(return_value=redis_mock)):
         allowed = await check_signup_email_rate_limit("attacker@example.com")
-    assert allowed is False, (
-        f"REQ-19.1: 4th attempt within window must be blocked. "
-        f"limit={EMAIL_RL_LIMIT}"
-    )
+    assert allowed is False, f"REQ-19.1: 4th attempt within window must be blocked. limit={EMAIL_RL_LIMIT}"
 
 
 @pytest.mark.asyncio
