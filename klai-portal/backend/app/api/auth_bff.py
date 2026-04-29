@@ -396,11 +396,37 @@ def _clear_retry_cookie(response: Response) -> None:
     )
 
 
-def _safe_return_to(value: str) -> str:
-    if not value or not value.startswith("/") or value.startswith("//"):
+def _safe_return_to(value: str | None) -> str:
+    """Return a same-origin path safe for use as an HTTP redirect target.
+
+    SPEC-SEC-HYGIENE-001 REQ-21: percent-decode once, then reject any
+    decoded form that opens a protocol-relative or path-traversal vector.
+    On success, return the ORIGINAL (non-decoded) value so legitimate
+    paths that contain `%`-encoded query parameters survive intact.
+
+    Rejection causes the caller to redirect to ``/app``.
+    """
+    if not value:
         return "/app"
-    if "://" in value:
+    # REQ-21.1: decode once before all other checks so encoded slashes
+    # and backslashes are evaluated in their browser-normalised form.
+    try:
+        decoded = urllib.parse.unquote(value)
+    except Exception:
         return "/app"
+    # REQ-21.2: every form of protocol-relative / traversal vector.
+    if not decoded.startswith("/"):
+        return "/app"
+    if decoded.startswith("//"):
+        return "/app"
+    if decoded.startswith("/\\"):
+        return "/app"
+    if "://" in decoded:
+        return "/app"
+    if "\\\\" in decoded:
+        return "/app"
+    # REQ-21.3: legitimate path — return ORIGINAL value, preserving the
+    # caller's encoded query string verbatim.
     return value
 
 
