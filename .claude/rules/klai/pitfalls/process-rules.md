@@ -623,3 +623,31 @@ suggested — investigate before accepting.
 you know main is moving, and use `git fetch && git log --oneline
 HEAD..origin/main -- klai-portal/backend/pyproject.toml` to see
 upstream pyproject changes before they collide with yours.
+
+## fail-open-auth (HIGH)
+When a service treats an EMPTY env var (whitespace-only or unset) as "no auth required", a misconfigured deploy silently disables auth instead of refusing to start. Empty-secret bypasses are catastrophic — webhook 200s on attacker traffic, internal endpoints accept any caller.
+
+Reference cases: SPEC-SEC-WEBHOOK-001 REQ-3 (Moneybird empty-token bypass before fix), SPEC-SEC-IDENTITY-ASSERT-001 (knowledge-mcp `KNOWLEDGE_INGEST_SECRET` empty fail-open).
+
+**Prevention:** Every auth-related secret in pydantic settings MUST have a `@model_validator(mode="after")` that rejects empty/whitespace values. The validator must run at startup, not at first request, so misconfigured deploys fail-fast in CI/staging.
+
+## empty-secret-fail-open (HIGH)
+Closely related to fail-open-auth but specifically about OUTBOUND calls: when `httpx.post(..., headers={"Authorization": f"Bearer {self._secret}"})` runs with `self._secret == ""`, the receiver sees `Bearer ` (literal trailing space) and may accept it as auth, or worse, log it as legitimate.
+
+Reference: SPEC-SEC-INTERNAL-001 connector empty-secret bypass; klai-portal/backend/app/services/klai_connector_client.py.
+
+**Prevention:** Outbound HTTP clients MUST refuse to construct the request if the credential is falsy. Raise at construction, never silently send.
+
+## non-constant-time-secret-compare (HIGH)
+`==` and `!=` short-circuit on the first non-matching byte. Comparing user-supplied tokens / signatures / secrets with these operators leaks length and content via timing. The leak is exploitable across the LAN; on a same-host attacker (think compromised sidecar), a few thousand probes recovers the secret byte-by-byte.
+
+Reference: mailer `_validate_incoming_secret` was using `!=` until SPEC-SEC-INTERNAL-001 cross-service fix.
+
+**Prevention:** ALL secret/token/signature equality comparisons MUST use `hmac.compare_digest`. Add a semgrep rule to catch `==`/`!=` against any variable named like `*secret*`, `*token*`, `*signature*`. Reviewers MUST flag any auth-comparison without `compare_digest`.
+
+## format-string-template-injection (CRIT)
+`str.format(**user_dict)` walks attribute chains: `{x.__class__.__base__.__subclasses__}` is a valid format token, leading to introspection-based RCE. NEVER pass user-controlled data through `.format()`, `.format_map()`, or f-string `__class_getitem__` paths.
+
+Reference: SPEC-SEC-MAILER-INJECTION-001 — mailer rendered email subjects/bodies via `template.format(**variables)` where keys came from inbound webhook JSON.
+
+**Prevention:** Use `string.Template.safe_substitute` (allows only $-prefixed identifiers, no attribute traversal) or `jinja2` with `autoescape=True` and a sandbox. Add the format-string-injection check to the security-review skill checklist.
