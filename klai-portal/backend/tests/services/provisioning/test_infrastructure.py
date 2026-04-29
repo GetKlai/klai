@@ -271,7 +271,7 @@ def _mock_redis_sync_client(*, keys: list[str] | None = None, scan_raises: Excep
         "FLUSHALL must never be called -- SPEC-SEC-INTERNAL-001 REQ-2",
     ))
     client.close = MagicMock()
-    client._unlinked = unlinked  # noqa: SLF001 -- test-only attribute
+    client._unlinked = unlinked
     return MagicMock(return_value=client), client
 
 
