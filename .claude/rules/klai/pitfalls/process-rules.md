@@ -1,5 +1,36 @@
 # Process Rules
 
+## worktree-for-long-running-changes (HIGH)
+When you will make working-tree edits that span more than a single tool call
+— especially test fixes, refactors, or anything that produces an in-flight
+diff — start by creating a dedicated `git worktree add -b <branch> ../<path>`
+and work there. Never edit the main repo directory when another session may
+switch branches underneath you.
+
+**Why:** `git checkout <other-branch>` aborts with an error if uncommitted
+changes conflict, but silently *carries over* any clean-on-disk changes.
+If an external tool, IDE auto-format, or parallel session then runs
+`git checkout -- <file>` or `git restore`, uncommitted work disappears
+without warning. The git reflog records the checkout but NOT the file-level
+revert, so the changes look like they were never written. This happened
+during the SPEC-KB-019 notion-tests fix: a Write succeeded, tests went green
+locally, and then a branch switch in a parallel session restored the file to
+its pre-edit state with no recoverable copy anywhere (not in stash, not in
+any branch, not in any worktree).
+
+**Prevention:**
+1. `git worktree add -b chore/<name> ../<repo>-<name> main` BEFORE the first
+   edit.
+2. Work inside that worktree path exclusively.
+3. Commit frequently — an uncommitted change in a worktree is still
+   vulnerable to `git checkout --` or `git restore` from elsewhere.
+4. Push the branch as soon as the first meaningful commit lands, so the
+   work exists on origin even if the local worktree is wiped.
+
+**When to skip:** single-file, single-tool-call edits that you stage and
+commit immediately. For anything that takes more than ~5 tool calls to
+complete, use a worktree.
+
 ## adapter-framework-bleed (HIGH)
 When a service is declared "a pure X adapter framework" but you find
 infrastructure concepts leaking into its public contract (S3 clients,
