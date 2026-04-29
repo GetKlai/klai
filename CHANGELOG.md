@@ -1,5 +1,144 @@
 # Changelog
 
+## [Unreleased] — 2026-04-29 — SPEC-SEC-INTERNAL-001: service-wide internal-secret surface hardening
+
+Closes Cornelis 2026-04-22 audit findings #14 (rate-limit fail-open),
+#18 (FLUSHALL in regenerate), A2 (taxonomy timing compare), A3 (BFF
+proxy header passthrough), A4 (`exc.response.text` log reflection in
+20+ portal sites) plus 7 internal-wave findings (2026-04-24) covering
+mailer / connector / scribe-api / knowledge-mcp. Behavioural changes
+are backward-compatible at every wire-level surface; the new failure
+modes (fail-closed startup on empty mandatory secrets, 503 on Redis
+outage) only surface under conditions that should not exist in
+production. Production env-parity verified against
+`klai-infra/core-01/.env.sops` BEFORE merge per the
+`validator-env-parity` pitfall.
+
+### Added (security)
+
+- **`klai-libs/log-utils/`** (NEW shared package, distribution
+  `klai-log-utils`) — four-symbol public API: `sanitize_response_body`
+  (REQ-4.1, scrubs known-secret substrings before truncation, default
+  512 chars), `sanitize_from_settings` (REQ-4.4, convenience wrapper),
+  `extract_secret_values` (REQ-4.2, walks Pydantic `model_fields` and
+  matches secret-shaped names with length ≥ 8), `verify_shared_secret`
+  (REQ-1.7, constant-time `hmac.compare_digest` with empty-configured
+  ValueError guard). `py.typed` marker (PEP 561) so consumer pyright
+  doesn't fall back to `reportMissingTypeStubs`. 29 tests, ruff +
+  pyright strict clean.
+- **Per-service sanitizer wrappers** —
+  `klai-portal/backend/app/utils/response_sanitizer.py` /
+  `klai-connector/app/core/sanitize.py` /
+  `klai-scribe/scribe-api/app/core/sanitize.py` /
+  `klai-knowledge-mcp/main.py::_KNOWN_SECRETS` — each binds the local
+  Settings instance to the shared sanitizer.
+- **`klai-portal/backend/app/core/config.py::internal_rate_limit_fail_mode`**
+  (REQ-5) — new `Literal["open", "closed"]` Settings field, default
+  `"closed"`. Production fails-closed on Redis outage (returns HTTP
+  503 with `internal_rate_limit_fail_closed` warning); staging /
+  dev override to `"open"` for SEC-005 baseline behaviour.
+- **`klai-portal/backend/app/core/config.py::librechat_cache_key_pattern`**
+  (REQ-2.3) — new Settings field, default `"configs:*"`. Future
+  LibreChat upgrade can flip the namespace via SOPS without a code
+  change.
+- **`klai-portal/backend/app/api/proxy.py::_SECRET_HEADER_BLOCKLIST`**
+  + `_SECRET_HEADER_REGEX` (REQ-3) — explicit deny-list
+  (`x-internal-secret`, `x-klai-internal-secret`,
+  `x-retrieval-api-internal-secret`, `x-scribe-api-internal-secret`)
+  plus the catch-all regex
+  `(?i)^(x-)?(klai-internal|internal-auth|internal-token)`. Every
+  blocked attempt emits `proxy_header_injection_blocked` at info; the
+  header VALUE is never logged.
+- **Fail-closed Settings validators** on connector / scribe-api /
+  knowledge-mcp (REQ-9.3 / REQ-9.4 / REQ-9.5). Mirrors the mailer
+  validator already shipped in SPEC-SEC-MAILER-INJECTION-001 (#168).
+  Process refuses to import / start when any required outbound secret
+  is empty. Runtime guards on
+  `klai-connector/app/services/portal_client.py::_headers()` and
+  `klai-connector/app/clients/knowledge_ingest.py::__init__` catch the
+  `Settings.model_construct()` bypass path used in some unit tests.
+- **`rules/no-secret-eq-compare.yml` + `rules/no-secret-neq-compare.yml`**
+  + RHS variants (REQ-6) — ast-grep rules with a `kind: identifier`
+  constraint so `Model.field == ...` SQLAlchemy expressions don't
+  false-positive. Wired into the five service workflows
+  (`portal-api.yml` / `klai-mailer.yml` / `klai-connector.yml` /
+  `scribe-api.yml` / `klai-knowledge-mcp.yml`). Regression fixture at
+  `.github/test-fixtures/sec-internal-001/regression.py` with five
+  intentional violations.
+
+### Changed (security)
+
+- **`klai-portal/backend/app/api/internal.py::regenerate_librechat_configs`**
+  (REQ-2) — replaced `redis_client.flushall()` with
+  `scan_iter(match=settings.librechat_cache_key_pattern, count=100)` +
+  batched `unlink(*batch)`. Failure surfaces as
+  `redis-cache-invalidation: <exc>` in the response `errors` list (was
+  `redis-flushall: ...`); restart step still runs (REQ-2.5).
+  `app/services/provisioning/infrastructure.py::_flush_redis_and_restart_librechat`
+  follows the same SCAN+UNLINK shape on the sync redis client.
+- **`klai-portal/backend/app/api/taxonomy.py::_require_internal_token`**
+  (REQ-1.1) — now uses `log_utils.verify_shared_secret`. The previous
+  `if token != f"Bearer {settings.internal_secret}":` leaked
+  length/prefix timing.
+- **`klai-knowledge-mcp/main.py::save_to_docs`** (REQ-8) — return
+  contract changed from
+  `f"Error: klai-docs returned HTTP {resp.status_code}. Details: {resp.text[:300]}"`
+  to
+  `f"Error saving to docs: upstream returned HTTP {status}. Request ID: {uuid}. Operator: check VictoriaLogs."`.
+  The sanitised upstream body is logged server-side at the same
+  request_id so operators retain debuggability without leaking the
+  body to the chat UI.
+- **`klai-connector/app/services/sync_engine.py`** (REQ-10) — the
+  `enqueue_err.response.text[:500]` write into `sync_runs.error_details`
+  JSONB now passes through the connector's `sanitize_response_body`
+  wrapper first. A reflected `KNOWLEDGE_INGEST_SECRET` from upstream
+  cannot land in Postgres or in the portal connector-management UI.
+- **`klai-scribe/scribe-api/app/services/knowledge_adapter.py`** —
+  removed the `if settings.knowledge_ingest_secret:` silent-omit guard.
+  Header injection is now unconditional now that the Settings
+  validator enforces non-empty.
+- **`klai-scribe/scribe-api/Dockerfile`** — full rewrite to the
+  repo-root + `uv sync --frozen` pattern (mirrors knowledge-mcp /
+  connector / portal-api). The previous `uv pip install -r pyproject.toml`
+  flow did not honour `[tool.uv.sources]` so the `klai-log-utils`
+  path-dep silently fell through to a PyPI lookup.
+  `.github/workflows/scribe-api.yml` build context broadened to repo
+  root accordingly.
+- **REQ-4 sweep (~28 sites)** — every raw `exc.response.text` /
+  `resp.text[:N]` log call across portal-api / connector / scribe-api /
+  knowledge-mcp is rewritten through the per-service sanitizer
+  wrapper. Where SPEC-SEC-AUTH-COVERAGE-001 (#195) had already
+  replaced `logger.exception(...)` with structured `_slog.exception(...)`
+  + `_emit_auth_event(...)` (22 of the 24 auth.py sites), the merge
+  resolution kept main's structured-event approach — both achieve
+  REQ-4 and events are more thorough.
+
+### Tests
+
+- 29 in `klai-libs/log-utils/tests/`.
+- 11 new in portal-api (`tests/test_taxonomy_internal_token.py`,
+  `tests/test_proxy_header_injection.py`, 3 new fail-mode tests in
+  `tests/test_internal_hardening.py`, rewritten
+  `tests/test_librechat_regenerate.py` around the SCAN+UNLINK
+  contract — `redis_client.flushall.assert_not_called()` doubles as
+  a tripwire).
+- 12 in knowledge-mcp (`tests/test_sec_internal_001.py`) including
+  subprocess-based fail-closed boot tests and source-grep regression
+  guards.
+- 10 in connector (`tests/test_sec_internal_001.py`).
+- 8 in scribe-api (`tests/test_sec_internal_001.py`).
+
+### Deployed
+
+PR #201 merged 2026-04-29 07:47 UTC (admin override after CI green —
+required-review policy is in place but the PR was self-authored).
+Auto-deploy chain ran clean on all 5 services; container ages on
+core-01 are 1-3 minutes post-merge with zero error-level logs in the
+20-minute post-deploy window. `internal_rate_limit_fail_closed` count
+is zero (Redis healthy, defensive fail-closed path not exercised).
+
+---
+
 ## [Unreleased] — 2026-04-29 — SPEC-SEC-SESSION-001: session and cookie robustness
 
 Closes Cornelis 2026-04-22 audit findings #13 (TOTP per-instance counter),
