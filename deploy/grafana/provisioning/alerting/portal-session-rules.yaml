@@ -1,0 +1,232 @@
+# SPEC-SEC-SESSION-001 — portal-api session/cookie health alerts.
+#
+# Routed via spec=SPEC-SEC-SESSION-001 -> klai-ops-alerts-email.
+#
+#   R1  session_sso_cookie_key_missing       CRIT  >= 1 event in any 1m window.
+#                                                  A portal-api replica failed
+#                                                  to boot because SSO_COOKIE_KEY
+#                                                  is empty / unset / whitespace.
+#                                                  The lifespan guard aborts the
+#                                                  process before traffic, so
+#                                                  every event = one boot loop.
+#   R2  session_totp_redis_unavailable       CRIT  > 3 events in 1m.
+#                                                  TOTP login is fail-CLOSED on
+#                                                  Redis unavailability (SPEC
+#                                                  REQ-1.7) — sustained burst
+#                                                  means real users cannot
+#                                                  complete TOTP and see HTTP 503.
+#
+# Why these two events and not the other two SPEC-SEC-SESSION-001 events:
+#   - totp_pending_lockout (REQ-5.1, warning) is working-as-designed signal —
+#     a user mis-typed their TOTP code five times. Adding a Grafana alert
+#     would generate brute-force noise; lockout volume is more useful as a
+#     dashboard metric than an alert.
+#   - idp_pending_binding_mismatch (REQ-5.2, warning) is a potential attack
+#     signal but at single-event frequency it is indistinguishable from a
+#     user switching network mid-signup (mobile WiFi -> 4G crossing a /24
+#     boundary). Rate-based alert tuning belongs in a follow-up SPEC after
+#     baseline volume is observed.
+#
+# Pitfall avoidance (matches portal-auth-rules.yaml conventions):
+#   - Always go through `reduce` between LogsQL output and SSE math.
+#   - execErrState: OK — VictoriaLogs plugin sometimes trips "long vs wide"
+#     errors on stats reduce chains; miss-on-hiccup beats false-page.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: sec-session-001-portal-api
+    folder: Klai
+    interval: 1m
+    rules:
+
+      # ── R1: session_sso_cookie_key_missing ─────────────────────────────
+      # The lifespan guard at app.main calls _get_sso_fernet() once at
+      # startup. An empty / whitespace SSO_COOKIE_KEY raises RuntimeError;
+      # before the raise propagates, _slog.critical(
+      #   "sso_cookie_key_missing_startup_abort",
+      #   env_var="SSO_COOKIE_KEY", sops_path="..."
+      # ) fires so Alloy captures the abort in VictoriaLogs even though
+      # the process is about to exit non-zero. A single event = one boot
+      # loop — there is no benign reason for this event in a healthy
+      # cluster.
+      - uid: sec-session-001-sso-cookie-key-missing
+        title: session_sso_cookie_key_missing
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 60
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: '_time:1m service:portal-api event:sso_cookie_key_missing_startup_abort | stats count() as n'
+              queryType: instant
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 60
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 60
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 0m
+        keepFiringFor: 30m
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-SEC-SESSION-001
+          service_group: portal-api
+        annotations:
+          summary: 'portal-api refusing to start: SSO_COOKIE_KEY missing'
+          description: |
+            A portal-api replica emitted ``sso_cookie_key_missing_startup_abort``
+            at startup and refused to serve traffic. SPEC-SEC-SESSION-001 REQ-4
+            requires the lifespan to abort BEFORE accepting any request when
+            ``settings.sso_cookie_key`` is empty, unset, or whitespace-only.
+            Replicas in this state will boot-loop until the env var is fixed
+            (Docker restart policy will keep retrying, each retry will fire
+            this alert again).
+
+            Triage:
+              1. Confirm the replica is in CrashLoopBackOff or its Docker
+                 equivalent on core-01:
+                   docker ps -a --filter name=portal-api
+                 Restarts > 1 in the last minute means the loop is active.
+              2. Verify SSO_COOKIE_KEY is present in the environment that
+                 the container actually sees (NOT just /opt/klai/.env on
+                 the host):
+                   docker exec klai-core-portal-api-1 printenv \
+                     | grep -E '^(SSO|PORTAL_API_SSO)_COOKIE_KEY'
+                 If empty or absent → fix at the source (SOPS-encrypted
+                 ``klai-infra/core-01/.env.sops`` is canonical).
+              3. After fixing the env, recreate the container so the new
+                 env propagates:
+                   docker compose -f /opt/klai/docker-compose.yml \
+                     up -d portal-api
+              4. Confirm the alert clears within 1m (the boot loop should
+                 stop on the first successful start).
+
+            Out of scope for this alert: rotation of an existing valid key
+            (use the runbook in ``docs/runbooks/sso_cookie_key-rotation.md``
+            once it lands; tracked as a follow-up to this SPEC).
+
+      # ── R2: session_totp_redis_unavailable ─────────────────────────────
+      # SPEC REQ-1.7 makes the TOTP path fail-CLOSED on Redis unavailability:
+      # an unreachable Redis pool causes /api/auth/totp-login to return HTTP
+      # 503 with "Authentication unavailable, please retry" instead of
+      # falling through to the in-memory ceiling (the bug we fixed). A
+      # sustained burst of these events means real users with TOTP enabled
+      # cannot complete login. Critical because login UX is broken; the >3
+      # threshold tolerates a single transient blip while still firing
+      # within ~30s of a real Redis outage.
+      - uid: sec-session-001-totp-redis-unavailable
+        title: session_totp_redis_unavailable
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 60
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: '_time:1m service:portal-api event:totp_pending_redis_unavailable | stats count() as n'
+              queryType: instant
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 60
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 60
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [3], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 1m
+        keepFiringFor: 5m
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-SEC-SESSION-001
+          service_group: portal-api
+        annotations:
+          summary: 'portal-api TOTP login broken: Redis unreachable'
+          description: |
+            More than 3 ``totp_pending_redis_unavailable`` events fired in
+            the last minute. Per SPEC-SEC-SESSION-001 REQ-1.7 the TOTP path
+            fails CLOSED on Redis unavailability — affected users see HTTP
+            503 ``Authentication unavailable, please retry`` and cannot
+            complete login. Single-replica blips are tolerated by the >3
+            threshold; sustained bursts mean Redis itself is down or the
+            portal-api -> redis network path is broken.
+
+            Triage:
+              1. Confirm Redis is the root cause:
+                   docker ps --filter name=redis
+                   docker logs --tail 50 klai-core-redis-1
+                 If the container is restarting or PING is failing, this
+                 is a Redis outage. Recover Redis first.
+              2. Confirm portal-api can reach Redis:
+                   docker exec klai-core-portal-api-1 \
+                     python -c "import redis.asyncio, asyncio; \
+                                asyncio.run(redis.asyncio.from_url('redis://...').ping())"
+                 (substitute the real REDIS_URL from the container env).
+                 A timeout / refused-connection here means Redis is up
+                 but unreachable — check klai-net network state.
+              3. Cross-check the ``phase`` field on the captured events:
+                   _time:5m service:portal-api event:totp_pending_redis_unavailable
+                     | stats by (phase) count()
+                 ``phase=create`` means /login can't enqueue;
+                 ``phase=get`` / ``incr`` / ``delete`` means an in-flight
+                 TOTP attempt failed mid-verify. The latter is worse —
+                 those users get a 503 mid-login.
+              4. There is NO fallback path by design. Recover Redis, then
+                 affected users retry from the password screen. Do NOT
+                 weaken the fail-closed semantics — opening the door
+                 lifts the brute-force ceiling that SPEC-SEC-SESSION-001
+                 specifically closed.

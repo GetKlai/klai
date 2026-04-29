@@ -23,6 +23,7 @@ from app.api.dependencies import _get_caller_org, _require_admin, bearer
 from app.core.config import settings
 from app.core.database import get_db
 from app.services.secrets import decrypt_mcp_secret, encrypt_mcp_secret, is_secret_var
+from app.utils.response_sanitizer import sanitize_response_body  # SPEC-SEC-INTERNAL-001 REQ-4
 
 logger = logging.getLogger(__name__)
 
@@ -331,7 +332,7 @@ async def _probe_mcp_server(url: str, headers: dict[str, str]) -> McpTestRespons
             return McpTestResponse(
                 status="error",
                 response_time_ms=elapsed_ms,
-                error=f"HTTP {resp.status_code}: {resp.text[:200]}",
+                error=f"HTTP {resp.status_code}: {sanitize_response_body(resp, max_len=200)}",
             )
 
         data = resp.json()

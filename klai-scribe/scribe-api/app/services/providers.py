@@ -19,6 +19,7 @@ import structlog
 from fastapi import HTTPException, status
 
 from app.core.config import settings
+from app.core.sanitize import sanitize_response_body  # SPEC-SEC-INTERNAL-001 REQ-4
 
 logger = structlog.get_logger(__name__)
 
@@ -113,10 +114,12 @@ class WhisperHttpProvider:
                 continue
 
             if resp.status_code != 200:
+                # SPEC-SEC-INTERNAL-001 REQ-4: scrub any reflected secret
+                # before the body lands in structlog / VictoriaLogs.
                 logger.error(
                     "transcription-service error",
                     status=resp.status_code,
-                    body=resp.text[:200],
+                    body=sanitize_response_body(resp, max_len=200),
                     attempt=attempt,
                 )
                 raise HTTPException(

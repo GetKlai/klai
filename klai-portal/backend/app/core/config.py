@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -73,6 +74,11 @@ class Settings(BaseSettings):
     sso_cookie_key: str = ""  # PORTAL_API_SSO_COOKIE_KEY
     sso_cookie_max_age: int = 7776000  # 90 days; Zitadel session lifetime is the real authority
 
+    # SPEC-SEC-SESSION-001 REQ-1.1: TTL for the Redis-backed TOTP pending-login
+    # state. Default 300 s preserves the legacy in-memory ``_pending_totp``
+    # window. Tunable so ops can compress it without code changes.
+    totp_pending_ttl_seconds: int = 300
+
     # BFF — Backend-for-Frontend session auth (SPEC-AUTH-008)
     # Fernet key for encrypting BFF session records at rest in Redis.
     # Falls back to sso_cookie_key when unset — single key during the rollout.
@@ -99,7 +105,7 @@ class Settings(BaseSettings):
     librechat_host_data_path: str = "/opt/klai/librechat"  # HOST path for Docker volume mounts
     librechat_image: str = "ghcr.io/danny-avila/librechat:latest"
     caddy_container_name: str = "klai-core-caddy-1"  # Docker container name for Caddy reload
-    redis_container_name: str = "klai-core-redis-1"  # Docker container name for Redis FLUSHALL
+    redis_container_name: str = "klai-core-redis-1"  # Docker container name; legacy operational reference
 
     # Internal service-to-service secret (used by klai-mailer → portal)
     # Generate with: openssl rand -hex 32
@@ -109,6 +115,22 @@ class Settings(BaseSettings):
     # Sliding-window (60s) over Redis; fails open when Redis is unavailable.
     # Tune via INTERNAL_RATE_LIMIT_RPM env var without code change.
     internal_rate_limit_rpm: int = 100
+
+    # SPEC-SEC-INTERNAL-001 REQ-5: behaviour when the rate-limit Redis
+    # backend is unavailable. ``closed`` returns HTTP 503 (production
+    # default -- bounded blast radius); ``open`` falls through with a
+    # warning log (legacy SEC-005 REQ-1.3 behaviour, kept for staging
+    # / dev availability).
+    # Production env file in klai-infra/ sets INTERNAL_RATE_LIMIT_FAIL_MODE=closed
+    # explicitly so a future default flip does not surprise the rotation.
+    internal_rate_limit_fail_mode: Literal["open", "closed"] = "closed"
+
+    # SPEC-SEC-INTERNAL-001 REQ-2.3: Redis key pattern that the LibreChat
+    # config-regenerate handler invalidates via SCAN+UNLINK. Default is
+    # the upstream ``configs:*`` namespace; settable via env so a future
+    # LibreChat upgrade that renames the namespace can ship in SOPS
+    # without a code change.
+    librechat_cache_key_pattern: str = "configs:*"
 
     # klai-mailer service URL (for sending transactional emails)
     mailer_url: str = ""  # e.g. http://klai-mailer:8300

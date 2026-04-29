@@ -11,6 +11,9 @@ dependencies = [
     # consumed by save_personal_knowledge / save_org_knowledge / save_to_docs.
     # Editable install — mirrors klai-image-storage pattern in knowledge-ingest.
     "klai-identity-assert",
+    # SPEC-SEC-INTERNAL-001 REQ-4 / REQ-8: shared sanitize_response_body +
+    # secret-introspection helpers used by every upstream-error log/return path.
+    "klai-log-utils",
 ]
 
 [project.optional-dependencies]
@@ -23,6 +26,7 @@ dev = [
 
 [tool.uv.sources]
 klai-identity-assert = { path = "../klai-libs/identity-assert", editable = true }
+klai-log-utils = { path = "../klai-libs/log-utils", editable = true }
 
 [tool.ruff]
 line-length = 100

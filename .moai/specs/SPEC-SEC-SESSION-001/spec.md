@@ -1,9 +1,9 @@
 ---
 id: SPEC-SEC-SESSION-001
-version: 0.2.0
-status: draft
+version: 0.3.0
+status: done
 created: 2026-04-24
-updated: 2026-04-24
+updated: 2026-04-29
 author: Mark Vletter
 priority: medium
 tracker: SPEC-SEC-AUDIT-2026-04
@@ -12,6 +12,44 @@ tracker: SPEC-SEC-AUDIT-2026-04
 # SPEC-SEC-SESSION-001: Session and Cookie Robustness
 
 ## HISTORY
+
+### v0.3.0 (2026-04-29) — shipped
+- Implementation merged via PR #197 (squash `298195aa`) and deployed to
+  core-01 the same day. Container `klai-core-portal-api-1` rolled over
+  cleanly: lifespan startup emitted no `sso_cookie_key_missing_startup_abort`
+  event, public health endpoint returned 200, zero error events on
+  `service:portal-api` in the 20-minute post-deploy scan.
+- All six REQs landed:
+  - REQ-1: in-memory `_pending_totp = TTLCache(...)` replaced with Redis
+    keys `totp_pending:<token>` (HASH) + `totp_pending_failures:<token>`
+    (STRING via atomic `INCR`). 5-failure ceiling now cross-replica
+    consistent. Fail-CLOSED on Redis unavailability (HTTP 503).
+  - REQ-2: `klai_idp_pending` Fernet payload extended with `ua_hash` +
+    `ip_subnet` (`/24` IPv4 / `/48` IPv6). `_verify_idp_pending_binding`
+    rejects mismatch with HTTP 403 + structlog event; cookie preserved
+    for legitimate retry within TTL.
+  - REQ-3: `_fernet = Fernet(... else generate_key())` replaced with
+    `@lru_cache _get_sso_fernet()` that raises `RuntimeError` on empty
+    key. Three callsites migrated.
+  - REQ-4: lifespan startup-guard runs BEFORE the dev/prod branch in
+    `app.main`, so `is_auth_dev_mode` no longer bypasses the SSO key
+    check. Empty key emits structlog `critical` event then re-raises.
+  - REQ-5: four structured events live in VictoriaLogs:
+    `totp_pending_lockout`, `totp_pending_redis_unavailable`,
+    `idp_pending_binding_mismatch`, `sso_cookie_key_missing_startup_abort`.
+    All carry prefix-only PII (8-hex hash prefixes, `/24`/`/48` subnets,
+    8-char token prefixes) — no raw UA, IP, or session credentials.
+  - REQ-6: 22 new tests across six files (acceptance scenarios 1-8). Two
+    new Grafana alerts on the SESSION-specific events (this close-out PR).
+- Caller-IP / subnet helper extracted to `app/services/request_ip.py` once
+  the third callsite (auth IDP-pending + signup binding-check) joined the
+  existing `app/api/internal.py` consumer; `internal.py` aliases the
+  legacy `_resolve_caller_ip` name to keep the test patch surface intact.
+- Known limitation (filed for follow-up, not blocking): `_totp_pending_create`
+  uses sequential `HSET` + `EXPIRE` rather than a Redis pipeline, so a
+  portal-api crash in the microsecond window between the two calls would
+  leak one orphan hash without TTL. Real-world impact: <1 hash per crash;
+  `maxmemory` policy on Redis caps long-term growth.
 
 ### v0.2.0 (2026-04-24)
 - Expanded from stub via `/moai plan SPEC-SEC-SESSION-001`
