@@ -21,9 +21,18 @@ from app.api import auth as auth_module
 
 
 @pytest.fixture(autouse=True)
-def _reset_cache() -> None:
-    """Each test starts with a fresh tenant-slug cache."""
+def _reset_cache() -> object:
+    """Each test starts with a fresh tenant-slug cache, then RESTORES the
+    conftest-populated cache after the test so unrelated tests that ran
+    later (e.g. test_auth_security login flows) still see the populated
+    allowlist they expect.
+    """
+    saved_cache = auth_module._tenant_slug_cache
+    saved_expiry = auth_module._tenant_slug_cache_expiry
     auth_module.invalidate_tenant_slug_cache()
+    yield
+    auth_module._tenant_slug_cache = saved_cache
+    auth_module._tenant_slug_cache_expiry = saved_expiry
 
 
 def _patch_allowlist(slugs: set[str]) -> patch:
