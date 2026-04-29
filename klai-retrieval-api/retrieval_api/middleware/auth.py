@@ -238,16 +238,37 @@ def _extract_role(payload: dict[str, Any]) -> str | None:
 
     Zitadel embeds roles as a nested dict under ``urn:zitadel:iam:org:project:roles``.
     We only need a coarse-grained classification (``admin`` vs. everything else)
-    for REQ-3 admin bypass.
+    for REQ-3 admin bypass in :func:`verify_body_identity`.
+
+    SPEC-SEC-TENANT-001 REQ-4.1 (v0.5.0):
+        ``"org_admin"`` is removed from the admin-equivalent set. It was never
+        produced by any production flow in the monorepo (signup.py, users.py,
+        invite_user, migrate-user-to-portal-org.sh all grant ``"org:owner"``),
+        and no portal-invite path under the v0.5.0 mapping can reach it.
+
+        ``"admin"`` is retained as admin-equivalent: it is not produced by any
+        production flow either, but it is the keyed shape that the
+        SPEC-SEC-010 / SPEC-SEC-TENANT-001 test fixtures use to assert the
+        admin-bypass mechanism still functions. Removing it would require a
+        coordinated test-fixture migration; that work belongs to
+        SPEC-SEC-IDENTITY-ASSERT-001 (gamma direction), where the JWT-claim
+        admin-bypass itself migrates to a portal-signed assertion.
+
+        Crucially, ``"org:owner"`` is intentionally NOT in this set even
+        though it IS reachable via the v0.5.0 admin invite flow. Adding it
+        would re-introduce finding #10 in a more direct form: every
+        signup-created or admin-invited user would gain the cross-org
+        bypass. See ``.claude/rules/klai/platform/zitadel.md`` "Project
+        roles and JWT claims" for the canonical authority model.
     """
     roles_claim = payload.get(_ZITADEL_ROLES_CLAIM)
     if isinstance(roles_claim, dict) and roles_claim:
-        if "admin" in roles_claim or "org_admin" in roles_claim:
+        if "admin" in roles_claim:
             return "admin"
         # First key is deterministic enough for log correlation.
         return next(iter(roles_claim))
     if isinstance(roles_claim, list) and roles_claim:
-        if "admin" in roles_claim or "org_admin" in roles_claim:
+        if "admin" in roles_claim:
             return "admin"
         return roles_claim[0]
     # Fallback: some token shapes put role directly on ``role``.
