@@ -75,6 +75,12 @@ async def lifespan(app: FastAPI):
                         "enrich-bulk",
                         "graphiti-bulk",
                         "taxonomy-backfill",
+                        # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-04: orchestrated
+                        # connector-purge worker. Without "connector-purge" in this
+                        # list the procrastinate task sits in 'todo' forever and
+                        # the user-visible delete looks stuck (state stays
+                        # 'deleting'). Caught by live e2e on Voys post-PR-C.
+                        "connector-purge",
                     ],
                     install_signal_handlers=False,
                 )
