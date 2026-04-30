@@ -347,6 +347,38 @@ async def delete_connector_artifacts(org_id: str, kb_slug: str, connector_id: st
     return int(result or 0)
 
 
+async def delete_connector_crawl_jobs(
+    org_id: str, kb_slug: str, connector_id: str
+) -> int:
+    """Hard-delete crawl_jobs rows owned by a specific connector.
+
+    knowledge.crawl_jobs has no native ``connector_id`` column — every row
+    nests it inside the ``config`` JSONB blob (set by web_crawler/crawler
+    adapters at job-create time). Filter on
+    ``config->>'connector_id'`` so we only nuke this connector's history,
+    leaving any other connector's job rows in the same KB untouched.
+
+    Counterpart to ``delete_connector_artifacts``. Without this, every
+    connector delete left an audit trail of orphan crawl_jobs that the
+    UI cannot reach but that the next deployment Sentry alert / dashboard
+    audit treats as live history. Returns the number of rows deleted.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        result = await conn.fetchval(
+            """WITH deleted AS (
+                 DELETE FROM knowledge.crawl_jobs
+                 WHERE org_id = $1
+                   AND kb_slug = $2
+                   AND config IS NOT NULL
+                   AND config->>'connector_id' = $3
+                 RETURNING id
+               ) SELECT COUNT(*) FROM deleted""",
+            org_id, kb_slug, connector_id,
+        )
+    return int(result or 0)
+
+
 async def upsert_crawled_page(
     org_id: str,
     kb_slug: str,

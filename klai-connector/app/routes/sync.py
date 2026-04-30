@@ -2,8 +2,8 @@
 
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
-from sqlalchemy import select
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
@@ -200,3 +200,49 @@ async def get_sync_run(
         raise HTTPException(status_code=404, detail="Sync run not found")
 
     return sync_run
+
+
+@router.delete("/connectors/{connector_id}/sync-runs", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_connector_sync_runs(
+    connector_id: uuid.UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> None:
+    """Delete every sync_runs row for a connector.
+
+    Called by the portal control plane during connector-delete to keep
+    ``connector.sync_runs`` consistent with ``public.portal_connectors``.
+
+    Until SPEC-CONNECTOR-CLEANUP-001 REQ-04 lands a cross-schema FK with
+    ``ON DELETE CASCADE`` (klai-connector role needs ``REFERENCES`` on
+    ``public.portal_connectors`` first), this endpoint is the
+    application-level equivalent: the portal calls it just before
+    dropping the ``portal_connectors`` row, so neither side leaves an
+    audit trail of orphan ``sync_runs`` keyed on a now-missing
+    ``connector_id``.
+
+    Idempotent: a connector with no sync history returns 204 the same
+    way one with 50 runs does. Filters on ``org_id`` when the portal
+    asserts tenancy via ``X-Org-ID`` (SPEC-SEC-TENANT-001 REQ-7.x) so a
+    cross-tenant connector_id cannot be wiped by a confused caller.
+    """
+    _require_portal_call(request)
+    org_id = _require_portal_org_id(request, settings)
+
+    stmt = delete(SyncRun).where(SyncRun.connector_id == connector_id)
+    if org_id is not None:
+        stmt = stmt.where(SyncRun.org_id == org_id)
+    result = await session.execute(stmt)
+    await session.commit()
+
+    logger.info(
+        "Deleted %s sync_runs row(s) for connector %s",
+        result.rowcount,
+        connector_id,
+        extra={
+            "connector_id": str(connector_id),
+            "rows_deleted": result.rowcount,
+            "org_id": org_id,
+        },
+    )
