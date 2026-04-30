@@ -3,9 +3,11 @@ Vexa meeting-api client.
 Portal-api calls this to start/stop meeting bots and manage recordings.
 """
 
-import hashlib
+import base64
+import json
 import re
 from typing import NamedTuple
+from urllib.parse import parse_qs, unquote, urlparse
 
 import httpx
 import structlog
@@ -19,6 +21,7 @@ logger = structlog.get_logger()
 class MeetingRef(NamedTuple):
     platform: str
     native_meeting_id: str
+    meeting_url: str = ""
 
 
 _PLATFORM_PATTERNS = [
@@ -28,16 +31,50 @@ _PLATFORM_PATTERNS = [
 ]
 
 
+def _extract_teams_coords(url: str) -> dict | None:
+    """Extract meetingCode and passcode from Teams /light-meetings/launch URLs.
+
+    These URLs embed the real meeting info in a base64-encoded 'coords' query param.
+    Returns {"meetingCode": "...", "passcode": "...", "meetingUrl": "..."} or None.
+    """
+    parsed = urlparse(url)
+    if "/light-meetings/" not in parsed.path:
+        return None
+    qs = parse_qs(parsed.query)
+    coords_list = qs.get("coords")
+    if not coords_list:
+        return None
+    try:
+        raw = unquote(coords_list[0])
+        # base64 padding may be missing
+        padded = raw + "=" * (-len(raw) % 4)
+        data = json.loads(base64.b64decode(padded))
+        if data.get("meetingCode") and data.get("passcode"):
+            return data
+    except (json.JSONDecodeError, base64.binascii.Error, UnicodeDecodeError):
+        pass
+    return None
+
+
 def parse_meeting_url(url: str) -> MeetingRef | None:
-    """Parse a meeting URL into (platform, native_meeting_id).
+    """Parse a meeting URL into (platform, native_meeting_id, meeting_url).
     Returns None if the URL does not match any supported platform.
     """
     for platform, pattern in _PLATFORM_PATTERNS:
         m = pattern.search(url)
         if m:
             if platform == "teams":
-                # Teams URLs are complex; use a hash of the full URL as the ID
-                native_id = hashlib.sha256(url.encode()).hexdigest()[:32]
+                # Try to extract structured data from /light-meetings/launch URLs
+                coords = _extract_teams_coords(url)
+                if coords:
+                    canonical = f"https://teams.microsoft.com/meet/{coords['meetingCode']}?p={coords['passcode']}"
+                    return MeetingRef(
+                        platform="teams",
+                        native_meeting_id=coords["meetingCode"],
+                        meeting_url=canonical,
+                    )
+                # For other Teams URLs, pass the URL through to Vexa for parsing
+                return MeetingRef(platform="teams", native_meeting_id="", meeting_url=url)
             else:
                 native_id = m.group(1)
             return MeetingRef(platform=platform, native_meeting_id=native_id)
@@ -55,22 +92,27 @@ class VexaClient:
     async def close(self) -> None:
         await self._http.aclose()
 
-    async def start_bot(self, platform: str, native_meeting_id: str) -> dict:
+    async def start_bot(self, platform: str, native_meeting_id: str, *, meeting_url: str = "") -> dict:
         """Start a bot for the given meeting. Returns the bot response dict."""
+        payload: dict = {
+            "recording_enabled": False,
+            "bot_name": "Klai",
+            "automatic_leave": {
+                "max_time_left_alone": 30000,  # 30s after everyone leaves
+                "no_one_joined_timeout": 120000,  # 2 min if no one joins
+                "max_wait_for_admission": 120000,  # 2 min in waiting room
+            },
+        }
+        if meeting_url:
+            # Let Vexa parse the URL to extract platform, native_meeting_id, and passcode
+            payload["meeting_url"] = meeting_url
+        else:
+            payload["platform"] = platform
+            payload["native_meeting_id"] = native_meeting_id
         resp = await self._http.post(
             "/bots",
             headers={**get_trace_headers()},
-            json={
-                "platform": platform,
-                "native_meeting_id": native_meeting_id,
-                "recording_enabled": False,
-                "bot_name": "Klai",
-                "automatic_leave": {
-                    "max_time_left_alone": 30000,  # 30s after everyone leaves
-                    "no_one_joined_timeout": 120000,  # 2 min if no one joins
-                    "max_wait_for_admission": 120000,  # 2 min in waiting room
-                },
-            },
+            json=payload,
         )
         resp.raise_for_status()
         return resp.json()
