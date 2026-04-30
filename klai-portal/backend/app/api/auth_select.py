@@ -92,12 +92,18 @@ async def notify_auto_join_admins(
 ) -> None:
     """Send auto-join admin notification to all admins of the workspace.
 
-    Informational email -- not a blocking approval request.
+    @MX:NOTE SPEC-AUTH-009 R7 -- uses auto_join_admin_notification template
+    (informational, no approval link) instead of join_request_admin.
     Non-fatal: exceptions are caught here so they never break the auth flow.
     """
-    from app.services.notifications import notify_admin_join_request as _notify
+    from app.services.notifications import notify_auto_join_admin as _notify
 
     try:
+        # Fetch org primary_domain for the notification template
+        org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id))
+        org = org_result.scalar_one_or_none()
+        domain = (org.primary_domain or email.split("@")[-1]) if org else email.split("@")[-1]
+
         result = await db.execute(
             select(PortalUser).where(
                 PortalUser.org_id == org_id,
@@ -111,6 +117,7 @@ async def notify_auto_join_admins(
                 await _notify(
                     email=email,
                     display_name=display_name or email,
+                    domain=domain,
                     org_id=org_id,
                     admin_email=admin.email,
                 )

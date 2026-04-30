@@ -88,3 +88,43 @@ async def notify_user_join_approved(
             )
     except Exception:
         logger.warning("mailer_notify_approved_failed", exc_info=True)
+
+
+async def notify_auto_join_admin(
+    *,
+    email: str,
+    display_name: str,
+    domain: str,
+    org_id: int,
+    admin_email: str,
+) -> None:
+    """Send auto-join admin notification email via klai-mailer.
+
+    @MX:NOTE SPEC-AUTH-009 R7 -- informs admins when a domain_match user
+    auto-joined (auto_accept=True). Uses the auto_join_admin_notification
+    template instead of join_request_admin (different message, no approval link).
+    """
+    if not settings.mailer_url:
+        logger.warning("mailer_url_not_configured_auto_join", org_id=org_id)
+        return
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.post(
+                f"{settings.mailer_url}/internal/send",
+                headers={"X-Internal-Secret": settings.internal_secret},
+                json={
+                    "template": "auto_join_admin_notification",
+                    "to": admin_email,
+                    "locale": "nl",
+                    "variables": {
+                        "name": display_name,
+                        "email": email,
+                        "domain": domain,
+                        "admin_email": admin_email,
+                        "org_id": org_id,
+                    },
+                },
+            )
+    except Exception:
+        logger.warning("mailer_notify_auto_join_failed", org_id=org_id, exc_info=True)
