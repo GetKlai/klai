@@ -110,6 +110,31 @@ class KlaiConnectorClient:
             response.raise_for_status()
             return [SyncRunData(**r) for r in response.json()]
 
+    async def delete_sync_runs(self, connector_id: str, *, org_id: str) -> None:
+        """Delete every sync_runs row for a connector.
+
+        SPEC-CONNECTOR-CLEANUP-001 REQ-04 (interim) — until the
+        ``connector.sync_runs.connector_id`` cross-schema FK with
+        ``ON DELETE CASCADE`` to ``public.portal_connectors`` lands,
+        the portal cleans the connector's sync history at delete time
+        by hitting this endpoint. Without it, every connector deletion
+        leaves an audit trail of orphan rows in ``connector.sync_runs``
+        keyed on a ``connector_id`` that no longer exists in
+        ``portal_connectors``. Discovered live during a Voys end-to-end
+        delete-cleanup audit on 2026-04-30.
+
+        Idempotent: zero rows is fine. Always called with the same
+        ``X-Org-ID`` as the rest of the connector lifecycle so the
+        connector cannot be made to wipe a different tenant's history
+        by ID confusion.
+        """
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.delete(
+                f"{settings.klai_connector_url}/api/v1/connectors/{connector_id}/sync-runs",
+                headers=self._headers(org_id=org_id),
+            )
+            response.raise_for_status()
+
     async def compute_fingerprint(
         self,
         url: str,

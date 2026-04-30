@@ -338,16 +338,26 @@ across services:
 | Service | Auto-migrates on container start? |
 |---|---|
 | portal-api | YES — `entrypoint.sh` runs `alembic upgrade head` then exec's uvicorn |
+| klai-connector | YES — `entrypoint.sh` runs `alembic upgrade head` then exec's uvicorn (added 2026-04-30 after migration 006_add_org_id_to_sync_runs shipped in image but never ran on prod) |
 | scribe-api | NO — `CMD uvicorn …` only |
-| klai-connector | NO — `CMD uvicorn …` only |
 | klai-mailer | NO — `CMD uvicorn …` only |
 | klai-knowledge-mcp | NO — `CMD python main.py` only |
 | klai-knowledge-ingest | NO — `CMD uvicorn …` only |
 | klai-retrieval-api | NO — `CMD uvicorn …` only |
 
-Every service except portal-api needs the manual-migrate step or an
-entrypoint port. The portal-api `entrypoint.sh` (introduced by
-SPEC-CHAT-TEMPLATES-CLEANUP-001) is the canonical pattern to copy.
+Every service except portal-api and klai-connector needs the
+manual-migrate step or an entrypoint port. The portal-api
+`entrypoint.sh` (introduced by SPEC-CHAT-TEMPLATES-CLEANUP-001) is the
+canonical pattern to copy. klai-connector's `entrypoint.sh` adds the
+twin requirement on klai-connector's `alembic.ini`:
+`prepend_sys_path = .` (so `from app.models.connector import Base`
+resolves) — without that line `alembic upgrade head` exits with
+`ModuleNotFoundError: No module named 'app'` and the container will
+crash-loop on every restart. Spotted live on 2026-04-30 when the
+`Sync now` click failed with `column sync_runs.org_id does not exist`
+on the very first new-build connector, requiring
+`docker exec klai-core-klai-connector-1 sh -c 'PYTHONPATH=. .venv/bin/alembic upgrade head'`
+as a hand-applied fix before this entrypoint pattern landed.
 
 ## ruff-format-and-ruff-check-are-different (MED)
 `uv run ruff check` and `uv run ruff format --check` enforce different
