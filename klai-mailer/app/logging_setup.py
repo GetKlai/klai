@@ -10,6 +10,43 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
+# Paths that the access log SHALL drop. Healthcheck spam from Docker's
+# liveness probe (every ~10s) drowns the signal of real /notify and
+# /internal/send requests. Route paths must match `request_line` byte-for-byte
+# as uvicorn formats them: ``GET /health HTTP/1.1`` (no host, no query).
+_ACCESS_LOG_FILTERED_PATHS: frozenset[str] = frozenset({"/health"})
+
+
+class _HealthCheckAccessFilter(logging.Filter):
+    """Drop uvicorn access log records for healthcheck endpoints.
+
+    SPEC-SEC-MAILER-INJECTION-001 v0.3.2 follow-up: yesterday's /notify
+    500 outage was four-times longer to diagnose than necessary because the
+    mailer suppressed ``uvicorn.access`` at WARNING level — request
+    lines never appeared in ``docker logs``. Re-enabling INFO shows the
+    real request flow but also surfaces every Docker healthcheck. This
+    filter removes the noise without removing the signal.
+
+    The filter inspects ``record.args`` (the tuple uvicorn passes to
+    its ``%s "%s %s HTTP/%s" %d`` format string) so it works regardless
+    of the eventual rendered message. Defensive against changes to
+    uvicorn's access-log format: if ``args`` is missing or doesn't
+    match the expected shape, the record passes through (we'd rather
+    leak a healthcheck line than swallow a real request log).
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if not isinstance(args, tuple) or len(args) < 3:
+            return True
+        # uvicorn access record args: (client_addr, method, full_path, http_version, status_code)
+        full_path = args[2]
+        if not isinstance(full_path, str):
+            return True
+        # full_path looks like "/health" or "/health?check=1"; split on '?'
+        path_only = full_path.split("?", 1)[0]
+        return path_only not in _ACCESS_LOG_FILTERED_PATHS
+
 
 def setup_logging(service_name: str = "klai-mailer") -> None:
     """Configure structlog with stdlib integration.
@@ -56,7 +93,13 @@ def setup_logging(service_name: str = "klai-mailer") -> None:
     root_logger.addHandler(handler)
     root_logger.setLevel(logging.INFO)
 
-    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    # uvicorn.access at INFO so every request is visible in `docker logs`
+    # — the diagnostic signal that was missing during the 2026-04-29 mailer
+    # /notify 500 outage. Spam from Docker healthcheck is filtered out via
+    # _HealthCheckAccessFilter so signal-to-noise stays good.
+    access_logger = logging.getLogger("uvicorn.access")
+    access_logger.setLevel(logging.INFO)
+    access_logger.addFilter(_HealthCheckAccessFilter())
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
