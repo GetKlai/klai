@@ -62,6 +62,7 @@ from app.models.portal import PortalOrg, PortalUser
 from app.services import audit
 from app.services.bff_session import SessionService
 from app.services.events import emit_event
+from app.services.pending_session import PendingSessionService
 from app.services.redis_client import get_redis_pool
 from app.services.request_ip import resolve_caller_ip_subnet
 from app.services.zitadel import zitadel
@@ -1903,17 +1904,63 @@ async def idp_callback(
     zitadel_user_id = details.get("zitadel_user_id", "")
     email = details.get("email", "")
 
-    # Look up existing portal_users rows for this zitadel_user_id
+    # SPEC-AUTH-009 R3: 4-case domain-match decision matrix
+    # member_orgs: orgs where the user already has a portal_users row
+    # domain_orgs: orgs whose primary_domain matches user email domain
+    #              AND user is NOT already a member
     if zitadel_user_id:
         user_result = await db.execute(select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id))
-        existing_users = user_result.scalars().all()
+        member_users = list(user_result.scalars().all())
     else:
-        existing_users = []
+        member_users = []
 
-    # C9.3: Multiple orgs → Redis pending-session, redirect to /select-workspace
-    if len(existing_users) > 1:
-        from app.services.pending_session import PendingSessionService
+    # Query orgs with matching primary_domain that user is NOT already a member of
+    email_domain = email.rsplit("@", 1)[-1].strip().lower() if "@" in email else ""
+    domain_orgs = []
+    if email_domain and zitadel_user_id:
+        member_org_ids = {u.org_id for u in member_users}
+        domain_result = await db.execute(
+            select(PortalOrg).where(
+                PortalOrg.primary_domain == email_domain,
+                PortalOrg.deleted_at.is_(None),
+                PortalOrg.id.not_in(member_org_ids) if member_org_ids else PortalOrg.id.is_not(None),
+            )
+        )
+        domain_orgs = list(domain_result.scalars().all())
 
+    # Build combined entries list: member entries first, then domain_match
+    entries = [
+        {
+            "org_id": u.org_id,
+            "name": u.org.name if hasattr(u.org, "name") else "",
+            "slug": u.org.slug if hasattr(u.org, "slug") else "",
+            "kind": "member",
+            "auto_accept": False,
+        }
+        for u in member_users
+    ] + [
+        {
+            "org_id": o.id,
+            "name": o.name,
+            "slug": o.slug,
+            "kind": "domain_match",
+            "auto_accept": bool(o.auto_accept_same_domain),
+        }
+        for o in domain_orgs
+    ]
+
+    total = len(entries)
+
+    # Case 1: no member orgs AND no domain_orgs -> redirect to /no-account
+    if total == 0:
+        return RedirectResponse(url="/no-account", status_code=302)
+
+    # Case 2: exactly 1 member entry + 0 domain_match -> direct finalize
+    if len(member_users) == 1 and len(domain_orgs) == 0:
+        pass  # falls through to finalize below
+
+    # Cases 3+4: any domain_match OR multiple total entries -> picker
+    elif total >= 1 and (len(domain_orgs) > 0 or total > 1):
         try:
             svc = PendingSessionService()
             ref = await svc.store(
@@ -1922,14 +1969,13 @@ async def idp_callback(
                 zitadel_user_id=zitadel_user_id,
                 email=email,
                 auth_request_id=auth_request_id,
-                org_ids=[u.org_id for u in existing_users],
+                entries=entries,
             )
             return RedirectResponse(url=f"/select-workspace?ref={ref}", status_code=302)
         except Exception:
-            _slog.exception("Failed to store pending session — falling through to first org")
+            _slog.exception("Failed to store pending session -- falling through to first member org")
 
-    # Finalize the auth request (always, even if no portal_users row)
-    # The callback.tsx will check org_found and redirect to /no-account if needed
+    # Finalize the auth request (Case 2: single member)
     try:
         callback_url = await zitadel.finalize_auth_request(
             auth_request_id=auth_request_id,
