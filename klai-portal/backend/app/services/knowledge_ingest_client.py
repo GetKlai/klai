@@ -76,18 +76,44 @@ async def delete_kb(org_id: str, kb_slug: str) -> None:
 
 
 async def delete_connector(org_id: str, kb_slug: str, connector_id: str) -> None:
-    """Delete all knowledge-ingest data for a connector: FalkorDB episodes, Qdrant chunks, PG artifacts.
+    """Synchronous connector cleanup — kept for admin force-purge (REQ-11).
 
-    Intentionally raises on failure — portal must not delete its own connector record when
-    ingest cleanup fails, to keep both sides consistent.
+    SPEC-CONNECTOR-DELETE-LIFECYCLE-001 keeps the synchronous DELETE for
+    operator-driven recovery. The user-facing flow uses ``enqueue_purge``
+    below which returns 202 immediately.
     """
     async with httpx.AsyncClient(
         base_url=settings.knowledge_ingest_url,
         headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
-        timeout=30.0,
+        timeout=60.0,
     ) as client:
         resp = await client.delete(
             "/ingest/v1/connector",
+            params={"org_id": org_id, "kb_slug": kb_slug, "connector_id": connector_id},
+        )
+        resp.raise_for_status()
+
+
+async def enqueue_connector_purge(org_id: str, kb_slug: str, connector_id: str) -> None:
+    """Enqueue an async connector-purge task on knowledge-ingest.
+
+    SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-03. Replaces the synchronous
+    ``delete_connector`` call in the user-facing DELETE endpoint. Returns
+    once knowledge-ingest has handed the work to procrastinate (P95 < 50ms
+    in practice). The procrastinate worker drives the cancel-jobs +
+    multi-store cleanup, then calls back to the portal's
+    ``finalize-delete`` endpoint to hard-delete the row.
+
+    Raises on transport / auth failure so the caller can rollback the
+    ``state='deleting'`` flip and surface a 5xx to the user.
+    """
+    async with httpx.AsyncClient(
+        base_url=settings.knowledge_ingest_url,
+        headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
+        timeout=10.0,
+    ) as client:
+        resp = await client.post(
+            "/ingest/v1/connector/purge",
             params={"org_id": org_id, "kb_slug": kb_slug, "connector_id": connector_id},
         )
         resp.raise_for_status()

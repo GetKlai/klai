@@ -347,6 +347,32 @@ async def delete_connector_artifacts(org_id: str, kb_slug: str, connector_id: st
     return int(result or 0)
 
 
+async def artifact_exists(artifact_id: str) -> bool:
+    """SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-07: existence-guard helper.
+
+    Returns True iff a row in ``knowledge.artifacts`` matches the given
+    UUID. Used by ``ingest_graphiti_episode`` to short-circuit when the
+    artifact was deleted (typically by the connector purge orchestrator)
+    between enqueue and dequeue. The graphiti task has no
+    ``source_connector_id`` arg, so artifact-presence is the canonical
+    signal here.
+
+    Fail-closed: any DB error returns False so the caller aborts.
+    """
+    if not artifact_id:
+        return False
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT 1 FROM knowledge.artifacts WHERE id = $1::uuid",
+                artifact_id,
+            )
+        return row is not None
+    except Exception:
+        return False
+
+
 async def delete_connector_crawl_jobs(
     org_id: str, kb_slug: str, connector_id: str
 ) -> int:
