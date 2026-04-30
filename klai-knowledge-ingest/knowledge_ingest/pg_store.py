@@ -478,20 +478,31 @@ async def get_orphan_image_keys_for_connector(
     return [r["s3_key"] for r in rows]
 
 
-async def get_alive_artifact_ids_for_org(org_id: str) -> set[str]:
-    """Return every artifact UUID in postgres for this org, as a set of strings.
+async def get_alive_episode_uuids_for_org(org_id: str) -> set[str]:
+    """Return every Graphiti episode UUID still referenced by an artifact for this org.
 
-    Used by ``graph_module.sweep_orphan_episodes_org_wide`` to compute
-    which FalkorDB episodes have lost their backing artifact and are
-    therefore orphan.
+    Read from ``knowledge.artifacts.extra->>'graphiti_episode_id'`` —
+    this is where the ingest pipeline stores the FalkorDB ``Episodic.uuid``
+    after a successful ``graph_module.ingest_episode``. The org-wide
+    janitor uses the result to compute which FalkorDB episodes are no
+    longer referenced and therefore orphan.
+
+    Excludes the ``no-chunks`` sentinel that artifacts use when an
+    article had no extractable text.
     """
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id::text AS id FROM knowledge.artifacts WHERE org_id = $1",
+            """
+            SELECT extra::jsonb->>'graphiti_episode_id' AS episode_uuid
+              FROM knowledge.artifacts
+             WHERE org_id = $1
+               AND extra IS NOT NULL
+               AND extra::jsonb->>'graphiti_episode_id' IS NOT NULL
+            """,
             org_id,
         )
-    return {r["id"] for r in rows}
+    return {r["episode_uuid"] for r in rows if r["episode_uuid"] != "no-chunks"}
 
 
 async def get_active_image_hashes_for_kb(org_id: str, kb_slug: str) -> set[str]:
