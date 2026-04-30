@@ -43,7 +43,12 @@ def _verify_internal_bearer(authorization: str | None) -> None:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
     presented = authorization.removeprefix("Bearer ")
-    if not hmac.compare_digest(presented, settings.knowledge_ingest_secret):
+    # ``internal_secret`` is the INBOUND secret for service->portal calls
+    # (matches what knowledge-ingest sends as PORTAL_INTERNAL_TOKEN). The
+    # original code used ``knowledge_ingest_secret`` which is the OUTBOUND
+    # token (portal -> knowledge-ingest), wrong direction — caught live
+    # by a 401 on the finalize-delete callback during e2e on Voys.
+    if not hmac.compare_digest(presented, settings.internal_secret):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
 
 

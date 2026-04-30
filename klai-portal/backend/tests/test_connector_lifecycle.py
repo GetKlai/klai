@@ -201,7 +201,7 @@ async def test_finalize_delete_idempotent_when_row_missing(
 ) -> None:
     """REQ-04.4: row already gone => 204 (worker retry after partial success)."""
     monkeypatch.setattr(
-        "app.api.internal_connectors.settings.knowledge_ingest_secret",
+        "app.api.internal_connectors.settings.internal_secret",
         "test-secret",
     )
     db = _FakeDB(fetch_value=None)
@@ -221,7 +221,7 @@ async def test_finalize_delete_drops_row_when_state_deleting(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "app.api.internal_connectors.settings.knowledge_ingest_secret",
+        "app.api.internal_connectors.settings.internal_secret",
         "test-secret",
     )
     connector = _FakeConnector(id="conn-uuid", kb_id=42, state="deleting")
@@ -245,7 +245,7 @@ async def test_finalize_delete_409_when_state_active(monkeypatch: pytest.MonkeyP
     from fastapi import HTTPException
 
     monkeypatch.setattr(
-        "app.api.internal_connectors.settings.knowledge_ingest_secret",
+        "app.api.internal_connectors.settings.internal_secret",
         "test-secret",
     )
     connector = _FakeConnector(id="conn-uuid", kb_id=42, state="active")
