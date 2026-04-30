@@ -487,7 +487,7 @@ async def _validate_callback_url(url: str) -> str:
     trusted = settings.domain  # getklai.com
     # Anything outside .{domain} is rejected before we hit the slug allowlist.
     if not hostname.endswith(f".{trusted}"):
-        logger.error("callback_url failed validation: %r", url)
+        _slog.error("callback_url_failed_validation", url=url, hostname=hostname)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Login failed, please try again later",
@@ -505,9 +505,9 @@ async def _validate_callback_url(url: str) -> str:
         first_label = first_label[len(_LIBRECHAT_HOST_PREFIX) :]
     allowed_slugs = await _get_tenant_slug_allowlist()
     if not first_label or first_label not in allowed_slugs:
-        logger.error(
+        _slog.error(
             "callback_url_subdomain_not_allowlisted",
-            extra={"hostname": hostname},
+            hostname=hostname,
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
