@@ -434,8 +434,21 @@ def _system_callback_hosts() -> frozenset[str]:
 #   with frontend host config + Caddy redirect rules before changing.
 # @MX:SPEC: SPEC-SEC-AUTH-COVERAGE-001 + SPEC-SEC-HYGIENE-001 REQ-20
 #   (REQ-20.1 tenant-slug allowlist on top of .{domain} suffix check,
-#   REQ-20.4 system-host bypass for FRONTEND_URL host, on top of
+#   REQ-20.4 system-host bypass for FRONTEND_URL host,
+#   REQ-20.5 ``chat-{slug}`` LibreChat tenant-host bypass on top of
 #   Zitadel's OIDC client redirect_uri validation)
+
+# REQ-20.5: every LibreChat tenant is provisioned at ``chat-{slug}.{domain}``
+# (see ``app/services/provisioning/generators.py`` lines 160-161 — the
+# Caddy block + DOMAIN_CLIENT/DOMAIN_SERVER env vars are derived from this
+# pattern). The Zitadel OIDC app for that tenant therefore returns callback
+# URLs whose first DNS label is the literal string ``chat-{slug}`` — which
+# does NOT match the bare ``{slug}`` row in ``portal_orgs.slug``. We strip
+# this one specific prefix before consulting the allowlist; the empty-slug
+# guard below keeps ``chat-.{domain}`` rejected.
+_LIBRECHAT_HOST_PREFIX = "chat-"
+
+
 async def _validate_callback_url(url: str) -> str:
     """Ensure callback_url points to a trusted host.
 
@@ -451,6 +464,11 @@ async def _validate_callback_url(url: str) -> str:
        allowlist (``portal_orgs.slug WHERE deleted_at IS NULL``). This
        prevents dangling-DNS or abandoned-tenant subdomains from acting
        as open-redirect targets.
+    4. LibreChat tenant subdomains (REQ-20.5) — hosts shaped
+       ``chat-{slug}.{domain}`` are the per-tenant LibreChat instance.
+       The bare ``{slug}`` (after stripping the literal ``chat-`` prefix)
+       MUST appear in the same allowlist. Any other prefix or a
+       hyphen-only ``chat-`` is treated as an unknown subdomain and 502s.
 
     Anything else returns 502 with a generic body (no information leak).
     Zitadel itself validates the registered ``redirect_uri`` list before
@@ -479,8 +497,14 @@ async def _validate_callback_url(url: str) -> str:
     subdomain = hostname[: -len(suffix)]
     # Take the first label (e.g. "voys" from "voys.subsection.getklai.com").
     first_label = subdomain.split(".")[0] if subdomain else ""
+    # REQ-20.5: strip the LibreChat ``chat-`` prefix so the bare slug is
+    # what's matched against the allowlist. ``chat-`` alone (empty slug
+    # after strip) falls through to the ``not in allowed_slugs`` rejection
+    # because the empty string is never a valid tenant slug.
+    if first_label.startswith(_LIBRECHAT_HOST_PREFIX):
+        first_label = first_label[len(_LIBRECHAT_HOST_PREFIX) :]
     allowed_slugs = await _get_tenant_slug_allowlist()
-    if first_label not in allowed_slugs:
+    if not first_label or first_label not in allowed_slugs:
         logger.error(
             "callback_url_subdomain_not_allowlisted",
             extra={"hostname": hostname},

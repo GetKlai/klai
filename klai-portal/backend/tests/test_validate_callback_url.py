@@ -407,3 +407,92 @@ async def test_idn_punycode_subdomain_rejected() -> None:
             with pytest.raises(HTTPException) as exc_info:
                 await auth_module._validate_callback_url(url)
         assert exc_info.value.status_code == 502
+
+
+# REQ-20.5: LibreChat tenant subdomain bypass (chat-{slug}.{domain}) ------- #
+#
+# Per ``app/services/provisioning/generators.py`` lines 160-161, every
+# LibreChat tenant is provisioned at ``chat-{slug}.{domain}`` (e.g.
+# ``chat-getklai.getklai.com``). The OIDC app for that tenant therefore
+# returns callback URLs whose first DNS label is ``chat-{slug}`` — which is
+# NOT in ``portal_orgs.slug`` (which holds the bare ``{slug}``).
+#
+# The 2026-04-30 prod outage (this very fix) was caused by REQ-20.1 only
+# considering the bare-slug class; ``chat-getklai`` failed the lookup and
+# every chat-iframe SSO-complete returned 502. Listed under
+# ``allowlist-must-enumerate-all-host-classes`` in
+# ``.claude/rules/klai/pitfalls/process-rules.md``.
+
+
+@pytest.mark.asyncio
+async def test_librechat_chat_prefixed_subdomain_passes() -> None:
+    """REQ-20.5: ``chat-{slug}.{domain}`` is the canonical LibreChat
+    tenant host. The validator MUST accept it when the bare ``{slug}`` is
+    in the active allowlist — without requiring ``chat-{slug}`` itself to
+    appear as a row in ``portal_orgs``.
+    """
+    with (
+        patch.object(auth_module.settings, "domain", "getklai.com"),
+        patch.object(auth_module.settings, "frontend_url", "https://my.getklai.com"),
+    ):
+        auth_module._system_callback_hosts.cache_clear()
+        # Allowlist holds the bare slug "getklai" — matches what
+        # ``portal_orgs.slug`` actually stores in production.
+        with _patch_allowlist({"getklai", "voys"}):
+            url = "https://chat-getklai.getklai.com/oauth/callback?code=abc"
+            result = await auth_module._validate_callback_url(url)
+        assert result == url
+
+
+@pytest.mark.asyncio
+async def test_librechat_chat_prefixed_unknown_slug_still_rejected() -> None:
+    """REQ-20.5 invariant: stripping the ``chat-`` prefix MUST NOT
+    weaken the allowlist gate. ``chat-attacker.getklai.com`` still 502s
+    when ``attacker`` is not in the active-slug set.
+    """
+    with (
+        patch.object(auth_module.settings, "domain", "getklai.com"),
+        patch.object(auth_module.settings, "frontend_url", "https://my.getklai.com"),
+    ):
+        auth_module._system_callback_hosts.cache_clear()
+        with _patch_allowlist({"getklai", "voys"}):
+            with pytest.raises(HTTPException) as exc_info:
+                await auth_module._validate_callback_url("https://chat-attacker.getklai.com/x")
+        assert exc_info.value.status_code == 502
+
+
+@pytest.mark.asyncio
+async def test_chat_prefix_is_not_allowlist_bypass_for_random_label() -> None:
+    """REQ-20.5 adversarial: only the literal ``chat-`` prefix is
+    stripped. Substrings like ``mychat-getklai`` must NOT fall through —
+    that label is neither a tenant slug nor a LibreChat tenant host.
+    """
+    with (
+        patch.object(auth_module.settings, "domain", "getklai.com"),
+        patch.object(auth_module.settings, "frontend_url", "https://my.getklai.com"),
+    ):
+        auth_module._system_callback_hosts.cache_clear()
+        with _patch_allowlist({"getklai", "voys"}):
+            with pytest.raises(HTTPException) as exc_info:
+                await auth_module._validate_callback_url("https://mychat-getklai.getklai.com/x")
+        assert exc_info.value.status_code == 502
+
+
+@pytest.mark.asyncio
+async def test_bare_chat_label_without_slug_rejected() -> None:
+    """REQ-20.5 adversarial: a degenerate ``chat-.getklai.com`` host
+    (empty slug after stripping) MUST be rejected — empty-string is
+    never a valid tenant slug.
+    """
+    with (
+        patch.object(auth_module.settings, "domain", "getklai.com"),
+        patch.object(auth_module.settings, "frontend_url", "https://my.getklai.com"),
+    ):
+        auth_module._system_callback_hosts.cache_clear()
+        # Even an allowlist that erroneously contained the empty string
+        # would not let this through, but the canonical case is an
+        # ordinary allowlist with valid slugs.
+        with _patch_allowlist({"getklai", "voys"}):
+            with pytest.raises(HTTPException) as exc_info:
+                await auth_module._validate_callback_url("https://chat-.getklai.com/x")
+        assert exc_info.value.status_code == 502
