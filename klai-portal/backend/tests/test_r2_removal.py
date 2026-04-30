@@ -48,9 +48,7 @@ class TestFrontendDomainsRouteGone:
     def test_domains_tsx_file_deleted(self) -> None:
         """The frontend domains route file must not exist."""
         # Path relative to the repo root (worktree root)
-        repo_root = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "..")
-        )
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
         domains_tsx = os.path.join(
             repo_root,
             "klai-portal",
@@ -60,21 +58,15 @@ class TestFrontendDomainsRouteGone:
             "admin",
             "domains.tsx",
         )
-        assert not os.path.exists(domains_tsx), (
-            f"domains.tsx still exists at {domains_tsx}; should be deleted per C2.4"
-        )
+        assert not os.path.exists(domains_tsx), f"domains.tsx still exists at {domains_tsx}; should be deleted per C2.4"
 
 
 class TestI18nKeyGone:
     """C2.5: admin_domains_* i18n keys MUST be removed from message files."""
 
     def _load_messages(self, lang: str) -> str:
-        repo_root = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "..")
-        )
-        msg_path = os.path.join(
-            repo_root, "klai-portal", "frontend", "messages", f"{lang}.json"
-        )
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+        msg_path = os.path.join(repo_root, "klai-portal", "frontend", "messages", f"{lang}.json")
         if not os.path.exists(msg_path):
             pytest.skip(f"Message file {msg_path} not found")
         with open(msg_path, encoding="utf-8") as fh:
@@ -82,15 +74,11 @@ class TestI18nKeyGone:
 
     def test_en_json_has_no_admin_domains_keys(self) -> None:
         content = self._load_messages("en")
-        assert "admin_domains_" not in content, (
-            "en.json still contains admin_domains_* keys; remove per C2.5"
-        )
+        assert "admin_domains_" not in content, "en.json still contains admin_domains_* keys; remove per C2.5"
 
     def test_nl_json_has_no_admin_domains_keys(self) -> None:
         content = self._load_messages("nl")
-        assert "admin_domains_" not in content, (
-            "nl.json still contains admin_domains_* keys; remove per C2.5"
-        )
+        assert "admin_domains_" not in content, "nl.json still contains admin_domains_* keys; remove per C2.5"
 
 
 class TestDomainValidationHelpersPreserved:
@@ -98,12 +86,15 @@ class TestDomainValidationHelpersPreserved:
 
     def test_is_free_email_provider_importable(self) -> None:
         from app.services.domain_validation import is_free_email_provider
+
         assert is_free_email_provider("gmail.com") is True
 
     def test_normalize_domain_importable(self) -> None:
         from app.services.domain_validation import normalize_domain
+
         assert normalize_domain("  ACME.NL  ") == "acme.nl"
 
     def test_is_valid_domain_importable(self) -> None:
         from app.services.domain_validation import is_valid_domain
+
         assert is_valid_domain("acme.nl") is True

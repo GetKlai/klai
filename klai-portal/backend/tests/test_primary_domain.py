@@ -4,7 +4,9 @@ Covers AC-1, AC-2, C1.1, C1.3, R7/C7.2.
 """
 
 from __future__ import annotations
+
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 
 _BASE: dict = {
@@ -20,10 +22,12 @@ _BASE: dict = {
 class TestPortalOrgModel:
     def test_has_primary_domain(self) -> None:
         from app.models.portal import PortalOrg
+
         assert hasattr(PortalOrg, "primary_domain")
 
     def test_has_auto_accept_same_domain(self) -> None:
         from app.models.portal import PortalOrg
+
         assert hasattr(PortalOrg, "auto_accept_same_domain")
 
 
@@ -43,7 +47,8 @@ class TestPrimaryDomainSetAtSignup:
     @pytest.mark.asyncio
     async def test_signup_sets_primary_domain(self) -> None:
         """AC-1: primary_domain stored on portal_orgs."""
-        from app.api.signup import signup, SignupRequest
+        from app.api.signup import SignupRequest, signup
+
         mock_db = AsyncMock()
         body = SignupRequest(**_BASE)
         with (
@@ -65,7 +70,8 @@ class TestPrimaryDomainSetAtSignup:
     @pytest.mark.asyncio
     async def test_signup_sets_auto_accept_false(self) -> None:
         """AC-1: auto_accept_same_domain=False by default."""
-        from app.api.signup import signup, SignupRequest
+        from app.api.signup import SignupRequest, signup
+
         mock_db = AsyncMock()
         body = SignupRequest(**_BASE)
         with (
@@ -86,7 +92,8 @@ class TestPrimaryDomainSetAtSignup:
     @pytest.mark.asyncio
     async def test_signup_normalises_domain_lowercase(self) -> None:
         """C1.1: primary_domain is normalised to lowercase."""
-        from app.api.signup import signup, SignupRequest
+        from app.api.signup import SignupRequest, signup
+
         mock_db = AsyncMock()
         body = SignupRequest(**{**_BASE, "email": "founder@BEDRIJF.NL"})
         with (
@@ -111,7 +118,9 @@ class TestFreeEmailSignupRejected:
     @pytest.mark.asyncio
     async def test_gmail_returns_400(self) -> None:
         from fastapi import HTTPException
-        from app.api.signup import signup, SignupRequest
+
+        from app.api.signup import SignupRequest, signup
+
         mock_db = AsyncMock()
         body = SignupRequest(**{**_BASE, "email": "user@gmail.com"})
         with (
@@ -125,7 +134,9 @@ class TestFreeEmailSignupRejected:
     async def test_gmail_error_mentions_company(self) -> None:
         """C7.2: Error must mention zakelijk/company or uitnodiging."""
         from fastapi import HTTPException
-        from app.api.signup import signup, SignupRequest
+
+        from app.api.signup import SignupRequest, signup
+
         mock_db = AsyncMock()
         body = SignupRequest(**{**_BASE, "email": "user@gmail.com"})
         with (
@@ -140,12 +151,13 @@ class TestFreeEmailSignupRejected:
     @pytest.mark.asyncio
     async def test_gmail_no_db_add(self) -> None:
         """AC-2: No portal_orgs row on free-email rejection."""
-        from fastapi import HTTPException
-        from app.api.signup import signup, SignupRequest
+
     @pytest.mark.asyncio
     async def test_hotmail_returns_400(self) -> None:
         from fastapi import HTTPException
-        from app.api.signup import signup, SignupRequest
+
+        from app.api.signup import SignupRequest, signup
+
         mock_db = AsyncMock()
         body = SignupRequest(**{**_BASE, "email": "user@hotmail.com"})
         with (
@@ -157,7 +169,8 @@ class TestFreeEmailSignupRejected:
 
     @pytest.mark.asyncio
     async def test_corporate_email_not_rejected(self) -> None:
-        from app.api.signup import signup, SignupRequest
+        from app.api.signup import SignupRequest, signup
+
         mock_db = AsyncMock()
         body = SignupRequest(**_BASE)
         with (
