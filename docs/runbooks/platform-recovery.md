@@ -869,3 +869,86 @@ After fix: health-failure log volume drops, alert auto-resolves within 10m of th
 If LibreChat ever upgrades and changes the "health" / "fail" text in their log format, this rule silently breaks. Quarterly review: confirm fire-count > 0 for SOME period of last quarter — if always zero, either we're suspiciously healthy (good) or the rule broke (bad).
 
 A long-term fix is to instrument LibreChat with structured-event logging via a sidecar, so we can match `event:health_failed` instead of substring text. Out of OBS-001 scope.
+
+---
+
+## mailer-zitadel-webhook-failed
+
+Triggered by either `mailer_zitadel_webhook_failed` or `mailer_notify_5xx_count_high` from `deploy/grafana/provisioning/alerting/mailer-rules.yaml`. Both signal "Zitadel-issued emails (password reset, invitation, MFA setup) are not being delivered". The 2026-04-29 broken-redis-URL outage emitted ~14k of these log lines over 4 hours before a user reported the symptom — both alerts close that signal gap.
+
+**Severity: critical**. Every minute of fire = users locked out of password recovery.
+
+### Step 1 — Confirm both alerts fire together
+
+```
+service:zitadel AND msg:"sending notification failed" AND error:"klai-mailer:8000"
+service:klai-mailer AND _msg:"POST /notify" AND _msg:" 5"
+```
+
+- Both fire → mailer-internal failure (renderer crashes, broken dependency, SMTP auth, etc.). Skip to Step 3.
+- Only the Zitadel-side alert fires → Zitadel's request never reaches mailer. Step 2.
+- Only the mailer-side alert fires → uvicorn access logs show 5xx but Zitadel's notification channel is silent. Rare; means mailer is being hit by something OTHER than Zitadel (e.g. a rogue probe). Investigate `request.host` or source-ip in the access log.
+
+### Step 2 — Network / auth path Zitadel → mailer
+
+```bash
+# Verify both containers share the klai-net network
+ssh core-01 "docker inspect klai-core-zitadel-1 klai-core-klai-mailer-1 --format '{{.Name}} {{.NetworkSettings.Networks}}'"
+
+# Verify the WEBHOOK_SECRET env var matches between the two
+ssh core-01 "docker exec klai-core-klai-mailer-1 sh -c 'echo \$WEBHOOK_SECRET' | sha256sum"
+ssh core-01 "docker exec klai-core-zitadel-1 sh -c 'cat /etc/zitadel-config.yaml' | grep -A 2 webhook"
+```
+
+Mismatch on either → fix in SOPS (`klai-infra/core-01/.env.sops`), redeploy both services.
+
+### Step 3 — Mailer-internal failure: capture the live ASGI traceback
+
+The mailer access log shows the request reaching mailer but every one returns 5xx. Root cause is in the handler or one of its dependencies (renderer, SMTP, redis nonce, settings validator). Capture the traceback by tailing the live container while triggering a fresh password reset:
+
+```bash
+# Window 1 — tail mailer logs in real time
+ssh core-01 "docker logs --tail 0 -f klai-core-klai-mailer-1"
+
+# Window 2 — trigger one fresh password reset
+curl -X POST https://my.getklai.com/api/auth/password/reset \
+  -H "Content-Type: application/json" \
+  -d '{"email":"<an existing-user-email>"}'
+```
+
+The full ASGI traceback prints inline. Common patterns:
+
+- `ValueError("Port could not be cast to integer value as ...")` → `REDIS_URL` password contains URL-reserved chars without percent-encoding. Fix in SOPS, redeploy. See `redis-url-password-must-be-parsed-manually` pitfall.
+- `aiosmtplib.errors.SMTPAuthenticationError` → SMTP password rotated upstream without updating SOPS. Update SOPS, redeploy.
+- `jinja2.exceptions.TemplateNotFound` / `UndefinedError` → renderer regression. Either Zitadel is sending a new event_type the renderer doesn't handle, or a recent renderer commit broke a template. `git log klai-mailer/app/renderer.py` for the suspect.
+- `httpx.ConnectError` to `portal-api:8010` → portal-internal callback is down. Check portal-api liveness first.
+
+### Step 4 — Rollback escape hatch
+
+If the root cause is in a recent mailer commit and Step 3 hasn't pinpointed the exact line within 10 minutes, revert the most recent mailer change to restore service:
+
+```bash
+LAST_MAILER_COMMIT=$(git log --pretty=format:"%h" --diff-filter=AM -1 -- klai-mailer/)
+echo "Reverting $LAST_MAILER_COMMIT — diagnose forward in a follow-up PR"
+git revert "$LAST_MAILER_COMMIT" --no-edit
+git push origin main
+gh run watch --exit-status
+ssh core-01 "docker ps --format '{{.Names}}\t{{.Status}}' | grep mailer"
+# Container should show "Up <fresh seconds>" within 90 seconds.
+```
+
+### Verify
+
+After fix, both alerts auto-resolve within 10 minutes of the last failing notification.
+
+```bash
+# Trigger one real password reset to confirm end-to-end delivery
+curl -X POST https://my.getklai.com/api/auth/password/reset \
+  -H "Content-Type: application/json" \
+  -d '{"email":"<your-email>"}'
+# Wait 30 seconds, check inbox.
+```
+
+### Follow-up
+
+If the same root cause class fires twice in one quarter, that's a structural problem — file a SPEC. The 2026-04-29 incident produced two such SPECs that are now on the stack: `SPEC-INFRA-REDIS-SPLIT-001` (eliminate the URL-encoded-password failure mode) and `SPEC-CI-E2E-GATE-001` (post-deploy E2E smoke gate that would have caught the regression in build-deploy seconds, not user-report hours).
