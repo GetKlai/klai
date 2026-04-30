@@ -4,6 +4,7 @@ Portal-api calls this to start/stop meeting bots and manage recordings.
 """
 
 import base64
+import binascii
 import json
 import re
 from typing import NamedTuple
@@ -51,7 +52,7 @@ def _extract_teams_coords(url: str) -> dict | None:
         data = json.loads(base64.b64decode(padded))
         if data.get("meetingCode") and data.get("passcode"):
             return data
-    except (json.JSONDecodeError, base64.binascii.Error, UnicodeDecodeError):
+    except (json.JSONDecodeError, binascii.Error, UnicodeDecodeError):
         pass
     return None
 
