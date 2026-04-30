@@ -296,6 +296,77 @@ async def delete_kb_episodes(org_id: str, episode_ids: list[str]) -> None:
     logger.info("graph_kb_episodes_deleted", org_id=org_id, count=len(episode_ids))
 
 
+async def sweep_orphan_episodes_org_wide(org_id: str, alive_artifact_ids: set[str]) -> int:
+    """ORG-WIDE sweep of FalkorDB episodes whose artifact_id is no longer in postgres.
+
+    SPEC-CONNECTOR-DELETE-LIFECYCLE-001 follow-up to the per-connector
+    janitor. The artifact-id snapshot misses two failure modes:
+
+    1. Late-arriving graphiti episodes from PREVIOUS purge cycles where
+       the cancel-jobs filter was broken (e.g. earlier worker bugs).
+       Those episodes never made it into the next purge's snapshot
+       because their artifact rows were already gone by then.
+    2. Operator-driven cleanup that bypassed the orchestrator.
+
+    Implementation: list every Episodic in the org's graph, keep only
+    those whose ``artifact_id`` is in ``alive_artifact_ids`` (computed
+    by the caller from postgres), DETACH DELETE the rest, then sweep
+    Entities that lost all incident episodes.
+
+    Returns count of episodes deleted. No-op when graphiti is disabled.
+    """
+    if not settings.graphiti_enabled:
+        return 0
+    graphiti = _get_graphiti()
+    driver = graphiti.driver.clone(org_id)
+    list_result = await driver.execute_query(
+        "MATCH (e:Episodic) WHERE e.artifact_id IS NOT NULL RETURN e.artifact_id AS artifact_id"
+    )
+    falkor_artifact_ids: set[str] = set()
+    if list_result is not None:
+        records, _, _ = list_result
+        for r in records or []:
+            aid = r.get("artifact_id")
+            if aid:
+                falkor_artifact_ids.add(str(aid))
+
+    orphan_ids = falkor_artifact_ids - alive_artifact_ids
+    if not orphan_ids:
+        logger.info(
+            "graph_orphan_sweep_clean",
+            org_id=org_id,
+            falkor_episodes=len(falkor_artifact_ids),
+            alive=len(alive_artifact_ids),
+        )
+        return 0
+
+    del_result = await driver.execute_query(
+        "MATCH (e:Episodic) WHERE e.artifact_id IN $orphan_ids "
+        "WITH e, e.uuid AS uuid "
+        "DETACH DELETE e "
+        "RETURN count(uuid) AS deleted",
+        orphan_ids=list(orphan_ids),
+    )
+    deleted = 0
+    if del_result is not None:
+        records, _, _ = del_result
+        if records:
+            deleted = int(records[0].get("deleted", 0) or 0)
+    if deleted:
+        await driver.execute_query(
+            "MATCH (n:Entity) WHERE NOT ((:Episodic)--(n)) DETACH DELETE n",
+        )
+    logger.info(
+        "graph_orphan_episodes_swept",
+        org_id=org_id,
+        scanned=len(falkor_artifact_ids),
+        alive=len(alive_artifact_ids),
+        orphan_artifact_ids=len(orphan_ids),
+        episodes_deleted=deleted,
+    )
+    return deleted
+
+
 async def delete_orphan_episodes_for_artifact_ids(org_id: str, artifact_ids: list[str]) -> int:
     """Janitor: drop FalkorDB episodes whose ``artifact_id`` is in the given list.
 
@@ -490,7 +561,7 @@ async def ingest_episode(
                 exc_str = str(exc).lower()
                 is_rate_limit = (
                     "rate limit" in exc_str or "429" in exc_str or "ratelimit" in exc_str
-                )  # noqa: E501
+                )
                 if attempt < max_attempts - 1:
                     # Rate limit: back off long enough for Mistral's sliding window to reset.
                     # Other errors: short exponential backoff (1s, 2s).
