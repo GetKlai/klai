@@ -49,7 +49,13 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "007_sync_runs_fk_portal_connectors"
+# NB: revision IDs are stored in ``alembic_version.version_num`` which alembic
+# defaults to ``VARCHAR(32)``. The previous revision name
+# ``007_sync_runs_fk_portal_connectors`` was 34 chars and crashed the
+# alembic_version UPDATE in a prod deploy attempt — kept the migration
+# applied (DELETE + FK ran) but rolled back via the transaction. This
+# shorter id avoids that trap entirely.
+revision: str = "007_sync_runs_fk"
 down_revision: str | None = "006_add_org_id_to_sync_runs"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -70,18 +76,34 @@ def upgrade() -> None:
     )
 
     # Step 2: add the cross-schema FK with ON DELETE CASCADE.
+    # IF NOT EXISTS via an EXECUTE block — Postgres has no native syntax
+    # for "ALTER TABLE ADD CONSTRAINT IF NOT EXISTS" but ``information_schema``
+    # gives us the same idempotency. Critical for crash-loop recovery: if a
+    # previous migration attempt added the constraint but failed to record
+    # the version_num bump (the bug that triggered this rewrite), retrying
+    # must not error out on duplicate-constraint.
+    #
     # NB: PostgreSQL allows cross-schema FKs as long as the referencing role
     # has REFERENCES on the target table. If you hit a permission error,
     # see the docstring's "Pre-flight" section.
-    op.create_foreign_key(
-        "fk_sync_runs_portal_connectors",
-        source_table="sync_runs",
-        referent_table="portal_connectors",
-        local_cols=["connector_id"],
-        remote_cols=["id"],
-        source_schema="connector",
-        referent_schema="public",
-        ondelete="CASCADE",
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                  FROM pg_constraint
+                 WHERE conname = 'fk_sync_runs_portal_connectors'
+                   AND connamespace = 'connector'::regnamespace
+            ) THEN
+                ALTER TABLE connector.sync_runs
+                  ADD CONSTRAINT fk_sync_runs_portal_connectors
+                  FOREIGN KEY (connector_id)
+                  REFERENCES public.portal_connectors(id)
+                  ON DELETE CASCADE;
+            END IF;
+        END $$;
+        """
     )
 
 
@@ -89,10 +111,7 @@ def downgrade() -> None:
     # Restore the pre-migration state: drop the FK. We deliberately do NOT
     # restore the orphan rows we deleted in upgrade() — the data is gone
     # and the original 004 migration also did not preserve it across the
-    # FK removal.
-    op.drop_constraint(
-        "fk_sync_runs_portal_connectors",
-        "sync_runs",
-        type_="foreignkey",
-        schema="connector",
+    # FK removal. Use IF EXISTS for symmetry with the idempotent upgrade.
+    op.execute(
+        "ALTER TABLE connector.sync_runs DROP CONSTRAINT IF EXISTS fk_sync_runs_portal_connectors"
     )
