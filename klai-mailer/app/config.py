@@ -12,8 +12,8 @@ class Settings(BaseSettings):
     smtp_password: str
     smtp_from: str = "noreply@example.com"
     smtp_from_name: str = "Klai"
-    smtp_tls: bool = True          # STARTTLS on port 587
-    smtp_ssl: bool = False         # Implicit TLS on port 465
+    smtp_tls: bool = True  # STARTTLS on port 587
+    smtp_ssl: bool = False  # Implicit TLS on port 465
 
     # Security — shared secret between Zitadel and this service.
     # Empty / whitespace-only values are rejected at startup (REQ-9.1).
@@ -73,6 +73,35 @@ class Settings(BaseSettings):
     def _require_internal_secret(cls, v: str) -> str:
         if not v or not v.strip():
             raise ValueError("Missing required: INTERNAL_SECRET")
+        return v
+
+    # @MX:NOTE: structural URL validator — fail-fast at boot prevents the
+    #   "service starts cleanly, then 5xx every webhook" failure mode that
+    #   the 2026-04-29 outage exposed (broken-redis-URL).
+    # Mirrors the lazy-fail path in `app/nonce.py::get_redis()` (which catches
+    #   `RedisURLError` and translates to a runtime 503), but moves the failure
+    #   forward to deploy time so the operator sees the misconfiguration
+    #   IMMEDIATELY in the deploy logs instead of waiting for the first
+    #   webhook to surface it. Counterpart: SPEC-SEC-MAILER-INJECTION-001
+    #   REQ-6.5.
+    # Boot-fail is safe here because `parse_redis_url` is permissive —
+    #   it accepts ANY structurally-valid URL including passwords with
+    #   reserved characters. The only way this validator raises is if
+    #   the URL is structurally broken (no scheme, no host, non-integer
+    #   port), which means the operator made a typo in SOPS and a
+    #   noisy startup failure is the correct response.
+    @field_validator("redis_url", mode="after")
+    @classmethod
+    def _require_parseable_redis_url(cls, v: str) -> str:
+        # Local import to avoid a top-level circular import:
+        # app.config is imported by app.redis_url indirectly via tests
+        # that build settings without the full app graph loaded.
+        from app.redis_url import RedisURLError, parse_redis_url
+
+        try:
+            parse_redis_url(v)
+        except RedisURLError as exc:
+            raise ValueError(f"Invalid REDIS_URL: {exc}") from exc
         return v
 
 
