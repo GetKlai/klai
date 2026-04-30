@@ -187,13 +187,21 @@ class TestSystemCallbackHosts:
             assert isinstance(auth_module._system_callback_hosts(), frozenset)
 
     def test_handles_empty_frontend_url(self) -> None:
-        """If FRONTEND_URL is unset (dev), only the bare apex is in the set."""
+        """If FRONTEND_URL is unset (dev), the bare apex + the static
+        system service subdomains (REQ-20.5) are still in the set; only
+        the FRONTEND_URL host is missing."""
         with (
             patch.object(auth_module.settings, "domain", "getklai.com"),
             patch.object(auth_module.settings, "frontend_url", ""),
         ):
             auth_module._system_callback_hosts.cache_clear()
-            assert auth_module._system_callback_hosts() == frozenset({"getklai.com"})
+            hosts = auth_module._system_callback_hosts()
+            # FRONTEND_URL host (my.getklai.com) is absent, but the apex
+            # and the static subdomains remain.
+            assert "my.getklai.com" not in hosts
+            assert "getklai.com" in hosts
+            for sub in ("chat", "chat-dev", "dev", "grafana", "errors", "auth"):
+                assert f"{sub}.getklai.com" in hosts, f"missing {sub}.getklai.com"
 
 
 @pytest.mark.asyncio
@@ -407,3 +415,123 @@ async def test_idn_punycode_subdomain_rejected() -> None:
             with pytest.raises(HTTPException) as exc_info:
                 await auth_module._validate_callback_url(url)
         assert exc_info.value.status_code == 502
+
+
+# REQ-20.5: static system service subdomains + chat-{slug} per-tenant pattern
+#
+# Sibling-bug coverage for the 2026-04-30 chat-iframe SSO regression.
+# REQ-20.4 covered the FRONTEND_URL host but missed every other registered
+# Zitadel OIDC app: chat / chat-dev / dev / grafana / errors / auth and the
+# per-tenant `chat-{slug}.getklai.com` pattern. Each test below pins one
+# host class as accepted (or, for adversarial cases, rejected) so the
+# next OIDC app addition cannot silently regress through the validator.
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "chat.getklai.com",
+        "chat-dev.getklai.com",
+        "dev.getklai.com",
+        "grafana.getklai.com",
+        "errors.getklai.com",
+        "auth.getklai.com",
+    ],
+)
+@pytest.mark.asyncio
+async def test_static_system_subdomains_accepted(host: str) -> None:
+    """REQ-20.5: every static system subdomain registered as an OIDC
+    redirect_uri in Zitadel must pass the validator.
+
+    The original 2026-04-30 incident: LibreChat's chat-iframe-SSO flow
+    returned a callback at ``chat-getklai.getklai.com`` (per-tenant)
+    AND ``chat.getklai.com`` (system); both rejected by REQ-20.4 alone.
+    """
+    with (
+        patch.object(auth_module.settings, "domain", "getklai.com"),
+        patch.object(auth_module.settings, "frontend_url", "https://my.getklai.com"),
+    ):
+        auth_module._system_callback_hosts.cache_clear()
+        # Empty allowlist on purpose — system hosts must short-circuit
+        # before the slug check.
+        with _patch_allowlist(set()):
+            url = f"https://{host}/oauth/openid/callback?code=abc"
+            result = await auth_module._validate_callback_url(url)
+        assert result == url
+
+
+@pytest.mark.asyncio
+async def test_chat_prefix_per_tenant_subdomain_accepted() -> None:
+    """REQ-20.5: ``chat-{slug}.getklai.com`` resolves the slug check after
+    stripping the ``chat-`` prefix.
+
+    Per the Zitadel ``librechat-{tenant}`` OIDC apps, the registered
+    redirect URIs follow the pattern ``chat-{tenant}.getklai.com``. This
+    is the host LibreChat redirects to after the iframe SSO completes.
+    """
+    with (
+        patch.object(auth_module.settings, "domain", "getklai.com"),
+        patch.object(auth_module.settings, "frontend_url", "https://my.getklai.com"),
+    ):
+        auth_module._system_callback_hosts.cache_clear()
+        with _patch_allowlist({"voys", "getklai"}):
+            url = "https://chat-getklai.getklai.com/oauth/openid/callback?code=abc"
+            result = await auth_module._validate_callback_url(url)
+        assert result == url
+
+
+@pytest.mark.asyncio
+async def test_chat_prefix_with_unknown_slug_rejected() -> None:
+    """REQ-20.5 security invariant: ``chat-{slug}`` is allowed ONLY if
+    the slug is currently active. A dangling ``chat-oldcustomer.getklai.com``
+    DNS record cannot bypass the validator just by adding ``chat-``.
+    """
+    with (
+        patch.object(auth_module.settings, "domain", "getklai.com"),
+        patch.object(auth_module.settings, "frontend_url", "https://my.getklai.com"),
+    ):
+        auth_module._system_callback_hosts.cache_clear()
+        with _patch_allowlist({"voys", "getklai"}):
+            with pytest.raises(HTTPException) as exc_info:
+                await auth_module._validate_callback_url("https://chat-oldcustomer.getklai.com/oauth/openid/callback")
+        assert exc_info.value.status_code == 502
+
+
+@pytest.mark.asyncio
+async def test_chat_prefix_only_strips_first_level() -> None:
+    """REQ-20.5 security invariant: only ONE ``chat-`` prefix is stripped.
+
+    Adversarial: ``chat-chat-getklai.getklai.com`` — first label is
+    ``chat-chat-getklai``; after stripping ``chat-`` once, candidate is
+    ``chat-getklai`` which is NOT a tenant slug (slug is ``getklai``).
+    Reject. (Also: this URL is not a registered redirect_uri in Zitadel
+    so the primary defense already rejects it; this test pins the second
+    layer.)
+    """
+    with (
+        patch.object(auth_module.settings, "domain", "getklai.com"),
+        patch.object(auth_module.settings, "frontend_url", "https://my.getklai.com"),
+    ):
+        auth_module._system_callback_hosts.cache_clear()
+        with _patch_allowlist({"voys", "getklai"}):
+            with pytest.raises(HTTPException) as exc_info:
+                await auth_module._validate_callback_url("https://chat-chat-getklai.getklai.com/x")
+        assert exc_info.value.status_code == 502
+
+
+def test_static_system_subdomains_set_includes_known_oidc_apps() -> None:
+    """REQ-20.5 audit: the static set MUST contain every subdomain that
+    has a registered redirect_uri in Zitadel.
+
+    This is the contract test that fails CI if a new OIDC app is added
+    in Zitadel without extending ``_STATIC_SYSTEM_SUBDOMAINS``. Manually
+    verified set as of 2026-04-30 — see the docstring of
+    ``_STATIC_SYSTEM_SUBDOMAINS`` for the curl command operators run
+    quarterly to re-audit.
+    """
+    expected = {"chat", "chat-dev", "dev", "grafana", "errors", "auth"}
+    assert auth_module._STATIC_SYSTEM_SUBDOMAINS == frozenset(expected), (
+        "If you added a new Zitadel OIDC app with a redirect URI under "
+        "*.getklai.com, extend `_STATIC_SYSTEM_SUBDOMAINS` AND update this "
+        "test's `expected` set. If you removed one, same drill."
+    )
