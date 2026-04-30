@@ -1,16 +1,15 @@
-"""merge SPEC-AUTH-009 with pending migrations
+"""merge SPEC-AUTH-009 with main
 
-Revision ID: 71f4add474f4
-Revises: a1b2c3d4e5f6, v2m3e4r5g6h7
-Create Date: 2026-04-30 21:21:24.575762
+Revision ID: d37d02ec5dbb
+Revises: 13bb3bb00d53, a1b2c3d4e5f6
+Create Date: 2026-04-30 21:32:20.109934
 
 """
-
 from typing import Sequence, Union
 
 # revision identifiers, used by Alembic.
-revision: str = "71f4add474f4"
-down_revision: Union[str, Sequence[str], None] = ("a1b2c3d4e5f6", "v2m3e4r5g6h7")
+revision: str = "d37d02ec5dbb"
+down_revision: Union[str, Sequence[str], None] = ("13bb3bb00d53", "a1b2c3d4e5f6")
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
