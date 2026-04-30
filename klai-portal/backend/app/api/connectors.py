@@ -528,14 +528,14 @@ async def update_connector(
     return _connector_out(connector)
 
 
-@router.delete("/{connector_id}", status_code=status.HTTP_202_ACCEPTED)
+@router.delete("/{connector_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_connector(
     kb_slug: str,
     connector_id: str,
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
-) -> dict:
-    """Schedule a connector for asynchronous purge. Returns 202 immediately.
+) -> None:
+    """Schedule a connector for asynchronous purge. Returns 204 immediately.
 
     SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-03. Behaviour:
 
@@ -549,6 +549,10 @@ async def delete_connector(
          (cancel-jobs + multi-store delete) and finally calls back to
          ``POST /api/internal/connectors/{id}/finalize-delete`` to
          hard-delete the row.
+
+    Returns 204 No Content (preserved from pre-SPEC) — the cascade is
+    asynchronous but to the client the connector is gone immediately
+    (read-paths hide it). Frontend semantics unchanged.
 
     Idempotent: a second DELETE on a connector already in ``'deleting'``
     returns 404 (the user-facing semantics — "already gone").
@@ -600,7 +604,8 @@ async def delete_connector(
             detail="Could not schedule connector purge; please retry.",
         ) from exc
 
-    return {"status": "deleting", "connector_id": str(connector.id)}
+    # 204 No Content — body intentionally absent.
+    return None
 
 
 # Note: the compensating ``POST /api/internal/connectors/{id}/finalize-delete``
