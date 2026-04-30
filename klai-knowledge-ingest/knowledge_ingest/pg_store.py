@@ -478,6 +478,22 @@ async def get_orphan_image_keys_for_connector(
     return [r["s3_key"] for r in rows]
 
 
+async def get_alive_artifact_ids_for_org(org_id: str) -> set[str]:
+    """Return every artifact UUID in postgres for this org, as a set of strings.
+
+    Used by ``graph_module.sweep_orphan_episodes_org_wide`` to compute
+    which FalkorDB episodes have lost their backing artifact and are
+    therefore orphan.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id::text AS id FROM knowledge.artifacts WHERE org_id = $1",
+            org_id,
+        )
+    return {r["id"] for r in rows}
+
+
 async def get_active_image_hashes_for_kb(org_id: str, kb_slug: str) -> set[str]:
     """Return content_hashes still referenced by any artifact in a KB.
 
