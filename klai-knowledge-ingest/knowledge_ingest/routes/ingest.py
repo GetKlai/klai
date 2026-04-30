@@ -181,7 +181,9 @@ def _parse_knowledge_fields(
 
 
 # SPEC-KB-021: imported here so callers in this module use the short name
-from knowledge_ingest.source_label import compute_source_label as _compute_source_label  # noqa: E402
+from knowledge_ingest.source_label import (  # noqa: E402
+    compute_source_label as _compute_source_label,
+)
 
 
 async def _graphiti_background(
@@ -718,6 +720,12 @@ async def delete_connector_route(
     await graph_module.delete_kb_episodes(org_id, episode_ids)
     await qdrant_store.delete_connector(org_id, kb_slug, connector_id)
     artifacts_deleted = await pg_store.delete_connector_artifacts(org_id, kb_slug, connector_id)
+    # Audit trail in knowledge.crawl_jobs is scoped per-connector via
+    # config->>'connector_id'. Without this the rows live forever and
+    # confuse re-ingest dashboards. See pg_store.delete_connector_crawl_jobs.
+    crawl_jobs_deleted = await pg_store.delete_connector_crawl_jobs(
+        org_id, kb_slug, connector_id
+    )
     logger.info(
         "connector_deleted",
         org_id=org_id,
@@ -725,8 +733,14 @@ async def delete_connector_route(
         connector_id=connector_id,
         episodes_deleted=len(episode_ids),
         artifacts_deleted=artifacts_deleted,
+        crawl_jobs_deleted=crawl_jobs_deleted,
     )
-    return {"status": "ok", "episodes_deleted": len(episode_ids), "artifacts_deleted": artifacts_deleted}  # noqa: E501
+    return {
+        "status": "ok",
+        "episodes_deleted": len(episode_ids),
+        "artifacts_deleted": artifacts_deleted,
+        "crawl_jobs_deleted": crawl_jobs_deleted,
+    }
 
 
 @router.patch("/ingest/v1/kb/visibility")

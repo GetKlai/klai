@@ -540,6 +540,15 @@ async def delete_connector(
         kb_slug=kb.slug,
         connector_id=str(connector.id),
     )
+    # SPEC-CONNECTOR-CLEANUP-001 REQ-04 (interim, app-level): drop
+    # ``connector.sync_runs`` rows for this connector via klai-connector.
+    # Until the cross-schema FK with ``ON DELETE CASCADE`` to
+    # ``public.portal_connectors`` lands, this prevents an audit-trail
+    # of orphan sync-history keyed on a now-missing ``connector_id``.
+    await klai_connector_client.delete_sync_runs(
+        str(connector.id),
+        org_id=org.zitadel_org_id,
+    )
     await db.delete(connector)
     await db.commit()
 

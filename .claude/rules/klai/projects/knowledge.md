@@ -31,21 +31,32 @@ Cost: half a day of SPEC-CRAWLER-005 Fase 6 debugging.
   (run_crawl_job + _ingest_crawl_result now accept `connector_id`) and
   `klai-knowledge-ingest/knowledge_ingest/crawl_tasks.py` (passes it through).
 
-## Connector-delete cleanup must cover all four layers (HIGH)
+## Connector-delete cleanup must cover every store (HIGH)
 
-Deleting a connector via the portal UI is a cross-service operation. All four data
-layers must be cleaned or the next re-ingest hits dedup and produces zero new work:
+Deleting a connector via the portal UI is a cross-service operation. Every data
+layer must be cleaned or the next re-ingest hits dedup, produces zero new work,
+and an audit trail of orphan rows lingers forever:
 
 | Layer | Cleaned by |
 |---|---|
 | Qdrant chunks | `qdrant_store.delete_connector` (filters on `source_connector_id`) |
+| FalkorDB Graphiti episodes/entities | `graph_module.delete_kb_episodes` (per-episode UUIDs from `pg_store.get_connector_episode_ids`) |
 | `knowledge.artifacts` | `pg_store.delete_connector_artifacts` (filters on `extra::jsonb->>'source_connector_id'`) |
 | `knowledge.crawled_pages` + `knowledge.page_links` | `pg_store.delete_connector_artifacts` (scoped via artifact URL set — added post-SPEC-CRAWLER-005) |
-| `connector.sync_runs` | Currently NOT cleaned — tracked in SPEC-CONNECTOR-CLEANUP-001 REQ-04 (FK CASCADE) |
+| `knowledge.crawl_jobs` | `pg_store.delete_connector_crawl_jobs` (filters on `config->>'connector_id'` — JSONB, no native column) |
+| `connector.sync_runs` | `klai_connector_client.delete_sync_runs` (interim app-level call until SPEC-CONNECTOR-CLEANUP-001 REQ-04 lands the cross-schema FK with `ON DELETE CASCADE`) |
+| Garage `klai-images/{org}/images/{kb_slug}/...` | **NOT YET CLEANED PER CONNECTOR** — image keys carry no `connector_id`, so per-connector cleanup needs an artifact↔image-key tracking table (separate SPEC). KB-level cleanup wipes the whole `{org}/images/{kb_slug}/` prefix on KB delete, but a partial KB still grows orphan images proportionally to the deleted connector. |
 
 **Prevention:** when adding a new data layer that is connector-scoped, immediately
-wire it into `delete_connector_artifacts` (or the Qdrant equivalent) AND write a
-regression test that does: insert → delete connector → assert rows == 0.
+wire it into `delete_connector_artifacts` (or the Qdrant equivalent), add the call
+to `delete_connector_route` in `klai-knowledge-ingest/knowledge_ingest/routes/ingest.py`
+(or the portal-side delete handler if the data lives in another schema), AND write a
+regression test that does: insert → delete connector → assert rows == 0 across all
+stores.
+
+**Audit (2026-04-30):** verified live on Voys via UI delete. Six of seven stores
+auto-clean on the current code path (after the 2026-04-30 fix). Garage images
+remain a known gap — see SPEC-CONNECTOR-CLEANUP-001 follow-up notes.
 
 ## Connector-delete leaves in-flight enrichment jobs behind (HIGH)
 
