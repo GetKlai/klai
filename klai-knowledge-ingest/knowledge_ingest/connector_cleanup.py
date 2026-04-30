@@ -291,12 +291,18 @@ async def purge_connector(
     #      iff no artifact in this KB still references its hash.
     # Both run unconditionally — even when steps 4b/7 returned zero,
     # because their inputs depend on rows that no longer exist.
-    falkor_orphans_deleted = await graph_module.delete_orphan_episodes_for_artifact_ids(
-        org_id, artifact_ids
+    # Org-wide sweep: catches both this connector's late-arrivers AND
+    # historical orphans from previous failed purges. Computes alive
+    # set from postgres (artifacts table is now in its post-delete
+    # state) and intersects against FalkorDB's episode set.
+    alive_artifact_ids = await pg_store.get_alive_artifact_ids_for_org(org_id)
+    falkor_orphans_deleted = await graph_module.sweep_orphan_episodes_org_wide(
+        org_id, alive_artifact_ids
     )
     log.info(
         "connector_purge_step_falkor_orphans_swept",
         count=falkor_orphans_deleted,
+        alive_artifact_count=len(alive_artifact_ids),
     )
 
     janitor_s3_deleted = 0
