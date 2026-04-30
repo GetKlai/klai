@@ -44,8 +44,14 @@ COPY --from=deps /repo/klai-libs /repo/klai-libs
 ENV PATH="/repo/klai-connector/.venv/bin:${PATH}" \
     VIRTUAL_ENV="/repo/klai-connector/.venv"
 
-# Application code (app/, alembic/, tests/ are all under klai-connector/).
+# Application code (app/, alembic/, alembic.ini, entrypoint.sh, tests/ are
+# all under klai-connector/).
 COPY klai-connector/ .
+
+# entrypoint.sh runs `alembic upgrade head` then exec's the CMD. Same
+# pattern as klai-portal/backend/entrypoint.sh — fail-loud on migration
+# error instead of silently serving with a stale schema.
+RUN chmod +x /repo/klai-connector/entrypoint.sh
 
 RUN adduser --disabled-password --gecos "" klai
 
@@ -53,4 +59,5 @@ EXPOSE 8200
 
 USER klai
 
+ENTRYPOINT ["/repo/klai-connector/entrypoint.sh"]
 CMD ["uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8200"]
