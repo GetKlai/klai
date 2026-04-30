@@ -435,6 +435,31 @@ _STATIC_SYSTEM_SUBDOMAINS: frozenset[str] = frozenset(
     }
 )
 
+# SPEC-SEC-HYGIENE-001 REQ-20.5: per-tenant host prefixes — first label
+# of the form ``<prefix><slug>`` is accepted iff ``<slug>`` is in the
+# active tenant allowlist. The set is hardcoded because each prefix
+# represents a runtime architectural decision (a per-tenant subdomain
+# pattern owned by a specific service) that requires a coordinated
+# review to add. Currently:
+#
+#   chat-     LibreChat per-tenant instance (chat-{slug}.{domain})
+#
+# To add a new prefix: extend this set, extend the audit-test in
+# tests/test_validate_callback_url.py, and verify the corresponding
+# service registers the matching redirect_uri pattern in Zitadel. The
+# nightly drift workflow (.github/workflows/zitadel-oidc-drift.yml)
+# fires if a new host class appears in Zitadel without code update.
+_TENANT_HOST_PREFIXES: frozenset[str] = frozenset({"chat-"})
+
+# Sentinel passed to Zitadel ``/v2/sessions`` when ``find_user_by_email``
+# returned None (user does not exist). Zitadel issues snowflake user
+# IDs of 18 numeric digits; 14 zeros can never collide with a real ID.
+# Using a syntactically-valid but unknown user_id keeps the timing
+# close to the user-found path, preserving the uniform-401
+# anti-enumeration property from SPEC-SEC-MFA-001 finding #12 /
+# REQ-2.3 / REQ-2.5. See ``login`` handler call site for context.
+_NONEXISTENT_USER_ID_SENTINEL: str = "00000000000000"
+
 
 @lru_cache(maxsize=1)
 def _system_callback_hosts() -> frozenset[str]:
@@ -523,16 +548,21 @@ async def _validate_callback_url(url: str) -> str:
             detail="Login failed, please try again later",
         )
     # REQ-20.1 + REQ-20.5: subdomain label MUST be in the active allowlist
-    # — either as the bare slug (``voys.getklai.com``) OR as the
-    # ``chat-{slug}`` per-tenant LibreChat host (``chat-voys.getklai.com``).
+    # — either as the bare slug (``voys.getklai.com``) OR as a per-tenant
+    # prefixed host like ``chat-voys.getklai.com``.
     suffix = f".{trusted}"
     subdomain = hostname[: -len(suffix)]
     # Take the first label (e.g. "voys" from "voys.subsection.getklai.com").
     first_label = subdomain.split(".")[0] if subdomain else ""
-    # REQ-20.5: strip the optional ``chat-`` prefix used for per-tenant
-    # LibreChat instances. Strict prefix-strip — only one level, matches
-    # the "chat-{slug}" pattern in Zitadel's librechat-{tenant} OIDC apps.
-    candidate_slug = first_label[5:] if first_label.startswith("chat-") else first_label
+    # REQ-20.5: strip a single per-tenant host prefix (``chat-``) before
+    # the slug check. Strict single-level strip — only the FIRST matching
+    # prefix is removed; "chat-chat-foo" still rejects because the result
+    # is "chat-foo" which is itself a chat-prefixed label, not a slug.
+    candidate_slug = first_label
+    for prefix in _TENANT_HOST_PREFIXES:
+        if first_label.startswith(prefix) and len(first_label) > len(prefix):
+            candidate_slug = first_label[len(prefix) :]
+            break
     allowed_slugs = await _get_tenant_slug_allowlist()
     if candidate_slug not in allowed_slugs:
         # SPEC-SEC-HYGIENE-001 REQ-20: structlog kwargs (NOT stdlib
@@ -1129,7 +1159,7 @@ async def login(
     # returns 4xx and the handler emits the SAME uniform "Email address or
     # password is incorrect" 401 — the anti-enumeration pattern from
     # SPEC-SEC-MFA-001 finding #12 / REQ-2.3 / REQ-2.5.
-    session_user_id = zitadel_user_id or "00000000000000"
+    session_user_id = zitadel_user_id or _NONEXISTENT_USER_ID_SENTINEL
     try:
         session = await zitadel.create_session_with_password(session_user_id, body.password)
     except httpx.HTTPStatusError as exc:
