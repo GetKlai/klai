@@ -39,9 +39,7 @@ _ENRICHMENT_TASKS = (
     "knowledge_ingest.enrichment_tasks.enrich_document_bulk",
     "knowledge_ingest.enrichment_tasks.enrich_document_interactive",
 )
-_GRAPHITI_TASKS = (
-    "knowledge_ingest.enrichment_tasks.ingest_graphiti_episode",
-)
+_GRAPHITI_TASKS = ("knowledge_ingest.enrichment_tasks.ingest_graphiti_episode",)
 
 
 @dataclass
@@ -54,6 +52,7 @@ class CleanupReport:
     crawl_jobs_deleted: int = 0
     qdrant_chunks_deleted: int = 0
     falkor_episodes_deleted: int = 0
+    s3_images_deleted: int = 0
     sync_runs_deleted: int | None = None  # None when REQ-08 FK CASCADE owns it
 
     def as_dict(self) -> dict[str, Any]:
@@ -64,13 +63,12 @@ class CleanupReport:
             "crawl_jobs_deleted": self.crawl_jobs_deleted,
             "qdrant_chunks_deleted": self.qdrant_chunks_deleted,
             "falkor_episodes_deleted": self.falkor_episodes_deleted,
+            "s3_images_deleted": self.s3_images_deleted,
             "sync_runs_deleted": self.sync_runs_deleted,
         }
 
 
-async def _list_artifact_ids(
-    org_id: str, kb_slug: str, connector_id: str
-) -> list[str]:
+async def _list_artifact_ids(org_id: str, kb_slug: str, connector_id: str) -> list[str]:
     """Return artifact UUIDs for a connector, BEFORE we delete them.
 
     Needed because the graphiti-cancel step filters procrastinate-jobs by
@@ -95,9 +93,7 @@ async def _list_artifact_ids(
     return [r["id"] for r in rows]
 
 
-async def _cancel_enrichment_jobs(
-    proc_app: Any, connector_id: str
-) -> int:
+async def _cancel_enrichment_jobs(proc_app: Any, connector_id: str) -> int:
     """Cancel queued + in-flight enrich_document_* jobs for this connector.
 
     Filter: ``args->'extra_payload'->>'source_connector_id' = connector_id``.
@@ -125,9 +121,7 @@ async def _cancel_enrichment_jobs(
     cancelled = 0
     for jid in job_ids:
         try:
-            await proc_app.job_manager.cancel_job_by_id_async(
-                jid, abort=True, delete_job=True
-            )
+            await proc_app.job_manager.cancel_job_by_id_async(jid, abort=True, delete_job=True)
             cancelled += 1
         except Exception:
             # Job may have just transitioned from todo->doing->finished
@@ -142,9 +136,7 @@ async def _cancel_enrichment_jobs(
     return cancelled
 
 
-async def _cancel_graphiti_jobs(
-    proc_app: Any, artifact_ids: list[str]
-) -> int:
+async def _cancel_graphiti_jobs(proc_app: Any, artifact_ids: list[str]) -> int:
     """Cancel queued + in-flight ingest_graphiti_episode jobs.
 
     The graphiti task signature does not carry ``source_connector_id``;
@@ -171,14 +163,10 @@ async def _cancel_graphiti_jobs(
     cancelled = 0
     for jid in job_ids:
         try:
-            await proc_app.job_manager.cancel_job_by_id_async(
-                jid, abort=True, delete_job=True
-            )
+            await proc_app.job_manager.cancel_job_by_id_async(jid, abort=True, delete_job=True)
             cancelled += 1
         except Exception:
-            logger.warning(
-                "cancel_graphiti_job_failed", job_id=jid, exc_info=True
-            )
+            logger.warning("cancel_graphiti_job_failed", job_id=jid, exc_info=True)
     return cancelled
 
 
@@ -215,9 +203,7 @@ async def purge_connector(
     retries the worker-task per its retry policy (REQ-04.5). Because every
     step is idempotent, retries do not double-count.
     """
-    log = logger.bind(
-        org_id=org_id, kb_slug=kb_slug, connector_id=connector_id
-    )
+    log = logger.bind(org_id=org_id, kb_slug=kb_slug, connector_id=connector_id)
     log.info("connector_purge_started")
 
     # Step 1: capture artifact UUIDs before they vanish.
@@ -240,28 +226,28 @@ async def purge_connector(
 
     # Step 4: snapshot graphiti episode-ids so we can clean FalkorDB even
     # after artifacts are gone (the join-key is artifact->episode in pg).
-    episode_ids = await pg_store.get_connector_episode_ids(
+    episode_ids = await pg_store.get_connector_episode_ids(org_id, kb_slug, connector_id)
+    log.info("connector_purge_step_episodes_listed", count=len(episode_ids))
+
+    # Step 4b: snapshot orphan S3 image keys BEFORE the artifact delete
+    # cascades the artifact_images rows away. Refcount on content_hash so
+    # we only return keys not referenced by any other artifact.
+    # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-06.3.
+    orphan_image_keys = await pg_store.get_orphan_image_keys_for_connector(
         org_id, kb_slug, connector_id
     )
     log.info(
-        "connector_purge_step_episodes_listed", count=len(episode_ids)
+        "connector_purge_step_orphan_images_listed",
+        count=len(orphan_image_keys),
     )
 
     # Step 5: pg artifacts (and cascade — see function docstring).
-    artifacts_deleted = await pg_store.delete_connector_artifacts(
-        org_id, kb_slug, connector_id
-    )
-    log.info(
-        "connector_purge_step_artifacts_deleted", count=artifacts_deleted
-    )
+    artifacts_deleted = await pg_store.delete_connector_artifacts(org_id, kb_slug, connector_id)
+    log.info("connector_purge_step_artifacts_deleted", count=artifacts_deleted)
 
     # Step 6: pg crawl_jobs.
-    crawl_jobs_deleted = await pg_store.delete_connector_crawl_jobs(
-        org_id, kb_slug, connector_id
-    )
-    log.info(
-        "connector_purge_step_crawl_jobs_deleted", count=crawl_jobs_deleted
-    )
+    crawl_jobs_deleted = await pg_store.delete_connector_crawl_jobs(org_id, kb_slug, connector_id)
+    log.info("connector_purge_step_crawl_jobs_deleted", count=crawl_jobs_deleted)
 
     # Step 7: FalkorDB episodes (using the snapshot we just took).
     await graph_module.delete_kb_episodes(org_id, episode_ids)
@@ -273,6 +259,34 @@ async def purge_connector(
     # Step 8: Qdrant vectors.
     await qdrant_store.delete_connector(org_id, kb_slug, connector_id)
     log.info("connector_purge_step_qdrant_deleted")
+
+    # Step 9: Garage S3 image keys that became orphan in step 4b. Best-
+    # effort: ``ImageStore.delete_keys`` swallows per-key failures and
+    # returns the count actually removed. SPEC REQ-06.4.
+    s3_images_deleted = 0
+    if orphan_image_keys:
+        try:
+            from knowledge_ingest.adapters.crawler import (
+                _build_image_store,
+            )
+
+            image_store = _build_image_store()
+        except Exception:
+            logger.exception("connector_purge_step_image_store_init_failed")
+            image_store = None
+
+        if image_store is None:
+            log.warning(
+                "connector_purge_step_image_store_unavailable",
+                key_count=len(orphan_image_keys),
+            )
+        else:
+            s3_images_deleted = await image_store.delete_keys(orphan_image_keys)
+            log.info(
+                "connector_purge_step_s3_images_deleted",
+                count=s3_images_deleted,
+                requested=len(orphan_image_keys),
+            )
 
     # NOTE: connector.sync_runs cleanup is invoked by the portal-side
     # delete-orchestration BEFORE it asks knowledge-ingest to purge. That
@@ -288,6 +302,7 @@ async def purge_connector(
         crawl_jobs_deleted=crawl_jobs_deleted,
         qdrant_chunks_deleted=0,  # qdrant_store.delete_connector doesn't return a count today
         falkor_episodes_deleted=len(episode_ids),
+        s3_images_deleted=s3_images_deleted,
         sync_runs_deleted=None,
     )
     log.info("connector_purge_completed", **report.as_dict())

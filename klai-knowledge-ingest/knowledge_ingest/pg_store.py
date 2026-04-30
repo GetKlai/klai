@@ -1,6 +1,7 @@
 """
 PostgreSQL artifact tracking for knowledge-ingest.
 """
+
 import json
 import time
 import uuid
@@ -22,7 +23,10 @@ async def get_active_content_hash(org_id: str, kb_slug: str, path: str) -> str |
         ORDER BY created_at DESC
         LIMIT 1
         """,
-        org_id, kb_slug, path, _SENTINEL,
+        org_id,
+        kb_slug,
+        path,
+        _SENTINEL,
     )
     return row
 
@@ -58,11 +62,20 @@ async def create_artifact(
            created_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
         """,
-        artifact_id, org_id, user_id, kb_slug, path,
-        provenance_type, assertion_mode,
-        synthesis_depth, confidence,
-        belief_time_start, belief_time_end,
-        content_type, extra_json, content_hash,
+        artifact_id,
+        org_id,
+        user_id,
+        kb_slug,
+        path,
+        provenance_type,
+        assertion_mode,
+        synthesis_depth,
+        confidence,
+        belief_time_start,
+        belief_time_end,
+        content_type,
+        extra_json,
+        content_hash,
         now,
     )
     return artifact_id
@@ -91,7 +104,12 @@ async def list_personal_artifacts(
         ORDER BY created_at DESC
         LIMIT $5 OFFSET $6
         """,
-        org_id, user_id, _personal_slug(user_id), _SENTINEL, limit, offset,
+        org_id,
+        user_id,
+        _personal_slug(user_id),
+        _SENTINEL,
+        limit,
+        offset,
     )
     return [dict(r) for r in rows]
 
@@ -107,7 +125,10 @@ async def count_personal_artifacts(org_id: str, user_id: str) -> int:
           AND kb_slug = $3
           AND belief_time_end = $4
         """,
-        org_id, user_id, _personal_slug(user_id), _SENTINEL,
+        org_id,
+        user_id,
+        _personal_slug(user_id),
+        _SENTINEL,
     )
     return row or 0
 
@@ -127,7 +148,11 @@ async def get_personal_artifact(
           AND kb_slug = $4
           AND belief_time_end = $5
         """,
-        artifact_id, org_id, user_id, _personal_slug(user_id), _SENTINEL,
+        artifact_id,
+        org_id,
+        user_id,
+        _personal_slug(user_id),
+        _SENTINEL,
     )
     return dict(row) if row else None
 
@@ -143,7 +168,11 @@ async def soft_delete_artifact(org_id: str, kb_slug: str, path: str) -> None:
         WHERE org_id = $2 AND kb_slug = $3 AND path = $4
           AND belief_time_end = $5
         """,
-        now, org_id, kb_slug, path, _SENTINEL,
+        now,
+        org_id,
+        kb_slug,
+        path,
+        _SENTINEL,
     )
 
 
@@ -161,7 +190,8 @@ async def get_episode_ids(org_id: str, kb_slug: str) -> list[str]:
                WHERE org_id = $1 AND kb_slug = $2
                  AND extra IS NOT NULL
                  AND extra::jsonb->>'graphiti_episode_id' IS NOT NULL""",
-            org_id, kb_slug,
+            org_id,
+            kb_slug,
         )
     return [r["episode_id"] for r in rows if r["episode_id"] != "no-chunks"]
 
@@ -182,19 +212,22 @@ async def delete_kb(org_id: str, kb_slug: str) -> None:
             await conn.execute(
                 "UPDATE knowledge.artifacts SET superseded_by = NULL"
                 " WHERE org_id = $1 AND kb_slug = $2",
-                org_id, kb_slug,
+                org_id,
+                kb_slug,
             )
             await conn.execute(
                 """DELETE FROM knowledge.embedding_queue WHERE artifact_id IN (
                      SELECT id FROM knowledge.artifacts WHERE org_id = $1 AND kb_slug = $2
                    )""",
-                org_id, kb_slug,
+                org_id,
+                kb_slug,
             )
             await conn.execute(
                 """DELETE FROM knowledge.artifact_entities WHERE artifact_id IN (
                      SELECT id FROM knowledge.artifacts WHERE org_id = $1 AND kb_slug = $2
                    )""",
-                org_id, kb_slug,
+                org_id,
+                kb_slug,
             )
             await conn.execute(
                 """DELETE FROM knowledge.derivations WHERE child_id IN (
@@ -202,27 +235,33 @@ async def delete_kb(org_id: str, kb_slug: str) -> None:
                    ) OR parent_id IN (
                      SELECT id FROM knowledge.artifacts WHERE org_id = $1 AND kb_slug = $2
                    )""",
-                org_id, kb_slug,
+                org_id,
+                kb_slug,
             )
             await conn.execute(
                 "DELETE FROM knowledge.artifacts WHERE org_id = $1 AND kb_slug = $2",
-                org_id, kb_slug,
+                org_id,
+                kb_slug,
             )
             await conn.execute(
                 "DELETE FROM knowledge.kb_config WHERE org_id = $1 AND kb_slug = $2",
-                org_id, kb_slug,
+                org_id,
+                kb_slug,
             )
             await conn.execute(
                 "DELETE FROM knowledge.crawl_jobs WHERE org_id = $1 AND kb_slug = $2",
-                org_id, kb_slug,
+                org_id,
+                kb_slug,
             )
             await conn.execute(
                 "DELETE FROM knowledge.crawled_pages WHERE org_id = $1 AND kb_slug = $2",
-                org_id, kb_slug,
+                org_id,
+                kb_slug,
             )
             await conn.execute(
                 "DELETE FROM knowledge.page_links WHERE org_id = $1 AND kb_slug = $2",
-                org_id, kb_slug,
+                org_id,
+                kb_slug,
             )
 
 
@@ -237,7 +276,9 @@ async def get_connector_episode_ids(org_id: str, kb_slug: str, connector_id: str
                  AND extra IS NOT NULL
                  AND extra::jsonb->>'source_connector_id' = $3
                  AND extra::jsonb->>'graphiti_episode_id' IS NOT NULL""",
-            org_id, kb_slug, connector_id,
+            org_id,
+            kb_slug,
+            connector_id,
         )
     return [r["episode_id"] for r in rows if r["episode_id"] != "no-chunks"]
 
@@ -267,7 +308,9 @@ async def delete_connector_artifacts(org_id: str, kb_slug: str, connector_id: st
                        AND extra IS NOT NULL
                        AND extra::jsonb->>'source_connector_id' = $3
                    )""",
-                org_id, kb_slug, connector_id,
+                org_id,
+                kb_slug,
+                connector_id,
             )
             await conn.execute(
                 """DELETE FROM knowledge.embedding_queue WHERE artifact_id IN (
@@ -276,7 +319,9 @@ async def delete_connector_artifacts(org_id: str, kb_slug: str, connector_id: st
                        AND extra IS NOT NULL
                        AND extra::jsonb->>'source_connector_id' = $3
                    )""",
-                org_id, kb_slug, connector_id,
+                org_id,
+                kb_slug,
+                connector_id,
             )
             await conn.execute(
                 """DELETE FROM knowledge.artifact_entities WHERE artifact_id IN (
@@ -285,7 +330,9 @@ async def delete_connector_artifacts(org_id: str, kb_slug: str, connector_id: st
                        AND extra IS NOT NULL
                        AND extra::jsonb->>'source_connector_id' = $3
                    )""",
-                org_id, kb_slug, connector_id,
+                org_id,
+                kb_slug,
+                connector_id,
             )
             await conn.execute(
                 """DELETE FROM knowledge.derivations WHERE child_id IN (
@@ -299,7 +346,9 @@ async def delete_connector_artifacts(org_id: str, kb_slug: str, connector_id: st
                        AND extra IS NOT NULL
                        AND extra::jsonb->>'source_connector_id' = $3
                    )""",
-                org_id, kb_slug, connector_id,
+                org_id,
+                kb_slug,
+                connector_id,
             )
             # SPEC-CRAWLER-005 Fase 6 follow-up: scrub crawled_pages + page_links
             # for URLs owned by this connector. Scoped via the artifact path-URL
@@ -315,7 +364,9 @@ async def delete_connector_artifacts(org_id: str, kb_slug: str, connector_id: st
                        AND extra IS NOT NULL
                        AND extra::jsonb->>'source_connector_id' = $3
                    )""",
-                org_id, kb_slug, connector_id,
+                org_id,
+                kb_slug,
+                connector_id,
             )
             await conn.execute(
                 """DELETE FROM knowledge.page_links
@@ -332,7 +383,9 @@ async def delete_connector_artifacts(org_id: str, kb_slug: str, connector_id: st
                          AND extra::jsonb->>'source_connector_id' = $3
                      )
                    )""",
-                org_id, kb_slug, connector_id,
+                org_id,
+                kb_slug,
+                connector_id,
             )
             result = await conn.fetchval(
                 """WITH deleted AS (
@@ -342,9 +395,87 @@ async def delete_connector_artifacts(org_id: str, kb_slug: str, connector_id: st
                        AND extra::jsonb->>'source_connector_id' = $3
                      RETURNING id
                    ) SELECT COUNT(*) FROM deleted""",
-                org_id, kb_slug, connector_id,
+                org_id,
+                kb_slug,
+                connector_id,
             )
     return int(result or 0)
+
+
+async def insert_artifact_image_refs(
+    artifact_id: str,
+    image_keys: list[tuple[str, str]],
+) -> None:
+    """Record (artifact, s3_key, content_hash) bookkeeping rows.
+
+    SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-06.2.
+
+    Called once per artifact at ingest-time, after the artifact row has
+    been inserted. Each tuple is ``(s3_key, content_hash)``. Idempotent:
+    duplicate (artifact_id, s3_key) pairs are silently merged via
+    ``ON CONFLICT DO NOTHING`` so that re-ingest of the same content
+    doesn't trip the primary-key constraint.
+
+    Empty ``image_keys`` is a no-op.
+    """
+    if not image_keys:
+        return
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.executemany(
+            """
+            INSERT INTO knowledge.artifact_images (artifact_id, s3_key, content_hash)
+            VALUES ($1::uuid, $2, $3)
+            ON CONFLICT (artifact_id, s3_key) DO NOTHING
+            """,
+            [(artifact_id, key, content_hash) for key, content_hash in image_keys],
+        )
+
+
+async def get_orphan_image_keys_for_connector(
+    org_id: str, kb_slug: str, connector_id: str
+) -> list[str]:
+    """Return S3 keys that will become orphan when this connector's artifacts are deleted.
+
+    SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-06.3. Refcount check on
+    ``content_hash``: a key is "orphan" iff its content_hash is NOT
+    referenced by any artifact OUTSIDE the deleted set. Same key might
+    be referenced by another connector in another KB sharing the SHA256
+    content; in that case we leave it in place.
+
+    Must be called BEFORE ``delete_connector_artifacts`` because the FK
+    CASCADE on ``artifact_images`` will remove the rows we need to query.
+    Returns an empty list if no images exist for this connector.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT DISTINCT ai.s3_key
+            FROM knowledge.artifact_images ai
+            JOIN knowledge.artifacts a ON a.id = ai.artifact_id
+            WHERE a.org_id = $1
+              AND a.kb_slug = $2
+              AND a.extra IS NOT NULL
+              AND a.extra::jsonb->>'source_connector_id' = $3
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM knowledge.artifact_images other_ai
+                  JOIN knowledge.artifacts other_a ON other_a.id = other_ai.artifact_id
+                  WHERE other_ai.content_hash = ai.content_hash
+                    AND (
+                        other_a.org_id != $1
+                        OR other_a.kb_slug != $2
+                        OR other_a.extra IS NULL
+                        OR other_a.extra::jsonb->>'source_connector_id' IS DISTINCT FROM $3
+                    )
+              )
+            """,
+            org_id,
+            kb_slug,
+            connector_id,
+        )
+    return [r["s3_key"] for r in rows]
 
 
 async def artifact_exists(artifact_id: str) -> bool:
@@ -373,9 +504,7 @@ async def artifact_exists(artifact_id: str) -> bool:
         return False
 
 
-async def delete_connector_crawl_jobs(
-    org_id: str, kb_slug: str, connector_id: str
-) -> int:
+async def delete_connector_crawl_jobs(org_id: str, kb_slug: str, connector_id: str) -> int:
     """Hard-delete crawl_jobs rows owned by a specific connector.
 
     knowledge.crawl_jobs has no native ``connector_id`` column — every row
@@ -400,7 +529,9 @@ async def delete_connector_crawl_jobs(
                    AND config->>'connector_id' = $3
                  RETURNING id
                ) SELECT COUNT(*) FROM deleted""",
-            org_id, kb_slug, connector_id,
+            org_id,
+            kb_slug,
+            connector_id,
         )
     return int(result or 0)
 
@@ -432,7 +563,13 @@ async def upsert_crawled_page(
             raw_markdown  = EXCLUDED.raw_markdown,
             crawled_at    = EXCLUDED.crawled_at
         """,
-        org_id, kb_slug, url, raw_html_hash, content_hash, raw_markdown, crawled_at,
+        org_id,
+        kb_slug,
+        url,
+        raw_html_hash,
+        content_hash,
+        raw_markdown,
+        crawled_at,
     )
 
 
@@ -440,15 +577,15 @@ async def upsert_crawled_page(
 PageHashes = tuple[str | None, str | None]
 
 
-async def get_crawled_page_stored(
-    org_id: str, kb_slug: str, url: str
-) -> PageHashes | None:
+async def get_crawled_page_stored(org_id: str, kb_slug: str, url: str) -> PageHashes | None:
     """Return (raw_html_hash, content_hash) for this URL, or None if not yet crawled."""
     pool = await get_pool()
     row = await pool.fetchrow(
         "SELECT raw_html_hash, content_hash FROM knowledge.crawled_pages "
         "WHERE org_id = $1 AND kb_slug = $2 AND url = $3",
-        org_id, kb_slug, url,
+        org_id,
+        kb_slug,
+        url,
     )
     return (row["raw_html_hash"], row["content_hash"]) if row else None
 
@@ -465,7 +602,9 @@ async def get_crawled_page_hashes(
     rows = await pool.fetch(
         "SELECT url, raw_html_hash, content_hash FROM knowledge.crawled_pages "
         "WHERE org_id = $1 AND kb_slug = $2 AND url = ANY($3::text[])",
-        org_id, kb_slug, urls,
+        org_id,
+        kb_slug,
+        urls,
     )
     return {row["url"]: (row["raw_html_hash"], row["content_hash"]) for row in rows}
 
@@ -478,18 +617,21 @@ async def upsert_page_links(
 ) -> None:
     """Upsert outgoing links for from_url in a single batch round-trip."""
     from urllib.parse import urljoin
+
     rows = []
     for link in links:
         href = link.get("href", "")
         if not href:
             continue
-        rows.append((
-            org_id,
-            kb_slug,
-            from_url,
-            urljoin(from_url, href),
-            (link.get("text", "") or "")[:500],
-        ))
+        rows.append(
+            (
+                org_id,
+                kb_slug,
+                from_url,
+                urljoin(from_url, href),
+                (link.get("text", "") or "")[:500],
+            )
+        )
     if not rows:
         return
     pool = await get_pool()
@@ -518,7 +660,9 @@ async def get_page_episode_ids(org_id: str, kb_slug: str, path: str) -> list[str
            WHERE org_id = $1 AND kb_slug = $2 AND path = $3
              AND extra IS NOT NULL
              AND extra::jsonb->>'graphiti_episode_id' IS NOT NULL""",
-        org_id, kb_slug, path,
+        org_id,
+        kb_slug,
+        path,
     )
     return [r["episode_id"] for r in rows if r["episode_id"] != "no-chunks"]
 
@@ -540,21 +684,27 @@ async def cleanup_page_metadata(org_id: str, kb_slug: str, path: str) -> None:
                      SELECT id FROM knowledge.artifacts
                      WHERE org_id = $1 AND kb_slug = $2 AND path = $3
                    )""",
-                org_id, kb_slug, path,
+                org_id,
+                kb_slug,
+                path,
             )
             await conn.execute(
                 """DELETE FROM knowledge.embedding_queue WHERE artifact_id IN (
                      SELECT id FROM knowledge.artifacts
                      WHERE org_id = $1 AND kb_slug = $2 AND path = $3
                    )""",
-                org_id, kb_slug, path,
+                org_id,
+                kb_slug,
+                path,
             )
             await conn.execute(
                 """DELETE FROM knowledge.artifact_entities WHERE artifact_id IN (
                      SELECT id FROM knowledge.artifacts
                      WHERE org_id = $1 AND kb_slug = $2 AND path = $3
                    )""",
-                org_id, kb_slug, path,
+                org_id,
+                kb_slug,
+                path,
             )
             await conn.execute(
                 """DELETE FROM knowledge.derivations WHERE child_id IN (
@@ -564,7 +714,9 @@ async def cleanup_page_metadata(org_id: str, kb_slug: str, path: str) -> None:
                      SELECT id FROM knowledge.artifacts
                      WHERE org_id = $1 AND kb_slug = $2 AND path = $3
                    )""",
-                org_id, kb_slug, path,
+                org_id,
+                kb_slug,
+                path,
             )
 
 
