@@ -252,3 +252,158 @@ async def test_apex_lookalike_still_rejected() -> None:
             with pytest.raises(HTTPException) as exc_info:
                 await auth_module._validate_callback_url("https://getklai.com.attacker.tld/x")
         assert exc_info.value.status_code == 502
+
+
+# REQ-20 hardening: adversarial URL property tests ----------------------- #
+#
+# Adversarial coverage of `urllib.parse.urlparse` edge cases that a
+# malicious or malformed callback URL might exploit. Each test pins the
+# exact expected behaviour so a future urlparse upgrade or a refactor of
+# `_validate_callback_url` cannot silently change semantics.
+#
+# Decisions captured here:
+#   - mixed-case hostnames: urlparse lowercases — accepted as system host
+#   - leading whitespace:    Python 3.13+ strips per CVE-2023-24329 fix —
+#                            accepted (host is correct)
+#   - trailing dot (FQDN):   rejected (host-equality is byte-strict and
+#                            Zitadel never emits FQDN form)
+#   - userinfo injection:    accepted iff host equals system host (Zitadel
+#                            registered the redirect_uri exact-match; userinfo
+#                            does not affect the host check; this is
+#                            defense-in-depth, NOT primary auth)
+#   - encoded-dot in host:   rejected (hostname keeps %2E literal)
+#   - IPv6 ::1:              rejected (NOT in our localhost shortcut set;
+#                            only the literal strings "localhost" and
+#                            "127.0.0.1" pass)
+#   - quad-slash + None host:rejected (urlparse returns hostname None)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        # urlparse normalises hostname to lowercase
+        "https://MY.GETKLAI.COM/api/auth/oidc/callback?code=abc",
+        "https://My.GetKlai.Com/x",
+        # CVE-2023-24329 fix: leading whitespace stripped on Python 3.11+
+        "\thttps://my.getklai.com/x",
+        " https://my.getklai.com/x",
+        # Explicit default port: hostname is still my.getklai.com
+        "https://my.getklai.com:443/api/auth/oidc/callback",
+        # Userinfo injection: hostname extraction ignores userinfo (Zitadel's
+        # exact-match on registered redirect_uri prevents the threat at the
+        # layer above; this layer just verifies the HOST)
+        "https://attacker@my.getklai.com/x",
+        "https://attacker:secret@my.getklai.com/x",
+        # Query / fragment can contain anything — host check is unaffected
+        "https://my.getklai.com/cb?next=https://evil.com",
+        "https://my.getklai.com/cb#@evil.com",
+    ],
+)
+@pytest.mark.asyncio
+async def test_adversarial_accepts_when_host_resolves_to_system_host(url: str) -> None:
+    """Adversarial accept-cases: hostname normalises to a system host,
+    the URL passes regardless of cosmetic noise around it."""
+    with (
+        patch.object(auth_module.settings, "domain", "getklai.com"),
+        patch.object(auth_module.settings, "frontend_url", "https://my.getklai.com"),
+    ):
+        auth_module._system_callback_hosts.cache_clear()
+        with _patch_allowlist(set()):  # empty allowlist — must short-circuit on system host
+            result = await auth_module._validate_callback_url(url)
+        assert result == url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        # Trailing dot — host becomes "my.getklai.com." (with dot), not in system set
+        "https://my.getklai.com./x",
+        # IPv6 loopback — only literal "127.0.0.1" / "localhost" pass the dev shortcut
+        "https://[::1]/x",
+        # Encoded dot in hostname — urlparse keeps %2E literal, no normalisation
+        "https://my.getklai.com%2Eevil.com/x",
+        # Quad slash defeats urlparse — hostname is None
+        "https:////my.getklai.com",
+        # Bare URL — urlparse returns hostname None
+        "not-a-url",
+        # Empty string — early-exit on the empty hostname branch
+        "",
+        # Subdomain spoofing the apex but pointing at attacker tld
+        "https://getklai.com.attacker.tld/x",
+        # Path-traversal of the apex via leading dots — host is the dotty form
+        "https://....getklai.com/x",
+    ],
+)
+@pytest.mark.asyncio
+async def test_adversarial_rejects_malformed_or_lookalike(url: str) -> None:
+    """Adversarial reject-cases: hostnames that LOOK system-like but
+    structurally don't match the system-host set, plus malformed URLs
+    that urlparse cannot extract a hostname from. Every case must 502
+    with the generic body."""
+    with (
+        patch.object(auth_module.settings, "domain", "getklai.com"),
+        patch.object(auth_module.settings, "frontend_url", "https://my.getklai.com"),
+    ):
+        auth_module._system_callback_hosts.cache_clear()
+        with _patch_allowlist({"voys", "getklai"}):
+            with pytest.raises(HTTPException) as exc_info:
+                await auth_module._validate_callback_url(url)
+        assert exc_info.value.status_code == 502
+        assert exc_info.value.detail == "Login failed, please try again later"
+
+
+@pytest.mark.asyncio
+async def test_tenant_subdomain_mixed_case_accepted() -> None:
+    """REQ-20.1 + adversarial: a tenant subdomain in mixed case still
+    matches the slug allowlist after urlparse lowercases the hostname."""
+    with (
+        patch.object(auth_module.settings, "domain", "getklai.com"),
+        patch.object(auth_module.settings, "frontend_url", "https://my.getklai.com"),
+    ):
+        auth_module._system_callback_hosts.cache_clear()
+        with _patch_allowlist({"voys", "getklai"}):
+            url = "https://VOYS.GetKlai.com/api/auth/oidc/callback"
+            result = await auth_module._validate_callback_url(url)
+        assert result == url
+
+
+@pytest.mark.asyncio
+async def test_tenant_subdomain_with_port_accepted() -> None:
+    """REQ-20.1 + adversarial: explicit port does not affect the
+    first-label slug check. Hostname property strips the port."""
+    with (
+        patch.object(auth_module.settings, "domain", "getklai.com"),
+        patch.object(auth_module.settings, "frontend_url", "https://my.getklai.com"),
+    ):
+        auth_module._system_callback_hosts.cache_clear()
+        with _patch_allowlist({"voys"}):
+            url = "https://voys.getklai.com:443/x"
+            result = await auth_module._validate_callback_url(url)
+        assert result == url
+
+
+@pytest.mark.asyncio
+async def test_idn_punycode_subdomain_rejected() -> None:
+    """Adversarial: an IDN homoglyph attack relies on a punycode
+    subdomain that visually resembles a real slug. Without an explicit
+    allowlist entry for the punycode form, the validator rejects it.
+
+    Confirms IDN normalisation does NOT auto-bridge between unicode and
+    punycode forms — the slug allowlist is byte-strict against
+    `urlparse(url).hostname`, which preserves whatever encoding was on
+    the wire.
+    """
+    with (
+        patch.object(auth_module.settings, "domain", "getklai.com"),
+        patch.object(auth_module.settings, "frontend_url", "https://my.getklai.com"),
+    ):
+        auth_module._system_callback_hosts.cache_clear()
+        with _patch_allowlist({"voys"}):
+            # Punycode form of an IDN that visually resembles "voys" but
+            # uses a non-ASCII codepoint in place of one letter. The
+            # exact unicode source does not matter for the test — we just
+            # need a valid xn-- label that is NOT in the slug allowlist.
+            url = "https://xn--vys-4md.getklai.com/x"
+            with pytest.raises(HTTPException) as exc_info:
+                await auth_module._validate_callback_url(url)
+        assert exc_info.value.status_code == 502
