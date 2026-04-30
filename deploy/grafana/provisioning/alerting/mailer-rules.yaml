@@ -69,7 +69,17 @@ groups:
               datasource:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
-              expr: 'service:zitadel AND msg:"sending notification failed" AND error:"klai-mailer:8000"'
+              # Match every Zitadel notification-channel failure regardless
+              # of target host:port. The earlier shape (`error:"klai-mailer:8000"`)
+              # was a literal substring on the error message that would
+              # silently break if mailer ever moves to a different host or
+              # port — exactly the regression class this SPEC is meant to
+              # close. Mailer is the only registered webhook channel today,
+              # so a Zitadel notification-failed event implies the mailer
+              # is broken; if a second channel ever exists (e.g. Slack
+              # incident-bridge), revisit this filter to restore the target
+              # narrowing.
+              expr: 'service:zitadel AND msg:"sending notification failed"'
               queryType: instant
           - refId: reduce
             datasourceUid: __expr__
@@ -119,9 +129,11 @@ groups:
 
             Triage:
               1. Check the actual error from Zitadel's view:
-                   service:zitadel AND msg:"sending notification failed" AND error:"klai-mailer:8000"
-                 The error= field contains the HTTP status and a partial
-                 reason from the mailer's response.
+                   service:zitadel AND msg:"sending notification failed"
+                 The error= field on the matching log lines contains the
+                 HTTP status, target URL, and a partial reason from the
+                 receiving service's response — that tells you which
+                 webhook target is broken.
               2. Inspect mailer's own logs for the same window (now
                  visible after the FU#2 access-log fix):
                    service:klai-mailer AND _time:5m
@@ -161,8 +173,15 @@ groups:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
               # The uvicorn access log for /notify lines with a 5xx status.
-              # Substring match on the message body — matches "POST /notify HTTP/1.1" 5XX.
-              expr: 'service:klai-mailer AND _msg:"POST /notify" AND _msg:" 5"'
+              # The exact uvicorn line shape is:
+              #   `<addr> - "POST /notify HTTP/1.1" <status> <reason>`
+              # The status code is preceded by the closing quote of the
+              # request line, so the substring `" 5` (close-quote + space
+              # + digit five) is a tight anchor to "5xx access record".
+              # Combining it with the literal `POST /notify HTTP` rules
+              # out unrelated app-level log lines that happen to contain
+              # `" 5` (e.g. structlog JSON entries with " 5" inside).
+              expr: 'service:klai-mailer AND _msg:"POST /notify HTTP" AND _msg:"\" 5"'
               queryType: instant
           - refId: reduce
             datasourceUid: __expr__
