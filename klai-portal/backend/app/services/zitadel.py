@@ -67,12 +67,22 @@ class ZitadelClient:
         password: str,
         preferred_language: str = "nl",
     ) -> dict:
-        """Create a human user inside a specific org."""
+        """Create a human user inside a specific org.
+
+        ``userName`` is lowercased before submission to Zitadel. Email
+        addresses are case-insensitive per RFC 5321 §2.4, but Zitadel
+        stores the userName / loginName byte-for-byte and matches against
+        it case-sensitively in some downstream calls (notably
+        ``/v2/sessions`` user check). Storing only the lowercase form
+        eliminates a class of "user signed up as Steven@... but typed
+        steven@... at login" issues at the source. The display ``email``
+        field keeps its original case for outgoing mail headers.
+        """
         resp = await self._http.post(
             "/management/v1/users/human/_import",
             headers={"x-zitadel-orgid": org_id},
             json={
-                "userName": email,
+                "userName": email.lower(),
                 "profile": {
                     "firstName": first_name,
                     "lastName": last_name,
@@ -127,12 +137,18 @@ class ZitadelClient:
         last_name: str,
         preferred_language: str = "nl",
     ) -> dict:
-        """Create a human user and send initialization email (password-less invite)."""
+        """Create a human user and send initialization email (password-less invite).
+
+        ``userName`` is lowercased before submission — see
+        ``create_human_user`` for rationale. The display ``email`` field
+        keeps its original case so the invite mail addresses the user
+        the way the inviting admin typed it.
+        """
         resp = await self._http.post(
             "/management/v1/users/human/_import",
             headers={"x-zitadel-orgid": org_id},
             json={
-                "userName": email,
+                "userName": email.lower(),
                 "profile": {
                     "firstName": first_name,
                     "lastName": last_name,
@@ -588,7 +604,11 @@ class ZitadelClient:
             "/v2/users/human",
             headers={"x-zitadel-orgid": org_id},
             json={
-                "username": email,
+                # username is lowercased to keep all auto-provisioned IDP
+                # users on the same case-insensitive footing as humans
+                # created via ``create_human_user`` and ``invite_user``.
+                # See ``create_human_user`` docstring for rationale.
+                "username": email.lower(),
                 "profile": {
                     "givenName": given_name or email.split("@")[0],
                     "familyName": family_name,
