@@ -17,6 +17,7 @@ def _make_org(auto_accept: bool = False) -> MagicMock:
     org.default_language = "nl"
     org.mfa_policy = "optional"
     org.auto_accept_same_domain = auto_accept
+    org.primary_domain = None
     return org
 
 

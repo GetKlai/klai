@@ -1547,5 +1547,8 @@
   "templates_form_error_name_required": "Naam is verplicht",
   "templates_form_error_prompt_required": "Prompt-instructies zijn verplicht",
   "templates_form_error_slug_conflict": "Er bestaat al een template met deze naam in deze organisatie",
-  "templates_form_error_generic": "Er ging iets mis bij het opslaan. Probeer het opnieuw."
+  "templates_form_error_generic": "Er ging iets mis bij het opslaan. Probeer het opnieuw.",
+  "admin_settings_auto_accept_label": "Gebruikers met @{domain} automatisch accepteren",
+  "admin_settings_auto_accept_hint_on": "Gebruikers van je domein worden direct lid zonder goedkeuring van een beheerder.",
+  "admin_settings_auto_accept_hint_off": "Gebruikers van je domein moeten toegang aanvragen en wachten op goedkeuring van een beheerder."
 }
