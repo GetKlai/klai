@@ -29,7 +29,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { Trash2, Send, Loader2, Pencil, MoreHorizontal, Pause, Play, UserX } from 'lucide-react'
+import { Trash2, Send, Loader2, Pencil, MoreHorizontal, Pause, Play, UserX, ShieldCheck, ShieldMinus, LogOut } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
 import { datetime, plural } from '@/paraglide/registry'
@@ -95,6 +95,8 @@ function UsersPage() {
 
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
   const [confirmingOffboardId, setConfirmingOffboardId] = useState<string | null>(null)
+  // R6: confirm dialog for "Leave workspace" (self-removal)
+  const [confirmingLeave, setConfirmingLeave] = useState(false)
 
   const suspendMutation = useSuspendUser()
   const reactivateMutation = useReactivateUser()
@@ -136,11 +138,46 @@ function UsersPage() {
     },
   })
 
+  // R6: promote to admin
+  const promoteAdminMutation = useMutation({
+    mutationFn: async (userId: string) => {
+      await apiFetch(`/api/admin/users/${userId}/promote-admin`, { method: 'POST' })
+    },
+    onSuccess: (_data, userId) => {
+      adminLogger.info('User promoted to admin', { userId })
+      void queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+    },
+  })
 
+  // R6: demote admin to member
+  const demoteAdminMutation = useMutation({
+    mutationFn: async (userId: string) => {
+      await apiFetch(`/api/admin/users/${userId}/demote-admin`, { method: 'POST' })
+    },
+    onSuccess: (_data, userId) => {
+      adminLogger.info('User demoted to member', { userId })
+      void queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+    },
+  })
+
+  // R6: leave workspace (self-removal)
+  const leaveWorkspaceMutation = useMutation({
+    mutationFn: async () => {
+      await apiFetch(`/api/admin/users/me`, { method: 'DELETE' })
+    },
+    onSuccess: () => {
+      adminLogger.info('Left workspace')
+      // Redirect to login/home after leaving
+      window.location.href = '/'
+    },
+  })
 
   const mutationError =
     (deleteMutation.error instanceof Error ? deleteMutation.error.message : deleteMutation.error ? m.admin_users_error_delete_generic() : null) ??
-    (resendInviteMutation.error instanceof Error ? resendInviteMutation.error.message : resendInviteMutation.error ? m.admin_users_error_resend_invite_generic() : null)
+    (resendInviteMutation.error instanceof Error ? resendInviteMutation.error.message : resendInviteMutation.error ? m.admin_users_error_resend_invite_generic() : null) ??
+    (promoteAdminMutation.error instanceof Error ? promoteAdminMutation.error.message : promoteAdminMutation.error ? m.admin_users_error_role_change() : null) ??
+    (demoteAdminMutation.error instanceof Error ? demoteAdminMutation.error.message : demoteAdminMutation.error ? m.admin_users_error_role_change() : null) ??
+    (leaveWorkspaceMutation.error instanceof Error ? leaveWorkspaceMutation.error.message : leaveWorkspaceMutation.error ? m.admin_users_error_leave_workspace() : null)
 
   const columns = [
     columnHelper.accessor((row) => `${row.first_name} ${row.last_name}`, {
@@ -253,32 +290,65 @@ function UsersPage() {
                     </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    {user.status === 'active' && (
+                    {/* R6: role management actions (C6.6) */}
+                    {user.role !== 'admin' && (
                       <DropdownMenuItem
-                        onClick={() => suspendMutation.mutate(user.zitadel_user_id)}
-                        disabled={isSelf}
+                        onClick={() => promoteAdminMutation.mutate(user.zitadel_user_id)}
+                        disabled={promoteAdminMutation.isPending}
                       >
-                        <Pause className="mr-2 h-4 w-4" />
-                        {m.admin_users_action_suspend()}
+                        <ShieldCheck className="mr-2 h-4 w-4" />
+                        {m.admin_users_action_make_admin()}
                       </DropdownMenuItem>
                     )}
-                    {user.status === 'suspended' && (
+                    {user.role === 'admin' && !isSelf && (
                       <DropdownMenuItem
-                        onClick={() => reactivateMutation.mutate(user.zitadel_user_id)}
+                        onClick={() => demoteAdminMutation.mutate(user.zitadel_user_id)}
+                        disabled={demoteAdminMutation.isPending}
                       >
-                        <Play className="mr-2 h-4 w-4" />
-                        {m.admin_users_action_reactivate()}
+                        <ShieldMinus className="mr-2 h-4 w-4" />
+                        {m.admin_users_action_remove_admin()}
                       </DropdownMenuItem>
                     )}
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      onClick={() => setConfirmingOffboardId(user.zitadel_user_id)}
-                      disabled={isSelf}
-                      className="text-[var(--color-destructive)]"
-                    >
-                      <UserX className="mr-2 h-4 w-4" />
-                      {m.admin_users_action_offboard()}
-                    </DropdownMenuItem>
+                    {isSelf && (
+                      <DropdownMenuItem
+                        onClick={() => setConfirmingLeave(true)}
+                        className="text-[var(--color-destructive)]"
+                      >
+                        <LogOut className="mr-2 h-4 w-4" />
+                        {m.admin_users_action_leave_workspace()}
+                      </DropdownMenuItem>
+                    )}
+                    {(user.role !== 'admin' || !isSelf) && user.role !== 'admin' && (
+                      <DropdownMenuSeparator />
+                    )}
+                    {!isSelf && (
+                      <>
+                        {user.status === 'active' && (
+                          <DropdownMenuItem
+                            onClick={() => suspendMutation.mutate(user.zitadel_user_id)}
+                          >
+                            <Pause className="mr-2 h-4 w-4" />
+                            {m.admin_users_action_suspend()}
+                          </DropdownMenuItem>
+                        )}
+                        {user.status === 'suspended' && (
+                          <DropdownMenuItem
+                            onClick={() => reactivateMutation.mutate(user.zitadel_user_id)}
+                          >
+                            <Play className="mr-2 h-4 w-4" />
+                            {m.admin_users_action_reactivate()}
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          onClick={() => setConfirmingOffboardId(user.zitadel_user_id)}
+                          className="text-[var(--color-destructive)]"
+                        >
+                          <UserX className="mr-2 h-4 w-4" />
+                          {m.admin_users_action_offboard()}
+                        </DropdownMenuItem>
+                      </>
+                    )}
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}
@@ -390,6 +460,33 @@ function UsersPage() {
               }}
             >
               {m.admin_users_action_offboard()}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* R6: confirm leave workspace dialog (C6.6) */}
+      <AlertDialog
+        open={confirmingLeave}
+        onOpenChange={(open) => { if (!open) setConfirmingLeave(false) }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{m.admin_users_confirm_leave_title()}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {m.admin_users_confirm_leave_description()}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{m.admin_users_cancel()}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-[var(--color-destructive)] text-white hover:bg-[var(--color-destructive)]/90"
+              onClick={() => {
+                setConfirmingLeave(false)
+                leaveWorkspaceMutation.mutate()
+              }}
+            >
+              {m.admin_users_action_leave_workspace()}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

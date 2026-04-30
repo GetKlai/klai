@@ -1550,5 +1550,12 @@
   "templates_form_error_generic": "Er ging iets mis bij het opslaan. Probeer het opnieuw.",
   "admin_settings_auto_accept_label": "Gebruikers met @{domain} automatisch accepteren",
   "admin_settings_auto_accept_hint_on": "Gebruikers van je domein worden direct lid zonder goedkeuring van een beheerder.",
-  "admin_settings_auto_accept_hint_off": "Gebruikers van je domein moeten toegang aanvragen en wachten op goedkeuring van een beheerder."
+  "admin_settings_auto_accept_hint_off": "Gebruikers van je domein moeten toegang aanvragen en wachten op goedkeuring van een beheerder.",
+  "admin_users_action_make_admin": "Beheerder maken",
+  "admin_users_action_remove_admin": "Beheerdersrol verwijderen",
+  "admin_users_action_leave_workspace": "Werkruimte verlaten",
+  "admin_users_confirm_leave_title": "Werkruimte verlaten?",
+  "admin_users_confirm_leave_description": "Je verliest toegang tot deze werkruimte. Als je de laatste beheerder bent, moet je eerst een andere beheerder aanwijzen.",
+  "admin_users_error_role_change": "Wijzigen van rol mislukt",
+  "admin_users_error_leave_workspace": "Kon werkruimte niet verlaten"
 }

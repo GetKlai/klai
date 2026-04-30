@@ -1550,5 +1550,12 @@
   "templates_form_error_generic": "Something went wrong while saving. Please try again.",
   "admin_settings_auto_accept_label": "Automatically accept users with @{domain}",
   "admin_settings_auto_accept_hint_on": "Users from your domain join immediately without requiring admin approval.",
-  "admin_settings_auto_accept_hint_off": "Users from your domain must request access and wait for admin approval."
+  "admin_settings_auto_accept_hint_off": "Users from your domain must request access and wait for admin approval.",
+  "admin_users_action_make_admin": "Make admin",
+  "admin_users_action_remove_admin": "Remove admin",
+  "admin_users_action_leave_workspace": "Leave workspace",
+  "admin_users_confirm_leave_title": "Leave workspace?",
+  "admin_users_confirm_leave_description": "You will lose access to this workspace. If you are the last admin, you must promote another admin first.",
+  "admin_users_error_role_change": "Role change failed",
+  "admin_users_error_leave_workspace": "Could not leave workspace"
 }
