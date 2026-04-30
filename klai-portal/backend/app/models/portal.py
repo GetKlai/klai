@@ -64,6 +64,13 @@ class PortalOrg(Base):
     )
     connector_dek_enc: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     mcp_servers: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # @MX:ANCHOR SPEC-AUTH-009 R1 -- founder's verified email domain; immutable after creation.
+    # C1.2: No endpoint exposes UPDATE for this column. Manual DB intervention only.
+    # C1.4: Multiple workspaces may share the same primary_domain.
+    primary_domain: Mapped[str] = mapped_column(String(253), nullable=False, server_default="")
+    # @MX:NOTE SPEC-AUTH-009 R5 -- when True, domain_match picker entries skip join-request
+    # approval and directly INSERT a portal_users row (R4-C4.3). Default False.
+    auto_accept_same_domain: Mapped[bool] = mapped_column(nullable=False, default=False, server_default="false")
 
     users: Mapped[list["PortalUser"]] = relationship(back_populates="org")
 
