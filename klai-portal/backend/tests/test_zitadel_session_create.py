@@ -181,6 +181,8 @@ class TestLoginHandlerForwardsUserIdNotEmail:
             mock_zitadel.create_session_with_password.assert_awaited_once()
             call_args = mock_zitadel.create_session_with_password.call_args
             passed = call_args.kwargs.get("user_id") or call_args.args[0]
-            # The sentinel value matches the auth.py implementation. If you
-            # change the sentinel there, update this assertion.
-            assert passed == "00000000000000"
+            # Pin against the named constant rather than the literal string
+            # so a single rename (constant → semantic value) stays in sync.
+            from app.api.auth import _NONEXISTENT_USER_ID_SENTINEL
+
+            assert passed == _NONEXISTENT_USER_ID_SENTINEL

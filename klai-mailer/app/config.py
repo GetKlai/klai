@@ -1,6 +1,8 @@
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.redis_url import RedisURLError, parse_redis_url
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
@@ -93,11 +95,9 @@ class Settings(BaseSettings):
     @field_validator("redis_url", mode="after")
     @classmethod
     def _require_parseable_redis_url(cls, v: str) -> str:
-        # Local import to avoid a top-level circular import:
-        # app.config is imported by app.redis_url indirectly via tests
-        # that build settings without the full app graph loaded.
-        from app.redis_url import RedisURLError, parse_redis_url
-
+        # ``parse_redis_url`` is imported at module top — no circular
+        # import because ``app.redis_url`` only depends on stdlib
+        # (``dataclasses``), not on ``app.config``.
         try:
             parse_redis_url(v)
         except RedisURLError as exc:
