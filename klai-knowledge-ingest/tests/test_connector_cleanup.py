@@ -80,7 +80,7 @@ async def test_purge_connector_orders_steps_correctly(mocked_proc_app: MagicMock
         return 0
 
     async def fake_get_alive_artifacts(*_a: object, **_kw: object) -> set[str]:
-        call_order.append("get_alive_artifact_ids_for_org")
+        call_order.append("get_alive_episode_uuids_for_org")
         return set()
 
     async def fake_get_active_hashes(*_a: object, **_kw: object) -> set[str]:
@@ -128,7 +128,7 @@ async def test_purge_connector_orders_steps_correctly(mocked_proc_app: MagicMock
             side_effect=fake_sweep_episodes,
         ),
         patch(
-            "knowledge_ingest.connector_cleanup.pg_store.get_alive_artifact_ids_for_org",
+            "knowledge_ingest.connector_cleanup.pg_store.get_alive_episode_uuids_for_org",
             side_effect=fake_get_alive_artifacts,
         ),
         patch(
@@ -162,7 +162,7 @@ async def test_purge_connector_orders_steps_correctly(mocked_proc_app: MagicMock
         "delete_connector_crawl_jobs",
         "delete_kb_episodes",
         "qdrant_delete_connector",
-        "get_alive_artifact_ids_for_org",
+        "get_alive_episode_uuids_for_org",
         "sweep_orphan_episodes_org_wide",
     ]
     assert isinstance(report, CleanupReport)
