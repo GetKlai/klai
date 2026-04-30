@@ -296,72 +296,75 @@ async def delete_kb_episodes(org_id: str, episode_ids: list[str]) -> None:
     logger.info("graph_kb_episodes_deleted", org_id=org_id, count=len(episode_ids))
 
 
-async def sweep_orphan_episodes_org_wide(org_id: str, alive_artifact_ids: set[str]) -> int:
-    """ORG-WIDE sweep of FalkorDB episodes whose artifact_id is no longer in postgres.
+async def sweep_orphan_episodes_org_wide(org_id: str, alive_episode_uuids: set[str]) -> int:
+    """ORG-WIDE sweep of FalkorDB episodes whose ``uuid`` is no longer
+    referenced by any artifact in postgres.
 
-    SPEC-CONNECTOR-DELETE-LIFECYCLE-001 follow-up to the per-connector
-    janitor. The artifact-id snapshot misses two failure modes:
+    Graphiti's Episodic node-schema has ``uuid``, ``name``, ``group_id``,
+    ``source``, ``source_description``, ``valid_at``, ``created_at`` —
+    but NO ``artifact_id`` property. The ingest pipeline links postgres
+    -> FalkorDB by writing the FalkorDB ``Episodic.uuid`` into
+    ``knowledge.artifacts.extra->>'graphiti_episode_id'``.
 
-    1. Late-arriving graphiti episodes from PREVIOUS purge cycles where
-       the cancel-jobs filter was broken (e.g. earlier worker bugs).
-       Those episodes never made it into the next purge's snapshot
-       because their artifact rows were already gone by then.
-    2. Operator-driven cleanup that bypassed the orchestrator.
+    Implementation uses the direct ``falkordb`` Python client (the same
+    pattern as ``routes/stats.py::get_graph_stats``). The earlier
+    attempt via ``graphiti.driver.execute_query`` returned an empty
+    result_set silently because the FalkorDB driver and the Neo4j
+    driver have different return shapes — proven on live e2e:
+    ``alive_episode_count: 0`` while FalkorDB clearly held 31 episodes.
 
-    Implementation: list every Episodic in the org's graph, keep only
-    those whose ``artifact_id`` is in ``alive_artifact_ids`` (computed
-    by the caller from postgres), DETACH DELETE the rest, then sweep
-    Entities that lost all incident episodes.
+    Lists every Episodic uuid in the org graph, intersects with the
+    alive set, DETACH DELETEs the difference, then sweeps Entities
+    that lost all incident episodes.
 
     Returns count of episodes deleted. No-op when graphiti is disabled.
     """
     if not settings.graphiti_enabled:
         return 0
-    graphiti = _get_graphiti()
-    driver = graphiti.driver.clone(org_id)
-    list_result = await driver.execute_query(
-        "MATCH (e:Episodic) WHERE e.artifact_id IS NOT NULL RETURN e.artifact_id AS artifact_id"
-    )
-    falkor_artifact_ids: set[str] = set()
-    if list_result is not None:
-        records, _, _ = list_result
-        for r in records or []:
-            aid = r.get("artifact_id")
-            if aid:
-                falkor_artifact_ids.add(str(aid))
+    try:
+        from falkordb import FalkorDB as FalkorDBClient
+    except ImportError:
+        logger.warning("falkordb_client_unavailable_for_sweep", org_id=org_id)
+        return 0
 
-    orphan_ids = falkor_artifact_ids - alive_artifact_ids
-    if not orphan_ids:
+    client = FalkorDBClient(host=settings.falkordb_host, port=settings.falkordb_port)
+    graph = client.select_graph(org_id)
+
+    list_res = graph.query("MATCH (e:Episodic) RETURN e.uuid AS uuid")
+    falkor_uuids: set[str] = set()
+    for row in list_res.result_set or []:
+        uid = row[0] if row else None
+        if uid:
+            falkor_uuids.add(str(uid))
+
+    orphan_uuids = falkor_uuids - alive_episode_uuids
+    if not orphan_uuids:
         logger.info(
             "graph_orphan_sweep_clean",
             org_id=org_id,
-            falkor_episodes=len(falkor_artifact_ids),
-            alive=len(alive_artifact_ids),
+            falkor_episodes=len(falkor_uuids),
+            alive=len(alive_episode_uuids),
         )
         return 0
 
-    del_result = await driver.execute_query(
-        "MATCH (e:Episodic) WHERE e.artifact_id IN $orphan_ids "
+    del_res = graph.query(
+        "MATCH (e:Episodic) WHERE e.uuid IN $uuids "
         "WITH e, e.uuid AS uuid "
         "DETACH DELETE e "
         "RETURN count(uuid) AS deleted",
-        orphan_ids=list(orphan_ids),
+        params={"uuids": list(orphan_uuids)},
     )
     deleted = 0
-    if del_result is not None:
-        records, _, _ = del_result
-        if records:
-            deleted = int(records[0].get("deleted", 0) or 0)
+    if del_res.result_set:
+        deleted = int(del_res.result_set[0][0] or 0)
     if deleted:
-        await driver.execute_query(
-            "MATCH (n:Entity) WHERE NOT ((:Episodic)--(n)) DETACH DELETE n",
-        )
+        graph.query("MATCH (n:Entity) WHERE NOT ((:Episodic)--(n)) DETACH DELETE n")
     logger.info(
         "graph_orphan_episodes_swept",
         org_id=org_id,
-        scanned=len(falkor_artifact_ids),
-        alive=len(alive_artifact_ids),
-        orphan_artifact_ids=len(orphan_ids),
+        scanned=len(falkor_uuids),
+        alive=len(alive_episode_uuids),
+        orphan_uuids=len(orphan_uuids),
         episodes_deleted=deleted,
     )
     return deleted
