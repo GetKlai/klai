@@ -57,6 +57,10 @@ async def test_purge_connector_orders_steps_correctly(mocked_proc_app: MagicMock
         call_order.append("get_connector_episode_ids")
         return ["episode-uuid-1"]
 
+    async def fake_get_orphan_image_keys(*_a: object, **_kw: object) -> list[str]:
+        call_order.append("get_orphan_image_keys_for_connector")
+        return []
+
     async def fake_delete_artifacts(*_a: object, **_kw: object) -> int:
         call_order.append("delete_connector_artifacts")
         return 2
@@ -85,6 +89,10 @@ async def test_purge_connector_orders_steps_correctly(mocked_proc_app: MagicMock
             side_effect=fake_get_episode_ids,
         ),
         patch(
+            "knowledge_ingest.connector_cleanup.pg_store.get_orphan_image_keys_for_connector",
+            side_effect=fake_get_orphan_image_keys,
+        ),
+        patch(
             "knowledge_ingest.connector_cleanup.pg_store.delete_connector_artifacts",
             side_effect=fake_delete_artifacts,
         ),
@@ -108,11 +116,15 @@ async def test_purge_connector_orders_steps_correctly(mocked_proc_app: MagicMock
             proc_app=mocked_proc_app,
         )
 
-    # Order assertion: artifact-id snapshot before episode/artifact deletion;
-    # artifacts deleted before episodes; episodes (FalkorDB) before Qdrant.
+    # Order assertion: artifact-id snapshot + episode-id snapshot +
+    # orphan-image-key snapshot ALL run BEFORE artifact delete (otherwise
+    # the artifact_images FK CASCADE removes our refcount source).
+    # artifacts deleted before episodes (FalkorDB) and Qdrant.
+    # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-05 + REQ-06.
     assert call_order == [
         "list_artifact_ids",
         "get_connector_episode_ids",
+        "get_orphan_image_keys_for_connector",
         "delete_connector_artifacts",
         "delete_connector_crawl_jobs",
         "delete_kb_episodes",
