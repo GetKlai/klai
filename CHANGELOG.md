@@ -1,5 +1,54 @@
 # Changelog
 
+## [Unreleased] — 2026-04-30 — SPEC-AUTH-009: Multi-tenant workspace discovery & admin handover
+
+Replaces SPEC-AUTH-006's admin-managed allowlist with implicit founder-domain-ownership model (Notion/Slack hybrid).
+User's verified email domain becomes the workspace primary_domain at creation. New users with matching domain see existing workspaces in picker.
+Joining defaults to join-request; admins can toggle auto-accept. Admin handover (promote/demote/leave) with min-1-admin enforcement.
+Free-email signup (gmail, outlook) rejected. Alembic migration drops `portal_org_allowed_domains` table and related endpoints.
+
+### Added
+
+- **`portal_orgs.primary_domain`** (VARCHAR 253, NOT NULL, lowercase-normalized) — implicit founder domain claim
+- **`portal_orgs.auto_accept_same_domain`** (BOOLEAN, default FALSE) — admin toggle for auto-join
+- **`PendingEntry` schema** — discriminated `kind` (member | domain_match) with `auto_accept` flag for picker display
+- **Workspace picker redesign** — extends `/select-workspace` to show domain_match entries; sort by (member first, auto_accept priority, alphabetical); footer link to self-serve signup
+- **`POST /api/auth/users/{user_id}/promote-admin`** — promote member to admin
+- **`POST /api/auth/users/{user_id}/demote-admin`** — demote admin to member (min-1-admin enforced)
+- **`DELETE /api/auth/users/me`** — leave workspace (self-removal, min-1-admin enforced)
+- **Admin handover UI** — `/admin/users` page extended with promote/demote/leave actions per klai-portal-ui patterns
+- **`auto_join_admin_notification_*` mailer template** — sent to admins when a user auto-joins same domain
+- **i18n keys** — picker entry microcopy (Lid, Vraag toegang aan, Auto-toegang), admin handover actions, free-email rejection message
+
+### Removed
+
+- **`portal_org_allowed_domains` table** — Alembic migration drops it (pre-launch, test data only)
+- **`app/api/admin/domains.py`** — FastAPI router removed
+- **`PortalOrgAllowedDomain` model** — removed from `app/models/portal.py`
+- **`frontend/src/routes/admin/domains.tsx`** — route removed; routeTree.gen.ts regenerated
+- **i18n keys** — `admin_domains_*` removed from messages (Paraglide regeneration automatic)
+- **Tests** — `test_admin_domains.py`, `test_allowed_domains.py` removed; free-email blocklist tests retained in `test_domain_validation.py`
+
+### Changed
+
+- **`idp_callback` flow** — rewritten to build picker entries from member_orgs + domain_orgs; branches on totals (0/0 → no-account, 1/0 → direct finalize, 0/1 → single picker, ≥2 → multi picker)
+- **Self-serve signup** (`/$locale/signup`) — now sets `primary_domain` from founder's email; rejects free-email with HTTP 400
+- **`/api/auth/select-workspace` response** — discriminated union (kind: member | auto_join | join_request_pending) with routing details
+- **`/no-account` page** — extended with self-serve workspace creation CTA
+
+### Migration
+
+Alembic revision: `a1b2c3d4e5f6_spec_auth_009_primary_domain`
+- `ALTER TABLE portal_orgs ADD COLUMN primary_domain VARCHAR(253), ADD COLUMN auto_accept_same_domain BOOLEAN DEFAULT FALSE`
+- `CREATE INDEX ix_portal_orgs_primary_domain ON portal_orgs (primary_domain) WHERE deleted_at IS NULL`
+- Pre-migration: manual UPDATE for any row with `primary_domain IS NULL` (test data only, pre-launch)
+- Post-migration: `DROP TABLE portal_org_allowed_domains`
+
+### Known Issue
+
+Pre-existing flaky test `test_single_member_finalizes_directly` (asyncpg pool state-pollution; passes isolated, occasionally fails in full suite).
+Observed rate < 2% in full suite runs. Not caused by this SPEC. Tracked in infrastructure backlog.
+
 ## [Unreleased] — 2026-04-29 — SPEC-SEC-INTERNAL-001: service-wide internal-secret surface hardening
 
 Closes Cornelis 2026-04-22 audit findings #14 (rate-limit fail-open),
