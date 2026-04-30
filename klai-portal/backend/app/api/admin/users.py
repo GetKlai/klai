@@ -542,3 +542,131 @@ async def offboard_user(
         logger.info("GitHub offboarding skipped for %s: no github_username linked", zitadel_user_id)
     await db.commit()
     return MessageResponse(message=f"User {zitadel_user_id} offboarded.")
+
+
+# ---------------------------------------------------------------------------
+# R6: Admin handover (SPEC-AUTH-009)
+# ---------------------------------------------------------------------------
+
+from app.services.events import emit_event  # noqa: E402 -- late import to avoid circular
+
+
+@router.post("/users/{zitadel_user_id}/promote-admin", response_model=MessageResponse)
+async def promote_admin(
+    zitadel_user_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """C6.1: Promote an active member to admin. No max-admin limit."""
+    caller_id, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    result = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == zitadel_user_id,
+            PortalUser.org_id == org.id,
+        )
+    )
+    target = result.scalar_one_or_none()
+    if not target:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    target.role = "admin"
+    await db.commit()
+    logger.info(
+        "promote_admin: actor=%s promoted user=%s in org=%d",
+        caller_id,
+        zitadel_user_id,
+        org.id,
+    )
+    emit_event("user.role_promoted", org_id=org.id, user_id=zitadel_user_id)
+    return MessageResponse(message=f"User {zitadel_user_id} promoted to admin.")
+
+
+@router.post("/users/{zitadel_user_id}/demote-admin", response_model=MessageResponse)
+async def demote_admin(
+    zitadel_user_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """C6.2: Demote an admin to member. Refuses if this would leave zero admins."""
+    caller_id, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    result = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == zitadel_user_id,
+            PortalUser.org_id == org.id,
+        )
+    )
+    target = result.scalar_one_or_none()
+    if not target:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    # C6.2: target must currently be admin
+    if target.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User is not an admin",
+        )
+
+    # @MX:ANCHOR SPEC-AUTH-009 R6 -- min-1-admin invariant: count admins BEFORE demoting.
+    # @MX:REASON Concurrent demotes without this check leave workspaces orphaned.
+    admin_count = await db.scalar(
+        select(func.count())
+        .select_from(PortalUser)
+        .where(
+            PortalUser.org_id == org.id,
+            PortalUser.role == "admin",
+        )
+    )
+    if (admin_count or 0) <= 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot demote: this is the last admin. Promote another user first.",
+        )
+
+    target.role = "member"
+    await db.commit()
+    logger.info(
+        "demote_admin: actor=%s demoted user=%s in org=%d",
+        caller_id,
+        zitadel_user_id,
+        org.id,
+    )
+    emit_event("user.role_demoted", org_id=org.id, user_id=zitadel_user_id)
+    return MessageResponse(message=f"User {zitadel_user_id} demoted to member.")
+
+
+@router.delete("/users/me", response_model=MessageResponse)
+async def leave_workspace(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """C6.3: Leave the workspace (self-removal). Refuses if caller is last admin.
+    C6.7: Refuses if this would leave the workspace with zero users (last-member case).
+    """
+    caller_id, org, caller_user = await _get_caller_org(credentials, db)
+
+    # @MX:ANCHOR SPEC-AUTH-009 R6 C6.3/C6.7 -- enforce min-1-admin and no-zombie-org.
+    # @MX:REASON Last-admin and sole-member edge cases both result in an unmanageable workspace.
+    if caller_user.role == "admin":
+        admin_count = await db.scalar(
+            select(func.count())
+            .select_from(PortalUser)
+            .where(
+                PortalUser.org_id == org.id,
+                PortalUser.role == "admin",
+            )
+        )
+        if (admin_count or 0) <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Promote another admin or delete the workspace before leaving.",
+            )
+
+    await db.delete(caller_user)
+    await db.commit()
+    logger.info("leave_workspace: user=%s left org=%d", caller_id, org.id)
+    emit_event("user.left_workspace", org_id=org.id, user_id=caller_id)
+    return MessageResponse(message="You have left the workspace.")
