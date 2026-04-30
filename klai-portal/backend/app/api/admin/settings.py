@@ -34,11 +34,16 @@ class OrgSettingsOut(BaseModel):
     name: str
     default_language: Literal["nl", "en"]
     mfa_policy: Literal["optional", "recommended", "required"] = "optional"
+    # @MX:NOTE SPEC-AUTH-009 R5 -- toggle for auto-accepting same-domain users.
+    # Default False; when True, domain_match picker entries skip join-request flow.
+    auto_accept_same_domain: bool = False
 
 
 class OrgSettingsUpdate(BaseModel):
     default_language: Literal["nl", "en"] | None = None
     mfa_policy: Literal["optional", "recommended", "required"] | None = None
+    # C5.1: optional field -- omitting it does NOT change the existing value
+    auto_accept_same_domain: bool | None = None
 
 
 class PlanChangeRequest(BaseModel):
@@ -57,7 +62,12 @@ async def get_org_settings(
 ) -> OrgSettingsOut:
     _, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
-    return OrgSettingsOut(name=org.name, default_language=org.default_language, mfa_policy=org.mfa_policy)
+    return OrgSettingsOut(
+        name=org.name,
+        default_language=org.default_language,
+        mfa_policy=org.mfa_policy,
+        auto_accept_same_domain=bool(org.auto_accept_same_domain),
+    )
 
 
 @router.patch("/settings", response_model=OrgSettingsOut)
@@ -72,9 +82,17 @@ async def update_org_settings(
         org.default_language = body.default_language
     if body.mfa_policy is not None:
         org.mfa_policy = body.mfa_policy
+    # C5.1: only update when explicitly provided
+    if body.auto_accept_same_domain is not None:
+        org.auto_accept_same_domain = body.auto_accept_same_domain
     await db.commit()
     logger.info("Org settings updated: org_id=%d", org.id)
-    return OrgSettingsOut(name=org.name, default_language=org.default_language, mfa_policy=org.mfa_policy)
+    return OrgSettingsOut(
+        name=org.name,
+        default_language=org.default_language,
+        mfa_policy=org.mfa_policy,
+        auto_accept_same_domain=bool(org.auto_accept_same_domain),
+    )
 
 
 @router.patch("/plan", response_model=MessageResponse)
