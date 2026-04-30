@@ -478,6 +478,32 @@ async def get_orphan_image_keys_for_connector(
     return [r["s3_key"] for r in rows]
 
 
+async def get_active_image_hashes_for_kb(org_id: str, kb_slug: str) -> set[str]:
+    """Return content_hashes still referenced by any artifact in a KB.
+
+    SPEC-CONNECTOR-DELETE-LIFECYCLE-001 janitor support. The Garage
+    cleanup janitor calls this AFTER ``delete_connector_artifacts`` to
+    work out which S3 keys still have a referencing artifact_image row
+    for this KB. Keys whose hash is NOT in this set are orphan and safe
+    to delete from S3.
+
+    Returns an empty set when the KB has no images / no artifacts.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT DISTINCT ai.content_hash
+              FROM knowledge.artifact_images ai
+              JOIN knowledge.artifacts a ON a.id = ai.artifact_id
+             WHERE a.org_id = $1 AND a.kb_slug = $2
+            """,
+            org_id,
+            kb_slug,
+        )
+    return {r["content_hash"] for r in rows}
+
+
 async def artifact_exists(artifact_id: str) -> bool:
     """SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-07: existence-guard helper.
 

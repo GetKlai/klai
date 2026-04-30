@@ -7,6 +7,7 @@ LLM client: OpenAIGenericClient pointing at LiteLLM proxy (AC-14).
 Graph DB: FalkorDB via FalkorDriver (AC-11).
 Tenant isolation: every episode uses group_id=org_id (AC-10).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -24,6 +25,7 @@ try:
     from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
     from graphiti_core.nodes import EpisodeType
     from openai import AsyncOpenAI
+
     _GRAPHITI_AVAILABLE = True
 except ImportError:
     _GRAPHITI_AVAILABLE = False  # graphiti-core not installed yet; added in /run SPEC-KB-011
@@ -174,6 +176,7 @@ def _get_semaphore() -> asyncio.Semaphore:
         _episode_semaphore = asyncio.Semaphore(settings.graphiti_max_concurrent)
     return _episode_semaphore
 
+
 _graphiti_client: Graphiti | None = None
 
 
@@ -238,7 +241,6 @@ def _get_graphiti() -> Graphiti:
     return _graphiti_client
 
 
-
 async def _update_edge_weights(
     nodes: list,
     org_id: str,
@@ -269,6 +271,7 @@ async def _update_edge_weights(
             updated = records[0].get("updated", 0)
     return updated
 
+
 async def delete_kb_episodes(org_id: str, episode_ids: list[str]) -> None:
     """Delete FalkorDB nodes for a set of episodes within an org's graph.
 
@@ -291,6 +294,58 @@ async def delete_kb_episodes(org_id: str, episode_ids: list[str]) -> None:
         "MATCH (n:Entity) WHERE NOT ((:Episodic)--(n)) DETACH DELETE n",
     )
     logger.info("graph_kb_episodes_deleted", org_id=org_id, count=len(episode_ids))
+
+
+async def delete_orphan_episodes_for_artifact_ids(org_id: str, artifact_ids: list[str]) -> int:
+    """Janitor: drop FalkorDB episodes whose ``artifact_id`` is in the given list.
+
+    SPEC-CONNECTOR-DELETE-LIFECYCLE-001 follow-up. Some Graphiti tasks
+    do synchronous LLM calls that don't honour ``asyncio.CancelledError``
+    — they keep running after the procrastinate cancel and write a fresh
+    episode for an already-deleted artifact. Those episodes never made
+    it into ``knowledge.artifacts.extra->>graphiti_episode_id`` (the row
+    was already gone), so ``delete_kb_episodes`` cannot find them via
+    the normal path.
+
+    The orchestrator runs this AFTER ``delete_connector_artifacts`` with
+    the artifact-id snapshot taken BEFORE the delete: any episode in
+    FalkorDB referring to those artifact-ids is by definition orphan
+    (the artifact does not exist in postgres anymore).
+
+    Also cleans Entity nodes that lose all incident Episodic edges
+    after the delete — same pattern as ``delete_kb_episodes``.
+
+    Returns the count of Episodic nodes deleted. No-op when graphiti is
+    disabled or ``artifact_ids`` is empty.
+    """
+    if not settings.graphiti_enabled or not artifact_ids:
+        return 0
+    graphiti = _get_graphiti()
+    driver = graphiti.driver.clone(org_id)
+    result = await driver.execute_query(
+        "MATCH (e:Episodic) WHERE e.artifact_id IN $artifact_ids "
+        "WITH e, e.uuid AS uuid "
+        "DETACH DELETE e "
+        "RETURN count(uuid) AS deleted",
+        artifact_ids=artifact_ids,
+    )
+    deleted = 0
+    if result is not None:
+        records, _, _ = result
+        if records:
+            deleted = int(records[0].get("deleted", 0) or 0)
+    if deleted:
+        # Entities now potentially orphaned by the episode-delete above.
+        await driver.execute_query(
+            "MATCH (n:Entity) WHERE NOT ((:Episodic)--(n)) DETACH DELETE n",
+        )
+    logger.info(
+        "graph_orphan_episodes_deleted",
+        org_id=org_id,
+        artifact_count=len(artifact_ids),
+        episodes_deleted=deleted,
+    )
+    return deleted
 
 
 async def compute_entity_pagerank(org_id: str) -> dict[str, float]:
@@ -411,9 +466,7 @@ async def ingest_episode(
 
                 # Store entity UUIDs + PageRank scores in Qdrant for retrieval boosting
                 entity_uuids_list = [
-                    str(getattr(n, "uuid", ""))
-                    for n in nodes
-                    if getattr(n, "uuid", None)
+                    str(getattr(n, "uuid", "")) for n in nodes if getattr(n, "uuid", None)
                 ]
                 if entity_uuids_list:
                     try:
@@ -435,7 +488,9 @@ async def ingest_episode(
 
             except Exception as exc:
                 exc_str = str(exc).lower()
-                is_rate_limit = "rate limit" in exc_str or "429" in exc_str or "ratelimit" in exc_str  # noqa: E501
+                is_rate_limit = (
+                    "rate limit" in exc_str or "429" in exc_str or "ratelimit" in exc_str
+                )  # noqa: E501
                 if attempt < max_attempts - 1:
                     # Rate limit: back off long enough for Mistral's sliding window to reset.
                     # Other errors: short exponential backoff (1s, 2s).
