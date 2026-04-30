@@ -100,12 +100,20 @@ jobs:
           file: klai-connector/Dockerfile
           push: true
           tags: |
-            ghcr.io/getklai/klai-connector:latest
             ghcr.io/getklai/klai-connector:${{ github.sha }}
+            ${{ github.event_name == 'push' && 'ghcr.io/getklai/klai-connector:latest' || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 PR C lesson: an earlier version of
+      # this workflow ran the deploy step on every ``pull_request`` build,
+      # auto-publishing PR-build images to prod under the ``:latest`` tag and
+      # triggering a docker compose up -d on core-01. That dropped a broken
+      # (varchar(32)-overflow) alembic migration into prod from a PR that was
+      # never reviewed. The ``if`` condition below pins the deploy to
+      # main-branch pushes only — PRs build + scan but do not deploy.
       - name: Deploy to core-01
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.CORE01_HOST }}
