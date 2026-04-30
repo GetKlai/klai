@@ -1,0 +1,215 @@
+# SPEC-OBS-001 follow-up — klai-mailer alerts (LogsQL via VictoriaLogs).
+#
+# Routed via spec=SPEC-OBS-001 → klai-ops-alerts-email.
+#
+#   M1  mailer_zitadel_webhook_failed   CRIT  Zitadel notification → klai-mailer
+#                                              returned non-2xx >5 times in 5m.
+#                                              The 2026-04-29 four-hour outage
+#                                              would have fired in 5 minutes.
+#   M2  mailer_notify_5xx_count_high   CRIT  >5 mailer access-log lines with
+#                                              5xx status on /notify in 5m.
+#                                              Direct mailer-side signal,
+#                                              independent of Zitadel logs.
+#
+# Why a dedicated mailer rules file:
+#
+# The existing `caddy_5xx_count_high` catches every 5xx that PASSES THROUGH
+# Caddy. But Zitadel calls `http://klai-mailer:8000/notify` directly over
+# the Docker network — never through Caddy. So a mailer outage is invisible
+# to Caddy-edge alerts. M1 closes that gap by querying Zitadel's own
+# notification-channel log line. M2 doubles the signal from the mailer
+# side (now that uvicorn access logs are visible via the FU#2 logging fix).
+#
+# Field shapes verified against production VictoriaLogs (2026-04-30):
+#   service:zitadel AND msg:"sending notification failed"
+#     → matches Zitadel's `webhook didn't return a success status` log
+#       across notification types (user.human.password.code.added,
+#       user.human.invite.code.added, etc.)
+#   service:klai-mailer AND _msg:"POST /notify"
+#     → matches uvicorn's access log for /notify requests after the
+#       FU#2 logging fix (PR #233) re-enabled access logs at INFO.
+#
+# Pitfalls inherited from caddy-rules.yaml:
+#   - Always go through `reduce` between LogsQL output and SSE math
+#   - SSE math has no max(), no ternary
+#   - execErrState: OK so plugin hiccups don't false-fire
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: obs-001-mailer
+    folder: Klai
+    interval: 1m
+    rules:
+
+      # ── M1: mailer_zitadel_webhook_failed ────────────────────────────────
+      #
+      # Watches Zitadel's notification-channel log for failures targeting
+      # klai-mailer. This is the EARLIEST signal that password-reset emails,
+      # invitation emails, and email-OTP codes are not being delivered.
+      #
+      # On 2026-04-29 the broken-redis-URL outage produced ~14k of these log
+      # lines over 4 hours (~1Hz retry loop), entirely invisible to existing
+      # alerts. Threshold of 5 in 5m is conservative — Zitadel retries up
+      # to ~5 times per individual notification, so 5 failures across 5
+      # minutes is the very bottom of "real outage" signal.
+      - uid: obs-001-mailer-zitadel-webhook-failed
+        title: mailer_zitadel_webhook_failed
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:zitadel AND msg:"sending notification failed" AND error:"klai-mailer:8000"'
+              queryType: instant
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [5], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        keepFiringFor: 10m
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-OBS-001
+          service_group: mailer
+        annotations:
+          summary: 'Zitadel cannot deliver notifications to klai-mailer (>5 failures in 5m)'
+          runbook_url: 'docs/runbooks/platform-recovery.md#mailer-zitadel-webhook-failed'
+          description: |
+            Zitadel logged more than 5 `sending notification failed` events
+            targeting klai-mailer in the last 5 minutes. This means at
+            least one user-facing email flow is broken: password reset,
+            invitations, email-OTP codes, MFA setup mails.
+
+            The 2026-04-29 broken-redis-URL outage emitted ~14k of these
+            log lines over 4 hours before a user reported "email not
+            arriving". This alert closes that signal gap.
+
+            Triage:
+              1. Check the actual error from Zitadel's view:
+                   service:zitadel AND msg:"sending notification failed" AND error:"klai-mailer:8000"
+                 The error= field contains the HTTP status and a partial
+                 reason from the mailer's response.
+              2. Inspect mailer's own logs for the same window (now
+                 visible after the FU#2 access-log fix):
+                   service:klai-mailer AND _time:5m
+                 If access logs show requests reaching mailer but every
+                 one returns 5xx, see step 3. If no access logs show a
+                 request reaching mailer, see step 4.
+              3. Mailer-internal failure: pull the live ASGI traceback
+                 by tailing mailer logs while triggering a fresh
+                 password reset:
+                   ssh core-01 "docker logs --tail 0 -f klai-core-klai-mailer-1"
+                   curl -X POST https://my.getklai.com/api/auth/password/reset \
+                     -d '{"email":"<your-email>"}' -H "Content-Type: application/json"
+              4. Network/auth failure: Zitadel's call isn't even reaching
+                 mailer. Check klai-net Docker network membership for
+                 zitadel + klai-mailer. Verify WEBHOOK_SECRET matches
+                 between the two containers.
+
+      # ── M2: mailer_notify_5xx_count_high ────────────────────────────────
+      #
+      # Direct signal from the mailer side. Independent of Zitadel logs so
+      # the alert still fires if Zitadel logging is interrupted. Becomes
+      # actionable once the FU#2 logging fix (PR #233) lets uvicorn emit
+      # access lines.
+      - uid: obs-001-mailer-notify-5xx-count-high
+        title: mailer_notify_5xx_count_high
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              # The uvicorn access log for /notify lines with a 5xx status.
+              # Substring match on the message body — matches "POST /notify HTTP/1.1" 5XX.
+              expr: 'service:klai-mailer AND _msg:"POST /notify" AND _msg:" 5"'
+              queryType: instant
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [5], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        keepFiringFor: 10m
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-OBS-001
+          service_group: mailer
+        annotations:
+          summary: 'klai-mailer returned >5 5xx on POST /notify in 5 min'
+          runbook_url: 'docs/runbooks/platform-recovery.md#mailer-zitadel-webhook-failed'
+          description: |
+            More than 5 mailer access-log lines for `POST /notify` with
+            a 5xx status in the last 5 minutes. Same operational meaning
+            as `mailer_zitadel_webhook_failed` (emails not delivered) but
+            measured from the mailer side.
+
+            Both alerts are expected to fire together when the actual
+            failure is in mailer code (broken renderer, bad redis URL,
+            SMTP outage). If only `mailer_zitadel_webhook_failed` fires,
+            the requests are not even reaching mailer — likely a Docker
+            network or webhook-secret mismatch.
+
+            Same triage steps as `mailer_zitadel_webhook_failed`.
