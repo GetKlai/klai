@@ -34,7 +34,6 @@ import { Route as AppChatRouteImport } from './routes/app/chat'
 import { Route as AppAccountRouteImport } from './routes/app/account'
 import { Route as AdminSettingsRouteImport } from './routes/admin/settings'
 import { Route as AdminJoinRequestsRouteImport } from './routes/admin/join-requests'
-import { Route as AdminDomainsRouteImport } from './routes/admin/domains'
 import { Route as AdminBillingRouteImport } from './routes/admin/billing'
 import { Route as LocaleSignupRouteImport } from './routes/$locale/signup'
 import { Route as AppTranscribeIndexRouteImport } from './routes/app/transcribe/index'
@@ -214,11 +213,6 @@ const AdminSettingsRoute = AdminSettingsRouteImport.update({
 const AdminJoinRequestsRoute = AdminJoinRequestsRouteImport.update({
   id: '/join-requests',
   path: '/join-requests',
-  getParentRoute: () => AdminRouteRoute,
-} as any)
-const AdminDomainsRoute = AdminDomainsRouteImport.update({
-  id: '/domains',
-  path: '/domains',
   getParentRoute: () => AdminRouteRoute,
 } as any)
 const AdminBillingRoute = AdminBillingRouteImport.update({
@@ -526,7 +520,6 @@ export interface FileRoutesByFullPath {
   '/verify': typeof VerifyRoute
   '/$locale/signup': typeof LocaleSignupRouteWithChildren
   '/admin/billing': typeof AdminBillingRoute
-  '/admin/domains': typeof AdminDomainsRoute
   '/admin/join-requests': typeof AdminJoinRequestsRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
@@ -606,7 +599,6 @@ export interface FileRoutesByTo {
   '/signup': typeof SignupRoute
   '/verify': typeof VerifyRoute
   '/admin/billing': typeof AdminBillingRoute
-  '/admin/domains': typeof AdminDomainsRoute
   '/admin/join-requests': typeof AdminJoinRequestsRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
@@ -688,7 +680,6 @@ export interface FileRoutesById {
   '/verify': typeof VerifyRoute
   '/$locale/signup': typeof LocaleSignupRouteWithChildren
   '/admin/billing': typeof AdminBillingRoute
-  '/admin/domains': typeof AdminDomainsRoute
   '/admin/join-requests': typeof AdminJoinRequestsRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
@@ -773,7 +764,6 @@ export interface FileRouteTypes {
     | '/verify'
     | '/$locale/signup'
     | '/admin/billing'
-    | '/admin/domains'
     | '/admin/join-requests'
     | '/admin/settings'
     | '/app/account'
@@ -853,7 +843,6 @@ export interface FileRouteTypes {
     | '/signup'
     | '/verify'
     | '/admin/billing'
-    | '/admin/domains'
     | '/admin/join-requests'
     | '/admin/settings'
     | '/app/account'
@@ -934,7 +923,6 @@ export interface FileRouteTypes {
     | '/verify'
     | '/$locale/signup'
     | '/admin/billing'
-    | '/admin/domains'
     | '/admin/join-requests'
     | '/admin/settings'
     | '/app/account'
@@ -1197,13 +1185,6 @@ declare module '@tanstack/react-router' {
       path: '/join-requests'
       fullPath: '/admin/join-requests'
       preLoaderRoute: typeof AdminJoinRequestsRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/domains': {
-      id: '/admin/domains'
-      path: '/domains'
-      fullPath: '/admin/domains'
-      preLoaderRoute: typeof AdminDomainsRouteImport
       parentRoute: typeof AdminRouteRoute
     }
     '/admin/billing': {
@@ -1624,7 +1605,6 @@ const LocaleRouteRouteWithChildren = LocaleRouteRoute._addFileChildren(
 
 interface AdminRouteRouteChildren {
   AdminBillingRoute: typeof AdminBillingRoute
-  AdminDomainsRoute: typeof AdminDomainsRoute
   AdminJoinRequestsRoute: typeof AdminJoinRequestsRoute
   AdminSettingsRoute: typeof AdminSettingsRoute
   AdminIndexRoute: typeof AdminIndexRoute
@@ -1652,7 +1632,6 @@ interface AdminRouteRouteChildren {
 
 const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminBillingRoute: AdminBillingRoute,
-  AdminDomainsRoute: AdminDomainsRoute,
   AdminJoinRequestsRoute: AdminJoinRequestsRoute,
   AdminSettingsRoute: AdminSettingsRoute,
   AdminIndexRoute: AdminIndexRoute,

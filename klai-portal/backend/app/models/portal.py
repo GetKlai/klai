@@ -116,20 +116,6 @@ class PortalUser(Base):
     org: Mapped["PortalOrg"] = relationship(back_populates="users")
 
 
-class PortalOrgAllowedDomain(Base):
-    __tablename__ = "portal_org_allowed_domains"
-    __table_args__ = (
-        UniqueConstraint("org_id", "domain", name="uq_org_allowed_domains_org_domain"),
-        UniqueConstraint("domain", name="uq_org_allowed_domains_domain_global"),
-    )
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    org_id: Mapped[int] = mapped_column(ForeignKey("portal_orgs.id", ondelete="CASCADE"))
-    domain: Mapped[str] = mapped_column(String(253), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    created_by: Mapped[str] = mapped_column(String(64), nullable=False)
-
-
 class PortalJoinRequest(Base):
     __tablename__ = "portal_join_requests"
 
