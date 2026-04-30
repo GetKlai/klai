@@ -19,6 +19,7 @@ Revises: v2m3e4r5g6h7
 Create Date: 2026-04-30 14:40:33.428643
 
 """
+
 from typing import Sequence, Union
 
 from alembic import op
@@ -67,7 +68,5 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Downgrade schema."""
     op.drop_index("ix_portal_connectors_state_kb", table_name="portal_connectors")
-    op.drop_constraint(
-        "ck_portal_connectors_state", "portal_connectors", type_="check"
-    )
+    op.drop_constraint("ck_portal_connectors_state", "portal_connectors", type_="check")
     op.drop_column("portal_connectors", "state")

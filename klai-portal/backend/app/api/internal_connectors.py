@@ -69,9 +69,7 @@ async def finalize_connector_delete(
     """
     _verify_internal_bearer(authorization)
 
-    result = await db.execute(
-        select(PortalConnector).where(PortalConnector.id == connector_id)
-    )
+    result = await db.execute(select(PortalConnector).where(PortalConnector.id == connector_id))
     connector = result.scalar_one_or_none()
     if connector is None:
         # Already hard-deleted; idempotent.
@@ -92,9 +90,7 @@ async def finalize_connector_delete(
             detail=f"Connector is in state {connector.state!r}, expected 'deleting'",
         )
 
-    await db.execute(
-        delete(PortalConnector).where(PortalConnector.id == connector_id)
-    )
+    await db.execute(delete(PortalConnector).where(PortalConnector.id == connector_id))
     await db.commit()
     logger.info(
         "finalize_connector_delete_completed",
