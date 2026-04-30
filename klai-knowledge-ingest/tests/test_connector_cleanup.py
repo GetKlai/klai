@@ -75,6 +75,17 @@ async def test_purge_connector_orders_steps_correctly(mocked_proc_app: MagicMock
     async def fake_delete_qdrant(*_a: object, **_kw: object) -> None:
         call_order.append("qdrant_delete_connector")
 
+    async def fake_delete_orphan_episodes(*_a: object, **_kw: object) -> int:
+        call_order.append("delete_orphan_episodes_for_artifact_ids")
+        return 0
+
+    async def fake_get_active_hashes(*_a: object, **_kw: object) -> set[str]:
+        call_order.append("get_active_image_hashes_for_kb")
+        return set()
+
+    async def fake_build_image_store_returns_none() -> None:
+        return None
+
     with (
         patch(
             "knowledge_ingest.connector_cleanup._list_artifact_ids",
@@ -108,6 +119,20 @@ async def test_purge_connector_orders_steps_correctly(mocked_proc_app: MagicMock
             "knowledge_ingest.connector_cleanup.qdrant_store.delete_connector",
             side_effect=fake_delete_qdrant,
         ),
+        patch(
+            "knowledge_ingest.connector_cleanup.graph_module.delete_orphan_episodes_for_artifact_ids",
+            side_effect=fake_delete_orphan_episodes,
+        ),
+        patch(
+            "knowledge_ingest.connector_cleanup.pg_store.get_active_image_hashes_for_kb",
+            side_effect=fake_get_active_hashes,
+        ),
+        # ImageStore init returns None so the Garage paths are skipped in this
+        # mock-only test. Real Garage integration is covered by integration tests.
+        patch(
+            "knowledge_ingest.adapters.crawler._build_image_store",
+            return_value=None,
+        ),
     ):
         report = await purge_connector(
             org_id="org-zid",
@@ -129,6 +154,7 @@ async def test_purge_connector_orders_steps_correctly(mocked_proc_app: MagicMock
         "delete_connector_crawl_jobs",
         "delete_kb_episodes",
         "qdrant_delete_connector",
+        "delete_orphan_episodes_for_artifact_ids",
     ]
     assert isinstance(report, CleanupReport)
     assert report.artifacts_deleted == 2

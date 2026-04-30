@@ -260,33 +260,86 @@ async def purge_connector(
     await qdrant_store.delete_connector(org_id, kb_slug, connector_id)
     log.info("connector_purge_step_qdrant_deleted")
 
-    # Step 9: Garage S3 image keys that became orphan in step 4b. Best-
-    # effort: ``ImageStore.delete_keys`` swallows per-key failures and
-    # returns the count actually removed. SPEC REQ-06.4.
+    # Step 9: Garage S3 image keys — orchestrator-scoped ones from step 4b.
     s3_images_deleted = 0
-    if orphan_image_keys:
+    image_store = None
+    try:
+        from knowledge_ingest.adapters.crawler import _build_image_store
+
+        image_store = _build_image_store()
+    except Exception:
+        logger.exception("connector_purge_step_image_store_init_failed")
+
+    if orphan_image_keys and image_store is not None:
+        s3_images_deleted = await image_store.delete_keys(orphan_image_keys)
+        log.info(
+            "connector_purge_step_s3_images_deleted",
+            count=s3_images_deleted,
+            requested=len(orphan_image_keys),
+        )
+
+    # Step 10 (JANITOR): catch the cleanup-misses that the per-connector
+    # logic above structurally cannot find:
+    #   a) FalkorDB episodes written AFTER our cancel — graphiti tasks
+    #      with sync LLM calls don't honour asyncio cancellation, so
+    #      mid-flight episodes can land between cancel + delete. The
+    #      artifact-id snapshot we took in step 1 still applies — any
+    #      episode in FalkorDB referencing those artifact-ids is now
+    #      orphan because the artifact rows are gone (step 5).
+    #   b) Garage keys that lost their last reference at step 5's CASCADE
+    #      on artifact_images. Refcount on content_hash: a key is orphan
+    #      iff no artifact in this KB still references its hash.
+    # Both run unconditionally — even when steps 4b/7 returned zero,
+    # because their inputs depend on rows that no longer exist.
+    falkor_orphans_deleted = await graph_module.delete_orphan_episodes_for_artifact_ids(
+        org_id, artifact_ids
+    )
+    log.info(
+        "connector_purge_step_falkor_orphans_swept",
+        count=falkor_orphans_deleted,
+    )
+
+    janitor_s3_deleted = 0
+    if image_store is not None:
         try:
-            from knowledge_ingest.adapters.crawler import (
-                _build_image_store,
-            )
+            from minio import Minio
 
-            image_store = _build_image_store()
-        except Exception:
-            logger.exception("connector_purge_step_image_store_init_failed")
-            image_store = None
+            from knowledge_ingest.adapters.crawler import _build_image_store
+            from knowledge_ingest.config import settings as ki_settings
 
-        if image_store is None:
-            log.warning(
-                "connector_purge_step_image_store_unavailable",
-                key_count=len(orphan_image_keys),
+            active_hashes = await pg_store.get_active_image_hashes_for_kb(org_id, kb_slug)
+            # List all S3 keys under {org}/images/{kb_slug}/, derive the
+            # content_hash from each filename, and propose for delete the
+            # ones whose hash isn't in active_hashes.
+            prefix = f"{org_id}/images/{kb_slug}/"
+            from minio import Minio  # noqa: F811
+
+            mc = Minio(
+                ki_settings.garage_s3_endpoint,
+                access_key=ki_settings.garage_access_key,
+                secret_key=ki_settings.garage_secret_key,
+                region=ki_settings.garage_region,
+                secure=False,
             )
-        else:
-            s3_images_deleted = await image_store.delete_keys(orphan_image_keys)
+            orphan_under_prefix: list[str] = []
+            for obj in mc.list_objects(ki_settings.garage_bucket, prefix=prefix, recursive=True):
+                key = obj.object_name
+                basename = key.rsplit("/", 1)[-1]
+                content_hash = basename.rsplit(".", 1)[0]
+                if content_hash and content_hash not in active_hashes:
+                    orphan_under_prefix.append(key)
+            if orphan_under_prefix:
+                janitor_s3_deleted = await image_store.delete_keys(orphan_under_prefix)
             log.info(
-                "connector_purge_step_s3_images_deleted",
-                count=s3_images_deleted,
-                requested=len(orphan_image_keys),
+                "connector_purge_step_garage_orphans_swept",
+                count=janitor_s3_deleted,
+                scanned=len(orphan_under_prefix),
+                active_hashes=len(active_hashes),
             )
+        except Exception:
+            logger.exception("connector_purge_step_garage_janitor_failed")
+
+    s3_images_deleted += janitor_s3_deleted
 
     # NOTE: connector.sync_runs cleanup is invoked by the portal-side
     # delete-orchestration BEFORE it asks knowledge-ingest to purge. That
@@ -301,7 +354,7 @@ async def purge_connector(
         artifacts_deleted=artifacts_deleted,
         crawl_jobs_deleted=crawl_jobs_deleted,
         qdrant_chunks_deleted=0,  # qdrant_store.delete_connector doesn't return a count today
-        falkor_episodes_deleted=len(episode_ids),
+        falkor_episodes_deleted=len(episode_ids) + falkor_orphans_deleted,
         s3_images_deleted=s3_images_deleted,
         sync_runs_deleted=None,
     )
