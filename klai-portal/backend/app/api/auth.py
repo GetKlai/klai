@@ -58,7 +58,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.bearer import bearer  # BFF Phase A4 — session-aware bearer shim
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, get_db
-from app.models.portal import PortalOrg, PortalOrgAllowedDomain, PortalUser
+from app.models.portal import PortalOrg, PortalUser
 from app.services import audit
 from app.services.bff_session import SessionService
 from app.services.events import emit_event
@@ -1927,41 +1927,6 @@ async def idp_callback(
             return RedirectResponse(url=f"/select-workspace?ref={ref}", status_code=302)
         except Exception:
             _slog.exception("Failed to store pending session — falling through to first org")
-
-    if not existing_users and zitadel_user_id and email:
-        # No portal_users row — check allowed domains for auto-provision
-        email_domain = email.rsplit("@", 1)[-1].lower() if "@" in email else ""
-        if email_domain:
-            domain_result = await db.execute(
-                select(PortalOrgAllowedDomain).where(PortalOrgAllowedDomain.domain == email_domain)
-            )
-            matched_domain = domain_result.scalar_one_or_none()
-
-            if matched_domain:
-                # C4.4: DB error → log + fall through, never 500
-                try:
-                    new_user = PortalUser(
-                        zitadel_user_id=zitadel_user_id,
-                        org_id=matched_domain.org_id,
-                        role="member",
-                        status="active",
-                        display_name=email.split("@")[0],
-                        email=email,
-                    )
-                    db.add(new_user)
-                    await db.commit()
-                    _slog.info(
-                        "Auto-provisioned SSO user",
-                        zitadel_user_id=zitadel_user_id,
-                        org_id=matched_domain.org_id,
-                        domain=email_domain,
-                    )
-                except Exception:
-                    _slog.exception(
-                        "Auto-provision failed — user will see no-account page",
-                        zitadel_user_id=zitadel_user_id,
-                    )
-                    await db.rollback()
 
     # Finalize the auth request (always, even if no portal_users row)
     # The callback.tsx will check org_found and redirect to /no-account if needed
