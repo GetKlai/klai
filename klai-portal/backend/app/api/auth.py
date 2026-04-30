@@ -1058,9 +1058,20 @@ async def login(
             _slog.warning("has_totp_check_failed", exc_info=True)
             has_totp = False
 
-    # 2. Create a Zitadel session by checking email + password
+    # 2. Create a Zitadel session — pass the canonical Zitadel user_id
+    # resolved in step 1a, NOT the raw user-typed email. Zitadel matches
+    # `loginName` case-sensitively in /v2/sessions checks, so a user whose
+    # stored loginName is `Steven@getklai.com` cannot sign in by typing
+    # `steven@getklai.com` if we forward the typed value. The IGNORE_CASE
+    # fix on `find_user_by_email` (commit 7e92e089) already gives us the
+    # canonical user_id; we simply need to use it. When find returned None
+    # (user not found), pass a syntactically-valid sentinel so Zitadel
+    # returns 4xx and the handler emits the SAME uniform "Email address or
+    # password is incorrect" 401 — the anti-enumeration pattern from
+    # SPEC-SEC-MFA-001 finding #12 / REQ-2.3 / REQ-2.5.
+    session_user_id = zitadel_user_id or "00000000000000"
     try:
-        session = await zitadel.create_session_with_password(body.email, body.password)
+        session = await zitadel.create_session_with_password(session_user_id, body.password)
     except httpx.HTTPStatusError as exc:
         logger.exception("create_session failed %s: %s", exc.response.status_code, sanitize_response_body(exc))
         if exc.response.status_code in (400, 401, 404, 412):
