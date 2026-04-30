@@ -47,34 +47,46 @@ def init_app(connector: Any) -> Any:
     procrastinate is imported here to avoid module-level psycopg dependency.
     """
     global _procrastinate_app
-    import procrastinate  # noqa: PLC0415 — intentional lazy import
+    import procrastinate
 
     _procrastinate_app = procrastinate.App(connector=connector)
     _register_tasks(_procrastinate_app)
 
-    from knowledge_ingest.crawl_tasks import register_crawl_tasks  # noqa: PLC0415
+    from knowledge_ingest.crawl_tasks import register_crawl_tasks
 
     register_crawl_tasks(_procrastinate_app)
 
-    from knowledge_ingest.ingest_tasks import register_ingest_tasks  # noqa: PLC0415
+    from knowledge_ingest.ingest_tasks import register_ingest_tasks
 
     register_ingest_tasks(_procrastinate_app)
 
-    from knowledge_ingest.taxonomy_tasks import register_taxonomy_tasks  # noqa: PLC0415
+    from knowledge_ingest.taxonomy_tasks import register_taxonomy_tasks
 
     register_taxonomy_tasks(_procrastinate_app)
 
-    from knowledge_ingest.clustering_tasks import register_auto_categorise_task, register_clustering_tasks
+    from knowledge_ingest.clustering_tasks import (
+        register_auto_categorise_task,
+        register_clustering_tasks,
+    )
 
     register_clustering_tasks(_procrastinate_app)
     register_auto_categorise_task(_procrastinate_app)
+
+    # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-04: orchestrated connector-purge
+    # task. Receives an enqueue from the portal DELETE endpoint and drives
+    # the centralised ``connector_cleanup.purge_connector`` flow.
+    from knowledge_ingest.connector_purge_tasks import (
+        register_connector_purge_task,
+    )
+
+    register_connector_purge_task(_procrastinate_app)
 
     return _procrastinate_app
 
 
 def _register_tasks(procrastinate_app: Any) -> None:
     """Register task functions on the given App instance."""
-    import procrastinate  # noqa: PLC0415 — intentional lazy import
+    import procrastinate
 
     @procrastinate_app.task(
         queue="enrich-interactive", retry=procrastinate.RetryStrategy(max_attempts=2)
@@ -155,15 +167,29 @@ def _register_tasks(procrastinate_app: Any) -> None:
         Runs on the graphiti-bulk queue, which the worker drains AFTER enrich-bulk.
         This ensures enrichment LLM calls complete before Graphiti starts, preventing
         both from competing on the same 1 req/s upstream rate limit simultaneously.
+
+        SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-07: artifact-existence guard.
+        If the artifact has been deleted between enqueue and dequeue (e.g. by
+        the connector purge orchestrator) abort before writing to FalkorDB.
+        Closes the regrow window — graphiti tasks have no
+        ``source_connector_id`` arg, so the artifact-presence check is the
+        canonical signal here.
         """
+        from knowledge_ingest import pg_store
+        if not await pg_store.artifact_exists(artifact_id):
+            logger.info(
+                "graphiti_aborted_artifact_missing",
+                artifact_id=artifact_id,
+                org_id=org_id,
+            )
+            return
         logger.info(
             "graphiti_episode_started",
             artifact_id=artifact_id,
             org_id=org_id,
             content_type=content_type,
         )
-        from knowledge_ingest import graph as graph_module  # noqa: PLC0415
-        from knowledge_ingest import pg_store  # noqa: PLC0415
+        from knowledge_ingest import graph as graph_module
 
         episode_id = await graph_module.ingest_episode(
             artifact_id=artifact_id,
@@ -196,6 +222,24 @@ async def _enrich_document(
     Uses content-type profiles for HyPE decisions and context strategy.
     Errors are logged but do not raise -- raw vectors remain in Qdrant.
     """
+    # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-07: existence-guard.
+    # If the source connector has been flipped to ``state='deleting'``
+    # while this task was sitting in the queue, abort before doing any
+    # write. Closes the in-flight regrow window — without this guard
+    # any chunk we enrich here would be re-written to Qdrant after the
+    # purge orchestrator's qdrant cleanup ran.
+    source_connector_id = extra_payload.get("source_connector_id") if extra_payload else None
+    if source_connector_id:
+        from knowledge_ingest.connector_state import connector_is_active
+        if not await connector_is_active(source_connector_id):
+            logger.info(
+                "enrichment_aborted_connector_inactive",
+                connector_id=source_connector_id,
+                artifact_id=artifact_id,
+                kb_slug=kb_slug,
+                path=path,
+            )
+            return
     t_total = time.monotonic()
     logger.info(
         "enrichment_started",

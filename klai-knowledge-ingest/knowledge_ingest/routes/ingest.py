@@ -706,40 +706,73 @@ async def delete_kb_route(request: Request, org_id: str, kb_slug: str) -> dict:
     return {"status": "ok"}
 
 
+@router.post("/ingest/v1/connector/purge", status_code=202)
+async def enqueue_connector_purge_route(
+    request: Request, org_id: str, kb_slug: str, connector_id: str
+) -> dict:
+    """Enqueue an async connector-purge task. Returns 202 immediately.
+
+    SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-03 + REQ-04. The portal flips
+    ``portal_connectors.state='deleting'`` and POSTs here; we defer the
+    orchestrated purge to procrastinate and return.
+
+    The procrastinate worker drives the centralised cleanup
+    (``connector_cleanup.purge_connector``) and finally calls back to
+    ``/api/internal/connectors/{id}/finalize-delete`` on the portal to
+    hard-delete the row.
+    """
+    _verify_internal_secret(request)
+    from knowledge_ingest import enrichment_tasks
+
+    proc_app = enrichment_tasks.get_app()
+    await proc_app.connector_purge_task.defer_async(
+        connector_id=connector_id,
+        org_id=org_id,
+        kb_slug=kb_slug,
+    )
+    logger.info(
+        "connector_purge_enqueued",
+        org_id=org_id,
+        kb_slug=kb_slug,
+        connector_id=connector_id,
+    )
+    return {"status": "enqueued"}
+
+
 @router.delete("/ingest/v1/connector")
 async def delete_connector_route(
     request: Request, org_id: str, kb_slug: str, connector_id: str
 ) -> dict:
-    """Delete all data for a connector: FalkorDB graph nodes + Qdrant chunks + PostgreSQL records.
+    """Synchronous connector purge — backwards-compat + admin recovery.
 
-    Scoped to (org_id, kb_slug, connector_id). Called by the portal on connector deletion
-    and by operators for manual cleanup. Only affects documents tagged with source_connector_id.
+    SPEC-CONNECTOR-DELETE-LIFECYCLE-001 keeps this endpoint as the
+    deterministic complete-or-fail variant used by the admin force-purge
+    flow (REQ-11). New portal-side calls go through
+    ``POST /ingest/v1/connector/purge`` (async, returns 202).
+
+    Internally delegates to the same ``purge_connector`` orchestrator so
+    the cancel-jobs + multi-store-delete behaviour is identical to the
+    async path minus the procrastinate indirection.
     """
     _verify_internal_secret(request)
-    episode_ids = await pg_store.get_connector_episode_ids(org_id, kb_slug, connector_id)
-    await graph_module.delete_kb_episodes(org_id, episode_ids)
-    await qdrant_store.delete_connector(org_id, kb_slug, connector_id)
-    artifacts_deleted = await pg_store.delete_connector_artifacts(org_id, kb_slug, connector_id)
-    # Audit trail in knowledge.crawl_jobs is scoped per-connector via
-    # config->>'connector_id'. Without this the rows live forever and
-    # confuse re-ingest dashboards. See pg_store.delete_connector_crawl_jobs.
-    crawl_jobs_deleted = await pg_store.delete_connector_crawl_jobs(
-        org_id, kb_slug, connector_id
-    )
-    logger.info(
-        "connector_deleted",
+    from knowledge_ingest import enrichment_tasks
+    from knowledge_ingest.connector_cleanup import purge_connector
+
+    proc_app = enrichment_tasks.get_app()
+    report = await purge_connector(
         org_id=org_id,
         kb_slug=kb_slug,
         connector_id=connector_id,
-        episodes_deleted=len(episode_ids),
-        artifacts_deleted=artifacts_deleted,
-        crawl_jobs_deleted=crawl_jobs_deleted,
+        proc_app=proc_app,
     )
+    logger.info("connector_deleted_sync", **report.as_dict())
     return {
         "status": "ok",
-        "episodes_deleted": len(episode_ids),
-        "artifacts_deleted": artifacts_deleted,
-        "crawl_jobs_deleted": crawl_jobs_deleted,
+        "episodes_deleted": report.falkor_episodes_deleted,
+        "artifacts_deleted": report.artifacts_deleted,
+        "crawl_jobs_deleted": report.crawl_jobs_deleted,
+        "enrichment_jobs_cancelled": report.enrichment_jobs_cancelled,
+        "graphiti_jobs_cancelled": report.graphiti_jobs_cancelled,
     }
 
 
