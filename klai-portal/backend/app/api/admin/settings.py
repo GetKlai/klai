@@ -37,6 +37,9 @@ class OrgSettingsOut(BaseModel):
     # @MX:NOTE SPEC-AUTH-009 R5 -- toggle for auto-accepting same-domain users.
     # Default False; when True, domain_match picker entries skip join-request flow.
     auto_accept_same_domain: bool = False
+    # @MX:NOTE SPEC-AUTH-009 R5 -- exposed so the frontend toggle label can show
+    # "Automatically accept users with @{primary_domain}". None when not set.
+    primary_domain: str | None = None
 
 
 class OrgSettingsUpdate(BaseModel):
@@ -67,6 +70,7 @@ async def get_org_settings(
         default_language=org.default_language,
         mfa_policy=org.mfa_policy,
         auto_accept_same_domain=bool(org.auto_accept_same_domain),
+        primary_domain=org.primary_domain or None,
     )
 
 
@@ -92,6 +96,7 @@ async def update_org_settings(
         default_language=org.default_language,
         mfa_policy=org.mfa_policy,
         auto_accept_same_domain=bool(org.auto_accept_same_domain),
+        primary_domain=org.primary_domain or None,
     )
 
 

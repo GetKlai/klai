@@ -1547,5 +1547,8 @@
   "templates_form_error_name_required": "Name is required",
   "templates_form_error_prompt_required": "Prompt instructions are required",
   "templates_form_error_slug_conflict": "A template with this name already exists in this organization",
-  "templates_form_error_generic": "Something went wrong while saving. Please try again."
+  "templates_form_error_generic": "Something went wrong while saving. Please try again.",
+  "admin_settings_auto_accept_label": "Automatically accept users with @{domain}",
+  "admin_settings_auto_accept_hint_on": "Users from your domain join immediately without requiring admin approval.",
+  "admin_settings_auto_accept_hint_off": "Users from your domain must request access and wait for admin approval."
 }
