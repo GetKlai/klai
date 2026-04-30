@@ -235,17 +235,31 @@ class ZitadelClient:
 
     # ── Custom Login UI (Session API) ─────────────────────────────────────────
 
-    async def create_session_with_password(self, email: str, password: str) -> dict:
-        """Create a Zitadel session validated by email + password.
+    async def create_session_with_password(self, user_id: str, password: str) -> dict:
+        """Create a Zitadel session for the given Zitadel ``user_id`` with the
+        supplied password.
 
-        Returns the full response dict containing ``sessionId`` and ``sessionToken``.
-        Raises ``httpx.HTTPStatusError`` on invalid credentials (4xx).
+        ``user_id`` MUST be the canonical Zitadel userId resolved from the
+        user-supplied email via ``find_user_by_email`` (which is itself
+        case-insensitive per RFC 5321 §2.4). Passing the raw user-typed
+        email here is wrong: Zitadel's ``/v2/sessions`` user check matches
+        ``loginName`` case-sensitively against the stored value, so a user
+        whose Zitadel ``loginName`` is ``Steven@getklai.com`` cannot log in
+        by typing ``steven@getklai.com`` — Zitadel returns HTTP 400 and the
+        portal returns 401 "Email address or password is incorrect". The
+        IGNORE_CASE fix on ``find_user_by_email`` (commit 7e92e089) closed
+        the lookup half of this gap; this signature closes the session-
+        creation half.
+
+        Returns the full response dict containing ``sessionId`` and
+        ``sessionToken``. Raises ``httpx.HTTPStatusError`` on invalid
+        credentials (4xx) or unknown ``user_id`` (also 4xx).
         """
         resp = await self._http.post(
             "/v2/sessions",
             json={
                 "checks": {
-                    "user": {"loginName": email},
+                    "user": {"userId": user_id},
                     "password": {"password": password},
                 }
             },
