@@ -75,9 +75,13 @@ async def test_purge_connector_orders_steps_correctly(mocked_proc_app: MagicMock
     async def fake_delete_qdrant(*_a: object, **_kw: object) -> None:
         call_order.append("qdrant_delete_connector")
 
-    async def fake_delete_orphan_episodes(*_a: object, **_kw: object) -> int:
-        call_order.append("delete_orphan_episodes_for_artifact_ids")
+    async def fake_sweep_episodes(*_a: object, **_kw: object) -> int:
+        call_order.append("sweep_orphan_episodes_org_wide")
         return 0
+
+    async def fake_get_alive_artifacts(*_a: object, **_kw: object) -> set[str]:
+        call_order.append("get_alive_artifact_ids_for_org")
+        return set()
 
     async def fake_get_active_hashes(*_a: object, **_kw: object) -> set[str]:
         call_order.append("get_active_image_hashes_for_kb")
@@ -120,8 +124,12 @@ async def test_purge_connector_orders_steps_correctly(mocked_proc_app: MagicMock
             side_effect=fake_delete_qdrant,
         ),
         patch(
-            "knowledge_ingest.connector_cleanup.graph_module.delete_orphan_episodes_for_artifact_ids",
-            side_effect=fake_delete_orphan_episodes,
+            "knowledge_ingest.connector_cleanup.graph_module.sweep_orphan_episodes_org_wide",
+            side_effect=fake_sweep_episodes,
+        ),
+        patch(
+            "knowledge_ingest.connector_cleanup.pg_store.get_alive_artifact_ids_for_org",
+            side_effect=fake_get_alive_artifacts,
         ),
         patch(
             "knowledge_ingest.connector_cleanup.pg_store.get_active_image_hashes_for_kb",
@@ -154,7 +162,8 @@ async def test_purge_connector_orders_steps_correctly(mocked_proc_app: MagicMock
         "delete_connector_crawl_jobs",
         "delete_kb_episodes",
         "qdrant_delete_connector",
-        "delete_orphan_episodes_for_artifact_ids",
+        "get_alive_artifact_ids_for_org",
+        "sweep_orphan_episodes_org_wide",
     ]
     assert isinstance(report, CleanupReport)
     assert report.artifacts_deleted == 2
