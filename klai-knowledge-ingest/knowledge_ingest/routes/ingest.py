@@ -184,6 +184,41 @@ from knowledge_ingest.source_label import (  # noqa: E402
     compute_source_label as _compute_source_label,
 )
 
+# SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-06.2: convention for the public
+# URL prefix that ImageStore prepends to every uploaded key (matches
+# ``klai_image_storage.storage.PUBLIC_IMAGE_PATH_PREFIX``). We re-derive
+# the s3_key by stripping this prefix.
+_IMAGE_URL_PREFIX = "/kb-images/"
+
+
+def _parse_image_refs(image_urls: list) -> list[tuple[str, str]]:
+    """Convert image URLs into (s3_key, content_hash) tuples for bookkeeping.
+
+    Public URL shape: ``/kb-images/{org}/images/{kb}/{sha256}.{ext}``.
+    The ``content_hash`` is the basename minus the extension; the
+    ``s3_key`` is the full URL minus the ``/kb-images/`` prefix.
+
+    Skips any URL that does not match the expected shape (manual uploads
+    pointing at external CDNs, malformed entries) — those simply do not
+    get connector-scoped cleanup. The bookkeeping table is best-effort:
+    not having a row for an image means the cleanup query will never
+    propose it as orphan, which is the safe default.
+    """
+    refs: list[tuple[str, str]] = []
+    for raw in image_urls or []:
+        if not isinstance(raw, str):
+            continue
+        if not raw.startswith(_IMAGE_URL_PREFIX):
+            continue
+        s3_key = raw[len(_IMAGE_URL_PREFIX) :]
+        # Final segment is "{sha256}.{ext}" — strip the extension.
+        basename = s3_key.rsplit("/", 1)[-1]
+        content_hash = basename.rsplit(".", 1)[0]
+        if not content_hash or "/" in content_hash:
+            continue
+        refs.append((s3_key, content_hash))
+    return refs
+
 
 async def _graphiti_background(
     artifact_id: str,
@@ -377,6 +412,29 @@ async def ingest_document(req: IngestRequest) -> dict:
         extra=pg_extra or None,
         content_hash=content_hash,
     )
+
+    # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-06.2: record image-key
+    # bookkeeping so per-connector cleanup can compute orphan keys via
+    # content_hash refcount on artifact_images. Adapters write public
+    # URLs into ``extra["image_urls"]`` (the existing convention); we
+    # parse the s3_key + sha256 component out and insert one row per
+    # (artifact, key) pair. Idempotent — re-ingest of the same image is
+    # absorbed by the table's PK.
+    image_urls = (req.extra or {}).get("image_urls", [])
+    if image_urls:
+        image_refs = _parse_image_refs(image_urls)
+        if image_refs:
+            try:
+                await pg_store.insert_artifact_image_refs(artifact_id, image_refs)
+            except Exception:
+                # Bookkeeping failure must not block ingest. The image
+                # is in S3; if we ever lose this row the worst case is
+                # the key never gets cleaned. Log loud + carry on.
+                logger.exception(
+                    "artifact_image_refs_insert_failed",
+                    artifact_id=artifact_id,
+                    count=len(image_refs),
+                )
 
     pool = await get_pool()
     visibility = await kb_config.get_kb_visibility(req.org_id, req.kb_slug, pool)
