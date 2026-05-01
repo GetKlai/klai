@@ -200,6 +200,34 @@ class TestPassThrough:
         call_next.assert_awaited_once_with(request)
         assert response.status_code == 200
 
+    @pytest.mark.parametrize(
+        "bad_slug",
+        [
+            "evil.com",  # would escape the .getklai.com suffix
+            "bad/path",  # path separator
+            "with space",  # whitespace
+            "UPPERCASE",  # uppercase forbidden
+            "-leadinghyphen",
+            "trailing-",
+            "",  # empty
+            "a" * 65,  # exceeds Klai MAX_SLUG_LENGTH (64)
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_invalid_session_slug_fails_open(self, bad_slug: str) -> None:
+        """A session slug that does not match the hostname-label regex is
+        rejected (fail-open, not 302/409) — defense-in-depth against any
+        future schema bug producing a malformed slug."""
+        middleware = KlaiTenantHostMiddleware(app=MagicMock())
+        request = _make_request(host="voys.getklai.com", session_org_id=42)
+        call_next = AsyncMock(return_value=MagicMock(status_code=200))
+
+        with patch.object(mw_module, "_resolve_org_slug", _slug_resolver({42: bad_slug})):
+            response = await middleware.dispatch(request, call_next)
+
+        call_next.assert_awaited_once_with(request)
+        assert response.status_code == 200
+
 
 # ---------------------------------------------------------------------------
 # Mismatch cases
