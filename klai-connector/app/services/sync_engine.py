@@ -1,4 +1,12 @@
-"""Sync orchestrator with global semaphore and per-connector locking."""
+"""Sync orchestrator with global semaphore and per-connector locking.
+
+``documents_ok`` semantics (commit 341f3fdb): counts only artifacts
+actually persisted in ``knowledge.artifacts``. Docs whose parsed text
+falls below the 50-char ingest threshold (Notion containers, empty
+Confluence pages, ms_docs placeholder rows) are tracked separately as
+``documents_short_skipped`` so the counter accurately reflects what is
+in the system after the sync run completes.
+"""
 
 import asyncio
 import base64
