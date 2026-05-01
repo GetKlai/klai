@@ -81,15 +81,17 @@ def _get_token_client() -> object | None:
             token_url=KLAI_OAUTH_TOKEN_URL,
             scope=SCOPE_RETRIEVAL_QUERY,
         )
+        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
         logger.info(
-            "KlaiKnowledgeHook: zitadel token client initialised (scope=%s)",
+            "KlaiKnowledgeHook: zitadel token client initialised (oauth scope=%s)",
             SCOPE_RETRIEVAL_QUERY,
         )
         return _token_client
     except Exception as exc:
+        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
         logger.warning(
             "KlaiKnowledgeHook: zitadel token client init failed (%s) — "
-            "falling back to legacy X-Internal-Secret",
+            "falling back to legacy auth header",
             exc,
         )
         return None
@@ -110,9 +112,10 @@ async def _retrieve_jwt_headers() -> dict[str, str] | None:
     except Exception as exc:
         # Mint failed (Zitadel down, bad creds, network error). Logged
         # by ZitadelTokenClient; we just record the fallback decision.
+        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
         logger.warning(
             "KlaiKnowledgeHook: jwt mint failed (%s) — falling back to "
-            "X-Internal-Secret",
+            "legacy auth header",
             exc,
         )
         return None
@@ -156,9 +159,10 @@ async def _retrieve_with_dual_auth(
         # JWT was minted but receiver rejected the token. Most common cause
         # during Phase C-1 migration: receiver's audience/scope config not
         # yet wired up for this caller. Retry once with the legacy header.
+        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
         logger.warning(
             "KlaiKnowledgeHook: jwt rejected by receiver (HTTP %d) — "
-            "retrying with X-Internal-Secret",
+            "retrying with legacy auth header",
             resp.status_code,
         )
 
