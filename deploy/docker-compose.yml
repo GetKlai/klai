@@ -1186,6 +1186,13 @@ services:
   knowledge-ingest:
     image: ghcr.io/getklai/knowledge-ingest:latest
     restart: unless-stopped
+    # SPEC-PROCRASTINATE-ZOMBIE-001: graphiti enrichment tasks call LiteLLM
+    # which can take 30-60s. Docker default 10s SIGTERM-to-SIGKILL window
+    # would interrupt those mid-call and orphan the procrastinate job in
+    # 'doing' state forever. 90s lets nearly all in-flight LLM calls
+    # finish gracefully on deploy. Recovery for the residual cases lives
+    # in knowledge_ingest.zombie_recovery (runs at next worker startup).
+    stop_grace_period: 90s
     environment:
       POSTGRES_DSN: postgresql+asyncpg://klai:${POSTGRES_PASSWORD}@postgres:5432/klai
       QDRANT_URL: http://qdrant:6333
