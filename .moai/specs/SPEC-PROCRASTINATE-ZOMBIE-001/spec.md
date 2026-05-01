@@ -1,13 +1,21 @@
 ---
 id: SPEC-PROCRASTINATE-ZOMBIE-001
 version: "1.0"
-status: draft
+status: completed
 created: 2026-05-01
 updated: 2026-05-01
+synced: 2026-05-01
 author: Mark Vletter
 priority: high
 issue_number: 0
+related: SPEC-WORKER-LANES-001
 ---
+
+> **COMPLETED 2026-05-01.** Implementation in commit `e4e9294a` (PR #260),
+> merged to main + deployed at 09:46 UTC. The recovery mechanism is unchanged
+> by the later SPEC-WORKER-LANES-001 refactor — `recover_zombie_jobs` still
+> runs ONCE at startup, but now before BOTH lane workers start.
+> Future-proofed for any future lane additions by being lane-agnostic.
 
 ## HISTORY
 

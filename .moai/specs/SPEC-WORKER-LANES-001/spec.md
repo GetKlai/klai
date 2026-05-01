@@ -1,13 +1,16 @@
 ---
 id: SPEC-WORKER-LANES-001
-version: "1.0"
-status: draft
+version: "1.1"
+status: completed
 created: 2026-05-01
 updated: 2026-05-01
+synced: 2026-05-01
 author: Mark Vletter
 priority: high
 issue_number: 0
 supersedes: SPEC-INGEST-QUEUE-SEPARATION-001 (in spirit; constants module + crawl-jobs queue retained)
+implementation_commit: fec181c6
+deployed_at: 2026-05-01T13:57:37Z
 ---
 
 ## HISTORY
@@ -230,3 +233,81 @@ After deploy:
 5. Data-state divergence (artifact writes after sync_run failure) is a
    separate problem class from queue scheduling. Solving one doesn't
    solve the other; both must be in scope.
+
+---
+
+## Implementation Notes (sync, 2026-05-01)
+
+This SPEC was implemented and deployed within the same session it was
+written. All five EARS requirements were validated against the live
+production deployment before sync. Recording ground-truth measurements
+here so future audits can cross-reference.
+
+### Implementation artefacts
+
+| File | Lines (added/removed) | Purpose |
+|---|---|---|
+| `klai-knowledge-ingest/knowledge_ingest/queues.py` | +37/-22 | `IO_QUEUES`, `LLM_QUEUES`, `ALL_QUEUES = IO_QUEUES + LLM_QUEUES` |
+| `klai-knowledge-ingest/knowledge_ingest/worker.py` | +95/-34 | Two `run_worker_async` tasks; `IO_CONCURRENCY=8`, `LLM_CONCURRENCY=4`; lane-aware shutdown |
+| `klai-knowledge-ingest/knowledge_ingest/routes/crawl_sync.py` | +103/-2 | `POST /ingest/v1/crawl/sync/{job_id}/cancel` |
+| `klai-connector/app/clients/knowledge_ingest.py` | +18/-0 | `crawl_sync_cancel(job_id)` HTTP method |
+| `klai-connector/app/services/sync_engine.py` | +27/-0 | Cancel call on poll timeout, before marking FAILED |
+| `klai-knowledge-ingest/tests/test_queues_constants.py` | +51/-0 | Lane-partition + per-queue lane invariants |
+| `klai-knowledge-ingest/tests/test_worker_lifecycle.py` | +170/-0 (new) | 6 tests pinning two-worker startup contract |
+| `docs/architecture/knowledge-ingest-flow.md` | +47/-12 | Phase 5 rewritten for the lane architecture |
+
+Total: 9 files, 741 insertions, 58 deletions in commit `fec181c6`.
+
+### EARS REQ verification (against live production at 2026-05-01T14:43Z)
+
+| REQ | Verification command | Result |
+|---|---|---|
+| REQ-1 | `python -c "from knowledge_ingest import queues; ..."` | `IO ∩ LLM = ∅`, `IO ∪ LLM = ALL_QUEUES`, partition holds |
+| REQ-2 | `SELECT count(*) FROM procrastinate_workers WHERE last_heartbeat > NOW() - INTERVAL '60s'` | 2 active workers (id 249, 250) |
+| REQ-3 | `python -c "from knowledge_ingest.routes.crawl_sync import crawl_sync_cancel"` | endpoint deployed |
+| REQ-4 | Container restart at 13:57:37 UTC, both workers stopped + restarted cleanly | log line `procrastinate_workers_stopping` then `procrastinate_workers_started` |
+| REQ-5 | First worker startup log: `procrastinate_zombie_recovery_clean` precedes `procrastinate_workers_started` | order pinned |
+
+### Lane independence — production proof
+
+After deploy, manually triggered a Voys Help NL sync at 14:11 UTC. Procrastinate
+job `4624` on the `crawl-jobs` queue transitioned to `doing` within 10 s of the
+HTTP 202 response, with the LLM lane simultaneously processing 6 graphiti-bulk
+jobs. This is the SLA promised by REQ-2 + lane-independence and would not have
+been achievable under the previous single-worker design.
+
+### Voys e2e validation
+
+Final state across the three Voys connectors after sync:
+
+| Store | Count |
+|---|---|
+| `knowledge.artifacts` | 486 (Voys Help NL 39 + Notion 79 + Redcactus 368) |
+| `count(DISTINCT artifact_images.s3_key)` | 395 |
+| Garage S3 objects under `support/` | **395** (1:1 invariant holds) |
+| Qdrant chunks (`klai_knowledge`) | 3,941 |
+| FalkorDB Episodic | 228+ (still draining via LLM lane) |
+| FalkorDB Entity | 2,484+ (still draining) |
+| Public-URL fetch test | HTTP 200 image/png across 3/3 sample images |
+
+### Tests
+
+29 unit tests passing, structured by SPEC:
+
+* `tests/test_queues_constants.py` — 9 tests (lane partition, drift detection, kebab-case, individual queue lane assignment)
+* `tests/test_worker_lifecycle.py` — 6 tests (two workers, lane subscription, concurrency, zombie recovery order, recovery best-effort)
+* `tests/test_worker_dsn.py` — 9 tests (DSN normalisation; SPEC-PROCRASTINATE-ZOMBIE-001 carry-over)
+* `tests/test_zombie_recovery.py` — 5 tests (clean state, retry-all, partial-failure isolation, SQL filter, 120s timeout; SPEC-PROCRASTINATE-ZOMBIE-001 carry-over)
+
+### Superseded SPECs
+
+* `SPEC-INGEST-QUEUE-SEPARATION-001` — fully superseded. The crawl-jobs queue
+  and `queues.py` constants module survive as building blocks; the single-worker
+  design that SPEC ratified is replaced by the two-worker lane architecture here.
+* `SPEC-PROCRASTINATE-ZOMBIE-001` — partially superseded. The recovery
+  mechanism is unchanged; only the "where it runs" moved (still ONCE at startup,
+  but now before BOTH lane workers start). Future-proofed for any future lane
+  additions.
+* `SPEC-CONNECTOR-DELETE-LIFECYCLE-001` PR #253 lesson — explicitly cited as
+  the trigger for the constants-module pattern this SPEC builds on. Not
+  superseded; this SPEC closes the bug class that #253 fell into.
