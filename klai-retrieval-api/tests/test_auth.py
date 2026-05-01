@@ -32,14 +32,25 @@ def _make_jwt_payload(
     resourceowner: str = "362757920133283846",
     role: str | None = None,
     aud: str = "test-audience",
+    scope: str = "klai:internal:retrieval:query",
 ) -> dict:
-    """Return a fake decoded-JWT payload in the Zitadel shape."""
+    """Return a fake decoded-JWT payload in the Zitadel shape.
+
+    SPEC-SEC-SERVICE-AUTH-001 REQ-3: ``/retrieve`` now requires the
+    ``klai:internal:retrieval:query`` scope. The test helper defaults to
+    including it so pre-existing tests continue to assert auth-middleware
+    behaviour without being blocked by the new scope gate. Tests that want
+    to exercise the scope check itself pass ``scope=""`` or a different
+    scope explicitly.
+    """
     payload: dict = {
         "sub": sub,
         "aud": aud,
         "iss": "https://auth.test.local",
         "urn:zitadel:iam:user:resourceowner:id": resourceowner,
     }
+    if scope:
+        payload["scope"] = scope
     if role is not None:
         payload["urn:zitadel:iam:org:project:roles"] = {role: {}}
     return payload
