@@ -614,6 +614,33 @@ class SyncEngine:
                             "timeout_seconds": int(poll_timeout),
                         },
                     ]
+                    # SPEC-WORKER-LANES-001 REQ-3: cancel the remote
+                    # procrastinate task so it does not keep writing
+                    # artifacts behind a sync_run that is now marked
+                    # failed. Without this, the user-visible state
+                    # (sync_run.status='failed') diverged from the data
+                    # state (knowledge.artifacts continued to accumulate
+                    # for the same connector hours after the failure).
+                    # Cancel is idempotent and best-effort — a network
+                    # blip while cancelling is logged and swallowed; the
+                    # sync_run remains FAILED regardless.
+                    try:
+                        await self._crawl_sync_client.crawl_sync_cancel(remote_job_id)
+                        logger.info(
+                            "web_crawler_remote_cancel_sent",
+                            extra={
+                                "connector_id": str(connector_id),
+                                "remote_job_id": remote_job_id,
+                            },
+                        )
+                    except httpx.HTTPError:
+                        logger.exception(
+                            "web_crawler_remote_cancel_failed",
+                            extra={
+                                "connector_id": str(connector_id),
+                                "remote_job_id": remote_job_id,
+                            },
+                        )
                 else:
                     documents_total = int(final_state.get("pages_total") or 0)
                     documents_ok = int(final_state.get("pages_done") or 0)
