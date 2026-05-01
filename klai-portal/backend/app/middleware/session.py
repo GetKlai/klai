@@ -158,6 +158,7 @@ def _to_context(record: SessionRecord) -> SessionContext:
         access_token=record.access_token,
         csrf_token=record.csrf_token,
         access_token_expires_at=record.access_token_expires_at,
+        org_id=record.org_id,
     )
 
 
