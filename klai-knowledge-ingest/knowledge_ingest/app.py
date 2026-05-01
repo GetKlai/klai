@@ -81,21 +81,17 @@ async def lifespan(app: FastAPI):
                 # the worker still starts and processes new jobs.
                 logger.exception("procrastinate_zombie_recovery_failed")
 
+            # SPEC-INGEST-QUEUE-SEPARATION-001: queue list is the single
+            # source of truth in ``knowledge_ingest.queues.ALL_QUEUES``.
+            # A new task only needs to add a constant + append it there;
+            # the worker subscribes automatically. Prevents the
+            # add-task-but-forget-worker-list bug class that bit
+            # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 PR #253.
+            from knowledge_ingest.queues import ALL_QUEUES  # noqa: PLC0415
+
             worker_task = asyncio.create_task(
                 proc_app.run_worker_async(
-                    queues=[
-                        "ingest-kb",
-                        "enrich-interactive",
-                        "enrich-bulk",
-                        "graphiti-bulk",
-                        "taxonomy-backfill",
-                        # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-04: orchestrated
-                        # connector-purge worker. Without "connector-purge" in this
-                        # list the procrastinate task sits in 'todo' forever and
-                        # the user-visible delete looks stuck (state stays
-                        # 'deleting'). Caught by live e2e on Voys post-PR-C.
-                        "connector-purge",
-                    ],
+                    queues=ALL_QUEUES,
                     install_signal_handlers=False,
                 )
             )

@@ -17,6 +17,8 @@ from typing import Any
 
 import structlog
 
+from knowledge_ingest import queues
+
 logger = structlog.get_logger()
 
 
@@ -25,7 +27,7 @@ def register_taxonomy_tasks(procrastinate_app: Any) -> None:
     import procrastinate
 
     @procrastinate_app.task(
-        queue="taxonomy-backfill",
+        queue=queues.TAXONOMY_BACKFILL,
         retry=procrastinate.RetryStrategy(max_attempts=1),
     )
     async def run_taxonomy_backfill(
