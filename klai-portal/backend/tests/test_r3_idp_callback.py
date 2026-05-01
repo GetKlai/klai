@@ -97,7 +97,16 @@ class TestIdpCallbackCase2SingleMemberNoDomain:
         dr.scalars.return_value.all.return_value = []
         mock_db = AsyncMock()
         mock_db.execute = AsyncMock(side_effect=[mr, dr])
-        with patch("app.api.auth.zitadel", _zitadel_mocks()), patch("app.api.auth.emit_event"):
+        # Case 2 returns to the tenant URL → _validate_callback_url loads the
+        # tenant-slug allowlist via a FRESH AsyncSessionLocal session. Patch
+        # the cached helper so the test never touches a real DB. Without this,
+        # full-suite runs that don't pre-warm the module cache crash with
+        # asyncpg connection refused (CI does not run Postgres).
+        with (
+            patch("app.api.auth.zitadel", _zitadel_mocks()),
+            patch("app.api.auth.emit_event"),
+            patch("app.api.auth._get_tenant_slug_allowlist", AsyncMock(return_value={"acme"})),
+        ):
             response = await idp_callback(id="intent-1", token="tok-1", auth_request_id="ar-1", db=mock_db)
         assert response.status_code == 302
         assert "acme.getklai.com" in response.headers.get("location", "")
