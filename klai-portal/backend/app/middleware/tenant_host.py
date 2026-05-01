@@ -24,7 +24,9 @@ runs with O(50) tenants, so after warm-up the lookup is a dict hit.
 
 from __future__ import annotations
 
+import re
 import time
+from urllib.parse import urlunsplit
 
 import structlog
 from fastapi import Request, Response, status
@@ -36,6 +38,14 @@ from app.core.config import settings
 from app.core.session import SessionContext
 
 logger = structlog.get_logger()
+
+# RFC 1123 hostname-label shape: lowercase alphanumeric + hyphens, max 63
+# chars, must start and end with alphanumeric. Klai slugs are stored in
+# ``portal_orgs.slug`` (max 64 chars per ``app/utils/slug.py``); enforcing
+# this shape before splicing the slug into a hostname is defense-in-depth
+# against any future schema change or rogue admin entry that could break
+# the redirect URL or cross-host into an attacker-controlled domain.
+_HOSTNAME_LABEL_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 
 # ---------------------------------------------------------------------------
 # Skip rules
@@ -144,6 +154,17 @@ class KlaiTenantHostMiddleware(BaseHTTPMiddleware):
             # Fail-open: another layer (404 in handlers) will surface this.
             return await call_next(request)
 
+        # Defence-in-depth: slug is server-controlled (portal_orgs.slug)
+        # but a hostname-shape validation makes it impossible to accidentally
+        # produce a redirect Location that escapes ``*.{settings.domain}``.
+        if not _HOSTNAME_LABEL_PATTERN.match(session_slug):
+            logger.error(
+                "tenant_host_invalid_session_slug",
+                org_id=session.org_id,
+                session_slug=session_slug,
+            )
+            return await call_next(request)
+
         if host_slug == session_slug:
             return await call_next(request)
 
@@ -184,9 +205,19 @@ class KlaiTenantHostMiddleware(BaseHTTPMiddleware):
 
     @staticmethod
     def _mismatch_response(request: Request, session_slug: str) -> Response:
-        target = f"https://{session_slug}.{settings.domain}{request.url.path}"
-        if request.url.query:
-            target = f"{target}?{request.url.query}"
+        # Both ``session_slug`` (validated against ``_HOSTNAME_LABEL_PATTERN``
+        # by the caller) and ``settings.domain`` (hardcoded config) are
+        # server-controlled. Construct the URL with ``urlunsplit`` so the
+        # path/query/host segments stay structurally separated.
+        target = urlunsplit(
+            (
+                "https",
+                f"{session_slug}.{settings.domain}",
+                request.url.path,
+                request.url.query,
+                "",
+            )
+        )
 
         accept = request.headers.get("accept", "")
         wants_html = "text/html" in accept and "application/json" not in accept
