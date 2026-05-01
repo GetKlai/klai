@@ -31,6 +31,101 @@ if not KNOWLEDGE_RETRIEVE_URL:
     raise RuntimeError("KNOWLEDGE_RETRIEVE_URL is not set")
 PORTAL_API_URL = os.getenv("PORTAL_API_URL", "http://portal-api:8000")
 PORTAL_INTERNAL_SECRET = os.getenv("PORTAL_INTERNAL_SECRET", "")
+
+# SPEC-SEC-SERVICE-AUTH-001 Phase C-1: Zitadel client_credentials JWT auth
+# replaces the shared X-Internal-Secret. The token client is constructed lazily
+# the first time it is needed — that way a service still boots even if the
+# Zitadel env vars are missing during the rollout (REQ-5: fall back to legacy).
+KLAI_OAUTH_TOKEN_URL = os.getenv("KLAI_OAUTH_TOKEN_URL", "")
+KLAI_LITELLM_CLIENT_ID = os.getenv("KLAI_LITELLM_CLIENT_ID", "")
+KLAI_LITELLM_CLIENT_SECRET = os.getenv("KLAI_LITELLM_CLIENT_SECRET", "")
+
+# Lazy-built ZitadelTokenClient instance. None when env vars are missing —
+# the retrieve call site handles that by falling back to the legacy
+# X-Internal-Secret path (Phase C-1 REQ-5 safe rollout).
+_token_client: object | None = None
+_token_client_init_attempted: bool = False
+
+
+def _get_token_client() -> object | None:
+    """Return the cached ``ZitadelTokenClient`` or ``None`` if unconfigured.
+
+    Builds it on first call. Subsequent calls reuse the same instance.
+    Returns ``None`` (not raises) when env vars are missing — callers are
+    expected to fall back to the legacy auth path. This is intentional:
+    Phase C-1 deploys the code BEFORE the operator finishes the Zitadel
+    bootstrap, so a missing-config branch must keep chat working.
+    """
+    global _token_client, _token_client_init_attempted
+
+    if _token_client is not None:
+        return _token_client
+    if _token_client_init_attempted:
+        return None
+
+    _token_client_init_attempted = True
+    if not (KLAI_OAUTH_TOKEN_URL and KLAI_LITELLM_CLIENT_ID and KLAI_LITELLM_CLIENT_SECRET):
+        logger.info(
+            "KlaiKnowledgeHook: jwt auth env vars missing — using legacy "
+            "X-Internal-Secret path (SPEC-SEC-SERVICE-AUTH-001 Phase C-1 fallback)"
+        )
+        return None
+
+    try:
+        from klai_service_auth import SCOPE_RETRIEVAL_QUERY, ZitadelTokenClient
+
+        _token_client = ZitadelTokenClient(
+            client_id=KLAI_LITELLM_CLIENT_ID,
+            client_secret=KLAI_LITELLM_CLIENT_SECRET,
+            token_url=KLAI_OAUTH_TOKEN_URL,
+            scope=SCOPE_RETRIEVAL_QUERY,
+        )
+        logger.info(
+            "KlaiKnowledgeHook: zitadel token client initialised (scope=%s)",
+            SCOPE_RETRIEVAL_QUERY,
+        )
+        return _token_client
+    except Exception as exc:
+        logger.warning(
+            "KlaiKnowledgeHook: zitadel token client init failed (%s) — "
+            "falling back to legacy X-Internal-Secret",
+            exc,
+        )
+        return None
+
+
+async def _retrieve_auth_headers() -> dict[str, str]:
+    """Build the auth headers for the ``POST /retrieve`` call.
+
+    Phase C-1 dual-auth (REQ-5 safe rollout):
+
+    * If a configured ``ZitadelTokenClient`` is available AND mints a token
+      successfully → return ``{"Authorization": "Bearer <jwt>"}``.
+    * Otherwise → fall back to legacy ``{"X-Internal-Secret": ...}``.
+
+    The legacy fallback is removed in Phase C-1 cleanup (after 7-day soak
+    with zero ``service_auth_token_mint_failed`` events in production).
+    """
+    client = _get_token_client()
+    if client is not None:
+        try:
+            token = await client.get_token()  # type: ignore[attr-defined]
+            return {"Authorization": f"Bearer {token}"}
+        except Exception as exc:
+            # Mint failed (Zitadel down, bad creds, network error). Logged
+            # by ZitadelTokenClient; we just record the fallback decision.
+            logger.warning(
+                "KlaiKnowledgeHook: jwt mint failed (%s) — falling back to "
+                "X-Internal-Secret",
+                exc,
+            )
+
+    if PORTAL_INTERNAL_SECRET:
+        return {"X-Internal-Secret": PORTAL_INTERNAL_SECRET}
+    # No JWT and no legacy secret — receiver will reject. Keep going so the
+    # rejection reason is visible in retrieval-api logs (auth_rejected) rather
+    # than swallowed here.
+    return {}
 RETRIEVE_TIMEOUT = float(os.getenv("KNOWLEDGE_RETRIEVE_TIMEOUT", "3.0"))
 RETRIEVE_TOP_K = int(os.getenv("KNOWLEDGE_RETRIEVE_TOP_K", "5"))
 KLAI_GAP_SOFT_THRESHOLD = float(os.getenv("KLAI_GAP_SOFT_THRESHOLD", "0.4"))
@@ -472,13 +567,17 @@ class KlaiKnowledgeHook(CustomLogger):
         if kb_slugs:
             retrieve_body["kb_slugs"] = kb_slugs
 
+        # SPEC-SEC-SERVICE-AUTH-001 Phase C-1: prefer JWT auth, fall back to
+        # legacy X-Internal-Secret on mint failure. See ``_retrieve_auth_headers``.
+        retrieve_headers = await _retrieve_auth_headers()
+
         t0 = time.monotonic()
         try:
             async with httpx.AsyncClient(timeout=RETRIEVE_TIMEOUT) as client:
                 resp = await client.post(
                     KNOWLEDGE_RETRIEVE_URL,
                     json=retrieve_body,
-                    headers={"X-Internal-Secret": PORTAL_INTERNAL_SECRET} if PORTAL_INTERNAL_SECRET else {},
+                    headers=retrieve_headers,
                 )
                 resp.raise_for_status()
                 result = resp.json()
