@@ -36,26 +36,19 @@ def _make_db(
 ) -> AsyncMock:
     """Return an AsyncMock DB where:
     - _get_caller_org returns (caller.zitadel_user_id, org, caller)
-    - a secondary execute() for the target lookup returns target (or None)
-    - a scalar() for admin count returns admin_count
+    - every execute() returns a result whose scalar_one_or_none() == target
+      (the demote-admin handler issues an extra SELECT ... FOR UPDATE on
+      portal_orgs to serialise concurrent role changes; that lock query
+      consumes a result the handler does not read, so always returning
+      `target` is safe — only the target-lookup call inspects the result)
+    - scalar() for admin count returns admin_count
     """
     db = AsyncMock()
     db.add = MagicMock()
 
-    target_result = MagicMock()
-    target_result.scalar_one_or_none.return_value = target
-
-    call_order: list[MagicMock] = []
-
     async def _execute(stmt, *args, **kwargs):
         mock_result = MagicMock()
-        if not call_order:
-            # first call in promote/demote is the target lookup
-            mock_result.scalar_one_or_none.return_value = target
-            call_order.append(mock_result)
-        else:
-            mock_result.scalar_one_or_none.return_value = None
-            call_order.append(mock_result)
+        mock_result.scalar_one_or_none.return_value = target
         return mock_result
 
     async def _scalar(stmt, *args, **kwargs):
