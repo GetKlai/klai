@@ -16,9 +16,29 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # SPEC-AUTH-009 A-001: Pre-launch; backfill placeholder for any existing test rows.
-    # In a real migration with customer data, this would need a careful per-row UPDATE
-    # to set the actual founder domain. For pre-launch we use a placeholder.
+    # Standard add-NOT-NULL-with-backfill pattern:
+    #   1. Add column nullable
+    #   2. Backfill existing rows
+    #   3. ALTER ... SET NOT NULL
+    # An UPDATE before add_column fails with "column does not exist" — even
+    # on an empty table, PostgreSQL parses the statement before scanning rows.
+
+    # 1a. Add primary_domain as nullable so the backfill UPDATE can target it.
+    op.add_column(
+        "portal_orgs",
+        sa.Column("primary_domain", sa.String(253), nullable=True),
+    )
+
+    # 1b. auto_accept_same_domain has a SQL default — safe as NOT NULL directly.
+    op.add_column(
+        "portal_orgs",
+        sa.Column("auto_accept_same_domain", sa.Boolean(), nullable=False, server_default="false"),
+    )
+
+    # 2. Backfill primary_domain from the founder's email.
+    # SPEC-AUTH-009 A-001: Klai is pre-launch; placeholder fallback for any
+    # test rows without a discoverable founder. Real-customer data would
+    # need a curated per-row migration before this ships to production.
     op.execute("""
         UPDATE portal_orgs
         SET primary_domain = COALESCE(
@@ -31,22 +51,13 @@ def upgrade() -> None:
              LIMIT 1),
             'placeholder.invalid'
         )
-        WHERE primary_domain IS NULL OR primary_domain = ''
+        WHERE primary_domain IS NULL
     """)
 
-    # Add primary_domain as NOT NULL (backfill above ensures no NULLs)
-    op.add_column(
-        "portal_orgs",
-        sa.Column("primary_domain", sa.String(253), nullable=False, server_default=""),
-    )
+    # 3. Now safe to enforce NOT NULL.
+    op.alter_column("portal_orgs", "primary_domain", nullable=False)
 
-    # Add auto_accept_same_domain with default False
-    op.add_column(
-        "portal_orgs",
-        sa.Column("auto_accept_same_domain", sa.Boolean(), nullable=False, server_default="false"),
-    )
-
-    # Partial index for fast domain lookups (WHERE deleted_at IS NULL)
+    # Partial index for fast domain lookups (scoped to active orgs).
     op.create_index(
         "ix_portal_orgs_primary_domain",
         "portal_orgs",
@@ -54,7 +65,7 @@ def upgrade() -> None:
         postgresql_where=sa.text("deleted_at IS NULL"),
     )
 
-    # R2: Drop the SPEC-AUTH-006 allowed-domains table (pre-launch, no migration needed)
+    # R2: Drop the SPEC-AUTH-006 allowed-domains table (pre-launch, no data migration).
     op.drop_table("portal_org_allowed_domains")
 
 

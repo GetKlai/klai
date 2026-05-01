@@ -583,6 +583,20 @@ async def promote_admin(
     return MessageResponse(message=f"User {zitadel_user_id} promoted to admin.")
 
 
+async def _lock_org_for_role_change(db: AsyncSession, org_id: int) -> None:
+    """Take a row-level lock on portal_orgs.{org_id} to serialise role changes.
+
+    @MX:ANCHOR SPEC-AUTH-009 R6 — min-1-admin invariant requires serialised
+    role changes. Without this lock, two concurrent demotes that both see
+    admin_count=2 can each succeed and leave the workspace with zero admins.
+    @MX:REASON SELECT...FOR UPDATE on the parent org row blocks any other
+    transaction performing a role change on the same org until commit.
+    Patterns chosen from .claude/rules/klai/projects/portal-backend.md
+    "SELECT FOR UPDATE in get-or-create patterns" pitfall.
+    """
+    await db.execute(select(PortalOrg.id).where(PortalOrg.id == org_id).with_for_update())
+
+
 @router.post("/users/{zitadel_user_id}/demote-admin", response_model=MessageResponse)
 async def demote_admin(
     zitadel_user_id: str,
@@ -592,6 +606,9 @@ async def demote_admin(
     """C6.2: Demote an admin to member. Refuses if this would leave zero admins."""
     caller_id, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
+
+    # Serialise concurrent role changes for this org (see _lock_org_for_role_change).
+    await _lock_org_for_role_change(db, org.id)
 
     result = await db.execute(
         select(PortalUser).where(
@@ -603,15 +620,12 @@ async def demote_admin(
     if not target:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    # C6.2: target must currently be admin
     if target.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="User is not an admin",
         )
 
-    # @MX:ANCHOR SPEC-AUTH-009 R6 -- min-1-admin invariant: count admins BEFORE demoting.
-    # @MX:REASON Concurrent demotes without this check leave workspaces orphaned.
     admin_count = await db.scalar(
         select(func.count())
         .select_from(PortalUser)
@@ -648,9 +662,10 @@ async def leave_workspace(
     """
     caller_id, org, caller_user = await _get_caller_org(credentials, db)
 
-    # @MX:ANCHOR SPEC-AUTH-009 R6 C6.3/C6.7 -- enforce min-1-admin and no-zombie-org.
-    # @MX:REASON Last-admin and sole-member edge cases both result in an unmanageable workspace.
     if caller_user.role == "admin":
+        # Serialise concurrent role changes for this org (see _lock_org_for_role_change).
+        await _lock_org_for_role_change(db, org.id)
+
         admin_count = await db.scalar(
             select(func.count())
             .select_from(PortalUser)
