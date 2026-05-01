@@ -75,7 +75,10 @@ def _api(
 def find_existing_user(*, instance_url: str, pat: str, org_id: str, name: str) -> str | None:
     """Return userId if a service account with this name exists, else None.
 
-    Uses the Zitadel v2 user search endpoint. Searches by username field.
+    Uses the Zitadel v1 Management API ``/users/_search`` endpoint, filtered
+    by username. Machine users are not creatable or queryable via the
+    Zitadel v2 ``/v2/users`` endpoints in current Zitadel releases — those
+    cover human users only.
     """
     body = {
         "queries": [
@@ -84,7 +87,7 @@ def find_existing_user(*, instance_url: str, pat: str, org_id: str, name: str) -
     }
     resp = _api(
         method="POST",
-        url=f"{instance_url}/v2/users",
+        url=f"{instance_url}/management/v1/users/_search",
         pat=pat,
         org_id=org_id,
         json_body=body,
@@ -92,7 +95,7 @@ def find_existing_user(*, instance_url: str, pat: str, org_id: str, name: str) -
     users = resp.get("result") or []
     if not users:
         return None
-    user_id = users[0].get("userId")
+    user_id = users[0].get("id")
     if not user_id:
         return None
     _log("service_account_exists", name=name, user_id=user_id)
@@ -102,21 +105,23 @@ def find_existing_user(*, instance_url: str, pat: str, org_id: str, name: str) -
 def create_machine_user(*, instance_url: str, pat: str, org_id: str, name: str) -> str:
     """Create a Zitadel machine user (service account) with the given username.
 
+    Uses the v1 Management API ``POST /management/v1/users/machine``.
+    The v2 ``/v2/users/machine`` endpoint returns 405 Method Not Allowed
+    in current Zitadel releases.
+
     Returns: userId.
     """
     body = {
         "userName": name,
-        "machine": {
-            "name": name,
-            "description": f"Klai internal service account ({name}) per SPEC-SEC-SERVICE-AUTH-001",
-            # JWT access tokens (vs opaque) so receivers can validate locally
-            # against Zitadel JWKS instead of round-tripping introspection.
-            "accessTokenType": "ACCESS_TOKEN_TYPE_JWT",
-        },
+        "name": name,
+        "description": f"Klai internal service account ({name}) per SPEC-SEC-SERVICE-AUTH-001",
+        # JWT access tokens (vs opaque) so receivers can validate locally
+        # against Zitadel JWKS instead of round-tripping introspection.
+        "accessTokenType": "ACCESS_TOKEN_TYPE_JWT",
     }
     resp = _api(
         method="POST",
-        url=f"{instance_url}/v2/users/machine",
+        url=f"{instance_url}/management/v1/users/machine",
         pat=pat,
         org_id=org_id,
         json_body=body,
@@ -126,30 +131,46 @@ def create_machine_user(*, instance_url: str, pat: str, org_id: str, name: str) 
     return user_id
 
 
-def generate_client_secret(*, instance_url: str, pat: str, org_id: str, user_id: str) -> str:
+def generate_client_secret(
+    *, instance_url: str, pat: str, org_id: str, user_id: str
+) -> tuple[str, str]:
     """Generate (or replace) the client_secret for a machine user.
 
-    Returns: the plaintext secret, which is shown ONCE — Zitadel never
-    surfaces it again. Caller is responsible for getting it into SOPS
-    immediately and deleting any plaintext copy.
+    Uses v1 Management API ``PUT /management/v1/users/{userId}/secret``.
+    The secret is shown ONCE — Zitadel never surfaces it again. Caller is
+    responsible for getting it into SOPS immediately and deleting any
+    plaintext copy.
+
+    Returns ``(client_id, client_secret)``: the client_id is the userId
+    for machine users in Zitadel's Client Credentials grant — but we
+    return both here so the caller can pin them in SOPS without making
+    assumptions about the relationship.
     """
     resp = _api(
         method="PUT",
-        url=f"{instance_url}/v2/users/{user_id}/secret",
+        url=f"{instance_url}/management/v1/users/{user_id}/secret",
         pat=pat,
         org_id=org_id,
     )
+    client_id: str = resp.get("clientId") or user_id
     client_secret: str = resp["clientSecret"]
-    _log("client_secret_generated", user_id=user_id, hint=f"{client_secret[:6]}...")
-    return client_secret
+    _log(
+        "client_secret_generated",
+        user_id=user_id,
+        client_id=client_id,
+        hint=f"{client_secret[:6]}...",
+    )
+    return client_id, client_secret
 
 
-def write_secret_file(*, name: str, client_id: str, client_secret: str) -> Path:
-    """Write the secret to a 0600 temp file next to the script.
+def write_secret_file(
+    *, name: str, client_id: str, client_secret: str, output_dir: Path
+) -> Path:
+    """Write the secret to a 0600 temp file in ``output_dir``.
 
     Returns: path to the written file. Operator deletes it after SOPS encryption.
     """
-    out = Path(f".{name}-secret.txt").resolve()
+    out = (output_dir / f".{name}-secret.txt").resolve()
     payload = {
         "service_account_name": name,
         "client_id": client_id,
@@ -176,7 +197,19 @@ def main() -> None:
         required=True,
         help="Service account username (convention: 'svc-<servicename>')",
     )
+    parser.add_argument(
+        "--output-dir",
+        default=".",
+        help=(
+            "Directory to write the temp secret file. Default: current dir. "
+            "Use a writable path like /tmp when running inside a read-only "
+            "container CWD."
+        ),
+    )
     args = parser.parse_args()
+    output_dir = Path(args.output_dir).resolve()
+    if not output_dir.is_dir():
+        sys.exit(f"error: --output-dir {output_dir} is not a directory")
 
     if not args.name.startswith("svc-"):
         sys.exit("error: --name must follow the 'svc-<servicename>' convention")
@@ -191,10 +224,10 @@ def main() -> None:
             instance_url=instance_url, pat=pat, org_id=org_id, name=args.name
         )
 
-    # In Zitadel, the client_id IS the userId for machine users using
-    # Client Credentials grant. The client_secret is generated separately.
-    client_id = user_id
-    client_secret = generate_client_secret(
+    # Generate (or rotate) the client_secret. Returns (client_id, client_secret)
+    # — for machine users in Zitadel's Client Credentials grant the client_id
+    # is the userId, but the API returns both explicitly.
+    client_id, client_secret = generate_client_secret(
         instance_url=instance_url, pat=pat, org_id=org_id, user_id=user_id
     )
 
@@ -202,6 +235,7 @@ def main() -> None:
         name=args.name,
         client_id=client_id,
         client_secret=client_secret,
+        output_dir=output_dir,
     )
 
     print(
