@@ -119,6 +119,7 @@ async function doFetch<T>(path: string, options: ApiFetchOptions): Promise<T> {
   if (!res.ok) {
     let detail = `${res.status}`
     let validationIssues: ValidationIssue[] | undefined
+    let detailObject: Record<string, unknown> | undefined
     try {
       const body = (await res.json()) as {
         detail?: string | ValidationIssue[] | Record<string, unknown>
@@ -133,11 +134,31 @@ async function doFetch<T>(path: string, options: ApiFetchOptions): Promise<T> {
         // Some portal-api routes raise HTTPException(detail={"error_code": ...})
         // for structured error signalling (quota exceeded, capability gate, etc.)
         // Stringify here so callers can JSON.parse(err.detail) to read the code.
+        detailObject = body.detail
         detail = JSON.stringify(body.detail)
       }
     } catch {
       // no JSON body
     }
+
+    // Tenant-host guard: portal-api returns 409 when the URL hostname's tenant
+    // slug does not match the session's org slug (KlaiTenantHostMiddleware).
+    // Redirect the browser to the correct subdomain — the SPA on the wrong
+    // subdomain otherwise renders content that contradicts the URL.
+    if (
+      res.status === 409 &&
+      detailObject?.error_code === 'tenant_host_mismatch' &&
+      typeof detailObject?.redirect_to === 'string'
+    ) {
+      authLogger.info('tenant_host_mismatch — redirecting to correct subdomain', {
+        redirect_to: detailObject.redirect_to,
+      })
+      window.location.replace(detailObject.redirect_to)
+      // Return a never-resolving promise so the caller does not see a
+      // misleading ApiError flash before the redirect kicks in.
+      return new Promise<T>(() => {})
+    }
+
     throw new ApiError(res.status, detail, validationIssues)
   }
 
