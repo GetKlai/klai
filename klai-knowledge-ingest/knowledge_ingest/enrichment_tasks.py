@@ -3,7 +3,12 @@ Procrastinate task definitions for async chunk enrichment.
 
 Two queues:
   enrich-interactive  -- single-doc uploads, drains first (higher priority)
-  enrich-bulk         -- crawl/import jobs
+  enrich-bulk         -- bulk LLM enrichment for crawled/imported pages
+
+Crawl orchestration itself lives on the separate ``crawl-jobs`` queue
+(``knowledge_ingest.crawl_tasks.run_crawl``) per
+SPEC-INGEST-QUEUE-SEPARATION-001 — keeps I/O-bound crawls out of the
+LLM-bound enrichment lane.
 
 Both tasks call _enrich_document() which:
 1. Loads a ContentTypeProfile for content-type-aware enrichment
@@ -25,7 +30,7 @@ from typing import Any
 
 import structlog
 
-from knowledge_ingest import embedder, enrichment, kb_config, qdrant_store, sparse_embedder
+from knowledge_ingest import embedder, enrichment, kb_config, qdrant_store, queues, sparse_embedder
 from knowledge_ingest.content_profiles import get_profile
 from knowledge_ingest.db import get_pool
 
@@ -89,7 +94,7 @@ def _register_tasks(procrastinate_app: Any) -> None:
     import procrastinate
 
     @procrastinate_app.task(
-        queue="enrich-interactive", retry=procrastinate.RetryStrategy(max_attempts=2)
+        queue=queues.ENRICH_INTERACTIVE, retry=procrastinate.RetryStrategy(max_attempts=2)
     )
     async def enrich_document_interactive(
         org_id: str,
@@ -119,7 +124,9 @@ def _register_tasks(procrastinate_app: Any) -> None:
             content_type=content_type,
         )
 
-    @procrastinate_app.task(queue="enrich-bulk", retry=procrastinate.RetryStrategy(max_attempts=2))
+    @procrastinate_app.task(
+        queue=queues.ENRICH_BULK, retry=procrastinate.RetryStrategy(max_attempts=2)
+    )
     async def enrich_document_bulk(
         org_id: str,
         kb_slug: str,
@@ -153,7 +160,7 @@ def _register_tasks(procrastinate_app: Any) -> None:
     procrastinate_app.enrich_document_bulk = enrich_document_bulk  # type: ignore[attr-defined]
 
     @procrastinate_app.task(
-        queue="graphiti-bulk", retry=procrastinate.RetryStrategy(max_attempts=3)
+        queue=queues.GRAPHITI_BULK, retry=procrastinate.RetryStrategy(max_attempts=3)
     )
     async def ingest_graphiti_episode(
         artifact_id: str,
