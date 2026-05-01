@@ -1,13 +1,22 @@
 ---
 id: SPEC-INGEST-QUEUE-SEPARATION-001
 version: "1.0"
-status: draft
+status: superseded
 created: 2026-05-01
 updated: 2026-05-01
+superseded_at: 2026-05-01
+superseded_by: SPEC-WORKER-LANES-001
 author: Mark Vletter
 priority: high
 issue_number: 0
 ---
+
+> **SUPERSEDED 2026-05-01.** This SPEC introduced the `crawl-jobs` queue and
+> the `queues.py` constants module — both retained. The single-worker design
+> it ratified turned out to be insufficient (procrastinate has no per-queue
+> fairness within one worker), and was replaced by the two-worker lane
+> architecture in SPEC-WORKER-LANES-001. See that SPEC's Implementation
+> Notes for the full rationale.
 
 ## HISTORY
 
