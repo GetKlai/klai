@@ -61,20 +61,37 @@ CRAWL_JOBS = "crawl-jobs"
 """Web crawl orchestration (SPEC-INGEST-QUEUE-SEPARATION-001)."""
 
 
-# --- Worker subscription ----------------------------------------------------
+# --- Worker lanes -----------------------------------------------------------
+#
+# SPEC-WORKER-LANES-001. Procrastinate has no per-queue fairness — when one
+# worker subscribes to all queues at concurrency=N, FIFO across queues means
+# a backlog of slow LLM jobs blocks fast I/O jobs even at high concurrency.
+# We split queues into two lanes and run a dedicated worker process per lane:
+#
+# * I/O lane — HTTP, file ops, DB. Bursty user-triggered work, sub-second
+#   per-task. Concurrency tuned for parallel HTTP fan-out.
+# * LLM lane — Mistral calls via LiteLLM, 5-60 s per task. Concurrency
+#   bounded by upstream rate limit (token bucket in ``graph.py``).
+#
+# Adding a new queue: pick the lane, append the constant to that lane's list.
+# ``ALL_QUEUES`` is computed; the lane invariant is enforced by
+# ``tests/test_queues_constants.py``.
 
-ALL_QUEUES: list[str] = [
+IO_QUEUES: list[str] = [
     INGEST_KB,
+    CONNECTOR_PURGE,
+    CRAWL_JOBS,
+]
+"""Latency-sensitive I/O work — HTTP, file ops, DB. No LLM calls."""
+
+LLM_QUEUES: list[str] = [
     ENRICH_INTERACTIVE,
     ENRICH_BULK,
     GRAPHITI_BULK,
     TAXONOMY_BACKFILL,
-    CONNECTOR_PURGE,
-    CRAWL_JOBS,
 ]
-"""All queues this service's worker must subscribe to.
+"""Throughput-bound LLM work — bounded by upstream rate limit."""
 
-Used by ``knowledge_ingest.app.lifespan`` when starting the procrastinate
-worker. Adding a queue constant above without appending it here is a bug
-caught by ``tests/test_queues_constants.py``.
-"""
+ALL_QUEUES: list[str] = IO_QUEUES + LLM_QUEUES
+"""Union of both lanes. Tests pin that every declared constant is in exactly
+one lane and that ALL_QUEUES contains every constant."""

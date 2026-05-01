@@ -74,10 +74,26 @@ class WorkerLifecycle:
     and is gracefully cancelled on exit.
     """
 
+    # SPEC-WORKER-LANES-001 — concurrency tuning per lane.
+    # I/O lane: HTTP-bound, can fan out parallel without rate concerns.
+    # LLM lane: bounded by Mistral upstream + token-bucket in graph.py
+    # (1 req/s for graphiti). 4 in-flight LLM jobs is the empirically
+    # validated upper bound that keeps the rate limiter happy without
+    # leaving slots idle.
+    IO_CONCURRENCY: int = 8
+    LLM_CONCURRENCY: int = 4
+
     def __init__(self, *, postgres_dsn: str) -> None:
         self.postgres_dsn = postgres_dsn
         self.proc_app: Any | None = None
-        self._worker_task: asyncio.Task | None = None
+        # SPEC-WORKER-LANES-001: two procrastinate workers, one per lane.
+        # Both share the same App + connector pool, but subscribe to disjoint
+        # queue sets and have independent concurrency semaphores. This is the
+        # only way to give I/O work latency guarantees while LLM work runs at
+        # its natural throughput — procrastinate has no per-queue fairness
+        # within a single worker.
+        self._io_worker_task: asyncio.Task | None = None
+        self._llm_worker_task: asyncio.Task | None = None
         self._stack = AsyncExitStack()
 
     @classmethod
@@ -115,44 +131,60 @@ class WorkerLifecycle:
         except Exception:
             logger.exception("procrastinate_zombie_recovery_failed")
 
-        # SPEC-INGEST-QUEUE-SEPARATION-001: queue list is centralised in
-        # ``queues.ALL_QUEUES``. Worker subscribes to all of them — a new
-        # queue is just one constant + one append.
-        from knowledge_ingest.queues import ALL_QUEUES
+        # SPEC-WORKER-LANES-001: start two workers in parallel, each
+        # subscribed to one lane only. This is what gives I/O work latency
+        # independence from LLM work — no FIFO across lanes, no concurrency
+        # competition. A single worker subscribed to ALL_QUEUES (the previous
+        # design) would still let a backlog of LLM jobs starve I/O work
+        # because procrastinate fetches the oldest todo across the worker's
+        # queue set, regardless of queue identity.
+        from knowledge_ingest.queues import IO_QUEUES, LLM_QUEUES
 
-        # Procrastinate's default ``concurrency=1`` serialises ALL jobs across
-        # ALL queues — exactly the head-of-line blocking the queue separation
-        # was meant to remove. Without this, a backlog of 30-60s LLM
-        # enrichment jobs blocks ``crawl-jobs`` and ``connector-purge``
-        # completely. Concurrency 4 lets crawl + enrichment + graphiti +
-        # purge advance in parallel. The LLM rate limiter in
-        # ``knowledge_ingest.graph._TokenBucketLimiter`` already throttles
-        # the Mistral side, so raising worker concurrency does not violate
-        # the upstream 1 req/s budget.
-        self._worker_task = asyncio.create_task(
+        self._io_worker_task = asyncio.create_task(
             self.proc_app.run_worker_async(
-                queues=ALL_QUEUES,
-                concurrency=4,
+                queues=IO_QUEUES,
+                concurrency=self.IO_CONCURRENCY,
                 install_signal_handlers=False,
             ),
-            name="procrastinate-worker",
+            name="procrastinate-worker-io",
         )
-        logger.info("procrastinate_worker_started", queues=ALL_QUEUES, concurrency=4)
+        self._llm_worker_task = asyncio.create_task(
+            self.proc_app.run_worker_async(
+                queues=LLM_QUEUES,
+                concurrency=self.LLM_CONCURRENCY,
+                install_signal_handlers=False,
+            ),
+            name="procrastinate-worker-llm",
+        )
+        logger.info(
+            "procrastinate_workers_started",
+            io_queues=IO_QUEUES,
+            io_concurrency=self.IO_CONCURRENCY,
+            llm_queues=LLM_QUEUES,
+            llm_concurrency=self.LLM_CONCURRENCY,
+        )
         return self
 
     async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-        if self._worker_task is not None:
-            logger.info("procrastinate_worker_stopping")
-            self._worker_task.cancel()
-            try:
-                await self._worker_task
-            except asyncio.CancelledError:
-                # Expected: cancellation is how we ask the worker to stop.
-                pass
-            except Exception:
-                # Anything else is unexpected. Log it so we never lose the
-                # traceback, but do not re-raise — shutdown must continue
-                # so db.close_pool() runs and the container exits cleanly.
-                logger.exception("procrastinate_worker_shutdown_error")
+        # Cancel both lane workers in parallel and wait for them to exit.
+        worker_tasks = [t for t in (self._io_worker_task, self._llm_worker_task) if t is not None]
+        if worker_tasks:
+            logger.info("procrastinate_workers_stopping", count=len(worker_tasks))
+            for t in worker_tasks:
+                t.cancel()
+            results = await asyncio.gather(*worker_tasks, return_exceptions=True)
+            for task, result in zip(worker_tasks, results, strict=True):
+                if isinstance(result, asyncio.CancelledError):
+                    # Expected: cancellation is how we ask each worker to stop.
+                    continue
+                if isinstance(result, BaseException):
+                    # Unexpected. Log with traceback but do not re-raise —
+                    # shutdown must continue so db.close_pool() runs and the
+                    # container exits cleanly.
+                    logger.exception(
+                        "procrastinate_worker_shutdown_error",
+                        worker=task.get_name(),
+                        exc_info=(type(result), result, result.__traceback__),
+                    )
         await self._stack.aclose()
-        logger.info("procrastinate_worker_stopped")
+        logger.info("procrastinate_workers_stopped")

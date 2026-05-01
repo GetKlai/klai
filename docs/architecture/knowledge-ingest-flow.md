@@ -611,12 +611,38 @@ The frontend reads `s3_key` from chunk payload metadata in retrieval results
 and constructs the public URL itself. This avoids URL expiry issues and works
 with the standard browser cache.
 
-### Phase 5: Worker lifecycle and reliability
+### Phase 5: Worker lanes and reliability
 
-The procrastinate worker is the engine that drains every queue listed above.
-Its bootstrap and shutdown live in `knowledge_ingest/worker.py`
-(`WorkerLifecycle` class), called from the FastAPI lifespan. Three reliability
-mechanisms protect the queues from common operational failure modes.
+Bootstrap and shutdown live in `knowledge_ingest/worker.py`
+(`WorkerLifecycle` class), called from the FastAPI lifespan. The lifecycle
+starts **two** procrastinate worker instances inside the same container —
+one per workload lane — plus three reliability mechanisms.
+
+**Two-lane architecture (SPEC-WORKER-LANES-001).** The seven queues split
+into two lanes by latency profile:
+
+| Lane | Queues | Concurrency | Per-task latency |
+|---|---|---|---|
+| **I/O** | `ingest-kb`, `connector-purge`, `crawl-jobs` | 8 | sub-second to ~30s |
+| **LLM** | `enrich-interactive`, `enrich-bulk`, `graphiti-bulk`, `taxonomy-backfill` | 4 | 5-60s, rate-limited |
+
+Each lane runs as a dedicated `run_worker_async` task subscribed to its
+queues only. They share the same `proc_app` and connector pool, but each
+registers an independent `procrastinate_workers` row with its own
+heartbeat and concurrency semaphore. This is the only way to give I/O
+work latency guarantees: procrastinate has no per-queue fairness within a
+single worker — it fetches the oldest todo across the worker's full queue
+set, so a backlog of slow LLM jobs would otherwise delay every I/O job
+until the LLM lane drains. Verified against Voys 2026-05-01: a
+50-LLM-job backlog had pushed user-triggered crawls 10+ minutes behind
+schedule under the old single-worker design.
+
+Lane membership lives in `knowledge_ingest/queues.py` (`IO_QUEUES`,
+`LLM_QUEUES`). `ALL_QUEUES = IO_QUEUES + LLM_QUEUES` is the union, used
+only by tests and observability — the two workers never subscribe to it.
+A queue without a lane assignment fails
+`tests/test_queues_constants.py::test_io_and_llm_lanes_partition_all_queues`
+and CI blocks the PR.
 
 **1. DSN normalisation.** Procrastinate uses psycopg3 / libpq, not asyncpg.
 Klai's database password is base64-encoded and contains `=`, `+`, `/` chars
@@ -633,11 +659,12 @@ row but does NOT reset the orphaned job — the FK CASCADE only nulls
 permanently consumes a worker concurrency slot. Over a few weeks of deploys,
 the `enrich-bulk` and `graphiti-bulk` queues silently saturated.
 
-`zombie_recovery.recover_zombie_jobs` runs at every worker startup. It calls
-`prune_stalled_workers(120s)` then retries every job matching
-`status='doing' AND worker_id IS NULL`. Every queue task is idempotent
-(content-hash dedup for ingest, Episode UUID dedup for graphiti, the
-connector-purge task is idempotent by design), so retry is safe.
+`zombie_recovery.recover_zombie_jobs` runs at every worker startup, ONCE
+before either lane worker starts. It calls `prune_stalled_workers(120s)`
+then retries every job matching `status='doing' AND worker_id IS NULL`.
+Every queue task is idempotent (content-hash dedup for ingest, Episode
+UUID dedup for graphiti, the connector-purge task is idempotent by
+design), so retry is safe across both lanes.
 SPEC-PROCRASTINATE-ZOMBIE-001.
 
 **3. Graceful shutdown grace period.** `deploy/docker-compose.yml` sets
@@ -647,6 +674,18 @@ so a deploy mid-call would SIGKILL the worker and produce zombies even with
 the recovery loop. 90 seconds lets nearly all in-flight LLM calls complete
 gracefully on shutdown; recovery only runs on the rare job that genuinely
 exceeded the budget.
+
+**4. Cancel-on-timeout for klai-connector polls.** When
+`sync_engine._run_web_crawler_delegation` hits its 30-min poll timeout,
+the procrastinate `run_crawl` task on knowledge-ingest may still be
+running. Without intervention it would keep writing artifacts behind a
+`sync_run` already marked FAILED, so the data state diverges from the
+user-visible status. SPEC-WORKER-LANES-001 added
+`POST /ingest/v1/crawl/sync/{job_id}/cancel`: klai-connector calls it
+after timeout, knowledge-ingest looks up the matching procrastinate task
+and calls `job_manager.cancel_job_by_id_async(abort=True)`. The endpoint
+is idempotent (204 whether the task was running, finished, or never
+existed) so retries don't matter.
 
 ### Phase 6: Connector-delete orchestration
 

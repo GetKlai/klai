@@ -63,3 +63,54 @@ def test_all_queue_values_use_kebab_case():
         assert q == q.lower(), f"queue name not lowercase: {q!r}"
         assert "_" not in q, f"queue name uses underscore instead of hyphen: {q!r}"
         assert " " not in q, f"queue name contains whitespace: {q!r}"
+
+
+# --- SPEC-WORKER-LANES-001 invariants ---------------------------------------
+
+
+def test_io_and_llm_lanes_partition_all_queues():
+    """Every queue MUST belong to exactly one lane (I/O xor LLM).
+
+    A queue that escapes both lanes silently disables itself: no worker
+    subscribes to it. A queue that lands in both lanes is double-handled
+    by competing worker processes and the lane SLAs collapse. Both are
+    silent failures — pin the partition mechanically.
+    """
+    io = set(queues.IO_QUEUES)
+    llm = set(queues.LLM_QUEUES)
+    all_q = set(queues.ALL_QUEUES)
+
+    assert io & llm == set(), f"queue belongs to both lanes: {io & llm}"
+    assert io | llm == all_q, (
+        f"lanes do not cover ALL_QUEUES.\n"
+        f"  in ALL_QUEUES but not in any lane: {all_q - (io | llm)}\n"
+        f"  in lanes but not in ALL_QUEUES: {(io | llm) - all_q}"
+    )
+
+
+def test_all_queues_is_io_plus_llm_in_order():
+    """``ALL_QUEUES = IO_QUEUES + LLM_QUEUES`` (and order matters: I/O
+    first reflects the 'latency-first' priority of the architecture).
+
+    Order matters because ``test_all_queues_contains_every_string_constant``
+    + downstream tests rely on the union being deterministic.
+    """
+    assert queues.ALL_QUEUES == queues.IO_QUEUES + queues.LLM_QUEUES
+
+
+def test_crawl_jobs_lives_in_io_lane():
+    """SPEC-WORKER-LANES-001 REQ-1: crawl orchestration is I/O-bound."""
+    assert queues.CRAWL_JOBS in queues.IO_QUEUES
+    assert queues.CRAWL_JOBS not in queues.LLM_QUEUES
+
+
+def test_graphiti_bulk_lives_in_llm_lane():
+    """SPEC-WORKER-LANES-001 REQ-1: graphiti episode ingest IS LLM-bound."""
+    assert queues.GRAPHITI_BULK in queues.LLM_QUEUES
+    assert queues.GRAPHITI_BULK not in queues.IO_QUEUES
+
+
+def test_connector_purge_lives_in_io_lane():
+    """SPEC-WORKER-LANES-001 REQ-1: purge orchestration is DB/HTTP only."""
+    assert queues.CONNECTOR_PURGE in queues.IO_QUEUES
+    assert queues.CONNECTOR_PURGE not in queues.LLM_QUEUES
