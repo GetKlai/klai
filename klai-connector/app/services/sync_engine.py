@@ -145,6 +145,11 @@ class SyncEngine:
         documents_total = 0
         documents_ok = 0
         documents_failed = 0
+        # Docs whose parsed text was below the 50-char ingest threshold
+        # (Notion containers, empty Confluence pages, ms_docs placeholders).
+        # Tracked separately so ``documents_ok`` accurately reflects what is
+        # actually persisted in knowledge.artifacts.
+        documents_short_skipped = 0
         bytes_processed = 0
         error_details: list[dict[str, str]] = []
 
@@ -295,6 +300,16 @@ class SyncEngine:
                         len(refs),
                     )
 
+                # Docs skipped because their parsed text was below the
+                # 50-char threshold (Notion containers, empty Confluence
+                # pages, ms_docs placeholder rows). Counter is initialised
+                # at function scope above; we track it here for the log
+                # output. They are NOT persisted in knowledge.artifacts,
+                # so they do not belong in ``documents_ok`` — that field
+                # measures "how many docs are now in the system".
+                # Previously rolled into documents_ok, which made the
+                # field ~30-50% higher than the real artifact count for
+                # Notion workspaces (120 vs 79 on Voys e2e, 2026-05-01).
                 for ref in refs_to_sync:
                     ref_key = ref.source_ref or ref.path
 
@@ -312,7 +327,7 @@ class SyncEngine:
                                 ref.path,
                                 len(text.strip()),
                             )
-                            documents_ok += 1
+                            documents_short_skipped += 1
                             resume_ingested_refs.add(ref_key)
                             continue
 
@@ -465,6 +480,7 @@ class SyncEngine:
                     "documents_total": documents_total,
                     "documents_ok": documents_ok,
                     "documents_failed": documents_failed,
+                    "documents_short_skipped": documents_short_skipped,
                     "bytes_processed": bytes_processed,
                 },
             )
