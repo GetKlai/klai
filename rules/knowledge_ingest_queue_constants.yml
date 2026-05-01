@@ -37,10 +37,13 @@ message: |
 rule:
   pattern: queue=$VALUE
   has:
+    # `string` covers both regular and f-strings in tree-sitter Python.
+    # `concatenated_string` catches the `"a" "b"` adjacent-literal form.
+    # We do NOT need a separate `f_string` kind — the grammar does not
+    # have one (ast-grep rejected it on first deploy).
     any:
       - kind: string
       - kind: concatenated_string
-      - kind: f_string
 
 # Per SPEC-INGEST-QUEUE-SEPARATION-001 + project convention: every file in
 # klai-knowledge-ingest that registers a Procrastinate task is checked.
