@@ -120,11 +120,24 @@ class WorkerLifecycle:
         # queue is just one constant + one append.
         from knowledge_ingest.queues import ALL_QUEUES
 
+        # Procrastinate's default ``concurrency=1`` serialises ALL jobs across
+        # ALL queues — exactly the head-of-line blocking the queue separation
+        # was meant to remove. Without this, a backlog of 30-60s LLM
+        # enrichment jobs blocks ``crawl-jobs`` and ``connector-purge``
+        # completely. Concurrency 4 lets crawl + enrichment + graphiti +
+        # purge advance in parallel. The LLM rate limiter in
+        # ``knowledge_ingest.graph._TokenBucketLimiter`` already throttles
+        # the Mistral side, so raising worker concurrency does not violate
+        # the upstream 1 req/s budget.
         self._worker_task = asyncio.create_task(
-            self.proc_app.run_worker_async(queues=ALL_QUEUES, install_signal_handlers=False),
+            self.proc_app.run_worker_async(
+                queues=ALL_QUEUES,
+                concurrency=4,
+                install_signal_handlers=False,
+            ),
             name="procrastinate-worker",
         )
-        logger.info("procrastinate_worker_started", queues=ALL_QUEUES)
+        logger.info("procrastinate_worker_started", queues=ALL_QUEUES, concurrency=4)
         return self
 
     async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
