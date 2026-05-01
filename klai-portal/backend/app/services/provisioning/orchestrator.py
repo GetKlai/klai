@@ -331,7 +331,15 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
                     json={
                         "team_id": team_id,
                         "metadata": {"org_id": zitadel_org_id},
-                        "models": ["klai-llm", "klai-fallback"],
+                        # @MX:ANCHOR fan_in=2 LibreChat tenants call klai-primary
+                        # directly; LiteLLM's custom_router may upgrade to
+                        # klai-large (tool calls) or downgrade to klai-fast (web
+                        # search). All three MUST be in scope.
+                        # @MX:REASON: deploy/litellm/config.yaml only defines
+                        # klai-primary, klai-fast, klai-large, klai-pipeline;
+                        # klai-pipeline is reserved for internal services and
+                        # bypasses custom_router (see platform/litellm.md).
+                        "models": ["klai-primary", "klai-fast", "klai-large"],
                     },
                 )
                 key_resp.raise_for_status()
