@@ -31,88 +31,39 @@ _apply_graphiti_patch()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting knowledge-ingest service...")
+    logger.info("starting_knowledge_ingest_service")
     await qdrant_store.ensure_collection()
-    logger.info("Qdrant collection ready.")
+    logger.info("qdrant_collection_ready")
 
     pool = await db.get_pool()
-    logger.info("PostgreSQL pool ready.")
-
-    from knowledge_ingest.config import settings
+    logger.info("postgres_pool_ready")
 
     if settings.enrichment_enabled:
-        # Lazy import: procrastinate pulls in psycopg which requires libpq.
-        # Guarded by enrichment_enabled so test environments (ENRICHMENT_ENABLED=false)
-        # skip this block entirely without needing psycopg installed.
-        import procrastinate  # noqa: PLC0415
-        from knowledge_ingest import enrichment_tasks  # noqa: PLC0415
+        # Procrastinate worker bootstrap + zombie recovery + queue
+        # subscription is owned by knowledge_ingest.worker.WorkerLifecycle.
+        # Keeps the lifespan focused on lifecycle ordering, not task-runner
+        # internals. See SPEC-PROCRASTINATE-ZOMBIE-001 +
+        # SPEC-INGEST-QUEUE-SEPARATION-001.
+        from knowledge_ingest.worker import WorkerLifecycle  # noqa: PLC0415
 
-        # PsycopgConnector uses psycopg3 (libpq-based); no asyncpg connector exists.
-        # Use SQLAlchemy make_url to safely parse the DSN (handles base64 passwords with
-        # '/', '+', '=' that break stdlib urlparse), then build a libpq key=value string.
-        from sqlalchemy.engine import make_url  # noqa: PLC0415
-        from knowledge_ingest.config import settings as _s  # noqa: PLC0415
-
-        _u = make_url(_s.postgres_dsn)
-        # Wrap password in single quotes: base64 passwords end with '=' which
-        # libpq key=value format interprets as a new separator without quoting.
-        _pw = (_u.password or "").replace("\\", "\\\\").replace("'", "\\'")
-        pg_dsn = (
-            f"host={_u.host} port={_u.port or 5432} "
-            f"dbname={_u.database} user={_u.username} password='{_pw}'"
-        )
-        # Pass kwargs={} to avoid psycopg-pool 3.x bug: default kwargs=None → **None TypeError.
-        async_connector = procrastinate.PsycopgConnector(conninfo=pg_dsn, kwargs={})
-        proc_app = enrichment_tasks.init_app(async_connector)
-        logger.info("Procrastinate app initialised.")
-
-        async with proc_app.open_async():
-            # SPEC-PROCRASTINATE-ZOMBIE-001: reset jobs orphaned by killed
-            # containers (status='doing' AND worker_id IS NULL) before starting
-            # the new worker. Procrastinate v3's built-in prune_stalled_workers
-            # only deletes the worker rows; orphaned jobs would otherwise stay
-            # in 'doing' forever and consume worker concurrency slots.
-            from knowledge_ingest.zombie_recovery import recover_zombie_jobs  # noqa: PLC0415
-
-            try:
-                await recover_zombie_jobs(proc_app)
-            except Exception:
-                # Recovery is best-effort. If it fails, log and continue —
-                # the worker still starts and processes new jobs.
-                logger.exception("procrastinate_zombie_recovery_failed")
-
-            # SPEC-INGEST-QUEUE-SEPARATION-001: queue list is the single
-            # source of truth in ``knowledge_ingest.queues.ALL_QUEUES``.
-            # A new task only needs to add a constant + append it there;
-            # the worker subscribes automatically. Prevents the
-            # add-task-but-forget-worker-list bug class that bit
-            # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 PR #253.
-            from knowledge_ingest.queues import ALL_QUEUES  # noqa: PLC0415
-
-            worker_task = asyncio.create_task(
-                proc_app.run_worker_async(
-                    queues=ALL_QUEUES,
-                    install_signal_handlers=False,
-                )
-            )
+        async with WorkerLifecycle.start(postgres_dsn=settings.postgres_dsn):
             listener_task = asyncio.create_task(org_config.start_listener(pool))
             kb_config_listener_task = asyncio.create_task(kb_config.start_listener(pool))
-            logger.info("Procrastinate worker and config listeners started.")
-
-            yield
-
-            logger.info("Shutting down knowledge-ingest service.")
-            worker_task.cancel()
-            listener_task.cancel()
-            kb_config_listener_task.cancel()
-            await asyncio.gather(
-                worker_task, listener_task, kb_config_listener_task, return_exceptions=True
-            )
+            logger.info("config_listeners_started")
+            try:
+                yield
+            finally:
+                logger.info("shutting_down_config_listeners")
+                listener_task.cancel()
+                kb_config_listener_task.cancel()
+                await asyncio.gather(
+                    listener_task, kb_config_listener_task, return_exceptions=True
+                )
     else:
-        logger.info("Enrichment disabled — skipping Procrastinate worker.")
+        logger.info("enrichment_disabled_skipping_worker")
         yield
-        logger.info("Shutting down knowledge-ingest service.")
 
+    logger.info("shutting_down_knowledge_ingest_service")
     await db.close_pool()
 
 
