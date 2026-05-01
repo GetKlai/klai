@@ -67,6 +67,20 @@ async def lifespan(app: FastAPI):
         logger.info("Procrastinate app initialised.")
 
         async with proc_app.open_async():
+            # SPEC-PROCRASTINATE-ZOMBIE-001: reset jobs orphaned by killed
+            # containers (status='doing' AND worker_id IS NULL) before starting
+            # the new worker. Procrastinate v3's built-in prune_stalled_workers
+            # only deletes the worker rows; orphaned jobs would otherwise stay
+            # in 'doing' forever and consume worker concurrency slots.
+            from knowledge_ingest.zombie_recovery import recover_zombie_jobs  # noqa: PLC0415
+
+            try:
+                await recover_zombie_jobs(proc_app)
+            except Exception:
+                # Recovery is best-effort. If it fails, log and continue —
+                # the worker still starts and processes new jobs.
+                logger.exception("procrastinate_zombie_recovery_failed")
+
             worker_task = asyncio.create_task(
                 proc_app.run_worker_async(
                     queues=[
