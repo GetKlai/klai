@@ -59,13 +59,25 @@ done
 
 if [[ -n "$SERVICE" ]]; then
     echo "Pulling $SERVICE..."
-    docker compose pull "$SERVICE"
+    # Pull is best-effort. Some services intentionally have no
+    # registry image and `docker compose pull` exits non-zero:
+    #   - retrieval-api: image klai/retrieval-api:local — tag-aliased
+    #     locally from ghcr.io/getklai/retrieval-api:latest before this
+    #     script runs (see retrieval-api.yml workflow `docker tag`).
+    #   - bge-m3-sparse on gpu-01: built from local context.
+    # For these the existing image is already up-to-date in the local
+    # daemon; we proceed to `up -d` which uses what's there.
+    if ! docker compose pull "$SERVICE" 2>&1; then
+        echo "WARN: pull failed for $SERVICE (likely a locally-tagged image like klai/<svc>:local) — proceeding with existing local image"
+    fi
     echo "Recreating $SERVICE with --remove-orphans..."
     # shellcheck disable=SC2086
     docker compose up -d --remove-orphans $NO_DEPS_FLAG "$SERVICE"
 else
     echo "Pulling all services..."
-    docker compose pull
+    if ! docker compose pull 2>&1; then
+        echo "WARN: bulk pull had failures (likely klai/<svc>:local-tagged services) — proceeding with existing local images"
+    fi
     echo "Recreating all services with --remove-orphans..."
     docker compose up -d --remove-orphans
 fi
