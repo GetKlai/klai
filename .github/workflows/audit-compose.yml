@@ -1,24 +1,30 @@
-name: Audit compose volumes
+name: Audit compose (volumes + orphans)
 
 on:
   pull_request:
     paths:
       - 'deploy/docker-compose.yml'
+      - 'deploy/caddy/Caddyfile'
       - 'deploy/volume-mounts.yaml'
       - 'scripts/audit-compose-volumes.sh'
+      - 'scripts/audit-compose-orphans.sh'
       - 'scripts/test-audit-compose.sh'
+      - 'scripts/test-audit-compose-orphans.sh'
       - '.github/workflows/audit-compose.yml'
   push:
     branches: [main]
     paths:
       - 'deploy/docker-compose.yml'
+      - 'deploy/caddy/Caddyfile'
       - 'deploy/volume-mounts.yaml'
       - 'scripts/audit-compose-volumes.sh'
+      - 'scripts/audit-compose-orphans.sh'
       - 'scripts/test-audit-compose.sh'
+      - 'scripts/test-audit-compose-orphans.sh'
 
 jobs:
   audit:
-    name: audit-compose-volumes
+    name: audit-compose-volumes-and-orphans
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -40,8 +46,14 @@ jobs:
           yq --version
           jq --version
 
-      - name: Run audit
+      - name: Run volume audit
         run: bash scripts/audit-compose-volumes.sh
 
-      - name: Regression test — bug must be caught
+      - name: Volume regression test — bug must be caught
         run: bash scripts/test-audit-compose.sh
+
+      - name: Run orphan audit (SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-2c)
+        run: bash scripts/audit-compose-orphans.sh
+
+      - name: Orphan regression test — fixtures must catch known anti-patterns
+        run: bash scripts/test-audit-compose-orphans.sh
