@@ -123,8 +123,8 @@ fi
 # customer-/tenant-specific container. Removing without explicit confirmation
 # is exactly the librechat-voys mistake.
 
-if [[ "$TARGET" =~ -voys$|-getklai$|-[a-z]+-tenant$ ]]; then
-    emit_block "$TARGET matches a tenant-specific naming pattern ($OPERATION). Verify customer impact before removal."
+if [[ "$TARGET" =~ -voys$|-getklai$|-[a-z]+-tenant$ ]] || [[ "$TARGET" =~ ^librechat- ]]; then
+    emit_block "$TARGET matches a tenant-managed naming pattern ($OPERATION). If this is a portal-api-provisioning-managed tenant container (klasse B, see SPEC REQ-2), use the deprovision flow instead: portal-api orchestrator.deprovision_tenant() — never delete directly via 'docker rm'. If this is a different match, verify customer impact and override with explicit user approval."
 fi
 
 # ─── Check 3: compose git-history (best-effort, lokaal) ───────────────────────

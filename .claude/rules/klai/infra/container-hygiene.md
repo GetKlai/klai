@@ -15,17 +15,50 @@ paths:
 
 On 2026-05-02 the `librechat-voys` production container (Voys-tenant
 chat) was removed by a cleanup-agent because it lacked
-`com.docker.compose.project=klai-core` labels. It was running via a
-manual `docker run` rather than as a compose service, and the Caddyfile
-didn't route to it on the time of inspection — both signals pointed at
-"orphan, safe to delete". The container was, in fact, the canonical
-runtime artifact for the Voys tenant. Recovery was possible because the
-tenant config (`/opt/klai/librechat/voys/`) survived, but the original
-image SHA (untagged, never in any registry) was lost permanently.
+`com.docker.compose.project=klai-core` labels. The cleanup framing was:
+"no compose label + no Caddy upstream = wees, safe to delete." The
+container was, in fact, a legitimate **provisioning-managed** prod
+container — created dynamically by portal-api per tenant, not by
+compose. Recovery was possible because the tenant config
+(`/opt/klai/librechat/voys/`) survived, but the original image SHA
+(untagged, never in any registry) was lost permanently.
 
-The class: a destructive `docker rm`/`rmi`/`volume rm` on a target whose
-"orphan" appearance is fully consistent with being legitimately
-production-relevant.
+The class: a destructive `docker rm`/`rmi`/`volume rm` on a target
+whose "orphan" appearance is fully consistent with being a legitimate
+prod container managed by a non-compose pathway.
+
+## Two legitimate classes of prod containers
+
+Klai has two canonical management paths for prod containers. Hygiene
+tooling MUST recognise both:
+
+### Klasse A — Compose-managed
+
+- Created by `docker compose up` against
+  `klai-infra/deploy/docker-compose.yml`
+- Carries `com.docker.compose.project=klai-core` (and
+  `com.docker.compose.service=<naam>`) labels automatically
+- Examples: `klai-core-portal-api-1`, `klai-core-redis-1`,
+  `librechat-getklai`, `librechat-dev`
+- Cleanup: through compose (`docker compose down`, `--remove-orphans`)
+
+### Klasse B — Provisioning-managed
+
+- Created by portal-api via `client.containers.run()` per tenant
+- Source: `klai-portal/backend/app/services/provisioning/infrastructure.py::_start_librechat_container`
+- MUST carry these three labels (SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-2a):
+  - `klai.managed_by=portal-api-provisioning`
+  - `klai.tenant_slug=<slug>` (e.g. `voys`, `acme-corp`)
+  - `klai.kind=librechat` (other kinds may follow if portal-api
+    provisions more types in future)
+- Example: `librechat-voys`, `librechat-<future-tenant>`
+- Cleanup: through portal-api deprovisioning flow
+  (`provisioning/orchestrator.py::deprovision_tenant`), NEVER via
+  direct `docker rm`
+
+A container without ANY of these labels (and without a
+`klai.adhoc=*` opt-in for ad-hoc debug — see below) is a wees and
+warrants human review before removal.
 
 ## How we block it now
 
@@ -35,15 +68,18 @@ Two layers, both mechanical:
 
 `.claude/hooks/klai/container-hygiene-preflight.sh` runs before every
 Bash tool-call. If the command matches a destructive docker pattern, it
-runs five checks and `exit 2` blocks the tool-call:
+runs checks and `exit 2` blocks the tool-call:
 
 1. **Hard-block dangerous global prunes:** `docker volume prune`,
    `docker image prune -af`, `docker system prune -a`,
    `docker compose down --volumes`. These never have a one-shot
    legitimate use — REQ-6's daily `docker-cleanup.timer` is the canonical
    safe-cleanup path.
-2. **Tenant-naam pattern match:** target ends in `-voys`, `-getklai`,
-   or `-<word>-tenant`. Hard block — verify customer impact first.
+2. **Tenant-pattern match:** target matches `librechat-*` (klasse-B
+   provisioning-managed) OR ends in `-voys`/`-getklai`/`-<word>-tenant`.
+   Hard block; the message points at the deprovisioning flow because
+   direct `docker rm` on a klasse-B container bypasses Mongo/Caddy/
+   Meilisearch cleanup that portal-api orchestrates.
 3. **Compose git-history grep:** if `klai-infra` checkout reachable,
    search `deploy/docker-compose*.yml` history for the target. Match
    means it was a declared service at some point — needs review.

@@ -519,23 +519,41 @@ adding the shared `klai-log-utils` path-dep silently broke its build.
 ## container-cleanup-without-preflight (HIGH)
 When you face a "wees-uitziende" container — no
 `com.docker.compose.project` label, no Caddy upstream, untagged image —
-do NOT treat the absence of those signals as a verdict to delete. Run
-the pre-cleanup checks first. The librechat-voys incident (2026-05-02)
-is the canonical case: the production Voys-tenant chat container was
-running via a manual `docker run` (no compose label) and had been
-disconnected from Caddy at some earlier point, so it appeared to be a
-wees in every cleanup-agent's view. It was, in fact, the canonical
-runtime artifact for the Voys tenant. Recovery succeeded only because
-`/opt/klai/librechat/voys/` (env-file + librechat.yaml) survived; the
-original image SHA (untagged, never registered) was permanently lost.
+do NOT treat the absence of those signals as a verdict to delete. Klai
+has TWO legitimate classes of prod containers:
+
+- **Klasse A — compose-managed:** `com.docker.compose.project=klai-core` label
+- **Klasse B — provisioning-managed:** `klai.managed_by=portal-api-provisioning`
+  + `klai.tenant_slug=<slug>` + `klai.kind=<type>` (gezet door
+  `_start_librechat_container` per SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-2a)
+
+A container without ANY of these labels AND without a `klai.adhoc=*`
+opt-in is a candidate wees, but verify before deleting.
+
+The librechat-voys incident (2026-05-02) is the canonical case. The
+production Voys-tenant chat container was klasse B (provisioning-managed
+by portal-api) but at the time the labels did not yet exist as a
+convention. The cleanup-agent (me) checked only for klasse-A label,
+saw none, also saw no current Caddy upstream, and concluded "wees".
+Wrong on both counts: the container was legitimate; Caddy upstream
+absence had a different cause (timing of provisioning vs. caddy
+reload). Recovery succeeded only because `/opt/klai/librechat/voys/`
+(env-file + librechat.yaml) survived; the original image SHA
+(untagged, never registered) was permanently lost.
 
 **Why this is a HIGH-class trap:** the signals that look like "orphan"
 are exactly the signals you'd expect from a legitimate
-production-relevant container that was provisioned outside the
-canonical compose flow. "No compose label" correlates strongly with
-rommel, not strongly with safe-to-delete. Tenant-specific names
-(`-voys`, `-getklai`, `-<klant>`) flip the prior: those are almost
-never test fixtures.
+production-relevant container managed via a non-compose pathway.
+"No compose label" correlates with rommel for klasse-A containers,
+NOT for klasse-B (provisioning-managed) containers. Tenant-specific
+names (`librechat-*`, `-voys`, `-getklai`, `-<klant>`) flip the prior:
+those are almost never test fixtures.
+
+**Tenant-deprovisioning is NOT just `docker rm`.** A klasse-B
+container belongs to a tenant whose Mongo user, Meilisearch index,
+Caddy upstream, and Redis cache need cleanup too. Use the portal-api
+deprovision flow (`provisioning/orchestrator.py::deprovision_tenant`)
+— never `docker rm` a `librechat-<slug>` directly.
 
 **Prevention (mechanical, not narrative):**
 

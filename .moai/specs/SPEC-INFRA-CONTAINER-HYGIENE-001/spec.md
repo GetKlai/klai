@@ -1,6 +1,6 @@
 ---
 id: SPEC-INFRA-CONTAINER-HYGIENE-001
-version: "0.2.0"
+version: "0.3.0"
 status: draft
 created: "2026-05-02"
 updated: "2026-05-02"
@@ -14,7 +14,8 @@ issue_number: 0
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 0.1.0 | 2026-05-02 | MoAI | Initiële stub na librechat-voys cleanup-incident. 7 requirements: rule-files, librechat-voys compose-block, --remove-orphans, image-pinning pilot, weekly audit, daily prune, pitfall. |
-| 0.2.0 | 2026-05-02 | MoAI | Twee fundamentele herzieningen na review: (1) REQ-4 (image-pinning pilot) **geschrapt** — `:latest` op `ghcr.io/getklai/*` is bewust beleid per `deploy/VERSIONS.md` + `docs/runbooks/version-management.md`; rollback gaat via `:${github.sha}` tags die CI ook pusht. De 679 dangling images zijn een geaccepteerde bijwerking, opgelost door REQ-6 daily prune. (2) REQ-1/2/3/5 herschreven naar **AI-first mechanische guards** — geen markdown-rules die agents moeten lezen, maar PreToolUse hooks, CI-checks, deploy-wrappers, en VictoriaLogs-events die AI mechanisch volgt en queryt. Aanleiding: een AI doet het primaire code- en deploy-werk; "vertrouw op discipline" is geen vangnet. |
+| 0.2.0 | 2026-05-02 | MoAI | Twee fundamentele herzieningen na review: (1) REQ-4 (image-pinning pilot) **geschrapt** — `:latest` op `ghcr.io/getklai/*` is bewust beleid per `deploy/VERSIONS.md` + `docs/runbooks/version-management.md`. (2) REQ-1/2/3/5 herschreven naar **AI-first mechanische guards** — PreToolUse hooks, CI-checks, deploy-wrappers, VictoriaLogs-events. |
+| 0.3.0 | 2026-05-02 | MoAI | **Tenant-provisioning architectuur correct opgenomen.** REQ-2 was "alles via compose" — fout. Klai heeft twee legitieme klassen prod-containers: (a) compose-managed met `com.docker.compose.project=klai-core` label, (b) provisioning-managed door portal-api via `client.containers.run()` per tenant (zie `klai-portal/backend/app/services/provisioning/infrastructure.py::_start_librechat_container`). REQ-2 herschreven: tenant-LibreChats SHALL `klai.managed_by=portal-api-provisioning` + `klai.tenant_slug=<slug>` + `klai.kind=librechat` labels dragen. REQ-2c (librechat-voys in compose-block toevoegen) **vervalt** — vervangen door label-backfill voor bestaande tenants. REQ-1 hook + REQ-5 audit detecteren wezen op afwezigheid van **beide** label-klasses, niet alleen compose-label. Aanleiding: gebruiker review wees op tenant-provisioning patroon dat ik gemist had. |
 
 # SPEC-INFRA-CONTAINER-HYGIENE-001: Container hygiene op core-01 — mechanische guards tegen orphans, dangling images en verlaten volumes
 
@@ -22,10 +23,19 @@ issue_number: 0
 
 Elimineer de drie fout-klassen die op 2026-05-02 zichtbaar werden:
 
-1. **Wees-containers** — productie-containers die via handmatige
-   `docker run` draaien zonder `com.docker.compose.project` label en
-   daardoor onzichtbaar zijn voor automatische tooling. Een AI of
-   cleanup-agent kan ze niet onderscheiden van echte rommel.
+1. **Wees-containers** — productie-containers die voor cleanup-tools
+   onzichtbaar zijn omdat ze geen herkenbare beheers-label dragen.
+   Klai heeft TWEE legitieme klassen prod-containers, beide door deze
+   SPEC erkend:
+   - **Compose-managed:** `com.docker.compose.project=klai-core` label,
+     gedeclareerd in `klai-infra/deploy/docker-compose.yml`.
+   - **Provisioning-managed:** door portal-api dynamisch aangemaakt
+     via `client.containers.run()` per tenant
+     (zie `klai-portal/backend/app/services/provisioning/infrastructure.py::_start_librechat_container`).
+     SHALL `klai.managed_by=portal-api-provisioning`,
+     `klai.tenant_slug=<slug>`, en `klai.kind=<type>` labels dragen
+     (REQ-2).
+   Een container zonder een van beide label-klasses is een wees.
 2. **Service-removed-but-running** — compose-services worden uit
    `docker-compose.yml` gehaald zonder dat hun container/volume mee
    wordt opgeruimd, omdat `docker compose up` standaard zonder
@@ -38,9 +48,10 @@ Elimineer de drie fout-klassen die op 2026-05-02 zichtbaar werden:
 Het librechat-voys incident is de directe aanleiding: een cleanup-agent
 verwijderde de tenant-specifieke container omdat hij op alle
 mens-leesbare signalen ("geen compose label, geen Caddy upstream") als
-wees uitkwam. Recovery was mogelijk omdat de tenant-config intact bleef,
-maar de oude image-sha was permanent verloren — niet reproduceerbaar
-omdat hij nooit een registry-tag had.
+wees uitkwam. De container was in feite provisioning-managed via
+portal-api — maar `_start_librechat_container` zette geen labels, dus
+het was niet detecteerbaar als legitiem. Recovery was mogelijk omdat de
+tenant-config intact bleef, maar de oude image-sha was permanent verloren.
 
 **De fix is mechanisch, niet documentair.** Een AI doet het primaire
 code- en deploy-werk in deze codebase. Regels die "vertrouwen op
@@ -51,15 +62,16 @@ falen, en logs-die-AI-zelf-queryt vóór cleanup-beslissingen.
 Zes requirements over drie lagen:
 
 - **Mechanische guards** (deze repo): pre-cleanup hook (REQ-1),
-  CI orphan-detectie (REQ-2-deel), pitfall (REQ-7).
+  provisioning-labels in portal-api (REQ-2), pitfall (REQ-7).
 - **Tooling op core-01**: weekly audit-stream naar VictoriaLogs (REQ-5),
   daily safe-only prune via systemd timer (REQ-6).
-- **Cross-repo deploy-discipline** (klai-infra): librechat-voys als
-  compose-service (REQ-2-fix), deploy-wrapper-script met `--remove-orphans`
-  ingebouwd (REQ-3).
+- **Cross-repo deploy-discipline** (klai-infra): deploy-wrapper-script
+  met `--remove-orphans` ingebouwd (REQ-3), CI orphan-guard (REQ-2a).
 
 REQ-4 uit v0.1.0 is geschrapt. VERSIONS.md + version-management.md
-zijn de canoniek voor image-pinning.
+zijn de canoniek voor image-pinning. REQ-2c uit v0.2.0 (librechat-voys
+in compose-block toevoegen) is in v0.3.0 vervangen door REQ-2 label-fix
+plus eenmalige backfill.
 
 ## Environment
 
@@ -75,21 +87,28 @@ zijn de canoniek voor image-pinning.
   documentatie + verwijzing naar het script),
   `.claude/rules/klai/pitfalls/process-rules.md` (uitgebreid met
   `container-cleanup-without-preflight (HIGH)`).
-- **Affected klai-infra:** `deploy/docker-compose.yml` (REQ-2
-  librechat-voys block), `deploy/scripts/compose-up.sh` (nieuw — deploy-
-  wrapper voor REQ-3), `scripts/audit-compose-orphans.sh` (nieuw — REQ-2
-  CI-guard), `scripts/test-audit-compose-orphans.sh` (regression test),
-  `scripts/docker-orphan-audit.sh` (nieuw — REQ-5 emit-naar-VictoriaLogs),
-  `core-01/systemd/docker-cleanup.{service,timer}` (REQ-6),
-  `core-01/systemd/orphan-audit.{service,timer}` (REQ-5),
-  `.github/workflows/audit-compose.yml` (uitgebreid met orphan-check
-  voor REQ-2), 10 service-deploy-workflows (`portal-api.yml`,
-  `klai-connector.yml`, etc. — vervangen `docker compose up` door
-  `compose-up.sh` aanroep voor REQ-3).
+- **Affected portal-api code in klai (deze repo):**
+  `klai-portal/backend/app/services/provisioning/infrastructure.py`
+  — `_start_librechat_container` SHALL `labels={...}` toevoegen aan
+  `client.containers.run()` (REQ-2). Tests in
+  `klai-portal/backend/tests/services/provisioning/test_infrastructure_labels.py`
+  (nieuw) verifiëren label-aanwezigheid.
+- **Affected klai-infra:** `deploy/scripts/compose-up.sh` (nieuw —
+  deploy-wrapper voor REQ-3), `scripts/audit-compose-orphans.sh`
+  (nieuw — REQ-2a CI-guard), `scripts/test-audit-compose-orphans.sh`
+  (regression test), `scripts/docker-orphan-audit.sh` (nieuw — REQ-5
+  emit-naar-VictoriaLogs), `core-01/systemd/docker-cleanup.{service,timer}`
+  (REQ-6), `core-01/systemd/orphan-audit.{service,timer}` (REQ-5),
+  `.github/workflows/audit-compose.yml` (uitgebreid met orphan-check),
+  10 service-deploy-workflows — vervangen `docker compose up` door
+  `compose-up.sh` aanroep voor REQ-3.
 - **Affected core-01 host (operator-actie via SSH/Ansible):**
   `/etc/systemd/system/docker-cleanup.{service,timer}`,
   `/etc/systemd/system/orphan-audit.{service,timer}`,
-  symlinks naar de scripts in klai-infra checkout.
+  symlinks naar de scripts in klai-infra checkout. **Backfill:**
+  bestaande `librechat-voys` en `librechat-getklai` containers worden
+  eenmalig opnieuw gestart met de nieuwe labels (recreate vereist;
+  labels zijn immutable na container create).
 
 ## Assumptions
 
@@ -128,27 +147,26 @@ SHALL eerst draaien. Het script SHALL:
 
 1. Parsen welk argument wordt verwijderd (container-naam,
    image-naam/sha, volume-naam, of bulk-prune).
-2. Voor container-targets: vijf checks uitvoeren:
-   - **Caddy upstream check:** wordt de naam genoemd in
-     `/opt/klai/Caddyfile` (via `ssh core-01`)?
-   - **Compose git-history check:** stond de naam ooit in
-     `klai-infra/deploy/docker-compose*.yml`?
-   - **Tenant-naam check:** matcht de naam regex
-     `-(voys|getklai|[a-z]+-tenant)$`?
-   - **Depends-on check:** heeft een running container `depends_on`
-     op deze naam (uit compose-labels)?
-   - **Recent-traffic check:** had de naam in afgelopen 30d log-events
-     in VictoriaLogs (`service:<name>` query)?
-3. Voor image-targets: heeft de image een tag die in
-   `klai-infra/deploy/docker-compose.yml` voorkomt? Wordt hij
-   gebruikt door een running container?
-4. Voor volume-targets: heeft het volume mounts in een running
-   container? Heeft het een naam in een tenant-pattern? Bevat het data
-   in afgelopen 30 dagen?
+2. Hard-blocks voor altijd-gevaarlijke patterns:
+   `docker volume prune`, `docker image prune -af`,
+   `docker system prune -a`, `docker compose down --volumes`.
+3. Voor container-targets: hard-block bij positieve match op één van:
+   - **Tenant-naam check:** target ends in `-voys`, `-getklai`, of
+     `-<klant>-tenant`. Block-bericht verwijst naar de
+     provisioning-flow (REQ-2): "if portal-api-managed, use the
+     deprovision flow; do not docker rm directly".
+   - **Compose git-history check:** target stond ooit als service in
+     `klai-infra/deploy/docker-compose*.yml` (best-effort, alleen
+     wanneer klai-infra checkout sibling beschikbaar is).
+4. Best-effort checks (skip-bij-onreachable, fail-open):
+   - **Caddy upstream check:** target voorkomt in
+     `/opt/klai/Caddyfile` via `ssh core-01`.
+   - **VictoriaLogs traffic check:** target had log-events in
+     afgelopen 30d.
 
-Eén positieve match = exit-code 1 met diagnose-bericht. De Bash tool-call
-wordt geblokkeerd; Claude moet expliciet de blokkade overwegen, om
-hulp vragen, of de actie afbreken.
+Een positieve match = exit-code 2 met JSON-decision-payload. De Bash
+tool-call wordt geblokkeerd; Claude moet expliciet de blokkade
+overwegen, hulp vragen, of de actie afbreken.
 
 Het script SHALL idempotent en hermetic zijn (geen state-mutatie, geen
 externe afhankelijkheden behalve `docker`, `ssh`, `curl`,
@@ -163,44 +181,61 @@ het script + hook.
 `PreToolUse` hook met `matcher: "Bash"` en de juiste command-path via
 `$CLAUDE_PROJECT_DIR`.
 
-### R2 — Ubiquitous: alle prod containers via compose, mechanisch geverifieerd
+### R2 — Ubiquitous: élke prod container draagt een herkenningslabel
 
-Elke container die productie-traffic ziet SHALL als service in
-`klai-infra/deploy/docker-compose.yml` (of geldige override) gedeclareerd
-zijn. Verificatie gebeurt op twee plekken:
+Elke productie-container SHALL door één van de twee canonieke beheers-
+paden zijn aangemaakt en bijbehorend label dragen:
 
-**R2a — CI-guard (preventief):**
+**Klasse A — Compose-managed:**
+- Aangemaakt via `docker compose up` op `klai-infra/deploy/docker-compose.yml`.
+- Draagt automatisch `com.docker.compose.project=klai-core` (en
+  `com.docker.compose.service=<naam>`).
+- Geen extra werk in deze SPEC — bestaand patroon.
+
+**Klasse B — Provisioning-managed:**
+- Aangemaakt door portal-api via `client.containers.run()`,
+  momenteel uitsluitend tenant-LibreChats via
+  `_start_librechat_container` in
+  `klai-portal/backend/app/services/provisioning/infrastructure.py`.
+- SHALL labels dragen: `klai.managed_by=portal-api-provisioning`,
+  `klai.tenant_slug=<slug>`, `klai.kind=librechat`. Future kinds
+  (e.g. tenant-meilisearch, tenant-vectorstore) volgen hetzelfde
+  schema met andere `klai.kind`.
+
+**REQ-2a — Code-fix in `_start_librechat_container`:**
+
+`client.containers.run()` SHALL een `labels` keyword-arg meegeven met
+ten minste de drie genoemde labels. Tests SHALL de aanwezigheid van
+elk label verifiëren via `docker inspect` (of mock equivalent).
+
+**REQ-2b — Backfill voor bestaande tenant-containers:**
+
+`librechat-voys` (handmatig herstart op 2026-05-02) en
+`librechat-getklai` (compose-managed, dus al klasse A) MOETEN bij de
+volgende geplande herstart de juiste labels dragen. Voor
+`librechat-voys`: één-malige operator-actie op core-01 om de container
+te recreaten met de nieuwe labels (Docker labels zijn immutable na
+container create — recreate is de enige weg). Documentatie van het
+exacte commando in `docs/runbooks/` of PR-body.
+
+**REQ-2c — CI-guard tegen toekomstige label-loosheid:**
 
 `klai-infra/scripts/audit-compose-orphans.sh` SHALL bij elke PR die
 `docker-compose.yml` raakt, draaien als deel van de bestaande
-`audit-compose.yml` workflow. De check SHALL:
+`audit-compose.yml` workflow. De check SHALL Caddy-upstreams in
+`deploy/caddy/Caddyfile` matchen tegen een UNION van: (a) service-namen
+in compose, (b) bekende provisioning-managed naam-patterns
+(`librechat-*`), (c) whitelisted external endpoints.
 
-- Voor elke service-naam in compose: bevestigen dat de service een
-  geldige `image:` of `build:` directive heeft.
-- Voor elke `container_name:`: bevestigen dat de naam matcht het
-  service-block (geen drift).
-- Voor elke Caddy-upstream in `deploy/caddy/Caddyfile`: bevestigen dat
-  de upstream een service in compose is OF een whitelisted external
-  endpoint (Vexa intern, GHCR, etc.).
-- Een regression-fixture `test-audit-compose-orphans.sh` SHALL faal-cases
-  testen die zonder de check zouden lekken.
-
-**R2b — Post-deploy verificatie (detectief):**
+**REQ-2d — Post-deploy verificatie:**
 
 Na elke `compose up -d` (via REQ-3 wrapper) SHALL het wrapper-script
-verifiëren: zijn er nu containers running die GEEN
-`com.docker.compose.project=klai-core` (of bekende override-project)
-label hebben? Zo ja, waarschuwingsregel naar VictoriaLogs (REQ-5
-event-stream) met `event:orphan_post_deploy`.
-
-**R2c — Concrete fix voor librechat-voys:**
-
-Een service-block `librechat-voys` SHALL toegevoegd worden aan
-`klai-infra/deploy/docker-compose.yml` (1-op-1 spiegel van
-`librechat-getklai`, paths vervangen door `./librechat/voys/...`). De
-huidige handmatig-gestarte container SHALL bij eerstvolgende
-compose-up vervangen worden door de compose-managed variant met
-dezelfde naam.
+verifiëren: zijn er nu running containers die GEEN
+`com.docker.compose.project=klai-core` label EN GEEN
+`klai.managed_by=portal-api-provisioning` label hebben? Zo ja,
+waarschuwingsregel naar VictoriaLogs (REQ-5 event-stream) met
+`event:orphan_post_deploy`. Containers met `klai.adhoc=*` label vallen
+buiten — dat is bewust ad-hoc debug-werk per REQ-7.
 
 ### R3 — Event-driven: deploy-wrapper met `--remove-orphans` ingebouwd
 
@@ -463,11 +498,13 @@ emit_event() {
       container_name:$name, details:$details, _time:$ts}'
 }
 
-# Detectie 1: orphan_no_compose_label
+# Detectie 1: orphan (geen van beide legitieme label-klasses)
 docker ps --format '{{.Names}}' | while read -r name; do
   proj=$(docker inspect "$name" --format '{{index .Config.Labels "com.docker.compose.project"}}')
-  if [ "$proj" != "klai-core" ]; then
-    emit_event "orphan_no_compose_label" "warning" "$name" \
+  managed_by=$(docker inspect "$name" --format '{{index .Config.Labels "klai.managed_by"}}')
+  adhoc=$(docker inspect "$name" --format '{{index .Config.Labels "klai.adhoc"}}')
+  if [ "$proj" != "klai-core" ] && [ "$managed_by" != "portal-api-provisioning" ] && [ -z "$adhoc" ]; then
+    emit_event "orphan_no_managed_label" "warning" "$name" \
       "{\"image\":\"$(docker inspect "$name" --format '{{.Config.Image}}')\"}"
   fi
 done

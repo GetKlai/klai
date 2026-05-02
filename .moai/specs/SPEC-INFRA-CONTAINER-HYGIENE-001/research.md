@@ -384,3 +384,89 @@ Workflow bestaat al, audit alleen nu volume-mounts (`audit-compose-volumes.sh`).
 REQ-2 breidt 'm uit met een `audit-compose-orphans.sh` check, gekoppeld
 aan dezelfde workflow-trigger. Pattern volgt bestaande
 `test-audit-compose.sh` regression-test conventie.
+
+## 13. Tenant-provisioning architectuur (v0.3.0 herziening)
+
+Tijdens v0.2.0 review wees de gebruiker erop dat ik een fundamentele
+laag van de architectuur over het hoofd zag: tenant-LibreChats worden
+NIET via compose beheerd, maar dynamisch door portal-api aangemaakt.
+
+**Bewijs uit de codebase:**
+
+`klai-portal/backend/app/services/provisioning/infrastructure.py`,
+functie `_start_librechat_container` (regel ~231-280):
+
+```python
+client = docker.from_env()
+container_name = f"librechat-{slug}"
+# ...
+client.containers.run(
+    image=settings.librechat_image,
+    name=container_name,
+    detach=True,
+    restart_policy={"Name": "unless-stopped"},
+    volumes={...},
+    network="klai-net",
+)
+# + connect to klai-net-mongodb, meilisearch, redis
+```
+
+Deze container krijgt:
+- Een herkenbare naam (`librechat-<slug>`)
+- Volume-mounts naar tenant-specifieke configs
+- Connectie aan vier networks
+- **GEEN labels** — niet compose-project (logisch, niet
+  compose-managed) en niet `klai.managed_by` (niet voorzien)
+
+Het orchestrator-niveau (`provisioning/orchestrator.py::provision_tenant`)
+roept dit aan als FastAPI BackgroundTask na signup (regel 204).
+Deprovisioning gaat via `_sync_remove_container(f"librechat-{slug}")`
+(regel 141).
+
+**Klassen prod-containers in klai per 2026-05-02:**
+
+| Klasse | Beheer-pad | Label v0.2.0 | Label v0.3.0 |
+|---|---|---|---|
+| A: compose-managed | `docker compose up` | `com.docker.compose.project=klai-core` | identiek |
+| B: provisioning-managed | portal-api `containers.run()` | (geen) | `klai.managed_by=portal-api-provisioning` + `klai.tenant_slug=<slug>` + `klai.kind=librechat` |
+| Ad-hoc debug (REQ-7) | `docker run --rm` | `klai.adhoc=*` | identiek |
+
+**Impact op SPEC v0.3.0:**
+
+REQ-2 v0.2.0 ("alles via compose") was technisch fout — klasse B
+bestaat by design. REQ-2 v0.3.0 herzien naar 5-regel code-patch in
+`_start_librechat_container`:
+
+```python
+client.containers.run(
+    ...,
+    labels={
+        "klai.managed_by": "portal-api-provisioning",
+        "klai.tenant_slug": slug,
+        "klai.kind": "librechat",
+    },
+)
+```
+
+Audit-tooling (REQ-1 hook, REQ-5 audit, REQ-2c CI-guard, REQ-2d
+post-deploy snapshot) checkt UNION van klasse-A én klasse-B labels.
+librechat-voys backfill via container recreate (Docker labels zijn
+immutable). librechat-getklai blijft klasse A — geen klasse-B nodig.
+
+**Waarom dit incident hier ontstond:**
+
+Mijn cleanup-actie van 2026-05-02 zocht naar containers zonder
+compose-project label en kwalificeerde librechat-voys daar onder.
+De impliciete aanname "geen compose label = wees" was onjuist —
+librechat-voys was provisioning-managed, een legitieme klasse die op
+dat moment geen herkenbaar label droeg. Het "geen Caddy upstream"
+signaal was óók verwarrend: portal-api configureert Caddy bij
+provisioning, maar de exacte timing tussen tenant-provisioning,
+Caddy-config-update, en DNS-propagatie is geen garantie. Een
+container die deze stap nog niet heeft gehaald (of waar Caddy
+sindsdien is gerestart) heeft tijdelijk geen upstream. Geen wees.
+
+**Lesson voor de SPEC:** vóór een aanname als "alles via X is
+canonical" expliciet de codebase rondom `containers.run` / orchestrator
+analyseren. Dit had ik in v0.1.0 / v0.2.0 niet gedaan; v0.3.0
+corrigeert het.
