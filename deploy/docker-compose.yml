@@ -231,7 +231,14 @@ services:
       KNOWLEDGE_RETRIEVE_TIMEOUT: "60.0"
       KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
       PORTAL_API_URL: http://portal-api:8010
+      # Two DIFFERENT secrets — one per receiver. portal-api validates the first
+      # (entitlement check + templates fetch) against PORTAL_API_INTERNAL_SECRET;
+      # retrieval-api validates the second (/retrieve call) against its own
+      # INTERNAL_SECRET env var (sourced from RETRIEVAL_API_INTERNAL_SECRET in
+      # SOPS). Until 2026-05-02 the hook used PORTAL_INTERNAL_SECRET for both,
+      # which 401'd retrieve calls every time the two secrets diverged.
       PORTAL_INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
+      RETRIEVAL_INTERNAL_SECRET: ${RETRIEVAL_API_INTERNAL_SECRET}
       # SPEC-SEC-SERVICE-AUTH-001 Phase C-1: Zitadel client_credentials env
       # vars for the LiteLLM hook → retrieval-api JWT path. All three must
       # be SOPS-encrypted in klai-infra/core-01/.env.sops BEFORE the new
