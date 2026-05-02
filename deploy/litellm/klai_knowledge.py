@@ -31,7 +31,21 @@ KNOWLEDGE_RETRIEVE_URL = os.getenv("KNOWLEDGE_RETRIEVE_URL")
 if not KNOWLEDGE_RETRIEVE_URL:
     raise RuntimeError("KNOWLEDGE_RETRIEVE_URL is not set")
 PORTAL_API_URL = os.getenv("PORTAL_API_URL", "http://portal-api:8000")
+
+# PORTAL_INTERNAL_SECRET authenticates calls to portal-api (entitlement check
+# at /internal/v1/kb/feature, template fetch at /internal/templates/effective).
+# Maps to PORTAL_API_INTERNAL_SECRET in SOPS / portal-api validates with that.
 PORTAL_INTERNAL_SECRET = os.getenv("PORTAL_INTERNAL_SECRET", "")
+
+# RETRIEVAL_INTERNAL_SECRET authenticates the /retrieve call on retrieval-api.
+# retrieval-api validates against its own INTERNAL_SECRET env var (mapped from
+# RETRIEVAL_API_INTERNAL_SECRET in SOPS) — a DIFFERENT secret from portal-api's.
+# When unset (e.g. older deploys), falls back to PORTAL_INTERNAL_SECRET so the
+# hook keeps shipping headers, but in production both secrets must be set or
+# the legacy auth path on /retrieve 401s with `invalid_internal_secret`.
+RETRIEVAL_INTERNAL_SECRET = (
+    os.getenv("RETRIEVAL_INTERNAL_SECRET", "") or PORTAL_INTERNAL_SECRET
+)
 
 # SPEC-SEC-SERVICE-AUTH-001 Phase C-1: Zitadel client_credentials JWT auth
 # replaces the shared X-Internal-Secret. The token client is constructed lazily
@@ -122,9 +136,17 @@ async def _retrieve_jwt_headers() -> dict[str, str] | None:
 
 
 def _retrieve_legacy_headers() -> dict[str, str]:
-    """Legacy X-Internal-Secret header set; empty when not configured."""
-    if PORTAL_INTERNAL_SECRET:
-        return {"X-Internal-Secret": PORTAL_INTERNAL_SECRET}
+    """Legacy X-Internal-Secret header set for the /retrieve call.
+
+    Uses RETRIEVAL_INTERNAL_SECRET (which falls back to PORTAL_INTERNAL_SECRET
+    when unset). retrieval-api validates against its own INTERNAL_SECRET env
+    var which is sourced from RETRIEVAL_API_INTERNAL_SECRET in SOPS — that is
+    a DIFFERENT secret from portal-api's. Sending portal-api's secret here is
+    the bug that historically caused `invalid_internal_secret` rejections on
+    every retrieve call when the two secrets diverged.
+    """
+    if RETRIEVAL_INTERNAL_SECRET:
+        return {"X-Internal-Secret": RETRIEVAL_INTERNAL_SECRET}
     return {}
 
 
