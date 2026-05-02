@@ -44,6 +44,7 @@ def _load_hook(monkeypatch, extra_env=None):
     """Import and reload klai_knowledge with the given env vars."""
     env = {
         "PORTAL_INTERNAL_SECRET": "test-portal-secret",
+        "RETRIEVAL_INTERNAL_SECRET": "test-retrieval-secret",
         "KNOWLEDGE_RETRIEVE_URL": "http://retrieval-api:8040/retrieve",
         "PORTAL_API_URL": "http://portal-api:8000",
     }
@@ -155,7 +156,7 @@ class TestKlaiKnowledgeHookLegacy:
 
             post_call = mc.post.call_args
             headers = post_call.kwargs.get("headers") or {}
-            assert headers.get("X-Internal-Secret") == "test-portal-secret"
+            assert headers.get("X-Internal-Secret") == "test-retrieval-secret"
 
     @pytest.mark.asyncio
     async def test_no_secret_no_header(self, monkeypatch):
@@ -259,7 +260,7 @@ class TestKlaiKnowledgeHookDualAuth:
 
             assert mc.post.call_count == 1
             headers = mc.post.call_args.kwargs.get("headers") or {}
-            assert headers.get("X-Internal-Secret") == "test-portal-secret"
+            assert headers.get("X-Internal-Secret") == "test-retrieval-secret"
             assert "Authorization" not in headers
 
     @pytest.mark.asyncio
@@ -293,7 +294,7 @@ class TestKlaiKnowledgeHookDualAuth:
             first_headers = mc.post.call_args_list[0].kwargs.get("headers") or {}
             second_headers = mc.post.call_args_list[1].kwargs.get("headers") or {}
             assert first_headers.get("Authorization") == "Bearer fake.jwt.token"
-            assert second_headers.get("X-Internal-Secret") == "test-portal-secret"
+            assert second_headers.get("X-Internal-Secret") == "test-retrieval-secret"
             assert "Authorization" not in second_headers
 
     @pytest.mark.asyncio
@@ -350,7 +351,7 @@ class TestKlaiKnowledgeHookDualAuth:
 
             assert mc.post.call_count == 1
             headers = mc.post.call_args.kwargs.get("headers") or {}
-            assert headers.get("X-Internal-Secret") == "test-portal-secret"
+            assert headers.get("X-Internal-Secret") == "test-retrieval-secret"
             assert "Authorization" not in headers
 
 
