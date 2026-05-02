@@ -1,0 +1,14 @@
+[Unit]
+Description=Run klai orphan-audit weekly on Sunday at 03:00 local time
+Documentation=file:///opt/klai/.claude/rules/klai/infra/container-hygiene.md
+
+[Timer]
+OnCalendar=Sun *-*-* 03:00
+# Run on next boot if missed
+Persistent=true
+# Random delay up to 10 min
+RandomizedDelaySec=600
+Unit=orphan-audit.service
+
+[Install]
+WantedBy=timers.target

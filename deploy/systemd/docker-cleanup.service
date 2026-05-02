@@ -1,0 +1,27 @@
+[Unit]
+Description=Klai Docker safe-only cleanup (dangling images, exited containers, unused networks, build cache)
+Documentation=file:///opt/klai/.claude/rules/klai/infra/container-hygiene.md
+After=docker.service
+Requires=docker.service
+
+# SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-6.
+#
+# Safe-only: NEVER add `docker volume prune` here (klantdata-risico) or
+# `docker image prune -af` (rolt VERSIONS.md `:latest` rollback-buffer
+# weg via :sha tags). The PreToolUse hook in klai checkout also blocks
+# these patterns at the agent layer (REQ-1).
+
+[Service]
+Type=oneshot
+# Dangling images (untagged, unreferenced) — 100% safe
+ExecStart=/usr/bin/docker image prune -f
+# Exited containers older than 24h — 24h rollback-buffer voor debug
+ExecStart=/usr/bin/docker container prune -f --filter until=24h
+# Unused networks — geen container houdt referentie
+ExecStart=/usr/bin/docker network prune -f
+# Build cache older than 72h — 3 dagen rollback-buffer voor build issues
+ExecStart=/usr/bin/docker builder prune -f --filter until=72h
+
+# Capture exit & log via journalctl
+StandardOutput=journal
+StandardError=journal
