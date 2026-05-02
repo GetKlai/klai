@@ -110,29 +110,31 @@ is_compose_service() {
 # ─── Check 1: Caddy upstreams resolve to compose-services or klasse-B ────────
 
 if [[ -f "$CADDYFILE" ]]; then
-    # Extract `reverse_proxy <host>[:<port>]` and `proxy <host>` patterns.
-    # Strip protocol prefixes; keep the hostname (first token before `:`).
+    # Caddy `reverse_proxy [@matcher] <upstream> [<upstream>...]` accepts
+    # an optional named matcher as first arg. Skip @-prefixed tokens and
+    # flags so we only collect actual upstream hosts.
     mapfile -t UPSTREAMS < <(
         grep -hE '^\s*(reverse_proxy|proxy)\s+' "$CADDYFILE" \
-        | awk '{for(i=2;i<=NF;i++) print $i}' \
-        | grep -vE '^(http|https)://' \
-        | grep -vE '^\{' \
-        | sed -E 's/:.*$//' \
-        | sed -E 's|/.*$||' \
-        | sort -u \
-        | grep -vE '^$'
+        | awk '{
+            for (i=2; i<=NF; i++) {
+                t = $i
+                if (t ~ /^@/) continue       # named matcher
+                if (t ~ /^-/) continue       # flag
+                if (t ~ /^\{/) continue      # caddy placeholder
+                sub(/^https?:\/\//, "", t)   # strip scheme
+                sub(/\/.*$/, "", t)          # strip path
+                sub(/:.*$/, "", t)           # strip port
+                if (length(t) > 0) print t
+            }
+        }' \
+        | sort -u
     )
 
     for host in "${UPSTREAMS[@]}"; do
-        if is_compose_service "$host"; then
-            continue
-        fi
-        if is_klasse_b_pattern "$host"; then
-            continue
-        fi
-        if is_whitelisted "$host"; then
-            continue
-        fi
+        [[ -z "$host" ]] && continue
+        if is_compose_service "$host"; then continue; fi
+        if is_klasse_b_pattern "$host"; then continue; fi
+        if is_whitelisted "$host"; then continue; fi
         echo "VIOLATION (Check 1): Caddy upstream '$host' is neither a compose service, a klasse-B provisioning pattern, nor whitelisted." >&2
         echo "  Source: $CADDYFILE" >&2
         echo "  Either declare '$host' as a service in deploy/docker-compose.yml, add a klasse-B pattern, or add to CADDY_WHITELIST." >&2

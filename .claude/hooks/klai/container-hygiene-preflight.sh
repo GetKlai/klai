@@ -92,58 +92,73 @@ if echo "$COMMAND" | grep -qE 'docker\s+compose\s+down\s+(-v|--volumes)'; then
     emit_block "docker compose down --volumes — destroys named volumes. Stop containers without -v, then targeted volume rm if needed."
 fi
 
-# ─── Targeted destructive operations: extract target ──────────────────────────
+# ─── Targeted destructive operations: extract ALL targets ────────────────────
+# `docker rm a b c` removes three containers. Extract every argument that
+# follows the verb (skipping flags) so a tenant-named container in position
+# 2/3/N is also blocked, not just the first.
 
-TARGET=""
+TARGETS=()
 OPERATION=""
 
-# docker rm <name|id> [more]
-if [[ "$COMMAND" =~ docker[[:space:]]+rm[[:space:]]+(-f[[:space:]]+)?([a-zA-Z0-9_.-]+) ]]; then
-    TARGET="${BASH_REMATCH[2]}"
+extract_args_after() {
+    # Strip leading whitespace + verb, then split by whitespace, dropping flags.
+    local rest="$1"
+    # Take everything after the verb; remove `--flag` and `-x` tokens
+    awk '{
+        for (i=1; i<=NF; i++) {
+            if ($i ~ /^-/) continue
+            print $i
+        }
+    }' <<< "$rest"
+}
+
+if [[ "$COMMAND" =~ docker[[:space:]]+rm[[:space:]]+(.*)$ ]]; then
     OPERATION="container removal"
-fi
-# docker rmi <name|sha> [more]
-if [[ -z "$TARGET" ]] && [[ "$COMMAND" =~ docker[[:space:]]+rmi[[:space:]]+(-f[[:space:]]+)?([a-zA-Z0-9_./:-]+) ]]; then
-    TARGET="${BASH_REMATCH[2]}"
+    while IFS= read -r tgt; do
+        [[ -n "$tgt" ]] && TARGETS+=("$tgt")
+    done < <(extract_args_after "${BASH_REMATCH[1]}")
+elif [[ "$COMMAND" =~ docker[[:space:]]+rmi[[:space:]]+(.*)$ ]]; then
     OPERATION="image removal"
-fi
-# docker volume rm <name>
-if [[ -z "$TARGET" ]] && [[ "$COMMAND" =~ docker[[:space:]]+volume[[:space:]]+rm[[:space:]]+([a-zA-Z0-9_.-]+) ]]; then
-    TARGET="${BASH_REMATCH[1]}"
+    while IFS= read -r tgt; do
+        [[ -n "$tgt" ]] && TARGETS+=("$tgt")
+    done < <(extract_args_after "${BASH_REMATCH[1]}")
+elif [[ "$COMMAND" =~ docker[[:space:]]+volume[[:space:]]+rm[[:space:]]+(.*)$ ]]; then
     OPERATION="volume removal"
+    while IFS= read -r tgt; do
+        [[ -n "$tgt" ]] && TARGETS+=("$tgt")
+    done < <(extract_args_after "${BASH_REMATCH[1]}")
 fi
 
 # Nothing matched a destructive operation we know — allow
-if [[ -z "$TARGET" ]]; then
+if [[ ${#TARGETS[@]} -eq 0 ]]; then
     exit 0
 fi
 
-# ─── Check 2: tenant-naam pattern (always-on, lokaal) ─────────────────────────
-# A name ending in -voys, -getklai, or -<word>-tenant is a strong signal of a
-# customer-/tenant-specific container. Removing without explicit confirmation
-# is exactly the librechat-voys mistake.
-
-if [[ "$TARGET" =~ -voys$|-getklai$|-[a-z]+-tenant$ ]] || [[ "$TARGET" =~ ^librechat- ]]; then
-    emit_block "$TARGET matches a tenant-managed naming pattern ($OPERATION). If this is a portal-api-provisioning-managed tenant container (klasse B, see SPEC REQ-2), use the deprovision flow instead: portal-api orchestrator.deprovision_tenant() — never delete directly via 'docker rm'. If this is a different match, verify customer impact and override with explicit user approval."
-fi
-
-# ─── Check 3: compose git-history (best-effort, lokaal) ───────────────────────
-# If a klai-infra checkout exists alongside this repo, search its compose
-# history for the target. Appearance in history = was a declared service at
-# some point = needs human review before removal.
-
-KLAI_INFRA_CANDIDATES=(
-    "$CLAUDE_PROJECT_DIR/../klai-infra"
-    "$CLAUDE_PROJECT_DIR/../../klai-infra"
-    "/opt/klai-infra"
-)
-for candidate in "${KLAI_INFRA_CANDIDATES[@]}"; do
+# Locate klai-infra checkout once; reuse across targets
+KLAI_INFRA=""
+for candidate in \
+    "$CLAUDE_PROJECT_DIR/../klai-infra" \
+    "$CLAUDE_PROJECT_DIR/../../klai-infra" \
+    "$CLAUDE_PROJECT_DIR/klai-infra" \
+    "/opt/klai-infra"; do
     if [[ -d "$candidate/.git" ]]; then
-        # 2s timeout — git log on a small repo is fast; bail if anything weird
-        if timeout 2 git -C "$candidate" log --all -p -- 'deploy/docker-compose*.yml' 2>/dev/null | grep -qE "container_name:[[:space:]]*$TARGET\b|^[[:space:]]+$TARGET:[[:space:]]*$" ; then
+        KLAI_INFRA="$candidate"
+        break
+    fi
+done
+
+# Iterate over every target; first hard-match wins (block immediately).
+for TARGET in "${TARGETS[@]}"; do
+    # Check 2: tenant-naam / klasse-B prefix pattern
+    if [[ "$TARGET" =~ -voys$|-getklai$|-[a-z]+-tenant$ ]] || [[ "$TARGET" =~ ^librechat- ]]; then
+        emit_block "$TARGET matches a tenant-managed naming pattern ($OPERATION). If this is a portal-api-provisioning-managed tenant container (klasse B, see SPEC REQ-2), use the deprovision flow instead: portal-api orchestrator.deprovision_tenant() — never delete directly via 'docker rm'. If this is a different match, verify customer impact and override with explicit user approval."
+    fi
+
+    # Check 3: compose git-history (best-effort)
+    if [[ -n "$KLAI_INFRA" ]]; then
+        if timeout 2 git -C "$KLAI_INFRA" log --all -p -- 'deploy/docker-compose*.yml' 2>/dev/null | grep -qE "container_name:[[:space:]]*$TARGET\b|^[[:space:]]+$TARGET:[[:space:]]*$" ; then
             emit_block "$TARGET previously appeared as a service in klai-infra/deploy/docker-compose*.yml history. Verify why it was removed before deleting the runtime artifact."
         fi
-        break
     fi
 done
 

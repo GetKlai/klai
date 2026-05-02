@@ -1,6 +1,7 @@
 [Unit]
 Description=Klai Docker safe-only cleanup (dangling images, exited containers, unused networks, build cache)
-Documentation=file:///opt/klai/.claude/rules/klai/infra/container-hygiene.md
+Documentation=https://github.com/GetKlai/klai/blob/main/.claude/rules/klai/infra/container-hygiene.md
+Documentation=https://github.com/GetKlai/klai/blob/main/.moai/specs/SPEC-INFRA-CONTAINER-HYGIENE-001/spec.md
 After=docker.service
 Requires=docker.service
 

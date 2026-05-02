@@ -1,6 +1,6 @@
 [Unit]
 Description=Run klai orphan-audit weekly on Sunday at 03:00 local time
-Documentation=file:///opt/klai/.claude/rules/klai/infra/container-hygiene.md
+Documentation=https://github.com/GetKlai/klai/blob/main/.claude/rules/klai/infra/container-hygiene.md
 
 [Timer]
 OnCalendar=Sun *-*-* 03:00

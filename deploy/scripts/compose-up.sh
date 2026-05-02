@@ -27,6 +27,13 @@
 
 set -euo pipefail
 
+# Pre-flight: refuse to run if /opt/klai is missing or compose-file absent.
+# Better a fail-fast with a clear error than a silent partial deploy.
+if [[ ! -f /opt/klai/docker-compose.yml ]]; then
+    echo "ERROR: /opt/klai/docker-compose.yml not found — was deploy-compose.yml run?" >&2
+    exit 2
+fi
+
 cd /opt/klai
 
 NO_DEPS_FLAG=""

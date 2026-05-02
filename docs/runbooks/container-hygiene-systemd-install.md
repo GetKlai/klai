@@ -14,6 +14,18 @@
 - `deploy/scripts/*.sh` are at `/opt/klai/scripts/*.sh` (same workflow)
 - SSH access to core-01 with sudo
 
+## Race-condition note (fresh-server setup)
+
+On a brand-new server, `deploy-compose.yml` MUST run BEFORE any
+service-specific deploy workflow (`portal-api.yml`, `docs.yml`, etc.)
+because the latter call `/opt/klai/scripts/compose-up.sh` which is
+synced by the former. On an existing server with the scripts already
+present, ordering does not matter — pulls happen idempotently.
+
+If you ever clone klai onto a new host, run the deploy-compose.yml
+workflow first (or sync the scripts manually with the install commands
+below) before triggering any other deploy.
+
 ## Install
 
 ```bash
