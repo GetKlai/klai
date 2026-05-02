@@ -39,9 +39,14 @@ import datetime as _dt
 from typing import Any
 
 import httpx
-import structlog
 
-logger = structlog.get_logger()
+# Vendored copy: the canonical klai-libs/service-auth uses structlog, but the
+# stock LiteLLM container does not bundle structlog. Stdlib logging keeps the
+# vendored copy zero-dep — drift test verifies behavioural equivalence, not
+# logging library identity.
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class ServiceAuthError(Exception):
@@ -120,13 +125,13 @@ class ZitadelTokenClient:
         """
         cached = self._cache
         if cached is not None and self._is_fresh(cached[1]):
-            logger.debug("service_auth_token_cache_hit", client_id=self._client_id)
+            logger.debug("service_auth_token_cache_hit client_id=%s", self._client_id)
             return cached[0]
 
         async with self._lock:
             cached = self._cache
             if cached is not None and self._is_fresh(cached[1]):
-                logger.debug("service_auth_token_cache_hit", client_id=self._client_id)
+                logger.debug("service_auth_token_cache_hit client_id=%s", self._client_id)
                 return cached[0]
 
             token, expires_at = await self._mint_token()
@@ -152,22 +157,22 @@ class ZitadelTokenClient:
                 )
         except httpx.HTTPError as exc:
             logger.warning(
-                "service_auth_token_mint_failed",
-                client_id=self._client_id,
-                token_url=self._token_url,
-                reason="http_error",
-                error=str(exc),
+                "service_auth_token_mint_failed client_id=%s token_url=%s "
+                "reason=http_error error=%s",
+                self._client_id,
+                self._token_url,
+                exc,
             )
             raise ServiceAuthError(f"token mint network error: {exc}") from exc
 
         if resp.status_code != 200:
             body_excerpt = resp.text[:500] if resp.text else ""
             logger.warning(
-                "service_auth_token_mint_failed",
-                client_id=self._client_id,
-                status_code=resp.status_code,
-                reason="non_2xx",
-                body_excerpt=body_excerpt,
+                "service_auth_token_mint_failed client_id=%s status_code=%d "
+                "reason=non_2xx body_excerpt=%s",
+                self._client_id,
+                resp.status_code,
+                body_excerpt,
             )
             raise ServiceAuthError(f"token mint rejected by IdP: {resp.status_code} {body_excerpt}")
 
@@ -175,29 +180,29 @@ class ZitadelTokenClient:
             payload: dict[str, Any] = resp.json()
         except ValueError as exc:
             logger.warning(
-                "service_auth_token_mint_failed",
-                client_id=self._client_id,
-                reason="malformed_json",
-                error=str(exc),
+                "service_auth_token_mint_failed client_id=%s reason=malformed_json "
+                "error=%s",
+                self._client_id,
+                exc,
             )
             raise ServiceAuthError(f"token endpoint returned non-JSON: {exc}") from exc
 
         access_token = payload.get("access_token")
         if not access_token or not isinstance(access_token, str):
             logger.warning(
-                "service_auth_token_mint_failed",
-                client_id=self._client_id,
-                reason="missing_access_token",
+                "service_auth_token_mint_failed client_id=%s "
+                "reason=missing_access_token",
+                self._client_id,
             )
             raise ServiceAuthError("token response missing access_token")
 
         expires_in = payload.get("expires_in")
         if not isinstance(expires_in, int) or expires_in < _MIN_TTL_SECONDS:
             logger.warning(
-                "service_auth_token_mint_failed",
-                client_id=self._client_id,
-                reason="invalid_expires_in",
-                expires_in=expires_in,
+                "service_auth_token_mint_failed client_id=%s "
+                "reason=invalid_expires_in expires_in=%r",
+                self._client_id,
+                expires_in,
             )
             raise ServiceAuthError(f"token response has invalid expires_in: {expires_in!r}")
 
@@ -205,9 +210,9 @@ class ZitadelTokenClient:
             seconds=int(expires_in * _REFRESH_FRACTION)
         )
         logger.info(
-            "service_auth_token_minted",
-            client_id=self._client_id,
-            expires_in=expires_in,
-            refresh_at=refresh_at.isoformat(),
+            "service_auth_token_minted client_id=%s expires_in=%d refresh_at=%s",
+            self._client_id,
+            expires_in,
+            refresh_at.isoformat(),
         )
         return access_token, refresh_at
