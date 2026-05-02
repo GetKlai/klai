@@ -516,6 +516,79 @@ adding the shared `klai-log-utils` path-dep silently broke its build.
   (`docker build -f <service>/Dockerfile .`) BEFORE pushing — the
   CI feedback loop is 3-5 min per attempt.
 
+## container-cleanup-without-preflight (HIGH)
+When you face a "wees-uitziende" container — no
+`com.docker.compose.project` label, no Caddy upstream, untagged image —
+do NOT treat the absence of those signals as a verdict to delete. Klai
+has TWO legitimate classes of prod containers:
+
+- **Klasse A — compose-managed:** `com.docker.compose.project=klai-core` label
+- **Klasse B — provisioning-managed:** `klai.managed_by=portal-api-provisioning`
+  + `klai.tenant_slug=<slug>` + `klai.kind=<type>` (gezet door
+  `_start_librechat_container` per SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-2a)
+
+A container without ANY of these labels AND without a `klai.adhoc=*`
+opt-in is a candidate wees, but verify before deleting.
+
+The librechat-voys incident (2026-05-02) is the canonical case. The
+production Voys-tenant chat container was klasse B (provisioning-managed
+by portal-api) but at the time the labels did not yet exist as a
+convention. The cleanup-agent (me) checked only for klasse-A label,
+saw none, also saw no current Caddy upstream, and concluded "wees".
+Wrong on both counts: the container was legitimate; Caddy upstream
+absence had a different cause (timing of provisioning vs. caddy
+reload). Recovery succeeded only because `/opt/klai/librechat/voys/`
+(env-file + librechat.yaml) survived; the original image SHA
+(untagged, never registered) was permanently lost.
+
+**Why this is a HIGH-class trap:** the signals that look like "orphan"
+are exactly the signals you'd expect from a legitimate
+production-relevant container managed via a non-compose pathway.
+"No compose label" correlates with rommel for klasse-A containers,
+NOT for klasse-B (provisioning-managed) containers. Tenant-specific
+names (`librechat-*`, `-voys`, `-getklai`, `-<klant>`) flip the prior:
+those are almost never test fixtures.
+
+**Tenant-deprovisioning is NOT just `docker rm`.** A klasse-B
+container belongs to a tenant whose Mongo user, Meilisearch index,
+Caddy upstream, and Redis cache need cleanup too. Use the portal-api
+deprovision flow (`provisioning/orchestrator.py::deprovision_tenant`)
+— never `docker rm` a `librechat-<slug>` directly.
+
+**Prevention (mechanical, not narrative):**
+
+1. Hook `.claude/hooks/klai/container-hygiene-preflight.sh` blocks
+   `docker rm`/`rmi`/`volume rm`/`system prune`/`compose down --volumes`
+   on any target matching tenant-naam patterns or appearing in
+   `klai-infra/deploy/docker-compose*.yml` history. Registered as
+   PreToolUse in `.claude/settings.json` alongside
+   `portal-api-preflight.sh`. SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-1.
+
+2. Hook hard-blocks `docker volume prune`, `docker image prune -af`,
+   `docker system prune -a`, `docker compose down --volumes`. Use
+   targeted `volume rm` after manual review or the systemd
+   `docker-cleanup.timer` (SPEC REQ-6) for safe daily prune.
+
+3. Weekly `klai-orphan-audit` (SPEC REQ-5) emits structlog events to
+   VictoriaLogs (`service:klai-orphan-audit`); cleanup-agents query
+   the stream BEFORE deciding via VictoriaLogs MCP. Caddy upstream
+   without container, container with tenant-naam without Caddy
+   upstream, untagged images >30d — all flagged for human review,
+   never auto-removed.
+
+4. Ad-hoc debug runs MUST use
+   `docker run --rm --label klai.adhoc=YYYY-MM-DD-reason --label klai.owner=<email>`
+   so they self-clean and appear in a separate "ad-hoc" audit
+   section, not in the "wees" section.
+
+**Why mechanical not narrative.** An AI is the primary code- and
+deploy-actor in this codebase. A markdown rule that "agents should
+read first" is a gap that re-opens with every context truncation,
+prompt variation, or new agent. The hook is the only enforcement that
+survives all those failure modes. The narrative rule
+`.claude/rules/klai/infra/container-hygiene.md` exists for human
+review and override-path documentation, not as the primary guard.
+
 ## parallel-spec-on-overlapping-log-sites (MED)
 When two SPECs land on the same call sites in the same file, the rebase
 or merge produces large, repetitive conflicts. SPEC-SEC-INTERNAL-001

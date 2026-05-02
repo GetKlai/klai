@@ -90,7 +90,8 @@ jobs:
             source /opt/klai/.env
             echo "$GHCR_READ_PAT" | docker login ghcr.io -u mvletter --password-stdin
             docker pull ghcr.io/getklai/knowledge-ingest:latest
-            cd /opt/klai && docker compose up -d knowledge-ingest
+            # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3
+            /opt/klai/scripts/compose-up.sh knowledge-ingest
 
   scan:
     needs: build-push

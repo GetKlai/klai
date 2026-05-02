@@ -253,11 +253,25 @@ def _start_librechat_container(
     tenant_yaml_dir.mkdir(parents=True, exist_ok=True)
     (tenant_yaml_dir / "librechat.yaml").write_text(tenant_yaml_content)
 
+    # @MX:ANCHOR provisioning-labels — SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-2.
+    # These three labels mark the container as klasse-B (provisioning-managed)
+    # so that hooks (.claude/hooks/klai/container-hygiene-preflight.sh) and
+    # the weekly orphan-audit recognise it as a legitimate prod container,
+    # NOT as a wees-container without compose-label. Removing or renaming
+    # these breaks the hygiene-detection layer; treat as part of the
+    # tenant-provisioning contract. See container-hygiene.md.
+    container_labels = {
+        "klai.managed_by": "portal-api-provisioning",
+        "klai.tenant_slug": slug,
+        "klai.kind": "librechat",
+    }
+
     client.containers.run(  # type: ignore[call-overload]  # nosemgrep: docker-arbitrary-container-run
         image=settings.librechat_image,
         name=container_name,
         detach=True,
         restart_policy={"Name": "unless-stopped"},  # type: ignore[arg-type]
+        labels=container_labels,
         volumes={
             env_file_host_path: {"bind": "/app/.env", "mode": "ro"},
             f"{librechat_host_base}/{slug}/librechat.yaml": {"bind": "/app/librechat.yaml", "mode": "ro"},

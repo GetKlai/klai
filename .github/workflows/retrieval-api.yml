@@ -83,7 +83,8 @@ jobs:
             echo "$GHCR_READ_PAT" | docker login ghcr.io -u mvletter --password-stdin
             docker pull ghcr.io/getklai/retrieval-api:latest
             docker tag ghcr.io/getklai/retrieval-api:latest klai/retrieval-api:local
-            cd /opt/klai && docker compose up -d retrieval-api
+            # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3
+            /opt/klai/scripts/compose-up.sh retrieval-api
 
   scan:
     needs: build-push
