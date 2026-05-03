@@ -12,6 +12,7 @@ denies `/exec/*/start` by design, and even if we flipped the allow-bit it
 would hand any tenant-provisioning bug a shell on the host.
 """
 
+import asyncio
 import time
 from pathlib import Path
 
@@ -29,6 +30,15 @@ logger = structlog.get_logger()
 # MongoDB error code for "user not found" (raised by dropUser when the target
 # user does not exist). Non-fatal for idempotent drop.
 _MONGO_USER_NOT_FOUND = 11
+
+# Process-wide lock that serialises Caddy file writes + container restarts.
+# Both `provision_tenant` (orchestrator.py) and `deprovision_tenant`
+# (deprovisioning_orchestrator.py + deprovisioning_steps.py) acquire this
+# lock around `_write_tenant_caddyfile` / file-unlink + `_reload_caddy`.
+# Defined here (next to _reload_caddy) so a single import path works for
+# both code paths and accidental "two locks, both serialise nothing" is
+# impossible. See SPEC-INFRA-TENANT-DELETE-001 R11.
+_caddy_lock: asyncio.Lock = asyncio.Lock()
 
 
 def _redis_sync_client() -> redis.Redis:
@@ -69,6 +79,21 @@ def _sync_remove_container(name: str) -> None:
         c.remove(force=True)
     except docker.errors.NotFound:  # type: ignore[attr-defined]
         pass
+
+
+def _sync_drop_mongodb_tenant_database(slug: str) -> None:
+    """Drop the MongoDB database for a tenant (sync, for use with run_in_executor).
+
+    Idempotent: dropping a non-existent database is a no-op in MongoDB —
+    the server returns ok:1 even when the database does not exist.
+
+    # @MX:NOTE: idempotent — al-weg = geen exception. SPEC-INFRA-TENANT-DELETE-001 R3.
+    """
+    db_name = f"librechat-{slug}"
+    with _mongo_admin_client() as client:
+        # MongoDB dropDatabase on a missing DB returns ok:1, no error raised.
+        client.drop_database(db_name)
+        logger.info("mongodb_tenant_database_dropped", slug=slug, db=db_name)
 
 
 def _sync_drop_mongodb_tenant_user(slug: str) -> None:

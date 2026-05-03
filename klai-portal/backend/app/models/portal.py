@@ -59,6 +59,11 @@ class PortalOrg(Base):
     provisioning_status: Mapped[str] = mapped_column(
         String(32), nullable=False, default="pending", server_default="pending"
     )
+    # @MX:NOTE: SPEC-INFRA-TENANT-DELETE-001 R2 — populated by deprovisioning
+    # orchestrator on definitive step failure. Shape: {"step": <name>,
+    # "error": <truncated>, "attempt": int, "failed_at": <iso>}. NULL on every
+    # other state. Cleared by admin retry endpoint before re-running.
+    last_failure: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     mfa_policy: Mapped[Literal["optional", "recommended", "required"]] = mapped_column(
         String(16), nullable=False, default="optional", server_default="optional"
     )
