@@ -28,8 +28,16 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 async def _get_caller_org(
     credentials: HTTPAuthorizationCredentials,
     db: AsyncSession,
+    *,
+    allow_during_deprovisioning: bool = False,
 ) -> tuple[str, "PortalOrg", "PortalUser"]:
-    """Validate token, return (zitadel_user_id, PortalOrg, caller PortalUser)."""
+    """Validate token, return (zitadel_user_id, PortalOrg, caller PortalUser).
+
+    # @MX:ANCHOR: fan_in>=6 — called by every admin endpoint. SPEC-INFRA-TENANT-DELETE-001 R1
+    #   added allow_during_deprovisioning so the deprovision-status polling endpoint can
+    #   still respond while the org is being deleted. All other callers keep the default
+    #   (False) and receive 403 tenant_deleting while deprovisioning is in progress.
+    """
     try:
         info = await zitadel.get_userinfo(credentials.credentials)
     except Exception as exc:
@@ -50,6 +58,18 @@ async def _get_caller_org(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organisation not found")
 
     org, caller_user = row
+
+    # SPEC-INFRA-TENANT-DELETE-001 R1: block all admin actions while a deprovisioning
+    # sequence is running, unless the endpoint explicitly opts in (e.g. status polling).
+    if org.provisioning_status == "deprovisioning" and not allow_during_deprovisioning:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "tenant_deleting",
+                "message": "This organisation is being deleted. No further actions are permitted.",
+            },
+        )
+
     await set_tenant(db, org.id)
     return zitadel_user_id, org, caller_user
 
