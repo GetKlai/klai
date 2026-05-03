@@ -20,7 +20,7 @@
 | 10 | Frontend DeleteOrgModal + Danger Zone page | ✅ DONE | commit 248e118f |
 | 11 | Frontend status polling + tenant-deleted + 403-handler | ✅ DONE | commit 68539d97 |
 | 12 | e2e test against dev-stack (handled by /klai:auto Phase 5) | deferred | |
-| 13 | docs + runbook | pending | |
+| 13 | docs + runbook | ✅ DONE | docs/runbooks/tenant-delete.md + klai-portal/CLAUDE.md + portal-backend.md |
 
 ## Phase 2 — Audit helper (portal-api)
 
