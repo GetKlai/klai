@@ -15,6 +15,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import * as m from '@/paraglide/messages'
+import { RoleGuard } from '@/components/layout/RoleGuard'
 import { apiFetch } from '@/lib/apiFetch'
 import type { KnowledgeBase, MembersResponse } from './-kb-types'
 
@@ -30,7 +31,11 @@ interface OrgUser {
 }
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/members')({
-  component: MembersTab,
+  component: () => (
+    <RoleGuard minRole="kb_manager">
+      <MembersTab />
+    </RoleGuard>
+  ),
 })
 
 type VisibilityMode = 'public' | 'org' | 'restricted'
