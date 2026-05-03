@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _get_caller_org, _require_admin_or_group_admin_role, bearer
+from app.api.dependencies import _get_caller_org, _require_at_least, bearer
 from app.core.database import get_db
 from app.models.groups import PortalGroup
 from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase
@@ -99,7 +99,7 @@ async def list_knowledge_bases(
     db: AsyncSession = Depends(get_db),
 ) -> KBsResponse:
     _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin_or_group_admin_role(caller_user)
+    _require_at_least("kb_manager")(caller_user=caller_user)
     result = await db.execute(
         select(PortalKnowledgeBase).where(PortalKnowledgeBase.org_id == org.id).order_by(PortalKnowledgeBase.name)
     )
@@ -130,7 +130,7 @@ async def create_knowledge_base(
     db: AsyncSession = Depends(get_db),
 ) -> KBOut:
     caller_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin_or_group_admin_role(caller_user)
+    _require_at_least("kb_manager")(caller_user=caller_user)
     kb = PortalKnowledgeBase(
         org_id=org.id,
         name=body.name,
@@ -175,7 +175,7 @@ async def update_knowledge_base(
     db: AsyncSession = Depends(get_db),
 ) -> KBOut:
     _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin_or_group_admin_role(caller_user)
+    _require_at_least("kb_manager")(caller_user=caller_user)
     kb = await _get_kb_or_404(kb_id, org.id, db)
     if body.name is not None:
         kb.name = body.name
@@ -231,7 +231,7 @@ async def list_kb_groups(
     db: AsyncSession = Depends(get_db),
 ) -> KBGroupsResponse:
     _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin_or_group_admin_role(caller_user)
+    _require_at_least("kb_manager")(caller_user=caller_user)
     await _get_kb_or_404(kb_id, org.id, db)
     access_result = await db.execute(
         select(PortalGroupKBAccess, PortalGroup)
@@ -262,7 +262,7 @@ async def grant_kb_group_access(
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     caller_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin_or_group_admin_role(caller_user)
+    _require_at_least("kb_manager")(caller_user=caller_user)
     await _get_kb_or_404(kb_id, org.id, db)
     group_result = await db.execute(
         select(PortalGroup).where(
@@ -294,7 +294,7 @@ async def revoke_kb_group_access(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin_or_group_admin_role(caller_user)
+    _require_at_least("kb_manager")(caller_user=caller_user)
     await _get_kb_or_404(kb_id, org.id, db)  # Verifies KB belongs to caller's org (IDOR guard)
     result = await db.execute(
         select(PortalGroupKBAccess).where(
