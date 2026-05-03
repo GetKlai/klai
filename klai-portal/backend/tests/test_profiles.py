@@ -433,3 +433,197 @@ class TestGroupManagerGate:
         dep = _require_at_least("group_manager")
         user = _mock_user(role="admin")
         dep(caller_user=user)
+
+
+class TestProfileLimits:
+    def test_all_rungs_have_profile_limits(self):
+        from app.core.profiles import PROFILE_LADDER, PROFILE_LIMITS
+
+        for role in PROFILE_LADDER:
+            assert role in PROFILE_LIMITS
+
+    def test_personal_max_personal_kbs_is_five(self):
+        from app.core.profiles import PROFILE_LIMITS
+
+        assert PROFILE_LIMITS["personal"].max_personal_kbs_per_user == 5
+
+    def test_personal_max_items_per_kb_is_twenty(self):
+        from app.core.profiles import PROFILE_LIMITS
+
+        assert PROFILE_LIMITS["personal"].max_items_per_kb == 20
+
+    def test_personal_cannot_create_org_kbs(self):
+        from app.core.profiles import PROFILE_LIMITS
+
+        assert PROFILE_LIMITS["personal"].can_create_org_kbs is False
+
+    def test_company_max_personal_kbs_is_five(self):
+        from app.core.profiles import PROFILE_LIMITS
+
+        assert PROFILE_LIMITS["company"].max_personal_kbs_per_user == 5
+
+    def test_company_cannot_create_org_kbs(self):
+        from app.core.profiles import PROFILE_LIMITS
+
+        assert PROFILE_LIMITS["company"].can_create_org_kbs is False
+
+    def test_kb_manager_max_personal_kbs_is_unlimited(self):
+        from app.core.profiles import PROFILE_LIMITS
+
+        assert PROFILE_LIMITS["kb_manager"].max_personal_kbs_per_user is None
+
+    def test_kb_manager_max_items_is_unlimited(self):
+        from app.core.profiles import PROFILE_LIMITS
+
+        assert PROFILE_LIMITS["kb_manager"].max_items_per_kb is None
+
+    def test_kb_manager_can_create_org_kbs(self):
+        from app.core.profiles import PROFILE_LIMITS
+
+        assert PROFILE_LIMITS["kb_manager"].can_create_org_kbs is True
+
+    def test_group_manager_same_limits_as_kb_manager(self):
+        from app.core.profiles import PROFILE_LIMITS
+
+        km = PROFILE_LIMITS["kb_manager"]
+        gm = PROFILE_LIMITS["group_manager"]
+        assert gm.max_personal_kbs_per_user == km.max_personal_kbs_per_user
+        assert gm.max_items_per_kb == km.max_items_per_kb
+        assert gm.can_create_org_kbs == km.can_create_org_kbs
+
+    def test_admin_same_limits_as_kb_manager(self):
+        from app.core.profiles import PROFILE_LIMITS
+
+        km = PROFILE_LIMITS["kb_manager"]
+        ad = PROFILE_LIMITS["admin"]
+        assert ad.max_personal_kbs_per_user == km.max_personal_kbs_per_user
+        assert ad.max_items_per_kb == km.max_items_per_kb
+        assert ad.can_create_org_kbs == km.can_create_org_kbs
+
+
+class TestMinWithUnlimited:
+    def test_both_finite_returns_min(self):
+        from app.core.profiles import _min_with_unlimited
+
+        assert _min_with_unlimited(5, 10) == 5
+
+    def test_first_none_returns_second(self):
+        from app.core.profiles import _min_with_unlimited
+
+        assert _min_with_unlimited(None, 7) == 7
+
+    def test_second_none_returns_first(self):
+        from app.core.profiles import _min_with_unlimited
+
+        assert _min_with_unlimited(3, None) == 3
+
+    def test_both_none_returns_none(self):
+        from app.core.profiles import _min_with_unlimited
+
+        assert _min_with_unlimited(None, None) is None
+
+    def test_equal_values_returns_value(self):
+        from app.core.profiles import _min_with_unlimited
+
+        assert _min_with_unlimited(5, 5) == 5
+
+
+class TestEffectiveKBLimits:
+    def test_returns_kblimits_instance(self):
+        from app.core.plan_limits import KBLimits
+        from app.core.profiles import effective_kb_limits
+
+        result = effective_kb_limits("personal", "core")
+        assert isinstance(result, KBLimits)
+
+    def test_personal_core_both_agree(self):
+        from app.core.profiles import effective_kb_limits
+
+        result = effective_kb_limits("personal", "core")
+        assert result.max_personal_kbs_per_user == 5
+        assert result.max_items_per_kb == 20
+        assert result.can_create_org_kbs is False
+
+    def test_personal_complete_profile_lowers(self):
+        from app.core.profiles import effective_kb_limits
+
+        result = effective_kb_limits("personal", "complete")
+        assert result.max_personal_kbs_per_user == 5
+        assert result.max_items_per_kb == 20
+        assert result.can_create_org_kbs is False
+
+    def test_company_core_caps_at_five_twenty(self):
+        from app.core.profiles import effective_kb_limits
+
+        result = effective_kb_limits("company", "core")
+        assert result.max_personal_kbs_per_user == 5
+        assert result.max_items_per_kb == 20
+        assert result.can_create_org_kbs is False
+
+    def test_kb_manager_core_plan_lowers(self):
+        from app.core.profiles import effective_kb_limits
+
+        result = effective_kb_limits("kb_manager", "core")
+        assert result.max_personal_kbs_per_user == 5
+        assert result.max_items_per_kb == 20
+        assert result.can_create_org_kbs is False
+
+    def test_kb_manager_professional_plan_lowers(self):
+        from app.core.profiles import effective_kb_limits
+
+        result = effective_kb_limits("kb_manager", "professional")
+        assert result.max_personal_kbs_per_user == 5
+        assert result.max_items_per_kb == 20
+        assert result.can_create_org_kbs is False
+
+    def test_kb_manager_complete_unlimited(self):
+        from app.core.profiles import effective_kb_limits
+
+        result = effective_kb_limits("kb_manager", "complete")
+        assert result.max_personal_kbs_per_user is None
+        assert result.max_items_per_kb is None
+        assert result.can_create_org_kbs is True
+
+    def test_group_manager_complete_unlimited(self):
+        from app.core.profiles import effective_kb_limits
+
+        result = effective_kb_limits("group_manager", "complete")
+        assert result.max_personal_kbs_per_user is None
+        assert result.can_create_org_kbs is True
+
+    def test_admin_complete_unlimited(self):
+        from app.core.profiles import effective_kb_limits
+
+        result = effective_kb_limits("admin", "complete")
+        assert result.max_personal_kbs_per_user is None
+        assert result.can_create_org_kbs is True
+
+    def test_admin_core_plan_lowers(self):
+        from app.core.profiles import effective_kb_limits
+
+        result = effective_kb_limits("admin", "core")
+        assert result.max_personal_kbs_per_user == 5
+        assert result.max_items_per_kb == 20
+        assert result.can_create_org_kbs is False
+
+    def test_unknown_role_falls_back_to_personal(self):
+        from app.core.profiles import effective_kb_limits
+
+        result = effective_kb_limits("nonexistent_role", "complete")
+        assert result.max_personal_kbs_per_user == 5
+        assert result.max_items_per_kb == 20
+        assert result.can_create_org_kbs is False
+
+    def test_unknown_plan_falls_back_to_core_limits(self):
+        from app.core.profiles import effective_kb_limits
+
+        result = effective_kb_limits("kb_manager", "unknown_plan")
+        assert result.max_personal_kbs_per_user == 5
+        assert result.max_items_per_kb == 20
+
+    def test_effective_limits_are_new_objects(self):
+        from app.core.profiles import effective_kb_limits
+
+        r1 = effective_kb_limits("personal", "core")
+        r2 = effective_kb_limits("personal", "core")
+        assert r1 is not r2

@@ -559,7 +559,7 @@ async def trigger_sync(
     Delegates to klai-connector execution service. Returns 202 with the new
     SyncRun immediately; sync runs in the background.
     """
-    caller_id, org, _ = await _get_caller_org(credentials, db)
+    caller_id, org, caller_user = await _get_caller_org(credentials, db)
     kb = await _get_kb_with_owner_check(kb_slug, caller_id, org.id, db)
     result = await db.execute(
         select(PortalConnector).where(
@@ -576,7 +576,7 @@ async def trigger_sync(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Sync already running")
 
     # R-E2: enforce per-KB item quota before triggering ingest.
-    await assert_can_add_item_to_kb(kb=kb, org=org)
+    await assert_can_add_item_to_kb(kb=kb, org=org, role=caller_user.role)
 
     try:
         sync_run = await klai_connector_client.trigger_sync(connector_id)

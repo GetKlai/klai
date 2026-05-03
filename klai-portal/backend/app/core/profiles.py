@@ -8,9 +8,13 @@ Each rung is a strict capability superset of the rung below it.
                          Do not add capability checks outside this module.
 @MX:ANCHOR fan_in=3+ -- _require_at_least is the authoritative role gate factory.
                          Replace all _require_admin_or_group_admin* with this.
+@MX:ANCHOR fan_in=3+ -- effective_kb_limits is the authoritative quota resolver.
+                         profile wins, plan can only lower (REQ-5).
 """
 
 from fastapi import HTTPException, status
+
+from app.core.plan_limits import KBLimits, get_plan_limits
 
 PROFILE_LADDER: list[str] = [
     "personal",
@@ -85,6 +89,95 @@ ROLE_MIGRATION_MAP: dict[str, str] = {
     "group-admin": "group_manager",
     "member": "personal",
 }
+
+# -----------------------------------------------------------------------------
+# REQ-5: Role-aware KB quota limits
+# profile wins, plan can only lower (min wins everywhere except can_create_org_kbs
+# which requires AND).
+# -----------------------------------------------------------------------------
+
+# Per-profile quota limits.  None means unlimited within the role.
+# personal and company are capped at 5 personal KBs and 20 items per KB.
+# kb_manager and above are unlimited and may create org KBs.
+PROFILE_LIMITS: dict[str, KBLimits] = {
+    "personal": KBLimits(
+        max_personal_kbs_per_user=5,
+        max_items_per_kb=20,
+        can_create_org_kbs=False,
+        capabilities=frozenset(),
+    ),
+    "company": KBLimits(
+        max_personal_kbs_per_user=5,
+        max_items_per_kb=20,
+        can_create_org_kbs=False,
+        capabilities=frozenset(),
+    ),
+    "kb_manager": KBLimits(
+        max_personal_kbs_per_user=None,
+        max_items_per_kb=None,
+        can_create_org_kbs=True,
+        capabilities=frozenset(),
+    ),
+    "group_manager": KBLimits(
+        max_personal_kbs_per_user=None,
+        max_items_per_kb=None,
+        can_create_org_kbs=True,
+        capabilities=frozenset(),
+    ),
+    "admin": KBLimits(
+        max_personal_kbs_per_user=None,
+        max_items_per_kb=None,
+        can_create_org_kbs=True,
+        capabilities=frozenset(),
+    ),
+}
+
+# Most-restrictive fallback for unknown roles.
+_FALLBACK_PROFILE_LIMITS = PROFILE_LIMITS["personal"]
+
+
+def _min_with_unlimited(a: int | None, b: int | None) -> int | None:
+    """Return the lower of two limits where None means unlimited.
+
+    None (unlimited) loses to any finite limit: min(None, 5) = 5.
+    min(None, None) = None (both unlimited -> still unlimited).
+    """
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return min(a, b)
+
+
+def effective_kb_limits(role: str, plan: str) -> KBLimits:
+    """Return the effective KB quota limits for (role, plan).
+
+    REQ-5: profile wins, plan can only lower.
+    - max_personal_kbs_per_user = min(profile_limit, plan_limit)
+    - max_items_per_kb          = min(profile_limit, plan_limit)
+    - can_create_org_kbs        = profile_allows AND plan_allows
+
+    Examples:
+      complete plan + personal role   -> 5/20 (profile lowers)
+      core plan    + kb_manager role  -> 5/20 (plan lowers)
+      complete plan + kb_manager role -> unlimited
+      core plan    + personal role    -> 5/20 (both agree)
+    """
+    profile_lim = PROFILE_LIMITS.get(role, _FALLBACK_PROFILE_LIMITS)
+    plan_lim = get_plan_limits(plan)
+
+    return KBLimits(
+        max_personal_kbs_per_user=_min_with_unlimited(
+            profile_lim.max_personal_kbs_per_user,
+            plan_lim.max_personal_kbs_per_user,
+        ),
+        max_items_per_kb=_min_with_unlimited(
+            profile_lim.max_items_per_kb,
+            plan_lim.max_items_per_kb,
+        ),
+        can_create_org_kbs=(profile_lim.can_create_org_kbs and plan_lim.can_create_org_kbs),
+        capabilities=frozenset(),
+    )
 
 
 def effective_role(user: object) -> str:
