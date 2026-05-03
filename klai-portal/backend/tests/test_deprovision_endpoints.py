@@ -434,10 +434,13 @@ class TestGetDeprovisionStatus:
         assert result == {"status": "deprovisioning"}
 
     @pytest.mark.asyncio
-    async def test_includes_last_failure_on_failed_state(self):
+    async def test_includes_sanitized_last_failure_on_failed_state(self):
+        """Owner sees only step + failed_at; error string with infra detail
+        and attempt count are NOT exposed (would leak internal hostnames /
+        DSN fragments)."""
         last_failure = {
             "step": "_delete_caddy_upstream",
-            "error": "timeout",
+            "error": "Connection refused to klai-core-knowledge-ingest-1:8000",
             "attempt": 3,
             "failed_at": "2026-05-03T12:00:00+00:00",
         }
@@ -454,7 +457,31 @@ class TestGetDeprovisionStatus:
             result = await get_deprovision_status(creds, db)
 
         assert result["status"] == "failed_deprovisioning"
-        assert result["last_failure"] == last_failure
+        # Sanitized: only step + failed_at exposed, NOT error string or attempt.
+        assert result["last_failure"] == {
+            "step": "_delete_caddy_upstream",
+            "failed_at": "2026-05-03T12:00:00+00:00",
+        }
+        assert "error" not in result["last_failure"]
+        assert "attempt" not in result["last_failure"]
+
+    @pytest.mark.asyncio
+    async def test_non_admin_member_blocked_by_require_admin(self):
+        """Members and group-admins MUST NOT see deprovision status — admin only."""
+        org = _make_org(provisioning_status="deprovisioning")
+        user = _make_user(role="member")  # not admin
+        db = AsyncMock()
+        db.add = MagicMock()
+        creds = _make_credentials()
+
+        with patch(
+            "app.api.admin.deprovision_org._get_caller_org",
+            AsyncMock(return_value=("zit-user-1", org, user)),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await get_deprovision_status(creds, db)
+
+        assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
     async def test_returns_ready_when_not_deprovisioning(self):
