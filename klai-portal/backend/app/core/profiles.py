@@ -5,7 +5,8 @@ Five-rung role hierarchy: personal -> company -> kb_manager -> group_manager -> 
 Each rung is a strict capability superset of the rung below it.
 
 @MX:ANCHOR fan_in=3+ -- PROFILE_CAPABILITIES is the authoritative capability table.
-                         Do not add capability checks outside this module.
+                         Only contains capability strings checked via require_capability().
+                         Direct role checks (org-KB read, groups, billing) use _require_at_least.
 @MX:ANCHOR fan_in=3+ -- _require_at_least is the authoritative role gate factory.
                          Replace all _require_admin_or_group_admin* with this.
 @MX:ANCHOR fan_in=3+ -- effective_kb_limits is the authoritative quota resolver.
@@ -24,57 +25,27 @@ PROFILE_LADDER: list[str] = [
     "admin",
 ]
 
-# Capability accumulation: each rung includes all capabilities of lower rungs.
-# personal (rung 0)
-_PERSONAL_CAPS: frozenset[str] = frozenset(
-    [
-        "kb.create_personal",
-        "kb.connectors.url",
-        "kb.connectors.upload",
-    ]
-)
+# Capability strings for SPEC v0.2.0: only capabilities that are actually checked
+# via require_capability() on endpoints.  Direct-role checks (org-KB read filter,
+# append-via-chat, groups manage, billing, settings) are NOT capability strings.
+_KB_BASIC_CAPS: frozenset[str] = frozenset({"kb.connectors"})
 
-# company adds: read org KB, append via chat
-_COMPANY_CAPS: frozenset[str] = _PERSONAL_CAPS | frozenset(
-    [
-        "kb.read_org",
-        "kb.append_via_chat",
-    ]
-)
-
-# kb_manager adds: external connectors, create org KB, member/taxonomy/gaps management
-_KB_MANAGER_CAPS: frozenset[str] = _COMPANY_CAPS | frozenset(
-    [
+_KB_FULL_CAPS: frozenset[str] = _KB_BASIC_CAPS | frozenset(
+    {
         "kb.connectors.external",
         "kb.create_org",
         "kb.members",
         "kb.taxonomy",
         "kb.gaps",
-    ]
-)
-
-# group_manager adds: group management
-_GROUP_MANAGER_CAPS: frozenset[str] = _KB_MANAGER_CAPS | frozenset(
-    [
-        "groups.manage",
-    ]
-)
-
-# admin adds: user invites, billing, org settings
-_ADMIN_CAPS: frozenset[str] = _GROUP_MANAGER_CAPS | frozenset(
-    [
-        "groups.invite_users",
-        "org.billing",
-        "org.settings",
-    ]
+    }
 )
 
 PROFILE_CAPABILITIES: dict[str, frozenset[str]] = {
-    "personal": _PERSONAL_CAPS,
-    "company": _COMPANY_CAPS,
-    "kb_manager": _KB_MANAGER_CAPS,
-    "group_manager": _GROUP_MANAGER_CAPS,
-    "admin": _ADMIN_CAPS,
+    "personal": _KB_BASIC_CAPS,
+    "company": _KB_BASIC_CAPS,
+    "kb_manager": _KB_FULL_CAPS,
+    "group_manager": _KB_FULL_CAPS,
+    "admin": _KB_FULL_CAPS,
 }
 
 # Connector types that are allowed without kb.connectors.external
@@ -198,6 +169,9 @@ def check_connector_allowed(user: object, connector_type: str) -> None:
     REQ-3: personal and company roles may only use url/upload connector types.
     kb_manager and above may use all connector types.
 
+    Checks role-level capability (PROFILE_CAPABILITIES).  Plan ceiling on
+    kb.connectors.external is handled by require_capability() on the endpoint.
+
     @MX:ANCHOR fan_in=2+ -- called from create_connector and check_connector_type.
     """
     role = effective_role(user)
@@ -209,13 +183,15 @@ def check_connector_allowed(user: object, connector_type: str) -> None:
 
 
 def _require_at_least(required_role: str):
-    """Return a FastAPI dependency that enforces a minimum profile role.
+    """Return a callable that enforces a minimum profile role.
 
-    Usage:
-        @router.delete(
-            "/groups/{group_id}",
-            dependencies=[Depends(_require_at_least("group_manager"))],
-        )
+    For use as a FastAPI dependency, use the wired version in dependencies.py:
+        from app.api.dependencies import require_at_least_dep
+
+    For direct unit-test invocation, call the returned function with
+    caller_user explicitly:
+        dep = _require_at_least("group_manager")
+        dep(caller_user=some_user)  # raises HTTPException if role too low
 
     Raises HTTP 403 if the caller role is ranked below required_role.
 
@@ -223,7 +199,7 @@ def _require_at_least(required_role: str):
     """
     required_idx = PROFILE_LADDER.index(required_role)
 
-    def _check(caller_user: object = None) -> None:
+    def _check(caller_user: object) -> None:
         role = effective_role(caller_user)
         caller_idx = PROFILE_LADDER.index(role) if role in PROFILE_LADDER else -1
         if caller_idx < required_idx:
