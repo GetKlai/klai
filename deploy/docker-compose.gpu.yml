@@ -108,7 +108,7 @@ services:
   # MAX_ACTIVE_REQUESTS / REALTIME_RESERVED_SLOTS. See plan.md R8.
 
   transcription-worker-1:
-    image: vexaai/transcription-service:0.10.0-pending
+    image: vexaai/transcription-service:0.10.6
     restart: unless-stopped
     environment:
       WORKER_ID: "1"
@@ -138,7 +138,7 @@ services:
       start_period: 180s
 
   transcription-worker-2:
-    image: vexaai/transcription-service:0.10.0-pending
+    image: vexaai/transcription-service:0.10.6
     restart: unless-stopped
     environment:
       WORKER_ID: "2"
