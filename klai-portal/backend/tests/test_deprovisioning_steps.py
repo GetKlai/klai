@@ -727,10 +727,16 @@ class TestFinalizePostgresDelete:
         state = _make_state(org_id=42, slug="acme", org_name="ACME Corp")
 
         # Lazy import: `from app.services.audit.tenant_lifecycle import emit_lifecycle_event`
-        with patch(
-            "app.services.audit.tenant_lifecycle.emit_lifecycle_event",
-            new=AsyncMock(),
-        ) as mock_emit:
+        # Also patch invalidate_tenant_slug_cache so we don't clear the module-level
+        # cache in app.api.auth (would cause cross-test pollution: other tests rely on
+        # the cache being warm and would try to load from DB on cache miss).
+        with (
+            patch(
+                "app.services.audit.tenant_lifecycle.emit_lifecycle_event",
+                new=AsyncMock(),
+            ) as mock_emit,
+            patch("app.api.auth.invalidate_tenant_slug_cache", new=MagicMock()),
+        ):
             from app.services.provisioning.deprovisioning_steps import _finalize_postgres_delete
 
             await _finalize_postgres_delete(state)
@@ -752,9 +758,12 @@ class TestFinalizePostgresDelete:
         """
         state = _make_state(org_id=42, slug="acme")
 
-        with patch(
-            "app.services.audit.tenant_lifecycle.emit_lifecycle_event",
-            new=AsyncMock(),
+        with (
+            patch(
+                "app.services.audit.tenant_lifecycle.emit_lifecycle_event",
+                new=AsyncMock(),
+            ),
+            patch("app.api.auth.invalidate_tenant_slug_cache", new=MagicMock()),
         ):
             from app.services.provisioning.deprovisioning_steps import _finalize_postgres_delete
 
