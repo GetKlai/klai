@@ -1,7 +1,7 @@
 ---
 id: SPEC-PORTAL-PROFILES-001
-version: "0.1.0"
-status: draft
+version: "0.3.0"
+status: phase-1-merged
 created: 2026-05-03
 updated: 2026-05-03
 author: Mark Vletter
@@ -19,6 +19,7 @@ related:
 |------|---------|--------|
 | 2026-05-03 | 0.1.0 | Initial draft after sparring session. Five-rung profile ladder (Personal chat → Company chat → Knowledge manager → Group manager → Admin) replaces the current `admin / group-admin / member` triplet. Plan and role decoupled: Company chat and Knowledge manager share a billing tier but differ in role. Scribe and Docs become per-tenant add-on toggles, not Plan-bound products. Knowledge access for Personal chat is hard-gated: no `default_org_role` fallback, ever. |
 | 2026-05-03 | 0.2.0 | Capability-laag versimpeld na review van Phase-1 PR. `PROFILE_CAPABILITIES` bevat alleen capabilities die op endpoints via `require_capability(...)` worden gechecked: `kb.connectors`, `kb.connectors.external`, `kb.create_org`, `kb.members`, `kb.taxonomy`, `kb.gaps`. Verwijderd: `kb.read_org`, `kb.append_via_chat`, `groups.manage`, `groups.invite_users`, `org.billing`, `org.settings` — die worden directe rol-checks via `_require_at_least` of `_require_admin`. Connector-allowlist via twee capability-gates ipv aparte rol-tabel. `effective_capabilities = role_caps ∩ plan_caps` is nu de canonieke werking. |
+| 2026-05-03 | 0.3.0 | Phase 1 merged via PR #274 (squash commit `b6397735`). Phase 1.6 cleanup-scope toegevoegd om de code "industry-standard" te maken vóór Phase 2/3: (1) Capability-strings worden typed via `Capability` Literal/StrEnum in `app/core/profiles.py` zodat pyright typos vangt. (2) `PROFILE_LADDER` wordt aangevuld met `PROFILE_RANK: dict[str,int]` voor O(1) ladder-lookups; legacy `.index()` calls worden vervangen. (3) `portal_users.role` wordt gemigreerd van `VARCHAR(20) + CHECK constraint` naar een echte Postgres `ENUM` type voor type-safety op DB-niveau. (4) Dood `require_at_least_dep` wordt verwijderd uit `dependencies.py` — de legacy helpers in `groups.py` blijven want ze hebben async system-group logica die niet in een Depends-decorator past. (5) Admin-bypass in `get_effective_capabilities` krijgt een expliciet `# @MX:NOTE` block met SPEC-referentie en de keuzeratio (admin moet upgrade-effecten kunnen testen zonder billing-wijziging). |
 
 ---
 

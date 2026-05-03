@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import _get_caller_org, bearer, get_effective_capabilities, require_capability
 from app.core.database import get_db
-from app.core.profiles import check_connector_allowed
+from app.core.profiles import Capability, check_connector_allowed
 from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.services import knowledge_ingest_client
@@ -67,7 +67,7 @@ router = APIRouter(
     prefix="/api/app/knowledge-bases/{kb_slug}/connectors",
     tags=["connectors"],
     # R-X2 / AC-3: all connector endpoints require the kb.connectors capability.
-    dependencies=[Depends(require_capability("kb.connectors"))],
+    dependencies=[Depends(require_capability(Capability.KB_CONNECTORS))],
 )
 
 # -- Webcrawler config schema (SPEC-CRAWL-003) --------------------------------
