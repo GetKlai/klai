@@ -297,9 +297,7 @@ async def _run_step_with_retry(
             # so _mark_failed records the correct count (typically 1).
             raise DeprovisionStepError(step_fn.__name__, exc, attempt=attempt) from exc
 
-    raise DeprovisionStepError(
-        step_fn.__name__, last_exc or RuntimeError("unknown"), attempt=last_attempt
-    )
+    raise DeprovisionStepError(step_fn.__name__, last_exc or RuntimeError("unknown"), attempt=last_attempt)
 
 
 async def _mark_failed(db: AsyncSession, org_id: int, step_name: str, error_str: str, attempt: int = 1) -> None:
