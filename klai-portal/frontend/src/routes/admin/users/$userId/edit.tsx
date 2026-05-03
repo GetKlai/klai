@@ -347,10 +347,9 @@ function EditUserPage() {
         </CardHeader>
         <CardContent className="space-y-3">
           {PROFILE_LADDER.map((role) => {
-            const labelKey = `profile_${role}_label` as keyof typeof m
-            const descKey = `profile_${role}_description` as keyof typeof m
-            const labelFn = m[labelKey] as (() => string) | undefined
-            const descFn = m[descKey] as (() => string) | undefined
+            const msgs = m as Record<string, (() => string) | undefined>
+            const labelFn = msgs[`profile_${role}_label`]
+            const descFn = msgs[`profile_${role}_description`]
             const isSelf = userId === currentUser?.user_id
             return (
               <label
