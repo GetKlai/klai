@@ -462,7 +462,7 @@ async def create_app_knowledge_base(
     db: AsyncSession = Depends(get_db),
 ) -> AppKBOut:
     """Create a new KB. The creator is automatically given the owner role."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
+    caller_id, org, caller_user = await _get_caller_org(credentials, db)
 
     if body.owner_type not in ("org", "user"):
         raise HTTPException(
@@ -479,9 +479,9 @@ async def create_app_knowledge_base(
     # Quota enforcement — SPEC-PORTAL-UNIFY-KB-001 Phase A (R-E1, R-E3, R-X3).
     # _resolve_personal_kb auto-provisioning is explicitly exempt (D8).
     if body.owner_type == "user":
-        await assert_can_create_personal_kb(user_id=caller_id, org=org, db=db)
+        await assert_can_create_personal_kb(user_id=caller_id, org=org, db=db, role=caller_user.role)
     elif body.owner_type == "org":
-        await assert_can_create_org_kb(org=org, db=db)
+        await assert_can_create_org_kb(org=org, db=db, role=caller_user.role)
 
     owner_user_id = caller_id if body.owner_type == "user" else None
 

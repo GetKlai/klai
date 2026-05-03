@@ -12,8 +12,9 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _get_caller_org, bearer, require_capability
+from app.api.dependencies import _get_caller_org, bearer, get_effective_capabilities, require_capability
 from app.core.database import get_db
+from app.core.profiles import check_connector_allowed
 from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.services import knowledge_ingest_client
@@ -413,7 +414,22 @@ async def create_connector(
     db: AsyncSession = Depends(get_db),
 ) -> ConnectorOut:
     """Create a connector for a KB. Requires contributor access."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
+    caller_id, org, caller_user = await _get_caller_org(credentials, db)
+    # REQ-3: personal/company roles may only use url/upload connector types
+    check_connector_allowed(caller_user, body.connector_type)
+    # G1: Plan-ceiling on external connectors. The role-level check above already
+    # blocks personal/company. For roles that pass (kb_manager+), ensure the org
+    # plan also permits external connectors.
+    if body.connector_type not in {"url", "upload"}:
+        caps = await get_effective_capabilities(caller_id, db)
+        if "kb.connectors.external" not in caps:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error_code": "external_connectors_require_complete_plan",
+                    "plan": org.plan,
+                },
+            )
     kb = await _get_kb_with_owner_check(kb_slug, caller_id, org.id, db)
     resolved_content_type = body.content_type or CONTENT_TYPE_DEFAULTS.get(body.connector_type, "unknown")
     if body.allowed_assertion_modes is not None:
@@ -625,7 +641,7 @@ async def trigger_sync(
     Delegates to klai-connector execution service. Returns 202 with the new
     SyncRun immediately; sync runs in the background.
     """
-    caller_id, org, _ = await _get_caller_org(credentials, db)
+    caller_id, org, caller_user = await _get_caller_org(credentials, db)
     kb = await _get_kb_with_owner_check(kb_slug, caller_id, org.id, db)
     # REQ-02.3: rows in 'deleting' state are owned by the purge worker.
     # Trigger-sync would race the cleanup; reject with 404 (do not leak
@@ -647,7 +663,7 @@ async def trigger_sync(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Sync already running")
 
     # R-E2: enforce per-KB item quota before triggering ingest.
-    await assert_can_add_item_to_kb(kb=kb, org=org)
+    await assert_can_add_item_to_kb(kb=kb, org=org, role=caller_user.role)
 
     try:
         # SPEC-SEC-TENANT-001 REQ-8.2: pass the authenticated session's
