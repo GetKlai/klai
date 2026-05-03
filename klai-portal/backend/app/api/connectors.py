@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import _get_caller_org, bearer, require_capability
 from app.core.database import get_db
+from app.core.profiles import check_connector_allowed
 from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.services import knowledge_ingest_client
@@ -401,7 +402,9 @@ async def create_connector(
     db: AsyncSession = Depends(get_db),
 ) -> ConnectorOut:
     """Create a connector for a KB. Requires contributor access."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
+    caller_id, org, caller_user = await _get_caller_org(credentials, db)
+    # REQ-3: personal/company roles may only use url/upload connector types
+    check_connector_allowed(caller_user, body.connector_type)
     kb = await _get_kb_with_owner_check(kb_slug, caller_id, org.id, db)
     resolved_content_type = body.content_type or CONTENT_TYPE_DEFAULTS.get(body.connector_type, "unknown")
     if body.allowed_assertion_modes is not None:
