@@ -4,8 +4,13 @@ Production tenant end-to-end tests. Two modes:
 
 | Mode | When to use | Login | Where it can run |
 |---|---|---|---|
-| **`isolated-tenant`** (default) | CI / unattended | bot via email + password + TOTP | local + GitHub Actions |
-| **`voys-attached`** | Local manual run by Mark | Google SSO (you log in once, script reuses session) | **local only** |
+| **`isolated-tenant`** (default) | Bot user, dedicated tenant | email + password + TOTP | local + CI |
+| **`voys-attached`** | Real Voys tenant via Google SSO | one-time capture, then session-cookie reuse | local + CI (via secret-injected storage-state) |
+
+The session-cookie captured by `npm run e2e:capture-session` keeps the
+script logged in as the captured Google account. Anything that account
+can do (browse Voys, create a Google Meet via meet.google.com/new, etc.)
+the e2e suite can do too.
 
 Every PR/deploy gets exercised against real LibreChat + LiteLLM + retrieval
 pipeline, no mocks. Test-created artifacts (KBs, templates, transcripts) are
@@ -48,6 +53,19 @@ npm run test:e2e:prod:voys
 
 Storage-state lives in `_config/storageState.voys.json` (gitignored).
 If the session expires re-run the capture step.
+
+### Run in CI (voys-attached)
+
+The captured `storageState.voys.json` can be base64-encoded and stored
+as a GitHub Secret (`E2E_VOYS_STORAGE_STATE_B64`); the workflow decodes
+it back to disk before the test-run. Refresh the secret whenever the
+Google session expires (typically every few weeks for active accounts).
+
+```bash
+# Local: encode the captured state for upload
+base64 -w0 e2e/prod-tenant/_config/storageState.voys.json | pbcopy
+# Paste into GitHub Secret E2E_VOYS_STORAGE_STATE_B64
+```
 
 Run a single journey with the UI inspector:
 

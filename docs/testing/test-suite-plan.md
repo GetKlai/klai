@@ -58,19 +58,20 @@ In CI (`.github/workflows/`) blijft het per-service-workflow patroon:
 
 ```
 ┌─────────────────────────┬─────────────────────────────────────────────┐
-│ isolated-tenant (CI)    │ voys-attached (lokaal)                      │
+│ isolated-tenant         │ voys-attached                               │
 ├─────────────────────────┼─────────────────────────────────────────────┤
 │ E2E_MODE=isolated-tenant│ E2E_MODE=voys-attached                      │
 │ (default)               │                                             │
 │                         │                                             │
-│ Login: J01 spec doet    │ Login: jij eenmalig handmatig via Google    │
-│ email + password + TOTP │ SSO; `npm run e2e:capture-session` saved    │
-│ via _lib/auth.ts        │ de cookies naar disk                        │
+│ Login: J01 spec doet    │ Login: éénmalig handmatige Google SSO       │
+│ email + password + TOTP │ capture; daarna session-cookie reuse        │
+│ via _lib/auth.ts        │                                             │
 │                         │                                             │
-│ Tenant: e2e.getklai.com │ Tenant: voys.getklai.com (echte data!)      │
+│ Tenant: e2e.getklai.com │ Tenant: voys.getklai.com (echte data —      │
+│ (dedicated bot tenant)  │ Voys is gewoon main, niet aparte tenant)    │
 │                         │                                             │
-│ Where: GitHub Actions   │ Where: lokaal, headed of headless           │
-│ + lokaal                │ Niet in CI (vereist user-interaction)       │
+│ Where: lokaal + CI      │ Where: lokaal + CI (storage-state als       │
+│                         │ base64-secret E2E_VOYS_STORAGE_STATE_B64)   │
 │                         │                                             │
 │ Cleanup: alles dat e2e  │ Cleanup: ALLEEN artifacts met prefix        │
 │ aanmaakt mag weg        │ `e2e-{run-ts}-`. Cleanup weigert mechanisch │
@@ -78,11 +79,16 @@ In CI (`.github/workflows/`) blijft het per-service-workflow patroon:
 └─────────────────────────┴─────────────────────────────────────────────┘
 ```
 
-**Beide modes** draaien dezelfde 11 journeys. Het enige verschil zit in
+**Beide modes** draaien dezelfde journeys. Het enige verschil zit in
 J01 (login) — die wordt overgeslagen in `voys-attached` omdat de browser-
 sessie al ingelogd is via de capture-step. Naming convention met prefix
 geldt overal — ook in isolated-tenant — om consistentie tussen modes te
 borgen en parallelle runs niet te laten botsen.
+
+**Bonus voor voys-attached:** de gecaptureerde Google sessie kan ook
+buiten de Klai-portal — bijvoorbeeld een Google Meet aanmaken via
+`meet.google.com/new`. Daardoor is de Vexa-meeting-flow autonoom
+testbaar (zie J12).
 
 ---
 
@@ -182,44 +188,34 @@ uitbreidbaarheid voor is.
 | **J09** | **Admin settings write** | `/admin/settings` | Wijzig display-name "Klai E2E {ts}", save, refresh, persisted. Cleanup: terug naar default |
 | **J10** | **Logout flow** | Logout → `/logged-out` → terug-navigatie → redirect naar `/login` | Sessie weg, geen residual auth-cookie |
 | **J11** | **Headers + performance** | Op elke route uit J01-J10 | Meet bij elk page-bezoek: HSTS aanwezig, CSP set, X-Frame-Options aanwezig, p99 page-load <3s. Resultaat als HTML-rapport, soft fail |
+| **J12** | **Vexa meeting + transcript** (voys-attached only) | `meet.google.com/new` → `/app/meetings` → `/app/transcribe` | Met de gecaptureerde Google sessie navigeert de spec naar `meet.google.com/new`, leest de Meet-URL, opent een tweede tab op `/app/meetings`, plakt de URL, klikt "+ New meeting". Wacht max 60s tot de Vexa-bot join't (zichtbaar via deelnemerlijst-API). Spreekt 30s "test test test" via een audio-loopback (gegenereerd uit `e2e-fixture.wav` 10× herhaald) of laat browser TTS draaien. Stopt de meeting. Polling op `/api/scribe/transcripts` tot transcript-status = `transcribed`. Assert text bevat "test". Cleanup: transcript delete. Vereist VOYS-ATTACHED-mode (Google sessie nodig); skipt in isolated-tenant. |
 
 **Bewust niet in scope** voor v1:
-- `/app/meetings` (Vexa) — vereist een Google Meet bot-flow die niet
-  Playwright-only te triggeren is. **Wel testbaar:** Mark logt via Google
-  SSO in op de Voys-tenant (`voys.getklai.com`) en draait daar een
-  ad-hoc Vexa-meeting test. Dit valt buiten het reguliere e2e-pad maar
-  is gedocumenteerd als hand-getriggerde smoke. Zie §6.1.
 - `/app/docs` (klai-docs) — eigen e2e-spec voor docs-app, aparte runner
 - `/app/transcribe` apart van `/app/scribe` — beide testen levert weinig
   extra coverage
 
 ---
 
-### 5.1 Hand-getriggerde Vexa smoke (buiten reguliere e2e)
+### 5.1 Vexa meeting (J12, voys-attached only)
 
-`/app/meetings` valt niet onder de Playwright-bot omdat een Vexa-meeting
-een Google Meet bot-participant vereist die in een echte meeting moet
-aansluiten. Voor coverage hierop:
+Eerder gedacht: hand-trigger door Mark. Bij nadere inspectie kan de
+gecaptureerde Google sessie ook `meet.google.com/new` openen — dus J12
+kan autonoom in voys-attached mode:
 
-- **Eigenaar:** Mark Vletter (Voys tenant via Google SSO).
-- **Cadens:** ad-hoc na een meetings-relevante deploy (klai-scribe,
-  vexa-runtime, vexa-meeting-api, vexa-bot, transcription-worker).
-- **Stappen:**
-  1. Login op `voys.getklai.com` via Google SSO.
-  2. Open `/app/meetings`, klik "+ New meeting", plak een actieve Google
-     Meet URL.
-  3. Verifieer dat de Vexa-bot binnen 30s join't (zichtbaar in Meet).
-  4. Praat 30s met "test test test"; klik stop.
-  5. Verifieer post-meeting transcript verschijnt in
-     `/app/transcribe` met herkenbare tekst.
-- **Logging-trigger:** als deze test faalt, query
-  `service:vexa-meeting-api OR service:scribe-api AND level:error
-  AND _time:[meeting_start, meeting_start+10m]` in VictoriaLogs.
-- **Documenteer issues** in een korte note in een GitHub Issue met
-  `meetings`-label.
+- **Mode:** voys-attached only. Skipt automatisch in isolated-tenant
+  (geen Google sessie).
+- **Cadens:** elke voys-attached run (lokaal of CI met
+  E2E_VOYS_STORAGE_STATE_B64).
+- **Audio-input:** loopback van `e2e-fixture.wav` of browser TTS via
+  `speechSynthesis`. Spec-implementatie kiest wat het beste werkt op
+  de Vexa-bot-pipeline.
+- **Logging bij failure:** query in VictoriaLogs:
+  `(service:vexa-meeting-api OR service:scribe-api OR service:vexa-bot)
+  AND level:error AND _time:[meeting_start, meeting_start+10m]`.
 
-Geen automatisering hiervoor — bewuste keuze. Vexa-flow is fragiel
-genoeg dat hand-validatie zinvoller is dan brittle bot-testing.
+Spec-skelet komt in fase 4 als `J12-meeting-vexa.spec.ts` — gemarkeerd
+met `test.skip(E2E_MODE !== 'voys-attached', 'requires Google session')`.
 
 ## 6. Test-fixtures
 
@@ -362,8 +358,8 @@ groen is.
 ### Fase 0 — Voor we beginnen ✓
 
 - [x] Dit plan-document is gereviewed en goedgekeurd (2026-05-03)
-- [x] Beslissing: scope v1 = J01-J11, geen Focus, meetings als
-      hand-trigger via Voys (§5.1), docs apart
+- [x] Beslissing: scope v1 = J01-J12, geen Focus, J12 (Vexa meeting)
+      autonoom via voys-attached mode (§5.1), docs apart
 - [x] `E2E_BASE_URL` = `e2e.getklai.com` (isolated-tenant mode)
 - [x] **Twee modes** aangenomen (zie §3.1): `isolated-tenant` voor CI,
       `voys-attached` voor lokale runs binnen Voys tenant via Google SSO
