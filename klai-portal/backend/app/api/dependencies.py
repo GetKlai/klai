@@ -13,7 +13,6 @@ from app.core.plan_limits import PLAN_LIMITS, get_plan_limits
 from app.core.profiles import (
     PROFILE_CAPABILITIES,
     PROFILE_LADDER,
-    _require_at_least,  # noqa: F401  -- re-export for group routes
     effective_role,
 )
 from app.models.groups import PortalGroup, PortalGroupMembership
