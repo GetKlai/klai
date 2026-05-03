@@ -110,11 +110,11 @@ services:
   transcription-worker-1:
     # NOTE: vexaai/transcription-service is NOT published to Docker Hub.
     # Built locally on gpu-01 from upstream Vexa-ai/vexa source (CUDA 12.3.2 +
-    # cuDNN 9, faster-whisper). The 0.10.0-260419-1129 tag is the locally-built
-    # image currently on gpu-01. Bumping requires a manual `make build` on
-    # gpu-01 against a newer upstream commit — separate cycle from the
-    # core-01 Docker-Hub-pull flow used by the rest of the v0.10.6 stack.
-    image: vexaai/transcription-service:0.10.0-260419-1129
+    # cuDNN 9, faster-whisper). Tag convention `<semver>-local-YYMMDD-HHMM`
+    # is recognised by `deploy/check-image-pullable.sh` as locally-built and
+    # skipped from the registry-manifest check. Bumping = `git clone v0.10.x`
+    # + `docker build` on gpu-01; runbook in `docs/runbooks/transcription-service-bump.md`.
+    image: vexaai/transcription-service:0.10.6-local-260503-0858
     restart: unless-stopped
     environment:
       WORKER_ID: "1"
@@ -145,7 +145,7 @@ services:
 
   transcription-worker-2:
     # See note on transcription-worker-1 — locally-built, not on Docker Hub.
-    image: vexaai/transcription-service:0.10.0-260419-1129
+    image: vexaai/transcription-service:0.10.6-local-260503-0858
     restart: unless-stopped
     environment:
       WORKER_ID: "2"

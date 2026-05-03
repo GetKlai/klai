@@ -4,13 +4,18 @@
 # Fails the commit if any vexaai/* image in deploy manifests points at a
 # mutable tag (latest, dev, staging) or a non-pinned form.
 #
-# Two pinned tag forms are accepted:
-#   1. Plain semver:        `<major>.<minor>.<patch>` (e.g. 0.10.6)
-#                           — used since v0.10.4, when upstream started
-#                             publishing pre-built images to Docker Hub.
-#   2. Timestamped semver:  `<major>.<minor>.<patch>-YYMMDD-HHMM`
-#                           — pre-v0.10.4 build convention, kept for
-#                             rollback compat with locally-built images.
+# Three pinned tag forms are accepted:
+#   1. Plain semver:               `<major>.<minor>.<patch>` (e.g. 0.10.6)
+#                                  — used since v0.10.4, when upstream
+#                                    started publishing pre-built images
+#                                    to Docker Hub.
+#   2. Locally-built (new):        `<semver>-local-YYMMDD-HHMM`
+#                                  — for images we build on-host that
+#                                    upstream does not publish (e.g.
+#                                    transcription-service CUDA build).
+#   3. Locally-built (legacy):     `<semver>-YYMMDD-HHMM`
+#                                  — pre-v0.10.4 SPEC-VEXA-003 convention,
+#                                    retained for rollback to old images.
 #
 # Placeholder `<semver>-pending` tags are also rejected — they indicate
 # a compose file is mid-migration and not deploy-ready.
@@ -41,11 +46,12 @@ for F in $FILES; do
         FAIL=1
     fi
 
-    # Rule 3: any other vexaai/* tag must match plain semver OR
-    #         timestamped semver `<semver>-YYMMDD-HHMM`.
+    # Rule 3: any other vexaai/* tag must match plain semver, locally-built
+    #         (`<semver>-local-YYMMDD-HHMM`), or legacy timestamped
+    #         (`<semver>-YYMMDD-HHMM`).
     BAD=$(grep -nE 'vexaai/[a-z0-9-]+:[^[:space:]#]+' "$F" \
-          | grep -vE 'vexaai/[a-z0-9-]+:[0-9]+\.[0-9]+\.[0-9]+(-[0-9]{6}-[0-9]{4})?$' \
-          | grep -vE 'vexaai/[a-z0-9-]+:[0-9]+\.[0-9]+\.[0-9]+(-[0-9]{6}-[0-9]{4})?[[:space:]]' \
+          | grep -vE 'vexaai/[a-z0-9-]+:[0-9]+\.[0-9]+\.[0-9]+(-(local-)?[0-9]{6}-[0-9]{4})?$' \
+          | grep -vE 'vexaai/[a-z0-9-]+:[0-9]+\.[0-9]+\.[0-9]+(-(local-)?[0-9]{6}-[0-9]{4})?[[:space:]]' \
           | grep -vE 'vexaai/[a-z0-9-]+:(latest|dev|staging)\b' \
           | grep -vE 'vexaai/[a-z0-9-]+:[0-9]+\.[0-9]+\.[0-9]+-pending' \
           || true)
@@ -57,11 +63,13 @@ for F in $FILES; do
 done
 
 if [ "$FAIL" -eq 0 ]; then
-    echo "OK: all Vexa image tags are pinned to plain or timestamped semver."
+    echo "OK: all Vexa image tags are pinned (plain semver, -local-YYMMDD-HHMM, or legacy timestamped)."
     exit 0
 fi
 
 echo "" >&2
-echo "Fix: update tags to vexaai/<svc>:<semver> (e.g. :0.10.6)" >&2
-echo "     or vexaai/<svc>:<semver>-YYMMDD-HHMM for locally-built rollback images." >&2
+echo "Fix: update tags to one of:" >&2
+echo "     vexaai/<svc>:<semver>                       (Docker Hub)" >&2
+echo "     vexaai/<svc>:<semver>-local-YYMMDD-HHMM     (locally built)" >&2
+echo "     vexaai/<svc>:<semver>-YYMMDD-HHMM           (legacy locally built)" >&2
 exit 1
