@@ -1,7 +1,14 @@
 """
 Tests for SPEC-PORTAL-PROFILES-001 Phase 1: Profile Ladder
 
-Covers REQ-1, REQ-3, REQ-7, REQ-11. Pure unit tests.
+Covers REQ-1, REQ-3, REQ-5, REQ-7, REQ-11. Pure unit tests.
+
+Phase 1.5 update (SPEC v0.2.0):
+  - PROFILE_CAPABILITIES simplified to endpoint-checked capabilities only.
+  - Removed assertions on kb.create_personal, kb.read_org, kb.append_via_chat,
+    groups.manage, org.billing, org.settings — those are direct role checks, not
+    capability strings.
+  - Added tests for new effective_capabilities intersection semantics.
 """
 
 from unittest.mock import AsyncMock, MagicMock
@@ -47,51 +54,82 @@ class TestProfileLadder:
 
 
 class TestProfileCapabilities:
+    """SPEC v0.2.0: only endpoint-checked capability strings in PROFILE_CAPABILITIES."""
+
     def test_capabilities_dict_has_all_rungs(self):
         from app.core.profiles import PROFILE_CAPABILITIES, PROFILE_LADDER
 
         for rung in PROFILE_LADDER:
             assert rung in PROFILE_CAPABILITIES
 
-    def test_personal_has_kb_create_personal(self):
+    # ── personal ──────────────────────────────────────────────────────────────
+
+    def test_personal_has_kb_connectors(self):
         from app.core.profiles import PROFILE_CAPABILITIES
 
-        assert "kb.create_personal" in PROFILE_CAPABILITIES["personal"]
-
-    def test_personal_lacks_kb_read_org(self):
-        from app.core.profiles import PROFILE_CAPABILITIES
-
-        assert "kb.read_org" not in PROFILE_CAPABILITIES["personal"]
+        assert "kb.connectors" in PROFILE_CAPABILITIES["personal"]
 
     def test_personal_lacks_kb_connectors_external(self):
         from app.core.profiles import PROFILE_CAPABILITIES
 
         assert "kb.connectors.external" not in PROFILE_CAPABILITIES["personal"]
 
-    def test_personal_has_kb_connectors_url(self):
+    def test_personal_lacks_kb_create_org(self):
         from app.core.profiles import PROFILE_CAPABILITIES
 
-        assert "kb.connectors.url" in PROFILE_CAPABILITIES["personal"]
+        assert "kb.create_org" not in PROFILE_CAPABILITIES["personal"]
 
-    def test_personal_has_kb_connectors_upload(self):
+    def test_personal_lacks_kb_members(self):
         from app.core.profiles import PROFILE_CAPABILITIES
 
-        assert "kb.connectors.upload" in PROFILE_CAPABILITIES["personal"]
+        assert "kb.members" not in PROFILE_CAPABILITIES["personal"]
 
-    def test_company_has_kb_read_org(self):
+    # Removed in v0.2.0: kb.create_personal is a direct role check, not a capability.
+    def test_personal_does_not_have_kb_create_personal(self):
+        """kb.create_personal was removed from PROFILE_CAPABILITIES in v0.2.0."""
         from app.core.profiles import PROFILE_CAPABILITIES
 
-        assert "kb.read_org" in PROFILE_CAPABILITIES["company"]
+        assert "kb.create_personal" not in PROFILE_CAPABILITIES["personal"]
 
-    def test_company_has_kb_append_via_chat(self):
+    # Removed in v0.2.0
+    def test_personal_does_not_have_kb_read_org(self):
+        """kb.read_org is a direct role check, not a capability string."""
         from app.core.profiles import PROFILE_CAPABILITIES
 
-        assert "kb.append_via_chat" in PROFILE_CAPABILITIES["company"]
+        assert "kb.read_org" not in PROFILE_CAPABILITIES["personal"]
+
+    # ── company ───────────────────────────────────────────────────────────────
+
+    def test_company_has_kb_connectors(self):
+        from app.core.profiles import PROFILE_CAPABILITIES
+
+        assert "kb.connectors" in PROFILE_CAPABILITIES["company"]
 
     def test_company_lacks_kb_connectors_external(self):
         from app.core.profiles import PROFILE_CAPABILITIES
 
         assert "kb.connectors.external" not in PROFILE_CAPABILITIES["company"]
+
+    # Removed in v0.2.0
+    def test_company_does_not_have_kb_read_org(self):
+        """kb.read_org is a direct role check, not a capability string."""
+        from app.core.profiles import PROFILE_CAPABILITIES
+
+        assert "kb.read_org" not in PROFILE_CAPABILITIES["company"]
+
+    # Removed in v0.2.0
+    def test_company_does_not_have_kb_append_via_chat(self):
+        """kb.append_via_chat is a direct role check, not a capability string."""
+        from app.core.profiles import PROFILE_CAPABILITIES
+
+        assert "kb.append_via_chat" not in PROFILE_CAPABILITIES["company"]
+
+    # ── kb_manager ────────────────────────────────────────────────────────────
+
+    def test_kb_manager_has_kb_connectors(self):
+        from app.core.profiles import PROFILE_CAPABILITIES
+
+        assert "kb.connectors" in PROFILE_CAPABILITIES["kb_manager"]
 
     def test_kb_manager_has_kb_connectors_external(self):
         from app.core.profiles import PROFILE_CAPABILITIES
@@ -118,30 +156,41 @@ class TestProfileCapabilities:
 
         assert "kb.gaps" in PROFILE_CAPABILITIES["kb_manager"]
 
-    def test_group_manager_has_groups_manage(self):
+    # group_manager should NOT have groups.manage as a capability string.
+    def test_group_manager_does_not_have_groups_manage_capability(self):
+        """groups.manage is a direct role check, not a capability string (v0.2.0)."""
         from app.core.profiles import PROFILE_CAPABILITIES
 
-        assert "groups.manage" in PROFILE_CAPABILITIES["group_manager"]
+        assert "groups.manage" not in PROFILE_CAPABILITIES["group_manager"]
 
-    def test_group_manager_lacks_org_billing(self):
+    # admin should NOT have org.billing as a capability string.
+    def test_admin_does_not_have_org_billing_capability(self):
+        """org.billing is a direct role check, not a capability string (v0.2.0)."""
         from app.core.profiles import PROFILE_CAPABILITIES
 
-        assert "org.billing" not in PROFILE_CAPABILITIES["group_manager"]
+        assert "org.billing" not in PROFILE_CAPABILITIES["admin"]
 
-    def test_admin_has_org_billing(self):
+    # ── group_manager == admin in capability set ───────────────────────────────
+
+    def test_group_manager_has_kb_connectors(self):
         from app.core.profiles import PROFILE_CAPABILITIES
 
-        assert "org.billing" in PROFILE_CAPABILITIES["admin"]
+        assert "kb.connectors" in PROFILE_CAPABILITIES["group_manager"]
 
-    def test_admin_has_org_settings(self):
+    def test_group_manager_has_kb_connectors_external(self):
         from app.core.profiles import PROFILE_CAPABILITIES
 
-        assert "org.settings" in PROFILE_CAPABILITIES["admin"]
+        assert "kb.connectors.external" in PROFILE_CAPABILITIES["group_manager"]
 
-    def test_admin_has_groups_invite_users(self):
+    def test_admin_has_kb_connectors_external(self):
         from app.core.profiles import PROFILE_CAPABILITIES
 
-        assert "groups.invite_users" in PROFILE_CAPABILITIES["admin"]
+        assert "kb.connectors.external" in PROFILE_CAPABILITIES["admin"]
+
+    def test_admin_has_kb_members(self):
+        from app.core.profiles import PROFILE_CAPABILITIES
+
+        assert "kb.members" in PROFILE_CAPABILITIES["admin"]
 
     def test_capabilities_are_frozensets(self):
         from app.core.profiles import PROFILE_CAPABILITIES
@@ -149,13 +198,23 @@ class TestProfileCapabilities:
         for _role, caps in PROFILE_CAPABILITIES.items():
             assert isinstance(caps, frozenset)
 
-    def test_each_rung_is_superset_of_lower(self):
-        from app.core.profiles import PROFILE_CAPABILITIES, PROFILE_LADDER
+    def test_personal_and_company_have_same_capabilities(self):
+        """personal and company share _KB_BASIC_CAPS in v0.2.0."""
+        from app.core.profiles import PROFILE_CAPABILITIES
 
-        for i in range(1, len(PROFILE_LADDER)):
-            lower = PROFILE_LADDER[i - 1]
-            higher = PROFILE_LADDER[i]
-            assert PROFILE_CAPABILITIES[lower].issubset(PROFILE_CAPABILITIES[higher])
+        assert PROFILE_CAPABILITIES["personal"] == PROFILE_CAPABILITIES["company"]
+
+    def test_kb_manager_group_manager_admin_have_same_capabilities(self):
+        """kb_manager, group_manager, and admin all share _KB_FULL_CAPS in v0.2.0."""
+        from app.core.profiles import PROFILE_CAPABILITIES
+
+        assert PROFILE_CAPABILITIES["kb_manager"] == PROFILE_CAPABILITIES["group_manager"]
+        assert PROFILE_CAPABILITIES["kb_manager"] == PROFILE_CAPABILITIES["admin"]
+
+    def test_kb_manager_is_superset_of_personal(self):
+        from app.core.profiles import PROFILE_CAPABILITIES
+
+        assert PROFILE_CAPABILITIES["personal"].issubset(PROFILE_CAPABILITIES["kb_manager"])
 
 
 class TestEffectiveRole:
@@ -179,23 +238,29 @@ class TestEffectiveRole:
 
 
 class TestHasCapability:
-    def test_personal_has_kb_create_personal(self):
+    def test_personal_has_kb_connectors(self):
         from app.core.profiles import has_capability
 
         user = _mock_user(role="personal")
-        assert has_capability(user, "kb.create_personal") is True
+        assert has_capability(user, "kb.connectors") is True
 
-    def test_personal_lacks_kb_read_org(self):
+    def test_personal_lacks_kb_connectors_external(self):
         from app.core.profiles import has_capability
 
         user = _mock_user(role="personal")
-        assert has_capability(user, "kb.read_org") is False
+        assert has_capability(user, "kb.connectors.external") is False
 
-    def test_company_has_kb_read_org(self):
+    def test_personal_lacks_kb_members(self):
+        from app.core.profiles import has_capability
+
+        user = _mock_user(role="personal")
+        assert has_capability(user, "kb.members") is False
+
+    def test_company_has_kb_connectors(self):
         from app.core.profiles import has_capability
 
         user = _mock_user(role="company")
-        assert has_capability(user, "kb.read_org") is True
+        assert has_capability(user, "kb.connectors") is True
 
     def test_company_lacks_kb_connectors_external(self):
         from app.core.profiles import has_capability
@@ -209,7 +274,7 @@ class TestHasCapability:
         user = _mock_user(role="kb_manager")
         assert has_capability(user, "kb.connectors.external") is True
 
-    def test_admin_has_all_capabilities(self):
+    def test_admin_has_all_kb_capabilities(self):
         from app.core.profiles import PROFILE_CAPABILITIES, has_capability
 
         user = _mock_user(role="admin")
@@ -274,6 +339,18 @@ class TestRequireAtLeast:
 
         dep = _require_at_least("company")
         assert callable(dep)
+
+    def test_kb_manager_blocked_when_required_group_manager(self):
+        """kb_manager does NOT have group management rights (SPEC v0.2.0 REQ-7)."""
+        from fastapi import HTTPException
+
+        from app.core.profiles import _require_at_least
+
+        dep = _require_at_least("group_manager")
+        user = _mock_user(role="kb_manager")
+        with pytest.raises(HTTPException) as exc_info:
+            dep(caller_user=user)
+        assert exc_info.value.status_code == 403
 
 
 class TestMigrationMapping:
@@ -397,24 +474,24 @@ class TestConnectorAllowlist:
 
 
 class TestGroupManagerGate:
-    def test_group_manager_role_index_above_company(self):
+    def test_group_manager_role_index_above_kb_manager(self):
         from app.core.profiles import PROFILE_LADDER
 
         gm_idx = PROFILE_LADDER.index("group_manager")
-        company_idx = PROFILE_LADDER.index("company")
-        assert gm_idx > company_idx
+        km_idx = PROFILE_LADDER.index("kb_manager")
+        assert gm_idx > km_idx
 
-    def test_company_lacks_groups_manage_capability(self):
-        from app.core.profiles import has_capability
+    def test_require_group_manager_blocks_kb_manager(self):
+        """kb_manager should NOT manage groups (H1 review concern)."""
+        from fastapi import HTTPException
 
-        user = _mock_user(role="company")
-        assert has_capability(user, "groups.manage") is False
+        from app.core.profiles import _require_at_least
 
-    def test_group_manager_has_groups_manage_capability(self):
-        from app.core.profiles import has_capability
-
-        user = _mock_user(role="group_manager")
-        assert has_capability(user, "groups.manage") is True
+        dep = _require_at_least("group_manager")
+        user = _mock_user(role="kb_manager")
+        with pytest.raises(HTTPException) as exc_info:
+            dep(caller_user=user)
+        assert exc_info.value.status_code == 403
 
     def test_require_group_manager_blocks_company(self):
         from fastapi import HTTPException
@@ -432,6 +509,13 @@ class TestGroupManagerGate:
 
         dep = _require_at_least("group_manager")
         user = _mock_user(role="admin")
+        dep(caller_user=user)
+
+    def test_require_group_manager_allows_group_manager(self):
+        from app.core.profiles import _require_at_least
+
+        dep = _require_at_least("group_manager")
+        user = _mock_user(role="group_manager")
         dep(caller_user=user)
 
 
@@ -545,6 +629,7 @@ class TestEffectiveKBLimits:
         assert result.can_create_org_kbs is False
 
     def test_personal_complete_profile_lowers(self):
+        """complete plan + personal role -> 5/20 (profile is the floor)."""
         from app.core.profiles import effective_kb_limits
 
         result = effective_kb_limits("personal", "complete")
@@ -561,6 +646,7 @@ class TestEffectiveKBLimits:
         assert result.can_create_org_kbs is False
 
     def test_kb_manager_core_plan_lowers(self):
+        """core plan + kb_manager role -> 5/20 (plan is the ceiling)."""
         from app.core.profiles import effective_kb_limits
 
         result = effective_kb_limits("kb_manager", "core")
