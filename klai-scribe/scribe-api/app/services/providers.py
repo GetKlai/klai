@@ -68,7 +68,13 @@ class WhisperHttpProvider:
         audio_wav: bytes,
         language: str | None,
     ) -> TranscriptionResult:
-        data: dict = {"transcription_tier": _DEFERRED_TIER}
+        # `model` is required by the OpenAI-compatible transcription-service
+        # (HTTP 422 if missing). `transcription_tier` is the Vexa extension
+        # for two-tier admission control (SPEC-VEXA-003 §5.1).
+        data: dict = {
+            "model": settings.whisper_model,
+            "transcription_tier": _DEFERRED_TIER,
+        }
         if language:
             data["language"] = language
 
