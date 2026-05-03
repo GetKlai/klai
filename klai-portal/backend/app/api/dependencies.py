@@ -10,6 +10,7 @@ from app.api.auth import get_current_user_id
 from app.api.bearer import bearer as bearer  # re-export for routes that import from here
 from app.core.database import get_db, set_tenant
 from app.core.plan_limits import PLAN_LIMITS, get_plan_limits
+from app.core.profiles import _require_at_least  # noqa: F401  # re-export for group routes
 from app.models.groups import PortalGroup, PortalGroupMembership
 from app.models.portal import PortalOrg, PortalUser
 from app.services.entitlements import get_effective_products
@@ -77,12 +78,16 @@ def _require_admin(caller_user: PortalUser) -> None:
 
 
 def _require_admin_or_group_admin_role(caller_user: PortalUser) -> None:
-    """Raise 403 unless caller is org admin or has group-admin role."""
-    if caller_user.role in ("admin", "group-admin"):
+    """Raise 403 unless caller has group_manager or admin profile role.
+
+    REQ-7: Replaces old (admin, group-admin) check with new profile ladder check.
+    group_manager and above may manage groups.
+    """
+    if caller_user.role in ("admin", "group_manager", "kb_manager", "group-admin"):
         return
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
-        detail="Access denied: admin or group admin role required",
+        detail="Access denied: group_manager role or higher required",
     )
 
 
@@ -110,7 +115,7 @@ async def _require_admin_or_group_admin(
             detail="Access denied: system groups can only be managed by org admins",
         )
 
-    if caller_user.role != "group-admin":
+    if caller_user.role not in ("group-admin", "group_manager", "kb_manager"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied: admin or group admin role required",
@@ -123,7 +128,7 @@ async def _require_admin_or_group_manager(
     db: AsyncSession,
 ) -> None:
     """Raise 403 unless caller is org admin, group-admin, or member of the Group Management system group."""
-    if caller_user.role in ("admin", "group-admin"):
+    if caller_user.role in ("admin", "group-admin", "group_manager", "kb_manager"):
         return
 
     # Check if caller is in the Group Management system group for their org
