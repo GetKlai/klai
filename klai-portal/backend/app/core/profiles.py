@@ -217,9 +217,6 @@ def check_connector_allowed(user: object, connector_type: str) -> None:
 def _require_at_least(required_role: str):
     """Return a callable that enforces a minimum profile role.
 
-    For use as a FastAPI dependency, use the wired version in dependencies.py:
-        from app.api.dependencies import require_at_least_dep
-
     For direct unit-test invocation, call the returned function with
     caller_user explicitly:
         dep = _require_at_least("group_manager")

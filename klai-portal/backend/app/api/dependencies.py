@@ -14,7 +14,6 @@ from app.core.profiles import (
     PROFILE_CAPABILITIES,
     PROFILE_RANK,
     Capability,
-    effective_role,
 )
 from app.models.groups import PortalGroup, PortalGroupMembership
 from app.models.portal import PortalOrg, PortalUser
@@ -197,43 +196,6 @@ def require_capability(capability: Capability):
             )
 
     return dep
-
-
-def require_at_least_dep(required_role: str):
-    """Return a FastAPI dependency that enforces a minimum profile role.
-
-    This is the fully-wired FastAPI version of _require_at_least from profiles.py.
-    It resolves the caller via bearer token + DB lookup.
-
-    G3 analysis (SPEC-PORTAL-PROFILES-001 Phase 1.5b): all current group-management
-    routes use _require_admin_or_group_admin / _require_admin_or_group_manager which
-    additionally check system_key per group_id or system group membership -- logic that
-    cannot be expressed as a simple role-ladder Depends.  This function is therefore
-    currently not called by any route.  It is retained as the correct dependency factory
-    for future routes that need only a role-ladder check (no system-group carve-out).
-
-    Usage::
-
-        @router.delete("/groups/{id}", dependencies=[Depends(require_at_least_dep("group_manager"))])
-
-    @MX:NOTE fan_in=0 -- no routes use this yet; see G3 analysis in docstring.
-    """
-    required_idx = PROFILE_RANK.get(required_role, -1)
-
-    async def _check(
-        credentials: HTTPAuthorizationCredentials = Depends(bearer),
-        db: AsyncSession = Depends(get_db),
-    ) -> None:
-        _, _, caller_user = await _get_caller_org(credentials, db)
-        role = effective_role(caller_user)
-        caller_idx = PROFILE_RANK.get(role, -1)
-        if caller_idx < required_idx:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"role {required_role!r} or higher required",
-            )
-
-    return _check
 
 
 async def get_effective_capabilities(user_id: str, db: AsyncSession) -> set[str]:
