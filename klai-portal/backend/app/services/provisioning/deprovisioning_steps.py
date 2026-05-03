@@ -182,29 +182,47 @@ async def _delete_meilisearch_index(state: _DeprovisionState) -> None:
 async def _flush_redis_tenant_keys(state: _DeprovisionState) -> None:
     """SCAN MATCH configs:{slug}:* + UNLINK all matching keys.
 
+    Uses the synchronous redis client wrapped in asyncio.to_thread so the
+    SCAN loop does not block the event loop. The sync client is intentional —
+    it mirrors infrastructure._flush_redis_and_restart_librechat which lives
+    in the same module-namespace; switching to redis.asyncio here would create
+    two divergent connection patterns for the same Redis instance.
+
     # @MX:NOTE: idempotent — al-weg = geen exception. SPEC R3.
+    # @MX:WARN: never call the sync redis SCAN loop directly inside this async
+    #   function — wrap in asyncio.to_thread to avoid event-loop stalls of
+    #   >100ms for tenants with many keys.
+    # @MX:REASON: BackgroundTask runs on the same event loop as foreground
+    #   requests; a blocking flush would freeze unrelated /api/* responses.
     """
+    import asyncio
+
     import redis
 
-    r = redis.Redis(
-        host=settings.redis_host,
-        port=settings.redis_port,
-        password=settings.redis_password or None,
-        decode_responses=True,
-    )
     pattern = f"configs:{state.slug}:*"
-    deleted = 0
-    batch: list[str] = []
-    try:
-        for key in r.scan_iter(match=pattern, count=100):
-            batch.append(key)
-            if len(batch) >= 100:
-                deleted += int(r.unlink(*batch))  # type: ignore[arg-type]
-                batch.clear()
-        if batch:
-            deleted += int(r.unlink(*batch))  # type: ignore[arg-type]
-    finally:
-        r.close()
+
+    def _sync_flush() -> int:
+        r = redis.Redis(
+            host=settings.redis_host,
+            port=settings.redis_port,
+            password=settings.redis_password or None,
+            decode_responses=True,
+        )
+        local_deleted = 0
+        batch: list[str] = []
+        try:
+            for key in r.scan_iter(match=pattern, count=100):
+                batch.append(key)
+                if len(batch) >= 100:
+                    local_deleted += int(r.unlink(*batch))  # type: ignore[arg-type]
+                    batch.clear()
+            if batch:
+                local_deleted += int(r.unlink(*batch))  # type: ignore[arg-type]
+        finally:
+            r.close()
+        return local_deleted
+
+    deleted = await asyncio.to_thread(_sync_flush)
     logger.info("redis_tenant_keys_flushed", slug=state.slug, pattern=pattern, deleted=deleted)
 
 
@@ -440,7 +458,13 @@ async def _archive_moneybird_subscription(state: _DeprovisionState) -> None:
 async def _delete_personal_kb(state: _DeprovisionState) -> None:
     """docs_api.deprovision_kb(org_slug=slug, kb_slug='personal').
 
-    # @MX:NOTE: idempotent — al-weg = geen exception. SPEC R3.
+    # @MX:NOTE: idempotent — al-weg (404) = geen exception. SPEC R3.
+    # @MX:NOTE: connect/read errors propagate to the orchestrator's retry loop
+    #   (httpx.ConnectError / ConnectTimeout / ReadTimeout are httpx.HTTPError
+    #   subclasses, which are listed in _RETRYABLE_EXCEPTIONS). After 3 retries
+    #   the step fails loud → status failed_deprovisioning. We do NOT silently
+    #   swallow connect-failures here — that would leave docs-app data behind
+    #   while the orchestrator marks the tenant as deprovisioned.
     """
     from app.services import docs_client as docs_api
 
@@ -450,11 +474,8 @@ async def _delete_personal_kb(state: _DeprovisionState) -> None:
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
             logger.info("personal_kb_already_absent", slug=state.slug)
-        else:
-            raise
-    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
-        # docs-app unreachable — treat as degraded but continue (no KB to clean)
-        logger.warning("personal_kb_delete_docs_app_unreachable", slug=state.slug, exc_info=True)
+            return
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -566,6 +587,15 @@ async def _finalize_postgres_delete(state: _DeprovisionState) -> None:
 
     # 4. Commit the whole transaction atomically.
     await db.commit()
+
+    # 5. SPEC R11 — second slug-cache invalidate. Step 0 already invalidated
+    # at the start of deprovisioning, but the cache could have been
+    # repopulated mid-run by an in-flight request that read the slug before
+    # the 403 guard kicked in. Invalidate again so the slug is immediately
+    # available for re-signup with the same name.
+    from app.api.auth import invalidate_tenant_slug_cache
+
+    invalidate_tenant_slug_cache()
 
     logger.info(
         "portal_org_hard_deleted",

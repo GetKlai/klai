@@ -55,7 +55,7 @@ function DangerZonePage() {
           size="sm"
           onClick={() => void navigate({ to: '/admin' })}
         >
-          {m.templates_form_cancel()}
+          {m.danger_zone_back()}
         </Button>
       </div>
       <p className="text-sm text-gray-400 -mt-4">{m.danger_zone_subtitle()}</p>

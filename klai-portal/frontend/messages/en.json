@@ -1563,6 +1563,7 @@
   "danger_zone_delete_card_title": "Permanently delete workspace",
   "danger_zone_delete_card_description": "Permanently deletes the workspace and all associated data. This action cannot be reversed.",
   "danger_zone_delete_button": "Delete workspace",
+  "danger_zone_back": "Back",
   "delete_org_modal_title": "Permanently delete workspace",
   "delete_org_modal_intro": "This permanently deletes:",
   "delete_org_modal_item_org": "and all conversations",

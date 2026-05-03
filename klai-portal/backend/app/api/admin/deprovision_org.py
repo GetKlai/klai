@@ -40,13 +40,27 @@ _ALREADY_DEPROVISIONING_STATES = frozenset(
     }
 )
 
-# States from which a deprovisioning may be initiated.
-DEPROVISION_ENTRY_STATES = frozenset(
+# States from which the initial-deprovision endpoint may be entered.
+#
+# Intentionally a STRICT SUBSET of state_machine.DEPROVISION_ENTRY_STATES
+# (which adds `failed_deprovisioning` for the admin retry endpoint). The
+# initial DELETE endpoints (owner self-service + platform admin) MUST NOT
+# accept `failed_deprovisioning` — that state requires the retry endpoint,
+# not a fresh delete (otherwise an operator confused about state could
+# overwrite last_failure and lose recovery context).
+#
+# If state_machine.DEPROVISION_ENTRY_STATES grows with new entry states,
+# audit whether they belong here too. Today: ready (happy path) +
+# failed_rollback_complete (cleanup of failed signup).
+INITIAL_DEPROVISION_ENTRY_STATES = frozenset(
     {
         "ready",
         "failed_rollback_complete",
     }
 )
+# Backward-compat alias (existing callers import DEPROVISION_ENTRY_STATES
+# from this module). Remove the alias once all callers are updated.
+DEPROVISION_ENTRY_STATES = INITIAL_DEPROVISION_ENTRY_STATES
 
 
 # ---------------------------------------------------------------------------

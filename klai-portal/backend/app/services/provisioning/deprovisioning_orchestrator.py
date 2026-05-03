@@ -153,7 +153,7 @@ async def _run(org_id: int, actor_id: str, actor_type: str, db: AsyncSession) ->
             step=exc.step_name,
             error=str(exc.original),
         )
-        await _mark_failed(db, org_id, exc.step_name, str(exc.original))
+        await _mark_failed(db, org_id, exc.step_name, str(exc.original), attempt=getattr(exc, "attempt", 1))
         return
 
     logger.info("deprovisioning_complete", org_id=org_id, slug=state.slug)
@@ -266,10 +266,16 @@ async def _run_step_with_retry(
     # @MX:NOTE: SPEC-INFRA-TENANT-DELETE-001 R3 — retry policy. Delays match
     #   SPEC (1, 2, 4). Non-retryable exceptions bypass all retries.
     """
-    delays = [1, 2, 4]
+    # delays[i] = sleep AFTER attempt i+1 if it failed retryably.
+    # 3 total attempts; sleep 1s after attempt 1, 2s after attempt 2.
+    # No sleep after attempt 3 — we fail-fast on the final exhaustion.
+    delays_between = [1, 2]
+    max_attempts = len(delays_between) + 1  # 3
     last_exc: Exception | None = None
+    last_attempt = 0
 
-    for attempt, delay in enumerate(delays, start=1):
+    for attempt in range(1, max_attempts + 1):
+        last_attempt = attempt
         try:
             await step_fn(state)
             return
@@ -280,19 +286,23 @@ async def _run_step_with_retry(
                 step=step_fn.__name__,
                 slug=state.slug,
                 attempt=attempt,
-                delay=delay,
                 error=str(exc),
             )
-            if attempt < len(delays):
-                await asyncio.sleep(delay)
+            if attempt < max_attempts:
+                await asyncio.sleep(delays_between[attempt - 1])
         except Exception as exc:
-            # Non-retryable — wrap and fail immediately.
-            raise DeprovisionStepError(step_fn.__name__, exc) from exc
+            # Non-retryable — wrap and fail immediately. Pass real attempt
+            # so _mark_failed records the correct count (typically 1).
+            err = DeprovisionStepError(step_fn.__name__, exc)
+            err.attempt = attempt
+            raise err from exc
 
-    raise DeprovisionStepError(step_fn.__name__, last_exc or RuntimeError("unknown"))
+    err = DeprovisionStepError(step_fn.__name__, last_exc or RuntimeError("unknown"))
+    err.attempt = last_attempt
+    raise err
 
 
-async def _mark_failed(db: AsyncSession, org_id: int, step_name: str, error_str: str) -> None:
+async def _mark_failed(db: AsyncSession, org_id: int, step_name: str, error_str: str, attempt: int = 1) -> None:
     """Transition org to `failed_deprovisioning` + populate last_failure JSONB.
 
     Best-effort: failures here are logged but not re-raised (the original
@@ -319,7 +329,7 @@ async def _mark_failed(db: AsyncSession, org_id: int, step_name: str, error_str:
                 "failure": {
                     "step": step_name,
                     "error": error_str[:500],  # truncate to keep JSONB compact
-                    "attempt": 3,
+                    "attempt": attempt,
                     "failed_at": failed_at,
                 },
                 "id": org_id,

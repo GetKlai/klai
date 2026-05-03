@@ -9,10 +9,11 @@ from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.bearer import bearer
+from app.core.config import settings as _app_settings  # avoid shadow by .settings submodule include
 from app.core.database import set_tenant
 from app.models.portal import PortalOrg, PortalUser
 from app.services.zitadel import zitadel
@@ -71,6 +72,16 @@ async def _get_caller_org(
         )
 
     await set_tenant(db, org.id)
+
+    # SPEC-INFRA-TENANT-DELETE-001 R6: enable platform-admin RLS on
+    # tenant_lifecycle_events when the caller is in the platform org. The
+    # post-deploy SQL policy reads `app.is_platform_admin` to gate SELECT —
+    # without this assignment, the audit-trail is permanently invisible
+    # via the API. SET LOCAL is transaction-scoped so the next request on
+    # this pooled connection starts clean (cleared by _reset_tenant_context).
+    if org.slug == _app_settings.platform_org_slug:
+        await db.execute(text("SELECT set_config('app.is_platform_admin', 'true', true)"))
+
     return zitadel_user_id, org, caller_user
 
 

@@ -37,14 +37,17 @@ interface DeprovisionStatus {
 export function DeprovisioningStatusPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  // eslint-disable-next-line react-hooks/purity -- Date.now() is stable at mount time; ref is set once
-  const startedAt = useRef(Date.now())
+  // Lazy useState initializer keeps Date.now() out of render-pure scope while
+  // still capturing the mount-time value once. The ref pattern triggers
+  // react-hooks/purity because Date.now() is evaluated during render.
+  const [startedAt] = useState<number>(() => Date.now())
+  const startedAtRef = useRef<number>(startedAt)
   const [elapsed, setElapsed] = useState(0)
 
   // Track elapsed time for progressive poll interval and timeout check
   useEffect(() => {
     const id = setInterval(() => {
-      setElapsed(Date.now() - startedAt.current)
+      setElapsed(Date.now() - startedAtRef.current)
     }, 1000)
     return () => clearInterval(id)
   }, [])
