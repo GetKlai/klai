@@ -80,7 +80,13 @@ async def _get_caller_org(
     # via the API. SET LOCAL is transaction-scoped so the next request on
     # this pooled connection starts clean (cleared by _reset_tenant_context).
     if org.slug == _app_settings.platform_org_slug:
-        await db.execute(text("SELECT set_config('app.is_platform_admin', 'true', true)"))
+        # GUC value MUST match the post_deploy SQL policy:
+        # `current_setting('app.is_platform_admin', true) = '1'`. Using '1'
+        # rather than 'true' aligns with the policy and with the convention
+        # used by app.current_org_id (also stored as text). A value mismatch
+        # would silently filter the SELECT-policy to zero rows — defeating
+        # the whole audit-readability fix.
+        await db.execute(text("SELECT set_config('app.is_platform_admin', '1', true)"))
 
     return zitadel_user_id, org, caller_user
 

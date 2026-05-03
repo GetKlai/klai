@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import asyncpg
@@ -89,7 +89,6 @@ class _DeprovisionState:
     deprovisioner_user_id: str
     deprovisioner_type: str  # 'owner' | 'platform_admin' | 'system'
     org_name: str
-    failures: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -222,8 +221,17 @@ async def _resolve_zitadel_oidc_app_id(client_id: str | None) -> str:
             for app in apps:
                 if app.get("oidcConfig", {}).get("clientId") == client_id:
                     return app.get("id", "")
-    except Exception:
-        logger.warning("zitadel_oidc_app_id_lookup_failed", client_id=client_id, exc_info=True)
+    except (httpx.HTTPError, KeyError, ValueError, TypeError) as exc:
+        # HTTPError: Zitadel down/4xx/5xx. KeyError/ValueError/TypeError: malformed
+        # JSON response shape. We deliberately NARROW the catch — bare `except`
+        # would mask AttributeError or IndexError which signal a programming bug,
+        # not "service degraded". Step 14 handles empty app_id gracefully.
+        logger.warning(
+            "zitadel_oidc_app_id_lookup_failed",
+            client_id=client_id,
+            error=type(exc).__name__,
+            exc_info=True,
+        )
 
     return ""
 
@@ -250,8 +258,14 @@ async def _resolve_litellm_team_id(slug: str) -> str:
             for team in teams:
                 if team.get("team_alias") == slug:
                     return str(team.get("team_id", ""))
-    except Exception:
-        logger.warning("litellm_team_id_lookup_failed", slug=slug, exc_info=True)
+    except (httpx.HTTPError, KeyError, ValueError, TypeError) as exc:
+        # Same narrowing rationale as _resolve_zitadel_oidc_app_id above.
+        logger.warning(
+            "litellm_team_id_lookup_failed",
+            slug=slug,
+            error=type(exc).__name__,
+            exc_info=True,
+        )
 
     return ""
 
