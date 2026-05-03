@@ -17,8 +17,8 @@
 | 7 | knowledge-ingest wipe-graph endpoint | ✅ DONE | commit e808edd5 |
 | 8 | admin/_get_caller_org 403-branch on deprovisioning state | ✅ DONE | commit 2e6d5b70 |
 | 9 | API endpoints (owner + admin + retry + status) | ✅ DONE | commit 471da922 |
-| 10 | Frontend DeleteOrgModal + Danger Zone page | pending | |
-| 11 | Frontend status polling + tenant-deleted + 403-handler | pending | |
+| 10 | Frontend DeleteOrgModal + Danger Zone page | ✅ DONE | commit 248e118f |
+| 11 | Frontend status polling + tenant-deleted + 403-handler | ✅ DONE | commit 68539d97 |
 | 12 | e2e test against dev-stack (handled by /klai:auto Phase 5) | deferred | |
 | 13 | docs + runbook | pending | |
 
@@ -135,6 +135,47 @@
 - `_require_platform_admin` checks `caller_org.slug == settings.platform_org_slug`.
 - `retry-deprovisioning` resets `last_failure = NULL` before re-queuing.
 - Status endpoint uses `allow_during_deprovisioning=True` (only exception to Phase 8 guard).
+
+## Phase 10 — Frontend DeleteOrgModal + Danger Zone page
+
+**Files added:**
+- `klai-portal/frontend/src/components/ui/delete-org-modal.tsx` — AlertDialog with type-slug-to-confirm, calls `DELETE /api/admin/org/me`, navigates to `/admin/deprovisioning-status` on success
+- `klai-portal/frontend/src/components/ui/__tests__/delete-org-modal.test.tsx` — 8 tests (render, disabled states, API call, error handling, conflict state, reset on close)
+- `klai-portal/frontend/src/routes/admin/danger-zone.tsx` — owner-only page, queries `GET /api/admin/org/me` for org metadata, opens DeleteOrgModal, Card with red border highlight
+
+**Files modified:**
+- `klai-portal/frontend/messages/nl.json` + `en.json` — added all deprovision + danger-zone i18n keys
+- `klai-portal/frontend/src/lib/logger.ts` — added `deprovisionLogger = logger.withTag('deprovision')`
+- `klai-portal/frontend/src/routes/admin/route.tsx` — added Danger Zone nav entry with `Skull` icon
+
+**Key design decisions:**
+- Confirmation input matches `orgSlug` (not orgName) to force deliberate typing of the workspace identifier.
+- Uses Tier 1 confirmation pattern (`AlertDialog`) per portal-patterns.md confirmation hierarchy.
+- `useProtectedRoute({ requireAdmin: true, noRoleFallback: '/admin' })` guards the page (owner = admin in portal).
+- Error branch distinguishes `already_deprovisioning` (conflict message) from generic failures.
+- Danger Zone page layout: `mx-auto max-w-lg px-6 py-10` (form/edit page width per portal-patterns.md).
+
+## Phase 11 — Frontend status polling + tenant-deleted + 403-handler
+
+**Files added:**
+- `klai-portal/frontend/src/routes/admin/deprovisioning-status.tsx` — polls `GET /api/admin/org/me/deprovision-status` with progressive intervals (2s/5s/10s), navigates on terminal states, timeout warning at 5 min
+- `klai-portal/frontend/src/routes/admin/__tests__/deprovisioning-status.test.tsx` — 5 tests (spinner, gone→tenant-deleted, ready→admin, failed view, 404-as-gone)
+- `klai-portal/frontend/src/routes/tenant-deleted.tsx` — public landing page (no auth), CheckCircle icon, link to getklai.com
+- `klai-portal/frontend/src/lib/navigate-singleton.ts` — singleton registry for navigate + queryClient.clear() usable outside React component tree
+- `klai-portal/frontend/src/routes/admin/__tests__/deprovisioning-status.test.tsx` (see above)
+
+**Files modified:**
+- `klai-portal/frontend/src/lib/apiFetch.ts` — added 403 `tenant_deleting` detection via `res.clone().json()` before the regular `!res.ok` handler; calls `clearAllQueries()` + `navigateTo('/tenant-deleted')`
+- `klai-portal/frontend/src/lib/__tests__/apiFetch.test.ts` — added 2 tests for the 403 handler (tenant_deleting redirect, non-tenant_deleting passthrough)
+- `klai-portal/frontend/src/main.tsx` — calls `registerNavigateSingleton(...)` after router creation
+- `klai-portal/frontend/src/routeTree.gen.ts` — regenerated with 3 new routes (`/admin/danger-zone`, `/admin/deprovisioning-status`, `/tenant-deleted`)
+
+**Key design decisions:**
+- `DeprovisioningStatusPage` exported as named function (not only via `Route`) so tests can render it directly without needing the full TanStack Router context.
+- 404 from the status endpoint is caught inside `queryFn` and converted to `{ status: 'gone' }` (not propagated as an error) to simplify the rendering logic.
+- `res.clone().json()` used for the tenant_deleting probe so the original response body is still available for the standard `ApiError` construction path.
+- Navigate singleton registered in `main.tsx` (after router creation) to avoid circular dependency; `apiFetch.ts` reads from it lazily.
+- Progressive poll interval driven by `elapsed` state updated by a 1-second `setInterval`; `getRefetchInterval()` is called synchronously on each render so TanStack Query always gets the current value.
 
 ## Implementation Notes
 
