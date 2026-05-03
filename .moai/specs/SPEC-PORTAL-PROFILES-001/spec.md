@@ -18,6 +18,7 @@ related:
 | Date | Version | Change |
 |------|---------|--------|
 | 2026-05-03 | 0.1.0 | Initial draft after sparring session. Five-rung profile ladder (Personal chat → Company chat → Knowledge manager → Group manager → Admin) replaces the current `admin / group-admin / member` triplet. Plan and role decoupled: Company chat and Knowledge manager share a billing tier but differ in role. Scribe and Docs become per-tenant add-on toggles, not Plan-bound products. Knowledge access for Personal chat is hard-gated: no `default_org_role` fallback, ever. |
+| 2026-05-03 | 0.2.0 | Capability-laag versimpeld na review van Phase-1 PR. `PROFILE_CAPABILITIES` bevat alleen capabilities die op endpoints via `require_capability(...)` worden gechecked: `kb.connectors`, `kb.connectors.external`, `kb.create_org`, `kb.members`, `kb.taxonomy`, `kb.gaps`. Verwijderd: `kb.read_org`, `kb.append_via_chat`, `groups.manage`, `groups.invite_users`, `org.billing`, `org.settings` — die worden directe rol-checks via `_require_at_least` of `_require_admin`. Connector-allowlist via twee capability-gates ipv aparte rol-tabel. `effective_capabilities = role_caps ∩ plan_caps` is nu de canonieke werking. |
 
 ---
 
@@ -78,32 +79,46 @@ The frontend label set (Engels):
 
 **Backend — capability remap**
 
-Capabilities vandaag plan-gebonden ([`PLAN_LIMITS`](klai-portal/backend/app/core/plan_limits.py#L33-L60)) worden role-gebonden in `app/core/profiles.py`:
+Capability-strings worden alléén bewaard voor checks die via `require_capability(...)` op endpoints lopen. Alles wat al via een directe rol-check te doen is (org-KB read filter, append-via-chat, groups beheren, billing, settings) krijgt geen capability-string maar een rechtstreekse `_require_at_least(...)` of `_require_admin(...)` op de route.
 
-| Capability | Rol-ondergrens |
+**Capability-string set** (gechecked via `require_capability`, gehandhaafd op endpoints):
+
+| Capability | In `PROFILE_CAPABILITIES` | In `PLAN_LIMITS.capabilities` |
+|---|---|---|
+| `kb.connectors` (basis: url/upload) | personal, company, kb_manager, group_manager, admin | core, professional, complete |
+| `kb.connectors.external` (overige types) | kb_manager, group_manager, admin | complete |
+| `kb.create_org` | kb_manager, group_manager, admin | complete |
+| `kb.members` | kb_manager, group_manager, admin | complete |
+| `kb.taxonomy` | kb_manager, group_manager, admin | complete |
+| `kb.gaps` | kb_manager, group_manager, admin | complete |
+
+**Effective capabilities** op runtime:
+
+```
+effective_capabilities(user) = PROFILE_CAPABILITIES[role] ∩ PLAN_LIMITS[plan].capabilities
+```
+
+Plan blijft ceiling, profiel blijft floor. Een `kb_manager` op een `core`-plan krijgt alleen wat `core` toelaat (basis `kb.connectors`); een `personal` op `complete`-plan krijgt alleen wat `personal` toelaat (basis `kb.connectors`). Admin behoudt de bestaande complete-tier bypass uit SPEC-PORTAL-UNIFY-KB-001 — een admin op een goedkoper plan krijgt alle kb-capabilities (rationaal: admin moet kunnen testen wat een upgrade oplevert; bewuste keuze).
+
+**Directe rol-checks** (geen capability-string):
+
+| Wat | Hoe |
 |---|---|
-| `kb.create_personal` | personal |
-| `kb.connectors.url` | personal |
-| `kb.connectors.upload` | personal |
-| `kb.append_via_chat` | company |
-| `kb.read_org` | company |
-| `kb.connectors.external` | kb_manager |
-| `kb.create_org` | kb_manager |
-| `kb.members` | kb_manager |
-| `kb.taxonomy` | kb_manager |
-| `kb.gaps` | kb_manager |
-| `groups.manage` | group_manager |
-| `groups.invite_users` | admin |
-| `org.billing` | admin |
-| `org.settings` | admin |
+| Personal hard gate op org-KB | `get_accessible_kb_slugs` filtert wanneer `user.role == "personal"` |
+| Append-to-org-KB via chat | Endpoint check `_require_at_least("company")` op append-flow |
+| Groups beheren | `_require_at_least("group_manager")` op `/api/admin/groups/*` |
+| Users invite, billing, settings, domains, api-keys, widgets, MCPs, templates | `_require_admin` op de overige `/api/admin/*` |
 
-Plan-tier blijft de ceiling: een `core`-plan bedrijf mag geen `kb_manager`-rol toekennen aan zijn users. Nieuw: per-rol-per-plan toelaatbaarheid in `app/core/profiles.py::ALLOWED_PROFILES_PER_PLAN`.
+Plan-tier blijft de ceiling op rol-toekenning: een `core`-plan bedrijf mag geen `kb_manager`-rol toekennen aan zijn users. Nieuw: per-rol-per-plan toelaatbaarheid in `app/core/profiles.py::ALLOWED_PROFILES_PER_PLAN`.
 
 **Backend — connector allowlist**
 
-- `klai-connector` adapter-registratie krijgt een `tier_minimum: str` veld per connector-type.
-- Bij KB-source-creatie checkt `klai-portal/backend/app/api/knowledge.py` (of `app_knowledge_bases.py`) tegen `PROFILE_CAPABILITIES[user.role]` of `kb.connectors.<type>` aanwezig is.
-- `url` en `upload` zijn de enige met `tier_minimum: "personal"`. Alle externe connectors krijgen `tier_minimum: "kb_manager"`.
+De connector-type check loopt via twee capability-checks op het `POST /api/connectors` endpoint:
+
+1. `require_capability("kb.connectors")` — mag de user überhaupt connectors creëren? (basis-gate, plan + rol)
+2. Indien `connector_type ∉ {"url", "upload"}`: `require_capability("kb.connectors.external")` — mag de user externe types? (extra-gate, plan + rol)
+
+Geen aparte rol-tabel of `tier_minimum` op adapter-registratie nodig — de capabilities dragen de gating.
 
 **Backend — KB quota**
 
