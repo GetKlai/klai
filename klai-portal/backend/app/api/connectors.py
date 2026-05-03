@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _get_caller_org, bearer, require_capability
+from app.api.dependencies import _get_caller_org, bearer, get_effective_capabilities, require_capability
 from app.core.database import get_db
 from app.core.profiles import check_connector_allowed
 from app.models.connectors import PortalConnector
@@ -405,6 +405,19 @@ async def create_connector(
     caller_id, org, caller_user = await _get_caller_org(credentials, db)
     # REQ-3: personal/company roles may only use url/upload connector types
     check_connector_allowed(caller_user, body.connector_type)
+    # G1: Plan-ceiling on external connectors. The role-level check above already
+    # blocks personal/company. For roles that pass (kb_manager+), ensure the org
+    # plan also permits external connectors.
+    if body.connector_type not in {"url", "upload"}:
+        caps = await get_effective_capabilities(caller_id, db)
+        if "kb.connectors.external" not in caps:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error_code": "external_connectors_require_complete_plan",
+                    "plan": org.plan,
+                },
+            )
     kb = await _get_kb_with_owner_check(kb_slug, caller_id, org.id, db)
     resolved_content_type = body.content_type or CONTENT_TYPE_DEFAULTS.get(body.connector_type, "unknown")
     if body.allowed_assertion_modes is not None:
