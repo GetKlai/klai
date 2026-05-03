@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { apiFetch } from '@/lib/apiFetch'
+import { Checkbox } from '@/components/ui/checkbox'
 import * as m from '@/paraglide/messages'
 import { adminLogger } from '@/lib/logger'
 
@@ -51,6 +52,46 @@ function AdminSettingsPage() {
       setSelectedMfa(settings.mfa_policy ?? 'optional')
     }
   }, [settings])
+
+  // SPEC-PORTAL-PROFILES-001 P3.6: Add-on toggles
+  const [addons, setAddons] = useState<string[]>([])
+  const [savingAddons, setSavingAddons] = useState(false)
+  const [savedAddons, setSavedAddons] = useState(false)
+  const [addonsError, setAddonsError] = useState<string | null>(null)
+
+  const { data: addonsData, isLoading: addonsLoading, error: addonsQueryError } = useQuery({
+    queryKey: ['admin-enabled-addons'],
+    queryFn: async () => apiFetch<{ enabled_addons: string[] }>('/api/admin/settings/addons'),
+    enabled: auth.isAuthenticated,
+  })
+
+  useEffect(() => {
+    if (addonsData) {
+      setAddons(addonsData.enabled_addons ?? [])
+    }
+  }, [addonsData])
+
+  async function handleToggleAddon(addon: string, enabled: boolean) {
+    const next = enabled ? [...new Set([...addons, addon])] : addons.filter((a) => a !== addon)
+    setAddons(next)
+    setSavingAddons(true)
+    setAddonsError(null)
+    try {
+      await apiFetch('/api/admin/settings/addons', {
+        method: 'PATCH',
+        body: JSON.stringify({ enabled_addons: next }),
+      })
+      adminLogger.info('Add-ons updated', { enabled_addons: next })
+      setSavedAddons(true)
+      setTimeout(() => setSavedAddons(false), 2500)
+    } catch (err) {
+      setAddonsError(err instanceof Error ? err.message : m.admin_settings_error_save())
+      // Revert optimistic update on error
+      setAddons(addonsData?.enabled_addons ?? [])
+    } finally {
+      setSavingAddons(false)
+    }
+  }
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-10 space-y-6" data-help-id="admin-settings-general">
@@ -170,6 +211,45 @@ function AdminSettingsPage() {
         </CardHeader>
         <CardContent>
           <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_settings_placeholder()}</p>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>{m.admin_settings_addons_title()}</CardTitle>
+          <CardDescription>
+            {m.admin_settings_addons_description()}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {addonsLoading ? (
+            <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_users_loading()}</p>
+          ) : addonsQueryError ? (
+            <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_fetch()}</p>
+          ) : (
+            <>
+              <Checkbox
+                checked={addons.includes('scribe')}
+                onChange={(e) => void handleToggleAddon('scribe', e.target.checked)}
+                disabled={savingAddons}
+                label={m.admin_settings_addon_scribe()}
+              />
+              <Checkbox
+                checked={addons.includes('docs')}
+                onChange={(e) => void handleToggleAddon('docs', e.target.checked)}
+                disabled={savingAddons}
+                label={m.admin_settings_addon_docs()}
+              />
+              {addonsError && (
+                <p className="text-sm text-[var(--color-destructive)]">{addonsError}</p>
+              )}
+              {savedAddons && (
+                <p className="text-sm text-[var(--color-accent)]">{m.admin_settings_saved()}</p>
+              )}
+              {savingAddons && (
+                <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_settings_saving()}</p>
+              )}
+            </>
+          )}
         </CardContent>
       </Card>
     </div>

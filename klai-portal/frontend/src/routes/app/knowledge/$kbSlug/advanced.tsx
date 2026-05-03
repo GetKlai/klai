@@ -5,11 +5,16 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { DeleteKbModal } from '@/components/ui/delete-kb-modal'
 import * as m from '@/paraglide/messages'
+import { RoleGuard } from '@/components/layout/RoleGuard'
 import { apiFetch } from '@/lib/apiFetch'
 import type { KnowledgeBase, KBStats, MembersResponse } from './-kb-types'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/advanced')({
-  component: AdvancedTab,
+  component: () => (
+    <RoleGuard minRole="kb_manager">
+      <AdvancedTab />
+    </RoleGuard>
+  ),
 })
 
 function AdvancedTab() {

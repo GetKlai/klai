@@ -10,7 +10,9 @@ import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
+import { Tooltip } from '@/components/ui/tooltip'
 import { ProductCapabilityGuard } from '@/components/layout/ProductCapabilityGuard'
+import { meetsMinRole } from '@/lib/profiles'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import type { KBTab, KnowledgeBase, KBStats, MembersResponse, TaxonomyProposal } from './-kb-types'
 
@@ -59,6 +61,16 @@ const TAB_CAPABILITIES: Partial<Record<KBTab, string>> = {
   members: 'kb.members',
   taxonomy: 'kb.taxonomy',
   advanced: 'kb.advanced',
+}
+
+// SPEC-PORTAL-PROFILES-001 P3.3: Role requirements for KB tabs.
+// Tabs that need kb_manager+ are grayed out for personal/company roles
+// regardless of whether plan-level capabilities are present.
+const TAB_MIN_ROLES: Partial<Record<KBTab, 'kb_manager'>> = {
+  connectors: 'kb_manager',
+  members: 'kb_manager',
+  taxonomy: 'kb_manager',
+  advanced: 'kb_manager',
 }
 
 function KbLayout() {
@@ -174,21 +186,42 @@ function KbLayout() {
         <nav className="-mb-px flex gap-6">
           {tabEntries.map(({ id, to, icon: TabIcon, label, badge }) => {
             const requiredCap = TAB_CAPABILITIES[id]
-            const hasAccess = !requiredCap || user?.hasCapability(requiredCap) !== false
+            const requiredMinRole = TAB_MIN_ROLES[id]
+            const hasCapAccess = !requiredCap || user?.hasCapability(requiredCap) !== false
+            const hasRoleAccess = !requiredMinRole || meetsMinRole(user?.effective_role, requiredMinRole)
+            const hasAccess = hasCapAccess && hasRoleAccess
 
             if (!hasAccess) {
               // Grayed tab: visible, not clickable, tooltip on hover (D4).
+              const tooltipText = (!hasRoleAccess && requiredMinRole
+                ? m.role_guard_description({ minRole: requiredMinRole })
+                : m.capability_tooltip_knowledge_only()) ?? ''
+              const grayedTab = (
+                <span className="flex items-center gap-1.5 pb-3 text-sm font-medium border-b-2 border-transparent text-[var(--color-muted-foreground)]">
+                  <TabIcon className="h-4 w-4" />
+                  {label}
+                </span>
+              )
+              if (requiredCap) {
+                return (
+                  <ProductCapabilityGuard
+                    key={id}
+                    capability={requiredCap}
+                    tooltip={tooltipText}
+                  >
+                    {grayedTab}
+                  </ProductCapabilityGuard>
+                )
+              }
               return (
-                <ProductCapabilityGuard
-                  key={id}
-                  capability={requiredCap}
-                  tooltip={m.capability_tooltip_knowledge_only()}
-                >
-                  <span className="flex items-center gap-1.5 pb-3 text-sm font-medium border-b-2 border-transparent text-[var(--color-muted-foreground)]">
-                    <TabIcon className="h-4 w-4" />
-                    {label}
+                <Tooltip key={id} label={tooltipText}>
+                  <span
+                    className="opacity-50 cursor-default pointer-events-none select-none"
+                    aria-disabled="true"
+                  >
+                    {grayedTab}
                   </span>
-                </ProductCapabilityGuard>
+                </Tooltip>
               )
             }
 
