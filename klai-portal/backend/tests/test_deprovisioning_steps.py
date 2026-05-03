@@ -730,12 +730,15 @@ class TestFinalizePostgresDelete:
         # Also patch invalidate_tenant_slug_cache so we don't clear the module-level
         # cache in app.api.auth (would cause cross-test pollution: other tests rely on
         # the cache being warm and would try to load from DB on cache miss).
+        # set_tenant is patched because production code uses it to set the RLS
+        # Category-D tenant context before the explicit DELETEs.
         with (
             patch(
                 "app.services.audit.tenant_lifecycle.emit_lifecycle_event",
                 new=AsyncMock(),
             ) as mock_emit,
             patch("app.api.auth.invalidate_tenant_slug_cache", new=MagicMock()),
+            patch("app.core.database.set_tenant", new=AsyncMock()) as mock_set_tenant,
         ):
             from app.services.provisioning.deprovisioning_steps import _finalize_postgres_delete
 
@@ -743,6 +746,10 @@ class TestFinalizePostgresDelete:
 
         mock_emit.assert_awaited_once()
         state.db.commit.assert_awaited_once()
+        # Verify tenant context is set before DELETEs run — without it the
+        # Category-D RLS policies on portal_knowledge_bases / portal_groups /
+        # portal_kb_tombstones / vexa_meetings raise IntegrityError 42501.
+        mock_set_tenant.assert_awaited_once_with(state.db, state.org_id)
 
     @pytest.mark.asyncio
     async def test_execute_called_for_each_non_cascading_child_table(self) -> None:
@@ -764,6 +771,7 @@ class TestFinalizePostgresDelete:
                 new=AsyncMock(),
             ),
             patch("app.api.auth.invalidate_tenant_slug_cache", new=MagicMock()),
+            patch("app.core.database.set_tenant", new=AsyncMock()),
         ):
             from app.services.provisioning.deprovisioning_steps import _finalize_postgres_delete
 

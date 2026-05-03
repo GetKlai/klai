@@ -541,9 +541,18 @@ async def _finalize_postgres_delete(state: _DeprovisionState) -> None:
     #   added to this DELETE list, otherwise the final hard-delete throws FK violation
     #   and the tenant gets stuck in failed_deprovisioning.
     """
+    from app.core.database import set_tenant
     from app.services.audit.tenant_lifecycle import emit_lifecycle_event
 
     db = state.db
+
+    # 0. Set tenant context for RLS Category-D tables. Without this, the
+    # explicit DELETEs below (portal_knowledge_bases, portal_groups,
+    # portal_kb_tombstones, vexa_meetings — all in RLS_DML_TABLES per
+    # rls_guard.py) raise IntegrityError 42501 because the orchestrator
+    # opens its own AsyncSessionLocal which RESETS app.current_org_id.
+    # See portal-backend.md "Pool-GUC pollution" pitfall.
+    await set_tenant(db, state.org_id)
 
     # 1. Audit event — inside this transaction so a failure rolls back the delete too.
     await emit_lifecycle_event(

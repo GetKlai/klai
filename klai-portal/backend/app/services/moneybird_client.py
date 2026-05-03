@@ -62,22 +62,22 @@ class MoneybirdClient:
         )
 
     async def stop_subscription(self, subscription_id: str) -> None:
-        """Stop/pause a recurring sales invoice (subscription).
+        """Stop a recurring sales invoice (subscription).
 
-        Moneybird recurring invoices can be stopped by setting frequency_type
-        to "stopped" via PATCH on the recurring_sales_invoices endpoint.
-
-        # @MX:TODO: verify Moneybird API path during integration test.
-        # The Moneybird REST API docs show recurring_sales_invoices as the
-        # canonical resource for subscription billing. The frequency_type field
-        # accepts "stopped" to deactivate recurring billing.
+        Per Moneybird docs (developer.moneybird.com/api/recurring_sales_invoices):
+        DELETE on the resource is the only mechanism to stop automatic invoicing.
+        The API behaves polymorphically:
+          - If no invoices were ever created from this recurring template, the
+            recurring invoice is destroyed → 204.
+          - If invoices have been created, the recurring template is deactivated
+            (history is preserved) → 204.
+        Either way: billing stops. There is no PATCH-based "frequency_type=stopped"
+        endpoint — that was a guess in the original implementation that this fix
+        replaces.
 
         Idempotent: 404 means the subscription is already absent or deleted.
         """
-        resp = await self._http.patch(
-            f"/recurring_sales_invoices/{subscription_id}",
-            json={"recurring_sales_invoice": {"frequency_type": "stopped"}},
-        )
+        resp = await self._http.delete(f"/recurring_sales_invoices/{subscription_id}")
         if resp.status_code == 404:
             logger.info(
                 "moneybird_subscription_already_absent",
@@ -88,6 +88,7 @@ class MoneybirdClient:
         logger.info(
             "moneybird_subscription_stopped",
             subscription_id=subscription_id,
+            status=resp.status_code,
         )
 
     async def archive_contact(self, contact_id: str) -> None:
