@@ -506,10 +506,19 @@ async def _finalize_postgres_delete(state: _DeprovisionState) -> None:
     the org row is deleted (audit table has no FK, so it survives).
 
     # @MX:NOTE: idempotent — if org is already gone, the DELETE is a no-op. SPEC R3.
-    # @MX:WARN: hard-deletes the portal_orgs row. Cascades to partner_api_keys,
-    #   portal_knowledge_bases, portal_connectors, portal_widgets, portal_feedback_events,
-    #   portal_retrieval_gaps. SET NULL: vexa_meetings.org_id, product_events.org_id.
-    # @MX:REASON: explicit child-deletes first for non-cascading tables to prevent FK violations.
+    # @MX:WARN: hard-deletes the portal_orgs row. The DELETE list below MUST stay in
+    #   sync with every FK to portal_orgs.id that does NOT have ondelete=CASCADE.
+    #   Source of truth: grep "ForeignKey.*portal_orgs" klai-portal/backend/app/models/.
+    #   Tables that DO cascade automatically (no explicit DELETE needed):
+    #     portal_connectors (CASCADE), portal_widgets (CASCADE),
+    #     portal_feedback_events (CASCADE), portal_retrieval_gaps (CASCADE),
+    #     partner_api_keys (CASCADE).
+    #   Tables that SET NULL on delete (preserved with NULL org_id):
+    #     product_events (SET NULL — historical analytics rows survive),
+    #     portal_users.deleted_by_org? (SET NULL on portal.py:138 — review-only field).
+    # @MX:REASON: any new non-cascading FK added to portal_orgs in the future MUST be
+    #   added to this DELETE list, otherwise the final hard-delete throws FK violation
+    #   and the tenant gets stuck in failed_deprovisioning.
     """
     from app.services.audit.tenant_lifecycle import emit_lifecycle_event
 
@@ -530,16 +539,29 @@ async def _finalize_postgres_delete(state: _DeprovisionState) -> None:
     )
 
     # 2. Explicit DELETEs on non-cascading child tables.
-    # portal_groups — also cascades portal_group_memberships via FK
+    # Order matters: KB tables first (they have child-CASCADE chains), then
+    # group tables, then leaf tables, then portal_users last (other tables
+    # may FK to it).
+    #
+    # portal_knowledge_bases — cascades portal_user_kb_access + portal_group_kb_access
+    # (both have ondelete=CASCADE on their kb_id FK).
+    await db.execute(text("DELETE FROM portal_knowledge_bases WHERE org_id = :id"), {"id": state.org_id})
+    # portal_kb_tombstones — independent table tracking deleted KBs per org.
+    await db.execute(text("DELETE FROM portal_kb_tombstones WHERE org_id = :id"), {"id": state.org_id})
+    # vexa_meetings — meetings owned by org users; FK has no ondelete so blocks portal_orgs DELETE.
+    await db.execute(text("DELETE FROM vexa_meetings WHERE org_id = :id"), {"id": state.org_id})
+    # portal_groups — cascades portal_group_memberships + portal_group_products via group_id CASCADE.
     await db.execute(text("DELETE FROM portal_groups WHERE org_id = :id"), {"id": state.org_id})
     # portal_products
     await db.execute(text("DELETE FROM portal_products WHERE org_id = :id"), {"id": state.org_id})
     # portal_templates
     await db.execute(text("DELETE FROM portal_templates WHERE org_id = :id"), {"id": state.org_id})
-    # portal_users — last of the non-cascading children that other tables may FK to
+    # portal_users — last of the non-cascading children that other tables may FK to.
     await db.execute(text("DELETE FROM portal_users WHERE org_id = :id"), {"id": state.org_id})
 
-    # 3. Hard-delete the org row — cascades the rest.
+    # 3. Hard-delete the org row — cascades the auto-CASCADE tables (connectors,
+    #    widgets, feedback_events, retrieval_gaps, partner_api_keys) and SET NULLs
+    #    the SET NULL tables (product_events).
     await db.execute(text("DELETE FROM portal_orgs WHERE id = :id"), {"id": state.org_id})
 
     # 4. Commit the whole transaction atomically.

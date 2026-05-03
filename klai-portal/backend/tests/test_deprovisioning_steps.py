@@ -60,11 +60,11 @@ class TestMarkDeprovisioning:
         state = _make_state()
         with (
             patch(
-                "app.services.provisioning.deprovisioning_steps.transition_state",
+                "app.services.provisioning.state_machine.transition_state",
                 new=AsyncMock(),
             ) as mock_transition,
             patch(
-                "app.services.provisioning.deprovisioning_steps.invalidate_tenant_slug_cache",
+                "app.api.auth.invalidate_tenant_slug_cache",
                 new=MagicMock(),
             ),
         ):
@@ -82,11 +82,11 @@ class TestMarkDeprovisioning:
         state = _make_state()
         with (
             patch(
-                "app.services.provisioning.deprovisioning_steps.transition_state",
+                "app.services.provisioning.state_machine.transition_state",
                 new=AsyncMock(),
             ) as mock_transition,
             patch(
-                "app.services.provisioning.deprovisioning_steps.invalidate_tenant_slug_cache",
+                "app.api.auth.invalidate_tenant_slug_cache",
                 new=MagicMock(),
             ),
         ):
@@ -102,11 +102,11 @@ class TestMarkDeprovisioning:
         state = _make_state()
         with (
             patch(
-                "app.services.provisioning.deprovisioning_steps.transition_state",
+                "app.services.provisioning.state_machine.transition_state",
                 new=AsyncMock(),
             ),
             patch(
-                "app.services.provisioning.deprovisioning_steps.invalidate_tenant_slug_cache",
+                "app.api.auth.invalidate_tenant_slug_cache",
                 new=MagicMock(),
             ) as mock_invalidate,
         ):
@@ -428,7 +428,7 @@ class TestDeleteFalkordbGraph:
         with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
             mock_settings.knowledge_ingest_url = "http://knowledge-ingest:8000"
             mock_settings.knowledge_ingest_secret = "secret"
-            with patch("app.services.provisioning.deprovisioning_steps.get_trace_headers", return_value={}):
+            with patch("app.trace.get_trace_headers", return_value={}):
                 with respx_router(base_url="http://knowledge-ingest:8000") as router:
                     router.post("/internal/v1/orgs/42/wipe-graph").mock(
                         return_value=httpx.Response(200, json={"nodes_deleted": 5, "status": "ok"})
@@ -445,7 +445,7 @@ class TestDeleteFalkordbGraph:
         with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
             mock_settings.knowledge_ingest_url = "http://knowledge-ingest:8000"
             mock_settings.knowledge_ingest_secret = "secret"
-            with patch("app.services.provisioning.deprovisioning_steps.get_trace_headers", return_value={}):
+            with patch("app.trace.get_trace_headers", return_value={}):
                 with respx_router(base_url="http://knowledge-ingest:8000") as router:
                     router.post("/internal/v1/orgs/42/wipe-graph").mock(return_value=httpx.Response(404))
                     from app.services.provisioning.deprovisioning_steps import _delete_falkordb_graph
@@ -739,8 +739,17 @@ class TestFinalizePostgresDelete:
         state.db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_execute_called_for_each_table(self) -> None:
-        """db.execute is called at least 5 times (4 child DELETEs + 1 portal_orgs DELETE)."""
+    async def test_execute_called_for_each_non_cascading_child_table(self) -> None:
+        """db.execute called exactly 8 times: 7 explicit child DELETEs + 1 portal_orgs DELETE.
+
+        Order MUST be: portal_knowledge_bases, portal_kb_tombstones, vexa_meetings,
+        portal_groups, portal_products, portal_templates, portal_users, portal_orgs.
+
+        This list is the source of truth for the FK audit. If a new non-cascading
+        FK is added to portal_orgs, this test must be updated AND the step's
+        DELETE list extended — otherwise the production deprovision will fail
+        on FK violation.
+        """
         state = _make_state(org_id=42, slug="acme")
 
         with patch(
@@ -751,7 +760,32 @@ class TestFinalizePostgresDelete:
 
             await _finalize_postgres_delete(state)
 
-        assert state.db.execute.await_count >= 5
+        assert state.db.execute.await_count == 8
+
+        # Verify the table-name + order of every executed DELETE.
+        expected_tables_in_order = [
+            "portal_knowledge_bases",
+            "portal_kb_tombstones",
+            "vexa_meetings",
+            "portal_groups",
+            "portal_products",
+            "portal_templates",
+            "portal_users",
+            "portal_orgs",
+        ]
+        actual_tables = []
+        for call in state.db.execute.await_args_list:
+            sql_text = str(call.args[0])
+            # Extract table name from "DELETE FROM <name> ..." — string inspection
+            # only, no SQL execution. The S608 lint is a false positive here.
+            for table in expected_tables_in_order:
+                if f"DELETE FROM {table}" in sql_text:  # noqa: S608
+                    actual_tables.append(table)
+                    break
+
+        assert actual_tables == expected_tables_in_order, (
+            f"DELETE order or list mismatch.\n  expected: {expected_tables_in_order}\n  actual:   {actual_tables}"
+        )
 
 
 # ---------------------------------------------------------------------------

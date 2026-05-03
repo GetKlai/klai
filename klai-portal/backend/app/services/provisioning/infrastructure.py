@@ -12,6 +12,7 @@ denies `/exec/*/start` by design, and even if we flipped the allow-bit it
 would hand any tenant-provisioning bug a shell on the host.
 """
 
+import asyncio
 import time
 from pathlib import Path
 
@@ -29,6 +30,15 @@ logger = structlog.get_logger()
 # MongoDB error code for "user not found" (raised by dropUser when the target
 # user does not exist). Non-fatal for idempotent drop.
 _MONGO_USER_NOT_FOUND = 11
+
+# Process-wide lock that serialises Caddy file writes + container restarts.
+# Both `provision_tenant` (orchestrator.py) and `deprovision_tenant`
+# (deprovisioning_orchestrator.py + deprovisioning_steps.py) acquire this
+# lock around `_write_tenant_caddyfile` / file-unlink + `_reload_caddy`.
+# Defined here (next to _reload_caddy) so a single import path works for
+# both code paths and accidental "two locks, both serialise nothing" is
+# impossible. See SPEC-INFRA-TENANT-DELETE-001 R11.
+_caddy_lock: asyncio.Lock = asyncio.Lock()
 
 
 def _redis_sync_client() -> redis.Redis:

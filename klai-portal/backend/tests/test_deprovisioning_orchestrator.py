@@ -183,7 +183,7 @@ class TestMarkFailed:
         db = AsyncMock()
 
         with patch(
-            "app.services.provisioning.deprovisioning_orchestrator.transition_state",
+            "app.services.provisioning.state_machine.transition_state",
             new=AsyncMock(),
         ) as mock_transition:
             await _mark_failed(db, org_id=42, step_name="step_x", error_str="boom")
@@ -203,7 +203,7 @@ class TestMarkFailed:
         db.commit.side_effect = Exception("db down")
 
         with patch(
-            "app.services.provisioning.deprovisioning_orchestrator.transition_state",
+            "app.services.provisioning.state_machine.transition_state",
             new=AsyncMock(),
         ):
             # Must not raise
