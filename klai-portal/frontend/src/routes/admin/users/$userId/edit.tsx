@@ -347,7 +347,7 @@ function EditUserPage() {
         </CardHeader>
         <CardContent className="space-y-3">
           {PROFILE_LADDER.map((role) => {
-            const msgs = m as Record<string, (() => string) | undefined>
+            const msgs = m as unknown as Record<string, (() => string) | undefined>
             const labelFn = msgs[`profile_${role}_label`]
             const descFn = msgs[`profile_${role}_description`]
             const isSelf = userId === currentUser?.user_id
