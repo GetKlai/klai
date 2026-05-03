@@ -10,7 +10,12 @@ from app.api.auth import get_current_user_id
 from app.api.bearer import bearer as bearer  # re-export for routes that import from here
 from app.core.database import get_db, set_tenant
 from app.core.plan_limits import PLAN_LIMITS, get_plan_limits
-from app.core.profiles import _require_at_least  # noqa: F401  # re-export for group routes
+from app.core.profiles import (
+    PROFILE_CAPABILITIES,
+    PROFILE_LADDER,
+    _require_at_least,  # noqa: F401  -- re-export for group routes
+    effective_role,
+)
 from app.models.groups import PortalGroup, PortalGroupMembership
 from app.models.portal import PortalOrg, PortalUser
 from app.services.entitlements import get_effective_products
@@ -80,15 +85,17 @@ def _require_admin(caller_user: PortalUser) -> None:
 def _require_admin_or_group_admin_role(caller_user: PortalUser) -> None:
     """Raise 403 unless caller has group_manager or admin profile role.
 
-    REQ-7: Replaces old (admin, group-admin) check with new profile ladder check.
-    group_manager and above may manage groups.
+    REQ-7: group_manager and above may manage groups.
+    kb_manager does NOT have group management rights.
     """
-    if caller_user.role in ("admin", "group_manager", "kb_manager", "group-admin"):
-        return
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Access denied: group_manager role or higher required",
-    )
+    role = caller_user.role
+    role_idx = PROFILE_LADDER.index(role) if role in PROFILE_LADDER else -1
+    required_idx = PROFILE_LADDER.index("group_manager")
+    if role_idx < required_idx:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: group_manager role or higher required",
+        )
 
 
 async def _require_admin_or_group_admin(
@@ -100,7 +107,7 @@ async def _require_admin_or_group_admin(
 
     Rules:
     - Org admin (role='admin'): may manage any group, including system groups.
-    - group-admin role: may manage any non-system group.
+    - group_manager role: may manage any non-system group.
     - System groups (system_key IS NOT NULL): only org admins may manage members.
     """
     if caller_user.role == "admin":
@@ -115,10 +122,13 @@ async def _require_admin_or_group_admin(
             detail="Access denied: system groups can only be managed by org admins",
         )
 
-    if caller_user.role not in ("group-admin", "group_manager", "kb_manager"):
+    role = caller_user.role
+    role_idx = PROFILE_LADDER.index(role) if role in PROFILE_LADDER else -1
+    required_idx = PROFILE_LADDER.index("group_manager")
+    if role_idx < required_idx:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied: admin or group admin role required",
+            detail="Access denied: admin or group_manager role required",
         )
 
 
@@ -127,8 +137,11 @@ async def _require_admin_or_group_manager(
     org_id: int,
     db: AsyncSession,
 ) -> None:
-    """Raise 403 unless caller is org admin, group-admin, or member of the Group Management system group."""
-    if caller_user.role in ("admin", "group-admin", "group_manager", "kb_manager"):
+    """Raise 403 unless caller is org admin or group_manager (or higher)."""
+    role = caller_user.role
+    role_idx = PROFILE_LADDER.index(role) if role in PROFILE_LADDER else -1
+    required_idx = PROFILE_LADDER.index("group_manager")
+    if role_idx >= required_idx:
         return
 
     # Check if caller is in the Group Management system group for their org
@@ -141,7 +154,7 @@ async def _require_admin_or_group_manager(
     gm_group_id = gm_result.scalar_one_or_none()
     _no_access = HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
-        detail="Access denied: admin or group admin role required",
+        detail="Access denied: admin or group_manager role required",
     )
     if not gm_group_id:
         raise _no_access
@@ -163,10 +176,9 @@ def require_capability(capability: str):
 
         @router.get("/some-endpoint", dependencies=[Depends(require_capability("kb.connectors"))])
 
-    Rules (SPEC-PORTAL-UNIFY-KB-001 R-X2, AC-3):
+    Rules (SPEC-PORTAL-PROFILES-001 v0.2.0):
     - Admin users bypass the check (they always have complete-tier capabilities).
-    - complete-plan users have all kb.* capabilities.
-    - core/professional users have no kb.* capabilities.
+    - effective_capabilities = PROFILE_CAPABILITIES[role] & PLAN_LIMITS[plan].capabilities
     - Unknown users or plans are treated as most restrictive (deny).
     """
 
@@ -187,13 +199,48 @@ def require_capability(capability: str):
     return dep
 
 
-async def get_effective_capabilities(user_id: str, db: AsyncSession) -> set[str]:
-    """Return the set of KB capabilities for a user based on their org's plan.
+def require_at_least_dep(required_role: str):
+    """Return a FastAPI dependency that enforces a minimum profile role.
 
-    Admin users always receive the complete-tier capabilities (superset of all plans).
+    This is the fully-wired FastAPI version of _require_at_least from profiles.py.
+    It resolves the caller via bearer token + DB lookup.
+
+    Usage::
+
+        @router.delete("/groups/{id}", dependencies=[Depends(require_at_least_dep("group_manager"))])
+
+    @MX:ANCHOR fan_in=3+ -- wired FastAPI version of _require_at_least for route dependencies.
+    """
+    required_idx = PROFILE_LADDER.index(required_role)
+
+    async def _check(
+        credentials: HTTPAuthorizationCredentials = Depends(bearer),
+        db: AsyncSession = Depends(get_db),
+    ) -> None:
+        _, _, caller_user = await _get_caller_org(credentials, db)
+        role = effective_role(caller_user)
+        caller_idx = PROFILE_LADDER.index(role) if role in PROFILE_LADDER else -1
+        if caller_idx < required_idx:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"role {required_role!r} or higher required",
+            )
+
+    return _check
+
+
+async def get_effective_capabilities(user_id: str, db: AsyncSession) -> set[str]:
+    """Return the set of KB capabilities for a user.
+
+    effective_capabilities = PROFILE_CAPABILITIES[role] & PLAN_LIMITS[plan].capabilities
+
+    Admin bypass: admin role always gets complete-tier capabilities regardless of plan.
+    (Intentional per SPEC-PORTAL-PROFILES-001 v0.2.0: admin must be able to test what
+    a plan upgrade unlocks without upgrading the billing plan first.)
+
     Returns an empty set for unknown users or plans.
 
-    SPEC-PORTAL-UNIFY-KB-001 Phase A — AC-3.
+    SPEC-PORTAL-PROFILES-001 Phase 1.5 — F3.
     """
     result = await db.execute(
         select(PortalUser, PortalOrg)
@@ -210,4 +257,7 @@ async def get_effective_capabilities(user_id: str, db: AsyncSession) -> set[str]
     if user.role == "admin":
         return set(PLAN_LIMITS["complete"].capabilities)
 
-    return set(get_plan_limits(org.plan).capabilities)
+    # All other roles: intersect role capabilities with plan capabilities.
+    role_caps = PROFILE_CAPABILITIES.get(user.role, frozenset())
+    plan_caps = get_plan_limits(org.plan).capabilities
+    return set(role_caps) & set(plan_caps)
