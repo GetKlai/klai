@@ -26,6 +26,19 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # Forcing function — fail loud BEFORE pushing to core-01 if any
+      # vexaai/* image reference points at a tag that is not pullable
+      # from the registry and not a locally-built convention. This is
+      # the CI half of the defense; .githooks/pre-commit is the local
+      # half. PR #269 (broken `:0.10.6` for transcription-service)
+      # would have failed this gate.
+      - name: Validate image tags + pullability
+        run: |
+          set -e
+          chmod +x deploy/check-image-tags.sh deploy/check-image-pullable.sh
+          sh deploy/check-image-tags.sh
+          sh deploy/check-image-pullable.sh
+
       - name: Sync docker-compose.yml + config + run smoke-test
         uses: appleboy/ssh-action@v1
         with:

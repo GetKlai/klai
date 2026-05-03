@@ -1,5 +1,34 @@
 # Process Rules
 
+## verify-image-pullable-before-pin (HIGH)
+When pinning an external image tag in any compose file (`vexaai/*`,
+`ghcr.io/*`, etc.), verify the tag is actually pullable BEFORE
+committing. PR #269 (2026-05-03) bumped
+`vexaai/transcription-service` to `:0.10.6` based on the v0.10.6
+release notes — but that specific image was never published to
+Docker Hub (upstream lists 9 public images; transcription-service is
+locally-built only). The bug landed in main; only the fact that
+gpu-01 has no CI sync prevented a runtime regression.
+
+**Why this slips through:** release notes are written for a global
+audience. They list "all images" from the maintainer's perspective,
+which can mean "all images in our private CI" not "all images on
+Docker Hub". Reading carefully and trusting the prose is not enough.
+
+**Prevention (mechanical):** `deploy/check-image-pullable.sh` runs
+in pre-commit and the deploy-compose CI workflow. For every
+`vexaai/*` (and other external) ref in compose files, it does
+`docker manifest inspect <ref>`. Failures are accepted ONLY if the
+tag matches a locally-built convention
+(`<semver>-local-YYMMDD-HHMM` or legacy `<semver>-YYMMDD-HHMM`).
+Anything else is rejected at commit time.
+
+**Prevention (human):** before adding a NEW external image tag to
+a compose file, run `docker manifest inspect <ref>` locally. If it
+404s and the image is locally built, name the tag with the
+`-local-` infix so the script's whitelist accepts it. Do not invent
+tag names; mirror what your build pipeline emits.
+
 ## adapter-framework-bleed (HIGH)
 When a service is declared "a pure X adapter framework" but you find
 infrastructure concepts leaking into its public contract (S3 clients,
