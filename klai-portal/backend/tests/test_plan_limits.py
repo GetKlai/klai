@@ -32,15 +32,15 @@ class TestPlanProductsKnowledgeAdded:
         products = set(get_plan_products("core"))
         assert products == {"chat", "knowledge"}
 
-    def test_professional_plan_products_include_scribe(self) -> None:
-        """Professional plan: chat + scribe + knowledge."""
+    def test_professional_plan_products_are_chat_and_knowledge(self) -> None:
+        """SPEC-PORTAL-PROFILES-001 P2.2: professional no longer includes scribe (add-on)."""
         products = set(get_plan_products("professional"))
-        assert products == {"chat", "scribe", "knowledge"}
+        assert products == {"chat", "knowledge"}
 
-    def test_complete_plan_products_include_scribe(self) -> None:
-        """Complete plan: chat + scribe + knowledge."""
+    def test_complete_plan_products_are_chat_and_knowledge(self) -> None:
+        """SPEC-PORTAL-PROFILES-001 P2.2: complete no longer includes scribe (add-on)."""
         products = set(get_plan_products("complete"))
-        assert products == {"chat", "scribe", "knowledge"}
+        assert products == {"chat", "knowledge"}
 
     def test_free_plan_still_has_no_products(self) -> None:
         assert get_plan_products("free") == []
@@ -51,14 +51,7 @@ class TestPlanProductsKnowledgeAdded:
 
 
 class TestSystemGroupsLabel:
-    """AC-7: 'Chat + Focus' label renamed to 'Chat'."""
-
-    def test_chat_group_label_is_chat(self) -> None:
-        from app.core.system_groups import SYSTEM_GROUPS
-
-        chat_group = next((g for g in SYSTEM_GROUPS if g["system_key"] == "chat"), None)
-        assert chat_group is not None, "Chat system group not found"
-        assert chat_group["name"] == "Chat", f"Expected 'Chat', got '{chat_group['name']}'"
+    """SPEC-PORTAL-PROFILES-001 P2.5: system groups herinrichting."""
 
     def test_no_system_group_has_focus_in_name(self) -> None:
         from app.core.system_groups import SYSTEM_GROUPS
@@ -66,19 +59,32 @@ class TestSystemGroupsLabel:
         for group in SYSTEM_GROUPS:
             assert "Focus" not in group["name"], f"Group '{group['name']}' still contains 'Focus'"
 
-    def test_chat_system_key_unchanged(self) -> None:
+    def test_role_bind_groups_have_no_products(self) -> None:
+        """Role-bind system groups do not grant products directly."""
         from app.core.system_groups import SYSTEM_GROUPS
 
-        chat_group = next((g for g in SYSTEM_GROUPS if g["system_key"] == "chat"), None)
-        assert chat_group is not None
-        assert chat_group["system_key"] == "chat"
+        for group in SYSTEM_GROUPS:
+            if group["system_key"].startswith("role_"):
+                assert group["products"] == [], f"Role-bind group '{group['system_key']}' should not have products"
 
-    def test_chat_group_products_unchanged(self) -> None:
+    def test_addon_scribe_group_grants_scribe_product(self) -> None:
         from app.core.system_groups import SYSTEM_GROUPS
 
-        chat_group = next((g for g in SYSTEM_GROUPS if g["system_key"] == "chat"), None)
-        assert chat_group is not None
-        assert chat_group["products"] == ["chat"]
+        addon = next((g for g in SYSTEM_GROUPS if g["system_key"] == "addon_scribe"), None)
+        assert addon is not None, "addon_scribe system group not found"
+        assert "scribe" in addon["products"]
+
+    def test_addon_docs_group_grants_docs_product(self) -> None:
+        from app.core.system_groups import SYSTEM_GROUPS
+
+        addon = next((g for g in SYSTEM_GROUPS if g["system_key"] == "addon_docs"), None)
+        assert addon is not None, "addon_docs system group not found"
+        assert "docs" in addon["products"]
+
+    def test_seven_system_groups_total(self) -> None:
+        from app.core.system_groups import SYSTEM_GROUPS
+
+        assert len(SYSTEM_GROUPS) == 7, f"Expected 7 system groups, got {len(SYSTEM_GROUPS)}"
 
 
 class TestKBLimitsDataclass:

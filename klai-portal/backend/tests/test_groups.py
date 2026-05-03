@@ -214,6 +214,7 @@ class TestAddMember:
         with (
             patch("app.api.groups._get_caller_org", return_value=("caller-1", org, caller)),
             patch("app.api.groups._require_admin_or_group_admin", new_callable=AsyncMock),
+            patch("app.api.groups.sync_role_from_system_group", new_callable=AsyncMock),
         ):
             result = await add_member(group_id=10, body=body, credentials=mock_credentials, db=mock_db)
 

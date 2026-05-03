@@ -70,6 +70,16 @@ class PortalOrg(Base):
     )
     connector_dek_enc: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     mcp_servers: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # @MX:NOTE: SPEC-PORTAL-PROFILES-001 Phase 2 P2.1 — per-tenant add-on toggles.
+    # Stores which add-on products (scribe, docs) the admin has enabled for this org.
+    # A user/group still needs an entitlement in portal_user_products / portal_group_products;
+    # access = enabled_addons AND user/group entitlement (both required).
+    enabled_addons: Mapped[list[str]] = mapped_column(
+        ARRAY(Text()),
+        nullable=False,
+        default=list,
+        server_default="{}",
+    )
 
     users: Mapped[list["PortalUser"]] = relationship(back_populates="org")
 
