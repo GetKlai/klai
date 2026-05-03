@@ -912,17 +912,18 @@ services:
     depends_on:
       - postgres
 
-  # ─── Vexa stack (SPEC-VEXA-003 — upstream main v0.10.x, commit f0756bf) ──
-  # Source: https://github.com/Vexa-ai/vexa branch klai/main-260419
-  # Build pattern (Phase 6): on core-01 clone fork, run `make build` from
-  # deploy/compose/Makefile; images land as vexaai/<svc>:<version>-YYMMDD-HHMM.
-  # Tags below are placeholders — Phase 6 rewrites them to real build timestamps.
-  # The placeholder form is intentionally rejected by deploy/check-image-tags.sh
-  # so this compose file is NOT deploy-ready until Phase 6 completes.
+  # ─── Vexa stack (SPEC-VEXA-003 — upstream Vexa-ai/vexa v0.10.6) ──────────
+  # Source: https://github.com/Vexa-ai/vexa/releases/tag/v0.10.6
+  # Images pulled directly from Docker Hub (vexaai/*) — no local build needed.
+  # v0.10.6 brings Pack U audio unification (single audio-pipeline.ts module)
+  # and Pack M chunk-leak fix (resolves the v0.10.5.2 24-min recording crash
+  # class). Pack H helm hardening is irrelevant for our compose deploy.
+  # Tag format: plain semver `:0.10.6`. The pre-v0.10.4 timestamped form
+  # `<semver>-YYMMDD-HHMM` is no longer used upstream.
 
   # ─── Vexa admin-api (management) ────────────────────────────────────────
   admin-api:
-    image: vexaai/admin-api:0.10.0-260419-1129
+    image: vexaai/admin-api:0.10.6
     restart: unless-stopped
     environment:
       DB_HOST: postgres
@@ -954,7 +955,7 @@ services:
 
   # ─── Vexa api-gateway (public entry, rate-limited, CORS) ────────────────
   api-gateway:
-    image: vexaai/api-gateway:0.10.0-260419-1129
+    image: vexaai/api-gateway:0.10.6
     restart: unless-stopped
     environment:
       ADMIN_API_URL: http://admin-api:8001
@@ -992,7 +993,7 @@ services:
   # Network alias `vexa-meeting-api` retained for portal-api backwards compat
   # (REQ-E-001, REQ-U-001 — no config churn in portal-api during this migration).
   meeting-api:
-    image: vexaai/meeting-api:0.10.0-260419-1129
+    image: vexaai/meeting-api:0.10.6
     restart: unless-stopped
     environment:
       DB_HOST: postgres
@@ -1011,7 +1012,7 @@ services:
       RUNTIME_API_URL: http://runtime-api:8090
       RUNTIME_API_TOKEN: ${BOT_API_TOKEN}
       MEETING_API_URL: http://meeting-api:8080
-      BOT_IMAGE_NAME: vexaai/vexa-bot:0.10.0-260419-1129
+      BOT_IMAGE_NAME: vexaai/vexa-bot:0.10.6
       DOCKER_NETWORK: vexa-bots
       TRANSCRIPTION_COLLECTOR_URL: http://meeting-api:8080
       # Storage backend: Garage speaks S3, so minio-* vars point at Garage.
@@ -1089,11 +1090,11 @@ services:
 
   # ─── Vexa runtime-api (Docker-socket bot orchestrator) ──────────────────
   runtime-api:
-    image: vexaai/runtime-api:0.10.0-260419-1129
+    image: vexaai/runtime-api:0.10.6
     restart: unless-stopped
     environment:
       DOCKER_NETWORK: vexa-bots
-      BROWSER_IMAGE: vexaai/vexa-bot:0.10.0-260419-1129
+      BROWSER_IMAGE: vexaai/vexa-bot:0.10.6
       AGENT_IMAGE: ""                              # agent profile not shipped in v1
       REDIS_URL: redis://:${VEXA_REDIS_PASSWORD}@vexa-redis:6379/0
       MINIO_ENDPOINT: garage:3900
