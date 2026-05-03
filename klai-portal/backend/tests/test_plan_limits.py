@@ -201,20 +201,27 @@ class TestPlanLimitsTable:
 
         assert PLAN_LIMITS["complete"].can_create_org_kbs is True
 
-    def test_core_capabilities_is_empty(self) -> None:
+    def test_core_capabilities_has_kb_connectors(self) -> None:
         from app.core.plan_limits import PLAN_LIMITS
 
-        assert PLAN_LIMITS["core"].capabilities == frozenset()
+        assert PLAN_LIMITS["core"].capabilities == frozenset({"kb.connectors"})
 
-    def test_professional_capabilities_is_empty(self) -> None:
+    def test_professional_capabilities_has_kb_connectors(self) -> None:
         from app.core.plan_limits import PLAN_LIMITS
 
-        assert PLAN_LIMITS["professional"].capabilities == frozenset()
+        assert PLAN_LIMITS["professional"].capabilities == frozenset({"kb.connectors"})
 
     def test_complete_capabilities_contains_expected_strings(self) -> None:
         from app.core.plan_limits import PLAN_LIMITS
 
-        expected = {"kb.connectors", "kb.members", "kb.taxonomy", "kb.advanced", "kb.gaps"}
+        expected = {
+            "kb.connectors",
+            "kb.connectors.external",
+            "kb.create_org",
+            "kb.members",
+            "kb.taxonomy",
+            "kb.gaps",
+        }
         assert PLAN_LIMITS["complete"].capabilities == frozenset(expected)
 
     def test_core_and_professional_limits_are_equal(self) -> None:
