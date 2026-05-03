@@ -12,7 +12,7 @@ from app.core.database import get_db, set_tenant
 from app.core.plan_limits import PLAN_LIMITS, get_plan_limits
 from app.core.profiles import (
     PROFILE_CAPABILITIES,
-    PROFILE_LADDER,
+    PROFILE_RANK,
     Capability,
     effective_role,
 )
@@ -89,8 +89,8 @@ def _require_admin_or_group_admin_role(caller_user: PortalUser) -> None:
     kb_manager does NOT have group management rights.
     """
     role = caller_user.role
-    role_idx = PROFILE_LADDER.index(role) if role in PROFILE_LADDER else -1
-    required_idx = PROFILE_LADDER.index("group_manager")
+    role_idx = PROFILE_RANK.get(role, -1)
+    required_idx = PROFILE_RANK["group_manager"]
     if role_idx < required_idx:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -123,8 +123,8 @@ async def _require_admin_or_group_admin(
         )
 
     role = caller_user.role
-    role_idx = PROFILE_LADDER.index(role) if role in PROFILE_LADDER else -1
-    required_idx = PROFILE_LADDER.index("group_manager")
+    role_idx = PROFILE_RANK.get(role, -1)
+    required_idx = PROFILE_RANK["group_manager"]
     if role_idx < required_idx:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -139,8 +139,8 @@ async def _require_admin_or_group_manager(
 ) -> None:
     """Raise 403 unless caller is org admin or group_manager (or higher)."""
     role = caller_user.role
-    role_idx = PROFILE_LADDER.index(role) if role in PROFILE_LADDER else -1
-    required_idx = PROFILE_LADDER.index("group_manager")
+    role_idx = PROFILE_RANK.get(role, -1)
+    required_idx = PROFILE_RANK["group_manager"]
     if role_idx >= required_idx:
         return
 
@@ -218,7 +218,7 @@ def require_at_least_dep(required_role: str):
 
     @MX:NOTE fan_in=0 -- no routes use this yet; see G3 analysis in docstring.
     """
-    required_idx = PROFILE_LADDER.index(required_role)
+    required_idx = PROFILE_RANK.get(required_role, -1)
 
     async def _check(
         credentials: HTTPAuthorizationCredentials = Depends(bearer),
@@ -226,7 +226,7 @@ def require_at_least_dep(required_role: str):
     ) -> None:
         _, _, caller_user = await _get_caller_org(credentials, db)
         role = effective_role(caller_user)
-        caller_idx = PROFILE_LADDER.index(role) if role in PROFILE_LADDER else -1
+        caller_idx = PROFILE_RANK.get(role, -1)
         if caller_idx < required_idx:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

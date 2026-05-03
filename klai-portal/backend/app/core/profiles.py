@@ -44,6 +44,11 @@ PROFILE_LADDER: list[str] = [
     "admin",
 ]
 
+# O(1) rank lookups -- use PROFILE_RANK.get(role, -1) instead of PROFILE_LADDER.index(role).
+# PROFILE_LADDER is kept for iteration / display; PROFILE_RANK is for ranking comparisons only.
+# C2: SPEC-PORTAL-PROFILES-001 Phase 1.6.
+PROFILE_RANK: dict[str, int] = {role: idx for idx, role in enumerate(PROFILE_LADDER)}
+
 # Capability strings for SPEC v0.2.0: only capabilities that are actually checked
 # via require_capability() on endpoints.  Direct-role checks (org-KB read filter,
 # append-via-chat, groups manage, billing, settings) are NOT capability strings.
@@ -224,11 +229,11 @@ def _require_at_least(required_role: str):
 
     @MX:ANCHOR fan_in=3+ -- primary role gate for admin-group endpoints.
     """
-    required_idx = PROFILE_LADDER.index(required_role)
+    required_idx = PROFILE_RANK.get(required_role, -1)
 
     def _check(caller_user: object) -> None:
         role = effective_role(caller_user)
-        caller_idx = PROFILE_LADDER.index(role) if role in PROFILE_LADDER else -1
+        caller_idx = PROFILE_RANK.get(role, -1)
         if caller_idx < required_idx:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
