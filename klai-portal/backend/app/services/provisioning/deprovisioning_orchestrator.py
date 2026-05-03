@@ -100,13 +100,15 @@ class _DeprovisionState:
 class DeprovisionStepError(Exception):
     """Raised by `_run_step_with_retry` when a step exceeds all retry attempts.
 
-    Carries the step name and the original exception for structured logging.
+    Carries the step name, original exception, and the attempt count at which
+    the failure occurred (1 for non-retryable, 1-3 for retryable).
     """
 
-    def __init__(self, step_name: str, original: Exception) -> None:
+    def __init__(self, step_name: str, original: Exception, attempt: int = 1) -> None:
         self.step_name = step_name
         self.original = original
-        super().__init__(f"step {step_name} failed: {original}")
+        self.attempt = attempt
+        super().__init__(f"step {step_name} failed at attempt {attempt}: {original}")
 
 
 # ---------------------------------------------------------------------------
@@ -293,13 +295,11 @@ async def _run_step_with_retry(
         except Exception as exc:
             # Non-retryable — wrap and fail immediately. Pass real attempt
             # so _mark_failed records the correct count (typically 1).
-            err = DeprovisionStepError(step_fn.__name__, exc)
-            err.attempt = attempt
-            raise err from exc
+            raise DeprovisionStepError(step_fn.__name__, exc, attempt=attempt) from exc
 
-    err = DeprovisionStepError(step_fn.__name__, last_exc or RuntimeError("unknown"))
-    err.attempt = last_attempt
-    raise err
+    raise DeprovisionStepError(
+        step_fn.__name__, last_exc or RuntimeError("unknown"), attempt=last_attempt
+    )
 
 
 async def _mark_failed(db: AsyncSession, org_id: int, step_name: str, error_str: str, attempt: int = 1) -> None:

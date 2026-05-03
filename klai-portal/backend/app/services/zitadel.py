@@ -75,7 +75,9 @@ class ZitadelClient:
             headers={"x-zitadel-orgid": org_id},
         )
         if resp.status_code == 404:
-            logger.info("zitadel_org_already_absent", org_id=org_id)
+            # File uses stdlib logging (not structlog) — kwargs would be
+            # treated as `extra` not structured fields. Use %-style instead.
+            logger.info("zitadel_org_already_absent org_id=%s", org_id)
             return
         resp.raise_for_status()
 
