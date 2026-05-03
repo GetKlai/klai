@@ -209,3 +209,55 @@ class TestNon200Non503Surfaces503:
             await WhisperHttpProvider().transcribe(b"audio", language=None)
         assert exc_info.value.status_code == 503
         assert len(client.calls) == 1
+
+
+class TestPayloadFieldsAreOptional:
+    """Discovered during 2026-05-03 e2e walk: every Voys-tenant scribe
+    upload was returning status='failed' because the live whisper-server
+    response is missing the `inference_time_seconds` field that the
+    provider was reading via `payload[...]`. The KeyError was swallowed
+    by the broad except in transcribe.py and surfaced only as
+    `status: failed` in the UI — root cause invisible.
+
+    These regression tests pin the provider against future upstream
+    schema-drift on optional fields. text/language/duration are part
+    of the OpenAI-compatible contract; inference_time_seconds is a
+    Vexa extension and should be treated as optional.
+    """
+
+    async def test_missing_inference_time_seconds_does_not_raise(self, patch_client) -> None:
+        # Whisper-server response observed live on 2026-05-03 — no
+        # `inference_time_seconds` field present.
+        client = patch_client([
+            httpx.Response(
+                200,
+                json={
+                    "text": "",
+                    "language": "en",
+                    "language_probability": 0.6,
+                    "duration": 0.0,
+                    "segments": [],
+                },
+            )
+        ])
+
+        result = await WhisperHttpProvider().transcribe(b"audio", language=None)
+
+        assert isinstance(result, TranscriptionResult)
+        assert result.text == ""
+        assert result.language == "en"
+        assert result.duration_seconds == 0.0
+        assert result.inference_time_seconds == 0.0  # default for missing field
+        assert len(client.calls) == 1
+
+    async def test_minimal_response_uses_safe_defaults(self, patch_client) -> None:
+        # Pathological-but-spec-allowed: only `text` is present.
+        client = patch_client([httpx.Response(200, json={"text": "hi"})])
+
+        result = await WhisperHttpProvider().transcribe(b"audio", language=None)
+
+        assert result.text == "hi"
+        assert result.language == "und"
+        assert result.duration_seconds == 0.0
+        assert result.inference_time_seconds == 0.0
+        assert result.model == "large-v3-turbo"

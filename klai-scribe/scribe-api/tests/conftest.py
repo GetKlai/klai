@@ -19,6 +19,10 @@ _DEFAULTS: dict[str, str] = {
     "WHISPER_PROVIDER_NAME": "vexa-transcription-service",
     "STT_PROVIDER": "whisper_http",
     "ZITADEL_ISSUER": "https://auth.test.local",
+    # SPEC-SEC-INTERNAL-001 REQ-9.4 — pydantic Settings validator rejects
+    # empty/whitespace. Tests don't call /ingest, so any non-empty
+    # placeholder satisfies the validator.
+    "KNOWLEDGE_INGEST_SECRET": "test-knowledge-ingest-secret",
 }
 for _k, _v in _DEFAULTS.items():
     os.environ.setdefault(_k, _v)
