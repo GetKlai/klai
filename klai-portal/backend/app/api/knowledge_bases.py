@@ -10,8 +10,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _get_caller_org, _require_at_least, bearer
+from app.api.dependencies import _get_caller_org, bearer
 from app.core.database import get_db
+from app.core.profiles import _require_at_least
 from app.models.groups import PortalGroup
 from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase
 from app.services import docs_client, knowledge_ingest_client
