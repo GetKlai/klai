@@ -13,6 +13,7 @@ from app.core.plan_limits import PLAN_LIMITS, get_plan_limits
 from app.core.profiles import (
     PROFILE_CAPABILITIES,
     PROFILE_LADDER,
+    Capability,
     effective_role,
 )
 from app.models.groups import PortalGroup, PortalGroupMembership
@@ -168,7 +169,7 @@ async def _require_admin_or_group_manager(
         raise _no_access
 
 
-def require_capability(capability: str):
+def require_capability(capability: Capability):
     """Return a FastAPI dependency callable that raises 403 when the caller lacks a KB capability.
 
     Usage::
