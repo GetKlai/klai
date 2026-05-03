@@ -387,10 +387,22 @@ async def list_connectors(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> list[ConnectorOut]:
-    """List connectors for a KB. Any org member with access to the KB can view."""
+    """List connectors for a KB. Any org member with access to the KB can view.
+
+    SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-02: connectors in ``state='deleting'``
+    are owned by the procrastinate purge worker and are hidden from every
+    user-facing read-path. They become user-visible again only on the
+    rare admin force-purge recovery flow (REQ-11), which uses a separate
+    endpoint family.
+    """
     _, org, _ = await _get_caller_org(credentials, db)
     kb = await _get_kb_for_org(kb_slug, org.id, db)
-    result = await db.execute(select(PortalConnector).where(PortalConnector.kb_id == kb.id))
+    result = await db.execute(
+        select(PortalConnector).where(
+            PortalConnector.kb_id == kb.id,
+            PortalConnector.state == "active",
+        )
+    )
     return [_connector_out(c) for c in result.scalars().all()]
 
 
@@ -472,13 +484,18 @@ async def update_connector(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> ConnectorOut:
-    """Update a connector. Requires contributor access."""
+    """Update a connector. Requires contributor access.
+
+    REQ-02: rows in ``state='deleting'`` are not editable (return 404 to
+    avoid leaking lifecycle state).
+    """
     caller_id, org, _ = await _get_caller_org(credentials, db)
     kb = await _get_kb_with_owner_check(kb_slug, caller_id, org.id, db)
     result = await db.execute(
         select(PortalConnector).where(
             PortalConnector.id == connector_id,
             PortalConnector.kb_id == kb.id,
+            PortalConnector.state == "active",
         )
     )
     connector = result.scalar_one_or_none()
@@ -534,13 +551,40 @@ async def delete_connector(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Delete a connector. Requires contributor access."""
+    """Schedule a connector for asynchronous purge. Returns 204 immediately.
+
+    SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-03. Behaviour:
+
+      1. Fetch the connector (must be ``state='active'``; otherwise 404).
+      2. UPDATE state to ``'deleting'`` and commit. From this point on
+         the row is hidden from every read-path (REQ-02). Sync-trigger
+         calls return 409, list/get return 404.
+      3. POST to knowledge-ingest ``/ingest/v1/connector/purge`` which
+         defers a procrastinate task and returns 202.
+      4. Procrastinate worker drives ``connector_cleanup.purge_connector``
+         (cancel-jobs + multi-store delete) and finally calls back to
+         ``POST /api/internal/connectors/{id}/finalize-delete`` to
+         hard-delete the row.
+
+    Returns 204 No Content (preserved from pre-SPEC) — the cascade is
+    asynchronous but to the client the connector is gone immediately
+    (read-paths hide it). Frontend semantics unchanged.
+
+    Idempotent: a second DELETE on a connector already in ``'deleting'``
+    returns 404 (the user-facing semantics — "already gone").
+
+    Failure rollback: if the enqueue HTTPS call to knowledge-ingest fails
+    we revert the state back to ``'active'`` so the user can retry. The
+    procrastinate-task itself has its own retry budget once enqueued.
+    """
     caller_id, org, _ = await _get_caller_org(credentials, db)
     kb = await _get_kb_with_owner_check(kb_slug, caller_id, org.id, db)
+    # REQ-02: only ``state='active'`` rows are addressable by user routes.
     result = await db.execute(
         select(PortalConnector).where(
             PortalConnector.id == connector_id,
             PortalConnector.kb_id == kb.id,
+            PortalConnector.state == "active",
         )
     )
     connector = result.scalar_one_or_none()
@@ -549,15 +593,40 @@ async def delete_connector(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Connector not found",
         )
-    # Clean up all ingested data before removing the DB record.
-    # Raises on failure — keeps portal and ingest consistent (no orphaned data).
-    await knowledge_ingest_client.delete_connector(
-        org_id=org.zitadel_org_id,
-        kb_slug=kb.slug,
-        connector_id=str(connector.id),
-    )
-    await db.delete(connector)
+
+    # REQ-03.1.2: flip state and commit BEFORE the HTTP enqueue so that
+    # even if the enqueue races with another DELETE click the second one
+    # observes ``state='deleting'`` and short-circuits to 404.
+    connector.state = "deleting"
     await db.commit()
+
+    # REQ-03.1.3: enqueue async purge. On failure: revert state.
+    try:
+        await knowledge_ingest_client.enqueue_connector_purge(
+            org_id=org.zitadel_org_id,
+            kb_slug=kb.slug,
+            connector_id=str(connector.id),
+        )
+    except Exception as exc:
+        # Best-effort rollback so the user can retry.
+        logger.exception(
+            "connector_purge_enqueue_failed; rolling back state",
+            extra={"connector_id": str(connector.id)},
+        )
+        connector.state = "active"
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not schedule connector purge; please retry.",
+        ) from exc
+
+    # 204 No Content — body intentionally absent.
+    return None
+
+
+# Note: the compensating ``POST /api/internal/connectors/{id}/finalize-delete``
+# endpoint that the knowledge-ingest worker calls back to is registered in
+# ``app/api/internal_connectors.py`` (X-Internal-Secret auth, separate router).
 
 
 @router.post("/{connector_id}/sync", response_model=SyncRunData, status_code=status.HTTP_202_ACCEPTED)
@@ -574,10 +643,15 @@ async def trigger_sync(
     """
     caller_id, org, caller_user = await _get_caller_org(credentials, db)
     kb = await _get_kb_with_owner_check(kb_slug, caller_id, org.id, db)
+    # REQ-02.3: rows in 'deleting' state are owned by the purge worker.
+    # Trigger-sync would race the cleanup; reject with 404 (do not leak
+    # the lifecycle state via 409 — see "never leak existence" in
+    # portal-security.md).
     result = await db.execute(
         select(PortalConnector).where(
             PortalConnector.id == connector_id,
             PortalConnector.kb_id == kb.id,
+            PortalConnector.state == "active",
         )
     )
     connector = result.scalar_one_or_none()
@@ -592,7 +666,14 @@ async def trigger_sync(
     await assert_can_add_item_to_kb(kb=kb, org=org, role=caller_user.role)
 
     try:
-        sync_run = await klai_connector_client.trigger_sync(connector_id)
+        # SPEC-SEC-TENANT-001 REQ-8.2: pass the authenticated session's
+        # Zitadel resourceowner as X-Org-ID so the connector can filter
+        # the sync run by tenancy. Source MUST be PortalOrg.zitadel_org_id
+        # — never a body field, never a query-string parameter.
+        sync_run = await klai_connector_client.trigger_sync(
+            connector_id,
+            org_id=org.zitadel_org_id,
+        )
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == status.HTTP_409_CONFLICT:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Sync already running") from exc
@@ -638,7 +719,12 @@ async def list_sync_runs(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
 
     try:
-        return await klai_connector_client.get_sync_runs(connector_id, limit=limit)
+        # SPEC-SEC-TENANT-001 REQ-8.2: org_id sourced from PortalOrg.zitadel_org_id.
+        return await klai_connector_client.get_sync_runs(
+            connector_id,
+            org_id=org.zitadel_org_id,
+            limit=limit,
+        )
     except httpx.HTTPError as exc:
         logger.exception("Failed to reach klai-connector for sync history of %s", connector_id)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Sync service unavailable") from exc

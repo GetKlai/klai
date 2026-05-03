@@ -1,9 +1,9 @@
 ---
 id: SPEC-SEC-HYGIENE-001
-version: 0.5.0
-status: in-progress
+version: 0.7.1
+status: done
 created: 2026-04-24
-updated: 2026-04-28
+updated: 2026-04-29
 author: Mark Vletter
 priority: low
 tracker: SPEC-SEC-AUDIT-2026-04
@@ -21,6 +21,154 @@ tracker: SPEC-SEC-AUDIT-2026-04
 > one PR or five is a call for /run.
 
 ## HISTORY
+
+### v0.7.1 (2026-04-29) — REQ-20.4 hotfix after prod outage
+
+REQ-20 shipped in commit `6bd07440` and was deployed to prod ~13:35 UTC
+on 2026-04-29. Within the deploy window every TOTP-completing OIDC login
+started failing with `502 Bad Gateway` and `callback_url_subdomain_not_allowlisted`
+in the logs. Root cause: REQ-20.1 enumerated the bare-apex case and the
+tenant-subdomain case but missed the canonical-login-domain case
+(`my.getklai.com`, the FRONTEND_URL host per SPEC-AUTH-008). After
+successful TOTP, Zitadel always redirects through the FRONTEND_URL host
+first; that hostname's first label is `my`, which is not a tenant slug,
+so the allowlist rejected every login.
+
+**Fix landed in this commit (REQ-20.4 below):** new helper
+`_system_callback_hosts()` derives the trusted-non-tenant host set from
+`settings.domain` (apex) AND `urlparse(settings.frontend_url).hostname`
+(login domain). The validator consults that set before the slug
+allowlist, so the FRONTEND_URL host always passes regardless of whether
+a tenant happens to share its label. Test coverage extended in
+`tests/test_validate_callback_url.py` — the original REQ-20 PR had test
+coverage on REQ-20.1/.2/.3 but never asserted that ``my.getklai.com``
+(the FRONTEND_URL host) passes, which is why CI did not catch the
+regression. The hotfix adds 4 helper-composition tests + 3 validator
+tests (FRONTEND_URL host pass, label-overlap invariant, apex-lookalike
+rejection). Pitfall captured under
+`allowlist-must-enumerate-all-host-classes` in `process-rules.md`.
+
+The pop-ordering bug in `totp_login` (`_pending_totp.pop()` runs before
+`_finalize_and_set_cookie`, so any 502 from finalize wipes the TOTP
+session and the retry sees `400 Session expired`) is **not** part of
+this hotfix — it is a UX-fidelity issue, not a security/correctness
+issue, and a clean fix interacts with one-time-code semantics. Tracked
+as a follow-up.
+
+### v0.7.0 (2026-04-29) — mailer slice covered, SPEC closed out
+
+Final HYGIENE-001 close-out. All in-scope findings are now landed on
+`main` or formally deferred. SPEC status flips `in-progress → done`.
+
+**Mailer slice (HY-49 + HY-50): covered by SPEC-SEC-MAILER-INJECTION-001.**
+
+Per REQ-49.4 and REQ-50.4 of this SPEC, HY-49 and HY-50 close as
+"covered" once SPEC-SEC-MAILER-INJECTION-001 lands the equivalent fix.
+That happened in commit `a54499a0` on `main`
+(`feat(mailer): REQ-7 + REQ-10 uniform 401 + strict signature parser`):
+
+- **HY-49 (REQ-49.1/49.2/49.3)** ↔ **MAILER-INJECTION-001 REQ-7**.
+  All Zitadel signature-verification failures now return a byte-
+  identical `401 {"detail": "invalid signature"}` from
+  `_verify_zitadel_signature` in `klai-mailer/app/main.py`. The
+  precise failure reason is preserved in structlog at
+  `mailer_signature_invalid` with a `reason` field
+  (`missing_header`, `malformed_header`, `timestamp_out_of_window`,
+  `hmac_mismatch`, `unknown_vN_field`, `replay`). No
+  `WWW-Authenticate` or other side-channel response headers. See
+  `app/signature.py` for the `SignatureError` sentinel set and
+  `tests/` for AC-6 + AC-8 byte-identity assertions.
+
+- **HY-50 (REQ-50.1/50.2/50.3)** ↔ **MAILER-INJECTION-001 REQ-10**.
+  HY-50 was scoped docs-only ("annotate the parser, no code change
+  today"). REQ-10 went further and *implemented* the strict parser:
+  `_parse_signature_header` in `klai-mailer/app/signature.py` rejects
+  any unknown `vN=` token (e.g. a future `v2=`), rejects headers with
+  more than 5 tokens, and rejects malformed tokens — all surfacing
+  as `unknown_vN_field` and returning the same uniform 401 from
+  REQ-7. The HY-50 worry (silent-accept downgrade attack during a
+  hypothetical v1/v2 transition) is structurally closed, not just
+  annotated. The MX:NOTE that REQ-50.1 asked for is therefore
+  redundant and not added — the reject-by-default parser is the
+  stronger contract.
+
+No code or test change in this SPEC's repo footprint. Doc-only commit.
+
+**Other slices** — already shipped on `main` prior to this close-out:
+
+| Slice | Status | Reference |
+|---|---|---|
+| Portal HY-19..HY-28 | shipped | direct commits on `main` (REQ-19 `8695ef7d`, REQ-20 `6bd07440`, REQ-21 `0d1903f6`, REQ-22 `74bdd261`, REQ-23 `44bf0f08`, REQ-24 `7be258ba`, REQ-27 `838f5a89`, REQ-28 `cf772a76`; REQ-25/REQ-26 not allocated) |
+| Connector HY-30..HY-32 | shipped | v0.5.0 close-out, see HISTORY entry below |
+| Scribe HY-33..HY-38 | shipped | PR #179, merge `4463bb3d`; v0.4.0 close-out below |
+| Retrieval HY-39..HY-44 | shipped | PR #188, merge `99a7571c` |
+| Knowledge-MCP HY-45/46/48 | shipped | v0.6.0 close-out below |
+| Knowledge-MCP HY-47 | deferred | structurally relocated to `SPEC-INGEST-RATELIMIT-001` (see v0.6.0 entry) |
+| Mailer HY-49/HY-50 | covered | this entry (via SPEC-SEC-MAILER-INJECTION-001) |
+
+Of the 29 internal-wave findings, 28 ship as code/docs in this SPEC's
+slices. HY-47 is the only deliberate deferral and has its own
+follow-up SPEC.
+
+### v0.6.0 (2026-04-29) — knowledge-mcp slice (HY-45/46/48 shipped, HY-47 deferred)
+
+3 of 4 knowledge-mcp items closed in worktree
+`feature/SPEC-SEC-HYGIENE-001-mcp` (commit `8e297f59`, branched from
+`origin/main` at `3b5cd772`):
+
+- **HY-45** (REQ-45.1/45.2/45.3): `@MX:WARN` + `@MX:REASON` block
+  above `enable_dns_rebinding_protection=False` in
+  `klai-knowledge-mcp/main.py` — references SPEC-SEC-HYGIENE-001
+  REQ-45 + future SPEC-MCP-TRANSPORT-001. Matching reviewer-signal
+  comment in `deploy/caddy/Caddyfile` lists klai-knowledge-mcp as
+  Docker-internal / not internet-reachable. 2 grep tests in
+  `tests/test_mcp_hygiene.py`.
+- **HY-46** (REQ-46.1, stub-level): new `_validate_page_path` helper
+  in `main.py` rejects literal `..`/`\`/leading `/`, ANY `%` char
+  (catches every URL-encoded variant without enumerating each), and
+  paths whose Unicode-NFKC normalised form differs from the input
+  AND produces traversal characters (catches FULLWIDTH FULL STOP
+  U+FF0E and other compatibility-equivalent glyphs). User-facing
+  error stays generic to avoid handing an attacker a validator-shape
+  oracle. 11 parametrised tests + 1 deferred-scope assertion in
+  `tests/test_page_path_validation.py`. REQ-46.2 (klai-docs route-
+  handler audit) and REQ-46.3 (full encoding matrix incl. overlong
+  UTF-8 + IDN homoglyphs) remain deferred to a follow-up SPEC.
+- **HY-48** (REQ-48.1/48.2/48.3): `@MX:NOTE` block above
+  `kb_slug=f"personal-{verified.user_id}"` in
+  `save_personal_knowledge` references SPEC-SEC-IDENTITY-ASSERT-001
+  (already shipped on main; structural neutralisation lives there)
+  + REQ-48. Slug FORMAT unchanged per REQ-48.2. 2 grep tests + 1
+  format-regression monitor in `tests/test_personal_kb_annotation.py`.
+
+**HY-47 deferred to SPEC-INGEST-RATELIMIT-001.** During /run the
+SPEC's premise was challenged: the AC mentions tools (`list_sources`,
+`add_source`, `query_kb`, `get_page_content`) that don't exist in
+klai-knowledge-mcp today, and tenant-isolation is structurally NOT
+what HY-47 protects (IDENTITY-ASSERT-001 + downstream RLS already do
+that). HY-47 is purely cost / DoS protection, and the structurally
+correct chokepoint is one layer deeper at `klai-knowledge-ingest`,
+where every save (MCP + portal + future callers) flows through.
+Acceptance.md gets an "Implementation note" recording the move; the
+original AC-47 text stays intact for audit traceability. Follow-up
+SPEC ships against `POST /ingest/v1/document` using the same ZSET
+sliding-window pattern as `klai-connector/app/services/rate_limit.py`.
+
+Quality state on slice branch:
+- Pytest: 42 passed (slice tests + adjacent regressions in
+  `test_mcp_security.py`, `test_identity_assert.py`,
+  `test_sec_internal_001.py`).
+- Ruff lint + format: clean on the four touched files.
+- Pre-existing 5 `test_assertion_mode_taxonomy.py` failures verified
+  to also fail on `origin/main` without the slice diff (via
+  `git stash`); not in scope.
+
+Status remains `in-progress`: knowledge-mcp slice fully closed-out
+modulo HY-47 (now tracked separately); scribe + connector slices
+already shipped at v0.4.0/v0.5.0; remaining slices (portal
+HY-19..HY-28, retrieval HY-39..HY-44, mailer HY-49..HY-50) still
+outstanding. HY-47 (rate-limit) ownership transferred to
+`SPEC-INGEST-RATELIMIT-001` (to be opened post-merge).
 
 ### v0.5.0 (2026-04-28) — connector slice closed-out (followup landed)
 
@@ -469,6 +617,29 @@ a second, tenant-explicit layer.
   `auth.py:150` SHALL be preserved unchanged — they remain the local-dev
   escape hatch and are safe because Zitadel registers them explicitly
   as dev redirect URIs.
+- **REQ-20.4 (hotfix v0.7.1):** The validator SHALL accept hostnames in
+  the **system-host set** before consulting the tenant-slug allowlist.
+  The system-host set SHALL be derived once at process start (and cached
+  via `functools.lru_cache`) from settings, containing:
+  - `settings.domain` — the bare apex (e.g. `getklai.com`).
+  - `urlparse(settings.frontend_url).hostname` — the canonical login
+    domain (e.g. `my.getklai.com`), which is where Zitadel redirects
+    through after every successful auth per SPEC-AUTH-008 and
+    `portal-backend.md` FRONTEND_URL rule.
+
+  This requirement codifies the rule that the callback-URL allowlist
+  must enumerate ALL legitimate hostname classes — not only user-tenant
+  ones. The system-host set is intentionally derived from settings
+  (not hardcoded strings) so dev / staging / prod URLs all work without
+  code changes, and so a future `FRONTEND_URL` rename automatically
+  updates the allowlist.
+
+  **Anti-regression:** any future change that adds a new hostname class
+  to OIDC callback flows (e.g. a second portal domain, an admin-console
+  host) MUST extend `_system_callback_hosts()` AND add a corresponding
+  acceptance scenario AND a test case in `test_callback_url_allowlist.py`
+  before the new host can ship. See
+  `allowlist-must-enumerate-all-host-classes` in `process-rules.md`.
 
 ### Finding #21 — `_safe_return_to` backslash and percent-decode
 

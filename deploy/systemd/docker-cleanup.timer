@@ -1,0 +1,14 @@
+[Unit]
+Description=Run klai Docker safe-only cleanup daily at 03:00 local time
+Documentation=https://github.com/GetKlai/klai/blob/main/.claude/rules/klai/infra/container-hygiene.md
+
+[Timer]
+OnCalendar=*-*-* 03:00
+# Run on next boot if missed (e.g. server was down at 03:00)
+Persistent=true
+# Random delay up to 5 min to avoid thundering-herd if multiple machines
+RandomizedDelaySec=300
+Unit=docker-cleanup.service
+
+[Install]
+WantedBy=timers.target

@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import structlog
@@ -75,12 +75,17 @@ class AuthContext:
     resourceowner -- JWT Zitadel ``resourceowner`` claim (org id) when method == "jwt".
     role      -- Highest-privilege role name from the JWT (e.g. "admin"), or None /
                  "service" for internal callers. Used by REQ-3 admin bypass.
+    scopes    -- SPEC-SEC-SERVICE-AUTH-001 REQ-3: parsed OAuth 2.0 ``scope`` claim
+                 (space-separated string in the JWT) split into a frozenset of
+                 individual scopes. Empty for internal-secret callers (legacy
+                 path); they get a Phase B/C migration bypass via ``require_scope``.
     """
 
     method: str
     sub: str | None
     resourceowner: str | None
     role: str | None
+    scopes: frozenset[str] = field(default_factory=frozenset)
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,16 +243,37 @@ def _extract_role(payload: dict[str, Any]) -> str | None:
 
     Zitadel embeds roles as a nested dict under ``urn:zitadel:iam:org:project:roles``.
     We only need a coarse-grained classification (``admin`` vs. everything else)
-    for REQ-3 admin bypass.
+    for REQ-3 admin bypass in :func:`verify_body_identity`.
+
+    SPEC-SEC-TENANT-001 REQ-4.1 (v0.5.0):
+        ``"org_admin"`` is removed from the admin-equivalent set. It was never
+        produced by any production flow in the monorepo (signup.py, users.py,
+        invite_user, migrate-user-to-portal-org.sh all grant ``"org:owner"``),
+        and no portal-invite path under the v0.5.0 mapping can reach it.
+
+        ``"admin"`` is retained as admin-equivalent: it is not produced by any
+        production flow either, but it is the keyed shape that the
+        SPEC-SEC-010 / SPEC-SEC-TENANT-001 test fixtures use to assert the
+        admin-bypass mechanism still functions. Removing it would require a
+        coordinated test-fixture migration; that work belongs to
+        SPEC-SEC-IDENTITY-ASSERT-001 (gamma direction), where the JWT-claim
+        admin-bypass itself migrates to a portal-signed assertion.
+
+        Crucially, ``"org:owner"`` is intentionally NOT in this set even
+        though it IS reachable via the v0.5.0 admin invite flow. Adding it
+        would re-introduce finding #10 in a more direct form: every
+        signup-created or admin-invited user would gain the cross-org
+        bypass. See ``.claude/rules/klai/platform/zitadel.md`` "Project
+        roles and JWT claims" for the canonical authority model.
     """
     roles_claim = payload.get(_ZITADEL_ROLES_CLAIM)
     if isinstance(roles_claim, dict) and roles_claim:
-        if "admin" in roles_claim or "org_admin" in roles_claim:
+        if "admin" in roles_claim:
             return "admin"
         # First key is deterministic enough for log correlation.
         return next(iter(roles_claim))
     if isinstance(roles_claim, list) and roles_claim:
-        if "admin" in roles_claim or "org_admin" in roles_claim:
+        if "admin" in roles_claim:
             return "admin"
         return roles_claim[0]
     # Fallback: some token shapes put role directly on ``role``.
@@ -313,11 +339,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
             resourceowner = payload.get(_ZITADEL_RESOURCEOWNER_CLAIM)
             if not sub:
                 return _unauthorized("invalid_jwt_signature")
+            # SPEC-SEC-SERVICE-AUTH-001 REQ-3: parse OAuth 2.0 scope claim
+            # (space-separated string per RFC 6749 §3.3) into a frozenset.
+            # Missing claim → empty set → endpoints with require_scope reject.
+            scopes_claim = payload.get("scope") or ""
+            scopes = frozenset(s for s in str(scopes_claim).split() if s)
             auth = AuthContext(
                 method="jwt",
                 sub=str(sub),
                 resourceowner=str(resourceowner) if resourceowner is not None else None,
                 role=_extract_role(payload),
+                scopes=scopes,
             )
         elif internal_header is not None:
             if not _constant_time_secret_match(internal_header, settings.internal_secret):
@@ -327,6 +359,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 sub=None,
                 resourceowner=None,
                 role="service",
+                scopes=frozenset(),
             )
         else:
             return _unauthorized("missing_credentials")
@@ -343,9 +376,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return _rate_limited(retry_after, auth.method)
 
         # REQ-7.1: log successful auth decision.
+        # SPEC-SEC-SERVICE-AUTH-001 REQ-4: include ``auth_path`` so a Grafana
+        # panel can track migration progress (jwt vs internal_secret) per
+        # service. Renamed from auth_method for clarity in the panel name.
         logger.info(
             "auth_accepted",
             auth_method=auth.method,
+            auth_path=auth.method,
+            sub=auth.sub,
+            scopes=sorted(auth.scopes) if auth.scopes else None,
             role=auth.role,
             path=request.url.path,
         )
@@ -516,3 +555,54 @@ async def verify_body_identity(
         raise _identity_assertion_failed(result.reason or "unknown")
 
     request.state.verified_caller = VerifiedCaller(user_id=result.user_id, org_id=result.org_id)
+
+
+# --- SPEC-SEC-SERVICE-AUTH-001 — scope-based authorization ------------------
+
+
+def require_scope(scope: str):
+    """FastAPI dependency factory: require a specific OAuth scope claim.
+
+    SPEC-SEC-SERVICE-AUTH-001 REQ-3. Use as ``Depends(require_scope(...))``
+    on routes that gate on a scope.
+
+    During Phase B/C migration, internal-secret callers (``method="internal"``)
+    bypass the scope check — they have full access by virtue of holding the
+    shared secret. This bypass is removed in Phase D once all callers have
+    migrated to JWT auth and the X-Internal-Secret middleware path is deleted.
+
+    Returns:
+        ``AuthContext`` of the calling principal — useful for downstream
+        identity-based logic (e.g. logging caller ``sub``).
+
+    Raises:
+        HTTPException(403, "insufficient_scope") when method=="jwt" and the
+        required scope is not present in the token.
+    """
+
+    async def _dep(request: Request) -> AuthContext:
+        auth: AuthContext | None = getattr(request.state, "auth", None)
+        if auth is None:
+            # Means AuthMiddleware did not run (route on _UNAUTH_PATHS) or
+            # was bypassed. Defensive — should not happen on real endpoints.
+            raise HTTPException(status_code=401, detail="not_authenticated")
+
+        # Phase B legacy bypass: internal-secret callers retain full access
+        # until Phase D. Logged via auth_path=internal_secret in middleware
+        # so observability can track the deprecated path.
+        if auth.method == "internal":
+            return auth
+
+        if scope not in auth.scopes:
+            logger.warning(
+                "auth_scope_rejected",
+                required_scope=scope,
+                granted_scopes=sorted(auth.scopes),
+                sub=auth.sub,
+                path=request.url.path,
+            )
+            raise HTTPException(status_code=403, detail="insufficient_scope")
+
+        return auth
+
+    return _dep

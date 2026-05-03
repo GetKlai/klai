@@ -39,6 +39,16 @@ class FakeResult:
     def scalar_one_or_none(self):
         return self._rows[0] if self._rows else None
 
+    def one_or_none(self):
+        """Return the single row (typically a tuple) or None.
+
+        SQLAlchemy 2.0 distinction: ``scalar_one_or_none()`` returns the first
+        column of the first row; ``one_or_none()`` returns the whole row.
+        Tests that mock multi-column SELECT (e.g. ``select(PortalOrg, PortalUser)``)
+        expect ``one_or_none()`` to return the full tuple as the test stored it.
+        """
+        return self._rows[0] if self._rows else None
+
     def scalar(self):
         return self._scalar_value
 
