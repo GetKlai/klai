@@ -14,8 +14,8 @@ CHECK constraint.
 Down migration reverts to VARCHAR(20) + the v2 CHECK constraint from a1b2c3d4e5f6.
 """
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "59fff72b480b"
@@ -26,24 +26,30 @@ depends_on = None
 _ENUM_NAME = "portal_user_role"
 _ENUM_VALUES = ("personal", "company", "kb_manager", "group_manager", "admin")
 _CHECK_NAME = "ck_portal_users_role_v2"
-_SERVER_DEFAULT = "company"
 
 
 def upgrade() -> None:
     # 1. Create the ENUM type
-    op.execute(f"CREATE TYPE {_ENUM_NAME} AS ENUM ('personal', 'company', 'kb_manager', 'group_manager', 'admin')")
+    # nosemgrep: python.lang.security.audit.formatted-sql-query.formatted-sql-query,python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query
+    # Rationale: _ENUM_NAME is a module-level constant, not user input.
+    op.execute(  # nosemgrep
+        "CREATE TYPE portal_user_role AS ENUM ('personal', 'company', 'kb_manager', 'group_manager', 'admin')"
+    )
 
     # 2. Drop the old CHECK constraint (a1b2c3d4e5f6 added ck_portal_users_role_v2)
     op.drop_constraint(_CHECK_NAME, "portal_users", type_="check")
 
-    # 3. Alter column to use the ENUM type
-    op.execute(f"ALTER TABLE portal_users ALTER COLUMN role TYPE {_ENUM_NAME} USING role::{_ENUM_NAME}")
+    # 3. Alter column to use the ENUM type (raw DDL required; SQLAlchemy has no
+    #    ALTER COLUMN ... USING syntax).
+    op.execute(  # nosemgrep
+        "ALTER TABLE portal_users ALTER COLUMN role TYPE portal_user_role USING role::portal_user_role"
+    )
 
     # 4. Set server_default using the typed cast
     op.alter_column(
         "portal_users",
         "role",
-        server_default=f"'company'::{_ENUM_NAME}",
+        server_default="'company'::portal_user_role",
         existing_type=sa.Enum(*_ENUM_VALUES, name=_ENUM_NAME, create_type=False),
         existing_nullable=False,
     )
@@ -51,7 +57,9 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # 1. Change column back to VARCHAR(20) with text cast
-    op.execute("ALTER TABLE portal_users ALTER COLUMN role TYPE VARCHAR(20) USING role::text")
+    op.execute(  # nosemgrep
+        "ALTER TABLE portal_users ALTER COLUMN role TYPE VARCHAR(20) USING role::text"
+    )
 
     # 2. Restore server_default as plain string
     op.alter_column(
@@ -70,4 +78,4 @@ def downgrade() -> None:
     )
 
     # 4. Drop the ENUM type
-    op.execute(f"DROP TYPE {_ENUM_NAME}")
+    op.execute("DROP TYPE portal_user_role")  # nosemgrep
