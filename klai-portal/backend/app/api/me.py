@@ -19,6 +19,7 @@ from app.api.bearer import bearer
 from app.api.dependencies import get_effective_capabilities
 from app.core.config import settings
 from app.core.database import get_db, set_tenant
+from app.core.profiles import PROFILE_CAPABILITIES as _pc
 from app.core.profiles import effective_role as _profile_effective_role
 from app.models.audit import PortalAuditLog
 from app.models.events import ProductEvent
@@ -53,10 +54,10 @@ class MeResponse(BaseModel):
     mfa_enrolled: bool = False
     mfa_policy: str = "optional"
     preferred_language: Literal["nl", "en"] = "nl"
-    portal_role: str = "member"
+    portal_role: str = "personal"
     products: list[str] = []
     capabilities: list[str] = []
-    effective_role: str = "member"
+    effective_role: str = "personal"
     effective_capabilities: list[str] = []
     org_found: bool = False
 
@@ -95,7 +96,7 @@ async def me(
     mfa_policy: str = "optional"
     preferred_language: Literal["nl", "en"] = "nl"
     portal_role: str = "member"
-    _eff_role: str = "member"
+    _eff_role: str = "personal"
     _profile_caps_set: set[str] = set()
     org_found: bool = False
     if zitadel_user_id:
@@ -113,9 +114,7 @@ async def me(
             preferred_language = portal_user.preferred_language
             portal_role = portal_user.role
             _eff_role = _profile_effective_role(portal_user)
-            from app.core.profiles import PROFILE_CAPABILITIES as _pc
-
-            _profile_caps_set: set[str] = set(_pc.get(_eff_role, frozenset()))
+            _profile_caps_set = set(_pc.get(_eff_role, frozenset()))
             if org.slug:
                 workspace_url = f"https://{org.slug}.{settings.domain}"
             # Cache display info from OIDC token so members endpoints can resolve names
@@ -137,7 +136,6 @@ async def me(
     # get_effective_products self-heals its own RLS tenant context — no
     # set_tenant needed at this call site.
     products = await get_effective_products(zitadel_user_id, db) if zitadel_user_id else []
-    _profile_caps = _profile_caps_set
     capabilities = await get_effective_capabilities(zitadel_user_id, db) if zitadel_user_id else set()
 
     return MeResponse(
@@ -155,7 +153,7 @@ async def me(
         products=products,
         capabilities=sorted(capabilities),
         effective_role=_eff_role,
-        effective_capabilities=sorted(_profile_caps),
+        effective_capabilities=sorted(_profile_caps_set),
         org_found=org_found,
     )
 
