@@ -1,12 +1,21 @@
 """Per-plan KB quota limits and capability definitions.
 
 SPEC-PORTAL-UNIFY-KB-001 Phase A (D2).
+Updated in SPEC-PORTAL-PROFILES-001 Phase 1.5:
+  - core / professional now include kb.connectors (basic connector capability).
+  - complete includes full capability set matching PROFILE_CAPABILITIES for
+    kb_manager / group_manager / admin roles.
 
 Each plan has a KBLimits entry that governs:
 - How many personal KBs a user may create
 - How many items (documents) per KB
 - Whether the user may create org-scoped KBs
 - Which advanced KB capabilities are unlocked
+
+Effective capabilities at runtime:
+    effective_capabilities(user) = PROFILE_CAPABILITIES[role] & PLAN_LIMITS[plan].capabilities
+
+Plan is the ceiling; role is the floor.
 
 R-O1: get_effective_limits() is a stub for future per-org overrides.
       Current implementation delegates directly to get_plan_limits(org.plan).
@@ -35,13 +44,13 @@ PLAN_LIMITS: dict[str, KBLimits] = {
         max_personal_kbs_per_user=5,
         max_items_per_kb=20,
         can_create_org_kbs=False,
-        capabilities=frozenset(),
+        capabilities=frozenset({"kb.connectors"}),
     ),
     "professional": KBLimits(
         max_personal_kbs_per_user=5,
         max_items_per_kb=20,
         can_create_org_kbs=False,
-        capabilities=frozenset(),
+        capabilities=frozenset({"kb.connectors"}),
     ),
     "complete": KBLimits(
         max_personal_kbs_per_user=None,
@@ -50,9 +59,10 @@ PLAN_LIMITS: dict[str, KBLimits] = {
         capabilities=frozenset(
             {
                 "kb.connectors",
+                "kb.connectors.external",
+                "kb.create_org",
                 "kb.members",
                 "kb.taxonomy",
-                "kb.advanced",
                 "kb.gaps",
             }
         ),
