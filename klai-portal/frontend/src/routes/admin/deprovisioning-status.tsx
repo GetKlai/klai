@@ -23,11 +23,12 @@ const TIMEOUT_MS = 5 * 60_000
 
 interface DeprovisionStatus {
   status: 'deprovisioning' | 'failed_deprovisioning' | 'ready' | 'gone'
+  // Backend deliberately strips `error` + `attempt` from the owner-facing
+  // payload — they may contain internal infra detail. Full fields are
+  // available to platform admins via direct DB query / VictoriaLogs.
   last_failure?: {
     step: string
-    error: string
-    attempt: number
-    failed_at: string
+    failed_at?: string
   }
 }
 
