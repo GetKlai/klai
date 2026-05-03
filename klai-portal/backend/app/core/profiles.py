@@ -13,9 +13,28 @@ Each rung is a strict capability superset of the rung below it.
                          profile wins, plan can only lower (REQ-5).
 """
 
+from enum import StrEnum
+
 from fastapi import HTTPException, status
 
 from app.core.plan_limits import KBLimits, get_plan_limits
+
+
+class Capability(StrEnum):
+    """All valid capability strings checked via require_capability().
+
+    Using StrEnum so pyright catches typos at call sites while remaining
+    fully compatible with frozenset[str] and set[str] containers at runtime.
+    C1: SPEC-PORTAL-PROFILES-001 Phase 1.6.
+    """
+
+    KB_CONNECTORS = "kb.connectors"
+    KB_CONNECTORS_EXTERNAL = "kb.connectors.external"
+    KB_CREATE_ORG = "kb.create_org"
+    KB_MEMBERS = "kb.members"
+    KB_TAXONOMY = "kb.taxonomy"
+    KB_GAPS = "kb.gaps"
+
 
 PROFILE_LADDER: list[str] = [
     "personal",
@@ -25,18 +44,23 @@ PROFILE_LADDER: list[str] = [
     "admin",
 ]
 
+# O(1) rank lookups -- use PROFILE_RANK.get(role, -1) instead of PROFILE_LADDER.index(role).
+# PROFILE_LADDER is kept for iteration / display; PROFILE_RANK is for ranking comparisons only.
+# C2: SPEC-PORTAL-PROFILES-001 Phase 1.6.
+PROFILE_RANK: dict[str, int] = {role: idx for idx, role in enumerate(PROFILE_LADDER)}
+
 # Capability strings for SPEC v0.2.0: only capabilities that are actually checked
 # via require_capability() on endpoints.  Direct-role checks (org-KB read filter,
 # append-via-chat, groups manage, billing, settings) are NOT capability strings.
-_KB_BASIC_CAPS: frozenset[str] = frozenset({"kb.connectors"})
+_KB_BASIC_CAPS: frozenset[str] = frozenset({Capability.KB_CONNECTORS})
 
 _KB_FULL_CAPS: frozenset[str] = _KB_BASIC_CAPS | frozenset(
     {
-        "kb.connectors.external",
-        "kb.create_org",
-        "kb.members",
-        "kb.taxonomy",
-        "kb.gaps",
+        Capability.KB_CONNECTORS_EXTERNAL,
+        Capability.KB_CREATE_ORG,
+        Capability.KB_MEMBERS,
+        Capability.KB_TAXONOMY,
+        Capability.KB_GAPS,
     }
 )
 
@@ -164,7 +188,7 @@ def effective_role(user: object) -> str:
     return str(user.role)  # type: ignore[attr-defined]
 
 
-def has_capability(user: object, capability: str) -> bool:
+def has_capability(user: object, capability: Capability) -> bool:
     """Return True if the user has the given capability based on their role."""
     role = effective_role(user)
     caps = PROFILE_CAPABILITIES.get(role, frozenset())
@@ -193,9 +217,6 @@ def check_connector_allowed(user: object, connector_type: str) -> None:
 def _require_at_least(required_role: str):
     """Return a callable that enforces a minimum profile role.
 
-    For use as a FastAPI dependency, use the wired version in dependencies.py:
-        from app.api.dependencies import require_at_least_dep
-
     For direct unit-test invocation, call the returned function with
     caller_user explicitly:
         dep = _require_at_least("group_manager")
@@ -205,11 +226,11 @@ def _require_at_least(required_role: str):
 
     @MX:ANCHOR fan_in=3+ -- primary role gate for admin-group endpoints.
     """
-    required_idx = PROFILE_LADDER.index(required_role)
+    required_idx = PROFILE_RANK.get(required_role, -1)
 
     def _check(caller_user: object) -> None:
         role = effective_role(caller_user)
-        caller_idx = PROFILE_LADDER.index(role) if role in PROFILE_LADDER else -1
+        caller_idx = PROFILE_RANK.get(role, -1)
         if caller_idx < required_idx:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

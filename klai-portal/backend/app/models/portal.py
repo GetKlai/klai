@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
+import sqlalchemy as sa
 from sqlalchemy import (
     ARRAY,
     JSON,
@@ -83,8 +84,19 @@ class PortalUser(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     zitadel_user_id: Mapped[str] = mapped_column(String(64), index=True)
     org_id: Mapped[int] = mapped_column(ForeignKey("portal_orgs.id"))
-    role: Mapped[Literal["admin", "group-admin", "member"]] = mapped_column(
-        String(20), nullable=False, default="member", server_default="member"
+    role: Mapped[Literal["personal", "company", "kb_manager", "group_manager", "admin"]] = mapped_column(
+        sa.Enum(
+            "personal",
+            "company",
+            "kb_manager",
+            "group_manager",
+            "admin",
+            name="portal_user_role",
+            create_type=False,  # alembic migration 59fff72b480b creates the type
+        ),
+        nullable=False,
+        default="company",
+        server_default="company::portal_user_role",
     )
     preferred_language: Mapped[Literal["nl", "en"]] = mapped_column(
         String(8), nullable=False, default="nl", server_default="nl"

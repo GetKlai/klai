@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import _get_caller_org, bearer, require_capability
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.profiles import Capability
 from app.models.audit import PortalAuditLog
 from app.models.connectors import PortalConnector
 from app.models.groups import PortalGroup
@@ -802,7 +803,7 @@ async def get_kb_stats(
 @router.get(
     "/knowledge-bases/{kb_slug}/members",
     response_model=MembersResponse,
-    dependencies=[Depends(require_capability("kb.members"))],
+    dependencies=[Depends(require_capability(Capability.KB_MEMBERS))],
 )
 async def list_members(
     kb_slug: str,
@@ -859,7 +860,7 @@ async def list_members(
     "/knowledge-bases/{kb_slug}/members/users",
     response_model=UserMemberOut,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_capability("kb.members"))],
+    dependencies=[Depends(require_capability(Capability.KB_MEMBERS))],
 )
 async def invite_user(
     kb_slug: str,
@@ -928,7 +929,7 @@ async def invite_user(
 @router.patch(
     "/knowledge-bases/{kb_slug}/members/users/{access_id}",
     response_model=UserMemberOut,
-    dependencies=[Depends(require_capability("kb.members"))],
+    dependencies=[Depends(require_capability(Capability.KB_MEMBERS))],
 )
 async def update_user_role(
     kb_slug: str,
@@ -976,7 +977,7 @@ async def update_user_role(
 @router.delete(
     "/knowledge-bases/{kb_slug}/members/users/{access_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(require_capability("kb.members"))],
+    dependencies=[Depends(require_capability(Capability.KB_MEMBERS))],
 )
 async def remove_user(
     kb_slug: str,
@@ -1010,7 +1011,7 @@ async def remove_user(
     "/knowledge-bases/{kb_slug}/members/groups",
     response_model=GroupMemberOut,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_capability("kb.members"))],
+    dependencies=[Depends(require_capability(Capability.KB_MEMBERS))],
 )
 async def invite_group(
     kb_slug: str,
@@ -1066,7 +1067,7 @@ async def invite_group(
 @router.patch(
     "/knowledge-bases/{kb_slug}/members/groups/{access_id}",
     response_model=GroupMemberOut,
-    dependencies=[Depends(require_capability("kb.members"))],
+    dependencies=[Depends(require_capability(Capability.KB_MEMBERS))],
 )
 async def update_group_role(
     kb_slug: str,
@@ -1112,7 +1113,7 @@ async def update_group_role(
 @router.delete(
     "/knowledge-bases/{kb_slug}/members/groups/{access_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(require_capability("kb.members"))],
+    dependencies=[Depends(require_capability(Capability.KB_MEMBERS))],
 )
 async def remove_group(
     kb_slug: str,
