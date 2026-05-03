@@ -328,7 +328,7 @@ class TestAutoAssignOnInvite:
         body.email = "new@example.com"
         body.first_name = "Test"
         body.last_name = "User"
-        body.role = "member"
+        body.role = "company"
         body.preferred_language = "nl"
 
         mock_zitadel = AsyncMock()
@@ -392,7 +392,7 @@ class TestSeatLimitEnforcement:
         body.email = "new@example.com"
         body.first_name = "Test"
         body.last_name = "User"
-        body.role = "member"
+        body.role = "company"
         body.preferred_language = "nl"
 
         with patch("app.api.admin.users._get_caller_org", return_value=("admin-1", org, caller)):
