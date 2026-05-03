@@ -222,7 +222,22 @@ async def get_effective_capabilities(user_id: str, db: AsyncSession) -> set[str]
 
     user, org = row
 
-    # Admin users get the complete-tier capabilities regardless of plan.
+    # @MX:NOTE -- Admin-bypass: an admin role on any plan tier (including "core")
+    # receives the full "complete"-tier capability set. This is INTENTIONAL per
+    # SPEC-PORTAL-PROFILES-001 v0.2.0 and v0.3.0: an admin must be able to
+    # preview / test what a plan upgrade unlocks BEFORE the org commits to the
+    # higher billing tier. Without this, a "core"-plan admin who wants to evaluate
+    # the connector ecosystem before paying for "complete" is blocked.
+    #
+    # Trade-off: this gives admins more capabilities than their plan technically
+    # pays for. Acceptable because (a) admins are the billing-decision-maker
+    # anyway, (b) the per-user capabilities of NON-admin users on the same org
+    # are still constrained by the plan ceiling (so a "core"-tenant's regular
+    # users still hit the limits).
+    #
+    # To remove the bypass: replace the "if user.role == 'admin'" branch with
+    # the same intersection logic used for other roles. Tests that assert
+    # "test_admin_on_core_gets_complete_tier" would need updating.
     if user.role == "admin":
         return set(PLAN_LIMITS["complete"].capabilities)
 
