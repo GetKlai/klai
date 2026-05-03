@@ -1,12 +1,19 @@
 # prod-tenant E2E
 
-Production tenant end-to-end tests. Runs against a dedicated bot tenant
-on production (default `e2e.getklai.com`). Every PR/deploy gets exercised
-against real LibreChat + LiteLLM + retrieval pipeline, no mocks.
+Production tenant end-to-end tests. Two modes:
+
+| Mode | When to use | Login | Where it can run |
+|---|---|---|---|
+| **`isolated-tenant`** (default) | CI / unattended | bot via email + password + TOTP | local + GitHub Actions |
+| **`voys-attached`** | Local manual run by Mark | Google SSO (you log in once, script reuses session) | **local only** |
+
+Every PR/deploy gets exercised against real LibreChat + LiteLLM + retrieval
+pipeline, no mocks. Test-created artifacts (KBs, templates, transcripts) are
+prefixed `e2e-{run-timestamp}-...` so cleanup never touches real user data.
 
 > **Plan & rationale:** see [`docs/testing/test-suite-plan.md`](../../../../docs/testing/test-suite-plan.md).
 
-## Run locally
+## Run locally — isolated-tenant mode (default)
 
 ```bash
 # .env.local (gitignored; values from 1Password)
@@ -18,6 +25,29 @@ export E2E_TOTP_SECRET=...
 cd klai-portal/frontend
 npm run test:e2e:prod
 ```
+
+## Run locally — voys-attached mode
+
+For testing inside the Voys tenant (Google SSO, no bot user available).
+**One-time** capture the browser session:
+
+```bash
+cd klai-portal/frontend
+npm run e2e:capture-session
+# Headed Chromium opens at https://voys.getklai.com
+# → log in via Google SSO
+# → script auto-saves storage-state once /app/* loads
+# → close the browser when ready
+```
+
+Then run the test-suite (skips J01-login):
+
+```bash
+npm run test:e2e:prod:voys
+```
+
+Storage-state lives in `_config/storageState.voys.json` (gitignored).
+If the session expires re-run the capture step.
 
 Run a single journey with the UI inspector:
 
