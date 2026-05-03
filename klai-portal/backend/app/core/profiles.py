@@ -170,7 +170,7 @@ def check_connector_allowed(user: object, connector_type: str) -> None:
     kb_manager and above may use all connector types.
 
     Checks role-level capability (PROFILE_CAPABILITIES).  Plan ceiling on
-    kb.connectors.external is handled by require_capability() on the endpoint.
+    kb.connectors.external is handled inline in create_connector() in app/api/connectors.py.
 
     @MX:ANCHOR fan_in=2+ -- called from create_connector and check_connector_type.
     """
