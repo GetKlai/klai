@@ -137,6 +137,9 @@ def effective_kb_limits(role: str, plan: str) -> KBLimits:
     profile_lim = PROFILE_LIMITS.get(role, _FALLBACK_PROFILE_LIMITS)
     plan_lim = get_plan_limits(plan)
 
+    # G4: capabilities = role caps intersected with plan caps (profile wins, plan can only lower).
+    role_caps = PROFILE_CAPABILITIES.get(role, frozenset())
+    plan_caps = plan_lim.capabilities
     return KBLimits(
         max_personal_kbs_per_user=_min_with_unlimited(
             profile_lim.max_personal_kbs_per_user,
@@ -147,12 +150,17 @@ def effective_kb_limits(role: str, plan: str) -> KBLimits:
             plan_lim.max_items_per_kb,
         ),
         can_create_org_kbs=(profile_lim.can_create_org_kbs and plan_lim.can_create_org_kbs),
-        capabilities=frozenset(),
+        capabilities=role_caps & plan_caps,
     )
 
 
 def effective_role(user: object) -> str:
-    """Return the effective profile role for the user."""
+    """Return the effective profile role for the user.
+
+    G5: Returns "personal" (most-restrictive) if user is None.
+    """
+    if user is None:
+        return "personal"
     return str(user.role)  # type: ignore[attr-defined]
 
 
