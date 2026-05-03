@@ -173,7 +173,7 @@ class TestTriggerSyncItemQuota:
         with (
             patch(
                 "app.api.connectors._get_caller_org",
-                return_value=("user-complete", org, MagicMock()),
+                return_value=("user-complete", org, MagicMock(role="kb_manager")),
             ),
             patch(
                 "app.api.connectors._get_kb_with_owner_check",
