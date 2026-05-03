@@ -15,7 +15,8 @@
 import { API_BASE } from '@/lib/api'
 import { readCsrfCookie } from '@/lib/auth'
 import { FetchError, UnauthorizedError } from '@/lib/fetch-errors'
-import { authLogger } from '@/lib/logger'
+import { authLogger, deprovisionLogger } from '@/lib/logger'
+import { navigateTo, clearAllQueries } from '@/lib/navigate-singleton'
 
 export { UnauthorizedError } from '@/lib/fetch-errors'
 
@@ -94,6 +95,27 @@ async function doFetch<T>(path: string, options: ApiFetchOptions): Promise<T> {
   if (res.status === 401) {
     throw new UnauthorizedError()
   }
+
+  // @MX:NOTE: tenant_deleting 403 — org is mid-deprovisioning. Clear all cached queries
+  // and redirect to the tenant-deleted waiting page.
+  // @MX:SPEC: SPEC-INFRA-TENANT-DELETE-001 Phase 11 R10
+  if (res.status === 403) {
+    let errorCode: string | undefined
+    try {
+      const body = (await res.clone().json()) as { error?: string }
+      errorCode = body.error
+    } catch {
+      // no JSON body or already consumed — ignore
+    }
+    if (errorCode === 'tenant_deleting') {
+      deprovisionLogger.info('Received 403 tenant_deleting — redirecting to tenant-deleted', { path })
+      clearAllQueries()
+      navigateTo('/tenant-deleted')
+      // Return a sentinel to prevent calling code from trying to render fallback UI
+      throw new ApiError(403, 'tenant_deleting')
+    }
+  }
+
   if (!res.ok) {
     let detail = `${res.status}`
     let validationIssues: ValidationIssue[] | undefined
