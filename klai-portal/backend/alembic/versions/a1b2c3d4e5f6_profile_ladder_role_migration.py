@@ -1,8 +1,13 @@
 """SPEC-PORTAL-PROFILES-001 REQ-11: migrate role values to five-rung ladder
 
 Revision ID: a1b2c3d4e5f6
-Revises: z3a4b5c6d7e8
+Revises: z3a4b5c6d7e8, 7e2d3c1a9b8f
 Create Date: 2026-05-03
+
+This is a merge migration: it joins the SPEC-PORTAL-PROFILES-001 branch
+(rooted at z3a4b5c6d7e8) with main's SPEC-INFRA-TENANT-DELETE-001 chain
+(latest 7e2d3c1a9b8f). No DDL is added by the merge itself; the role-enum
+extension below is the actual change.
 
 Changes:
 - Drop old CHECK constraint (admin, group-admin, member)
@@ -16,7 +21,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = "a1b2c3d4e5f6"
-down_revision = "z3a4b5c6d7e8"
+down_revision = ("z3a4b5c6d7e8", "7e2d3c1a9b8f")
 branch_labels = None
 depends_on = None
 

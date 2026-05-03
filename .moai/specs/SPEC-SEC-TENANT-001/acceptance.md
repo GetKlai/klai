@@ -52,19 +52,25 @@ memberships in org B.
 
 ---
 
-## A-2: Invite role -> Zitadel grant mapping
+## A-2: Invite role -> Zitadel grant mapping (v0.5.0 — β architecture)
 
 **REQs covered:** REQ-2.1, REQ-2.2, REQ-5.2
 
-**Purpose:** `invite_user` MUST pass the Zitadel role matching the
-admin's chosen portal role, not the hardcoded `org:owner`.
+**Purpose:** `invite_user` MUST grant `org:owner` only when the
+inviting admin selects `role="admin"`. For `group-admin` and `member`,
+NO Zitadel project-role grant is issued — portal_users.role is the
+canonical authority for those non-admin roles. The JWT
+`urn:zitadel:iam:org:project:roles` claim is empty for those users;
+retrieval-api's `_extract_role` returns None; the cross-org check
+fires as designed.
 
 **Given:**
 - Admin `caller` is authenticated against `org_a` and passes
   `_require_admin`.
 - `zitadel.invite_user` is patched to return
   `{"userId": "new-user-<role>"}` without hitting the network.
-- `zitadel.grant_user_role` is patched to capture the `role` argument.
+- `zitadel.grant_user_role` is patched (AsyncMock) so the test can
+  assert on call count and arguments.
 - Seat limit is not reached.
 
 **When (parametrised — one test, three cases):**
@@ -74,85 +80,119 @@ For each `portal_role` in `["admin", "group-admin", "member"]`:
     "role": <portal_role>, "preferred_language": "nl"}`.
 
 **Then:**
-- Response is `200 OK`.
-- `zitadel.grant_user_role` is called exactly once per request.
-- The `role` argument passed to `grant_user_role` matches the REQ-2.2
-  mapping. Expected values (subject to REQ-3 Zitadel-console
-  confirmation during implementation):
-  - `portal_role="admin"`     -> grant `"org:owner"`
-  - `portal_role="group-admin"` -> grant `"org:group-admin"`
-  - `portal_role="member"`    -> grant `"org:member"`
-- In all cases the portal row `portal_users.role` matches `portal_role`.
+- Response is `201 Created`.
+- For `portal_role="admin"`: `zitadel.grant_user_role` is awaited
+  exactly once with `role="org:owner"`.
+- For `portal_role="group-admin"` and `portal_role="member"`:
+  `zitadel.grant_user_role` is NOT awaited at all (call count == 0).
+  A structured event `event="invite_no_zitadel_grant"` is emitted at
+  INFO with `org_id`, `portal_role`, and `zitadel_user_id` so
+  operations can audit the absence-of-grant in VictoriaLogs.
+- In all three cases the portal row `portal_users.role` matches
+  `portal_role`.
 
-**Failure mode under current code:**
-- All three cases pass `role="org:owner"` to `grant_user_role`
-  regardless of input → assertions on member / group-admin cases fail
-  red. This is the regression guard REQ-5.2 requires.
+**Rationale — why `None` for non-admins (β architecture):**
+Zitadel's own guidance — *"ZITADEL only provides RBAC and no
+permission handling"* — together with industry consensus for
+multi-tenant SaaS (IDP for identity, application/centralized authz
+for authorization) lead this SPEC to keep portal_users.role as the
+single source of truth. Granting `org:group-admin` / `org:member` in
+Zitadel would (a) require Zitadel project-role configuration that
+does not exist today, (b) duplicate the portal-side authority into a
+second system that must be kept in sync, and (c) NOT close finding
+#10's text-match bypass in retrieval-api — that bypass migrates to a
+portal-signed assertion under SPEC-SEC-IDENTITY-ASSERT-001 (γ
+direction). Skipping the grant for non-admins eliminates the
+cross-system sync requirement and removes the role-string surface
+that finding #10 already exploited.
+
+**Failure mode under v0.1 / v0.4 / pre-fix code:**
+- v0.1 (production today): all three cases pass `role="org:owner"`
+  to `grant_user_role` — the time-bomb finding #10 describes.
+- v0.4 mapping (admin/group-admin/member -> org:owner/org:group-admin/
+  org:member): would 502 in production for group-admin and member
+  invites because the Zitadel project does not have those role-keys
+  configured.
+- v0.5 mapping (β) is the regression guard for both.
 
 **Test location:**
 `klai-portal/backend/tests/test_admin_users.py::test_invite_user_grants_portal_role_to_zitadel`
 
-**Note on mapping values:** The exact strings are the REQ-3 /
-`research.md` §7 open question. If the Zitadel project does not
-configure a matching key (e.g. `org:group-admin` is not present),
-REQ-2 mapping uses the configured value; the test assertion is
-updated to match. Either way the invariant holds: NO CASE maps to
-`org:owner` except `portal_role="admin"`.
-
 ---
 
-## A-3: Cross-org request from a member JWT returns 403
+## A-3: Cross-org request from a non-admin JWT returns 403 (v0.5.0)
 
 **REQs covered:** REQ-4.1, REQ-4.3, REQ-4.4, REQ-5.3
 
-**Purpose:** A user invited with `role="member"` MUST NOT trigger the
-admin bypass in retrieval-api's `verify_body_identity`. A body
-carrying a different `org_id` than the JWT's `resourceowner` MUST
-return HTTP 403.
+**Purpose:** A user invited with `role="member"` (or `group-admin`)
+MUST NOT trigger the admin bypass in retrieval-api's
+`verify_body_identity`. A body carrying a different `org_id` than the
+JWT's `resourceowner` MUST return HTTP 403.
+
+**v0.5.0 / β note on JWT shape:** Under the v0.5.0 mapping, non-admin
+invites receive NO Zitadel project-role grant. Their JWTs therefore
+carry NO `urn:zitadel:iam:org:project:roles` claim (or carry it as
+`{}` / `null` depending on Zitadel emission shape). `_extract_role`
+returns `None`; `auth.role` is `None` (not `"admin"`); the cross-org
+check fires.
 
 **Given:**
-- retrieval-api is running against a mocked JWKS with a test
-  `RS256` key.
-- A JWT is issued with:
+- retrieval-api is running with the `_decode_jwt` helper patched
+  (no real JWKS / network).
+- A JWT payload is constructed with:
   - `sub="user-member-1"`
-  - `resourceowner="101"` (org A)
-  - `"urn:zitadel:iam:org:project:roles": {"org:member": {}}`
-    (the REQ-2 mapping for portal role `member`).
+  - `resourceowner="org-a"` (org A; opaque Zitadel resourceowner)
+  - **NO `urn:zitadel:iam:org:project:roles` claim** (β: member
+    receives no grant)
   - `aud=<settings.zitadel_api_audience>`, `iss=<settings.zitadel_issuer>`.
 - Internal-secret auth is NOT used for this request.
 
 **When:**
 - `POST /retrieve` (or any endpoint calling `verify_body_identity`)
   with `Authorization: Bearer <jwt>` and body
-  `{"org_id": "102", "user_id": "user-member-1", ...}`.
+  `{"org_id": "org-b", "user_id": "user-member-1", ...}`.
 
 **Then:**
 - Response is `403 Forbidden`.
 - Response body contains `{"error": "org_mismatch"}` (per
-  `verify_body_identity` line 352).
+  `verify_body_identity`).
 - Metric `cross_org_rejected_total` incremented by 1.
 - Structured log `event="cross_org_rejected"` emitted with
   `reason="org_mismatch"`, `auth_method="jwt"`, truncated `jwt_sub_hash`.
 
-**Negative case (guard):**
-- Same request but with JWT carrying
-  `"urn:zitadel:iam:org:project:roles": {"admin": {}}` → response is
+**Negative case (control — admin still bypasses):**
+- Same request but with JWT carrying the test-fixture admin shape
+  `urn:zitadel:iam:org:project:roles: {"admin": {}}` → response is
   `200 OK` (admin bypass is the SPEC-SEC-010 REQ-3.1 behaviour and
   is intentional for genuine admins). This is the control case
-  confirming the bypass still works as specified for actual admin
-  roles.
+  confirming the bypass still works for `_extract_role` "admin"
+  match. Production admin users do NOT carry this shape today
+  (they carry `{"org:owner": {}}`); the test fixture is the only
+  reachable consumer of the admin-match branch — see
+  `_extract_role` docstring for the full v0.5.0 audit and the
+  SPEC-SEC-IDENTITY-ASSERT-001 (γ) migration plan.
 
-**Failure mode under current code (when combined with A-2 defect):**
-- Because current code grants `org:owner` for every invite, the JWT
-  for a nominal "member" would carry `{"org:owner": {}}`.
-  `_extract_role` returns `"org:owner"` (not `"admin"` today), so
-  today the 403 still fires — but only by chance. If an operator
-  ever adds `"org:owner"` to the bypass set, the cross-org check is
-  silently removed. REQ-4.1 + REQ-4.4 lock the bypass set to values
-  the mapping can reach AND test that `member` never hits the bypass.
+**Negative case (guard — `org_admin` removed):**
+- Same request but with JWT carrying
+  `urn:zitadel:iam:org:project:roles: {"org_admin": {}}` → response
+  is `403 Forbidden`. REQ-4.1 v0.5.0 removed `org_admin` from the
+  admin-equivalent set: it was never produced by any production
+  flow and is no longer a bypass candidate. This case asserts the
+  removal landed.
+
+**Failure mode under pre-v0.5.0 code:**
+- Pre-fix `_extract_role` matched both `admin` AND `org_admin` as
+  admin-equivalent. The `org_admin` branch was unreachable in
+  production but represented a latent attack surface — any future
+  code path that ever produced `org_admin` (e.g. a SCIM provisioner,
+  a migration script) would have silently granted admin-bypass to
+  non-admin users. v0.5.0 removes the unreachable branch; the
+  control case in this acceptance asserts the removal.
 
 **Test location:**
-`klai-retrieval-api/tests/test_auth_middleware.py::test_verify_body_identity_rejects_cross_org_for_member_role`
+`klai-retrieval-api/tests/test_auth.py::TestCrossUserOrgGuard::test_non_admin_jwt_does_not_bypass_cross_org`
+and
+`klai-retrieval-api/tests/test_auth.py::TestCrossUserOrgGuard::test_org_admin_role_is_no_longer_admin_equivalent`
 
 ---
 
@@ -236,8 +276,10 @@ suite continues to pass unchanged.
 **REQs covered:** REQ-7.1, REQ-7.2
 
 **Purpose:** The `SyncRun` SQLAlchemy model and `connector.sync_runs`
-table MUST declare `org_id` as a `NOT NULL` integer column with an
-index, as the schema foundation for REQ-7.3 org-scoped filtering.
+table MUST declare `org_id` as a `NOT NULL VARCHAR(255)` column with
+an index, as the schema foundation for REQ-7.3 org-scoped filtering.
+The type matches the existing `Connector.org_id` shape (Zitadel
+resourceowner, set by migration `003_org_id_string`).
 
 **Given:**
 - The Alembic migration adding `org_id` to `sync_runs` has been
@@ -253,13 +295,13 @@ index, as the schema foundation for REQ-7.3 org-scoped filtering.
 **Then:**
 - `grep -n "org_id" klai-connector/app/models/sync_run.py` returns at
   least one line of the form
-  `org_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)`.
-- DB introspection confirms the column exists, is `integer`, is `NOT
-  NULL`, and is indexed (index name `ix_sync_runs_org_id` per the
-  migration).
+  `org_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)`.
+- DB introspection confirms the column exists, is
+  `character varying(255)`, is `NOT NULL`, and is indexed (index name
+  `ix_sync_runs_org_id` per the migration).
 - A model-load test `SyncRun(connector_id=<uuid>, status="running",
-  org_id=101)` instantiates successfully; omitting `org_id` raises
-  `IntegrityError` on flush.
+  org_id="org-a-resourceowner")` instantiates successfully; omitting
+  `org_id` raises `IntegrityError` on flush.
 
 **Failure mode under current code:**
 - The grep returns zero results; model load with `org_id=` kwarg
@@ -280,79 +322,26 @@ list/trigger equivalents) for a run belonging to org B while asserting
 org A via `X-Org-ID` MUST receive HTTP 404 — never 200, never 403.
 
 **Given:**
-- Two connectors seeded in the portal DB:
-  - `conn_A` (id=`11111111-...`, `org_id=101`).
-  - `conn_B` (id=`22222222-...`, `org_id=102`).
+- Two connectors seeded in the connector DB (`connector.connectors`):
+  - `conn_A` (id=`11111111-...`, `org_id="org-a-resourceowner"`).
+  - `conn_B` (id=`22222222-...`, `org_id="org-b-resourceowner"`).
 - Two `SyncRun` rows seeded in the connector DB:
-  - `run_A` (connector_id=`conn_A.id`, org_id=101,
-    status="completed").
-  - `run_B` (connector_id=`conn_B.id`, org_id=102,
-    status="completed").
-- REQ-7 implementation has landed: handlers filter on
-  `SyncRun.org_id`; `_require_portal_org_id(request)` reads
-  `X-Org-ID`.
-- The test client holds `PORTAL_CALLER_SECRET` and can set arbitrary
-  headers.
-
-**When (three sub-cases):**
-- **GET detail**: `GET /connectors/{conn_B.id}/syncs/{run_B.id}` with
-  `X-Org-ID: 101` (caller claims org A).
-- **GET list**: `GET /connectors/{conn_B.id}/syncs` with
-  `X-Org-ID: 101`.
-- **POST trigger**: `POST /connectors/{conn_B.id}/sync` with
-  `X-Org-ID: 101`.
-
-**Then:**
-- All three requests return HTTP 404 with body
-  `{"detail": "Sync run not found"}` (detail handler) or
-  `{"detail": "Connector not found"}` (list/trigger handlers — when
-  the org_id filter eliminates every match, the shape is
-  "nothing exists" not "forbidden", per REQ-7.5 and
-  `portal-security.md` "never leak existence").
-- VictoriaLogs for the connector service shows NO
-  `event="sync_missing_org_id"` entries (the header was present),
-  and no DB row was created or mutated (verified by
-  `SELECT COUNT(*) FROM connector.sync_runs WHERE id =
-  {run_B.id}` → 1 unchanged; no new row with org_id=101).
-
-**Positive control:**
-- Same three requests with `X-Org-ID: 102` (the correct org for
-  `conn_B`) return 200 / 200 / 202 respectively. This proves the
-  filter is tenant-scoped, not blanket-blocking.
-
-**Failure mode under current code (pre-REQ-7):**
-- All three requests return 200 / 200 / 202 regardless of
-  `X-Org-ID` — the filter is absent. This is the regression guard
-  the test exists to trigger red.
-
-**Test location:**
-`klai-connector/tests/test_sync_routes_org_scoping.py::test_cross_tenant_sync_fetch_returns_404`
-
----
-
-## A-7: Backfill migration produces zero NULL org_id rows
-
-**REQs covered:** REQ-7.1
-
-**Purpose:** The Alembic migration adding `org_id` to
-`connector.sync_runs` MUST backfill every pre-existing row from the
-parent `portal_connectors.org_id` without leaving any NULLs, so that
-the subsequent `NOT NULL` alter succeeds on real multi-tenant data.
-
-**Given:**
-- Multi-tenant fixture seeded in portal DB:
-  - `portal_connectors` rows: 10 connectors split across orgs 101
-    (5 connectors) and 102 (5 connectors), plus 2 connectors in
-    org 103.
-- Connector DB fixture seeded with `connector.sync_runs` rows
-  (before migration): at least 3 runs per connector, ~36 rows total,
+  - `run_A` (connector_id=`conn_A.id`,
+    `org_id="org-a-resourceowner"`, status="completed").
+  - `run_B` (connector_id=`conn_B.id`,
   all with the current schema (no `org_id` column).
 - Orphan sanity: ONE `sync_runs` row exists for a `connector_id`
-  that is NOT in `portal_connectors` (deleted upstream). The
-  runbook pre-step deletes this orphan before the migration.
+  that is NOT in `connector.connectors` (parent connector deleted
+  upstream). The runbook pre-step deletes this orphan before the
+  migration via
+  `DELETE FROM connector.sync_runs WHERE connector_id NOT IN
+  (SELECT id FROM connector.connectors)`.
 
 **When:**
-- The Alembic migration is applied (see `research.md` §8.6).
+- The Alembic migration is applied. The backfill statement is a
+  single intra-DB UPDATE:
+  `UPDATE connector.sync_runs r SET org_id = c.org_id FROM
+  connector.connectors c WHERE r.connector_id = c.id`.
 
 **Then:**
 - `SELECT COUNT(*) FROM connector.sync_runs WHERE org_id IS NULL`
@@ -361,14 +350,13 @@ the subsequent `NOT NULL` alter succeeds on real multi-tenant data.
   as before the migration MINUS the one orphan deleted by the
   runbook pre-step.
 - For every surviving row: `sync_runs.org_id` matches
-  `portal_connectors.org_id` when joined on `connector_id`.
+  `connector.connectors.org_id` when joined on `connector_id`.
   Verified by a post-migration audit query:
   ```sql
-  SELECT r.id, r.org_id, pc.org_id AS portal_org_id
+  SELECT r.id, r.org_id, c.org_id AS connector_org_id
   FROM connector.sync_runs r
-  -- cross-DB: materialised via runbook script
-  LEFT JOIN portal_connectors pc ON pc.id = r.connector_id
-  WHERE r.org_id IS DISTINCT FROM pc.org_id;
+  LEFT JOIN connector.connectors c ON c.id = r.connector_id
+  WHERE r.org_id IS DISTINCT FROM c.org_id;
   ```
   returns zero rows.
 - The `ALTER COLUMN ... SET NOT NULL` step of the migration
@@ -405,8 +393,8 @@ mandatory. During the transition period, the same call MUST succeed
 **Given (case 8.a — transition period, flag OFF):**
 - Connector config has `sync_require_org_id=False` (default).
 - Portal caller holds `PORTAL_CALLER_SECRET`.
-- `conn_A` exists with `org_id=101`; `run_A` exists tied to
-  `conn_A`.
+- `conn_A` exists with `org_id="org-a-resourceowner"`; `run_A`
+  exists tied to `conn_A`.
 
 **When:**
 - `GET /connectors/{conn_A.id}/syncs` is called with the portal
@@ -438,10 +426,11 @@ mandatory. During the transition period, the same call MUST succeed
   rejecting the request.
 
 **Portal-side control (REQ-8.4, same test file):**
-- `klai_connector_client.trigger_sync(connector_id, org_id=101)`
-  is called with a patched httpx transport. The transport-level
-  assertion confirms the outbound request headers contain
-  `X-Org-ID: 101` AND `Authorization: Bearer <portal-secret>`.
+- `klai_connector_client.trigger_sync(connector_id,
+  org_id="org-a-resourceowner")` is called with a patched httpx
+  transport. The transport-level assertion confirms the outbound
+  request headers contain `X-Org-ID: org-a-resourceowner` AND
+  `Authorization: Bearer <portal-secret>`.
 - Calling the same client method without the `org_id` parameter
   raises `TypeError` (parameter is required, not defaulted) —
   proving portal-side code cannot forget the header.

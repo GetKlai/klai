@@ -38,6 +38,12 @@ def _patch_settings(monkeypatch: pytest.MonkeyPatch) -> None:
         "vexa-transcription-service",
         raising=False,
     )
+    monkeypatch.setattr(
+        providers.settings,
+        "whisper_model",
+        "large-v3-turbo",
+        raising=False,
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -110,8 +116,32 @@ class TestTierDeferredIsPosted:
         posted = client.calls[0]
         assert posted["url"] == "http://transcription-service.test/v1/audio/transcriptions"
         assert posted["data"]["transcription_tier"] == _DEFERRED_TIER
+        assert posted["data"]["model"] == "large-v3-turbo"
         assert posted["data"]["language"] == "nl"
         assert posted["files"]["file"][0] == "audio.wav"
+
+
+class TestModelFieldIsPosted:
+    """Regression guard for the Vexa transcription-service `model` requirement.
+
+    The OpenAI-compatible POST /v1/audio/transcriptions endpoint rejects with
+    HTTP 422 when `model` is missing. Production was broken when scribe-api
+    only sent `transcription_tier` + optional `language`. This test pins the
+    contract so a future refactor cannot silently drop it again.
+    """
+
+    async def test_request_carries_model_even_without_language(self, patch_client) -> None:
+        client = patch_client([_success_response()])
+        await WhisperHttpProvider().transcribe(b"audio-bytes", language=None)
+
+        assert len(client.calls) == 1
+        posted = client.calls[0]
+        assert "model" in posted["data"], (
+            "model field is required by the transcription-service; missing it "
+            "regresses to the HTTP 422 / status='failed' bug"
+        )
+        assert posted["data"]["model"] == "large-v3-turbo"
+        assert "language" not in posted["data"]
 
 
 class TestBackpressureRetry:

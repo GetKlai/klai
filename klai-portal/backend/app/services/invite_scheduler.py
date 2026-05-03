@@ -154,7 +154,9 @@ async def _join_meeting(invite: ParsedInvite, zitadel_user_id: str, org_id: int 
             await db.refresh(meeting)
 
             try:
-                bot_resp = await vexa.start_bot(invite.platform, invite.native_meeting_id)
+                bot_resp = await vexa.start_bot(
+                    invite.platform, invite.native_meeting_id, meeting_url=invite.meeting_url
+                )
                 meeting.bot_id = bot_resp.get("bot_id") or bot_resp.get("id")
                 meeting.status = "in_progress"
                 logger.info("Bot started for meeting uid=%s bot_id=%s", invite.uid, meeting.bot_id)

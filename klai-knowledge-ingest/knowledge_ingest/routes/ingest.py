@@ -6,6 +6,7 @@ Ingest routes:
   DELETE /ingest/v1/kb/webhook    — de-register Gitea webhook for a KB
   POST /ingest/v1/kb/sync         — bulk re-index all pages of a KB
 """
+
 import hashlib
 import hmac
 import json
@@ -171,9 +172,7 @@ def _parse_knowledge_fields(
     if isinstance(fm.get("belief_time_start"), str):
         try:
             result["belief_time_start"] = int(
-                datetime.fromisoformat(fm["belief_time_start"])
-                .replace(tzinfo=UTC)
-                .timestamp()
+                datetime.fromisoformat(fm["belief_time_start"]).replace(tzinfo=UTC).timestamp()
             )
         except Exception:
             logger.debug("belief_time_parse_error", value=fm.get("belief_time_start"))
@@ -181,7 +180,44 @@ def _parse_knowledge_fields(
 
 
 # SPEC-KB-021: imported here so callers in this module use the short name
-from knowledge_ingest.source_label import compute_source_label as _compute_source_label  # noqa: E402
+from knowledge_ingest.source_label import (  # noqa: E402
+    compute_source_label as _compute_source_label,
+)
+
+# SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-06.2: convention for the public
+# URL prefix that ImageStore prepends to every uploaded key (matches
+# ``klai_image_storage.storage.PUBLIC_IMAGE_PATH_PREFIX``). We re-derive
+# the s3_key by stripping this prefix.
+_IMAGE_URL_PREFIX = "/kb-images/"
+
+
+def _parse_image_refs(image_urls: list) -> list[tuple[str, str]]:
+    """Convert image URLs into (s3_key, content_hash) tuples for bookkeeping.
+
+    Public URL shape: ``/kb-images/{org}/images/{kb}/{sha256}.{ext}``.
+    The ``content_hash`` is the basename minus the extension; the
+    ``s3_key`` is the full URL minus the ``/kb-images/`` prefix.
+
+    Skips any URL that does not match the expected shape (manual uploads
+    pointing at external CDNs, malformed entries) — those simply do not
+    get connector-scoped cleanup. The bookkeeping table is best-effort:
+    not having a row for an image means the cleanup query will never
+    propose it as orphan, which is the safe default.
+    """
+    refs: list[tuple[str, str]] = []
+    for raw in image_urls or []:
+        if not isinstance(raw, str):
+            continue
+        if not raw.startswith(_IMAGE_URL_PREFIX):
+            continue
+        s3_key = raw[len(_IMAGE_URL_PREFIX) :]
+        # Final segment is "{sha256}.{ext}" — strip the extension.
+        basename = s3_key.rsplit("/", 1)[-1]
+        content_hash = basename.rsplit(".", 1)[0]
+        if not content_hash or "/" in content_hash:
+            continue
+        refs.append((s3_key, content_hash))
+    return refs
 
 
 async def _graphiti_background(
@@ -206,6 +242,35 @@ async def _graphiti_background(
 async def ingest_document(req: IngestRequest) -> dict:
     """Core ingest pipeline: chunk -> embed -> upsert."""
     t_ingest = time.monotonic()
+
+    # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-07: existence-guard for the
+    # ingest write path. Closes the race-window where a connector flipped
+    # to ``state='deleting'`` while a long-running crawl was already
+    # producing artifacts. Without this guard, mid-crawl ingest calls
+    # would write new artifacts AFTER ``purge_connector`` snapshotted the
+    # artifact-id set, leaving them as orphan rows that the worker only
+    # catches on a subsequent retry.
+    #
+    # The guard mirrors ``_enrich_document``: source_connector_id is the
+    # canonical signal. Manual uploads / gitea webhooks without a
+    # source_connector_id pass through unchanged.
+    if req.source_connector_id:
+        source_connector_id = req.source_connector_id
+        from knowledge_ingest.connector_state import connector_is_active
+
+        if not await connector_is_active(source_connector_id):
+            logger.info(
+                "ingest_aborted_connector_inactive",
+                connector_id=source_connector_id,
+                kb_slug=req.kb_slug,
+                path=req.path,
+                org_id=req.org_id,
+            )
+            return {
+                "status": "skipped",
+                "reason": "connector deleting or deleted",
+                "chunks": 0,
+            }
 
     # Early exit if content is unchanged since last ingest
     content_hash = hashlib.sha256(req.content.encode()).hexdigest()
@@ -348,6 +413,29 @@ async def ingest_document(req: IngestRequest) -> dict:
         content_hash=content_hash,
     )
 
+    # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-06.2: record image-key
+    # bookkeeping so per-connector cleanup can compute orphan keys via
+    # content_hash refcount on artifact_images. Adapters write public
+    # URLs into ``extra["image_urls"]`` (the existing convention); we
+    # parse the s3_key + sha256 component out and insert one row per
+    # (artifact, key) pair. Idempotent — re-ingest of the same image is
+    # absorbed by the table's PK.
+    image_urls = (req.extra or {}).get("image_urls", [])
+    if image_urls:
+        image_refs = _parse_image_refs(image_urls)
+        if image_refs:
+            try:
+                await pg_store.insert_artifact_image_refs(artifact_id, image_refs)
+            except Exception:
+                # Bookkeeping failure must not block ingest. The image
+                # is in S3; if we ever lose this row the worst case is
+                # the key never gets cleaned. Log loud + carry on.
+                logger.exception(
+                    "artifact_image_refs_insert_failed",
+                    artifact_id=artifact_id,
+                    count=len(image_refs),
+                )
+
     pool = await get_pool()
     visibility = await kb_config.get_kb_visibility(req.org_id, req.kb_slug, pool)
 
@@ -412,6 +500,7 @@ async def ingest_document(req: IngestRequest) -> dict:
     # The >= 3 threshold in maybe_generate_proposal prevents noise from single documents.
     if has_taxonomy and not taxonomy_node_ids:
         import asyncio as _asyncio
+
         _t = _asyncio.create_task(
             maybe_generate_proposal(
                 org_id=req.org_id,
@@ -428,6 +517,7 @@ async def ingest_document(req: IngestRequest) -> dict:
     # Enqueue enrichment as async Procrastinate task (non-blocking)
     if await org_config.is_enrichment_enabled(req.org_id, pool):
         from knowledge_ingest import enrichment_tasks
+
         proc_app = enrichment_tasks.get_app()
         task_fn = (
             proc_app.enrich_document_interactive  # type: ignore[attr-defined]
@@ -436,6 +526,7 @@ async def ingest_document(req: IngestRequest) -> dict:
         )
         try:
             from procrastinate.exceptions import AlreadyEnqueued
+
             await task_fn.configure(
                 queueing_lock=f"{req.org_id}:{req.kb_slug}:{req.path}",
             ).defer_async(
@@ -465,6 +556,7 @@ async def ingest_document(req: IngestRequest) -> dict:
     # compete on the same 1 req/s upstream rate limit simultaneously.
     if settings.graphiti_enabled:
         from knowledge_ingest import enrichment_tasks
+
         proc_app = enrichment_tasks.get_app()
         await proc_app.ingest_graphiti_episode.configure(  # type: ignore[attr-defined]
             queueing_lock=f"graphiti:{artifact_id}",
@@ -535,8 +627,8 @@ async def gitea_webhook(request: Request) -> dict:
         logger.warning("webhook_ignored", reason="unexpected_repo_format", repo=full_name)
         return {"status": "ignored", "reason": "unexpected repo format"}
 
-    gitea_org_name = parts[0]   # e.g. "org-myslug"
-    kb_slug = parts[1]           # e.g. "personal"
+    gitea_org_name = parts[0]  # e.g. "org-myslug"
+    kb_slug = parts[1]  # e.g. "personal"
     org_slug = gitea_org_name[4:]  # strip "org-"
 
     # Fetch org_id (Zitadel org ID) from Gitea org metadata
@@ -589,6 +681,7 @@ async def gitea_webhook(request: Request) -> dict:
                 from procrastinate.exceptions import AlreadyEnqueued
 
                 from knowledge_ingest import enrichment_tasks
+
                 proc_app = enrichment_tasks.get_app()
                 await proc_app.ingest_from_gitea.configure(  # type: ignore[attr-defined]
                     queueing_lock=f"gitea:{org_id}:{kb_slug}:{path}",
@@ -612,8 +705,11 @@ async def gitea_webhook(request: Request) -> dict:
                 logger.warning("gitea_fetch_failed", path=path, repo=full_name)
                 continue
             req = IngestRequest(
-                org_id=org_id, kb_slug=kb_slug, path=path,
-                content=content, source_type="docs",
+                org_id=org_id,
+                kb_slug=kb_slug,
+                path=path,
+                content=content,
+                source_type="docs",
                 content_type="kb_article",
                 user_id=webhook_user_id,
             )
@@ -632,7 +728,10 @@ async def gitea_webhook(request: Request) -> dict:
         except Exception as exc:
             logger.warning(
                 "page_qdrant_delete_failed",
-                org_id=org_id, kb_slug=kb_slug, path=path, error=str(exc),
+                org_id=org_id,
+                kb_slug=kb_slug,
+                path=path,
+                error=str(exc),
             )
 
         # Graphiti cleanup: fetch episode IDs before soft-delete (reads extra field)
@@ -644,7 +743,10 @@ async def gitea_webhook(request: Request) -> dict:
             except Exception as exc:
                 logger.warning(
                     "page_graph_cleanup_failed",
-                    org_id=org_id, kb_slug=kb_slug, path=path, error=str(exc),
+                    org_id=org_id,
+                    kb_slug=kb_slug,
+                    path=path,
+                    error=str(exc),
                 )
 
         # Metadata cleanup: derivations, artifact_entities, embedding_queue
@@ -653,7 +755,10 @@ async def gitea_webhook(request: Request) -> dict:
         except Exception as exc:
             logger.warning(
                 "page_metadata_cleanup_failed",
-                org_id=org_id, kb_slug=kb_slug, path=path, error=str(exc),
+                org_id=org_id,
+                kb_slug=kb_slug,
+                path=path,
+                error=str(exc),
             )
 
         try:
@@ -662,7 +767,10 @@ async def gitea_webhook(request: Request) -> dict:
         except Exception as exc:
             logger.warning(
                 "page_soft_delete_failed",
-                org_id=org_id, kb_slug=kb_slug, path=path, error=str(exc),
+                org_id=org_id,
+                kb_slug=kb_slug,
+                path=path,
+                error=str(exc),
             )
 
     return {"status": "ok", "queued": queued, "deleted": deleted, "org_slug": org_slug}
@@ -704,29 +812,74 @@ async def delete_kb_route(request: Request, org_id: str, kb_slug: str) -> dict:
     return {"status": "ok"}
 
 
+@router.post("/ingest/v1/connector/purge", status_code=202)
+async def enqueue_connector_purge_route(
+    request: Request, org_id: str, kb_slug: str, connector_id: str
+) -> dict:
+    """Enqueue an async connector-purge task. Returns 202 immediately.
+
+    SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-03 + REQ-04. The portal flips
+    ``portal_connectors.state='deleting'`` and POSTs here; we defer the
+    orchestrated purge to procrastinate and return.
+
+    The procrastinate worker drives the centralised cleanup
+    (``connector_cleanup.purge_connector``) and finally calls back to
+    ``/api/internal/connectors/{id}/finalize-delete`` on the portal to
+    hard-delete the row.
+    """
+    _verify_internal_secret(request)
+    from knowledge_ingest import enrichment_tasks
+
+    proc_app = enrichment_tasks.get_app()
+    await proc_app.connector_purge_task.defer_async(
+        connector_id=connector_id,
+        org_id=org_id,
+        kb_slug=kb_slug,
+    )
+    logger.info(
+        "connector_purge_enqueued",
+        org_id=org_id,
+        kb_slug=kb_slug,
+        connector_id=connector_id,
+    )
+    return {"status": "enqueued"}
+
+
 @router.delete("/ingest/v1/connector")
 async def delete_connector_route(
     request: Request, org_id: str, kb_slug: str, connector_id: str
 ) -> dict:
-    """Delete all data for a connector: FalkorDB graph nodes + Qdrant chunks + PostgreSQL records.
+    """Synchronous connector purge — backwards-compat + admin recovery.
 
-    Scoped to (org_id, kb_slug, connector_id). Called by the portal on connector deletion
-    and by operators for manual cleanup. Only affects documents tagged with source_connector_id.
+    SPEC-CONNECTOR-DELETE-LIFECYCLE-001 keeps this endpoint as the
+    deterministic complete-or-fail variant used by the admin force-purge
+    flow (REQ-11). New portal-side calls go through
+    ``POST /ingest/v1/connector/purge`` (async, returns 202).
+
+    Internally delegates to the same ``purge_connector`` orchestrator so
+    the cancel-jobs + multi-store-delete behaviour is identical to the
+    async path minus the procrastinate indirection.
     """
     _verify_internal_secret(request)
-    episode_ids = await pg_store.get_connector_episode_ids(org_id, kb_slug, connector_id)
-    await graph_module.delete_kb_episodes(org_id, episode_ids)
-    await qdrant_store.delete_connector(org_id, kb_slug, connector_id)
-    artifacts_deleted = await pg_store.delete_connector_artifacts(org_id, kb_slug, connector_id)
-    logger.info(
-        "connector_deleted",
+    from knowledge_ingest import enrichment_tasks
+    from knowledge_ingest.connector_cleanup import purge_connector
+
+    proc_app = enrichment_tasks.get_app()
+    report = await purge_connector(
         org_id=org_id,
         kb_slug=kb_slug,
         connector_id=connector_id,
-        episodes_deleted=len(episode_ids),
-        artifacts_deleted=artifacts_deleted,
+        proc_app=proc_app,
     )
-    return {"status": "ok", "episodes_deleted": len(episode_ids), "artifacts_deleted": artifacts_deleted}  # noqa: E501
+    logger.info("connector_deleted_sync", **report.as_dict())
+    return {
+        "status": "ok",
+        "episodes_deleted": report.falkor_episodes_deleted,
+        "artifacts_deleted": report.artifacts_deleted,
+        "crawl_jobs_deleted": report.crawl_jobs_deleted,
+        "enrichment_jobs_cancelled": report.enrichment_jobs_cancelled,
+        "graphiti_jobs_cancelled": report.graphiti_jobs_cancelled,
+    }
 
 
 @router.patch("/ingest/v1/kb/visibility")

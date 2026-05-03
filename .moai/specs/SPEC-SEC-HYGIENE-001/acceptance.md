@@ -95,6 +95,51 @@ to an unprovisioned subdomain of getklai.com (e.g.
 
 ---
 
+## AC-20.4 — Callback URL allowlist accepts FRONTEND_URL host (hotfix)
+
+**Scenario (regression):** After a successful TOTP login, Zitadel
+returns a `callback_url` whose hostname is the FRONTEND_URL host
+(`my.getklai.com`). Before v0.7.1, REQ-20.1 rejected it because `my`
+is not a tenant slug, breaking every multi-tenant login. v0.7.1
+introduces REQ-20.4: the system-host set bypasses the slug check.
+
+**Test file:** `klai-portal/backend/tests/test_validate_callback_url.py` (consolidated — extends the existing REQ-20.1/.2/.3 test file)
+
+**Steps:**
+
+1. Set `settings.domain = "getklai.com"` and
+   `settings.frontend_url = "https://my.getklai.com"`.
+2. Clear `_system_callback_hosts.cache_clear()`.
+3. Call `_validate_callback_url("https://my.getklai.com/api/auth/oidc/callback?code=abc")` →
+   **returns the URL unchanged** (FRONTEND_URL host bypass).
+4. Call `_validate_callback_url("https://getklai.com/api/auth/oidc/callback?code=abc")` →
+   **returns the URL unchanged** (bare apex, also part of system-host set).
+5. Set `settings.frontend_url = ""` and re-clear cache. Call
+   `_system_callback_hosts()` → returns `frozenset({"getklai.com"})` (empty
+   FRONTEND_URL is tolerated; only apex remains).
+6. Call `_validate_callback_url("https://attacker.getklai.com/x")` with
+   slug allowlist `{"getklai", "voys"}` → **raises HTTPException(502)**
+   and logs `callback_url_subdomain_not_allowlisted` (security invariant
+   from REQ-20.1 still holds — system-host set is additive, not
+   permissive).
+7. Call `_validate_callback_url("https://getklai.com.attacker.tld/x")` →
+   **raises HTTPException(502)** (suffix-substring lookalike rejected;
+   `.endswith` check still catches it because hostname does not end with
+   `.getklai.com`).
+
+**Pass condition:**
+
+- Steps 3, 4 pass through unchanged.
+- Step 5: `_system_callback_hosts()` is composable from settings, not
+  hardcoded; an unset FRONTEND_URL produces a 1-element set, not a crash.
+- Steps 6, 7 raise 502 with the generic body
+  `"Login failed, please try again later"` (no information leak).
+- All cases in `test_validate_callback_url.py` pass (existing REQ-20.1/.2/.3 plus new REQ-20.4 — 4 helper-composition cases + 3 validator cases).
+
+**Covers:** REQ-20.4.
+
+---
+
 ## AC-21 — `_safe_return_to` backslash and percent-decode
 
 **Scenario:** An attacker submits a crafted `return_to` query param
@@ -972,6 +1017,33 @@ rate-limit error.
 **Pass condition:** Steps 2, 4, 5, 6, 8-11 all hold.
 
 **Covers:** REQ-47.1, REQ-47.2, REQ-47.3, REQ-47.4, REQ-47.5.
+
+**Implementation note (slice-deviation, knowledge-mcp /run 2026-04-29):**
+HY-47 is NOT shipped at the MCP layer. Two reasons drove the move:
+
+1. The SPEC text talks about `list_sources`, `query_kb`, `get_page_content`,
+   and `add_source` tools — none of which exist in `klai-knowledge-mcp`
+   today. The current MCP exposes only three write tools
+   (`save_personal_knowledge`, `save_org_knowledge`, `save_to_docs`). The
+   read sub-test (steps 1-2) cannot be wired against a tool that does
+   not exist; building a synthetic read tool just to satisfy the SPEC is
+   scope creep that ships a feature with no callers.
+2. The structurally correct location for write rate-limiting is one layer
+   deeper, at `klai-knowledge-ingest`. That service is the choke point
+   every save eventually flows through (today: portal-api + MCP; future:
+   any new caller). A throttle there protects every path including
+   future ones, keys on the same identity tuple (forwarded via
+   `X-User-ID` / `X-Org-ID` headers from MCP), and matches the pattern
+   already used for `partner_rate_limit.py` in portal-api.
+
+Action: HY-47 is deferred from this SPEC and tracked as
+`SPEC-INGEST-RATELIMIT-001` (write-rate-limit on
+`POST /ingest/v1/document`, ZSET sliding-window keyed on
+`(org_id, user_id)`, fail-open on Redis outage — same shape as
+`klai-connector/app/services/rate_limit.py` / SPEC-API-001 REQ-2.4).
+The AC tests in `tests/test_mcp_rate_limit.py` are NOT created in
+this slice. When the follow-up SPEC ships, its acceptance file will
+adapt the matrix above to the real ingest endpoint surface.
 
 ### AC-48 — Personal-KB slug annotation (docs-only)
 

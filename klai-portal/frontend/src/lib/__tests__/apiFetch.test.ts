@@ -1,6 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, apiFetch, formatValidationIssues, type ValidationIssue } from '../apiFetch'
 
+const navigateTo = vi.fn()
+const clearAllQueries = vi.fn()
+vi.mock('@/lib/navigate-singleton', () => ({
+  navigateTo: (...args: unknown[]) => navigateTo(...args),
+  clearAllQueries: () => clearAllQueries(),
+}))
+
+vi.mock('@/lib/logger', () => ({
+  authLogger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() },
+  deprovisionLogger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() },
+}))
+
 describe('formatValidationIssues', () => {
   it('joins field + message per issue and strips the body. prefix', () => {
     const issues: ValidationIssue[] = [
@@ -138,5 +150,54 @@ describe('apiFetch — detail body handling', () => {
     }
     expect(caught).toBeInstanceOf(ApiError)
     expect((caught as ApiError).validationIssues).toEqual(issues)
+  })
+
+  it('redirects to /tenant-deleted and clears queries on 403 with tenant_deleting error code', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Response(JSON.stringify({ error: 'tenant_deleting', message: 'Workspace is being deleted.' }), {
+            status: 403,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      ),
+    )
+
+    let caught: unknown
+    try {
+      await apiFetch<unknown>('/api/me', {})
+    } catch (err) {
+      caught = err
+    }
+
+    expect(navigateTo).toHaveBeenCalledWith('/tenant-deleted')
+    expect(clearAllQueries).toHaveBeenCalled()
+    expect(caught).toBeInstanceOf(ApiError)
+    expect((caught as ApiError).status).toBe(403)
+  })
+
+  it('does NOT redirect on regular 403 (non-tenant_deleting error)', async () => {
+    navigateTo.mockReset()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Response(JSON.stringify({ detail: 'Insufficient permissions' }), {
+            status: 403,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      ),
+    )
+
+    let caught: unknown
+    try {
+      await apiFetch<unknown>('/api/admin/settings', {})
+    } catch (err) {
+      caught = err
+    }
+
+    expect(navigateTo).not.toHaveBeenCalled()
+    expect(caught).toBeInstanceOf(ApiError)
   })
 })

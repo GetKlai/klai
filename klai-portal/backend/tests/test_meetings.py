@@ -36,13 +36,43 @@ def test_parse_meeting_url_zoom_plain() -> None:
     assert ref.native_meeting_id == "9876543210"
 
 
-def test_parse_meeting_url_teams() -> None:
+def test_parse_meeting_url_teams_legacy() -> None:
     url = "https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc123"
     ref = parse_meeting_url(url)
     assert ref is not None
     assert ref.platform == "teams"
-    # Teams uses a SHA-256 hash prefix as the ID
-    assert len(ref.native_meeting_id) == 32
+    # Legacy URLs pass the full URL through for Vexa to parse
+    assert ref.meeting_url == url
+
+
+def test_parse_meeting_url_teams_light_meetings() -> None:
+    """Teams /light-meetings/launch URLs embed meeting data in base64 coords."""
+    import base64
+    import json
+    from urllib.parse import quote
+
+    coords_data = {
+        "meetingUrl": "https://teams.microsoft.com/meet/39640530635861?p=AbCdEf123",
+        "meetingCode": "39640530635861",
+        "passcode": "AbCdEf123",
+    }
+    coords_b64 = base64.b64encode(json.dumps(coords_data).encode()).decode().rstrip("=")
+    url = f"https://teams.microsoft.com/light-meetings/launch?coords={quote(coords_b64)}"
+
+    ref = parse_meeting_url(url)
+    assert ref is not None
+    assert ref.platform == "teams"
+    assert ref.native_meeting_id == "39640530635861"
+    assert ref.meeting_url == "https://teams.microsoft.com/meet/39640530635861?p=AbCdEf123"
+
+
+def test_parse_meeting_url_teams_short() -> None:
+    url = "https://teams.microsoft.com/meet/39640530635861?p=SomePasscode"
+    ref = parse_meeting_url(url)
+    assert ref is not None
+    assert ref.platform == "teams"
+    # Non-light-meetings URLs pass through for Vexa to parse
+    assert ref.meeting_url == url
 
 
 def test_parse_meeting_url_invalid() -> None:

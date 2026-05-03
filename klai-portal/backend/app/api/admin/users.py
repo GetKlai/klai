@@ -1,9 +1,11 @@
 """Admin user lifecycle endpoints."""
 
 import logging
+from collections.abc import Mapping
 from datetime import datetime
-from typing import Literal
+from typing import Final, Literal
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr
@@ -13,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.plans import get_plan_products
-from app.models.groups import PortalGroupMembership
+from app.models.groups import PortalGroup, PortalGroupMembership
 from app.models.portal import PortalOrg, PortalUser
 from app.models.products import PortalUserProduct
 from app.services.audit import log_event
@@ -23,6 +25,33 @@ from app.services.zitadel import zitadel
 from . import _get_caller_org, _require_admin, bearer
 
 logger = logging.getLogger(__name__)
+# Structured-event logger for VictoriaLogs queryability — follows the
+# dual-logger pattern established in app/api/auth.py. Per
+# .claude/rules/klai/projects/portal-logging-py.md, all NEW log statements
+# in this file go via structlog so kwargs land as queryable JSON keys
+# instead of an `extra` blob. The legacy `logger` calls in this file
+# pre-date that rule and remain on stdlib until a dedicated migration.
+_slog = structlog.get_logger()
+
+# SPEC-SEC-TENANT-001 REQ-2.2 (v0.5.0 / β): frozen module-level mapping from
+# the portal role (InviteRequest.role Literal) to the optional Zitadel
+# project-role string used by `zitadel.grant_user_role`. The mapping is
+# exhaustive for the three accepted values of the Literal — REQ-2.3
+# enforces this at runtime.
+#
+# Authority model: portal_users.role is the canonical source for portal-side
+# authorization (admin / group-admin / member). Zitadel project roles are
+# reserved for the one downstream signal that retrieval-api currently
+# honours (org:owner ⇔ portal admin). Non-admin invites receive NO Zitadel
+# grant; their JWT roles claim is empty and `_extract_role` returns None.
+#
+# Canonical doc + verification recipe:
+# `.claude/rules/klai/platform/zitadel.md` "Project roles and JWT claims".
+_ZITADEL_ROLE_BY_PORTAL_ROLE: Final[Mapping[str, str | None]] = {
+    "admin": "org:owner",
+    "group-admin": None,
+    "member": None,
+}
 
 router = APIRouter()
 
@@ -158,18 +187,50 @@ async def invite_user(
 
     zitadel_user_id: str = user_data["userId"]
 
+    # SPEC-SEC-TENANT-001 REQ-2 (v0.5.0 / β): only portal_role="admin" gets a
+    # Zitadel grant; group-admin and member rely on portal_users.role for
+    # authorization. v0.1 hardcoded role="org:owner" for every invite — the
+    # finding #10 time-bomb. v0.5.0 keeps the admin grant as before and
+    # explicitly skips the Zitadel call for non-admins.
     try:
-        await zitadel.grant_user_role(
-            org_id=settings.zitadel_portal_org_id,
-            user_id=zitadel_user_id,
-            role="org:owner",
+        zitadel_role = _ZITADEL_ROLE_BY_PORTAL_ROLE[body.role]
+    except KeyError as exc:
+        # REQ-2.3: pydantic Literal blocks this at parse time; the runtime
+        # check exists to keep the mapping and the InviteRequest schema in
+        # lock-step. Reaching this branch means the schema added a value the
+        # mapping has not — a developer error, not a user-supplied input.
+        logger.exception(
+            "invite_role_not_in_mapping",
+            extra={"portal_role": body.role, "email": body.email},
         )
-    except Exception as exc:
-        logger.exception("Role grant failed for invited user %s: %s", body.email, exc)
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to assign project role: {exc}",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unsupported role",
         ) from exc
+
+    if zitadel_role is None:
+        # REQ-2.1 observability: structured event so the absence-of-grant is
+        # queryable in VictoriaLogs (e.g. confirm zero org:* grants land for
+        # non-admin invites in production).
+        _slog.info(
+            "invite_no_zitadel_grant",
+            org_id=org.id,
+            portal_role=body.role,
+            zitadel_user_id=zitadel_user_id,
+        )
+    else:
+        try:
+            await zitadel.grant_user_role(
+                org_id=settings.zitadel_portal_org_id,
+                user_id=zitadel_user_id,
+                role=zitadel_role,
+            )
+        except Exception as exc:
+            logger.exception("Role grant failed for invited user %s: %s", body.email, exc)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Failed to assign project role: {exc}",
+            ) from exc
 
     user_row = PortalUser(
         zitadel_user_id=zitadel_user_id,
@@ -432,8 +493,23 @@ async def offboard_user(
     if user.status == "offboarded":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User has already been offboarded")
 
-    # Cascade: remove group memberships and product assignments
-    await db.execute(delete(PortalGroupMembership).where(PortalGroupMembership.zitadel_user_id == zitadel_user_id))
+    # Cascade: remove group memberships and product assignments.
+    #
+    # SPEC-SEC-TENANT-001 REQ-1: scope the membership delete to the caller's
+    # org via PortalGroup.org_id. PortalGroupMembership has no org_id column
+    # (tenancy inherits via the parent group's FK), so a delete keyed only on
+    # zitadel_user_id wipes the user's memberships in EVERY tenant they belong
+    # to. The subselect constrains the rows to groups owned by the caller's
+    # org. Memberships in other orgs are left untouched.
+    membership_delete_result = await db.execute(
+        delete(PortalGroupMembership).where(
+            PortalGroupMembership.zitadel_user_id == zitadel_user_id,
+            PortalGroupMembership.group_id.in_(select(PortalGroup.id).where(PortalGroup.org_id == org.id)),
+        )
+    )
+    # AsyncSession.execute() is typed as Result[Any]; the rowcount attribute
+    # is only on CursorResult, hence getattr with a 0 default to satisfy pyright.
+    memberships_removed_count = getattr(membership_delete_result, "rowcount", 0) or 0
     await db.execute(
         delete(PortalUserProduct).where(
             PortalUserProduct.zitadel_user_id == zitadel_user_id,
@@ -442,6 +518,16 @@ async def offboard_user(
     )
 
     user.status = "offboarded"
+    # SPEC-SEC-TENANT-001 REQ-1.4: structured event for VictoriaLogs audit so
+    # any future cross-tenant regression is queryable. structlog kwargs land
+    # as top-level JSON keys (queryable as `org_id:<n>`,
+    # `memberships_removed_count:<n>` in LogsQL) — not under an `extra` blob.
+    _slog.info(
+        "user_offboarded",
+        org_id=org.id,
+        zitadel_user_id=zitadel_user_id,
+        memberships_removed_count=memberships_removed_count,
+    )
     await log_event(
         org_id=org.id,
         actor=caller_id,

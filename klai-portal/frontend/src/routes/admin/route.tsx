@@ -1,5 +1,5 @@
 import { createFileRoute, Outlet } from '@tanstack/react-router'
-import { LayoutDashboard, Users, FolderKanban, Settings, CreditCard, Puzzle, Key, MessageSquare, Sliders } from 'lucide-react'
+import { LayoutDashboard, Users, FolderKanban, Settings, CreditCard, Puzzle, Key, MessageSquare, Sliders, Skull } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { HelpButton } from '@/components/help/HelpButton'
 import * as m from '@/paraglide/messages'
@@ -25,6 +25,7 @@ function AdminLayout() {
     { to: '/admin/templates', label: m.admin_nav_templates(), icon: Sliders },
     { to: '/admin/mcps', label: m.admin_nav_mcps(), icon: Puzzle },
     { to: '/admin/settings', label: m.admin_nav_settings(), icon: Settings },
+    { to: '/admin/danger-zone', label: m.admin_nav_danger_zone(), icon: Skull },
   ]
 
   if (!canRender) {

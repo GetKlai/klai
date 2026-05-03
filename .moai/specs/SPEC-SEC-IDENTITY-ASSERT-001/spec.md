@@ -13,6 +13,11 @@ tracker: SPEC-SEC-AUDIT-2026-04
 
 ## HISTORY
 
+### v0.4.0 (2026-04-29) — SHIPPED, audit close-out
+- All REQs merged to main as part of SPEC-SEC-AUDIT-2026-04 closure sweep.
+- Merge commits on origin/main: 20f004ce, 1c86c603, c5b3d0d9, c4421146
+- Verified by re-audit (see SPEC-SEC-AUDIT-2026-04 v1.0.0 mission-1 results).
+
 ### v0.4.0 (2026-04-28) — Phase B + C + D landed; SPEC done
 
 All four phases delivered to `main` and live on core-01:
