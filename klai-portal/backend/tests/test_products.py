@@ -41,13 +41,13 @@ class TestPlanProducts:
         # SPEC-PORTAL-UNIFY-KB-001 D2: core now includes knowledge.
         assert get_plan_products("core") == ["chat", "knowledge"]
 
-    def test_professional_plan_has_chat_scribe_knowledge(self) -> None:
-        # SPEC-PORTAL-UNIFY-KB-001 D2: professional gained knowledge; limits
-        # still match core tier until complete is reached.
-        assert get_plan_products("professional") == ["chat", "scribe", "knowledge"]
+    def test_professional_plan_has_chat_and_knowledge(self) -> None:
+        # SPEC-PORTAL-PROFILES-001 P2.2: scribe is now an add-on, not plan-included.
+        assert get_plan_products("professional") == ["chat", "knowledge"]
 
-    def test_complete_plan_has_all_products(self) -> None:
-        assert get_plan_products("complete") == ["chat", "scribe", "knowledge"]
+    def test_complete_plan_has_chat_and_knowledge(self) -> None:
+        # SPEC-PORTAL-PROFILES-001 P2.2: scribe is now an add-on, not plan-included.
+        assert get_plan_products("complete") == ["chat", "knowledge"]
 
     def test_unknown_plan_returns_empty_list(self) -> None:
         assert get_plan_products("nonexistent") == []
@@ -60,7 +60,7 @@ class TestPlanProducts:
             assert isinstance(products, list), f"Plan '{plan}' value is not a list"
 
     def test_plan_hierarchy_is_superset(self) -> None:
-        """Each higher plan includes all products of lower plans."""
+        """SPEC-PORTAL-PROFILES-001 P2.2: chat/knowledge are plan products; add-ons handled separately."""
         free = set(get_plan_products("free"))
         core = set(get_plan_products("core"))
         professional = set(get_plan_products("professional"))
@@ -69,6 +69,8 @@ class TestPlanProducts:
         assert free.issubset(core)
         assert core.issubset(professional)
         assert professional.issubset(complete)
+        # professional and complete are now equal (both only chat + knowledge)
+        assert professional == complete
 
 
 # ---------------------------------------------------------------------------
@@ -348,11 +350,11 @@ class TestAutoAssignOnInvite:
 
         assert result.user_id == "new-user-id"
 
-        # SPEC-PORTAL-UNIFY-KB-001 D2: professional plan is chat + scribe + knowledge.
+        # SPEC-PORTAL-PROFILES-001 P2.2: professional plan is now chat + knowledge (scribe = add-on).
         product_adds = [obj for obj in added_objects if isinstance(obj, PortalUserProduct)]
-        assert len(product_adds) == 3
+        assert len(product_adds) == 2
         product_names = {p.product for p in product_adds}
-        assert product_names == {"chat", "scribe", "knowledge"}
+        assert product_names == {"chat", "knowledge"}
 
         # All product rows should reference the admin who did the invite
         for p in product_adds:
@@ -603,8 +605,8 @@ class TestListAvailableProducts:
         with patch("app.api.admin.products._get_caller_org", return_value=("admin-1", org, caller)):
             result = await list_available_products(credentials=mock_credentials, db=mock_db)
 
-        # SPEC-PORTAL-UNIFY-KB-001 D2: professional = chat + scribe + knowledge.
-        assert result.products == ["chat", "scribe", "knowledge"]
+        # SPEC-PORTAL-PROFILES-001 P2.2: professional = chat + knowledge (scribe = add-on).
+        assert result.products == ["chat", "knowledge"]
 
     @pytest.mark.asyncio
     async def test_list_products_free_plan_returns_empty(self) -> None:

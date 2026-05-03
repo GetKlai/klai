@@ -10,6 +10,7 @@ from app.api.auth import get_current_user_id
 from app.api.bearer import bearer as bearer  # re-export for routes that import from here
 from app.core.database import get_db, set_tenant
 from app.core.plan_limits import PLAN_LIMITS, get_plan_limits
+from app.core.plans import ADDON_PRODUCTS
 from app.core.profiles import (
     PROFILE_CAPABILITIES,
     PROFILE_RANK,
@@ -24,22 +25,68 @@ from app.services.zitadel import zitadel
 def require_product(product: str):
     """Return a FastAPI dependency callable that raises 403 if user lacks the product.
 
-    Org admins bypass the check and always have access to all products.
+    SPEC-PORTAL-PROFILES-001 Phase 2 P2.3: Two-layer gate for add-on products.
+
+    For products in ADDON_PRODUCTS (scribe, docs):
+      Layer 1: tenant must have enabled the add-on (portal_orgs.enabled_addons).
+      Layer 2: user must have the product entitlement (portal_user_products /
+               portal_group_products via get_effective_products).
+
+    For non-add-on products: only layer 2 applies (unchanged behaviour).
+
+    # @MX:NOTE: admin role bypasses LAYER 2 (user entitlement) but NOT layer 1
+    # (tenant enable). Rationale: if scribe/docs is not enabled for the tenant,
+    # even admin cannot use it — the feature is simply not provisioned. Admin
+    # can enable it first via PATCH /api/admin/settings/addons, then access it.
     """
 
     async def dependency(
         user_id: str = Depends(get_current_user_id),
         db: AsyncSession = Depends(get_db),
     ) -> None:
-        role_result = await db.execute(select(PortalUser.role).where(PortalUser.zitadel_user_id == user_id))
-        if role_result.scalar_one_or_none() == "admin":
-            return
-        products = await get_effective_products(user_id, db)
-        if product not in products:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Product access required: {product}",
+        # Resolve user + org in one query for add-on products; fall back to
+        # user-only query for non-add-on products to keep the common path fast.
+        if product in ADDON_PRODUCTS:
+            result = await db.execute(
+                select(PortalUser, PortalOrg)
+                .join(PortalOrg, PortalOrg.id == PortalUser.org_id)
+                .where(PortalUser.zitadel_user_id == user_id)
             )
+            row = result.one_or_none()
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="User not found",
+                )
+            user, org = row
+
+            # Layer 1: tenant-level enable (applies to ALL callers including admin)
+            if product not in (org.enabled_addons or []):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Add-on not enabled for tenant: {product}",
+                )
+
+            # Layer 2: user-level entitlement (admin bypass applies here only)
+            if user.role == "admin":
+                return
+            products = await get_effective_products(user_id, db)
+            if product not in products:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Product access required: {product}",
+                )
+        else:
+            # Non-add-on products: original single-layer check
+            role_result = await db.execute(select(PortalUser.role).where(PortalUser.zitadel_user_id == user_id))
+            if role_result.scalar_one_or_none() == "admin":
+                return
+            products = await get_effective_products(user_id, db)
+            if product not in products:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Product access required: {product}",
+                )
 
     return dependency
 
