@@ -1,4 +1,5 @@
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from fastapi import HTTPException
 
@@ -9,10 +10,12 @@ def _make_org(enabled_addons=None):
     org.enabled_addons = enabled_addons or []
     return org
 
+
 def _make_user(role="company"):
     user = MagicMock()
     user.role = role
     return user
+
 
 def _make_db_one_or_none(user, org):
     db = AsyncMock()
@@ -26,6 +29,7 @@ class TestTenantAddOnGating:
     @pytest.mark.asyncio
     async def test_scribe_denied_when_tenant_not_enabled(self) -> None:
         from app.api.dependencies import require_product
+
         user = _make_user()
         org = _make_org(enabled_addons=[])
         db = _make_db_one_or_none(user, org)
@@ -42,6 +46,7 @@ class TestTenantAddOnGating:
     @pytest.mark.asyncio
     async def test_scribe_denied_when_user_lacks_entitlement(self) -> None:
         from app.api.dependencies import require_product
+
         user = _make_user()
         org = _make_org(enabled_addons=["scribe"])
         db = _make_db_one_or_none(user, org)
@@ -58,6 +63,7 @@ class TestTenantAddOnGating:
     @pytest.mark.asyncio
     async def test_scribe_allowed_when_both_layers_pass(self) -> None:
         from app.api.dependencies import require_product
+
         user = _make_user()
         org = _make_org(enabled_addons=["scribe"])
         db = _make_db_one_or_none(user, org)
@@ -71,6 +77,7 @@ class TestTenantAddOnGating:
     @pytest.mark.asyncio
     async def test_admin_blocked_by_tenant_level_disable(self) -> None:
         from app.api.dependencies import require_product
+
         user = _make_user(role="admin")
         org = _make_org(enabled_addons=[])
         db = _make_db_one_or_none(user, org)
@@ -84,6 +91,7 @@ class TestTenantAddOnGating:
     @pytest.mark.asyncio
     async def test_admin_passes_when_tenant_enabled(self) -> None:
         from app.api.dependencies import require_product
+
         user = _make_user(role="admin")
         org = _make_org(enabled_addons=["scribe"])
         db = _make_db_one_or_none(user, org)
@@ -94,6 +102,7 @@ class TestTenantAddOnGating:
     @pytest.mark.asyncio
     async def test_non_addon_uses_single_layer(self) -> None:
         from app.api.dependencies import require_product
+
         db = AsyncMock()
         role_result = MagicMock()
         role_result.scalar_one_or_none.return_value = "company"
@@ -108,6 +117,7 @@ class TestTenantAddOnGating:
     @pytest.mark.asyncio
     async def test_docs_addon_blocked_by_tenant_disable(self) -> None:
         from app.api.dependencies import require_product
+
         user = _make_user()
         org = _make_org(enabled_addons=[])
         db = _make_db_one_or_none(user, org)

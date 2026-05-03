@@ -18,13 +18,13 @@ depends_on = None
 _LEGACY_KEYS = ("admin", "group_management", "chat", "scribe", "knowledge")
 
 _NEW_GROUPS = [
-    {"name": "Personal chat",     "system_key": "role_personal"},
-    {"name": "Company chat",      "system_key": "role_company"},
+    {"name": "Personal chat", "system_key": "role_personal"},
+    {"name": "Company chat", "system_key": "role_company"},
     {"name": "Knowledge manager", "system_key": "role_kb_manager"},
-    {"name": "Group manager",     "system_key": "role_group_manager"},
-    {"name": "Admin",             "system_key": "role_admin"},
-    {"name": "Scribe users",      "system_key": "addon_scribe"},
-    {"name": "Docs users",        "system_key": "addon_docs"},
+    {"name": "Group manager", "system_key": "role_group_manager"},
+    {"name": "Admin", "system_key": "role_admin"},
+    {"name": "Scribe users", "system_key": "addon_scribe"},
+    {"name": "Docs users", "system_key": "addon_docs"},
 ]
 
 _ADDON_PRODUCTS = {
@@ -63,8 +63,7 @@ def upgrade() -> None:
         for sg in _NEW_GROUPS:
             existing = conn.execute(
                 sa.text(
-                    "SELECT id FROM portal_groups"
-                    " WHERE org_id = :org_id AND system_key = :key AND is_system = true"
+                    "SELECT id FROM portal_groups WHERE org_id = :org_id AND system_key = :key AND is_system = true"
                 ),
                 {"org_id": org_id, "key": sg["system_key"]},
             ).fetchone()

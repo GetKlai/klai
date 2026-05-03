@@ -1,4 +1,5 @@
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from fastapi import HTTPException
 
@@ -8,6 +9,7 @@ def _mock_org(enabled_addons=None):
     org.id = 42
     org.enabled_addons = enabled_addons or []
     return org
+
 
 def _mock_caller(role="admin"):
     caller = MagicMock()
@@ -19,6 +21,7 @@ class TestGetAddons:
     @pytest.mark.asyncio
     async def test_returns_current_state(self) -> None:
         from app.api.admin.settings import get_addons
+
         org = _mock_org(enabled_addons=["scribe"])
         caller = _mock_caller()
         mock_db = AsyncMock()
@@ -30,6 +33,7 @@ class TestGetAddons:
     @pytest.mark.asyncio
     async def test_returns_empty_list_by_default(self) -> None:
         from app.api.admin.settings import get_addons
+
         org = _mock_org(enabled_addons=[])
         caller = _mock_caller()
         mock_db = AsyncMock()
@@ -43,6 +47,7 @@ class TestUpdateAddons:
     @pytest.mark.asyncio
     async def test_patch_valid_addon_updates_org(self) -> None:
         from app.api.admin.settings import AddonsUpdate, update_addons
+
         org = _mock_org(enabled_addons=[])
         caller = _mock_caller()
         mock_db = AsyncMock()
@@ -62,6 +67,7 @@ class TestUpdateAddons:
     @pytest.mark.asyncio
     async def test_patch_unknown_addon_returns_400(self) -> None:
         from app.api.admin.settings import AddonsUpdate, update_addons
+
         org = _mock_org()
         caller = _mock_caller()
         mock_db = AsyncMock()
@@ -76,6 +82,7 @@ class TestUpdateAddons:
     @pytest.mark.asyncio
     async def test_patch_both_addons(self) -> None:
         from app.api.admin.settings import AddonsUpdate, update_addons
+
         org = _mock_org()
         caller = _mock_caller()
         mock_db = AsyncMock()
@@ -92,6 +99,7 @@ class TestUpdateAddons:
     @pytest.mark.asyncio
     async def test_patch_empty_disables_all(self) -> None:
         from app.api.admin.settings import AddonsUpdate, update_addons
+
         org = _mock_org(enabled_addons=["scribe"])
         caller = _mock_caller()
         mock_db = AsyncMock()
@@ -108,6 +116,7 @@ class TestUpdateAddons:
     @pytest.mark.asyncio
     async def test_non_admin_rejected(self) -> None:
         from app.api.admin.settings import AddonsUpdate, update_addons
+
         org = _mock_org()
         caller = _mock_caller(role="company")
         mock_db = AsyncMock()

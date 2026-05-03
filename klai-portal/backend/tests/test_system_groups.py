@@ -1,24 +1,29 @@
 from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 
 class TestSystemGroupRoleMap:
     def test_role_map_has_five_entries(self) -> None:
         from app.core.system_groups import SYSTEM_GROUP_ROLE_MAP
+
         assert len(SYSTEM_GROUP_ROLE_MAP) == 5
 
     def test_role_map_covers_all_roles(self) -> None:
         from app.core.system_groups import SYSTEM_GROUP_ROLE_MAP
+
         expected = {"personal", "company", "kb_manager", "group_manager", "admin"}
         assert set(SYSTEM_GROUP_ROLE_MAP.values()) == expected
 
     def test_addon_keys_not_in_role_map(self) -> None:
         from app.core.system_groups import SYSTEM_GROUP_ROLE_MAP
+
         assert "addon_scribe" not in SYSTEM_GROUP_ROLE_MAP
         assert "addon_docs" not in SYSTEM_GROUP_ROLE_MAP
 
     def test_seven_system_groups_total(self) -> None:
         from app.core.system_groups import SYSTEM_GROUPS
+
         assert len(SYSTEM_GROUPS) == 7
 
 
@@ -26,6 +31,7 @@ class TestSyncRoleFromSystemGroup:
     @pytest.mark.asyncio
     async def test_role_bind_group_sets_user_role(self) -> None:
         from app.services.system_groups import sync_role_from_system_group
+
         group = MagicMock()
         group.id = 10
         group.is_system = True
@@ -43,6 +49,7 @@ class TestSyncRoleFromSystemGroup:
     @pytest.mark.asyncio
     async def test_non_system_group_is_noop(self) -> None:
         from app.services.system_groups import sync_role_from_system_group
+
         group = MagicMock()
         group.id = 20
         group.is_system = False
@@ -58,6 +65,7 @@ class TestSyncRoleFromSystemGroup:
     @pytest.mark.asyncio
     async def test_group_not_found_returns_none(self) -> None:
         from app.services.system_groups import sync_role_from_system_group
+
         group_result = MagicMock()
         group_result.scalar_one_or_none.return_value = None
         db = AsyncMock()
@@ -68,6 +76,7 @@ class TestSyncRoleFromSystemGroup:
     @pytest.mark.asyncio
     async def test_addon_group_does_not_set_role(self) -> None:
         from app.services.system_groups import sync_role_from_system_group
+
         group = MagicMock()
         group.id = 30
         group.is_system = True
@@ -83,6 +92,7 @@ class TestSyncRoleFromSystemGroup:
     @pytest.mark.asyncio
     async def test_role_admin_group_sets_admin(self) -> None:
         from app.services.system_groups import sync_role_from_system_group
+
         group = MagicMock()
         group.id = 40
         group.is_system = True
@@ -99,6 +109,7 @@ class TestSyncRoleFromSystemGroup:
     @pytest.mark.asyncio
     async def test_membership_in_role_kb_manager_via_add_member(self) -> None:
         from app.services.system_groups import sync_role_from_system_group
+
         group = MagicMock()
         group.id = 50
         group.is_system = True

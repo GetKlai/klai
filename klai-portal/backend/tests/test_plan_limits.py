@@ -65,9 +65,7 @@ class TestSystemGroupsLabel:
 
         for group in SYSTEM_GROUPS:
             if group["system_key"].startswith("role_"):
-                assert group["products"] == [], (
-                    f"Role-bind group '{group['system_key']}' should not have products"
-                )
+                assert group["products"] == [], f"Role-bind group '{group['system_key']}' should not have products"
 
     def test_addon_scribe_group_grants_scribe_product(self) -> None:
         from app.core.system_groups import SYSTEM_GROUPS
