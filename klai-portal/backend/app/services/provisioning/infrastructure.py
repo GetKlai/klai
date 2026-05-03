@@ -71,6 +71,21 @@ def _sync_remove_container(name: str) -> None:
         pass
 
 
+def _sync_drop_mongodb_tenant_database(slug: str) -> None:
+    """Drop the MongoDB database for a tenant (sync, for use with run_in_executor).
+
+    Idempotent: dropping a non-existent database is a no-op in MongoDB —
+    the server returns ok:1 even when the database does not exist.
+
+    # @MX:NOTE: idempotent — al-weg = geen exception. SPEC-INFRA-TENANT-DELETE-001 R3.
+    """
+    db_name = f"librechat-{slug}"
+    with _mongo_admin_client() as client:
+        # MongoDB dropDatabase on a missing DB returns ok:1, no error raised.
+        client.drop_database(db_name)
+        logger.info("mongodb_tenant_database_dropped", slug=slug, db=db_name)
+
+
 def _sync_drop_mongodb_tenant_user(slug: str) -> None:
     """Drop the MongoDB user for a tenant (sync, for use with run_in_executor).
 
