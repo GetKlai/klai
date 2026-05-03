@@ -23,6 +23,7 @@ from app.api.admin.deprovision_org import (
     deprovision_org_by_slug,
     deprovision_own_org,
     get_deprovision_status,
+    get_own_org,
     retry_deprovisioning,
 )
 
@@ -529,3 +530,61 @@ class TestGetDeprovisionStatus:
                 await get_deprovision_status(creds, db)
 
         assert exc_info.value.status_code == 404
+
+
+class TestGetOwnOrg:
+    """SPEC-INFRA-TENANT-DELETE-001 R10 — owner-readable org metadata.
+
+    Discovered during 2026-05-03 e2e walkthrough on voys.getklai.com:
+    danger-zone page issued GET /api/admin/org/me and got 405 because
+    only DELETE was registered. Added the GET handler to render the
+    delete-modal precondition (org slug + name).
+    """
+
+    @pytest.mark.asyncio
+    async def test_returns_slug_and_name_for_admin(self):
+        org = _make_org(slug="voys")
+        org.name = "Voys"
+        user = _make_user(role="admin")
+        db = AsyncMock()
+        creds = _make_credentials()
+
+        with _caller_org_patch(org, user):
+            result = await get_own_org(creds, db)
+
+        assert result == {"slug": "voys", "name": "Voys"}
+
+    @pytest.mark.asyncio
+    async def test_raises_403_for_non_admin(self):
+        org = _make_org(slug="voys")
+        org.name = "Voys"
+        user = _make_user(role="member")
+        db = AsyncMock()
+        creds = _make_credentials()
+
+        with _caller_org_patch(org, user):
+            with pytest.raises(HTTPException) as exc_info:
+                await get_own_org(creds, db)
+
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_allows_during_deprovisioning(self):
+        # The modal needs slug+name to render the polling UI even after
+        # deprovisioning has started. allow_during_deprovisioning=True is
+        # the contract — verify _get_caller_org is called with that flag.
+        org = _make_org(slug="voys", provisioning_status="deprovisioning")
+        org.name = "Voys"
+        user = _make_user(role="admin")
+        db = AsyncMock()
+        creds = _make_credentials()
+
+        with patch(
+            "app.api.admin.deprovision_org._get_caller_org",
+            AsyncMock(return_value=("zit-user-1", org, user)),
+        ) as mock_caller:
+            result = await get_own_org(creds, db)
+
+        # First positional or keyword arg lands on credentials/db, then the flag.
+        mock_caller.assert_awaited_once_with(creds, db, allow_during_deprovisioning=True)
+        assert result == {"slug": "voys", "name": "Voys"}

@@ -1,6 +1,7 @@
 """SPEC-INFRA-TENANT-DELETE-001 R1/R8/R10 — tenant deprovisioning endpoints.
 
-Four endpoints:
+Five endpoints:
+  GET    /api/admin/org/me                      — owner read of current org metadata
   DELETE /api/admin/org/me                      — owner self-service
   DELETE /api/admin/orgs/{slug}/deprovision     — platform-admin
   POST   /api/admin/orgs/{slug}/retry-deprovisioning  — admin retry after failure
@@ -129,6 +130,48 @@ def _require_platform_admin(caller_org: PortalOrg) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied: platform admin org required",
         )
+
+
+# ---------------------------------------------------------------------------
+# Owner read: GET /api/admin/org/me
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/org/me",
+    status_code=status.HTTP_200_OK,
+)
+async def get_own_org(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    """Owner-readable metadata for the caller's current organisation.
+
+    Returns the minimum surface needed by the danger-zone delete-modal:
+    `{slug, name}`. Caller must be the org owner (portal_role='admin').
+
+    Discovered during the 2026-05-03 e2e walkthrough: the danger-zone page
+    was issuing 4x `GET /api/admin/org/me` (one per render of the
+    delete-modal precondition) and getting 405 because the only handler
+    on this path was DELETE. Frontend was correct; backend was missing
+    the GET counterpart. SPEC-INFRA-TENANT-DELETE-001 R10.
+
+    # @MX:NOTE: SPEC-INFRA-TENANT-DELETE-001 R10. Read-only sibling of the
+    # DELETE /org/me endpoint. Same auth pattern. No state-machine guard:
+    # if the org is already in a deprovisioning state the modal still
+    # needs slug+name to render the polling UI.
+    """
+    _, caller_org, caller_user = await _get_caller_org(
+        credentials,
+        db,
+        allow_during_deprovisioning=True,
+    )
+    _require_admin(caller_user)
+
+    return {
+        "slug": caller_org.slug,
+        "name": caller_org.name,
+    }
 
 
 # ---------------------------------------------------------------------------
