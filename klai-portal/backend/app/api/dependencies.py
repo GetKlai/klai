@@ -205,11 +205,18 @@ def require_at_least_dep(required_role: str):
     This is the fully-wired FastAPI version of _require_at_least from profiles.py.
     It resolves the caller via bearer token + DB lookup.
 
+    G3 analysis (SPEC-PORTAL-PROFILES-001 Phase 1.5b): all current group-management
+    routes use _require_admin_or_group_admin / _require_admin_or_group_manager which
+    additionally check system_key per group_id or system group membership -- logic that
+    cannot be expressed as a simple role-ladder Depends.  This function is therefore
+    currently not called by any route.  It is retained as the correct dependency factory
+    for future routes that need only a role-ladder check (no system-group carve-out).
+
     Usage::
 
         @router.delete("/groups/{id}", dependencies=[Depends(require_at_least_dep("group_manager"))])
 
-    @MX:ANCHOR fan_in=3+ -- wired FastAPI version of _require_at_least for route dependencies.
+    @MX:NOTE fan_in=0 -- no routes use this yet; see G3 analysis in docstring.
     """
     required_idx = PROFILE_LADDER.index(required_role)
 
