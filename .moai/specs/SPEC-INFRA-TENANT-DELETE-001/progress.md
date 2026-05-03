@@ -10,13 +10,13 @@
 |-------|-------------|--------|-----------|
 | 1 | State machine + Alembic migration + tenant_lifecycle_events model + 10 unit tests | ✅ DONE | commit abcb7506 |
 | 2 | tenant_lifecycle audit helper + tests | ✅ DONE | commit (portal-api) |
-| 3 | 16 deprovisioning steps with idempotent + retry pattern | pending | |
-| 4 | deprovisioning orchestrator + integration tests | pending | |
+| 3 | 16 deprovisioning steps with idempotent + retry pattern | ✅ DONE | commit (portal-api) |
+| 4 | deprovisioning orchestrator + integration tests | ✅ DONE | commit d9e6de2d |
 | 5 | Zitadel client extension (delete_org) | ✅ DONE | commit (portal-api) |
 | 6 | Moneybird client (stop_subscription + archive_contact) | ✅ DONE | commit (portal-api) |
 | 7 | knowledge-ingest wipe-graph endpoint | ✅ DONE | commit e808edd5 |
-| 8 | auth.py 403-branch on deprovisioning state | pending | |
-| 9 | API endpoints (owner + admin + retry + status) | pending | |
+| 8 | admin/_get_caller_org 403-branch on deprovisioning state | ✅ DONE | commit 2e6d5b70 |
+| 9 | API endpoints (owner + admin + retry + status) | ✅ DONE | commit 471da922 |
 | 10 | Frontend DeleteOrgModal + Danger Zone page | pending | |
 | 11 | Frontend status polling + tenant-deleted + 403-handler | pending | |
 | 12 | e2e test against dev-stack (handled by /klai:auto Phase 5) | deferred | |
@@ -79,6 +79,62 @@
 - Endpoint uses `asyncio.to_thread()` to call the sync function without blocking the event loop.
 - Auth handled entirely by existing `InternalSecretMiddleware` — no per-route guard needed.
 - Idempotent: successive calls return `{"nodes_deleted": 0, "status": "ok"}` after first wipe.
+
+## Phase 3 — 17 deprovisioning steps (portal-api)
+
+**Files added:**
+- `klai-portal/backend/app/services/provisioning/deprovisioning_steps.py` — `STEPS` list + 17 idempotent async step functions (steps 0–16)
+- `klai-portal/backend/tests/test_deprovisioning_steps.py` — 34 tests, one class per step
+
+**Files modified:**
+- `klai-portal/backend/app/core/config.py` — added `garage_s3_endpoint`, `garage_s3_access_key`, `garage_s3_secret_key`, `garage_s3_bucket`, `platform_org_slug`
+- `klai-portal/backend/pyproject.toml` — added `boto3>=1.35,<2.0` and `qdrant-client>=1.12,<2.0`
+
+**Key design decisions:**
+- All steps use `@MX:NOTE: idempotent — al-weg = geen exception. SPEC R3.`
+- Step 0 `from_state` includes `"deprovisioning"` itself (for retry idempotency).
+- S3 step guarded by empty `garage_s3_endpoint` feature flag.
+- Lazy imports inside step functions for Moneybird, Zitadel, docs-app, audit to avoid circular imports.
+
+## Phase 4 — Deprovisioning orchestrator (portal-api)
+
+**Files added:**
+- `klai-portal/backend/app/services/provisioning/deprovisioning_orchestrator.py`
+- `klai-portal/backend/tests/test_deprovisioning_orchestrator.py` — 9 test classes
+
+**Key design decisions:**
+- `litellm_team_id` resolved at deprovision-time via `GET /team/list?team_alias={slug}` (not stored in portal_orgs).
+- `zitadel_oidc_app_id` resolved via POST to Zitadel app search (only `zitadel_librechat_client_id` stored).
+- Retry policy: delays=[1s, 2s, 4s], retryable vs non-retryable exception distinction.
+- `_mark_failed` transitions to `failed_deprovisioning` + populates `last_failure` JSONB.
+
+## Phase 8 — _get_caller_org 403 guard (portal-api)
+
+**Files modified:**
+- `klai-portal/backend/app/api/admin/__init__.py` — `allow_during_deprovisioning: bool = False` kwarg added; raises 403 `tenant_deleting` when `provisioning_status == 'deprovisioning'`
+
+**Files added:**
+- `klai-portal/backend/tests/test_auth_deprovisioning_block.py` — 9 tests
+
+**Key design decisions:**
+- `set_tenant` is NOT called when the 403 guard fires.
+- Only the status-polling endpoint uses `allow_during_deprovisioning=True`.
+
+## Phase 9 — Deprovision API endpoints (portal-api)
+
+**Files added:**
+- `klai-portal/backend/app/api/admin/deprovision_org.py` — 4 endpoints + 3 helper functions
+- `klai-portal/backend/tests/test_deprovision_endpoints.py` — 25 tests
+
+**Files modified:**
+- `klai-portal/backend/app/api/admin/__init__.py` — `deprovision_org_router` included
+
+**Key design decisions:**
+- `SELECT FOR UPDATE` on target org row before state mutation (concurrency guard).
+- `_guard_entry_state` blocks `already_deprovisioning` + non-entry states with 409.
+- `_require_platform_admin` checks `caller_org.slug == settings.platform_org_slug`.
+- `retry-deprovisioning` resets `last_failure = NULL` before re-queuing.
+- Status endpoint uses `allow_during_deprovisioning=True` (only exception to Phase 8 guard).
 
 ## Implementation Notes
 
