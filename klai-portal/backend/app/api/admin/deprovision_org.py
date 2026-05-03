@@ -151,9 +151,9 @@ async def get_own_org(
     `{slug, name}`. Caller must be the org owner (portal_role='admin').
 
     Discovered during the 2026-05-03 e2e walkthrough: the danger-zone page
-    was issuing 4× `GET /api/admin/org/me` (one per render of the
+    was issuing 4x `GET /api/admin/org/me` (one per render of the
     delete-modal precondition) and getting 405 because the only handler
-    on this path was DELETE. Frontend was correct — backend was missing
+    on this path was DELETE. Frontend was correct; backend was missing
     the GET counterpart. SPEC-INFRA-TENANT-DELETE-001 R10.
 
     # @MX:NOTE: SPEC-INFRA-TENANT-DELETE-001 R10. Read-only sibling of the
