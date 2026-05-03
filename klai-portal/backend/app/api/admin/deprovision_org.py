@@ -344,7 +344,7 @@ async def get_deprovision_status(
     #   other endpoints with this flag without SPEC justification.
     """
     try:
-        _, org, _ = await _get_caller_org(credentials, db, allow_during_deprovisioning=True)
+        _, org, caller_user = await _get_caller_org(credentials, db, allow_during_deprovisioning=True)
     except HTTPException as exc:
         if exc.status_code == status.HTTP_404_NOT_FOUND:
             # Org row is gone — successful deprovisioning completed.
@@ -354,8 +354,23 @@ async def get_deprovision_status(
             ) from exc
         raise
 
+    # SEC: only org-owner (admin role) may poll deprovisioning status. Without
+    # this guard, members/group-admins could see step names + (previously) full
+    # error strings during a failed deprovision — info disclosure of internal
+    # infrastructure (container hostnames, step orchestration internals).
+    _require_admin(caller_user)
+
     payload: dict = {"status": org.provisioning_status}
     if org.provisioning_status == "failed_deprovisioning" and org.last_failure:
-        payload["last_failure"] = org.last_failure
+        # SEC: do NOT expose `last_failure.error` to the owner — error strings
+        # may include internal hostnames (klai-core-*-1), DSN fragments from
+        # asyncpg/httpx exceptions, or other infra detail. Step name + timestamp
+        # is enough for the owner to contact support; full error stays in
+        # portal_orgs.last_failure (visible only via direct DB access by
+        # platform admins) and in VictoriaLogs (queryable via Grafana MCP).
+        payload["last_failure"] = {
+            "step": org.last_failure.get("step", "unknown"),
+            "failed_at": org.last_failure.get("failed_at"),
+        }
 
     return payload
