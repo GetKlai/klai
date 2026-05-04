@@ -1,0 +1,80 @@
+# SPEC-RAG-EVAL-001 — RAGAS quality alerts.
+#
+# Routed via spec=SPEC-RAG-EVAL-001 → klai-ops-alerts-email.
+#
+#   R1  rag_eval_faithfulness_low   HIGH  baseline faithfulness < 0.85 on
+#                                         two consecutive nightly runs
+#
+# Source: knowledge.rag_eval_results (PortalPostgres datasource).
+# Variant scope is intentionally pinned to 'baseline' — variant runs are
+# experiments and are allowed to score lower without paging.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: rag-eval-001
+    folder: Klai
+    interval: 6h
+    rules:
+
+      # ── R1: rag_eval_faithfulness_low ──────────────────────────────────
+      # Catastrophic-regression detector. Reads the latest two nightly runs
+      # per suite and fires when BOTH have faithfulness < 0.85. The 6h
+      # interval keeps the alert evaluator cheap; baseline metrics only
+      # change once per day after the 02:00 UTC nightly task lands.
+      - uid: rag-eval-001-faithfulness-low
+        title: rag_eval_faithfulness_low
+        condition: faithfulness_below_threshold
+        data:
+          - refId: faithfulness_below_threshold
+            datasourceUid: portal-postgres
+            queryType: ""
+            relativeTimeRange:
+              from: 172800       # 48h: covers two nightly runs even with retries.
+              to: 0
+            model:
+              datasource:
+                type: postgres
+                uid: portal-postgres
+              format: table
+              rawSql: |
+                WITH last_two AS (
+                  SELECT
+                    suite,
+                    AVG(faithfulness) AS faithfulness_avg,
+                    date_trunc('day', run_at) AS day
+                  FROM knowledge.rag_eval_results
+                  WHERE variant = 'baseline'
+                    AND run_at >= NOW() - INTERVAL '48 hours'
+                    AND faithfulness IS NOT NULL
+                  GROUP BY suite, date_trunc('day', run_at)
+                ),
+                ranked AS (
+                  SELECT
+                    suite,
+                    faithfulness_avg,
+                    ROW_NUMBER() OVER (PARTITION BY suite ORDER BY day DESC) AS rn
+                  FROM last_two
+                )
+                SELECT COUNT(*) AS value
+                FROM ranked
+                WHERE rn <= 2
+                  AND faithfulness_avg < 0.85
+                HAVING COUNT(*) = 2;
+              refId: faithfulness_below_threshold
+        for: 0s
+        noDataState: OK
+        execErrState: Alerting
+        labels:
+          severity: high
+          spec: SPEC-RAG-EVAL-001
+          alert_type: quality_regression
+        annotations:
+          summary: "RAG faithfulness baseline below 0.85 on two consecutive nightly runs"
+          description: |
+            The baseline `faithfulness` RAGAS metric has scored below 0.85 on
+            BOTH of the last two nightly runs for at least one suite.
+            Investigate: did the corpus change? Did retrieval-api or LiteLLM
+            misbehave? Query knowledge.rag_eval_results for details.
+          runbook_url: https://github.com/getklai/klai/blob/main/.moai/specs/SPEC-RAG-EVAL-001/spec.md
