@@ -122,6 +122,7 @@ class TestAutoJoinPath:
             ar_.scalars.return_value.all.return_value = [_admin()]
             db.execute = AsyncMock(side_effect=[or_, ar_])
             db.flush = AsyncMock()
+            db.add = MagicMock()  # sync add — avoid coroutine-never-awaited warning
             result = await select_workspace(body=SelectWorkspaceRequest(ref="r", org_id=1), db=db)
         assert result.kind == "auto_join"
         assert "acme" in result.workspace_url
@@ -173,6 +174,7 @@ class TestJoinRequestPath:
             svc.consume = AsyncMock(return_value=session)
             db = AsyncMock()
             db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=org)))
+            db.add = MagicMock()  # sync add — avoid coroutine-never-awaited warning
             result = await select_workspace(body=SelectWorkspaceRequest(ref="r", org_id=1), db=db)
         assert result.kind == "join_request_pending"
         assert result.redirect_to == "/join-request/sent"
