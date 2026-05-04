@@ -221,6 +221,65 @@ async def test_happy_path_transitions_to_ready(mock_orchestrator_env, monkeypatc
 
 
 # ---------------------------------------------------------------------------
+# REGRESSION — LiteLLM key models scope
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_litellm_key_generate_uses_real_model_aliases(mock_orchestrator_env) -> None:
+    """The /key/generate body MUST scope tenant keys to the actual LiteLLM
+    model aliases defined in deploy/litellm/config.yaml.
+
+    Regression guard: a previous bug shipped with `["klai-llm","klai-fallback"]`
+    — names that don't exist anywhere in the LiteLLM config. LibreChat (which
+    is hardcoded to call `klai-primary`) then got 401s for every tenant. The
+    legitimate aliases per platform/litellm.md are klai-fast, klai-primary,
+    klai-large, klai-pipeline — and klai-pipeline is reserved for internal
+    services, so tenant keys must scope to the three user-facing tiers.
+    """
+    from app.services.provisioning import orchestrator
+
+    db, _org = _make_db_and_org()
+
+    captured: list[dict] = []
+
+    class _CapturingClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def post(self, path, json=None):
+            if "/team/new" in path:
+                return mock_orchestrator_env["litellm_team_post"]
+            if "/key/generate" in path:
+                captured.append(json or {})
+                return mock_orchestrator_env["litellm_key_post"]
+            if "/team/delete" in path:
+                return MagicMock()
+            if "/kbs" in path:
+                ok = MagicMock()
+                ok.status_code = 200
+                ok.raise_for_status = MagicMock()
+                ok.json = MagicMock(return_value={"id": 1, "slug": "default"})
+                return ok
+            raise AssertionError(f"Unexpected httpx call: {path}")
+
+    orchestrator.httpx.AsyncClient = lambda **kw: _CapturingClient()
+
+    with patch("app.services.provisioning.state_machine.emit_event"):
+        await orchestrator._provision(1, db)
+
+    assert len(captured) == 1, f"Expected exactly one /key/generate POST, got {len(captured)}"
+    body = captured[0]
+    assert body.get("models") == ["klai-primary", "klai-fast", "klai-large"], (
+        f"Tenant LiteLLM key must scope to user-facing klai-* aliases, got {body.get('models')!r}. "
+        "See deploy/litellm/config.yaml for valid model names."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Failure mid-run — compensators drain in LIFO order
 # ---------------------------------------------------------------------------
 
