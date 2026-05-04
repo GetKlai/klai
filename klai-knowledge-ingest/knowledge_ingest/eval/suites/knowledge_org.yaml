@@ -1,0 +1,256 @@
+suite: knowledge_org
+description: |
+  Direct-search-style queries against Voys's support KB. Style mirrors how an internal
+  user would phrase a search query (more keyword-like than chat). 30 queries with the
+  same mix as chat.yaml:
+    - 9 easy-lookup (regression canaries; expected_chunks populated)
+    - 9 vague-pronoun (query-rewrite targets)
+    - 6 multi-doc synthesis (parent-child targets)
+    - 4 long-tail (recall test)
+    - 2 edge cases
+  All queries target tenant Voys (org_zitadel_id 368884765035593759).
+queries:
+  # --- Easy-lookup canaries (9) ---
+  - id: org-easy-yealink-firmware-version
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Yealink firmware versie"
+    expected_topics: [yealink, firmware, telefonie]
+    expected_chunks: ["latest Yealink firmware"]
+    mix: easy_lookup
+
+  - id: org-easy-bubble-troubleshoot-doc
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Bubble troubleshoot procedure"
+    expected_topics: [bubble, troubleshoot]
+    expected_chunks: ["Bubble troubleshoot"]
+    mix: easy_lookup
+
+  - id: org-easy-pipedrive-config
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Pipedrive configuratie"
+    expected_topics: [pipedrive, crm]
+    expected_chunks: ["pipedrive"]
+    mix: easy_lookup
+
+  - id: org-easy-3cx-api
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "3CX API integratie"
+    expected_topics: [3cx, api, telefonie]
+    expected_chunks: ["3cx-api"]
+    mix: easy_lookup
+
+  - id: org-easy-monday-com
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Monday.com integratie"
+    expected_topics: [monday, crm]
+    expected_chunks: ["Monday.com"]
+    mix: easy_lookup
+
+  - id: org-easy-uitportering-procedure
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Uitporteringen verwerken"
+    expected_topics: [uitportering, portering, customer-service]
+    expected_chunks: ["Uitporteringen verwerken (Porting Out)"]
+    mix: easy_lookup
+
+  - id: org-easy-webphone-troubleshoot
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Webphone troubleshoot"
+    expected_topics: [webphone, troubleshoot]
+    expected_chunks: ["Webphone troubleshoot & transfer"]
+    mix: easy_lookup
+
+  - id: org-easy-account-changes
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "bedrijfswijzigingen verwerken"
+    expected_topics: [account-changes, customer-service]
+    expected_chunks: ["Bedrijfswijzigingen verwerken (Account Changes)"]
+    mix: easy_lookup
+
+  - id: org-easy-fraude-politie
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "politie belt voor klantgegevens"
+    expected_topics: [fraude, politie, privacy]
+    expected_chunks: ["Als de"]
+    mix: easy_lookup
+
+  # --- Vague-pronoun (9) ---
+  - id: org-vague-die-procedure
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "die procedure"
+    expected_topics: [procedure]
+    expected_chunks: []
+    mix: vague_pronoun
+
+  - id: org-vague-zijn-firmware
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "zijn firmware update"
+    expected_topics: [firmware, yealink]
+    expected_chunks: []
+    mix: vague_pronoun
+
+  - id: org-vague-hun-portering
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "hun nummerportering"
+    expected_topics: [portering, nummerovername]
+    expected_chunks: []
+    mix: vague_pronoun
+
+  - id: org-vague-deze-issue
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "deze inkomende telefonie issue"
+    expected_topics: [telefonie, inkomend, troubleshoot]
+    expected_chunks: []
+    mix: vague_pronoun
+
+  - id: org-vague-die-call-issue
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "die audioproblemen"
+    expected_topics: [audio, troubleshoot, webphone]
+    expected_chunks: []
+    mix: vague_pronoun
+
+  - id: org-vague-zijn-account
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "zijn account is geblokkeerd"
+    expected_topics: [klantaccount, freedom, inloggegevens]
+    expected_chunks: []
+    mix: vague_pronoun
+
+  - id: org-vague-die-overdracht
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "die overdracht"
+    expected_topics: [overdracht, voys]
+    expected_chunks: []
+    mix: vague_pronoun
+
+  - id: org-vague-deze-trunk
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "deze trunk"
+    expected_topics: [trunk, telefonie]
+    expected_chunks: []
+    mix: vague_pronoun
+
+  - id: org-vague-die-fraude
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "deze fraude case"
+    expected_topics: [fraude, customer-service]
+    expected_chunks: []
+    mix: vague_pronoun
+
+  # --- Multi-doc synthesis (6) ---
+  - id: org-synth-crm-overzicht
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Overzicht van alle CRM-integraties die we ondersteunen"
+    expected_topics: [crm, integratie, overzicht]
+    expected_chunks: []
+    mix: multi_doc_synthesis
+
+  - id: org-synth-telefonie-overzicht
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Welke phone-software integraties hebben we en wat zijn de verschillen?"
+    expected_topics: [telefonie, phone-software, integratie]
+    expected_chunks: []
+    mix: multi_doc_synthesis
+
+  - id: org-synth-bubble-lifecycle
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Bubble lifecycle: van setup tot vertrek van een klant"
+    expected_topics: [bubble, setup, opzegging, lifecycle]
+    expected_chunks: []
+    mix: multi_doc_synthesis
+
+  - id: org-synth-portering-types
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Verschillende soorten porteringen en hun procedures"
+    expected_topics: [portering, uitportering, nummerovername]
+    expected_chunks: []
+    mix: multi_doc_synthesis
+
+  - id: org-synth-customer-issues
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Veelvoorkomende customer-service issues en hoe ze op te lossen"
+    expected_topics: [customer-service, troubleshoot]
+    expected_chunks: []
+    mix: multi_doc_synthesis
+
+  - id: org-synth-klant-lifecycle-events
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Klant lifecycle events: heractivering, opzegging, dispuut"
+    expected_topics: [klantaccount, opzegging, heractivering, dispuut]
+    expected_chunks: []
+    mix: multi_doc_synthesis
+
+  # --- Long-tail / obscure (4) ---
+  - id: org-longtail-elevate-uc
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Elevate UC integratie"
+    expected_topics: [elevate-uc, telefonie]
+    expected_chunks: []
+    mix: long_tail
+
+  - id: org-longtail-tmobile-cloud
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "T-Mobile Cloud Clear"
+    expected_topics: [tmobile, telefonie]
+    expected_chunks: []
+    mix: long_tail
+
+  - id: org-longtail-bouwinfosys
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Bouwinfosys CRM"
+    expected_topics: [bouwinfosys, crm]
+    expected_chunks: []
+    mix: long_tail
+
+  - id: org-longtail-teamviewer
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Teamviewer QS"
+    expected_topics: [teamviewer, support-tools]
+    expected_chunks: []
+    mix: long_tail
+
+  # --- Edge cases (2) ---
+  - id: org-edge-mixed-lang
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "How does the Trunk procedure work voor een nieuwe klant?"
+    expected_topics: [trunk, telefonie, klant]
+    expected_chunks: []
+    mix: edge_case
+
+  - id: org-edge-empty-keyword
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "?"
+    expected_topics: []
+    expected_chunks: []
+    mix: edge_case
