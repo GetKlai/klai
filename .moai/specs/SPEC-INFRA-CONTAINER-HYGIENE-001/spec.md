@@ -1,9 +1,9 @@
 ---
 id: SPEC-INFRA-CONTAINER-HYGIENE-001
-version: "0.3.0"
-status: draft
+version: "0.4.0"
+status: complete
 created: "2026-05-02"
-updated: "2026-05-02"
+updated: "2026-05-04"
 author: MoAI
 priority: high
 issue_number: 0
@@ -16,6 +16,7 @@ issue_number: 0
 | 0.1.0 | 2026-05-02 | MoAI | Initiële stub na librechat-voys cleanup-incident. 7 requirements: rule-files, librechat-voys compose-block, --remove-orphans, image-pinning pilot, weekly audit, daily prune, pitfall. |
 | 0.2.0 | 2026-05-02 | MoAI | Twee fundamentele herzieningen na review: (1) REQ-4 (image-pinning pilot) **geschrapt** — `:latest` op `ghcr.io/getklai/*` is bewust beleid per `deploy/VERSIONS.md` + `docs/runbooks/version-management.md`. (2) REQ-1/2/3/5 herschreven naar **AI-first mechanische guards** — PreToolUse hooks, CI-checks, deploy-wrappers, VictoriaLogs-events. |
 | 0.3.0 | 2026-05-02 | MoAI | **Tenant-provisioning architectuur correct opgenomen.** REQ-2 was "alles via compose" — fout. Klai heeft twee legitieme klassen prod-containers: (a) compose-managed met `com.docker.compose.project=klai-core` label, (b) provisioning-managed door portal-api via `client.containers.run()` per tenant (zie `klai-portal/backend/app/services/provisioning/infrastructure.py::_start_librechat_container`). REQ-2 herschreven: tenant-LibreChats SHALL `klai.managed_by=portal-api-provisioning` + `klai.tenant_slug=<slug>` + `klai.kind=librechat` labels dragen. REQ-2c (librechat-voys in compose-block toevoegen) **vervalt** — vervangen door label-backfill voor bestaande tenants. REQ-1 hook + REQ-5 audit detecteren wezen op afwezigheid van **beide** label-klasses, niet alleen compose-label. Aanleiding: gebruiker review wees op tenant-provisioning patroon dat ik gemist had. |
+| 0.4.0 | 2026-05-04 | MoAI | **Stage 6 finalisering — REQ-5 Grafana panel + alert + status flip naar `complete`.** Verifieerd op core-01 (2026-05-04): librechat-voys draagt klasse-B labels (`klai.kind=librechat,klai.managed_by=portal-api-provisioning,klai.tenant_slug=voys`); `docker-cleanup.timer` draait dagelijks (laatst Mon 2026-05-04 03:04 EEST); `orphan-audit.timer` draait wekelijks (laatst Sun 2026-05-03 03:08 EEST). Alle 6 stages live. **Incident-leerlessons in deze versie:** Eerste deploy-poging (PR #296, 2026-05-04 12:11 CEST) crashte Grafana in een restart loop omdat de gekozen UIDs (`spec-infra-container-hygiene-001-tenant-no-route` + 2 vergelijkbare) 49–55 chars waren — Grafana enforcet een 40-char hard limit op alert-rule + dashboard UIDs. Revert (#297) gemerged 12:13 CEST + handmatige `rm` op core-01 (rsync zonder `--delete` flag laat verwijderde files staan); Grafana hersteld 12:14 CEST. Total downtime ~3 minuten, binnen Kuma's 5-minute heartbeat-window — geen alerter-down email. Toegevoegd in deze versie: `deploy/grafana/provisioning/alerting/orphan-audit-rules.yaml` met 2 critical alert rules (`spec-hyg-001-tenant-no-route` + `spec-hyg-001-caddy-upstream-missing`), `deploy/grafana/provisioning/dashboards/klai-orphan-audit.json` dashboard met UID `spec-hyg-001-orphan-audit` + 4 stat-panels + 2 logs-panels, route in `policies.yaml` voor `spec=SPEC-INFRA-CONTAINER-HYGIENE-001` → `klai-ops-alerts-email` met repeat 24h, **mechanische CI guard** `scripts/audit-alert-uid-length.sh` die in de `Alerting provisioning checks` workflow draait op elke PR die `deploy/grafana/provisioning/{alerting,dashboards}/**` raakt en faalt als enige UID > 40 chars is, en pitfall-entry `grafana-uid-40-char-limit (HIGH)` in `process-rules.md`. |
 
 # SPEC-INFRA-CONTAINER-HYGIENE-001: Container hygiene op core-01 — mechanische guards tegen orphans, dangling images en verlaten volumes
 
@@ -639,3 +640,55 @@ WantedBy=timers.target
   panel met laatste 100 audit-events, één alert op
   `event:tenant_container_no_route` of `event:caddy_upstream_missing`
   met severity:critical.
+- **UID-discipline voor Grafana provisioning** (lesson uit v0.4.0
+  incident): Grafana enforcet 40 chars hard limit op alert-rule + dashboard
+  UIDs. Gebruik `spec-hyg-001-*` (3-letter abbrev + 3-digit number) als
+  prefix-conventie. Mechanisch geënforced via
+  `scripts/audit-alert-uid-length.sh` in CI workflow `Alerting provisioning
+  checks`. Zie ook pitfall `grafana-uid-40-char-limit (HIGH)`.
+
+## Live Verification (v0.4.0, 2026-05-04)
+
+Alle stages live geverifieerd op core-01:
+
+| REQ | Verification command | Expected | Actual (2026-05-04) |
+|---|---|---|---|
+| REQ-1 hook | `cat .claude/hooks/klai/container-hygiene-preflight.sh \| head -1` | Script aanwezig | ✓ |
+| REQ-1 hook reg | `grep container-hygiene-preflight .claude/settings.json` | Hit | ✓ (commit `06e9388e`) |
+| REQ-2a labels in code | `grep -A3 'container_labels' klai-portal/backend/app/services/provisioning/infrastructure.py` | Drie klasse-B labels in dict | ✓ ([infrastructure.py:288-292](klai-portal/backend/app/services/provisioning/infrastructure.py#L288-L292)) |
+| REQ-2b backfill | `ssh core-01 "docker inspect librechat-voys --format '{{ .Config.Labels }}'"` | Bevat `klai.kind`, `klai.managed_by`, `klai.tenant_slug` | ✓ alle drie aanwezig |
+| REQ-2c CI guard | `cat .github/workflows/audit-compose.yml \| grep audit-compose-orphans` | Hit | ✓ |
+| REQ-2d post-deploy snapshot | `grep audit-orphan-snapshot deploy/scripts/compose-up.sh` | Hit | ✓ |
+| REQ-3 wrapper | `for f in .github/workflows/*.yml; do grep -l compose-up.sh "$f"; done` | 10 workflows | ✓ (caddy, deploy-compose, docs, klai-connector, klai-knowledge-mcp, klai-mailer, knowledge-ingest, portal-api, retrieval-api, scribe-api) |
+| REQ-5 audit-script | `ls /opt/klai/scripts/docker-orphan-audit.sh` (op core-01) | aanwezig | ✓ |
+| REQ-5 audit timer | `ssh core-01 "systemctl list-timers \| grep orphan-audit"` | actief | ✓ laatste run Sun 2026-05-03 03:08 EEST |
+| REQ-5 Grafana panel + alert | `ls deploy/grafana/provisioning/{alerting/orphan-audit-rules.yaml,dashboards/klai-orphan-audit.json}` | Beide aanwezig | ✓ (deze versie, korte UIDs) |
+| REQ-5 UID guard | `bash scripts/audit-alert-uid-length.sh` | exit 0 | ✓ alle 11 UIDs ≤ 40 chars |
+| REQ-6 cleanup timer | `ssh core-01 "systemctl list-timers \| grep docker-cleanup"` | actief | ✓ laatste run Mon 2026-05-04 03:04 EEST |
+| REQ-7 pitfall | `grep container-cleanup-without-preflight .claude/rules/klai/pitfalls/process-rules.md` | Hit | ✓ |
+| Lesson learned (v0.4.0) | `grep grafana-uid-40-char-limit .claude/rules/klai/pitfalls/process-rules.md` | Hit | ✓ |
+
+## Success Criteria — final state
+
+- [x] librechat-voys draagt klasse-B labels (`docker inspect` op core-01)
+- [x] `_start_librechat_container` zet labels via `client.containers.run(labels={...})`
+- [x] Tests in `test_infrastructure_labels.py` slagen — verifiëren label-aanwezigheid
+- [x] PreToolUse hook blokkeert `docker volume prune`, `docker image prune -af`,
+      `docker compose down --volumes`, en tenant-pattern targets
+- [x] CI `audit-compose.yml` workflow draait `audit-compose-orphans.sh` op elke
+      compose- of Caddyfile-PR
+- [x] `compose-up.sh` deploy-wrapper roept `audit-orphan-snapshot.sh` aan na elke deploy
+- [x] 10 service-deploy-workflows roepen `compose-up.sh` aan i.p.v. `docker compose up -d`
+- [x] `docker-cleanup.timer` (REQ-6) actief op core-01, dagelijkse safe-prune
+- [x] `orphan-audit.timer` (REQ-5) actief op core-01, wekelijkse audit
+- [x] Grafana alert rules `tenant_container_no_route` en `caddy_upstream_missing`
+      live met routing naar `klai-ops-alerts-email`
+- [x] Grafana dashboard `Container hygiene — orphan audit` gedeployed
+- [x] `audit-alert-uid-length.sh` mechanical guard tegen 40-char UID-class regressie
+- [x] Pitfall-entries `container-cleanup-without-preflight (HIGH)` en
+      `grafana-uid-40-char-limit (HIGH)` in process-rules.md
+
+7 dagen post-deploy steady-state target: zero `event:orphan_no_managed_label`,
+zero `event:tenant_container_no_route`, zero `event:caddy_upstream_missing`
+events op de VictoriaLogs `service:klai-orphan-audit` stream. Verifieer via
+het Container hygiene dashboard.
