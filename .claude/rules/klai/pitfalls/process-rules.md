@@ -1,5 +1,34 @@
 # Process Rules
 
+## verify-image-pullable-before-pin (HIGH)
+When pinning an external image tag in any compose file (`vexaai/*`,
+`ghcr.io/*`, etc.), verify the tag is actually pullable BEFORE
+committing. PR #269 (2026-05-03) bumped
+`vexaai/transcription-service` to `:0.10.6` based on the v0.10.6
+release notes — but that specific image was never published to
+Docker Hub (upstream lists 9 public images; transcription-service is
+locally-built only). The bug landed in main; only the fact that
+gpu-01 has no CI sync prevented a runtime regression.
+
+**Why this slips through:** release notes are written for a global
+audience. They list "all images" from the maintainer's perspective,
+which can mean "all images in our private CI" not "all images on
+Docker Hub". Reading carefully and trusting the prose is not enough.
+
+**Prevention (mechanical):** `deploy/check-image-pullable.sh` runs
+in pre-commit and the deploy-compose CI workflow. For every
+`vexaai/*` (and other external) ref in compose files, it does
+`docker manifest inspect <ref>`. Failures are accepted ONLY if the
+tag matches a locally-built convention
+(`<semver>-local-YYMMDD-HHMM` or legacy `<semver>-YYMMDD-HHMM`).
+Anything else is rejected at commit time.
+
+**Prevention (human):** before adding a NEW external image tag to
+a compose file, run `docker manifest inspect <ref>` locally. If it
+404s and the image is locally built, name the tag with the
+`-local-` infix so the script's whitelist accepts it. Do not invent
+tag names; mirror what your build pipeline emits.
+
 ## adapter-framework-bleed (HIGH)
 When a service is declared "a pure X adapter framework" but you find
 infrastructure concepts leaking into its public contract (S3 clients,
@@ -332,26 +361,26 @@ klai-core-scribe-api-1 alembic upgrade head` + container restart.
    any migration. If absent, use option 1 (manual + PR-body reminder) as
    a stopgap and file a follow-up SPEC for option 2.
 
-**Audit (2026-04-27)** — verified by greping `Dockerfile` ENTRYPOINT/CMD
+**Audit (2026-04-27, updated 2026-04-29)** — verified by greping `Dockerfile` ENTRYPOINT/CMD
 across services:
 
 | Service | Auto-migrates on container start? |
 |---|---|
 | portal-api | YES — `entrypoint.sh` runs `alembic upgrade head` then exec's uvicorn |
 | klai-connector | YES — `entrypoint.sh` runs `alembic upgrade head` then exec's uvicorn (added 2026-04-30 after migration 006_add_org_id_to_sync_runs shipped in image but never ran on prod) |
-| scribe-api | NO — `CMD uvicorn …` only |
+| scribe-api | YES — `entrypoint.sh` added by SPEC-SEC-AUDIT-2026-04 C5 (PR fix/scribe-c5-alembic-auto-migrate) |
 | klai-mailer | NO — `CMD uvicorn …` only |
 | klai-knowledge-mcp | NO — `CMD python main.py` only |
 | klai-knowledge-ingest | NO — `CMD uvicorn …` only |
 | klai-retrieval-api | NO — `CMD uvicorn …` only |
 
-Every service except portal-api and klai-connector needs the
-manual-migrate step or an entrypoint port. The portal-api
-`entrypoint.sh` (introduced by SPEC-CHAT-TEMPLATES-CLEANUP-001) is the
-canonical pattern to copy. klai-connector's `entrypoint.sh` adds the
-twin requirement on klai-connector's `alembic.ini`:
-`prepend_sys_path = .` (so `from app.models.connector import Base`
-resolves) — without that line `alembic upgrade head` exits with
+The remaining 4 services without auto-migration are tracked in
+SPEC-DEPLOY-AUTO-MIGRATE-001 as follow-up work. The portal-api, klai-connector
+and scribe-api `entrypoint.sh` pattern (introduced by SPEC-CHAT-TEMPLATES-CLEANUP-001
+and extended by SPEC-SEC-AUDIT-2026-04 C5) is the canonical template to copy.
+klai-connector's `entrypoint.sh` adds the twin requirement on its `alembic.ini`:
+`prepend_sys_path = .` (so `from app.models.connector import Base` resolves) —
+without that line `alembic upgrade head` exits with
 `ModuleNotFoundError: No module named 'app'` and the container will
 crash-loop on every restart. Spotted live on 2026-04-30 when the
 `Sync now` click failed with `column sync_runs.org_id does not exist`
@@ -515,6 +544,79 @@ adding the shared `klai-log-utils` path-dep silently broke its build.
 - After rewriting, smoke-test the Dockerfile locally
   (`docker build -f <service>/Dockerfile .`) BEFORE pushing — the
   CI feedback loop is 3-5 min per attempt.
+
+## container-cleanup-without-preflight (HIGH)
+When you face a "wees-uitziende" container — no
+`com.docker.compose.project` label, no Caddy upstream, untagged image —
+do NOT treat the absence of those signals as a verdict to delete. Klai
+has TWO legitimate classes of prod containers:
+
+- **Klasse A — compose-managed:** `com.docker.compose.project=klai-core` label
+- **Klasse B — provisioning-managed:** `klai.managed_by=portal-api-provisioning`
+  + `klai.tenant_slug=<slug>` + `klai.kind=<type>` (gezet door
+  `_start_librechat_container` per SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-2a)
+
+A container without ANY of these labels AND without a `klai.adhoc=*`
+opt-in is a candidate wees, but verify before deleting.
+
+The librechat-voys incident (2026-05-02) is the canonical case. The
+production Voys-tenant chat container was klasse B (provisioning-managed
+by portal-api) but at the time the labels did not yet exist as a
+convention. The cleanup-agent (me) checked only for klasse-A label,
+saw none, also saw no current Caddy upstream, and concluded "wees".
+Wrong on both counts: the container was legitimate; Caddy upstream
+absence had a different cause (timing of provisioning vs. caddy
+reload). Recovery succeeded only because `/opt/klai/librechat/voys/`
+(env-file + librechat.yaml) survived; the original image SHA
+(untagged, never registered) was permanently lost.
+
+**Why this is a HIGH-class trap:** the signals that look like "orphan"
+are exactly the signals you'd expect from a legitimate
+production-relevant container managed via a non-compose pathway.
+"No compose label" correlates with rommel for klasse-A containers,
+NOT for klasse-B (provisioning-managed) containers. Tenant-specific
+names (`librechat-*`, `-voys`, `-getklai`, `-<klant>`) flip the prior:
+those are almost never test fixtures.
+
+**Tenant-deprovisioning is NOT just `docker rm`.** A klasse-B
+container belongs to a tenant whose Mongo user, Meilisearch index,
+Caddy upstream, and Redis cache need cleanup too. Use the portal-api
+deprovision flow (`provisioning/orchestrator.py::deprovision_tenant`)
+— never `docker rm` a `librechat-<slug>` directly.
+
+**Prevention (mechanical, not narrative):**
+
+1. Hook `.claude/hooks/klai/container-hygiene-preflight.sh` blocks
+   `docker rm`/`rmi`/`volume rm`/`system prune`/`compose down --volumes`
+   on any target matching tenant-naam patterns or appearing in
+   `klai-infra/deploy/docker-compose*.yml` history. Registered as
+   PreToolUse in `.claude/settings.json` alongside
+   `portal-api-preflight.sh`. SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-1.
+
+2. Hook hard-blocks `docker volume prune`, `docker image prune -af`,
+   `docker system prune -a`, `docker compose down --volumes`. Use
+   targeted `volume rm` after manual review or the systemd
+   `docker-cleanup.timer` (SPEC REQ-6) for safe daily prune.
+
+3. Weekly `klai-orphan-audit` (SPEC REQ-5) emits structlog events to
+   VictoriaLogs (`service:klai-orphan-audit`); cleanup-agents query
+   the stream BEFORE deciding via VictoriaLogs MCP. Caddy upstream
+   without container, container with tenant-naam without Caddy
+   upstream, untagged images >30d — all flagged for human review,
+   never auto-removed.
+
+4. Ad-hoc debug runs MUST use
+   `docker run --rm --label klai.adhoc=YYYY-MM-DD-reason --label klai.owner=<email>`
+   so they self-clean and appear in a separate "ad-hoc" audit
+   section, not in the "wees" section.
+
+**Why mechanical not narrative.** An AI is the primary code- and
+deploy-actor in this codebase. A markdown rule that "agents should
+read first" is a gap that re-opens with every context truncation,
+prompt variation, or new agent. The hook is the only enforcement that
+survives all those failure modes. The narrative rule
+`.claude/rules/klai/infra/container-hygiene.md` exists for human
+review and override-path documentation, not as the primary guard.
 
 ## parallel-spec-on-overlapping-log-sites (MED)
 When two SPECs land on the same call sites in the same file, the rebase

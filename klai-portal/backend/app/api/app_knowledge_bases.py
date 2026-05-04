@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import _get_caller_org, bearer, require_capability
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.profiles import Capability
 from app.models.audit import PortalAuditLog
 from app.models.connectors import PortalConnector
 from app.models.groups import PortalGroup
@@ -462,7 +463,7 @@ async def create_app_knowledge_base(
     db: AsyncSession = Depends(get_db),
 ) -> AppKBOut:
     """Create a new KB. The creator is automatically given the owner role."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
+    caller_id, org, caller_user = await _get_caller_org(credentials, db)
 
     if body.owner_type not in ("org", "user"):
         raise HTTPException(
@@ -479,9 +480,9 @@ async def create_app_knowledge_base(
     # Quota enforcement — SPEC-PORTAL-UNIFY-KB-001 Phase A (R-E1, R-E3, R-X3).
     # _resolve_personal_kb auto-provisioning is explicitly exempt (D8).
     if body.owner_type == "user":
-        await assert_can_create_personal_kb(user_id=caller_id, org=org, db=db)
+        await assert_can_create_personal_kb(user_id=caller_id, org=org, db=db, role=caller_user.role)
     elif body.owner_type == "org":
-        await assert_can_create_org_kb(org=org, db=db)
+        await assert_can_create_org_kb(org=org, db=db, role=caller_user.role)
 
     owner_user_id = caller_id if body.owner_type == "user" else None
 
@@ -802,7 +803,7 @@ async def get_kb_stats(
 @router.get(
     "/knowledge-bases/{kb_slug}/members",
     response_model=MembersResponse,
-    dependencies=[Depends(require_capability("kb.members"))],
+    dependencies=[Depends(require_capability(Capability.KB_MEMBERS))],
 )
 async def list_members(
     kb_slug: str,
@@ -859,7 +860,7 @@ async def list_members(
     "/knowledge-bases/{kb_slug}/members/users",
     response_model=UserMemberOut,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_capability("kb.members"))],
+    dependencies=[Depends(require_capability(Capability.KB_MEMBERS))],
 )
 async def invite_user(
     kb_slug: str,
@@ -928,7 +929,7 @@ async def invite_user(
 @router.patch(
     "/knowledge-bases/{kb_slug}/members/users/{access_id}",
     response_model=UserMemberOut,
-    dependencies=[Depends(require_capability("kb.members"))],
+    dependencies=[Depends(require_capability(Capability.KB_MEMBERS))],
 )
 async def update_user_role(
     kb_slug: str,
@@ -976,7 +977,7 @@ async def update_user_role(
 @router.delete(
     "/knowledge-bases/{kb_slug}/members/users/{access_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(require_capability("kb.members"))],
+    dependencies=[Depends(require_capability(Capability.KB_MEMBERS))],
 )
 async def remove_user(
     kb_slug: str,
@@ -1010,7 +1011,7 @@ async def remove_user(
     "/knowledge-bases/{kb_slug}/members/groups",
     response_model=GroupMemberOut,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_capability("kb.members"))],
+    dependencies=[Depends(require_capability(Capability.KB_MEMBERS))],
 )
 async def invite_group(
     kb_slug: str,
@@ -1066,7 +1067,7 @@ async def invite_group(
 @router.patch(
     "/knowledge-bases/{kb_slug}/members/groups/{access_id}",
     response_model=GroupMemberOut,
-    dependencies=[Depends(require_capability("kb.members"))],
+    dependencies=[Depends(require_capability(Capability.KB_MEMBERS))],
 )
 async def update_group_role(
     kb_slug: str,
@@ -1112,7 +1113,7 @@ async def update_group_role(
 @router.delete(
     "/knowledge-bases/{kb_slug}/members/groups/{access_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(require_capability("kb.members"))],
+    dependencies=[Depends(require_capability(Capability.KB_MEMBERS))],
 )
 async def remove_group(
     kb_slug: str,

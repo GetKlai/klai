@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as VerifyRouteImport } from './routes/verify'
+import { Route as TenantDeletedRouteImport } from './routes/tenant-deleted'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as SelectWorkspaceRouteImport } from './routes/select-workspace'
 import { Route as ProvisioningRouteImport } from './routes/provisioning'
@@ -34,6 +35,8 @@ import { Route as AppChatRouteImport } from './routes/app/chat'
 import { Route as AppAccountRouteImport } from './routes/app/account'
 import { Route as AdminSettingsRouteImport } from './routes/admin/settings'
 import { Route as AdminJoinRequestsRouteImport } from './routes/admin/join-requests'
+import { Route as AdminDeprovisioningStatusRouteImport } from './routes/admin/deprovisioning-status'
+import { Route as AdminDangerZoneRouteImport } from './routes/admin/danger-zone'
 import { Route as AdminBillingRouteImport } from './routes/admin/billing'
 import { Route as LocaleSignupRouteImport } from './routes/$locale/signup'
 import { Route as AppTranscribeIndexRouteImport } from './routes/app/transcribe/index'
@@ -93,6 +96,11 @@ import { Route as AppKnowledgeKbSlugEditConnectorConnectorIdRouteImport } from '
 const VerifyRoute = VerifyRouteImport.update({
   id: '/verify',
   path: '/verify',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TenantDeletedRoute = TenantDeletedRouteImport.update({
+  id: '/tenant-deleted',
+  path: '/tenant-deleted',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SignupRoute = SignupRouteImport.update({
@@ -213,6 +221,17 @@ const AdminSettingsRoute = AdminSettingsRouteImport.update({
 const AdminJoinRequestsRoute = AdminJoinRequestsRouteImport.update({
   id: '/join-requests',
   path: '/join-requests',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminDeprovisioningStatusRoute =
+  AdminDeprovisioningStatusRouteImport.update({
+    id: '/deprovisioning-status',
+    path: '/deprovisioning-status',
+    getParentRoute: () => AdminRouteRoute,
+  } as any)
+const AdminDangerZoneRoute = AdminDangerZoneRouteImport.update({
+  id: '/danger-zone',
+  path: '/danger-zone',
   getParentRoute: () => AdminRouteRoute,
 } as any)
 const AdminBillingRoute = AdminBillingRouteImport.update({
@@ -517,9 +536,12 @@ export interface FileRoutesByFullPath {
   '/provisioning': typeof ProvisioningRoute
   '/select-workspace': typeof SelectWorkspaceRoute
   '/signup': typeof SignupRoute
+  '/tenant-deleted': typeof TenantDeletedRoute
   '/verify': typeof VerifyRoute
   '/$locale/signup': typeof LocaleSignupRouteWithChildren
   '/admin/billing': typeof AdminBillingRoute
+  '/admin/danger-zone': typeof AdminDangerZoneRoute
+  '/admin/deprovisioning-status': typeof AdminDeprovisioningStatusRoute
   '/admin/join-requests': typeof AdminJoinRequestsRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
@@ -597,8 +619,11 @@ export interface FileRoutesByTo {
   '/provisioning': typeof ProvisioningRoute
   '/select-workspace': typeof SelectWorkspaceRoute
   '/signup': typeof SignupRoute
+  '/tenant-deleted': typeof TenantDeletedRoute
   '/verify': typeof VerifyRoute
   '/admin/billing': typeof AdminBillingRoute
+  '/admin/danger-zone': typeof AdminDangerZoneRoute
+  '/admin/deprovisioning-status': typeof AdminDeprovisioningStatusRoute
   '/admin/join-requests': typeof AdminJoinRequestsRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
@@ -677,9 +702,12 @@ export interface FileRoutesById {
   '/provisioning': typeof ProvisioningRoute
   '/select-workspace': typeof SelectWorkspaceRoute
   '/signup': typeof SignupRoute
+  '/tenant-deleted': typeof TenantDeletedRoute
   '/verify': typeof VerifyRoute
   '/$locale/signup': typeof LocaleSignupRouteWithChildren
   '/admin/billing': typeof AdminBillingRoute
+  '/admin/danger-zone': typeof AdminDangerZoneRoute
+  '/admin/deprovisioning-status': typeof AdminDeprovisioningStatusRoute
   '/admin/join-requests': typeof AdminJoinRequestsRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
@@ -761,9 +789,12 @@ export interface FileRouteTypes {
     | '/provisioning'
     | '/select-workspace'
     | '/signup'
+    | '/tenant-deleted'
     | '/verify'
     | '/$locale/signup'
     | '/admin/billing'
+    | '/admin/danger-zone'
+    | '/admin/deprovisioning-status'
     | '/admin/join-requests'
     | '/admin/settings'
     | '/app/account'
@@ -841,8 +872,11 @@ export interface FileRouteTypes {
     | '/provisioning'
     | '/select-workspace'
     | '/signup'
+    | '/tenant-deleted'
     | '/verify'
     | '/admin/billing'
+    | '/admin/danger-zone'
+    | '/admin/deprovisioning-status'
     | '/admin/join-requests'
     | '/admin/settings'
     | '/app/account'
@@ -920,9 +954,12 @@ export interface FileRouteTypes {
     | '/provisioning'
     | '/select-workspace'
     | '/signup'
+    | '/tenant-deleted'
     | '/verify'
     | '/$locale/signup'
     | '/admin/billing'
+    | '/admin/danger-zone'
+    | '/admin/deprovisioning-status'
     | '/admin/join-requests'
     | '/admin/settings'
     | '/app/account'
@@ -1003,6 +1040,7 @@ export interface RootRouteChildren {
   ProvisioningRoute: typeof ProvisioningRoute
   SelectWorkspaceRoute: typeof SelectWorkspaceRoute
   SignupRoute: typeof SignupRoute
+  TenantDeletedRoute: typeof TenantDeletedRoute
   VerifyRoute: typeof VerifyRoute
   PasswordForgotRoute: typeof PasswordForgotRoute
   PasswordSetRoute: typeof PasswordSetRoute
@@ -1017,6 +1055,13 @@ declare module '@tanstack/react-router' {
       path: '/verify'
       fullPath: '/verify'
       preLoaderRoute: typeof VerifyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/tenant-deleted': {
+      id: '/tenant-deleted'
+      path: '/tenant-deleted'
+      fullPath: '/tenant-deleted'
+      preLoaderRoute: typeof TenantDeletedRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/signup': {
@@ -1185,6 +1230,20 @@ declare module '@tanstack/react-router' {
       path: '/join-requests'
       fullPath: '/admin/join-requests'
       preLoaderRoute: typeof AdminJoinRequestsRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/deprovisioning-status': {
+      id: '/admin/deprovisioning-status'
+      path: '/deprovisioning-status'
+      fullPath: '/admin/deprovisioning-status'
+      preLoaderRoute: typeof AdminDeprovisioningStatusRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/danger-zone': {
+      id: '/admin/danger-zone'
+      path: '/danger-zone'
+      fullPath: '/admin/danger-zone'
+      preLoaderRoute: typeof AdminDangerZoneRouteImport
       parentRoute: typeof AdminRouteRoute
     }
     '/admin/billing': {
@@ -1605,6 +1664,8 @@ const LocaleRouteRouteWithChildren = LocaleRouteRoute._addFileChildren(
 
 interface AdminRouteRouteChildren {
   AdminBillingRoute: typeof AdminBillingRoute
+  AdminDangerZoneRoute: typeof AdminDangerZoneRoute
+  AdminDeprovisioningStatusRoute: typeof AdminDeprovisioningStatusRoute
   AdminJoinRequestsRoute: typeof AdminJoinRequestsRoute
   AdminSettingsRoute: typeof AdminSettingsRoute
   AdminIndexRoute: typeof AdminIndexRoute
@@ -1632,6 +1693,8 @@ interface AdminRouteRouteChildren {
 
 const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminBillingRoute: AdminBillingRoute,
+  AdminDangerZoneRoute: AdminDangerZoneRoute,
+  AdminDeprovisioningStatusRoute: AdminDeprovisioningStatusRoute,
   AdminJoinRequestsRoute: AdminJoinRequestsRoute,
   AdminSettingsRoute: AdminSettingsRoute,
   AdminIndexRoute: AdminIndexRoute,
@@ -1786,6 +1849,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProvisioningRoute: ProvisioningRoute,
   SelectWorkspaceRoute: SelectWorkspaceRoute,
   SignupRoute: SignupRoute,
+  TenantDeletedRoute: TenantDeletedRoute,
   VerifyRoute: VerifyRoute,
   PasswordForgotRoute: PasswordForgotRoute,
   PasswordSetRoute: PasswordSetRoute,

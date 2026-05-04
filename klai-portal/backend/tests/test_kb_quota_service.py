@@ -128,11 +128,11 @@ class TestAssertCanCreatePersonalKB:
 
     @pytest.mark.asyncio
     async def test_passes_when_plan_is_complete_and_none_limit(self) -> None:
-        """Complete plan has no limit (None = unlimited)."""
+        """Complete plan + kb_manager role has no limit (None = unlimited). REQ-5."""
         from app.services.kb_quota import assert_can_create_personal_kb
 
         mock_db = _make_db_mock()
-        # Even with 100 KBs, complete plan should pass
+        # Even with 100 KBs, kb_manager+complete should pass (both unlimited)
         mock_result = MagicMock()
         mock_result.scalar_one.return_value = 100
         mock_db.execute.return_value = mock_result
@@ -141,11 +141,12 @@ class TestAssertCanCreatePersonalKB:
             user_id="user-complete",
             org=_make_org("complete"),
             db=mock_db,
+            role="kb_manager",
         )
 
     @pytest.mark.asyncio
     async def test_db_execute_is_called_only_when_limit_exists(self) -> None:
-        """When plan has None limit, skip the DB count query."""
+        """When effective limit is None (kb_manager+complete), skip the DB count query. REQ-5."""
         from app.services.kb_quota import assert_can_create_personal_kb
 
         mock_db = _make_db_mock()
@@ -157,8 +158,9 @@ class TestAssertCanCreatePersonalKB:
             user_id="user-complete",
             org=_make_org("complete"),
             db=mock_db,
+            role="kb_manager",
         )
-        # DB execute should NOT be called for unlimited plan
+        # DB execute should NOT be called when effective limit is None
         mock_db.execute.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -190,7 +192,7 @@ class TestAssertCanCreateOrgKB:
 
         mock_db = _make_db_mock()
 
-        await assert_can_create_org_kb(org=_make_org("complete"), db=mock_db)
+        await assert_can_create_org_kb(org=_make_org("complete"), db=mock_db, role="kb_manager")
 
     @pytest.mark.asyncio
     async def test_raises_403_for_core_plan(self) -> None:
@@ -297,7 +299,7 @@ class TestAssertCanAddItemToKB:
             "app.services.kb_quota.knowledge_ingest_client.get_source_count",
             new_callable=AsyncMock,
         ) as mock_count:
-            await assert_can_add_item_to_kb(kb=kb, org=org)
+            await assert_can_add_item_to_kb(kb=kb, org=org, role="kb_manager")
             mock_count.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -493,6 +495,7 @@ class TestAdvisoryLockPersonalKB:
             user_id="user-complete",
             org=_make_org("complete"),
             db=mock_db,
+            role="kb_manager",
         )
 
         # No db.execute calls at all — unlimited plan short-circuits early.

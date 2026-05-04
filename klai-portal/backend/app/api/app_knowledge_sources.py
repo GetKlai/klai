@@ -83,6 +83,7 @@ async def _get_writable_kb_or_raise(
     caller_id: str,
     org: PortalOrg,
     db: AsyncSession,
+    profile_role: str = "company",
 ) -> PortalKnowledgeBase:
     """Resolve the KB, assert caller has contributor+ role, and quota is OK."""
     result = await db.execute(
@@ -113,7 +114,7 @@ async def _get_writable_kb_or_raise(
         )
 
     # Raises HTTP 403 with error_code=kb_quota_items_exceeded when at limit.
-    await assert_can_add_item_to_kb(kb, org)
+    await assert_can_add_item_to_kb(kb, org, role=profile_role)
     return kb
 
 
@@ -189,8 +190,8 @@ async def add_url_source(
 ) -> SourceIngestedResponse:
     """Fetch a web page via crawl4ai and ingest its markdown."""
     start = time.monotonic()
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_writable_kb_or_raise(kb_slug, caller_id, org, db)
+    caller_id, org, caller_user = await _get_caller_org(credentials, db)
+    kb = await _get_writable_kb_or_raise(kb_slug, caller_id, org, db, profile_role=caller_user.role)
 
     try:
         title, content, source_ref = await extract_url(body.url)
@@ -276,8 +277,8 @@ async def add_text_source(
 ) -> SourceIngestedResponse:
     """Accept a plain-text paste and ingest it directly (no external fetch)."""
     start = time.monotonic()
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_writable_kb_or_raise(kb_slug, caller_id, org, db)
+    caller_id, org, caller_user = await _get_caller_org(credentials, db)
+    kb = await _get_writable_kb_or_raise(kb_slug, caller_id, org, db, profile_role=caller_user.role)
 
     try:
         title, content, source_ref = extract_text(body.title, body.content)

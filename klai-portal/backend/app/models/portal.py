@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
+import sqlalchemy as sa
 from sqlalchemy import (
     ARRAY,
     JSON,
@@ -59,6 +60,11 @@ class PortalOrg(Base):
     provisioning_status: Mapped[str] = mapped_column(
         String(32), nullable=False, default="pending", server_default="pending"
     )
+    # @MX:NOTE: SPEC-INFRA-TENANT-DELETE-001 R2 — populated by deprovisioning
+    # orchestrator on definitive step failure. Shape: {"step": <name>,
+    # "error": <truncated>, "attempt": int, "failed_at": <iso>}. NULL on every
+    # other state. Cleared by admin retry endpoint before re-running.
+    last_failure: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     mfa_policy: Mapped[Literal["optional", "recommended", "required"]] = mapped_column(
         String(16), nullable=False, default="optional", server_default="optional"
     )
@@ -71,6 +77,16 @@ class PortalOrg(Base):
     # @MX:NOTE SPEC-AUTH-009 R5 -- when True, domain_match picker entries skip join-request
     # approval and directly INSERT a portal_users row (R4-C4.3). Default False.
     auto_accept_same_domain: Mapped[bool] = mapped_column(nullable=False, default=False, server_default="false")
+    # @MX:NOTE: SPEC-PORTAL-PROFILES-001 Phase 2 P2.1 — per-tenant add-on toggles.
+    # Stores which add-on products (scribe, docs) the admin has enabled for this org.
+    # A user/group still needs an entitlement in portal_user_products / portal_group_products;
+    # access = enabled_addons AND user/group entitlement (both required).
+    enabled_addons: Mapped[list[str]] = mapped_column(
+        ARRAY(Text()),
+        nullable=False,
+        default=list,
+        server_default="{}",
+    )
 
     users: Mapped[list["PortalUser"]] = relationship(back_populates="org")
 
@@ -85,8 +101,19 @@ class PortalUser(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     zitadel_user_id: Mapped[str] = mapped_column(String(64), index=True)
     org_id: Mapped[int] = mapped_column(ForeignKey("portal_orgs.id"))
-    role: Mapped[Literal["admin", "group-admin", "member"]] = mapped_column(
-        String(20), nullable=False, default="member", server_default="member"
+    role: Mapped[Literal["personal", "company", "kb_manager", "group_manager", "admin"]] = mapped_column(
+        sa.Enum(
+            "personal",
+            "company",
+            "kb_manager",
+            "group_manager",
+            "admin",
+            name="portal_user_role",
+            create_type=False,  # alembic migration 59fff72b480b creates the type
+        ),
+        nullable=False,
+        default="company",
+        server_default="company::portal_user_role",
     )
     preferred_language: Mapped[Literal["nl", "en"]] = mapped_column(
         String(8), nullable=False, default="nl", server_default="nl"

@@ -422,6 +422,52 @@ async def delete_orphan_episodes_for_artifact_ids(org_id: str, artifact_ids: lis
     return deleted
 
 
+def wipe_org_graph(org_id: str) -> int:
+    """Hard-delete ALL nodes in the FalkorDB graph for *org_id*.
+
+    # @MX:ANCHOR: deprovisioning hard-delete — wipes the entire org graph.
+    # @MX:REASON: Called by SPEC-INFRA-TENANT-DELETE-001 Phase 7 endpoint.
+    #   This is irreversible: every node (Episodic, Entity, …) with
+    #   group_id == org_id is DETACH DELETE'd.  Returns the count of nodes
+    #   removed so the API can surface it to the orchestrator.
+
+    Uses the direct ``falkordb`` Python client (same pattern as
+    ``sweep_orphan_episodes_org_wide``) because the async Graphiti driver
+    returns empty result_sets for COUNT queries due to shape mismatch.
+
+    Returns 0 when graphiti is disabled or the graph is already empty.
+    Synchronous — callers wrap in ``asyncio.to_thread`` when called from
+    an async context if needed (but a FastAPI endpoint runs fine blocking
+    on a sync FalkorDB round-trip given the small overhead).
+
+    SPEC-INFRA-TENANT-DELETE-001 Phase 7.
+    """
+    if not settings.graphiti_enabled:
+        logger.info("wipe_org_graph_skipped_graphiti_disabled", org_id=org_id)
+        return 0
+    try:
+        from falkordb import FalkorDB as FalkorDBClient
+    except ImportError:
+        logger.warning("falkordb_client_unavailable_for_wipe", org_id=org_id)
+        return 0
+
+    client = FalkorDBClient(host=settings.falkordb_host, port=settings.falkordb_port)
+    graph = client.select_graph(org_id)
+
+    result = graph.query(
+        "MATCH (n) WHERE n.group_id = $org_id "
+        "WITH n, id(n) AS nid "
+        "DETACH DELETE n "
+        "RETURN count(nid) AS deleted",
+        params={"org_id": org_id},
+    )
+    deleted = 0
+    if result.result_set:
+        deleted = int(result.result_set[0][0] or 0)
+    logger.info("wipe_org_graph_complete", org_id=org_id, nodes_deleted=deleted)
+    return deleted
+
+
 async def compute_entity_pagerank(org_id: str) -> dict[str, float]:
     """Compute PageRank scores for all Entity nodes in the org's graph.
 

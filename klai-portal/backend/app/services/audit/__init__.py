@@ -1,11 +1,20 @@
-"""
-Audit log service -- write immutable access control event entries.
+"""Audit services package.
 
-The audit log is append-only. No UPDATE or DELETE operations are issued
-against portal_audit_log from this module or anywhere in the application.
+Two distinct audit surfaces:
 
-@MX:ANCHOR fan_in=10+ -- log_event is the single write path to the audit log.
-                          All access control events must go through this function.
+- ``log_event`` — append-only access-control audit log (portal_audit_log).
+  Fire-and-forget pattern with own session so the caller's transaction can
+  roll back without losing the audit row. Used by every admin endpoint.
+
+- ``tenant_lifecycle.emit_lifecycle_event`` — synchronous tenant-lifecycle
+  audit (tenant_lifecycle_events) emitted within the deprovisioning
+  orchestrator's transaction. Survives portal_orgs hard-delete by design
+  (no FK to portal_orgs). See SPEC-INFRA-TENANT-DELETE-001 R6.
+
+The two surfaces serve different audiences and have opposite consistency
+contracts (fire-and-forget vs transactional), so they live in separate
+modules. ``log_event`` is re-exported from this package init for backward
+compatibility with the original ``app.services.audit`` flat-module layout.
 """
 
 import json
@@ -27,6 +36,8 @@ _INSERT_SQL = text(
 )
 
 
+# @MX:ANCHOR fan_in=10+ — log_event is the single write path to the audit log.
+#                          All access control events must go through this function.
 async def log_event(
     org_id: int,
     actor: str,
@@ -62,3 +73,6 @@ async def log_event(
             resource_type=resource_type,
             resource_id=resource_id,
         )
+
+
+__all__ = ["log_event"]

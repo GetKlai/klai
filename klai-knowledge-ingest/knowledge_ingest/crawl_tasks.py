@@ -3,12 +3,23 @@ from __future__ import annotations
 
 from typing import Any
 
+from knowledge_ingest import queues
+
 
 def register_crawl_tasks(procrastinate_app: Any) -> None:
     """Register crawl tasks on the Procrastinate app. Called from enrichment_tasks.init_app()."""
     import procrastinate
 
-    @procrastinate_app.task(queue="enrich-bulk", retry=procrastinate.RetryStrategy(max_attempts=1))
+    # SPEC-INGEST-QUEUE-SEPARATION-001: ``run_crawl`` lives on its own
+    # ``crawl-jobs`` queue. Was previously sharing ``enrich-bulk`` with the
+    # LLM-bound enrichment tasks (Mistral entity/relation extraction takes
+    # 30-60s per call). A bulk Notion sync (120 pages → 120 enrichment jobs)
+    # would block any subsequent crawl request for 20+ minutes. Crawl is
+    # I/O-bound (httpx + crawl4ai), enrichment is LLM-bound — different
+    # workloads belong on different queues.
+    @procrastinate_app.task(
+        queue=queues.CRAWL_JOBS, retry=procrastinate.RetryStrategy(max_attempts=1)
+    )
     async def run_crawl(
         job_id: str,
         org_id: str,

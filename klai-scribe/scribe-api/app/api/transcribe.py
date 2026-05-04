@@ -181,7 +181,17 @@ async def transcribe(
         record.status = "failed"
         await db.commit()
         await db.refresh(record)
-        logger.warning("Transcription failed for %s, audio preserved at %s", txn_id, audio_path)
+        # exc_info=True per `klai/projects/portal-logging-py.md` —
+        # except blocks MUST capture traceback, otherwise the same
+        # warning at 3am has no usable root cause in VictoriaLogs.
+        # Without this, we couldn't see the KeyError that surfaced
+        # during the 2026-05-03 e2e walkthrough.
+        logger.warning(
+            "transcription_failed",
+            txn_id=txn_id,
+            audio_path=audio_path,
+            exc_info=True,
+        )
         return _to_response(record)
 
     # Success — mutate record + purge audio from disk (retention policy).
@@ -243,7 +253,7 @@ async def retry_transcription(
         record.status = "failed"
         await db.commit()
         await db.refresh(record)
-        logger.warning("Retry failed for %s", txn_id)
+        logger.warning("retry_transcription_failed", txn_id=txn_id, exc_info=True)
         return _to_response(record)
 
     # Success — mutate record + purge audio from disk (retention policy).

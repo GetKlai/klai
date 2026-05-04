@@ -6,6 +6,11 @@
  *   2. Needs 2FA   → redirect to the MFA setup page.
  *   3. Wrong role  → redirect to the caller-supplied `noRoleFallback`.
  *
+ * SPEC-PORTAL-PROFILES-001 P3.2: `requireMinRole` replaces the blanket
+ * `requireAdmin` check for admin/* layouts. `requireAdmin` is kept for
+ * backward compat but `requireMinRole: 'kb_manager'` lets sub-admin roles
+ * (kb_manager, group_manager) enter the admin section.
+ *
  * The redirects run in priority order. `isResolving` is `true` while any
  * dependency is still loading, so callers can show a single spinner until
  * the guard has made up its mind — no flash of content, no infinite spinner
@@ -17,6 +22,7 @@ import { useEffect } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { useAuth } from '@/lib/auth'
 import { useCurrentUser, type CurrentUser } from '@/hooks/useCurrentUser'
+import { meetsMinRole, type ProfileRole } from '@/lib/profiles'
 
 interface BaseOptions {
   /** Path to send unauthenticated visitors to. Defaults to `/`. */
@@ -28,19 +34,28 @@ interface AdminOptions extends BaseOptions {
   readonly requireAdmin: true
   /** Path to send authenticated-but-insufficient-role visitors to. */
   readonly noRoleFallback: string
+  readonly requireMinRole?: never
+}
+
+interface MinRoleOptions extends BaseOptions {
+  /** Require effective_role >= minRole on the profile ladder. */
+  readonly requireMinRole: ProfileRole
+  /** Path to send authenticated-but-insufficient-role visitors to. */
+  readonly noRoleFallback: string
+  readonly requireAdmin?: never
 }
 
 interface NonAdminOptions extends BaseOptions {
   readonly requireAdmin?: false
+  readonly requireMinRole?: never
   readonly noRoleFallback?: never
 }
 
 /**
- * Discriminated union: setting `requireAdmin: true` makes `noRoleFallback`
- * compile-time mandatory so admin-only routes cannot silently leave
- * non-admin visitors stuck on a spinner.
+ * Discriminated union: setting `requireAdmin: true` or `requireMinRole` makes
+ * `noRoleFallback` compile-time mandatory.
  */
-export type UseProtectedRouteOptions = AdminOptions | NonAdminOptions
+export type UseProtectedRouteOptions = AdminOptions | MinRoleOptions | NonAdminOptions
 
 export interface UseProtectedRouteResult {
   /** User record once loaded (undefined until /api/me resolves). */
@@ -51,12 +66,25 @@ export interface UseProtectedRouteResult {
   readonly canRender: boolean
 }
 
+function hasRequiredRole(user: CurrentUser | undefined, options: UseProtectedRouteOptions): boolean {
+  if (!user) return false
+  if ('requireAdmin' in options && options.requireAdmin) {
+    return user.isAdmin === true || user.isGroupAdmin === true
+  }
+  if ('requireMinRole' in options && options.requireMinRole) {
+    return meetsMinRole(user.effective_role, options.requireMinRole)
+  }
+  return true
+}
+
 export function useProtectedRoute(
   options: UseProtectedRouteOptions = {},
 ): UseProtectedRouteResult {
   const fallback = options.fallback ?? '/'
-  const requireAdmin = options.requireAdmin === true
-  const noRoleFallback = requireAdmin ? options.noRoleFallback : undefined
+  const requireAdmin = 'requireAdmin' in options && options.requireAdmin === true
+  const requireMinRole = 'requireMinRole' in options ? options.requireMinRole : undefined
+  const needsRoleCheck = requireAdmin || !!requireMinRole
+  const noRoleFallback = needsRoleCheck ? options.noRoleFallback : undefined
   const auth = useAuth()
   const navigate = useNavigate()
   const { user, isPending: userLoading } = useCurrentUser()
@@ -75,8 +103,8 @@ export function useProtectedRoute(
       window.location.replace('/setup/2fa')
       return
     }
-    // 3. Admin-only route with a non-admin caller.
-    if (requireAdmin && user && !user.isAdmin && !user.isGroupAdmin && noRoleFallback) {
+    // 3. Role-gated route with an insufficient-role caller.
+    if (needsRoleCheck && user && !hasRequiredRole(user, options) && noRoleFallback) {
       void navigate({ to: noRoleFallback })
     }
   }, [
@@ -84,14 +112,15 @@ export function useProtectedRoute(
     auth.isAuthenticated,
     user,
     userLoading,
-    requireAdmin,
+    needsRoleCheck,
     fallback,
     noRoleFallback,
     navigate,
+    options,
   ])
 
-  const hasRole = !requireAdmin || user?.isAdmin === true || user?.isGroupAdmin === true
-  const isResolving = auth.isLoading || !auth.isAuthenticated || userLoading || !hasRole
+  const roleOk = !needsRoleCheck || hasRequiredRole(user, options)
+  const isResolving = auth.isLoading || !auth.isAuthenticated || userLoading || !roleOk
 
   return {
     user,
