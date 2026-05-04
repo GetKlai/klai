@@ -76,12 +76,8 @@ ALLOWED_HELPER_FUNCTIONS: frozenset[str] = frozenset(
         "ensure_default_knowledge_bases",
         "create_default_org_kb",
         "create_default_personal_kb",
-        # app/core/system_groups.py — calls set_tenant itself.
+        # app/core/system_groups.py — no-op stub after SPEC-PORTAL-RBAC-001.
         "create_system_groups",
-        # app/services/system_groups.py — SPEC-PORTAL-PROFILES-001 Phase 2 P2.5.
-        # Only called from add_member in groups.py, which calls _get_caller_org +
-        # set_tenant before invoking this helper. Tenant context is upstream.
-        "sync_role_from_system_group",
         # app/api/app_knowledge_bases.py — all helpers take org_id and
         # are only reachable via _get_caller_org routes.
         "_get_kb_or_404",
@@ -110,10 +106,6 @@ ALLOWED_HELPER_FUNCTIONS: frozenset[str] = frozenset(
         # app/api/connectors.py — takes org_id, called from connector routes
         # under _get_caller_org.
         "_get_kb_for_org",
-        # app/api/dependencies.py — group-admin check helpers take org_id,
-        # invoked from routes that already ran _get_caller_org.
-        "_require_admin_or_group_admin",
-        "_require_admin_or_group_manager",
         # app/api/groups.py — org-scoped helper, called from routes under
         # _get_caller_org.
         "_get_group_or_404",

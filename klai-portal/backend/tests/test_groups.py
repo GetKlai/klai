@@ -213,8 +213,6 @@ class TestAddMember:
 
         with (
             patch("app.api.groups._get_caller_org", return_value=("caller-1", org, caller)),
-            patch("app.api.groups._require_admin_or_group_admin", new_callable=AsyncMock),
-            patch("app.api.groups.sync_role_from_system_group", new_callable=AsyncMock),
         ):
             result = await add_member(group_id=10, body=body, credentials=mock_credentials, db=mock_db)
 
@@ -246,7 +244,6 @@ class TestAddMember:
 
         with (
             patch("app.api.groups._get_caller_org", return_value=("caller-1", org, caller)),
-            patch("app.api.groups._require_admin_or_group_admin", new_callable=AsyncMock),
         ):
             with pytest.raises(HTTPException) as exc_info:
                 await add_member(group_id=10, body=body, credentials=mock_credentials, db=mock_db)
@@ -280,7 +277,6 @@ class TestAddMember:
 
         with (
             patch("app.api.groups._get_caller_org", return_value=("caller-1", org, caller)),
-            patch("app.api.groups._require_admin_or_group_admin", new_callable=AsyncMock),
         ):
             with pytest.raises(HTTPException) as exc_info:
                 await add_member(group_id=10, body=body, credentials=mock_credentials, db=mock_db)
@@ -351,14 +347,16 @@ class TestToggleGroupAdmin:
 # ---------------------------------------------------------------------------
 
 
-class TestGroupAdminCanManageMembers:
+class TestGroupManagerCanManageMembers:
+    """SPEC-PORTAL-RBAC-001: per-group `is_group_admin` no longer grants
+    list-members rights. Listing requires role rank >= group_manager."""
+
     @pytest.mark.asyncio
-    async def test_group_admin_can_list_members(self) -> None:
-        """R4: Group admin can list members of their group."""
+    async def test_group_manager_can_list_members(self) -> None:
         from app.api.groups import list_members
 
         org = _mock_org()
-        caller = _mock_caller(role="member")
+        caller = _mock_caller(role="group_manager")
         group = _mock_group()
 
         membership = MagicMock(spec=PortalGroupMembership)
@@ -367,23 +365,29 @@ class TestGroupAdminCanManageMembers:
         membership.joined_at = MagicMock()
 
         mock_db = AsyncMock()
-        # First execute: group lookup
         group_result = MagicMock()
         group_result.scalar_one_or_none.return_value = group
-        # Second execute: members list
         members_result = MagicMock()
         members_result.scalars.return_value.all.return_value = [membership]
-
         mock_db.execute.side_effect = [group_result, members_result]
-        mock_credentials = MagicMock()
 
-        with (
-            patch("app.api.groups._get_caller_org", return_value=("caller-1", org, caller)),
-            patch("app.api.groups._require_admin_or_group_admin", new_callable=AsyncMock),
-        ):
-            result = await list_members(group_id=10, credentials=mock_credentials, db=mock_db)
+        with patch("app.api.groups._get_caller_org", return_value=("caller-1", org, caller)):
+            result = await list_members(group_id=10, credentials=MagicMock(), db=mock_db)
 
         assert len(result.members) == 1
+
+    @pytest.mark.asyncio
+    async def test_personal_caller_cannot_list_members(self) -> None:
+        from app.api.groups import list_members
+
+        org = _mock_org()
+        caller = _mock_caller(role="personal")
+        mock_db = AsyncMock()
+
+        with patch("app.api.groups._get_caller_org", return_value=("caller-1", org, caller)):
+            with pytest.raises(HTTPException) as exc_info:
+                await list_members(group_id=10, credentials=MagicMock(), db=mock_db)
+        assert exc_info.value.status_code == 403
 
 
 # ---------------------------------------------------------------------------
