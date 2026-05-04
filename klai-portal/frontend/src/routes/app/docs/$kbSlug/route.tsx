@@ -32,7 +32,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 export const Route = createFileRoute('/app/docs/$kbSlug')({
   component: () => (
-    <ProductGuard product="knowledge">
+    <ProductGuard product="docs">
       <KBEditorLayout />
     </ProductGuard>
   ),

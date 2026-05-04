@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import _get_caller_org, _require_admin, bearer, require_capability
 from app.core.config import settings
 from app.core.database import get_db, set_tenant
+from app.core.profiles import Capability
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg
 from app.models.retrieval_gaps import PortalRetrievalGap
@@ -183,7 +184,7 @@ async def _check_circular_reference(
 @router.get(
     "/{kb_slug}/taxonomy/nodes",
     response_model=TaxonomyNodesResponse,
-    dependencies=[Depends(require_capability("kb.taxonomy"))],
+    dependencies=[Depends(require_capability(Capability.KB_TAXONOMY))],
 )
 async def list_taxonomy_nodes(
     kb_slug: str,
@@ -207,7 +208,7 @@ async def list_taxonomy_nodes(
     "/{kb_slug}/taxonomy/nodes",
     response_model=TaxonomyNodeOut,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_capability("kb.taxonomy"))],
+    dependencies=[Depends(require_capability(Capability.KB_TAXONOMY))],
 )
 async def create_taxonomy_node(
     kb_slug: str,
@@ -256,7 +257,7 @@ async def create_taxonomy_node(
 @router.patch(
     "/{kb_slug}/taxonomy/nodes/{node_id}",
     response_model=TaxonomyNodeOut,
-    dependencies=[Depends(require_capability("kb.taxonomy"))],
+    dependencies=[Depends(require_capability(Capability.KB_TAXONOMY))],
 )
 async def update_taxonomy_node(
     kb_slug: str,
@@ -323,7 +324,7 @@ async def update_taxonomy_node(
 @router.delete(
     "/{kb_slug}/taxonomy/nodes/{node_id}",
     status_code=status.HTTP_200_OK,
-    dependencies=[Depends(require_capability("kb.taxonomy"))],
+    dependencies=[Depends(require_capability(Capability.KB_TAXONOMY))],
 )
 async def delete_taxonomy_node(
     kb_slug: str,
@@ -375,7 +376,7 @@ async def delete_taxonomy_node(
 @router.get(
     "/{kb_slug}/taxonomy/proposals",
     response_model=ProposalsResponse,
-    dependencies=[Depends(require_capability("kb.taxonomy"))],
+    dependencies=[Depends(require_capability(Capability.KB_TAXONOMY))],
 )
 async def list_taxonomy_proposals(
     kb_slug: str,

@@ -10,9 +10,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.plans import PLAN_PRODUCTS, get_plan_products
+from app.core.plans import ADDON_PRODUCTS, PLAN_PRODUCTS, get_plan_products
 from app.models.groups import PortalGroupProduct
 from app.models.products import PortalUserProduct
+from app.services.audit import log_event
+from app.services.events import emit_event
 
 from . import _get_caller_org, _require_admin, bearer
 
@@ -129,3 +131,79 @@ async def change_plan(
 
     await db.commit()
     return MessageResponse(message=f"Plan bijgewerkt naar {new_plan}.")
+
+
+# ---------------------------------------------------------------------------
+# Add-on toggle endpoints (SPEC-PORTAL-PROFILES-001 Phase 2 P2.4)
+# ---------------------------------------------------------------------------
+
+
+class AddonsOut(BaseModel):
+    enabled_addons: list[str]
+
+
+class AddonsUpdate(BaseModel):
+    enabled_addons: list[str]
+
+
+@router.get("/settings/addons", response_model=AddonsOut)
+async def get_addons(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> AddonsOut:
+    """Return the tenant's currently enabled add-ons."""
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+    return AddonsOut(enabled_addons=list(org.enabled_addons or []))
+
+
+@router.patch("/settings/addons", response_model=AddonsOut)
+async def update_addons(
+    body: AddonsUpdate,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> AddonsOut:
+    """Enable or disable tenant-level add-ons.
+
+    # @MX:NOTE: SPEC-PORTAL-PROFILES-001 Phase 2 P2.4 — only values in
+    # ADDON_PRODUCTS are accepted. Unknown values raise 400. Disabling an
+    # add-on does NOT remove user/group entitlements — they become dormant
+    # and re-activate when the toggle is turned back on. This is intentional:
+    # preserves manual entitlement work done by the admin.
+    """
+    admin_user_id, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    unknown = [p for p in body.enabled_addons if p not in ADDON_PRODUCTS]
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown add-on product(s): {unknown}. Valid: {sorted(ADDON_PRODUCTS)}",
+        )
+
+    before = list(org.enabled_addons or [])
+    after = list(body.enabled_addons)
+
+    org.enabled_addons = after
+
+    added = sorted(set(after) - set(before))
+    removed = sorted(set(before) - set(after))
+
+    await log_event(
+        org_id=org.id,
+        actor=admin_user_id,
+        action="addons.updated",
+        resource_type="org",
+        resource_id=str(org.id),
+        details={"before": before, "after": after, "added": added, "removed": removed},
+    )
+    await db.commit()
+
+    emit_event(
+        "tenant.addons_updated",
+        org_id=org.id,
+        user_id=admin_user_id,
+        properties={"enabled_addons": after, "added": added, "removed": removed},
+    )
+
+    return AddonsOut(enabled_addons=after)

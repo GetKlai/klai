@@ -320,7 +320,33 @@ class TestRequireAdminOrGroupAdmin:
         await _require_admin_or_group_admin(group_id=1, caller_user=caller, db=mock_db)
 
     @pytest.mark.asyncio
-    async def test_group_admin_passes(self) -> None:
+    async def test_group_manager_passes(self) -> None:
+        """group_manager (formerly group-admin) passes non-system group check.
+
+        Fixed regression: group-admin role was renamed to group_manager in
+        SPEC-PORTAL-PROFILES-001 migration.  The old role no longer exists in
+        the enum; callers with the legacy name would get 403.
+        """
+        from app.api.dependencies import _require_admin_or_group_admin
+
+        caller = _mock_caller(role="group_manager")
+        mock_db = AsyncMock()
+
+        # system_key check returns None (not a system group)
+        system_key_result = MagicMock()
+        system_key_result.scalar_one_or_none.return_value = None
+        mock_db.execute.return_value = system_key_result
+
+        # Should not raise
+        await _require_admin_or_group_admin(group_id=1, caller_user=caller, db=mock_db)
+
+    @pytest.mark.asyncio
+    async def test_legacy_group_admin_hyphen_is_blocked(self) -> None:
+        """Old 'group-admin' role is no longer valid; must 403 (fixed regression).
+
+        After the SPEC-PORTAL-PROFILES-001 migration, group-admin does not exist
+        in PROFILE_LADDER. Users with this role must be migrated to group_manager.
+        """
         from app.api.dependencies import _require_admin_or_group_admin
 
         caller = _mock_caller(role="group-admin")
@@ -331,8 +357,9 @@ class TestRequireAdminOrGroupAdmin:
         system_key_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = system_key_result
 
-        # Should not raise
-        await _require_admin_or_group_admin(group_id=1, caller_user=caller, db=mock_db)
+        with pytest.raises(HTTPException) as exc_info:
+            await _require_admin_or_group_admin(group_id=1, caller_user=caller, db=mock_db)
+        assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
     async def test_non_admin_non_group_admin_raises_403(self) -> None:

@@ -108,7 +108,13 @@ services:
   # MAX_ACTIVE_REQUESTS / REALTIME_RESERVED_SLOTS. See plan.md R8.
 
   transcription-worker-1:
-    image: vexaai/transcription-service:0.10.0-pending
+    # NOTE: vexaai/transcription-service is NOT published to Docker Hub.
+    # Built locally on gpu-01 from upstream Vexa-ai/vexa source (CUDA 12.3.2 +
+    # cuDNN 9, faster-whisper). Tag convention `<semver>-local-YYMMDD-HHMM`
+    # is recognised by `deploy/check-image-pullable.sh` as locally-built and
+    # skipped from the registry-manifest check. Bumping = `git clone v0.10.x`
+    # + `docker build` on gpu-01; runbook in `docs/runbooks/transcription-service-bump.md`.
+    image: vexaai/transcription-service:0.10.6-local-260503-0858
     restart: unless-stopped
     environment:
       WORKER_ID: "1"
@@ -138,7 +144,8 @@ services:
       start_period: 180s
 
   transcription-worker-2:
-    image: vexaai/transcription-service:0.10.0-pending
+    # See note on transcription-worker-1 — locally-built, not on Docker Hub.
+    image: vexaai/transcription-service:0.10.6-local-260503-0858
     restart: unless-stopped
     environment:
       WORKER_ID: "2"

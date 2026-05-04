@@ -1,7 +1,7 @@
 ---
 id: SPEC-SEC-AUDIT-2026-04
-version: 0.7.0
-status: draft
+version: 1.0.0
+status: closed
 created: 2026-04-24
 updated: 2026-04-29
 author: Mark Vletter
@@ -12,6 +12,12 @@ type: tracker
 # SPEC-SEC-AUDIT-2026-04: Security Audit Response Tracker
 
 ## HISTORY
+### v1.0.0 (2026-04-29) — CLOSED
+- All 91 findings (28 Cornelis + 63 internal-wave) addressed.
+- 12 sub-SPECs all shipped (see tracker table).
+- Re-audit completed and verified.
+- Klai-focus governance: awaiting decision.
+
 
 ### v0.7.0 (2026-04-29, late)
 - SPEC-SEC-INTERNAL-001 fully shipped (#201): service-wide internal-secret
@@ -335,3 +341,14 @@ All SPECs below have full EARS requirements, research.md, and acceptance.md. Rea
   toctou-dns, from-header-trust, hardcoded-zitadel-role, caller-asserted-identity,
   format-string-template-injection, shared-env-file-pattern) — capture via `/klai:retro` in a
   separate session to avoid polluting this tracker
+
+---
+
+## v1.0.0 follow-up findings
+
+Post-close items deferred from the main audit pass. Each is a documentation/hardening task,
+not a new vulnerability.
+
+| ID | Finding | Status | Commit | Resolution |
+|---|---|---|---|---|
+| C3 | knowledge-ingest body-org_id contract | DOCUMENTED | <TBD> | @MX:NOTE + contract test |
