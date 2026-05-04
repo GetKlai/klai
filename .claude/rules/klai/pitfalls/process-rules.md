@@ -899,3 +899,34 @@ Reference: 2026-04-30 — `/api/admin/domains` and `/api/admin/join-requests` re
    ```
    If `alembic current` is at head AND `to_regclass` is NULL for an expected table, you have schema drift. The fix is `alembic upgrade --sql <prev>:<head>` (offline, generates the DDL alembic WOULD have run), strip the `UPDATE alembic_version SET ...` lines, apply via `psql`. Do NOT `alembic stamp` backwards then `upgrade head` — that re-runs ALL migrations after the stamp point, most of which will fail because their tables already exist.
 5. **Logging.** When a handler queries an ORM model whose backing table doesn't exist, `asyncpg.exceptions.UndefinedTableError` is raised inside SQLAlchemy and FastAPI catches it as a generic 500. The trace IS in VictoriaLogs (`service:portal-api AND level:error AND message:"UndefinedTable"`) — use that query first when triaging "500 on a single endpoint, all other endpoints fine" before assuming it's an auth / dependency-injection / RLS issue. Diagnosis-without-logs falls back to the `to_regclass` probe above.
+
+## grafana-uid-40-char-limit (HIGH)
+Grafana enforces a hard 40-character limit on alert-rule and dashboard UIDs. A
+file-provisioned alert rule with `uid: <49+ chars>` causes the entire
+provisioning step to fail with `Failed to provision alerting: ... cannot
+create rule with UID '<x>': UID is longer than 40 symbols`, which in turn
+crashes Grafana into a restart loop. While Grafana is down: ALL alerts stop
+firing, the alerter-on-alerter heartbeat stops pushing to Uptime Kuma, and
+the dead-man's switch fires within 5 minutes (SPEC-OBS-001 R22 alerter-down
+detection).
+
+Reference: 2026-05-04 — SPEC-INFRA-CONTAINER-HYGIENE-001 stage 6 first
+deploy (PR #296, 12:11 CEST) used UIDs `spec-infra-container-hygiene-001-tenant-no-route` (49 chars) and `spec-infra-container-hygiene-001-caddy-upstream-missing` (55 chars). Grafana entered restart loop the moment deploy-compose.yml synced the files. Recovery required revert (#297, 12:13 CEST) PLUS a manual `rm` of the synced files on core-01 because deploy-compose.yml uses `rsync -ac` WITHOUT `--delete`, so revert-removed files remain on disk and re-trigger the failure on every grafana recreate. Total downtime ~3 minutes (12:11 → 12:14 CEST), within Kuma's 5-minute heartbeat window — no alerter-down email was sent.
+
+**The class.** Any provisioned Grafana resource with a UID has a 40-char limit. This applies to:
+- Alert rule UIDs (`groups[].rules[].uid`)
+- Dashboard top-level UIDs (`{"uid": "..."}`)
+- Folder UIDs (when explicitly set)
+- Notification policy UIDs
+
+**Why the limit isn't documented mechanically.** Grafana's docs describe UIDs as "any string up to 40 characters" but the enforcement is a fail-loud refusal at provisioning, not a config-time validation. CI checks that don't probe the actual provisioning path will pass; the failure surfaces only on the first sync to a real Grafana.
+
+**Prevention (mechanical, the right kind of guard):**
+
+1. CI script `scripts/audit-alert-uid-length.sh` runs in the `Alerting provisioning checks` workflow on every PR that touches `deploy/grafana/provisioning/{alerting,dashboards}/**`. Iterates every YAML `uid:` and JSON top-level `"uid"`, fails CI if any is > 40 chars. Tested against 9 cases (5 accept incl. existing UIDs, 4 reject incl. path-traversal). After this guard landed, the class is structurally impossible to ship.
+
+2. UID convention for klai-provisioned alerts: `spec-<3-letter>-<3-digit>-<verb>` (e.g. `spec-hyg-001-tenant-no-route`). The 3-letter abbreviation must be unique across active SPECs. Existing prefixes: `obs-`, `spec-sec-024-`, `spec-infra-005-`, `spec-hyg-001-`. Never use the full SPEC ID — they're 30+ chars before the verb.
+
+3. `scripts/reset-grafana-orphan-alert.sh` accepts UIDs matching `^(obs-[0-9]+|spec-[a-z][a-z-]*-[0-9]+)-` so multi-word abbreviations work for the cleanup-by-uid path. (Shorter abbrevs are still preferred — the 40-char limit doesn't change.)
+
+4. The `rsync without --delete` quirk is a SEPARATE class: `deploy-compose.yml` syncs `deploy/grafana/provisioning/` to `/opt/klai/grafana/provisioning/` with `rsync -ac` (no `--delete`). Revert-removed files persist on disk. For any future revert that removes provisioning files, the operator MUST `ssh core-01 "rm /opt/klai/grafana/provisioning/<deleted-path>"` after the revert merges. Long-term fix is to add `--delete` to the rsync (separate SPEC — `--delete` has its own blast-radius considerations because server-only files would also disappear).
