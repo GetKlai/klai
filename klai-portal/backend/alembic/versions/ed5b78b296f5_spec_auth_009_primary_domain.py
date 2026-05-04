@@ -1,16 +1,21 @@
 """SPEC-AUTH-009: add primary_domain + auto_accept_same_domain to portal_orgs;
    drop portal_org_allowed_domains.
 
-Revision ID: a1b2c3d4e5f6
-Revises: z3a4b5c6d7e8
+Revision ID: ed5b78b296f5
+Revises: 261dae89162c
 Create Date: 2026-04-30
+
+Note: original revision id was a1b2c3d4e5f6 but that collided with
+SPEC-PORTAL-PROFILES-001's profile_ladder_role_migration on main. Renamed
+to ed5b78b296f5 and rebased onto current head 261dae89162c during the
+2026-05-04 integration of feature/SPEC-AUTH-009 into main.
 """
 
 import sqlalchemy as sa
 from alembic import op
 
-revision = "a1b2c3d4e5f6"
-down_revision = "z3a4b5c6d7e8"
+revision = "ed5b78b296f5"
+down_revision = "261dae89162c"
 branch_labels = None
 depends_on = None
 
