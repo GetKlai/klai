@@ -1271,6 +1271,10 @@ services:
       GRAPHITI_ENABLED: "true"
       PORTAL_URL: http://portal-api:8010
       PORTAL_INTERNAL_TOKEN: ${PORTAL_API_INTERNAL_SECRET}
+      # SPEC-RAG-EVAL-001 — RAGAS evaluation harness calls /retrieve on
+      # klai-retrieval-api. Same secret as the litellm-hook uses for
+      # /retrieve auth (see deploy/litellm/klai_knowledge.py).
+      RETRIEVAL_API_INTERNAL_SECRET: ${RETRIEVAL_API_INTERNAL_SECRET}
       # SPEC-CRAWLER-004 Fase A — shared Garage S3 image pipeline.
       # Empty GARAGE_S3_ENDPOINT disables image extraction silently.
       GARAGE_S3_ENDPOINT: garage:3900
