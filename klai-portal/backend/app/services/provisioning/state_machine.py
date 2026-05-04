@@ -70,11 +70,32 @@ ENTRY_STATES: Final[frozenset[str]] = frozenset({"pending", "queued"})
 # otherwise). Callers can use this set to gate retry/observability logic.
 TERMINAL_STATES: Final[frozenset[str]] = frozenset({"ready", "failed_rollback_complete", "failed_rollback_pending"})
 
+# SPEC-INFRA-TENANT-DELETE-001 R2 — deprovisioning state-machine constants.
+#
+# DEPROVISION_ENTRY_STATES: states from which `deprovision_tenant` may be entered.
+#   - `ready` is the normal happy-path entry (active tenant, owner clicks delete)
+#   - `failed_rollback_complete` allows deleting a soft-deleted failed-provisioning
+#     row that still has lingering external resources (rare edge case, support cleanup)
+#   - `failed_deprovisioning` is the admin retry entry — orchestrator re-runs from
+#     scratch and step idempotency handles already-deleted resources
+DEPROVISION_ENTRY_STATES: Final[frozenset[str]] = frozenset(
+    {"ready", "failed_rollback_complete", "failed_deprovisioning"}
+)
+
+# Terminal states for deprovisioning. `deprovisioned` is rarely observed because
+# the row is hard-deleted in the same transaction that writes this state — it
+# exists for the CHECK constraint and as the orchestrator's final pre-delete
+# checkpoint. `failed_deprovisioning` is the observable failure state.
+DEPROVISION_TERMINAL_STATES: Final[frozenset[str]] = frozenset({"deprovisioned", "failed_deprovisioning"})
+
 # States that the startup stuck-detector (M7) should actively reconcile when they
-# persist past the detector's `updated_at` grace period. These are all states
-# except the terminal ones, `pending` (signup transient), and `queued` (awaiting
-# BackgroundTask start). Changing this set requires updating M7 tests.
-STUCK_CANDIDATE_STATES: Final[frozenset[str]] = frozenset({next_state for _, next_state in FORWARD_SEQUENCE})
+# persist past the detector's `updated_at` grace period. Provisioning's intermediate
+# states + `deprovisioning` (a deprovisioning run that crashed mid-flight needs
+# the same recovery treatment as a crashed provisioning run). Changing this set
+# requires updating M7 tests.
+STUCK_CANDIDATE_STATES: Final[frozenset[str]] = frozenset(
+    {next_state for _, next_state in FORWARD_SEQUENCE} | {"deprovisioning"}
+)
 
 # Start timestamps per (org_id, step) for duration_ms measurement. Scoped to a
 # single provisioning run; the orchestrator resets this per run.

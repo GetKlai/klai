@@ -22,6 +22,7 @@ from app.api.billing import router as billing_router
 from app.api.connectors import router as connectors_router
 from app.api.groups import router as groups_router
 from app.api.internal import router as internal_router
+from app.api.internal_connectors import router as internal_connectors_router
 from app.api.knowledge import router as knowledge_router
 from app.api.knowledge_bases import router as knowledge_bases_router
 from app.api.mcp_servers import router as mcp_servers_router
@@ -38,6 +39,7 @@ from app.logging_setup import setup_logging
 from app.middleware.klai_cors import KlaiCORSMiddleware
 from app.middleware.logging_context import LoggingContextMiddleware
 from app.middleware.session import SessionMiddleware
+from app.middleware.tenant_host import KlaiTenantHostMiddleware
 from app.services.bot_poller import poll_loop
 from app.services.events import _pending as _event_tasks
 from app.services.recording_cleanup import recording_cleanup_loop
@@ -214,10 +216,12 @@ app = FastAPI(
 #   -> no_cache_authenticated (@http decorator)
 #   -> LoggingContextMiddleware (binds request_id, org_id, user_id to structlog)
 #   -> SessionMiddleware (resolves BFF session cookie + CSRF check)
+#   -> KlaiTenantHostMiddleware (validates URL tenant slug == session org slug)
 #   -> route handler
-# So we register in reverse: SessionMiddleware first (inner), CORS last (outer).
+# So we register in reverse: tenant-host first (innermost), CORS last (outer).
 # REQ-6.7 (SPEC-SEC-CORS-001): CORS must be the LAST add_middleware call so that
 # CSRF-reject 403s from SessionMiddleware carry CORS headers to cross-origin browsers.
+app.add_middleware(KlaiTenantHostMiddleware)
 app.add_middleware(SessionMiddleware)
 app.add_middleware(LoggingContextMiddleware)
 
@@ -259,6 +263,10 @@ app.include_router(webhooks_router)
 # SEC-023 / F-038 — BFF proxy for internal services (research, scribe, docs)
 app.include_router(proxy_router)
 app.include_router(internal_router)
+# SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-04.4: callback endpoint for the
+# knowledge-ingest connector_purge_task to hard-delete a connector row
+# after the cascade-cleanup completes.
+app.include_router(internal_connectors_router)
 app.include_router(knowledge_bases_router)
 app.include_router(app_account_router)
 app.include_router(app_chat_router)

@@ -3,7 +3,7 @@ import { useAuth } from '@/lib/auth'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
 import { ArrowLeft, Loader2, Trash2 } from 'lucide-react'
-import { Card, CardContent } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -23,6 +23,8 @@ import { toast } from 'sonner'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { useSuspendUser, useReactivateUser, useOffboardUser } from '@/hooks/useUserLifecycle'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
+import { PROFILE_LADDER, type ProfileRole } from '@/lib/profiles'
 
 export const Route = createFileRoute('/admin/users/$userId/edit')({
   component: EditUserPage,
@@ -51,6 +53,7 @@ function EditUserPage() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const { userId } = Route.useParams()
+  const { user: currentUser } = useCurrentUser()
 
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
@@ -61,6 +64,10 @@ function EditUserPage() {
   const [selectedGroupId, setSelectedGroupId] = useState('')
   const [confirmRemoveId, setConfirmRemoveId] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
+  const [selectedProfile, setSelectedProfile] = useState<ProfileRole | ''>('')
+  const [savingProfile, setSavingProfile] = useState(false)
+  const [profileSaved, setProfileSaved] = useState(false)
+  const [profileError, setProfileError] = useState<string | null>(null)
 
   const { data: usersData } = useQuery({
     queryKey: ['admin-users'],
@@ -75,6 +82,9 @@ function EditUserPage() {
       setFirstName(user.first_name)
       setLastName(user.last_name)
       setLanguage(user.preferred_language)
+      if ('portal_role' in user && user.portal_role && PROFILE_LADDER.includes(user.portal_role as ProfileRole)) {
+        setSelectedProfile(user.portal_role as ProfileRole)
+      }
     }
   }, [user])
 
@@ -163,6 +173,25 @@ function EditUserPage() {
       toast.error(err instanceof Error ? err.message : m.admin_users_error_edit_generic())
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function handleSaveProfile() {
+    if (!selectedProfile) return
+    setSavingProfile(true)
+    setProfileError(null)
+    try {
+      await apiFetch(`/api/admin/users/${userId}/role`, {
+        method: 'PATCH',
+        body: JSON.stringify({ role: selectedProfile }),
+      })
+      void queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+      setProfileSaved(true)
+      setTimeout(() => setProfileSaved(false), 2500)
+    } catch (err) {
+      setProfileError(err instanceof Error ? err.message : m.admin_users_error_edit_generic())
+    } finally {
+      setSavingProfile(false)
     }
   }
 
@@ -307,6 +336,64 @@ function EditUserPage() {
               </Button>
             </div>
           </form>
+        </CardContent>
+      </Card>
+
+      {/* Profile card — SPEC-PORTAL-PROFILES-001 P3.5 */}
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle>{m.profile_picker_title()}</CardTitle>
+          <CardDescription>{m.profile_picker_description()}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {PROFILE_LADDER.map((role) => {
+            const msgs = m as unknown as Record<string, (() => string) | undefined>
+            const labelFn = msgs[`profile_${role}_label`]
+            const descFn = msgs[`profile_${role}_description`]
+            const isSelf = userId === currentUser?.user_id
+            return (
+              <label
+                key={role}
+                className={`flex items-start gap-3 rounded-lg border border-[var(--color-border)] p-3 cursor-pointer transition-colors ${selectedProfile === role ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/5' : 'hover:bg-[var(--color-muted)]'} ${isSelf ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                <input
+                  type="radio"
+                  name="profile"
+                  value={role}
+                  checked={selectedProfile === role}
+                  disabled={isSelf}
+                  onChange={() => { if (!isSelf) setSelectedProfile(role) }}
+                  className="mt-0.5 accent-[var(--color-accent)]"
+                />
+                <div className="space-y-0.5">
+                  <p className="text-sm font-medium text-[var(--color-foreground)]">
+                    {labelFn ? labelFn() : role}
+                  </p>
+                  <p className="text-xs text-[var(--color-muted-foreground)]">
+                    {descFn ? descFn() : ''}
+                  </p>
+                </div>
+              </label>
+            )
+          })}
+          {profileError && (
+            <p className="text-sm text-[var(--color-destructive)]">{profileError}</p>
+          )}
+          <Button
+            type="button"
+            onClick={() => void handleSaveProfile()}
+            disabled={savingProfile || profileSaved || !selectedProfile || userId === currentUser?.user_id}
+          >
+            {savingProfile && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+            {profileSaved
+              ? m.admin_settings_saved()
+              : savingProfile
+                ? m.admin_settings_saving()
+                : m.profile_picker_save()}
+          </Button>
+          {userId === currentUser?.user_id && (
+            <p className="text-xs text-[var(--color-muted-foreground)]">{m.profile_picker_self_edit_hint()}</p>
+          )}
         </CardContent>
       </Card>
 

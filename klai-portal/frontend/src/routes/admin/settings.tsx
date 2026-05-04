@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { apiFetch } from '@/lib/apiFetch'
+import { Checkbox } from '@/components/ui/checkbox'
 import * as m from '@/paraglide/messages'
 import { adminLogger } from '@/lib/logger'
 
@@ -51,6 +52,47 @@ function AdminSettingsPage() {
       setSelectedMfa(settings.mfa_policy ?? 'optional')
     }
   }, [settings])
+
+  // SPEC-PORTAL-PROFILES-001 P3.6: Add-on toggles.
+  // UX pattern: ticking a checkbox stages the change; user clicks Save to commit.
+  // Consistent with Language and MFA sections above.
+  const [addons, setAddons] = useState<string[]>([])
+  const [savedAddons, setSavedAddons] = useState(false)
+
+  const { data: addonsData, isLoading: addonsLoading, error: addonsQueryError } = useQuery({
+    queryKey: ['admin-enabled-addons'],
+    queryFn: async () => apiFetch<{ enabled_addons: string[] }>('/api/admin/settings/addons'),
+    enabled: auth.isAuthenticated,
+  })
+
+  useEffect(() => {
+    if (addonsData) {
+      setAddons(addonsData.enabled_addons ?? [])
+    }
+  }, [addonsData])
+
+  const addonsMutation = useMutation({
+    mutationFn: (next: string[]) =>
+      apiFetch('/api/admin/settings/addons', {
+        method: 'PATCH',
+        body: JSON.stringify({ enabled_addons: next }),
+      }),
+    onSuccess: (_data, next) => {
+      adminLogger.info('Add-ons updated', { enabled_addons: next })
+      setSavedAddons(true)
+      setTimeout(() => setSavedAddons(false), 2500)
+    },
+  })
+
+  function toggleStaged(addon: string, enabled: boolean) {
+    setAddons((prev) =>
+      enabled ? [...new Set([...prev, addon])] : prev.filter((a) => a !== addon),
+    )
+  }
+
+  const addonsDirty =
+    addonsData != null &&
+    JSON.stringify([...addons].sort()) !== JSON.stringify([...(addonsData.enabled_addons ?? [])].sort())
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-10 space-y-6" data-help-id="admin-settings-general">
@@ -170,6 +212,51 @@ function AdminSettingsPage() {
         </CardHeader>
         <CardContent>
           <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_settings_placeholder()}</p>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>{m.admin_settings_addons_title()}</CardTitle>
+          <CardDescription>
+            {m.admin_settings_addons_description()}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {addonsLoading ? (
+            <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_users_loading()}</p>
+          ) : addonsQueryError ? (
+            <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_fetch()}</p>
+          ) : (
+            <>
+              <div className="space-y-3">
+                <Checkbox
+                  checked={addons.includes('scribe')}
+                  onChange={(e) => toggleStaged('scribe', e.target.checked)}
+                  disabled={addonsMutation.isPending}
+                  label={m.admin_settings_addon_scribe()}
+                />
+                <Checkbox
+                  checked={addons.includes('docs')}
+                  onChange={(e) => toggleStaged('docs', e.target.checked)}
+                  disabled={addonsMutation.isPending}
+                  label={m.admin_settings_addon_docs()}
+                />
+              </div>
+              {addonsMutation.error && (
+                <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_save()}</p>
+              )}
+              <Button
+                onClick={() => addonsMutation.mutate(addons)}
+                disabled={addonsMutation.isPending || savedAddons || !addonsDirty}
+              >
+                {savedAddons
+                  ? m.admin_settings_saved()
+                  : addonsMutation.isPending
+                    ? m.admin_settings_saving()
+                    : m.admin_settings_save()}
+              </Button>
+            </>
+          )}
         </CardContent>
       </Card>
     </div>
