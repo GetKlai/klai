@@ -70,12 +70,24 @@ def upgrade() -> None:
         postgresql_where=sa.text("deleted_at IS NULL"),
     )
 
-    # R2: Drop the SPEC-AUTH-006 allowed-domains table (pre-launch, no data migration).
-    op.drop_table("portal_org_allowed_domains")
+    # R2: SPEC-AUTH-006's portal_org_allowed_domains table is replaced by
+    # portal_orgs.primary_domain.  The DROP TABLE is intentionally NOT done
+    # here — the table is owned by `klai` (superuser) and `portal_api`
+    # (the alembic-running role) lacks DROP TABLE privileges, which would
+    # crash the entrypoint with InsufficientPrivilegeError.
+    #
+    # Drop is delegated to alembic/versions/post_deploy_ed5b78b296f5.sql,
+    # which an operator runs manually as `klai` after deploy.  Pattern
+    # mirrors `post_deploy_f0a1b2c3d4e5.sql` (SPEC-WIDGET-002) and the RLS
+    # post-deploys.  See `klai/projects/portal-backend.md::RLS + Alembic`.
 
 
 def downgrade() -> None:
-    # Recreate portal_org_allowed_domains for reversibility
+    # Recreate portal_org_allowed_domains for reversibility.
+    # NOTE: The CREATE TABLE will assign ownership to portal_api (the
+    # alembic-running role).  If the original table was owned by klai
+    # superuser (RLS pattern), a separate ALTER TABLE OWNER run by klai is
+    # needed to restore that.  Pre-launch this is non-critical.
     op.create_table(
         "portal_org_allowed_domains",
         sa.Column("id", sa.Integer(), nullable=False),
