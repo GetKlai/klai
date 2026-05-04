@@ -8,6 +8,7 @@ import { LocaleProvider } from '@/lib/locale'
 import { Toaster } from '@/components/ui/sonner'
 import { routeTree } from './routeTree.gen'
 import { initVitals } from '@/lib/vitals'
+import { registerNavigateSingleton } from '@/lib/navigate-singleton'
 import './index.css'
 
 const queryClient = new QueryClient({
@@ -47,6 +48,12 @@ const router = createRouter({
   parseSearch,
   stringifySearch,
 })
+
+// Register the navigate singleton so apiFetch can redirect on tenant_deleting 403s.
+registerNavigateSingleton(
+  (to) => { void router.navigate({ to }) },
+  () => { queryClient.clear() },
+)
 
 declare module '@tanstack/react-router' {
   interface Register {

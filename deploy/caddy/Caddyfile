@@ -70,6 +70,25 @@
     # in the service code is a SPEC-SEC-HYGIENE-001 violation.
     # ────────────────────────────────────────────────────────────────────────
 
+    # SPEC-SEC-AUDIT-2026-04 C1: strip internal-trust headers on every inbound
+    # public reverse_proxy. These headers are ONLY valid when set by internal
+    # services — a client spoofing them must never reach an upstream.
+    # header_up with a "-" prefix removes the named request header before
+    # forwarding. This is a no-op if the header is absent, so it is safe on
+    # all routes including those that don't read these headers today.
+    #
+    # Headers stripped:
+    #   X-Internal-Secret  — service-to-service shared secret (klai-mailer,
+    #                         knowledge-ingest, retrieval-api, scribe-api,
+    #                         connector, knowledge-mcp)
+    #   X-Caller-Service   — IDENTITY-ASSERT caller identity claim
+    #   X-Org-ID           — tenant scope injected by portal on internal hops
+    #   X-User-ID          — user identity injected by portal/knowledge-mcp
+    #
+    # DO NOT strip on tenant caddyfiles (imported below) — those route
+    # LibreChat <-> knowledge-mcp on the internal Docker network where
+    # these headers are legitimately set.
+
     # Logs ingest (VictoriaLogs push endpoint for remote Alloy agents)
     @logs-ingest host logs-ingest.{$DOMAIN}
     handle @logs-ingest {
@@ -80,6 +99,10 @@
         # VictoriaLogs requires basic auth — pass credentials upstream
         reverse_proxy victorialogs:9428 {
             header_up Authorization "Basic {$VICTORIALOGS_BASIC_AUTH_B64}"
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-User-ID
         }
     }
 
@@ -89,14 +112,24 @@
         # Allow framing from our own domains for OIDC flow inside portal iframe.
         header Content-Security-Policy "frame-ancestors 'self' *.{$DOMAIN}"
         # Zitadel handles its own rate limiting internally
-        reverse_proxy h2c://zitadel:8080
+        reverse_proxy h2c://zitadel:8080 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-User-ID
+        }
     }
 
     # LiteLLM model proxy — /health only (for uptime monitoring)
     @llm host llm.{$DOMAIN}
     handle @llm {
         handle /health/liveliness {
-            reverse_proxy litellm:4000
+            reverse_proxy litellm:4000 {
+                header_up -X-Internal-Secret
+                header_up -X-Caller-Service
+                header_up -X-Org-ID
+                header_up -X-User-ID
+            }
         }
         respond 403
     }
@@ -115,7 +148,12 @@
                 window 1m
             }
         }
-        reverse_proxy grafana:3000
+        reverse_proxy grafana:3000 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-User-ID
+        }
     }
 
     @grafana host grafana.{$DOMAIN}
@@ -129,7 +167,12 @@
         }
         @grafana-html path / /login /logout /d/* /dashboards* /explore* /alerting* /datasources* /plugins* /admin*
         header @grafana-html Cache-Control "no-cache, no-store, must-revalidate"
-        reverse_proxy grafana:3000
+        reverse_proxy grafana:3000 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-User-ID
+        }
     }
 
     # GlitchTip (frontend error tracking)
@@ -142,7 +185,12 @@
                 window 1m
             }
         }
-        reverse_proxy glitchtip-web:8000
+        reverse_proxy glitchtip-web:8000 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-User-ID
+        }
     }
 
     # Connector API (GitHub + external source sync) — must be before portal /api/* catch-all
@@ -155,7 +203,12 @@
                 window 1m
             }
         }
-        reverse_proxy klai-connector:8200
+        reverse_proxy klai-connector:8200 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-User-ID
+        }
     }
 
     # Portal API — stricter limit on sensitive provisioning endpoints
@@ -170,13 +223,22 @@
                 window 1m
             }
         }
-        reverse_proxy portal-api:8010
+        reverse_proxy portal-api:8010 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-User-ID
+        }
     }
 
     # Knowledge base images served via Garage S3 website endpoint (anonymous reads)
     handle_path /kb-images/* {
         reverse_proxy garage:3902 {
             header_up Host klai-images.web.garage
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-User-ID
         }
     }
 
@@ -189,7 +251,12 @@
                 window 1m
             }
         }
-        reverse_proxy portal-api:8010
+        reverse_proxy portal-api:8010 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-User-ID
+        }
     }
 
     # Dev environment — dev.getklai.com routes to portal-api-dev + /srv/portal-dev
@@ -205,7 +272,12 @@
         }
         route {
             @dev-api path /api/*
-            reverse_proxy @dev-api portal-api-dev:8010
+            reverse_proxy @dev-api portal-api-dev:8010 {
+                header_up -X-Internal-Secret
+                header_up -X-Caller-Service
+                header_up -X-Org-ID
+                header_up -X-User-ID
+            }
 
             root * /srv/portal-dev
 
@@ -221,7 +293,12 @@
     }
 
     handle /api/* {
-        reverse_proxy portal-api:8010
+        reverse_proxy portal-api:8010 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-User-ID
+        }
     }
 
     # SEC-023 / F-038 — Scribe/Docs are no longer publicly routed.
@@ -244,7 +321,12 @@
             }
         }
         uri strip_prefix /bots
-        reverse_proxy api-gateway:8000
+        reverse_proxy api-gateway:8000 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-User-ID
+        }
     }
 
     # Portal SPA — static files (fallback for all *.${DOMAIN})

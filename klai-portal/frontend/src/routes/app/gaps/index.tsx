@@ -11,6 +11,7 @@ import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
+import { RoleGuard } from '@/components/layout/RoleGuard'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { Tooltip } from '@/components/ui/tooltip'
 
@@ -24,7 +25,9 @@ export const Route = createFileRoute('/app/gaps/')({
   }),
   component: () => (
     <ProductGuard product="knowledge">
-      <GapsPage />
+      <RoleGuard minRole="kb_manager">
+        <GapsPage />
+      </RoleGuard>
     </ProductGuard>
   ),
 })

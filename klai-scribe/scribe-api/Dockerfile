@@ -13,6 +13,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 # Repo-mirror layout: /repo/klai-libs/..., /repo/klai-scribe/scribe-api/...
 WORKDIR /repo
 COPY klai-libs/log-utils klai-libs/log-utils
+COPY klai-libs/identity-assert klai-libs/identity-assert
 COPY klai-scribe/scribe-api/pyproject.toml klai-scribe/scribe-api/pyproject.toml
 COPY klai-scribe/scribe-api/uv.lock klai-scribe/scribe-api/uv.lock
 
@@ -48,6 +49,16 @@ ENV PATH="/repo/klai-scribe/scribe-api/.venv/bin:${PATH}" \
 COPY klai-scribe/scribe-api/app app
 COPY klai-scribe/scribe-api/alembic alembic
 COPY klai-scribe/scribe-api/alembic.ini alembic.ini
+# SPEC-SEC-WEBHOOK-001 REQ-6: shared uvicorn launcher (Caddy IP resolution +
+# --proxy-headers). Copied from repo root scripts/ directory.
+COPY scripts/uvicorn-launch.sh /app/scripts/uvicorn-launch.sh
+RUN chmod +x /app/scripts/uvicorn-launch.sh
+# SPEC-SEC-AUDIT-2026-04 C5 / SPEC-SEC-HYGIENE-001: container entrypoint runs
+# alembic upgrade head before starting uvicorn so that new migrations are
+# applied automatically on every deploy. Mirrors the portal-api pattern.
+# See scribe-deploy-no-alembic pitfall in .claude/rules/klai/pitfalls/process-rules.md.
+COPY klai-scribe/scribe-api/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 RUN adduser --disabled-password --gecos "" klai && \
     mkdir -p /data/audio && chown klai:klai /data/audio
@@ -56,9 +67,7 @@ EXPOSE 8020
 
 USER klai
 
-# SPEC-SEC-WEBHOOK-001 REQ-1.6: --proxy-headers + allow-ips=127.0.0.1 for internal
-# services. scribe-api is reached only on klai-net (portal-api BFF proxy); no
-# upstream is trusted to set X-Forwarded-For. request.client.host reflects the
-# TCP peer's container IP, which is the legitimate caller identity for
-# service-to-service rate-limiting.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8020", "--proxy-headers", "--forwarded-allow-ips", "127.0.0.1"]
+# SPEC-SEC-AUDIT-2026-04 C5: entrypoint.sh runs alembic upgrade head then
+# delegates to the shared uvicorn-launch.sh (Caddy IP resolution +
+# --proxy-headers). No CMD needed — entrypoint.sh is the sole startup path.
+ENTRYPOINT ["/app/entrypoint.sh"]

@@ -36,7 +36,7 @@ def _make_org(plan: str = "core") -> MagicMock:
 
 def _make_caller() -> MagicMock:
     caller = MagicMock()
-    caller.role = "member"
+    caller.role = "kb_manager"
     return caller
 
 

@@ -20,10 +20,15 @@ dependencies = [
     # the transcription-service error log path so a reflected
     # KNOWLEDGE_INGEST_SECRET / litellm_master_key never lands in VictoriaLogs.
     "klai-log-utils",
+    # SPEC-SEC-AUDIT-2026-04 B1: replace JWT resourceowner trust with portal
+    # identity-verify. IdentityAsserter provides the canonical caller pattern
+    # (60s LRU cache, fail-closed, structlog telemetry).
+    "klai-identity-assert",
 ]
 
 [tool.uv.sources]
 klai-log-utils = { path = "../../klai-libs/log-utils", editable = true }
+klai-identity-assert = { path = "../../klai-libs/identity-assert", editable = true }
 
 [project.optional-dependencies]
 dev = [

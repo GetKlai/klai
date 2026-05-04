@@ -49,8 +49,10 @@ _slog = structlog.get_logger()
 # `.claude/rules/klai/platform/zitadel.md` "Project roles and JWT claims".
 _ZITADEL_ROLE_BY_PORTAL_ROLE: Final[Mapping[str, str | None]] = {
     "admin": "org:owner",
-    "group-admin": None,
-    "member": None,
+    "group_manager": None,
+    "kb_manager": None,
+    "company": None,
+    "personal": None,
 }
 
 router = APIRouter()
@@ -66,7 +68,7 @@ class UserOut(BaseModel):
     email: str
     first_name: str
     last_name: str
-    role: Literal["admin", "group-admin", "member"]
+    role: Literal["personal", "company", "kb_manager", "group_manager", "admin"]
     preferred_language: Literal["nl", "en"]
     status: str
     created_at: datetime
@@ -81,7 +83,7 @@ class InviteRequest(BaseModel):
     email: EmailStr
     first_name: str
     last_name: str
-    role: Literal["admin", "group-admin", "member"] = "member"
+    role: Literal["personal", "company", "kb_manager", "group_manager", "admin"] = "company"
     preferred_language: Literal["nl", "en"] = "nl"
 
 
@@ -97,7 +99,7 @@ class UserUpdateRequest(BaseModel):
 
 
 class RoleUpdateRequest(BaseModel):
-    role: Literal["admin", "group-admin", "member"]
+    role: Literal["personal", "company", "kb_manager", "group_manager", "admin"]
 
 
 class MessageResponse(BaseModel):
