@@ -642,7 +642,10 @@ async def demote_admin(
             detail="Cannot demote: this is the last admin. Promote another user first.",
         )
 
-    target.role = "member"
+    # SPEC-PORTAL-PROFILES-001 migration: "member" no longer exists in the
+    # role enum. A demoted admin keeps org-knowledge read access, so demote
+    # to "company" (the rung that mirrors what former members had).
+    target.role = "company"
     await db.commit()
     logger.info(
         "demote_admin: actor=%s demoted user=%s in org=%d",
@@ -651,7 +654,7 @@ async def demote_admin(
         org.id,
     )
     emit_event("user.role_demoted", org_id=org.id, user_id=zitadel_user_id)
-    return MessageResponse(message=f"User {zitadel_user_id} demoted to member.")
+    return MessageResponse(message=f"User {zitadel_user_id} demoted to company.")
 
 
 @router.delete("/users/me", response_model=MessageResponse)
