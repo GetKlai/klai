@@ -419,6 +419,59 @@ on the very first new-build connector, requiring
 `docker exec klai-core-klai-connector-1 sh -c 'PYTHONPATH=. .venv/bin/alembic upgrade head'`
 as a hand-applied fix before this entrypoint pattern landed.
 
+## alembic-cannot-drop-non-portal_api-tables (HIGH)
+
+`portal_api` is the role that runs `alembic upgrade head` from the
+portal-api `entrypoint.sh`. Tables created with RLS (or any table whose
+ownership is `klai` superuser instead of `portal_api`) cannot be dropped
+by `op.drop_table(...)` — Postgres raises
+`InsufficientPrivilegeError: must be owner of table <name>`. The
+entrypoint then crash-loops and the deploy lands in 502.
+
+This bit SPEC-AUTH-009 (PR #259, 2026-05-04). Migration `ed5b78b296f5`
+ended with `op.drop_table("portal_org_allowed_domains")`. The table was
+owned by `klai` (RLS pattern from SPEC-AUTH-006), not `portal_api`. On
+deploy:
+
+1. `alembic upgrade head` ran the ADD COLUMN statements fine.
+2. The DROP TABLE failed with `InsufficientPrivilegeError`.
+3. portal-api crash-looped on every `alembic upgrade` retry.
+4. `voys.getklai.com/api/auth/oidc/start` → 502.
+
+**Recovery (manual, on prod):**
+```bash
+# As klai superuser:
+DROP TABLE IF EXISTS <table> CASCADE;
+# Re-run any pending migration steps (ADD COLUMN with backfill, etc.) manually:
+ALTER TABLE ... ;
+UPDATE ... ;
+# Stamp alembic so the entrypoint doesn't re-attempt the failing migration:
+UPDATE alembic_version SET version_num = '<failed-revision>';
+docker restart klai-core-portal-api-1
+```
+
+**Prevention:** Whenever a migration drops a table whose `pg_class.relowner`
+is not `portal_api`, do NOT use `op.drop_table(...)`. Instead:
+
+1. Replace the `op.drop_table(...)` call with a comment explaining the delegation.
+2. Add a sibling `alembic/versions/post_deploy_<revision>.sql` containing
+   `DROP TABLE IF EXISTS <name> CASCADE;` (idempotent).
+3. The post-deploy SQL is run by an operator (or `apply_post_deploy_sql.sh`)
+   as `klai` superuser AFTER `alembic upgrade head` completes successfully.
+
+Mirrors the RLS pattern (`post_deploy_f0a1b2c3d4e5.sql` for SPEC-WIDGET-002,
+`post_deploy_rls_*.sql` for the RLS rollouts).
+
+**Detection during PR review:** for any migration with `op.drop_table(...)`
+or `op.execute("ALTER TABLE ... OWNER TO ...")`, check `pg_class.relowner`
+on the live DB (or recall the table's history). If it was created by an
+RLS-enabled migration, it almost certainly is owned by `klai`.
+
+```bash
+# Quick owner-check on prod:
+ssh core-01 "docker exec klai-core-postgres-1 sh -c 'psql -U \$POSTGRES_USER -d \$POSTGRES_DB -c \"SELECT tablename, tableowner FROM pg_tables WHERE tablename = ARG;\"'"
+```
+
 ## ruff-format-and-ruff-check-are-different (MED)
 `uv run ruff check` and `uv run ruff format --check` enforce different
 things. Lint (`check`) catches code-correctness issues (unused imports,
