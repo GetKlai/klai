@@ -47,18 +47,36 @@ def reset_redis_client() -> None:
 
 
 def get_redis() -> Any:
-    """Return the module-level redis asyncio client, creating it lazily."""
+    """Return the module-level redis asyncio client, creating it lazily.
+
+    When `redis_host` is set in config, build the client from structured
+    fields (host/port/password/db). This avoids URL parsing breakage when
+    REDIS_PASSWORD contains URL-special characters (`/`, `+`, `=`) — same
+    reason portal-api uses host/port/password fields instead of a URL.
+    Falls back to `redis_url` for tests that point at fakeredis.
+    """
     global _redis_client
     if _redis_client is None:
         # Lazy import so test overrides can install a stub before first use
         # without pulling redis-py into process memory unnecessarily.
         import redis.asyncio as redis_asyncio
-        _redis_client = redis_asyncio.from_url(
-            settings.redis_url,
-            decode_responses=False,
-            socket_timeout=2.0,
-            socket_connect_timeout=2.0,
-        )
+        if settings.redis_host:
+            _redis_client = redis_asyncio.Redis(
+                host=settings.redis_host,
+                port=settings.redis_port,
+                password=settings.redis_password or None,
+                db=settings.redis_db,
+                decode_responses=False,
+                socket_timeout=2.0,
+                socket_connect_timeout=2.0,
+            )
+        else:
+            _redis_client = redis_asyncio.from_url(
+                settings.redis_url,
+                decode_responses=False,
+                socket_timeout=2.0,
+                socket_connect_timeout=2.0,
+            )
     return _redis_client
 
 

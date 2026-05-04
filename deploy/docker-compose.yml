@@ -323,7 +323,16 @@ services:
       # (SPEC-SEC-MAILER-INJECTION-001 REQ-4 + REQ-6). Mailer fails closed
       # with HTTP 503 when redis is unreachable, so it MUST share net-redis
       # with the redis service — same pattern as portal-api and litellm.
-      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      #
+      # Use structured host/port/password fields rather than REDIS_URL —
+      # the production REDIS_PASSWORD contains URL-special characters
+      # (`/`, `+`, `=`) which urllib mis-parses as path/query/fragment
+      # separators (Python urllib bug, not redis-py). portal-api uses the
+      # same structured pattern for the same reason.
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_DB: "0"
     networks:
       - klai-net
       - net-redis

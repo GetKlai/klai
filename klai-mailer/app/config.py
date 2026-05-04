@@ -37,9 +37,21 @@ class Settings(BaseSettings):
     # Empty / whitespace-only values are rejected at startup (REQ-9.2).
     internal_secret: str
 
-    # Redis URL for nonce tracking (REQ-6) and per-recipient rate limiting
-    # (REQ-4). Required in every deployment — nonce replay protection is
-    # a security control, not a degraded-monitoring feature.
+    # Redis connection for nonce tracking (REQ-6) and per-recipient rate
+    # limiting (REQ-4). Required in every deployment — nonce replay protection
+    # is a security control, not a degraded-monitoring feature.
+    #
+    # Two configuration shapes are supported:
+    #   1. Structured (preferred): redis_host + redis_port + redis_password +
+    #      redis_db. Works correctly when REDIS_PASSWORD contains URL-special
+    #      characters (`/`, `+`, `=`) — matches the portal-api pattern.
+    #   2. Legacy: redis_url (e.g. "redis://host:port/db"). Used by tests via
+    #      fakeredis URLs. NOT safe in production with password-encoded URLs
+    #      because urllib mis-parses `/` in the password as a path break.
+    redis_host: str = ""
+    redis_port: int = 6379
+    redis_password: str = ""
+    redis_db: int = 0
     redis_url: str = "redis://redis:6379/0"
 
     # Per-recipient rate limit for /internal/send (REQ-4.4). Default 10
