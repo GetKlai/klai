@@ -14,6 +14,7 @@ Coverage:
 from __future__ import annotations
 
 import os
+from unittest.mock import patch
 
 import pytest
 
@@ -80,14 +81,20 @@ async def test_nightly_task_uses_env_var_for_variant():
     app, connector = _make_app()
     register_eval_tasks(app)
 
+    # Mock load_suite so the task body doesn't need a real YAML file.
+    from knowledge_ingest.eval.suite_loader import Suite
+
+    mock_suite = Suite(name="chat", description="", queries=[])
+
     try:
         os.environ["RAG_EVAL_VARIANT"] = "contextual_v1"
         with structlog.testing.capture_logs() as captured:
-            await app.tasks[_TASK_NAME].defer_async(suite="chat")
-            jobs = list(connector.jobs.values())
-            assert len(jobs) == 1
-            task = app.tasks[jobs[0]["task_name"]]
-            await task(**jobs[0]["args"])
+            with patch("knowledge_ingest.eval.suite_loader.load_suite", return_value=mock_suite):
+                await app.tasks[_TASK_NAME].defer_async(suite="chat")
+                jobs = list(connector.jobs.values())
+                assert len(jobs) == 1
+                task = app.tasks[jobs[0]["task_name"]]
+                await task(**jobs[0]["args"])
     finally:
         os.environ.pop("RAG_EVAL_VARIANT", None)
 
@@ -113,12 +120,17 @@ async def test_nightly_task_default_variant_baseline():
     app, connector = _make_app()
     register_eval_tasks(app)
 
+    from knowledge_ingest.eval.suite_loader import Suite
+
+    mock_suite = Suite(name="chat", description="", queries=[])
+
     with structlog.testing.capture_logs() as captured:
-        await app.tasks[_TASK_NAME].defer_async(suite="chat")
-        jobs = list(connector.jobs.values())
-        assert len(jobs) == 1
-        task = app.tasks[jobs[0]["task_name"]]
-        await task(**jobs[0]["args"])
+        with patch("knowledge_ingest.eval.suite_loader.load_suite", return_value=mock_suite):
+            await app.tasks[_TASK_NAME].defer_async(suite="chat")
+            jobs = list(connector.jobs.values())
+            assert len(jobs) == 1
+            task = app.tasks[jobs[0]["task_name"]]
+            await task(**jobs[0]["args"])
 
     started_events = [e for e in captured if e.get("event") == "rag_eval_run_started"]
     assert started_events, "rag_eval_run_started log event not emitted"
@@ -169,11 +181,16 @@ async def test_log_events_emitted():
     app, connector = _make_app()
     register_eval_tasks(app)
 
+    from knowledge_ingest.eval.suite_loader import Suite
+
+    mock_suite = Suite(name="knowledge_org", description="", queries=[])
+
     with structlog.testing.capture_logs() as captured:
-        await app.tasks[_TASK_NAME].defer_async(suite="knowledge_org")
-        jobs = list(connector.jobs.values())
-        task = app.tasks[jobs[0]["task_name"]]
-        await task(**jobs[0]["args"])
+        with patch("knowledge_ingest.eval.suite_loader.load_suite", return_value=mock_suite):
+            await app.tasks[_TASK_NAME].defer_async(suite="knowledge_org")
+            jobs = list(connector.jobs.values())
+            task = app.tasks[jobs[0]["task_name"]]
+            await task(**jobs[0]["args"])
 
     event_names = [e.get("event") for e in captured]
     assert "rag_eval_run_started" in event_names

@@ -1,57 +1,42 @@
 """
-Procrastinate task registration for the nightly RAGAS evaluation harness.
+Procrastinate task for the nightly RAGAS evaluation harness (SPEC-RAG-EVAL-001).
 
-This module is the sole public entrypoint for wiring the eval task into the
-Procrastinate worker. Call ``register_eval_tasks(procrastinate_app)`` from
-``enrichment_tasks.init_app()`` alongside the other task-module registrations.
-
-Why it exists:
-    Retrieval-quality regressions are invisible without instrumented metrics.
-    The nightly ``evaluate_retrieval_quality_nightly`` task provides RAGAS
-    scores (context_precision, context_recall, faithfulness, answer_relevance)
-    written to ``knowledge.rag_eval_results``, which Grafana surfaces as a
-    7-day moving average per suite.  Unit 3 fills in the retrieval + metric
-    logic; this module establishes the orchestration shell — scheduling,
-    concurrency locking, variant tagging, and structured logging — so that
-    wiring and locking are proven correct before the heavier work lands.
+Per-query flow (REQ-1, REQ-2, REQ-3):
+    1. Load suite YAML via suite_loader.
+    2. For each query: call /retrieve on klai-retrieval-api.
+       On failure: write a NULL-metric row with meta.error and continue.
+    3. Generate model answer via klai-fast.
+    4. Run 4 RAGAS metrics via klai-fast as judge.
+    5. Write one row to knowledge.rag_eval_results.
+    6. Emit per-query structured log.
 
 Concurrency contract:
-    ``queueing_lock=f"rag-eval-{suite}"`` ensures at most one pending or
-    running evaluation exists per suite at any time.  A second ``.defer()``
-    against the same suite raises ``procrastinate.exceptions.AlreadyEnqueued``
-    (Procrastinate's deferral-rejection mechanism), satisfying REQ-5.
+    queueing_lock=f"rag-eval-{suite}" ensures at most one evaluation per suite
+    at any time (REQ-5).
 
 Variant routing (REQ-6):
-    The env var ``RAG_EVAL_VARIANT`` is read once per task invocation.
-    Default is ``'baseline'``.  Experiment branches set this var before the
-    nightly cron fires.  Every result row carries the same variant value.
+    RAG_EVAL_VARIANT env var, default baseline.
 """
 
 from __future__ import annotations
 
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 import structlog
 
 from knowledge_ingest import queues
+from knowledge_ingest.config import settings
 
 logger = structlog.get_logger()
 
+_MAX_ERROR_LEN = 200
+
 
 def register_eval_tasks(procrastinate_app: Any) -> None:
-    """Register the nightly RAGAS evaluation task on the Procrastinate app.
-
-    Mirror of the ``register_clustering_tasks`` / ``register_crawl_tasks``
-    pattern used by every other task module in this service.  Called once
-    from ``enrichment_tasks.init_app()`` after the DB pool is ready.
-
-    The registered task (``evaluate_retrieval_quality_nightly``) is
-    skeletal in Unit 2: it emits structured log events and returns a
-    zero-count dict.  Unit 3 replaces the stub body with real retrieval
-    calls and RAGAS metric computation.
-    """
+    """Register the nightly RAGAS evaluation task on the Procrastinate app."""
     import procrastinate
 
     @procrastinate_app.task(
@@ -59,25 +44,116 @@ def register_eval_tasks(procrastinate_app: Any) -> None:
         retry=procrastinate.RetryStrategy(max_attempts=1),
     )
     async def evaluate_retrieval_quality_nightly(suite: str) -> dict:
-        """Run the RAGAS evaluation harness for one query suite.
+        """Run the RAGAS evaluation harness for one query suite."""
+        from knowledge_ingest.eval import judge_client, retrieval_client
+        from knowledge_ingest.eval.retrieval_client import RetrievalFailure
+        from knowledge_ingest.eval.store import insert_eval_row
+        from knowledge_ingest.eval.suite_loader import load_suite
 
-        Parameters
-        ----------
-        suite:
-            Name of the query suite to evaluate (e.g. ``'chat'``,
-            ``'knowledge_org'``).  Determines the lock key so different
-            suites can run in parallel while the same suite cannot collide
-            with itself (REQ-5).
-        """
         variant = os.getenv("RAG_EVAL_VARIANT", "baseline")
         t_start = time.monotonic()
 
         logger.info("rag_eval_run_started", suite=suite, variant=variant)
 
-        # --- Unit 3 will replace these stubs with real retrieval + RAGAS ---
+        suites_dir = Path(settings.rag_eval_suites_dir)
+        suite_file = suites_dir / f"{suite}.yaml"
+        loaded = load_suite(suite_file)
+
         queries_processed: int = 0
         rows_written: int = 0
-        # -------------------------------------------------------------------
+
+        for query in loaded.queries:
+            q_errors: list[str] = []
+            meta: dict[str, Any] = {
+                "variant": variant,
+                "errors": q_errors,
+            }
+
+            retrieval = await retrieval_client.retrieve_chunks(
+                query=query.query,
+                org_zitadel_id=query.org_zitadel_id,
+                user_zitadel_id=query.user_zitadel_id,
+            )
+
+            if isinstance(retrieval, RetrievalFailure):
+                reason = retrieval.reason[:_MAX_ERROR_LEN]
+                meta["error"] = f"retrieval_failed: {reason}"
+                await insert_eval_row(
+                    suite=suite,
+                    variant=variant,
+                    query_id=query.id,
+                    context_precision=None,
+                    context_recall=None,
+                    faithfulness=None,
+                    answer_relevance=None,
+                    retrieved_chunk_ids=[],
+                    retrieval_ms=None,
+                    total_tokens=None,
+                    meta=meta,
+                )
+                rows_written += 1
+                queries_processed += 1
+                logger.info(
+                    "rag_eval_query_evaluated",
+                    query_id=query.id,
+                    suite=suite,
+                    variant=variant,
+                    context_precision=None,
+                    context_recall=None,
+                    faithfulness=None,
+                    answer_relevance=None,
+                    retrieval_ms=None,
+                    error_count=1,
+                )
+                continue
+
+            chunks = retrieval.chunks
+            retrieval_ms = retrieval.retrieval_ms
+            total_tokens = retrieval.total_tokens
+            chunk_ids = [c.get("id", "") for c in chunks if c.get("id")]
+
+            answer = await judge_client.generate_answer(
+                query=query.query,
+                chunks=chunks,
+            )
+            if answer is None:
+                q_errors.append("judge_answer_failed")
+
+            metrics = await judge_client.evaluate_query(
+                query=query.query,
+                chunks=chunks,
+                answer=answer,
+                expected_topics=query.expected_topics,
+            )
+
+            await insert_eval_row(
+                suite=suite,
+                variant=variant,
+                query_id=query.id,
+                context_precision=metrics.get("context_precision"),
+                context_recall=metrics.get("context_recall"),
+                faithfulness=metrics.get("faithfulness"),
+                answer_relevance=metrics.get("answer_relevance"),
+                retrieved_chunk_ids=chunk_ids,
+                retrieval_ms=retrieval_ms,
+                total_tokens=total_tokens,
+                meta=meta,
+            )
+            rows_written += 1
+            queries_processed += 1
+
+            logger.info(
+                "rag_eval_query_evaluated",
+                query_id=query.id,
+                suite=suite,
+                variant=variant,
+                context_precision=metrics.get("context_precision"),
+                context_recall=metrics.get("context_recall"),
+                faithfulness=metrics.get("faithfulness"),
+                answer_relevance=metrics.get("answer_relevance"),
+                retrieval_ms=retrieval_ms,
+                error_count=len(q_errors),
+            )
 
         duration_ms = int((time.monotonic() - t_start) * 1000)
         logger.info(
@@ -95,6 +171,4 @@ def register_eval_tasks(procrastinate_app: Any) -> None:
             "rows_written": rows_written,
         }
 
-    # Expose via app attribute so callers (e.g. tests, __main__) can reach
-    # the task object without importing this module directly.
     procrastinate_app.evaluate_retrieval_quality_nightly = evaluate_retrieval_quality_nightly  # type: ignore[attr-defined]
