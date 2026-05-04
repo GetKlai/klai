@@ -19,7 +19,9 @@ _VALID_SETTINGS_KWARGS: dict[str, str] = {
     "zitadel_client_secret": "test-zitadel-secret-12345",
     "github_app_id": "12345",
     "github_app_private_key": "-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----",
-    "encryption_key": "0" * 64,
+    # Base64 of 32 zero bytes -- valid AES-256 KEK shape required by the
+    # encryption_key validator added 2026-05-04.
+    "encryption_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
     "knowledge_ingest_url": "http://knowledge-ingest:8000",
     # The two fields under test default to "" and require fail-closed validators.
     "knowledge_ingest_secret": "test-ingest-secret-12345",

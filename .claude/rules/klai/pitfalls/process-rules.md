@@ -887,6 +887,44 @@ Reference: SPEC-SEC-INTERNAL-001 connector empty-secret bypass; klai-portal/back
 
 **Prevention:** Outbound HTTP clients MUST refuse to construct the request if the credential is falsy. Raise at construction, never silently send.
 
+## empty-encryption-key-mid-lifespan-crash (HIGH)
+When a service uses a base64-encoded AES / Fernet / KEK env var that is consumed via `cipher = AESGCM(base64.b64decode(settings.encryption_key))` (or equivalent) during FastAPI lifespan, an empty / missing / invalid env var crashes mid-lifespan with a cryptic `ValueError: AES-256 requires a 32-byte key, got 0 bytes`. The container restart-loops, ops sees a stack trace deep inside cryptography internals, and the actual misconfiguration is invisible.
+
+Reference: 2026-05-04 incident on klai-connector. `CONNECTOR_ENCRYPTION_KEY` was declared in `deploy/docker-compose.yml` as `${CONNECTOR_ENCRYPTION_KEY}` but was never added to `klai-infra/core-01/.env.sops`. Compose interpolation passed empty string through, pydantic-settings happily stored `""`, and `AESGCMCipher(base64.b64decode(""))` crashed at `cipher = AESGCM(b"")`.
+
+**Prevention:**
+
+1. **Pydantic validator on every encryption-key field**, mirroring the `_require_*_secret` patterns in `klai-mailer/app/config.py` and `klai-connector/app/core/config.py`:
+   ```python
+   @field_validator("encryption_key", mode="after")
+   @classmethod
+   def _require_valid_encryption_key(cls, v: str) -> str:
+       if not v or not v.strip():
+           raise ValueError("CONNECTOR_ENCRYPTION_KEY must be non-empty base64 …")
+       try:
+           decoded = base64.b64decode(v, validate=True)
+       except Exception as exc:
+           raise ValueError(f"… valid base64. {exc!s}") from exc
+       if len(decoded) != EXPECTED_KEY_LEN:  # 32 for AES-256, 32 for Fernet
+           raise ValueError(f"… exactly {EXPECTED_KEY_LEN} bytes, got {len(decoded)}")
+       return v
+   ```
+   Validator runs at module-load (Settings init) — fails BEFORE the FastAPI lifespan, so the error surface is "ValidationError on Settings load" with an actionable message, not a mid-lifespan crash.
+
+2. **Test the validator** with: empty string, whitespace-only, invalid base64, decoded-too-short, decoded-too-long, missing-env. See `klai-connector/tests/test_encryption_key_validator.py` for a worked example.
+
+3. **VALIDATOR-ENV-PARITY applies**: before landing the validator, verify the env var exists in `klai-infra/core-01/.env.sops`. Without env-parity, the validator-bearing release crash-loops on every deploy. See validator-env-parity (HIGH) above.
+
+4. **Audit checklist** when adding a new encryption / KEK field to a service config:
+   - Field declared in `app/core/config.py` Settings? ✓
+   - Field interpolated in `deploy/docker-compose.yml` environment block? ✓
+   - Env var present in `klai-infra/core-01/.env.sops`? ✓
+   - `@field_validator(mode="after")` rejects empty + invalid format? ✓
+   - Test file covers all reject paths? ✓
+   - Test for valid 32-byte (or whatever-length) round-trip? ✓
+
+   All six required. Missing any = future restart-loop incident.
+
 ## non-constant-time-secret-compare (HIGH)
 `==` and `!=` short-circuit on the first non-matching byte. Comparing user-supplied tokens / signatures / secrets with these operators leaks length and content via timing. The leak is exploitable across the LAN; on a same-host attacker (think compromised sidecar), a few thousand probes recovers the secret byte-by-byte.
 
