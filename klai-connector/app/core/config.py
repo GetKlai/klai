@@ -110,6 +110,42 @@ class Settings(BaseSettings):
         return v
 
     # ------------------------------------------------------------------
+    # Fail-closed startup on the AES-256 KEK used by PostgresSecretsStore.
+    # Without this validator, an empty/missing CONNECTOR_ENCRYPTION_KEY
+    # crashes mid-lifespan with `AES-256 requires a 32-byte key, got 0
+    # bytes` and the container restart-loops with a cryptic trace. The
+    # validator surfaces the same misconfiguration at module-load time
+    # with an actionable error.
+    #
+    # VALIDATOR-ENV-PARITY: CONNECTOR_ENCRYPTION_KEY must exist in
+    # klai-infra/core-01/.env.sops before this code is deployed. Deploy
+    # order is env-var-first, validator-second. See validator-env-parity
+    # (HIGH) pitfall in .claude/rules/klai/pitfalls/process-rules.md.
+    # ------------------------------------------------------------------
+    @field_validator("encryption_key", mode="after")
+    @classmethod
+    def _require_valid_encryption_key(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError(
+                "CONNECTOR_ENCRYPTION_KEY must be a non-empty base64-encoded "
+                "32-byte AES-256 key. PostgresSecretsStore uses this as the "
+                "KEK for connector credential storage; an empty value would "
+                "crash the lifespan with a 0-byte cipher key."
+            )
+        try:
+            decoded = base64.b64decode(v, validate=True)
+        except Exception as exc:
+            raise ValueError(f"CONNECTOR_ENCRYPTION_KEY must be valid base64. Decode failed: {exc!s}.") from exc
+        if len(decoded) != 32:
+            raise ValueError(
+                "CONNECTOR_ENCRYPTION_KEY must decode to exactly 32 bytes "
+                f"(AES-256). Got {len(decoded)} bytes after base64 decode. "
+                "Generate a valid key with: python -c 'import secrets, base64; "
+                "print(base64.b64encode(secrets.token_bytes(32)).decode())'"
+            )
+        return v
+
+    # ------------------------------------------------------------------
     # SPEC-SEC-INTERNAL-001 REQ-9.3: fail-closed startup on empty outbound
     # secrets. Mirrors the SPEC-SEC-MAILER-INJECTION-001 mailer validators.
     # An ALLOW_EMPTY_OUTBOUND_SECRETS escape hatch (REQ-9.3 exception) is NOT
