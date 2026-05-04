@@ -39,6 +39,7 @@ from app.logging_setup import setup_logging
 from app.middleware.klai_cors import KlaiCORSMiddleware
 from app.middleware.logging_context import LoggingContextMiddleware
 from app.middleware.session import SessionMiddleware
+from app.middleware.tenant_host import KlaiTenantHostMiddleware
 from app.services.bot_poller import poll_loop
 from app.services.events import _pending as _event_tasks
 from app.services.recording_cleanup import recording_cleanup_loop
@@ -215,10 +216,12 @@ app = FastAPI(
 #   -> no_cache_authenticated (@http decorator)
 #   -> LoggingContextMiddleware (binds request_id, org_id, user_id to structlog)
 #   -> SessionMiddleware (resolves BFF session cookie + CSRF check)
+#   -> KlaiTenantHostMiddleware (validates URL tenant slug == session org slug)
 #   -> route handler
-# So we register in reverse: SessionMiddleware first (inner), CORS last (outer).
+# So we register in reverse: tenant-host first (innermost), CORS last (outer).
 # REQ-6.7 (SPEC-SEC-CORS-001): CORS must be the LAST add_middleware call so that
 # CSRF-reject 403s from SessionMiddleware carry CORS headers to cross-origin browsers.
+app.add_middleware(KlaiTenantHostMiddleware)
 app.add_middleware(SessionMiddleware)
 app.add_middleware(LoggingContextMiddleware)
 
