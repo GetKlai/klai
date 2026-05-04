@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.plans import get_plan_products
 from app.models.groups import PortalGroup, PortalGroupMembership, PortalGroupProduct
-from app.models.portal import PortalUser
+from app.models.portal import PortalOrg, PortalUser
 from app.models.products import PortalUserProduct
 from app.services.audit import log_event
 
@@ -75,15 +75,30 @@ class ProductSummaryResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _assignable_products(org: PortalOrg) -> list[str]:
+    """Products an admin may assign: plan-included products plus tenant-enabled add-ons.
+
+    SPEC-PORTAL-PROFILES-001 Phase 2 — add-ons (scribe, docs) are gated by both
+    `portal_orgs.enabled_addons` (tenant-level unlock) AND a per-user/group
+    assignment via `portal_user_products` / `portal_group_products`. This
+    helper combines the two pools so the frontend dropdown and the assign
+    endpoints accept add-ons once the admin has flipped the toggle on
+    `/admin/settings`.
+    """
+    plan_products = set(get_plan_products(org.plan))
+    enabled_addons = set(org.enabled_addons or [])
+    return sorted(plan_products | enabled_addons)
+
+
 @router.get("/products", response_model=ProductsResponse)
 async def list_available_products(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> ProductsResponse:
-    """Return products available under the org's current plan."""
+    """Return products an admin may assign: plan products plus enabled add-ons."""
     _, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
-    return ProductsResponse(products=get_plan_products(org.plan))
+    return ProductsResponse(products=_assignable_products(org))
 
 
 @router.post("/users/{zitadel_user_id}/products", status_code=status.HTTP_201_CREATED)
@@ -93,15 +108,14 @@ async def assign_product(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    """Assign a product to a user within plan ceiling."""
+    """Assign a product to a user. Plan-included or tenant-enabled add-on only."""
     admin_user_id, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
 
-    # Plan ceiling check
-    if body.product not in get_plan_products(org.plan):
+    if body.product not in _assignable_products(org):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Product '{body.product}' exceeds plan ceiling",
+            detail=f"Product '{body.product}' is not available for this org",
         )
 
     # Check user belongs to this org
