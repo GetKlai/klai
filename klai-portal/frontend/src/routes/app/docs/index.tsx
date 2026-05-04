@@ -11,7 +11,7 @@ import { apiFetch } from '@/lib/apiFetch'
 
 export const Route = createFileRoute('/app/docs/')({
   component: () => (
-    <ProductGuard product="knowledge">
+    <ProductGuard product="docs">
       <DocsPage />
     </ProductGuard>
   ),

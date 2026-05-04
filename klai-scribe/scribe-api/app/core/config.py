@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     stt_provider: str = "whisper_http"
     # Provider label stored in audit column — update to "whisper-gpu" when moving to Phase 3+
     whisper_provider_name: str = "whisper-cpu"
+    # OpenAI-compatible `model` field on POST /v1/audio/transcriptions.
+    # Vexa transcription-service requires this field (HTTP 422 if missing).
+    # `large-v3-turbo` is the model the service runs internally and the value
+    # it returns in its response payload, so the round-trip is consistent.
+    whisper_model: str = "large-v3-turbo"
 
     # Upload limits
     max_upload_mb: int = 100

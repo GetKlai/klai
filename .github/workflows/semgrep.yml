@@ -15,6 +15,7 @@ on:
       - 'klai-scribe/**'
       - 'deploy/litellm/**'
       - '.github/workflows/semgrep.yml'
+      - '.semgrep/**'
   pull_request:
     branches: [main]
     paths:
@@ -28,6 +29,8 @@ on:
       - 'klai-retrieval-api/**'
       - 'klai-scribe/**'
       - 'deploy/litellm/**'
+      - '.github/workflows/semgrep.yml'
+      - '.semgrep/**'
 
 permissions:
   contents: read
@@ -50,6 +53,7 @@ jobs:
           semgrep scan \
             --config auto \
             --config p/owasp-top-ten \
+            --config .semgrep/rules/ \
             --exclude 'klai-portal/frontend/public/widget/*.js' \
             klai-portal/backend \
             klai-portal/frontend \
@@ -62,3 +66,45 @@ jobs:
             klai-scribe \
             deploy/litellm \
             --error
+
+      # Self-test: verify our custom rules fire on positive fixtures and stay
+      # silent on negative fixtures. A future change that silently disables a
+      # custom rule (typo in YAML, forgotten `--config` flag, etc.) is caught
+      # here BEFORE it can let a real regression through the production scan.
+      # See .semgrep/README.md for the layout convention.
+      - name: Self-test custom Semgrep rules (positive — must fire)
+        run: |
+          # Expect findings: rule MUST fire. Suppress --error so a non-zero
+          # exit (i.e. findings present) is exactly what we want. We then
+          # assert at least one finding via JSON output.
+          semgrep scan \
+            --config .semgrep/rules/jwt-peek-without-verify.yml \
+            --json \
+            --quiet \
+            .semgrep/tests/jwt_peek_positive.py > /tmp/positive.json || true
+          HITS=$(python -c "import json,sys; print(len(json.load(open('/tmp/positive.json'))['results']))")
+          echo "positive fixture findings: $HITS"
+          if [ "$HITS" -lt 1 ]; then
+            echo "FAIL: expected >=1 findings on jwt_peek_positive.py, got $HITS"
+            echo "      The B4 regression guard is not firing — investigate"
+            echo "      .semgrep/rules/jwt-peek-without-verify.yml"
+            exit 1
+          fi
+
+      - name: Self-test custom Semgrep rules (negative — must stay silent)
+        run: |
+          semgrep scan \
+            --config .semgrep/rules/jwt-peek-without-verify.yml \
+            --json \
+            --quiet \
+            .semgrep/tests/jwt_peek_negative.py > /tmp/negative.json || true
+          HITS=$(python -c "import json,sys; print(len(json.load(open('/tmp/negative.json'))['results']))")
+          echo "negative fixture findings: $HITS"
+          if [ "$HITS" -ne 0 ]; then
+            echo "FAIL: expected 0 findings on jwt_peek_negative.py, got $HITS"
+            echo "      The B4 rule has regressed into a false-positive —"
+            echo "      tighten the pattern-not branches, do not silence with"
+            echo "      # nosemgrep:"
+            python -c "import json; print(json.dumps(json.load(open('/tmp/negative.json'))['results'], indent=2))"
+            exit 1
+          fi

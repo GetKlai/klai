@@ -373,14 +373,32 @@ to produce a 1024-dimensional dense vector. These raw embeddings are immediately
 The document is now searchable.
 
 **Step 3 — Enqueue enrichment.** The main request enqueues two async tasks via
-Procrastinate (a PostgreSQL-backed task queue) and returns to the caller. Three queues
-manage priorities:
-- `enrich-interactive` — user-triggered saves (should feel fast)
-- `enrich-bulk` — background connector syncs (can wait)
-- `graphiti-bulk` — knowledge graph ingestion (lowest priority)
+Procrastinate (a PostgreSQL-backed task queue) and returns to the caller. The
+service runs **seven** queues, each backing a distinct workload type. Names live
+in `knowledge_ingest/queues.py` as constants — never as bare string literals
+(SPEC-INGEST-QUEUE-SEPARATION-001, enforced by an ast-grep CI rule):
 
-The worker processes queues in drain order: `ingest-kb → enrich-interactive → enrich-bulk
-→ graphiti-bulk`.
+- `ingest-kb` — debounced Gitea ingest after webhook fires (one task per page)
+- `enrich-interactive` — user-triggered single-doc enrichment (drains first)
+- `enrich-bulk` — bulk LLM enrichment for crawled/imported pages
+- `graphiti-bulk` — LLM relation building → FalkorDB knowledge graph
+- `taxonomy-backfill` — clustering + taxonomy backfill jobs
+- `connector-purge` — connector-delete saga orchestration (SPEC-CONNECTOR-DELETE-LIFECYCLE-001)
+- `crawl-jobs` — web crawl orchestration (`crawl_tasks.run_crawl`); kept off
+  the LLM-bound enrichment lane so a 100-doc Notion sync cannot block a
+  user-triggered crawl behind 30-60s/job Mistral calls
+
+A single procrastinate worker subscribes to all seven via
+`queues.ALL_QUEUES`. Adding a queue is mechanical: define the constant +
+append it to `ALL_QUEUES`, the worker picks it up automatically. The
+`tests/test_queues_constants.py` invariants forbid drift, and the
+ast-grep rule `rules/knowledge_ingest_queue_constants.yml` prevents new
+task modules from regressing back to string literals.
+
+Procrastinate processes queues independently with a per-worker concurrency
+limit; there is no global drain order. Priority is expressed via queue
+choice (interactive enrichment finishes well before bulk because their
+queues run in parallel and interactive jobs are short).
 
 **Step 4 — Feed the knowledge graph (async).** If `settings.graphiti_enabled` is on, a
 Procrastinate task on the `graphiti-bulk` queue defers the document to Graphiti/FalkorDB
@@ -549,6 +567,161 @@ labeling). Mistral's API has a 1 req/s rate limit. `knowledge_ingest/graph.py` w
 Graphiti LLM calls with a `_TokenBucketLimiter(rate=settings.graphiti_llm_rps)` transport
 (default 1.0 req/s). On rate-limit error: backs off 30s then 60s. On other errors: backs
 off 1s then 2s. Three retries total before the episode is dropped (with a warning log).
+
+### Phase 4: Image extraction and content-addressed storage
+
+Documents that contain inline images (Notion screenshots, Confluence diagrams,
+crawled pages) get a separate object-storage pipeline that runs alongside text
+ingestion. Lives in `klai-libs/image-storage/` (`klai_image_storage` package),
+shared between `klai-connector` (during sync) and `klai-knowledge-ingest`
+(during crawl ingest). Backed by **Garage**, a self-hosted S3-compatible object
+store on core-01.
+
+**Content-addressed keys.** Every image is hashed with SHA-256 before upload.
+The hash becomes the object key:
+
+```
+<bucket>/<org_id>/images/<kb_slug>/<sha256>.<ext>
+```
+
+Identical images uploaded across different pages, different syncs, or even
+different connectors collide on the same key — Garage stores them once. A Voys
+help-center logo that appears on 21 Notion pages results in 21
+`knowledge.artifact_images` rows (one per artifact reference) but a single S3
+object. This is verified end-to-end at every ingest run by comparing
+`count(DISTINCT artifact_images.s3_key)` against the S3 object count under the
+org's prefix — they must match exactly.
+
+**`knowledge.artifact_images` table** (added in SPEC-CONNECTOR-DELETE-LIFECYCLE-001 PR-B):
+
+| Column | Notes |
+|---|---|
+| `artifact_id` | FK to `knowledge.artifacts.id` ON DELETE CASCADE |
+| `s3_key` | The Garage object key (full `<org>/images/<kb>/<sha>.<ext>`) |
+| `content_hash` | SHA-256 of the image content; redundant with key suffix but indexed for orphan-key sweeps |
+
+The CASCADE on `artifact_id` means deleting an artifact automatically removes
+its image references; the connector-purge orchestrator then sweeps any S3 keys
+whose refcount across the org dropped to zero.
+
+**Public URL.** Garage runs in S3-website mode on a separate port (3902); Caddy
+proxies `https://my.getklai.com/kb-images/<key>` to that endpoint, so browsers
+fetch images by their stable content-addressed URL without presigned tokens.
+The frontend reads `s3_key` from chunk payload metadata in retrieval results
+and constructs the public URL itself. This avoids URL expiry issues and works
+with the standard browser cache.
+
+### Phase 5: Worker lanes and reliability
+
+Bootstrap and shutdown live in `knowledge_ingest/worker.py`
+(`WorkerLifecycle` class), called from the FastAPI lifespan. The lifecycle
+starts **two** procrastinate worker instances inside the same container —
+one per workload lane — plus three reliability mechanisms.
+
+**Two-lane architecture (SPEC-WORKER-LANES-001).** The seven queues split
+into two lanes by latency profile:
+
+| Lane | Queues | Concurrency | Per-task latency |
+|---|---|---|---|
+| **I/O** | `ingest-kb`, `connector-purge`, `crawl-jobs` | 8 | sub-second to ~30s |
+| **LLM** | `enrich-interactive`, `enrich-bulk`, `graphiti-bulk`, `taxonomy-backfill` | 4 | 5-60s, rate-limited |
+
+Each lane runs as a dedicated `run_worker_async` task subscribed to its
+queues only. They share the same `proc_app` and connector pool, but each
+registers an independent `procrastinate_workers` row with its own
+heartbeat and concurrency semaphore. This is the only way to give I/O
+work latency guarantees: procrastinate has no per-queue fairness within a
+single worker — it fetches the oldest todo across the worker's full queue
+set, so a backlog of slow LLM jobs would otherwise delay every I/O job
+until the LLM lane drains. Verified against Voys 2026-05-01: a
+50-LLM-job backlog had pushed user-triggered crawls 10+ minutes behind
+schedule under the old single-worker design.
+
+Lane membership lives in `knowledge_ingest/queues.py` (`IO_QUEUES`,
+`LLM_QUEUES`). `ALL_QUEUES = IO_QUEUES + LLM_QUEUES` is the union, used
+only by tests and observability — the two workers never subscribe to it.
+A queue without a lane assignment fails
+`tests/test_queues_constants.py::test_io_and_llm_lanes_partition_all_queues`
+and CI blocks the PR.
+
+**1. DSN normalisation.** Procrastinate uses psycopg3 / libpq, not asyncpg.
+Klai's database password is base64-encoded and contains `=`, `+`, `/` chars
+that break both stdlib urlparse and libpq's key=value parsing. The
+`_build_libpq_dsn` helper rewrites `postgresql+asyncpg://...` URLs to
+`host=... password='...'` form with proper escaping. Pinned by 9 unit tests
+in `tests/test_worker_dsn.py`.
+
+**2. Zombie recovery on startup.** Container restarts during a long-running
+LLM call leave the executing job in `status='doing'` with no live worker.
+Procrastinate v3's built-in `prune_stalled_workers` deletes the dead worker
+row but does NOT reset the orphaned job — the FK CASCADE only nulls
+`worker_id`. Without intervention the job sits in `doing` forever and
+permanently consumes a worker concurrency slot. Over a few weeks of deploys,
+the `enrich-bulk` and `graphiti-bulk` queues silently saturated.
+
+`zombie_recovery.recover_zombie_jobs` runs at every worker startup, ONCE
+before either lane worker starts. It calls `prune_stalled_workers(120s)`
+then retries every job matching `status='doing' AND worker_id IS NULL`.
+Every queue task is idempotent (content-hash dedup for ingest, Episode
+UUID dedup for graphiti, the connector-purge task is idempotent by
+design), so retry is safe across both lanes.
+SPEC-PROCRASTINATE-ZOMBIE-001.
+
+**3. Graceful shutdown grace period.** `deploy/docker-compose.yml` sets
+`stop_grace_period: 90s` on the knowledge-ingest service. Docker's default 10
+seconds is shorter than Mistral's longest entity-extraction calls (30-60s),
+so a deploy mid-call would SIGKILL the worker and produce zombies even with
+the recovery loop. 90 seconds lets nearly all in-flight LLM calls complete
+gracefully on shutdown; recovery only runs on the rare job that genuinely
+exceeded the budget.
+
+**4. Cancel-on-timeout for klai-connector polls.** When
+`sync_engine._run_web_crawler_delegation` hits its 30-min poll timeout,
+the procrastinate `run_crawl` task on knowledge-ingest may still be
+running. Without intervention it would keep writing artifacts behind a
+`sync_run` already marked FAILED, so the data state diverges from the
+user-visible status. SPEC-WORKER-LANES-001 added
+`POST /ingest/v1/crawl/sync/{job_id}/cancel`: klai-connector calls it
+after timeout, knowledge-ingest looks up the matching procrastinate task
+and calls `job_manager.cancel_job_by_id_async(abort=True)`. The endpoint
+is idempotent (204 whether the task was running, finished, or never
+existed) so retries don't matter.
+
+### Phase 6: Connector-delete orchestration
+
+Deleting a connector is a cross-service saga, not a single SQL DELETE.
+SPEC-CONNECTOR-DELETE-LIFECYCLE-001 introduced the orchestrator
+(`connector_cleanup.purge_connector`) and a state machine on
+`portal_connectors.state` (`'active' | 'deleting'`). The portal API flips the
+state and enqueues a procrastinate task on the dedicated `connector-purge`
+queue; the orchestrator runs the steps in order:
+
+1. **Snapshot** the artifact-id set (one SELECT for repeatable cascading).
+2. **Cancel** any pending `enrich_document_bulk` and `ingest_graphiti_episode`
+   jobs scoped to the connector. New work that sneaks in after this step is
+   blocked by an existence guard at the top of the enrichment task that
+   re-checks `portal_connectors.state` before doing real work.
+3. **Snapshot** orphan S3 image keys (refcount across the rest of the org).
+4. **Delete** `knowledge.artifacts` (CASCADE clears `artifact_images`,
+   `artifact_entities`, `derivations`).
+5. **Delete** `knowledge.crawl_jobs` for the connector.
+6. **Delete** FalkorDB `Episodic` nodes for this connector's artifacts (uuid
+   stored in `extra->>'graphiti_episode_id'`); a separate org-wide sweep
+   removes any orphan episodes whose owning artifact is gone.
+7. **Delete** Qdrant chunks filtered on `source_connector_id`.
+8. **Delete** S3 image objects whose orphan refcount reached zero.
+9. **Janitor sweep**: org-wide FalkorDB orphans + S3 orphan-hash check.
+
+Cross-schema FK CASCADE (`connector.sync_runs.connector_id →
+public.portal_connectors.id ON DELETE CASCADE`) handles the sync_runs cleanup
+when the portal finally hard-deletes the row after the worker reports
+completion via the internal `/finalize-delete` endpoint.
+
+The whole saga is idempotent — a retried `connector_purge_task` finds nothing
+to do and returns cleanly. Verified end-to-end against Voys on 2026-04-30
+with 0 cross-store residue across all 9 affected stores (portal_connectors,
+sync_runs, artifacts, crawl_jobs, artifact_images, crawled_pages, Qdrant
+chunks, FalkorDB nodes, Garage S3 objects).
 
 ---
 
@@ -834,9 +1007,10 @@ text from the fetched pages.
 
 | Service | Role |
 |---|---|
-| `knowledge-ingest` | Ingest pipeline: chunk, embed, enqueue enrichment, graph ingestion |
+| `knowledge-ingest` | Ingest pipeline: chunk, embed, enqueue enrichment, graph ingestion, image upload, connector-delete orchestrator |
 | `retrieval-api` | Retrieval endpoint (SPEC-KB-008) — replaces deprecated /knowledge/v1/retrieve |
-| `procrastinate-worker` | Async enrichment worker (queues: enrich-interactive, enrich-bulk, graphiti-bulk) |
+| `procrastinate-worker` | Async task worker (in-process, owned by `WorkerLifecycle`); subscribes to all 7 queues in `queues.ALL_QUEUES`. Runs zombie recovery on every startup. |
+| `garage` | S3-compatible object store for content-addressed image storage (SHA-256 keyed); served browser-public via Caddy at `/kb-images/...` |
 | `qdrant` | Vector store — `klai_knowledge` collection, 3 named vectors per chunk |
 | `tei` | TEI (text-embeddings-inference) — BGE-M3 dense embeddings (1024-dim, OpenAI-compatible `/v1/embeddings`) — gpu-01 via SSH tunnel at 172.18.0.1:7997 |
 | `bge-m3-sparse` | BGE-M3 sparse embeddings sidecar (FlagEmbedding) — gpu-01 via SSH tunnel at 172.18.0.1:8001 |

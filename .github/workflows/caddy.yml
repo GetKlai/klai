@@ -53,7 +53,8 @@ jobs:
           key: ${{ secrets.CORE01_DEPLOY_KEY }}
           script: |
             docker pull ghcr.io/getklai/caddy-hetzner:latest
-            cd /opt/klai && docker compose up -d caddy
+            # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3
+            /opt/klai/scripts/compose-up.sh caddy
 
   scan:
     needs: build-push

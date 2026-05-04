@@ -48,3 +48,7 @@ pythonpath = ["."]
 filterwarnings = [
     "ignore::DeprecationWarning:pydantic.*",
 ]
+markers = [
+    "benchmark: constant-time regression benchmarks (run with: pytest -m benchmark)",
+]
+addopts = "-m 'not benchmark'"

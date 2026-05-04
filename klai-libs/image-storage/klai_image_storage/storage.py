@@ -170,3 +170,42 @@ class ImageStore:
             return True
         except S3Error:
             return False
+
+    async def delete_keys(self, object_keys: list[str]) -> int:
+        """Best-effort batch delete. Returns count of keys removed.
+
+        SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-06.4. Called by the
+        connector-purge orchestrator with the list of keys whose
+        content_hash refcount has dropped to zero (computed from the
+        ``knowledge.artifact_images`` snapshot taken before the artifact
+        delete).
+
+        Idempotent: keys that no longer exist (already removed by an
+        earlier worker retry) are silently skipped. Failures on
+        individual keys are logged but never raise — losing one S3
+        delete must not block the rest of the cleanup. The next
+        ``purge_connector`` retry would also pick the keys up if they
+        re-appear in the orphan-list.
+        """
+        if not object_keys:
+            return 0
+        from minio.deleteobjects import DeleteObject
+
+        delete_objs = [DeleteObject(k) for k in object_keys]
+        deleted = 0
+        try:
+            errors = await asyncio.to_thread(lambda: list(self._client.remove_objects(self._bucket, delete_objs)))
+            for err in errors:
+                logger.warning(
+                    "image_delete_failed",
+                    object_key=getattr(err, "name", "?"),
+                    code=getattr(err, "code", "?"),
+                    message=getattr(err, "message", "?"),
+                )
+            deleted = len(object_keys) - len(errors)
+        except Exception:
+            logger.exception(
+                "image_delete_batch_failed",
+                key_count=len(object_keys),
+            )
+        return deleted

@@ -1,0 +1,49 @@
+[project]
+name = "klai-service-auth"
+version = "0.1.0"
+description = "OAuth 2.0 Client Credentials token client for Klai inter-service authentication (SPEC-SEC-SERVICE-AUTH-001)."
+requires-python = ">=3.12"
+readme = "README.md"
+license = { text = "Proprietary" }
+authors = [{ name = "Klai" }]
+
+# Runtime dependencies. Every embedding service already pins httpx + structlog.
+dependencies = [
+    "httpx>=0.27",
+    "structlog>=25.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=1",
+    "ruff>=0.8",
+    "pyright>=1.1.390",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=1",
+    "ruff>=0.8",
+    "pyright>=1.1.390",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["klai_service_auth"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "S", "RUF", "G", "LOG"]
+# S101 (assert), S105/S106 (hardcoded password): all expected in test fixtures.
+extend-per-file-ignores = { "tests/*" = ["S101", "S105", "S106", "S107"] }
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

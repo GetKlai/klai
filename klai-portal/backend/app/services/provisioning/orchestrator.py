@@ -36,6 +36,7 @@ from app.core.system_groups import create_system_groups
 from app.models.portal import PortalOrg, PortalUser
 from app.services.provisioning.generators import _generate_librechat_env, _slugify_unique
 from app.services.provisioning.infrastructure import (
+    _caddy_lock,
     _create_mongodb_tenant_user,
     _reload_caddy,
     _start_librechat_container,
@@ -53,8 +54,11 @@ from app.services.zitadel import zitadel
 
 logger = structlog.get_logger()
 
-# File lock to prevent concurrent tenant caddyfile writes.
-_caddy_lock = asyncio.Lock()
+# Caddy lock moved to infrastructure.py so deprovisioning_steps.py can share the
+# same lock — defining it twice would silently lose the serialisation guarantee.
+# Re-exported here for backward-compat with any external code that imported it
+# from this module historically.
+__all__ = ["_caddy_lock", "provision_tenant"]
 
 
 @dataclass
