@@ -529,16 +529,22 @@ async def assign_group_product(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> GroupProductOut:
-    """Assign a product to a group. Org admin only, plan ceiling enforced."""
+    """Assign a product to a group. Org admin only.
+
+    Accepted products: plan-included products plus tenant-enabled add-ons
+    (`portal_orgs.enabled_addons`). SPEC-PORTAL-PROFILES-001 Phase 2 — add-ons
+    require both the tenant-level toggle on `/admin/settings` AND a per-group
+    or per-user assignment before they show up in `get_effective_products`.
+    """
     caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
     await _get_group_or_404(group_id, org.id, db)
 
-    # Plan ceiling check
-    if body.product not in get_plan_products(org.plan):
+    assignable = set(get_plan_products(org.plan)) | set(org.enabled_addons or [])
+    if body.product not in assignable:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Product not included in org plan",
+            detail="Product not available for this org",
         )
 
     record = PortalGroupProduct(
