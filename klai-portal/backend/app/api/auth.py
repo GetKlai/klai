@@ -58,10 +58,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.bearer import bearer  # BFF Phase A4 — session-aware bearer shim
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, get_db
-from app.models.portal import PortalOrg, PortalOrgAllowedDomain, PortalUser
+from app.models.portal import PortalOrg, PortalUser
 from app.services import audit
 from app.services.bff_session import SessionService
 from app.services.events import emit_event
+from app.services.pending_session import PendingSessionService
 from app.services.redis_client import get_redis_pool
 from app.services.request_ip import resolve_caller_ip_subnet
 from app.services.zitadel import zitadel
@@ -1903,17 +1904,62 @@ async def idp_callback(
     zitadel_user_id = details.get("zitadel_user_id", "")
     email = details.get("email", "")
 
-    # Look up existing portal_users rows for this zitadel_user_id
+    # SPEC-AUTH-009 R3: 4-case domain-match decision matrix
+    # member_orgs: orgs where the user already has a portal_users row
+    # domain_orgs: orgs whose primary_domain matches user email domain
+    #              AND user is NOT already a member
     if zitadel_user_id:
         user_result = await db.execute(select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id))
-        existing_users = user_result.scalars().all()
+        member_users = list(user_result.scalars().all())
     else:
-        existing_users = []
+        member_users = []
 
-    # C9.3: Multiple orgs → Redis pending-session, redirect to /select-workspace
-    if len(existing_users) > 1:
-        from app.services.pending_session import PendingSessionService
+    # Query orgs with matching primary_domain that user is NOT already a member of.
+    email_domain = email.rsplit("@", 1)[-1].strip().lower() if "@" in email else ""
+    domain_orgs: list[PortalOrg] = []
+    if email_domain and zitadel_user_id:
+        member_org_ids = {u.org_id for u in member_users}
+        domain_query = select(PortalOrg).where(
+            PortalOrg.primary_domain == email_domain,
+            PortalOrg.deleted_at.is_(None),
+        )
+        if member_org_ids:
+            domain_query = domain_query.where(PortalOrg.id.not_in(member_org_ids))
+        domain_result = await db.execute(domain_query)
+        domain_orgs = list(domain_result.scalars().all())
 
+    # Build combined entries list: member entries first, then domain_match.
+    entries = [
+        {
+            "org_id": u.org_id,
+            "name": u.org.name,
+            "slug": u.org.slug,
+            "kind": "member",
+            "auto_accept": False,
+        }
+        for u in member_users
+    ] + [
+        {
+            "org_id": o.id,
+            "name": o.name,
+            "slug": o.slug,
+            "kind": "domain_match",
+            "auto_accept": o.auto_accept_same_domain,
+        }
+        for o in domain_orgs
+    ]
+
+    total = len(entries)
+
+    # Case 1: no member orgs AND no domain_orgs -> redirect to /no-account.
+    if total == 0:
+        return RedirectResponse(url="/no-account", status_code=302)
+
+    # Case 2: exactly 1 member, 0 domain_match -> direct finalize (falls through below).
+    is_case_2 = len(member_users) == 1 and len(domain_orgs) == 0
+
+    # Cases 3+4: anything else with at least one entry -> workspace picker.
+    if not is_case_2:
         try:
             svc = PendingSessionService()
             ref = await svc.store(
@@ -1922,49 +1968,18 @@ async def idp_callback(
                 zitadel_user_id=zitadel_user_id,
                 email=email,
                 auth_request_id=auth_request_id,
-                org_ids=[u.org_id for u in existing_users],
+                entries=entries,
             )
             return RedirectResponse(url=f"/select-workspace?ref={ref}", status_code=302)
         except Exception:
-            _slog.exception("Failed to store pending session — falling through to first org")
+            # Storing the pending session failed (Redis down or similar). Do NOT
+            # silently finalise into the user's first org — they may have multiple
+            # eligible workspaces and picking one without their consent is wrong.
+            # Send them back to login so they can retry.
+            _slog.exception("idp_callback_pending_session_failed")
+            return RedirectResponse(url=failure_url, status_code=302)
 
-    if not existing_users and zitadel_user_id and email:
-        # No portal_users row — check allowed domains for auto-provision
-        email_domain = email.rsplit("@", 1)[-1].lower() if "@" in email else ""
-        if email_domain:
-            domain_result = await db.execute(
-                select(PortalOrgAllowedDomain).where(PortalOrgAllowedDomain.domain == email_domain)
-            )
-            matched_domain = domain_result.scalar_one_or_none()
-
-            if matched_domain:
-                # C4.4: DB error → log + fall through, never 500
-                try:
-                    new_user = PortalUser(
-                        zitadel_user_id=zitadel_user_id,
-                        org_id=matched_domain.org_id,
-                        role="member",
-                        status="active",
-                        display_name=email.split("@")[0],
-                        email=email,
-                    )
-                    db.add(new_user)
-                    await db.commit()
-                    _slog.info(
-                        "Auto-provisioned SSO user",
-                        zitadel_user_id=zitadel_user_id,
-                        org_id=matched_domain.org_id,
-                        domain=email_domain,
-                    )
-                except Exception:
-                    _slog.exception(
-                        "Auto-provision failed — user will see no-account page",
-                        zitadel_user_id=zitadel_user_id,
-                    )
-                    await db.rollback()
-
-    # Finalize the auth request (always, even if no portal_users row)
-    # The callback.tsx will check org_found and redirect to /no-account if needed
+    # Finalize the auth request (Case 2: single member)
     try:
         callback_url = await zitadel.finalize_auth_request(
             auth_request_id=auth_request_id,

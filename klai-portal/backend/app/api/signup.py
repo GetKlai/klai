@@ -34,6 +34,7 @@ from app.core.config import settings
 from app.core.database import get_db, set_tenant
 from app.models.portal import PortalOrg, PortalUser
 from app.services.bff_session import SessionService
+from app.services.domain_validation import is_free_email_provider
 from app.services.events import emit_event
 from app.services.provisioning import provision_tenant
 from app.services.request_ip import resolve_caller_ip_subnet
@@ -156,6 +157,19 @@ async def signup(
             detail="Too many signup attempts for this email. Please try again tomorrow.",
         )
 
+    # SPEC-AUTH-009 R1/R7 C1.3: reject free-email domains before any Zitadel/DB work.
+    # C7.2: NL message instructs the user to use a company email or request an invitation.
+    _email_domain = body.email.split("@")[-1].strip().lower()
+    if is_free_email_provider(_email_domain):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Klai-werkruimtes kun je alleen aanmaken met een zakelijk mailadres. "
+                "Vraag je beheerder om een uitnodiging als je via een privé-mailadres "
+                "wilt deelnemen."
+            ),
+        )
+
     # 1. Create Zitadel org
     try:
         org_data = await zitadel.create_org(_slugify(body.company_name))
@@ -230,6 +244,8 @@ async def signup(
             zitadel_org_id=zitadel_org_id,
             name=body.company_name,
             slug=_to_slug(body.company_name, zitadel_org_id),
+            primary_domain=_email_domain,
+            auto_accept_same_domain=False,
         )
         db.add(org_row)
         await db.flush()  # get org_row.id without committing yet
@@ -394,6 +410,19 @@ async def signup_social(
             detail="Social signup session expired. Please try again.",
         )
 
+    # SPEC-AUTH-009 R1 C1.3: reject free-email domains in social signup path too.
+    _social_email = pending.get("email", "")
+    _social_domain = _social_email.split("@")[-1].strip().lower() if "@" in _social_email else ""
+    if _social_domain and is_free_email_provider(_social_domain):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Klai-werkruimtes kun je alleen aanmaken met een zakelijk mailadres. "
+                "Vraag je beheerder om een uitnodiging als je via een privé-mailadres "
+                "wilt deelnemen."
+            ),
+        )
+
     # 2. Create Zitadel org
     try:
         org_data = await zitadel.create_org(_slugify(body.company_name))
@@ -453,6 +482,8 @@ async def signup_social(
             zitadel_org_id=zitadel_org_id,
             name=body.company_name,
             slug=_to_slug(body.company_name, zitadel_org_id),
+            primary_domain=_social_domain,
+            auto_accept_same_domain=False,
         )
         db.add(org_row)
         await db.flush()
