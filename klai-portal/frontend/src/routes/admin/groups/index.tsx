@@ -10,8 +10,7 @@ import {
 } from '@tanstack/react-table'
 import { Button } from '@/components/ui/button'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
-import { Badge } from '@/components/ui/badge'
-import { Loader2, Eye, Lock, Pencil, Plus, Trash2 } from 'lucide-react'
+import { Loader2, Eye, Pencil, Plus, Trash2 } from 'lucide-react'
 
 // Avatar colors: decorative differentiation, not semantic states — raw Tailwind allowed per frontend.md
 const AVATAR_COLORS = [
@@ -38,7 +37,6 @@ export const Route = createFileRoute('/admin/groups/')({
 interface Group {
   id: number
   name: string
-  products: string[]
   is_system: boolean
 }
 
@@ -157,24 +155,9 @@ function AdminGroups() {
     columnHelper.accessor('name', {
       header: () => m.admin_groups_name(),
       cell: (info) => (
-        <span className="font-medium text-[var(--color-foreground)] flex items-center gap-2">
-          {info.row.original.is_system && (
-            <Lock className="h-3 w-3 text-[var(--color-muted-foreground)]" />
-          )}
+        <span className="font-medium text-[var(--color-foreground)]">
           {info.getValue()}
         </span>
-      ),
-    }),
-    columnHelper.accessor('products', {
-      header: () => 'Product',
-      cell: (info) => (
-        <div className="flex gap-1">
-          {info.getValue().map((p) => (
-            <Badge key={p} variant="outline" className="text-xs capitalize">
-              {p}
-            </Badge>
-          ))}
-        </div>
       ),
     }),
     columnHelper.display({
@@ -198,7 +181,7 @@ function AdminGroups() {
       id: 'actions',
       header: () => '',
       cell: ({ row }) => {
-        const isConfirming = !row.original.is_system && confirmDeleteId === row.original.id
+        const isConfirming = confirmDeleteId === row.original.id
         return (
           <InlineDeleteConfirm
             isConfirming={isConfirming}
@@ -209,29 +192,25 @@ function AdminGroups() {
             onCancel={() => setConfirmDeleteId(null)}
           >
             <div className="flex items-start justify-end gap-2 mt-px">
-              {!row.original.is_system && (
-                <button
-                  onClick={() => setConfirmDeleteId(row.original.id)}
-                  aria-label={`Delete ${row.original.name}`}
-                  className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              )}
-              {!row.original.is_system && (
-                <button
-                  onClick={() =>
-                    navigate({
-                      to: '/admin/groups/$groupId/edit',
-                      params: { groupId: String(row.original.id) },
-                    })
-                  }
-                  aria-label={`Edit ${row.original.name}`}
-                  className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
-                >
-                  <Pencil className="h-4 w-4" />
-                </button>
-              )}
+              <button
+                onClick={() => setConfirmDeleteId(row.original.id)}
+                aria-label={`Delete ${row.original.name}`}
+                className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() =>
+                  navigate({
+                    to: '/admin/groups/$groupId/edit',
+                    params: { groupId: String(row.original.id) },
+                  })
+                }
+                aria-label={`Edit ${row.original.name}`}
+                className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
+              >
+                <Pencil className="h-4 w-4" />
+              </button>
               <button
                 onClick={() =>
                   navigate({

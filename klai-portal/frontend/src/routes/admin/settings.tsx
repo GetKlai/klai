@@ -97,6 +97,10 @@ function AdminSettingsPage() {
       }),
     onSuccess: (_data, next) => {
       adminLogger.info('Add-ons updated', { enabled_addons: next })
+      // SPEC-PORTAL-RBAC-001 REQ-12: keep React Query cache in sync with the
+      // saved state so addonsDirty flips back to false and the Save button
+      // disables straight away.
+      queryClient.setQueryData(['admin-enabled-addons'], { enabled_addons: next })
       setSavedAddons(true)
       setTimeout(() => setSavedAddons(false), 2500)
     },

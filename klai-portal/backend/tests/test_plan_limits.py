@@ -50,41 +50,23 @@ class TestPlanProductsKnowledgeAdded:
             assert "knowledge" in PLAN_PRODUCTS[plan], f"Plan '{plan}' missing knowledge"
 
 
-class TestSystemGroupsLabel:
-    """SPEC-PORTAL-PROFILES-001 P2.5: system groups herinrichting."""
+class TestSystemGroupsRemoved:
+    """SPEC-PORTAL-RBAC-001 v0.2.0: system groups are removed.
 
-    def test_no_system_group_has_focus_in_name(self) -> None:
+    Profile is the single writer of `portal_users.role`; add-ons are derived
+    from `portal_orgs.enabled_addons` + profile rank. There is no longer any
+    role_* or addon_* system group in the registry.
+    """
+
+    def test_system_groups_registry_is_empty(self) -> None:
         from app.core.system_groups import SYSTEM_GROUPS
 
-        for group in SYSTEM_GROUPS:
-            assert "Focus" not in group["name"], f"Group '{group['name']}' still contains 'Focus'"
+        assert SYSTEM_GROUPS == []
 
-    def test_role_bind_groups_have_no_products(self) -> None:
-        """Role-bind system groups do not grant products directly."""
-        from app.core.system_groups import SYSTEM_GROUPS
+    def test_system_group_role_map_is_empty(self) -> None:
+        from app.core.system_groups import SYSTEM_GROUP_ROLE_MAP
 
-        for group in SYSTEM_GROUPS:
-            if group["system_key"].startswith("role_"):
-                assert group["products"] == [], f"Role-bind group '{group['system_key']}' should not have products"
-
-    def test_addon_scribe_group_grants_scribe_product(self) -> None:
-        from app.core.system_groups import SYSTEM_GROUPS
-
-        addon = next((g for g in SYSTEM_GROUPS if g["system_key"] == "addon_scribe"), None)
-        assert addon is not None, "addon_scribe system group not found"
-        assert "scribe" in addon["products"]
-
-    def test_addon_docs_group_grants_docs_product(self) -> None:
-        from app.core.system_groups import SYSTEM_GROUPS
-
-        addon = next((g for g in SYSTEM_GROUPS if g["system_key"] == "addon_docs"), None)
-        assert addon is not None, "addon_docs system group not found"
-        assert "docs" in addon["products"]
-
-    def test_seven_system_groups_total(self) -> None:
-        from app.core.system_groups import SYSTEM_GROUPS
-
-        assert len(SYSTEM_GROUPS) == 7, f"Expected 7 system groups, got {len(SYSTEM_GROUPS)}"
+        assert SYSTEM_GROUP_ROLE_MAP == {}
 
 
 class TestKBLimitsDataclass:

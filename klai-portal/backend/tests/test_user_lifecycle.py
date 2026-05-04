@@ -174,7 +174,12 @@ class TestReactivateUser:
 class TestOffboardUser:
     @pytest.mark.asyncio
     async def test_offboard_active_user_cascade(self) -> None:
-        """Offboard deletes memberships, products, calls Zitadel, sets status."""
+        """Offboard deletes memberships, calls Zitadel, sets status.
+
+        SPEC-PORTAL-RBAC-001: portal_user_products is no longer written/deleted
+        per user lifecycle event -- products derive from (role, plan,
+        enabled_addons) at read time. The execute call count drops from 3 to 2.
+        """
         from app.api.admin.users import offboard_user
 
         org = _mock_org()
@@ -186,8 +191,7 @@ class TestOffboardUser:
         mock_result.scalar_one_or_none.return_value = user
         # First execute: user lookup
         # Second execute: delete memberships
-        # Third execute: delete products
-        mock_db.execute.side_effect = [mock_result, MagicMock(), MagicMock()]
+        mock_db.execute.side_effect = [mock_result, MagicMock()]
         mock_credentials = MagicMock()
 
         mock_zitadel = AsyncMock()
@@ -203,8 +207,8 @@ class TestOffboardUser:
         assert user.status == "offboarded"
         assert "offboarded" in result.message
         mock_zitadel.deactivate_user.assert_awaited_once()
-        # 3 execute calls: user lookup + delete memberships + delete products
-        assert mock_db.execute.await_count == 3
+        # 2 execute calls: user lookup + delete memberships
+        assert mock_db.execute.await_count == 2
         mock_db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -308,71 +312,33 @@ class TestSuspendPreservesMemberships:
 # ---------------------------------------------------------------------------
 
 
-class TestRequireAdminOrGroupAdmin:
-    @pytest.mark.asyncio
-    async def test_admin_passes(self) -> None:
-        from app.api.dependencies import _require_admin_or_group_admin
+class TestRequireAtLeast:
+    """SPEC-PORTAL-RBAC-001: _require_admin_or_group_admin removed; use _require_at_least."""
+
+    def test_admin_passes(self) -> None:
+        from app.core.profiles import _require_at_least
 
         caller = _mock_caller(role="admin")
-        mock_db = AsyncMock()
+        _require_at_least("group_manager")(caller_user=caller)  # no raise
 
-        # Should not raise
-        await _require_admin_or_group_admin(group_id=1, caller_user=caller, db=mock_db)
-
-    @pytest.mark.asyncio
-    async def test_group_manager_passes(self) -> None:
-        """group_manager (formerly group-admin) passes non-system group check.
-
-        Fixed regression: group-admin role was renamed to group_manager in
-        SPEC-PORTAL-PROFILES-001 migration.  The old role no longer exists in
-        the enum; callers with the legacy name would get 403.
-        """
-        from app.api.dependencies import _require_admin_or_group_admin
+    def test_group_manager_passes(self) -> None:
+        from app.core.profiles import _require_at_least
 
         caller = _mock_caller(role="group_manager")
-        mock_db = AsyncMock()
+        _require_at_least("group_manager")(caller_user=caller)  # no raise
 
-        # system_key check returns None (not a system group)
-        system_key_result = MagicMock()
-        system_key_result.scalar_one_or_none.return_value = None
-        mock_db.execute.return_value = system_key_result
+    def test_kb_manager_blocked_for_group_management(self) -> None:
+        from app.core.profiles import _require_at_least
 
-        # Should not raise
-        await _require_admin_or_group_admin(group_id=1, caller_user=caller, db=mock_db)
-
-    @pytest.mark.asyncio
-    async def test_legacy_group_admin_hyphen_is_blocked(self) -> None:
-        """Old 'group-admin' role is no longer valid; must 403 (fixed regression).
-
-        After the SPEC-PORTAL-PROFILES-001 migration, group-admin does not exist
-        in PROFILE_LADDER. Users with this role must be migrated to group_manager.
-        """
-        from app.api.dependencies import _require_admin_or_group_admin
-
-        caller = _mock_caller(role="group-admin")
-        mock_db = AsyncMock()
-
-        # system_key check returns None (not a system group)
-        system_key_result = MagicMock()
-        system_key_result.scalar_one_or_none.return_value = None
-        mock_db.execute.return_value = system_key_result
-
+        caller = _mock_caller(role="kb_manager")
         with pytest.raises(HTTPException) as exc_info:
-            await _require_admin_or_group_admin(group_id=1, caller_user=caller, db=mock_db)
+            _require_at_least("group_manager")(caller_user=caller)
         assert exc_info.value.status_code == 403
 
-    @pytest.mark.asyncio
-    async def test_non_admin_non_group_admin_raises_403(self) -> None:
-        from app.api.dependencies import _require_admin_or_group_admin
+    def test_personal_blocked(self) -> None:
+        from app.core.profiles import _require_at_least
 
-        caller = _mock_caller(role="member")
-        mock_db = AsyncMock()
-
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = None
-        mock_db.execute.return_value = mock_result
-
+        caller = _mock_caller(role="personal")
         with pytest.raises(HTTPException) as exc_info:
-            await _require_admin_or_group_admin(group_id=1, caller_user=caller, db=mock_db)
-
+            _require_at_least("group_manager")(caller_user=caller)
         assert exc_info.value.status_code == 403
