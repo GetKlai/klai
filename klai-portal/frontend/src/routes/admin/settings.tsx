@@ -53,11 +53,11 @@ function AdminSettingsPage() {
     }
   }, [settings])
 
-  // SPEC-PORTAL-PROFILES-001 P3.6: Add-on toggles
+  // SPEC-PORTAL-PROFILES-001 P3.6: Add-on toggles.
+  // UX pattern: ticking a checkbox stages the change; user clicks Save to commit.
+  // Consistent with Language and MFA sections above.
   const [addons, setAddons] = useState<string[]>([])
-  const [savingAddons, setSavingAddons] = useState(false)
   const [savedAddons, setSavedAddons] = useState(false)
-  const [addonsError, setAddonsError] = useState<string | null>(null)
 
   const { data: addonsData, isLoading: addonsLoading, error: addonsQueryError } = useQuery({
     queryKey: ['admin-enabled-addons'],
@@ -71,27 +71,28 @@ function AdminSettingsPage() {
     }
   }, [addonsData])
 
-  async function handleToggleAddon(addon: string, enabled: boolean) {
-    const next = enabled ? [...new Set([...addons, addon])] : addons.filter((a) => a !== addon)
-    setAddons(next)
-    setSavingAddons(true)
-    setAddonsError(null)
-    try {
-      await apiFetch('/api/admin/settings/addons', {
+  const addonsMutation = useMutation({
+    mutationFn: (next: string[]) =>
+      apiFetch('/api/admin/settings/addons', {
         method: 'PATCH',
         body: JSON.stringify({ enabled_addons: next }),
-      })
+      }),
+    onSuccess: (_data, next) => {
       adminLogger.info('Add-ons updated', { enabled_addons: next })
       setSavedAddons(true)
       setTimeout(() => setSavedAddons(false), 2500)
-    } catch (err) {
-      setAddonsError(err instanceof Error ? err.message : m.admin_settings_error_save())
-      // Revert optimistic update on error
-      setAddons(addonsData?.enabled_addons ?? [])
-    } finally {
-      setSavingAddons(false)
-    }
+    },
+  })
+
+  function toggleStaged(addon: string, enabled: boolean) {
+    setAddons((prev) =>
+      enabled ? [...new Set([...prev, addon])] : prev.filter((a) => a !== addon),
+    )
   }
+
+  const addonsDirty =
+    addonsData != null &&
+    JSON.stringify([...addons].sort()) !== JSON.stringify([...(addonsData.enabled_addons ?? [])].sort())
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-10 space-y-6" data-help-id="admin-settings-general">
@@ -220,34 +221,40 @@ function AdminSettingsPage() {
             {m.admin_settings_addons_description()}
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-4">
           {addonsLoading ? (
             <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_users_loading()}</p>
           ) : addonsQueryError ? (
             <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_fetch()}</p>
           ) : (
             <>
-              <Checkbox
-                checked={addons.includes('scribe')}
-                onChange={(e) => void handleToggleAddon('scribe', e.target.checked)}
-                disabled={savingAddons}
-                label={m.admin_settings_addon_scribe()}
-              />
-              <Checkbox
-                checked={addons.includes('docs')}
-                onChange={(e) => void handleToggleAddon('docs', e.target.checked)}
-                disabled={savingAddons}
-                label={m.admin_settings_addon_docs()}
-              />
-              {addonsError && (
-                <p className="text-sm text-[var(--color-destructive)]">{addonsError}</p>
+              <div className="space-y-3">
+                <Checkbox
+                  checked={addons.includes('scribe')}
+                  onChange={(e) => toggleStaged('scribe', e.target.checked)}
+                  disabled={addonsMutation.isPending}
+                  label={m.admin_settings_addon_scribe()}
+                />
+                <Checkbox
+                  checked={addons.includes('docs')}
+                  onChange={(e) => toggleStaged('docs', e.target.checked)}
+                  disabled={addonsMutation.isPending}
+                  label={m.admin_settings_addon_docs()}
+                />
+              </div>
+              {addonsMutation.error && (
+                <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_save()}</p>
               )}
-              {savedAddons && (
-                <p className="text-sm text-[var(--color-accent)]">{m.admin_settings_saved()}</p>
-              )}
-              {savingAddons && (
-                <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_settings_saving()}</p>
-              )}
+              <Button
+                onClick={() => addonsMutation.mutate(addons)}
+                disabled={addonsMutation.isPending || savedAddons || !addonsDirty}
+              >
+                {savedAddons
+                  ? m.admin_settings_saved()
+                  : addonsMutation.isPending
+                    ? m.admin_settings_saving()
+                    : m.admin_settings_save()}
+              </Button>
             </>
           )}
         </CardContent>
