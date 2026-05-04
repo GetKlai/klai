@@ -17,13 +17,15 @@ from __future__ import annotations
 
 import structlog
 
+from knowledge_ingest import queues
+
 logger = structlog.get_logger()
 
 
 def register_ingest_tasks(procrastinate_app: object) -> None:
     """Register ingest task on the given Procrastinate App instance."""
 
-    @procrastinate_app.task(queue="ingest-kb")  # type: ignore[misc]
+    @procrastinate_app.task(queue=queues.INGEST_KB)  # type: ignore[misc]
     async def ingest_from_gitea(
         org_id: str,
         kb_slug: str,

@@ -13,6 +13,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 # Repo-mirror layout: /repo/klai-libs/..., /repo/klai-scribe/scribe-api/...
 WORKDIR /repo
 COPY klai-libs/log-utils klai-libs/log-utils
+COPY klai-libs/identity-assert klai-libs/identity-assert
 COPY klai-scribe/scribe-api/pyproject.toml klai-scribe/scribe-api/pyproject.toml
 COPY klai-scribe/scribe-api/uv.lock klai-scribe/scribe-api/uv.lock
 

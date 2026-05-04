@@ -1,9 +1,9 @@
 ---
 id: SPEC-SEC-MAILER-INJECTION-001
-version: 0.3.0
+version: 0.3.1
 status: shipped
 created: 2026-04-24
-updated: 2026-04-24
+updated: 2026-04-29
 author: Mark Vletter
 priority: critical
 tracker: SPEC-SEC-AUDIT-2026-04
@@ -12,6 +12,73 @@ tracker: SPEC-SEC-AUDIT-2026-04
 # SPEC-SEC-MAILER-INJECTION-001: klai-mailer Template Injection + SMTP Relay Hardening
 
 ## HISTORY
+
+### v0.3.1 (2026-04-29) — REQ-6 hardening hotfix after mailer-notify outage
+
+**Symptom:** From 12:36 UTC on 2026-04-29 every Zitadel webhook to
+`http://klai-mailer:8000/notify` returned HTTP 500 with no log line on
+the mailer side. Zitadel retried at ~1Hz indefinitely, producing the
+`webhook didn't return a success status` log storm in
+`klai-core-zitadel-1`. User-visible impact: zero password-reset emails
+delivered for ~4 hours.
+
+**Root cause:** `app/nonce.py::get_redis()` called
+`redis_asyncio.from_url(settings.redis_url)`, which delegates to
+`urllib.parse.urlparse`. The production `REDIS_URL` password contains
+characters that urllib treats as URL-reserved in the userinfo component
+(observed: `:`, `/`, `+`). urllib mis-attributes the substring after
+the last unescaped `:` to the port field and `Redis.from_url` raises
+`ValueError("Port could not be cast to integer value as 'hPKBf'")` on
+every request. The exception propagated past
+`_verify_zitadel_signature`'s `except (NonceReplayError,
+RedisUnavailableError)` clauses (a bare `ValueError` matched neither),
+becoming a generic FastAPI 500. The mailer's `setup_logging()`
+suppresses uvicorn's default access log, so neither the request nor
+the traceback appeared in `docker logs` — the outage was invisible
+unless an operator captured the raw ASGI traceback by tailing the
+container.
+
+**Fix landed in this commit:**
+
+1. New module `klai-mailer/app/redis_url.py` exposes
+   `parse_redis_url(url) -> ParsedRedisURL`. The parser uses
+   structural splits (`split('://', 1)`, `rsplit('@', 1)`,
+   `partition(':')`) instead of `urllib.parse.urlparse`, so password
+   bytes between the first `:` after the scheme and the last `@`
+   before the host are treated as opaque and survive any combination
+   of reserved characters.
+2. `klai-mailer/app/nonce.py::get_redis()` now uses
+   `parse_redis_url` and passes individual host / port / username /
+   password / db kwargs to `redis_asyncio.Redis(**kwargs)`. The URL
+   parser is bypassed entirely for the password component.
+3. A structurally-broken URL (no scheme, no host) raises
+   `RedisURLError` (a `ValueError` subclass), which `get_redis()`
+   catches and translates to `RedisUnavailableError`. The existing
+   `_verify_zitadel_signature` handler maps that to HTTP 503 with the
+   `mailer_redis_url_invalid` log event, instead of an opaque 500.
+   This preserves the REQ-6.3 fail-closed contract.
+4. New test file `klai-mailer/tests/test_redis_url.py` (17 cases)
+   covers happy-path, every reserved-char regression, structural
+   error paths, and empty-component normalisation. Crucially:
+   `test_password_with_colon_does_not_become_port` reproduces the
+   exact 2026-04-29 outage shape and asserts it now parses
+   correctly.
+
+**Out of scope for this hotfix:**
+
+- The empty-mailer-stdout problem (no access logs visible in
+  `docker logs` even though uvicorn was started with `--log-level
+  info`) is a logging-config bug that hid the root cause for hours.
+  Tracked as a separate follow-up — fixing it requires reviewing
+  `setup_logging()` in `klai-libs/log-utils` and the shared uvicorn
+  launcher (SPEC-SEC-WEBHOOK-001 REQ-6).
+- Retiring `REDIS_URL` in favour of separate `REDIS_HOST`,
+  `REDIS_PASSWORD` env vars (recommended by 12-factor and avoids the
+  whole class of escaping bugs) is also a separate follow-up — touches
+  every klai service that uses Redis, not just mailer.
+
+**Pitfall captured under** `redis-url-password-must-be-parsed-manually`
+in `.claude/rules/klai/pitfalls/process-rules.md`.
 
 ### v0.3.0 (2026-04-29) — SHIPPED, audit close-out
 - All REQs merged to main as part of SPEC-SEC-AUDIT-2026-04 closure sweep.
@@ -426,6 +493,26 @@ reject replays.
   limit fails open) -- different fail modes are deliberate.
 - **REQ-6.4:** THE nonce check SHALL run AFTER the signature verification (not before).
   Otherwise an attacker could force cache-fill with forged signatures.
+- **REQ-6.5 (v0.3.1 hotfix):** THE Redis client SHALL be constructed via
+  `parse_redis_url(settings.redis_url)` (`klai-mailer/app/redis_url.py`)
+  with explicit `host`/`port`/`username`/`password`/`db` kwargs to
+  `redis_asyncio.Redis`, NOT via `redis_asyncio.from_url(url)`. Rationale:
+  `from_url` delegates to `urllib.parse.urlparse`, which raises
+  `ValueError("Port could not be cast")` on URLs whose password contains
+  reserved characters (`:`, `/`, `+`, `@`). `parse_redis_url` peels off
+  the userinfo structurally so any password — including those generated
+  with reserved characters and not URL-encoded by the operator — connects
+  successfully. A structurally-broken URL (no scheme, no host) raises
+  `RedisURLError` which the caller MUST translate to
+  `RedisUnavailableError` so REQ-6.3 (fail-closed 503) holds for
+  configuration errors as well as runtime outages.
+
+  **Anti-regression:** any future Redis client construction in mailer
+  MUST go through `parse_redis_url` or accept individual env vars
+  (`REDIS_HOST`, `REDIS_PASSWORD`, etc.). Re-introducing
+  `redis_asyncio.from_url(settings.redis_url)` without operator
+  guarantees on percent-encoding will reproduce the outage class. See
+  `redis-url-password-must-be-parsed-manually` in `process-rules.md`.
 
 ### REQ-7: Uniform Signature-Verification Error Body
 

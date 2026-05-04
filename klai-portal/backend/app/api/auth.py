@@ -400,6 +400,103 @@ def invalidate_tenant_slug_cache() -> None:
     _tenant_slug_cache_expiry = 0.0
 
 
+# SPEC-SEC-HYGIENE-001 REQ-20.5: every static system subdomain that has
+# a Zitadel OIDC client registered with `*.{settings.domain}/...` redirect
+# URIs. These hosts are operationally-pinned (created at infra deploy time,
+# not per-tenant) and protected by Zitadel's primary `redirect_uri` exact
+# match. This validator is defense-in-depth.
+#
+# MUST be kept in sync with the registered redirect_uris on every Zitadel
+# OIDC app under the Klai Platform project. Verify quarterly via:
+#
+#   curl -sf "https://auth.getklai.com/management/v1/projects/<klai-platform>/apps/_search" \
+#     -H "Authorization: Bearer $ZITADEL_ADMIN_PAT" \
+#     -H "X-Zitadel-Orgid: <klai-org>" -X POST -d '{}' \
+#   | jq '.result[].oidcConfig.redirectUris[]?' \
+#   | xargs -I{} python -c "from urllib.parse import urlparse; \
+#                            print(urlparse('{}').hostname.split('.')[0])"
+#
+# Any first-label not in the union of (this set + tenant-slug allowlist +
+# `chat-{slug}` derived hosts) is a NEW class — extend the validator AND
+# add a test BEFORE the new OIDC app ships.
+_STATIC_SYSTEM_SUBDOMAINS: frozenset[str] = frozenset(
+    {
+        # Portal — login + dev variant
+        # `my` (frontend_url) is added dynamically below from settings.
+        "dev",
+        # LibreChat
+        "chat",
+        "chat-dev",
+        # Auth provider
+        "auth",
+        # Observability
+        "grafana",
+        "errors",
+    }
+)
+
+# SPEC-SEC-HYGIENE-001 REQ-20.5: per-tenant host prefixes — first label
+# of the form ``<prefix><slug>`` is accepted iff ``<slug>`` is in the
+# active tenant allowlist. The set is hardcoded because each prefix
+# represents a runtime architectural decision (a per-tenant subdomain
+# pattern owned by a specific service) that requires a coordinated
+# review to add. Currently:
+#
+#   chat-     LibreChat per-tenant instance (chat-{slug}.{domain})
+#
+# To add a new prefix: extend this set, extend the audit-test in
+# tests/test_validate_callback_url.py, and verify the corresponding
+# service registers the matching redirect_uri pattern in Zitadel. The
+# nightly drift workflow (.github/workflows/zitadel-oidc-drift.yml)
+# fires if a new host class appears in Zitadel without code update.
+_TENANT_HOST_PREFIXES: frozenset[str] = frozenset({"chat-"})
+
+# Sentinel passed to Zitadel ``/v2/sessions`` when ``find_user_by_email``
+# returned None (user does not exist). Zitadel issues snowflake user
+# IDs of 18 numeric digits; 14 zeros can never collide with a real ID.
+# Using a syntactically-valid but unknown user_id keeps the timing
+# close to the user-found path, preserving the uniform-401
+# anti-enumeration property from SPEC-SEC-MFA-001 finding #12 /
+# REQ-2.3 / REQ-2.5. See ``login`` handler call site for context.
+_NONEXISTENT_USER_ID_SENTINEL: str = "00000000000000"
+
+
+@lru_cache(maxsize=1)
+def _system_callback_hosts() -> frozenset[str]:
+    """SPEC-SEC-HYGIENE-001 REQ-20.4 + REQ-20.5: trusted callback hosts that
+    are NOT tenant subdomains.
+
+    The callback-URL allowlist must accept every legitimate hostname class
+    that a Zitadel-issued ``callback_url`` can resolve to:
+
+    - the bare apex (``settings.domain``) — used by the SPA itself
+    - the canonical login domain (``urlparse(settings.frontend_url).hostname``)
+      — Zitadel redirects through this host on every OIDC flow per
+      SPEC-AUTH-008 / portal-backend.md ``FRONTEND_URL`` rule (REQ-20.4)
+    - static system service subdomains (REQ-20.5) — see
+      ``_STATIC_SYSTEM_SUBDOMAINS`` for the curated list
+    - tenant subdomains — handled separately via
+      ``_get_tenant_slug_allowlist`` (REQ-20.1)
+    - per-tenant LibreChat subdomains (``chat-{slug}.{domain}``) — handled
+      inline in ``_validate_callback_url`` (REQ-20.5)
+
+    Derived from settings, cached for the process lifetime — these settings
+    are deploy-immutable. Synchronous so it can be called from anywhere
+    without an await. Tests that vary settings should call
+    ``_system_callback_hosts.cache_clear()`` after monkeypatching.
+    """
+    hosts: set[str] = {settings.domain}
+    fe_host = urlparse(str(settings.frontend_url)).hostname
+    if fe_host:
+        hosts.add(fe_host)
+    # REQ-20.5: each static system subdomain combines with the bare apex
+    # to produce one fully-qualified host. Doing the join once at boot
+    # keeps the hot path on a single set lookup.
+    for subdomain in _STATIC_SYSTEM_SUBDOMAINS:
+        hosts.add(f"{subdomain}.{settings.domain}")
+    return frozenset(hosts)
+
+
 # @MX:ANCHOR: Trust boundary for OIDC callback URLs returned by Zitadel.
 # @MX:REASON: fan_in=3 — called from login() pre-finalize, idp_callback,
 #   and sso_complete after every successful finalize. Loosening the
@@ -407,20 +504,28 @@ def invalidate_tenant_slug_cache() -> None:
 #   opens an open-redirect across the entire auth surface. Coordinate
 #   with frontend host config + Caddy redirect rules before changing.
 # @MX:SPEC: SPEC-SEC-AUTH-COVERAGE-001 + SPEC-SEC-HYGIENE-001 REQ-20
-#   (subdomain allowlist on top of the .{domain} suffix check, on top
-#   of Zitadel's OIDC client redirect_uri validation)
+#   (REQ-20.1 tenant-slug allowlist on top of .{domain} suffix check,
+#   REQ-20.4 system-host bypass for FRONTEND_URL host, on top of
+#   Zitadel's OIDC client redirect_uri validation)
 async def _validate_callback_url(url: str) -> str:
-    """Ensure callback_url points to a trusted, currently-active tenant subdomain.
+    """Ensure callback_url points to a trusted host.
 
-    localhost / 127.0.0.1 are allowed (REQ-20.3) because they are registered as
-    valid redirect URIs in the Zitadel OIDC app (dev mode). Zitadel itself
-    validates the redirect_uri against the registered list before returning
-    the callback_url, so this is defense-in-depth only.
+    Trusted classes, in evaluation order:
 
-    SPEC-SEC-HYGIENE-001 REQ-20.1 hardens the .{domain} suffix check by
-    additionally requiring the first subdomain label to appear in the
-    active-tenant slug allowlist — preventing dangling-DNS or
-    abandoned-tenant subdomains from acting as open-redirect targets.
+    1. ``localhost`` / ``127.0.0.1`` (REQ-20.3) — registered as valid
+       redirect URIs in the Zitadel OIDC app for dev mode.
+    2. System hosts (REQ-20.4) — the bare apex and the canonical login
+       domain (``settings.frontend_url`` host). Both are non-tenant trusted
+       targets. See ``_system_callback_hosts``.
+    3. Tenant subdomains (REQ-20.1) — first subdomain label of any
+       ``*.{settings.domain}`` host MUST appear in the active-tenant slug
+       allowlist (``portal_orgs.slug WHERE deleted_at IS NULL``). This
+       prevents dangling-DNS or abandoned-tenant subdomains from acting
+       as open-redirect targets.
+
+    Anything else returns 502 with a generic body (no information leak).
+    Zitadel itself validates the registered ``redirect_uri`` list before
+    issuing the callback URL, so this validator is defense-in-depth.
     """
     try:
         hostname = urlparse(url).hostname or ""
@@ -429,27 +534,46 @@ async def _validate_callback_url(url: str) -> str:
     # REQ-20.3: localhost short-circuit preserved unchanged.
     if hostname in ("localhost", "127.0.0.1"):
         return url
-    trusted = settings.domain  # getklai.com
-    # Bare apex passes — used by the SPA itself.
-    if hostname == trusted:
+    # REQ-20.4 + REQ-20.5: bare apex, FRONTEND_URL host, and static
+    # system service subdomains (chat, chat-dev, dev, grafana, errors,
+    # auth) — non-tenant trusted hosts.
+    if hostname in _system_callback_hosts():
         return url
-    # Anything outside .{domain} is rejected before we hit the allowlist.
+    trusted = settings.domain  # getklai.com
+    # Anything outside .{domain} is rejected before we hit the slug allowlist.
     if not hostname.endswith(f".{trusted}"):
         logger.error("callback_url failed validation: %r", url)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Login failed, please try again later",
         )
-    # REQ-20.1: subdomain label MUST be in the active allowlist.
+    # REQ-20.1 + REQ-20.5: subdomain label MUST be in the active allowlist
+    # — either as the bare slug (``voys.getklai.com``) OR as a per-tenant
+    # prefixed host like ``chat-voys.getklai.com``.
     suffix = f".{trusted}"
     subdomain = hostname[: -len(suffix)]
     # Take the first label (e.g. "voys" from "voys.subsection.getklai.com").
     first_label = subdomain.split(".")[0] if subdomain else ""
+    # REQ-20.5: strip a single per-tenant host prefix (``chat-``) before
+    # the slug check. Strict single-level strip — only the FIRST matching
+    # prefix is removed; "chat-chat-foo" still rejects because the result
+    # is "chat-foo" which is itself a chat-prefixed label, not a slug.
+    candidate_slug = first_label
+    for prefix in _TENANT_HOST_PREFIXES:
+        if first_label.startswith(prefix) and len(first_label) > len(prefix):
+            candidate_slug = first_label[len(prefix) :]
+            break
     allowed_slugs = await _get_tenant_slug_allowlist()
-    if first_label not in allowed_slugs:
-        logger.error(
+    if candidate_slug not in allowed_slugs:
+        # SPEC-SEC-HYGIENE-001 REQ-20: structlog kwargs (NOT stdlib
+        # ``extra={...}``) so the hostname survives the wrapper — this
+        # lost the diagnostic field on the 2026-04-29 callback-allowlist
+        # incident, which made the regression class harder to locate.
+        _slog.error(
             "callback_url_subdomain_not_allowlisted",
-            extra={"hostname": hostname},
+            hostname=hostname,
+            first_label=first_label,
+            candidate_slug=candidate_slug,
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -1024,9 +1148,20 @@ async def login(
             _slog.warning("has_totp_check_failed", exc_info=True)
             has_totp = False
 
-    # 2. Create a Zitadel session by checking email + password
+    # 2. Create a Zitadel session — pass the canonical Zitadel user_id
+    # resolved in step 1a, NOT the raw user-typed email. Zitadel matches
+    # `loginName` case-sensitively in /v2/sessions checks, so a user whose
+    # stored loginName is `Steven@getklai.com` cannot sign in by typing
+    # `steven@getklai.com` if we forward the typed value. The IGNORE_CASE
+    # fix on `find_user_by_email` (commit 7e92e089) already gives us the
+    # canonical user_id; we simply need to use it. When find returned None
+    # (user not found), pass a syntactically-valid sentinel so Zitadel
+    # returns 4xx and the handler emits the SAME uniform "Email address or
+    # password is incorrect" 401 — the anti-enumeration pattern from
+    # SPEC-SEC-MFA-001 finding #12 / REQ-2.3 / REQ-2.5.
+    session_user_id = zitadel_user_id or _NONEXISTENT_USER_ID_SENTINEL
     try:
-        session = await zitadel.create_session_with_password(body.email, body.password)
+        session = await zitadel.create_session_with_password(session_user_id, body.password)
     except httpx.HTTPStatusError as exc:
         logger.exception("create_session failed %s: %s", exc.response.status_code, sanitize_response_body(exc))
         if exc.response.status_code in (400, 401, 404, 412):

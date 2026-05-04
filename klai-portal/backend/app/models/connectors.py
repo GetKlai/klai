@@ -14,6 +14,9 @@ class PortalConnector(Base):
     __table_args__ = (
         Index("ix_portal_connectors_kb_id", "kb_id"),
         Index("ix_portal_connectors_org_id", "org_id"),
+        # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-01.3: composite for the hot
+        # list-endpoint filter ``WHERE kb_id = ? AND state = 'active'``.
+        Index("ix_portal_connectors_state_kb", "state", "kb_id"),
     )
 
     id: Mapped[str] = mapped_column(
@@ -42,3 +45,14 @@ class PortalConnector(Base):
     allowed_assertion_modes: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     encrypted_credentials: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, default=None)
     created_by: Mapped[str] = mapped_column(Text, nullable=False)
+    # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-01: transient lifecycle state.
+    # Values: 'active' | 'deleting'. The DB has a CHECK constraint with the
+    # same set so an out-of-band INSERT cannot widen the enum at runtime.
+    # 'deleting' rows are hidden from every read-path (REQ-02) and owned
+    # by the procrastinate purge worker until hard-delete completes.
+    state: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        server_default="active",
+        default="active",
+    )

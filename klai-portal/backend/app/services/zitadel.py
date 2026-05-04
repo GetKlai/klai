@@ -56,6 +56,31 @@ class ZitadelClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def delete_org(self, org_id: str) -> None:
+        """Delete a Zitadel organisation and cascade-delete all its users + grants.
+
+        Idempotent: 404 means the org is already absent, which is fine for
+        deprovisioning re-runs. All other non-2xx responses are propagated
+        via raise_for_status().
+
+        Requires IAM_OWNER role on the PAT (settings.zitadel_pat). Per A4 in
+        SPEC-INFRA-TENANT-DELETE-001: Zitadel cascades users and grants when
+        the org is deleted — no per-user step is needed.
+
+        # @MX:NOTE: SPEC-INFRA-TENANT-DELETE-001 Phase 5 — called by step 15
+        #   (_delete_zitadel_org) in deprovisioning_orchestrator.
+        """
+        resp = await self._http.delete(
+            "/management/v1/orgs",
+            headers={"x-zitadel-orgid": org_id},
+        )
+        if resp.status_code == 404:
+            # File uses stdlib logging (not structlog) — kwargs would be
+            # treated as `extra` not structured fields. Use %-style instead.
+            logger.info("zitadel_org_already_absent org_id=%s", org_id)
+            return
+        resp.raise_for_status()
+
     # ── User management ───────────────────────────────────────────────────────
 
     async def create_human_user(
@@ -67,12 +92,22 @@ class ZitadelClient:
         password: str,
         preferred_language: str = "nl",
     ) -> dict:
-        """Create a human user inside a specific org."""
+        """Create a human user inside a specific org.
+
+        ``userName`` is lowercased before submission to Zitadel. Email
+        addresses are case-insensitive per RFC 5321 §2.4, but Zitadel
+        stores the userName / loginName byte-for-byte and matches against
+        it case-sensitively in some downstream calls (notably
+        ``/v2/sessions`` user check). Storing only the lowercase form
+        eliminates a class of "user signed up as Steven@... but typed
+        steven@... at login" issues at the source. The display ``email``
+        field keeps its original case for outgoing mail headers.
+        """
         resp = await self._http.post(
             "/management/v1/users/human/_import",
             headers={"x-zitadel-orgid": org_id},
             json={
-                "userName": email,
+                "userName": email.lower(),
                 "profile": {
                     "firstName": first_name,
                     "lastName": last_name,
@@ -127,12 +162,18 @@ class ZitadelClient:
         last_name: str,
         preferred_language: str = "nl",
     ) -> dict:
-        """Create a human user and send initialization email (password-less invite)."""
+        """Create a human user and send initialization email (password-less invite).
+
+        ``userName`` is lowercased before submission — see
+        ``create_human_user`` for rationale. The display ``email`` field
+        keeps its original case so the invite mail addresses the user
+        the way the inviting admin typed it.
+        """
         resp = await self._http.post(
             "/management/v1/users/human/_import",
             headers={"x-zitadel-orgid": org_id},
             json={
-                "userName": email,
+                "userName": email.lower(),
                 "profile": {
                     "firstName": first_name,
                     "lastName": last_name,
@@ -235,17 +276,31 @@ class ZitadelClient:
 
     # ── Custom Login UI (Session API) ─────────────────────────────────────────
 
-    async def create_session_with_password(self, email: str, password: str) -> dict:
-        """Create a Zitadel session validated by email + password.
+    async def create_session_with_password(self, user_id: str, password: str) -> dict:
+        """Create a Zitadel session for the given Zitadel ``user_id`` with the
+        supplied password.
 
-        Returns the full response dict containing ``sessionId`` and ``sessionToken``.
-        Raises ``httpx.HTTPStatusError`` on invalid credentials (4xx).
+        ``user_id`` MUST be the canonical Zitadel userId resolved from the
+        user-supplied email via ``find_user_by_email`` (which is itself
+        case-insensitive per RFC 5321 §2.4). Passing the raw user-typed
+        email here is wrong: Zitadel's ``/v2/sessions`` user check matches
+        ``loginName`` case-sensitively against the stored value, so a user
+        whose Zitadel ``loginName`` is ``Steven@getklai.com`` cannot log in
+        by typing ``steven@getklai.com`` — Zitadel returns HTTP 400 and the
+        portal returns 401 "Email address or password is incorrect". The
+        IGNORE_CASE fix on ``find_user_by_email`` (commit 7e92e089) closed
+        the lookup half of this gap; this signature closes the session-
+        creation half.
+
+        Returns the full response dict containing ``sessionId`` and
+        ``sessionToken``. Raises ``httpx.HTTPStatusError`` on invalid
+        credentials (4xx) or unknown ``user_id`` (also 4xx).
         """
         resp = await self._http.post(
             "/v2/sessions",
             json={
                 "checks": {
-                    "user": {"loginName": email},
+                    "user": {"userId": user_id},
                     "password": {"password": password},
                 }
             },
@@ -574,7 +629,11 @@ class ZitadelClient:
             "/v2/users/human",
             headers={"x-zitadel-orgid": org_id},
             json={
-                "username": email,
+                # username is lowercased to keep all auto-provisioned IDP
+                # users on the same case-insensitive footing as humans
+                # created via ``create_human_user`` and ``invite_user``.
+                # See ``create_human_user`` docstring for rationale.
+                "username": email.lower(),
                 "profile": {
                     "givenName": given_name or email.split("@")[0],
                     "familyName": family_name,

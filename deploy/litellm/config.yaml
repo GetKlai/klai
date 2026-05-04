@@ -1,33 +1,41 @@
 model_list:
-  # Primary: Claude Haiku — default for user-facing tasks
-  # TEMPORARY: switched from Mistral Small due to Tier 1 monthly quota exhaustion
-  # (service_tier_capacity_exceeded / code 3505). Revert to Mistral after quota reset.
+  # Primary: Mistral Small — default for user-facing tasks
   # Routes through custom_router.py: may be upgraded to klai-large (tool calls)
   # or downgraded to klai-fast (web search content). Never use for internal services.
   - model_name: klai-primary
     litellm_params:
-      model: anthropic/claude-haiku-4-5-20251001
-      api_key: os.environ/ANTHROPIC_API_KEY
+      model: mistral/mistral-small-2603
+      api_key: os.environ/MISTRAL_API_KEY
     rpm: 500
     tpm: 400000
 
-  # Fast: Claude Haiku — bypasses custom_router.py routing
-  # TEMPORARY: switched from Mistral Small due to Tier 1 monthly quota exhaustion
-  # Use for all internal services: enrichment, coreference, Graphiti extraction
+  # Fast: Mistral Small — bypasses custom_router.py routing
+  # Use for lightweight, latency-sensitive user-facing calls
   - model_name: klai-fast
     litellm_params:
-      model: anthropic/claude-haiku-4-5-20251001
-      api_key: os.environ/ANTHROPIC_API_KEY
+      model: mistral/mistral-small-2603
+      api_key: os.environ/MISTRAL_API_KEY
     rpm: 500
     tpm: 400000
 
-  # Large: Claude Sonnet 4.6 — agentic / tool use flows
+  # Large: Mistral Large — agentic / tool use flows
   # Auto-selected by custom_router.py when tool call history is detected
   - model_name: klai-large
     litellm_params:
-      model: anthropic/claude-sonnet-4-6
-      api_key: os.environ/ANTHROPIC_API_KEY
+      model: mistral/mistral-large-2512
+      api_key: os.environ/MISTRAL_API_KEY
     rpm: 200
+    tpm: 400000
+
+  # Pipeline: Mistral Small — internal background services (Graphiti
+  # extraction, enrichment, coreference). Bypasses custom_router.py
+  # because the router only fires on klai-primary. Required by compose
+  # env GRAPHITI_LLM_MODEL=klai-pipeline (deploy/docker-compose.yml).
+  - model_name: klai-pipeline
+    litellm_params:
+      model: mistral/mistral-small-2603
+      api_key: os.environ/MISTRAL_API_KEY
+    rpm: 500
     tpm: 400000
 
 router_settings:
@@ -35,7 +43,7 @@ router_settings:
   optional_pre_call_checks:
     - enforce_model_rate_limits  # Queue requests when provider budget is hit
   provider_budget_config:
-    anthropic:
+    mistral:
       rpm_limit: 500
       tpm_limit: 400000
 

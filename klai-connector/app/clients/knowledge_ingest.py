@@ -234,6 +234,24 @@ class CrawlSyncClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def crawl_sync_cancel(self, job_id: str) -> None:
+        """Cancel an in-flight ``run_crawl`` task on knowledge-ingest.
+
+        SPEC-WORKER-LANES-001 REQ-3. Called by sync_engine on poll timeout
+        so the procrastinate task does not keep writing artifacts behind a
+        sync_run that has already been marked failed. Idempotent and
+        best-effort — knowledge-ingest returns 204 even when the task has
+        already finished.
+
+        Returns:
+            None on success (204 No Content). 404 on unknown job_id.
+        """
+        resp = await self._client.post(
+            f"/ingest/v1/crawl/sync/{job_id}/cancel",
+            headers=self._headers(),
+        )
+        resp.raise_for_status()
+
     async def aclose(self) -> None:
         """Close the underlying HTTP client."""
         await self._client.aclose()

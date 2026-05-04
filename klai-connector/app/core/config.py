@@ -2,7 +2,7 @@
 
 import base64
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -17,9 +17,11 @@ class Settings(BaseSettings):
     zitadel_client_id: str
     zitadel_client_secret: str
     # Expected `aud` claim value for introspected tokens (SPEC-SEC-008 F-017).
-    # When empty, audience verification is skipped (warn-only fallback) so that
-    # existing deployments without a configured audience continue to work. SHOULD
-    # be set to the klai-connector Zitadel application audience for defense-in-depth.
+    # SPEC-SEC-AUDIT-2026-04 B2: audience verification is now MANDATORY.
+    # Empty/missing value raises ValidationError at startup (fail-closed).
+    # The env var KLAI_CONNECTOR_ZITADEL_AUDIENCE MUST exist in SOPS before
+    # this validator is deployed — see validator-env-parity pitfall in
+    # .claude/rules/klai/pitfalls/process-rules.md.
     zitadel_api_audience: str = ""
 
     # GitHub App
@@ -143,3 +145,33 @@ class Settings(BaseSettings):
                 "SPEC-SEC-INTERNAL-001 REQ-9.3."
             )
         return v
+
+    # ------------------------------------------------------------------
+    # SPEC-SEC-AUDIT-2026-04 B2: fail-closed startup on empty audience.
+    # Before this fix the middleware had a warn-only fallback that silently
+    # skipped audience verification when zitadel_api_audience was empty,
+    # allowing any valid Zitadel token (even for a different app) to pass
+    # auth (cross-app token reuse).
+    #
+    # VALIDATOR-ENV-PARITY: KLAI_CONNECTOR_ZITADEL_AUDIENCE must exist in
+    # klai-infra/core-01/.env.sops before this code is deployed. Deploy order
+    # is env-var-first, validator-second.  See validator-env-parity (HIGH)
+    # pitfall in .claude/rules/klai/pitfalls/process-rules.md.
+    # ------------------------------------------------------------------
+    @model_validator(mode="after")
+    def _require_zitadel_api_audience(self) -> "Settings":
+        """SPEC-SEC-AUDIT-2026-04 B2: fail-closed on empty/missing ZITADEL_API_AUDIENCE.
+
+        Mirrors SPEC-SEC-012 in research-api. An empty audience allows cross-app
+        token reuse: any Zitadel JWT that introspects as active=true passes auth.
+        Setting the audience ensures only tokens issued for klai-connector's own
+        Zitadel application are accepted.
+        """
+        if not self.zitadel_api_audience or not self.zitadel_api_audience.strip():
+            raise ValueError(
+                "Missing required: KLAI_CONNECTOR_ZITADEL_AUDIENCE (SPEC-SEC-AUDIT-2026-04 B2). "
+                "Must be the Zitadel application audience for klai-connector. "
+                "An empty value would silently skip audience verification, enabling "
+                "cross-app token reuse."
+            )
+        return self
