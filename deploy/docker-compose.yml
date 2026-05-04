@@ -1327,8 +1327,10 @@ services:
       ZITADEL_INTROSPECTION_URL: https://auth.${DOMAIN}/oauth/v2/introspect
       ZITADEL_CLIENT_ID: ${CONNECTOR_ZITADEL_CLIENT_ID}
       ZITADEL_CLIENT_SECRET: ${CONNECTOR_ZITADEL_CLIENT_SECRET}
-      # SPEC-SEC-008 F-017: defense-in-depth audience check against Zitadel API app
-      ZITADEL_API_AUDIENCE: ${KLAI_CONNECTOR_ZITADEL_AUDIENCE:-}
+      # SPEC-SEC-AUDIT-2026-04 B2: audience verification is MANDATORY.
+      # KLAI_CONNECTOR_ZITADEL_AUDIENCE must be set in SOPS (verified present).
+      # Empty value causes startup ValidationError (fail-closed).
+      ZITADEL_API_AUDIENCE: ${KLAI_CONNECTOR_ZITADEL_AUDIENCE}
       # GitHub App credentials for connector adapter
       GITHUB_APP_ID: ${GITHUB_APP_ID}
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY}
