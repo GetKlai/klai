@@ -18,8 +18,8 @@ The harness is **multi-tenant by design**: a single deployment in `klai-knowledg
 ## 3. Architecture Decisions
 
 - **Service host**: `klai-knowledge-ingest` — reuses existing Procrastinate worker + asyncpg pool, no new service container.
-- **Storage**: new table `rag_eval_results` in the existing `klai` Postgres database, schema verbatim from SPEC §Scope.
-- **Migration tool**: alembic, in `klai-knowledge-ingest/alembic/versions/`.
+- **Storage**: new table `rag_eval_results` in the existing `klai` Postgres database, schema verbatim from SPEC §Scope. Schema-prefix: `knowledge.rag_eval_results` (consistent with sibling tables `knowledge.artifacts`, `knowledge.crawled_pages`, etc.).
+- **Migration tool**: plain SQL in `deploy/postgres/migrations/NNN_*.sql` (NO alembic — knowledge-ingest uses raw asyncpg + idempotent `CREATE TABLE IF NOT EXISTS`). Next number: `014` (last existing is `013_artifact_images.sql`). Manual deploy on core-01: `docker exec klai-core-postgres-1 psql -U postgres -d klai -f /docker-entrypoint-initdb.d/migrations/014_rag_eval_results.sql`.
 - **Worker integration**: new Procrastinate task `evaluate_retrieval_quality_nightly` registered in `klai-knowledge-ingest/knowledge_ingest/worker.py`.
 - **Schedule**: 02:00 UTC nightly, configured in the existing Procrastinate scheduling block.
 - **Retrieval path**: harness calls the production `klai-retrieval-api` `/retrieve` endpoint over the Docker internal network using `KLAI_INTERNAL_SECRET` — same auth pattern as `deploy/litellm/klai_knowledge.py`. No bypass, no shortcut.
@@ -36,12 +36,12 @@ The harness is **multi-tenant by design**: a single deployment in `klai-knowledg
 
 Five units, executed in dependency order. Each is a separate commit (or commit cluster) in the worktree.
 
-### Unit 1 — DB schema + alembic migration
+### Unit 1 — DB schema (plain SQL migration)
 
-- **Scope**: create `rag_eval_results` table and the two indexes from SPEC §Scope.
+- **Scope**: create `knowledge.rag_eval_results` table and the two indexes from SPEC §Scope. Plain SQL, idempotent (`CREATE TABLE IF NOT EXISTS`).
 - **Files touched**:
-  - new: `klai-knowledge-ingest/alembic/versions/<rev>_rag_eval_results.py`
-  - modify: `klai-knowledge-ingest/knowledge_ingest/db/models.py` — add `RagEvalResult` SQLAlchemy model.
+  - new: `deploy/postgres/migrations/014_rag_eval_results.sql`
+  - new: `klai-knowledge-ingest/knowledge_ingest/eval/store.py` — asyncpg helper functions (`insert_eval_row`, `get_pool` reuse from existing `pg_store`).
 - **Schema** (verbatim from SPEC):
   - `id BIGSERIAL PK`
   - `run_at TIMESTAMPTZ NOT NULL DEFAULT now()`
@@ -54,7 +54,7 @@ Five units, executed in dependency order. Each is a separate commit (or commit c
   - `total_tokens INT`
   - `meta JSONB`
 - **Indexes**: `ix_rag_eval_run_at_suite (run_at DESC, suite)`, `ix_rag_eval_variant_run_at (variant, run_at DESC)`.
-- **Acceptance test**: pytest fixture spins up a test DB, runs `alembic upgrade head`, asserts table + indexes exist via `pg_indexes` query.
+- **Acceptance test**: pytest fixture spins up a test DB, applies `014_rag_eval_results.sql` directly via asyncpg, asserts table + indexes exist via `pg_indexes` query, asserts `insert_eval_row()` round-trips a row.
 - **EARS coverage**: REQ-2 (storage shape).
 - **Dependencies**: none (root unit).
 
