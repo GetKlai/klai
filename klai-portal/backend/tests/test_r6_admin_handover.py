@@ -122,7 +122,9 @@ class TestDemoteAdmin:
                     db=db,
                 )
 
-        assert target.role == "member"
+        # Post profile-ladder migration: demoted admin lands on "company"
+        # rung (formerly "member"). See SPEC-PORTAL-PROFILES-001.
+        assert target.role == "company"
         assert result.message
 
     @pytest.mark.asyncio
