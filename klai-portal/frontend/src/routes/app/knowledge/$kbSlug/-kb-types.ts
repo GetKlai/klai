@@ -73,7 +73,6 @@ export interface TaxonomyNode {
   name: string
   slug: string
   description?: string | null
-  doc_count: number
   sort_order: number
   created_at: string
   created_by: string
