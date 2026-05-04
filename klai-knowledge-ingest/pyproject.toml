@@ -24,6 +24,7 @@ dependencies = [
     # SPEC-CRAWLER-004 Fase A: image pipeline (Garage S3 + magic-byte MIME detection).
     "minio>=7.2",
     "filetype>=1.2",
+    "ragas>=0.4.3",
 ]
 
 [tool.uv.sources]

@@ -86,6 +86,10 @@ def init_app(connector: Any) -> Any:
 
     register_connector_purge_task(_procrastinate_app)
 
+    from knowledge_ingest.eval.ragas_runner import register_eval_tasks
+
+    register_eval_tasks(_procrastinate_app)
+
     return _procrastinate_app
 
 

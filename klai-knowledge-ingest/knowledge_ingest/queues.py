@@ -39,26 +39,29 @@ from __future__ import annotations
 
 # --- Queue names ------------------------------------------------------------
 
-INGEST_KB = "ingest-kb"
-"""KB document ingest from external sources."""
-
-ENRICH_INTERACTIVE = "enrich-interactive"
-"""Single-document enrichment, foreground (drains first)."""
-
-ENRICH_BULK = "enrich-bulk"
-"""Bulk LLM enrichment for crawled/imported pages."""
-
-GRAPHITI_BULK = "graphiti-bulk"
-"""LLM relation building → FalkorDB knowledge graph."""
-
-TAXONOMY_BACKFILL = "taxonomy-backfill"
-"""One-shot backfill jobs (clustering, taxonomy)."""
+CRAWL_JOBS = "crawl-jobs"
+"""Web crawl orchestration (SPEC-INGEST-QUEUE-SEPARATION-001)."""
 
 CONNECTOR_PURGE = "connector-purge"
 """Connector-delete orchestration (SPEC-CONNECTOR-DELETE-LIFECYCLE-001)."""
 
-CRAWL_JOBS = "crawl-jobs"
-"""Web crawl orchestration (SPEC-INGEST-QUEUE-SEPARATION-001)."""
+ENRICH_BULK = "enrich-bulk"
+"""Bulk LLM enrichment for crawled/imported pages."""
+
+ENRICH_INTERACTIVE = "enrich-interactive"
+"""Single-document enrichment, foreground (drains first)."""
+
+GRAPHITI_BULK = "graphiti-bulk"
+"""LLM relation building → FalkorDB knowledge graph."""
+
+INGEST_KB = "ingest-kb"
+"""KB document ingest from external sources."""
+
+RAG_EVAL = "rag-eval"
+"""Nightly RAGAS evaluation harness (SPEC-RAG-EVAL-001). LLM-bound via judge calls."""
+
+TAXONOMY_BACKFILL = "taxonomy-backfill"
+"""One-shot backfill jobs (clustering, taxonomy)."""
 
 
 # --- Worker lanes -----------------------------------------------------------
@@ -88,6 +91,7 @@ LLM_QUEUES: list[str] = [
     ENRICH_INTERACTIVE,
     ENRICH_BULK,
     GRAPHITI_BULK,
+    RAG_EVAL,
     TAXONOMY_BACKFILL,
 ]
 """Throughput-bound LLM work — bounded by upstream rate limit."""
