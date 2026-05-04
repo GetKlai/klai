@@ -35,6 +35,12 @@ _ADDON_PRODUCTS = {
 
 def upgrade() -> None:
     conn = op.get_bind()
+    # portal_groups, portal_group_products and portal_group_memberships are
+    # RLS-protected. The install_rls_guard policy raises 42501 when
+    # app.current_org_id is unset and app.cross_org_admin is not true. Alembic
+    # opens its own connection without a tenant scope, so we set the
+    # cross-org admin GUC for the duration of this migration's transaction.
+    conn.execute(sa.text("SET LOCAL app.cross_org_admin = TRUE"))
 
     legacy_ids_result = conn.execute(
         sa.text("SELECT id FROM portal_groups WHERE is_system = true AND system_key = ANY(:keys)"),
@@ -94,6 +100,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     conn = op.get_bind()
+    conn.execute(sa.text("SET LOCAL app.cross_org_admin = TRUE"))
 
     new_keys = [sg["system_key"] for sg in _NEW_GROUPS]
     new_ids_result = conn.execute(
