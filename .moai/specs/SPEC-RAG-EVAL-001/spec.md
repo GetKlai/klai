@@ -1,7 +1,7 @@
 ---
 id: SPEC-RAG-EVAL-001
-version: "0.1.0"
-status: draft
+version: "0.2.0"
+status: in_progress
 created: 2026-05-04
 updated: 2026-05-04
 author: Mark Vletter
@@ -110,12 +110,12 @@ The suite files start with **30 hand-written queries per type** (90 total). Gene
 - **REQ-6**: WHEN a SPEC implementation team adds a `variant` column value (e.g. `contextual_v1`), the harness SHALL accept the variant via env var `RAG_EVAL_VARIANT` and tag every row with it; default `baseline`.
 - **REQ-7**: An operator SHALL be able to run the harness ad-hoc via `python -m knowledge_ingest.eval.ragas_runner --suite chat --variant my-experiment` and see results within 5 minutes for a 30-query suite.
 
-## Open Questions (resolve in /plan)
+## Resolved Open Questions
 
-1. **Service boundary** — does the runner live inside `klai-knowledge-ingest` (uses its existing Procrastinate worker + DB pool) or as a new `klai-rag-eval` service? Heuristic: if RAGAS install bloats knowledge-ingest by > 200 MB, split it; otherwise reuse.
-2. **LLM-as-judge cost** — RAGAS calls a judge LLM per metric per query. With 90 queries × 4 metrics × 30 nights/month = 10800 LLM calls/month. At klai-fast pricing (~€0.01 per 1k tokens, ~500 tokens per judge call) this is ~€54/month. Acceptable; verify in plan-phase.
-3. **Per-tenant or global?** Option A: one fixed test-tenant with curated KBs. Option B: sample real tenants. Option A is reproducible, Option B is realistic. Default A; revisit when we have customers.
-4. **Variant comparison UI** — do we need a Grafana panel that shows side-by-side (baseline vs variant) on the same chart, or is `WHERE variant = ?` SQL filter enough? Default: SQL filter; UI in follow-up if needed.
+1. **Service boundary** — RESOLVED: reuse `klai-knowledge-ingest`. RAGAS install footprint smoke-tested at 403 MB (scipy 90, pyarrow 83, pandas 37, numpy 41, sknetwork + PIL + langchain — no torch/transformers). Above the 200 MB heuristic but acceptable: scientific-stack libs the Docker base layer can cache, no GPU bloat, nightly job doesn't justify a new service container.
+2. **LLM-as-judge cost** — RESOLVED: ~€5/month, NOT ~€54/month. Original estimate was wrong by an order of magnitude. Correct math: 60 queries × 4 metrics × 30 nights = 7,200 judge calls/month. klai-fast (Mistral small via LiteLLM) is ~€0.60 per million input tokens, ~€1.80 per million output tokens. 500 input + 50 output tokens per call → 3.6M input tokens (€2.16) + 0.36M output tokens (€0.65) ≈ €2.81/month + retry/buffer ≈ **~€5/month**.
+3. **Per-tenant or global?** — RESOLVED: Voys-only for v1 (`org_zitadel_id = '368884765035593759'`). Multi-tenant by design — each query in a suite YAML carries its own `org_zitadel_id`, so adding tenants post-launch is a YAML drop-in (no service split, no per-tenant deployment).
+4. **Variant comparison UI** — RESOLVED: Grafana SQL filter via `$variant` template variable on the `variant` column. No custom UI for v1.
 
 ## Estimated effort
 

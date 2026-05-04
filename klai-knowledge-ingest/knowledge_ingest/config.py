@@ -89,6 +89,23 @@ class Settings(BaseSettings):
     # environments can run knowledge-ingest without provisioning a KEK.
     encryption_key: str = ""
 
+    # SPEC-RAG-EVAL-001 — nightly RAGAS evaluation harness settings.
+    # retrieval_api_url: base URL of klai-retrieval-api (Docker internal network).
+    # retrieval_internal_secret: X-Internal-Secret for /retrieve auth.
+    #   Reuses RETRIEVAL_INTERNAL_SECRET env var (same secret as litellm-hook).
+    #   Warn-on-empty at startup (fail-open: harness skips retrieval auth when absent
+    #   in dev; production must set RETRIEVAL_INTERNAL_SECRET via SOPS).
+    # rag_eval_retrieval_timeout: seconds before a /retrieve call is declared failed (REQ-3).
+    # rag_eval_judge_timeout: seconds before a klai-fast judge call is declared failed.
+    # rag_eval_judge_model: LiteLLM model alias for answer generation and RAGAS judge.
+    # rag_eval_suites_dir: directory containing suite YAML files.
+    retrieval_api_url: str = "http://klai-retrieval-api:8000"
+    retrieval_internal_secret: str = ""
+    rag_eval_retrieval_timeout: int = 10
+    rag_eval_judge_timeout: int = 30
+    rag_eval_judge_model: str = "klai-fast"
+    rag_eval_suites_dir: str = "knowledge_ingest/eval/suites"
+
     model_config = {"env_file": ".env"}
 
     @model_validator(mode="after")
