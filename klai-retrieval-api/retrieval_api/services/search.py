@@ -11,9 +11,6 @@ import asyncio
 import warnings
 from datetime import UTC, datetime
 
-# Qdrant client warns about API key over HTTP; safe inside Docker network
-warnings.filterwarnings("ignore", message="Api key is used with an insecure connection")
-
 import structlog
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import (
@@ -30,6 +27,10 @@ from qdrant_client.models import (
 from retrieval_api.config import settings
 from retrieval_api.models import RetrieveRequest
 from retrieval_api.util.payload import payload_list
+
+# Qdrant client warns at call-time when an api_key is used over plain HTTP;
+# safe inside the Docker network, so silence that specific warning.
+warnings.filterwarnings("ignore", message="Api key is used with an insecure connection")
 
 logger = structlog.get_logger()
 
@@ -195,7 +196,8 @@ async def _search_notebook(
         # SPEC-SEC-HYGIENE-001 REQ-43: logger.exception preserves the
         # traceback (TRY400/TRY401); the previous `error=str(exc)` discarded it.
         logger.exception(
-            "qdrant_search_failed", collection=settings.qdrant_focus_collection
+            "qdrant_search_failed",
+            collection=settings.qdrant_focus_collection,
         )
         raise
 
