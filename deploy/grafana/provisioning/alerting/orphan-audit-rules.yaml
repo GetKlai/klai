@@ -1,0 +1,204 @@
+# SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-5 — orphan-audit alerts (LogsQL via VictoriaLogs).
+#
+# Routed via spec=SPEC-INFRA-CONTAINER-HYGIENE-001 → klai-ops-alerts-email
+# (see policies.yaml).
+#
+#   spec-infra-container-hygiene-001-tenant-no-route
+#       CRITICAL — tenant-named or klasse-B container has no Caddy upstream.
+#       This is the EXACT librechat-voys signal that the 2026-05-02 incident
+#       would have surfaced — fires the moment the audit detects a tenant
+#       container that has been disconnected from its routing layer.
+#
+#   spec-infra-container-hygiene-001-caddy-upstream-missing
+#       CRITICAL — Caddy upstream points at a container that does not exist.
+#       Inverse of the above — broken routing rule, request would 502.
+#
+# Both rules query the structlog stream emitted by docker-orphan-audit.sh
+# (running weekly via systemd on core-01, REQ-5+REQ-6). The audit emits
+# event:<type> labels per detected issue; absence of events = healthy.
+#
+# Eval window is 8 days so a missed audit run (timer paused, deploy
+# overlap, etc.) does NOT mask a real signal — the previous week's
+# events still keep the alert firing. `for: 0s` fires immediately on
+# the first matching event of the week. `keepFiringFor: 1h` is the
+# resolved-grace; the alert auto-resolves when the next audit run
+# emits zero events of that type (steady-state recovery).
+#
+# `noDataState: OK` and `execErrState: OK` follow the caddy/librechat
+# precedent (see caddy-rules.yaml header) — the LogsQL plugin
+# intermittently trips on empty/edge-case results, and a plugin hiccup
+# should not page ops. Real ops events are always backed by
+# multi-week-stable LogsQL queries.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: spec-infra-container-hygiene-001-orphan-audit
+    folder: Klai
+    interval: 5m
+    rules:
+
+      # ── tenant_container_no_route ─────────────────────────────────────────
+      # Klasse-B container or `librechat-*` named container that the audit
+      # could not match against any Caddy upstream. This is the exact
+      # signal that, had it existed on 2026-05-02, would have flagged
+      # librechat-voys before the cleanup-agent removed it.
+      - uid: spec-infra-container-hygiene-001-tenant-no-route
+        title: tenant_container_no_route
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 691200   # 8 days — covers one missed weekly audit run
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:klai-orphan-audit AND event:tenant_container_no_route'
+              queryType: instant
+          - refId: count
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 691200
+              to: 0
+            model:
+              refId: count
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 691200
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: count
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 0s
+        keepFiringFor: 1h
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-INFRA-CONTAINER-HYGIENE-001
+          service_group: hygiene-orphan-audit
+        annotations:
+          summary: 'Tenant container without Caddy route detected ({{ $value }} events in last 8d)'
+          runbook_url: 'docs/runbooks/container-hygiene-systemd-install.md'
+          description: |
+            klai-orphan-audit emitted at least one `tenant_container_no_route`
+            event in the last 8 days. A container with klasse-B label
+            (`klai.managed_by=portal-api-provisioning`) or a `librechat-*`
+            naming pattern is running but no Caddy upstream points at it —
+            tenant traffic to that container would 502.
+
+            This is the librechat-voys class signal. Do NOT `docker rm`
+            the affected container directly; that bypasses Mongo / Caddy /
+            Meilisearch cleanup and may lose tenant data.
+
+            Triage:
+              1. Identify the affected container in VictoriaLogs:
+                   service:klai-orphan-audit AND event:tenant_container_no_route
+                 The `container_name` field on the event names the container.
+              2. Verify whether it should be running:
+                   ssh core-01 "docker inspect {NAME} --format '{{ json .Config.Labels }}'"
+                 If `klai.managed_by=portal-api-provisioning` is set, this is a
+                 legitimate tenant container — its tenant_slug label tells you
+                 which tenant.
+              3. Check why Caddy lost the upstream:
+                   ssh core-01 "grep -n {NAME} /opt/klai/Caddyfile /opt/klai/caddy/tenants/*.caddyfile"
+                 If absent, the per-tenant Caddyfile was lost — recreate via
+                 the portal-api provisioning re-run flow (see provisioning-retry.md
+                 runbook).
+              4. NEVER `docker rm` until step 2 confirms the container is
+                 unmanaged. If unsure, ask before deleting — the
+                 PreToolUse hook will block this anyway.
+
+      # ── caddy_upstream_missing ────────────────────────────────────────────
+      # Inverse: Caddy has an upstream pointing at a container that does
+      # not exist. Means a service was removed or its container died and
+      # Caddy is now serving 502 for that route.
+      - uid: spec-infra-container-hygiene-001-caddy-upstream-missing
+        title: caddy_upstream_missing
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 691200
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:klai-orphan-audit AND event:caddy_upstream_missing'
+              queryType: instant
+          - refId: count
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 691200
+              to: 0
+            model:
+              refId: count
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 691200
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: count
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 0s
+        keepFiringFor: 1h
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-INFRA-CONTAINER-HYGIENE-001
+          service_group: hygiene-orphan-audit
+        annotations:
+          summary: 'Caddy has upstream(s) without matching containers ({{ $value }} events in last 8d)'
+          runbook_url: 'docs/runbooks/container-hygiene-systemd-install.md'
+          description: |
+            klai-orphan-audit emitted at least one `caddy_upstream_missing`
+            event in the last 8 days. A `reverse_proxy` directive in the
+            Caddyfile points at a container/service name that has no
+            running container — every request to that route returns 502.
+
+            Triage:
+              1. Identify the missing upstream:
+                   service:klai-orphan-audit AND event:caddy_upstream_missing
+                 The `container_name` field names the upstream Caddy could
+                 not resolve.
+              2. Verify Caddyfile state:
+                   ssh core-01 "grep -nE '(^|[[:space:]]){NAME}([[:space:]]|:|$)' /opt/klai/Caddyfile /opt/klai/caddy/tenants/*.caddyfile"
+              3. Decide: is this a stale Caddyfile entry (service was
+                 intentionally removed) or a missing container (service
+                 should exist)?
+                 - Stale entry: edit Caddyfile, remove the route, redeploy.
+                 - Missing container: investigate why it's down via
+                   container_down runbook + recreate via compose-up.sh.
