@@ -77,4 +77,4 @@ groups:
             BOTH of the last two nightly runs for at least one suite.
             Investigate: did the corpus change? Did retrieval-api or LiteLLM
             misbehave? Query knowledge.rag_eval_results for details.
-          runbook_url: https://github.com/getklai/klai/blob/main/.moai/specs/SPEC-RAG-EVAL-001/spec.md
+          runbook_url: 'docs/runbooks/rag-quality.md#faithfulness-baseline-low'
