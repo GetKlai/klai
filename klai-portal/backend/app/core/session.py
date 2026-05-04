@@ -59,3 +59,8 @@ class SessionContext:
 
     access_token_expires_at: int
     """Unix seconds when `access_token` stops being valid."""
+
+    org_id: int | None = None
+    """Portal org the session is bound to. None for pre-finalised sessions
+    (e.g. mid-multi-org workspace selection). Read by KlaiTenantHostMiddleware
+    to validate the URL hostname against the session's tenant."""
