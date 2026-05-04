@@ -78,6 +78,10 @@ ALLOWED_HELPER_FUNCTIONS: frozenset[str] = frozenset(
         "create_default_personal_kb",
         # app/core/system_groups.py — calls set_tenant itself.
         "create_system_groups",
+        # app/services/system_groups.py — SPEC-PORTAL-PROFILES-001 Phase 2 P2.5.
+        # Only called from add_member in groups.py, which calls _get_caller_org +
+        # set_tenant before invoking this helper. Tenant context is upstream.
+        "sync_role_from_system_group",
         # app/api/app_knowledge_bases.py — all helpers take org_id and
         # are only reachable via _get_caller_org routes.
         "_get_kb_or_404",

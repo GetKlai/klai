@@ -1,15 +1,17 @@
 """Effective product entitlement resolution.
 
-Computes the union of direct (portal_user_products) and group-inherited
-(portal_group_products via portal_group_memberships) product assignments.
+Computes the union of plan-included, direct (portal_user_products), and
+group-inherited (portal_group_products via portal_group_memberships)
+product assignments.
 """
 
 from sqlalchemy import select, union
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import set_tenant
+from app.core.plans import get_plan_products
 from app.models.groups import PortalGroupMembership, PortalGroupProduct
-from app.models.portal import PortalUser
+from app.models.portal import PortalOrg, PortalUser
 from app.models.products import PortalUserProduct
 
 
@@ -19,28 +21,45 @@ from app.models.products import PortalUserProduct
 #   /internal/* and FastAPI dependencies resolved in parallel with _get_caller_org)
 #   rely on this function to set_tenant itself via the portal_users permissive lookup.
 #   Removing that behaviour re-introduces the 2026-04-21 Voys incident class.
-# @MX:SPEC SPEC-SEC-007
+# @MX:NOTE Plan-included products (chat, knowledge) are the floor for any user on a paying
+#   plan. Without this union, sidebars and gates render empty for admins/users without an
+#   explicit per-user/per-group product entitlement — which broke the post-Phase-3 UI.
+#   Add-on products (scribe, docs) are NOT in PLAN_PRODUCTS — those still require explicit
+#   per-tenant enabled_addons + per-user/group entitlement (handled by require_product).
+# @MX:SPEC SPEC-SEC-007, SPEC-PORTAL-PROFILES-001
 async def get_effective_products(zitadel_user_id: str, db: AsyncSession) -> list[str]:
-    """Return all products a user has access to (direct + group-inherited).
+    """Return all products a user has access to.
+
+    Three sources, all unioned:
+      1. Plan-included products (from org.plan via PLAN_PRODUCTS) — the floor for anyone on a paying plan.
+      2. Direct per-user assignments (portal_user_products) — explicitly granted to this user.
+      3. Group-inherited assignments (portal_group_products via portal_group_memberships).
 
     Self-heals tenant context: looks up the user's org_id and calls
-    set_tenant() before querying the RLS-protected portal_user_products
-    and portal_group_products. This lets callers invoke this function
-    without being responsible for set_tenant — e.g. FastAPI dependency
-    ordering means `require_product` can resolve BEFORE `_get_caller_org`
-    has run, and /internal endpoints that don't carry a request org_id
-    can still resolve entitlements.
+    set_tenant() before querying the RLS-protected tables. This lets callers
+    invoke this function without being responsible for set_tenant — e.g.
+    FastAPI dependency ordering means `require_product` can resolve BEFORE
+    `_get_caller_org` has run, and /internal endpoints that don't carry a
+    request org_id can still resolve entitlements.
 
     Returns empty list if the user has no portal row yet (pre-provisioning
     or deleted user).
     """
-    # Resolve user's tenant. portal_users has a permissive-on-missing policy
-    # so this lookup is safe without prior set_tenant().
-    org_row = await db.execute(select(PortalUser.org_id).where(PortalUser.zitadel_user_id == zitadel_user_id))
-    org_id = org_row.scalar_one_or_none()
-    if org_id is None:
+    # Resolve user's tenant + plan. portal_users has a permissive-on-missing
+    # policy so this lookup is safe without prior set_tenant().
+    org_row = await db.execute(
+        select(PortalUser.org_id, PortalOrg.plan)
+        .join(PortalOrg, PortalOrg.id == PortalUser.org_id)
+        .where(PortalUser.zitadel_user_id == zitadel_user_id)
+    )
+    row = org_row.one_or_none()
+    if row is None:
         return []
+    org_id, plan = row
     await set_tenant(db, org_id)
+
+    # Plan-included products (free / core / professional / complete → chat, knowledge, …)
+    plan_products: set[str] = set(get_plan_products(plan))
 
     # Direct assignments
     direct_q = select(PortalUserProduct.product).where(PortalUserProduct.zitadel_user_id == zitadel_user_id)
@@ -57,4 +76,6 @@ async def get_effective_products(zitadel_user_id: str, db: AsyncSession) -> list
 
     combined = union(direct_q, group_q)
     result = await db.execute(combined)
-    return list(result.scalars().all())
+    user_and_group_products: set[str] = set(result.scalars().all())
+
+    return sorted(plan_products | user_and_group_products)

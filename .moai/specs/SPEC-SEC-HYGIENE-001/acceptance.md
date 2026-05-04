@@ -95,6 +95,51 @@ to an unprovisioned subdomain of getklai.com (e.g.
 
 ---
 
+## AC-20.4 — Callback URL allowlist accepts FRONTEND_URL host (hotfix)
+
+**Scenario (regression):** After a successful TOTP login, Zitadel
+returns a `callback_url` whose hostname is the FRONTEND_URL host
+(`my.getklai.com`). Before v0.7.1, REQ-20.1 rejected it because `my`
+is not a tenant slug, breaking every multi-tenant login. v0.7.1
+introduces REQ-20.4: the system-host set bypasses the slug check.
+
+**Test file:** `klai-portal/backend/tests/test_validate_callback_url.py` (consolidated — extends the existing REQ-20.1/.2/.3 test file)
+
+**Steps:**
+
+1. Set `settings.domain = "getklai.com"` and
+   `settings.frontend_url = "https://my.getklai.com"`.
+2. Clear `_system_callback_hosts.cache_clear()`.
+3. Call `_validate_callback_url("https://my.getklai.com/api/auth/oidc/callback?code=abc")` →
+   **returns the URL unchanged** (FRONTEND_URL host bypass).
+4. Call `_validate_callback_url("https://getklai.com/api/auth/oidc/callback?code=abc")` →
+   **returns the URL unchanged** (bare apex, also part of system-host set).
+5. Set `settings.frontend_url = ""` and re-clear cache. Call
+   `_system_callback_hosts()` → returns `frozenset({"getklai.com"})` (empty
+   FRONTEND_URL is tolerated; only apex remains).
+6. Call `_validate_callback_url("https://attacker.getklai.com/x")` with
+   slug allowlist `{"getklai", "voys"}` → **raises HTTPException(502)**
+   and logs `callback_url_subdomain_not_allowlisted` (security invariant
+   from REQ-20.1 still holds — system-host set is additive, not
+   permissive).
+7. Call `_validate_callback_url("https://getklai.com.attacker.tld/x")` →
+   **raises HTTPException(502)** (suffix-substring lookalike rejected;
+   `.endswith` check still catches it because hostname does not end with
+   `.getklai.com`).
+
+**Pass condition:**
+
+- Steps 3, 4 pass through unchanged.
+- Step 5: `_system_callback_hosts()` is composable from settings, not
+  hardcoded; an unset FRONTEND_URL produces a 1-element set, not a crash.
+- Steps 6, 7 raise 502 with the generic body
+  `"Login failed, please try again later"` (no information leak).
+- All cases in `test_validate_callback_url.py` pass (existing REQ-20.1/.2/.3 plus new REQ-20.4 — 4 helper-composition cases + 3 validator cases).
+
+**Covers:** REQ-20.4.
+
+---
+
 ## AC-21 — `_safe_return_to` backslash and percent-decode
 
 **Scenario:** An attacker submits a crafted `return_to` query param

@@ -15,7 +15,8 @@
 import { API_BASE } from '@/lib/api'
 import { readCsrfCookie } from '@/lib/auth'
 import { FetchError, UnauthorizedError } from '@/lib/fetch-errors'
-import { authLogger } from '@/lib/logger'
+import { authLogger, deprovisionLogger } from '@/lib/logger'
+import { navigateTo, clearAllQueries } from '@/lib/navigate-singleton'
 
 export { UnauthorizedError } from '@/lib/fetch-errors'
 
@@ -94,9 +95,31 @@ async function doFetch<T>(path: string, options: ApiFetchOptions): Promise<T> {
   if (res.status === 401) {
     throw new UnauthorizedError()
   }
+
+  // @MX:NOTE: tenant_deleting 403 — org is mid-deprovisioning. Clear all cached queries
+  // and redirect to the tenant-deleted waiting page.
+  // @MX:SPEC: SPEC-INFRA-TENANT-DELETE-001 Phase 11 R10
+  if (res.status === 403) {
+    let errorCode: string | undefined
+    try {
+      const body = (await res.clone().json()) as { error?: string }
+      errorCode = body.error
+    } catch {
+      // no JSON body or already consumed — ignore
+    }
+    if (errorCode === 'tenant_deleting') {
+      deprovisionLogger.info('Received 403 tenant_deleting — redirecting to tenant-deleted', { path })
+      clearAllQueries()
+      navigateTo('/tenant-deleted')
+      // Return a sentinel to prevent calling code from trying to render fallback UI
+      throw new ApiError(403, 'tenant_deleting')
+    }
+  }
+
   if (!res.ok) {
     let detail = `${res.status}`
     let validationIssues: ValidationIssue[] | undefined
+    let detailObject: Record<string, unknown> | undefined
     try {
       const body = (await res.json()) as {
         detail?: string | ValidationIssue[] | Record<string, unknown>
@@ -111,11 +134,31 @@ async function doFetch<T>(path: string, options: ApiFetchOptions): Promise<T> {
         // Some portal-api routes raise HTTPException(detail={"error_code": ...})
         // for structured error signalling (quota exceeded, capability gate, etc.)
         // Stringify here so callers can JSON.parse(err.detail) to read the code.
+        detailObject = body.detail
         detail = JSON.stringify(body.detail)
       }
     } catch {
       // no JSON body
     }
+
+    // Tenant-host guard: portal-api returns 409 when the URL hostname's tenant
+    // slug does not match the session's org slug (KlaiTenantHostMiddleware).
+    // Redirect the browser to the correct subdomain — the SPA on the wrong
+    // subdomain otherwise renders content that contradicts the URL.
+    if (
+      res.status === 409 &&
+      detailObject?.error_code === 'tenant_host_mismatch' &&
+      typeof detailObject?.redirect_to === 'string'
+    ) {
+      authLogger.info('tenant_host_mismatch — redirecting to correct subdomain', {
+        redirect_to: detailObject.redirect_to,
+      })
+      window.location.replace(detailObject.redirect_to)
+      // Return a never-resolving promise so the caller does not see a
+      // misleading ApiError flash before the redirect kicks in.
+      return new Promise<T>(() => {})
+    }
+
     throw new ApiError(res.status, detail, validationIssues)
   }
 

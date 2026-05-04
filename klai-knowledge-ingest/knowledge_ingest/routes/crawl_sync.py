@@ -119,7 +119,8 @@ async def _validate_connector(
         msg = str(exc)
         if "not_configured" in msg:
             raise HTTPException(
-                status_code=500, detail="encryption_key_not_configured",
+                status_code=500,
+                detail="encryption_key_not_configured",
             ) from exc
         logger.exception("crawl_sync_bad_kek", connector_id=str(connector_id))
         raise HTTPException(status_code=500, detail="encryption_key_invalid") from exc
@@ -156,9 +157,7 @@ async def crawl_sync(req: CrawlSyncRequest) -> CrawlSyncResponse:
     # crawl4ai URLPatternFilter classifies '/nl/' as exact-match (fnmatch with no
     # wildcards) so '/nl/6-bubble' never matches. Appending '/*' makes it a PREFIX
     # pattern, which is the intended semantics for a path_prefix filter.
-    include_patterns = (
-        [req.path_prefix.rstrip("/") + "/*"] if req.path_prefix else None
-    )
+    include_patterns = [req.path_prefix.rstrip("/") + "/*"] if req.path_prefix else None
 
     # BFS must enter the graph at a node that links into the allowed subtree.
     # If the root page only links to sibling language paths (e.g. wiki shows
@@ -227,3 +226,101 @@ async def crawl_sync_status(job_id: str) -> CrawlSyncStatusResponse:
         pages_done=row["pages_done"],
         error=row["error"],
     )
+
+
+@router.post(
+    "/ingest/v1/crawl/sync/{job_id}/cancel",
+    status_code=204,
+)
+async def crawl_sync_cancel(job_id: str) -> None:
+    """Cancel an in-flight ``run_crawl`` procrastinate task.
+
+    SPEC-WORKER-LANES-001. klai-connector's ``sync_engine`` calls this on
+    poll timeout so the procrastinate task does not keep writing artifacts
+    behind a sync_run that is already marked failed. Without it, the
+    user-visible state (sync_run.status='failed') diverges from the data
+    state (artifacts continue to accumulate after the failure).
+
+    Idempotent:
+
+    * If the procrastinate task is already finished (succeeded / failed /
+      aborted), this returns 204 — there is nothing to cancel and the data
+      is already where it should be.
+    * If the underlying ``knowledge.crawl_jobs`` row is unknown, returns 404
+      so the caller can distinguish "wrong job_id" from "already done".
+    """
+    pool = await get_pool()
+    crawl_row = await pool.fetchrow(
+        "SELECT id, status FROM knowledge.crawl_jobs WHERE id = $1",
+        job_id,
+    )
+    if crawl_row is None:
+        raise HTTPException(status_code=404, detail="job_not_found")
+
+    # Find the matching procrastinate run_crawl task. The task args carry
+    # ``job_id`` (the crawl_jobs.id, not procrastinate's own id) so we look
+    # it up there. Most recent matching row wins — retried jobs would have
+    # multiple, the live one is the newest in 'todo' or 'doing'.
+    proc_row = await pool.fetchrow(
+        """
+        SELECT id, status FROM procrastinate_jobs
+        WHERE task_name = 'knowledge_ingest.crawl_tasks.run_crawl'
+          AND args->>'job_id' = $1
+          AND status IN ('todo', 'doing')
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        job_id,
+    )
+    if proc_row is None:
+        # No live procrastinate row — task already finished (succeeded /
+        # failed / aborted) or was never enqueued. Either way, cancel is a
+        # no-op; the caller's intent (stop the work) is satisfied.
+        logger.info(
+            "crawl_sync_cancel_noop",
+            job_id=job_id,
+            crawl_status=crawl_row["status"],
+        )
+        return
+
+    # Lazy import to keep procrastinate optional in test environments
+    # where ENRICHMENT_ENABLED=false.
+    import procrastinate  # noqa: F401
+
+    from knowledge_ingest import enrichment_tasks
+
+    proc_app = enrichment_tasks.get_app()
+    if proc_app is None:
+        # Worker bootstrap hasn't completed yet — the task can't be running
+        # either, so this is effectively the no-op path.
+        logger.warning(
+            "crawl_sync_cancel_proc_app_unavailable",
+            job_id=job_id,
+            proc_job_id=proc_row["id"],
+        )
+        return
+
+    try:
+        # ``abort=True`` signals the running worker to interrupt the task at
+        # the next safe checkpoint via the ``abort_requested`` column.
+        # ``delete_job=False`` keeps the row for observability (status
+        # transitions to ``cancelled``).
+        await proc_app.job_manager.cancel_job_by_id_async(
+            proc_row["id"], abort=True, delete_job=False
+        )
+        logger.info(
+            "crawl_sync_cancel_requested",
+            job_id=job_id,
+            proc_job_id=proc_row["id"],
+            previous_status=proc_row["status"],
+        )
+    except Exception:
+        # Cancel is best-effort. If procrastinate raises (e.g. job
+        # transitioned to a terminal state mid-call), we still return 204:
+        # the caller's intent is satisfied because the task is no longer
+        # going to write new data.
+        logger.exception(
+            "crawl_sync_cancel_failed",
+            job_id=job_id,
+            proc_job_id=proc_row["id"],
+        )
