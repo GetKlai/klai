@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -91,16 +91,27 @@ class Settings(BaseSettings):
 
     # SPEC-RAG-EVAL-001 — nightly RAGAS evaluation harness settings.
     # retrieval_api_url: base URL of klai-retrieval-api (Docker internal network).
+    #   Production hostname is `retrieval-api` (no `klai-` prefix) on port 8040,
+    #   verified against /opt/klai/.env::KNOWLEDGE_RETRIEVE_URL.
     # retrieval_internal_secret: X-Internal-Secret for /retrieve auth.
-    #   Reuses RETRIEVAL_INTERNAL_SECRET env var (same secret as litellm-hook).
+    #   Accepts both RETRIEVAL_INTERNAL_SECRET (knowledge-ingest convention)
+    #   AND RETRIEVAL_API_INTERNAL_SECRET (production SOPS convention, same name
+    #   as portal-api and litellm-hook). Pydantic AliasChoices picks whichever
+    #   is set — same fall-through pattern as deploy/litellm/klai_knowledge.py.
     #   Warn-on-empty at startup (fail-open: harness skips retrieval auth when absent
-    #   in dev; production must set RETRIEVAL_INTERNAL_SECRET via SOPS).
+    #   in dev; production must set the secret via SOPS).
     # rag_eval_retrieval_timeout: seconds before a /retrieve call is declared failed (REQ-3).
     # rag_eval_judge_timeout: seconds before a klai-fast judge call is declared failed.
     # rag_eval_judge_model: LiteLLM model alias for answer generation and RAGAS judge.
     # rag_eval_suites_dir: directory containing suite YAML files.
-    retrieval_api_url: str = "http://klai-retrieval-api:8000"
-    retrieval_internal_secret: str = ""
+    retrieval_api_url: str = "http://retrieval-api:8040"
+    retrieval_internal_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "RETRIEVAL_INTERNAL_SECRET",
+            "RETRIEVAL_API_INTERNAL_SECRET",
+        ),
+    )
     rag_eval_retrieval_timeout: int = 10
     rag_eval_judge_timeout: int = 30
     rag_eval_judge_model: str = "klai-fast"
