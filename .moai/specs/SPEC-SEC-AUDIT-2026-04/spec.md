@@ -376,12 +376,13 @@ All SPECs below have full EARS requirements, research.md, and acceptance.md. Rea
 
 ---
 
-## Re-audit follow-up findings
+## v1.0.0 follow-up findings
 
-Findings raised after v1.0.0 closed. Each lists the mechanical guard
-that prevents regression — code fixes are tracked in their parent SPEC,
-guards are tracked here.
+Post-close items deferred from the main audit pass. Each is a documentation/hardening task,
+not a new vulnerability. Findings raised AFTER v1.0.0 closed list the mechanical guard
+that prevents regression — code fixes are tracked in their parent SPEC, guards are tracked here.
 
-| ID | Finding | Status | Mechanical guard | Lands in |
-|----|---------|--------|------------------|----------|
+| ID | Finding | Status | Mechanical guard / Resolution | Lands in |
+|----|---------|--------|-------------------------------|----------|
+| C3 | knowledge-ingest body-org_id contract | DOCUMENTED | @MX:NOTE + contract test | v1.0.0 |
 | B4 | `partner_dependencies.py` peek-then-verify uses unverified `jwt.decode` to read `org_id` BEFORE the HKDF-derived verified decode. Default semgrep `unverified-jwt-decode` rule is `nosemgrep`-suppressed; no positive guard against a future refactor that drops the verified decode. | FIXED in v1.0.1 | `.semgrep/rules/jwt-peek-without-verify.yml` — fires on any `verify_signature=False` peek not followed by a recognised verified-decode shape. CI self-tests both positive and negative fixtures every run. | This SPEC v1.0.1 |

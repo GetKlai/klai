@@ -1,4 +1,12 @@
-"""Sync orchestrator with global semaphore and per-connector locking."""
+"""Sync orchestrator with global semaphore and per-connector locking.
+
+``documents_ok`` semantics (commit 341f3fdb): counts only artifacts
+actually persisted in ``knowledge.artifacts``. Docs whose parsed text
+falls below the 50-char ingest threshold (Notion containers, empty
+Confluence pages, ms_docs placeholder rows) are tracked separately as
+``documents_short_skipped`` so the counter accurately reflects what is
+in the system after the sync run completes.
+"""
 
 import asyncio
 import base64
@@ -145,6 +153,11 @@ class SyncEngine:
         documents_total = 0
         documents_ok = 0
         documents_failed = 0
+        # Docs whose parsed text was below the 50-char ingest threshold
+        # (Notion containers, empty Confluence pages, ms_docs placeholders).
+        # Tracked separately so ``documents_ok`` accurately reflects what is
+        # actually persisted in knowledge.artifacts.
+        documents_short_skipped = 0
         bytes_processed = 0
         error_details: list[dict[str, str]] = []
 
@@ -295,6 +308,16 @@ class SyncEngine:
                         len(refs),
                     )
 
+                # Docs skipped because their parsed text was below the
+                # 50-char threshold (Notion containers, empty Confluence
+                # pages, ms_docs placeholder rows). Counter is initialised
+                # at function scope above; we track it here for the log
+                # output. They are NOT persisted in knowledge.artifacts,
+                # so they do not belong in ``documents_ok`` — that field
+                # measures "how many docs are now in the system".
+                # Previously rolled into documents_ok, which made the
+                # field ~30-50% higher than the real artifact count for
+                # Notion workspaces (120 vs 79 on Voys e2e, 2026-05-01).
                 for ref in refs_to_sync:
                     ref_key = ref.source_ref or ref.path
 
@@ -312,7 +335,7 @@ class SyncEngine:
                                 ref.path,
                                 len(text.strip()),
                             )
-                            documents_ok += 1
+                            documents_short_skipped += 1
                             resume_ingested_refs.add(ref_key)
                             continue
 
@@ -465,6 +488,7 @@ class SyncEngine:
                     "documents_total": documents_total,
                     "documents_ok": documents_ok,
                     "documents_failed": documents_failed,
+                    "documents_short_skipped": documents_short_skipped,
                     "bytes_processed": bytes_processed,
                 },
             )
@@ -590,6 +614,33 @@ class SyncEngine:
                             "timeout_seconds": int(poll_timeout),
                         },
                     ]
+                    # SPEC-WORKER-LANES-001 REQ-3: cancel the remote
+                    # procrastinate task so it does not keep writing
+                    # artifacts behind a sync_run that is now marked
+                    # failed. Without this, the user-visible state
+                    # (sync_run.status='failed') diverged from the data
+                    # state (knowledge.artifacts continued to accumulate
+                    # for the same connector hours after the failure).
+                    # Cancel is idempotent and best-effort — a network
+                    # blip while cancelling is logged and swallowed; the
+                    # sync_run remains FAILED regardless.
+                    try:
+                        await self._crawl_sync_client.crawl_sync_cancel(remote_job_id)
+                        logger.info(
+                            "web_crawler_remote_cancel_sent",
+                            extra={
+                                "connector_id": str(connector_id),
+                                "remote_job_id": remote_job_id,
+                            },
+                        )
+                    except httpx.HTTPError:
+                        logger.exception(
+                            "web_crawler_remote_cancel_failed",
+                            extra={
+                                "connector_id": str(connector_id),
+                                "remote_job_id": remote_job_id,
+                            },
+                        )
                 else:
                     documents_total = int(final_state.get("pages_total") or 0)
                     documents_ok = int(final_state.get("pages_done") or 0)

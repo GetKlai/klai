@@ -26,6 +26,7 @@ from app.core.system_groups import SYSTEM_GROUPS
 from app.models.groups import PortalGroup, PortalGroupMembership, PortalGroupProduct
 from app.models.portal import PortalUser
 from app.services.audit import log_event
+from app.services.system_groups import sync_role_from_system_group
 
 logger = logging.getLogger(__name__)
 
@@ -393,6 +394,11 @@ async def add_member(
             status_code=status.HTTP_409_CONFLICT,
             detail="User is already a member of this group",
         ) from exc
+
+    # @MX:NOTE: SPEC-PORTAL-PROFILES-001 Phase 2 P2.5 — if this is a role-bind
+    # system-group, update the user's role to match the group's binding.
+    # sync_role_from_system_group is a no-op for non-system or non-role groups.
+    await sync_role_from_system_group(body.zitadel_user_id, group_id, db)
 
     await log_event(
         org_id=group.org_id,
