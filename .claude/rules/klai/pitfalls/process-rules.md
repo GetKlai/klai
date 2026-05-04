@@ -361,26 +361,26 @@ klai-core-scribe-api-1 alembic upgrade head` + container restart.
    any migration. If absent, use option 1 (manual + PR-body reminder) as
    a stopgap and file a follow-up SPEC for option 2.
 
-**Audit (2026-04-27)** — verified by greping `Dockerfile` ENTRYPOINT/CMD
+**Audit (2026-04-27, updated 2026-04-29)** — verified by greping `Dockerfile` ENTRYPOINT/CMD
 across services:
 
 | Service | Auto-migrates on container start? |
 |---|---|
 | portal-api | YES — `entrypoint.sh` runs `alembic upgrade head` then exec's uvicorn |
 | klai-connector | YES — `entrypoint.sh` runs `alembic upgrade head` then exec's uvicorn (added 2026-04-30 after migration 006_add_org_id_to_sync_runs shipped in image but never ran on prod) |
-| scribe-api | NO — `CMD uvicorn …` only |
+| scribe-api | YES — `entrypoint.sh` added by SPEC-SEC-AUDIT-2026-04 C5 (PR fix/scribe-c5-alembic-auto-migrate) |
 | klai-mailer | NO — `CMD uvicorn …` only |
 | klai-knowledge-mcp | NO — `CMD python main.py` only |
 | klai-knowledge-ingest | NO — `CMD uvicorn …` only |
 | klai-retrieval-api | NO — `CMD uvicorn …` only |
 
-Every service except portal-api and klai-connector needs the
-manual-migrate step or an entrypoint port. The portal-api
-`entrypoint.sh` (introduced by SPEC-CHAT-TEMPLATES-CLEANUP-001) is the
-canonical pattern to copy. klai-connector's `entrypoint.sh` adds the
-twin requirement on klai-connector's `alembic.ini`:
-`prepend_sys_path = .` (so `from app.models.connector import Base`
-resolves) — without that line `alembic upgrade head` exits with
+The remaining 4 services without auto-migration are tracked in
+SPEC-DEPLOY-AUTO-MIGRATE-001 as follow-up work. The portal-api, klai-connector
+and scribe-api `entrypoint.sh` pattern (introduced by SPEC-CHAT-TEMPLATES-CLEANUP-001
+and extended by SPEC-SEC-AUDIT-2026-04 C5) is the canonical template to copy.
+klai-connector's `entrypoint.sh` adds the twin requirement on its `alembic.ini`:
+`prepend_sys_path = .` (so `from app.models.connector import Base` resolves) —
+without that line `alembic upgrade head` exits with
 `ModuleNotFoundError: No module named 'app'` and the container will
 crash-loop on every restart. Spotted live on 2026-04-30 when the
 `Sync now` click failed with `column sync_runs.org_id does not exist`
