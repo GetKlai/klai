@@ -7,6 +7,7 @@ on:
       - 'deploy/docker-compose.yml'
       - 'deploy/docker-compose.override.yml'
       - 'deploy/grafana/provisioning/**'          # SPEC-SEC-024 M4.2 — alert rule + dashboard
+      - 'deploy/scripts/**'                       # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3 — compose-up wrapper + audit-orphan-snapshot
       - 'scripts/smoke-docker-socket-proxy.sh'    # SPEC-SEC-024 M4.3 — smoke-test
       - '.github/workflows/deploy-compose.yml'
   workflow_dispatch:
@@ -24,6 +25,19 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+
+      # Forcing function — fail loud BEFORE pushing to core-01 if any
+      # vexaai/* image reference points at a tag that is not pullable
+      # from the registry and not a locally-built convention. This is
+      # the CI half of the defense; .githooks/pre-commit is the local
+      # half. PR #269 (broken `:0.10.6` for transcription-service)
+      # would have failed this gate.
+      - name: Validate image tags + pullability
+        run: |
+          set -e
+          chmod +x deploy/check-image-tags.sh deploy/check-image-pullable.sh
+          sh deploy/check-image-tags.sh
+          sh deploy/check-image-pullable.sh
 
       - name: Sync docker-compose.yml + config + run smoke-test
         uses: appleboy/ssh-action@v1
@@ -45,9 +59,28 @@ jobs:
               deploy/docker-compose.yml \
               deploy/docker-compose.override.yml \
               deploy/grafana/provisioning \
+              deploy/scripts \
+              deploy/systemd \
               scripts
             cp deploy/docker-compose.yml /opt/klai/docker-compose.yml
             cp deploy/docker-compose.override.yml /opt/klai/docker-compose.override.yml
+
+            # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3 + REQ-5: sync
+            # deploy-wrapper + audit scripts to /opt/klai/scripts/ so
+            # service-deploy workflows and systemd timers can use them.
+            mkdir -p /opt/klai/scripts
+            install -m 0755 deploy/scripts/compose-up.sh /opt/klai/scripts/compose-up.sh
+            install -m 0755 deploy/scripts/audit-orphan-snapshot.sh /opt/klai/scripts/audit-orphan-snapshot.sh
+            install -m 0755 deploy/scripts/docker-orphan-audit.sh /opt/klai/scripts/docker-orphan-audit.sh
+
+            # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-5 + REQ-6: sync systemd
+            # units. Activation requires sudo and is one-time per host —
+            # see docs/runbooks/container-hygiene-systemd-install.md.
+            mkdir -p /opt/klai/systemd
+            install -m 0644 deploy/systemd/docker-cleanup.service /opt/klai/systemd/docker-cleanup.service
+            install -m 0644 deploy/systemd/docker-cleanup.timer /opt/klai/systemd/docker-cleanup.timer
+            install -m 0644 deploy/systemd/orphan-audit.service /opt/klai/systemd/orphan-audit.service
+            install -m 0644 deploy/systemd/orphan-audit.timer /opt/klai/systemd/orphan-audit.timer
 
             # SPEC-SEC-024 M4.2 — sync Grafana provisioning. Grafana loads
             # provisioning only at startup, so we need to restart when files

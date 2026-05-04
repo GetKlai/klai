@@ -56,6 +56,31 @@ class ZitadelClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def delete_org(self, org_id: str) -> None:
+        """Delete a Zitadel organisation and cascade-delete all its users + grants.
+
+        Idempotent: 404 means the org is already absent, which is fine for
+        deprovisioning re-runs. All other non-2xx responses are propagated
+        via raise_for_status().
+
+        Requires IAM_OWNER role on the PAT (settings.zitadel_pat). Per A4 in
+        SPEC-INFRA-TENANT-DELETE-001: Zitadel cascades users and grants when
+        the org is deleted — no per-user step is needed.
+
+        # @MX:NOTE: SPEC-INFRA-TENANT-DELETE-001 Phase 5 — called by step 15
+        #   (_delete_zitadel_org) in deprovisioning_orchestrator.
+        """
+        resp = await self._http.delete(
+            "/management/v1/orgs",
+            headers={"x-zitadel-orgid": org_id},
+        )
+        if resp.status_code == 404:
+            # File uses stdlib logging (not structlog) — kwargs would be
+            # treated as `extra` not structured fields. Use %-style instead.
+            logger.info("zitadel_org_already_absent org_id=%s", org_id)
+            return
+        resp.raise_for_status()
+
     # ── User management ───────────────────────────────────────────────────────
 
     async def create_human_user(

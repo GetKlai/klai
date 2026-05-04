@@ -20,6 +20,7 @@ from typing import Any
 
 import structlog
 
+from knowledge_ingest import queues
 from knowledge_ingest.connector_cleanup import purge_connector
 from knowledge_ingest.portal_client import finalize_connector_delete
 
@@ -57,7 +58,7 @@ def register_connector_purge_task(procrastinate_app: Any) -> None:
             )
 
     @procrastinate_app.task(
-        queue="connector-purge",
+        queue=queues.CONNECTOR_PURGE,
         retry=_ExponentialBackoff(),
         # queueing_lock prevents two purge tasks racing for the same
         # connector_id when a user double-clicks delete (the DELETE

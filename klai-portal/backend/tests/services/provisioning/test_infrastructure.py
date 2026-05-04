@@ -417,3 +417,69 @@ class TestCharacterizeStartLibrechatContainer:
             assert call_kwargs[1]["name"] == "librechat-acme"
             assert call_kwargs[1]["detach"] is True
             assert call_kwargs[1]["network"] == "klai-net"
+
+    def test_provisioning_labels_are_set(self, tmp_path):
+        """SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-2a: tenant-LibreChats MUST
+        carry klai.managed_by, klai.tenant_slug, and klai.kind labels so
+        hygiene-tooling (PreToolUse hook + weekly orphan-audit) recognises
+        them as legitimate klasse-B containers, not as label-loose wezen.
+
+        The librechat-voys cleanup-incident of 2026-05-02 happened because
+        these labels did not exist. Without this test passing, the same
+        class of mistake can recur for any future tenant.
+        """
+        from app.services.provisioning import _start_librechat_container
+
+        base_yaml = Path(tmp_path) / "librechat.yaml"
+        base_yaml.write_text("version: 1.0\n")
+
+        mock_client = MagicMock()
+        mock_client.containers.get.side_effect = type("NotFound", (Exception,), {})("not found")
+
+        with (
+            patch("app.services.provisioning.infrastructure.docker") as mock_docker,
+            patch("app.services.provisioning.infrastructure.settings") as mock_settings,
+        ):
+            mock_settings.librechat_host_data_path = "/opt/klai/librechat-data"
+            mock_settings.librechat_container_data_path = str(tmp_path)
+            mock_settings.librechat_image = "ghcr.io/danny-avila/librechat:latest"
+            mock_docker.from_env.return_value = mock_client
+            mock_docker.errors.NotFound = type("NotFound", (Exception,), {})
+            mock_client.containers.get.side_effect = mock_docker.errors.NotFound("not found")
+
+            _start_librechat_container("voys", "/opt/klai/librechat-data/voys/.env")
+
+            call_kwargs = mock_client.containers.run.call_args
+            labels = call_kwargs[1]["labels"]
+            assert labels["klai.managed_by"] == "portal-api-provisioning"
+            assert labels["klai.tenant_slug"] == "voys"
+            assert labels["klai.kind"] == "librechat"
+
+    def test_provisioning_labels_use_actual_slug(self, tmp_path):
+        """klai.tenant_slug MUST reflect the tenant slug passed in, not a
+        hard-coded value. Backfill scripts depend on this for tenant lookup.
+        """
+        from app.services.provisioning import _start_librechat_container
+
+        base_yaml = Path(tmp_path) / "librechat.yaml"
+        base_yaml.write_text("version: 1.0\n")
+
+        mock_client = MagicMock()
+        mock_client.containers.get.side_effect = type("NotFound", (Exception,), {})("not found")
+
+        with (
+            patch("app.services.provisioning.infrastructure.docker") as mock_docker,
+            patch("app.services.provisioning.infrastructure.settings") as mock_settings,
+        ):
+            mock_settings.librechat_host_data_path = "/opt/klai/librechat-data"
+            mock_settings.librechat_container_data_path = str(tmp_path)
+            mock_settings.librechat_image = "ghcr.io/danny-avila/librechat:latest"
+            mock_docker.from_env.return_value = mock_client
+            mock_docker.errors.NotFound = type("NotFound", (Exception,), {})
+            mock_client.containers.get.side_effect = mock_docker.errors.NotFound("not found")
+
+            for tenant_slug in ("voys", "acme-corp", "klai-internal"):
+                mock_client.containers.run.reset_mock()
+                _start_librechat_container(tenant_slug, f"/opt/klai/librechat-data/{tenant_slug}/.env")
+                labels = mock_client.containers.run.call_args[1]["labels"]
+                assert labels["klai.tenant_slug"] == tenant_slug

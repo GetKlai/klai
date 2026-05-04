@@ -156,3 +156,26 @@ checkpoint via `transition_state()` and registers its compensator on a
 - Never emit `provisioning_status = 'failed'` — that legacy value is out.
   Use `failed_rollback_pending` (rollback failed) or `failed_rollback_complete`
   (rollback succeeded, row soft-deleted).
+
+## Tenant deprovisioning state machine (SPEC-INFRA-TENANT-DELETE-001)
+
+Mirror of provisioning state machine for tenant delete:
+- `deprovisioning` — orchestrator running, auth-flow returns 403 with code `tenant_deleting`
+- `deprovisioned` — pre-hard-delete checkpoint (rarely observed; same-tx as DELETE)
+- `failed_deprovisioning` — terminal failure; `last_failure` jsonb populated; admin retry possible
+
+Files:
+- Orchestrator: `app/services/provisioning/deprovisioning_orchestrator.py`
+- 16 steps: `app/services/provisioning/deprovisioning_steps.py`
+- Audit emit: `app/services/audit/tenant_lifecycle.py::emit_lifecycle_event` (synchronous, NOT fire-and-forget — failure rolls back the deprovision finalize transaction)
+- Endpoints: `app/api/admin/deprovision_org.py`
+- Runbook: `docs/runbooks/tenant-delete.md`
+
+Invariants:
+- Each step is idempotent — al-weg = OK, no exception
+- 3 internal retries with exponential backoff (1s, 2s, 4s) on transient errors
+- All steps critical: definitive failure → `failed_deprovisioning` (no fail-soft)
+- portal_orgs hard-delete is the final step; audit emit happens BEFORE delete in same transaction
+- `tenant_lifecycle_events` has NO FK to portal_orgs — survives the hard-delete by design
+- Auth-flow check: `_get_caller_org` returns 403 with code `tenant_deleting` when org is in `deprovisioning` state. The owner status-polling endpoint passes `allow_during_deprovisioning=True` to bypass.
+- New non-cascading FK to portal_orgs added in the future MUST be added to the explicit DELETE list in `_finalize_postgres_delete` step — otherwise the final hard-delete throws FK violation. Test fixture asserts the full delete-list against a populated test tenant.

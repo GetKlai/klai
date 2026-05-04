@@ -254,7 +254,21 @@ function KnowledgePage() {
           </h1>
           {!kbsLoading && createdKbs.length > 0 && (
             <p className="text-sm text-[var(--color-muted-foreground)]">
-              {m.knowledge_page_stat_org({ count: String(createdKbs.length) })}
+              {m.knowledge_page_stat_org({
+                // Aggregate items across every visible KB. Was passing
+                // `createdKbs.length` (the *KB count*) into a message
+                // template that says "items indexed org-wide" - produced
+                // wrong-by-orders-of-magnitude output e.g. "1 items
+                // indexed" while the Support KB alone had 3941 items.
+                // Discovered during 2026-05-03 e2e walkthrough on
+                // voys.getklai.com.
+                count: String(
+                  allKbs.reduce(
+                    (sum, kb) => sum + (statsBySlug[kb.slug]?.items ?? 0),
+                    0,
+                  ),
+                ),
+              })}
             </p>
           )}
         </div>

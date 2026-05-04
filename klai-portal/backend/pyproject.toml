@@ -36,6 +36,12 @@ dependencies = [
     # SPEC-SEC-HYGIENE-001 REQ-22: zxcvbn password-strength estimator.
     # MIT-licensed pure-Python port of Dropbox's zxcvbn; no native extensions.
     "zxcvbn>=4.5,<5.0",
+    # SPEC-INFRA-TENANT-DELETE-001 Phase 3 step 8: delete tenant points from Qdrant
+    # shared collections (klai_knowledge + klai_focus) by org_id filter during deprovisioning.
+    "qdrant-client>=1.12,<2.0",
+    # SPEC-INFRA-TENANT-DELETE-001 Phase 3 step 10: delete Scribe S3 artifacts from
+    # Garage-compatible S3 (boto3 speaks S3 protocol; Garage implements it).
+    "boto3>=1.35,<2.0",
 ]
 
 [tool.uv.sources]

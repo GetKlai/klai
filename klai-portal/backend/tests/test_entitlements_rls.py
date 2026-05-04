@@ -32,14 +32,17 @@ async def test_sets_tenant_context_before_union_query(monkeypatch: pytest.Monkey
     """set_tenant must run between the org lookup and the entitlements query."""
     calls: list[tuple[str, object]] = []
 
-    org_scalar = MagicMock()
-    org_scalar.scalar_one_or_none.return_value = 42
+    # Org-lookup now returns (org_id, plan) via row.one_or_none() — see
+    # SPEC-PORTAL-PROFILES-001 follow-up that unioned plan-products into
+    # the result.
+    org_row = MagicMock()
+    org_row.one_or_none.return_value = (42, "free")
     products_scalars = MagicMock()
     products_scalars.all.return_value = ["chat", "scribe"]
     products_result = MagicMock()
     products_result.scalars.return_value = products_scalars
 
-    execute_responses: list[object] = [org_scalar, products_result]
+    execute_responses: list[object] = [org_row, products_result]
 
     async def tracked_execute(*_args: object, **_kwargs: object) -> object:
         calls.append(("execute", None))
@@ -51,12 +54,15 @@ async def test_sets_tenant_context_before_union_query(monkeypatch: pytest.Monkey
     db = AsyncMock()
     db.execute = AsyncMock(side_effect=tracked_execute)
     monkeypatch.setattr("app.services.entitlements.set_tenant", mock_set_tenant)
+    # Free plan has no plan-included products — keeps the assertion focused on
+    # RLS ordering (chat + scribe come from the UNION query mock).
+    monkeypatch.setattr("app.services.entitlements.get_plan_products", lambda plan: [])
 
     result = await get_effective_products("user-42", db)
 
-    assert result == ["chat", "scribe"]
+    assert sorted(result) == ["chat", "scribe"]
     assert calls == [
-        ("execute", None),  # 1. org_id lookup (portal_users is permissive → safe)
+        ("execute", None),  # 1. (org_id, plan) lookup (portal_users is permissive → safe)
         ("set_tenant", 42),  # 2. RLS context set for the UNION query
         ("execute", None),  # 3. UNION over RLS-protected product tables
     ], f"Call order broke RLS invariant: {calls}"
@@ -67,11 +73,11 @@ async def test_returns_empty_for_unprovisioned_user_without_setting_tenant(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Users without a portal_users row short-circuit without touching RLS."""
-    org_scalar = MagicMock()
-    org_scalar.scalar_one_or_none.return_value = None
+    org_row = MagicMock()
+    org_row.one_or_none.return_value = None
 
     db = AsyncMock()
-    db.execute = AsyncMock(return_value=org_scalar)
+    db.execute = AsyncMock(return_value=org_row)
 
     set_tenant_mock = AsyncMock()
     monkeypatch.setattr("app.services.entitlements.set_tenant", set_tenant_mock)

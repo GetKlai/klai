@@ -68,7 +68,13 @@ class WhisperHttpProvider:
         audio_wav: bytes,
         language: str | None,
     ) -> TranscriptionResult:
-        data: dict = {"transcription_tier": _DEFERRED_TIER}
+        # `model` is required by the OpenAI-compatible transcription-service
+        # (HTTP 422 if missing). `transcription_tier` is the Vexa extension
+        # for two-tier admission control (SPEC-VEXA-003 §5.1).
+        data: dict = {
+            "model": settings.whisper_model,
+            "transcription_tier": _DEFERRED_TIER,
+        }
         if language:
             data["language"] = language
 
@@ -128,11 +134,21 @@ class WhisperHttpProvider:
                 )
 
             payload = resp.json()
+            # Whisper-server response fields aren't all guaranteed across
+            # upstream versions. text/language/duration are part of the
+            # OpenAI-compatible contract; inference_time_seconds is a Vexa
+            # extension that's optional. Prefer .get() over [] for fields
+            # that may be absent — a missing optional extension shouldn't
+            # cause 100% transcription failure (KeyError → outer broad
+            # except in transcribe.py → status='failed', root cause
+            # invisible per `portal-logging-py.md` rule).
+            # Discovered during e2e walkthrough 2026-05-03 — every
+            # Voys-tenant scribe upload was hitting this KeyError.
             return TranscriptionResult(
-                text=payload["text"],
-                language=payload["language"],
-                duration_seconds=float(payload["duration"]),
-                inference_time_seconds=float(payload["inference_time_seconds"]),
+                text=payload.get("text", ""),
+                language=payload.get("language", "und"),
+                duration_seconds=float(payload.get("duration", 0.0)),
+                inference_time_seconds=float(payload.get("inference_time_seconds", 0.0)),
                 provider=settings.whisper_provider_name,
                 model=payload.get("model", "large-v3-turbo"),
             )

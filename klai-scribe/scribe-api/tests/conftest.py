@@ -19,6 +19,13 @@ _DEFAULTS: dict[str, str] = {
     "WHISPER_PROVIDER_NAME": "vexa-transcription-service",
     "STT_PROVIDER": "whisper_http",
     "ZITADEL_ISSUER": "https://auth.test.local",
+    # SPEC-SEC-INTERNAL-001 REQ-9.4 + SPEC-SEC-AUDIT-2026-04 B1:
+    # pydantic Settings validators reject empty/whitespace. Tests don't actually
+    # call /ingest or portal identity-verify (both monkey-patched), so any
+    # non-empty placeholder satisfies the startup validators.
+    "KNOWLEDGE_INGEST_SECRET": "test-knowledge-ingest-secret",
+    "PORTAL_INTERNAL_SECRET": "test-portal-internal-secret-for-tests",
+    "PORTAL_API_URL": "http://portal-api-test:8010",
 }
 for _k, _v in _DEFAULTS.items():
     os.environ.setdefault(_k, _v)
