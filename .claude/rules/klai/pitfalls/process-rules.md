@@ -169,6 +169,70 @@ image tags, resource limits, excluded services. Then during work:
   debugging downstream symptoms.
 - If any constraint is unclear — ask before implementing.
 
+## multi-layer-gate-audit-all-sides (HIGH)
+When a SPEC introduces a new gating layer on top of an existing one
+(e.g. tenant-level toggle PLUS per-user/group entitlement, where access
+requires BOTH), the implementation must touch THREE sides at once:
+**Unlock side** (the new flag write), **Assign side** (every endpoint
+that creates the per-user record AND every plan-ceiling / allowlist
+check that decides which products are assignable), and **Read side**
+(every consumer that surfaces effective entitlements — `get_effective_*`,
+`/api/me`, internal JWT enrichment, sidebar feeds). Missing any one
+side leaves a cosmetic dead-end or a leaky gate.
+
+SPEC-PORTAL-PROFILES-001 Phase 2 shipped with only Unlock + part of
+Read wired correctly. The tenant flag (`portal_orgs.enabled_addons`)
+on `/admin/settings` persisted, and `require_product` enforced the
+two-layer AND. But `list_available_products` and `assign_product` /
+`assign_group_product` still read `get_plan_products(org.plan)` only,
+so the admin UI dropdown never offered the new addons and a direct
+POST got 403. In the reverse direction, `get_effective_products` did
+not filter granted entitlements against `enabled_addons`, so the
+sidebar still advertised an addon for one click after the toggle was
+disabled. Fixed in PR #291 (commit `db9c2e9002f2`, 2026-05-04) by
+introducing `_assignable_products(org) = plan_products | enabled_addons`
+on the assign side and a dormancy filter on the read side.
+
+**Why this slips through:** each side passes its own unit tests in
+isolation. `require_product` tests stayed green because they exercised
+the read path through a pre-built fixture. The unlock-side endpoint
+test only checked the toggle write. Assign-side tests covered the
+old plan-ceiling. None of them composed the full chain, and the
+SPEC's own description ("checks two things: A AND B") did not
+translate into a per-consumer audit.
+
+**Prevention (mechanical):** Before merging any SPEC implementation
+that adds a new gating layer, run the audit explicitly:
+
+1. Grep every reference to the OLD single-layer gate that is still
+   the source of truth for any decision:
+   ```bash
+   grep -rn "get_plan_products\|<old_gate_function>" \
+     klai-portal/backend/app klai-connector/app
+   ```
+   For each hit, decide: does it correctly compose with the new
+   layer, or is it intentionally left as-is with a `# noqa:
+   single-layer — reason …` comment? No silent leftovers.
+
+2. Grep every consumer of the read function that surfaces entitlements
+   to clients:
+   ```bash
+   grep -rn "get_effective_products\|/api/me\|/internal/" \
+     klai-portal/backend/app
+   ```
+   Each must either apply the new layer's filter or carry a comment
+   explaining why it is exempt.
+
+3. Add at minimum one full-chain integration test: tenant flag ON +
+   per-user assignment → read endpoint sees product. Then tenant flag
+   OFF → read endpoint no longer sees it. This is the only test that
+   catches cross-layer gaps; per-layer unit tests cannot.
+
+4. In the SPEC's Success Criteria, list the three sides explicitly as
+   separate checkboxes ("Unlock UI wired", "Assign endpoints accept
+   new layer", "Read consumers filter by new layer"). A single
+   "implements two-layer gate" box hides the audit.
+
 ## read-before-delegate
 Before giving a subagent a "rewrite this file" task, Read the file
 yourself first. If the user edited it, extract their text and pass it
