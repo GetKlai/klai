@@ -54,6 +54,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.api.bearer import bearer  # BFF Phase A4 — session-aware bearer shim
 from app.core.config import settings
@@ -1909,7 +1910,16 @@ async def idp_callback(
     # domain_orgs: orgs whose primary_domain matches user email domain
     #              AND user is NOT already a member
     if zitadel_user_id:
-        user_result = await db.execute(select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id))
+        # Eager-load org -- this query feeds the entries[] list below which
+        # accesses u.org.name / u.org.slug. In async SQLAlchemy lazy-load on
+        # a relationship raises MissingGreenlet because the implicit IO is
+        # not on a greenlet-spawned coroutine. selectinload issues one extra
+        # SELECT per batch; cost is negligible vs. the 500-error alternative.
+        user_result = await db.execute(
+            select(PortalUser)
+            .options(selectinload(PortalUser.org))
+            .where(PortalUser.zitadel_user_id == zitadel_user_id)
+        )
         member_users = list(user_result.scalars().all())
     else:
         member_users = []
