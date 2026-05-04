@@ -166,7 +166,6 @@ async def test_invite_user_grants_portal_role_to_zitadel(
     with (
         patch("app.api.admin.users._get_caller_org", return_value=("admin-1", org, caller)),
         patch("app.api.admin.users.zitadel") as mock_zitadel,
-        patch("app.api.admin.users.get_plan_products", return_value=[]),
         patch(
             "app.services.default_knowledge_bases.create_default_personal_kb",
             new=AsyncMock(),

@@ -14,10 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.plans import get_plan_products
 from app.models.groups import PortalGroup, PortalGroupMembership
 from app.models.portal import PortalOrg, PortalUser
-from app.models.products import PortalUserProduct
 from app.services.audit import log_event
 from app.services.github import remove_github_org_member
 from app.services.zitadel import zitadel
@@ -160,7 +158,7 @@ async def invite_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> InviteResponse:
-    admin_user_id, org, caller_user = await _get_caller_org(credentials, db)
+    _, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
 
     # Seat enforcement: lock the org row to prevent concurrent invites
@@ -242,18 +240,8 @@ async def invite_user(
     )
     db.add(user_row)
 
-    # Auto-assign products based on org plan
-    plan_products = get_plan_products(org.plan)
-    for product in plan_products:
-        db.add(
-            PortalUserProduct(
-                zitadel_user_id=zitadel_user_id,
-                org_id=org.id,
-                product=product,
-                enabled_by=admin_user_id,
-            )
-        )
-
+    # SPEC-PORTAL-RBAC-001: products are derived from (role, plan, enabled_addons)
+    # at read time; no per-user entitlement rows are written here.
     await db.commit()
     logger.info("User invited: email=%s, role=%s, org_id=%d", body.email, body.role, org.id)
 
@@ -512,12 +500,7 @@ async def offboard_user(
     # AsyncSession.execute() is typed as Result[Any]; the rowcount attribute
     # is only on CursorResult, hence getattr with a 0 default to satisfy pyright.
     memberships_removed_count = getattr(membership_delete_result, "rowcount", 0) or 0
-    await db.execute(
-        delete(PortalUserProduct).where(
-            PortalUserProduct.zitadel_user_id == zitadel_user_id,
-            PortalUserProduct.org_id == org.id,
-        )
-    )
+    # SPEC-PORTAL-RBAC-001: portal_user_products is dropped; no rows to clean up.
 
     user.status = "offboarded"
     # SPEC-SEC-TENANT-001 REQ-1.4: structured event for VictoriaLogs audit so

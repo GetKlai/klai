@@ -6,13 +6,10 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.plans import ADDON_PRODUCTS, PLAN_PRODUCTS, get_plan_products
-from app.models.groups import PortalGroupProduct
-from app.models.products import PortalUserProduct
+from app.core.plans import ADDON_PRODUCTS, PLAN_PRODUCTS
 from app.services.audit import log_event
 from app.services.events import emit_event
 
@@ -108,50 +105,22 @@ async def change_plan(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    """Upgrade or downgrade org plan. On downgrade, revokes over-ceiling products."""
+    """Upgrade or downgrade org plan.
+
+    SPEC-PORTAL-RBAC-001 v0.2.0: products are derived from (profile, plan,
+    enabled_addons), so changing the plan automatically (re-)gates the
+    feature set on the next request. No per-user/group product cleanup
+    needed -- those tables are no longer the source of truth.
+    """
     _, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
 
-    old_plan = org.plan
     new_plan = body.plan
 
     if new_plan not in PLAN_PRODUCTS:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown plan: {new_plan}")
 
     org.plan = new_plan
-
-    # Downgrade: revoke products that exceed the new plan ceiling
-    new_products = set(get_plan_products(new_plan))
-
-    revoked_result = await db.execute(select(PortalUserProduct).where(PortalUserProduct.org_id == org.id))
-    all_assignments = revoked_result.scalars().all()
-    for row in all_assignments:
-        if row.product not in new_products:
-            logger.info(
-                "Plan downgrade: revoking product %s from user %s (org %s, %s -> %s)",
-                row.product,
-                row.zitadel_user_id,
-                org.id,
-                old_plan,
-                new_plan,
-            )
-            await db.delete(row)
-
-    # Downgrade: also revoke group products that exceed the new plan ceiling
-    group_revoked_result = await db.execute(select(PortalGroupProduct).where(PortalGroupProduct.org_id == org.id))
-    all_group_assignments = group_revoked_result.scalars().all()
-    for row in all_group_assignments:
-        if row.product not in new_products:
-            logger.info(
-                "Plan downgrade: revoking group product %s from group %s (org %s, %s -> %s)",
-                row.product,
-                row.group_id,
-                org.id,
-                old_plan,
-                new_plan,
-            )
-            await db.delete(row)
-
     await db.commit()
     return MessageResponse(message=f"Plan bijgewerkt naar {new_plan}.")
 
