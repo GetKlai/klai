@@ -20,7 +20,12 @@ function AppHome() {
   const { user } = useCurrentUser()
   const userName = auth.user?.profile.given_name ?? auth.user?.profile.name ?? m.app_home_user_fallback()
 
-  // SPEC-PORTAL-UNIFY-KB-001: Focus tile removed; Knowledge replaces it as single KB surface.
+  // SPEC-PORTAL-PROFILES-001 P3.1 follow-up: tools-grid mirrors sidebar gating.
+  // Tiles for products the user does not have are HIDDEN (not greyed-out).
+  // Admin-bypass is intentionally absent — admins see exactly what their tenant
+  // has enabled, same as everyone else.
+  // SPEC-PORTAL-UNIFY-KB-001: Focus tile removed; Knowledge replaces it.
+  // SPEC-PORTAL-PROFILES-001 Phase 2: docs is its own product (was: knowledge).
   const tools = [
     {
       title: m.app_tool_chat_title(),
@@ -52,13 +57,12 @@ function AppHome() {
       icon: BookMarked,
       href: '/app/docs',
       helpId: 'home-tool-docs',
-      product: 'knowledge',
+      product: 'docs',
     },
   ]
 
-  function hasAccess(product: string) {
-    return user?.isAdmin || user?.products.includes(product)
-  }
+  const products = user?.products ?? []
+  const accessibleTools = tools.filter((tool) => products.includes(tool.product))
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-10 space-y-8">
@@ -71,40 +75,16 @@ function AppHome() {
         </p>
       </div>
 
-      <div>
-        <h2 className="mb-4 text-sm font-semibold text-[var(--color-foreground)]">{m.app_home_tools()}</h2>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {tools.map((tool) => {
-            const accessible = hasAccess(tool.product)
-            if (accessible) {
-              return (
-                <a
-                  key={tool.title}
-                  href={tool.href}
-                  data-help-id={tool.helpId}
-                  className="group flex flex-col gap-3 rounded-xl border bg-[var(--color-card)] p-5 transition-shadow hover:shadow-md"
-                >
-                  <tool.icon
-                    size={20}
-                    strokeWidth={1.5}
-                    className="text-[var(--color-muted-foreground)]"
-                  />
-                  <div>
-                    <p className="text-sm font-medium text-[var(--color-foreground)] group-hover:text-[var(--color-rl-accent)] transition-colors">
-                      {tool.title}
-                    </p>
-                    <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">
-                      {tool.description}
-                    </p>
-                  </div>
-                </a>
-              )
-            }
-            return (
-              <div
+      {accessibleTools.length > 0 && (
+        <div>
+          <h2 className="mb-4 text-sm font-semibold text-[var(--color-foreground)]">{m.app_home_tools()}</h2>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            {accessibleTools.map((tool) => (
+              <a
                 key={tool.title}
+                href={tool.href}
                 data-help-id={tool.helpId}
-                className="flex flex-col gap-3 rounded-xl border bg-[var(--color-card)] p-5 opacity-40 cursor-not-allowed select-none"
+                className="group flex flex-col gap-3 rounded-xl border bg-[var(--color-card)] p-5 transition-shadow hover:shadow-md"
               >
                 <tool.icon
                   size={20}
@@ -112,18 +92,18 @@ function AppHome() {
                   className="text-[var(--color-muted-foreground)]"
                 />
                 <div>
-                  <p className="text-sm font-medium text-[var(--color-foreground)]">
+                  <p className="text-sm font-medium text-[var(--color-foreground)] group-hover:text-[var(--color-rl-accent)] transition-colors">
                     {tool.title}
                   </p>
                   <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">
                     {tool.description}
                   </p>
                 </div>
-              </div>
-            )
-          })}
+              </a>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }

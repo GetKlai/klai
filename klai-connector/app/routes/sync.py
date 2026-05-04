@@ -200,3 +200,13 @@ async def get_sync_run(
         raise HTTPException(status_code=404, detail="Sync run not found")
 
     return sync_run
+
+
+# DELETE /connectors/{id}/sync-runs removed by
+# SPEC-CONNECTOR-DELETE-LIFECYCLE-001 PR C (REQ-08): the new cross-schema
+# FK with ON DELETE CASCADE in migration 007 makes per-connector
+# sync_runs cleanup automatic. When the portal hard-deletes a row from
+# ``public.portal_connectors`` (via the finalize-delete callback after
+# the purge worker completes) PostgreSQL cascades to
+# ``connector.sync_runs`` for free. The dedicated endpoint is gone but
+# its replacement is the migration itself.
