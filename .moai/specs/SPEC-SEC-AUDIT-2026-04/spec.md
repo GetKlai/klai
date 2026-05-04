@@ -341,3 +341,14 @@ All SPECs below have full EARS requirements, research.md, and acceptance.md. Rea
   toctou-dns, from-header-trust, hardcoded-zitadel-role, caller-asserted-identity,
   format-string-template-injection, shared-env-file-pattern) — capture via `/klai:retro` in a
   separate session to avoid polluting this tracker
+
+---
+
+## v1.0.0 follow-up findings
+
+Post-close items deferred from the main audit pass. Each is a documentation/hardening task,
+not a new vulnerability.
+
+| ID | Finding | Status | Commit | Resolution |
+|---|---|---|---|---|
+| C3 | knowledge-ingest body-org_id contract | DOCUMENTED | <TBD> | @MX:NOTE + contract test |
