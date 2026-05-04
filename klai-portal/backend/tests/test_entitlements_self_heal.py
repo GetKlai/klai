@@ -27,17 +27,18 @@ import pytest
 from app.services import entitlements
 
 
-def _make_org_row(org_id: int | None, plan: str | None = "core"):
+def _make_org_row(org_id: int | None, plan: str | None = "core", enabled_addons: list[str] | None = None):
     """Build a mock row mimicking SQLAlchemy's ``result.one_or_none()`` output.
 
     Returns a MagicMock whose ``one_or_none()`` returns either a
-    ``(org_id, plan)`` tuple (for found users) or ``None`` (for missing users).
+    ``(org_id, plan, enabled_addons)`` tuple (for found users) or ``None``
+    (for missing users).
     """
     row = MagicMock()
     if org_id is None:
         row.one_or_none = MagicMock(return_value=None)
     else:
-        row.one_or_none = MagicMock(return_value=(org_id, plan))
+        row.one_or_none = MagicMock(return_value=(org_id, plan, enabled_addons or []))
     return row
 
 
@@ -59,8 +60,9 @@ async def test_self_heals_tenant_context_before_querying(monkeypatch):
     monkeypatch.setattr(entitlements, "set_tenant", _fake_set_tenant)
     monkeypatch.setattr(entitlements, "get_plan_products", lambda plan: [])
 
-    # First execute = lookup user's (org_id, plan). Second = union(direct, group).
-    org_row = _make_org_row(42, "core")
+    # First execute = lookup user's (org_id, plan, enabled_addons). Second = union(direct, group).
+    # enabled_addons must include "scribe" so the dormancy filter doesn't strip it.
+    org_row = _make_org_row(42, "core", enabled_addons=["scribe"])
     products_row = _make_products_row(["scribe"])
 
     async def _execute(_stmt):
@@ -180,7 +182,8 @@ async def test_plan_user_and_group_products_unioned(monkeypatch):
         lambda plan: ["chat", "knowledge"] if plan == "professional" else [],
     )
 
-    org_row = _make_org_row(7, "professional")
+    # Both add-ons must be enabled at tenant level for the dormancy filter to keep them.
+    org_row = _make_org_row(7, "professional", enabled_addons=["scribe", "docs"])
     # The union query returns user + group products together (deduplicated by SQL UNION).
     products_row = _make_products_row(["scribe", "docs"])
 
@@ -214,3 +217,80 @@ async def test_dedupe_when_plan_overlaps_with_explicit_grant(monkeypatch):
 
     result = await entitlements.get_effective_products("user-5", db)
     assert sorted(result) == ["chat", "knowledge"]  # no duplicate
+
+
+@pytest.mark.asyncio
+async def test_addon_dormant_when_tenant_toggle_off(monkeypatch):
+    """SPEC-PORTAL-PROFILES-001 P2.4 dormancy: a user/group entitlement for
+    an add-on is filtered out when the tenant toggle is off. The DB row stays
+    (preserves admin work) but `/api/me` and `require_product` agree it's
+    inactive.
+    """
+
+    async def _fake_set_tenant(_session, _org_id: int) -> None:
+        pass
+
+    monkeypatch.setattr(entitlements, "set_tenant", _fake_set_tenant)
+    monkeypatch.setattr(
+        entitlements,
+        "get_plan_products",
+        lambda plan: ["chat", "knowledge"] if plan == "core" else [],
+    )
+
+    # User has `scribe` granted (per-user or per-group) but tenant toggle is off.
+    org_row = _make_org_row(7, "core", enabled_addons=[])
+    products_row = _make_products_row(["scribe"])
+
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[org_row, products_row])
+
+    result = await entitlements.get_effective_products("user-6", db)
+    assert "scribe" not in result
+    assert sorted(result) == ["chat", "knowledge"]
+
+
+@pytest.mark.asyncio
+async def test_addon_active_when_tenant_toggle_on(monkeypatch):
+    """Mirror of the dormant case: same entitlement, tenant flag flipped on,
+    add-on now appears."""
+
+    async def _fake_set_tenant(_session, _org_id: int) -> None:
+        pass
+
+    monkeypatch.setattr(entitlements, "set_tenant", _fake_set_tenant)
+    monkeypatch.setattr(
+        entitlements,
+        "get_plan_products",
+        lambda plan: ["chat", "knowledge"] if plan == "core" else [],
+    )
+
+    org_row = _make_org_row(7, "core", enabled_addons=["scribe"])
+    products_row = _make_products_row(["scribe"])
+
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[org_row, products_row])
+
+    result = await entitlements.get_effective_products("user-7", db)
+    assert sorted(result) == ["chat", "knowledge", "scribe"]
+
+
+@pytest.mark.asyncio
+async def test_partial_dormancy_keeps_active_addon(monkeypatch):
+    """Tenant has only one of two add-ons enabled; the disabled one is
+    filtered out, the enabled one survives."""
+
+    async def _fake_set_tenant(_session, _org_id: int) -> None:
+        pass
+
+    monkeypatch.setattr(entitlements, "set_tenant", _fake_set_tenant)
+    monkeypatch.setattr(entitlements, "get_plan_products", lambda plan: [])
+
+    org_row = _make_org_row(7, "core", enabled_addons=["docs"])
+    products_row = _make_products_row(["scribe", "docs"])
+
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[org_row, products_row])
+
+    result = await entitlements.get_effective_products("user-8", db)
+    assert "docs" in result
+    assert "scribe" not in result

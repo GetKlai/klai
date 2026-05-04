@@ -32,11 +32,11 @@ async def test_sets_tenant_context_before_union_query(monkeypatch: pytest.Monkey
     """set_tenant must run between the org lookup and the entitlements query."""
     calls: list[tuple[str, object]] = []
 
-    # Org-lookup now returns (org_id, plan) via row.one_or_none() — see
-    # SPEC-PORTAL-PROFILES-001 follow-up that unioned plan-products into
-    # the result.
+    # Org-lookup returns (org_id, plan, enabled_addons) via row.one_or_none() —
+    # see SPEC-PORTAL-PROFILES-001 follow-up that unioned plan-products and
+    # added the dormancy filter for add-ons.
     org_row = MagicMock()
-    org_row.one_or_none.return_value = (42, "free")
+    org_row.one_or_none.return_value = (42, "free", ["scribe"])
     products_scalars = MagicMock()
     products_scalars.all.return_value = ["chat", "scribe"]
     products_result = MagicMock()

@@ -9,7 +9,7 @@ from sqlalchemy import select, union
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import set_tenant
-from app.core.plans import get_plan_products
+from app.core.plans import ADDON_PRODUCTS, get_plan_products
 from app.models.groups import PortalGroupMembership, PortalGroupProduct
 from app.models.portal import PortalOrg, PortalUser
 from app.models.products import PortalUserProduct
@@ -24,16 +24,22 @@ from app.models.products import PortalUserProduct
 # @MX:NOTE Plan-included products (chat, knowledge) are the floor for any user on a paying
 #   plan. Without this union, sidebars and gates render empty for admins/users without an
 #   explicit per-user/per-group product entitlement — which broke the post-Phase-3 UI.
-#   Add-on products (scribe, docs) are NOT in PLAN_PRODUCTS — those still require explicit
-#   per-tenant enabled_addons + per-user/group entitlement (handled by require_product).
+#   Add-on products (scribe, docs) are filtered against org.enabled_addons: an entitlement
+#   row whose tenant toggle is off becomes dormant — kept in DB to preserve manual admin
+#   work, but excluded from effective products so the sidebar/gates honor the toggle.
 # @MX:SPEC SPEC-SEC-007, SPEC-PORTAL-PROFILES-001
 async def get_effective_products(zitadel_user_id: str, db: AsyncSession) -> list[str]:
     """Return all products a user has access to.
 
-    Three sources, all unioned:
+    Three sources, all unioned then filtered:
       1. Plan-included products (from org.plan via PLAN_PRODUCTS) — the floor for anyone on a paying plan.
       2. Direct per-user assignments (portal_user_products) — explicitly granted to this user.
       3. Group-inherited assignments (portal_group_products via portal_group_memberships).
+
+    Add-on products (ADDON_PRODUCTS — scribe, docs) are then filtered against
+    `portal_orgs.enabled_addons`: a row whose tenant toggle is off becomes
+    dormant. This keeps the SPEC-PORTAL-PROFILES-001 two-layer gate consistent
+    between `require_product` (API gating) and `/api/me` (sidebar gating).
 
     Self-heals tenant context: looks up the user's org_id and calls
     set_tenant() before querying the RLS-protected tables. This lets callers
@@ -45,17 +51,17 @@ async def get_effective_products(zitadel_user_id: str, db: AsyncSession) -> list
     Returns empty list if the user has no portal row yet (pre-provisioning
     or deleted user).
     """
-    # Resolve user's tenant + plan. portal_users has a permissive-on-missing
-    # policy so this lookup is safe without prior set_tenant().
+    # Resolve user's tenant + plan + enabled add-ons. portal_users has a
+    # permissive-on-missing policy so this lookup is safe without prior set_tenant().
     org_row = await db.execute(
-        select(PortalUser.org_id, PortalOrg.plan)
+        select(PortalUser.org_id, PortalOrg.plan, PortalOrg.enabled_addons)
         .join(PortalOrg, PortalOrg.id == PortalUser.org_id)
         .where(PortalUser.zitadel_user_id == zitadel_user_id)
     )
     row = org_row.one_or_none()
     if row is None:
         return []
-    org_id, plan = row
+    org_id, plan, enabled_addons = row
     await set_tenant(db, org_id)
 
     # Plan-included products (free / core / professional / complete → chat, knowledge, …)
@@ -78,4 +84,11 @@ async def get_effective_products(zitadel_user_id: str, db: AsyncSession) -> list
     result = await db.execute(combined)
     user_and_group_products: set[str] = set(result.scalars().all())
 
-    return sorted(plan_products | user_and_group_products)
+    effective = plan_products | user_and_group_products
+
+    # Dormancy filter: an add-on entitlement only counts when the tenant
+    # toggle is on. Non-add-on products (chat, knowledge) bypass this.
+    enabled_addon_set: set[str] = set(enabled_addons or [])
+    effective = {p for p in effective if p not in ADDON_PRODUCTS or p in enabled_addon_set}
+
+    return sorted(effective)
