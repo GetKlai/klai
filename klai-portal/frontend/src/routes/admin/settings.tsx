@@ -97,10 +97,17 @@ function AdminSettingsPage() {
       }),
     onSuccess: (_data, next) => {
       adminLogger.info('Add-ons updated', { enabled_addons: next })
-      // SPEC-PORTAL-RBAC-001 REQ-12: keep React Query cache in sync with the
-      // saved state so addonsDirty flips back to false and the Save button
-      // disables straight away.
+      // SPEC-PORTAL-RBAC-001 REQ-12: keep the addons-list cache in sync with
+      // the saved state so addonsDirty flips back to false and the Save
+      // button disables straight away.
       queryClient.setQueryData(['admin-enabled-addons'], { enabled_addons: next })
+      // The sidebar in /app reads `user.products` from useCurrentUser()
+      // (queryKey ['current-user']). user.products is derived server-side
+      // from (role, plan, enabled_addons), so flipping an add-on toggle
+      // invalidates that view too. Without this, /app keeps the stale
+      // products list until the next hard refresh and the toggled-off
+      // add-on lingers in the sidebar.
+      void queryClient.invalidateQueries({ queryKey: ['current-user'] })
       setSavedAddons(true)
       setTimeout(() => setSavedAddons(false), 2500)
     },
