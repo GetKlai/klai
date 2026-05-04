@@ -80,6 +80,13 @@ _ALLOWLIST: dict[str, str] = {
     "app/services/kb_quota.py": (
         "service layer — all callers pass a db session with tenant context already set via _get_caller_org"
     ),
+    # SPEC-PORTAL-PROFILES-001 Phase 2 P2.5: system_groups.py is only called
+    # from add_member in groups.py, which calls _get_caller_org + set_tenant
+    # before invoking sync_role_from_system_group. Tenant context is set by
+    # the calling route, not the service.
+    "app/services/system_groups.py": (
+        "service layer — only caller is add_member in groups.py which calls _get_caller_org + set_tenant first"
+    ),
 }
 
 

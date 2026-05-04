@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import * as m from '@/paraglide/messages'
+import { RoleGuard } from '@/components/layout/RoleGuard'
 import { apiFetch } from '@/lib/apiFetch'
 import { taxonomyLogger } from '@/lib/logger'
 import { toast } from 'sonner'
@@ -21,7 +22,11 @@ import type {
 } from './-kb-types'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/taxonomy')({
-  component: TaxonomyTab,
+  component: () => (
+    <RoleGuard minRole="kb_manager">
+      <TaxonomyTab />
+    </RoleGuard>
+  ),
 })
 
 // -- Coverage widget ----------------------------------------------------------

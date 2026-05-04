@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import _get_caller_org, _require_admin, bearer, require_capability
 from app.core.database import get_db
+from app.core.profiles import Capability
 from app.models.retrieval_gaps import PortalRetrievalGap
 from app.models.taxonomy import PortalTaxonomyNode
 
@@ -20,7 +21,7 @@ router = APIRouter(
     prefix="/api/app",
     tags=["gaps"],
     # R-X2 / AC-3: all gap endpoints require the kb.gaps capability.
-    dependencies=[Depends(require_capability("kb.gaps"))],
+    dependencies=[Depends(require_capability(Capability.KB_GAPS))],
 )
 
 

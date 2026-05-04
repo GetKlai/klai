@@ -1,8 +1,11 @@
 """
-Portal API client for taxonomy operations.
+Portal API client for taxonomy + connector lifecycle operations.
 
 - fetch_taxonomy_nodes: cached (5 min) per (org_id, kb_slug)
 - submit_taxonomy_proposal: POST proposal to portal review queue
+- finalize_connector_delete: SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-04.4 —
+  invoked at the end of ``purge_connector`` so the portal hard-deletes the
+  ``portal_connectors`` row that has been in ``state='deleting'``.
 
 Missing PORTAL_INTERNAL_TOKEN → returns empty list / skips submission with warning.
 """
@@ -140,6 +143,40 @@ async def submit_taxonomy_proposal(
             kb_slug=kb_slug,
             error=str(exc),
         )
+
+
+async def finalize_connector_delete(connector_id: str) -> None:
+    """Tell the portal to hard-delete a connector row that we just purged.
+
+    SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-04.4. Called by the
+    ``connector_purge_task`` after ``purge_connector`` finishes so the
+    portal can drop the row that has been sitting in ``state='deleting'``
+    while we did the cascade.
+
+    Idempotent on the portal side: the endpoint accepts both an existing
+    ``deleting`` row (does the DELETE) and an already-gone row (returns
+    204). That makes worker-task retries safe — re-run after a partial
+    success is harmless.
+
+    Raises on HTTP error so procrastinate retry kicks in.
+    """
+    if not settings.portal_internal_token:
+        logger.error(
+            "finalize_connector_delete_skipped",
+            reason="missing PORTAL_INTERNAL_TOKEN",
+            connector_id=connector_id,
+        )
+        # Raise so the task fails and is retried — the row staying in
+        # ``state='deleting'`` is exactly the recoverable case the admin
+        # endpoint is designed for.
+        raise RuntimeError("PORTAL_INTERNAL_TOKEN missing — cannot finalize")
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(
+            f"{settings.portal_url}/api/internal/connectors/{connector_id}/finalize-delete",
+            headers={"Authorization": f"Bearer {settings.portal_internal_token}"},
+        )
+        resp.raise_for_status()
 
 
 def invalidate_cache(org_id: str, kb_slug: str) -> None:

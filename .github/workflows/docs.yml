@@ -89,5 +89,7 @@ jobs:
           username: klai
           key: ${{ secrets.CORE01_DEPLOY_KEY }}
           script: |
-            docker pull ghcr.io/getklai/klai-docs:latest
-            cd /opt/klai && docker compose up -d --no-deps docs-app
+            # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3: deploy via canonical
+            # wrapper so --remove-orphans and post-deploy snapshot run on
+            # every deploy, mechanically. Pilot workflow for the rollout.
+            /opt/klai/scripts/compose-up.sh --no-deps docs-app

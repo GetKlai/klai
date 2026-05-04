@@ -197,6 +197,19 @@ class Settings(BaseSettings):
     extraction_model: str = "klai-fast"
     synthesis_model: str = "klai-primary"
 
+    # SPEC-INFRA-TENANT-DELETE-001: Garage S3 for Scribe artifact deletion.
+    # Feature-flag pattern: empty endpoint = step disabled (no S3 configured).
+    # Generate credentials via: garage key new --name portal-api
+    garage_s3_endpoint: str = ""  # e.g. http://garage:3900 (empty = feature disabled)
+    garage_s3_access_key: str = ""
+    garage_s3_secret_key: str = ""
+    garage_s3_bucket: str = "klai-scribe"  # default bucket name for scribe artifacts
+
+    # SPEC-INFRA-TENANT-DELETE-001 R1: platform-org slug guard for admin deprovision endpoint.
+    # The DELETE /api/admin/orgs/{slug}/deprovision endpoint requires the caller to be
+    # a member of the platform org. Override via PORTAL_API_PLATFORM_ORG_SLUG.
+    platform_org_slug: str = "getklai"
+
     # Knowledge gap thresholds (mirror of LiteLLM hook env vars for re-scoring)
     klai_gap_soft_threshold: float = 0.4
     klai_gap_dense_threshold: float = 0.35

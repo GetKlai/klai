@@ -1,0 +1,57 @@
+# SPEC-INGEST-QUEUE-SEPARATION-001 REQ-1 + REQ-4 — every Procrastinate task in
+# klai-knowledge-ingest MUST set its `queue=` argument to a constant from
+# `knowledge_ingest.queues`, not a string literal.
+#
+# Why: when queue names are spread across files as bare strings, adding a new
+# queue requires two coordinated edits (task definition + worker subscription
+# list). Forgetting either is silent — the task ends up on a queue no worker
+# subscribes to, and jobs pile up in `status='todo'` forever. We have hit
+# this bug twice in production:
+#
+#   * SPEC-CONNECTOR-DELETE-LIFECYCLE-001 PR #253 — `connector-purge` queue
+#     forgotten in worker list. Delete UI hung for hours.
+#   * SPEC-INGEST-QUEUE-SEPARATION-001 (root cause) — `run_crawl` shared the
+#     enrich-bulk queue and got blocked behind LLM enrichment for 20+ minutes.
+#
+# Resolution: `knowledge_ingest/queues.py` is the single source of truth. Every
+# `queue=` MUST resolve through that module so adding a queue is `1 constant +
+# 1 ALL_QUEUES append` and the worker picks it up automatically. This rule
+# enforces that contract on every PR.
+#
+# What it catches: `queue="enrich-bulk"` (literal string).
+# What passes: `queue=queues.ENRICH_BULK` (attribute access on the constants module).
+
+id: knowledge-ingest-task-queue-must-use-constant
+language: python
+severity: error
+message: |
+  Procrastinate task `queue=` argument must reference a constant from
+  `knowledge_ingest.queues`, not a string literal. The queues module is the
+  single source of truth so the worker subscription list (`ALL_QUEUES`) stays
+  in sync automatically. See SPEC-INGEST-QUEUE-SEPARATION-001.
+
+  Bad : `@procrastinate_app.task(queue="enrich-bulk", ...)`
+  Good: `from knowledge_ingest import queues`
+        `@procrastinate_app.task(queue=queues.ENRICH_BULK, ...)`
+
+rule:
+  pattern: queue=$VALUE
+  has:
+    # `string` covers both regular and f-strings in tree-sitter Python.
+    # `concatenated_string` catches the `"a" "b"` adjacent-literal form.
+    # We do NOT need a separate `f_string` kind — the grammar does not
+    # have one (ast-grep rejected it on first deploy).
+    any:
+      - kind: string
+      - kind: concatenated_string
+
+# Per SPEC-INGEST-QUEUE-SEPARATION-001 + project convention: every file in
+# klai-knowledge-ingest that registers a Procrastinate task is checked.
+# Adding a new task module: append it here.
+files:
+  - klai-knowledge-ingest/knowledge_ingest/crawl_tasks.py
+  - klai-knowledge-ingest/knowledge_ingest/enrichment_tasks.py
+  - klai-knowledge-ingest/knowledge_ingest/clustering_tasks.py
+  - klai-knowledge-ingest/knowledge_ingest/connector_purge_tasks.py
+  - klai-knowledge-ingest/knowledge_ingest/taxonomy_tasks.py
+  - klai-knowledge-ingest/knowledge_ingest/ingest_tasks.py
