@@ -230,6 +230,18 @@ async def _resolve_expected_recipient(
             raise HTTPException(status_code=400, detail="recipient mismatch")
         return str(validated_vars.email)
 
+    if template_name == "auto_join_admin_notification":
+        expected = str(validated_vars.admin_email).strip().lower()
+        if supplied_norm and supplied_norm != expected:
+            struct_logger.warning(
+                "mailer_recipient_mismatch",
+                template=template_name,
+                expected_hash=hashlib.sha256(expected.encode()).hexdigest(),
+                supplied_hash=hashlib.sha256(supplied_norm.encode()).hexdigest(),
+            )
+            raise HTTPException(status_code=400, detail="recipient mismatch")
+        return str(validated_vars.admin_email)
+
     # Fallback for any template that somehow bypassed TEMPLATE_SCHEMAS —
     # defensively 400 rather than passing through attacker `to`.
     raise HTTPException(status_code=400, detail=f"Unknown template: {template_name}")

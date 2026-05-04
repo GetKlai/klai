@@ -56,6 +56,19 @@ class JoinRequestApprovedVars(_BaseVars):
     workspace_url: HttpUrl
 
 
+
+class AutoJoinAdminNotificationVars(_BaseVars):
+    """Variables for the `auto_join_admin_notification` email.
+
+    Sent to all workspace admins when a domain_match user auto-joins.
+    `admin_email` is the authoritative recipient; caller pre-resolves it.
+    """
+
+    name: str
+    email: EmailStr
+    domain: str
+    admin_email: EmailStr
+
 # REQ-2.2: registry keyed on template_name. Handler resolves schema via
 # TEMPLATE_SCHEMAS[template_name]; unknown key -> HTTP 400.
 TEMPLATE_SCHEMAS: dict[str, type[_BaseVars]] = {

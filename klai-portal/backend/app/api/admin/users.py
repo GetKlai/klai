@@ -544,3 +544,149 @@ async def offboard_user(
         logger.info("GitHub offboarding skipped for %s: no github_username linked", zitadel_user_id)
     await db.commit()
     return MessageResponse(message=f"User {zitadel_user_id} offboarded.")
+
+
+# ---------------------------------------------------------------------------
+# R6: Admin handover (SPEC-AUTH-009)
+# ---------------------------------------------------------------------------
+
+from app.services.events import emit_event  # noqa: E402 -- late import to avoid circular
+
+
+@router.post("/users/{zitadel_user_id}/promote-admin", response_model=MessageResponse)
+async def promote_admin(
+    zitadel_user_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """C6.1: Promote an active member to admin. No max-admin limit."""
+    caller_id, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    result = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == zitadel_user_id,
+            PortalUser.org_id == org.id,
+        )
+    )
+    target = result.scalar_one_or_none()
+    if not target:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    target.role = "admin"
+    await db.commit()
+    logger.info(
+        "promote_admin: actor=%s promoted user=%s in org=%d",
+        caller_id,
+        zitadel_user_id,
+        org.id,
+    )
+    emit_event("user.role_promoted", org_id=org.id, user_id=zitadel_user_id)
+    return MessageResponse(message=f"User {zitadel_user_id} promoted to admin.")
+
+
+async def _lock_org_for_role_change(db: AsyncSession, org_id: int) -> None:
+    """Take a row-level lock on portal_orgs.{org_id} to serialise role changes.
+
+    @MX:ANCHOR SPEC-AUTH-009 R6 — min-1-admin invariant requires serialised
+    role changes. Without this lock, two concurrent demotes that both see
+    admin_count=2 can each succeed and leave the workspace with zero admins.
+    @MX:REASON SELECT...FOR UPDATE on the parent org row blocks any other
+    transaction performing a role change on the same org until commit.
+    Patterns chosen from .claude/rules/klai/projects/portal-backend.md
+    "SELECT FOR UPDATE in get-or-create patterns" pitfall.
+    """
+    await db.execute(select(PortalOrg.id).where(PortalOrg.id == org_id).with_for_update())
+
+
+@router.post("/users/{zitadel_user_id}/demote-admin", response_model=MessageResponse)
+async def demote_admin(
+    zitadel_user_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """C6.2: Demote an admin to member. Refuses if this would leave zero admins."""
+    caller_id, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    # Serialise concurrent role changes for this org (see _lock_org_for_role_change).
+    await _lock_org_for_role_change(db, org.id)
+
+    result = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == zitadel_user_id,
+            PortalUser.org_id == org.id,
+        )
+    )
+    target = result.scalar_one_or_none()
+    if not target:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if target.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User is not an admin",
+        )
+
+    admin_count = await db.scalar(
+        select(func.count())
+        .select_from(PortalUser)
+        .where(
+            PortalUser.org_id == org.id,
+            PortalUser.role == "admin",
+        )
+    )
+    if (admin_count or 0) <= 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot demote: this is the last admin. Promote another user first.",
+        )
+
+    # SPEC-PORTAL-PROFILES-001 migration: "member" no longer exists in the
+    # role enum. A demoted admin keeps org-knowledge read access, so demote
+    # to "company" (the rung that mirrors what former members had).
+    target.role = "company"
+    await db.commit()
+    logger.info(
+        "demote_admin: actor=%s demoted user=%s in org=%d",
+        caller_id,
+        zitadel_user_id,
+        org.id,
+    )
+    emit_event("user.role_demoted", org_id=org.id, user_id=zitadel_user_id)
+    return MessageResponse(message=f"User {zitadel_user_id} demoted to company.")
+
+
+@router.delete("/users/me", response_model=MessageResponse)
+async def leave_workspace(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """C6.3: Leave the workspace (self-removal). Refuses if caller is last admin.
+    C6.7: Refuses if this would leave the workspace with zero users (last-member case).
+    """
+    caller_id, org, caller_user = await _get_caller_org(credentials, db)
+
+    if caller_user.role == "admin":
+        # Serialise concurrent role changes for this org (see _lock_org_for_role_change).
+        await _lock_org_for_role_change(db, org.id)
+
+        admin_count = await db.scalar(
+            select(func.count())
+            .select_from(PortalUser)
+            .where(
+                PortalUser.org_id == org.id,
+                PortalUser.role == "admin",
+            )
+        )
+        if (admin_count or 0) <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Promote another admin or delete the workspace before leaving.",
+            )
+
+    await db.delete(caller_user)
+    await db.commit()
+    logger.info("leave_workspace: user=%s left org=%d", caller_id, org.id)
+    emit_event("user.left_workspace", org_id=org.id, user_id=caller_id)
+    return MessageResponse(message="You have left the workspace.")

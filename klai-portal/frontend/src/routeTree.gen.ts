@@ -35,7 +35,6 @@ import { Route as AppChatRouteImport } from './routes/app/chat'
 import { Route as AppAccountRouteImport } from './routes/app/account'
 import { Route as AdminSettingsRouteImport } from './routes/admin/settings'
 import { Route as AdminJoinRequestsRouteImport } from './routes/admin/join-requests'
-import { Route as AdminDomainsRouteImport } from './routes/admin/domains'
 import { Route as AdminDeprovisioningStatusRouteImport } from './routes/admin/deprovisioning-status'
 import { Route as AdminDangerZoneRouteImport } from './routes/admin/danger-zone'
 import { Route as AdminBillingRouteImport } from './routes/admin/billing'
@@ -222,11 +221,6 @@ const AdminSettingsRoute = AdminSettingsRouteImport.update({
 const AdminJoinRequestsRoute = AdminJoinRequestsRouteImport.update({
   id: '/join-requests',
   path: '/join-requests',
-  getParentRoute: () => AdminRouteRoute,
-} as any)
-const AdminDomainsRoute = AdminDomainsRouteImport.update({
-  id: '/domains',
-  path: '/domains',
   getParentRoute: () => AdminRouteRoute,
 } as any)
 const AdminDeprovisioningStatusRoute =
@@ -548,7 +542,6 @@ export interface FileRoutesByFullPath {
   '/admin/billing': typeof AdminBillingRoute
   '/admin/danger-zone': typeof AdminDangerZoneRoute
   '/admin/deprovisioning-status': typeof AdminDeprovisioningStatusRoute
-  '/admin/domains': typeof AdminDomainsRoute
   '/admin/join-requests': typeof AdminJoinRequestsRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
@@ -631,7 +624,6 @@ export interface FileRoutesByTo {
   '/admin/billing': typeof AdminBillingRoute
   '/admin/danger-zone': typeof AdminDangerZoneRoute
   '/admin/deprovisioning-status': typeof AdminDeprovisioningStatusRoute
-  '/admin/domains': typeof AdminDomainsRoute
   '/admin/join-requests': typeof AdminJoinRequestsRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
@@ -716,7 +708,6 @@ export interface FileRoutesById {
   '/admin/billing': typeof AdminBillingRoute
   '/admin/danger-zone': typeof AdminDangerZoneRoute
   '/admin/deprovisioning-status': typeof AdminDeprovisioningStatusRoute
-  '/admin/domains': typeof AdminDomainsRoute
   '/admin/join-requests': typeof AdminJoinRequestsRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
@@ -804,7 +795,6 @@ export interface FileRouteTypes {
     | '/admin/billing'
     | '/admin/danger-zone'
     | '/admin/deprovisioning-status'
-    | '/admin/domains'
     | '/admin/join-requests'
     | '/admin/settings'
     | '/app/account'
@@ -887,7 +877,6 @@ export interface FileRouteTypes {
     | '/admin/billing'
     | '/admin/danger-zone'
     | '/admin/deprovisioning-status'
-    | '/admin/domains'
     | '/admin/join-requests'
     | '/admin/settings'
     | '/app/account'
@@ -971,7 +960,6 @@ export interface FileRouteTypes {
     | '/admin/billing'
     | '/admin/danger-zone'
     | '/admin/deprovisioning-status'
-    | '/admin/domains'
     | '/admin/join-requests'
     | '/admin/settings'
     | '/app/account'
@@ -1242,13 +1230,6 @@ declare module '@tanstack/react-router' {
       path: '/join-requests'
       fullPath: '/admin/join-requests'
       preLoaderRoute: typeof AdminJoinRequestsRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/domains': {
-      id: '/admin/domains'
-      path: '/domains'
-      fullPath: '/admin/domains'
-      preLoaderRoute: typeof AdminDomainsRouteImport
       parentRoute: typeof AdminRouteRoute
     }
     '/admin/deprovisioning-status': {
@@ -1685,7 +1666,6 @@ interface AdminRouteRouteChildren {
   AdminBillingRoute: typeof AdminBillingRoute
   AdminDangerZoneRoute: typeof AdminDangerZoneRoute
   AdminDeprovisioningStatusRoute: typeof AdminDeprovisioningStatusRoute
-  AdminDomainsRoute: typeof AdminDomainsRoute
   AdminJoinRequestsRoute: typeof AdminJoinRequestsRoute
   AdminSettingsRoute: typeof AdminSettingsRoute
   AdminIndexRoute: typeof AdminIndexRoute
@@ -1715,7 +1695,6 @@ const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminBillingRoute: AdminBillingRoute,
   AdminDangerZoneRoute: AdminDangerZoneRoute,
   AdminDeprovisioningStatusRoute: AdminDeprovisioningStatusRoute,
-  AdminDomainsRoute: AdminDomainsRoute,
   AdminJoinRequestsRoute: AdminJoinRequestsRoute,
   AdminSettingsRoute: AdminSettingsRoute,
   AdminIndexRoute: AdminIndexRoute,
