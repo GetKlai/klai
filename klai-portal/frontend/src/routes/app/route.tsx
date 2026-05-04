@@ -5,12 +5,14 @@ import { HelpButton } from '@/components/help/HelpButton'
 import * as m from '@/paraglide/messages'
 import { useProtectedRoute } from '@/hooks/useProtectedRoute'
 
+// SPEC-PORTAL-PROFILES-001 P3.1: Nav items filtered by product availability.
+// Admin-bypass for products is intentionally removed — admins see what tenant has enabled.
 // SPEC-PORTAL-UNIFY-KB-001: Focus removed; all /app/focus/* now redirects to /app/knowledge.
 const PRODUCT_ROUTES: Record<string, string[]> = {
   '/app/chat': ['chat'],
   '/app/transcribe': ['scribe'],
   '/app/knowledge': ['knowledge'],
-  '/app/docs': ['knowledge'],
+  '/app/docs': ['docs'],
 }
 
 export const Route = createFileRoute('/app')({
@@ -27,14 +29,11 @@ function AppLayout() {
     { to: '/app/docs', label: m.app_tool_docs_title(), icon: BookMarked },
   ]
 
-  const isAdmin = user?.isAdmin === true
   const products = user?.products ?? []
-  const appNav = isAdmin
-    ? allNavItems
-    : allNavItems.filter((item) => {
-        const required = PRODUCT_ROUTES[item.to]
-        return !required || required.some((p) => products.includes(p))
-      })
+  const appNav = allNavItems.filter((item) => {
+    const required = PRODUCT_ROUTES[item.to]
+    return !required || required.some((p) => products.includes(p))
+  })
 
   if (!canRender) {
     return (

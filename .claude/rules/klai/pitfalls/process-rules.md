@@ -1,5 +1,34 @@
 # Process Rules
 
+## verify-image-pullable-before-pin (HIGH)
+When pinning an external image tag in any compose file (`vexaai/*`,
+`ghcr.io/*`, etc.), verify the tag is actually pullable BEFORE
+committing. PR #269 (2026-05-03) bumped
+`vexaai/transcription-service` to `:0.10.6` based on the v0.10.6
+release notes — but that specific image was never published to
+Docker Hub (upstream lists 9 public images; transcription-service is
+locally-built only). The bug landed in main; only the fact that
+gpu-01 has no CI sync prevented a runtime regression.
+
+**Why this slips through:** release notes are written for a global
+audience. They list "all images" from the maintainer's perspective,
+which can mean "all images in our private CI" not "all images on
+Docker Hub". Reading carefully and trusting the prose is not enough.
+
+**Prevention (mechanical):** `deploy/check-image-pullable.sh` runs
+in pre-commit and the deploy-compose CI workflow. For every
+`vexaai/*` (and other external) ref in compose files, it does
+`docker manifest inspect <ref>`. Failures are accepted ONLY if the
+tag matches a locally-built convention
+(`<semver>-local-YYMMDD-HHMM` or legacy `<semver>-YYMMDD-HHMM`).
+Anything else is rejected at commit time.
+
+**Prevention (human):** before adding a NEW external image tag to
+a compose file, run `docker manifest inspect <ref>` locally. If it
+404s and the image is locally built, name the tag with the
+`-local-` infix so the script's whitelist accepts it. Do not invent
+tag names; mirror what your build pipeline emits.
+
 ## adapter-framework-bleed (HIGH)
 When a service is declared "a pure X adapter framework" but you find
 infrastructure concepts leaking into its public contract (S3 clients,
@@ -338,16 +367,26 @@ across services:
 | Service | Auto-migrates on container start? |
 |---|---|
 | portal-api | YES — `entrypoint.sh` runs `alembic upgrade head` then exec's uvicorn |
+| klai-connector | YES — `entrypoint.sh` runs `alembic upgrade head` then exec's uvicorn (added 2026-04-30 after migration 006_add_org_id_to_sync_runs shipped in image but never ran on prod) |
 | scribe-api | NO — `CMD uvicorn …` only |
-| klai-connector | NO — `CMD uvicorn …` only |
 | klai-mailer | NO — `CMD uvicorn …` only |
 | klai-knowledge-mcp | NO — `CMD python main.py` only |
 | klai-knowledge-ingest | NO — `CMD uvicorn …` only |
 | klai-retrieval-api | NO — `CMD uvicorn …` only |
 
-Every service except portal-api needs the manual-migrate step or an
-entrypoint port. The portal-api `entrypoint.sh` (introduced by
-SPEC-CHAT-TEMPLATES-CLEANUP-001) is the canonical pattern to copy.
+Every service except portal-api and klai-connector needs the
+manual-migrate step or an entrypoint port. The portal-api
+`entrypoint.sh` (introduced by SPEC-CHAT-TEMPLATES-CLEANUP-001) is the
+canonical pattern to copy. klai-connector's `entrypoint.sh` adds the
+twin requirement on klai-connector's `alembic.ini`:
+`prepend_sys_path = .` (so `from app.models.connector import Base`
+resolves) — without that line `alembic upgrade head` exits with
+`ModuleNotFoundError: No module named 'app'` and the container will
+crash-loop on every restart. Spotted live on 2026-04-30 when the
+`Sync now` click failed with `column sync_runs.org_id does not exist`
+on the very first new-build connector, requiring
+`docker exec klai-core-klai-connector-1 sh -c 'PYTHONPATH=. .venv/bin/alembic upgrade head'`
+as a hand-applied fix before this entrypoint pattern landed.
 
 ## ruff-format-and-ruff-check-are-different (MED)
 `uv run ruff check` and `uv run ruff format --check` enforce different
@@ -506,6 +545,79 @@ adding the shared `klai-log-utils` path-dep silently broke its build.
   (`docker build -f <service>/Dockerfile .`) BEFORE pushing — the
   CI feedback loop is 3-5 min per attempt.
 
+## container-cleanup-without-preflight (HIGH)
+When you face a "wees-uitziende" container — no
+`com.docker.compose.project` label, no Caddy upstream, untagged image —
+do NOT treat the absence of those signals as a verdict to delete. Klai
+has TWO legitimate classes of prod containers:
+
+- **Klasse A — compose-managed:** `com.docker.compose.project=klai-core` label
+- **Klasse B — provisioning-managed:** `klai.managed_by=portal-api-provisioning`
+  + `klai.tenant_slug=<slug>` + `klai.kind=<type>` (gezet door
+  `_start_librechat_container` per SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-2a)
+
+A container without ANY of these labels AND without a `klai.adhoc=*`
+opt-in is a candidate wees, but verify before deleting.
+
+The librechat-voys incident (2026-05-02) is the canonical case. The
+production Voys-tenant chat container was klasse B (provisioning-managed
+by portal-api) but at the time the labels did not yet exist as a
+convention. The cleanup-agent (me) checked only for klasse-A label,
+saw none, also saw no current Caddy upstream, and concluded "wees".
+Wrong on both counts: the container was legitimate; Caddy upstream
+absence had a different cause (timing of provisioning vs. caddy
+reload). Recovery succeeded only because `/opt/klai/librechat/voys/`
+(env-file + librechat.yaml) survived; the original image SHA
+(untagged, never registered) was permanently lost.
+
+**Why this is a HIGH-class trap:** the signals that look like "orphan"
+are exactly the signals you'd expect from a legitimate
+production-relevant container managed via a non-compose pathway.
+"No compose label" correlates with rommel for klasse-A containers,
+NOT for klasse-B (provisioning-managed) containers. Tenant-specific
+names (`librechat-*`, `-voys`, `-getklai`, `-<klant>`) flip the prior:
+those are almost never test fixtures.
+
+**Tenant-deprovisioning is NOT just `docker rm`.** A klasse-B
+container belongs to a tenant whose Mongo user, Meilisearch index,
+Caddy upstream, and Redis cache need cleanup too. Use the portal-api
+deprovision flow (`provisioning/orchestrator.py::deprovision_tenant`)
+— never `docker rm` a `librechat-<slug>` directly.
+
+**Prevention (mechanical, not narrative):**
+
+1. Hook `.claude/hooks/klai/container-hygiene-preflight.sh` blocks
+   `docker rm`/`rmi`/`volume rm`/`system prune`/`compose down --volumes`
+   on any target matching tenant-naam patterns or appearing in
+   `klai-infra/deploy/docker-compose*.yml` history. Registered as
+   PreToolUse in `.claude/settings.json` alongside
+   `portal-api-preflight.sh`. SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-1.
+
+2. Hook hard-blocks `docker volume prune`, `docker image prune -af`,
+   `docker system prune -a`, `docker compose down --volumes`. Use
+   targeted `volume rm` after manual review or the systemd
+   `docker-cleanup.timer` (SPEC REQ-6) for safe daily prune.
+
+3. Weekly `klai-orphan-audit` (SPEC REQ-5) emits structlog events to
+   VictoriaLogs (`service:klai-orphan-audit`); cleanup-agents query
+   the stream BEFORE deciding via VictoriaLogs MCP. Caddy upstream
+   without container, container with tenant-naam without Caddy
+   upstream, untagged images >30d — all flagged for human review,
+   never auto-removed.
+
+4. Ad-hoc debug runs MUST use
+   `docker run --rm --label klai.adhoc=YYYY-MM-DD-reason --label klai.owner=<email>`
+   so they self-clean and appear in a separate "ad-hoc" audit
+   section, not in the "wees" section.
+
+**Why mechanical not narrative.** An AI is the primary code- and
+deploy-actor in this codebase. A markdown rule that "agents should
+read first" is a gap that re-opens with every context truncation,
+prompt variation, or new agent. The hook is the only enforcement that
+survives all those failure modes. The narrative rule
+`.claude/rules/klai/infra/container-hygiene.md` exists for human
+review and override-path documentation, not as the primary guard.
+
 ## parallel-spec-on-overlapping-log-sites (MED)
 When two SPECs land on the same call sites in the same file, the rebase
 or merge produces large, repetitive conflicts. SPEC-SEC-INTERNAL-001
@@ -651,3 +763,55 @@ Reference: mailer `_validate_incoming_secret` was using `!=` until SPEC-SEC-INTE
 Reference: SPEC-SEC-MAILER-INJECTION-001 — mailer rendered email subjects/bodies via `template.format(**variables)` where keys came from inbound webhook JSON.
 
 **Prevention:** Use `string.Template.safe_substitute` (allows only $-prefixed identifiers, no attribute traversal) or `jinja2` with `autoescape=True` and a sandbox. Add the format-string-injection check to the security-review skill checklist.
+
+## allowlist-must-enumerate-all-host-classes (HIGH)
+A security-allowlist is only as good as the enumeration that built it. When a hardening SPEC introduces a new check on hostnames, identifiers, or any user-facing string, the implementer MUST list **every** legitimate class the field can hold — not just the obvious user-facing class — before the check ships. Missing one class breaks production at deploy time.
+
+Reference: SPEC-SEC-HYGIENE-001 REQ-20 (callback URL subdomain allowlist) shipped on 2026-04-29 with three host classes enumerated (`localhost`, bare apex, tenant-slug) and one missed: the FRONTEND_URL host (`my.getklai.com`). Zitadel always redirects through the FRONTEND_URL host first per SPEC-AUTH-008, so every multi-tenant TOTP login started returning 502 within minutes of deploy. Fixed by REQ-20.4 (system-host bypass derived from `settings.frontend_url`) and `tests/test_callback_url_allowlist.py`. The original PR landed with **zero** dedicated tests on the validator, which is why CI did not catch the regression.
+
+**Prevention checklist for any new allowlist / blocklist / hostname-validator PR:**
+
+1. Before merging, list every hostname / identifier the validator will see in production. Grep the codebase for the field across all services. Enumerate at minimum:
+   - localhost / 127.0.0.1 (dev)
+   - the bare apex domain
+   - any FRONTEND_URL / login domain / admin domain
+   - all currently-active user-tenant subdomains
+   - any third-party-callback domains (Stripe, Vexa, Moneybird, etc.)
+2. Each enumerated class MUST appear either explicitly in the allowlist OR with a documented bypass (a comment on the bypass line + a test asserting the bypass).
+3. The validator MUST have a dedicated test file in `klai-portal/backend/tests/` (or the equivalent service) covering at least one accept-case per enumerated class AND at least two reject-cases (random unknown, lookalike-substring). No "we'll add tests later" merges on auth surfaces — the v0.7.1 hotfix exists because of this exact decision.
+4. Configurable values (`settings.domain`, `settings.frontend_url`, etc.) MUST be derived from settings — never hardcoded strings — so dev / staging / prod work without code changes.
+5. PR description MUST include the rollback command. For validator-style hardening: `git revert <sha> && gh run watch && verify on core-01`. So when the regression hits prod, recovery is one command, not a panic.
+
+## redis-url-password-must-be-parsed-manually (HIGH)
+`redis_asyncio.from_url(url)` (and `redis.Redis.from_url`) delegate to `urllib.parse.urlparse`. urlparse rejects URLs whose userinfo password contains characters it treats as URL-reserved — most commonly `:`, `/`, `+`, `@`, `#`, `?`, `%` — by raising `ValueError("Port could not be cast to integer value as '<garbled>'")` on the first property access. Operators routinely paste a generated password into SOPS without percent-encoding it, the service starts cleanly because `from_url` is called lazily, and every subsequent Redis operation crashes with an opaque error.
+
+Reference: SPEC-SEC-MAILER-INJECTION-001 v0.3.1 (2026-04-29). klai-mailer's `app/nonce.py::get_redis()` called `redis_asyncio.from_url(settings.redis_url)`. Production password contained `:`, `/`, `+`. Every Zitadel webhook to `/notify` returned 500. The mailer's `setup_logging()` swallowed uvicorn access logs, so neither the request nor the traceback appeared in `docker logs` — diagnosis required tailing the container live AND triggering a fresh request to capture the ASGI traceback. Outage duration ~4 hours (12:36 → 17:30 UTC). Fixed by `parse_redis_url` (structural splits, not urlparse) + `Redis(host=..., password=..., ...)` kwargs.
+
+**Prevention for any code constructing a Redis client (or any URL-userinfo-bearing client):**
+
+1. Do not call `Redis.from_url(settings.foo_url)` if there is any chance the password came through SOPS / env var. Either:
+   - Construct via individual env vars (`REDIS_HOST`, `REDIS_PASSWORD`, `REDIS_PORT`) — the 12-factor recommended pattern, no escaping ambiguity.
+   - Use a structural URL parser (e.g. `app/redis_url.py::parse_redis_url`) that takes the password as opaque bytes between the first `:` after the scheme and the last `@` before the host.
+2. If `from_url` is unavoidable (e.g. third-party library doesn't accept kwargs), document in SOPS that the password MUST be percent-encoded AND add a startup-time `urlparse(settings.redis_url).port` access in the lifespan handler — that fails-fast at deploy with a clear error instead of crashing on the first request.
+3. Include a regression test that loads the URL with `:` in the password (`redis://:p:hPKBf@host:6379/0`) and asserts the client constructs without error. The test must NOT use a hand-crafted "valid" password — pretend the operator pasted directly from a 1Password generator.
+4. Verify the same pattern across every klai service that uses Redis (portal-api, retrieval-api, knowledge-ingest, scribe, connector, mailer). If any of them uses `from_url(settings.redis_url)` and the URL hasn't been audited for password encoding, that's a latent outage waiting on a password rotation.
+5. Audit logging-config: the mailer outage was 4× longer than necessary because `setup_logging()` suppressed uvicorn access logs. For any service that uses structlog + `ProcessorFormatter`, verify uvicorn access logs still surface in stdout — otherwise an unhandled exception is invisible to `docker logs`.
+
+## alembic-stamped-past-skipped-migration (HIGH)
+`alembic_version` is a single source of truth for "what's the current head" — it is NOT a log of every migration that ran. If a migration's `op.create_table` (or any other DDL) silently fails to execute on a given deploy but `alembic_version` still advances past it, the schema and alembic's view of the schema permanently diverge. Every subsequent `alembic upgrade head` is a no-op (head already equals current), so the missing tables / columns / indexes never get created. The only symptom is a 500 on the first endpoint that touches the missing object — sometimes weeks after the original deploy.
+
+Reference: 2026-04-30 — `/api/admin/domains` and `/api/admin/join-requests` returned 500 on prod. Root cause: `portal_org_allowed_domains` and `portal_join_requests` (created by SPEC-AUTH-006 migrations `23c5c8b48669` and `b2c3d4e5f6g7`) did not exist in the production DB even though `SELECT version_num FROM alembic_version` returned `v2m3e4r5g6h7` (head). All other migrations on the chain were applied — verified by probing five sentinel columns/tables (`portal_templates`, `vexa_meetings.recording_deleted_at`, `portal_connectors.content_type`, `portal_users.kb_narrow`, `portal_users.active_template_ids`) — only those two specific tables were missing. Likely trigger: the `93bf090e refactor(alembic): real random hex ids + resolve a1b2c3d4e5f6 duplicate` rename on 2026-04-22 happened while a deploy that had already advanced `alembic_version` past that chain segment was in flight, so the renamed migrations were never re-walked. Logs from the original deploy window were rolled (Docker `max-size: 50m, max-file: 3`) so the exact moment is not recoverable. The fix was to apply the alembic-generated DDL directly via `psql` (alembic_version stayed at head; the schema caught up).
+
+**Prevention:**
+
+1. **Post-deploy schema drift check on any portal-api PR that adds a migration.** Add a `scripts/verify_schema_at_head.py` (or extend `scripts/apply_post_deploy_sql.sh`) that reads every `op.create_table(...)` from migration files newer than `alembic_version - 5` and asserts each table exists in `information_schema.tables`. Run it as the last step of `portal-api.yml` CI deploy. Failing the deploy on schema-vs-head divergence means future regressions surface within minutes instead of weeks.
+2. **Never `alembic stamp` on prod without immediately following with `alembic upgrade head` in the same shell session.** A bare `stamp` command silently advances `alembic_version` past migrations that have not run. If you ever need to mark a migration as "already applied" on prod (e.g. recovering from a renamed-revision incident), document the reason in the deploy log and verify the schema state before AND after.
+3. **For an alembic-rename refactor (commit shape: changing `revision = "..."` of an existing migration file):** before merging, `docker exec klai-core-portal-api-1 alembic current` on prod and confirm the result is NOT inside the chain segment being renamed. If it is, the rename either has to wait or be paired with a manual `alembic stamp <new-id>` on the spot — never assume the rename is invisible to prod.
+4. **Diagnostic playbook when an endpoint mysteriously 500s after a recent deploy:**
+   ```bash
+   ssh core-01 "docker exec klai-core-portal-api-1 alembic current && docker exec klai-core-portal-api-1 alembic heads"
+   # Pick a sentinel table from each recent migration and probe:
+   ssh core-01 "docker exec klai-core-postgres-1 sh -c 'psql -U \$POSTGRES_USER -d \$POSTGRES_DB -c \"SELECT to_regclass('"'"'public.<expected_table>'"'"');\"'"
+   ```
+   If `alembic current` is at head AND `to_regclass` is NULL for an expected table, you have schema drift. The fix is `alembic upgrade --sql <prev>:<head>` (offline, generates the DDL alembic WOULD have run), strip the `UPDATE alembic_version SET ...` lines, apply via `psql`. Do NOT `alembic stamp` backwards then `upgrade head` — that re-runs ALL migrations after the stamp point, most of which will fail because their tables already exist.
+5. **Logging.** When a handler queries an ORM model whose backing table doesn't exist, `asyncpg.exceptions.UndefinedTableError` is raised inside SQLAlchemy and FastAPI catches it as a generic 500. The trace IS in VictoriaLogs (`service:portal-api AND level:error AND message:"UndefinedTable"`) — use that query first when triaging "500 on a single endpoint, all other endpoints fine" before assuming it's an auth / dependency-injection / RLS issue. Diagnosis-without-logs falls back to the `to_regclass` probe above.

@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Tooltip } from '@/components/ui/tooltip'
 import * as m from '@/paraglide/messages'
+import { RoleGuard } from '@/components/layout/RoleGuard'
 import { apiFetch } from '@/lib/apiFetch'
 import { SyncStatusBadge } from './-kb-helpers'
 import type { ConnectorSummary, KnowledgeBase, MembersResponse } from './-kb-types'
@@ -27,7 +28,11 @@ export const Route = createFileRoute('/app/knowledge/$kbSlug/connectors')({
   validateSearch: (search: Record<string, unknown>) => ({
     oauth: typeof search.oauth === 'string' ? search.oauth : undefined,
   }),
-  component: ConnectorsTab,
+  component: () => (
+    <RoleGuard minRole="kb_manager">
+      <ConnectorsTab />
+    </RoleGuard>
+  ),
 })
 
 type ConnectorTypeInfo = { label: () => string; IconComponent: React.ComponentType<{ className?: string }> }

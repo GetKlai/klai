@@ -109,8 +109,10 @@ async def test_offboard_user_does_not_wipe_other_org_memberships() -> None:
         # Non-admins: NO Zitadel grant. portal_users.role is the canonical
         # authority; the JWT roles claim stays empty so retrieval-api's
         # _extract_role returns None and the cross-org check fires normally.
-        ("group-admin", None),
-        ("member", None),
+        ("group_manager", None),
+        ("kb_manager", None),
+        ("company", None),
+        ("personal", None),
     ],
 )
 @pytest.mark.asyncio

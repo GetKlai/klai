@@ -25,9 +25,15 @@ Services previously using `env_file: .env` (the shared global file at
 | victorialogs | YES | `58e11c30` |
 | portal-api | YES | (this commit) |
 
-Services using an acceptable per-service `env_file: ./<svc>/.env`
-pattern (REQ-6 — compliant as-is, content audit is a follow-up):
-klai-mailer, klai-connector, librechat-getklai.
+Services migrated off per-service `env_file: ./<svc>/.env` (SPEC-SEC-AUDIT-2026-04 B3):
+
+| Service | Migrated | Commit |
+|---|---|---|
+| klai-mailer | YES | (this commit) |
+| klai-connector | YES | (this commit) |
+
+Services still using per-service `env_file` pattern (REQ-6 — compliant as-is):
+librechat-getklai.
 
 ## Matrix
 
@@ -38,6 +44,14 @@ from SOPS `klai-infra/core-01/.env.sops`) unless noted otherwise.
 
 | Secret | Service | Purpose |
 |---|---|---|
+| `CONNECTOR_CORS_ORIGINS` | klai-connector | Comma-separated allowed CORS origins. Empty disables CORS (code default). Mapped to `CORS_ORIGINS` in-container. |
+| `SMTP_HOST` | klai-mailer | SMTP server hostname. Source: klai-infra/core-01/klai-mailer/.env.sops. |
+| `SMTP_PASSWORD` | klai-mailer | SMTP auth password. Source: klai-infra/core-01/klai-mailer/.env.sops. |
+| `SMTP_USERNAME` | klai-mailer | SMTP auth username. Source: klai-infra/core-01/klai-mailer/.env.sops. |
+| `CONNECTOR_ENCRYPTION_KEY` | klai-connector | KEK for connector credential storage (two-tier hierarchy). Mapped to `ENCRYPTION_KEY` in-container. |
+| `CONNECTOR_REDIS_URL` | klai-connector | Redis URL for per-org rate limiting (SPEC-SEC-HYGIENE-001 HY-32). Empty disables rate limiting (code default). Mapped to `REDIS_URL` in-container. |
+| `CONNECTOR_ZITADEL_CLIENT_ID` | klai-connector | Zitadel OIDC client_id for connector token introspection. Mapped to `ZITADEL_CLIENT_ID` in-container. |
+| `CONNECTOR_ZITADEL_CLIENT_SECRET` | klai-connector | Zitadel OIDC client_secret for connector introspection. Mapped to `ZITADEL_CLIENT_SECRET` in-container. |
 | `DOCS_INTERNAL_SECRET` | portal-api | Shared secret portal-api → klai-docs for KB provisioning calls. |
 | `GRAPHITI_LLM_MODEL` | retrieval-api | LLM model name used by Graphiti for knowledge-graph extraction. Prod uses `klai-pipeline`; config.py default is `klai-fast`. Not a secret — declared here because the prod value differs from the code default. |
 | `FIRECRAWL_INTERNAL_KEY` | portal-api | Shared web-search API key (portal re-uses the Firecrawl internal key for URL extraction). |
@@ -47,11 +61,15 @@ from SOPS `klai-infra/core-01/.env.sops`) unless noted otherwise.
 | `KNOWLEDGE_INGEST_SECRET` | scribe-api | HMAC auth when scribe pushes transcripts to knowledge-ingest. |
 | `KNOWLEDGE_RETRIEVE_URL` | portal-api | URL of retrieval-api used for gap re-scoring (value, not secret — kept here because it crosses a trust boundary). |
 | `LIBRECHAT_MONGO_ROOT_URI` | portal-api | MongoDB root URI with multi-DB read access for lazy LibreChat user mapping (KB-010). |
+| `LOGO_URL` | klai-mailer | Brand logo URL for email templates. Overrides code default (example.com). Mapped to `LOGO_URL` in-container. Source: klai-infra/core-01/klai-mailer/.env.sops. |
+| `BRAND_URL` | klai-mailer | Brand homepage URL for email templates. Overrides code default (example.com). Mapped to `BRAND_URL` in-container. Source: klai-infra/core-01/klai-mailer/.env.sops. |
+| `MAILER_WEBHOOK_SECRET` | klai-mailer | HMAC secret for Zitadel webhook signature verification. Validator fails closed on empty (SPEC-SEC-MAILER-INJECTION-001 REQ-9.1). Mapped to `WEBHOOK_SECRET` in-container. Source: klai-infra/core-01/klai-mailer/.env.sops. |
 | `LITELLM_MASTER_KEY` | portal-api | Master key for the LiteLLM gateway — portal writes this when provisioning per-tenant LibreChat containers. |
 | `LITELLM_MASTER_KEY` | retrieval-api | Bearer token for the LiteLLM gateway (re-exposed as `LITELLM_API_KEY` in-container). |
 | `LITELLM_MASTER_KEY` | scribe-api | Bearer token for the LiteLLM gateway (AI summarization of transcripts). |
 | `MEILI_MASTER_KEY` | portal-api | Meilisearch master key — portal provisions Meili indexes per tenant. |
 | `MONEYBIRD_WEBHOOK_TOKEN` | portal-api | Signs Moneybird billing webhooks; portal's config validator fails closed on empty/whitespace (SPEC-SEC-WEBHOOK-001 REQ-3). |
+| `MAILER_PORTAL_API_URL` | klai-mailer | Portal API base URL for locale lookup. Falls back to code default http://portal-api:8010 when unset. Mapped to `PORTAL_API_URL` in-container. |
 | `MONGO_ROOT_PASSWORD` | portal-api | MongoDB root password for per-tenant LibreChat database provisioning. |
 | `MONGO_ROOT_USERNAME` | portal-api | MongoDB root username (non-secret but kept here for pairing with the password). |
 | `PORTAL_API_BFF_SESSION_KEY` | portal-api | Fernet key for BFF session records at rest in Redis (SPEC-AUTH-008). Mapped to `BFF_SESSION_KEY` in-container. |

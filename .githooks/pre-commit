@@ -1,0 +1,33 @@
+#!/bin/bash
+# Pre-commit hook — run image-tag validators when deploy compose files change.
+#
+# Activate locally with: git config core.hooksPath .githooks
+#
+# Catches the PR #269 class of bug at commit time: a vexaai/* image
+# reference that is not pullable from Docker Hub and does not match a
+# locally-built convention.
+
+set -e
+
+CHANGED=$(git diff --cached --name-only --diff-filter=ACM)
+
+# Only run when relevant files are staged.
+if echo "$CHANGED" | grep -qE '^deploy/(docker-compose.*\.ya?ml|check-image-.*\.sh|VERSIONS\.md)$'; then
+    echo "[pre-commit] deploy/ change detected — validating image tags..."
+
+    if [ -x deploy/check-image-tags.sh ]; then
+        sh deploy/check-image-tags.sh
+    fi
+
+    if [ -x deploy/check-image-pullable.sh ]; then
+        # Only run pullable check if docker is available (skip silently otherwise
+        # so the hook works on machines without docker daemon access).
+        if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+            sh deploy/check-image-pullable.sh
+        else
+            echo "[pre-commit] docker not available — skipping pullable check (CI will catch)."
+        fi
+    fi
+fi
+
+exit 0

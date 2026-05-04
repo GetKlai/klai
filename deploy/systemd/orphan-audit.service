@@ -1,0 +1,25 @@
+[Unit]
+Description=Klai weekly orphan-audit (containers, images, volumes, Caddy upstreams)
+Documentation=https://github.com/GetKlai/klai/blob/main/.claude/rules/klai/infra/container-hygiene.md
+Documentation=https://github.com/GetKlai/klai/blob/main/.moai/specs/SPEC-INFRA-CONTAINER-HYGIENE-001/spec.md
+After=docker.service
+Requires=docker.service
+
+# SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-5.
+#
+# REPORT-ONLY. Emits structlog-events to stdout; Alloy picks them up
+# into VictoriaLogs as `service:klai-orphan-audit`. Never deletes
+# anything. Operators / agents query the stream via VictoriaLogs MCP
+# before deciding on cleanup.
+
+[Service]
+Type=oneshot
+ExecStart=/opt/klai/scripts/docker-orphan-audit.sh
+
+# Run as root so volume-mtime detection (find on /var/lib/docker/volumes)
+# works without sudo prompts. Audit is read-only at the filesystem level.
+User=root
+
+# Stdout becomes journal entry, picked up by Alloy → VictoriaLogs
+StandardOutput=journal
+StandardError=journal

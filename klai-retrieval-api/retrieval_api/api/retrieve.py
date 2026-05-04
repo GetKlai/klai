@@ -9,7 +9,7 @@ import os
 import time
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from retrieval_api.config import settings
 from retrieval_api.metrics import (
@@ -17,7 +17,7 @@ from retrieval_api.metrics import (
     retrieval_requests_total,
     step_latency_seconds,
 )
-from retrieval_api.middleware.auth import verify_body_identity
+from retrieval_api.middleware.auth import AuthContext, require_scope, verify_body_identity
 from retrieval_api.models import ChunkResult, RetrieveMetadata, RetrieveRequest, RetrieveResponse
 from retrieval_api.quality_boost import quality_boost
 from retrieval_api.services import coreference, evidence_tier, gate, graph_search, reranker, search
@@ -30,6 +30,16 @@ from retrieval_api.util.payload import payload_list
 logger = structlog.get_logger(__name__)
 
 router = APIRouter()
+
+# SPEC-SEC-SERVICE-AUTH-001 REQ-3: scope required for the /retrieve endpoint.
+# Internal-secret callers are bypassed during Phase B/C migration; once Phase D
+# removes the legacy auth path, only callers presenting a JWT with this scope
+# will reach this endpoint. Granted to: svc-litellm, svc-research-api,
+# svc-knowledge-mcp, svc-portal-api.
+_RETRIEVAL_QUERY_SCOPE = "klai:internal:retrieval:query"
+# Module-level singleton — avoids ruff B008 ("Depends in default arg") and
+# is the FastAPI-recommended pattern for repeated dependencies.
+_REQUIRE_RETRIEVAL_SCOPE = Depends(require_scope(_RETRIEVAL_QUERY_SCOPE))
 
 
 def _rrf_merge(qdrant_results: list[dict], graph_results: list[dict], k: int = 60) -> list[dict]:
@@ -55,7 +65,14 @@ def _rrf_merge(qdrant_results: list[dict], graph_results: list[dict], k: int = 6
 
 
 @router.post("/retrieve", response_model=RetrieveResponse)
-async def retrieve(req: RetrieveRequest, request: Request) -> RetrieveResponse:
+async def retrieve(
+    req: RetrieveRequest,
+    request: Request,
+    # SPEC-SEC-SERVICE-AUTH-001 REQ-3: scope check. JWT callers must hold
+    # ``klai:internal:retrieval:query``. Internal-secret callers bypass
+    # during Phase B/C — see ``require_scope`` docstring.
+    _auth: AuthContext = _REQUIRE_RETRIEVAL_SCOPE,
+) -> RetrieveResponse:
     # --- Validation ---
     if req.scope in ("personal", "both") and not req.user_id:
         raise HTTPException(status_code=400, detail="user_id required for scope=personal/both")
