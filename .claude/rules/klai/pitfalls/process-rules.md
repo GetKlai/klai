@@ -259,6 +259,59 @@ the risk — the mess ships as-is.
 See `.claude/rules/moai/workflow/worktree-integration.md` for the decision
 tree and `worktree add` flags.
 
+## worktree-teardown-after-merge (HIGH)
+After `gh pr merge --delete-branch` from inside a worktree, the LOCAL-side
+cleanup step (`git checkout main && git branch -D <feature>`) silently
+fails because:
+
+1. `git checkout main` errors with "main is already used by worktree at..."
+   if any other worktree (including a stale `klai-kb-sources` mirror) has
+   `main` checked out.
+2. Even when main IS available locally, `git branch -D <feature>` errors
+   with "cannot delete branch <X> used by worktree at <path>" — the
+   worktree IS the thing using it.
+
+`gh` reports the failure but the merge ITSELF succeeded on GitHub. The
+worktree directory stays on disk, the local branch stays in
+`git branch`, and over many PRs you accumulate dead worktrees.
+
+**The 2026-05-04 incident:** the canonical klai repo had 39 worktrees
+on disk (40 including main repo), 30 stale local branches with `gone`
+upstream, and 10 stashes — almost all from this exact failure mode
+across many sessions. The `klai-kb-sources` worktree had quietly been
+holding `main` for weeks, forcing every `git switch main` attempt into
+detached-HEAD as a workaround, which spawned more workarounds.
+
+**Prevention (mechanical, SPEC-INFRA-AI-WORKFLOW-001):**
+
+- `.claude/hooks/klai/pr-merge-teardown.sh` runs PostToolUse on
+  `gh pr merge`. If PWD is a worktree (not canonical repo), it prints
+  the exact teardown command: `git worktree remove --force <path> &&
+  git branch -D <branch>`. Does NOT auto-execute — surfaces the next
+  step so the next assistant turn (or human) sees and runs it.
+- `.claude/hooks/klai/worktree-no-main.sh` runs PreToolUse on
+  `git worktree add`. Refuses any form that checks out `main` in a
+  non-canonical location. Suggests `-b feature/<task> origin/main`
+  instead. This stops the kb-sources class of incident.
+- `.claude/hooks/klai/session-start-hygiene.sh` runs SessionStart and
+  warns if worktree count, gone-branch count, or non-rescue-stash
+  count exceed thresholds. Does NOT auto-clean.
+
+**Recovery for an existing collision (manual):**
+
+1. `git worktree list` to see who's holding main.
+2. If a non-canonical worktree (e.g. `klai-kb-sources`) has main and
+   you don't need it: `git worktree remove --force <path>`.
+3. Back in canonical repo: `git switch main` should now work.
+4. `git branch -vv | grep ': gone\]' | awk '{print $1}' | xargs -r
+   git branch -D` to prune stale local branches.
+
+**Windows-specific:** locked agent worktrees (`.claude/worktrees/agent-*`)
+may need `git worktree unlock <path>` before `git worktree remove`. The
+`bezmaw3bz` background command on 2026-05-04 hung on locked worktrees;
+the fix is to unlock first or use `--force` synchronously rather than
+running 30+ removes in a single bash chain.
+
 ## validator-env-parity (HIGH)
 When a pydantic `@model_validator` is added that REJECTS an empty /
 whitespace-only env var at app startup, verify the env var already exists
