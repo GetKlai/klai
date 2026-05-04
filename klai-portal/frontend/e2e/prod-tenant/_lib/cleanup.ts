@@ -80,14 +80,60 @@ export async function deleteTranscript(
 }
 
 /**
- * Restore the org's display-name to the default (used by J09).
- * Defensive: if the default isn't known yet, the journey can pass
- * the original value via `previous` instead.
+ * Restore the org's display-name (used by J09 cleanup).
+ *
+ * Two safety guards — both critical when running in voys-attached
+ * mode against a real customer tenant. Display names are NOT prefix-
+ * scoped (free-text field), so we derive safety from state instead:
+ *
+ *   1. previousDisplayName must be a truthy non-empty string. An
+ *      empty/undefined value would silently wipe the org name. Common
+ *      cause: the journey crashed before it captured the original
+ *      via getCurrentOrgDisplayName.
+ *
+ *   2. The CURRENT display name on the server MUST start with
+ *      E2E_NAME_GUARD ('e2e-'). That proves the journey actually put
+ *      a test-value there. If something else is in the field (the
+ *      journey didn't run, a parallel run crashed, the user manually
+ *      changed it between create and cleanup), refuse — this avoids
+ *      the worst case where a stale `previousDisplayName` from a
+ *      prior run blows away genuine data.
+ *
+ * Both guards throw loud rather than swallow. Failing the cleanup
+ * step is the SAFE outcome; the test will be flagged but tenant
+ * data stays intact.
  */
 export async function restoreOrgDisplayName(
   request: APIRequestContext,
   previousDisplayName: string,
 ): Promise<void> {
+  if (!previousDisplayName || previousDisplayName.trim() === '') {
+    throw new Error(
+      `[cleanup] restoreOrgDisplayName refused: previousDisplayName is empty. ` +
+        `Capture the original via getCurrentOrgDisplayName BEFORE the journey ` +
+        `mutates it, and pass that exact value here.`,
+    )
+  }
+
+  const currentResp = await request.get('/api/admin/settings')
+  if (!currentResp.ok()) {
+    throw new Error(
+      `[cleanup] restoreOrgDisplayName: could not read current settings ` +
+        `(${currentResp.status()}). Refusing to PATCH without verified state.`,
+    )
+  }
+  const current = (await currentResp.json()) as { display_name?: string }
+  const currentName = current.display_name ?? ''
+
+  if (!currentName.startsWith(E2E_NAME_GUARD)) {
+    throw new Error(
+      `[cleanup] restoreOrgDisplayName refused: current display name is ` +
+        `'${currentName}', not '${E2E_NAME_GUARD}'-prefixed. The journey ` +
+        `may not have changed it, or someone else has touched it since. ` +
+        `Refusing to overwrite — verify tenant state manually.`,
+    )
+  }
+
   const r = await request.patch('/api/admin/settings', {
     data: { display_name: previousDisplayName },
   })
