@@ -31,9 +31,12 @@ if [[ -z "${UID_TO_DELETE}" ]]; then
 fi
 
 # Defense against foot-gun: the orphan uid MUST look like an alert rule uid
-# (prefix like obs-001, spec-sec-024, spec-infra-005). Refuses to run on
-# arbitrary strings that could be an accident.
-if ! [[ "${UID_TO_DELETE}" =~ ^(obs-[0-9]+|spec-[a-z]+-[0-9]+)- ]]; then
+# (prefix like obs-001, spec-sec-024, spec-infra-005,
+# spec-infra-container-hygiene-001). Multi-word abbreviations between
+# `spec-` and the numeric suffix are allowed so SPEC-IDs with several
+# hyphenated words still match. Refuses to run on arbitrary strings that
+# could be an accident.
+if ! [[ "${UID_TO_DELETE}" =~ ^(obs-[0-9]+|spec-[a-z][a-z-]*-[0-9]+)- ]]; then
   echo "refusing to delete uid '${UID_TO_DELETE}' — doesn't match expected prefix pattern" >&2
   exit 2
 fi
