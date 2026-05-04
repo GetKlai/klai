@@ -172,6 +172,9 @@ class TestFreeEmailSignupRejected:
         from app.api.signup import SignupRequest, signup
 
         mock_db = AsyncMock()
+        # SQLAlchemy's session.add() is sync — overriding with MagicMock prevents
+        # AsyncMock's coroutine-never-awaited RuntimeWarning.
+        mock_db.add = MagicMock()
         body = SignupRequest(**_BASE)
         with (
             patch("app.api.signup.check_signup_email_rate_limit", AsyncMock(return_value=True)),
