@@ -1,5 +1,9 @@
 import { defineConfig, devices } from '@playwright/test'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+// ESM-friendly __dirname (frontend package.json is `"type": "module"`).
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 /**
  * Production-tenant E2E config.
