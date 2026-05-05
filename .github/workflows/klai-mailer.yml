@@ -5,11 +5,13 @@ on:
     branches: [main]
     paths:
       - 'klai-mailer/**'
+      - 'klai-libs/log-utils/**'
       - '.github/workflows/klai-mailer.yml'
   pull_request:
     branches: [main]
     paths:
       - 'klai-mailer/**'
+      - 'klai-libs/log-utils/**'
       - '.github/workflows/klai-mailer.yml'
   workflow_dispatch:
 
@@ -63,7 +65,10 @@ jobs:
       - name: Build and push klai-mailer
         uses: docker/build-push-action@v7
         with:
-          context: ./klai-mailer
+          # SPEC-LOGGING-EXTRACT-001: build from repo root so the Dockerfile
+          # can COPY the shared klai-libs/log-utils path dep.
+          context: .
+          file: klai-mailer/Dockerfile
           push: true
           # `:latest` is published ONLY on push to main. PR builds publish
           # only the SHA tag so a `docker pull :latest` cannot accidentally
