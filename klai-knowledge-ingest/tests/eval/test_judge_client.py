@@ -29,6 +29,8 @@ def _make_settings(**overrides):
     s.litellm_url = overrides.get("litellm_url", "http://litellm:4000")
     s.litellm_api_key = overrides.get("litellm_api_key", "test-key")
     s.rag_eval_judge_model = overrides.get("rag_eval_judge_model", "klai-fast")
+    s.rag_eval_faithfulness_model = overrides.get("rag_eval_faithfulness_model", "klai-medium")
+    s.rag_eval_embeddings_model = overrides.get("rag_eval_embeddings_model", "klai-embeddings")
     s.rag_eval_judge_timeout = overrides.get("rag_eval_judge_timeout", 30)
     return s
 

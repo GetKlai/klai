@@ -102,7 +102,16 @@ class Settings(BaseSettings):
     #   in dev; production must set the secret via SOPS).
     # rag_eval_retrieval_timeout: seconds before a /retrieve call is declared failed (REQ-3).
     # rag_eval_judge_timeout: seconds before a klai-fast judge call is declared failed.
-    # rag_eval_judge_model: LiteLLM model alias for answer generation and RAGAS judge.
+    # rag_eval_judge_model: LiteLLM model alias for answer generation + light RAGAS metrics
+    #   (context_precision, context_recall). Mistral Small via LiteLLM proxy.
+    # rag_eval_faithfulness_model: middle-tier LiteLLM alias for the Faithfulness
+    #   metric. Mistral Small (klai-fast) hits its 3072-token output ceiling on
+    #   RAGAS' multi-statement faithfulness JSON, leaving most rows NaN. Mistral
+    #   Medium 3.5 (klai-medium) handles the longer JSON reliably without paying
+    #   Mistral Large prices. Cost impact small: ~60 calls/night.
+    # rag_eval_embeddings_model: LiteLLM alias for the embeddings model used by
+    #   AnswerRelevancy (compares imaginary-question vectors to the user's actual
+    #   question). Wraps BGE-M3 on TEI/gpu-01.
     # rag_eval_suites_dir: directory containing suite YAML files.
     retrieval_api_url: str = "http://retrieval-api:8040"
     retrieval_internal_secret: str = Field(
@@ -115,6 +124,8 @@ class Settings(BaseSettings):
     rag_eval_retrieval_timeout: int = 10
     rag_eval_judge_timeout: int = 30
     rag_eval_judge_model: str = "klai-fast"
+    rag_eval_faithfulness_model: str = "klai-medium"
+    rag_eval_embeddings_model: str = "klai-embeddings"
     rag_eval_suites_dir: str = "knowledge_ingest/eval/suites"
 
     model_config = {"env_file": ".env"}
