@@ -102,9 +102,17 @@ class Settings(BaseSettings):
     def _validate_security_settings(self) -> Settings:
         """REQ-1.1 / REQ-5.2: fail-closed on missing required security config.
 
-        Required (fail-closed): INTERNAL_SECRET — without it, auth is bypassed.
-        Required (fail-closed): REDIS_URL — rate limiter fails open to identity
-            check only, but Redis config is still expected.
+        Required (fail-closed):
+          - INTERNAL_SECRET — without it, inbound auth is bypassed.
+          - REDIS_URL — rate limiter fails open to identity check only, but
+            Redis config is still expected.
+          - PORTAL_INTERNAL_SECRET — SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-14.
+            Outbound retrieval-api → portal-api Bearer for the
+            /internal/identity/verify call (SPEC-SEC-IDENTITY-ASSERT-001).
+            With an empty value, the IdentityAsserter constructor would
+            raise downstream — this validator surfaces the same failure
+            at startup with an actionable message instead of at the first
+            internal-secret request.
 
         Optional (graceful degrade):
           ZITADEL_ISSUER + ZITADEL_API_AUDIENCE — if either is empty, the JWT
@@ -114,12 +122,18 @@ class Settings(BaseSettings):
           This is the correct state until SEC-012 lands: retrieval-api is only
           called by trusted services (portal-api, focus, LiteLLM hook) using
           the internal-secret path; no end-user JWT flows through it yet.
+
+        Pre-flight (validator-env-parity pitfall): all three required env
+        vars verified populated in /opt/klai/.env on core-01 prior to
+        landing this REQ-14 extension (2026-05-05).
         """
         missing: list[str] = []
         if not self.internal_secret or not self.internal_secret.strip():
             missing.append("INTERNAL_SECRET")
         if not self.redis_url or not self.redis_url.strip():
             missing.append("REDIS_URL")
+        if not self.portal_internal_secret or not self.portal_internal_secret.strip():
+            missing.append("PORTAL_INTERNAL_SECRET (SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-14)")
         if missing:
             raise ValueError(
                 "Missing required security configuration (SPEC-SEC-010 REQ-5.2): "
