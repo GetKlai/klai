@@ -20,23 +20,9 @@ vi.mock('@/lib/auth', () => ({
   useAuth: () => ({ isAuthenticated: true }),
 }))
 
-vi.mock('@/paraglide/messages', () => ({
-  admin_profiles_title: () => 'Profiles',
-  admin_profiles_subtitle: () => 'Manage who can do what',
-  admin_profiles_loading: () => 'Loading profiles...',
-  admin_groups_name: () => 'Name',
-  admin_groups_members_title: () => 'Members',
-  profile_personal_label: () => 'Personal chat',
-  profile_personal_description: () => 'Personal description',
-  profile_company_label: () => 'Company chat',
-  profile_company_description: () => 'Company description',
-  profile_kb_manager_label: () => 'Knowledge manager',
-  profile_kb_manager_description: () => 'KB manager description',
-  profile_group_manager_label: () => 'Group manager',
-  profile_group_manager_description: () => 'Group manager description',
-  profile_admin_label: () => 'Admin',
-  profile_admin_description: () => 'Admin description',
-}))
+import { adminMessageMocks } from '../../_components/__tests__/_messages'
+
+vi.mock('@/paraglide/messages', () => ({ ...adminMessageMocks }))
 
 import { Route as RouteCfg } from '../index'
 

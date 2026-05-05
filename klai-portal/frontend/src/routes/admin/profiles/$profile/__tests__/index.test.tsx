@@ -34,26 +34,9 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }))
 
-vi.mock('@/paraglide/messages', () => ({
-  admin_profiles_back: () => 'Back to profiles',
-  admin_profiles_loading: () => 'Loading...',
-  admin_profiles_drill_in_empty: () => 'No members in this profile yet.',
-  admin_profiles_error_change: () => 'Failed',
-  admin_profiles_demote_action: () => 'Demote to Personal chat',
-  admin_profiles_demote_confirm: ({ name }: { name: string }) => `Demote ${name} to Personal chat?`,
-  admin_profiles_demote_success: () => 'Demoted',
-  admin_profiles_demote_self_blocked: () => 'You cannot demote yourself.',
-  admin_groups_members_title: () => 'Members',
-  admin_groups_members_add: () => 'Add member',
-  admin_users_col_name: () => 'Name',
-  admin_users_col_email: () => 'Email',
-  admin_users_col_invited: () => 'Invited',
-  admin_users_cancel: () => 'Cancel',
-  profile_company_label: () => 'Company chat',
-  profile_company_description: () => 'Company description',
-  profile_personal_label: () => 'Personal chat',
-  profile_personal_description: () => 'Personal description',
-}))
+import { adminMessageMocks } from '../../../_components/__tests__/_messages'
+
+vi.mock('@/paraglide/messages', () => ({ ...adminMessageMocks }))
 
 vi.mock('@/hooks/useCurrentUser', () => ({
   useCurrentUser: () => ({ user: { user_id: 'someone-else' } }),

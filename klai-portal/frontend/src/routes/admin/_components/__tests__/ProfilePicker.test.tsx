@@ -1,20 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
+import { profileLadderMessages } from './_messages'
 import { ProfilePicker } from '../ProfilePicker'
 
-vi.mock('@/paraglide/messages', () => ({
-  profile_picker_title: () => 'Profile',
-  profile_personal_label: () => 'Personal chat',
-  profile_personal_description: () => 'Personal description',
-  profile_company_label: () => 'Company chat',
-  profile_company_description: () => 'Company description',
-  profile_kb_manager_label: () => 'Knowledge manager',
-  profile_kb_manager_description: () => 'KB manager description',
-  profile_group_manager_label: () => 'Group manager',
-  profile_group_manager_description: () => 'Group manager description',
-  profile_admin_label: () => 'Admin',
-  profile_admin_description: () => 'Admin description',
-}))
+vi.mock('@/paraglide/messages', () => ({ ...profileLadderMessages }))
 
 describe('ProfilePicker', () => {
   it('renders all 5 ladder profiles in order', () => {
