@@ -662,7 +662,14 @@ services:
       # Referenced as %{ENV.VICTORIALOGS_BASIC_AUTH_B64} in config.yml.
       VICTORIALOGS_BASIC_AUTH_B64: ${VICTORIALOGS_BASIC_AUTH_B64}
     networks:
+      # monitoring — for victorialogs:9428 upstream
+      # klai-net   — for outbound HTTPS to auth.getklai.com (Zitadel JWKS).
+      #              The monitoring network is closed for external egress
+      #              (Docker DNS returns "bad address" for public domains
+      #              from monitoring-only containers). Caddy uses the same
+      #              dual-network pattern.
       - monitoring
+      - klai-net
     deploy:
       resources:
         limits:
