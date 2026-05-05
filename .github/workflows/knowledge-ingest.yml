@@ -73,13 +73,20 @@ jobs:
           context: .
           file: klai-knowledge-ingest/Dockerfile
           push: true
+          # `:latest` is published ONLY on push to main. PR builds publish
+          # only the SHA tag so `docker pull :latest` cannot accidentally
+          # pull PR-build code. Mirrors klai-connector / klai-mailer.
           tags: |
-            ghcr.io/getklai/knowledge-ingest:latest
             ghcr.io/getklai/knowledge-ingest:${{ github.sha }}
+            ${{ github.event_name == 'push' && 'ghcr.io/getklai/knowledge-ingest:latest' || '' }}
           # GHA layer cache disabled: it failed to invalidate on source code changes.
           # Builds are fast enough (~1 min) without caching.
 
+      # 2026-05-05 mailer-incident class: this step previously had no `if:`
+      # gate, so PR builds also auto-deployed `:latest` to prod. Same
+      # pattern that bit klai-mailer post PR #319 → hotfix #322.
       - name: Deploy to core-01
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.CORE01_HOST }}

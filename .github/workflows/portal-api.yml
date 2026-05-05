@@ -275,9 +275,12 @@ jobs:
           context: .
           file: klai-portal/backend/Dockerfile
           push: true
+          # `:latest` is published ONLY on push to main. PR builds publish
+          # only the SHA tag so `docker pull :latest` cannot accidentally
+          # pull PR-build code. Mirrors klai-connector / klai-mailer.
           tags: |
-            ghcr.io/getklai/portal-api:latest
             ghcr.io/getklai/portal-api:${{ github.sha }}
+            ${{ github.event_name == 'push' && 'ghcr.io/getklai/portal-api:latest' || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -327,7 +330,13 @@ jobs:
     needs: [build-push]
     runs-on: ubuntu-latest
     steps:
+      # Audit 2026-05-05: defence-in-depth gate. The deploy job is gated
+      # via `needs: build-push` (build-push is itself gated), but the
+      # Pre-deploy env check step has no `if:` — if a future change
+      # loosens the build-push gate, this step would SSH into prod from
+      # PR context. Match the Deploy step's gate explicitly.
       - name: Pre-deploy env check
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.CORE01_HOST }}
@@ -352,7 +361,11 @@ jobs:
             fi
             echo "Pre-flight OK — all critical vars present."
 
+      # 2026-05-05 mailer-incident class: this step previously had no `if:`
+      # gate, so PR builds also auto-deployed `:latest` to prod. Same
+      # pattern that bit klai-mailer post PR #319 → hotfix #322.
       - name: Deploy to core-01
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.CORE01_HOST }}
