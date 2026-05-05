@@ -32,6 +32,20 @@ export function userInitials(input: {
   return input.email.slice(0, 2).toUpperCase()
 }
 
+/**
+ * Standard "full name with email fallback" rendering used across the admin
+ * surfaces (users table, profiles drill-in, groups detail). Lives next to
+ * UserAvatar so the two stay in sync — same input shape, same fallback rules.
+ */
+export function displayName(input: {
+  first_name?: string | null
+  last_name?: string | null
+  email: string
+}): string {
+  const full = `${input.first_name ?? ''} ${input.last_name ?? ''}`.trim()
+  return full || input.email
+}
+
 interface UserAvatarProps {
   uid: string
   first_name?: string | null

@@ -13,7 +13,7 @@ import { getLocale } from '@/paraglide/runtime'
 import { datetime } from '@/paraglide/registry'
 import { apiFetch } from '@/lib/apiFetch'
 import { PROFILE_LADDER, type ProfileRole } from '@/lib/profiles'
-import { UserAvatar } from '../../_components/UserAvatar'
+import { UserAvatar, displayName } from '../../_components/UserAvatar'
 import { cleanErrorMessage } from '../../_components/errors'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 
@@ -41,11 +41,6 @@ function formatDate(isoString: string): string {
     month: 'short',
     year: 'numeric',
   })
-}
-
-function displayName(user: OrgUser): string {
-  const full = `${user.first_name} ${user.last_name}`.trim()
-  return full || user.email
 }
 
 function AdminProfileDetail() {

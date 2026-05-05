@@ -10,6 +10,7 @@ import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { PROFILE_LADDER, type ProfileRole } from '@/lib/profiles'
+import { cleanErrorMessage } from '../_components/errors'
 
 export const Route = createFileRoute('/admin/users/invite')({
   component: InviteUserPage,
@@ -164,9 +165,7 @@ function InviteUserPage() {
 
         {inviteMutation.error && (
           <p className="text-sm text-[var(--color-destructive)]">
-            {inviteMutation.error instanceof Error
-              ? inviteMutation.error.message
-              : m.admin_users_error_invite_generic()}
+            {cleanErrorMessage(inviteMutation.error, m.admin_users_error_invite_generic())}
           </p>
         )}
 

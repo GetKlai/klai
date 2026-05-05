@@ -47,14 +47,9 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }))
 
-vi.mock('@/paraglide/messages', () => ({
-  admin_groups_members_add: () => 'Add member',
-  admin_groups_members_search_placeholder: () => 'Search…',
-  admin_groups_members_success_added: () => 'Added',
-  admin_users_cancel: () => 'Cancel',
-  admin_profiles_error_change: () => 'Failed',
-  profile_kb_manager_label: () => 'Knowledge manager',
-}))
+import { adminMessageMocks } from '../../../_components/__tests__/_messages'
+
+vi.mock('@/paraglide/messages', () => ({ ...adminMessageMocks }))
 
 import { Route as RouteCfg } from '../add-member'
 
