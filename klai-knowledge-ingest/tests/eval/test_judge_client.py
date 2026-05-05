@@ -411,6 +411,46 @@ async def test_metrics_run_in_parallel(monkeypatch, _patch_module_deps) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Embeddings adapter regression guard
+# ---------------------------------------------------------------------------
+
+
+def test_build_ragas_embeddings_returns_canonical_modern_provider() -> None:
+    """Regression: ``ragas.metrics.collections`` rejects custom embedding
+    classes with::
+
+        Collections metrics only support modern embeddings.
+        Found: <CustomClass>. Use: embedding_factory('openai', ...,
+        interface='modern')
+
+    PR C originally shipped a custom ``_LiteLLMRagasEmbeddings`` adapter
+    that satisfied the BaseRagasEmbedding *method* shape (aembed_text /
+    aembed_texts / embed_text / embed_texts) but failed the RAGAS *type*
+    check, producing all-None metrics on every eval row. The fix is to
+    use ``embedding_factory(provider='openai', ..., interface='modern')``
+    which returns the canonical
+    ``ragas.embeddings.openai_provider.OpenAIEmbeddings``. This test
+    locks the contract so a future refactor to a custom class will
+    fail loud instead of silently zeroing out the eval matrix.
+    """
+    from knowledge_ingest.eval.judge_client import _build_ragas_embeddings
+
+    settings = _make_settings()
+
+    with patch("knowledge_ingest.eval.judge_client.settings", settings):
+        emb = _build_ragas_embeddings()
+
+    cls = type(emb)
+    # Canonical RAGAS modern provider — anything outside this namespace
+    # means we drifted back to a custom class.
+    assert cls.__module__.startswith("ragas.embeddings."), (
+        f"Expected RAGAS-canonical embeddings, got {cls.__module__}.{cls.__name__}"
+    )
+    # The factory returns OpenAIEmbeddings for provider='openai'.
+    assert cls.__name__ == "OpenAIEmbeddings", f"Expected OpenAIEmbeddings, got {cls.__name__}"
+
+
+# ---------------------------------------------------------------------------
 # AsyncMock import sanity.
 # ---------------------------------------------------------------------------
 
