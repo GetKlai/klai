@@ -15,8 +15,23 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
+import app.core.database as _db_module
 from app.core.enums import SyncStatus
 from app.services.sync_run_reaper import SyncRunReaper
+
+
+@pytest.fixture(autouse=True)
+def _reset_db_session_maker():
+    """Save and restore app.core.database.session_maker around each test.
+
+    _make_reaper() writes the mock session_maker into the module so that
+    the module-level helpers cross_org_session() and tenant_scoped_session()
+    work without a real database engine.  This fixture guarantees a clean
+    state after each test regardless of whether the test passes or fails.
+    """
+    original = _db_module.session_maker
+    yield
+    _db_module.session_maker = original
 
 
 def _row(
@@ -36,11 +51,7 @@ def _row(
     row.documents_failed = 0
     row.bytes_processed = 0
     row.error_details = None
-    row.cursor_state = (
-        {"remote_job_id": remote_job_id, "remote_status": "queued"}
-        if remote_job_id
-        else None
-    )
+    row.cursor_state = {"remote_job_id": remote_job_id, "remote_status": "queued"} if remote_job_id else None
     row.quality_status = None
     return row
 
@@ -60,8 +71,7 @@ def _make_reaper(
         crawl_client.crawl_sync_status = AsyncMock(side_effect=status_responses)
     else:
         crawl_client.crawl_sync_status = AsyncMock(
-            return_value={"job_id": "abc123", "status": "running",
-                          "pages_done": 0, "pages_total": 0, "error": None},
+            return_value={"job_id": "abc123", "status": "running", "pages_done": 0, "pages_total": 0, "error": None},
         )
     crawl_client.crawl_sync_cancel = AsyncMock()  # MUST NOT be called.
 
@@ -80,9 +90,18 @@ def _make_reaper(
         sess.execute = AsyncMock(return_value=result)
         sess.get = AsyncMock(side_effect=lambda model, row_id, **kwargs: registry.get(row_id))
         sess.commit = AsyncMock()
+        # SPEC-TI-002: _pin_and_reset_connection calls await session.connection()
+        # and await session.rollback() — both must be awaitable.
+        sess.connection = AsyncMock()
+        sess.rollback = AsyncMock()
         return sess
 
     session_maker = MagicMock(side_effect=_make_session)
+
+    # SPEC-TI-002: cross_org_session() and tenant_scoped_session() are
+    # module-level helpers that check app.core.database.session_maker.
+    # Inject the mock so tick() and _finalise_* work without a real DB engine.
+    _db_module.session_maker = session_maker
 
     portal_client = MagicMock()
     portal_client.report_sync_status = AsyncMock()
@@ -108,8 +127,7 @@ class TestReaperFinalisesTerminalRemote:
         reaper, crawl_client, _, portal, _ = _make_reaper(
             candidate_rows=[row],
             status_responses=[
-                {"job_id": "abc123", "status": "completed",
-                 "pages_done": 100, "pages_total": 100, "error": None},
+                {"job_id": "abc123", "status": "completed", "pages_done": 100, "pages_total": 100, "error": None},
             ],
         )
 
@@ -133,8 +151,13 @@ class TestReaperFinalisesTerminalRemote:
         reaper, _, _, portal, _ = _make_reaper(
             candidate_rows=[row],
             status_responses=[
-                {"job_id": "abc123", "status": "failed",
-                 "pages_done": 5, "pages_total": 100, "error": "internal_crash"},
+                {
+                    "job_id": "abc123",
+                    "status": "failed",
+                    "pages_done": 5,
+                    "pages_total": 100,
+                    "error": "internal_crash",
+                },
             ],
         )
 
@@ -187,8 +210,7 @@ class TestReaperLeavesYoungRunningRowsAlone:
         reaper, _, _, portal, _ = _make_reaper(
             candidate_rows=[row],
             status_responses=[
-                {"job_id": "abc123", "status": "running",
-                 "pages_done": 1, "pages_total": 100, "error": None},
+                {"job_id": "abc123", "status": "running", "pages_done": 1, "pages_total": 100, "error": None},
             ],
         )
 
@@ -209,8 +231,7 @@ class TestReaperForceFailsAfter7Days:
         reaper, _, _, portal, _ = _make_reaper(
             candidate_rows=[row],
             status_responses=[
-                {"job_id": "abc123", "status": "running",
-                 "pages_done": 50, "pages_total": 100, "error": None},
+                {"job_id": "abc123", "status": "running", "pages_done": 50, "pages_total": 100, "error": None},
             ],
         )
 
@@ -260,8 +281,7 @@ class TestReaperRaceWithResolver:
         reaper, _, _, portal, registry = _make_reaper(
             candidate_rows=[candidate],
             status_responses=[
-                {"job_id": "abc123", "status": "completed",
-                 "pages_done": 10, "pages_total": 10, "error": None},
+                {"job_id": "abc123", "status": "completed", "pages_done": 10, "pages_total": 10, "error": None},
             ],
         )
         # Override the registry: session.get returns the post-resolver row.
