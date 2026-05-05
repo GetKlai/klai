@@ -29,6 +29,9 @@ Redis URL (the original REQ-6 framed Redis as a fail-closed dependency;
 v1.1 closes the operator-error class that made the service crash before
 it could fail-close).
 
+SPEC-SEC-AUTH-HARDENING-001 item 1 — extracted verbatim from
+``klai-mailer/app/redis_url.py`` into the shared package home.
+
 Pitfall: ``redis-url-password-must-be-parsed-manually`` in
 ``.claude/rules/klai/pitfalls/process-rules.md``.
 """

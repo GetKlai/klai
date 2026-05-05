@@ -1,4 +1,4 @@
-"""Tests for ``app.redis_url.parse_redis_url``.
+"""Tests for ``webhook_replay.redis_url.parse_redis_url``.
 
 Regression coverage for the 2026-04-29 mailer-notify outage (SPEC-SEC-
 MAILER-INJECTION-001 v1.1 REQ-6 hardening). The original code path
@@ -13,8 +13,7 @@ structurally so the password is taken as opaque bytes.
 from __future__ import annotations
 
 import pytest
-
-from app.redis_url import ParsedRedisURL, RedisURLError, parse_redis_url
+from webhook_replay.redis_url import ParsedRedisURL, RedisURLError, parse_redis_url
 
 # ---------------------------------------------------------------------------
 # Happy path: well-formed URLs

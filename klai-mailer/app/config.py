@@ -1,7 +1,6 @@
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-from app.redis_url import RedisURLError, parse_redis_url
+from webhook_replay.redis_url import RedisURLError, parse_redis_url
 
 
 class Settings(BaseSettings):
@@ -118,7 +117,7 @@ class Settings(BaseSettings):
     @classmethod
     def _require_parseable_redis_url(cls, v: str) -> str:
         # ``parse_redis_url`` is imported at module top — no circular
-        # import because ``app.redis_url`` only depends on stdlib
+        # import because ``webhook_replay.redis_url`` only depends on stdlib
         # (``dataclasses``), not on ``app.config``.
         try:
             parse_redis_url(v)
