@@ -283,6 +283,10 @@ async def _rebuild_artifact(
 
             child_chunks, parent_chunks_obj = chunker.chunk_markdown_with_parents(document_text)
             child_texts = [c.text for c in child_chunks]
+            # Each child knows its parent's index in parent_chunks_obj —
+            # _enrich_document needs this list to thread parent_chunks.id
+            # into each child's Qdrant payload (parent_chunk_id).
+            parent_index_per_child: list[int | None] = [c.parent_index for c in child_chunks]
 
             if not child_texts:
                 logger.info(
@@ -310,8 +314,23 @@ async def _rebuild_artifact(
             extra_payload.setdefault("belief_time_start", belief_time_start)
             extra_payload.setdefault("belief_time_end", belief_time_end)
 
-            # Steps 2-3: enrichment + TEI/sparse embedding + Qdrant delete-then-upsert.
-            # _enrich_document handles all of this atomically for a single document.
+            # SPEC-RAG-PARENT-CHILD-001: clear stale parent_chunks rows before
+            # _enrich_document re-inserts them. Without this, the prior
+            # rebuild's parent rows pile up and child→parent lookup at retrieval
+            # time hits the wrong target.
+            from knowledge_ingest import pg_store as _pg_store
+
+            await _pg_store.delete_parent_chunks_for_artifact(artifact_id)
+
+            # Steps 2-3: enrichment + TEI/sparse embedding + Qdrant
+            # delete-then-upsert. _enrich_document inserts parent_chunks rows
+            # itself (so it can thread the generated row ids into each
+            # child's Qdrant payload as ``parent_chunk_id``) — passing
+            # ``parents`` + ``parent_index_per_child`` here is what lights up
+            # the parent-child retrieval expansion in retrieval-api. Before
+            # this fix the rebuild path called ``_enrich_document`` without
+            # them, so every Voys child chunk had ``parent_chunk_id=None``
+            # and parent expansion silently degraded to chunk-text-only.
             from knowledge_ingest.enrichment_tasks import _enrich_document
 
             await _enrich_document(
@@ -326,18 +345,9 @@ async def _rebuild_artifact(
                 extra_payload=extra_payload,
                 synthesis_depth=synthesis_depth,
                 content_type=content_type,
+                parents=parents_serialised,
+                parent_index_per_child=parent_index_per_child,
             )
-
-            # Step 4: Replace parent_chunks rows in PostgreSQL.
-            from knowledge_ingest import pg_store
-
-            await pg_store.delete_parent_chunks_for_artifact(artifact_id)
-            if parents_serialised:
-                await pg_store.insert_parent_chunks(
-                    artifact_id=artifact_id,
-                    org_id=org_id,
-                    parents=parents_serialised,
-                )
 
             logger.info(
                 "rebuild_artifact_processed",
