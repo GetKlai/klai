@@ -330,6 +330,120 @@ async def _delete_falkordb_graph(state: _DeprovisionState) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Step 9a — wipe_knowledge_postgres (SPEC-INFRA-TENANT-DELETE-002 G3)
+# ---------------------------------------------------------------------------
+
+
+async def _wipe_knowledge_postgres(state: _DeprovisionState) -> None:
+    """POST to knowledge-ingest /internal/v1/orgs/{org_id}/wipe-postgres.
+
+    Closes G3 of audit Cluster F. The endpoint hard-deletes every row
+    carrying ``org_id`` from the 8 tenant-scoped ``knowledge.*`` tables
+    (page_links, crawled_pages, crawl_jobs, crawl_domains, kb_config,
+    org_config, entities, artifacts) inside a single transaction.
+    Cascade-children (artifact_entities, artifact_images, derivations)
+    are picked up automatically.
+
+    Without this step, knowledge.* tenant rows are orphaned after
+    portal_orgs DELETE: those tables have no FK to portal_orgs (they
+    live in a different schema) so cascade-delete cannot reach them.
+
+    # @MX:NOTE: idempotent — second call returns rows_deleted={...:0}. SPEC R3.
+    """
+    from app.trace import get_trace_headers
+
+    if not settings.knowledge_ingest_url:
+        logger.warning("knowledge_postgres_wipe_skipped_no_url", org_id=state.org_id, slug=state.slug)
+        return
+
+    async with httpx.AsyncClient(
+        base_url=settings.knowledge_ingest_url,
+        headers={
+            "X-Internal-Secret": settings.knowledge_ingest_secret,
+            **get_trace_headers(),
+        },
+        timeout=60.0,
+    ) as client:
+        resp = await client.post(f"/internal/v1/orgs/{state.org_id}/wipe-postgres")
+        if resp.status_code == 404:
+            # Endpoint not deployed yet (rolling deploy ordering). Idempotent
+            # safe-ish: rows persist until next deprovision retry, but the
+            # rest of the deprovision continues. Logged at WARN so the
+            # operator sees the gap in VictoriaLogs.
+            logger.warning(
+                "knowledge_postgres_wipe_endpoint_not_found",
+                org_id=state.org_id,
+                slug=state.slug,
+                status=resp.status_code,
+            )
+            return
+        resp.raise_for_status()
+        data = resp.json()
+        logger.info(
+            "knowledge_postgres_wiped",
+            org_id=state.org_id,
+            slug=state.slug,
+            rows_deleted=data.get("rows_deleted", {}),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Step 9b — wipe_klai_connector_state (SPEC-INFRA-TENANT-DELETE-002 G6)
+# ---------------------------------------------------------------------------
+
+
+async def _wipe_klai_connector_state(state: _DeprovisionState) -> None:
+    """POST to klai-connector /internal/v1/orgs/{org_id}/wipe-state.
+
+    Closes G6 of audit Cluster F. The endpoint hard-deletes
+    ``connector.sync_runs`` rows for the given org_id. The
+    klai-connector schema lives in the connector container's DB and
+    does NOT cascade with portal_orgs DELETE — this is the only purge
+    path.
+
+    Authenticates via ``klai_connector_secret`` (matches klai-connector's
+    ``portal_caller_secret``). NULL-org legacy rows are intentionally
+    preserved by the endpoint — those pre-date tenant tracking.
+
+    # @MX:NOTE: idempotent — second call returns rows_deleted=0. SPEC R3.
+    """
+    from app.trace import get_trace_headers
+
+    if not settings.klai_connector_url:
+        logger.warning("klai_connector_state_wipe_skipped_no_url", org_id=state.org_id, slug=state.slug)
+        return
+
+    async with httpx.AsyncClient(
+        base_url=settings.klai_connector_url,
+        headers={
+            # klai-connector auths via Authorization Bearer (X-Internal-Secret
+            # was the historical pattern). Use the same Bearer the portal sends
+            # on every other connector call site (services/klai_connector_client.py).
+            "Authorization": f"Bearer {settings.klai_connector_secret}",
+            **get_trace_headers(),
+        },
+        timeout=60.0,
+    ) as client:
+        resp = await client.post(f"/internal/v1/orgs/{state.org_id}/wipe-state")
+        if resp.status_code == 404:
+            logger.warning(
+                "klai_connector_state_wipe_endpoint_not_found",
+                org_id=state.org_id,
+                slug=state.slug,
+                status=resp.status_code,
+            )
+            return
+        resp.raise_for_status()
+        data = resp.json()
+        logger.info(
+            "klai_connector_state_wiped",
+            org_id=state.org_id,
+            slug=state.slug,
+            rows_deleted=data.get("rows_deleted", 0),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Step 10 — delete_scribe_artifacts
 # ---------------------------------------------------------------------------
 
@@ -652,6 +766,11 @@ STEPS = [
     _flush_redis_tenant_keys,
     _delete_qdrant_points,
     _delete_falkordb_graph,
+    # SPEC-INFRA-TENANT-DELETE-002 G3 + G6 — sibling wipes-via-internal-endpoint,
+    # placed adjacent to the FalkorDB wipe so all "external service tells me to
+    # purge tenant rows" steps live as a contiguous block in the SPEC R5 order.
+    _wipe_knowledge_postgres,
+    _wipe_klai_connector_state,
     _delete_scribe_artifacts,
     _delete_litellm_team,
     _archive_moneybird_subscription,
