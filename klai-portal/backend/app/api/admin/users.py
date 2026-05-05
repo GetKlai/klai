@@ -307,8 +307,20 @@ async def update_user_role(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
+    """SPEC-PORTAL-ADMIN-UI-001 REQ-2: unified change-profile endpoint.
+
+    Serialises role changes per-org and refuses to demote the last admin so
+    the new admin UI cannot lock a tenant out of its own workspace. Mirrors
+    the invariant that POST /demote-admin already enforces.
+    """
     _, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
+
+    # @MX:ANCHOR SPEC-PORTAL-ADMIN-UI-001 REQ-2 — min-1-admin invariant.
+    # @MX:REASON Without serialised role changes two concurrent admin->X
+    # patches that both see admin_count=2 can each succeed and leave the
+    # workspace with zero admins.
+    await _lock_org_for_role_change(db, org.id)
 
     result = await db.execute(
         select(PortalUser).where(
@@ -319,6 +331,22 @@ async def update_user_role(
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    # Refuse to demote the last admin via the unified endpoint.
+    if user.role == "admin" and body.role != "admin":
+        admin_count = await db.scalar(
+            select(func.count())
+            .select_from(PortalUser)
+            .where(
+                PortalUser.org_id == org.id,
+                PortalUser.role == "admin",
+            )
+        )
+        if (admin_count or 0) <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Cannot change profile: this is the last admin. Promote another user first.",
+            )
 
     user.role = body.role
     await db.commit()

@@ -9,19 +9,20 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
+import { type ProfileRole } from '@/lib/profiles'
+import { ProfilePicker } from '../_components/ProfilePicker'
 
 export const Route = createFileRoute('/admin/users/invite')({
   component: InviteUserPage,
 })
 
-type Role = 'admin' | 'member'
 type Language = 'nl' | 'en'
 
 interface InviteForm {
   first_name: string
   last_name: string
   email: string
-  role: Role
+  role: ProfileRole
   preferred_language: Language
 }
 
@@ -49,11 +50,13 @@ function InviteUserPage() {
 
   const defaultLanguage: Language = orgSettings?.default_language ?? 'nl'
 
+  // SPEC-PORTAL-ADMIN-UI-001 REQ-9: default profile is "company" — most
+  // common onboarding rung; admin opt-in stays explicit.
   const [form, setForm] = useState<InviteForm>({
     first_name: '',
     last_name: '',
     email: '',
-    role: 'member',
+    role: 'company',
     preferred_language: defaultLanguage,
   })
 
@@ -126,31 +129,28 @@ function InviteUserPage() {
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="role">{m.admin_users_field_role()}</Label>
-            <Select
-              id="role"
-              value={form.role}
-              onChange={(e) => setForm((prev) => ({ ...prev, role: e.target.value as Role }))}
-            >
-              <option value="member">{m.admin_users_role_member()}</option>
-              <option value="admin">{m.admin_users_role_admin()}</option>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="language">{m.admin_users_field_language()}</Label>
-            <Select
-              id="language"
-              value={form.preferred_language}
-              onChange={(e) =>
-                setForm((prev) => ({ ...prev, preferred_language: e.target.value as Language }))
-              }
-            >
-              <option value="nl">{m.admin_users_language_nl()}</option>
-              <option value="en">{m.admin_users_language_en()}</option>
-            </Select>
-          </div>
+        {/* SPEC-PORTAL-ADMIN-UI-001 REQ-9: 5-rung profile picker, full width, default "company" */}
+        <div className="space-y-1.5">
+          <Label>{m.admin_users_field_profile()}</Label>
+          <ProfilePicker
+            value={form.role}
+            onChange={(role) => setForm((prev) => ({ ...prev, role }))}
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="language">{m.admin_users_field_language()}</Label>
+          <Select
+            id="language"
+            value={form.preferred_language}
+            onChange={(e) =>
+              setForm((prev) => ({ ...prev, preferred_language: e.target.value as Language }))
+            }
+            className="max-w-xs"
+          >
+            <option value="nl">{m.admin_users_language_nl()}</option>
+            <option value="en">{m.admin_users_language_en()}</option>
+          </Select>
         </div>
 
         {inviteMutation.error && (

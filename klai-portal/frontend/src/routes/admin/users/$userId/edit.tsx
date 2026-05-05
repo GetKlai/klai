@@ -25,6 +25,7 @@ import { apiFetch } from '@/lib/apiFetch'
 import { useSuspendUser, useReactivateUser, useOffboardUser } from '@/hooks/useUserLifecycle'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { PROFILE_LADDER, type ProfileRole } from '@/lib/profiles'
+import { ProfilePicker } from '../../_components/ProfilePicker'
 
 export const Route = createFileRoute('/admin/users/$userId/edit')({
   component: EditUserPage,
@@ -346,36 +347,12 @@ function EditUserPage() {
           <CardDescription>{m.profile_picker_description()}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          {PROFILE_LADDER.map((role) => {
-            const msgs = m as unknown as Record<string, (() => string) | undefined>
-            const labelFn = msgs[`profile_${role}_label`]
-            const descFn = msgs[`profile_${role}_description`]
-            const isSelf = userId === currentUser?.user_id
-            return (
-              <label
-                key={role}
-                className={`flex items-start gap-3 rounded-lg border border-[var(--color-border)] p-3 cursor-pointer transition-colors ${selectedProfile === role ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/5' : 'hover:bg-[var(--color-muted)]'} ${isSelf ? 'opacity-50 cursor-not-allowed' : ''}`}
-              >
-                <input
-                  type="radio"
-                  name="profile"
-                  value={role}
-                  checked={selectedProfile === role}
-                  disabled={isSelf}
-                  onChange={() => { if (!isSelf) setSelectedProfile(role) }}
-                  className="mt-0.5 accent-[var(--color-accent)]"
-                />
-                <div className="space-y-0.5">
-                  <p className="text-sm font-medium text-[var(--color-foreground)]">
-                    {labelFn ? labelFn() : role}
-                  </p>
-                  <p className="text-xs text-[var(--color-muted-foreground)]">
-                    {descFn ? descFn() : ''}
-                  </p>
-                </div>
-              </label>
-            )
-          })}
+          <ProfilePicker
+            value={selectedProfile}
+            onChange={setSelectedProfile}
+            disabled={userId === currentUser?.user_id}
+            disabledMessage={m.profile_picker_self_edit_hint()}
+          />
           {profileError && (
             <p className="text-sm text-[var(--color-destructive)]">{profileError}</p>
           )}
@@ -391,9 +368,6 @@ function EditUserPage() {
                 ? m.admin_settings_saving()
                 : m.profile_picker_save()}
           </Button>
-          {userId === currentUser?.user_id && (
-            <p className="text-xs text-[var(--color-muted-foreground)]">{m.profile_picker_self_edit_hint()}</p>
-          )}
         </CardContent>
       </Card>
 
