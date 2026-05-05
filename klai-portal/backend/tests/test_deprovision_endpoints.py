@@ -150,13 +150,13 @@ class TestGuardEntryState:
 class TestRequirePlatformAdmin:
     def test_allows_platform_org(self):
         org = _make_org(slug="getklai")
-        with patch("app.api.admin.deprovision_org.settings") as mock_settings:
+        with patch("app.api.admin._app_settings") as mock_settings:
             mock_settings.platform_org_slug = "getklai"
             _require_platform_admin(org)  # no exception
 
     def test_raises_403_for_non_platform_org(self):
         org = _make_org(slug="acme")
-        with patch("app.api.admin.deprovision_org.settings") as mock_settings:
+        with patch("app.api.admin._app_settings") as mock_settings:
             mock_settings.platform_org_slug = "getklai"
             with pytest.raises(HTTPException) as exc_info:
                 _require_platform_admin(org)
@@ -278,7 +278,7 @@ class TestDeprovisionOrgBySlug:
 
         with (
             _caller_org_patch(caller_org, user),
-            patch("app.api.admin.deprovision_org.settings") as mock_settings,
+            patch("app.api.admin._app_settings") as mock_settings,
         ):
             mock_settings.platform_org_slug = "getklai"
             result = await deprovision_org_by_slug("acme", background_tasks, creds, db)
@@ -301,7 +301,7 @@ class TestDeprovisionOrgBySlug:
 
         with (
             _caller_org_patch(caller_org, user),
-            patch("app.api.admin.deprovision_org.settings") as mock_settings,
+            patch("app.api.admin._app_settings") as mock_settings,
         ):
             mock_settings.platform_org_slug = "getklai"
             with pytest.raises(HTTPException) as exc_info:
@@ -320,7 +320,7 @@ class TestDeprovisionOrgBySlug:
 
         with (
             _caller_org_patch(caller_org, user),
-            patch("app.api.admin.deprovision_org.settings") as mock_settings,
+            patch("app.api.admin._app_settings") as mock_settings,
         ):
             mock_settings.platform_org_slug = "getklai"
             with pytest.raises(HTTPException) as exc_info:
@@ -353,7 +353,7 @@ class TestRetryDeprovisioning:
 
         with (
             _caller_org_patch(caller_org, user),
-            patch("app.api.admin.deprovision_org.settings") as mock_settings,
+            patch("app.api.admin._app_settings") as mock_settings,
         ):
             mock_settings.platform_org_slug = "getklai"
             result = await retry_deprovisioning("acme", background_tasks, creds, db)
@@ -379,7 +379,7 @@ class TestRetryDeprovisioning:
 
         with (
             _caller_org_patch(caller_org, user),
-            patch("app.api.admin.deprovision_org.settings") as mock_settings,
+            patch("app.api.admin._app_settings") as mock_settings,
         ):
             mock_settings.platform_org_slug = "getklai"
             with pytest.raises(HTTPException) as exc_info:
@@ -403,7 +403,7 @@ class TestRetryDeprovisioning:
 
         with (
             _caller_org_patch(caller_org, user),
-            patch("app.api.admin.deprovision_org.settings") as mock_settings,
+            patch("app.api.admin._app_settings") as mock_settings,
         ):
             mock_settings.platform_org_slug = "getklai"
             with pytest.raises(HTTPException) as exc_info:
