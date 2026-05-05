@@ -1,38 +1,39 @@
-"""
-LLM judge client for the RAGAS evaluation harness (SPEC-RAG-EVAL-001).
+"""LLM judge client for the RAGAS evaluation harness (SPEC-RAG-EVAL-001).
 
 Two responsibilities:
-  1. generate_answer: generate a model answer via klai-fast (LiteLLM proxy)
+  1. ``generate_answer``: generate a model answer via klai-fast (LiteLLM proxy)
      given a query and retrieved chunks.
-  2. evaluate_query: run the four RAGAS metrics with per-metric LLM/embeddings
-     injection — light metrics on klai-fast, faithfulness on klai-medium
-     (Mistral Medium 3.5), answer_relevancy embeddings on klai-bge-m3 (BGE-M3).
+  2. ``evaluate_query``: run the four RAGAS metrics with per-metric LLM and
+     embeddings injection — light metrics on klai-fast, faithfulness on
+     klai-medium (Mistral Medium 3.5), answer_relevancy on klai-fast +
+     klai-bge-m3 (BGE-M3 via TEI).
 
-Both functions are fail-open: any HTTP or RAGAS failure returns None / a
-metrics dict with None values instead of raising (REQ-3 generalisation).
+Both functions are fail-open: any HTTP or RAGAS failure logs and returns
+``None`` (or a metrics dict with None values) instead of raising (REQ-3
+generalisation).
 
-Per-metric model assignment (post-baseline-fix 2026-05-05):
+Per-metric model assignment:
   - context_precision  → klai-fast LLM
   - context_recall     → klai-fast LLM
   - faithfulness       → klai-medium LLM (Mistral Medium 3.5; klai-fast
                           truncates the multi-statement JSON output)
   - answer_relevancy   → klai-fast LLM + klai-bge-m3 (BGE-M3 via TEI)
 
-RAGAS 0.4.3 API notes:
-  - Uses EvaluationDataset + SingleTurnSample (not HF datasets).
-  - llm_factory(model, client=AsyncOpenAI(...)) is the recommended wrapper.
-  - evaluate() is synchronous in 0.4.3; run it in a thread via asyncio.
-  - Each metric class accepts an optional ``llm`` (and ``embeddings`` where
-    applicable) constructor arg, which RAGAS uses in preference to any
-    global llm/embeddings passed to evaluate().
-  - context_precision / context_recall need reference (ground_truth).
-  - faithfulness / answer_relevancy need response (model answer).
+RAGAS 0.4.3 ``ragas.metrics.collections`` API:
+  - Each metric class is constructed with its dependencies (``llm``, optionally
+    ``embeddings``) and exposes a per-metric ``ascore(...)`` coroutine with a
+    metric-specific signature.
+  - No more ``EvaluationDataset`` + synchronous ``evaluate()`` thread-pool
+    dance. Each metric runs in parallel via ``asyncio.gather`` with a
+    per-metric try/except so one failure does not poison the others.
+  - Embeddings on the new path implement ``BaseRagasEmbedding``
+    (``aembed_text`` / ``aembed_texts`` / ``embed_text`` / ``embed_texts``),
+    not the legacy LangChain ``embed_query`` / ``embed_documents`` shape.
 """
 
 from __future__ import annotations
 
 import asyncio
-import functools
 from typing import Any
 
 import httpx
@@ -78,70 +79,92 @@ def _build_ragas_llm(model: str | None = None):
     """
     from ragas.llms import llm_factory
 
-    return llm_factory(model or settings.rag_eval_judge_model, client=_make_async_openai_client())
+    return llm_factory(
+        model or settings.rag_eval_judge_model,
+        client=_make_async_openai_client(),
+    )
 
 
-class _SimpleEmbeddings:
-    """Minimal embeddings adapter for RAGAS AnswerRelevancy.
+class _LiteLLMRagasEmbeddings:
+    """RAGAS 0.4.3 BaseRagasEmbedding adapter pointed at klai-bge-m3.
 
-    RAGAS 0.4.3's AnswerRelevancy metric calls ``embed_query(text)`` and
-    ``embed_documents(list[text])`` on its embeddings object. The modern
-    ``ragas.embeddings.OpenAIEmbeddings`` provider only exposes the new
-    ``aembed_text`` / ``embed_text`` interface, not these legacy method
-    names — so we cannot use it here yet. Rather than pull the deprecated
-    ``LangchainEmbeddingsWrapper`` (which RAGAS will remove in v1.0), we
-    implement the two methods directly against the OpenAI Python SDK
-    pointed at our LiteLLM proxy.
-
-    AnswerRelevancy is fully synchronous (calls embed_query inside a
-    numpy.asarray(...) chain), so we use the sync OpenAI client to avoid
-    event-loop juggling inside RAGAS' thread pool.
+    Implements the modern interface (``aembed_text``, ``aembed_texts``,
+    ``embed_text``, ``embed_texts``) that ``ragas.metrics.collections``
+    metrics consume. Backed by sync + async OpenAI clients against the
+    LiteLLM proxy; the proxy aliases ``klai-bge-m3`` to the BGE-M3
+    deployment on TEI/gpu-01.
     """
 
     def __init__(self, base_url: str, api_key: str, model: str) -> None:
-        from openai import OpenAI
+        from openai import AsyncOpenAI, OpenAI
 
-        self._client = OpenAI(base_url=base_url, api_key=api_key)
+        # Sync + async OpenAI clients sharing the LiteLLM proxy. RAGAS calls
+        # both depending on the metric (AnswerRelevancy uses the async path).
+        self._sync = OpenAI(base_url=base_url, api_key=api_key)
+        self._async = AsyncOpenAI(base_url=base_url, api_key=api_key)
         self._model = model
 
-    def embed_query(self, text: str) -> list[float]:
-        resp = self._client.embeddings.create(input=text, model=self._model)
+    def embed_text(self, text: str, **kwargs: Any) -> list[float]:
+        resp = self._sync.embeddings.create(input=text, model=self._model)
         return resp.data[0].embedding
 
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        resp = self._client.embeddings.create(input=texts, model=self._model)
+    def embed_texts(self, texts: list[str], **kwargs: Any) -> list[list[float]]:
+        resp = self._sync.embeddings.create(input=texts, model=self._model)
+        return [d.embedding for d in resp.data]
+
+    async def aembed_text(self, text: str, **kwargs: Any) -> list[float]:
+        resp = await self._async.embeddings.create(input=text, model=self._model)
+        return resp.data[0].embedding
+
+    async def aembed_texts(self, texts: list[str], **kwargs: Any) -> list[list[float]]:
+        resp = await self._async.embeddings.create(input=texts, model=self._model)
         return [d.embedding for d in resp.data]
 
 
-def _build_ragas_embeddings() -> _SimpleEmbeddings:
+def _build_ragas_embeddings() -> _LiteLLMRagasEmbeddings:
     """Build the RAGAS embeddings adapter pointed at klai-bge-m3.
 
-    klai-bge-m3 is the LiteLLM alias for BGE-M3 on TEI/gpu-01.
-    Used by AnswerRelevancy to compare imaginary-question vectors with
-    the user's actual question.
+    klai-bge-m3 is the LiteLLM alias for BGE-M3 on TEI/gpu-01. Used by
+    AnswerRelevancy to compare imaginary-question vectors with the user's
+    actual question.
     """
-    return _SimpleEmbeddings(
+    return _LiteLLMRagasEmbeddings(
         base_url=f"{settings.litellm_url}/v1",
         api_key=settings.litellm_api_key or "no-key",
         model=settings.rag_eval_embeddings_model,
     )
 
 
-async def _run_ragas_evaluate(dataset, metrics):
-    """Run ragas.evaluate in a thread pool to avoid blocking the event loop.
+def _metric_value(result: Any) -> float | None:
+    """Extract a numeric score from a RAGAS ``MetricResult`` (or None)."""
+    if result is None:
+        return None
+    value = getattr(result, "value", None)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
-    RAGAS 0.4.3 evaluate() is synchronous. The metrics list carries its own
-    per-metric LLM/embeddings wrappers (set in evaluate_query), so evaluate()
-    is called without a global llm/embeddings arg.
 
-    Separated into its own function so tests can patch it cleanly without
-    touching the public API.
+async def _safe_ascore(metric_name: str, coro: Any) -> float | None:
+    """Await a single metric's ``ascore()`` coroutine, fail-open per-metric.
+
+    RAGAS' classifier prompts occasionally return malformed JSON or trip
+    on edge cases (empty contexts, missing reference). Per REQ-3 a failure
+    in one metric must not kill the others — log and return None.
     """
-    from ragas import evaluate
-
-    loop = asyncio.get_event_loop()
-    fn = functools.partial(evaluate, dataset, metrics=metrics, show_progress=False)
-    return await loop.run_in_executor(None, fn)
+    try:
+        result = await coro
+    except Exception as exc:
+        logger.warning(
+            "rag_eval_metric_failed",
+            metric=metric_name,
+            error=str(exc)[:_MAX_REASON_LEN],
+        )
+        return None
+    return _metric_value(result)
 
 
 # ---------------------------------------------------------------------------
@@ -205,12 +228,14 @@ async def evaluate_query(
 ) -> dict[str, float | None]:
     """Run the four RAGAS metrics for one query and return a metrics dict.
 
-    Returns a dict with keys: context_precision, context_recall,
-    faithfulness, answer_relevance. Each value is a float or None when
-    that metric could not be computed.
+    Returns a dict with keys: ``context_precision``, ``context_recall``,
+    ``faithfulness``, ``answer_relevance``. Each value is a float or None
+    when that metric could not be computed.
 
-    Partial failures are handled gracefully: if one metric is absent from
-    the RAGAS result scores, it returns None while others are preserved.
+    Uses RAGAS 0.4.3's ``ragas.metrics.collections`` per-metric ``ascore()``
+    API: each metric runs as its own coroutine in parallel via
+    ``asyncio.gather``, and per-metric errors are absorbed so one failure
+    does not poison the others (REQ-3).
 
     Parameters
     ----------
@@ -235,45 +260,66 @@ async def evaluate_query(
         return result
 
     try:
-        # TODO: migrate to ragas.metrics.collections.* + per-metric ascore()
-        # when we revisit the harness API. The collections refactor is a full
-        # API change (no more evaluate(dataset); per-metric ascore() calls
-        # with different signatures), out of scope for this baseline-fix PR.
-        from ragas.dataset_schema import EvaluationDataset, SingleTurnSample
-        from ragas.metrics import AnswerRelevancy, ContextPrecision, ContextRecall, Faithfulness
-
-        sample = SingleTurnSample(
-            user_input=query,
-            retrieved_contexts=[c.get("text", "") for c in chunks],
-            response=answer or "",
-            reference=", ".join(expected_topics) if expected_topics else "general",
+        from ragas.metrics.collections import (
+            AnswerRelevancy,
+            ContextPrecision,
+            ContextRecall,
+            Faithfulness,
         )
-        dataset = EvaluationDataset(samples=[sample])
 
-        # Per-metric model assignment: light metrics on klai-fast, faithfulness
-        # on klai-medium (Mistral Medium 3.5), answer_relevancy on klai-fast +
-        # klai-bge-m3 (BGE-M3). See module docstring for rationale.
+        contexts = [c.get("text", "") for c in chunks]
+        reference = ", ".join(expected_topics) if expected_topics else "general"
+        response = answer or ""
+
+        # Per-metric model assignment (see module docstring).
         light_llm = _build_ragas_llm()
         heavy_llm = _build_ragas_llm(model=settings.rag_eval_faithfulness_model)
         embeddings = _build_ragas_embeddings()
 
-        metrics = [
-            ContextPrecision(llm=light_llm),
-            ContextRecall(llm=light_llm),
-            Faithfulness(llm=heavy_llm),
-            AnswerRelevancy(llm=light_llm, embeddings=embeddings),
-        ]
+        ctx_precision = ContextPrecision(llm=light_llm)
+        ctx_recall = ContextRecall(llm=light_llm)
+        faithful = Faithfulness(llm=heavy_llm)
+        answer_rel = AnswerRelevancy(llm=light_llm, embeddings=embeddings)
 
-        eval_result = await _run_ragas_evaluate(dataset, metrics)
-
-        # scores is a list of dicts, one per sample
-        if eval_result.scores:
-            scores = eval_result.scores[0]
-            result["context_precision"] = scores.get("context_precision")
-            result["context_recall"] = scores.get("context_recall")
-            result["faithfulness"] = scores.get("faithfulness")
-            # RAGAS key is "answer_relevancy" but we store as "answer_relevance"
-            result["answer_relevance"] = scores.get("answer_relevancy")
+        # Run all four metrics in parallel — RAGAS' new API is async-native,
+        # so no thread-pool dance. Per-metric try/except inside _safe_ascore
+        # turns one metric's failure into a None entry instead of a raise.
+        cp, cr, fa, ar = await asyncio.gather(
+            _safe_ascore(
+                "context_precision",
+                ctx_precision.ascore(
+                    user_input=query,
+                    reference=reference,
+                    retrieved_contexts=contexts,
+                ),
+            ),
+            _safe_ascore(
+                "context_recall",
+                ctx_recall.ascore(
+                    user_input=query,
+                    retrieved_contexts=contexts,
+                    reference=reference,
+                ),
+            ),
+            _safe_ascore(
+                "faithfulness",
+                faithful.ascore(
+                    user_input=query,
+                    response=response,
+                    retrieved_contexts=contexts,
+                ),
+            ),
+            _safe_ascore(
+                "answer_relevancy",
+                answer_rel.ascore(user_input=query, response=response),
+            ),
+        )
+        result["context_precision"] = cp
+        result["context_recall"] = cr
+        result["faithfulness"] = fa
+        # RAGAS column is "answer_relevancy" but the eval store keeps the
+        # historical "answer_relevance" key for the rag_eval_results schema.
+        result["answer_relevance"] = ar
 
     except Exception as exc:
         logger.warning(
