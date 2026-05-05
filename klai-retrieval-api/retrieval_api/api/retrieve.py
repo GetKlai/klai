@@ -317,33 +317,55 @@ async def retrieve(
         else:
             serving = scored
 
-        # 7. Build ChunkResult objects
-        chunks_out = [
-            ChunkResult(
-                chunk_id=r["chunk_id"],
-                artifact_id=r.get("artifact_id"),
-                content_type=r.get("content_type"),
-                text=r["text"],
-                context_prefix=r.get("context_prefix"),
-                score=r["score"],
-                reranker_score=r.get("reranker_score"),
-                scope=r.get("scope"),
-                valid_at=r.get("valid_at"),
-                invalid_at=r.get("invalid_at"),
-                ingested_at=r.get("ingested_at"),
-                assertion_mode=r.get("assertion_mode"),
-                final_score=r.get("final_score"),
-                evidence_tier_metadata=r.get("evidence_tier_metadata"),
-                source_ref=r.get("source_ref"),
-                source_connector_id=r.get("source_connector_id"),
-                source_url=r.get("source_url"),
-                kb_slug=r.get("kb_slug"),
-                source_label=r.get("source_label"),
-                title=r.get("title"),
-                image_urls=payload_list(r, "image_urls") or None,
-            )
-            for r in serving
+        # 6b. SPEC-RAG-PARENT-CHILD-001: swap child text for the parent's
+        # broader-context text. Fetched in one batch query against
+        # knowledge.parent_chunks. Children with no parent_chunk_id (legacy
+        # ingests) keep their own text — REQ-3 fall-through.
+        from retrieval_api.services import parent_lookup
+
+        parent_id_per_serving: list[int | None] = [
+            r.get("parent_chunk_id") for r in serving
         ]
+        parent_text_by_id = await parent_lookup.fetch_parents(
+            pid for pid in parent_id_per_serving if pid is not None
+        )
+
+        # 7. Build ChunkResult objects (with parent-text swap when available)
+        chunks_out = []
+        for r in serving:
+            pid = r.get("parent_chunk_id")
+            if pid is not None and pid in parent_text_by_id:
+                display_text = parent_text_by_id[pid]
+                is_parent = True
+            else:
+                display_text = r["text"]
+                is_parent = False
+            chunks_out.append(
+                ChunkResult(
+                    chunk_id=r["chunk_id"],
+                    artifact_id=r.get("artifact_id"),
+                    content_type=r.get("content_type"),
+                    text=display_text,
+                    context_prefix=r.get("context_prefix"),
+                    score=r["score"],
+                    reranker_score=r.get("reranker_score"),
+                    scope=r.get("scope"),
+                    valid_at=r.get("valid_at"),
+                    invalid_at=r.get("invalid_at"),
+                    ingested_at=r.get("ingested_at"),
+                    assertion_mode=r.get("assertion_mode"),
+                    final_score=r.get("final_score"),
+                    evidence_tier_metadata=r.get("evidence_tier_metadata"),
+                    source_ref=r.get("source_ref"),
+                    source_connector_id=r.get("source_connector_id"),
+                    source_url=r.get("source_url"),
+                    kb_slug=r.get("kb_slug"),
+                    source_label=r.get("source_label"),
+                    title=r.get("title"),
+                    image_urls=payload_list(r, "image_urls") or None,
+                    is_parent_text=is_parent,
+                )
+            )
 
     retrieval_ms = (time.perf_counter() - t0) * 1000
     step_latency_seconds.labels(step="total").observe(retrieval_ms / 1000)

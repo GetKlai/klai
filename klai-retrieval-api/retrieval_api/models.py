@@ -65,6 +65,10 @@ class ChunkResult(BaseModel):
     source_label: str | None = None        # Human-readable source label (SPEC-KB-021)
     title: str | None = None               # Document title from Qdrant payload
     image_urls: list[str] | None = None    # Presigned S3 URLs for images in this document
+    # SPEC-RAG-PARENT-CHILD-001: when present, ``text`` already carries the
+    # parent's broader-context text (matched on the smaller child chunk).
+    # Clients can use this flag for debugging / display hints.
+    is_parent_text: bool = False
 
 
 class RetrieveMetadata(BaseModel):
