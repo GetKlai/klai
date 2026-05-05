@@ -66,17 +66,16 @@ This section captures what is running in production (core-01) as of March 2026. 
 | Service | What it is | Notes |
 |---|---|---|
 | `docs-app` (klai-docs) | Next.js app — reader + REST API | KB publication and CRUD; editor UI lives in klai-portal |
-| `research-api` (klai-research) | FastAPI — document Q&A | Klai Focus backend; uses Qdrant (`klai_focus` collection) |
 | `docling-serve` | Document chunker | HybridChunker; shared across all ingest paths |
 | `tei` | Text embeddings (BGE-M3, dense only) | Dense embeddings. Sparse handled by separate `bge-m3-sparse` sidecar (FlagEmbedding). |
 | `bge-m3-sparse` | BGE-M3 sparse sidecar | FlagEmbedding-based; `http://bge-m3-sparse:8001`; batch sparse embedding |
 | `knowledge-ingest` | Unified ingest API | `/ingest/v1/document`, `/ingest/v1/webhook/gitea`, `/ingest/v1/crawl`, `/knowledge/v1/personal/items` |
-| `retrieval-api` | Retrieval service | `POST /retrieve`; 3-leg RRF (dense + question + sparse); called by research-api and LiteLLM hook |
+| `retrieval-api` | Retrieval service | `POST /retrieve`; 3-leg RRF (dense + question + sparse); called by portal-api and the LiteLLM hook |
 | `klai-knowledge-mcp` | MCP write server | `save_personal_knowledge`, `save_org_knowledge`, `save_to_docs` — `klai-knowledge-mcp/main.py` |
-| Qdrant | Vector store | `klai_knowledge` collection (org + personal KB); `klai_focus` collection (research-api) |
+| Qdrant | Vector store | `klai_knowledge` collection (org + personal KB) |
 | `gitea` | Self-hosted Git | One repo per org KB; content store for klai-docs |
 | `whisper-server` | Audio transcription | Used by klai-portal Scribe/Transcribe features |
-| `searxng` | Self-hosted web search | Used by research-api for web mode; not Tavily/Brave |
+| `searxng` | Self-hosted web search | Self-hosted; not Tavily/Brave |
 | PostgreSQL | Relational store | `docs` schema (orgs, KBs, pages); `portal` schema (tenants, billing). pgvector no longer used. |
 | LiteLLM + Ollama | LLM routing | Mistral API (primary); Ollama as CPU fallback |
 | Zitadel | Auth/OIDC | Tenant isolation; all services use same instance |
@@ -85,7 +84,7 @@ This section captures what is running in production (core-01) as of March 2026. 
 
 | Component | Status |
 |---|---|
-| Qdrant | ✅ Deployed — `klai_knowledge` + `klai_focus` collections; `org_id`, `kb_slug`, `user_id` payload indexes |
+| Qdrant | ✅ Deployed — `klai_knowledge` collection; `org_id`, `kb_slug`, `user_id` payload indexes |
 | `knowledge` schema (PostgreSQL) | ✅ Created — migration `001_knowledge_schema.sql`; tables exist, not yet populated (Qdrant is primary store for now) |
 | Unified Ingest API | ✅ Built as `knowledge-ingest` — `/ingest/v1/document`, `/ingest/v1/webhook/gitea`, `/ingest/v1/crawl`, `/knowledge/v1/personal/items` |
 | Retrieval API | ✅ Built — `POST /retrieve` on `retrieval-api`; 3-leg RRF fusion (dense + question + sparse) |
@@ -106,7 +105,10 @@ This section captures what is running in production (core-01) as of March 2026. 
 
 ### Completed migrations
 
-**research-api → Qdrant:** Done. research-api uses `klai_focus` Qdrant collection via `retrieval-api`. pgvector is no longer used.
+**Klai Focus / research-api decommission:** Done. The Focus service was
+collapsed into Knowledge in SPEC-PORTAL-UNIFY-KB-001 (April 2026); the
+final residual cleanup (`klai_focus` collection, allowlists, dead code
+paths) landed in SPEC-DECOMM-FOCUS-001 (May 2026).
 
 **TEI → FlagEmbedding sparse sidecar:** Done. `bge-m3-sparse` sidecar handles sparse embeddings via FlagEmbedding. TEI continues serving dense-only embeddings.
 
@@ -1543,7 +1545,7 @@ No persistent volume mount for recordings — storage is ephemeral by design.
 | **V2 external connectors** | Unstructured.io (Apache 2.0) | 30+ native source connectors (Zendesk, Google Drive, Confluence, Slack, SharePoint, Jira). Integrates as a Python library inside `knowledge-ingest` — no extra infrastructure. Each connector becomes an adapter: call Unstructured, forward output to `/ingest/v1/document`. Chosen over Airbyte (operationally heavy, ELv2 license) and LlamaIndex (code-only, no admin UI). Alternative for orgs with complex sync needs: Airbyte (600+ connectors, native web UI, native Qdrant destination, but requires Temporal + multiple containers). |
 | **Web crawling** | Crawl4AI | Open source, async, sitemap-aware |
 | **Embeddings** | BGE-M3 dense via TEI + sparse via `bge-m3-sparse` sidecar (FlagEmbedding) | Both deployed on core-01. TEI cannot produce BGE-M3 sparse; sidecar handles sparse in a separate HTTP service. |
-| **Vector store** | Qdrant (self-hosted, core-01) | Two collections: `klai_knowledge` (org + personal KB) and `klai_focus` (research-api). `org_id`, `kb_slug`, `user_id` payload indexes. |
+| **Vector store** | Qdrant (self-hosted, core-01) | `klai_knowledge` collection (org + personal KB). `org_id`, `kb_slug`, `user_id` payload indexes. |
 | **Web search** | SearXNG (self-hosted, reconfigured) → Mojeek API if quality insufficient | Google/Bing removed; Startpage + DuckDuckGo active. Mojeek configured but disabled (API key needed). LibreChat webSearch deployed. See §13.8. |
 | **Graph layer** | FalkorDB + Graphiti (ingest + retrieval, live) | `GRAPHITI_ENABLED=true` on both `knowledge-ingest` and `retrieval-api`. Graph entities/relationships are written at ingest and a parallel graph search branch is RRF-merged with the Qdrant 3-leg fusion. Empirical value for Klai's B2B query mix is under evaluation — see §5.3 and §13.3. |
 | **Structured storage** | PostgreSQL `knowledge` schema | Replaces SQLite. Artifacts, provenance DAG, entity registry, embedding outbox. Same cluster as klai-docs. |
@@ -1567,11 +1569,10 @@ No persistent volume mount for recordings — storage is ephemeral by design.
 |---|---|
 | `klai-docs` | Publication layer — renders KB sites + REST API; editor UI lives in klai-portal (see §13.7) |
 | `klai-portal` | Editorial interface — editorial inbox, article management, gap review |
-| `klai-research/research-api` | Klai Focus backend — Qdrant (`klai_focus` collection) + calls `retrieval-api` for broad-mode retrieval |
 | `knowledge-ingest` | Unified ingest pipeline — accepts documents from all sources, enriches (Contextual Retrieval + HyPE), embeds (dense + sparse), stores in Qdrant |
-| `retrieval-api` | Retrieval service — 3-leg RRF fusion (dense + question + sparse); used by research-api broad mode and LiteLLM hook |
+| `retrieval-api` | Retrieval service — 3-leg RRF fusion (dense + question + sparse); used by portal-api and the LiteLLM hook |
 | `klai-knowledge-mcp` | MCP write interface — personal + org knowledge saves; posts directly to knowledge-ingest |
-| `docling-serve` | Shared document parser — self-hosted, produces HybridChunker output; called by knowledge-ingest and research-api |
+| `docling-serve` | Shared document parser — self-hosted, produces HybridChunker output; called by knowledge-ingest |
 | Zitadel | Auth — already in production, OIDC for all editor access |
 | Caddy (core-01) | Reverse proxy — handles `*.getklai.com` routing |
 

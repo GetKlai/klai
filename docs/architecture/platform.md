@@ -129,7 +129,7 @@ For the authoritative and current service list per server, see `klai-infra/SERVE
 | Server | Type | Cost | Services |
 |---|---|---|---|
 | public-01 | CX42 — Hetzner HEL | €17/mo | Coolify, website, Twenty (CRM), Fider, Uptime Kuma |
-| core-01 | EX44 — Hetzner HEL | €47/mo | Caddy, Zitadel, MongoDB, Meilisearch, LiteLLM + Mistral API, Ollama (fallback), LibreChat containers, PostgreSQL, Redis, Qdrant, FalkorDB, VictoriaMetrics, VictoriaLogs, Grafana, Alloy, cAdvisor, Portal API (+ Partner API routes), klai-mailer, GlitchTip, scribe-api, docling-serve, SearXNG, Firecrawl, Crawl4AI, research-api, knowledge-ingest, klai-connector, retrieval-api, klai-knowledge-mcp. Dev-only: isolated LibreChat + LiteLLM for `dev.getklai.com` (shared infra secrets, own DB) |
+| core-01 | EX44 — Hetzner HEL | €47/mo | Caddy, Zitadel, MongoDB, Meilisearch, LiteLLM + Mistral API, Ollama (fallback), LibreChat containers, PostgreSQL, Redis, Qdrant, FalkorDB, VictoriaMetrics, VictoriaLogs, Grafana, Alloy, cAdvisor, Portal API (+ Partner API routes), klai-mailer, GlitchTip, scribe-api, docling-serve, SearXNG, Firecrawl, Crawl4AI, knowledge-ingest, klai-connector, retrieval-api, klai-knowledge-mcp. Dev-only: isolated LibreChat + LiteLLM for `dev.getklai.com` (shared infra secrets, own DB) |
 | gpu-01 | GEX44 + RTX 4000 Ada 20GB — Hetzner FSN | — | TEI (BGE-M3 dense, :7997), Infinity (reranker, :7998), bge-m3-sparse (:8001), whisper-server (:8000) — reached from core-01 via SSH tunnel at 172.18.0.1 |
 | monitor-01 _(planned)_ | CAX11 — Hetzner HEL | €5/mo | Dedicated VictoriaMetrics + VictoriaLogs + Grafana (currently co-hosted on core-01) |
 
@@ -153,7 +153,7 @@ Principle: public-01 and core-01 share no ports and no machines. monitor-01 rece
 
 **Phase 3+ networking (when self-hosting AI):** core-01 (Hetzner HEL) and ai-01 (Nebius HEL) are in the same city — latency 5-15 ms RTT. Connected via WireGuard tunnel. LiteLLM calls vLLM via private WireGuard IP. Failover to Scaleway Paris (H100) or RunPod EU if Nebius goes down. Nebius SLA: 99.9%, has official OpenTofu provider.
 
-**Klai Knowledge (Phase 2 — deployed March 2026):** Qdrant on core-01 (`klai_knowledge` + `klai_focus` collections). Custom `knowledge-ingest` service replaces rag_api. `retrieval-api` serves hybrid RRF search. `bge-m3-sparse` sidecar handles sparse embeddings via FlagEmbedding. pgvector no longer used for vector search.
+**Klai Knowledge (Phase 2 — deployed March 2026):** Qdrant on core-01 (`klai_knowledge` collection). Custom `knowledge-ingest` service replaces rag_api. `retrieval-api` serves hybrid RRF search. `bge-m3-sparse` sidecar handles sparse embeddings via FlagEmbedding. pgvector no longer used for vector search.
 
 ## Branding
 
@@ -391,7 +391,7 @@ Custom FastAPI services with full control. Haystack/LlamaIndex orchestration was
 Document parsing   docling-serve (MIT, IBM Research)
 Embeddings dense   BGE-M3 via HuggingFace TEI
 Embeddings sparse  BGE-M3 via FlagEmbedding sidecar (bge-m3-sparse, http://bge-m3-sparse:8001)
-Vector store       Qdrant on core-01 (klai_knowledge + klai_focus collections)
+Vector store       Qdrant on core-01 (klai_knowledge collection)
 Ingest service     knowledge-ingest (FastAPI, /ingest/v1/*)
 Retrieval service  retrieval-api (FastAPI, POST /retrieve, 3-leg RRF fusion)
 LiteLLM hook       KlaiKnowledgeHook (feature gate, user_id scoping, gap detection)
@@ -722,7 +722,7 @@ Legend: ✅ confirmed compatible | ⚠️ attention point | ❌ correction neede
 | ✅ Done | Grafana VictoriaLogs plugin | Required (`victoriametrics-logs-datasource`). LogsQL != LogQL, generic Loki does not work. |
 | ✅ Done | LibreChat provisioning | portal-api provisioning service live (Phase 1 complete). Template logic: `provisioning.py`. |
 | ✅ Done | LiteLLM `drop_params` | `drop_params: true` in `litellm/config.yaml`. |
-| ✅ Done | Qdrant | Deployed on core-01. `klai_knowledge` + `klai_focus` collections. Replaces pgvector for vector search. |
+| ✅ Done | Qdrant | Deployed on core-01. `klai_knowledge` collection. Replaces pgvector for vector search. |
 | ✅ Done | knowledge-ingest | Custom ingest service deployed. Gitea webhook, document upload, crawl, personal items endpoints. |
 | ✅ Done | retrieval-api | Hybrid RRF retrieval (dense + question + sparse) deployed on core-01. `POST /retrieve`. |
 | ✅ Done | bge-m3-sparse | FlagEmbedding sparse sidecar deployed. BGE-M3 dense+sparse in production. |

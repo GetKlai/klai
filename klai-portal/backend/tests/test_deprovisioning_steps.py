@@ -374,8 +374,8 @@ class TestFlushRedisTenantKeys:
 
 class TestDeleteQdrantPoints:
     @pytest.mark.asyncio
-    async def test_deletes_from_both_collections(self) -> None:
-        """Must call delete on klai_knowledge and klai_focus."""
+    async def test_deletes_from_klai_knowledge_only(self) -> None:
+        """SPEC-DECOMM-FOCUS-001: only klai_knowledge is targeted; klai_focus is gone."""
         state = _make_state(org_id=42, slug="acme")
         mock_client = AsyncMock()
         mock_client.close = AsyncMock()
@@ -390,22 +390,19 @@ class TestDeleteQdrantPoints:
 
             await _delete_qdrant_points(state)
 
-        assert mock_client.delete.await_count == 2
+        assert mock_client.delete.await_count == 1
         call_args = [call.kwargs.get("collection_name") or call.args[0] for call in mock_client.delete.await_args_list]
-        assert "klai_knowledge" in call_args
-        assert "klai_focus" in call_args
+        assert call_args == ["klai_knowledge"]
+        assert "klai_focus" not in call_args
 
     @pytest.mark.asyncio
-    async def test_filter_key_differs_per_collection(self) -> None:
-        """SPEC-INFRA-TENANT-DELETE-002 G4 regression-guard.
+    async def test_filter_key_is_org_id(self) -> None:
+        """SPEC-INFRA-TENANT-DELETE-002 G4 regression-guard (post-DECOMM-FOCUS).
 
-        klai_knowledge stores the tenant ID under payload field ``org_id``;
-        klai_focus stores it under ``tenant_id``. Pre-fix the step iterated
-        with a hardcoded ``org_id`` key, silently leaving every klai_focus
-        point of the deprovisioned tenant untouched — a HIGH-severity GDPR
-        purge gap. This test asserts BOTH collections are deleted with the
-        correct payload key, so a future refactor that re-unifies the keys
-        without verifying the schemas is caught at CI.
+        klai_knowledge stores the tenant ID under payload field ``org_id``.
+        Pre-fix the step iterated with the wrong key (the int PK), silently
+        leaving every point of the deprovisioned tenant untouched — a
+        HIGH-severity GDPR purge gap. This test locks in the correct key.
         """
         state = _make_state(org_id=99, slug="testorg")
         mock_client = AsyncMock()
@@ -421,20 +418,15 @@ class TestDeleteQdrantPoints:
 
             await _delete_qdrant_points(state)
 
-        # Reconstruct (collection, filter_key) tuples from the mock calls.
-        # The Filter is positional/kwargs as `points_selector=...`. Walk the
-        # FieldCondition.key inside.
         seen: list[tuple[str, str]] = []
         for call in mock_client.delete.await_args_list:
             collection = call.kwargs.get("collection_name") or call.args[0]
             filt = call.kwargs.get("points_selector")
             assert filt is not None, "delete() must pass points_selector kwarg"
-            # filt.must is a list of FieldCondition; pick the first key.
             key = filt.must[0].key
             seen.append((collection, key))
 
-        assert ("klai_knowledge", "org_id") in seen, f"Expected ('klai_knowledge', 'org_id'), got {seen}"
-        assert ("klai_focus", "tenant_id") in seen, f"Expected ('klai_focus', 'tenant_id'), got {seen}"
+        assert seen == [("klai_knowledge", "org_id")], f"Expected single call, got {seen}"
 
     @pytest.mark.asyncio
     async def test_collection_not_found_is_idempotent(self) -> None:

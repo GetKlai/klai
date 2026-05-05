@@ -1,5 +1,64 @@
 # Changelog
 
+## [Unreleased] — 2026-05-XX — SPEC-DECOMM-FOCUS-001: Drop Klai Focus / research-api
+
+Final cleanup of the SPEC-PORTAL-UNIFY-KB-001 (April 2026) decommission. The
+service has been undeployed since 2026-04-23; this SPEC removes the residue
+that kept it visually alive (allowlists, dead code paths, stale docs, CI
+workflow).
+
+### Removed
+
+- **`klai-focus/` directory** (50 files, ~5.3k lines) — full FastAPI app,
+  alembic migrations, Dockerfile, GHCR build/deploy GitHub Actions workflow.
+- **`scope=notebook` and `scope=broad`** from retrieval-api `RetrieveRequest`
+  Literal. Both scopes were the integration with research-api; 0 callers in
+  production code, 0 hits in 24h logs at audit time.
+- **`_search_notebook` + `_notebook_filter`** from `services/search.py`,
+  including the parallel-merge tak in `scope=broad`.
+- **`qdrant_focus_collection`** from `retrieval-api/config.py`.
+- **`klai_focus`** from `klai-portal/.../deprovisioning_steps.py` — the
+  `_delete_qdrant_points` step now targets only `klai_knowledge`.
+- **`research-api`** from `klai-libs/identity-assert/KNOWN_CALLER_SERVICES`
+  (added 2026-05-05 as defensive-but-inert hotfix in PR #311; rolled back
+  here) and from the mirror copy in `portal-api/services/identity_verifier.py`.
+- **`svc-research-api`** from `klai-libs/service-auth` scope-grant docstring.
+- **`research-api`** + **`klai-focus`** from `klai-libs/image-storage`
+  SSRF-blocklist + tests; same trim in `klai-portal/.../source_extractors`
+  and `klai-knowledge-ingest/tests/test_url_validator.py`.
+- **`klai-focus/research-api/app/main.py`** from
+  `rules/cors_middleware_last.yml` ast-grep config.
+- **`klai-focus/**`** from `.github/workflows/semgrep.yml` path-filter and
+  scan target list.
+- **research-api comment-line** in `deploy/caddy/Caddyfile` (history is in
+  the SPEC).
+- **Klai Focus section** + **`research-api` row** in
+  `docs/architecture/knowledge-ingest-flow.md` — replaced by a short
+  historical marker.
+
+### Added
+
+- **`docs/runbooks/decommission-focus.md`** — one-shot operator runbook for
+  the destructive server-side cleanup (Qdrant `klai_focus` DELETE,
+  `/opt/klai/research-uploads/` rm, `/opt/klai/research-api-src/` rm,
+  `focus.legacy_data_purged` product_events insert).
+- **`tests/test_research_api_caller_rejected.py`** in retrieval-api —
+  receiver-side regression test that locks in the allowlist removal
+  (per pitfalls/process-rules.md → retrieve-caller-service-header-mismatch).
+- **`test_retrieve_scope_notebook_returns_422`** +
+  **`test_retrieve_scope_broad_returns_422`** in `retrieval-api/tests/test_api.py`
+  — Pydantic `Literal` rejection regression guards for R-E1.
+
+### Migration
+
+The destructive cleanup of server-side residue (Qdrant collection,
+research-uploads PDFs, research-api-src directory, SOPS env vars in
+klai-infra) is documented in `docs/runbooks/decommission-focus.md` and
+runs as a single one-shot operator action after the PR merges. There are
+no application-side migrations.
+
+---
+
 ## [Unreleased] — 2026-04-30 — SPEC-AUTH-009: Multi-tenant workspace discovery & admin handover
 
 Replaces SPEC-AUTH-006's admin-managed allowlist with implicit founder-domain-ownership model (Notion/Slack hybrid).

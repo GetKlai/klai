@@ -10,7 +10,6 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://qdrant:6333"
     qdrant_api_key: str = ""
     qdrant_collection: str = "klai_knowledge"
-    qdrant_focus_collection: str = "klai_focus"
 
     tei_url: str = "http://172.18.0.1:7997"
     infinity_reranker_url: str = "http://172.18.0.1:7998"
@@ -76,7 +75,7 @@ class Settings(BaseSettings):
     retrieval_events_max_pending: int = 1000
 
     # SPEC-SEC-010 — Authentication and request hardening
-    # Shared secret for internal service-to-service calls (portal-api, research-api, LiteLLM hook).
+    # Shared secret for internal service-to-service calls (portal-api, LiteLLM hook).
     # REQ-1.1 + REQ-5.2: empty / whitespace-only value MUST cause startup failure.
     internal_secret: str = ""
     # Zitadel issuer + audience for JWT validation (REQ-1.2, REQ-5.1).
@@ -120,8 +119,8 @@ class Settings(BaseSettings):
           valid X-Internal-Secret. Bearer JWTs are rejected with 401.
 
           This is the correct state until SEC-012 lands: retrieval-api is only
-          called by trusted services (portal-api, focus, LiteLLM hook) using
-          the internal-secret path; no end-user JWT flows through it yet.
+          called by trusted services (portal-api, LiteLLM hook) using the
+          internal-secret path; no end-user JWT flows through it yet.
 
         Pre-flight (validator-env-parity pitfall): all three required env
         vars verified populated in /opt/klai/.env on core-01 prior to

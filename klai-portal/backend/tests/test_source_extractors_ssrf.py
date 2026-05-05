@@ -202,7 +202,6 @@ class TestDockerInternalHostnames:
             "redis",
             "qdrant",
             "retrieval-api",
-            "research-api",
             "connector",
             "scribe",
             "mailer",

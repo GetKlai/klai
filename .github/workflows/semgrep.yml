@@ -7,7 +7,6 @@ on:
       - 'klai-portal/backend/**'
       - 'klai-portal/frontend/**'
       - 'klai-connector/**'
-      - 'klai-focus/**'
       - 'klai-knowledge-ingest/**'
       - 'klai-knowledge-mcp/**'
       - 'klai-mailer/**'
@@ -22,7 +21,6 @@ on:
       - 'klai-portal/backend/**'
       - 'klai-portal/frontend/**'
       - 'klai-connector/**'
-      - 'klai-focus/**'
       - 'klai-knowledge-ingest/**'
       - 'klai-knowledge-mcp/**'
       - 'klai-mailer/**'
@@ -58,7 +56,6 @@ jobs:
             klai-portal/backend \
             klai-portal/frontend \
             klai-connector \
-            klai-focus \
             klai-knowledge-ingest/knowledge_ingest \
             klai-knowledge-mcp \
             klai-mailer \

@@ -3,7 +3,7 @@
 Queries FalkorDB via Graphiti for entity/edge results and converts them to
 chunk-compatible dicts for RRF merging with Qdrant results.
 
-AC-5:  parallel execution with Qdrant search for non-notebook scopes.
+AC-5:  parallel execution with Qdrant search.
 AC-7:  returns [] on timeout or error (graceful degradation).
 AC-8:  returns [] immediately when GRAPHITI_ENABLED=false.
 AC-10: group_ids=[org_id] enforces tenant isolation.

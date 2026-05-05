@@ -7,9 +7,6 @@ token. Two internal services still expect Bearer JWT:
 - ``scribe-api``   at ``scribe-api:8020``   (Scribe module)
 - ``docs-app``     at ``docs-app:3010``     (klai-docs)
 
-research-api was removed in SPEC-PORTAL-UNIFY-KB-001 (Phase C). Focus is
-decommissioned; Knowledge (knowledge-ingest) is the sole KB surface.
-
 This router exposes each as ``/api/<slug>/*`` under portal-api. The handler
 reads the BFF ``SessionContext`` from ``request.state`` and forwards the
 request to the upstream with ``Authorization: Bearer <session.access_token>``

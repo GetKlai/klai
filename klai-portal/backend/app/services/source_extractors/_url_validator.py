@@ -46,7 +46,6 @@ _DOCKER_INTERNAL_HOSTNAMES = frozenset(
         "redis",
         "qdrant",
         "retrieval-api",
-        "research-api",
         "connector",
         "scribe",
         "mailer",
