@@ -38,6 +38,32 @@ model_list:
     rpm: 500
     tpm: 400000
 
+  # Eval-judge: Mistral Large — used by SPEC-RAG-EVAL-001's RAGAS faithfulness
+  # metric. Mistral Small (klai-fast / klai-pipeline) hits its 3072-token
+  # output ceiling on RAGAS' multi-statement faithfulness JSON, leaving
+  # ~28/30 rows with NaN. Mistral Large has a larger output window AND
+  # produces more reliable structured JSON. Cost impact is small: only
+  # one RAGAS metric uses this alias (~60 calls/night against Voys).
+  - model_name: klai-eval-judge
+    litellm_params:
+      model: mistral/mistral-large-2512
+      api_key: os.environ/MISTRAL_API_KEY
+    rpm: 200
+    tpm: 400000
+
+  # Embeddings: BGE-M3 via TEI on gpu-01. RAGAS' AnswerRelevancy metric
+  # needs an embeddings model to compare imaginary-question vectors with
+  # the user's actual question. We expose the TEI endpoint (already used
+  # by knowledge-ingest for chunk embeddings) through the proxy so RAGAS
+  # can reach it via standard OpenAI-compatible /v1/embeddings.
+  - model_name: klai-embeddings
+    litellm_params:
+      model: openai/bge-m3
+      api_base: http://172.18.0.1:7997/v1
+      api_key: "no-auth-needed"  # TEI does not require auth on the internal network
+    rpm: 1000
+    tpm: 1000000
+
 router_settings:
   routing_strategy: simple-shuffle
   optional_pre_call_checks:

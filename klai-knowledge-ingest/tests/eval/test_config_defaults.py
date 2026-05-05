@@ -31,6 +31,26 @@ def test_retrieval_api_url_default_matches_production() -> None:
     assert settings.retrieval_api_url == "http://retrieval-api:8040"
 
 
+def test_rag_eval_judge_model_default() -> None:
+    """Light-metrics + answer-generation default to klai-fast (Mistral Small)."""
+    settings = Settings(_env_file=None)
+    assert settings.rag_eval_judge_model == "klai-fast"
+
+
+def test_rag_eval_faithfulness_model_default() -> None:
+    """Faithfulness defaults to klai-eval-judge (Mistral Large) to avoid the
+    Mistral Small max-tokens truncation that left ~28/30 rows NaN at v1.
+    """
+    settings = Settings(_env_file=None)
+    assert settings.rag_eval_faithfulness_model == "klai-eval-judge"
+
+
+def test_rag_eval_embeddings_model_default() -> None:
+    """AnswerRelevancy embeddings default to klai-embeddings (BGE-M3 via TEI)."""
+    settings = Settings(_env_file=None)
+    assert settings.rag_eval_embeddings_model == "klai-embeddings"
+
+
 def test_retrieval_internal_secret_via_canonical_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

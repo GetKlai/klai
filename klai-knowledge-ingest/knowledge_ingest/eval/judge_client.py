@@ -4,15 +4,27 @@ LLM judge client for the RAGAS evaluation harness (SPEC-RAG-EVAL-001).
 Two responsibilities:
   1. generate_answer: generate a model answer via klai-fast (LiteLLM proxy)
      given a query and retrieved chunks.
-  2. evaluate_query: run the four RAGAS metrics with klai-fast as the judge LLM.
+  2. evaluate_query: run the four RAGAS metrics with per-metric LLM/embeddings
+     injection — light metrics on klai-fast, faithfulness on klai-eval-judge
+     (Mistral Large), answer_relevancy embeddings on klai-embeddings (BGE-M3).
 
 Both functions are fail-open: any HTTP or RAGAS failure returns None / a
 metrics dict with None values instead of raising (REQ-3 generalisation).
+
+Per-metric model assignment (post-baseline-fix 2026-05-05):
+  - context_precision  → klai-fast LLM
+  - context_recall     → klai-fast LLM
+  - faithfulness       → klai-eval-judge LLM (Mistral Large; small model
+                          truncates the multi-statement JSON output)
+  - answer_relevancy   → klai-fast LLM + klai-embeddings (BGE-M3 via TEI)
 
 RAGAS 0.4.3 API notes:
   - Uses EvaluationDataset + SingleTurnSample (not HF datasets).
   - llm_factory(model, client=AsyncOpenAI(...)) is the recommended wrapper.
   - evaluate() is synchronous in 0.4.3; run it in a thread via asyncio.
+  - Each metric class accepts an optional ``llm`` (and ``embeddings`` where
+    applicable) constructor arg, which RAGAS uses in preference to any
+    global llm/embeddings passed to evaluate().
   - context_precision / context_recall need reference (ground_truth).
   - faithfulness / answer_relevancy need response (model answer).
 """
@@ -48,38 +60,67 @@ def _build_http_client(
     return httpx.AsyncClient(**kwargs)
 
 
-def _build_ragas_llm():
-    """Build the RAGAS LLM wrapper using llm_factory + AsyncOpenAI.
-
-    Pointed at the LiteLLM proxy so klai-fast handles Mistral calls.
-    llm_factory is the recommended approach in RAGAS 0.4.3.
-    """
+def _make_async_openai_client():
     from openai import AsyncOpenAI
-    from ragas.llms import llm_factory
 
-    client = AsyncOpenAI(
+    return AsyncOpenAI(
         base_url=f"{settings.litellm_url}/v1",
         api_key=settings.litellm_api_key or "no-key",
     )
-    return llm_factory(settings.rag_eval_judge_model, client=client)
 
 
-async def _run_ragas_evaluate(dataset, metrics, llm):
+def _build_ragas_llm(model: str | None = None):
+    """Build a RAGAS LLM wrapper pointed at the LiteLLM proxy.
+
+    Falls back to ``settings.rag_eval_judge_model`` when ``model`` is None,
+    keeping the original generate_answer / light-metric path unchanged.
+    Faithfulness gets a heavier Mistral Large via klai-eval-judge.
+    """
+    from ragas.llms import llm_factory
+
+    return llm_factory(model or settings.rag_eval_judge_model, client=_make_async_openai_client())
+
+
+def _build_ragas_embeddings():
+    """Build the RAGAS embeddings wrapper pointed at klai-embeddings.
+
+    klai-embeddings is the LiteLLM alias for BGE-M3 on TEI/gpu-01.
+    Used by AnswerRelevancy to compare imaginary-question vectors with
+    the user's actual question.
+
+    Uses LangchainEmbeddingsWrapper around langchain-openai's OpenAIEmbeddings
+    pointed at the LiteLLM proxy. RAGAS' embedding_factory("openai", ...)
+    expects an OpenAI client constructed with explicit kwargs that don't
+    map cleanly onto our proxy URL, so the langchain wrapper is the
+    cleanest path.
+    """
+    from langchain_openai import OpenAIEmbeddings
+    from ragas.embeddings import LangchainEmbeddingsWrapper
+
+    return LangchainEmbeddingsWrapper(
+        OpenAIEmbeddings(
+            model=settings.rag_eval_embeddings_model,
+            base_url=f"{settings.litellm_url}/v1",
+            api_key=settings.litellm_api_key or "no-key",
+            check_embedding_ctx_length=False,
+        )
+    )
+
+
+async def _run_ragas_evaluate(dataset, metrics):
     """Run ragas.evaluate in a thread pool to avoid blocking the event loop.
 
-    RAGAS 0.4.3 evaluate() is synchronous. Separated into its own function
-    so tests can patch it cleanly without touching the public API.
+    RAGAS 0.4.3 evaluate() is synchronous. The metrics list carries its own
+    per-metric LLM/embeddings wrappers (set in evaluate_query), so evaluate()
+    is called without a global llm/embeddings arg.
+
+    Separated into its own function so tests can patch it cleanly without
+    touching the public API.
     """
     from ragas import evaluate
 
     loop = asyncio.get_event_loop()
-    fn = functools.partial(
-        evaluate,
-        dataset,
-        metrics=metrics,
-        llm=llm,
-        show_progress=False,
-    )
+    fn = functools.partial(evaluate, dataset, metrics=metrics, show_progress=False)
     return await loop.run_in_executor(None, fn)
 
 
@@ -185,10 +226,21 @@ async def evaluate_query(
         )
         dataset = EvaluationDataset(samples=[sample])
 
-        metrics = [ContextPrecision(), ContextRecall(), Faithfulness(), AnswerRelevancy()]
-        llm = _build_ragas_llm()
+        # Per-metric model assignment: light metrics on klai-fast, faithfulness
+        # on klai-eval-judge (Mistral Large), answer_relevancy on klai-fast +
+        # klai-embeddings (BGE-M3). See module docstring for rationale.
+        light_llm = _build_ragas_llm()
+        heavy_llm = _build_ragas_llm(model=settings.rag_eval_faithfulness_model)
+        embeddings = _build_ragas_embeddings()
 
-        eval_result = await _run_ragas_evaluate(dataset, metrics, llm)
+        metrics = [
+            ContextPrecision(llm=light_llm),
+            ContextRecall(llm=light_llm),
+            Faithfulness(llm=heavy_llm),
+            AnswerRelevancy(llm=light_llm, embeddings=embeddings),
+        ]
+
+        eval_result = await _run_ragas_evaluate(dataset, metrics)
 
         # scores is a list of dicts, one per sample
         if eval_result.scores:
