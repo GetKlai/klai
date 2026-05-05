@@ -28,7 +28,19 @@ async def rerank(
     if not candidates:
         return []
 
-    passages = [c["text"] for c in candidates]
+    # SPEC-RAG-CONTEXTUAL-001 parity: feed the cross-encoder the same
+    # context_prefix + chunk_text combination that the embedding model
+    # saw at index time. Without this the reranker scores chunks on raw
+    # body alone — context-prefix-driven semantics (which document /
+    # which section / which terminology) is lost from ranking.
+    # Falls back to plain text when context_prefix is null (legacy
+    # chunks pre-CONTEXTUAL-001).
+    def _passage(c: dict) -> str:
+        prefix = c.get("context_prefix") or ""
+        text = c.get("text") or ""
+        return f"{prefix}\n\n{text}".strip() if prefix else text
+
+    passages = [_passage(c) for c in candidates]
 
     try:
         async with httpx.AsyncClient(timeout=settings.reranker_timeout) as client:
