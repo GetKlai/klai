@@ -33,6 +33,7 @@ from app.services.crypto import PostgresSecretsStore
 from app.services.portal_client import PortalClient
 from app.services.scheduler import ConnectorScheduler
 from app.services.sync_engine import SyncEngine
+from app.services.sync_run_resolver import SyncRunResolver
 
 logger = get_logger(__name__)
 
@@ -158,6 +159,16 @@ def create_app() -> FastAPI:
             crawl_sync_client=crawl_sync_client,
         )
         app.state.sync_engine = sync_engine
+
+        # SPEC-CRAWLER-006: live status resolver for delegated
+        # web_crawler runs. Shares the same crawl_sync_client +
+        # portal_client + session_maker so terminal state lands
+        # consistently on first read after the remote job finishes.
+        app.state.sync_run_resolver = SyncRunResolver(
+            crawl_sync_client=crawl_sync_client,
+            session_maker=_db.session_maker,
+            portal_client=portal_client,
+        )
 
         # Scheduler
         scheduler = ConnectorScheduler()

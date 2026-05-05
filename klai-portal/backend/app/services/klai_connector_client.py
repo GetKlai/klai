@@ -30,6 +30,11 @@ class SyncRunData(BaseModel):
     documents_failed: int = 0
     bytes_processed: int = 0
     error_details: list[dict] | None = None
+    # SPEC-CRAWLER-006: live progress for delegated web_crawler runs.
+    # Always None / False for terminal rows and non-crawler types.
+    pages_done: int | None = None
+    pages_total: int | None = None
+    live_resolution_failed: bool = False
 
 
 class KlaiConnectorClient:
