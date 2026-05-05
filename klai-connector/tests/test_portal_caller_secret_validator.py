@@ -43,12 +43,19 @@ def _required_settings_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 
 def _import_settings_class():
-    """Import Settings via importlib so each test sees a fresh validator pass."""
+    """Import Settings via importlib so each test sees a fresh validator pass.
+
+    Audit 2026-05-05 finding F5: previously used `importlib.reload(config_module)`
+    which keeps the old module in `sys.modules` and patches in place — xdist-unsafe
+    because the singleton mutation leaks across tests when run in parallel. Now
+    pops the module first, then re-imports clean. Mirrors portal-api's
+    `_reimport_config` helper (klai-portal/backend/tests/test_config_fail_closed.py).
+    """
     import importlib
+    import sys
 
-    import app.core.config as config_module
-
-    importlib.reload(config_module)
+    sys.modules.pop("app.core.config", None)
+    config_module = importlib.import_module("app.core.config")
     return config_module.Settings  # noqa: N806 (returning class)
 
 
