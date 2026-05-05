@@ -233,8 +233,12 @@ class SyncEngine:
             try:
                 cursor_state = await adapter.get_cursor_state(portal_config)
 
-                last_run = await self._get_last_successful_run(session, connector_id)
-                last_pending = await self._get_last_pending_run(session, connector_id)
+                last_run = await self._get_last_successful_run(
+                    session, connector_id, portal_config.zitadel_org_id
+                )
+                last_pending = await self._get_last_pending_run(
+                    session, connector_id, portal_config.zitadel_org_id
+                )
 
                 # Resume state: refs already ingested in an interrupted run.
                 resume_ingested_refs: set[str] = set()
@@ -822,11 +826,25 @@ class SyncEngine:
                 await session.commit()
 
     @staticmethod
-    async def _get_last_successful_run(session: AsyncSession, connector_id: uuid.UUID) -> SyncRun | None:
-        """Retrieve the most recent successful sync run for a connector."""
+    async def _get_last_successful_run(
+        session: AsyncSession,
+        connector_id: uuid.UUID,
+        org_id: str,
+    ) -> SyncRun | None:
+        """Retrieve the most recent successful sync run for a connector.
+
+        SPEC-SEC-PORTAL-RLS-001 REQ-3 — connector.sync_runs has no Postgres
+        RLS policy yet, so the application-level ``SyncRun.org_id`` filter
+        is the only tenant-isolation barrier. ``connector_id`` is allocated
+        per-tenant by the portal control plane (so two tenants can never
+        share one), but that invariant lives outside klai-connector and
+        was flagged by audit-2026-05-04 TP-5 as a soft contract. Adding the
+        explicit org-id filter closes the gap regardless of upstream drift.
+        """
         result = await session.execute(
             select(SyncRun)
             .where(
+                SyncRun.org_id == org_id,
                 SyncRun.connector_id == connector_id,
                 SyncRun.status == SyncStatus.COMPLETED,
             )
@@ -836,11 +854,20 @@ class SyncEngine:
         return result.scalars().first()
 
     @staticmethod
-    async def _get_last_pending_run(session: AsyncSession, connector_id: uuid.UUID) -> SyncRun | None:
-        """Retrieve the most recent PENDING sync run for a connector."""
+    async def _get_last_pending_run(
+        session: AsyncSession,
+        connector_id: uuid.UUID,
+        org_id: str,
+    ) -> SyncRun | None:
+        """Retrieve the most recent PENDING sync run for a connector.
+
+        See :meth:`_get_last_successful_run` for the SPEC-SEC-PORTAL-RLS-001
+        rationale on the ``SyncRun.org_id`` filter.
+        """
         result = await session.execute(
             select(SyncRun)
             .where(
+                SyncRun.org_id == org_id,
                 SyncRun.connector_id == connector_id,
                 SyncRun.status == SyncStatus.PENDING,
             )
