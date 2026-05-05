@@ -86,6 +86,47 @@ directly with the content."""
 _DOC_CONTEXT_MAX_CHARS: Final[int] = settings.enrichment_max_document_tokens * 4
 
 
+# Lingua detector instance — built lazily on first detect call so that
+# importing this module stays cheap (test modules import it without
+# wanting to pay the load cost).
+_lingua_detector: object | None = None
+
+
+def _get_lingua_detector() -> object | None:
+    """Return a cached LanguageDetector instance covering nl + en + a few
+    European languages so non-target languages get correctly classified
+    (and then fall through to DEFAULT_PROMPT_LANGUAGE in detect_language).
+    """
+    global _lingua_detector
+    if _lingua_detector is not None:
+        return _lingua_detector
+    try:
+        from lingua import Language, LanguageDetectorBuilder
+    except ImportError:
+        logger.warning(
+            "contextual_langdetect_unavailable",
+            reason="lingua-language-detector not installed; defaulting to en",
+        )
+        return None
+
+    # Restrict to the language set we care about — this keeps the
+    # detector small (~10 MB on disk) and inference fast. Adding
+    # languages later means the model must be re-built once.
+    detector = (
+        LanguageDetectorBuilder.from_languages(
+            Language.DUTCH,
+            Language.ENGLISH,
+            Language.GERMAN,
+            Language.FRENCH,
+            Language.SPANISH,
+        )
+        .with_preloaded_language_models()
+        .build()
+    )
+    _lingua_detector = detector
+    return detector
+
+
 def detect_language(text: str) -> str:
     """Return ISO-639-1 code for the dominant language of ``text``.
 
@@ -93,37 +134,31 @@ def detect_language(text: str) -> str:
     to detect reliably or detection fails. Currently recognises "nl" and
     "en"; everything else falls back to the default.
 
-    Detection uses ``langdetect`` (pure Python; ports Nakatani Shuyo's
-    Java library, ~99% accuracy on >50 char inputs). Sample is capped at
-    ``_LANGDETECT_SAMPLE_CHARS`` chars so long documents don't waste cycles.
-    The detector seed is fixed for reproducibility — without a seed the
-    library re-randomises on every call and short inputs can flip-flop
-    between candidate languages.
+    Detection uses ``lingua-language-detector`` (pure Python, no native
+    build, actively maintained, deterministic). Built once at module
+    load and reused — instantiation is the expensive part. Sample is
+    capped at ``_LANGDETECT_SAMPLE_CHARS`` chars so long documents don't
+    waste cycles.
     """
     if not text or len(text.strip()) < _LANGDETECT_MIN_CHARS:
         return DEFAULT_PROMPT_LANGUAGE
 
-    try:
-        from langdetect import DetectorFactory, detect
-        from langdetect.lang_detect_exception import LangDetectException
-    except ImportError:
-        logger.warning(
-            "contextual_langdetect_unavailable",
-            reason="langdetect not installed; defaulting to en",
-        )
+    detector = _get_lingua_detector()
+    if detector is None:
         return DEFAULT_PROMPT_LANGUAGE
-
-    DetectorFactory.seed = 0  # deterministic across calls
 
     sample = text.strip().replace("\n", " ")[:_LANGDETECT_SAMPLE_CHARS]
     try:
-        lang = detect(sample)
-    except LangDetectException as exc:
+        result = detector.detect_language_of(sample)
+    except Exception as exc:  # pragma: no cover - defensive
         logger.warning("contextual_langdetect_failed", error=str(exc)[:200])
         return DEFAULT_PROMPT_LANGUAGE
 
-    if lang in SUPPORTED_PROMPT_LANGUAGES:
-        return lang
+    if result is None:
+        return DEFAULT_PROMPT_LANGUAGE
+    iso = result.iso_code_639_1.name.lower()
+    if iso in SUPPORTED_PROMPT_LANGUAGES:
+        return iso
     return DEFAULT_PROMPT_LANGUAGE
 
 
