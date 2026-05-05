@@ -198,6 +198,7 @@ async def upsert_enriched_chunks(
     content_type: str = "unknown",
     belief_time_start: int | None = None,
     belief_time_end: int | None = None,
+    parent_chunk_ids: list[int | None] | None = None,
 ) -> None:
     """
     Upsert enriched chunks with named + sparse vectors.
@@ -274,6 +275,15 @@ async def upsert_enriched_chunks(
         }
         if getattr(ec, "chunk_type", ""):
             chunk_payload["chunk_type"] = ec.chunk_type
+
+        # SPEC-RAG-PARENT-CHILD-001: thread the parent_chunks.id into each
+        # child's payload so retrieval-api can fetch the parent text and
+        # swap it in. None for legacy ingests that didn't run through the
+        # parent-child chunker — retrieval-api falls through to chunk text.
+        if parent_chunk_ids is not None and i < len(parent_chunk_ids):
+            pid = parent_chunk_ids[i]
+            if pid is not None:
+                chunk_payload["parent_chunk_id"] = int(pid)
 
         points.append(
             PointStruct(
