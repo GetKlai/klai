@@ -1318,3 +1318,129 @@ If a future @playwright/mcp version introduces auto-write-back of storage
 state on session close, the manual refresh step can be removed. Until
 then, refreshing the storage-state file every few weeks is the cost of
 this design — accept it.
+
+## stale-decommission-attracts-defensive-fixes (HIGH)
+Wanneer een service is gedecommissioned maar de source-directory in de
+git-tree blijft staan met een README "FROZEN — do not resurrect", trekt
+die directory ALSNOG defensieve code-fixes aan op alsof hij levend is.
+De volgende sweep-style PR die door alle callers van een interface gaat
+behandelt de dode directory als een normale caller en patcht hem
+zorgvuldig — zonder eerst te checken of de service draait.
+
+SPEC-PORTAL-UNIFY-KB-001 (April 2026) verwijderde `research-api` uit
+`docker-compose.yml` en zette `klai-focus/README.md` op FROZEN. De
+directory bleef "voor historische referentie" in de tree. Tien dagen
+later, toen SPEC-SEC-IDENTITY-ASSERT-001 Phase D `X-Caller-Service`
+mandatory maakte op `retrieval-api /retrieve`, brak elke caller
+silent. PR #311 (2026-05-05 hotfix) fixte 4 callers — waaronder
+`klai-focus/research-api/app/services/retrieval_client.py`. De fix
+was in de PR uitgevoerd ZONDER te checken dat `klai-core-research-api-1`
+op core-01 niet draaide. Plus: `research-api` werd toegevoegd aan
+`klai_identity_assert.KNOWN_CALLER_SERVICES` als allowlist-entry voor
+een caller die niet bestaat. Dood materiaal verspilt review-tijd.
+
+Discovered tijdens SPEC-DECOMM-FOCUS-001 (mei 2026) audit:
+`docker ps` op core-01 → geen container; Caddy `/research/` 0 hits in
+7 dagen; retrieval-api `_search_notebook` 0 logs in 24u. De directory
+was effectief dood maar trok tóch defensieve fixes aan.
+
+**Prevention (mechanisch, in volgorde):**
+
+1. **Een decommission is pas af als de directory weg is.** "FROZEN"
+   README + behouden tree is een halfslachtige staat die ALTIJD
+   onderhoud blijft trekken. Een SPEC-PORTAL-UNIFY-KB-001-style
+   decommission MOET in dezelfde of vervolg-PR `git rm -r <dir>/`
+   doen — niet "later, als we tijd hebben".
+
+2. **Pre-flight check bij sweep-PRs.** Voor elke PR die "alle X
+   bijwerkt" (alle callers van een endpoint, alle services die een
+   secret rouleren, alle FastAPI services met een middleware-fix):
+   ```bash
+   ssh core-01 "docker ps --format '{{.Names}}'" | sort > /tmp/live.txt
+   git ls-tree -d HEAD '*/Dockerfile' | awk '{print $4}' | xargs -n1 dirname > /tmp/in-tree.txt
+   comm -23 /tmp/in-tree.txt /tmp/live.txt
+   ```
+   Output = directories met een Dockerfile maar geen draaiende
+   container. Skip die in je sweep, of merge er een delete-commit
+   voor.
+
+3. **Audit op decommission-residu na elke SPEC die "Phase X
+   verwijdert service Y".** Check binnen 7 dagen na de SPEC:
+   - Ghc.io image build workflow nog actief? (zou uit moeten staan)
+   - Productie SOPS env vars nog aanwezig? (zou weg moeten zijn)
+   - Allowlists nog include? (zou geschrapt moeten zijn)
+   - Documentatie SERVERS.md / architecture.md nog "up"? (zou
+     historisch moeten zijn)
+
+   Als één van deze nog "live" is, is de decommission incompleet en
+   trekt het volgende sweep-PR weer onnodig werk. Zie
+   SPEC-DECOMM-FOCUS-001 voor het opruim-template.
+
+4. **Comment-marker ipv FROZEN README.** Als een directory ECHT moet
+   blijven (bv. wettelijk archief), zet een SessionStart-hook die bij
+   elke `Edit` in de directory een waarschuwing toont. README's worden
+   genegeerd door agents die op grep-resultaten werken.
+
+## sync-env-removal-needs-explicit-confirmation (HIGH)
+Sync-workflows die SOPS-decryption naar `/opt/klai/.env` doen MOETEN
+een expliciete escape hatch hebben voor key-REMOVAL. Zonder die hatch
+forceert elke decommission die SOPS-vars schrapt tot een handmatige
+`sudo sed` op `/opt/klai/.env` — wat de SOPS-as-source-of-truth
+invariant breekt en drift tussen SOPS en server creëert.
+
+Achtergrond: `klai-infra/.github/workflows/sync-env.yml` had tot
+mei 2026 de regel "abort if any keys would be REMOVED". Dat is een
+verstandige default (voorkomt accidentele truncation), maar zonder
+override-mechanisme dwingt het de operator om SOPS en server
+verschillend te houden of het probleem op de server te omzeilen. Bij
+SPEC-DECOMM-FOCUS-001 (mei 2026) leverde dit een drift-window: SOPS
+had 176 lines (na verwijdering van `KUMA_TOKEN_RESEARCH_API` +
+`RESEARCH_API_ZITADEL_AUDIENCE`), `/opt/klai/.env` had nog 178. De
+auto-sync weigerde te draaien tot de operator handmatig sed'de.
+
+**Prevention (mechanisch, opgelost in klai-infra#6):**
+
+`workflow_dispatch.inputs.allow_removal` toegevoegd aan sync-env.yml
+met een getypte string confirmation:
+
+```yaml
+workflow_dispatch:
+  inputs:
+    allow_removal:
+      description: 'Acknowledge intentional key removal (typed confirmation required: "I-CONFIRM-REMOVAL")'
+      required: false
+      type: string
+      default: ''
+```
+
+In de check:
+
+```bash
+if [ -n "$REMOVED" ]; then
+  if [ "${{ github.event_name }}" = "workflow_dispatch" ] \
+     && [ "${{ inputs.allow_removal }}" = "I-CONFIRM-REMOVAL" ]; then
+    echo "::warning::Keys REMOVED with explicit confirmation: $REMOVED"
+  else
+    echo "::error::Keys would be REMOVED: $REMOVED — refusing automatic deploy."
+    exit 1
+  fi
+fi
+```
+
+**Waarom een typed string en geen boolean:** een boolean input zit
+voor-aangevinkt of standaard "false" in de "Run workflow" UI van
+GitHub. Een operator die snel doorklikt vinkt 'm per ongeluk aan.
+Een getypte string `I-CONFIRM-REMOVAL` dwingt expliciete
+intentioneel typen — geen accidental click-through mogelijk.
+
+**Gebruik bij decommission:**
+```bash
+gh workflow run sync-env.yml -f allow_removal=I-CONFIRM-REMOVAL
+```
+
+**Pattern voor andere sync workflows:** elke workflow die keys/files/
+configs verwijdert van een productie-systeem heeft een variant van
+deze guard nodig — refuse-by-default + getypte-string-override-input.
+Niet alleen voor SOPS env: ook voor migrations die DROP TABLE doen,
+voor terraform destroy, voor docker prune in CI. De pattern is
+generic: destructieve ops moeten een getypte intent-bewijs hebben.
