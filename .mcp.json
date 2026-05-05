@@ -16,21 +16,20 @@
       "env": {}
     },
     "playwright": {
-      "$comment": "Browser automation with persistent Chromium profile (login state survives restarts). Cross-platform via .claude/scripts/playwright-launcher.mjs — passes --user-data-dir as CLI flag to dodge microsoft/playwright-mcp#1446. Single-instance: a second concurrent Claude Code session must use playwright-isolated.",
+      "$comment": "Headed Chromium with shared login state across parallel Claude Code sessions. Uses --isolated + --storage-state (canonical Playwright multi-session auth). Log in once via `npx playwright codegen --save-storage=~/.claude/mcp-storageState.json --browser=chromium <url>`; every session preloads that state. No browser-lock conflicts because each session uses its own ephemeral profile. AI-driven sessions don't mutate login state, so read-only storage-state is sufficient.",
       "type": "stdio",
       "command": "node",
       "args": [".claude/scripts/playwright-launcher.mjs"],
       "env": {}
     },
     "playwright-isolated": {
-      "$comment": "Ephemeral headless Chromium for CSS debugging, visual verification, and parallel sessions. No login state, no profile conflicts.",
+      "$comment": "Ephemeral headed Chromium for one-off CSS/visual checks where login state is not needed. Window is visible (not headless) so you can see what is happening; profile is in-memory and discarded on close.",
       "type": "stdio",
       "command": "npx",
       "args": [
         "@playwright/mcp@0.0.70",
         "--browser", "chromium",
-        "--isolated",
-        "--headless"
+        "--isolated"
       ],
       "env": {}
     },
