@@ -7,14 +7,15 @@ paths:
 # LiteLLM
 
 ## Tier aliases (HARD)
-Never use raw model names. Only `klai-fast`, `klai-primary`, `klai-large`, `klai-pipeline`.
+Never use raw model names. Aliases are tier-/model-named, NEVER role-named (no `klai-eval-judge`, `klai-pipeline` etc). New tiers are added when an existing tier is structurally insufficient for a task.
 
-| Alias | Mistral (default) | Task |
+| Alias | Backing model | Task |
 |---|---|---|
-| `klai-fast` | `mistral-small-2603` | Lightweight, high-volume, latency-sensitive |
-| `klai-primary` | `mistral-small-2603` | Standard quality, user-facing |
-| `klai-large` | `mistral-large-2512` | Agentic, tool use, MCP flows |
-| `klai-pipeline` | `mistral-small-2603` | Internal services (bypasses custom_router) |
+| `klai-fast` | `mistral-small-2603` | Lightweight, high-volume, latency-sensitive. Bypasses custom_router. |
+| `klai-primary` | `mistral-small-2603` | Standard quality, user-facing. Routed via custom_router (may upgrade to klai-large for tool-calls). |
+| `klai-medium` | `mistral-medium-3.5` | Middle tier — used when klai-fast hits its output-token ceiling but klai-large is overkill. |
+| `klai-large` | `mistral-large-2512` | Agentic, tool use, MCP flows. |
+| `klai-bge-m3` | BGE-M3 on TEI/gpu-01 | Embeddings. Distinct model TYPE (not text-completion). |
 
 ## Provider swap
 Switch all services by changing 3 entries in `deploy/litellm/config.yaml`, then `docker compose restart litellm`.
@@ -29,7 +30,7 @@ Switch all services by changing 3 entries in `deploy/litellm/config.yaml`, then 
 - `/health` — requires valid virtual key (NOT master key).
 
 ## custom_router.py
-- Content heuristics fire on ALL `klai-primary` calls. Internal services must use `klai-pipeline` to bypass.
+- Content heuristics fire on ALL `klai-primary` calls. Internal services must use `klai-fast` to bypass.
 - Never use `klai-primary` for background services processing document content with URLs.
 
 ## Mistral quota

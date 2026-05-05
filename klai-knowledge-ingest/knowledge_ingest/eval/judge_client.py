@@ -6,7 +6,7 @@ Two responsibilities:
      given a query and retrieved chunks.
   2. evaluate_query: run the four RAGAS metrics with per-metric LLM/embeddings
      injection — light metrics on klai-fast, faithfulness on klai-medium
-     (Mistral Medium 3.5), answer_relevancy embeddings on klai-embeddings (BGE-M3).
+     (Mistral Medium 3.5), answer_relevancy embeddings on klai-bge-m3 (BGE-M3).
 
 Both functions are fail-open: any HTTP or RAGAS failure returns None / a
 metrics dict with None values instead of raising (REQ-3 generalisation).
@@ -16,7 +16,7 @@ Per-metric model assignment (post-baseline-fix 2026-05-05):
   - context_recall     → klai-fast LLM
   - faithfulness       → klai-medium LLM (Mistral Medium 3.5; klai-fast
                           truncates the multi-statement JSON output)
-  - answer_relevancy   → klai-fast LLM + klai-embeddings (BGE-M3 via TEI)
+  - answer_relevancy   → klai-fast LLM + klai-bge-m3 (BGE-M3 via TEI)
 
 RAGAS 0.4.3 API notes:
   - Uses EvaluationDataset + SingleTurnSample (not HF datasets).
@@ -114,9 +114,9 @@ class _SimpleEmbeddings:
 
 
 def _build_ragas_embeddings() -> _SimpleEmbeddings:
-    """Build the RAGAS embeddings adapter pointed at klai-embeddings.
+    """Build the RAGAS embeddings adapter pointed at klai-bge-m3.
 
-    klai-embeddings is the LiteLLM alias for BGE-M3 on TEI/gpu-01.
+    klai-bge-m3 is the LiteLLM alias for BGE-M3 on TEI/gpu-01.
     Used by AnswerRelevancy to compare imaginary-question vectors with
     the user's actual question.
     """
@@ -252,7 +252,7 @@ async def evaluate_query(
 
         # Per-metric model assignment: light metrics on klai-fast, faithfulness
         # on klai-medium (Mistral Medium 3.5), answer_relevancy on klai-fast +
-        # klai-embeddings (BGE-M3). See module docstring for rationale.
+        # klai-bge-m3 (BGE-M3). See module docstring for rationale.
         light_llm = _build_ragas_llm()
         heavy_llm = _build_ragas_llm(model=settings.rag_eval_faithfulness_model)
         embeddings = _build_ragas_embeddings()

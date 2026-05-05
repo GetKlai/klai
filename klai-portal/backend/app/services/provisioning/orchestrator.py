@@ -339,10 +339,11 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
                         # directly; LiteLLM's custom_router may upgrade to
                         # klai-large (tool calls) or downgrade to klai-fast (web
                         # search). All three MUST be in scope.
-                        # @MX:REASON: deploy/litellm/config.yaml only defines
-                        # klai-primary, klai-fast, klai-large, klai-pipeline;
-                        # klai-pipeline is reserved for internal services and
-                        # bypasses custom_router (see platform/litellm.md).
+                        # @MX:REASON: deploy/litellm/config.yaml defines the
+                        # tier ladder klai-primary, klai-fast, klai-medium,
+                        # klai-large + the klai-bge-m3 embeddings model.
+                        # Internal-only aliases (klai-medium, klai-bge-m3)
+                        # are excluded from tenant keys (see platform/litellm.md).
                         "models": ["klai-primary", "klai-fast", "klai-large"],
                     },
                 )

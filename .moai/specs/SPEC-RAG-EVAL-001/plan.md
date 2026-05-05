@@ -142,7 +142,7 @@ Five units, executed in dependency order. Each is a separate commit (or commit c
 - **Concurrent runs against the same suite.** Mitigated by Procrastinate `queue_lock=f"rag-eval-{suite}"` (REQ-5).
 - **Voys KB drift.** As the KB grows, baseline metrics will shift even without retrieval changes. Mitigation: every row's `meta` includes `kb_artifact_count` snapshot so score changes can be correlated with corpus changes.
 - **No personal-KB data.** `knowledge_personal.yaml` ships with 10 synthetic queries in v1. Document as known limitation; backfill once alpha customers create personal KBs.
-- **Judge-LLM scoring drift.** Mistral small can be inconsistent across runs. Mitigation: run nightly so variance averages out over 7 days. If individual-night variance exceeds 0.1 standard deviation on `baseline` metrics, escalate the model choice (consider klai-pipeline) in a follow-up SPEC.
+- **Judge-LLM scoring drift.** Mistral small can be inconsistent across runs. Mitigation: run nightly so variance averages out over 7 days. If individual-night variance exceeds 0.1 standard deviation on `baseline` metrics, escalate the model choice (consider klai-medium or klai-large) in a follow-up SPEC.
 - **Cost overrun.** Estimate is ~€5/month. Mitigation: log `total_tokens` per row; if monthly aggregate exceeds €15 (3× budget), pause the cron and re-evaluate.
 
 ## 6. Sequencing

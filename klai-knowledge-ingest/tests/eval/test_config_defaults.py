@@ -46,9 +46,9 @@ def test_rag_eval_faithfulness_model_default() -> None:
 
 
 def test_rag_eval_embeddings_model_default() -> None:
-    """AnswerRelevancy embeddings default to klai-embeddings (BGE-M3 via TEI)."""
+    """AnswerRelevancy embeddings default to klai-bge-m3 (BGE-M3 via TEI)."""
     settings = Settings(_env_file=None)
-    assert settings.rag_eval_embeddings_model == "klai-embeddings"
+    assert settings.rag_eval_embeddings_model == "klai-bge-m3"
 
 
 def test_retrieval_internal_secret_via_canonical_env(
