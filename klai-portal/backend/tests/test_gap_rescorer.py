@@ -67,6 +67,14 @@ async def test_rescore_marks_resolved_when_no_longer_gap() -> None:
     # Should have committed to persist resolved_at updates
     mock_db.commit.assert_called_once()
 
+    # Regression-guard for SPEC-SEC-IDENTITY-ASSERT-001 silent-degradation:
+    # the /retrieve call MUST send X-Caller-Service or retrieval-api 400s.
+    post_headers = mock_client.post.call_args.kwargs["headers"]
+    assert post_headers.get("X-Caller-Service") == "portal-api", (
+        "X-Caller-Service header missing — would silently 400 in prod. "
+        "See pitfalls/process-rules.md → retrieve-caller-service-header-mismatch."
+    )
+
 
 @pytest.mark.asyncio
 async def test_rescore_keeps_open_when_still_gap() -> None:

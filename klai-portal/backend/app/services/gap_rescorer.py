@@ -88,7 +88,12 @@ async def rescore_open_gaps(
         return 0
 
     resolved_count = 0
-    headers = {**get_trace_headers()}
+    # SPEC-SEC-IDENTITY-ASSERT-001 REQ-4.2: retrieval-api requires
+    # X-Caller-Service for any /retrieve with an end-user identity in the
+    # body. We send `system` here in user_id, but the header is still
+    # validated. Without it: 400 missing_caller_service → silent rescore
+    # noop. See pitfalls → retrieve-caller-service-header-mismatch.
+    headers = {"X-Caller-Service": "portal-api", **get_trace_headers()}
     if settings.internal_secret:
         headers["Authorization"] = f"Bearer {settings.internal_secret}"
 

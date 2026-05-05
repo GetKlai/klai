@@ -1,5 +1,66 @@
 # Process Rules
 
+## retrieve-caller-service-header-mismatch (CRIT)
+When a SPEC adds a new MANDATORY request header (or any other contract
+change) on a receiver, the SAME PR MUST update every active caller, even
+the ones in other repositories or directories the SPEC author does not
+normally edit. SPEC-SEC-IDENTITY-ASSERT-001 Phase D landed on 2026-04-28
+and made `X-Caller-Service` required on `retrieval-api /retrieve`. The
+SPEC PR updated the receiver and its tests; it did NOT touch the four
+in-repo callers:
+
+| Caller | File | Symptom |
+|---|---|---|
+| LiteLLM hook | `deploy/litellm/klai_knowledge.py` | Every chat ran with no KB context for 7 days |
+| Partner API | `klai-portal/backend/app/services/partner_chat.py` | Partner /chat/completions returned no KB chunks |
+| Gap re-scorer | `klai-portal/backend/app/services/gap_rescorer.py` | Background job silently returned 400 on every call |
+| Focus narrow retrieval | `klai-focus/research-api/app/services/retrieval_client.py` | Notebook narrow returned [] for 7 days |
+
+**Why nobody noticed:** every caller wrapped the call in a fail-open
+`except Exception → log.warning → return empty/no context`. The chat
+still produced a coherent answer (just from general knowledge, not the
+KB). No alerts on retrieval-failure rate. Discovered only when a user
+asked "is the KB even being queried?" and we tailed the logs.
+
+**Prevention (mechanical, several layers):**
+
+1. **Allowlist tests.** Every consumer of
+   `klai_identity_assert.KNOWN_CALLER_SERVICES` MUST have a unit test
+   that locks in `X-Caller-Service: <its-name>` on the outbound
+   `/retrieve` call. The test mocks the httpx client and asserts the
+   header is set. Without it, the next refactor that drops the header
+   passes CI silently. We added these tests for all 4 callers in the
+   2026-05-05 hotfix — keep them.
+
+2. **Receiver-side contract test.** `klai-retrieval-api` should ship a
+   smoke test that POSTs to `/retrieve` from a real httpx client using
+   the EXACT header set every caller sends. A unit test inside the
+   receiver covers the receiver only — it does not validate that any
+   caller still complies.
+
+3. **Cross-repo audit on contract changes.** When a SPEC adds a new
+   header / required field on an internal endpoint, grep the entire
+   monorepo for callers BEFORE merging:
+   ```bash
+   grep -rn '/retrieve\|RETRIEVE_URL\|knowledge_retrieve_url' \
+       --include='*.py' --include='*.ts' .
+   ```
+   For every match outside the SPEC's own service, either patch it in
+   the same PR or open a tracking issue and ship the receiver-side
+   change behind a per-caller header allowlist for the soak window.
+
+4. **Fail-loud on retrieval failure.** The hook now bumps `warning →
+   error` on any /retrieve failure AND injects a user-visible
+   "[Klai Kennisbank — TIJDELIJK NIET BEREIKBAAR]" notice into the
+   system prompt so the user sees an explicit warning. Same class as
+   `fail-open-auth` in this file: silent-degrade on a feature the user
+   thinks they have is worse than a loud error.
+
+5. **Grafana alert on failure rate.** Pending: alert on
+   `service:litellm AND message:"retrieval"` ERROR-rate > 0 for 5 min.
+   This regression was visible in logs from minute one — only the lack
+   of an alert kept it hidden for a week.
+
 ## verify-image-pullable-before-pin (HIGH)
 When pinning an external image tag in any compose file (`vexaai/*`,
 `ghcr.io/*`, etc.), verify the tag is actually pullable BEFORE
