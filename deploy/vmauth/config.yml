@@ -34,15 +34,11 @@ users:
       # adequate. After diagnosis, re-add audience match.
     # Forward all paths to VictoriaLogs select endpoint.
     url_prefix: "http://victorialogs:9428/"
-    # Replace the developer's JWT with VL's expected basic-auth before
-    # forwarding upstream. The developer never sees VICTORIALOGS_AUTH_*
-    # creds; vmauth holds them only.
-    headers:
-      # Re-uses the EXISTING VICTORIALOGS_BASIC_AUTH_B64 from SOPS — same
-      # value Caddy already injects on the logs-ingest path. No new
-      # secrets. vmauth reads it from its own process env (set in compose),
-      # using vmauth's `%{ENV.VAR}` placeholder syntax.
-      - "Authorization: Basic %{ENV.VICTORIALOGS_BASIC_AUTH_B64}"
+    # NOTE — headers block temporarily removed while diagnosing why
+    # vmauth silently drops the JWT user. Will reach VL without
+    # upstream auth → VL returns 401 itself, but the test for vmauth
+    # accepting the JWT works (we'll see vmauth → VL → 401 instead of
+    # vmauth → 401).
 
 # Unauthorized requests (no matching user) get 401 by default.
 # No `unauthorized_user` block is set on purpose — log access requires
