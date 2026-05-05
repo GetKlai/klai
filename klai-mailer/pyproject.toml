@@ -13,7 +13,13 @@ dependencies = [
     "structlog>=25.0",
     "redis>=5.0",
     "email-validator>=2.0",
+    # SPEC-LOGGING-EXTRACT-001: shared setup_logging + RequestContextMiddleware
+    # + HealthCheckAccessFilter — klai-mailer is the canonical reference impl.
+    "klai-log-utils",
 ]
+
+[tool.uv.sources]
+klai-log-utils = { path = "../klai-libs/log-utils", editable = true }
 
 [project.optional-dependencies]
 dev = [
