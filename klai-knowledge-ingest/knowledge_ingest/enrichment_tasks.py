@@ -112,6 +112,8 @@ def _register_tasks(procrastinate_app: Any) -> None:
         extra_payload: dict,
         synthesis_depth: int,
         content_type: str = "unknown",
+        parents: list[dict] | None = None,
+        parent_index_per_child: list[int | None] | None = None,
     ) -> None:
         """Enrich chunks for a single-doc upload (high priority)."""
         await _enrich_document(
@@ -126,6 +128,8 @@ def _register_tasks(procrastinate_app: Any) -> None:
             extra_payload,
             synthesis_depth,
             content_type=content_type,
+            parents=parents,
+            parent_index_per_child=parent_index_per_child,
         )
 
     @procrastinate_app.task(
@@ -143,6 +147,8 @@ def _register_tasks(procrastinate_app: Any) -> None:
         extra_payload: dict,
         synthesis_depth: int,
         content_type: str = "unknown",
+        parents: list[dict] | None = None,
+        parent_index_per_child: list[int | None] | None = None,
     ) -> None:
         """Enrich chunks for crawl/import jobs (lower priority)."""
         await _enrich_document(
@@ -157,6 +163,8 @@ def _register_tasks(procrastinate_app: Any) -> None:
             extra_payload,
             synthesis_depth,
             content_type=content_type,
+            parents=parents,
+            parent_index_per_child=parent_index_per_child,
         )
 
     # Expose task functions via app attributes for use in ingest.py
@@ -228,6 +236,8 @@ async def _enrich_document(
     extra_payload: dict,
     synthesis_depth: int,
     content_type: str = "unknown",
+    parents: list[dict] | None = None,
+    parent_index_per_child: list[int | None] | None = None,
 ) -> None:
     """
     Core enrichment logic shared by both task variants.
@@ -374,6 +384,24 @@ async def _enrich_document(
         pool = await get_pool()
         extra_payload["visibility"] = await kb_config.get_kb_visibility(org_id, kb_slug, pool)
 
+        # SPEC-RAG-PARENT-CHILD-001: persist parents to Postgres NOW so the
+        # generated row ids can be threaded into each child's Qdrant payload.
+        # Skipped (parent_chunk_ids list of None) when this ingest path was
+        # called without parents — keeps backward-compat for any caller that
+        # hasn't been switched to chunk_markdown_with_parents yet.
+        parent_chunk_ids: list[int | None] = [None] * len(enriched_chunks)
+        if parents and parent_index_per_child:
+            from knowledge_ingest import pg_store
+
+            inserted_ids = await pg_store.insert_parent_chunks(
+                artifact_id=artifact_id,
+                org_id=org_id,
+                parents=parents,
+            )
+            for i, parent_idx in enumerate(parent_index_per_child):
+                if parent_idx is not None and 0 <= parent_idx < len(inserted_ids):
+                    parent_chunk_ids[i] = inserted_ids[parent_idx]
+
         # Step 4: Upsert enriched chunks to Qdrant
         t0 = time.monotonic()
         await qdrant_store.upsert_enriched_chunks(
@@ -390,6 +418,7 @@ async def _enrich_document(
             content_type=content_type,
             belief_time_start=extra_payload.get("belief_time_start") if extra_payload else None,
             belief_time_end=extra_payload.get("belief_time_end") if extra_payload else None,
+            parent_chunk_ids=parent_chunk_ids,
         )
         qdrant_ms = int((time.monotonic() - t0) * 1000)
 

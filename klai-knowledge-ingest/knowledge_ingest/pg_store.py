@@ -785,3 +785,77 @@ async def update_artifact_extra(artifact_id: str, extra_patch: dict) -> None:
         json.dumps(extra_patch),
         artifact_id,
     )
+
+
+# SPEC-RAG-PARENT-CHILD-001 — parent_chunks helpers.
+
+
+async def insert_parent_chunks(
+    artifact_id: str,
+    org_id: str,
+    parents: list[dict],
+) -> list[int]:
+    """Insert parent rows for an artifact and return their generated ids in order.
+
+    ``parents`` is a list of dicts with ``text``, ``token_count``, ``position``
+    keys (matching the ParentChunk dataclass fields the chunker produces).
+    Returns the inserted ids in the same order so callers can reference each
+    parent by index when assembling the children's Qdrant payloads.
+    """
+    if not parents:
+        return []
+    pool = await get_pool()
+    ids: list[int] = []
+    async with pool.acquire() as conn, conn.transaction():
+        for p in parents:
+            row_id = await conn.fetchval(
+                """
+                INSERT INTO knowledge.parent_chunks
+                    (artifact_id, org_id, text, token_count, position)
+                VALUES ($1, $2, $3, $4, $5)
+                RETURNING id
+                """,
+                artifact_id,
+                org_id,
+                p["text"],
+                int(p["token_count"]),
+                int(p["position"]),
+            )
+            ids.append(int(row_id))
+    return ids
+
+
+async def fetch_parent_chunks(parent_ids: list[int]) -> dict[int, str]:
+    """Return ``{parent_id: text}`` for the requested ids.
+
+    Missing ids are simply absent from the returned dict — callers (the
+    retrieval-api parent_lookup module) treat missing parents as a
+    fall-through to the child's own text per REQ-3.
+    """
+    if not parent_ids:
+        return {}
+    pool = await get_pool()
+    rows = await pool.fetch(
+        "SELECT id, text FROM knowledge.parent_chunks WHERE id = ANY($1::bigint[])",
+        list(parent_ids),
+    )
+    return {int(row["id"]): row["text"] for row in rows}
+
+
+async def delete_parent_chunks_for_artifact(artifact_id: str) -> int:
+    """Drop all parent rows for one artifact. Returns the row count.
+
+    The FK on parent_chunks.artifact_id is ON DELETE CASCADE, so this is
+    only needed when an artifact is being re-chunked but kept in place
+    (e.g. recontextualize / rechunk operator tasks).
+    """
+    pool = await get_pool()
+    result = await pool.execute(
+        "DELETE FROM knowledge.parent_chunks WHERE artifact_id = $1",
+        artifact_id,
+    )
+    # asyncpg's execute returns "DELETE N"
+    try:
+        return int(result.split()[-1])
+    except Exception:
+        return 0

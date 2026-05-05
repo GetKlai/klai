@@ -300,14 +300,30 @@ async def ingest_document(req: IngestRequest) -> dict:
             if profile_chunk_chars != settings.chunk_size
             else settings.chunk_size
         )
-        chunks = chunker.chunk_markdown(
+        # SPEC-RAG-PARENT-CHILD-001: produce small "child" chunks for
+        # embedding-and-matching plus large "parent" chunks for the LLM
+        # response context. Each child carries its parent's index so
+        # qdrant payload can map child → parent_chunk_id post-DB-insert.
+        # Legacy callers without parent support keep working because
+        # retrieval-api falls through to child text when parent_chunk_id
+        # is absent (REQ-3).
+        chunks, parents = chunker.chunk_markdown_with_parents(
             req.content,
-            chunk_size=chunk_size,
-            overlap=settings.chunk_overlap,
+            child_size=chunk_size,
+            child_overlap=settings.chunk_overlap,
         )
         if not chunks:
             return {"status": "skipped", "reason": "empty document", "chunks": 0}
         texts = [c.text for c in chunks]
+        parent_index_per_child: list[int | None] = [c.parent_index for c in chunks]
+        parents_serialised: list[dict] = [
+            {
+                "text": p.text,
+                "token_count": chunker._approx_token_count(p.text),
+                "position": p.position,
+            }
+            for p in parents
+        ]
 
     if not texts:
         return {"status": "skipped", "reason": "empty document", "chunks": 0}
@@ -525,6 +541,8 @@ async def ingest_document(req: IngestRequest) -> dict:
                 extra_payload=extra_payload,
                 synthesis_depth=kf["synthesis_depth"],
                 content_type=req.content_type,
+                parents=parents_serialised,
+                parent_index_per_child=parent_index_per_child,
             )
         except AlreadyEnqueued:
             logger.info(
