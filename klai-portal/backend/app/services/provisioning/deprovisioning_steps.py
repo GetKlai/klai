@@ -599,13 +599,17 @@ async def _finalize_postgres_delete(state: _DeprovisionState) -> None:
     await db.execute(text("DELETE FROM portal_templates WHERE org_id = :id"), {"id": state.org_id})
     # portal_users — last of the non-cascading children that other tables may FK to.
     await db.execute(text("DELETE FROM portal_users WHERE org_id = :id"), {"id": state.org_id})
-    # SPEC-INFRA-TENANT-DELETE-002 G1 — portal_join_requests carries org_id
-    # (no ondelete=CASCADE on the FK) and was previously left as orphaned PII
-    # after the parent org was hard-deleted. Add an explicit DELETE here to
-    # close the GDPR-purge gap. Idempotent: zero rows for a tenant with no
-    # in-flight join requests is a no-op. SPEC-AUTH-009 R2 will eventually
-    # drop portal_org_allowed_domains entirely (G2 is therefore moot post-AUTH-009),
-    # so we do NOT add it to this list — the table is on the deletion path.
+    # SPEC-INFRA-TENANT-DELETE-002 G1 — portal_join_requests has a single FK
+    # `portal_join_requests_org_id_fkey FOREIGN KEY (org_id) REFERENCES
+    # portal_orgs(id) ON DELETE SET NULL` (verified 2026-05-05 against prod).
+    # WITHOUT this explicit DELETE, the portal_orgs DELETE below would simply
+    # NULL the org_id on every join_request row — leaving the email/name PII
+    # in place as orphaned data. With this DELETE, the rows are gone before
+    # the parent. Ordering is independent of portal_users (no FK between them
+    # — verified). Idempotent: zero rows for a tenant with no in-flight join
+    # requests is a no-op. SPEC-AUTH-009 R2 will drop portal_org_allowed_domains
+    # entirely, so G2 is moot post-AUTH-009 and that table is intentionally
+    # NOT in this list.
     await db.execute(text("DELETE FROM portal_join_requests WHERE org_id = :id"), {"id": state.org_id})
 
     # 3. Hard-delete the org row — cascades the auto-CASCADE tables (connectors,

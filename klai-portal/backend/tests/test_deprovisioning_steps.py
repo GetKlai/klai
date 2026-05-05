@@ -805,9 +805,13 @@ class TestFinalizePostgresDelete:
         DELETE list extended — otherwise the production deprovision will fail
         on FK violation.
 
-        SPEC-INFRA-TENANT-DELETE-002 G1 added portal_join_requests after
-        portal_users (ordering matters: portal_users may be referenced by
-        join requests via inviting_user_id).
+        SPEC-INFRA-TENANT-DELETE-002 G1 added portal_join_requests just
+        before portal_orgs. Ordering relative to portal_users is independent
+        — verified 2026-05-05: portal_join_requests has exactly ONE FK,
+        `org_id → portal_orgs(id) ON DELETE SET NULL`, and no FK to
+        portal_users. The DELETE must run BEFORE portal_orgs (otherwise
+        SET NULL leaves orphaned PII rows); placement after portal_users
+        is a docstring-readability choice, not a correctness requirement.
         """
         state = _make_state(org_id=42, slug="acme")
 
