@@ -171,7 +171,29 @@ async def run_evaluation(suite: str, variant: str | None = None) -> dict:
 
 
 def register_eval_tasks(procrastinate_app: Any) -> None:
-    """Register the nightly RAGAS evaluation task on the Procrastinate app."""
+    """Register the nightly RAGAS evaluation task on the Procrastinate app.
+
+    Two registrations per suite:
+
+    1. ``evaluate_retrieval_quality_nightly`` — the regular task. Operators
+       can defer it ad-hoc (or it gets called by the periodic wrapper below).
+    2. ``evaluate_retrieval_quality_periodic_<suite>`` — a thin periodic
+       wrapper per suite, scheduled via Procrastinate's ``@app.periodic``
+       decorator at 02:00 UTC daily. The PeriodicDeferrer lives inside the
+       Procrastinate worker and fires the task on its cron schedule. No
+       host-level cron job needed; ops just runs the worker as it already
+       does.
+
+    Why per-suite wrappers: ``@app.periodic`` cannot be parameterised at
+    schedule time — the decorated task must take only the auto-injected
+    ``timestamp`` arg. So we spell out one periodic registration per suite
+    name, each calling ``run_evaluation(suite=...)`` internally.
+
+    Cron schedule: ``"0 2 * * *"`` — 02:00 UTC daily. Picked to land after
+    most timezone-spread chat traffic settles and before European business
+    hours start; matches the placeholder in the runbook + Grafana alert
+    description.
+    """
     import procrastinate
 
     @procrastinate_app.task(
@@ -183,3 +205,47 @@ def register_eval_tasks(procrastinate_app: Any) -> None:
         return await run_evaluation(suite=suite)
 
     procrastinate_app.evaluate_retrieval_quality_nightly = evaluate_retrieval_quality_nightly  # type: ignore[attr-defined]
+
+    # Periodic wrappers — one per suite. PeriodicDeferrer in the worker
+    # picks them up and defers ``evaluate_retrieval_quality_nightly``
+    # automatically at 02:00 UTC every day.
+    #
+    # Each suite needs its own task with a unique ``name=`` because
+    # Procrastinate registers tasks under their function name by default —
+    # two ``_periodic_eval`` definitions in a for-loop would collide
+    # (TaskAlreadyRegistered). Explicit names also keep the worker logs
+    # self-explanatory.
+    def _make_periodic_wrapper(suite_name: str):
+        """Build a periodic-task wrapper bound to one suite.
+
+        Closure captures ``suite_name`` cleanly via the function argument —
+        avoids the late-binding gotcha of closing over a loop variable.
+        """
+
+        @procrastinate_app.periodic(
+            cron="0 2 * * *",
+            periodic_id=f"rag-eval-{suite_name}",
+        )
+        @procrastinate_app.task(
+            name=f"knowledge_ingest.eval.ragas_runner.evaluate_retrieval_quality_periodic_{suite_name}",
+            queue=queues.RAG_EVAL,
+            retry=procrastinate.RetryStrategy(max_attempts=1),
+            # queueing_lock at the periodic task level mirrors the existing
+            # ad-hoc lock so an in-flight nightly + ad-hoc trigger can't
+            # double-run the same suite.
+            queueing_lock=f"rag-eval-{suite_name}",
+        )
+        async def _periodic_eval(timestamp: int) -> dict:
+            """PeriodicDeferrer-managed wrapper.
+
+            ``timestamp`` is the Unix epoch when the deferrer fired (auto-
+            injected by Procrastinate's periodic mechanism). Logged but
+            not used for the run itself.
+            """
+            logger.info("rag_eval_periodic_fired", suite=suite_name, deferrer_ts=timestamp)
+            return await run_evaluation(suite=suite_name)
+
+        return _periodic_eval
+
+    for suite in ("chat", "knowledge_org"):
+        _make_periodic_wrapper(suite)
