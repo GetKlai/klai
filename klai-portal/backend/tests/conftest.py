@@ -46,6 +46,23 @@ os.environ.setdefault("VEXA_WEBHOOK_SECRET", "test-vexa-webhook-secret")  # SEC-
 os.environ.setdefault("MONEYBIRD_WEBHOOK_TOKEN", "test-moneybird-webhook-token")  # SPEC-SEC-WEBHOOK-001 REQ-3
 os.environ.setdefault("ZITADEL_IDP_GOOGLE_ID", "test-google-idp-id")  # SPEC-SEC-AUTH-COVERAGE-001 REQ-2.6
 os.environ.setdefault("ZITADEL_IDP_MICROSOFT_ID", "test-microsoft-idp-id")  # SPEC-SEC-AUTH-COVERAGE-001 REQ-2.6
+os.environ.setdefault("INTERNAL_SECRET", "test-internal-secret-x" * 2)  # SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-1
+os.environ.setdefault(
+    "KLAI_CONNECTOR_SECRET", "test-klai-connector-secret" * 2
+)  # SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-2
+os.environ.setdefault(
+    "KNOWLEDGE_INGEST_SECRET", "test-knowledge-ingest-secret" * 2
+)  # SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-3
+os.environ.setdefault(
+    "RETRIEVAL_API_INTERNAL_SECRET", "test-retrieval-secret" * 2
+)  # SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-4
+os.environ.setdefault("DOCS_INTERNAL_SECRET", "test-docs-internal-secret" * 2)  # SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-5
+os.environ.setdefault(
+    "ZITADEL_PORTAL_CLIENT_SECRET", "test-zitadel-portal-client-secret"
+)  # SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-6
+os.environ.setdefault(
+    "BFF_SESSION_KEY", "R1c1-s96uO9Yz7k1E0kN6qz52gzd9PwNbAeZaks_PIc="
+)  # SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-10
 
 # ---------------------------------------------------------------------------
 # Auto-discoverable fixtures (SPEC-SEC-AUTH-COVERAGE-001 REQ-5.6)
