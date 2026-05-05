@@ -230,6 +230,7 @@
   "admin_users_error_invite_generic": "Uitnodiging mislukt.",
   "admin_users_edit": "Bewerken",
   "admin_users_edit_heading": "Gebruiker bewerken",
+  "admin_users_edit_subtitle": "Profielen bepalen welke tools de gebruiker mag gebruiken. Groepen bepalen welke kennisbanken de gebruiker daarbinnen mag gebruiken.",
   "admin_users_edit_submit": "Opslaan",
   "admin_users_edit_submit_loading": "Opslaan...",
   "admin_users_error_edit": "Bijwerken mislukt ({status})",

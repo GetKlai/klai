@@ -230,6 +230,7 @@
   "admin_users_error_invite_generic": "Invitation failed.",
   "admin_users_edit": "Edit",
   "admin_users_edit_heading": "Edit user",
+  "admin_users_edit_subtitle": "Profiles control what tools the user can use. Groups control which knowledge bases the user can access within those tools.",
   "admin_users_edit_submit": "Save",
   "admin_users_edit_submit_loading": "Saving...",
   "admin_users_error_edit": "Update failed ({status})",
