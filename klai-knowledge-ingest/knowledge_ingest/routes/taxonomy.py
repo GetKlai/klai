@@ -78,20 +78,6 @@ class BootstrapResponse(BaseModel):
     proposals_submitted: int
 
 
-def _verify_internal_token(request: Request) -> None:
-    """Verify X-Internal-Token header.
-
-    SEC-014: fail-closed. Empty/missing PORTAL_INTERNAL_TOKEN is caught at
-    startup by the pydantic validator in knowledge_ingest.config — here the
-    only failure mode is a wrong or absent header, which always returns 401.
-    """
-    import hmac
-
-    token = request.headers.get("x-internal-token", "")
-    if not token or not hmac.compare_digest(token, settings.portal_internal_token):
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-
 # ---------------------------------------------------------------------------
 # Procrastinate job status mapping
 # ---------------------------------------------------------------------------
@@ -656,8 +642,13 @@ async def taxonomy_auto_categorise(
 
     Called when a taxonomy proposal is approved in the portal.
     No LLM calls -- pure cosine similarity against provided centroid (SPEC-KB-024 R4).
+
+    Auth: enforced by InternalSecretMiddleware (X-Internal-Secret) — the
+    legacy per-route X-Internal-Token check was removed in
+    SPEC-CODEBASE-AUDIT-001 cluster G TP-1 to eliminate header drift across
+    ingest routes. portal_internal_token remains the outbound credential
+    used by clustering_tasks/portal_client to call portal-api.
     """
-    _verify_internal_token(request)
     categorised = await _auto_categorise_impl(
         org_id=req.org_id,
         kb_slug=req.kb_slug,
