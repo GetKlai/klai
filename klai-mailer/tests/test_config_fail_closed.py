@@ -59,6 +59,25 @@ def test_empty_internal_secret_refuses_startup(settings_env, monkeypatch, value)
     assert "Missing required: INTERNAL_SECRET" in str(exc_info.value)
 
 
+@pytest.mark.parametrize("value", ["", "   ", "\t\n "], ids=["empty", "spaces", "whitespace"])
+def test_empty_portal_internal_secret_refuses_startup(settings_env, monkeypatch, value):
+    """SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-13: empty / whitespace
+    PORTAL_INTERNAL_SECRET raises ValidationError.
+
+    Closes empty-secret-fail-open on the outbound mailer→portal trust
+    boundary. With an empty value, app/portal_client.py would send
+    ``Authorization: Bearer `` (literal trailing space) on every locale
+    lookup call.
+    """
+    monkeypatch.setenv("PORTAL_INTERNAL_SECRET", value)
+    sys.modules.pop("app.config", None)
+    with pytest.raises(ValidationError) as exc_info:
+        importlib.import_module("app.config")
+    msg = str(exc_info.value)
+    assert "PORTAL_INTERNAL_SECRET" in msg
+    assert "SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-13" in msg
+
+
 def test_both_empty_raises(settings_env, monkeypatch):
     """Both secrets empty → import fails with at least one missing error."""
     monkeypatch.setenv("WEBHOOK_SECRET", "")
