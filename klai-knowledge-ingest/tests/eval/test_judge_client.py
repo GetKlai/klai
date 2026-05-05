@@ -451,6 +451,54 @@ def test_build_ragas_embeddings_returns_canonical_modern_provider() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Faithfulness max_tokens regression guard
+# ---------------------------------------------------------------------------
+
+
+def test_build_ragas_llm_threads_max_tokens_kwarg() -> None:
+    """Regression: RAGAS' default max_tokens is 1024 — too small for the
+    Faithfulness NLI verdicts prompt (multi-statement JSON), producing::
+
+        The output is incomplete due to a max_tokens length limit.
+
+    PR G adds an opt-in ``max_tokens`` kwarg on ``_build_ragas_llm`` and
+    threads ``_FAITHFULNESS_MAX_TOKENS`` (8192) into the heavy_llm path.
+    This test locks both contracts:
+      1. The kwarg, when supplied, lands in the LLM's model_args dict.
+      2. The light_llm path (no kwarg) keeps RAGAS' default — we don't
+         want to inflate token usage for context_precision/recall/answer_rel
+         where the JSON output is small.
+    """
+    from knowledge_ingest.eval.judge_client import (
+        _FAITHFULNESS_MAX_TOKENS,
+        _build_ragas_llm,
+    )
+
+    settings = _make_settings()
+
+    with patch("knowledge_ingest.eval.judge_client.settings", settings):
+        heavy = _build_ragas_llm(model="klai-medium", max_tokens=_FAITHFULNESS_MAX_TOKENS)
+        light = _build_ragas_llm()
+
+    # Heavy LLM carries the explicit max_tokens override.
+    assert heavy.model_args.get("max_tokens") == _FAITHFULNESS_MAX_TOKENS, (
+        f"heavy_llm max_tokens should be {_FAITHFULNESS_MAX_TOKENS}, "
+        f"got {heavy.model_args.get('max_tokens')}"
+    )
+    # 8192 is well above RAGAS' default of 1024 — guard against an
+    # accidental down-rev to a value < 4096 that would re-trigger
+    # the truncation regression on multi-statement Faithfulness prompts.
+    assert _FAITHFULNESS_MAX_TOKENS >= 4096, (
+        "Faithfulness max_tokens must stay >= 4096 to fit the NLI verdicts JSON"
+    )
+
+    # Light LLM keeps RAGAS' default (no override).
+    assert light.model_args.get("max_tokens") == 1024, (
+        "Light LLM should keep RAGAS default max_tokens=1024 — small JSON output"
+    )
+
+
+# ---------------------------------------------------------------------------
 # AsyncMock import sanity.
 # ---------------------------------------------------------------------------
 
