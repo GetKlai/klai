@@ -630,10 +630,39 @@ class KlaiKnowledgeHook(CustomLogger):
             data["messages"] = messages
             return data
 
-        # Determine retrieval scope, KB slug filter, and answer mode
-        scope = "both" if feature.get("kb_personal_enabled", True) else "org"
-        kb_slugs = feature.get("kb_slugs_filter")  # None = all org KBs
+        # Determine retrieval scope, KB slug filter, and answer mode.
+        #
+        # `kb_slugs_filter` tri-state contract (matches portal-api +
+        # ChatConfigBar dropdown):
+        #   None   = "all org KBs" (default)
+        #   []     = "no org KBs"  (user turned every collection off)
+        #   [...]  = explicit subset
+        #
+        # Combined with `kb_personal_enabled`, this gives 6 reachable
+        # states. The historic `if kb_slugs:` branch treated `[]` and
+        # `None` identically, so a user who turned EVERY org collection
+        # off (and personal too) silently still got every org chunk
+        # injected — exact opposite of intent.
+        kb_personal = feature.get("kb_personal_enabled", True)
+        kb_slugs = feature.get("kb_slugs_filter")
         kb_narrow = feature.get("kb_narrow", False)
+
+        # User explicitly opted out of every scope → skip retrieval. Templates
+        # may still apply (REQ-TEMPLATES-HOOK-U2 fail-open).
+        if not kb_personal and kb_slugs == []:
+            _prepend_system_prefix(messages, templates_block)
+            data["messages"] = messages
+            return data
+
+        # Translate (kb_personal, kb_slugs) → retrieval-api `scope` + optional
+        # `kb_slugs` filter.
+        if kb_personal and kb_slugs == []:
+            # Personal-only: no org KBs at all.
+            scope = "personal"
+            kb_slugs_for_request: list[str] | None = None
+        else:
+            scope = "both" if kb_personal else "org"
+            kb_slugs_for_request = kb_slugs if kb_slugs else None
 
         conversation_history = _build_conversation_history(messages)
 
@@ -645,8 +674,8 @@ class KlaiKnowledgeHook(CustomLogger):
             "top_k": RETRIEVE_TOP_K,
             "conversation_history": conversation_history,
         }
-        if kb_slugs:
-            retrieve_body["kb_slugs"] = kb_slugs
+        if kb_slugs_for_request:
+            retrieve_body["kb_slugs"] = kb_slugs_for_request
 
         # SPEC-SEC-SERVICE-AUTH-001 Phase C-1: prefer JWT auth, fall back to
         # legacy X-Internal-Secret on either mint failure OR receiver-side

@@ -367,6 +367,131 @@ class TestKlaiKnowledgeHookDualAuth:
             assert "Authorization" not in headers
 
 
+# ─── kb_slugs_filter tri-state tests (2026-05-05 follow-up) ─────────────────
+
+
+class TestKlaiKnowledgeHookSlugsTriState:
+    """Pin the tri-state contract for ``kb_slugs_filter``:
+
+    * ``None`` → all org KBs (no filter sent)
+    * ``[]``   → user explicitly turned every org collection off
+    * ``[..]`` → explicit subset
+
+    The hook used to treat ``[]`` and ``None`` as identical via
+    ``if kb_slugs:``, so a user who turned every collection off (and
+    personal too) silently still got every org chunk injected — the
+    exact opposite of intent. See pitfalls →
+    ``kb-slugs-filter-empty-list-collapse``.
+    """
+
+    @pytest.mark.asyncio
+    async def test_empty_slugs_and_personal_off_skips_retrieval(self, monkeypatch):
+        """[] + personal=False → hook short-circuits, no /retrieve call."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(
+            feature={
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": False,
+                "kb_slugs_filter": [],
+                "kb_narrow": False,
+                "version": 0,
+            }
+        )
+        data = {"user": "u1" * 12, "messages": [
+            {"role": "user", "content": "What about that thing?"}
+        ]}
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+
+            # No /retrieve call — user opted out of every scope.
+            assert mc.post.call_count == 0, (
+                "kb_personal=False + kb_slugs=[] MUST skip retrieval entirely. "
+                "If a /retrieve call goes out the user gets back chunks they "
+                "explicitly told us not to fetch."
+            )
+
+    @pytest.mark.asyncio
+    async def test_empty_slugs_and_personal_on_uses_personal_scope(self, monkeypatch):
+        """[] + personal=True → scope=personal, no kb_slugs filter."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(
+            feature={
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": [],
+                "kb_narrow": False,
+                "version": 0,
+            }
+        )
+        data = {"user": "u1" * 12, "messages": [
+            {"role": "user", "content": "What about that thing?"}
+        ]}
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+
+            assert mc.post.call_count == 1
+            body = mc.post.call_args.kwargs["json"]
+            assert body["scope"] == "personal", (
+                f"Expected scope=personal when only personal is enabled, got {body['scope']!r}"
+            )
+            assert "kb_slugs" not in body, (
+                "kb_slugs filter MUST NOT be sent in personal-only scope."
+            )
+
+    @pytest.mark.asyncio
+    async def test_null_slugs_keeps_both_scope_no_filter(self, monkeypatch):
+        """None + personal=True → scope=both, no filter (default behaviour)."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(
+            feature={
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": None,
+                "kb_narrow": False,
+                "version": 0,
+            }
+        )
+        data = {"user": "u1" * 12, "messages": [
+            {"role": "user", "content": "What about that thing?"}
+        ]}
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+
+            body = mc.post.call_args.kwargs["json"]
+            assert body["scope"] == "both"
+            assert "kb_slugs" not in body
+
+
 # ─── 2026-05-05 fail-loud regression tests ──────────────────────────────────
 
 
