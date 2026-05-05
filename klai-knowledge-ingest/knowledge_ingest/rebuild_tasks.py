@@ -122,6 +122,75 @@ async def rebuild_kb_inline(org_id: str, kb_slug: str) -> dict:
     return await _rebuild_kb_core(org_id=org_id, kb_slug=kb_slug)
 
 
+async def _reconstruct_document_text(
+    org_id: str,
+    kb_slug: str,
+    path: str,
+) -> str | None:
+    """Reconstruct a document body from its existing Qdrant chunks.
+
+    Used by the rebuild path when the legacy artifact row has no
+    ``document_text`` on its extra JSONB. We pull every chunk for
+    ``(org_id, kb_slug, path)`` from Qdrant in chunk_index order, then
+    concat the (non-enriched) text values with double-newline separators.
+
+    The reconstruction is lossy — markdown frontmatter is dropped at
+    ingest time and chunk overlap leaves duplication on boundaries.
+    Good enough to feed the summary generator + new chunker; not the
+    same as a fresh re-fetch from the source connector.
+
+    Returns None when no chunks are found.
+    """
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+    from knowledge_ingest import qdrant_store
+
+    client = qdrant_store.get_client()
+    try:
+        scroll_result, _ = await client.scroll(
+            collection_name=qdrant_store.COLLECTION,
+            scroll_filter=Filter(
+                must=[
+                    FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+                    FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
+                    FieldCondition(key="path", match=MatchValue(value=path)),
+                ]
+            ),
+            limit=512,
+            with_payload=True,
+            with_vectors=False,
+        )
+    except Exception as exc:
+        logger.warning(
+            "rebuild_qdrant_scroll_failed",
+            org_id=org_id,
+            kb_slug=kb_slug,
+            path=path,
+            error=str(exc)[:200],
+        )
+        return None
+
+    if not scroll_result:
+        return None
+
+    # Sort by chunk_index when present; fall back to insertion order.
+    def _idx(point):
+        try:
+            return int(point.payload.get("chunk_index", 0))
+        except Exception:
+            return 0
+
+    sorted_points = sorted(scroll_result, key=_idx)
+    parts: list[str] = []
+    for p in sorted_points:
+        text = p.payload.get("text") or ""
+        if text:
+            parts.append(text)
+    if not parts:
+        return None
+    return "\n\n".join(parts)
+
+
 async def _list_active_artifacts(org_id: str, kb_slug: str) -> list[dict]:
     """Return all currently-active artifact rows for a KB.
 
@@ -172,14 +241,35 @@ async def _rebuild_artifact(
 
             document_text: str | None = extra.get("document_text")
             if not document_text:
+                # Fallback: reconstruct document_text from existing Qdrant chunks.
+                # Concat the original chunk text in chunk_index order. Loses
+                # frontmatter and exact whitespace but is enough material for
+                # the chunker + summary-generator to produce a usable rebuild.
+                # This is the v1 path for legacy artifacts ingested before we
+                # started persisting document_text on extra; new ingests can
+                # skip the reconstruction once the storage gap is closed.
+                document_text = await _reconstruct_document_text(
+                    org_id=org_id,
+                    kb_slug=kb_slug,
+                    path=path,
+                )
+                if not document_text:
+                    logger.info(
+                        "rebuild_skip_no_text",
+                        org_id=org_id,
+                        kb_slug=kb_slug,
+                        artifact_id=artifact_id,
+                        path=path,
+                    )
+                    return "skipped"
                 logger.info(
-                    "rebuild_skip_no_text",
+                    "rebuild_text_reconstructed_from_qdrant",
                     org_id=org_id,
                     kb_slug=kb_slug,
                     artifact_id=artifact_id,
                     path=path,
+                    chars=len(document_text),
                 )
-                return "skipped"
 
             content_type: str = artifact.get("content_type") or "unknown"
             synthesis_depth: int = artifact.get("synthesis_depth") or 0
