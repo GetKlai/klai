@@ -23,7 +23,7 @@ on:
   workflow_run:
     workflows:
       - 'Build and push portal-api'
-      - 'Build and push portal-frontend'
+      - 'Build and deploy portal-frontend'
       - 'Build and push klai-knowledge-mcp'
       - 'Build and push knowledge-ingest'
       - 'Build and push retrieval-api'
