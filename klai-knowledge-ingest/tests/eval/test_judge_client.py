@@ -1,17 +1,18 @@
-"""
-Tests for knowledge_ingest.eval.judge_client.
+"""Tests for ``knowledge_ingest.eval.judge_client``.
 
-RED phase: tests fail until judge_client.py exists.
+Covers the RAGAS 0.4.3 ``ragas.metrics.collections`` per-metric ``ascore()``
+API used by the evaluation harness:
 
-Coverage:
-  - generate_answer: 200 response returns a non-empty string.
-  - generate_answer: 500 response returns None (no raise).
-  - evaluate_query: mocked ragas.evaluate returns dict with all 4 metric keys.
-  - evaluate_query: single metric failure returns None for that metric, others survive.
+  - ``generate_answer``: 200 → string, non-200 → None.
+  - ``evaluate_query``: each metric class is constructed and its ``ascore``
+    coroutine is awaited; success path returns floats, per-metric failure
+    returns None for that metric while the others survive.
+  - ``_safe_ascore``: never raises; converts None / missing ``.value`` to None.
 """
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -23,8 +24,6 @@ import pytest
 
 
 def _make_settings(**overrides):
-    from unittest.mock import MagicMock
-
     s = MagicMock()
     s.litellm_url = overrides.get("litellm_url", "http://litellm:4000")
     s.litellm_api_key = overrides.get("litellm_api_key", "test-key")
@@ -64,14 +63,85 @@ _CHAT_200_BODY = {
 }
 
 
+class _CannedMetric:
+    """Stand-in for a ``ragas.metrics.collections`` metric class.
+
+    Records all ``ascore(...)`` calls and returns either a canned
+    ``MetricResult``-shaped object (with ``.value``) or raises a configured
+    exception, per ``evaluate_query``'s parallel-gather contract.
+    """
+
+    def __init__(self, value: float | None, *, raises: Exception | None = None):
+        self.value = value
+        self.raises = raises
+        self.calls: list[dict] = []
+
+    def __call__(self, **kwargs):
+        # The metric class itself is used as a constructor; tests don't care
+        # about constructor kwargs (llm/embeddings) — they just want the same
+        # instance back so they can inspect ``calls``.
+        return self
+
+    async def ascore(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.raises is not None:
+            raise self.raises
+        return SimpleNamespace(value=self.value)
+
+
+@pytest.fixture
+def _patch_module_deps(monkeypatch):
+    """Patch the heavy RAGAS dependencies to no-op stubs.
+
+    ``evaluate_query`` builds a RAGAS LLM + embeddings up-front; for tests
+    we don't want to construct real OpenAI clients. The metric classes
+    themselves are patched per-test by injecting a fake
+    ``ragas.metrics.collections`` module so we can assert ``ascore`` was
+    awaited correctly.
+    """
+    monkeypatch.setattr(
+        "knowledge_ingest.eval.judge_client._build_ragas_llm",
+        MagicMock(return_value=MagicMock()),
+    )
+    monkeypatch.setattr(
+        "knowledge_ingest.eval.judge_client._build_ragas_embeddings",
+        MagicMock(return_value=MagicMock()),
+    )
+    yield
+
+
+def _install_fake_collections(monkeypatch, **metric_overrides):
+    """Replace ``ragas.metrics.collections`` with a stub exposing the 4 metrics.
+
+    Pass ``ContextPrecision=_CannedMetric(0.85)`` etc to control the result
+    of each metric's ``ascore`` call.
+    """
+    import sys
+    import types
+
+    defaults = {
+        "ContextPrecision": _CannedMetric(0.85),
+        "ContextRecall": _CannedMetric(0.90),
+        "Faithfulness": _CannedMetric(0.88),
+        "AnswerRelevancy": _CannedMetric(0.92),
+    }
+    defaults.update(metric_overrides)
+
+    fake = types.ModuleType("ragas.metrics.collections")
+    for name, metric in defaults.items():
+        setattr(fake, name, metric)
+
+    monkeypatch.setitem(sys.modules, "ragas.metrics.collections", fake)
+    return defaults
+
+
 # ---------------------------------------------------------------------------
-# Test 1 — generate_answer success returns string
+# generate_answer
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_generate_answer_returns_string() -> None:
-    """200 chat completion: generate_answer returns a non-empty string."""
     transport = _MockTransport(status_code=200, json_body=_CHAT_200_BODY)
 
     from knowledge_ingest.eval.judge_client import generate_answer
@@ -87,18 +157,11 @@ async def test_generate_answer_returns_string() -> None:
         )
 
     assert isinstance(result, str)
-    assert len(result) > 0
     assert "Bubble" in result
-
-
-# ---------------------------------------------------------------------------
-# Test 2 — generate_answer failure returns None
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_generate_answer_failure_returns_none() -> None:
-    """HTTP 500 from judge: generate_answer returns None (no raise)."""
     transport = _MockTransport(
         status_code=500,
         json_body={"detail": "Internal server error"},
@@ -120,39 +183,21 @@ async def test_generate_answer_failure_returns_none() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 3 — evaluate_query returns metrics dict with all 4 keys
+# evaluate_query — happy path (4 metrics in parallel)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_evaluate_query_returns_metrics_dict() -> None:
-    """evaluate_query returns a dict with all 4 metric keys when RAGAS succeeds."""
-
-    # Mock the RAGAS evaluate call at the module level where it is used
-    canned_scores = [
-        {
-            "context_precision": 0.85,
-            "context_recall": 0.90,
-            "faithfulness": 0.88,
-            "answer_relevancy": 0.92,
-        }
-    ]
-    mock_result = MagicMock()
-    mock_result.scores = canned_scores
+async def test_evaluate_query_returns_metrics_dict(monkeypatch, _patch_module_deps) -> None:
+    """All four metrics succeed → dict has all 4 floats."""
+    metrics = _install_fake_collections(monkeypatch)
 
     from knowledge_ingest.eval.judge_client import evaluate_query
 
     settings = _make_settings()
     chunks = [{"id": "c1", "text": "Context text"}]
 
-    with (
-        patch("knowledge_ingest.eval.judge_client.settings", settings),
-        patch(
-            "knowledge_ingest.eval.judge_client._run_ragas_evaluate",
-            new_callable=AsyncMock,
-            return_value=mock_result,
-        ),
-    ):
+    with patch("knowledge_ingest.eval.judge_client.settings", settings):
         result = await evaluate_query(
             query="Hoe troubleshoot ik Bubble?",
             chunks=chunks,
@@ -160,48 +205,63 @@ async def test_evaluate_query_returns_metrics_dict() -> None:
             expected_topics=["bubble", "browser-plugin"],
         )
 
-    assert "context_precision" in result
-    assert "context_recall" in result
-    assert "faithfulness" in result
-    assert "answer_relevance" in result
     assert result["context_precision"] == pytest.approx(0.85)
+    assert result["context_recall"] == pytest.approx(0.90)
     assert result["faithfulness"] == pytest.approx(0.88)
+    assert result["answer_relevance"] == pytest.approx(0.92)
+
+    # Each metric's ``ascore`` was called exactly once with the contract-shaped
+    # kwargs.
+    assert metrics["ContextPrecision"].calls == [
+        {
+            "user_input": "Hoe troubleshoot ik Bubble?",
+            "reference": "bubble, browser-plugin",
+            "retrieved_contexts": ["Context text"],
+        }
+    ]
+    assert metrics["ContextRecall"].calls == [
+        {
+            "user_input": "Hoe troubleshoot ik Bubble?",
+            "retrieved_contexts": ["Context text"],
+            "reference": "bubble, browser-plugin",
+        }
+    ]
+    assert metrics["Faithfulness"].calls == [
+        {
+            "user_input": "Hoe troubleshoot ik Bubble?",
+            "response": "Bubble is een plugin.",
+            "retrieved_contexts": ["Context text"],
+        }
+    ]
+    # AnswerRelevancy contract is just (user_input, response) — embeddings
+    # are configured at construction.
+    assert metrics["AnswerRelevancy"].calls == [
+        {
+            "user_input": "Hoe troubleshoot ik Bubble?",
+            "response": "Bubble is een plugin.",
+        }
+    ]
 
 
 # ---------------------------------------------------------------------------
-# Test 4 — partial metric failure: failed metric is None, others survive
+# evaluate_query — partial failure (one metric raises)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_evaluate_query_partial_failure() -> None:
-    """When RAGAS raises for one metric, that metric is None; others are preserved."""
-
-    # Simulate RAGAS returning scores where faithfulness is missing (None-valued)
-    canned_scores = [
-        {
-            "context_precision": 0.75,
-            "context_recall": 0.80,
-            # faithfulness absent — simulates per-metric failure
-            "answer_relevancy": 0.70,
-        }
-    ]
-    mock_result = MagicMock()
-    mock_result.scores = canned_scores
+async def test_evaluate_query_partial_failure(monkeypatch, _patch_module_deps) -> None:
+    """One metric raises → None for that metric; others survive (REQ-3)."""
+    _install_fake_collections(
+        monkeypatch,
+        Faithfulness=_CannedMetric(None, raises=ValueError("malformed JSON")),
+    )
 
     from knowledge_ingest.eval.judge_client import evaluate_query
 
     settings = _make_settings()
     chunks = [{"id": "c1", "text": "Context text"}]
 
-    with (
-        patch("knowledge_ingest.eval.judge_client.settings", settings),
-        patch(
-            "knowledge_ingest.eval.judge_client._run_ragas_evaluate",
-            new_callable=AsyncMock,
-            return_value=mock_result,
-        ),
-    ):
+    with patch("knowledge_ingest.eval.judge_client.settings", settings):
         result = await evaluate_query(
             query="Test query",
             chunks=chunks,
@@ -209,9 +269,153 @@ async def test_evaluate_query_partial_failure() -> None:
             expected_topics=["test"],
         )
 
-    # faithfulness missing from scores => None
     assert result["faithfulness"] is None
-    # Others present
-    assert result["context_precision"] == pytest.approx(0.75)
-    assert result["context_recall"] == pytest.approx(0.80)
-    assert result["answer_relevance"] == pytest.approx(0.70)
+    assert result["context_precision"] == pytest.approx(0.85)
+    assert result["context_recall"] == pytest.approx(0.90)
+    assert result["answer_relevance"] == pytest.approx(0.92)
+
+
+# ---------------------------------------------------------------------------
+# evaluate_query — empty chunks short-circuits to all-None
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_evaluate_query_no_chunks_returns_all_none() -> None:
+    """No chunks → fail-fast with all metrics None (no LLM call attempted)."""
+    from knowledge_ingest.eval.judge_client import evaluate_query
+
+    settings = _make_settings()
+
+    with patch("knowledge_ingest.eval.judge_client.settings", settings):
+        result = await evaluate_query(
+            query="anything",
+            chunks=[],
+            answer="anything",
+            expected_topics=["x"],
+        )
+
+    assert result == {
+        "context_precision": None,
+        "context_recall": None,
+        "faithfulness": None,
+        "answer_relevance": None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# evaluate_query — fail-open on construction error
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_evaluate_query_fail_open_on_setup_error(monkeypatch) -> None:
+    """If RAGAS LLM construction blows up, return all-None instead of raising."""
+    monkeypatch.setattr(
+        "knowledge_ingest.eval.judge_client._build_ragas_llm",
+        MagicMock(side_effect=RuntimeError("LiteLLM is down")),
+    )
+
+    from knowledge_ingest.eval.judge_client import evaluate_query
+
+    settings = _make_settings()
+    chunks = [{"id": "c1", "text": "ctx"}]
+
+    with patch("knowledge_ingest.eval.judge_client.settings", settings):
+        result = await evaluate_query(query="q", chunks=chunks, answer="a", expected_topics=["t"])
+
+    assert result == {
+        "context_precision": None,
+        "context_recall": None,
+        "faithfulness": None,
+        "answer_relevance": None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# _safe_ascore unit
+# ---------------------------------------------------------------------------
+
+
+class TestSafeAscore:
+    @pytest.mark.asyncio
+    async def test_returns_value_on_success(self) -> None:
+        from knowledge_ingest.eval.judge_client import _safe_ascore
+
+        async def _coro():
+            return SimpleNamespace(value=0.42)
+
+        result = await _safe_ascore("metric_x", _coro())
+        assert result == pytest.approx(0.42)
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_exception(self) -> None:
+        from knowledge_ingest.eval.judge_client import _safe_ascore
+
+        async def _coro():
+            raise RuntimeError("boom")
+
+        result = await _safe_ascore("metric_y", _coro())
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_value_missing(self) -> None:
+        from knowledge_ingest.eval.judge_client import _safe_ascore
+
+        async def _coro():
+            return SimpleNamespace(value=None)
+
+        result = await _safe_ascore("metric_z", _coro())
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_value_non_numeric(self) -> None:
+        from knowledge_ingest.eval.judge_client import _safe_ascore
+
+        async def _coro():
+            return SimpleNamespace(value="not-a-float")
+
+        result = await _safe_ascore("metric_q", _coro())
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Smoke: each metric runs exactly once via asyncio.gather (regression guard).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_metrics_run_in_parallel(monkeypatch, _patch_module_deps) -> None:
+    """All 4 metrics' ascore coroutines must each be awaited exactly once."""
+    metrics = _install_fake_collections(monkeypatch)
+
+    from knowledge_ingest.eval.judge_client import evaluate_query
+
+    settings = _make_settings()
+
+    with patch("knowledge_ingest.eval.judge_client.settings", settings):
+        await evaluate_query(
+            query="q",
+            chunks=[{"id": "c1", "text": "ctx"}],
+            answer="a",
+            expected_topics=["t"],
+        )
+
+    for name in (
+        "ContextPrecision",
+        "ContextRecall",
+        "Faithfulness",
+        "AnswerRelevancy",
+    ):
+        assert len(metrics[name].calls) == 1, f"{name} ascore was not called exactly once"
+
+
+# ---------------------------------------------------------------------------
+# AsyncMock import sanity.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_async_mock_smoke() -> None:
+    m = AsyncMock(return_value=1)
+    assert await m() == 1
