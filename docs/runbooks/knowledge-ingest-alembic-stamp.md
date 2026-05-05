@@ -36,8 +36,16 @@ no-op until a real new migration is added.
 ## Command
 
 ```bash
-ssh core-01 "docker exec klai-core-knowledge-ingest-1 alembic stamp 0001_baseline"
+ssh core-01 "docker exec --workdir /repo/klai-knowledge-ingest klai-core-knowledge-ingest-1 alembic stamp 0001_baseline"
 ```
+
+Audit 2026-05-05 finding: `--workdir` is REQUIRED. The `alembic.ini`
+file lives at `/repo/klai-knowledge-ingest/alembic.ini` and `alembic`
+resolves it from the process working directory. Without `--workdir`,
+the exec process runs at `/` and fails with `FileNotFoundError:
+alembic.ini`. The container's normal CMD entrypoint runs at the right
+WORKDIR, but `docker exec` does NOT inherit it — you have to specify
+it explicitly.
 
 Expected output:
 
