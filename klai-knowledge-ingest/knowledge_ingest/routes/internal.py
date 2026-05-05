@@ -140,8 +140,11 @@ async def wipe_org_graph(org_id: str) -> WipeGraphResponse:
 async def wipe_org_postgres(org_id: str) -> WipePostgresResponse:
     """Hard-delete every row carrying *org_id* from all knowledge.* tables.
 
-    Called by the tenant-deprovisioning orchestrator as step 13a
-    (SPEC-INFRA-TENANT-DELETE-002 G3). Idempotent: successive calls return
+    Called by the tenant-deprovisioning orchestrator as step 9a (SPEC
+    sequencing was originally "13a" per the SPEC scope-section enumeration,
+    but the actual orchestrator implementation places this immediately after
+    the FalkorDB wipe at step 9, making the ordering 9a / 9b for G3 / G6
+    respectively). Idempotent: successive calls return
     ``rows_deleted[table] = 0`` for all tables after the first successful wipe.
 
     Tables wiped (in FK-safe order):
