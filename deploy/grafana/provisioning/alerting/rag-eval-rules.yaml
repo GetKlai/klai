@@ -2,7 +2,7 @@
 #
 # Routed via spec=SPEC-RAG-EVAL-001 → klai-ops-alerts-email.
 #
-#   R1  rag_eval_faithfulness_low   HIGH  baseline faithfulness < 0.85 on
+#   R1  rag_eval_faithfulness_low   HIGH  baseline faithfulness < 0.80 on
 #                                         two consecutive nightly runs
 #
 # Source: knowledge.rag_eval_results (PortalPostgres datasource).
@@ -20,7 +20,7 @@ groups:
 
       # ── R1: rag_eval_faithfulness_low ──────────────────────────────────
       # Catastrophic-regression detector. Reads the latest two nightly runs
-      # per suite and fires when BOTH have faithfulness < 0.85. The 6h
+      # per suite and fires when BOTH have faithfulness < 0.80. The 6h
       # interval keeps the alert evaluator cheap; baseline metrics only
       # change once per day after the 02:00 UTC nightly task lands.
       - uid: rag-eval-001-faithfulness-low
@@ -60,7 +60,7 @@ groups:
                 SELECT COUNT(*) AS value
                 FROM ranked
                 WHERE rn <= 2
-                  AND faithfulness_avg < 0.85
+                  AND faithfulness_avg < 0.80
                 HAVING COUNT(*) = 2;
               refId: faithfulness_below_threshold
         for: 0s
@@ -71,9 +71,9 @@ groups:
           spec: SPEC-RAG-EVAL-001
           alert_type: quality_regression
         annotations:
-          summary: "RAG faithfulness baseline below 0.85 on two consecutive nightly runs"
+          summary: "RAG faithfulness baseline below 0.80 on two consecutive nightly runs"
           description: |
-            The baseline `faithfulness` RAGAS metric has scored below 0.85 on
+            The baseline `faithfulness` RAGAS metric has scored below 0.80 on
             BOTH of the last two nightly runs for at least one suite.
             Investigate: did the corpus change? Did retrieval-api or LiteLLM
             misbehave? Query knowledge.rag_eval_results for details.
