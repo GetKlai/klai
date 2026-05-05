@@ -187,7 +187,7 @@ class TestRedisUrlFailFastValidator:
 
         settings = Settings()
         # The conftest sets a default; whatever it is, it must be valid.
-        from app.redis_url import parse_redis_url
+        from webhook_replay.redis_url import parse_redis_url
 
         parsed = parse_redis_url(settings.redis_url)
         assert parsed.host  # non-empty
