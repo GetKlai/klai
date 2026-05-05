@@ -16,6 +16,7 @@ KB-context presence is signalled to downstream hooks via data["_klai_kb_meta"].
 The custom_router uses this to prevent model downgrade for KB-enriched requests.
 """
 
+import asyncio
 import logging
 import os
 import re
@@ -291,6 +292,19 @@ QUERY_REWRITE_HISTORY_TURNS = int(os.getenv("QUERY_REWRITE_HISTORY_TURNS", "4"))
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
 MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions"
 
+# SPEC-RAG-TAXONOMY-001: Query-time taxonomy filtering
+# KNOWLEDGE_RETRIEVE_URL already set above. Taxonomy endpoints live on the same
+# retrieval-api base: /internal/v1/taxonomy/tree and /internal/v1/taxonomy/coverage.
+_RETRIEVAL_BASE_URL = (KNOWLEDGE_RETRIEVE_URL or "").rsplit("/retrieve", 1)[0]
+TAXONOMY_ENABLED = os.getenv("TAXONOMY_ENABLED", "true").lower() == "true"
+# Coverage threshold: if < this fraction of KB chunks are tagged, skip filter.
+# Default 0.30 — only skip when KB is mostly untagged (REQ-2 coverage-stats fallback).
+KLAI_TAXONOMY_COVERAGE_THRESHOLD = float(
+    os.getenv("KLAI_TAXONOMY_COVERAGE_THRESHOLD", "0.30")
+)
+# Timeout for each taxonomy HTTP call (tree fetch + coverage fetch).
+TAXONOMY_FETCH_TIMEOUT = float(os.getenv("TAXONOMY_FETCH_TIMEOUT", "0.8"))
+
 _QUERY_REWRITE_PROMPT = (
     "You are a query rewriter for a RAG search system. Rewrite the user's "
     "current question so it makes sense as a stand-alone search query — "
@@ -407,6 +421,220 @@ async def _rewrite_query(
     rewritten = rewritten[:500]
     meta["was_changed"] = rewritten.lower() != raw_query.strip().lower()
     return rewritten, meta
+
+
+# ---------------------------------------------------------------------------
+# SPEC-RAG-TAXONOMY-001: Combined rewrite + classify prompt
+# Single LLM call returns BOTH the rewritten query AND taxonomy node IDs.
+# Keeps added token cost < 100 tokens (REQ-6) vs the standalone rewrite prompt.
+# ---------------------------------------------------------------------------
+
+_QUERY_REWRITE_AND_CLASSIFY_PROMPT = (
+    "You are a query rewriter and topic classifier for a RAG search system.\n\n"
+    "Tasks (combined, single JSON response):\n"
+    "1. Rewrite the user's current question into a self-contained search query "
+    "— resolve pronouns and references using the conversation history. "
+    "If already clear, return it unchanged.\n"
+    "2. From the taxonomy below, select ALL node IDs whose topic is genuinely "
+    "relevant to the rewritten query. An empty list means no narrowing.\n\n"
+    "Conversation history (oldest → newest):\n{history}\n\n"
+    "User's current question: {raw_query}\n\n"
+    "Available taxonomy nodes:\n{taxonomy}\n\n"
+    "Reply with ONLY a JSON object, no markdown, no explanation:\n"
+    '{{"rewritten_query": "<string, max 200 chars, same language as user>", '
+    '"taxonomy_node_ids": [<int>, ...]}}'
+)
+
+
+def _format_taxonomy_for_prompt(tree: list[dict], max_nodes: int = 30) -> str:
+    """Format taxonomy tree as 'id: name' lines for the LLM prompt."""
+    if not tree:
+        return "(none)"
+    lines = [f"- id={node['id']}: {node['name']}" for node in tree[:max_nodes]]
+    if len(tree) > max_nodes:
+        lines.append(f"... ({len(tree) - max_nodes} more nodes omitted)")
+    return "\n".join(lines)
+
+
+async def _fetch_taxonomy_tree(
+    org_id: str,
+    kb_slug: str,
+    *,
+    _transport: httpx.AsyncBaseTransport | None = None,
+) -> list[dict]:
+    """Fetch the taxonomy tree from retrieval-api /internal/v1/taxonomy/tree.
+
+    Returns [] on any error (fail-open per REQ-2).
+    """
+    if not TAXONOMY_ENABLED or not _RETRIEVAL_BASE_URL:
+        return []
+    url = f"{_RETRIEVAL_BASE_URL}/internal/v1/taxonomy/tree"
+    legacy_headers = _retrieve_legacy_headers()
+    client_kwargs: dict = {"timeout": TAXONOMY_FETCH_TIMEOUT}
+    if _transport is not None:
+        client_kwargs["transport"] = _transport
+    try:
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            resp = await client.get(
+                url,
+                params={"org_id": org_id, "kb_slug": kb_slug},
+                headers=legacy_headers,
+            )
+            resp.raise_for_status()
+            return resp.json()  # list[dict] with id, name, parent_id, depth
+    except Exception as exc:
+        logger.warning(
+            "KlaiKnowledgeHook: taxonomy_tree_fetch_failed org=%s kb=%s error=%s",
+            org_id,
+            kb_slug,
+            str(exc)[:120],
+        )
+        return []
+
+
+async def _fetch_taxonomy_coverage(
+    org_id: str,
+    kb_slug: str,
+    *,
+    _transport: httpx.AsyncBaseTransport | None = None,
+) -> float:
+    """Fetch the taxonomy coverage ratio from retrieval-api /internal/v1/taxonomy/coverage.
+
+    Returns 0.0 on any error (fail-open — caller skips filter when 0.0 < threshold).
+    """
+    if not TAXONOMY_ENABLED or not _RETRIEVAL_BASE_URL:
+        return 0.0
+    url = f"{_RETRIEVAL_BASE_URL}/internal/v1/taxonomy/coverage"
+    legacy_headers = _retrieve_legacy_headers()
+    client_kwargs: dict = {"timeout": TAXONOMY_FETCH_TIMEOUT}
+    if _transport is not None:
+        client_kwargs["transport"] = _transport
+    try:
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            resp = await client.get(
+                url,
+                params={"org_id": org_id, "kb_slug": kb_slug},
+                headers=legacy_headers,
+            )
+            resp.raise_for_status()
+            return float(resp.json().get("coverage", 0.0))
+    except Exception as exc:
+        logger.warning(
+            "KlaiKnowledgeHook: taxonomy_coverage_fetch_failed org=%s kb=%s error=%s",
+            org_id,
+            kb_slug,
+            str(exc)[:120],
+        )
+        return 0.0
+
+
+async def _rewrite_and_classify(
+    raw_query: str,
+    history: list[dict],
+    taxonomy_tree: list[dict],
+    *,
+    _transport: httpx.AsyncBaseTransport | None = None,
+) -> tuple[str, list[int], dict]:
+    """Return ``(rewritten_query, classified_node_ids, debug_meta)`` in one LLM call.
+
+    Replaces the standalone ``_rewrite_query`` call when taxonomy_tree is non-empty.
+    When taxonomy_tree is empty, falls back to plain rewrite (no classification).
+
+    Anti-hallucination guard (REQ-4): only returns node IDs that exist in tree.
+    Fail-open on any error: falls back to (raw_query, [], meta_with_skip_reason).
+    """
+    import json as _json  # noqa: PLC0415 — local import avoids shadowing module-level vars
+
+    meta: dict = {"was_changed": False, "rewrite_ms": 0}
+
+    # Early exits (same skip conditions as _rewrite_query)
+    if not raw_query or not raw_query.strip():
+        meta["skipped"] = "empty_query"
+        return raw_query, [], meta
+    if not QUERY_REWRITE_ENABLED:
+        meta["skipped"] = "disabled"
+        return raw_query, [], meta
+    if not MISTRAL_API_KEY:
+        meta["skipped"] = "no_api_key"
+        return raw_query, [], meta
+
+    # No history AND no taxonomy → nothing to do
+    if not history and not taxonomy_tree:
+        meta["skipped"] = "no_history_no_tree"
+        return raw_query, [], meta
+
+    # Fall back to plain text prompt when no taxonomy is available
+    if not taxonomy_tree:
+        rewritten, rewrite_meta = await _rewrite_query(
+            raw_query, history, _transport=_transport
+        )
+        return rewritten, [], rewrite_meta
+
+    # Build combined prompt
+    history_str = _format_history_for_rewrite(history) if history else "(none)"
+    taxonomy_str = _format_taxonomy_for_prompt(taxonomy_tree)
+    prompt = _QUERY_REWRITE_AND_CLASSIFY_PROMPT.format(
+        history=history_str,
+        raw_query=raw_query,
+        taxonomy=taxonomy_str,
+    )
+    payload = {
+        "model": QUERY_REWRITE_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 300,
+        "temperature": 0.0,
+        "response_format": {"type": "json_object"},
+    }
+    headers = {
+        "Authorization": f"Bearer {MISTRAL_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    client_kwargs: dict = {"timeout": QUERY_REWRITE_TIMEOUT}
+    if _transport is not None:
+        client_kwargs["transport"] = _transport
+
+    valid_ids: set[int] = {int(n["id"]) for n in taxonomy_tree}
+    t_start = time.monotonic()
+    try:
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            resp = await client.post(MISTRAL_API_URL, json=payload, headers=headers)
+            resp.raise_for_status()
+            raw_content = resp.json()["choices"][0]["message"]["content"]
+        parsed = _json.loads(raw_content or "{}")
+    except Exception as exc:
+        meta["rewrite_ms"] = int((time.monotonic() - t_start) * 1000)
+        meta["skipped"] = "exception"
+        meta["error"] = str(exc)[:120]
+        logger.warning(
+            "query_rewrite_and_classify_failed error=%s rewrite_ms=%d",
+            meta["error"],
+            meta["rewrite_ms"],
+        )
+        return raw_query, [], meta
+
+    meta["rewrite_ms"] = int((time.monotonic() - t_start) * 1000)
+
+    # Extract rewritten query
+    rewritten = (parsed.get("rewritten_query") or "").strip().strip('"').strip("'")
+    if not rewritten:
+        meta["skipped"] = "empty_rewritten_query"
+        return raw_query, [], meta
+    rewritten = rewritten[:500]
+    meta["was_changed"] = rewritten.lower() != raw_query.strip().lower()
+
+    # Extract and validate taxonomy node IDs (anti-hallucination guard REQ-4)
+    raw_ids = parsed.get("taxonomy_node_ids") or []
+    classified: list[int] = []
+    for item in raw_ids:
+        try:
+            node_id = int(item)
+        except (TypeError, ValueError):
+            continue
+        if node_id in valid_ids:
+            classified.append(node_id)
+
+    meta["classified_node_ids"] = classified
+    return rewritten, classified, meta
 
 
 async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
@@ -837,7 +1065,9 @@ class KlaiKnowledgeHook(CustomLogger):
                 "(identity-resolve-failed) — dit antwoord is niet gebaseerd op "
                 "jullie eigen documentatie. Probeer het later opnieuw.']\n"
             )
-            prefix = "\n\n".join(b for b in (templates_block, kb_unavailable_notice) if b)
+            prefix = "\n\n".join(
+                b for b in (templates_block, kb_unavailable_notice) if b
+            )
             _prepend_system_prefix(messages, prefix)
             data["messages"] = messages
             return data
@@ -878,13 +1108,29 @@ class KlaiKnowledgeHook(CustomLogger):
 
         conversation_history = _build_conversation_history(messages)
 
-        # SPEC-RAG-QUERY-REWRITE-001: rewrite the raw query into a
-        # self-contained search query before /retrieve. Fail-open: any
-        # failure path returns the raw query unchanged with skip reason
-        # recorded in meta. ~150-300ms typical, <500ms p95 (REQ-4).
-        rewritten_query, rewrite_meta = await _rewrite_query(
-            query, conversation_history
+        # SPEC-RAG-TAXONOMY-001: fetch taxonomy tree for the first KB in scope.
+        # Good-enough heuristic for v1: multi-KB queries skip taxonomy filter.
+        # Fail-open: empty tree = no classify, no filter (REQ-2).
+        first_kb_slug: str | None = (
+            kb_slugs_for_request[0] if kb_slugs_for_request else None
         )
+        taxonomy_tree: list[dict] = []
+        taxonomy_coverage: float = 0.0
+        if first_kb_slug and TAXONOMY_ENABLED and scope in ("org", "both"):
+            taxonomy_tree, taxonomy_coverage = await asyncio.gather(
+                _fetch_taxonomy_tree(org_id, first_kb_slug),
+                _fetch_taxonomy_coverage(org_id, first_kb_slug),
+            )
+
+        # SPEC-RAG-QUERY-REWRITE-001 + SPEC-RAG-TAXONOMY-001:
+        # Combined rewrite + classify in a single LLM call (REQ-5 zero added roundtrip).
+        # When taxonomy_tree is empty, falls back to plain rewrite (no classification).
+        # Fail-open: any failure returns (raw_query, [], meta_with_skip_reason).
+        (
+            rewritten_query,
+            classified_node_ids,
+            rewrite_meta,
+        ) = await _rewrite_and_classify(query, conversation_history, taxonomy_tree)
         try:
             logger.info(
                 "query_rewrite org_id=%s user_id=%s raw_query=%r rewritten_query=%r "
@@ -901,6 +1147,36 @@ class KlaiKnowledgeHook(CustomLogger):
             # Logging itself must never abort the hook (REQ-2 fail-open).
             pass
 
+        # SPEC-RAG-TAXONOMY-001 REQ-1+2: inject taxonomy filter iff coverage >= threshold
+        # AND the classifier returned at least one valid node ID.
+        taxonomy_applied = False
+        taxonomy_skip_reason: str | None = None
+        if TAXONOMY_ENABLED and first_kb_slug:
+            if taxonomy_coverage < KLAI_TAXONOMY_COVERAGE_THRESHOLD:
+                taxonomy_skip_reason = "low_coverage"
+            elif not classified_node_ids:
+                taxonomy_skip_reason = "empty_classify"
+            else:
+                taxonomy_applied = True
+        else:
+            taxonomy_skip_reason = "no_kb_slug" if not first_kb_slug else "disabled"
+
+        # REQ-7: log taxonomy_classify event on every classify invocation.
+        if TAXONOMY_ENABLED and first_kb_slug:
+            try:
+                logger.info(
+                    "taxonomy_classify org_id=%s kb_slug=%s coverage_ratio=%.3f "
+                    "classified_node_ids=%s was_applied=%s skip_reason=%s",
+                    org_id,
+                    first_kb_slug,
+                    taxonomy_coverage,
+                    classified_node_ids,
+                    taxonomy_applied,
+                    taxonomy_skip_reason,
+                )
+            except Exception:
+                pass
+
         retrieve_body: dict = {
             "query": rewritten_query,
             "raw_query": query,
@@ -915,6 +1191,11 @@ class KlaiKnowledgeHook(CustomLogger):
         }
         if kb_slugs_for_request:
             retrieve_body["kb_slugs"] = kb_slugs_for_request
+        # REQ-3: inject taxonomy_node_ids only when coverage is sufficient
+        # and the classifier produced valid IDs. The org/kb scoping filters
+        # are NEVER weakened — they run in addition to this filter.
+        if taxonomy_applied:
+            retrieve_body["taxonomy_node_ids"] = classified_node_ids
 
         # SPEC-SEC-SERVICE-AUTH-001 Phase C-1: prefer JWT auth, fall back to
         # legacy X-Internal-Secret on either mint failure OR receiver-side
