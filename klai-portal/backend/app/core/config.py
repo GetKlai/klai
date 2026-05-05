@@ -82,7 +82,10 @@ class Settings(BaseSettings):
 
     # BFF — Backend-for-Frontend session auth (SPEC-AUTH-008)
     # Fernet key for encrypting BFF session records at rest in Redis.
-    # Falls back to sso_cookie_key when unset — single key during the rollout.
+    # SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-10 removed the historical
+    # ``bff_session_key or sso_cookie_key`` fallback. The key is now a
+    # required, fail-closed setting; the validator at the bottom of this
+    # class refuses to start the app on an empty value.
     bff_session_key: str = ""  # PORTAL_API_BFF_SESSION_KEY
     bff_session_ttl_seconds: int = 30 * 24 * 3600  # 30 days, matches Zitadel refresh-token lifetime
     bff_access_token_skew_seconds: int = 60  # refresh this many seconds before expiry
