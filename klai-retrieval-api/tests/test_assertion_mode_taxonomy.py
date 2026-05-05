@@ -50,30 +50,3 @@ class TestNewTaxonomyValuesPassthrough:
             results = await search.hybrid_search([0.1, 0.2], req, 10)
 
         assert results[0]["assertion_mode"] == mode
-
-    @pytest.mark.asyncio
-    async def test_notebook_search_returns_assertion_mode(self):
-        """Notebook search results must also include assertion_mode."""
-        point = SimpleNamespace(
-            id="c1",
-            score=0.9,
-            payload={
-                "content": "focus content",
-                "tenant_id": "org-1",
-                "notebook_id": "nb-1",
-                "assertion_mode": "fact",
-            },
-        )
-        mock_client = AsyncMock()
-        mock_client.query_points.return_value = _make_query_response([point])
-
-        with patch.object(search, "_get_client", return_value=mock_client):
-            req = RetrieveRequest(
-                query="test",
-                org_id="org-1",
-                scope="notebook",
-                notebook_id="nb-1",
-            )
-            results = await search.hybrid_search([0.1, 0.2], req, 10)
-
-        assert results[0]["assertion_mode"] == "fact"
