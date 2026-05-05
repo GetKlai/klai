@@ -1,12 +1,12 @@
 ---
 id: SPEC-DECOMM-FOCUS-001
-version: "1.1"
-status: approved
+version: "1.2"
+status: implemented
 created: 2026-05-05
 updated: 2026-05-05
 author: Mark Vletter
 priority: medium
-issue_number: null
+issue_number: 368
 ---
 
 # SPEC-DECOMM-FOCUS-001: Klai Focus / research-api volledig opruimen
@@ -17,6 +17,7 @@ issue_number: null
 |---------|------|--------|--------|
 | 1.0 | 2026-05-05 | Mark Vletter | Initial draft. Verificatie tegen productie (core-01) bevestigt dat de service al ~14 dagen niet meer draait en geen traffic meer ontvangt; de opruim die SPEC-PORTAL-UNIFY-KB-001 (April 2026) startte, is nooit afgemaakt. |
 | 1.1 | 2026-05-05 | Mark Vletter | `scope=broad` toegevoegd aan opruim-scope. v1.0-analyse keek alleen naar `_search_notebook` en zag niet dat `scope=broad` in `services/search.py:422` óók `_search_notebook` callt (parallel-merge tegen `klai_focus`). Verificatie: 0 callers in productie-code buiten klai-focus, 0 hits in retrieval-api logs in 24u. Plus `docs/architecture/knowledge-ingest-flow.md` (regels 799/843/991/994) die `broad` documenteren — toegevoegd aan E. |
+| 1.2 | 2026-05-05 | Mark Vletter | **IMPLEMENTED.** Alle stappen voltooid op 2026-05-05: GetKlai/klai#368 (squash-merged commit `e6fabc73`) + GetKlai/klai-infra#5 (squash-merged commit `922cf035`). Runbook handmatig uitgevoerd op core-01: Qdrant `klai_focus` collection gedropped (idempotent, status `ok`), `/opt/klai/research-uploads/` + `/opt/klai/research-api-src/` weggegooid, `focus.legacy_data_purged` event geëmit (product_events row id=476, properties bevatten point_count=15, pdf_count=2, tenant_id=362757920133283846, spec=SPEC-DECOMM-FOCUS-001). Volledige acceptance D.1–D.6 groen. **SOPS sync workflow-issue:** auto-sync weigerde de 2 vars te verwijderen uit `/opt/klai/.env`; manueel via `sed -i` opgelost als tijdelijke workaround. Duurzame fix in vervolg-PR GetKlai/klai-infra#6 (squash-merged commit) — voegt `workflow_dispatch.inputs.allow_removal` toe aan `sync-env.yml` zodat toekomstige key-removals via `gh workflow run sync-env.yml -f allow_removal=I-CONFIRM-REMOVAL` netjes kunnen lopen. |
 
 ---
 
