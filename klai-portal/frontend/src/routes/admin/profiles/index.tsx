@@ -7,7 +7,7 @@ import {
   flexRender,
   createColumnHelper,
 } from '@tanstack/react-table'
-import { Eye, Pencil } from 'lucide-react'
+import { Eye } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import { apiFetch } from '@/lib/apiFetch'
@@ -82,18 +82,6 @@ function AdminProfiles() {
       header: () => '',
       cell: ({ row }) => (
         <div className="flex items-start justify-end gap-2 mt-px">
-          <button
-            onClick={() =>
-              navigate({
-                to: '/admin/profiles/$profile',
-                params: { profile: row.original.role },
-              })
-            }
-            aria-label={`Edit ${row.original.label}`}
-            className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
-          >
-            <Pencil className="h-4 w-4" />
-          </button>
           <button
             onClick={() =>
               navigate({
