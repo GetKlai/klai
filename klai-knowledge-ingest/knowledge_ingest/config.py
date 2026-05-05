@@ -158,5 +158,31 @@ class Settings(BaseSettings):
             raise ValueError("Missing required: PORTAL_INTERNAL_TOKEN (SEC-014)")
         return self
 
+    @model_validator(mode="after")
+    def _require_gitea_webhook_secret(self) -> Settings:
+        """SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-12: fail-closed on missing
+        GITEA_WEBHOOK_SECRET.
+
+        Gitea POSTs to /webhooks/gitea on every push to a tenant-tracked
+        repository. The handler verifies the X-Gitea-Signature HMAC against
+        ``Settings.gitea_webhook_secret`` via ``hmac.compare_digest``. With
+        an empty/whitespace-only value, every comparison would succeed
+        against an attacker request that also has an empty signature —
+        exact fail-open-auth pattern, attacker can trigger ingestion of
+        attacker-controlled markdown into the tenant KB.
+
+        Env-parity: GITEA_WEBHOOK_SECRET must exist in
+        klai-infra/core-01/.env.sops BEFORE merge. Pre-flight verified
+        2026-05-05: value populated in /opt/klai/.env on core-01.
+        """
+        if not self.gitea_webhook_secret or not self.gitea_webhook_secret.strip():
+            raise ValueError(
+                "Missing required: GITEA_WEBHOOK_SECRET (SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-12). "
+                "knowledge-ingest verifies Gitea push-webhook HMACs against this; "
+                "an empty value would accept any caller and let an attacker inject "
+                "tenant KB content. Set it in SOPS before starting knowledge-ingest."
+            )
+        return self
+
 
 settings = Settings()
