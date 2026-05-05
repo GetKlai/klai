@@ -10,6 +10,16 @@ Concurrency guarantee: `SELECT ... FOR UPDATE` on the target row serialises
 concurrent retry clicks. The second caller reads the row after the first
 committed the transition to `queued` and falls through to the
 `not_in_retryable_state` branch.
+
+Authorization (audit-tenant-isolation-2026-05-05 finding C-2):
+The handler operates on a `slug` URL-parameter that may identify a tenant
+DIFFERENT from the caller's own org (the failed-row predates any user-level
+tenancy). This is a cross-tenant action and MUST be gated by
+`_require_platform_admin` — only callers operating from the platform-admin
+org (settings.platform_org_slug, default 'getklai') may invoke it. Without
+this guard, any tenant-admin could revive any other tenant's failed-rollback
+org. Mirrors the gating in `deprovision_org.py::deprovision_org_by_slug`
+and `retry_deprovisioning`.
 """
 
 from __future__ import annotations
@@ -20,9 +30,10 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.admin import _get_caller_org, _require_admin, bearer
+from app.api.admin import _get_caller_org, _require_admin, _require_platform_admin, bearer
 from app.core.database import get_db
 from app.models.portal import PortalOrg
+from app.services.audit import log_event
 from app.services.provisioning.orchestrator import provision_tenant
 
 logger = structlog.get_logger()
@@ -52,6 +63,10 @@ async def retry_provisioning(
     """
     _, _caller_org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
+    # audit-tenant-isolation-2026-05-05 finding C-2: this endpoint operates on
+    # an arbitrary tenant `slug` (the failed-row may belong to ANY tenant, not
+    # just the caller's). Gate cross-tenant actions on platform-admin org.
+    _require_platform_admin(_caller_org)
 
     # Find the failed row for this slug. Because the partial unique index only
     # enforces uniqueness over active rows, there MAY be multiple rows sharing
@@ -150,6 +165,24 @@ async def retry_provisioning(
         org_id=failed_org.id,
         slug=slug,
         admin_user=caller_user.zitadel_user_id,
+        platform_admin_org_id=_caller_org.id,
+    )
+
+    # Audit-trail (audit-tenant-isolation-2026-05-05 C-2): platform-admin
+    # actions on another tenant's row MUST be logged. Fire-and-forget via
+    # log_event — own session so the trail survives even if the BackgroundTask
+    # path raises later.
+    await log_event(
+        org_id=failed_org.id,
+        actor=caller_user.zitadel_user_id,
+        action="retry_provisioning",
+        resource_type="portal_org",
+        resource_id=str(failed_org.id),
+        details={
+            "slug": slug,
+            "platform_admin_org_id": _caller_org.id,
+            "platform_admin_org_slug": _caller_org.slug,
+        },
     )
 
     # Schedule the actual provisioning outside the request cycle.
