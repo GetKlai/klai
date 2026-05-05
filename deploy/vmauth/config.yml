@@ -19,26 +19,9 @@ users:
   - jwt:
       oidc:
         issuer: "https://auth.getklai.com"
-      # match_claims constrains which JWTs vmauth accepts:
-      # - aud must include the klai-vmauth project ID so JWTs minted for
-      #   other Klai apps (portal, librechat, knowledge-mcp, etc.) don't
-      #   grant log-query access. Zitadel includes the project_id in `aud`
-      #   automatically when the auth-code flow uses scope
-      #   `urn:zitadel:iam:org:project:id:<id>:aud` OR by default if the
-      #   user has a project grant.
-      # - iss equality is enforced by vmauth automatically when oidc.issuer
-      #   is configured; listing it here is defense-in-depth.
-      # match_claims temporarily REMOVED while we diagnose why vmauth
-      # silently drops JWT users with match_claims set. The oidc.issuer
-      # alone enforces signature + iss + exp; for the moment this is
-      # adequate. After diagnosis, re-add audience match.
-    # Forward all paths to VictoriaLogs select endpoint.
+      match_claims:
+        aud: "371630015537741841"   # klai-vmauth project_id
     url_prefix: "http://victorialogs:9428/"
-    # NOTE — headers block temporarily removed while diagnosing why
-    # vmauth silently drops the JWT user. Will reach VL without
-    # upstream auth → VL returns 401 itself, but the test for vmauth
-    # accepting the JWT works (we'll see vmauth → VL → 401 instead of
-    # vmauth → 401).
 
 # Unauthorized requests (no matching user) get 401 by default.
 # No `unauthorized_user` block is set on purpose — log access requires
