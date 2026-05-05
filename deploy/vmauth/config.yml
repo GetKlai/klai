@@ -28,16 +28,10 @@ users:
       #   user has a project grant.
       # - iss equality is enforced by vmauth automatically when oidc.issuer
       #   is configured; listing it here is defense-in-depth.
-      match_claims:
-        # vmauth expects scalar string values for match_claims (lists are
-        # rejected with "cannot unmarshal !!seq into string"). For JWT
-        # claims that are arrays in the token (like `aud` per OIDC spec),
-        # vmauth iterates the array and passes if ANY element equals the
-        # configured string.
-        aud: "371630015537741841"   # Zitadel project_id for klai-vmauth
-        # `iss` is enforced automatically by vmauth's oidc.issuer match —
-        # listing it here would be redundant and (per local testing) may
-        # silently drop the user-config.
+      # match_claims temporarily REMOVED while we diagnose why vmauth
+      # silently drops JWT users with match_claims set. The oidc.issuer
+      # alone enforces signature + iss + exp; for the moment this is
+      # adequate. After diagnosis, re-add audience match.
     # Forward all paths to VictoriaLogs select endpoint.
     url_prefix: "http://victorialogs:9428/"
     # Replace the developer's JWT with VL's expected basic-auth before
