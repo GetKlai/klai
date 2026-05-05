@@ -159,39 +159,93 @@ async def test_rebuild_kb_iterates_artifacts(_common_patches):
 
 
 @pytest.mark.asyncio
-async def test_rebuild_kb_threads_parents_into_enrich_document(_common_patches):
+async def test_rebuild_kb_threads_parents_into_enrich_document(monkeypatch):
     """SPEC-RAG-PARENT-CHILD-001: rebuild MUST pass ``parents`` +
-    ``parent_index_per_child`` to ``_enrich_document``.
+    ``parent_index_per_child`` to ``_enrich_document``, AND the indices
+    must correctly route each child to its corresponding parent.
 
     Without these kwargs, ``_enrich_document`` upserts each child chunk to
-    Qdrant with ``parent_chunk_id=None`` and the parent expansion in
+    Qdrant with ``parent_chunk_id=None`` and parent expansion in
     retrieval-api silently degrades to chunk-text-only. A previous version
     of rebuild_tasks.py passed neither — the result on Voys-support was
-    448/448 rebuilt artifacts with zero parent linkage in Qdrant. This
-    test locks the contract so the regression cannot reappear silently.
-    """
-    from knowledge_ingest.rebuild_tasks import _rebuild_kb_core
+    448/448 rebuilt artifacts with zero parent linkage in Qdrant.
 
-    _common_patches["mock_list"].return_value = [
-        _make_artifact("art-1", "doc1.md", "Some body text"),
+    This test uses 4 child chunks fanning out across 3 parents
+    (``[0, 0, 1, 2]``) so the assertion locks BOTH:
+      1. The kwargs are passed (regression for the original bug).
+      2. The actual mapping is preserved end-to-end. Earlier the test
+         used a single chunk with ``parent_index=0`` (the dataclass
+         default), which would have passed even if the code threaded a
+         constant ``[0]`` instead of reading ``c.parent_index``.
+    """
+    chunks = [
+        _make_chunk("child-0", parent_index=0),
+        _make_chunk("child-1", parent_index=0),
+        _make_chunk("child-2", parent_index=1),
+        _make_chunk("child-3", parent_index=2),
+    ]
+    parents = [
+        _make_parent_chunk("parent-0", position=0),
+        _make_parent_chunk("parent-1", position=1),
+        _make_parent_chunk("parent-2", position=2),
     ]
 
-    await _rebuild_kb_core(org_id=_ORG, kb_slug=_KB)
+    mock_chunker = MagicMock()
+    mock_chunker.chunk_markdown_with_parents.return_value = (chunks, parents)
+    mock_chunker._approx_token_count.return_value = 50
 
-    assert _common_patches["mock_enrich"].call_count == 1
-    enrich_kwargs = _common_patches["mock_enrich"].call_args.kwargs
+    mock_pg = MagicMock()
+    mock_pg.delete_parent_chunks_for_artifact = AsyncMock(return_value=1)
+    mock_pg.insert_parent_chunks = AsyncMock(return_value=[10, 11, 12])
 
-    # parents was serialised from parent_chunks_obj — should be a list of dicts.
+    mock_enrich = AsyncMock()
+
+    with (
+        patch(
+            "knowledge_ingest.rebuild_tasks._list_active_artifacts",
+            new_callable=AsyncMock,
+        ) as mock_list,
+        patch.dict(
+            sys.modules,
+            {
+                "knowledge_ingest.enrichment_tasks": types.SimpleNamespace(
+                    _enrich_document=mock_enrich
+                ),
+                "knowledge_ingest.chunker": mock_chunker,
+                "knowledge_ingest.pg_store": mock_pg,
+            },
+        ),
+    ):
+        mock_list.return_value = [
+            _make_artifact("art-1", "doc1.md", "Some body text"),
+        ]
+
+        from knowledge_ingest.rebuild_tasks import _rebuild_kb_core
+
+        await _rebuild_kb_core(org_id=_ORG, kb_slug=_KB)
+
+    assert mock_enrich.call_count == 1
+    enrich_kwargs = mock_enrich.call_args.kwargs
+
+    # ``parents`` was serialised from parent_chunks_obj — list of dicts.
     assert "parents" in enrich_kwargs, "rebuild must pass parents= to _enrich_document"
     assert isinstance(enrich_kwargs["parents"], list)
-    assert len(enrich_kwargs["parents"]) == 1
-    assert enrich_kwargs["parents"][0]["text"] == "parent text"
+    assert len(enrich_kwargs["parents"]) == 3
+    assert [p["text"] for p in enrich_kwargs["parents"]] == [
+        "parent-0",
+        "parent-1",
+        "parent-2",
+    ]
 
-    # parent_index_per_child mirrors child_chunks order.
+    # ``parent_index_per_child`` MUST mirror child_chunks order
+    # (multiple distinct values, not just the default 0).
     assert "parent_index_per_child" in enrich_kwargs, (
         "rebuild must pass parent_index_per_child= to _enrich_document"
     )
-    assert enrich_kwargs["parent_index_per_child"] == [0]
+    assert enrich_kwargs["parent_index_per_child"] == [0, 0, 1, 2], (
+        "parent_index_per_child must preserve each child's parent_index "
+        "attribute — not a constant or default"
+    )
 
 
 # ---------------------------------------------------------------------------
