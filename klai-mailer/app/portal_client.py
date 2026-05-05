@@ -26,6 +26,15 @@ async def get_user_language(email: str) -> str | None:
     - portal_internal_secret is not configured
     - the portal is unreachable
     - the request fails for any reason
+
+    Note on the portal_internal_secret guard:
+        SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-13 added a startup-time
+        ``_require_portal_internal_secret`` validator (klai-mailer/app/config.py)
+        that rejects empty/whitespace-only values. So in production the
+        guard below is unreachable — but it is intentionally retained as
+        defence-in-depth for the ``Settings.model_construct()`` bypass
+        path used by some tests. Same shape as the dual guard on the
+        klai-connector PortalClient (services/portal_client.py).
     """
     if not settings.portal_internal_secret:
         return None
@@ -60,6 +69,11 @@ async def resolve_org_admin_email(org_id: int) -> str:
     so the handler can return HTTP 503 `{"detail": "recipient lookup
     unavailable"}`. Fail-closed is correct: without the callback the
     service cannot prove the recipient is the legitimate admin.
+
+    See `get_user_language` above for the rationale on the
+    portal_internal_secret guard — startup validator REQ-13 makes this
+    branch unreachable in production; retained as defence-in-depth for
+    the model_construct() test-bypass path.
     """
     if not settings.portal_internal_secret:
         raise PortalLookupError("portal_internal_secret not configured")
