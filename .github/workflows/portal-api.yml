@@ -330,7 +330,13 @@ jobs:
     needs: [build-push]
     runs-on: ubuntu-latest
     steps:
+      # Audit 2026-05-05: defence-in-depth gate. The deploy job is gated
+      # via `needs: build-push` (build-push is itself gated), but the
+      # Pre-deploy env check step has no `if:` — if a future change
+      # loosens the build-push gate, this step would SSH into prod from
+      # PR context. Match the Deploy step's gate explicitly.
       - name: Pre-deploy env check
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.CORE01_HOST }}
