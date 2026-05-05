@@ -1,7 +1,7 @@
 ---
 id: SPEC-PORTAL-ADMIN-UI-001
-version: "0.2.0"
-status: ready-for-run
+version: "0.3.0"
+status: in-progress-polish
 created: 2026-05-05
 updated: 2026-05-05
 author: Mark Vletter
@@ -20,17 +20,25 @@ related:
 |------|---------|--------|
 | 2026-05-05 | 0.1.0 | Initial draft after the post-RBAC-001 UX feedback. Three-sidebar model (Users / Profiles / Groups). Driven by competitive research on Linear, Notion, GitHub, Slack. |
 | 2026-05-05 | 0.2.0 | Sparring resolved with Mark. All open questions answered. Ready for /klai:auto. |
+| 2026-05-05 | 0.3.0 | Polish round after PR #317 deviated from Sparring decisions. v0.3.0 records ALL UI decisions explicitly so a follow-up implementer cannot "industry-standard" their way around them. Adds decisions for /admin/users/$userId/edit (was "no changes" in v0.2.0 — now: cards weg, groups weg, één save). Records what stays from PR #317 (users list view, backend min-1-admin invariant) and what gets reverted (invite radio-cards, users overflow change-profile submenu, profiles list ul-style, profiles drill-in bulk-move). |
 
-### Sparring decisions (v0.2.0)
+### Sparring decisions (v0.3.0 — supersedes v0.2.0)
 
-| # | Vraag | Keuze |
-|---|---|---|
-| 1 | Inline profielwissel in users-lijst | Geen inline. Edit-knop in de rij navigeert naar bestaande user-edit pagina; profielwissel gebeurt daar via de bestaande radio-card profile-picker. |
-| 2 | Naam van nieuwe pagina | `Profiles` (matcht bestaande UI-terminologie). |
-| 3 | Layout van Profiles pagina | Volg `/admin/groups` 1-op-1 als template: lijst-view + detail-view per item. Geen aparte ontwerp-overweging. |
-| 4 | Default profiel bij invite | `personal`. Bestaande dropdown-positie behouden, opties vervangen door 5 profielen, label "Role" → "Profile". |
-| 5 | Search/filter op users-lijst | Standaard search-Input boven de tabel volgens TranscriptionTable.tsx-patroon. Client-side filter op naam + email. Geen filter-chips. |
-| 6 | Groups detail-pagina | Niet aanraken. Bestaande functionaliteit voor KB-team-scoping (gebruikt op `/app/knowledge/<kb>/members`) blijft zoals het is. |
+| # | Vraag | Keuze | Bron |
+|---|---|---|---|
+| 1 | Inline profielwissel in users-lijst | **HERZIEN per Mark 2026-05-05:** de huidige live state op getklai.getklai.com/admin/users (PR #317) met overflow ⋯ → "Change profile to..." submenu blijft ongewijzigd. Niet aanraken. | Mark, post-#317 review |
+| 2 | Naam van nieuwe pagina | `Profiles` (matcht bestaande UI-terminologie). | v0.2.0 |
+| 3 | Layout van Profiles pagina | **STRENG:** Letterlijke kopie van `klai-portal/frontend/src/routes/admin/groups/index.tsx` als startpunt voor `profiles/index.tsx`, en `groups/$groupId/index.tsx` voor `profiles/$profile.tsx`. Geen `<ul>` met chevrons, geen eigen layout. Description als sub-text in dezelfde Name-cel (niet als aparte kolom). | v0.2.0 + Mark verduidelijkt 2026-05-05 |
+| 4 | Default profiel bij invite | `personal`. Bestaande **dropdown** (`<Select>`) blijft — geen radio-cards, geen ProfilePicker-component. Opties vervangen door 5 profielen, label "Role" → "Profile". | v0.2.0 |
+| 5 | Search/filter op users-lijst | Standaard search-Input boven de tabel volgens TranscriptionTable.tsx-patroon. Client-side filter op naam + email. Geen filter-chips. | v0.2.0 |
+| 6 | Groups index + detail | **NIET AANRAKEN.** Bestaande functionaliteit voor KB-team-scoping (gebruikt op `/app/knowledge/<kb>/members`) blijft zoals het is. Geldt ook voor de subtitle en empty-state van `/admin/groups` — die zijn in PR #317 aangepast en blijven als status quo, geen verdere wijzigingen. | v0.2.0 |
+| 7 | `/admin/users/$userId/edit` layout | **NIEUW v0.3.0 (vervangt "no changes" uit v0.2.0):** ÉÉN form, ÉÉN save-knop. Geen meerdere `<Card>` wrappers met aparte saves. Velden in volgorde: First name + Last name, Invitation language, Profile (radio-cards behouden — visuele beschrijvingen waardevol), één primaire `[Save]` + secundaire `Cancel` onderaan. Lifecycle-acties (Suspend/Reactivate/Offboard) blijven onder de form als losse sectie met destructieve buttons (geen Save). | Mark 2026-05-05 |
+| 8 | Groups-sectie op user-edit | **VERWIJDEREN.** Group-membership beheer gebeurt op `/admin/groups/$groupId/index.tsx` of via `/app/knowledge/<kb>/members`. Niet meer in user-edit. Header subtitle clarificeert: "Profiles control what tools the user can use. Groups control which knowledge bases the user can access within those tools." | Mark 2026-05-05 |
+| 9 | Backend `PATCH /role` min-1-admin invariant | **BEHOUDEN** (toegevoegd in PR #317). Mirrors `POST /demote-admin` invariant. Voorkomt tenant-lockout via de unified change-profile flow. Niet rollbacken — security guard. | Mark accept 2026-05-05 |
+| 10 | Profiles drill-in member-management UX | **STRENG:** Add member = aparte `/admin/profiles/$profile/add-member` route met dezelfde Popover+Command picker als `groups/$groupId/add-member.tsx`. Remove member = inline `InlineDeleteConfirm` op de rij; on confirm `PATCH /api/admin/users/<id>/role` met `{role: "personal"}` (demote naar laagste). **GEEN bulk-select**, GEEN checkboxes, GEEN "Move to ▾" submenu. | Mark 2026-05-05 |
+| 11 | ProfilePicker shared component | **BEHOUDEN** alleen voor user-edit. Niet meer in invite (zie #4). v1-spine compliant: `border-gray-900 bg-black/[0.06]` selected, `border-gray-200` unselected, geen amber. | Mark 2026-05-05 |
+| 12 | Klai v1-spine compliance | Alle nieuwe en gewijzigde files in deze SPEC houden zich aan `portal-patterns.md` v1-spine: `mx-auto max-w-3xl px-6 py-10` containers, `border-gray-200` literal voor tables/lists, `bg-black/5` hover + `bg-black/[0.06]` active, `text-gray-900` prose + `text-gray-400` muted, `rounded-full bg-gray-900` buttons, sentence-case, geen amber buiten focus-rings/logo. | Mark 2026-05-05 |
+| 13 | Error-message scrubbing | `apiFetch` formatteert errors als `"{status}: {detail}"` — voor UI banners/toasts wordt de `"409: "`/`"404: "` prefix gestript. Helper in `_components/errors.ts::cleanErrorMessage(err, fallback)`. | Mark accept 2026-05-05 |
 
 ---
 
@@ -71,153 +79,160 @@ Sidebar (admin):
 
 ---
 
-## Scope
+## Scope (v0.3.0)
 
-### In scope
+### Implementation status across PR #317 + this polish round
 
-**Sidebar — three top-level items, one purpose each**
+| Surface | PR #317 status | Polish action |
+|---|---|---|
+| Sidebar order Overview · Users · Profiles · Groups · Billing | LIVE | Niet aanraken |
+| `/admin/users` table + search + Profile column + overflow change-profile submenu | LIVE | Niet aanraken (Sparring #1, herzien — Mark accepteert huidige UI) |
+| `/admin/users/invite` met radio-cards ProfilePicker + default `company` | LIVE | **Rollback:** terug naar `<Select>` dropdown, default `personal` (Sparring #4) |
+| `/admin/profiles/index` met `<ul>` + chevrons | LIVE | **Volledig herschrijven** als 1-op-1 kopie van `groups/index.tsx` (Sparring #3) |
+| `/admin/profiles/$profile` met bulk-select + Move-to ▾ | LIVE | **Volledig herschrijven** als 1-op-1 kopie van `groups/$groupId/index.tsx` met Add member + Remove member (Sparring #3, #10) |
+| `/admin/profiles/$profile/add-member` (nieuwe route) | NIET aanwezig | **Nieuw** — kopie van `groups/$groupId/add-member.tsx` (Sparring #10) |
+| `/admin/users/$userId/edit` met meerdere `<Card>`s + aparte saves + Groups-sectie | LIVE op main (al van vóór deze SPEC) | **Refactor:** één form, één save; Groups-sectie verwijderen; header subtitle (Sparring #7, #8) |
+| `/admin/groups` subtitle + empty-state copy | LIVE | Niet aanraken (Sparring #6) |
+| Backend `PATCH /role` met min-1-admin invariant | LIVE | Behouden — security guard (Sparring #9) |
+| `_components/ProfilePicker.tsx` (v1-spine compliant, no amber) | LIVE | Behouden, gebruikt alleen in user-edit (niet in invite) |
+| `_components/UserAvatar.tsx` | LIVE op polish-branch | Gebruikt in nieuwe `profiles/$profile.tsx` drill-in |
+| `_components/errors.ts::cleanErrorMessage` | LIVE op polish-branch | Gebruikt in profiles/$profile + user-edit voor 409-prefix scrub |
 
-- `Users` — primary members table. Default landing for member management.
-- `Profiles` — role-oriented batch view. New page.
-- `Groups` — KB-team scoping. Existing page, copy + filter tightened.
+### Polish-round files that change
 
-**`/admin/users` (members table) redesign**
+**Refactor (rollback richting Sparring decisions):**
+- `klai-portal/frontend/src/routes/admin/users/invite.tsx`
+- `klai-portal/frontend/src/routes/admin/profiles/index.tsx`
+- `klai-portal/frontend/src/routes/admin/profiles/$profile.tsx`
+- `klai-portal/frontend/src/routes/admin/users/$userId/edit.tsx`
 
-- Columns: `Name (avatar + name)` | `Email` | `Profile` | `Status` | `Last active` | `Actions`
-- `Profile` column: badge with profile name, **inline editable** via overflow-menu (`⋯`) → submenu with the 5 profiles. Pattern from Linear (overflow-menu → modal/submenu) — matches their density and keyboard-first style. Notion uses an inline dropdown which is slightly faster but visually busier; for Klai's "calm" brand-DNA the overflow-menu pattern fits better.
-- Filter chips above the table: `All | Personal chat | Company chat | Knowledge manager | Group manager | Admin | Suspended`. Click a chip to filter; multi-select for combined filter.
-- No "Role" badge column (replaced by Profile).
-- Suspend / offboard remain as overflow-menu actions, not as columns.
+**New:**
+- `klai-portal/frontend/src/routes/admin/profiles/$profile/add-member.tsx`
 
-**`/admin/profiles` (new page)**
-
-- Top-level list: 5 profile rows in ladder order. Each row shows profile name, short description (the `profile_*_description` i18n string), and member count.
-- Click a profile row → drill-in view: list of members in that profile.
-- Each member in the drill-in: avatar + name + email + "Move to..." overflow action. "Move to..." opens a submenu with the other 4 profiles. Single click → `PATCH /api/admin/users/<id>/role` → row moves to the new profile's count.
-- Bulk action: checkbox-select multiple members → "Move selected to..." button. Calls the same endpoint per user (no bulk endpoint needed for v1).
-- This is the view that replaces the muscle-memory of the old `/admin/groups` (which showed the 5 role_* groups + 2 addon_* groups). Mark explicitly asked to keep this functionality. Industry-standard pattern is filter-chips on the members table, but a dedicated batch view is a Klai-specific addition that costs little and helps power-admins.
-
-**`/admin/groups` (custom groups only)**
-
-- Already filters on `system_key IS NULL` after RBAC-001. Cosmetic-only changes:
-  - Empty-state copy: "No groups yet. Create one to give a team access to specific knowledge bases."
-  - Page subtitle: "Groups scope which knowledge bases a team can use. To assign profiles, go to Profiles."
-- No structural change — the existing list-view + detail-view + members-list works fine for the custom KB-team use case.
-
-**`/admin/users/<id>/edit`**
-
-- Profile-picker (radio-card list with description) — already exists, no changes.
-- Groups section — already filters on `system_key IS NULL`, no changes.
-- Page header subtitle clarifies: "Profiles control what tools the user can use. Groups control which knowledge bases the user can access within those tools."
-
-**`/admin/users/invite`**
-
-- Replace the `<Select>` "member / admin" dropdown with the same radio-card profile picker used on user-edit.
-- Default selection: `company` (most common onboarding rung; admin opt-in stays explicit).
-- Form layout: name fields → email → profile picker (full width, with descriptions) → language → submit.
+**Untouched in polish round:**
+- `klai-portal/frontend/src/routes/admin/users/index.tsx` (Sparring #1 herzien)
+- `klai-portal/frontend/src/routes/admin/groups/**` (Sparring #6)
+- `klai-portal/frontend/src/routes/admin/route.tsx` (sidebar al goed)
+- `klai-portal/backend/app/api/admin/users.py::update_user_role` (Sparring #9)
 
 **Wording**
+- All UI labels: "Profile" / "Profiel". Never "Role" / "Rol" in UI surfaces.
+- DB column `portal_users.role` stays — no migration.
+- API endpoint `PATCH /api/admin/users/<id>/role` stays — no breaking change.
 
-- All UI labels: "Profile" (English) / "Profiel" (Dutch). Never "Role" in UI.
-- DB column `portal_users.role` stays — no migration. Only UI strings change.
-- API endpoints stay (`PATCH /api/admin/users/<id>/role`) — no breaking change for any caller.
-
-**i18n strings to add or rename**
-
-- New: `admin_profiles_title`, `admin_profiles_description`, `admin_profiles_member_count`, `admin_profiles_move_to`, `admin_profiles_drill_in_title`, `admin_profiles_bulk_move_button`, `admin_profiles_empty_state` (per profile).
-- Add (if absent): `admin_users_field_profile`, `admin_users_filter_*` for each profile + suspended.
-- Keep: `admin_users_role_admin/member` strings for backward compat in any CLI tooling, but stop using them in UI.
+**i18n strings**
+- `admin_users_field_profile`, `admin_profiles_*` keys: al toegevoegd in PR #317. Hergebruiken.
+- Geen nieuwe keys nodig in polish round (de `admin_profiles_bulk_*` en `admin_profiles_move_to` keys raken ongebruikt na rollback van bulk-select; mogen blijven staan voor toekomstige features).
 
 ### Out of scope
 
-- DB schema changes (none — column stays `role`, value-set stays the 5 profiles per RBAC-001).
-- Backend endpoint changes (`PATCH /role` already accepts the 5 profiles; no new endpoints needed for the bulk-move — frontend loops if user selected multiple).
-- Mobile-responsive redesign of these pages (existing breakpoints stay).
-- Permissions to ASSIGN profiles (admin-only stays as-is — only org admins can change anyone's profile).
-- Re-introducing system_groups in the database. The Profiles page reads from `portal_users.role` directly, no group-membership intermediary.
+- DB schema changes (none).
+- Bulk-move endpoint of bulk-select UI (Sparring #10 verwerpt bulk in v1).
+- Mobile-responsive redesign.
+- Permissions: alleen org-admin kan profielen aanpassen (al zo).
+- Re-introducing system_groups in DB.
+- Filter-chips of tabs op users-list (Sparring #5).
+- "Last active" backend-veld; `created_at` (Invited) blijft de gerenderde waarde tot een aparte SPEC `last_active_at` toevoegt.
 
 ---
 
-## Requirements (EARS)
+## Requirements (EARS — v0.3.0)
 
-**REQ-1**: WHEN an admin views `/admin/users` THEN the table SHALL display the columns Name, Email, Profile, Status, Last active, Actions in this order. The Profile column SHALL show the user's `portal_users.role` value rendered as the matching `profile_*_label` i18n string.
+> v0.3.0 vervangt v0.1.0 REQ-1 t/m REQ-11. Sommige zijn al door PR #317 voldaan en blijven staan; andere zijn herzien of verworpen na Mark's polish-feedback. Status-kolom maakt expliciet wat de polish-implementer wel/niet moet aanraken.
 
-**REQ-2**: WHEN an admin clicks the overflow menu on a user row in `/admin/users` THEN a submenu SHALL appear with "Change profile to..." → submenu of the 5 profiles, plus "Suspend / Reactivate" (depending on current status) and "Offboard". Selecting a different profile SHALL trigger `PATCH /api/admin/users/<id>/role` with the new value.
-
-**REQ-3**: WHEN an admin views `/admin/users` THEN filter chips SHALL appear above the table for each of the 5 profiles plus "Suspended". Multiple chips MAY be active simultaneously (OR-filter). The default state SHALL be no chip active (= show all).
-
-**REQ-4**: WHEN an admin opens `/admin/profiles` THEN the page SHALL list 5 rows in ladder order, each showing the profile label, the profile description, and a numeric count of users currently on that profile (from a single SELECT against `portal_users` grouped by role).
-
-**REQ-5**: WHEN an admin clicks a profile row in `/admin/profiles` THEN a drill-in view SHALL list every user currently on that profile, with avatar, name, email, and a "Move to..." overflow action.
-
-**REQ-6**: WHEN an admin selects "Move to..." → another profile in the `/admin/profiles` drill-in THEN the system SHALL call `PATCH /api/admin/users/<id>/role` with the new profile, and on success move the row to the new profile's drill-in.
-
-**REQ-7**: WHEN an admin checks multiple members in the drill-in THEN a "Move selected to..." button SHALL appear with a profile-picker submenu. Selecting a target profile SHALL call `PATCH /api/admin/users/<id>/role` once per selected user (frontend loop), and on completion refresh the count and the drill-in list.
-
-**REQ-8**: WHEN an admin opens `/admin/groups` THEN the page SHALL list only groups where `system_key IS NULL` and SHALL show the subtitle "Groups scope which knowledge bases a team can use. To assign profiles, go to Profiles."
-
-**REQ-9**: WHEN an admin opens `/admin/users/invite` THEN the form SHALL include a radio-card profile picker (the same component used on `/admin/users/<id>/edit`) with the 5 profile options and their descriptions. The default-selected option SHALL be "Company chat".
-
-**REQ-10**: WHERE the UI surfaces a user's profile role THEN the label SHALL be "Profile" / "Profiel". The string "Role" / "Rol" SHALL NOT appear as a label or heading in any admin UI surface.
-
-**REQ-11**: WHEN the admin sidebar renders THEN it SHALL include the entries `Users`, `Profiles`, `Groups` as separate items in this order, between Overview and Billing.
-
----
-
-## Acceptance Criteria
-
-**AC-1**: `/admin/users` shows the new columns, filter chips work (single + multi-select), inline profile change via overflow menu actually updates the user's profile and refreshes the row badge.
-
-**AC-2**: `/admin/profiles` lists 5 profiles with counts. Voys tenant counts match `SELECT role, count(*) FROM portal_users WHERE org_id=<voys> GROUP BY role`.
-
-**AC-3**: Drill into "Company chat" → all current Company chat users are listed. Clicking "Move to → Knowledge manager" on one user moves them in the UI without a page reload, and the API call hits `PATCH /api/admin/users/<id>/role`.
-
-**AC-4**: Bulk-select 3 users → "Move selected to → Personal chat" — three API calls fire, all succeed, drill-in refreshes with the three users now removed from the Company chat list.
-
-**AC-5**: `/admin/groups` shows the empty state copy on a tenant with no custom groups, and the "Support" group on getklai.
-
-**AC-6**: `/admin/users/invite` form has 5 radio-cards for profile, defaults to "Company chat". Submitting with each profile creates a user with that profile.
-
-**AC-7**: `git grep -i 'role'` in `klai-portal/frontend/src/routes/admin/` returns no UI string labels (only DB-field references and type names where unavoidable). All visible labels say "Profile".
-
-**AC-8**: Sidebar order is Overview, Users, Profiles, Groups, Billing, ... — verified visually on each tenant.
+| ID | Status | Requirement |
+|---|---|---|
+| REQ-1 | LIVE in #317 — niet aanraken | The `/admin/users` table SHALL display Name · Email · Profile · Status · Invited · Actions and SHALL render `portal_users.role` als de matching `profile_*_label` i18n string. |
+| REQ-2 | LIVE in #317 — niet aanraken | The `/admin/users` row overflow ⋯ submenu SHALL include "Change profile to..." (with the 5 ladder targets), Suspend/Reactivate, and Offboard. Selecting a target SHALL trigger `PATCH /api/admin/users/<id>/role`. (Sparring #1 v0.2.0 verworpen door Mark in v0.3.0; huidige live UI blijft.) |
+| ~~REQ-3~~ | VERWORPEN | Filter chips. Sparring #5 v0.2.0: alleen search-Input. PR #317 search-Input is voldoende. |
+| REQ-4 | HERZIEN | The `/admin/profiles/index.tsx` page SHALL be a literal copy of `klai-portal/frontend/src/routes/admin/groups/index.tsx`'s structure — `useReactTable` + section-style `<table>` met `border-gray-200` + `divide-y` — adapted to render 5 statische rows in `PROFILE_LADDER` volgorde. Each row SHALL show the profile label as primary text, the profile description as sub-text in the same Name cell (`text-xs text-gray-400`), a numeric member count, and Edit + Eye action icons leading to `/admin/profiles/<role>`. No "Create" button. No Delete action. |
+| REQ-5 | HERZIEN | The `/admin/profiles/$profile.tsx` drill-in SHALL be a literal copy of `groups/$groupId/index.tsx`'s structure. Header: `Back to profiles` link + profile label as h1 + profile description as muted paragraph. Members section: section-style `<table>` met `border-gray-200`, columns Name · Email · Joined-at · Actions. Each row uses the shared `<UserAvatar>` component. |
+| REQ-6 | HERZIEN | The drill-in's "Add member" button SHALL navigate to `/admin/profiles/$profile/add-member` (a separate route, kopie van `groups/$groupId/add-member.tsx`). The picker SHALL only list users whose current `role` is NOT the target profile. On select + submit: `PATCH /api/admin/users/<id>/role` with body `{role: "<profile>"}`, then redirect back to the drill-in. |
+| REQ-7 | HERZIEN | The drill-in's per-row Remove action SHALL use `<InlineDeleteConfirm>` met label `"Demote {name} to Personal chat?"`. On confirm: `PATCH /api/admin/users/<id>/role` met body `{role: "personal"}`. Geen bulk-select, geen "Move to ▾" submenu. (Sparring #10.) |
+| REQ-8 | LIVE in #317 — niet aanraken | `/admin/groups` SHALL list only groups where `system_key IS NULL` met subtitle "Groups scope which knowledge bases a team can use. To assign profiles, go to Profiles." |
+| REQ-9 | HERZIEN | `/admin/users/invite` SHALL gebruik een `<Select>` dropdown (geen radio-cards, geen ProfilePicker component). Opties: 5 ladder-profielen met `profile_<role>_label`. Default = `personal`. Label "Profile" (niet "Role"). (Sparring #4.) |
+| REQ-10 | LIVE in #317 — niet aanraken | All UI labels surface "Profile" / "Profiel". The string "Role" / "Rol" SHALL NOT appear as a label or heading in any admin UI surface. |
+| REQ-11 | LIVE in #317 — niet aanraken | Admin sidebar order: Overview · Users · Profiles · Groups · Billing · API keys · Chat widgets · Templates · MCPs · Settings · Danger zone. |
+| REQ-12 | NIEUW v0.3.0 | `/admin/users/$userId/edit` SHALL be ONE form with ONE submit button. Geen meerdere `<Card>` wrappers met aparte saves. Velden in volgorde: First name + Last name, Invitation language, Profile (radio-cards via `<ProfilePicker>` shared component). Submit-knop onderaan: primary `[Save]` + secondary `Cancel`. Submit-handler stuurt `PATCH /api/admin/users/<id>` voor naam/taal en (alleen als profile gewijzigd) `PATCH /api/admin/users/<id>/role`. Lifecycle-acties (Suspend/Reactivate/Offboard) blijven onder de form als losse sectie met destructieve buttons (geen Save). |
+| REQ-13 | NIEUW v0.3.0 | `/admin/users/$userId/edit` SHALL NOT contain a Groups-section. Group-membership beheer gebeurt op `/admin/groups/$groupId/index.tsx` of via `/app/knowledge/<kb>/members`. Alle group-staging code (`memberGroupIds`, `useQuery(['admin-user-groups', userId])`, `groupsToAdd`/`groupsToRemove`) wordt verwijderd uit `edit.tsx`. |
+| REQ-14 | NIEUW v0.3.0 | `/admin/users/$userId/edit` page header SHALL include the subtitle: "Profiles control what tools the user can use. Groups control which knowledge bases the user can access within those tools." |
+| REQ-15 | LIVE in #317 — behouden | Backend `PATCH /api/admin/users/<id>/role` SHALL refuse to demote the last admin met HTTP 409 + detail "Cannot change profile: this is the last admin. Promote another user first." Mirrors `POST /demote-admin` invariant via `_lock_org_for_role_change` + admin_count check. (Sparring #9.) |
+| REQ-16 | NIEUW v0.3.0 | Frontend error banners en toasts SHALL strip the `"<status>: "` prefix uit `apiFetch`-formatted errors via shared helper `_components/errors.ts::cleanErrorMessage(err, fallback)`. Gebruikt in profiles/$profile.tsx en user-edit. |
+| REQ-17 | LIVE in #317 — behouden | All polish-round files SHALL voldoen aan klai-portal v1-spine (`portal-patterns.md`): `mx-auto max-w-3xl px-6 py-10` voor list-views, `mx-auto max-w-lg px-6 py-10` voor forms, `border-gray-200` literal voor tables/lists, `bg-black/5` hover + `bg-black/[0.06]` active, `text-gray-900` prose + `text-gray-400` muted, `rounded-full bg-gray-900` buttons, sentence-case, geen amber buiten focus-rings/logo. ProfilePicker selected state: `border-gray-900 bg-black/[0.06]` (geen `var(--color-accent)`). |
 
 ---
 
-## Technical approach
+## Acceptance Criteria (v0.3.0)
 
-### Frontend
+**AC-1** (REQ-1, REQ-2, REQ-10, REQ-11): `/admin/users` toont Profile column, search-Input bovenaan, ⋯ overflow met Change profile submenu. Sidebar volgorde Overview · Users · Profiles · Groups · Billing. Geen "Role"/"Rol" UI strings. ALLE: live op getklai.getklai.com vóór polish-round, blijft staan.
 
-- New file `klai-portal/frontend/src/routes/admin/profiles/index.tsx` — top-level list view.
-- New file `klai-portal/frontend/src/routes/admin/profiles/$profile.tsx` — drill-in detail view (`profile` is the path param: `personal`, `company`, etc.).
-- Modified `klai-portal/frontend/src/routes/admin/users/index.tsx` — add Profile column, filter chips, overflow-menu action for change-profile. Drop the legacy RoleBadge.
-- Modified `klai-portal/frontend/src/routes/admin/users/invite.tsx` — replace dropdown with radio-card profile picker. Reuse the component from user-edit (extract to `_components/ProfilePicker.tsx` so it's shared).
-- Modified `klai-portal/frontend/src/routes/admin/groups/index.tsx` — empty-state copy, page subtitle.
-- Modified sidebar nav (likely `klai-portal/frontend/src/components/layout/AdminSidebar.tsx` — verify path during impl).
+**AC-2** (REQ-4): `/admin/profiles` rendert als section-style table (kopie van groups/index.tsx-pattern), 5 rijen in ladder-volgorde. Counts kloppen tegen `SELECT role, count(*) FROM portal_users WHERE org_id=<tenant> GROUP BY role`. Sub-text description onder profile-naam in dezelfde Name-cel.
 
-### Component extraction
+**AC-3** (REQ-5): `/admin/profiles/<role>` drill-in toont alle users met die `role`, met `<UserAvatar>` per row. Page header: Back-link + profile label h1 + description.
 
-- `_components/ProfilePicker.tsx` — radio-card list with profile + description + selected state. Used by:
-  - User-edit (existing radio list, refactored to use this)
-  - Invite (new)
-  - Profiles drill-in "Move to..." submenu (compact variant)
+**AC-4** (REQ-6): Klikken op `Add member` → navigatie naar `/admin/profiles/<role>/add-member`. Picker toont alleen users wiens huidige role NIET het target is. Submit → `PATCH /api/admin/users/<id>/role` met `{role: "<target>"}` → redirect terug naar drill-in. User is nu zichtbaar in drill-in.
+
+**AC-5** (REQ-7): Klikken op trash-icon op een drill-in row → `InlineDeleteConfirm` met `"Demote {name} to Personal chat?"` → confirm → `PATCH /role` met `{role: "personal"}` → row verdwijnt uit huidige drill-in. Geen bulk-select. Geen "Move to ▾" submenu.
+
+**AC-6** (REQ-8): `/admin/groups` ongewijzigd t.o.v. main na PR #317 (subtitle + empty-state copy zoals daar gemerged). Polish-round raakt deze pagina niet aan.
+
+**AC-7** (REQ-9): `/admin/users/invite` heeft een `<Select>` dropdown met 5 opties (Personal chat / Company chat / Knowledge manager / Group manager / Admin) en default `personal`. Geen radio-cards. Geen ProfilePicker component op deze pagina.
+
+**AC-8** (REQ-12, REQ-13, REQ-14): `/admin/users/$userId/edit` heeft ÉÉN `<form>` met ÉÉN submit-button onderaan. Geen Groups-sectie. Header subtitle aanwezig. `git grep -E 'type=.submit.' klai-portal/frontend/src/routes/admin/users/\\$userId/edit.tsx` returnt exact 1 hit (de Save). `git grep 'admin-user-groups' klai-portal/frontend/src/routes/admin/users/\\$userId/edit.tsx` returnt 0.
+
+**AC-9** (REQ-15): Backend test `tests/test_spec_portal_admin_ui_001.py` (4 cases — last-admin demote 409, two-admin demote OK, promote skip-check, non-admin → non-admin OK) blijft groen op main na polish-merge.
+
+**AC-10** (REQ-16): UI-error banner bij min-1-admin-trigger toont `"Cannot change profile: this is the last admin. Promote another user first."` zonder `"409: "` prefix.
+
+**AC-11** (REQ-17): `git grep 'border-\[var(--color-border)\]' klai-portal/frontend/src/routes/admin/profiles/` returnt 0. `git grep 'var(--color-accent)' klai-portal/frontend/src/routes/admin/profiles/ klai-portal/frontend/src/routes/admin/_components/ProfilePicker.tsx` returnt 0. `npx tsc -b` clean. `npm run lint` clean.
+
+---
+
+## Technical approach (v0.3.0 polish)
+
+### Frontend file plan
+
+| File | Polish action | Template/source |
+|---|---|---|
+| `routes/admin/profiles/index.tsx` | Volledig herschrijven | 1-op-1 kopie van `routes/admin/groups/index.tsx`. Vervang dynamic group-fetch door statische 5 rows uit `PROFILE_LADDER`. Members count = client-side count uit `/api/admin/users` waar `user.role === <profile>`. Geen "Create" knop. Description als sub-text in Name-cel. |
+| `routes/admin/profiles/$profile.tsx` | Volledig herschrijven | 1-op-1 kopie van `routes/admin/groups/$groupId/index.tsx`. Profile metadata uit `PROFILE_LADDER` (statisch). Members = filter `users` op `role === profileSlug`. Add member knop → navigate `/admin/profiles/$profile/add-member`. Remove member → InlineDeleteConfirm + `PATCH /role` met `{role: "personal"}`. UserAvatar in name cell. Geen bulk-select, geen Move-to ▾ submenu. |
+| `routes/admin/profiles/$profile/add-member.tsx` | Nieuw bestand | 1-op-1 kopie van `routes/admin/groups/$groupId/add-member.tsx`. Picker filtert users wiens `role !== <profile>`. Submit → `PATCH /api/admin/users/<id>/role` met `{role: "<profile>"}` → redirect naar drill-in. |
+| `routes/admin/users/invite.tsx` | Refactor (rollback) | Verwijder `<ProfilePicker>` import, herstel `<Select>` met 5 `<option>` waarden uit `PROFILE_LADDER` + `profile_*_label`. Default `form.role = "personal"`. Layout: name fields → email → profile + language in 2-col grid → submit. |
+| `routes/admin/users/$userId/edit.tsx` | Refactor | Verwijder beide `<Card>` wrappers met aparte saves. Verwijder Groups-sectie (state + queries + mutations). Eén form met First name + Last name + Invitation language + ProfilePicker. Eén `<Button type="submit">` onderaan + `Cancel` ghost. Submit-handler: `PATCH /api/admin/users/<id>` (naam/taal) en, indien profile gewijzigd, `PATCH /api/admin/users/<id>/role` (sequentieel). Header subtitle (REQ-14) toevoegen. Lifecycle-acties (suspend/reactivate/offboard) blijven onder de form. |
+
+**Untouched** (Sparring #1 herzien, #6, REQ-1/8/10/11 al voldaan):
+- `routes/admin/users/index.tsx`
+- `routes/admin/groups/**`
+- `routes/admin/route.tsx`
+
+### Component patterns to keep
+
+- `_components/ProfilePicker.tsx` — v1-spine compliant, alleen gebruikt in user-edit.
+- `_components/UserAvatar.tsx` — gebruikt in profiles/$profile drill-in.
+- `_components/errors.ts::cleanErrorMessage` — gebruikt in profiles/$profile + user-edit voor 409 prefix scrub.
 
 ### Backend
 
-- No changes. `PATCH /api/admin/users/<id>/role` already accepts the 5 profiles. `GET /api/admin/users` already returns `role` per user.
-- Optional optimisation (not required): a `GET /api/admin/profiles/counts` endpoint that returns `{personal: 3, company: 12, kb_manager: 2, group_manager: 1, admin: 1}` in one query, instead of the frontend computing counts from the users list. Defer to v0.2.0; v0.1.0 computes counts client-side from the existing users-list response.
+- `app/api/admin/users.py::update_user_role` — min-1-admin invariant uit PR #317 blijft (REQ-15). Geen verdere wijzigingen.
+- Geen migraties. Geen nieuwe endpoints.
 
 ### Tests
 
-- Component test: `ProfilePicker` renders 5 cards with correct labels and selection state.
-- Component test: filter-chips on `/admin/users` correctly filter the table.
-- Component test: overflow-menu on user row triggers profile-change mutation with correct payload.
-- E2E (J05-profiles-batch-move.spec.ts in prod-tenant suite, runs in CI when secrets are refreshed): login → /admin/profiles → drill into a profile → move a user → verify count update on parent view.
+| Test file | Cases |
+|---|---|
+| `_components/__tests__/ProfilePicker.test.tsx` | (al groen, 6 cases) Ladder volgorde, selection state, onChange callback, description toggle (default vs compact), disabled mode. |
+| `_components/__tests__/UserAvatar.test.tsx` (NIEUW) | Initials uit first+last name, fallback naar email-prefix, decoratieve kleur per uid hash. |
+| `routes/admin/profiles/__tests__/index.test.tsx` (NIEUW) | Renders 5 rows in ladder volgorde. Counts aggregate correct uit `/api/admin/users` mock data. Edit + Eye actions navigeren naar `/admin/profiles/<role>`. |
+| `routes/admin/profiles/__tests__/$profile.test.tsx` (NIEUW) | Filtert users op huidige profile param. Remove member actie dispatches `PATCH /role` met `{role: "personal"}`. Geen bulk checkboxes in DOM. cleanErrorMessage strips 409 prefix in error banner. |
+| `routes/admin/profiles/__tests__/add-member.test.tsx` (NIEUW) | Picker filtert users wiens role !== current profile. Submit dispatches `PATCH /role` met `{role: "<profile>"}`. |
+| `routes/admin/users/__tests__/invite.test.tsx` (NIEUW) | Default `form.role === "personal"`. `<Select>` rendert 5 opties met juiste i18n labels. Submit verstuurt body met geselecteerde profile-waarde. |
+| `routes/admin/users/$userId/__tests__/edit.test.tsx` (NIEUW) | Eén `<button type="submit">`. Geen Groups-sectie in DOM (`queryByText('Groups')` returnt null). Submit-handler dispatches juiste mutation chain. |
+| `klai-portal/backend/tests/test_spec_portal_admin_ui_001.py` | (al groen, 4 cases) min-1-admin invariant op PATCH /role. |
 
 ### Performance
 
-- No N+1 queries. The users-list endpoint already returns `role` per user, so the Profiles page count is `O(users)` in the browser, not a DB roundtrip per profile.
-- Filter chips: client-side filter on the already-fetched users list. No extra fetches.
+- Counts op `/admin/profiles` zijn O(users) client-side. Geen extra DB query.
+- Geen filter logica meer (geen filter-chips); search-Input blijft client-side.
 
 ---
 
@@ -231,25 +246,36 @@ Sidebar (admin):
 
 ## Open questions
 
-Alle open vragen uit v0.1.0 zijn beantwoord — zie de sparring-decisions tabel bovenaan. Geen open einden meer voor v0.2.0.
+Alle open vragen voor v0.3.0 zijn beantwoord. Sparring decisions table en REQ-status table bovenaan zijn de bron van waarheid. Implementer mag GEEN UX-keuzes uitbreiden buiten wat hier expliciet staat — bij twijfel STOPPEN en vragen, niet "industry-standard" invullen.
 
 ---
 
-## Estimated effort
+## Estimated effort (v0.3.0 polish round)
 
-- Frontend: ~350 LOC nieuw, ~80 LOC verwijderd. Net positief ~270 LOC.
-- Component extraction: 1 nieuw shared component (~60 LOC).
-- Tests: 4-6 component tests, 1 E2E test (E2E pas nuttig na CI secrets refresh).
+- Frontend rollbacks + nieuwe routes: ~300 LOC herschrijven (profiles/index + profiles/$profile + profiles/$profile/add-member) + ~50 LOC refactor (invite + user-edit). Net ~250 LOC herwerk.
+- Tests: 6 nieuwe component test files (~250 LOC).
 - Backend: 0 LOC.
 - DB: 0 migrations.
-- Calendar: 1 werkdag voor implementatie + tests + lokaal verifiëren.
 
 ---
 
-## Definition of done
+## Definition of done (v0.3.0)
 
-- All REQ-1 t/m REQ-11 implemented, covered by component tests.
-- All AC-1 t/m AC-8 verifiable on the Voys tenant after deploy.
-- `git grep -in '"role"' klai-portal/frontend/src/routes/admin/` returns only DB-field references (no visible UI labels).
-- Sidebar reordered, three items in correct positions, on every tenant.
-- Mark verifies the E2E flow on Voys: invite a test user as Personal chat → see them in `/admin/users` with the right badge → on `/admin/profiles` see them in the Personal chat drill-in → batch-move them to Company chat → see the change reflect in both views.
+- Alle REQ-1 t/m REQ-17 voldaan, met de `LIVE in #317 — niet aanraken` rijen ongewijzigd op getklai.getklai.com en my.getklai.com.
+- Alle AC-1 t/m AC-11 verifieerbaar:
+  - frontend `npx tsc -b` clean
+  - frontend `npm run lint` clean
+  - frontend tests groen (ProfilePicker + UserAvatar + profiles/index + profiles/$profile + profiles/add-member + invite + user-edit; minimum 7 frontend test files groen)
+  - backend `tests/test_spec_portal_admin_ui_001.py` 4/4 groen
+  - `git grep 'border-\[var(--color-border)\]' klai-portal/frontend/src/routes/admin/profiles/` → 0 hits
+  - `git grep 'var(--color-accent)' klai-portal/frontend/src/routes/admin/profiles/ klai-portal/frontend/src/routes/admin/_components/ProfilePicker.tsx` → 0 hits
+  - `git grep 'admin-user-groups' klai-portal/frontend/src/routes/admin/users/\$userId/edit.tsx` → 0 hits
+  - `git grep 'type=.submit.' klai-portal/frontend/src/routes/admin/users/\$userId/edit.tsx` → 1 hit
+- Mark verifieert post-deploy op getklai.getklai.com:
+  - Open `/admin/profiles` → 5 rows + counts + tabel-pattern dat eruitziet als `/admin/groups` index
+  - Drill in op een profile → groups-detail-stijl tabel met members
+  - Klik Add member → picker → pick user → user verschijnt in drill-in
+  - Klik trash op een member → confirm → user is gedemoteerd naar Personal chat (zichtbaar in `/admin/profiles/personal`)
+  - Open `/admin/users/<id>/edit` → één form, één Save knop, geen Groups-sectie, header subtitle aanwezig
+  - Open `/admin/users/invite` → dropdown met 5 opties, Personal chat default geselecteerd
+- Min-1-admin invariant: poging om laatste admin te demoten (via user-edit profile picker) toont `"Cannot change profile: this is the last admin. Promote another user first."` zonder `"409: "` prefix.
