@@ -61,7 +61,7 @@ It is **cross-platform** — all platform-specific settings live in local config
     "playwright-isolated": {
       "type": "stdio",
       "command": "npx",
-      "args": ["@playwright/mcp@0.0.70", "--browser", "chromium", "--isolated", "--headless"],
+      "args": ["@playwright/mcp@0.0.70", "--browser", "chromium", "--isolated"],
       "env": {}
     },
     "codeindex": {
@@ -96,66 +96,89 @@ It is **cross-platform** — all platform-specific settings live in local config
 |--------|---------|
 | **serena** | Semantic code navigation (symbol search, references, go-to-definition) and persistent project memories. Uses LSP for Python and TypeScript. |
 | **context7** | Up-to-date library documentation (React, FastAPI, Next.js, etc.). Prefer over web search for API docs. |
-| **playwright** | Browser automation for E2E spot-checks and visual verification. Persistent Chromium profile so login state survives Claude Code restarts. Single-instance — for parallel sessions, use `playwright-isolated`. |
-| **playwright-isolated** | Ephemeral headless Chromium for CSS debugging and parallel browser work. No login state, no profile lock conflicts. |
+| **playwright** | Browser automation for E2E spot-checks and visual verification. Headed Chromium with shared login state via `--storage-state` — every Claude Code session preloads the same auth, runs in its own ephemeral profile, parallel-safe. |
+| **playwright-isolated** | Headed ephemeral Chromium with NO storage state. For CSS work or unauthenticated checks where preloaded login would just be noise. |
 | **codeindex** | Graph-powered code intelligence — call graphs, impact analysis, semantic search, communities, and enrichment queries (git hotspots, SPEC links, test coverage, PageRank). |
 | **grafana** | Read-only access to Grafana dashboards, Prometheus/VictoriaMetrics queries, and alerts. Cannot query VictoriaLogs — use the `victorialogs` MCP for log queries instead. |
 | **victorialogs** | Production log queries via LogsQL against VictoriaLogs. Requires SSH tunnel (`./scripts/victorialogs-tunnel.sh`) and `VICTORIALOGS_BASIC_AUTH_B64` env var. Preferred over `docker logs` for investigating issues. |
 
 ## 3. Set up Playwright
 
-No per-machine setup. The `playwright` server in `.mcp.json` invokes
-`.claude/scripts/playwright-launcher.mjs` (committed, cross-platform). The launcher:
+No per-machine setup beyond a one-time login. The `playwright` server in `.mcp.json`
+invokes `.claude/scripts/playwright-launcher.mjs` (committed, cross-platform). The launcher
+spawns `@playwright/mcp@0.0.70` with `--browser chromium --isolated --storage-state
+~/.claude/mcp-storageState.json`. Bundled Chromium, no Brave/Chrome.
 
-- Uses Playwright's bundled Chromium — no Brave, Chrome, or other locally-installed browser
-- Passes `--user-data-dir ~/.claude/mcp-chromium-profile` as a CLI flag (cross-platform path
-  via `os.homedir()`, no per-developer edits needed)
-- Pins `@playwright/mcp@0.0.70`
+### Use case this is built for
+
+AI-driven coding sessions where the assistant validates its own changes end-to-end via
+Playwright MCP. You log in once; the AI takes over from there. Multiple coding sessions
+can run in parallel — each gets a visible browser window with the same login already
+loaded.
+
+### Why `--isolated` + `--storage-state` instead of a persistent profile
+
+A persistent Chromium profile (`--user-data-dir`) is single-instance: a second simultaneous
+session fails with `Browser is already in use`. `--isolated` gives every session its own
+ephemeral profile (no lock conflicts), and `--storage-state <file>` preloads cookies and
+localStorage at startup so the session is already authenticated. This is the canonical
+Playwright multi-session authentication pattern (also what Playwright Test does via
+`globalSetup` + `storageState`).
+
+Storage state is read-only at startup — nothing writes it back. That is fine for this use
+case because the AI does not log out, change passwords, or otherwise mutate auth. Refresh
+the file when Google's session cookies expire (~3 weeks).
 
 ### Why a launcher script and not a JSON `--config` file
 
 [microsoft/playwright-mcp#1446](https://github.com/microsoft/playwright-mcp/issues/1446):
-on `@playwright/mcp@0.0.70`, the `userDataDir` set inside a JSON `--config` file is silently
-ignored — the browser falls back to an in-memory profile and login state is lost on every
-restart. Passing `--user-data-dir` as a CLI flag works correctly. The launcher is the
-cross-platform vehicle for that flag.
+on `@playwright/mcp@0.0.70`, profile-related options set inside a JSON `--config` file
+can be silently ignored. CLI flags work correctly. The launcher is the cross-platform
+vehicle for those flags.
 
-### Single-instance limitation (and the workaround)
+### One-time login (and refresh)
 
-A persistent Chromium profile can only be opened by **one** browser instance at a time. If a
-second concurrent Claude Code session tries to launch the same `playwright` MCP server, the
-second one fails with `Browser is already in use`.
-
-Workaround in this repo: a **second** MCP server is wired in `.mcp.json` called
-`playwright-isolated`. It uses `--isolated --headless` (ephemeral, no persistent profile) and
-is meant for parallel sessions where login state is not required (CSS debugging, visual
-verification). Use the `playwright` server for anything that needs an authenticated session,
-and `playwright-isolated` everywhere else.
-
-For the full failure-mode cycle and anti-patterns to avoid, see
-`playwright-mcp-config-cycle (HIGH)` in `.claude/rules/klai/pitfalls/process-rules.md`.
-
-### First-time login
-
-On first invocation, the launcher opens Chromium at whatever URL you navigate to. Log in
-manually in that window. Cookies and localStorage are written to
-`~/.claude/mcp-chromium-profile/` automatically. Subsequent sessions start logged in.
-
-### Starting from scratch (logged-out state)
-
-Delete the profile directory:
+Run this once, and again whenever Google's session cookies expire (you'll know because
+sessions start logged-out):
 
 ```powershell
 # Windows (PowerShell)
-Remove-Item -Recurse -Force "$env:USERPROFILE\.claude\mcp-chromium-profile"
+npx --yes playwright codegen `
+  --save-storage="$env:USERPROFILE\.claude\mcp-storageState.json" `
+  --browser=chromium `
+  https://voys.getklai.com
 ```
 
 ```bash
 # macOS / Linux
-rm -rf ~/.claude/mcp-chromium-profile
+npx --yes playwright codegen \
+  --save-storage="$HOME/.claude/mcp-storageState.json" \
+  --browser=chromium \
+  https://voys.getklai.com
 ```
 
-Restart Claude Code. Log in again on first use.
+A Chromium window opens. Log in to all sites you need (Google SSO, getklai, etc.). When
+done, close the codegen window. The storage-state file is written automatically. Restart
+Claude Code; every Playwright MCP session now starts authenticated.
+
+For the full failure-mode cycle and anti-patterns to avoid, see
+`playwright-mcp-config-cycle (HIGH)` in `.claude/rules/klai/pitfalls/process-rules.md`.
+
+### Starting from scratch (logged-out state)
+
+Delete the storage-state file, then re-run the codegen command above:
+
+```powershell
+# Windows (PowerShell)
+Remove-Item -Force "$env:USERPROFILE\.claude\mcp-storageState.json"
+```
+
+```bash
+# macOS / Linux
+rm -f ~/.claude/mcp-storageState.json
+```
+
+Then re-run the codegen command above to regenerate the file.
 
 For session management rules (when to open/close the browser), see
 `.claude/rules/klai/lang/testing.md`.
@@ -326,9 +349,10 @@ uvx mcp-grafana --help
 3. **MCP timeout** — Serena takes too long to index. Check `.serena/project.yml` for overly broad
    file patterns.
 4. **Playwright launcher fails to start** — `node` not on PATH or the launcher script missing. Fix: verify `node --version` works in your shell and `.claude/scripts/playwright-launcher.mjs` exists. Restart Claude Code.
-5. **Playwright login does not persist across restarts** — `userDataDir` was silently ignored (microsoft/playwright-mcp#1446). Fix: confirm `.mcp.json` runs the launcher (`"command": "node", "args": [".claude/scripts/playwright-launcher.mjs"]`) and not `--config <some.json>`. The launcher uses CLI flags which work correctly.
-6. **Playwright fails with `Browser is already in use`** — a second Claude Code session is trying to use the persistent profile. Fix: in the second session, use the `playwright-isolated` MCP server instead. If no other session is running, a previous Chromium process crashed and is holding the lock — kill it (`taskkill /F /IM chrome.exe` on Windows; `pkill -f mcp-chromium-profile` on Mac/Linux) and retry.
-7. **Playwright browser window not visible after login** — `~/.claude/mcp-chromium-profile/` parent directory doesn't exist. Fix: confirm `~/.claude/` exists; the launcher creates the profile sub-directory itself on first run.
+5. **Playwright sessions start logged-out** — `~/.claude/mcp-storageState.json` is missing or its cookies have expired. Fix: re-run the codegen command in Section 3 to regenerate the file, then restart Claude Code.
+6. **Playwright fails with `Browser is already in use`** — should not happen with `--isolated`. If it does, confirm `.mcp.json` still uses `--isolated --storage-state` and not a `--user-data-dir` flag. A leftover Chromium process can be killed with `taskkill /F /IM chrome.exe` (Windows) or `pkill -f playwright` (Mac/Linux).
+7. **Playwright window opens but immediately closes** — storage-state file is corrupt or in a non-Playwright format. Fix: delete `~/.claude/mcp-storageState.json` and re-run the codegen command.
+8. **Login state visible in one site but missing in another** — codegen capture only saved the sites you visited during the login dance. Fix: re-run codegen and visit + log in to every site you need before closing the window.
 9. **CodeIndex not found** — `codeindex` command not available. Fix: `npm install -g klai-private/tools/codeindex-1.3.56.tgz`
 10. **CodeIndex stale index** — Index behind HEAD. Symptoms: impact analysis misses recent code. Fix: `codeindex update && node scripts/codeindex-enrich.mjs`
 11. **VictoriaLogs tunnel not running** — MCP queries fail silently or timeout. Fix: `./scripts/victorialogs-tunnel.sh` then restart Claude Code.
