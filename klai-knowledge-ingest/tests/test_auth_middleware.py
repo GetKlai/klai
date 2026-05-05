@@ -63,7 +63,18 @@ def test_health_without_secret(secured_client):
 
 
 def test_request_without_secret_returns_401(secured_client):
-    """Request without X-Internal-Secret should return 401."""
+    """Request without X-Internal-Secret should return 401.
+
+    Audit 2026-05-05 finding F6: the assertion targets the
+    `InternalSecretMiddleware` 401 body text. If the middleware ever
+    reformats its error message (e.g. for an OWASP-style consistency
+    pass), this test would fail on string drift, not on
+    auth-correctness. Comment retained because the string assertion is
+    still useful as a smoke-check, but the load-bearing assertion is
+    the status code — a future text reformat must update both
+    occurrences in this file (see test_request_with_wrong_secret_returns_401
+    below) consistently.
+    """
     resp = secured_client.post(
         "/ingest/v1/document",
         json={
@@ -74,6 +85,10 @@ def test_request_without_secret_returns_401(secured_client):
         },
     )
     assert resp.status_code == 401
+    # The string-match below is a SMOKE-CHECK that the 401 came from the
+    # InternalSecretMiddleware, not e.g. a 401 from an upstream Zitadel call.
+    # If the middleware text is reformatted, both this test and the next
+    # one must update together.
     assert "X-Internal-Secret" in resp.json()["detail"]
 
 
