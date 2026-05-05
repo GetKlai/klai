@@ -85,53 +85,36 @@ def _build_ragas_llm(model: str | None = None):
     )
 
 
-class _LiteLLMRagasEmbeddings:
-    """RAGAS 0.4.3 BaseRagasEmbedding adapter pointed at klai-bge-m3.
-
-    Implements the modern interface (``aembed_text``, ``aembed_texts``,
-    ``embed_text``, ``embed_texts``) that ``ragas.metrics.collections``
-    metrics consume. Backed by sync + async OpenAI clients against the
-    LiteLLM proxy; the proxy aliases ``klai-bge-m3`` to the BGE-M3
-    deployment on TEI/gpu-01.
-    """
-
-    def __init__(self, base_url: str, api_key: str, model: str) -> None:
-        from openai import AsyncOpenAI, OpenAI
-
-        # Sync + async OpenAI clients sharing the LiteLLM proxy. RAGAS calls
-        # both depending on the metric (AnswerRelevancy uses the async path).
-        self._sync = OpenAI(base_url=base_url, api_key=api_key)
-        self._async = AsyncOpenAI(base_url=base_url, api_key=api_key)
-        self._model = model
-
-    def embed_text(self, text: str, **kwargs: Any) -> list[float]:
-        resp = self._sync.embeddings.create(input=text, model=self._model)
-        return resp.data[0].embedding
-
-    def embed_texts(self, texts: list[str], **kwargs: Any) -> list[list[float]]:
-        resp = self._sync.embeddings.create(input=texts, model=self._model)
-        return [d.embedding for d in resp.data]
-
-    async def aembed_text(self, text: str, **kwargs: Any) -> list[float]:
-        resp = await self._async.embeddings.create(input=text, model=self._model)
-        return resp.data[0].embedding
-
-    async def aembed_texts(self, texts: list[str], **kwargs: Any) -> list[list[float]]:
-        resp = await self._async.embeddings.create(input=texts, model=self._model)
-        return [d.embedding for d in resp.data]
-
-
-def _build_ragas_embeddings() -> _LiteLLMRagasEmbeddings:
+def _build_ragas_embeddings():
     """Build the RAGAS embeddings adapter pointed at klai-bge-m3.
+
+    Uses RAGAS' canonical ``embedding_factory(provider="openai", ...,
+    interface="modern")`` which returns the
+    ``ragas.embeddings.openai_provider.OpenAIEmbeddings`` instance that
+    ``ragas.metrics.collections`` validates against. A custom class that
+    only ducks the method shape is rejected with::
+
+        Collections metrics only support modern embeddings.
+        Found: <CustomClass>. Use: embedding_factory('openai', ...,
+        interface='modern')
 
     klai-bge-m3 is the LiteLLM alias for BGE-M3 on TEI/gpu-01. Used by
     AnswerRelevancy to compare imaginary-question vectors with the user's
-    actual question.
+    actual question. The OpenAI client is pointed at the LiteLLM proxy so
+    every embedding call routes through klai-bge-m3.
     """
-    return _LiteLLMRagasEmbeddings(
+    from openai import AsyncOpenAI
+    from ragas.embeddings.base import embedding_factory
+
+    client = AsyncOpenAI(
         base_url=f"{settings.litellm_url}/v1",
         api_key=settings.litellm_api_key or "no-key",
+    )
+    return embedding_factory(
+        provider="openai",
         model=settings.rag_eval_embeddings_model,
+        client=client,
+        interface="modern",
     )
 
 
