@@ -600,6 +600,14 @@ class KnowledgeFeatureResponse(BaseModel):
     kb_slugs_filter: list[str] | None = None
     kb_narrow: bool = False
     kb_pref_version: int = 0
+    # SPEC-SEC-IDENTITY-ASSERT-001 follow-up: retrieval-api's identity-verify
+    # check matches against `PortalUser.zitadel_user_id`. The LiteLLM hook only
+    # has the LibreChat MongoDB ObjectId at hand. Returning the resolved
+    # zitadel_user_id here lets the hook send the right identifier on the
+    # /retrieve call, and matches what knowledge-ingest stamps on personal-KB
+    # qdrant chunks (klai-portal/backend/app/api/knowledge.py:172-204), so
+    # the personal-scope filter also works.
+    zitadel_user_id: str | None = None
 
 
 @router.get("/v1/users/{librechat_user_id}/feature/knowledge", response_model=KnowledgeFeatureResponse)
@@ -710,6 +718,7 @@ async def get_knowledge_feature(
         kb_slugs_filter=user.kb_slugs_filter,
         kb_narrow=user.kb_narrow,
         kb_pref_version=user.kb_pref_version,
+        zitadel_user_id=user.zitadel_user_id,
     )
 
 

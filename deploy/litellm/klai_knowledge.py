@@ -434,6 +434,7 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
             "kb_slugs_filter": None,
             "kb_narrow": False,
             "version": 0,
+            "zitadel_user_id": None,
         }
 
     # Step 1: check version pointer (short-lived — invalidated by preference changes)
@@ -467,6 +468,7 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
             "kb_slugs_filter": None,
             "kb_narrow": False,
             "version": 0,
+            "zitadel_user_id": None,
         }
 
     version = data.get("kb_pref_version", 0)
@@ -477,6 +479,12 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
         "kb_slugs_filter": data.get("kb_slugs_filter"),
         "kb_narrow": data.get("kb_narrow", False),
         "version": version,
+        # SPEC-SEC-IDENTITY-ASSERT-001 follow-up: portal-api maps the LibreChat
+        # ObjectId we pass in the URL to the portal_users row and exposes the
+        # canonical Zitadel sub here. retrieval-api's identity-verify path,
+        # personal-KB qdrant filter, and the verify-cache key all match on
+        # zitadel_user_id — using the LibreChat ObjectId would 403 every call.
+        "zitadel_user_id": data.get("zitadel_user_id"),
     }
 
     # Store version pointer (30s) and feature data (300s) separately
@@ -767,20 +775,25 @@ class KlaiKnowledgeHook(CustomLogger):
             # Master key usage — no org scope available, skip silently
             return data
 
-        # user_id = LibreChat MongoDB ObjectId sent as the "user" field
-        user_id = data.get("user", "")
-        if not user_id:
+        # librechat_user_id = LibreChat MongoDB ObjectId sent as the "user" field.
+        # We only use this against portal-api endpoints that explicitly accept
+        # the LibreChat ID (kb_feature, templates). Everything that asks
+        # "which Zitadel user is this?" — including retrieval-api's
+        # /retrieve identity-verify path and the personal-KB qdrant filter —
+        # gets the resolved zitadel_user_id from the kb_feature response.
+        librechat_user_id = data.get("user", "")
+        if not librechat_user_id:
             return data
 
         # SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-HOOK: fetch active templates
         # before the KB path so they apply on EVERY downstream branch —
         # including early returns when KB retrieval is skipped or fails.
         # Fail-open: empty list on any portal-api error.
-        template_instructions = await _get_templates(org_id, user_id, cache)
+        template_instructions = await _get_templates(org_id, librechat_user_id, cache)
         templates_block = _build_template_instructions_block(template_instructions)
 
         # Feature gate + KB scope preference (version-based cache, 30s propagation)
-        feature = await _get_kb_feature(user_id, org_id, cache)
+        feature = await _get_kb_feature(librechat_user_id, org_id, cache)
         if not feature["enabled"]:
             # No KB entitlement. Templates still apply.
             _prepend_system_prefix(messages, templates_block)
@@ -790,6 +803,42 @@ class KlaiKnowledgeHook(CustomLogger):
         if not feature["kb_retrieval_enabled"]:
             # User disabled KB retrieval. Templates still apply.
             _prepend_system_prefix(messages, templates_block)
+            data["messages"] = messages
+            return data
+
+        # SPEC-SEC-IDENTITY-ASSERT-001 follow-up: retrieval-api forwards
+        # claimed_user_id to portal-api /internal/identity/verify which
+        # matches against PortalUser.zitadel_user_id. Sending the LibreChat
+        # ObjectId here lands on `reason: "no_membership"` and a 403
+        # `identity_assertion_failed` — observed in prod 2026-05-05 once
+        # the missing-X-Caller-Service header bug was fixed.
+        #
+        # From here on we use `user_id` (= Zitadel sub) for everything that
+        # leaves this process: retrieval-api request body, gap-events,
+        # retrieval-log, _klai_kb_meta. Personal-KB qdrant chunks are
+        # stamped with the same Zitadel sub at ingest time
+        # (klai-portal/backend/app/api/knowledge.py:172-204) so the
+        # personal-scope filter matches.
+        user_id: str | None = feature.get("zitadel_user_id")
+        if not user_id:
+            # portal-api couldn't resolve the LibreChat ObjectId → Zitadel sub.
+            # Without it, retrieval-api's identity-verify denies. Surface to
+            # the user via the existing fail-loud path instead of degrading.
+            logger.error(
+                "KlaiKnowledgeHook: portal returned no zitadel_user_id for "
+                "librechat_user_id=%s org_id=%s — failing loud",
+                librechat_user_id,
+                org_id,
+            )
+            kb_unavailable_notice = (
+                "[Klai Kennisbank — TIJDELIJK NIET BEREIKBAAR. Antwoord op basis "
+                "van algemene kennis. Begin je antwoord met deze waarschuwing aan "
+                "de gebruiker: 'Let op: ik kon de kennisbank niet bereiken "
+                "(identity-resolve-failed) — dit antwoord is niet gebaseerd op "
+                "jullie eigen documentatie. Probeer het later opnieuw.']\n"
+            )
+            prefix = "\n\n".join(b for b in (templates_block, kb_unavailable_notice) if b)
+            _prepend_system_prefix(messages, prefix)
             data["messages"] = messages
             return data
 
@@ -856,6 +905,9 @@ class KlaiKnowledgeHook(CustomLogger):
             "query": rewritten_query,
             "raw_query": query,
             "org_id": org_id,
+            # Zitadel sub — matches PortalUser.zitadel_user_id (identity-verify)
+            # AND owner_user_id on personal-KB qdrant chunks
+            # (klai-portal/backend/app/api/knowledge.py:172-204).
             "user_id": user_id,
             "scope": scope,
             "top_k": RETRIEVE_TOP_K,
