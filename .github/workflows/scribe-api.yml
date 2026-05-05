@@ -67,13 +67,23 @@ jobs:
           context: .
           file: klai-scribe/scribe-api/Dockerfile
           push: true
+          # `:latest` is published ONLY on push to main. PR builds publish
+          # only the SHA tag so `docker pull :latest` cannot accidentally
+          # pull PR-build code. Mirrors klai-connector / klai-mailer
+          # (post hotfix #322).
           tags: |
-            ghcr.io/getklai/scribe-api:latest
             ghcr.io/getklai/scribe-api:${{ github.sha }}
+            ${{ github.event_name == 'push' && 'ghcr.io/getklai/scribe-api:latest' || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # 2026-05-05 mailer-incident class: this step previously had no `if:`
+      # gate, so PR builds also auto-deployed `:latest` to prod. The first
+      # PR build that produced a recreate after a long quiet period could
+      # surface a hidden validator-env-parity regression as a 30+ minute
+      # outage. Same pattern that bit klai-mailer post PR #319 → hotfix #322.
       - name: Deploy to core-01
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.CORE01_HOST }}
