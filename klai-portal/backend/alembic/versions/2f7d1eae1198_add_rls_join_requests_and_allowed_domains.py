@@ -47,49 +47,46 @@ Revises: rbac001drop00
 Create Date: 2026-05-05
 """
 
-from alembic import op
-
 revision = "2f7d1eae1198"
 down_revision = "rbac001drop00"
 branch_labels = None
 depends_on = None
 
-_T = "NULLIF(current_setting('app.current_org_id', true), '')::int"
-_T_IS_NULL = "NULLIF(current_setting('app.current_org_id', true), '') IS NULL"
 
-
-def _enable_rls(table: str) -> None:
-    op.execute(  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
-        f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY"
-    )
-    op.execute(  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
-        f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY"
-    )
+# All DDL for this migration (ENABLE ROW LEVEL SECURITY + CREATE POLICY)
+# requires the table-owner role (`klai` superuser), not the migration role
+# (`portal_api`). PostgreSQL refuses these statements when run by anyone
+# else with `ERROR: must be owner of table portal_join_requests` —
+# crash-looping portal-api on the next deploy. Same class as
+# `alembic-cannot-drop-non-portal_api-tables` in process-rules.md, just
+# with ENABLE / FORCE ROW LEVEL SECURITY instead of DROP TABLE.
+#
+# The DDL has been moved to a sibling post-deploy SQL file:
+#   alembic/versions/post_deploy_2f7d1eae1198.sql
+#
+# Apply it manually as the `klai` superuser after `alembic upgrade
+# 2f7d1eae1198` completes (or via `scripts/apply_post_deploy_sql.sh`).
+#
+# Pattern matches: post_deploy_7e2d3c1a9b8f.sql (RLS for
+# tenant_lifecycle_events), post_deploy_ed5b78b296f5.sql (DROP of
+# portal_org_allowed_domains), post_deploy_f0a1b2c3d4e5.sql (RLS for
+# widgets).
+#
+# This upgrade() is intentionally a no-op so the alembic_version row
+# advances cleanly even when the operator has not yet applied the
+# post-deploy SQL. Without that, every container start would re-attempt
+# the failing DDL and crash-loop on every restart.
 
 
 def upgrade() -> None:
-    # portal_join_requests: Category A (permissive on missing context).
-    # The admin token-based approve flow in app/api/auth_join.py looks up
-    # the join request by its approval_token BEFORE any tenant context is
-    # resolved (the token IS the resolution mechanism). Same shape as
-    # portal_users / portal_connectors — a permissive IS NULL branch so
-    # the pre-auth lookup succeeds, with strict tenant-equality once
-    # set_tenant has fired downstream (admin/join_requests.py path).
-    _enable_rls("portal_join_requests")
-    op.execute(  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
-        "DROP POLICY IF EXISTS tenant_isolation ON portal_join_requests"
-    )
-    op.execute(  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
-        "CREATE POLICY tenant_isolation ON portal_join_requests "
-        f"USING (org_id = {_T} OR {_T_IS_NULL}) "
-        f"WITH CHECK (org_id = {_T})"
-    )
+    # No-op: see file-level comment. DDL lives in
+    # post_deploy_2f7d1eae1198.sql, applied manually as klai superuser.
+    pass
 
 
 def downgrade() -> None:
-    op.execute(  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
-        "DROP POLICY IF EXISTS tenant_isolation ON portal_join_requests"
-    )
-    op.execute(  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
-        "ALTER TABLE portal_join_requests DISABLE ROW LEVEL SECURITY"
-    )
+    # No-op: the post-deploy SQL is idempotent and not part of the
+    # alembic-managed schema. To roll back, run as klai superuser:
+    #   DROP POLICY IF EXISTS tenant_isolation ON portal_join_requests;
+    #   ALTER TABLE portal_join_requests DISABLE ROW LEVEL SECURITY;
+    pass

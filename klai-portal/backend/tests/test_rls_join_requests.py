@@ -42,6 +42,13 @@ MIGRATION_PATH = (
     / "2f7d1eae1198_add_rls_join_requests_and_allowed_domains.py"
 )
 
+# DDL was moved to a post-deploy SQL file (run as klai superuser) because
+# `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` and `CREATE POLICY` require
+# the table-owner role, not the migration role (`portal_api`). See pitfall
+# `alembic-cannot-drop-non-portal_api-tables` in process-rules.md and the
+# header of post_deploy_2f7d1eae1198.sql for context.
+POST_DEPLOY_SQL_PATH = Path(__file__).resolve().parents[1] / "alembic" / "versions" / "post_deploy_2f7d1eae1198.sql"
+
 
 # ---------------------------------------------------------------------------
 # RLS_DML_TABLES regression — silent-filter guard must cover the new table
@@ -86,50 +93,83 @@ def _read_migration() -> str:
     return MIGRATION_PATH.read_text(encoding="utf-8")
 
 
-def test_migration_enables_force_rls() -> None:
+def _read_post_deploy_sql() -> str:
+    assert POST_DEPLOY_SQL_PATH.exists(), (
+        f"SPEC-SEC-PORTAL-RLS-001 post-deploy SQL file is missing: {POST_DEPLOY_SQL_PATH}. "
+        "DDL for portal_join_requests RLS lives there because the "
+        "migration role (portal_api) cannot run owner-required DDL "
+        "(see pitfall alembic-cannot-drop-non-portal_api-tables)."
+    )
+    return POST_DEPLOY_SQL_PATH.read_text(encoding="utf-8")
+
+
+def test_post_deploy_enables_force_rls() -> None:
     """Both ENABLE and FORCE row-level security must fire on the table.
 
     Without FORCE, the table owner role bypasses the policy — fine in
     dev but operationally risky if the migration role and the
     application role ever drift.
     """
-    src = _read_migration()
-    assert re.search(r"ENABLE ROW LEVEL SECURITY", src), "Migration must call ALTER TABLE ... ENABLE ROW LEVEL SECURITY"
-    assert re.search(r"FORCE ROW LEVEL SECURITY", src), "Migration must call ALTER TABLE ... FORCE ROW LEVEL SECURITY"
+    src = _read_post_deploy_sql()
+    assert re.search(r"ENABLE ROW LEVEL SECURITY", src), (
+        "post_deploy_2f7d1eae1198.sql must call ALTER TABLE ... ENABLE ROW LEVEL SECURITY"
+    )
+    assert re.search(r"FORCE ROW LEVEL SECURITY", src), (
+        "post_deploy_2f7d1eae1198.sql must call ALTER TABLE ... FORCE ROW LEVEL SECURITY"
+    )
     assert "portal_join_requests" in src
 
 
-def test_migration_does_not_touch_portal_org_allowed_domains() -> None:
-    """SPEC-AUTH-009 R2 dropped the table. The migration must NOT
+def test_migration_body_is_noop() -> None:
+    """The migration file's upgrade() and downgrade() MUST be no-ops.
+
+    The owner-required DDL was moved out of the migration to
+    post_deploy_2f7d1eae1198.sql to avoid the
+    `alembic-cannot-drop-non-portal_api-tables` crash-loop. If a future
+    refactor accidentally moves the DDL back into upgrade(), portal-api
+    will crash-loop on every fresh deploy.
+    """
+    src = _read_migration()
+    # Both upgrade() and downgrade() should be `pass`-only bodies. We
+    # assert the absence of `op.execute(`, which is the load-bearing
+    # API for raw DDL.
+    assert "op.execute(" not in src, (
+        "Migration file contains op.execute(...) — owner-required DDL "
+        "must live in post_deploy_2f7d1eae1198.sql instead. See pitfall "
+        "alembic-cannot-drop-non-portal_api-tables in process-rules.md."
+    )
+
+
+def test_post_deploy_does_not_touch_portal_org_allowed_domains() -> None:
+    """SPEC-AUTH-009 R2 dropped the table. Post-deploy SQL must NOT
     re-introduce DDL on it — that would conflict with the drop on
     upgrade() and confuse downgrade()."""
-    src = _read_migration()
-    # The table name may appear in the docstring as historical context
-    # (explaining WHY it is excluded). It MUST NOT appear in any
-    # op.execute() call.
-    op_executes = re.findall(r"op\.execute\([^)]*\)", src, re.DOTALL)
-    for stmt in op_executes:
-        assert "portal_org_allowed_domains" not in stmt, (
-            "Migration must not run DDL against portal_org_allowed_domains "
-            "— SPEC-AUTH-009 R2 dropped that table. Found in: "
-            f"{stmt[:200]}..."
-        )
+    src = _read_post_deploy_sql()
+    # Header docstring may mention the table as historical context.
+    # Strip SQL line-comments before searching for the table name in
+    # active DDL.
+    active_ddl = "\n".join(line for line in src.splitlines() if not line.lstrip().startswith("--"))
+    assert "portal_org_allowed_domains" not in active_ddl, (
+        "post_deploy_2f7d1eae1198.sql must not run DDL against "
+        "portal_org_allowed_domains — SPEC-AUTH-009 R2 dropped that "
+        "table."
+    )
 
 
 def _extract_policy_block(source: str, table: str) -> str:
     """Return the source-text run that contains the ``CREATE POLICY`` for
-    ``table``, up to the closing ``op.execute(...)`` call.
+    ``table``, up to the closing semicolon.
     """
     match = re.search(
-        rf"CREATE POLICY tenant_isolation ON {table}.*?\)\n",
+        rf"CREATE POLICY tenant_isolation ON {table}.*?;",
         source,
         re.DOTALL,
     )
-    assert match, f"CREATE POLICY block for {table} not found in migration"
+    assert match, f"CREATE POLICY block for {table} not found in post-deploy SQL"
     return match.group(0)
 
 
-def test_migration_creates_permissive_policy_on_join_requests() -> None:
+def test_post_deploy_creates_permissive_policy_on_join_requests() -> None:
     """Category-A pre-auth pattern: portal_join_requests MUST include
     the ``IS NULL`` permissive branch in its USING clause.
 
@@ -137,17 +177,10 @@ def test_migration_creates_permissive_policy_on_join_requests() -> None:
     ``auth_join.py`` cannot resolve the join request before tenant
     context exists. See migration docstring + SPEC-SEC-PORTAL-RLS-001
     Risks table.
-
-    The migration may emit the IS NULL branch either directly (literal
-    ``IS NULL`` text) or via the shared ``_T_IS_NULL`` variable that
-    expands to ``NULLIF(...) IS NULL`` at runtime — both shapes are
-    accepted, but the strict-only pattern (``USING (org_id = T)`` with
-    no NULL branch at all) is rejected.
     """
-    src = _read_migration()
+    src = _read_post_deploy_sql()
     block = _extract_policy_block(src, "portal_join_requests")
-    has_permissive_branch = "IS NULL" in block or "_T_IS_NULL" in block
-    assert has_permissive_branch, (
+    assert "IS NULL" in block, (
         "portal_join_requests policy must include the `IS NULL` "
         "permissive branch (Category-A auth-seed pattern). Without it "
         "the admin approve_join flow cannot resolve the row before "
@@ -155,53 +188,35 @@ def test_migration_creates_permissive_policy_on_join_requests() -> None:
     )
 
 
-def test_migration_with_check_clause_present() -> None:
+def test_post_deploy_with_check_clause_present() -> None:
     """The policy must include WITH CHECK so INSERTs from a wrong tenant
     context fail, not just SELECTs filter."""
-    src = _read_migration()
+    src = _read_post_deploy_sql()
     check_count = len(re.findall(r"WITH CHECK", src))
     assert check_count >= 1, (
-        f"Expected at least 1 WITH CHECK clause in migration; found "
-        f"{check_count}. Without WITH CHECK an attacker could INSERT a "
-        "row with someone else's org_id."
+        f"Expected at least 1 WITH CHECK clause in post-deploy SQL; "
+        f"found {check_count}. Without WITH CHECK an attacker could "
+        "INSERT a row with someone else's org_id."
     )
-
-
-def test_migration_downgrade_drops_policy() -> None:
-    """Downgrade must roll back the DDL changes — drop policy + disable RLS."""
-    src = _read_migration()
-    down_match = re.search(
-        r"def downgrade\(\) -> None:(.*?)\Z",
-        src,
-        re.DOTALL,
-    )
-    assert down_match, "Migration must define downgrade()"
-    down_body = down_match.group(1)
-    assert "DROP POLICY IF EXISTS tenant_isolation ON portal_join_requests" in down_body or (
-        "portal_join_requests" in down_body and "DROP POLICY" in down_body
-    )
-    assert "DISABLE ROW LEVEL SECURITY" in down_body, "Downgrade must DISABLE ROW LEVEL SECURITY"
 
 
 # ---------------------------------------------------------------------------
-# Idempotency — re-running the migration on an existing DB must not fail.
+# Idempotency — re-running on an existing DB must not fail.
 # ---------------------------------------------------------------------------
 
 
-def test_migration_uses_drop_if_exists_for_idempotency() -> None:
+def test_post_deploy_uses_drop_if_exists_for_idempotency() -> None:
     """``CREATE POLICY`` does not support ``IF NOT EXISTS``. The
-    migration must wrap each CREATE in a DROP IF EXISTS so re-applying
-    on a partially migrated database (rare but possible during staging
-    recovery) succeeds.
-
-    See ``alembic-stamped-past-skipped-migration`` pitfall.
+    post-deploy SQL must wrap each CREATE in a DROP IF EXISTS so
+    re-applying on a partially migrated database (rare but possible
+    during staging recovery) succeeds.
     """
-    src = _read_migration()
+    src = _read_post_deploy_sql()
     drop_count = len(re.findall(r"DROP POLICY IF EXISTS tenant_isolation", src))
     create_count = len(re.findall(r"CREATE POLICY tenant_isolation", src))
     assert drop_count >= create_count, (
-        f"Migration has {create_count} CREATE POLICY statements but only "
-        f"{drop_count} DROP POLICY IF EXISTS guards in upgrade(). "
+        f"Post-deploy SQL has {create_count} CREATE POLICY statements "
+        f"but only {drop_count} DROP POLICY IF EXISTS guards. "
         "Idempotency is broken: re-running on a partially migrated DB "
         "will fail."
     )
