@@ -11,7 +11,7 @@ Currently registered routes:
         an org. Part of the tenant wipe orchestration.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_session
 from app.core.logging import get_logger
 from app.models.sync_run import SyncRun
+from app.routes.sync import _require_portal_call  # pyright: ignore[reportPrivateUsage]
 
 logger = get_logger(__name__)
 
@@ -38,21 +39,12 @@ class WipeStateResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Helper
-# ---------------------------------------------------------------------------
-
-
-def _require_portal_call(request: Request) -> None:
-    """Raise 403 if the request did not arrive via the portal internal secret.
-
-    ``AuthMiddleware`` sets ``request.state.from_portal = True`` when the
-    ``Authorization: Bearer <portal_caller_secret>`` header matches. Any
-    other authenticated caller (Zitadel OIDC) is rejected here.
-    """
-    if not getattr(request.state, "from_portal", False):
-        raise HTTPException(status_code=403, detail="Portal service token required")
-
-
+# Note: ``_require_portal_call`` is the canonical auth helper defined in
+# ``app.routes.sync``. We import it above (with a pyright ignore for the
+# leading underscore — it's effectively semi-public within the connector
+# routes layer). Same pattern as ``app.routes.fingerprint``. Re-defining
+# it here would create a maintenance hazard if the auth contract ever
+# changes (one site updated, the other forgotten = silent drift).
 # ---------------------------------------------------------------------------
 # Wipe endpoint
 # ---------------------------------------------------------------------------
