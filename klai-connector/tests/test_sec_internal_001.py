@@ -28,6 +28,9 @@ _VALID_SETTINGS_KWARGS: dict[str, str] = {
     "portal_internal_secret": "test-portal-secret-12345",
     # SPEC-SEC-AUDIT-2026-04 B2: audience is now mandatory (model_validator).
     "zitadel_api_audience": "klai-connector-test-audience",
+    # SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-11: portal_caller_secret is now
+    # also fail-closed validated (inbound from portal-api).
+    "portal_caller_secret": "test-caller-secret-12345",
 }
 
 
