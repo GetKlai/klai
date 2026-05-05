@@ -5,8 +5,8 @@ Two responsibilities:
   1. generate_answer: generate a model answer via klai-fast (LiteLLM proxy)
      given a query and retrieved chunks.
   2. evaluate_query: run the four RAGAS metrics with per-metric LLM/embeddings
-     injection — light metrics on klai-fast, faithfulness on klai-eval-judge
-     (Mistral Large), answer_relevancy embeddings on klai-embeddings (BGE-M3).
+     injection — light metrics on klai-fast, faithfulness on klai-medium
+     (Mistral Medium 3.5), answer_relevancy embeddings on klai-embeddings (BGE-M3).
 
 Both functions are fail-open: any HTTP or RAGAS failure returns None / a
 metrics dict with None values instead of raising (REQ-3 generalisation).
@@ -14,7 +14,7 @@ metrics dict with None values instead of raising (REQ-3 generalisation).
 Per-metric model assignment (post-baseline-fix 2026-05-05):
   - context_precision  → klai-fast LLM
   - context_recall     → klai-fast LLM
-  - faithfulness       → klai-eval-judge LLM (Mistral Large; small model
+  - faithfulness       → klai-medium LLM (Mistral Medium 3.5; klai-fast
                           truncates the multi-statement JSON output)
   - answer_relevancy   → klai-fast LLM + klai-embeddings (BGE-M3 via TEI)
 
@@ -74,7 +74,7 @@ def _build_ragas_llm(model: str | None = None):
 
     Falls back to ``settings.rag_eval_judge_model`` when ``model`` is None,
     keeping the original generate_answer / light-metric path unchanged.
-    Faithfulness gets a heavier Mistral Large via klai-eval-judge.
+    Faithfulness gets the heavier Mistral Medium 3.5 via klai-medium.
     """
     from ragas.llms import llm_factory
 
@@ -227,7 +227,7 @@ async def evaluate_query(
         dataset = EvaluationDataset(samples=[sample])
 
         # Per-metric model assignment: light metrics on klai-fast, faithfulness
-        # on klai-eval-judge (Mistral Large), answer_relevancy on klai-fast +
+        # on klai-medium (Mistral Medium 3.5), answer_relevancy on klai-fast +
         # klai-embeddings (BGE-M3). See module docstring for rationale.
         light_llm = _build_ragas_llm()
         heavy_llm = _build_ragas_llm(model=settings.rag_eval_faithfulness_model)

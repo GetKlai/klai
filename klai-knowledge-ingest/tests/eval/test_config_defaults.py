@@ -38,11 +38,11 @@ def test_rag_eval_judge_model_default() -> None:
 
 
 def test_rag_eval_faithfulness_model_default() -> None:
-    """Faithfulness defaults to klai-eval-judge (Mistral Large) to avoid the
+    """Faithfulness defaults to klai-medium (Mistral Medium 3.5) to avoid the
     Mistral Small max-tokens truncation that left ~28/30 rows NaN at v1.
     """
     settings = Settings(_env_file=None)
-    assert settings.rag_eval_faithfulness_model == "klai-eval-judge"
+    assert settings.rag_eval_faithfulness_model == "klai-medium"
 
 
 def test_rag_eval_embeddings_model_default() -> None:

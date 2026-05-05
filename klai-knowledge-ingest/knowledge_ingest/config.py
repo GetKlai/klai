@@ -104,10 +104,11 @@ class Settings(BaseSettings):
     # rag_eval_judge_timeout: seconds before a klai-fast judge call is declared failed.
     # rag_eval_judge_model: LiteLLM model alias for answer generation + light RAGAS metrics
     #   (context_precision, context_recall). Mistral Small via LiteLLM proxy.
-    # rag_eval_faithfulness_model: heavier LiteLLM alias for the Faithfulness metric.
-    #   Mistral Small hits its 3072-token output ceiling on RAGAS' multi-statement
-    #   faithfulness JSON, leaving most rows NaN. Mistral Large (klai-eval-judge)
-    #   handles the longer JSON reliably. Cost impact small: ~60 calls/night.
+    # rag_eval_faithfulness_model: middle-tier LiteLLM alias for the Faithfulness
+    #   metric. Mistral Small (klai-fast) hits its 3072-token output ceiling on
+    #   RAGAS' multi-statement faithfulness JSON, leaving most rows NaN. Mistral
+    #   Medium 3.5 (klai-medium) handles the longer JSON reliably without paying
+    #   Mistral Large prices. Cost impact small: ~60 calls/night.
     # rag_eval_embeddings_model: LiteLLM alias for the embeddings model used by
     #   AnswerRelevancy (compares imaginary-question vectors to the user's actual
     #   question). Wraps BGE-M3 on TEI/gpu-01.
@@ -123,7 +124,7 @@ class Settings(BaseSettings):
     rag_eval_retrieval_timeout: int = 10
     rag_eval_judge_timeout: int = 30
     rag_eval_judge_model: str = "klai-fast"
-    rag_eval_faithfulness_model: str = "klai-eval-judge"
+    rag_eval_faithfulness_model: str = "klai-medium"
     rag_eval_embeddings_model: str = "klai-embeddings"
     rag_eval_suites_dir: str = "knowledge_ingest/eval/suites"
 
