@@ -1,0 +1,52 @@
+# SPEC-OBS-002 — vmauth config (DRAFT — not yet active in production)
+#
+# This config validates incoming JWTs against Zitadel via OIDC discovery
+# and injects upstream basic-auth toward VictoriaLogs so VL itself sees
+# the auth it expects (no VL changes needed).
+#
+# Reload-on-change: vmauth picks up edits within 30s
+# (`-configCheckInterval=30s` in compose) — no container restart needed.
+#
+# Activation prerequisites (until ALL are met, this config is dormant
+# because Caddy's `vlogs-test.{$DOMAIN}` route is also commented out):
+#   1. Zitadel app `klai-vmauth/vlogs-cli` exists (see SPEC-OBS-002
+#      notes/04-zitadel-app-setup.md).
+#   2. Audience claim value confirmed (M2 work — pending Q5 resolution).
+#   3. M2 smoke-tests pass: 401 with no JWT, 200 with valid JWT, 401
+#      with wrong audience / signature / iss / exp.
+
+users:
+  - jwt:
+      oidc:
+        issuer: "https://auth.getklai.com"
+      # match_claims constrains which JWTs vmauth accepts:
+      # - aud must include `vmauth-vlogs` so JWTs minted for other Klai
+      #   apps don't gain log-query access by accident.
+      # - iss equality is enforced by vmauth automatically when oidc.issuer
+      #   is configured; listing it here is defense-in-depth.
+      #
+      # TODO(SPEC-OBS-002 M2): once we know what Zitadel actually puts in
+      # `aud` for our app (project ID? client ID? custom audience?), update
+      # the value below. Current placeholder is the SPEC-named identifier.
+      match_claims:
+        aud: ["vmauth-vlogs"]
+        iss: "https://auth.getklai.com"
+    # Forward all paths to VictoriaLogs select endpoint.
+    url_prefix: "http://victorialogs:9428/"
+    # Replace the developer's JWT with VL's expected basic-auth before
+    # forwarding upstream. The developer never sees VICTORIALOGS_AUTH_*
+    # creds; vmauth holds them only.
+    headers:
+      - "Authorization: Basic $${VICTORIALOGS_INTERNAL_BASIC_AUTH_B64}"
+      # NOTE: $${...} is compose-escape for $-substitution in config files
+      # mounted via volumes. The value resolves at config-load time inside
+      # the vmauth container against its own env.
+      # TODO(SPEC-OBS-002 M2): add VICTORIALOGS_INTERNAL_BASIC_AUTH_B64 to
+      # SOPS once we decide whether to keep the existing
+      # VICTORIALOGS_AUTH_USER/PASSWORD pair OR mint a separate "internal"
+      # credential that vmauth uses, distinct from the credential the
+      # ingest path still uses for static Bearer-tokened pushes.
+
+# Unauthorized requests (no matching user) get 401 by default.
+# No `unauthorized_user` block is set on purpose — log access requires
+# authentication, period.
