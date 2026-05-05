@@ -134,8 +134,7 @@ export function ChatConfigBar() {
 
   function toggleNarrow() {
     // The early-return guard below ensures `pref` is defined when this is
-    // invoked from the rendered toggle button. `!` matches the existing
-    // pattern in the deprecated KBScopeBar's `toggleNarrow`.
+    // invoked from the rendered toggle button.
     mutation.mutate({ kb_narrow: !pref!.kb_narrow })
   }
 
