@@ -1,4 +1,8 @@
-"""Client for calling knowledge-ingest internal API."""
+"""Client for calling knowledge-ingest internal API.
+
+SPEC-TI-003 AC-7: every call sends X-Caller-Service: portal-api so
+knowledge-ingest identity-assertion can verify the caller.
+"""
 
 from __future__ import annotations
 
@@ -21,7 +25,7 @@ async def get_graph_stats(org_id: str) -> dict[str, int | None]:
     try:
         async with httpx.AsyncClient(
             base_url=settings.knowledge_ingest_url,
-            headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
+            headers={"X-Internal-Secret": settings.knowledge_ingest_secret, "X-Caller-Service": "portal-api", **get_trace_headers()},
             timeout=5.0,
         ) as client:
             resp = await client.get(
@@ -40,7 +44,7 @@ async def get_source_count(org_id: str, kb_slug: str) -> int | None:
     try:
         async with httpx.AsyncClient(
             base_url=settings.knowledge_ingest_url,
-            headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
+            headers={"X-Internal-Secret": settings.knowledge_ingest_secret, "X-Caller-Service": "portal-api", **get_trace_headers()},
             timeout=5.0,
         ) as client:
             resp = await client.get(
@@ -65,7 +69,7 @@ async def delete_kb(org_id: str, kb_slug: str) -> None:
     """
     async with httpx.AsyncClient(
         base_url=settings.knowledge_ingest_url,
-        headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
+        headers={"X-Internal-Secret": settings.knowledge_ingest_secret, "X-Caller-Service": "portal-api", **get_trace_headers()},
         timeout=30.0,
     ) as client:
         resp = await client.delete(
@@ -84,7 +88,7 @@ async def delete_connector(org_id: str, kb_slug: str, connector_id: str) -> None
     """
     async with httpx.AsyncClient(
         base_url=settings.knowledge_ingest_url,
-        headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
+        headers={"X-Internal-Secret": settings.knowledge_ingest_secret, "X-Caller-Service": "portal-api", **get_trace_headers()},
         timeout=60.0,
     ) as client:
         resp = await client.delete(
@@ -109,7 +113,7 @@ async def enqueue_connector_purge(org_id: str, kb_slug: str, connector_id: str) 
     """
     async with httpx.AsyncClient(
         base_url=settings.knowledge_ingest_url,
-        headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
+        headers={"X-Internal-Secret": settings.knowledge_ingest_secret, "X-Caller-Service": "portal-api", **get_trace_headers()},
         timeout=10.0,
     ) as client:
         resp = await client.post(
@@ -134,7 +138,7 @@ async def preview_crawl(
     try:
         async with httpx.AsyncClient(
             base_url=settings.knowledge_ingest_url,
-            headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
+            headers={"X-Internal-Secret": settings.knowledge_ingest_secret, "X-Caller-Service": "portal-api", **get_trace_headers()},
             timeout=20.0,
         ) as client:
             payload: dict = {
@@ -162,7 +166,7 @@ async def trigger_taxonomy_bootstrap(org_id: str, kb_slug: str) -> dict:
     """
     async with httpx.AsyncClient(
         base_url=settings.knowledge_ingest_url,
-        headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
+        headers={"X-Internal-Secret": settings.knowledge_ingest_secret, "X-Caller-Service": "portal-api", **get_trace_headers()},
         timeout=60.0,
     ) as client:
         resp = await client.post(
@@ -182,7 +186,7 @@ async def trigger_taxonomy_backfill(org_id: str, kb_slug: str) -> dict:
     """
     async with httpx.AsyncClient(
         base_url=settings.knowledge_ingest_url,
-        headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
+        headers={"X-Internal-Secret": settings.knowledge_ingest_secret, "X-Caller-Service": "portal-api", **get_trace_headers()},
         timeout=15.0,
     ) as client:
         resp = await client.post(
@@ -201,7 +205,7 @@ async def get_taxonomy_backfill_status(job_id: int) -> dict:
     """
     async with httpx.AsyncClient(
         base_url=settings.knowledge_ingest_url,
-        headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
+        headers={"X-Internal-Secret": settings.knowledge_ingest_secret, "X-Caller-Service": "portal-api", **get_trace_headers()},
         timeout=10.0,
     ) as client:
         resp = await client.get(f"/ingest/v1/taxonomy/backfill/{job_id}")
@@ -223,7 +227,7 @@ async def enqueue_auto_categorise(
     try:
         async with httpx.AsyncClient(
             base_url=settings.knowledge_ingest_url,
-            headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
+            headers={"X-Internal-Secret": settings.knowledge_ingest_secret, "X-Caller-Service": "portal-api", **get_trace_headers()},
             timeout=10.0,
         ) as client:
             resp = await client.post(
@@ -252,7 +256,7 @@ async def classify_gap_taxonomy(org_id: str, kb_slug: str, text: str) -> list[in
     try:
         async with httpx.AsyncClient(
             base_url=settings.knowledge_ingest_url,
-            headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
+            headers={"X-Internal-Secret": settings.knowledge_ingest_secret, "X-Caller-Service": "portal-api", **get_trace_headers()},
             timeout=10.0,
         ) as client:
             resp = await client.post(
@@ -283,7 +287,7 @@ async def ingest_document(payload: dict) -> str:
     """
     async with httpx.AsyncClient(
         base_url=settings.knowledge_ingest_url,
-        headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
+        headers={"X-Internal-Secret": settings.knowledge_ingest_secret, "X-Caller-Service": "portal-api", **get_trace_headers()},
         timeout=60.0,
     ) as client:
         resp = await client.post("/ingest/v1/document", json=payload)
@@ -301,7 +305,7 @@ async def update_kb_visibility(org_id: str, kb_slug: str, visibility: str) -> No
     try:
         async with httpx.AsyncClient(
             base_url=settings.knowledge_ingest_url,
-            headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
+            headers={"X-Internal-Secret": settings.knowledge_ingest_secret, "X-Caller-Service": "portal-api", **get_trace_headers()},
             timeout=10.0,
         ) as client:
             resp = await client.patch(

@@ -62,6 +62,7 @@ from typing import Any
 import structlog
 
 from knowledge_ingest import queues
+from knowledge_ingest.db import tenant_scoped_connection
 
 logger = structlog.get_logger()
 
@@ -195,24 +196,24 @@ async def _list_active_artifacts(org_id: str, kb_slug: str) -> list[dict]:
     """Return all currently-active artifact rows for a KB.
 
     Selects only rows with belief_time_end == _SENTINEL (still active).
+    SPEC-TI-003 AC-9: tenant_scoped_connection sets RLS GUC before the SELECT.
     """
-    from knowledge_ingest.db import get_pool
-
-    pool = await get_pool()
-    rows = await pool.fetch(
-        """
-        SELECT id, path, content_type, extra, synthesis_depth,
-               belief_time_start, belief_time_end, user_id
-        FROM knowledge.artifacts
-        WHERE org_id = $1
-          AND kb_slug = $2
-          AND belief_time_end = $3
-        ORDER BY created_at
-        """,
-        org_id,
-        kb_slug,
-        _SENTINEL,
-    )
+    # @MX:NOTE: tenant_scoped_connection required so RLS policy sees GUC
+    async with tenant_scoped_connection(org_id) as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, path, content_type, extra, synthesis_depth,
+                   belief_time_start, belief_time_end, user_id
+            FROM knowledge.artifacts
+            WHERE org_id = $1
+              AND kb_slug = $2
+              AND belief_time_end = $3
+            ORDER BY created_at
+            """,
+            org_id,
+            kb_slug,
+            _SENTINEL,
+        )
     return [dict(r) for r in rows]
 
 
