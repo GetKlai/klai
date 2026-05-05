@@ -452,5 +452,231 @@ class Settings(BaseSettings):
             )
         return self
 
+    # ------------------------------------------------------------------
+    # SPEC-SEC-VALIDATOR-COVERAGE-001 -- fail-closed validators (REQ-1..10)
+    # All 10 env vars verified present in /opt/klai/.env on 2026-05-05.
+    # ------------------------------------------------------------------
+
+    @model_validator(mode="after")
+    def _require_internal_secret(self) -> "Settings":
+        """SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-1: fail-closed on missing INTERNAL_SECRET.
+
+        Cross-service trust boundary: klai-mailer -> portal-api (and other callers
+        of /internal/*) use this as a shared Bearer token. An empty value causes
+        the HMAC comparison to accept any caller that also sends an empty token.
+
+        Where used: app/api/internal.py -- X-Internal-Secret / Authorization header.
+        Failure mode without validator: any unauthenticated caller reaches internal
+        endpoints (rate-limit bypass, data exfiltration via /internal/v1/users/*).
+
+        Env-parity: INTERNAL_SECRET must exist in klai-infra/core-01/.env.sops BEFORE merge.
+        Pre-flight verified 2026-05-05: value populated in /opt/klai/.env.
+        """
+        if not self.internal_secret or not self.internal_secret.strip():
+            raise ValueError(
+                "Missing required: INTERNAL_SECRET (SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-1). "
+                "Set it in SOPS before starting portal-api."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_klai_connector_secret(self) -> "Settings":
+        """SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-2: fail-closed on missing KLAI_CONNECTOR_SECRET.
+
+        Cross-service trust boundary: portal-api -> klai-connector (sync orchestration).
+        An empty secret silently disables auth on klai-connector/internal/* endpoints,
+        letting any caller trigger or inspect sync runs.
+
+        Where used: app/services/klai_connector_client.py -- Authorization: Bearer header.
+        Failure mode without validator: connector sync endpoints accept unauthenticated
+        requests (empty Bearer = empty expected secret = hmac.compare_digest passes).
+
+        Env-parity: KLAI_CONNECTOR_SECRET must exist in klai-infra/core-01/.env.sops BEFORE merge.
+        Pre-flight verified 2026-05-05: value populated in /opt/klai/.env.
+        """
+        if not self.klai_connector_secret or not self.klai_connector_secret.strip():
+            raise ValueError(
+                "Missing required: KLAI_CONNECTOR_SECRET (SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-2). "
+                "Set it in SOPS before starting portal-api."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_knowledge_ingest_secret(self) -> "Settings":
+        """SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-3: fail-closed on missing KNOWLEDGE_INGEST_SECRET.
+
+        Cross-service trust boundary: portal-api -> knowledge-ingest via X-Internal-Secret.
+        An empty value silently removes auth, allowing any caller to trigger ingestion
+        jobs or list knowledge items on behalf of arbitrary tenants.
+
+        Where used: app/services/knowledge_ingest_client.py -- X-Internal-Secret header.
+        Failure mode without validator: empty-secret fail-open (see pitfall empty-secret-fail-open).
+
+        Env-parity: KNOWLEDGE_INGEST_SECRET must exist in klai-infra/core-01/.env.sops BEFORE merge.
+        Pre-flight verified 2026-05-05: value populated in /opt/klai/.env.
+        """
+        if not self.knowledge_ingest_secret or not self.knowledge_ingest_secret.strip():
+            raise ValueError(
+                "Missing required: KNOWLEDGE_INGEST_SECRET (SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-3). "
+                "Set it in SOPS before starting portal-api."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_retrieval_api_internal_secret(self) -> "Settings":
+        """SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-4: fail-closed on missing RETRIEVAL_API_INTERNAL_SECRET.
+
+        Cross-service trust boundary: portal-api -> retrieval-api, kept separate from
+        internal_secret so both boundaries can be rotated independently (SPEC-SEC-010 REQ-6.1).
+        An empty value allows unauthenticated callers to reach retrieval endpoints.
+
+        Where used: app/api/knowledge_gap.py and related -- X-Internal-Secret header.
+        Failure mode without validator: retrieval-api accepts any caller sending an empty secret.
+
+        Env-parity: RETRIEVAL_API_INTERNAL_SECRET must exist in klai-infra/core-01/.env.sops BEFORE merge.
+        Pre-flight verified 2026-05-05: value populated in /opt/klai/.env.
+        """
+        if not self.retrieval_api_internal_secret or not self.retrieval_api_internal_secret.strip():
+            raise ValueError(
+                "Missing required: RETRIEVAL_API_INTERNAL_SECRET (SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-4). "
+                "Set it in SOPS before starting portal-api."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_docs_internal_secret(self) -> "Settings":
+        """SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-5: fail-closed on missing DOCS_INTERNAL_SECRET.
+
+        Cross-service trust boundary: portal-api -> klai-docs for KB provisioning.
+        An empty value silently disables auth, letting any caller provision or
+        deprovision knowledge-base resources for arbitrary tenants.
+
+        Where used: app/services/docs_client.py (or equivalent) -- X-Internal-Secret header.
+        Failure mode without validator: docs endpoint accepts empty secret, bypassing
+        tenant-scoped access control.
+
+        Env-parity: DOCS_INTERNAL_SECRET must exist in klai-infra/core-01/.env.sops BEFORE merge.
+        Pre-flight verified 2026-05-05: value populated in /opt/klai/.env.
+        """
+        if not self.docs_internal_secret or not self.docs_internal_secret.strip():
+            raise ValueError(
+                "Missing required: DOCS_INTERNAL_SECRET (SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-5). "
+                "Set it in SOPS before starting portal-api."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_zitadel_portal_client_secret(self) -> "Settings":
+        """SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-6: fail-closed on missing ZITADEL_PORTAL_CLIENT_SECRET.
+
+        Cross-service trust boundary: portal-api <-> Zitadel BFF code-exchange (SPEC-AUTH-008).
+        This is the confidential client secret used to exchange an authorization code for
+        tokens. An empty value causes every login to fail at token exchange (auth outage).
+
+        Where used: app/api/auth.py -- /api/auth/oidc/callback BFF code-exchange.
+        Failure mode without validator: portal-api starts but every login fails at token exchange.
+
+        Env-parity: ZITADEL_PORTAL_CLIENT_SECRET must exist in klai-infra/core-01/.env.sops BEFORE merge.
+        Pre-flight verified 2026-05-05: value populated in /opt/klai/.env.
+        """
+        if not self.zitadel_portal_client_secret or not self.zitadel_portal_client_secret.strip():
+            raise ValueError(
+                "Missing required: ZITADEL_PORTAL_CLIENT_SECRET (SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-6). "
+                "Set it in SOPS before starting portal-api."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_portal_secrets_key(self) -> "Settings":
+        """SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-7: fail-closed on missing PORTAL_SECRETS_KEY.
+
+        Encryption at rest: portal_secrets_key is the DEK used to encrypt tenant
+        secrets (e.g. zitadel_librechat_client_secret, litellm_team_key) stored
+        in the database. An empty key causes decryption of all at-rest tenant
+        secrets to fail, breaking every multi-tenant operation.
+
+        Where used: app/utils/crypto.py (or equivalent) -- AES-GCM encrypt/decrypt of tenant secrets.
+        Failure mode without validator: portal-api starts but all tenant-secret reads
+        return decryption errors; or encrypts with a known-weak/empty key.
+
+        Env-parity: PORTAL_SECRETS_KEY must exist in klai-infra/core-01/.env.sops BEFORE merge.
+        Pre-flight verified 2026-05-05: value populated in /opt/klai/.env.
+        """
+        if not self.portal_secrets_key or not self.portal_secrets_key.strip():
+            raise ValueError(
+                "Missing required: PORTAL_SECRETS_KEY (SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-7). "
+                "Set it in SOPS before starting portal-api."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_encryption_key(self) -> "Settings":
+        """SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-8: fail-closed on missing ENCRYPTION_KEY.
+
+        Encryption at rest: encryption_key is the KEK in the two-tier key hierarchy
+        (SPEC-KB-020) used to encrypt connector OAuth credentials (access_token,
+        refresh_token). An empty key causes connector auth to fail for every tenant.
+
+        Where used: app/utils/crypto.py -- connector credential KEK encrypt/decrypt.
+        Failure mode without validator: connector sync fails for all tenants with
+        decryption errors, or credentials are stored/retrieved with a null key.
+
+        Env-parity: ENCRYPTION_KEY must exist in klai-infra/core-01/.env.sops BEFORE merge.
+        Pre-flight verified 2026-05-05: value populated in /opt/klai/.env.
+        """
+        if not self.encryption_key or not self.encryption_key.strip():
+            raise ValueError(
+                "Missing required: ENCRYPTION_KEY (SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-8). "
+                "Set it in SOPS before starting portal-api."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_sso_cookie_key(self) -> "Settings":
+        """SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-9: fail-closed on missing SSO_COOKIE_KEY.
+
+        SSO auth cookie integrity: sso_cookie_key is the Fernet key that encrypts and
+        authenticates the SSO state cookie used in the OIDC login flow. An empty key
+        allows arbitrary cookie forgery, enabling session hijacking for any user.
+
+        Where used: app/api/auth.py::_get_sso_fernet -- SSO cookie encrypt/decrypt.
+        Failure mode without validator: RuntimeError at first login (defensive
+        _get_sso_fernet guard), or, if that guard is removed, unauthenticated cookie
+        acceptance. This validator adds the fail-fast-at-startup layer.
+
+        Env-parity: SSO_COOKIE_KEY must exist in klai-infra/core-01/.env.sops BEFORE merge.
+        Pre-flight verified 2026-05-05: value populated in /opt/klai/.env.
+        """
+        if not self.sso_cookie_key or not self.sso_cookie_key.strip():
+            raise ValueError(
+                "Missing required: SSO_COOKIE_KEY (SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-9). "
+                "Set it in SOPS before starting portal-api."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_bff_session_key(self) -> "Settings":
+        """SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-10: fail-closed on missing BFF_SESSION_KEY.
+
+        BFF session cookie integrity: bff_session_key is the Fernet key used to encrypt
+        BFF session records at rest in Redis (SPEC-AUTH-008). An empty key allows
+        arbitrary session forgery -- any attacker who can write to Redis can issue
+        authenticated sessions for any user.
+
+        Where used: app/api/auth.py -- BFF session encrypt/decrypt in Redis.
+        Failure mode without validator: bff_session_key falls back to sso_cookie_key
+        when unset (field comment). This validator closes that undocumented fallback
+        path in production by making the misconfiguration explicit at startup.
+
+        Env-parity: BFF_SESSION_KEY must exist in klai-infra/core-01/.env.sops BEFORE merge.
+        Pre-flight verified 2026-05-05: value populated in /opt/klai/.env.
+        """
+        if not self.bff_session_key or not self.bff_session_key.strip():
+            raise ValueError(
+                "Missing required: BFF_SESSION_KEY (SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-10). "
+                "Set it in SOPS before starting portal-api."
+            )
+        return self
+
 
 settings = Settings()  # type: ignore[call-arg]  # pydantic-settings reads required fields from env

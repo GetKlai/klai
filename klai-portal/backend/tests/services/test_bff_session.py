@@ -145,12 +145,18 @@ class TestEncryption:
         with pytest.raises(RuntimeError, match="BFF_SESSION_KEY"):
             svc._encrypt("anything")
 
-    def test_sso_cookie_key_is_used_as_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_sso_cookie_key_is_NOT_used_as_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-10: the legacy
+        ``bff_session_key or sso_cookie_key`` fallback is removed. Even if
+        ``sso_cookie_key`` is set, an empty ``bff_session_key`` MUST raise
+        — the fail-closed validator is the single source of truth for the
+        BFF key.
+        """
         monkeypatch.setattr(settings, "bff_session_key", "")
         monkeypatch.setattr(settings, "sso_cookie_key", Fernet.generate_key().decode())
         svc = SessionService()
-        blob = svc._encrypt("fallback")
-        assert svc._decrypt(blob) == "fallback"
+        with pytest.raises(RuntimeError, match="BFF_SESSION_KEY"):
+            svc._encrypt("anything")
 
 
 # ---------------------------------------------------------------------------
