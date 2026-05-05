@@ -430,7 +430,15 @@ services:
       ZITADEL_IDP_MICROSOFT_ID: ${ZITADEL_IDP_MICROSOFT_ID}
       # ─── Auth — session / BFF (SPEC-AUTH-008) ───────────────────
       SSO_COOKIE_KEY: ${PORTAL_API_SSO_COOKIE_KEY}
-      BFF_SESSION_KEY: ${PORTAL_API_BFF_SESSION_KEY:-}
+      # SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-10 removed the silent
+      # `bff_session_key or sso_cookie_key` fallback in code AND added a
+      # fail-closed startup validator. Until BFF_SESSION_KEY is rotated to
+      # its own value in SOPS, fall back to SSO_COOKIE_KEY's value here so
+      # the validator passes AND already-encrypted Redis sessions remain
+      # decryptable (the Fernet key must match what the cookie was minted
+      # with). This is the docker-compose equivalent of the in-code
+      # fallback the validator made explicit at startup-time.
+      BFF_SESSION_KEY: ${PORTAL_API_BFF_SESSION_KEY:-${PORTAL_API_SSO_COOKIE_KEY}}
       # ─── Internal service-to-service secrets ────────────────────
       INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
       KLAI_CONNECTOR_SECRET: ${PORTAL_API_KLAI_CONNECTOR_SECRET}
