@@ -116,13 +116,22 @@ async def _retrieve_jwt_headers() -> dict[str, str] | None:
 
     Returns ``None`` when no token client is configured OR when minting
     fails. The caller then uses the legacy X-Internal-Secret path.
+
+    SPEC-SEC-IDENTITY-ASSERT-001 REQ-4.2: ``X-Caller-Service`` header is
+    required by retrieval-api for any /retrieve request that carries an
+    end-user identity in the body. We always include it — both on the JWT
+    and the legacy auth path — so a future Phase D cleanup that removes
+    the legacy path doesn't quietly drop the header.
     """
     client = _get_token_client()
     if client is None:
         return None
     try:
         token = await client.get_token()  # type: ignore[attr-defined]
-        return {"Authorization": f"Bearer {token}"}
+        return {
+            "Authorization": f"Bearer {token}",
+            "X-Caller-Service": "litellm",
+        }
     except Exception as exc:
         # Mint failed (Zitadel down, bad creds, network error). Logged
         # by ZitadelTokenClient; we just record the fallback decision.
@@ -136,7 +145,7 @@ async def _retrieve_jwt_headers() -> dict[str, str] | None:
 
 
 def _retrieve_legacy_headers() -> dict[str, str]:
-    """Legacy X-Internal-Secret header set for the /retrieve call.
+    """Legacy X-Internal-Secret + X-Caller-Service header set for /retrieve.
 
     Uses RETRIEVAL_INTERNAL_SECRET (which falls back to PORTAL_INTERNAL_SECRET
     when unset). retrieval-api validates against its own INTERNAL_SECRET env
@@ -144,10 +153,19 @@ def _retrieve_legacy_headers() -> dict[str, str]:
     a DIFFERENT secret from portal-api's. Sending portal-api's secret here is
     the bug that historically caused `invalid_internal_secret` rejections on
     every retrieve call when the two secrets diverged.
+
+    SPEC-SEC-IDENTITY-ASSERT-001 REQ-4.2: ``X-Caller-Service: litellm`` is
+    REQUIRED — without it retrieval-api returns HTTP 400
+    ``missing_caller_service`` and the hook silently degrades chat to
+    "no KB". This was the regression that broke production for ~7 days
+    after Phase D landed on 2026-04-28.
     """
-    if RETRIEVAL_INTERNAL_SECRET:
-        return {"X-Internal-Secret": RETRIEVAL_INTERNAL_SECRET}
-    return {}
+    if not RETRIEVAL_INTERNAL_SECRET:
+        return {}
+    return {
+        "X-Internal-Secret": RETRIEVAL_INTERNAL_SECRET,
+        "X-Caller-Service": "litellm",
+    }
 
 
 async def _retrieve_with_dual_auth(
@@ -635,16 +653,57 @@ class KlaiKnowledgeHook(CustomLogger):
         # 401/403 (e.g. when Zitadel audience/scope grant for the receiver
         # is not yet wired up). See ``_retrieve_with_dual_auth``.
         t0 = time.monotonic()
+        retrieval_failure: str | None = None
+        result: dict[str, Any] = {}
         try:
             async with httpx.AsyncClient(timeout=RETRIEVE_TIMEOUT) as client:
                 resp = await _retrieve_with_dual_auth(client, retrieve_body)
                 resp.raise_for_status()
                 result = resp.json()
+        except httpx.HTTPStatusError as exc:
+            # @MX:WARN: 4xx from /retrieve is a config error, not a transient
+            # failure. Surface to the user — silent-degrade hid the
+            # caller-service-header regression in production for 7 days.
+            # @MX:REASON: SPEC-SEC-IDENTITY-ASSERT-001 Phase D + the
+            # `retrieve-caller-service-header-mismatch` pitfall.
+            body_snippet = ""
+            try:
+                body_snippet = exc.response.text[:200]
+            except Exception:
+                pass
+            logger.error(
+                "KlaiKnowledgeHook: retrieval HTTP %d — body=%r — failing loud",
+                exc.response.status_code,
+                body_snippet,
+            )
+            retrieval_failure = f"HTTP {exc.response.status_code}"
         except Exception as exc:
-            logger.warning("KlaiKnowledgeHook: retrieval failed (%s) — degrading", exc)
-            # Templates still apply even when KB retrieval fails.
-            _prepend_system_prefix(messages, templates_block)
+            # Network errors / timeouts: still log error (was warning), but
+            # surface in chat so a sustained outage is impossible to miss.
+            logger.error(
+                "KlaiKnowledgeHook: retrieval failed (%s) — failing loud", exc
+            )
+            retrieval_failure = type(exc).__name__
+
+        if retrieval_failure is not None:
+            kb_unavailable_notice = (
+                "[Klai Kennisbank — TIJDELIJK NIET BEREIKBAAR. Antwoord op basis "
+                "van algemene kennis. Begin je antwoord met deze waarschuwing aan "
+                f"de gebruiker: 'Let op: ik kon de kennisbank niet bereiken "
+                f"({retrieval_failure}) — dit antwoord is niet gebaseerd op jullie "
+                "eigen documentatie. Ververs of probeer het later opnieuw.']\n"
+            )
+            prefix = "\n\n".join(b for b in (templates_block, kb_unavailable_notice) if b)
+            _prepend_system_prefix(messages, prefix)
             data["messages"] = messages
+            data.setdefault("metadata", {})["_klai_kb_meta"] = {
+                "org_id": org_id,
+                "user_id": user_id,
+                "chunks_injected": 0,
+                "retrieval_ms": int((time.monotonic() - t0) * 1000),
+                "gate_bypassed": False,
+                "retrieval_failure": retrieval_failure,
+            }
             return data
 
         retrieval_ms = int((time.monotonic() - t0) * 1000)

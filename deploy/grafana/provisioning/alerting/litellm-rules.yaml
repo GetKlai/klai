@@ -1,0 +1,111 @@
+# LiteLLM knowledge hook health alerts (added 2026-05-05).
+#
+# Routed via spec=SPEC-SEC-IDENTITY-ASSERT-001 -> klai-ops-alerts-email.
+#
+#   R1  litellm_retrieval_failed   CRIT  ANY KB-retrieval failure logged by
+#                                        klai_knowledge_hook in the last 5m
+#
+# Why an error-rate alert (not a count threshold):
+#   The 2026-04-28 -> 2026-05-05 outage went undetected for 7 days because
+#   `KlaiKnowledgeHook: retrieval failed (...)` was logged at WARNING level
+#   without an alert. After the fix the same event is logged at ERROR plus
+#   a user-visible system-prompt notice, but a log line still requires an
+#   alert to surface in pager rotation. Single failure -> page; KB-retrieval
+#   is the entire value-add of Klai chat, every failure matters.
+#
+# Pitfall avoidance:
+#   - UID stays well under the 40-char Grafana limit (see
+#     `pitfalls/process-rules.md#grafana-uid-40-char-limit`).
+#   - LogsQL pattern matches BOTH error variants emitted by the hook
+#     (HTTP error + generic exception).
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: litellm-knowledge-hook
+    folder: Klai
+    interval: 1m
+    rules:
+
+      # ── R1: litellm_retrieval_failed ───────────────────────────────────
+      - uid: obs-001-litellm-kb-retrieval-failed
+        title: litellm_retrieval_failed
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: |
+                _time:5m service:litellm "KlaiKnowledgeHook: retrieval"
+                  -"jwt rejected by receiver"
+                  | stats count() as n
+              queryType: instant
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 0s
+        keepFiringFor: 10m
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-SEC-IDENTITY-ASSERT-001
+          service_group: litellm
+        annotations:
+          summary: 'LiteLLM klai_knowledge hook failing to reach retrieval-api'
+          runbook_url: 'docs/runbooks/litellm-retrieval-failed.md'
+          description: |
+            ``KlaiKnowledgeHook`` logged at least one retrieval failure in
+            the last 5m. Every failure means a chat answered without KB
+            context; the user's "Chat met: <collection>" UI lies to them.
+
+            Triage:
+              1. VictoriaLogs (Grafana -> Explore):
+                   _time:15m service:litellm "KlaiKnowledgeHook: retrieval"
+                 Look at the message detail — common failure modes:
+                   * `HTTP 400` body=`missing_caller_service` → header
+                     contract regression, see pitfalls →
+                     `retrieve-caller-service-header-mismatch`.
+                   * `HTTP 401`/`403` invalid_jwt_audience → Zitadel
+                     project/audience for retrieval-api drifted.
+                   * `ConnectError`/`TimeoutError` → retrieval-api down or
+                     network blip; check
+                     `service:retrieval-api` health-check in Grafana.
+              2. Confirm impact: `_time:15m service:litellm "KB injection"`
+                 — if zero, the hook has been broken throughout the
+                 window; user-facing degradation is in effect.
+              3. The "jwt rejected by receiver" log line is excluded from
+                 this alert — that one is the legacy fallback retry path
+                 (Phase C-1), which is expected to fire until Phase D
+                 cleanup. It is followed by the actual outcome.

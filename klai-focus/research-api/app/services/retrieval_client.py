@@ -24,11 +24,20 @@ def _auth_headers() -> dict[str, str]:
 
     Returns an empty dict if the secret is not configured; the caller is expected
     to log-and-skip in that case. We never send an empty X-Internal-Secret value.
+
+    SPEC-SEC-IDENTITY-ASSERT-001 REQ-4.2: ``X-Caller-Service: research-api``
+    is REQUIRED — without it retrieval-api returns HTTP 400
+    ``missing_caller_service`` and the caller silently returns []. Phase D
+    landed 2026-04-28 and broke focus narrow retrieval for 7 days. See
+    pitfalls → retrieve-caller-service-header-mismatch.
     """
     secret = settings.retrieval_api_internal_secret
     if not secret:
         return {}
-    return {"X-Internal-Secret": secret}
+    return {
+        "X-Internal-Secret": secret,
+        "X-Caller-Service": "research-api",
+    }
 
 
 async def retrieve_narrow(

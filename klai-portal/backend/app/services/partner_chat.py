@@ -122,6 +122,11 @@ async def retrieve_context(
 
     # SPEC-SEC-010 REQ-6.1: authenticate to retrieval-api with the dedicated
     # retrieval_api_internal_secret (separate from portal-api's mailer secret).
+    # SPEC-SEC-IDENTITY-ASSERT-001 REQ-4.2: X-Caller-Service is REQUIRED;
+    # without it retrieval-api returns 400 missing_caller_service. Phase D
+    # landed 2026-04-28 and silently broke partner chat for 7 days because
+    # the header was never added here. See pitfalls →
+    # retrieve-caller-service-header-mismatch.
     retrieval_secret = settings.retrieval_api_internal_secret or settings.internal_secret
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(
@@ -129,6 +134,7 @@ async def retrieve_context(
             json=retrieve_body,
             headers={
                 "X-Internal-Secret": retrieval_secret,
+                "X-Caller-Service": "portal-api",
                 **get_trace_headers(),
             },
         )
