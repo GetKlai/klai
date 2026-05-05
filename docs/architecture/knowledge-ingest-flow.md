@@ -795,11 +795,13 @@ The old code-level fallback URL in the hook that pointed to it has also been rem
 | `org` | All KBs in the org | `org_id` |
 | `personal` | User's personal KB only | `org_id` + `user_id` |
 | `both` | Personal + org | `org_id` + `user_id` |
-| `notebook` | Focus notebook (Qdrant `klai_focus`) | `org_id` + `notebook_id` |
-| `broad` | Focus notebook + org KB | `org_id` + `notebook_id` |
 
 The LiteLLM hook fires a single request with `scope=both`. The retrieval-api handles the
 fan-out to personal and org scopes internally and returns chunks labelled by scope.
+
+> **Removed:** `notebook` and `broad` scopes were the integration with the
+> Focus / research-api service. Both were removed in SPEC-DECOMM-FOCUS-001
+> (May 2026) following the Focus decommission in SPEC-PORTAL-UNIFY-KB-001.
 
 **Multiple knowledge bases and visibility:** An org can have multiple KBs (each with a
 `kb_slug`). Each KB has a `visibility` field (`public` | `internal` | `private`) stored
@@ -840,7 +842,6 @@ link-graph signals are applied before reranking:
   10) chunks are collected, and Qdrant is queried for any chunks whose `source_url` matches
   one of those URLs (`fetch_chunks_by_urls()`). Matching chunks are added as candidates with
   `score=0.0` so they pass through to the reranker, which scores them on actual relevance.
-  Skipped for `notebook` and `broad` scopes (Focus).
 - **Authority boost:** For every candidate chunk, `score += link_authority_boost × log(1 +
   incoming_link_count)`. Pages with many inbound links within the KB are editorially
   important — this boost surfaces them ahead of equally-similar but less-linked pages.
@@ -963,43 +964,18 @@ services. Duplication cost: an entire SPEC to undo.
 
 ---
 
-## Part 5: Klai Focus
+## Part 5: Klai Focus (decommissioned)
 
-Klai Focus (research-api) is a personal research assistant where users upload documents
-into notebooks. Focus shares the same retrieval-api and Qdrant infrastructure as the org
-knowledge base, but stores its vectors in a **separate Qdrant collection** (`klai_focus`)
-rather than `klai_knowledge`.
+Klai Focus (research-api) was a personal research assistant where users
+uploaded documents into notebooks. Focus was decommissioned in
+SPEC-PORTAL-UNIFY-KB-001 (April 2026) — `/app/focus/*` redirects to
+`/app/knowledge`, and the service was removed from docker-compose.
 
-Focus vectors were previously stored in PostgreSQL with pgvector. The pgvector embedding
-column was dropped on 2026-03-26 (migration `0003_drop_embedding_column`) — vectors now
-live in Qdrant.
-
-**Ingest:**
-```
-User uploads to Focus notebook
-  → docling-serve extracts text (PDF, DOCX, HTML, URLs)
-  → TEI embeds chunks (BGE-M3 dense, 1024-dim)
-  → stored in Qdrant klai_focus collection
-  → PostgreSQL research.chunks tracks metadata (no embedding column)
-```
-
-**Three chat modes** (all live):
-
-| Mode | What it searches | Use case |
-|---|---|---|
-| `narrow` | Notebook only (`scope=notebook` via retrieval-api) | Search your own uploads |
-| `broad` | Notebook + org KB (`scope=broad` via retrieval-api) | Search uploads and company knowledge together |
-| `web` | Notebook + SearXNG live web search | Search uploads and the web |
-
-In `broad` mode, retrieval-api runs parallel Qdrant searches on both `klai_focus` and
-`klai_knowledge`, merges the results by score, and returns combined chunks. The
-research-api then picks the appropriate system prompt based on whether KB results were
-actually found.
-
-**Web mode** uses SearXNG (self-hosted search) to find URLs, fetches and parses them via
-**docling-serve** (`convert_url`), embeds the text on-the-fly, and combines with notebook chunks. Whether web mode works
-well in practice depends on SearXNG's availability and docling's ability to extract clean
-text from the fetched pages.
+The full residual cleanup (klai-focus directory, scope=notebook +
+scope=broad in retrieval-api, klai_focus Qdrant collection,
+research-api allowlist entries, SOPS env vars, server-side data) was
+completed in SPEC-DECOMM-FOCUS-001 (May 2026). See that SPEC for
+the historical architecture details.
 
 ---
 
@@ -1021,8 +997,6 @@ text from the fetched pages.
 | `falkordb` | Graph database for Graphiti knowledge graph |
 | `klai-knowledge-mcp` | MCP server for explicit knowledge saves from LibreChat |
 | `klai-connector` | External source sync: GitHub repos, web crawls — uses Unstructured.io for binary parsing |
-| `docling-serve` | Document parsing voor Focus (uploads + URL-fetching in web mode) |
-| `research-api` | Klai Focus backend — Qdrant `klai_focus` collection |
 
 ---
 
