@@ -66,7 +66,7 @@ def _mock_session_maker(sync_run: MagicMock) -> Any:
 
 
 @pytest.mark.asyncio
-async def test_oauth_reconnect_required_marks_run_auth_error() -> None:
+async def test_oauth_reconnect_required_marks_run_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """Adapter raises OAuthReconnectRequiredError → sync_run + report_sync_status use AUTH_ERROR.
 
     Guards the sole wiring contract between the OAuth-adapter layer and
@@ -80,6 +80,12 @@ async def test_oauth_reconnect_required_marks_run_auth_error() -> None:
     sync_run.quality_status = None
 
     session_maker_mock, _session = _mock_session_maker(sync_run)
+    # SPEC-SEC-CONNECTOR-RLS-001: SyncEngine now opens its sessions via
+    # ``tenant_scoped_session(org_id)`` which uses the module-level
+    # ``session_maker``. Patch it so the mock factory is reached.
+    import app.core.database as _db_module  # noqa: PLC0415
+
+    monkeypatch.setattr(_db_module, "session_maker", session_maker_mock)
 
     portal_client = MagicMock()
     portal_client.get_connector_config = AsyncMock(return_value=_portal_config())
@@ -90,8 +96,7 @@ async def test_oauth_reconnect_required_marks_run_auth_error() -> None:
     adapter = MagicMock()
     adapter.get_cursor_state = AsyncMock(
         side_effect=OAuthReconnectRequiredError(
-            "Microsoft refresh_token rejected (connector_id=conn-uuid-reconnect): "
-            "AADSTS700082: refresh token expired"
+            "Microsoft refresh_token rejected (connector_id=conn-uuid-reconnect): AADSTS700082: refresh token expired"
         ),
     )
 
@@ -115,12 +120,10 @@ async def test_oauth_reconnect_required_marks_run_auth_error() -> None:
     # Act: run a sync that will hit the OAuthReconnectRequiredError path.
     connector_id = uuid.UUID("12345678-1234-5678-1234-567812345678")
     sync_run_id = uuid.UUID("87654321-4321-8765-4321-876543218765")
-    await engine.run_sync(connector_id, sync_run_id)
+    await engine.run_sync(connector_id, sync_run_id, "362757920133283846")
 
     # Assert: the sync_run object gets AUTH_ERROR status
-    assert sync_run.status == SyncStatus.AUTH_ERROR, (
-        f"expected AUTH_ERROR status on sync_run, got {sync_run.status}"
-    )
+    assert sync_run.status == SyncStatus.AUTH_ERROR, f"expected AUTH_ERROR status on sync_run, got {sync_run.status}"
 
     # Assert: report_sync_status is called with AUTH_ERROR
     portal_client.report_sync_status.assert_awaited_once()
@@ -132,14 +135,13 @@ async def test_oauth_reconnect_required_marks_run_auth_error() -> None:
     # Assert: error_details carries the reconnect_required reason so downstream
     # consumers can distinguish this from a generic auth failure.
     error_details = kwargs.get("error_details") or []
-    assert any(
-        isinstance(e, dict) and e.get("reason") == "reconnect_required"
-        for e in error_details
-    ), f"expected reason=reconnect_required in error_details, got {error_details!r}"
+    assert any(isinstance(e, dict) and e.get("reason") == "reconnect_required" for e in error_details), (
+        f"expected reason=reconnect_required in error_details, got {error_details!r}"
+    )
 
 
 @pytest.mark.asyncio
-async def test_generic_exception_falls_through_to_failed_not_auth_error() -> None:
+async def test_generic_exception_falls_through_to_failed_not_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """A non-OAuth exception still ends up as FAILED, not AUTH_ERROR.
 
     Regression guard: the except-clause ordering matters. If someone
@@ -154,6 +156,11 @@ async def test_generic_exception_falls_through_to_failed_not_auth_error() -> Non
     sync_run.quality_status = None
 
     session_maker_mock, _session = _mock_session_maker(sync_run)
+    # SPEC-SEC-CONNECTOR-RLS-001: see comment in
+    # test_oauth_reconnect_required_marks_run_auth_error above.
+    import app.core.database as _db_module  # noqa: PLC0415
+
+    monkeypatch.setattr(_db_module, "session_maker", session_maker_mock)
 
     portal_client = MagicMock()
     portal_client.get_connector_config = AsyncMock(return_value=_portal_config())
@@ -178,6 +185,7 @@ async def test_generic_exception_falls_through_to_failed_not_auth_error() -> Non
     await engine.run_sync(
         uuid.UUID("12345678-1234-5678-1234-567812345678"),
         uuid.UUID("87654321-4321-8765-4321-876543218765"),
+        "362757920133283846",
     )
 
     portal_client.report_sync_status.assert_awaited_once()

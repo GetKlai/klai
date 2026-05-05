@@ -21,7 +21,7 @@ from app.adapters.notion import NotionAdapter
 from app.adapters.registry import AdapterRegistry
 from app.clients.knowledge_ingest import KnowledgeIngestClient
 from app.core.config import Settings
-from app.core.database import dispose_engine, init_engine
+from app.core.database import cross_org_session, dispose_engine, init_engine
 from app.core.enums import SyncStatus
 from app.core.logging import RequestContextMiddleware, get_logger, setup_logging
 from app.core.security import AESGCMCipher
@@ -65,16 +65,23 @@ def create_app() -> FastAPI:
         # holds ``remote_job_id``, and :class:`SyncRunResolver` finalises
         # them at read time. Resetting those to PENDING orphans them
         # (resolver only resolves RUNNING rows). Skip them here.
+        #
+        # SPEC-SEC-CONNECTOR-RLS-001: this is one of two legitimate cross-
+        # tenant code paths in klai-connector (the other is
+        # SyncRunReaper.finalise_stuck_runs). No tenant context exists at
+        # lifespan time and there is no caller to derive an org_id from.
+        # cross_org_session() sets app.cross_org_admin = '1' so the new
+        # RLS policy on connector.sync_runs permits the cross-org UPDATE.
+        # Logged at INFO so any unexpected use shows up in VictoriaLogs.
         if _db.session_maker is not None:
-            async with _db.session_maker() as session:
+            async with cross_org_session() as session:
                 await session.execute(
                     update(SyncRun)
                     .where(SyncRun.status == SyncStatus.RUNNING)
                     .where(
                         # RUNNING with remote_job_id => delegated, leave alone.
                         # No JSONB key, or key absent => historical inline run, reset.
-                        (SyncRun.cursor_state.is_(None))
-                        | (SyncRun.cursor_state["remote_job_id"].astext.is_(None))  # type: ignore[index]
+                        (SyncRun.cursor_state.is_(None)) | (SyncRun.cursor_state["remote_job_id"].astext.is_(None))  # type: ignore[index]
                     )
                     .values(status=SyncStatus.PENDING, completed_at=datetime.now(UTC))
                 )
@@ -109,19 +116,11 @@ def create_app() -> FastAPI:
             # All three aliases reuse the same GoogleDriveAdapter instance; the
             # adapter's _extract_config injects a content_types preset based on
             # connector.connector_type.
-            registry.register_alias(
-                "google_docs", "google_drive", {"content_types": ["google_doc"]}
-            )
-            registry.register_alias(
-                "google_sheets", "google_drive", {"content_types": ["google_sheet"]}
-            )
-            registry.register_alias(
-                "google_slides", "google_drive", {"content_types": ["google_slides"]}
-            )
+            registry.register_alias("google_docs", "google_drive", {"content_types": ["google_doc"]})
+            registry.register_alias("google_sheets", "google_drive", {"content_types": ["google_sheet"]})
+            registry.register_alias("google_slides", "google_drive", {"content_types": ["google_slides"]})
         else:
-            logger.warning(
-                "google_drive adapter not registered — GOOGLE_DRIVE_CLIENT_ID unset"
-            )
+            logger.warning("google_drive adapter not registered — GOOGLE_DRIVE_CLIENT_ID unset")
         # Microsoft 365 adapter (SPEC-KB-MS-DOCS-001) — conditional on OAuth client.
         if settings.ms_docs_client_id:
             registry.register(
@@ -129,9 +128,7 @@ def create_app() -> FastAPI:
                 MsDocsAdapter(settings=settings, portal_client=portal_client),
             )
         else:
-            logger.warning(
-                "ms_docs adapter not registered — MS_DOCS_CLIENT_ID unset"
-            )
+            logger.warning("ms_docs adapter not registered — MS_DOCS_CLIENT_ID unset")
         app.state.registry = registry
 
         # Knowledge-ingest client
