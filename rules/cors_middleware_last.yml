@@ -77,5 +77,4 @@ files:
   - klai-knowledge-ingest/knowledge_ingest/app.py
   - klai-mailer/app/main.py
   - klai-knowledge-mcp/main.py
-  - klai-focus/research-api/app/main.py
   - rules/tests/fixtures/*.py
