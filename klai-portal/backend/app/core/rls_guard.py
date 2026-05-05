@@ -56,6 +56,7 @@ RLS_DML_TABLES: frozenset[str] = frozenset(
         "portal_group_memberships",
         "portal_group_products",
         "portal_groups",
+        "portal_join_requests",
         "portal_kb_tombstones",
         "portal_knowledge_bases",
         "portal_retrieval_gaps",
