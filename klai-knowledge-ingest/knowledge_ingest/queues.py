@@ -63,6 +63,10 @@ RAG_EVAL = "rag-eval"
 TAXONOMY_BACKFILL = "taxonomy-backfill"
 """One-shot backfill jobs (clustering, taxonomy)."""
 
+REBUILD_KB = "rebuild-kb"
+"""Operator-triggered KB rebuild backfill (SPEC-RAG-REBUILD-KB-001).
+LLM-bound: many per-artifact enrichment calls; runs on the LLM lane."""
+
 
 # --- Worker lanes -----------------------------------------------------------
 #
@@ -93,6 +97,7 @@ LLM_QUEUES: list[str] = [
     GRAPHITI_BULK,
     RAG_EVAL,
     TAXONOMY_BACKFILL,
+    REBUILD_KB,
 ]
 """Throughput-bound LLM work — bounded by upstream rate limit."""
 

@@ -90,6 +90,11 @@ def init_app(connector: Any) -> Any:
 
     register_eval_tasks(_procrastinate_app)
 
+    # SPEC-RAG-REBUILD-KB-001: operator-triggered KB rebuild backfill task.
+    from knowledge_ingest.rebuild_tasks import register_rebuild_tasks
+
+    register_rebuild_tasks(_procrastinate_app)
+
     return _procrastinate_app
 
 
