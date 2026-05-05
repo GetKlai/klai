@@ -1,10 +1,12 @@
 # Knowledge Retrieval Flow: How Chat with Knowledge Works
 
 > Engineering reference for the full retrieval pipeline — from user preference to LLM context injection.
-> Verified against `klai-portal/`, `klai-retrieval-api/`, and `deploy/litellm/` — April 2026 (updated 2026-04-16).
+> Verified against `klai-portal/`, `klai-retrieval-api/`, and `deploy/litellm/` — April 2026 (updated 2026-05-05).
 >
 > For how knowledge is *stored* (ingestion, chunking, embedding), see
 > [knowledge-ingest-flow.md](knowledge-ingest-flow.md).
+>
+> For the **strategic roadmap** (how this stack will evolve to be production-grade) and the **RAGAS evaluation harness** that measures every change, see [retrieval-improvements-roadmap.md](retrieval-improvements-roadmap.md).
 
 ---
 
@@ -653,6 +655,48 @@ Trailing punctuation and whitespace are ignored. "Ok!" and "Oké." are both triv
 
 ---
 
+## Quality measurement (SPEC-RAG-EVAL-001, shipped 2026-05-05)
+
+The retrieval pipeline above is exercised nightly by a RAGAS-based evaluation harness that writes per-query metrics to `knowledge.rag_eval_results`. Every retrieval-improvement SPEC (CONTEXTUAL-001 / QUERY-REWRITE-001 / PARENT-CHILD-001 / TAXONOMY-001) is measured by setting `RAG_EVAL_VARIANT=<experiment>` and comparing the result rows against the `baseline` rows.
+
+```
+                    ┌─────────────────────────────┐
+                    │  evaluate_retrieval_quality │
+                    │  _nightly (Procrastinate)   │
+                    └─────────────┬───────────────┘
+                                  │
+                ┌─────────────────┼─────────────────┐
+                ▼                 ▼                 ▼
+       Load YAML suite     Call /retrieve      klai-fast judge
+       (chat, knowledge_   (X-Internal-       (4 RAGAS metrics:
+       org)               Secret auth)        precision, recall,
+                                              faithfulness,
+                                              answer_relevance)
+                                  │
+                                  ▼
+                  knowledge.rag_eval_results (one row/query)
+                                  │
+                                  ▼
+                  Grafana → "RAG quality (RAGAS metrics)"
+                  Alert  → rag_eval_faithfulness_low (HIGH)
+```
+
+| Component | File / Path |
+|---|---|
+| Procrastinate task | `klai-knowledge-ingest/knowledge_ingest/eval/ragas_runner.py` (`evaluate_retrieval_quality_nightly`) |
+| Suite YAMLs | `klai-knowledge-ingest/knowledge_ingest/eval/suites/{chat,knowledge_org}.yaml` (60 hand-curated Voys queries) |
+| Storage | `knowledge.rag_eval_results` (migration `deploy/postgres/migrations/014_rag_eval_results.sql`) |
+| Ad-hoc CLI | `python -m knowledge_ingest.eval --suite chat --variant <name>` |
+| Grafana dashboard | `deploy/grafana/provisioning/dashboards/rag-quality.json` |
+| Alert rule | `deploy/grafana/provisioning/alerting/rag-eval-rules.yaml` |
+| Triage runbook | [docs/runbooks/rag-quality.md](../runbooks/rag-quality.md) |
+
+**Voys baseline (2026-05-05):** `context_precision=0.25`, `context_recall=0.26`, `retrieval_ms=542`. Faithfulness/answer_relevance have known tuning gaps documented in the roadmap. The low precision/recall is the **expected starting point** that Tier 1 SPECs will improve.
+
+**Multi-tenant by design:** every query in a suite YAML carries its own `org_zitadel_id`. v1 ships with Voys-only suites. Adding additional tenants post-launch is a YAML drop-in — no service split, no per-tenant deployment.
+
+---
+
 ## Reference: key files
 
 | Component | File | What it does |
@@ -678,3 +722,9 @@ Trailing punctuation and whitespace are ignored. "Ok!" and "Oké." are both triv
 | Templates | `klai-portal/backend/app/api/app_templates.py` | CRUD (SPEC-CHAT-TEMPLATES-001); resolved via `/internal/templates/effective` in the LiteLLM hook. |
 | Rules (planned) | klai-pii microservice + `app_rules.py` | SPEC-CHAT-GUARDRAILS-001 — not yet live. |
 | Config | `klai-retrieval-api/retrieval_api/config.py` | All configurable values and defaults |
+| RAGAS eval harness | `klai-knowledge-ingest/knowledge_ingest/eval/ragas_runner.py` | `run_evaluation()` + `evaluate_retrieval_quality_nightly` Procrastinate task |
+| RAGAS suite loader | `klai-knowledge-ingest/knowledge_ingest/eval/suite_loader.py` | YAML schema validator + `Suite` / `SuiteQuery` dataclasses |
+| RAGAS retrieval client | `klai-knowledge-ingest/knowledge_ingest/eval/retrieval_client.py` | Calls `/retrieve` with `X-Internal-Secret`; fail-open on errors (REQ-3) |
+| RAGAS judge client | `klai-knowledge-ingest/knowledge_ingest/eval/judge_client.py` | klai-fast for answer generation + 4 RAGAS metrics |
+| RAGAS storage | `klai-knowledge-ingest/knowledge_ingest/eval/store.py` | asyncpg helper `insert_eval_row()` |
+| RAGAS suite YAMLs | `klai-knowledge-ingest/knowledge_ingest/eval/suites/{chat,knowledge_org}.yaml` | 30 queries each, mix-tagged for SPEC-target stratification |
