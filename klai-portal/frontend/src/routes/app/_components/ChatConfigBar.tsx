@@ -123,6 +123,13 @@ export function ChatConfigBar() {
     mutation.mutate({ active_template_ids: null })
   }
 
+  function toggleNarrow() {
+    // The early-return guard below ensures `pref` is defined when this is
+    // invoked from the rendered toggle button. `!` matches the existing
+    // pattern in the deprecated KBScopeBar's `toggleNarrow`.
+    mutation.mutate({ kb_narrow: !pref!.kb_narrow })
+  }
+
   return (
     <div className="flex shrink-0 items-center gap-4 bg-[var(--color-sidebar)] border-b border-[var(--color-sidebar-border)] pl-4 pr-4 pt-5 pb-4">
       {collOpen && <div className="fixed inset-0 z-40" onClick={() => setCollOpen(false)} />}
@@ -196,6 +203,40 @@ export function ChatConfigBar() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Modus: kb_narrow toggle. Click flips between "KB + algemene
+          kennis" (default, kb_narrow=false) and "Alleen kennisbank"
+          (kb_narrow=true). The LiteLLM hook honours kb_narrow already
+          (deploy/litellm/klai_knowledge.py): narrow mode prepends a
+          stricter system prompt that forbids general-knowledge answers
+          and tells the model to say "Ik kan dit niet vinden in de
+          kennisbank" when the KB lacks the answer. Replaces the
+          equivalent toggle that lived in the deprecated KBScopeBar. */}
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="text-[13px] text-gray-400 whitespace-nowrap">
+          {m.chatbar_mode_label()}:
+        </span>
+        <button
+          type="button"
+          onClick={toggleNarrow}
+          title={
+            pref.kb_narrow
+              ? m.chatbar_mode_narrow_tooltip_on()
+              : m.chatbar_mode_narrow_tooltip_off()
+          }
+          aria-pressed={pref.kb_narrow}
+          className="flex items-center gap-1.5 text-[14px] font-semibold text-gray-700 hover:text-gray-900 transition-colors"
+        >
+          <span
+            className={`h-2 w-2 shrink-0 rounded-full ${pref.kb_narrow ? 'bg-green-500' : 'bg-gray-200'}`}
+          />
+          <span className={pref.kb_narrow ? 'text-gray-900' : 'text-gray-400'}>
+            {pref.kb_narrow
+              ? m.chatbar_mode_narrow_on()
+              : m.chatbar_mode_narrow_off()}
+          </span>
+        </button>
       </div>
 
       {/* Templates: multi-select. Hidden when backend has no templates yet. */}
