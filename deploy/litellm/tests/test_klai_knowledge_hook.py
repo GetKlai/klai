@@ -948,17 +948,21 @@ class TestKlaiKnowledgeHookKB010:
 
 class TestTokenRouterKB010:
     @pytest.mark.asyncio
-    async def test_token_router_skips_downgrade_when_kb_injected(self, monkeypatch):
-        """AC-010-17: model stays klai-primary when _klai_kb_meta present.
+    async def test_kb_meta_skips_safety_net_downgrade(self, monkeypatch):
+        """AC-010-17: kb-meta bypasses the *safety-net* downgrade only.
 
-        Specifically guards the *safety-net* downgrade at the bottom of the
-        router (long total context → klai-fast). The long-user-message
-        downgrade higher up the chain still fires regardless of KB context
-        — that's by design: a long single user message means an analytical
-        request, not a KB lookup. So we mock the per-call token_counter to
-        return a number BELOW the per-message threshold but ABOVE the total
-        threshold, exercising only the safety-net path that KB context is
-        meant to bypass.
+        Naming history: the original test was
+        ``test_token_router_skips_downgrade_when_kb_injected`` — the name
+        implied "any" downgrade, but the router has multiple downgrade
+        branches and kb-meta only bypasses the safety-net (large total
+        context → klai-fast). The long-user-message branch (analytical
+        request → klai-large) fires regardless of KB context — that's by
+        design.
+
+        This test mocks the per-call token_counter to return a number
+        BELOW the per-message threshold but ABOVE the total threshold,
+        exercising only the safety-net path that KB context is meant to
+        bypass.
         """
         litellm_mod = sys.modules["litellm"]
 
