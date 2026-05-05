@@ -548,7 +548,9 @@ class TestWipeKnowledgePostgres:
             mock_settings.knowledge_ingest_secret = "secret"
             with patch("app.trace.get_trace_headers", return_value={}):
                 with respx_router(base_url="http://knowledge-ingest:8000") as router:
-                    router.post("/internal/v1/orgs/zitadel-org-abc/wipe-postgres").mock(return_value=httpx.Response(404))
+                    router.post("/internal/v1/orgs/zitadel-org-abc/wipe-postgres").mock(
+                        return_value=httpx.Response(404)
+                    )
                     from app.services.provisioning.deprovisioning_steps import _wipe_knowledge_postgres
 
                     await _wipe_knowledge_postgres(state)
@@ -574,7 +576,9 @@ class TestWipeKnowledgePostgres:
             mock_settings.knowledge_ingest_secret = "secret"
             with patch("app.trace.get_trace_headers", return_value={}):
                 with respx_router(base_url="http://knowledge-ingest:8000") as router:
-                    router.post("/internal/v1/orgs/zitadel-org-abc/wipe-postgres").mock(return_value=httpx.Response(500))
+                    router.post("/internal/v1/orgs/zitadel-org-abc/wipe-postgres").mock(
+                        return_value=httpx.Response(500)
+                    )
                     from app.services.provisioning.deprovisioning_steps import _wipe_knowledge_postgres
 
                     with pytest.raises(httpx.HTTPStatusError):
