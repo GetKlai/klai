@@ -232,19 +232,20 @@ async def _flush_redis_tenant_keys(state: _DeprovisionState) -> None:
 
 
 async def _delete_qdrant_points(state: _DeprovisionState) -> None:
-    """Delete all Qdrant points matching {payload_key}={zitadel_org_id} from shared collections.
+    """Delete all Qdrant points matching org_id={zitadel_org_id} from klai_knowledge.
 
-    Both Qdrant collections (klai_knowledge + klai_focus) store the Zitadel
-    resourceowner ID (string like "362757920133283846") in their per-point
-    payload, NOT the portal_orgs integer PK. Each collection uses a different
-    payload key — verified live 2026-05-05:
-      * klai_knowledge → payload key "org_id"      → value = Zitadel resourceowner
-      * klai_focus     → payload key "tenant_id"   → value = Zitadel resourceowner
+    klai_knowledge stores the Zitadel resourceowner ID (string like
+    "362757920133283846") in the ``org_id`` payload key, NOT the portal_orgs
+    integer PK.
 
     Pre-fix every deprovisioning since SPEC-INFRA-TENANT-DELETE-001 landed
     silently filtered with the int PK, matching zero points (a HIGH-severity
     GDPR purge gap surfaced by audit 2026-05-05). Now uses
     state.zitadel_org_id consistently with the writer-side IDs.
+
+    SPEC-DECOMM-FOCUS-001: klai_focus collection removed from this list.
+    Focus is decommissioned and the collection is dropped during the
+    decommission runbook.
 
     # @MX:NOTE: idempotent — al-weg = geen exception. SPEC R3.
     """
@@ -256,50 +257,40 @@ async def _delete_qdrant_points(state: _DeprovisionState) -> None:
         api_key=settings.qdrant_api_key or None,
         timeout=30,
     )
-    # SPEC-INFRA-TENANT-DELETE-002 G4 — the two collections store the tenant
-    # ID under DIFFERENT payload keys. klai_knowledge uses ``org_id`` (set by
-    # knowledge-ingest's writer), klai_focus uses ``tenant_id`` (set by the
-    # legacy research-api / focus pipeline). Iterating with a single hardcoded
-    # key would silently skip every klai_focus point of the deprovisioned
-    # tenant — a HIGH-severity GDPR purge gap. Tuple-pair the collection with
-    # its payload key so adding a future collection forces an explicit choice.
-    collections: list[tuple[str, str]] = [
-        ("klai_knowledge", "org_id"),
-        ("klai_focus", "tenant_id"),
-    ]
+    collection = "klai_knowledge"
+    filter_key = "org_id"
     try:
-        for collection, filter_key in collections:
-            try:
-                await client.delete(
-                    collection_name=collection,
-                    points_selector=Filter(
-                        must=[
-                            FieldCondition(
-                                key=filter_key,
-                                match=MatchValue(value=state.zitadel_org_id),
-                            )
-                        ]
-                    ),
-                )
+        try:
+            await client.delete(
+                collection_name=collection,
+                points_selector=Filter(
+                    must=[
+                        FieldCondition(
+                            key=filter_key,
+                            match=MatchValue(value=state.zitadel_org_id),
+                        )
+                    ]
+                ),
+            )
+            logger.info(
+                "qdrant_points_deleted",
+                slug=state.slug,
+                org_id=state.org_id,
+                zitadel_org_id=state.zitadel_org_id,
+                collection=collection,
+                filter_key=filter_key,
+            )
+        except Exception as exc:
+            # Collection might not exist (404-like) — treat as idempotent
+            exc_str = str(exc)
+            if "not found" in exc_str.lower() or "404" in exc_str:
                 logger.info(
-                    "qdrant_points_deleted",
+                    "qdrant_collection_not_found",
                     slug=state.slug,
-                    org_id=state.org_id,
-                    zitadel_org_id=state.zitadel_org_id,
                     collection=collection,
-                    filter_key=filter_key,
                 )
-            except Exception as exc:
-                # Collection might not exist (404-like) — treat as idempotent
-                exc_str = str(exc)
-                if "not found" in exc_str.lower() or "404" in exc_str:
-                    logger.info(
-                        "qdrant_collection_not_found",
-                        slug=state.slug,
-                        collection=collection,
-                    )
-                else:
-                    raise
+            else:
+                raise
     finally:
         await client.close()
 
