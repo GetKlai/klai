@@ -148,7 +148,7 @@ async def list_sync_runs(
     limit: int = 20,
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
-) -> list[SyncRun]:
+) -> list[SyncRunResponse]:
     """List sync history for a connector (most recent first).
 
     Called by the portal control plane to retrieve sync history for the UI.
@@ -156,6 +156,13 @@ async def list_sync_runs(
     SPEC-SEC-TENANT-001 REQ-7.3: filtered on ``X-Org-ID`` when the header
     is present. During the transition period (REQ-7.6) a missing header
     falls back to legacy connector_id-only filtering with a WARN event.
+
+    SPEC-CRAWLER-006 REQ-04: each row in ``RUNNING`` state with a
+    ``cursor_state.remote_job_id`` has its live progress resolved from
+    knowledge-ingest. Terminal rows are returned from the local DB
+    unchanged. The resolver writes back terminal state on first read so
+    a closed remote job leaves the local row terminal across all
+    subsequent calls.
     """
     _require_portal_call(request)
     org_id = _require_portal_org_id(request, settings)
@@ -170,7 +177,29 @@ async def list_sync_runs(
         query = query.where(SyncRun.org_id == org_id)
 
     result = await session.execute(query)
-    return list(result.scalars().all())
+    rows = list(result.scalars().all())
+    return await _resolve_runs(request, rows)
+
+
+async def _resolve_runs(request: Request, rows: list[SyncRun]) -> list[SyncRunResponse]:
+    """Apply :class:`SyncRunResolver` to every row before serialising.
+
+    The resolver short-circuits for non-RUNNING rows and rows without a
+    ``cursor_state.remote_job_id``, so the cost on a typical history
+    list is one upstream call per running web_crawler row (cached 30 s).
+    """
+    resolver = getattr(request.app.state, "sync_run_resolver", None)
+    if resolver is None:
+        # Resolver not wired (e.g. minimal test app). Fall back to local
+        # rows — preserves pre-SPEC-006 behaviour for callers that don't
+        # configure the resolver.
+        return [SyncRunResponse.model_validate(r, from_attributes=True) for r in rows]
+
+    resolved = []
+    for row in rows:
+        snapshot = await resolver.resolve(row)
+        resolved.append(SyncRunResponse.model_validate(snapshot, from_attributes=True))
+    return resolved
 
 
 @router.get("/connectors/{connector_id}/syncs/{run_id}", response_model=SyncRunResponse)
@@ -180,7 +209,7 @@ async def get_sync_run(
     request: Request,
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
-) -> SyncRun:
+) -> SyncRunResponse:
     """Get details of a specific sync run.
 
     SPEC-SEC-TENANT-001 REQ-7.3 / REQ-7.5: filters on org_id when
@@ -199,7 +228,10 @@ async def get_sync_run(
     if org_id is not None and sync_run.org_id != org_id:
         raise HTTPException(status_code=404, detail="Sync run not found")
 
-    return sync_run
+    # SPEC-CRAWLER-006 REQ-04: live-resolve a single row identically to
+    # the list path so the detail view matches the list view.
+    resolved = await _resolve_runs(request, [sync_run])
+    return resolved[0]
 
 
 # DELETE /connectors/{id}/sync-runs removed by

@@ -79,11 +79,10 @@ class SyncEngine:
         portal_client: Client for the portal control plane API.
     """
 
-    # SPEC-CRAWLER-004 Fase D — poll cadence + total timeout for the
-    # delegation path. 5 s matches the SPEC; 30 min matches klai-connector's
-    # historical webcrawler timeout so behaviour stays unchanged for ops.
-    _WEB_CRAWLER_POLL_INTERVAL_S: float = 5.0
-    _WEB_CRAWLER_POLL_TIMEOUT_S: float = 30 * 60
+    # SPEC-CRAWLER-006: web_crawler delegation is fire-and-forget — the
+    # connector enqueues the job, stores remote_job_id, and returns.
+    # Live status is resolved on read by SyncRunResolver. The historical
+    # poll-loop constants are gone (REQ-CRAWLER-006-02 / REQ-CRAWLER-006-03).
 
     def __init__(
         self,
@@ -514,25 +513,27 @@ class SyncEngine:
         sync_run_id: uuid.UUID,
         start_time: float,
     ) -> None:
-        """SPEC-CRAWLER-004 Fase D delegation path.
+        """SPEC-CRAWLER-006 fire-and-forget delegation path.
 
-        klai-connector keeps owning ``sync_runs`` state + product_events but
-        forwards the actual crawl work to knowledge-ingest's
-        ``/ingest/v1/crawl/sync`` endpoint. We store the returned ``job_id``
-        on ``sync_run.cursor_state.remote_job_id`` immediately so a crash
-        leaves a traceable row, then poll the remote ``/status`` every 5 s
-        up to 30 min. On completion we close the sync_run with the remote
-        counts; on timeout or HTTP error we close it as FAILED with
-        ``error.details.service = 'knowledge-ingest'`` (REQ-03.5).
+        klai-connector enqueues the crawl job at knowledge-ingest, stores
+        the returned ``remote_job_id`` on ``sync_run.cursor_state``, and
+        returns. The sync_run stays in ``RUNNING`` state. Live progress and
+        terminal state resolution happen at read time via
+        :class:`SyncRunResolver` (see ``app/services/sync_run_resolver.py``).
+
+        Synchronous failure paths still close the sync_run as ``FAILED``
+        before any RUNNING state is observable:
+
+        - Persisted-URL SSRF rejection (no enqueue ever sent).
+        - Non-2xx HTTP response from ``POST /crawl/sync``.
+        - Network error (ConnectError etc.) during enqueue.
+
+        Replaces the SPEC-CRAWLER-004 poll loop and the
+        SPEC-WORKER-LANES-001 best-effort cancel — both architecturally
+        unable to keep ``sync_runs.status`` and ``crawl_jobs.status``
+        coherent on long-running crawls. See SPEC-CRAWLER-006 § Root cause.
         """
         assert self._crawl_sync_client is not None
-
-        status: str = SyncStatus.COMPLETED
-        documents_total = 0
-        documents_ok = 0
-        documents_failed = 0
-        error_details: list[dict[str, object]] = []
-        remote_job_id: str | None = None
 
         async with self._session_maker() as session:
             sync_run = await session.get(SyncRun, sync_run_id)
@@ -540,21 +541,20 @@ class SyncEngine:
                 logger.error("SyncRun not found: %s", sync_run_id)
                 return
 
+            # Synchronous failure paths share this state; the success
+            # path returns early with sync_run still in RUNNING.
+            failure_status: str | None = None
+            failure_error_details: list[dict[str, object]] = []
+
             try:
                 # SPEC-SEC-SSRF-001 REQ-2.4 / AC-9: re-validate the
-                # persisted web_crawler config BEFORE delegating to
-                # knowledge-ingest. Legacy rows predating the portal
-                # validator (Fase 5) may still hold an SSRF-unsafe
-                # base_url / canary_url. On rejection
-                # ``PersistedUrlRejectedError`` propagates to the
-                # common except handler below, which marks the sync
-                # run failed with ``error="ssrf_blocked_persisted_url"``
-                # — ``crawl_sync`` / ``crawl_site`` are never invoked.
+                # persisted web_crawler config BEFORE delegating. Legacy
+                # rows predating the portal validator (Fase 5) may still
+                # hold an SSRF-unsafe base_url / canary_url.
                 validate_web_crawler_config_strict(
                     portal_config.config,
                     connector_id=str(connector_id),
                 )
-                # REQ-03.1: submit the config (connector_id only — no cookies).
                 enqueue_resp = await self._crawl_sync_client.crawl_sync(
                     connector_id=str(connector_id),
                     org_id=portal_config.zitadel_org_id,
@@ -566,106 +566,30 @@ class SyncEngine:
                     "remote_job_id": remote_job_id,
                     "remote_status": enqueue_resp.get("status", "queued"),
                 }
+                # status stays RUNNING (set by trigger_sync route on
+                # creation). No commit-then-poll, no commit-then-cancel.
                 await session.commit()
                 logger.info(
                     "web_crawler_delegated",
                     extra={
+                        "event": "web_crawler_delegated",
                         "connector_id": str(connector_id),
                         "sync_run_id": str(sync_run_id),
                         "remote_job_id": remote_job_id,
+                        "duration_seconds": round(time.monotonic() - start_time, 3),
                     },
                 )
-
-                # REQ-03.4 + AC-03.4: poll until the remote job terminates
-                # or we hit the timeout.
-                poll_interval = self._WEB_CRAWLER_POLL_INTERVAL_S
-                poll_timeout = self._WEB_CRAWLER_POLL_TIMEOUT_S
-                elapsed = 0.0
-                final_state: dict = {}
-                while elapsed < poll_timeout:
-                    await asyncio.sleep(poll_interval)
-                    elapsed += poll_interval
-                    try:
-                        poll = await self._crawl_sync_client.crawl_sync_status(remote_job_id)
-                    except httpx.HTTPError as poll_err:
-                        logger.warning(
-                            "web_crawler_poll_failed",
-                            extra={
-                                "connector_id": str(connector_id),
-                                "remote_job_id": remote_job_id,
-                                "error": str(poll_err),
-                            },
-                        )
-                        continue
-                    remote_status = poll.get("status")
-                    if remote_status in ("completed", "failed"):
-                        final_state = poll
-                        break
-
-                if not final_state:
-                    # Timeout without a terminal state — SPEC-CRAWLER-004 EC-1.
-                    # Preserve remote_job_id so a later retry can resume polling.
-                    status = SyncStatus.FAILED
-                    error_details = [
-                        {
-                            "error": "web_crawler_poll_timeout",
-                            "service": "knowledge-ingest",
-                            "remote_job_id": remote_job_id,
-                            "timeout_seconds": int(poll_timeout),
-                        },
-                    ]
-                    # SPEC-WORKER-LANES-001 REQ-3: cancel the remote
-                    # procrastinate task so it does not keep writing
-                    # artifacts behind a sync_run that is now marked
-                    # failed. Without this, the user-visible state
-                    # (sync_run.status='failed') diverged from the data
-                    # state (knowledge.artifacts continued to accumulate
-                    # for the same connector hours after the failure).
-                    # Cancel is idempotent and best-effort — a network
-                    # blip while cancelling is logged and swallowed; the
-                    # sync_run remains FAILED regardless.
-                    try:
-                        await self._crawl_sync_client.crawl_sync_cancel(remote_job_id)
-                        logger.info(
-                            "web_crawler_remote_cancel_sent",
-                            extra={
-                                "connector_id": str(connector_id),
-                                "remote_job_id": remote_job_id,
-                            },
-                        )
-                    except httpx.HTTPError:
-                        logger.exception(
-                            "web_crawler_remote_cancel_failed",
-                            extra={
-                                "connector_id": str(connector_id),
-                                "remote_job_id": remote_job_id,
-                            },
-                        )
-                else:
-                    documents_total = int(final_state.get("pages_total") or 0)
-                    documents_ok = int(final_state.get("pages_done") or 0)
-                    if final_state.get("status") == "completed":
-                        status = SyncStatus.COMPLETED
-                    else:
-                        status = SyncStatus.FAILED
-                        documents_failed = max(0, documents_total - documents_ok)
-                        remote_error = final_state.get("error") or "unknown"
-                        error_details = [
-                            {
-                                "error": str(remote_error),
-                                "service": "knowledge-ingest",
-                                "remote_job_id": remote_job_id,
-                            },
-                        ]
+                # Fire-and-forget: terminal state will be written by
+                # SyncRunResolver on the first read after the remote job
+                # finishes. Portal callback also happens there to avoid
+                # double-reports.
+                return
 
             except PersistedUrlRejectedError as ssrf_err:
                 # SPEC-SEC-SSRF-001 REQ-2.4 / AC-9: legacy config failed
-                # the SSRF guard. Do NOT delegate to knowledge-ingest.
-                # The stable error code lets ops dashboards and the
-                # regression suite query persisted-URL rejections
-                # separately from network / validation failures.
-                status = SyncStatus.FAILED
-                error_details = [
+                # the SSRF guard. Do NOT delegate.
+                failure_status = SyncStatus.FAILED
+                failure_error_details = [
                     {
                         "error": ssrf_err.error_code,
                         "hostname": ssrf_err.hostname or "",
@@ -682,15 +606,11 @@ class SyncEngine:
                 )
 
             except httpx.HTTPStatusError as enqueue_err:
-                # REQ-03.5: non-2xx from /crawl/sync → single failed row, no retry.
-                # SPEC-SEC-INTERNAL-001 REQ-10 + AC-10.1: ``error_details`` is
-                # persisted to JSONB AND forwarded to portal for UI rendering.
-                # Sanitize the upstream body BEFORE persistence so a reflected
-                # KNOWLEDGE_INGEST_SECRET / DOCS_INTERNAL_SECRET / etc. cannot
-                # land in connector.sync_runs.error_details or in the portal
-                # connector-management UI.
-                status = SyncStatus.FAILED
-                error_details = [
+                # SPEC-SEC-INTERNAL-001 REQ-10: sanitize upstream body
+                # before persistence — KNOWLEDGE_INGEST_SECRET et al.
+                # MUST NOT land in error_details or the portal UI.
+                failure_status = SyncStatus.FAILED
+                failure_error_details = [
                     {
                         "error": f"http_{enqueue_err.response.status_code}",
                         "service": "knowledge-ingest",
@@ -704,9 +624,10 @@ class SyncEngine:
                         "status_code": enqueue_err.response.status_code,
                     },
                 )
+
             except httpx.HTTPError as enqueue_err:
-                status = SyncStatus.FAILED
-                error_details = [
+                failure_status = SyncStatus.FAILED
+                failure_error_details = [
                     {
                         "error": str(enqueue_err),
                         "service": "knowledge-ingest",
@@ -717,51 +638,39 @@ class SyncEngine:
                     extra={"connector_id": str(connector_id)},
                 )
 
-            duration = time.monotonic() - start_time
+            # Synchronous-failure tail. Only reached when the try block
+            # raised one of the handled exceptions above.
+            assert failure_status is not None
             completed_at = datetime.now(UTC)
-            sync_run.status = status
+            sync_run.status = failure_status
             sync_run.completed_at = completed_at
-            sync_run.quality_status = "healthy" if status == SyncStatus.COMPLETED else None
-            sync_run.documents_total = documents_total
-            sync_run.documents_ok = documents_ok
-            sync_run.documents_failed = documents_failed
-            sync_run.error_details = error_details if error_details else None
-            # Keep the remote_job_id so operators can correlate a failed run
-            # with the knowledge.crawl_jobs row.
-            if remote_job_id is not None:
-                sync_run.cursor_state = {
-                    "remote_job_id": remote_job_id,
-                    "remote_status": (
-                        "completed" if status == SyncStatus.COMPLETED else "failed"
-                    ),
-                }
+            sync_run.quality_status = None
+            sync_run.error_details = failure_error_details or None
             await session.commit()
 
             logger.info(
-                "web_crawler_delegation_complete",
+                "web_crawler_delegation_failed_synchronously",
                 extra={
                     "event": "sync_complete",
                     "connector_id": str(connector_id),
-                    "duration_seconds": round(duration, 1),
-                    "documents_total": documents_total,
-                    "documents_ok": documents_ok,
-                    "documents_failed": documents_failed,
-                    "status": status,
-                    "remote_job_id": remote_job_id,
+                    "duration_seconds": round(time.monotonic() - start_time, 3),
+                    "status": failure_status,
                 },
             )
 
-        # Portal callback (best-effort — errors swallowed in portal_client).
+        # Portal callback only on synchronous failure. Successful enqueues
+        # leave the run in RUNNING and the resolver reports terminal state
+        # back to portal when the remote job finishes.
         await self._portal_client.report_sync_status(
             connector_id=connector_id,
             sync_run_id=sync_run_id,
-            sync_status=status,
+            sync_status=failure_status,
             completed_at=completed_at,
-            documents_total=documents_total,
-            documents_ok=documents_ok,
-            documents_failed=documents_failed,
+            documents_total=0,
+            documents_ok=0,
+            documents_failed=0,
             bytes_processed=0,
-            error_details=error_details if error_details else None,
+            error_details=failure_error_details or None,
         )
 
     async def _upload_images(
