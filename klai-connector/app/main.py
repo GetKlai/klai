@@ -55,15 +55,27 @@ def create_app() -> FastAPI:
         # Mark any sync_runs that were left RUNNING (e.g. from a previous crash/restart) as PENDING.
         # PENDING preserves the cursor_state (which may contain checkpoint progress) so that
         # the next sync can resume from where it left off rather than restarting from scratch.
+        #
+        # SPEC-CRAWLER-006: web_crawler delegated runs are NOT stuck on
+        # restart — the work runs at knowledge-ingest, ``cursor_state``
+        # holds ``remote_job_id``, and :class:`SyncRunResolver` finalises
+        # them at read time. Resetting those to PENDING orphans them
+        # (resolver only resolves RUNNING rows). Skip them here.
         if _db.session_maker is not None:
             async with _db.session_maker() as session:
                 await session.execute(
                     update(SyncRun)
                     .where(SyncRun.status == SyncStatus.RUNNING)
+                    .where(
+                        # RUNNING with remote_job_id => delegated, leave alone.
+                        # No JSONB key, or key absent => historical inline run, reset.
+                        (SyncRun.cursor_state.is_(None))
+                        | (SyncRun.cursor_state["remote_job_id"].astext.is_(None))  # type: ignore[index]
+                    )
                     .values(status=SyncStatus.PENDING, completed_at=datetime.now(UTC))
                 )
                 await session.commit()
-            logger.info("Cleaned up stuck RUNNING sync_runs on startup")
+            logger.info("Cleaned up stuck RUNNING sync_runs on startup (delegated runs preserved)")
 
         # Encryption
         key_bytes = base64.b64decode(settings.encryption_key)
