@@ -24,14 +24,21 @@ class TestRetrieveEndpoint:
         assert resp.status_code == 400
         assert "user_id" in resp.json()["detail"]
 
-    def test_retrieve_scope_notebook_without_notebook_id(self, client):
-        """scope=notebook without notebook_id returns 400."""
+    def test_retrieve_scope_notebook_returns_422(self, client):
+        """SPEC-DECOMM-FOCUS-001 R-E1: scope=notebook is no longer a valid Literal."""
         resp = client.post(
             "/retrieve",
             json={"query": "test", "org_id": "org-1", "scope": "notebook"},
         )
-        assert resp.status_code == 400
-        assert "notebook_id" in resp.json()["detail"]
+        assert resp.status_code == 422
+
+    def test_retrieve_scope_broad_returns_422(self, client):
+        """SPEC-DECOMM-FOCUS-001 R-E1: scope=broad is no longer a valid Literal."""
+        resp = client.post(
+            "/retrieve",
+            json={"query": "test", "org_id": "org-1", "scope": "broad"},
+        )
+        assert resp.status_code == 422
 
     def test_retrieve_happy_path(self, client, sample_retrieve_request):
         """Happy path: mock all external calls, verify response structure."""
@@ -124,68 +131,6 @@ class TestRetrieveEndpoint:
         assert data["metadata"]["candidates_retrieved"] == 1
         assert data["metadata"]["retrieval_ms"] > 0
 
-    def test_retrieve_notebook_no_rerank(self, client):
-        """scope=notebook skips reranking."""
-        with (
-            patch(
-                "retrieval_api.api.retrieve.coreference.resolve",
-                new_callable=AsyncMock,
-                return_value="test query",
-            ),
-            patch(
-                "retrieval_api.api.retrieve.embed_single",
-                new_callable=AsyncMock,
-                return_value=[0.1, 0.2],
-            ),
-            patch(
-                "retrieval_api.api.retrieve.embed_sparse",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-            patch(
-                "retrieval_api.api.retrieve.gate.should_bypass",
-                new_callable=AsyncMock,
-                return_value=(False, None),
-            ),
-            patch(
-                "retrieval_api.api.retrieve.search.hybrid_search",
-                new_callable=AsyncMock,
-                return_value=[
-                    {
-                        "chunk_id": "c1",
-                        "text": "notebook chunk",
-                        "score": 0.8,
-                        "artifact_id": None,
-                        "content_type": None,
-                        "context_prefix": None,
-                        "scope": "notebook",
-                        "valid_at": None,
-                        "invalid_at": None,
-                        "ingested_at": None,
-                        "assertion_mode": None,
-                    }
-                ],
-            ),
-            patch(
-                "retrieval_api.api.retrieve.reranker.rerank",
-                new_callable=AsyncMock,
-            ) as mock_rerank,
-        ):
-            resp = client.post(
-                "/retrieve",
-                json={
-                    "query": "test",
-                    "org_id": "org-1",
-                    "scope": "notebook",
-                    "notebook_id": "nb-1",
-                },
-            )
-
-        assert resp.status_code == 200
-        # Reranker should NOT have been called for notebook scope
-        mock_rerank.assert_not_called()
-
-
 class TestGraphMetadata:
     def test_retrieve_metadata_includes_graph_fields(self, client, sample_retrieve_request):
         """Response metadata includes graph_results_count and graph_search_ms (AC-9)."""
@@ -242,60 +187,6 @@ class TestGraphMetadata:
         assert "graph_search_ms" in data["metadata"]
         assert data["metadata"]["graph_results_count"] == 0
 
-    def test_notebook_scope_skips_graph_search(self, client):
-        """scope=notebook does not execute graph search (AC-6)."""
-        mock_graph_search = AsyncMock(return_value=[])
-        with (
-            patch(
-                "retrieval_api.api.retrieve.coreference.resolve",
-                new_callable=AsyncMock,
-                return_value="q",
-            ),
-            patch(
-                "retrieval_api.api.retrieve.embed_single",
-                new_callable=AsyncMock,
-                return_value=[0.1],
-            ),
-            patch(
-                "retrieval_api.api.retrieve.embed_sparse",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-            patch(
-                "retrieval_api.api.retrieve.gate.should_bypass",
-                new_callable=AsyncMock,
-                return_value=(False, 0.1),
-            ),
-            patch(
-                "retrieval_api.api.retrieve.search.hybrid_search",
-                new_callable=AsyncMock,
-                return_value=[],
-            ),
-            patch(
-                "retrieval_api.api.retrieve.graph_search.search",
-                mock_graph_search,
-            ),
-            patch("retrieval_api.api.retrieve.settings") as mock_settings,
-        ):
-            mock_settings.retrieval_candidates = 60
-            mock_settings.graphiti_enabled = True
-            mock_settings.link_expand_enabled = True
-            mock_settings.link_expand_seed_k = 10
-            mock_settings.link_expand_max_urls = 30
-            mock_settings.link_expand_candidates = 20
-            mock_settings.link_authority_boost = 0.05
-            mock_settings.source_quota_enabled = True
-            mock_settings.source_quota_max_per_source = 2
-            mock_settings.router_enabled = False
-            client.post(
-                "/retrieve",
-                json={"query": "test", "org_id": "org-1", "scope": "notebook",
-                      "notebook_id": "nb-1"},
-            )
-
-        mock_graph_search.assert_not_called()
-
-
 class TestHealthEndpoint:
     def test_health_all_ok(self, client):
         """Health returns 200 when all services are reachable."""
@@ -331,11 +222,10 @@ class TestChatEndpoint:
         assert resp.status_code == 400
         assert "user_id" in resp.json()["detail"]
 
-    def test_chat_scope_notebook_without_notebook_id(self, client):
-        """scope=notebook without notebook_id returns 400."""
+    def test_chat_scope_notebook_returns_422(self, client):
+        """SPEC-DECOMM-FOCUS-001 R-E1: scope=notebook is no longer a valid Literal."""
         resp = client.post("/chat", json={"query": "test", "org_id": "org-1", "scope": "notebook"})
-        assert resp.status_code == 400
-        assert "notebook_id" in resp.json()["detail"]
+        assert resp.status_code == 422
 
     @patch(
         "retrieval_api.api.chat.coreference.resolve",

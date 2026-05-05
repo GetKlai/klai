@@ -12,9 +12,8 @@ _CONVERSATION_CONTENT_MAX_CHARS = 8_000
 class RetrieveRequest(BaseModel):
     query: str
     org_id: str
-    scope: Literal["personal", "org", "both", "notebook", "broad"] = "org"
+    scope: Literal["personal", "org", "both"] = "org"
     user_id: str | None = None
-    notebook_id: str | None = None
     # SPEC-SEC-010 REQ-2.1: top_k bounded to [1, 50] to block abusive payloads (F-010).
     top_k: int = Field(8, ge=1, le=50)
     # SPEC-SEC-010 REQ-2.2: conversation_history length bounded to 20 entries.

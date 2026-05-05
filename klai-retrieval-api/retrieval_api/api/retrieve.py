@@ -34,8 +34,8 @@ router = APIRouter()
 # SPEC-SEC-SERVICE-AUTH-001 REQ-3: scope required for the /retrieve endpoint.
 # Internal-secret callers are bypassed during Phase B/C migration; once Phase D
 # removes the legacy auth path, only callers presenting a JWT with this scope
-# will reach this endpoint. Granted to: svc-litellm, svc-research-api,
-# svc-knowledge-mcp, svc-portal-api.
+# will reach this endpoint. Granted to: svc-litellm, svc-knowledge-mcp,
+# svc-portal-api.
 _RETRIEVAL_QUERY_SCOPE = "klai:internal:retrieval:query"
 # Module-level singleton — avoids ruff B008 ("Depends in default arg") and
 # is the FastAPI-recommended pattern for repeated dependencies.
@@ -76,14 +76,6 @@ async def retrieve(
     # --- Validation ---
     if req.scope in ("personal", "both") and not req.user_id:
         raise HTTPException(status_code=400, detail="user_id required for scope=personal/both")
-    if req.scope == "notebook" and not req.notebook_id:
-        raise HTTPException(status_code=400, detail="notebook_id required for scope=notebook")
-    # SPEC-SEC-IDENTITY-ASSERT-001 REQ-5.2: notebook scope requires user_id so the
-    # personal-vs-team visibility gate can apply. Without user_id, the personal
-    # leg of _notebook_filter cannot fire and personal chunks would silently
-    # disappear from results — fail loud rather than silent.
-    if req.scope == "notebook" and not req.user_id:
-        raise HTTPException(status_code=400, detail="missing_user_id_for_personal_scope")
 
     # SPEC-SEC-010 REQ-3 + SPEC-SEC-IDENTITY-ASSERT-001 REQ-4: cross-user /
     # cross-org guard. JWT callers are matched against their JWT claims;
@@ -174,7 +166,7 @@ async def retrieve(
 
         graph_task: asyncio.Task[list[dict]] | None = None
         t_graph: float | None = None
-        if req.scope != "notebook" and settings.graphiti_enabled:  # AC-6: skip notebook
+        if settings.graphiti_enabled:
             t_graph = time.perf_counter()
             graph_task = asyncio.create_task(
                 graph_search.search(query_resolved, req.org_id, top_k=20)
@@ -202,7 +194,7 @@ async def retrieve(
         decision_record["search_candidates_count"] = candidates_retrieved
 
         # 4b. Link expansion (SPEC-CRAWLER-003 R14-R16)
-        if settings.link_expand_enabled and req.scope != "notebook" and raw_results:
+        if settings.link_expand_enabled and raw_results:
             t_expand = time.perf_counter()
             seed_chunks = raw_results[: settings.link_expand_seed_k]
             candidate_urls: list[str] = []
@@ -242,8 +234,8 @@ async def retrieve(
                 if incoming > 0:
                     r["score"] = r["score"] + settings.link_authority_boost * math.log(1 + incoming)
 
-        # 5. Rerank (skip for notebook scope or when reranker disabled)
-        if req.scope != "notebook" and raw_results and settings.reranker_enabled:
+        # 5. Rerank (skip when reranker disabled)
+        if raw_results and settings.reranker_enabled:
             t_rerank = time.perf_counter()
             rerank_input = raw_results[: settings.reranker_candidates]
             reranked = await reranker.rerank(query_resolved, rerank_input, req.top_k)
@@ -402,35 +394,34 @@ async def retrieve(
         retrieval_bypassed=bypassed,
     )
 
-    # SPEC-GRAFANA-METRICS: knowledge.queried event (skip notebook scope — Focus has its own).
+    # SPEC-GRAFANA-METRICS: knowledge.queried event.
     # SPEC-SEC-IDENTITY-ASSERT-001 REQ-6: tenant_id / user_id MUST come from
     # the verified-caller pin set by verify_body_identity, never from the
     # request body. Body fields are caller-supplied; product_events is a
     # business-metrics contract whose integrity we cannot let any caller
     # poison.
-    if req.scope != "notebook":
-        verified = getattr(request.state, "verified_caller", None)
-        if verified is not None:
-            emit_event(
-                "knowledge.queried",
-                tenant_id=verified.org_id,
-                user_id=verified.user_id,
-                properties={
-                    "scope": req.scope,
-                    "had_results": len(chunks_out) > 0,
-                    "result_count": len(chunks_out),
-                },
-            )
-        else:
-            # Defense in depth: should be unreachable because verify_body_identity
-            # always pins the verified tuple on the success path. If we see this
-            # log line in production, a new code path is bypassing the guard.
-            logger.warning(
-                "product_event_skipped_no_identity",
-                event_type="knowledge.queried",
-                scope=req.scope,
-                path=request.url.path,
-            )
+    verified = getattr(request.state, "verified_caller", None)
+    if verified is not None:
+        emit_event(
+            "knowledge.queried",
+            tenant_id=verified.org_id,
+            user_id=verified.user_id,
+            properties={
+                "scope": req.scope,
+                "had_results": len(chunks_out) > 0,
+                "result_count": len(chunks_out),
+            },
+        )
+    else:
+        # Defense in depth: should be unreachable because verify_body_identity
+        # always pins the verified tuple on the success path. If we see this
+        # log line in production, a new code path is bypassing the guard.
+        logger.warning(
+            "product_event_skipped_no_identity",
+            event_type="knowledge.queried",
+            scope=req.scope,
+            path=request.url.path,
+        )
 
     return RetrieveResponse(
         query_resolved=query_resolved,
