@@ -656,10 +656,11 @@ services:
       - -configCheckInterval=30s
       # On config reload, vmauth picks up changes within 30s without restart.
     environment:
-      # vmauth injects upstream basic-auth toward victorialogs using its own
-      # process env (referenced as $${VICTORIALOGS_AUTH_*} in config.yml).
-      VICTORIALOGS_AUTH_USER: ${VICTORIALOGS_AUTH_USER}
-      VICTORIALOGS_AUTH_PASSWORD: ${VICTORIALOGS_AUTH_PASSWORD}
+      # vmauth injects upstream basic-auth toward victorialogs using the
+      # SAME base64-encoded credential Caddy already uses for logs-ingest.
+      # Re-uses existing SOPS secret — no new env var to provision.
+      # Referenced as %{ENV.VICTORIALOGS_BASIC_AUTH_B64} in config.yml.
+      VICTORIALOGS_BASIC_AUTH_B64: ${VICTORIALOGS_BASIC_AUTH_B64}
     networks:
       - monitoring
     deploy:
