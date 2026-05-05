@@ -72,23 +72,27 @@ rule:
 
 # Scope: klai-connector source + the lint test fixtures.
 #
-# Existing call sites
-# -------------------
-# Two call sites in `klai-connector/app/services/sync_engine.py`
-# (`_get_last_successful_run`, `_get_last_pending_run`) currently filter
-# only by `connector_id + status` without an `SyncRun.org_id` clause.
-# In production this is "safe-by-coincidence": connector_id is allocated
-# per-tenant on the portal side, so no two tenants share a connector_id.
-# But that invariant lives in the portal control plane, not in
-# klai-connector itself, which makes it exactly the kind of soft
-# contract the audit (TP-5) flagged.
+# Historical note
+# ---------------
+# The first version of this rule (SPEC-SEC-PORTAL-RLS-001 round-1) carved
+# `klai-connector/app/services/sync_engine.py` and `klai-connector/app/main.py`
+# out of scope because two pre-existing call sites filtered SyncRun by
+# `connector_id + status` only, and the lifespan crash-recovery sweep
+# spanned every tenant by design. Both have since been closed:
 #
-# Closing those two call sites is intentionally OUT OF SCOPE for
-# SPEC-SEC-PORTAL-RLS-001 (per the SPEC's "Out of scope" section).
-# They are listed in `ignores` below so this rule lands without
-# breaking the existing klai-connector CI build, while still firing
-# on any NEW untenanted query and on the lint fixtures. A follow-up
-# SPEC will fix the existing call sites and remove the entries.
+#   * `_get_last_successful_run` / `_get_last_pending_run` now take an
+#     explicit `org_id` parameter and filter on `SyncRun.org_id`
+#     (round-2 follow-up — closes the soft-contract dependency the audit
+#     flagged on connector_id uniqueness across tenants).
+#   * The crash-recovery sweep was extracted into
+#     `klai-connector/app/services/sync_runs.py::reset_stuck_running_runs_cross_org`.
+#     That helper carries an explicit `_cross_org_marker = SyncRun.org_id`
+#     line so the rule's "function references SyncRun.org_id" exit
+#     accepts the legitimate cross-org sweep — and ONLY that sweep.
+#
+# Both source files are now FULLY in-scope. A new untenanted SyncRun
+# query anywhere in klai-connector therefore fails this rule, including
+# in main.py and sync_engine.py.
 files:
   - klai-connector/app/**/*.py
   - rules/tests/fixtures/*.py
@@ -96,13 +100,3 @@ ignores:
   - klai-connector/tests/**/*.py
   - klai-connector/alembic/**/*.py
   - '**/conftest.py'
-  # Pre-existing call sites — see header comment, follow-up SPEC.
-  - klai-connector/app/services/sync_engine.py
-  # Legitimate cross-org crash-recovery sweep at startup (mark RUNNING
-  # rows as PENDING so they can resume after a restart). Runs in the
-  # `lifespan` context, before any tenant context exists; spans every
-  # tenant by design. Acceptable because it does not RETURN data — it
-  # only updates status. A follow-up could move this to an explicit
-  # cross_org_session() helper, but for now the entry-module is opted
-  # out of the rule.
-  - klai-connector/app/main.py

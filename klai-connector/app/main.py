@@ -3,11 +3,9 @@
 import base64
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import update
 
 import app.core.database as _db
 from app.adapters.airtable import AirtableAdapter
@@ -20,11 +18,9 @@ from app.adapters.registry import AdapterRegistry
 from app.clients.knowledge_ingest import KnowledgeIngestClient
 from app.core.config import Settings
 from app.core.database import dispose_engine, init_engine
-from app.core.enums import SyncStatus
 from app.core.logging import RequestContextMiddleware, get_logger, setup_logging
 from app.core.security import AESGCMCipher
 from app.middleware.auth import AuthMiddleware
-from app.models.sync_run import SyncRun
 from app.routes.connectors import router as connectors_router
 from app.routes.fingerprint import router as fingerprint_router
 from app.routes.health import router as health_router
@@ -33,6 +29,7 @@ from app.services.crypto import PostgresSecretsStore
 from app.services.portal_client import PortalClient
 from app.services.scheduler import ConnectorScheduler
 from app.services.sync_engine import SyncEngine
+from app.services.sync_runs import reset_stuck_running_runs_cross_org
 
 logger = get_logger(__name__)
 
@@ -51,18 +48,15 @@ def create_app() -> FastAPI:
         # Database
         init_engine(settings.database_url)
 
-        # Mark any sync_runs that were left RUNNING (e.g. from a previous crash/restart) as PENDING.
-        # PENDING preserves the cursor_state (which may contain checkpoint progress) so that
-        # the next sync can resume from where it left off rather than restarting from scratch.
+        # Crash-recovery: re-mark RUNNING runs as PENDING. Cross-org by
+        # design — runs in lifespan before any tenant context exists. The
+        # helper documents the rationale + carries the SyncRun.org_id
+        # marker that ast-grep rule no-untenanted-syncrun-query expects.
         if _db.session_maker is not None:
             async with _db.session_maker() as session:
-                await session.execute(
-                    update(SyncRun)
-                    .where(SyncRun.status == SyncStatus.RUNNING)
-                    .values(status=SyncStatus.PENDING, completed_at=datetime.now(UTC))
-                )
+                rowcount = await reset_stuck_running_runs_cross_org(session)
                 await session.commit()
-            logger.info("Cleaned up stuck RUNNING sync_runs on startup")
+            logger.info("Cleaned up stuck RUNNING sync_runs on startup (rows=%d)", rowcount)
 
         # Encryption
         key_bytes = base64.b64decode(settings.encryption_key)
