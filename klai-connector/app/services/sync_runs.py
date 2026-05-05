@@ -56,7 +56,20 @@ async def reset_stuck_running_runs_cross_org(session: AsyncSession) -> int:
     # Marker reference — see module docstring + SPEC-SEC-PORTAL-RLS-001 REQ-3.
     # This is the ONLY legitimate cross-org SyncRun operation; any other
     # site must filter by SyncRun.org_id.
-    _cross_org_marker = SyncRun.org_id  # noqa: F841 — see docstring
+    #
+    # Audit 2026-05-05 finding F8: a prior version of this marker used
+    # an explicit lint-suppression annotation that was removable by
+    # automated cleanup tools. If the suppression got stripped, F841
+    # would have triggered, ruff autofix would have REMOVED the
+    # assignment, and the ast-grep rule would then fire on this
+    # legitimate sweep — a silent security-rule regression.
+    #
+    # Replaced with `_ = SyncRun.org_id`. The `_` name is the universal
+    # "intentionally discarded" convention; F841 ignores it by default.
+    # No suppression annotation required, so there is nothing for
+    # autofix to strip. A future tightening of F841 to flag `_` itself
+    # would be a project-wide concern, not a silent bypass-only one.
+    _ = SyncRun.org_id
     result = await session.execute(
         update(SyncRun)
         .where(SyncRun.status == SyncStatus.RUNNING)
