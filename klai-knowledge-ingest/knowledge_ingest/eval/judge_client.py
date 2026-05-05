@@ -81,29 +81,49 @@ def _build_ragas_llm(model: str | None = None):
     return llm_factory(model or settings.rag_eval_judge_model, client=_make_async_openai_client())
 
 
-def _build_ragas_embeddings():
-    """Build the RAGAS embeddings wrapper pointed at klai-embeddings.
+class _SimpleEmbeddings:
+    """Minimal embeddings adapter for RAGAS AnswerRelevancy.
+
+    RAGAS 0.4.3's AnswerRelevancy metric calls ``embed_query(text)`` and
+    ``embed_documents(list[text])`` on its embeddings object. The modern
+    ``ragas.embeddings.OpenAIEmbeddings`` provider only exposes the new
+    ``aembed_text`` / ``embed_text`` interface, not these legacy method
+    names — so we cannot use it here yet. Rather than pull the deprecated
+    ``LangchainEmbeddingsWrapper`` (which RAGAS will remove in v1.0), we
+    implement the two methods directly against the OpenAI Python SDK
+    pointed at our LiteLLM proxy.
+
+    AnswerRelevancy is fully synchronous (calls embed_query inside a
+    numpy.asarray(...) chain), so we use the sync OpenAI client to avoid
+    event-loop juggling inside RAGAS' thread pool.
+    """
+
+    def __init__(self, base_url: str, api_key: str, model: str) -> None:
+        from openai import OpenAI
+
+        self._client = OpenAI(base_url=base_url, api_key=api_key)
+        self._model = model
+
+    def embed_query(self, text: str) -> list[float]:
+        resp = self._client.embeddings.create(input=text, model=self._model)
+        return resp.data[0].embedding
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        resp = self._client.embeddings.create(input=texts, model=self._model)
+        return [d.embedding for d in resp.data]
+
+
+def _build_ragas_embeddings() -> _SimpleEmbeddings:
+    """Build the RAGAS embeddings adapter pointed at klai-embeddings.
 
     klai-embeddings is the LiteLLM alias for BGE-M3 on TEI/gpu-01.
     Used by AnswerRelevancy to compare imaginary-question vectors with
     the user's actual question.
-
-    Uses LangchainEmbeddingsWrapper around langchain-openai's OpenAIEmbeddings
-    pointed at the LiteLLM proxy. RAGAS' embedding_factory("openai", ...)
-    expects an OpenAI client constructed with explicit kwargs that don't
-    map cleanly onto our proxy URL, so the langchain wrapper is the
-    cleanest path.
     """
-    from langchain_openai import OpenAIEmbeddings
-    from ragas.embeddings import LangchainEmbeddingsWrapper
-
-    return LangchainEmbeddingsWrapper(
-        OpenAIEmbeddings(
-            model=settings.rag_eval_embeddings_model,
-            base_url=f"{settings.litellm_url}/v1",
-            api_key=settings.litellm_api_key or "no-key",
-            check_embedding_ctx_length=False,
-        )
+    return _SimpleEmbeddings(
+        base_url=f"{settings.litellm_url}/v1",
+        api_key=settings.litellm_api_key or "no-key",
+        model=settings.rag_eval_embeddings_model,
     )
 
 
@@ -215,6 +235,10 @@ async def evaluate_query(
         return result
 
     try:
+        # TODO: migrate to ragas.metrics.collections.* + per-metric ascore()
+        # when we revisit the harness API. The collections refactor is a full
+        # API change (no more evaluate(dataset); per-metric ascore() calls
+        # with different signatures), out of scope for this baseline-fix PR.
         from ragas.dataset_schema import EvaluationDataset, SingleTurnSample
         from ragas.metrics import AnswerRelevancy, ContextPrecision, ContextRecall, Faithfulness
 
