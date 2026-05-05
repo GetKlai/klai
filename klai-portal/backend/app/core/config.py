@@ -394,7 +394,14 @@ class Settings(BaseSettings):
         on a non-empty misconfigured value. No klai-infra/core-01/.env.sops
         change is required for this validator to land.
         """
+        # Normalise whitespace-only values to empty string. Without this
+        # the validator would early-return with a "" + "   " → portal_url
+        # property returns the whitespace string (since `or` treats it as
+        # truthy), breaking OAuth redirect_uri construction silently.
+        # Audit 2026-05-05 finding 7. Tests cover both empty and whitespace
+        # cases assert portal_url falls back to https://portal.{domain}.
         if not self.frontend_url or not self.frontend_url.strip():
+            self.frontend_url = ""
             return self
 
         parsed = urlparse(self.frontend_url.strip())
