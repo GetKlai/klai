@@ -154,6 +154,47 @@ async def test_rebuild_kb_iterates_artifacts(_common_patches):
 
 
 # ---------------------------------------------------------------------------
+# Test 1b: parent-child threading regression guard
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rebuild_kb_threads_parents_into_enrich_document(_common_patches):
+    """SPEC-RAG-PARENT-CHILD-001: rebuild MUST pass ``parents`` +
+    ``parent_index_per_child`` to ``_enrich_document``.
+
+    Without these kwargs, ``_enrich_document`` upserts each child chunk to
+    Qdrant with ``parent_chunk_id=None`` and the parent expansion in
+    retrieval-api silently degrades to chunk-text-only. A previous version
+    of rebuild_tasks.py passed neither — the result on Voys-support was
+    448/448 rebuilt artifacts with zero parent linkage in Qdrant. This
+    test locks the contract so the regression cannot reappear silently.
+    """
+    from knowledge_ingest.rebuild_tasks import _rebuild_kb_core
+
+    _common_patches["mock_list"].return_value = [
+        _make_artifact("art-1", "doc1.md", "Some body text"),
+    ]
+
+    await _rebuild_kb_core(org_id=_ORG, kb_slug=_KB)
+
+    assert _common_patches["mock_enrich"].call_count == 1
+    enrich_kwargs = _common_patches["mock_enrich"].call_args.kwargs
+
+    # parents was serialised from parent_chunks_obj — should be a list of dicts.
+    assert "parents" in enrich_kwargs, "rebuild must pass parents= to _enrich_document"
+    assert isinstance(enrich_kwargs["parents"], list)
+    assert len(enrich_kwargs["parents"]) == 1
+    assert enrich_kwargs["parents"][0]["text"] == "parent text"
+
+    # parent_index_per_child mirrors child_chunks order.
+    assert "parent_index_per_child" in enrich_kwargs, (
+        "rebuild must pass parent_index_per_child= to _enrich_document"
+    )
+    assert enrich_kwargs["parent_index_per_child"] == [0]
+
+
+# ---------------------------------------------------------------------------
 # Test 2: skips artifacts without document_text
 # ---------------------------------------------------------------------------
 
