@@ -193,6 +193,22 @@ def test_valid_env_constructs_settings() -> None:
     This test relies on conftest.py having set all required env vars via
     os.environ.setdefault at module load time. If this test fails, a required
     env var is missing from conftest.py.
+
+    Why this exists (audit 2026-05-05 finding F9 — explicitly retained):
+
+    The 20 parametrized fail-closed tests above each prove ONE specific
+    validator rejects empty/whitespace input. They do NOT prove that
+    conftest seeds enough valid values for the full Settings() to
+    construct. This sanity test catches a different regression class:
+    "a future PR adds a new fail-closed validator on field X, conftest is
+    not updated to seed X, every test in the file then fails at module
+    import with a confusing 'X is required' error". By asserting each
+    field is truthy, the failure mode is a single explicit assertion in
+    THIS test rather than every other test inheriting an opaque
+    ValidationError at conftest-import time.
+
+    Low marginal value per-validator, high marginal value as a
+    canary against conftest drift.
     """
     sys.modules.pop("app.core.config", None)
     import app.core.config as cfg
