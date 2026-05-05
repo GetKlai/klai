@@ -150,12 +150,26 @@ class SessionService:
     # ------------------------------------------------------------------ crypto
 
     def _get_fernet(self) -> Fernet:
-        """Lazy-init Fernet so we do not crash at import time if the key is unset."""
+        """Lazy-init Fernet for the BFF session key.
+
+        Pre SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-10 (2026-05-05) this method
+        had a fallback to ``sso_cookie_key`` for the rollout transition
+        window. With the new fail-closed validator, ``bff_session_key`` is
+        a required env var verified at startup — the fallback path is dead.
+        Removed to make the validator's contract honest: one validator says
+        "this key is required", code reads only that key.
+        """
         if self._fernet is not None:
             return self._fernet
-        key = settings.bff_session_key or settings.sso_cookie_key
+        key = settings.bff_session_key
         if not key:
-            raise RuntimeError("BFF_SESSION_KEY (or SSO_COOKIE_KEY fallback) is not configured")
+            # Defence-in-depth: validator should have prevented this, but
+            # if Settings was constructed via model_construct() (test bypass)
+            # we still refuse to encrypt with an empty key.
+            raise RuntimeError(
+                "BFF_SESSION_KEY is not configured — should be enforced by "
+                "_require_bff_session_key validator at startup."
+            )
         self._fernet = Fernet(key.encode() if isinstance(key, str) else key)
         return self._fernet
 
