@@ -83,6 +83,9 @@ def _make_cache(feature_enabled: bool | None = None, feature: dict | None = None
             "kb_personal_enabled": True,
             "kb_slugs_filter": None,
             "version": 0,
+            # Resolved Zitadel sub — required since 2026-05-05 to make
+            # /retrieve identity-verify and personal-KB scope filter work.
+            "zitadel_user_id": "362901948573220875",
         }
 
         async def _get(key: str) -> object:
@@ -367,6 +370,98 @@ class TestKlaiKnowledgeHookDualAuth:
             assert "Authorization" not in headers
 
 
+# ─── identity mapping tests (2026-05-05 follow-up) ──────────────────────────
+
+
+class TestKlaiKnowledgeHookIdentityMapping:
+    """``/retrieve`` body MUST carry the Zitadel sub, NOT the LibreChat ObjectId.
+
+    SPEC-SEC-IDENTITY-ASSERT-001 made retrieval-api forward
+    ``claimed_user_id`` to portal-api ``/internal/identity/verify`` which
+    matches against ``PortalUser.zitadel_user_id``. Personal-KB qdrant
+    chunks are also stamped with the Zitadel sub at ingest time. Sending
+    the LibreChat ObjectId on either path returns no_membership / 0
+    chunks. The hook resolves the LibreChat ObjectId → Zitadel sub via
+    the kb_feature endpoint response.
+    """
+
+    @pytest.mark.asyncio
+    async def test_retrieve_body_uses_zitadel_user_id_not_librechat_objectid(
+        self, monkeypatch
+    ):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(
+            feature={
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": None,
+                "kb_narrow": False,
+                "version": 0,
+                "zitadel_user_id": "362901948573220875",
+            }
+        )
+        librechat_objectid = "aabbcc112233445566778899"
+        data = {"user": librechat_objectid, "messages": [
+            {"role": "user", "content": "What are the team policies?"}
+        ]}
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+
+            assert mc.post.call_count == 1
+            body = mc.post.call_args.kwargs["json"]
+            assert body["user_id"] == "362901948573220875", (
+                f"/retrieve user_id should be the Zitadel sub, got {body['user_id']!r}."
+            )
+            assert body["user_id"] != librechat_objectid
+
+    @pytest.mark.asyncio
+    async def test_missing_zitadel_user_id_fails_loud(self, monkeypatch):
+        """portal-api returned None for zitadel_user_id → fail loud, no /retrieve."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(
+            feature={
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": None,
+                "kb_narrow": False,
+                "version": 0,
+                "zitadel_user_id": None,
+            }
+        )
+        data = {"user": "aabbcc112233445566778899", "messages": [
+            {"role": "user", "content": "What are the team policies?"}
+        ]}
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+
+            assert mc.post.call_count == 0
+            system_msg = next(
+                (m for m in data["messages"] if m["role"] == "system"), None
+            )
+            assert system_msg is not None
+            assert "TIJDELIJK NIET BEREIKBAAR" in system_msg["content"]
+
+
 # ─── kb_slugs_filter tri-state tests (2026-05-05 follow-up) ─────────────────
 
 
@@ -397,6 +492,7 @@ class TestKlaiKnowledgeHookSlugsTriState:
                 "kb_slugs_filter": [],
                 "kb_narrow": False,
                 "version": 0,
+                "zitadel_user_id": "362901948573220875",
             }
         )
         data = {"user": "u1" * 12, "messages": [
@@ -433,6 +529,7 @@ class TestKlaiKnowledgeHookSlugsTriState:
                 "kb_slugs_filter": [],
                 "kb_narrow": False,
                 "version": 0,
+                "zitadel_user_id": "362901948573220875",
             }
         )
         data = {"user": "u1" * 12, "messages": [
@@ -471,6 +568,7 @@ class TestKlaiKnowledgeHookSlugsTriState:
                 "kb_slugs_filter": None,
                 "kb_narrow": False,
                 "version": 0,
+                "zitadel_user_id": "362901948573220875",
             }
         )
         data = {"user": "u1" * 12, "messages": [
