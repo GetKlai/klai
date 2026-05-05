@@ -40,8 +40,29 @@ def _mock_litellm():
     sys.modules.pop("klai_knowledge", None)
 
 
-def _load_hook(monkeypatch, extra_env=None):
-    """Import and reload klai_knowledge with the given env vars."""
+
+
+def _load_hook(monkeypatch, extra_env=None, *, mock_fire_and_forget=True):
+    """Import and reload klai_knowledge with the given env vars.
+
+    By default also silences the fire-and-forget producers
+    (``_fire_gap_event`` and ``_fire_retrieval_log``). Both are
+    synchronous functions that internally build a ``_post()`` coroutine
+    and try to schedule it via
+    ``asyncio.get_running_loop().create_task(_post())``. In a test
+    context without a running loop the schedule call raises
+    ``RuntimeError``, which the function catches and silently swallows
+    — but the inner coroutine is already constructed and never awaited.
+    Python then raises ``RuntimeWarning: coroutine '_post' was never
+    awaited`` at GC, AFTER pytest's warning-capture has torn down,
+    polluting the test output via ``sys.unraisablehook``.
+
+    Per ``.claude/rules/klai/lang/testing.md`` the canonical fix is to
+    replace the producer with a sync ``MagicMock`` so no coroutine is
+    constructed in the first place. Tests that specifically exercise
+    these producers (``TestFireGapEvent``) pass
+    ``mock_fire_and_forget=False`` to skip the patch.
+    """
     env = {
         "PORTAL_INTERNAL_SECRET": "test-portal-secret",
         "RETRIEVAL_INTERNAL_SECRET": "test-retrieval-secret",
@@ -56,6 +77,9 @@ def _load_hook(monkeypatch, extra_env=None):
     sys.modules.pop("klai_knowledge", None)
     import klai_knowledge
     importlib.reload(klai_knowledge)
+    if mock_fire_and_forget:
+        monkeypatch.setattr(klai_knowledge, "_fire_gap_event", MagicMock())
+        monkeypatch.setattr(klai_knowledge, "_fire_retrieval_log", MagicMock())
     return klai_knowledge
 
 
@@ -82,11 +106,18 @@ def _make_cache(feature_enabled: bool | None = None, feature: dict | None = None
 
     if feature is None and feature_enabled is None:
         # Cache miss for KB feature — both kb_ver and kb_feature keys return
-        # None to force the portal HTTP call. Templates cache still seeded so
-        # the templates roundtrip stays out of the way of feature-flag tests.
+        # None to force the portal HTTP call. Templates + taxonomy caches are
+        # still seeded so those roundtrips stay out of the way of
+        # feature-flag tests (a test that doesn't set ``mc.get`` would
+        # otherwise trip the AsyncMock-never-awaited warning when the hook
+        # tries to fetch trees/coverage).
         async def _get(key: str) -> object:
             if key.startswith("templates:"):
                 return []
+            if key.startswith("tax_trees:"):
+                return {}
+            if key.startswith("tax_coverage:"):
+                return {}
             return None
 
         cache.async_get_cache = AsyncMock(side_effect=_get)
@@ -113,6 +144,16 @@ def _make_cache(feature_enabled: bool | None = None, feature: dict | None = None
                 return feat
             if key.startswith("templates:"):
                 return []
+            # Taxonomy lookups: pre-seed empty dicts so tests with kb_slugs
+            # filter don't need to mock ``mc.get`` for the
+            # /internal/v1/taxonomy/{trees,coverage} endpoints. Without
+            # this, a kb_slugs test triggers the multi-KB fetch path and
+            # the unconfigured AsyncMock returns a coroutine that's never
+            # awaited (RuntimeWarning at GC).
+            if key.startswith("tax_trees:"):
+                return {}
+            if key.startswith("tax_coverage:"):
+                return {}
             return None
 
         cache.async_get_cache = AsyncMock(side_effect=_get)
@@ -1086,10 +1127,14 @@ class TestFireGapEvent:
         """R2.1: _fire_gap_event schedules an async POST task."""
         import asyncio as _asyncio
 
-        mod = _load_hook(monkeypatch)
+        mod = _load_hook(monkeypatch, mock_fire_and_forget=False)
 
+        # ``create_task`` must close the coroutine it's handed — a real
+        # event loop would await it, but our MagicMock loop just stores
+        # it as call_args. Without ``.close()`` the coroutine surfaces
+        # at GC as ``RuntimeWarning: coroutine '_post' was never awaited``.
         mock_loop = MagicMock()
-        mock_loop.create_task = MagicMock()
+        mock_loop.create_task = MagicMock(side_effect=lambda coro: coro.close())
 
         with patch.object(_asyncio, "get_running_loop", return_value=mock_loop):
             mod._fire_gap_event(
@@ -1106,10 +1151,14 @@ class TestFireGapEvent:
         """R2.2: payload contains all required fields with correct types."""
         import asyncio as _asyncio
 
-        mod = _load_hook(monkeypatch)
+        mod = _load_hook(monkeypatch, mock_fire_and_forget=False)
 
+        # ``create_task`` must close the coroutine it's handed — a real
+        # event loop would await it, but our MagicMock loop just stores
+        # it as call_args. Without ``.close()`` the coroutine surfaces
+        # at GC as ``RuntimeWarning: coroutine '_post' was never awaited``.
         mock_loop = MagicMock()
-        mock_loop.create_task = MagicMock()
+        mock_loop.create_task = MagicMock(side_effect=lambda coro: coro.close())
 
         chunks = [
             {"reranker_score": 0.3, "score": 0.2, "metadata": {"kb_slug": "my-kb"}},
@@ -1131,10 +1180,14 @@ class TestFireGapEvent:
         """R2.5: hard gaps have nearest_kb_slug = None."""
         import asyncio as _asyncio
 
-        mod = _load_hook(monkeypatch)
+        mod = _load_hook(monkeypatch, mock_fire_and_forget=False)
 
+        # ``create_task`` must close the coroutine it's handed — a real
+        # event loop would await it, but our MagicMock loop just stores
+        # it as call_args. Without ``.close()`` the coroutine surfaces
+        # at GC as ``RuntimeWarning: coroutine '_post' was never awaited``.
         mock_loop = MagicMock()
-        mock_loop.create_task = MagicMock()
+        mock_loop.create_task = MagicMock(side_effect=lambda coro: coro.close())
 
         with patch.object(_asyncio, "get_running_loop", return_value=mock_loop):
             mod._fire_gap_event(
@@ -1151,7 +1204,7 @@ class TestFireGapEvent:
         """R2.3: if no event loop, skip silently without raising."""
         import asyncio as _asyncio
 
-        mod = _load_hook(monkeypatch)
+        mod = _load_hook(monkeypatch, mock_fire_and_forget=False)
 
         with patch.object(_asyncio, "get_running_loop", side_effect=RuntimeError("no event loop")):
             # Should not raise

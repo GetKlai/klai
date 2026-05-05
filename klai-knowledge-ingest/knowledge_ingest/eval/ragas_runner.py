@@ -108,7 +108,12 @@ async def run_evaluation(suite: str, variant: str | None = None) -> dict:
         chunks = retrieval.chunks
         retrieval_ms = retrieval.retrieval_ms
         total_tokens = retrieval.total_tokens
-        chunk_ids = [c.get("id", "") for c in chunks if c.get("id")]
+        # Retrieval-api emits chunks keyed on ``chunk_id`` (see ChunkResult
+        # in retrieval_api/models.py). The earlier ``c.get("id")`` lookup
+        # quietly returned None on every chunk, leaving the
+        # retrieved_chunk_ids column empty on every eval row and breaking
+        # the Grafana per-chunk drill-down for any post-mortem analysis.
+        chunk_ids = [c.get("chunk_id", "") for c in chunks if c.get("chunk_id")]
 
         answer = await judge_client.generate_answer(
             query=query.query,
