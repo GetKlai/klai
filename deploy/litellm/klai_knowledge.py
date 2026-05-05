@@ -79,7 +79,9 @@ def _get_token_client() -> object | None:
         return None
 
     _token_client_init_attempted = True
-    if not (KLAI_OAUTH_TOKEN_URL and KLAI_LITELLM_CLIENT_ID and KLAI_LITELLM_CLIENT_SECRET):
+    if not (
+        KLAI_OAUTH_TOKEN_URL and KLAI_LITELLM_CLIENT_ID and KLAI_LITELLM_CLIENT_SECRET
+    ):
         logger.info(
             "KlaiKnowledgeHook: jwt auth env vars missing — using legacy "
             "X-Internal-Secret path (SPEC-SEC-SERVICE-AUTH-001 Phase C-1 fallback)"
@@ -207,6 +209,8 @@ async def _retrieve_with_dual_auth(
         )
 
     return await http.post(KNOWLEDGE_RETRIEVE_URL, json=body, headers=legacy_headers)
+
+
 RETRIEVE_TIMEOUT = float(os.getenv("KNOWLEDGE_RETRIEVE_TIMEOUT", "3.0"))
 RETRIEVE_TOP_K = int(os.getenv("KNOWLEDGE_RETRIEVE_TOP_K", "5"))
 KLAI_GAP_SOFT_THRESHOLD = float(os.getenv("KLAI_GAP_SOFT_THRESHOLD", "0.4"))
@@ -262,10 +266,147 @@ def _build_conversation_history(messages: list[dict]) -> list[dict]:
     history = [
         {"role": m["role"], "content": m["content"]}
         for m in messages[:-1]
-        if m.get("role") in ("user", "assistant")
-        and isinstance(m.get("content"), str)
+        if m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str)
     ]
     return history[-6:]
+
+
+# SPEC-RAG-QUERY-REWRITE-001: query rewriting for the /retrieve call.
+#
+# Why: vague follow-up queries like "Wat zei hij daarover?" carry no useful
+# tokens for embedding match — pronouns and "die deal" only resolve via the
+# previous turns. Rewriting them into self-contained queries closes the gap.
+#
+# Why direct Mistral (not through the LiteLLM proxy at localhost:4000):
+# this code path runs INSIDE the proxy as a pre_call_hook callback.
+# Recursing into the proxy would re-fire every callback (including this
+# one) and can deadlock on rate-limited workers. A direct HTTPS call to
+# api.mistral.ai sidesteps that and keeps the rewrite path free of
+# bookkeeping side-effects (no extra LibreChat user-message log, no
+# token-router second pass, no entitlement re-check).
+QUERY_REWRITE_ENABLED = os.getenv("QUERY_REWRITE_ENABLED", "true").lower() == "true"
+QUERY_REWRITE_TIMEOUT = float(os.getenv("QUERY_REWRITE_TIMEOUT", "1.5"))
+QUERY_REWRITE_MODEL = os.getenv("QUERY_REWRITE_MODEL", "mistral-small-2603")
+QUERY_REWRITE_HISTORY_TURNS = int(os.getenv("QUERY_REWRITE_HISTORY_TURNS", "4"))
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
+MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions"
+
+_QUERY_REWRITE_PROMPT = (
+    "You are a query rewriter for a RAG search system. Rewrite the user's "
+    "current question so it makes sense as a stand-alone search query — "
+    "resolve pronouns and references using the conversation history. If the "
+    "question is already clear and self-contained, return it unchanged.\n\n"
+    "Conversation history (oldest → newest):\n{history}\n\n"
+    "User's current question: {raw_query}\n\n"
+    "Reply with ONLY the rewritten question, no preamble, no explanation, "
+    "no quotes. Maximum 200 characters. Same language as the user's input."
+)
+
+
+def _format_history_for_rewrite(history: list[dict], max_chars: int = 1000) -> str:
+    """Format the last N turns as plain "ROLE: content" lines, truncated."""
+    if not history:
+        return "(none)"
+    tail = history[-QUERY_REWRITE_HISTORY_TURNS * 2 :]
+    lines = []
+    used = 0
+    for turn in tail:
+        role = turn.get("role", "?").upper()
+        content = (turn.get("content") or "").strip().replace("\n", " ")
+        if not content:
+            continue
+        line = f"{role}: {content}"
+        if used + len(line) > max_chars:
+            line = line[: max_chars - used] + "…"
+            lines.append(line)
+            break
+        lines.append(line)
+        used += len(line) + 1
+    return "\n".join(lines) if lines else "(none)"
+
+
+async def _rewrite_query(
+    raw_query: str,
+    history: list[dict],
+    *,
+    _transport: httpx.AsyncBaseTransport | None = None,
+) -> tuple[str, dict]:
+    """Return ``(rewritten_query, debug_meta)`` — falls back to ``raw_query`` on any failure.
+
+    Skip-conditions (return ``raw_query`` immediately, with the reason
+    recorded in ``meta["skipped"]``):
+
+    * empty history (nothing to disambiguate),
+    * QUERY_REWRITE_ENABLED is false (operator kill switch),
+    * MISTRAL_API_KEY missing (deploy not finished).
+
+    Failure modes (also fall through to ``raw_query``):
+
+    * non-200 from Mistral,
+    * timeout (default 1.5s — REQ-4 budget is 500ms p95 added latency),
+    * empty model response,
+    * any unexpected exception.
+
+    ``debug_meta`` always contains ``rewrite_ms`` and ``was_changed: bool``.
+    On skip/error it also carries ``skipped`` (string reason).
+    """
+    meta: dict = {"was_changed": False, "rewrite_ms": 0}
+    if not raw_query or not raw_query.strip():
+        meta["skipped"] = "empty_query"
+        return raw_query, meta
+    if not QUERY_REWRITE_ENABLED:
+        meta["skipped"] = "disabled"
+        return raw_query, meta
+    if not history:
+        meta["skipped"] = "no_history"
+        return raw_query, meta
+    if not MISTRAL_API_KEY:
+        meta["skipped"] = "no_api_key"
+        return raw_query, meta
+
+    history_str = _format_history_for_rewrite(history)
+    prompt = _QUERY_REWRITE_PROMPT.format(history=history_str, raw_query=raw_query)
+    payload = {
+        "model": QUERY_REWRITE_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 200,
+        "temperature": 0.0,
+    }
+    headers = {
+        "Authorization": f"Bearer {MISTRAL_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    client_kwargs: dict = {"timeout": QUERY_REWRITE_TIMEOUT}
+    if _transport is not None:
+        client_kwargs["transport"] = _transport
+
+    t_start = time.monotonic()
+    try:
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            resp = await client.post(MISTRAL_API_URL, json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+        rewritten_raw = data["choices"][0]["message"]["content"]
+    except Exception as exc:
+        meta["rewrite_ms"] = int((time.monotonic() - t_start) * 1000)
+        meta["skipped"] = "exception"
+        meta["error"] = str(exc)[:120]
+        logger.warning(
+            "query_rewrite_failed error=%s rewrite_ms=%d",
+            meta["error"],
+            meta["rewrite_ms"],
+        )
+        return raw_query, meta
+
+    meta["rewrite_ms"] = int((time.monotonic() - t_start) * 1000)
+    rewritten = (rewritten_raw or "").strip().strip('"').strip("'")
+    if not rewritten:
+        meta["skipped"] = "empty_response"
+        return raw_query, meta
+    rewritten = rewritten[:500]
+    meta["was_changed"] = rewritten.lower() != raw_query.strip().lower()
+    return rewritten, meta
 
 
 async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
@@ -283,9 +424,17 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
     Backward compatible: handles old {"enabled": bool} portal responses gracefully.
     """
     if not PORTAL_INTERNAL_SECRET:
-        logger.warning("KlaiKnowledgeHook: PORTAL_INTERNAL_SECRET not set — fail-closed")
-        return {"enabled": False, "kb_retrieval_enabled": True, "kb_personal_enabled": True,
-                "kb_slugs_filter": None, "kb_narrow": False, "version": 0}
+        logger.warning(
+            "KlaiKnowledgeHook: PORTAL_INTERNAL_SECRET not set — fail-closed"
+        )
+        return {
+            "enabled": False,
+            "kb_retrieval_enabled": True,
+            "kb_personal_enabled": True,
+            "kb_slugs_filter": None,
+            "kb_narrow": False,
+            "version": 0,
+        }
 
     # Step 1: check version pointer (short-lived — invalidated by preference changes)
     version_key = f"kb_ver:{org_id}:{user_id}"
@@ -308,9 +457,17 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
             resp.raise_for_status()
             data = resp.json()
     except Exception as exc:
-        logger.warning("KlaiKnowledgeHook: portal feature fetch failed (%s) — fail-closed", exc)
-        return {"enabled": False, "kb_retrieval_enabled": True, "kb_personal_enabled": True,
-                "kb_slugs_filter": None, "kb_narrow": False, "version": 0}
+        logger.warning(
+            "KlaiKnowledgeHook: portal feature fetch failed (%s) — fail-closed", exc
+        )
+        return {
+            "enabled": False,
+            "kb_retrieval_enabled": True,
+            "kb_personal_enabled": True,
+            "kb_slugs_filter": None,
+            "kb_narrow": False,
+            "version": 0,
+        }
 
     version = data.get("kb_pref_version", 0)
     result = {
@@ -324,7 +481,9 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
 
     # Store version pointer (30s) and feature data (300s) separately
     await cache.async_set_cache(version_key, str(version), ttl=30)
-    await cache.async_set_cache(f"kb_feature:{org_id}:{user_id}:{version}", result, ttl=300)
+    await cache.async_set_cache(
+        f"kb_feature:{org_id}:{user_id}:{version}", result, ttl=300
+    )
     return result
 
 
@@ -335,9 +494,7 @@ def _classify_gap(chunks: list[dict]) -> str | None:
     if not chunks:
         return "hard"
     reranker_scores = [
-        c.get("reranker_score")
-        for c in chunks
-        if c.get("reranker_score") is not None
+        c.get("reranker_score") for c in chunks if c.get("reranker_score") is not None
     ]
     if reranker_scores:
         if all(s < KLAI_GAP_SOFT_THRESHOLD for s in reranker_scores):
@@ -382,7 +539,9 @@ def _fire_gap_event(
     try:
         org_id_int = int(org_id)
     except (ValueError, TypeError):
-        logger.warning("KlaiKnowledgeHook: non-numeric org_id '%s', skipping gap event", org_id)
+        logger.warning(
+            "KlaiKnowledgeHook: non-numeric org_id '%s', skipping gap event", org_id
+        )
         return
 
     payload = {
@@ -433,7 +592,9 @@ def _fire_retrieval_log(
     try:
         int(org_id)
     except (ValueError, TypeError):
-        logger.warning("KlaiKnowledgeHook: non-numeric org_id '%s', skipping retrieval log", org_id)
+        logger.warning(
+            "KlaiKnowledgeHook: non-numeric org_id '%s', skipping retrieval log", org_id
+        )
         return
 
     payload = {
@@ -576,7 +737,9 @@ def _build_template_instructions_block(instructions: list[dict]) -> str:
     """
     if not instructions:
         return ""
-    parts: list[str] = ["[Klai Templates — pas onderstaande instructies toe bij je antwoord]"]
+    parts: list[str] = [
+        "[Klai Templates — pas onderstaande instructies toe bij je antwoord]"
+    ]
     for inst in instructions:
         name = inst.get("name") or "template"
         text = (inst.get("text") or "").strip()
@@ -666,8 +829,32 @@ class KlaiKnowledgeHook(CustomLogger):
 
         conversation_history = _build_conversation_history(messages)
 
+        # SPEC-RAG-QUERY-REWRITE-001: rewrite the raw query into a
+        # self-contained search query before /retrieve. Fail-open: any
+        # failure path returns the raw query unchanged with skip reason
+        # recorded in meta. ~150-300ms typical, <500ms p95 (REQ-4).
+        rewritten_query, rewrite_meta = await _rewrite_query(
+            query, conversation_history
+        )
+        try:
+            logger.info(
+                "query_rewrite org_id=%s user_id=%s raw_query=%r rewritten_query=%r "
+                "rewrite_ms=%d was_changed=%s skipped=%s",
+                org_id,
+                user_id,
+                query,
+                rewritten_query,
+                rewrite_meta.get("rewrite_ms", 0),
+                rewrite_meta.get("was_changed", False),
+                rewrite_meta.get("skipped", ""),
+            )
+        except Exception:
+            # Logging itself must never abort the hook (REQ-2 fail-open).
+            pass
+
         retrieve_body: dict = {
-            "query": query,
+            "query": rewritten_query,
+            "raw_query": query,
             "org_id": org_id,
             "user_id": user_id,
             "scope": scope,
@@ -709,9 +896,7 @@ class KlaiKnowledgeHook(CustomLogger):
         except Exception as exc:
             # Network errors / timeouts: still log error (was warning), but
             # surface in chat so a sustained outage is impossible to miss.
-            logger.error(
-                "KlaiKnowledgeHook: retrieval failed (%s) — failing loud", exc
-            )
+            logger.error("KlaiKnowledgeHook: retrieval failed (%s) — failing loud", exc)
             retrieval_failure = type(exc).__name__
 
         if retrieval_failure is not None:
@@ -722,7 +907,9 @@ class KlaiKnowledgeHook(CustomLogger):
                 f"({retrieval_failure}) — dit antwoord is niet gebaseerd op jullie "
                 "eigen documentatie. Ververs of probeer het later opnieuw.']\n"
             )
-            prefix = "\n\n".join(b for b in (templates_block, kb_unavailable_notice) if b)
+            prefix = "\n\n".join(
+                b for b in (templates_block, kb_unavailable_notice) if b
+            )
             _prepend_system_prefix(messages, prefix)
             data["messages"] = messages
             data.setdefault("metadata", {})["_klai_kb_meta"] = {
