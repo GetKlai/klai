@@ -91,9 +91,18 @@ export function ChatConfigBar() {
     mutation.mutate({ kb_slugs_filter: next.length === allSlugs.length ? null : next })
   }
 
-  const allActive = (pref?.kb_personal_enabled ?? false) && currentSlugs.length === allSlugs.length
+  // "anything active" — true when ANY collection is on (personal or any
+  // org KB). Drives the dropdown header button:
+  //   * if anythingActive → label "Alles uit", click turns ALL off (incl. personal).
+  //   * else              → label "Alles aan", click turns ALL on.
+  // Previously this was `allActive` (TRUE only when EVERYTHING was on),
+  // which meant a partially-on state always showed "Alles aan" and clicking
+  // it re-enabled everything — exactly the user complaint.
+  const anythingActive =
+    (pref?.kb_personal_enabled ?? false) || currentSlugs.length > 0
+
   function toggleAll() {
-    if (allActive) {
+    if (anythingActive) {
       mutation.mutate({ kb_slugs_filter: [], kb_personal_enabled: false })
     } else {
       mutation.mutate({ kb_slugs_filter: null, kb_personal_enabled: true })
@@ -160,7 +169,7 @@ export function ChatConfigBar() {
                   onClick={toggleAll}
                   className="text-[10px] font-semibold tracking-wide text-gray-500 hover:text-gray-900 transition-colors"
                 >
-                  {allActive ? 'Alles uit' : 'Alles aan'}
+                  {anythingActive ? 'Alles uit' : 'Alles aan'}
                 </button>
               </div>
               {/* Personal */}
@@ -200,43 +209,61 @@ export function ChatConfigBar() {
                   </span>
                 </button>
               ))}
+
+              {/* Modus: kb_narrow checkbox row, separated from collections
+                  by a divider. When ON, the LiteLLM hook prepends a strict
+                  "answer ONLY from KB" prompt; OFF means KB chunks are
+                  additional context and the model may supplement with
+                  general knowledge. Logically a SCOPE setting (filtering
+                  the answer source), so it lives in the same dropdown as
+                  the collection scope toggles. */}
+              <div className="my-1 border-t border-gray-100" />
+              <div className="flex items-center justify-between px-3 py-1.5">
+                <span className="text-[10px] font-semibold tracking-wide text-gray-400">
+                  {m.chatbar_mode_label()}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={toggleNarrow}
+                title={
+                  pref.kb_narrow
+                    ? m.chatbar_mode_narrow_tooltip_on()
+                    : m.chatbar_mode_narrow_tooltip_off()
+                }
+                aria-checked={pref.kb_narrow}
+                role="checkbox"
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] hover:bg-gray-50 transition-colors text-left"
+              >
+                <span
+                  className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border ${
+                    pref.kb_narrow
+                      ? 'bg-green-500 border-green-500'
+                      : 'border-gray-300 bg-white'
+                  }`}
+                  aria-hidden="true"
+                >
+                  {pref.kb_narrow && (
+                    <svg
+                      viewBox="0 0 12 12"
+                      className="h-2.5 w-2.5 text-white"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                    >
+                      <polyline points="2 6 5 9 10 3" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                </span>
+                <span
+                  className={pref.kb_narrow ? 'text-gray-900 font-medium' : 'text-gray-400'}
+                >
+                  {m.chatbar_mode_narrow_on()}
+                </span>
+              </button>
             </div>
           )}
         </div>
-      </div>
-
-      {/* Modus: kb_narrow toggle. Click flips between "KB + algemene
-          kennis" (default, kb_narrow=false) and "Alleen kennisbank"
-          (kb_narrow=true). The LiteLLM hook honours kb_narrow already
-          (deploy/litellm/klai_knowledge.py): narrow mode prepends a
-          stricter system prompt that forbids general-knowledge answers
-          and tells the model to say "Ik kan dit niet vinden in de
-          kennisbank" when the KB lacks the answer. Replaces the
-          equivalent toggle that lived in the deprecated KBScopeBar. */}
-      <div className="flex items-center gap-2 min-w-0">
-        <span className="text-[13px] text-gray-400 whitespace-nowrap">
-          {m.chatbar_mode_label()}:
-        </span>
-        <button
-          type="button"
-          onClick={toggleNarrow}
-          title={
-            pref.kb_narrow
-              ? m.chatbar_mode_narrow_tooltip_on()
-              : m.chatbar_mode_narrow_tooltip_off()
-          }
-          aria-pressed={pref.kb_narrow}
-          className="flex items-center gap-1.5 text-[14px] font-semibold text-gray-700 hover:text-gray-900 transition-colors"
-        >
-          <span
-            className={`h-2 w-2 shrink-0 rounded-full ${pref.kb_narrow ? 'bg-green-500' : 'bg-gray-200'}`}
-          />
-          <span className={pref.kb_narrow ? 'text-gray-900' : 'text-gray-400'}>
-            {pref.kb_narrow
-              ? m.chatbar_mode_narrow_on()
-              : m.chatbar_mode_narrow_off()}
-          </span>
-        </button>
       </div>
 
       {/* Templates: multi-select. Hidden when backend has no templates yet. */}

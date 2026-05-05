@@ -158,11 +158,19 @@ async def patch_kb_preference(
     if "kb_slugs_filter" in body.model_fields_set:
         slugs = body.kb_slugs_filter
 
-        # Normalize empty list to null (empty list would mean "no org KBs", null means "all")
-        if slugs is not None and len(slugs) == 0:
-            slugs = None
-
-        if slugs is not None:
+        # Tri-state contract:
+        #   None  = "all org KBs" (default; client did not narrow)
+        #   []    = "no org KBs"  (user explicitly turned all off)
+        #   [..]  = explicit subset
+        #
+        # The earlier collapse `[] -> None` here was a silent destruction of
+        # user intent: when the user turned off the LAST org KB the client
+        # sent `[]`, the server stored it as `None`, the GET round-trip
+        # returned `None`, and the next render flipped every collection back
+        # to "on". The frontend's toggleSlug comment explicitly warns
+        # "DO NOT collapse empty to null" — this commit makes the server
+        # honour that contract.
+        if slugs is not None and len(slugs) > 0:
             # Validate all slugs belong to the caller's org (REQ-N3)
             result = await db.execute(
                 select(PortalKnowledgeBase.slug).where(
