@@ -1104,7 +1104,7 @@ Migration required for existing tenants: see §9.5 provisioning changes.
 
 At tenant creation, provisioning adds a step:
 1. `POST /team/new` — creates a LiteLLM team (alias = org slug)
-2. `POST /key/generate` — creates a team key with `metadata: {org_id: "<zitadel_org_id>"}` and `models: ["klai-primary", "klai-fast", "klai-large"]` (the user-facing LiteLLM tier aliases — `klai-pipeline` is excluded because it bypasses custom_router and is reserved for internal services)
+2. `POST /key/generate` — creates a team key with `metadata: {org_id: "<zitadel_org_id>"}` and `models: ["klai-primary", "klai-fast", "klai-large"]` (the user-facing LiteLLM tier aliases — internal-only aliases like `klai-medium` and `klai-bge-m3` are excluded from tenant keys)
 3. The returned key replaces `settings.litellm_master_key` as `LITELLM_API_KEY` in the LibreChat `.env`
 
 `zitadel_org_id` is used (not the integer PK) — it is the stable cross-system identifier available on `PortalOrg.zitadel_org_id`, and the correct key for Qdrant scope `org_{zitadel_org_id}`.

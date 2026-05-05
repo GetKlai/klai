@@ -787,11 +787,11 @@ services:
       FALKORDB_PORT: "6379"
       GRAPHITI_ENABLED: "true"
       GRAPH_SEARCH_TIMEOUT: "60.0"
-      # Graphiti LLM model for knowledge-graph extraction. Prod uses
-      # the heavier pipeline model; config.py defaults to klai-fast
-      # which is not suitable for graph extraction. Overrides the
-      # default to match pre-SPEC-SEC-ENVFILE-SCOPE-001 behaviour.
-      GRAPHITI_LLM_MODEL: ${GRAPHITI_LLM_MODEL:-klai-pipeline}
+      # Graphiti LLM model for knowledge-graph extraction. klai-fast
+      # points at Mistral Small 4 (same model the dropped klai-pipeline
+      # alias used to point at). Override via env if a different tier
+      # is required for graph extraction.
+      GRAPHITI_LLM_MODEL: ${GRAPHITI_LLM_MODEL:-klai-fast}
       RERANKER_ENABLED: "true"
       RERANKER_TIMEOUT: "60.0"
       OPENAI_API_KEY: "dummy"

@@ -53,7 +53,7 @@ from SOPS `klai-infra/core-01/.env.sops`) unless noted otherwise.
 | `CONNECTOR_ZITADEL_CLIENT_ID` | klai-connector | Zitadel OIDC client_id for connector token introspection. Mapped to `ZITADEL_CLIENT_ID` in-container. |
 | `CONNECTOR_ZITADEL_CLIENT_SECRET` | klai-connector | Zitadel OIDC client_secret for connector introspection. Mapped to `ZITADEL_CLIENT_SECRET` in-container. |
 | `DOCS_INTERNAL_SECRET` | portal-api | Shared secret portal-api → klai-docs for KB provisioning calls. |
-| `GRAPHITI_LLM_MODEL` | retrieval-api | LLM model name used by Graphiti for knowledge-graph extraction. Prod uses `klai-pipeline`; config.py default is `klai-fast`. Not a secret — declared here because the prod value differs from the code default. |
+| `GRAPHITI_LLM_MODEL` | retrieval-api | LLM model name used by Graphiti for knowledge-graph extraction. Defaults to `klai-fast` (Mistral Small 4) in both prod and config.py. Not a secret — declared here so future overrides remain visible in the matrix. |
 | `FIRECRAWL_INTERNAL_KEY` | portal-api | Shared web-search API key (portal re-uses the Firecrawl internal key for URL extraction). |
 | `GITHUB_ADMIN_PAT` | portal-api | GitHub PAT with `admin:org` scope — used during offboarding to remove members from the GetKlai org. |
 | `KLAI_CONNECTOR_SECRET` | portal-api | Shared secret for portal → klai-connector orchestration calls (SOPS key: `PORTAL_API_KLAI_CONNECTOR_SECRET`, mapped inline). |

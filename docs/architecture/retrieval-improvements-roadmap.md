@@ -67,11 +67,11 @@ docker exec klai-core-knowledge-ingest-1 \
 
 ### Known tuning gaps in v1 (follow-up SPECs)
 
-The harness produces usable baseline numbers, but two metric paths have known issues that will be addressed in follow-up work — they don't block Tier 1/2 progression because the working metrics (precision/recall/retrieval_ms) are sufficient to A/B-compare variants.
+The harness produces usable baseline numbers, but two metric paths had known issues at v1 that have since been addressed.
 
-1. **Faithfulness JSON-parse failures (28/30 NaN).** Judge LLM (klai-fast) hits the 3072-token completion limit on long context-relevant analyses, returning truncated JSON that RAGAS can't parse. Fix: shorten the judge prompt or switch to `klai-pipeline` for the faithfulness metric only.
-2. **Answer_relevance 30/30 NaN.** RAGAS's `AnswerRelevancy` metric requires an embeddings model (`embed_query`); we plug in a langchain `ChatOpenAI` LLM today, which doesn't satisfy that interface. Fix: configure a LiteLLM embeddings alias and use `LangchainEmbeddingsWrapper` in `judge_client.py`.
-3. **Runtime 14 min for 30 queries** exceeds REQ-7's 5 min target. Likely a knock-on effect of #1 (model regenerating after parse failures). Resolves once #1 is fixed.
+1. **Faithfulness JSON-parse failures (28/30 NaN).** Judge LLM (klai-fast) hit the 3072-token completion limit on long context-relevant analyses, returning truncated JSON that RAGAS could not parse. **Resolved (PR #312):** Faithfulness metric now uses `klai-medium` (Mistral Medium 3.5) which has a larger output window and produces reliable structured JSON.
+2. **Answer_relevance 30/30 NaN.** RAGAS's `AnswerRelevancy` metric requires an embeddings model (`embed_query`); we plugged in only an LLM, which did not satisfy that interface. **Resolved (PR #312):** Added `klai-bge-m3` LiteLLM alias pointing at the BGE-M3 model already running on TEI/gpu-01; AnswerRelevancy uses it via a small in-module embeddings adapter.
+3. **Runtime 14 min for 30 queries** exceeds REQ-7's 5 min target. Was a knock-on effect of #1 (model regenerating after parse failures). Should resolve along with #1 — re-measure on the next baseline run.
 
 ## Why prioritise improvements before launch
 
