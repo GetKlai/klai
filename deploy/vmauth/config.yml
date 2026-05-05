@@ -19,9 +19,17 @@ users:
   - jwt:
       oidc:
         issuer: "https://auth.getklai.com"
+      # vm_access claim is REQUIRED by vmauth (1.142.0) even when empty.
+      # Zitadel injects an empty `vm_access: {}` claim via Action
+      # `vmauth-vm-access-claim` bound to flow=Complement Token,
+      # trigger=Pre Access Token Creation. See SPEC-OBS-002 notes/06.
       match_claims:
         aud: "371630015537741841"   # klai-vmauth project_id
     url_prefix: "http://victorialogs:9428/"
+    # Inject upstream basic-auth toward victorialogs (re-uses existing
+    # VICTORIALOGS_BASIC_AUTH_B64 from SOPS — no new secret).
+    headers:
+      - "Authorization: Basic %{ENV.VICTORIALOGS_BASIC_AUTH_B64}"
 
 # Unauthorized requests (no matching user) get 401 by default.
 # No `unauthorized_user` block is set on purpose — log access requires
