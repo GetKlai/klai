@@ -8,7 +8,6 @@ on:
       - 'deploy/docker-compose.override.yml'
       - 'deploy/grafana/provisioning/**'          # SPEC-SEC-024 M4.2 — alert rule + dashboard
       - 'deploy/scripts/**'                       # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3 — compose-up wrapper + audit-orphan-snapshot
-      - 'deploy/vmauth/**'                        # SPEC-OBS-002 — vmauth config for VL query auth
       - 'scripts/smoke-docker-socket-proxy.sh'    # SPEC-SEC-024 M4.3 — smoke-test
       - '.github/workflows/deploy-compose.yml'
   workflow_dispatch:
@@ -62,7 +61,6 @@ jobs:
               deploy/grafana/provisioning \
               deploy/scripts \
               deploy/systemd \
-              deploy/vmauth \
               scripts
             cp deploy/docker-compose.yml /opt/klai/docker-compose.yml
             cp deploy/docker-compose.override.yml /opt/klai/docker-compose.override.yml
@@ -122,25 +120,8 @@ jobs:
             rsync -a scripts/smoke-docker-socket-proxy.sh /opt/klai/scripts/
             chmod +x /opt/klai/scripts/smoke-docker-socket-proxy.sh
 
-            # SPEC-OBS-002 — sync vmauth config. vmauth mounts
-            # /opt/klai/vmauth/config.yml read-only and reloads on change
-            # (-configCheckInterval=30s). Recreate container only when
-            # service-definition changed (image, env, command); pure config
-            # edits land via the file mount + reload, no restart needed.
-            mkdir -p /opt/klai/vmauth
-            RSYNC_VMAUTH_CHANGES=$(rsync -ac --itemize-changes deploy/vmauth/ /opt/klai/vmauth/ | grep -E '^[<>*]' || true)
-            if [ -n "$RSYNC_VMAUTH_CHANGES" ]; then
-              echo "vmauth config content changed:"
-              echo "$RSYNC_VMAUTH_CHANGES"
-              echo "(vmauth picks up changes within 30s via -configCheckInterval; no recreate needed for config-only edits)"
-            fi
-            # Always run `up -d vmauth` so a new vmauth service definition
-            # in compose triggers initial container creation. No-op when
-            # service definition is unchanged.
-            docker compose --project-directory /opt/klai up -d vmauth
-
             cd /tmp && rm -rf klai-compose-sync
-            echo "docker-compose.yml + grafana provisioning + vmauth + scripts synced to /opt/klai/"
+            echo "docker-compose.yml + grafana provisioning + scripts synced to /opt/klai/"
 
             # SPEC-SEC-024 M4.3 — non-blocking post-deploy smoke-test. Prints
             # [OK]/[FAIL] per probe; warns on non-zero exit but does NOT

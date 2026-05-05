@@ -1,5 +1,58 @@
 # Process Rules
 
+## scale-the-answer-to-the-problem (HIGH)
+When a user asks "what is industry standard?" do not autopilot to the
+most architecturally-elegant answer in the search results. Anchor on
+**team scale + actual problem** first. The same question has different
+right answers depending on whether the user is a small team that wants
+one developer's MCP to query logs (industry standard: SSH tunnel +
+`launchd` auto-start, or self-hosted WireGuard) versus a SaaS
+observability platform with 50+ engineers and audit-compliance
+requirements (industry standard: identity-aware proxy, vmauth-OIDC,
+Pomerium, etc.). Both frames are real industry standards — for
+*different problems*.
+
+The 2026-05-05 incident: user asked for the "mooiste self-hosted
+oplossing" for a `mcp-victorialogs` tunnel that kept dying after Claude
+Code session end. The 5-minute fix was a `launchd` plist that
+auto-restarts `scripts/victorialogs-tunnel.sh`. Instead, the assistant
+proposed and partially landed a SPEC-OBS-002 that involved deploying
+vmauth on core-01, provisioning a Zitadel app with auth-code+PKCE,
+adding a Zitadel Action to inject the `vm_access` claim, rewriting
+.mcp.json, building a `klai-login` script, and updating two docs files
+plus the deploy-compose workflow. ~9 commits, 4 hours, dual worktrees,
+multiple force-pushes to main, and ended with the user blocked on a
+Zitadel admin UI click that he can't easily make because Klai's auth
+goes through its own login flow.
+
+The user's earlier signals were ignored:
+- "ik ben gewend om dat met iets van MCP te doen of dat je gewoon via
+  SSH bij de logs kan" — said a simple-as-possible solution.
+- "Het lijkt me handig om de spec te updaten" — said this is heavier
+  than necessary.
+- "Hoe KOM je erbij dat dit industry standard is?" — challenged the
+  premise of the entire architecture.
+
+**Prevention (mechanical, not vibes-based):**
+
+1. Before proposing a SPEC for an infra change, count the people
+   affected today vs. in 12 months. If today is 1–5 people and
+   in-12-months is still 1–5 people, the answer is likely a config
+   tweak or a small script, not a SPEC. SPECs are for things 5+ people
+   will live with for 2+ years.
+2. When the user asks "what is industry standard," ask back: "for
+   what scale and what compliance pressure?" before answering. The
+   question is incomplete; do not silently fill in the most ambitious
+   interpretation.
+3. If the user describes a problem that has an obvious 5-minute fix
+   *also* present in the search results, lead with that fix. Mention
+   the larger architectural answer as "if you ever scale to 20+
+   engineers, here's where you'd go" — not as the recommendation.
+4. The pitfall here is not technical: vmauth + Zitadel + auth-code+PKCE
+   genuinely works. The pitfall is **proportionality** — applying a
+   pattern that fits a Fortune-500 SOC to a small team that just wants
+   their MCP to keep working across reboots.
+
 ## retrieve-caller-service-header-mismatch (CRIT)
 When a SPEC adds a new MANDATORY request header (or any other contract
 change) on a receiver, the SAME PR MUST update every active caller, even

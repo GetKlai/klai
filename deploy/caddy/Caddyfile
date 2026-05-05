@@ -106,21 +106,6 @@
         }
     }
 
-    # SPEC-OBS-002 (DRAFT — staging hostname; activate in M2 only)
-    # Logs query — JWT-authenticated path for developer laptops.
-    # vmauth (on the monitoring Docker network) validates the Bearer JWT
-    # against Zitadel's JWKS, then forwards to victorialogs with internal
-    # basic-auth. No header rewriting needed at Caddy — vmauth handles it.
-    #
-    # Activation: uncomment AFTER M2 smoke-tests pass (see SPEC-OBS-002
-    # acceptance.md AC-1..AC-4). Until then this block stays commented
-    # so a stray `caddy reload` doesn't expose an untested path.
-    #
-    # @vlogs-test host vlogs-test.{$DOMAIN}
-    # handle @vlogs-test {
-    #     reverse_proxy vmauth:8427
-    # }
-
     # Auth (Zitadel)
     @auth host auth.{$DOMAIN}
     handle @auth {
