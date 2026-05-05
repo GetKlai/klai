@@ -13,10 +13,11 @@ import time
 from urllib.parse import urlparse
 
 import structlog
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from knowledge_ingest import pg_store
+from knowledge_ingest.identity import assert_caller_identity
 from knowledge_ingest.crawl4ai_client import crawl_dom_summary, crawl_page
 from knowledge_ingest.db import get_pool
 from knowledge_ingest.domain_selectors import (
@@ -123,9 +124,14 @@ async def _run_crawl(
 
 
 @router.post("/ingest/v1/crawl/preview", response_model=CrawlPreviewResponse)
-async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
-    """Fetch a URL with PruningContentFilter and return the filtered markdown preview."""
+async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPreviewResponse:
+    """Fetch a URL with PruningContentFilter and return the filtered markdown preview.
+    SPEC-TI-003 AC-6: identity assertion when org_id is provided.
+    """
     logger.info("crawl_preview_started", url=body.url)
+    # SPEC-TI-003 AC-6: assert identity when caller provides org_id
+    if body.org_id:
+        await assert_caller_identity(request, claimed_org_id=body.org_id)
     # SPEC-SEC-SSRF-001 / REQ-1.1 / AC-1 / AC-6: SSRF validation MUST
     # run before any DNS lookup triggered by downstream crawl4ai /
     # get_domain_selector / crawl_dom_summary logic. It runs outside
@@ -234,13 +240,16 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
 
 
 @router.post("/ingest/v1/crawl", response_model=CrawlResponse)
-async def crawl_url(request: CrawlRequest) -> CrawlResponse:
+async def crawl_url(request: CrawlRequest, http_request: Request) -> CrawlResponse:
     """Fetch a URL with crawl4ai and ingest via the standard pipeline.
 
     Uses the same crawl4ai pipeline as the bulk crawler and preview endpoint,
     so JS-rendered pages (SPAs) are handled correctly and content_hash is
     consistent across all crawl paths.
+    SPEC-TI-003 AC-6: identity assertion on body org_id.
     """
+    if request.org_id:
+        await assert_caller_identity(http_request, claimed_org_id=request.org_id)
     try:
         await validate_url(request.url)
     except ValueError as exc:

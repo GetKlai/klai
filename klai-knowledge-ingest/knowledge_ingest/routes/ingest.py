@@ -41,6 +41,7 @@ from knowledge_ingest.models import (
     KBWebhookRequest,
     UpdateKBVisibilityRequest,
 )
+from knowledge_ingest.identity import assert_caller_identity
 from knowledge_ingest.portal_client import fetch_taxonomy_nodes
 from knowledge_ingest.taxonomy_classifier import classify_document
 
@@ -612,8 +613,15 @@ async def ingest_document(req: IngestRequest) -> dict:
 # itself. Do NOT trust the body fields by default.
 #
 # Reference: SPEC-SEC-AUDIT-2026-04 finding C3.
+# @MX:ANCHOR: identity-assertion replaces body-trust on /ingest/v1/document
+# @MX:REASON: SPEC-TI-003 AC-6 - org_id from body verified by identity-assertion.
+#             InternalSecretMiddleware handles network auth (AC-8).
 @router.post("/ingest/v1/document")
-async def ingest_document_route(req: IngestRequest) -> dict:
+async def ingest_document_route(req: IngestRequest, request: Request) -> dict:
+    """Ingest a document. SPEC-TI-003 AC-6: identity assertion on body org_id."""
+    await assert_caller_identity(
+        request, claimed_org_id=req.org_id, claimed_user_id=req.user_id
+    )
     return await ingest_document(req)
 
 
@@ -831,8 +839,10 @@ async def _get_org_id(gitea_org_name: str) -> str | None:
 async def delete_kb_route(request: Request, org_id: str, kb_slug: str) -> dict:
     """Delete all data for a knowledge base: graph nodes + Qdrant chunks + PostgreSQL records.
     Called by the portal on KB deletion. Scoped to (org_id, kb_slug).
+    SPEC-TI-003 AC-6: identity assertion on query-param org_id.
     """
     _verify_internal_secret(request)
+    await assert_caller_identity(request, claimed_org_id=org_id)
     # Fetch episode IDs before PG deletion — graph cleanup requires them.
     episode_ids = await pg_store.get_episode_ids(org_id, kb_slug)
     await graph_module.delete_kb_episodes(org_id, episode_ids)
@@ -858,6 +868,7 @@ async def enqueue_connector_purge_route(
     hard-delete the row.
     """
     _verify_internal_secret(request)
+    await assert_caller_identity(request, claimed_org_id=org_id)
     from knowledge_ingest import enrichment_tasks
 
     proc_app = enrichment_tasks.get_app()
@@ -885,12 +896,10 @@ async def delete_connector_route(
     deterministic complete-or-fail variant used by the admin force-purge
     flow (REQ-11). New portal-side calls go through
     ``POST /ingest/v1/connector/purge`` (async, returns 202).
-
-    Internally delegates to the same ``purge_connector`` orchestrator so
-    the cancel-jobs + multi-store-delete behaviour is identical to the
-    async path minus the procrastinate indirection.
+    SPEC-TI-003 AC-6: identity assertion on query-param org_id.
     """
     _verify_internal_secret(request)
+    await assert_caller_identity(request, claimed_org_id=org_id)
     from knowledge_ingest import enrichment_tasks
     from knowledge_ingest.connector_cleanup import purge_connector
 

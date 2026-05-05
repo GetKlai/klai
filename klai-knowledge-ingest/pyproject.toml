@@ -22,6 +22,7 @@ dependencies = [
     "graphiti-core[falkordb]>=0.28,<0.29",
     "klai-connector-credentials",
     "klai-image-storage",
+    "klai-identity-assert",  # SPEC-TI-003 AC-6: identity assertion
     # SPEC-CRAWLER-004 Fase A: image pipeline (Garage S3 + magic-byte MIME detection).
     "minio>=7.2",
     "filetype>=1.2",
@@ -32,6 +33,7 @@ dependencies = [
 [tool.uv.sources]
 klai-connector-credentials = { path = "../klai-libs/connector-credentials", editable = true }
 klai-image-storage = { path = "../klai-libs/image-storage", editable = true }
+klai-identity-assert = { path = "../klai-libs/identity-assert", editable = true }
 
 [project.optional-dependencies]
 dev = [
