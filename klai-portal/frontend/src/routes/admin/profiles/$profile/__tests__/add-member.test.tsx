@@ -4,6 +4,20 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 
+// jsdom doesn't ship ResizeObserver or Element#scrollIntoView — cmdk needs both.
+class ResizeObserverPolyfill {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+;(globalThis as unknown as { ResizeObserver: typeof ResizeObserverPolyfill }).ResizeObserver =
+  ResizeObserverPolyfill
+if (typeof Element !== 'undefined' && !Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = function () {
+    /* noop in jsdom */
+  }
+}
+
 const navigate = vi.fn()
 vi.mock('@tanstack/react-router', async () => {
   const actual = await vi.importActual<typeof import('@tanstack/react-router')>(
