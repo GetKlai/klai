@@ -411,6 +411,12 @@ async def ingest_document(req: IngestRequest) -> dict:
         pg_extra["source_type"] = req.source_type
     if req.source_ref:
         pg_extra["source_ref"] = req.source_ref
+    # SPEC-RAG-REBUILD-KB-001 follow-up: persist the document body on
+    # the artifact row so rebuild_kb can replay against the original
+    # source instead of reconstructing from Qdrant chunks. Bounded by
+    # the same ingest-content limits the rest of the pipeline observes.
+    if req.content:
+        pg_extra["document_text"] = req.content
 
     artifact_id = await pg_store.create_artifact(
         org_id=req.org_id,
@@ -455,6 +461,15 @@ async def ingest_document(req: IngestRequest) -> dict:
     visibility = await kb_config.get_kb_visibility(req.org_id, req.kb_slug, pool)
 
     extra_payload: dict = {"title": title, "artifact_id": artifact_id}
+
+    # SPEC-RAG-REBUILD-KB-001 follow-up: persist the original document
+    # body on the artifact row so future rebuild_kb runs don't need to
+    # reconstruct it from Qdrant chunks (lossy: frontmatter dropped,
+    # chunk-overlap leaves duplication on boundaries). Stored on extra
+    # JSONB to avoid a schema migration; size is bounded by the same
+    # ingest limits the rest of the pipeline observes.
+    if req.content:
+        extra_payload["document_text"] = req.content
     if req.source_type:
         extra_payload["source_type"] = req.source_type
     if req.source_connector_id:
