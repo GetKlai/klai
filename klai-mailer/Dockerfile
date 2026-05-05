@@ -1,9 +1,10 @@
-# SPEC-LOGGING-EXTRACT-001: build context is the repo root and the image
-# mirrors the repo layout under /repo so the path dep
-# `../klai-libs/log-utils` resolves WITHIN the workspace. Switched from
-# `pip install .` to uv because pip does not read `[tool.uv.sources]` and
-# would fall through to a PyPI lookup that fails (uv-pip-install-skips-uv-sources
-# pitfall — same trap that bit klai-connector pre-fix).
+# Build context is the repo root and the image mirrors the repo layout
+# under /repo so the path deps `../klai-libs/log-utils` (SPEC-LOGGING-EXTRACT-001)
+# and `../klai-libs/webhook-replay` (SPEC-SEC-AUTH-HARDENING-001 item 1)
+# resolve WITHIN the workspace. Switched from `pip install .` to uv because
+# pip does not read `[tool.uv.sources]` and would fall through to a PyPI
+# lookup that fails (uv-pip-install-skips-uv-sources pitfall — same trap
+# that bit klai-connector pre-fix).
 
 FROM python:3.12-slim AS deps
 
@@ -15,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /
 # Repo-mirror layout
 WORKDIR /repo
 COPY klai-libs/log-utils klai-libs/log-utils
+COPY klai-libs/webhook-replay klai-libs/webhook-replay
 COPY klai-mailer/pyproject.toml klai-mailer/pyproject.toml
 COPY klai-mailer/uv.lock klai-mailer/uv.lock
 
@@ -32,8 +34,8 @@ FROM python:3.12-slim
 
 WORKDIR /repo/klai-mailer
 
-# Venv (has editable klai-log-utils pointer) + the shared-lib source the
-# editable install points at.
+# Venv (has editable klai-log-utils + klai-webhook-replay pointers) + the
+# shared-lib sources the editable installs point at.
 COPY --from=deps /repo/klai-mailer/.venv /repo/klai-mailer/.venv
 COPY --from=deps /repo/klai-libs /repo/klai-libs
 

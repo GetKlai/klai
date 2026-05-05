@@ -11,15 +11,13 @@ dependencies = [
     "pydantic-settings>=2.6",
     "httpx>=0.27",
     "structlog>=25.0",
+    "klai-webhook-replay",
     "redis>=5.0",
     "email-validator>=2.0",
     # SPEC-LOGGING-EXTRACT-001: shared setup_logging + RequestContextMiddleware
     # + HealthCheckAccessFilter — klai-mailer is the canonical reference impl.
     "klai-log-utils",
 ]
-
-[tool.uv.sources]
-klai-log-utils = { path = "../klai-libs/log-utils", editable = true }
 
 [project.optional-dependencies]
 dev = [
@@ -32,6 +30,10 @@ dev = [
     "respx>=0.21",
     "lxml>=5.0",
 ]
+
+[tool.uv.sources]
+klai-log-utils = { path = "../klai-libs/log-utils", editable = true }
+klai-webhook-replay = { path = "../klai-libs/webhook-replay", editable = true }
 
 [tool.ruff]
 line-length = 100
