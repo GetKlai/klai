@@ -29,7 +29,12 @@ users:
       # - iss equality is enforced by vmauth automatically when oidc.issuer
       #   is configured; listing it here is defense-in-depth.
       match_claims:
-        aud: ["371630015537741841"]   # Zitadel project_id for klai-vmauth
+        # vmauth expects scalar string values for match_claims (lists are
+        # rejected with "cannot unmarshal !!seq into string"). For JWT
+        # claims that are arrays in the token (like `aud` per OIDC spec),
+        # vmauth iterates the array and passes if ANY element equals the
+        # configured string.
+        aud: "371630015537741841"   # Zitadel project_id for klai-vmauth
         iss: "https://auth.getklai.com"
     # Forward all paths to VictoriaLogs select endpoint.
     url_prefix: "http://victorialogs:9428/"
