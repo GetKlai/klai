@@ -134,7 +134,13 @@ def _patch_http(monkeypatch, portal_resp=None, retrieval_resp=None):
 class TestKlaiKnowledgeHookLegacy:
     @pytest.mark.asyncio
     async def test_retrieve_request_includes_auth_header(self, monkeypatch):
-        """V001: retrieve request must include X-Internal-Secret header."""
+        """V001: retrieve request must include X-Internal-Secret header.
+
+        Regression-guard for the 2026-04-28 → 2026-05-05 outage:
+        retrieval-api requires X-Caller-Service: litellm; without it a 400
+        is returned and the hook degrades silently. Both headers MUST be
+        present on every legacy-auth /retrieve request.
+        """
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
@@ -157,6 +163,7 @@ class TestKlaiKnowledgeHookLegacy:
             post_call = mc.post.call_args
             headers = post_call.kwargs.get("headers") or {}
             assert headers.get("X-Internal-Secret") == "test-retrieval-secret"
+            assert headers.get("X-Caller-Service") == "litellm"
 
     @pytest.mark.asyncio
     async def test_no_secret_no_header(self, monkeypatch):
@@ -230,6 +237,7 @@ class TestKlaiKnowledgeHookDualAuth:
             assert mc.post.call_count == 1
             headers = mc.post.call_args.kwargs.get("headers") or {}
             assert headers.get("Authorization") == "Bearer fake.jwt.token"
+            assert headers.get("X-Caller-Service") == "litellm"
             assert "X-Internal-Secret" not in headers
 
     @pytest.mark.asyncio
@@ -261,6 +269,7 @@ class TestKlaiKnowledgeHookDualAuth:
             assert mc.post.call_count == 1
             headers = mc.post.call_args.kwargs.get("headers") or {}
             assert headers.get("X-Internal-Secret") == "test-retrieval-secret"
+            assert headers.get("X-Caller-Service") == "litellm"
             assert "Authorization" not in headers
 
     @pytest.mark.asyncio
@@ -294,7 +303,9 @@ class TestKlaiKnowledgeHookDualAuth:
             first_headers = mc.post.call_args_list[0].kwargs.get("headers") or {}
             second_headers = mc.post.call_args_list[1].kwargs.get("headers") or {}
             assert first_headers.get("Authorization") == "Bearer fake.jwt.token"
+            assert first_headers.get("X-Caller-Service") == "litellm"
             assert second_headers.get("X-Internal-Secret") == "test-retrieval-secret"
+            assert second_headers.get("X-Caller-Service") == "litellm"
             assert "Authorization" not in second_headers
 
     @pytest.mark.asyncio
@@ -352,7 +363,100 @@ class TestKlaiKnowledgeHookDualAuth:
             assert mc.post.call_count == 1
             headers = mc.post.call_args.kwargs.get("headers") or {}
             assert headers.get("X-Internal-Secret") == "test-retrieval-secret"
+            assert headers.get("X-Caller-Service") == "litellm"
             assert "Authorization" not in headers
+
+
+# ─── 2026-05-05 fail-loud regression tests ──────────────────────────────────
+
+
+class TestKlaiKnowledgeHookFailLoud:
+    """Regression-guard for the silent-degradation incident.
+
+    Until 2026-05-05 the hook caught any /retrieve failure as a warning and
+    silently dropped KB context. This hid the SPEC-SEC-IDENTITY-ASSERT-001
+    Phase D regression for ~7 days. The new contract: a /retrieve failure
+    MUST surface to the user via a system-prompt notice, AND the call MUST
+    be marked in `_klai_kb_meta.retrieval_failure` so observability sees it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_retrieve_400_surfaces_in_system_prompt(self, monkeypatch):
+        """A 400 from retrieval-api injects a visible 'KB unreachable' notice."""
+        import httpx as _httpx
+
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        data = {"user": "aabbcc112233445566778899", "messages": [
+            {"role": "user", "content": "What are the team policies?"}
+        ]}
+
+        # Build a MagicMock that raises HTTPStatusError like a real 400 would.
+        bad_resp = _make_resp(
+            {"detail": {"error": "missing_caller_service"}}, status_code=400
+        )
+        bad_resp.text = '{"detail":{"error":"missing_caller_service"}}'
+        bad_resp.raise_for_status = MagicMock(
+            side_effect=_httpx.HTTPStatusError(
+                "400", request=MagicMock(), response=bad_resp
+            )
+        )
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
+            mc.post = AsyncMock(return_value=bad_resp)
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+
+            # System prompt must contain a user-visible "KB unreachable" notice.
+            system_msg = next(
+                (m for m in data["messages"] if m["role"] == "system"), None
+            )
+            assert system_msg is not None, "fail-loud must inject a system message"
+            assert "Kennisbank" in system_msg["content"]
+            assert "TIJDELIJK NIET BEREIKBAAR" in system_msg["content"]
+
+            # Failure marker MUST be in metadata for observability.
+            kb_meta = data.get("metadata", {}).get("_klai_kb_meta", {})
+            assert kb_meta.get("retrieval_failure") is not None
+            assert kb_meta.get("chunks_injected") == 0
+
+    @pytest.mark.asyncio
+    async def test_retrieve_network_error_surfaces_in_system_prompt(self, monkeypatch):
+        """ConnectError → same fail-loud path as HTTP error."""
+        import httpx as _httpx
+
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        data = {"user": "aabbcc112233445566778899", "messages": [
+            {"role": "user", "content": "What are the team policies?"}
+        ]}
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
+            mc.post = AsyncMock(side_effect=_httpx.ConnectError("connection refused"))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+
+            system_msg = next(
+                (m for m in data["messages"] if m["role"] == "system"), None
+            )
+            assert system_msg is not None
+            assert "TIJDELIJK NIET BEREIKBAAR" in system_msg["content"]
+            kb_meta = data.get("metadata", {}).get("_klai_kb_meta", {})
+            assert kb_meta.get("retrieval_failure") == "ConnectError"
 
 
 # ─── KB-010 new tests ────────────────────────────────────────────────────────

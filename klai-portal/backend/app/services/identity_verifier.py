@@ -47,6 +47,11 @@ logger = logging.getLogger(__name__)
 # requires a synchronised change in both locations; the library fails closed
 # with ``library_misconfigured`` and the endpoint with
 # ``unknown_caller_service`` so a one-sided change is loud.
+#
+# `litellm`, `portal-api`, `research-api` were added 2026-05-05 after the
+# caller-service header check (SPEC-SEC-IDENTITY-ASSERT-001 Phase D, landed
+# 2026-04-28) silently broke every internal caller of retrieval-api. See
+# pitfalls/process-rules.md -> retrieve-caller-service-header-mismatch.
 KNOWN_CALLER_SERVICES: frozenset[str] = frozenset(
     {
         "knowledge-mcp",
@@ -54,6 +59,9 @@ KNOWN_CALLER_SERVICES: frozenset[str] = frozenset(
         "retrieval-api",
         "connector",
         "mailer",
+        "litellm",
+        "portal-api",
+        "research-api",
     }
 )
 
