@@ -34,8 +34,8 @@ router = APIRouter()
 # SPEC-SEC-SERVICE-AUTH-001 REQ-3: scope required for the /retrieve endpoint.
 # Internal-secret callers are bypassed during Phase B/C migration; once Phase D
 # removes the legacy auth path, only callers presenting a JWT with this scope
-# will reach this endpoint. Granted to: svc-litellm, svc-research-api,
-# svc-knowledge-mcp, svc-portal-api.
+# will reach this endpoint. Granted to: svc-litellm, svc-knowledge-mcp,
+# svc-portal-api.
 _RETRIEVAL_QUERY_SCOPE = "klai:internal:retrieval:query"
 # Module-level singleton — avoids ruff B008 ("Depends in default arg") and
 # is the FastAPI-recommended pattern for repeated dependencies.

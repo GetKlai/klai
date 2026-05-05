@@ -13,9 +13,8 @@ two regex contracts:
   because the same header has multiple legitimate origins).
 
 REQ-41.4 (apply the same regex cap symmetrically across portal-api,
-connector, scribe, mailer, research-api, and knowledge-ingest) is
-DEFERRED to a follow-up cross-service slice; this file covers
-retrieval-api only.
+connector, scribe, mailer, and knowledge-ingest) is DEFERRED to a
+follow-up cross-service slice; this file covers retrieval-api only.
 """
 
 from __future__ import annotations

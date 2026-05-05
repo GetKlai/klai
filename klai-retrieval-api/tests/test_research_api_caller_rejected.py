@@ -5,6 +5,12 @@ If a future PR adds it back to the allowlist (or any other consumer of
 ``klai_identity_assert.KNOWN_CALLER_SERVICES`` resurrects the entry),
 this test fails so the regression cannot land silently.
 
+A direct API-level smoke (POST /retrieve with X-Caller-Service:
+research-api → 400) was considered but the conftest's ``_auto_allow_identity_assert``
+fixture stubs the asserter for every test, so the API-level path is
+not the right guard. The set membership test below is the canonical
+contract.
+
 See:
 - ``.claude/rules/klai/pitfalls/process-rules.md`` →
   ``retrieve-caller-service-header-mismatch``
@@ -12,8 +18,6 @@ See:
 """
 
 from __future__ import annotations
-
-import os
 
 
 def test_research_api_caller_is_not_known() -> None:
@@ -23,24 +27,20 @@ def test_research_api_caller_is_not_known() -> None:
     assert "research-api" not in KNOWN_CALLER_SERVICES
 
 
-def test_unknown_caller_service_returns_400(client) -> None:
-    """A request with X-Caller-Service: research-api is rejected with 400.
-
-    The middleware short-circuits before any business logic. The exact
-    body is the one set by ``klai_identity_assert.AssertResult`` when the
-    caller_service is unknown — we assert on the status code and on the
-    presence of the discriminator in the body to keep the test robust
-    against future copy changes.
+def test_known_callers_still_present() -> None:
+    """Sanity check: removing research-api did not accidentally remove the
+    services that ARE supposed to remain in the allowlist.
     """
-    resp = client.post(
-        "/retrieve",
-        json={"query": "test", "org_id": "org-1", "scope": "org"},
-        headers={
-            "X-Internal-Secret": os.environ["INTERNAL_SECRET"],
-            "X-Caller-Service": "research-api",
-        },
-    )
-    assert resp.status_code == 400
-    body = resp.json()
-    detail = body.get("detail", "")
-    assert "caller" in str(detail).lower() or "service" in str(detail).lower()
+    from klai_identity_assert import KNOWN_CALLER_SERVICES
+
+    expected_callers = {
+        "knowledge-mcp",
+        "scribe",
+        "retrieval-api",
+        "connector",
+        "mailer",
+        "litellm",
+        "portal-api",
+    }
+    missing = expected_callers - KNOWN_CALLER_SERVICES
+    assert not missing, f"Expected callers missing from allowlist: {missing}"
