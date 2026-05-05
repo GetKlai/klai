@@ -187,6 +187,7 @@ def _register_tasks(procrastinate_app: Any) -> None:
         canonical signal here.
         """
         from knowledge_ingest import pg_store
+
         if not await pg_store.artifact_exists(artifact_id):
             logger.info(
                 "graphiti_aborted_artifact_missing",
@@ -242,6 +243,7 @@ async def _enrich_document(
     source_connector_id = extra_payload.get("source_connector_id") if extra_payload else None
     if source_connector_id:
         from knowledge_ingest.connector_state import connector_is_active
+
         if not await connector_is_active(source_connector_id):
             logger.info(
                 "enrichment_aborted_connector_inactive",
@@ -283,6 +285,31 @@ async def _enrich_document(
         kb_name_val = (extra_payload or {}).get("kb_name", "")
         connector_type_val = (extra_payload or {}).get("connector_type", "")
         source_domain_val = (extra_payload or {}).get("source_domain", "")
+
+        # SPEC-RAG-CONTEXTUAL-001: generate one document summary per artifact
+        # (Anthropic-pattern). Cached in extra_payload so a re-ingest of the
+        # same artifact reuses it. The chunk-enrichment prompt then feeds
+        # the summary instead of the full document body — ~8x reduction in
+        # per-chunk input tokens for a 20-chunk document.
+        document_summary_val = (extra_payload or {}).get("document_summary", "")
+        document_language_val = (extra_payload or {}).get("document_language") or None
+        if not document_summary_val and document_text:
+            from knowledge_ingest import contextual
+
+            if document_language_val is None:
+                document_language_val = contextual.detect_language(document_text)
+            document_summary_val = await contextual.generate_document_summary(
+                text=document_text,
+                title=title,
+                language=document_language_val,
+            )
+            # Persist on extra_payload so callers (qdrant_store) can store it
+            # on the artifact row for cache hits on re-ingest.
+            if extra_payload is None:
+                extra_payload = {}
+            extra_payload["document_summary"] = document_summary_val
+            extra_payload["document_language"] = document_language_val
+
         t0 = time.monotonic()
         enriched_chunks = await enrichment.enrich_chunks(
             document_text=document_text,
@@ -297,6 +324,8 @@ async def _enrich_document(
             connector_type=connector_type_val,
             source_domain=source_domain_val,
             artifact_id=artifact_id,
+            document_summary=document_summary_val,
+            document_language=document_language_val,
         )
         llm_ms = int((time.monotonic() - t0) * 1000)
 
