@@ -34,22 +34,22 @@ Queueing lock
 rebuild tasks for the same KB are blocked (``AlreadyEnqueued`` raised at
 defer time — caller should surface this as a 409-equivalent).
 
-Source text (v1 scope)
-----------------------
+Source text
+-----------
 Reads document text from ``knowledge.artifacts.extra->>'document_text'``.
-Artifacts without this field are skipped and counted in ``artifacts_skipped``
-with a ``rebuild_skip_no_text`` log event.
+PR #347 (SPEC-RAG-CONTEXTUAL-001) made the ingest route persist
+``document_text`` on ``extra`` for every fresh ingest, so re-ingests
+after that change rebuild without any reconstruction.
 
-OPEN QUESTION: ``document_text`` is not currently stored on
-``knowledge.artifacts.extra`` by the default ingest pipeline. Most existing
-artifacts will have ``document_text`` absent and will be skipped. A follow-up
-SPEC should either:
-  a) store ``document_text`` in ``extra`` during initial ingest, or
-  b) provide a per-connector re-fetch adapter (more complex, out of v1 scope).
-Until that lands, this task is primarily useful for artifacts where the
-connector explicitly wrote ``document_text`` into extra (e.g. KB connector
-direct uploads, some Notion pages where content was persisted for future
-reprocessing).
+Artifacts ingested before PR #347 will not have ``document_text`` on
+``extra``. For those, ``_reconstruct_document_text`` rebuilds the body
+by concatenating the existing Qdrant chunks for the artifact's path in
+chunk_index order. The reconstruction is lossy — frontmatter is dropped
+and chunk overlap leaves duplication on boundaries — but it is enough
+material to feed the new chunker + summary generator. Artifacts where
+neither path produces text (no extra.document_text AND no Qdrant chunks)
+are skipped with a ``rebuild_skip_no_text`` log event and counted in
+``artifacts_skipped``.
 """
 
 from __future__ import annotations
