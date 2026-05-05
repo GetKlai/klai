@@ -8,8 +8,6 @@ Covers:
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
-
 import httpx
 import pytest
 from fastapi import HTTPException
@@ -252,7 +250,7 @@ class TestPayloadFieldsAreOptional:
 
     async def test_minimal_response_uses_safe_defaults(self, patch_client) -> None:
         # Pathological-but-spec-allowed: only `text` is present.
-        client = patch_client([httpx.Response(200, json={"text": "hi"})])
+        patch_client([httpx.Response(200, json={"text": "hi"})])
 
         result = await WhisperHttpProvider().transcribe(b"audio", language=None)
 

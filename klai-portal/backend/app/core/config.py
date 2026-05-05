@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -367,6 +368,63 @@ class Settings(BaseSettings):
                 "needs Swagger UI, or unset DEBUG."
             )
         return self
+
+    @model_validator(mode="after")
+    def _validate_frontend_url_host(self) -> "Settings":
+        """SPEC-CODEBASE-AUDIT-001 Adversarial Finding 3+4: validate frontend_url
+        hostname against a trusted allowlist.
+
+        Empty frontend_url is allowed (falls back to f"https://portal.{domain}").
+        When set, the URL hostname MUST be one of:
+          - "localhost" / "127.0.0.1" / "::1" (any env, for dev/canary)
+          - The configured `domain` itself (e.g. "getklai.com")
+          - Any subdomain of the configured `domain` (e.g. "my.getklai.com")
+
+        In production (`portal_env == "production"`) the scheme MUST be https.
+
+        Why: `frontend_url` is read by `portal_url` property and used to construct
+        OAuth `redirect_uri` values (oauth.py:163-165) plus post-OAuth browser
+        redirects. SOPS drift to e.g. `https://attacker.example` would silently
+        redirect OAuth codes to an attacker-controlled host. With a Microsoft
+        Graph app-registration that allows wildcard subdomain matches (and some
+        do), this is directly exploitable for token capture.
+
+        Env-parity (see pitfall `validator-env-parity`): `frontend_url` defaults
+        to "" (empty), so this validator NEVER fires on a missing env var — only
+        on a non-empty misconfigured value. No klai-infra/core-01/.env.sops
+        change is required for this validator to land.
+        """
+        if not self.frontend_url or not self.frontend_url.strip():
+            return self
+
+        parsed = urlparse(self.frontend_url.strip())
+        if parsed.scheme not in {"http", "https"}:
+            raise ValueError(
+                f"FRONTEND_URL must use scheme http or https; got '{parsed.scheme}' in '{self.frontend_url}'"
+            )
+        host = (parsed.hostname or "").lower()
+        if not host:
+            raise ValueError(f"FRONTEND_URL must contain a hostname; got '{self.frontend_url}'")
+
+        # Allow localhost in any env (dev/test/canary)
+        if host in {"localhost", "127.0.0.1", "::1"}:
+            return self
+
+        # Allow exact domain or any subdomain of self.domain
+        domain = self.domain.lower().lstrip(".")
+        if host == domain or host.endswith(f".{domain}"):
+            if self.portal_env == "production" and parsed.scheme != "https":
+                raise ValueError(
+                    f"FRONTEND_URL must use https in production; got '{parsed.scheme}' in '{self.frontend_url}'"
+                )
+            return self
+
+        raise ValueError(
+            f"FRONTEND_URL hostname '{host}' is not in the trusted allowlist. "
+            f"Must be 'localhost', '{domain}', or a subdomain of '{domain}'. "
+            f"This protects OAuth redirect_uri integrity "
+            f"(SPEC-CODEBASE-AUDIT-001 Adversarial Findings 3+4)."
+        )
 
     @model_validator(mode="after")
     def _require_imap_authserv_id_when_listener_enabled(self) -> "Settings":
