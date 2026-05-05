@@ -15,6 +15,7 @@ import { apiFetch } from '@/lib/apiFetch'
 import { PROFILE_LADDER, type ProfileRole } from '@/lib/profiles'
 import { UserAvatar } from '../../_components/UserAvatar'
 import { cleanErrorMessage } from '../../_components/errors'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
 
 export const Route = createFileRoute('/admin/profiles/$profile/')({
   component: AdminProfileDetail,
@@ -52,8 +53,9 @@ function AdminProfileDetail() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const { profile } = Route.useParams()
+  const { user: currentUser } = useCurrentUser()
   const profileRole = profile as ProfileRole
-  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null)
+  const [confirmDemoteId, setConfirmDemoteId] = useState<string | null>(null)
 
   const msgs = m as unknown as Record<string, (() => string) | undefined>
   const labelFn = msgs[`profile_${profileRole}_label`]
@@ -78,8 +80,8 @@ function AdminProfileDetail() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-users'] })
-      setConfirmRemoveId(null)
-      toast.success(m.admin_groups_members_success_removed())
+      setConfirmDemoteId(null)
+      toast.success(m.admin_profiles_demote_success())
     },
     onError: (err: Error) => {
       toast.error(cleanErrorMessage(err, m.admin_profiles_error_change()))
@@ -161,10 +163,17 @@ function AdminProfileDetail() {
               </thead>
               <tbody>
                 {members.map((user) => {
-                  const isRemoving =
+                  const isDemoting =
                     removeMemberMutation.isPending &&
                     removeMemberMutation.variables === user.zitadel_user_id
-                  const isConfirming = confirmRemoveId === user.zitadel_user_id
+                  const isConfirming = confirmDemoteId === user.zitadel_user_id
+                  const isSelf = user.zitadel_user_id === currentUser?.user_id
+                  // Demoting to "personal" is a no-op when already "personal".
+                  const alreadyPersonal = profileRole === 'personal'
+                  const demoteDisabled = isSelf || alreadyPersonal
+                  const demoteTooltip = isSelf
+                    ? m.admin_profiles_demote_self_blocked()
+                    : m.admin_profiles_demote_action()
 
                   return (
                     <tr
@@ -190,26 +199,34 @@ function AdminProfileDetail() {
                         {formatDate(user.created_at)}
                       </td>
                       <td className="py-4 align-top text-right w-16">
-                        <InlineDeleteConfirm
-                          isConfirming={isConfirming}
-                          isPending={isRemoving}
-                          label={m.admin_groups_members_remove_confirm({ name: displayName(user) })}
-                          cancelLabel={m.admin_users_cancel()}
-                          onConfirm={() => removeMemberMutation.mutate(user.zitadel_user_id)}
-                          onCancel={() => setConfirmRemoveId(null)}
-                        >
-                          <div className="flex items-start justify-end gap-2 mt-px">
-                            <Tooltip label={m.admin_groups_members_remove()}>
-                              <button
-                                onClick={() => setConfirmRemoveId(user.zitadel_user_id)}
-                                aria-label={m.admin_groups_members_remove()}
-                                className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
-                            </Tooltip>
-                          </div>
-                        </InlineDeleteConfirm>
+                        {alreadyPersonal ? (
+                          // No demote target on the lowest rung.
+                          <span className="text-xs text-[var(--color-muted-foreground)]">—</span>
+                        ) : (
+                          <InlineDeleteConfirm
+                            isConfirming={isConfirming}
+                            isPending={isDemoting}
+                            label={m.admin_profiles_demote_confirm({ name: displayName(user) })}
+                            cancelLabel={m.admin_users_cancel()}
+                            onConfirm={() => removeMemberMutation.mutate(user.zitadel_user_id)}
+                            onCancel={() => setConfirmDemoteId(null)}
+                          >
+                            <div className="flex items-start justify-end gap-2 mt-px">
+                              <Tooltip label={demoteTooltip}>
+                                <button
+                                  onClick={() => {
+                                    if (!demoteDisabled) setConfirmDemoteId(user.zitadel_user_id)
+                                  }}
+                                  disabled={demoteDisabled}
+                                  aria-label={demoteTooltip}
+                                  className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70 disabled:opacity-30 disabled:cursor-not-allowed"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              </Tooltip>
+                            </div>
+                          </InlineDeleteConfirm>
+                        )}
                       </td>
                     </tr>
                   )

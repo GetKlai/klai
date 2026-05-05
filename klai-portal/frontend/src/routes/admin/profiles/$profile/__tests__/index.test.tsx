@@ -39,17 +39,24 @@ vi.mock('@/paraglide/messages', () => ({
   admin_profiles_loading: () => 'Loading...',
   admin_profiles_drill_in_empty: () => 'No members in this profile yet.',
   admin_profiles_error_change: () => 'Failed',
+  admin_profiles_demote_action: () => 'Demote to Personal chat',
+  admin_profiles_demote_confirm: ({ name }: { name: string }) => `Demote ${name} to Personal chat?`,
+  admin_profiles_demote_success: () => 'Demoted',
+  admin_profiles_demote_self_blocked: () => 'You cannot demote yourself.',
   admin_groups_members_title: () => 'Members',
   admin_groups_members_add: () => 'Add member',
-  admin_groups_members_remove: () => 'Remove',
-  admin_groups_members_remove_confirm: ({ name }: { name: string }) => `Remove ${name}?`,
-  admin_groups_members_success_removed: () => 'Removed',
   admin_users_col_name: () => 'Name',
   admin_users_col_email: () => 'Email',
   admin_users_col_invited: () => 'Invited',
   admin_users_cancel: () => 'Cancel',
   profile_company_label: () => 'Company chat',
   profile_company_description: () => 'Company description',
+  profile_personal_label: () => 'Personal chat',
+  profile_personal_description: () => 'Personal description',
+}))
+
+vi.mock('@/hooks/useCurrentUser', () => ({
+  useCurrentUser: () => ({ user: { user_id: 'someone-else' } }),
 }))
 
 vi.mock('@/paraglide/runtime', () => ({
@@ -103,7 +110,7 @@ describe('AdminProfileDetail drill-in', () => {
     expect(screen.queryByText('Bob Bouwer')).toBeNull()
   })
 
-  it('remove dispatches PATCH /role with role: personal (demote)', async () => {
+  it('demote button uses "Demote to Personal chat" wording and dispatches PATCH /role with role: personal', async () => {
     apiFetchMock.mockResolvedValueOnce({
       users: [
         { zitadel_user_id: 'u1', email: 'a@x', first_name: 'Alice', last_name: 'Anders', role: 'company', created_at: '2026-01-01' },
@@ -121,15 +128,21 @@ describe('AdminProfileDetail drill-in', () => {
       expect(screen.getByText('Alice Anders')).toBeTruthy()
     })
 
+    // The action label is "Demote to Personal chat", not "Remove"
+    expect(screen.queryByLabelText('Remove')).toBeNull()
+    const demoteBtn = screen.getByLabelText('Demote to Personal chat')
+    expect(demoteBtn).toBeTruthy()
+
     apiFetchMock.mockResolvedValueOnce(undefined)
-    fireEvent.click(screen.getByLabelText('Remove'))
-    // Confirm
+    fireEvent.click(demoteBtn)
+    // Confirm copy uses "Demote ... to Personal chat?"
     await waitFor(() => {
-      expect(screen.getByText('Remove Alice Anders?')).toBeTruthy()
+      expect(screen.getByText('Demote Alice Anders to Personal chat?')).toBeTruthy()
     })
-    // The InlineDeleteConfirm renders a confirm button — click it
     const confirmButtons = screen.getAllByRole('button')
-    const confirmBtn = confirmButtons.find((b) => b.textContent?.includes('Remove Alice'))
+    const confirmBtn = confirmButtons.find((b) =>
+      b.textContent?.includes('Demote Alice Anders'),
+    )
     expect(confirmBtn).toBeTruthy()
     if (confirmBtn) fireEvent.click(confirmBtn)
 
@@ -142,6 +155,28 @@ describe('AdminProfileDetail drill-in', () => {
         }),
       )
     })
+  })
+
+  it('disables the demote button on the current user (self-guard)', async () => {
+    apiFetchMock.mockResolvedValue({
+      users: [
+        { zitadel_user_id: 'someone-else', email: 's@x', first_name: 'Self', last_name: 'User', role: 'company', created_at: '2026-01-01' },
+      ],
+    })
+
+    const Cfg = RouteCfg as unknown as { component: () => JSX.Element }
+    render(
+      <Wrapper>
+        <Cfg.component />
+      </Wrapper>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Self User')).toBeTruthy()
+    })
+
+    const btn = screen.getByLabelText('You cannot demote yourself.')
+    expect((btn as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('does not render any bulk-select checkboxes', async () => {
