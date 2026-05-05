@@ -502,7 +502,9 @@ survived the forward audit:
   meeting-bot traffic past the api-gateway layer.
 - `GRAPHITI_LLM_MODEL` on retrieval-api: prod set `klai-pipeline`,
   code default was `klai-fast`. Different quality/cost on graph
-  extraction.
+  extraction. (Resolved May 2026: dropped the role-based klai-pipeline
+  alias; both code and prod now use klai-fast which points at the
+  same Mistral Small 4 model.)
 - `VEXA_ADMIN_TOKEN` on portal-api: prod set a real token, code default
   was `""`. No current runtime reader, but future callers would have
   silently gotten an empty token.

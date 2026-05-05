@@ -125,7 +125,7 @@ class Settings(BaseSettings):
     rag_eval_judge_timeout: int = 30
     rag_eval_judge_model: str = "klai-fast"
     rag_eval_faithfulness_model: str = "klai-medium"
-    rag_eval_embeddings_model: str = "klai-embeddings"
+    rag_eval_embeddings_model: str = "klai-bge-m3"
     rag_eval_suites_dir: str = "knowledge_ingest/eval/suites"
 
     model_config = {"env_file": ".env"}

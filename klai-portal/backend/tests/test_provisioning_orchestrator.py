@@ -233,9 +233,10 @@ async def test_litellm_key_generate_uses_real_model_aliases(mock_orchestrator_en
     Regression guard: a previous bug shipped with `["klai-llm","klai-fallback"]`
     — names that don't exist anywhere in the LiteLLM config. LibreChat (which
     is hardcoded to call `klai-primary`) then got 401s for every tenant. The
-    legitimate aliases per platform/litellm.md are klai-fast, klai-primary,
-    klai-large, klai-pipeline — and klai-pipeline is reserved for internal
-    services, so tenant keys must scope to the three user-facing tiers.
+    legitimate aliases per platform/litellm.md are klai-primary, klai-fast,
+    klai-medium, klai-large + klai-bge-m3 embeddings — internal-only aliases
+    (klai-medium, klai-bge-m3) are excluded from tenant keys, so tenant keys
+    scope to the three user-facing tiers (klai-primary, klai-fast, klai-large).
     """
     from app.services.provisioning import orchestrator
 
