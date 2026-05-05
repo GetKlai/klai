@@ -38,16 +38,17 @@ A separate latent gap: **query-time taxonomy filtering is wired in retrieval-api
 
 SPEC-RAG-EVAL-001 closed the measurement gap. The harness now runs nightly against Voys's production retrieval stack and writes per-query metrics to `knowledge.rag_eval_results`, tagged with a `variant` column so future SPECs can A/B-compare against the `baseline` rows captured here.
 
-**Voys baseline on chat suite (30 queries, variant=`baseline`):**
+**Voys baseline on chat suite (30 queries, variant=`baseline-v4`, captured 2026-05-05 after PR #312 / #321 landed klai-medium + klai-bge-m3):**
 
-| Metric | Value |
-|---|---|
-| `context_precision` | 0.25 |
-| `context_recall` | 0.26 |
-| `faithfulness` | 0.43 (n=2 valid; 28 NaN — see tuning gaps) |
-| `answer_relevance` | NaN (n=0 valid — needs embeddings model) |
-| `retrieval_ms` (mean) | 542 ms |
-| Total runtime for 30 queries | ~14 min |
+| Metric | Value | Status |
+|---|---|---|
+| `context_precision` | **0.23** | working |
+| `context_recall` | **0.25** | working |
+| `faithfulness` | **0.51** | working (was NaN at v1) |
+| `answer_relevance` | **0.71** | working (was NaN at v1) |
+| `retrieval_ms` (mean) | 542 ms | working |
+
+This is the **clean baseline** every Tier 1/2/3 SPEC will be measured against. Earlier "v1" baselines (`baseline`, `smoke-test-v3`) were captured before the metric-fix PRs landed and are kept in the table only as historical evidence; they should not be used as comparison points.
 
 **What's in the harness:**
 - `klai-knowledge-ingest/knowledge_ingest/eval/` — module with `ragas_runner.py`, `suite_loader.py`, `retrieval_client.py`, `judge_client.py`, `store.py`
