@@ -634,61 +634,6 @@ services:
       retries: 3
       start_period: 30s
 
-  # SPEC-OBS-002 (DRAFT — not yet active in production)
-  # vmauth fronts VictoriaLogs query endpoints with Zitadel-issued JWT auth.
-  # Mounted config at /etc/vmauth/config.yml. No host port binding — Caddy
-  # reaches it internally on the `monitoring` network.
-  # Live cutover happens when:
-  #   1. The Caddy `vlogs-test.{$DOMAIN}` route below is enabled.
-  #   2. The Zitadel app has been provisioned and its client_id
-  #      committed to SOPS as KLAI_VLOGS_OIDC_CLIENT_ID.
-  #   3. Smoke-test passes (see SPEC-OBS-002 acceptance.md).
-  # Until then, this service stays defined but unreferenced — it has no
-  # external reachability.
-  vmauth:
-    image: victoriametrics/vmauth:v1.142.0
-    restart: unless-stopped
-    volumes:
-      - ./vmauth/config.yml:/etc/vmauth/config.yml:ro
-    command:
-      - -auth.config=/etc/vmauth/config.yml
-      - -httpListenAddr=:8427
-      - -configCheckInterval=30s
-      - -logInvalidAuthTokens=true
-      # On config reload, vmauth picks up changes within 30s without restart.
-      # logInvalidAuthTokens=true logs the actual reason on every 401 from
-      # auth-failure (signature, exp, iss, claim mismatch). The token value
-      # itself is logged — acceptable for our internal-only monitoring net,
-      # but reconsider before exposing logs publicly.
-    environment:
-      # vmauth injects upstream basic-auth toward victorialogs using the
-      # SAME base64-encoded credential Caddy already uses for logs-ingest.
-      # Re-uses existing SOPS secret — no new env var to provision.
-      # Referenced as %{ENV.VICTORIALOGS_BASIC_AUTH_B64} in config.yml.
-      VICTORIALOGS_BASIC_AUTH_B64: ${VICTORIALOGS_BASIC_AUTH_B64}
-    networks:
-      # monitoring — for victorialogs:9428 upstream
-      # klai-net   — for outbound HTTPS to auth.getklai.com (Zitadel JWKS).
-      #              The monitoring network is closed for external egress
-      #              (Docker DNS returns "bad address" for public domains
-      #              from monitoring-only containers). Caddy uses the same
-      #              dual-network pattern.
-      - monitoring
-      - klai-net
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - wget -q --spider http://127.0.0.1:8427/health
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
-
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.55.1
     restart: unless-stopped
