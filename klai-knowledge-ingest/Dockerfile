@@ -29,6 +29,12 @@ ENV UV_COMPILE_BYTECODE=1 \
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY --chown=app:app klai-knowledge-ingest/knowledge_ingest knowledge_ingest
+# SPEC-INGEST-ALEMBIC-001: alembic migration definitions
+COPY --chown=app:app klai-knowledge-ingest/alembic alembic
+COPY --chown=app:app klai-knowledge-ingest/alembic.ini alembic.ini
+# SPEC-INGEST-ALEMBIC-001: entrypoint runs alembic upgrade head before uvicorn
+COPY --chown=app:app klai-knowledge-ingest/entrypoint.sh entrypoint.sh
+RUN chmod +x /repo/klai-knowledge-ingest/entrypoint.sh
 # SPEC-SEC-WEBHOOK-001 REQ-6: shared uvicorn launcher (Caddy IP resolution +
 # --proxy-headers). Copied from repo root scripts/ directory.
 COPY --chown=app:app scripts/uvicorn-launch.sh /app/scripts/uvicorn-launch.sh
@@ -46,4 +52,7 @@ EXPOSE 8000
 # start time and passes --proxy-headers --forwarded-allow-ips=<resolved>.
 # knowledge-ingest is internal-only (klai-net), so DNS lookup falls back to
 # 127.0.0.1 — the correct safe default for an internal service.
+# SPEC-INGEST-ALEMBIC-001 + SPEC-SEC-WEBHOOK-001 REQ-1.6 + REQ-6:
+# entrypoint applies alembic migrations, then shared launcher resolves Caddy IP.
+ENTRYPOINT ["/repo/klai-knowledge-ingest/entrypoint.sh"]
 CMD ["/app/scripts/uvicorn-launch.sh", "knowledge_ingest.app:app", "--host", "0.0.0.0", "--port", "8000"]

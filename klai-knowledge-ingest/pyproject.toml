@@ -9,6 +9,7 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
     "sqlalchemy[asyncio]>=2.0",
+    "alembic>=1.13",  # SPEC-INGEST-ALEMBIC-001
     "asyncpg>=0.30",
     "qdrant-client>=1.12",
     "pyyaml>=6.0",
@@ -53,6 +54,8 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "knowledge_ingest/crawl4ai_client.py" = ["E501"]  # JS strings in multiline literals
+"alembic/versions/*.py" = ["E501"]  # SQL DDL lines legitimately exceed 100 chars
+"tests/test_alembic_bootstrap.py" = ["E501", "S603", "S607"]  # test file calls subprocess with known-safe args
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
