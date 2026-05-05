@@ -107,12 +107,17 @@ class VerifyResult:
 # new caller requires a synchronised change to portal-api's allowlist; consumers
 # fail-closed if they pass an unknown service identifier.
 #
-# `litellm`, `portal-api`, `research-api` were added 2026-05-05 after the
-# caller-service header check (SPEC-SEC-IDENTITY-ASSERT-001 Phase D, landed
-# 2026-04-28) silently broke every internal caller of retrieval-api `/retrieve`.
-# The fail-open in those callers degraded chat to "no KB" without surfacing
-# a single error for 7 days. See pitfalls/process-rules.md →
+# `litellm` and `portal-api` were added 2026-05-05 after the caller-service
+# header check (SPEC-SEC-IDENTITY-ASSERT-001 Phase D, landed 2026-04-28)
+# silently broke every internal caller of retrieval-api `/retrieve`. The
+# fail-open in those callers degraded chat to "no KB" without surfacing a
+# single error for 7 days. See pitfalls/process-rules.md →
 # retrieve-caller-service-header-mismatch.
+#
+# `research-api` was removed 2026-05-XX per SPEC-DECOMM-FOCUS-001. The service
+# was decommissioned in SPEC-PORTAL-UNIFY-KB-001 (April 2026); the allowlist
+# entry added on 2026-05-05 was inert defensive code on a service that no
+# longer runs.
 KNOWN_CALLER_SERVICES: frozenset[str] = frozenset(
     {
         "knowledge-mcp",
@@ -122,6 +127,5 @@ KNOWN_CALLER_SERVICES: frozenset[str] = frozenset(
         "mailer",
         "litellm",
         "portal-api",
-        "research-api",
     }
 )

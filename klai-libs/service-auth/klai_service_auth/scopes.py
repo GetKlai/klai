@@ -20,7 +20,7 @@ from __future__ import annotations
 # --- retrieval-api scopes ---------------------------------------------------
 
 RETRIEVAL_QUERY = "klai:internal:retrieval:query"
-"""Granted to: svc-litellm, svc-research-api, svc-knowledge-mcp, svc-portal-api.
+"""Granted to: svc-litellm, svc-knowledge-mcp, svc-portal-api.
 Permits: ``POST /retrieve``."""
 
 # --- knowledge-ingest scopes ------------------------------------------------
