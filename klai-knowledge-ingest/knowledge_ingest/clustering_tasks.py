@@ -174,7 +174,10 @@ async def _get_pending_proposals(org_id: str, kb_slug: str) -> list[dict]:
     url = f"{settings.portal_url}/api/v1/{kb_slug}/taxonomy/proposals"
     headers = {}
     if settings.portal_internal_token:
-        headers["x-internal-token"] = settings.portal_internal_token
+        # Authorization: Bearer matches portal_client.py:_fetch_from_portal —
+        # SPEC-CODEBASE-AUDIT-001 cluster G TP-1 unifies outbound auth on the
+        # Bearer pattern instead of the legacy x-internal-token header.
+        headers["Authorization"] = f"Bearer {settings.portal_internal_token}"
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:

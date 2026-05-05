@@ -59,7 +59,8 @@ class Settings(BaseSettings):
     graphiti_llm_rps: float = 1.0
     # Portal integration for taxonomy (SPEC-KB-021)
     portal_url: str = "http://portal-api:8000"
-    portal_internal_token: str = ""  # X-Internal-Token for portal internal endpoints
+    # Bearer token for outbound calls to portal-api internal endpoints
+    portal_internal_token: str = ""
     taxonomy_classification_model: str = "klai-fast"
     taxonomy_classification_timeout: float = 30.0
     content_label_timeout: float = 15.0
@@ -149,10 +150,15 @@ class Settings(BaseSettings):
         """SEC-014: fail-closed on empty/missing PORTAL_INTERNAL_TOKEN.
 
         Same class of bug as F-003/F-012 but for the ingest→portal direction:
-        routes/taxonomy.py:_verify_internal_token historically returned without
-        check when the env var was empty, silently accepting any caller. Now
-        that portal taxonomy endpoints are actively consumed, missing config
-        must fail at startup rather than silently open the surface.
+        outbound calls in clustering_tasks/portal_client send this token as a
+        Bearer header to portal-api internal endpoints. An empty value would
+        silently degrade auth on the outbound side, so missing config must
+        fail at startup rather than open the surface.
+
+        (The legacy inbound _verify_internal_token per-route check on
+        routes/taxonomy.py was removed in SPEC-CODEBASE-AUDIT-001 cluster G
+        TP-1 — the InternalSecretMiddleware (X-Internal-Secret) now provides
+        the only inbound auth layer.)
         """
         if not self.portal_internal_token or not self.portal_internal_token.strip():
             raise ValueError("Missing required: PORTAL_INTERNAL_TOKEN (SEC-014)")
