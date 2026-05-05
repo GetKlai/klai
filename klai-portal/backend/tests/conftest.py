@@ -60,8 +60,13 @@ os.environ.setdefault("DOCS_INTERNAL_SECRET", "test-docs-internal-secret" * 2)  
 os.environ.setdefault(
     "ZITADEL_PORTAL_CLIENT_SECRET", "test-zitadel-portal-client-secret"
 )  # SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-6
+# Audit 2026-05-05 finding 4: BFF_SESSION_KEY and SSO_COOKIE_KEY MUST be
+# distinct test values so a bug where code accidentally reads the wrong
+# key does not silently decrypt successfully (both Fernet keys produce
+# valid ciphertext for any payload). Use a generated-different second
+# Fernet key here.
 os.environ.setdefault(
-    "BFF_SESSION_KEY", "R1c1-s96uO9Yz7k1E0kN6qz52gzd9PwNbAeZaks_PIc="
+    "BFF_SESSION_KEY", "aBcDeFgHiJkLmNoPqRsTuVwXyZ012345678901234="
 )  # SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-10
 
 # ---------------------------------------------------------------------------
