@@ -580,6 +580,39 @@ class TestWipeKnowledgePostgres:
                     with pytest.raises(httpx.HTTPStatusError):
                         await _wipe_knowledge_postgres(state)
 
+    @pytest.mark.asyncio
+    async def test_uses_x_internal_secret_header(self) -> None:
+        """Audit 2026-05-05 finding 5: regression-guard for the auth header.
+
+        knowledge-ingest's InternalSecretMiddleware expects ``X-Internal-Secret``
+        (NOT Authorization Bearer like klai-connector). If a future refactor
+        changes the header name, all 4 other tests still pass via respx pattern
+        matching but the endpoint rejects with 401 in production. Capture the
+        outbound request and assert on the header explicitly. Mirrors the
+        Bearer header test in TestWipeKlaiConnectorState below.
+        """
+        state = _make_state(org_id=42, slug="acme")
+
+        captured_headers: dict[str, str] = {}
+
+        def _capture(request: httpx.Request) -> httpx.Response:
+            captured_headers.update(request.headers)
+            return httpx.Response(200, json={"rows_deleted": {}, "status": "ok"})
+
+        with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
+            mock_settings.knowledge_ingest_url = "http://knowledge-ingest:8000"
+            mock_settings.knowledge_ingest_secret = "ingest-secret-67890"
+            with patch("app.trace.get_trace_headers", return_value={}):
+                with respx_router(base_url="http://knowledge-ingest:8000") as router:
+                    router.post("/internal/v1/orgs/zitadel-org-abc/wipe-postgres").mock(side_effect=_capture)
+                    from app.services.provisioning.deprovisioning_steps import _wipe_knowledge_postgres
+
+                    await _wipe_knowledge_postgres(state)
+
+        assert captured_headers.get("x-internal-secret") == "ingest-secret-67890"
+        # Crucially MUST NOT be Bearer — that would route to a different middleware path.
+        assert "authorization" not in captured_headers
+
 
 # ---------------------------------------------------------------------------
 # Step 9b — _wipe_klai_connector_state (SPEC-INFRA-TENANT-DELETE-002 G6)
