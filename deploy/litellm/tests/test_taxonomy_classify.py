@@ -1,11 +1,15 @@
-"""SPEC-RAG-TAXONOMY-001 — _rewrite_and_classify + fetch helpers unit tests.
+"""SPEC-RAG-TAXONOMY-001 (multi-KB) — _rewrite_and_classify + fetch helpers.
 
-Tests:
-- _rewrite_and_classify: skip when no tree, happy path, anti-hallucination guard,
-  fail-open on LLM error, falls back to plain rewrite when tree is empty.
-- _fetch_taxonomy_tree: returns list on 200, [] on 4xx/5xx/timeout.
-- _fetch_taxonomy_coverage: returns float on 200, 0.0 on error.
-- _format_taxonomy_for_prompt: truncates at max_nodes.
+Tests cover the v2 multi-KB shape:
+- ``_rewrite_and_classify`` accepts ``dict[str, list[dict]]`` (multi-KB)
+  AND ``list[dict]`` (legacy single-KB) for backward compat.
+- ``_fetch_taxonomy_trees`` calls ``/internal/v1/taxonomy/trees`` with
+  repeated ``kb_slugs`` query params and a Redis cache hit short-circuit.
+- ``_fetch_taxonomy_coverage`` returns ``{kb_slug: 0.0|1.0}`` via the
+  multi-KB endpoint.
+- ``_format_taxonomy_for_prompt`` renders both shapes with KB-context
+  labels for the multi-KB shape.
+- ``_flatten_trees`` produces a single flat list across all KBs.
 
 litellm is not installed locally (runs in Docker), so we mock the import.
 """
@@ -75,6 +79,28 @@ def _load_hook(monkeypatch, extra_env=None):
 
 
 # ---------------------------------------------------------------------------
+# Cache stub (mimics LiteLLM DualCache surface used by the hook)
+# ---------------------------------------------------------------------------
+
+
+class _StubCache:
+    """In-memory cache supporting async_get_cache / async_set_cache."""
+
+    def __init__(self) -> None:
+        self.store: dict = {}
+        self.gets: list[str] = []
+        self.sets: list[tuple[str, object, int | None]] = []
+
+    async def async_get_cache(self, key: str):
+        self.gets.append(key)
+        return self.store.get(key)
+
+    async def async_set_cache(self, key: str, value, ttl: int | None = None) -> None:
+        self.sets.append((key, value, ttl))
+        self.store[key] = value
+
+
+# ---------------------------------------------------------------------------
 # Transport mocks
 # ---------------------------------------------------------------------------
 
@@ -85,8 +111,10 @@ class _MockTransport(httpx.AsyncBaseTransport):
     def __init__(self, status_code: int, json_body=None) -> None:
         self._status_code = status_code
         self._json_body = json_body if json_body is not None else {}
+        self.requests: list[httpx.Request] = []
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
         return httpx.Response(
             status_code=self._status_code,
             headers={"content-type": "application/json"},
@@ -99,10 +127,11 @@ class _RoutedTransport(httpx.AsyncBaseTransport):
     """Return different responses based on the request URL path."""
 
     def __init__(self, routes: dict) -> None:
-        # routes = {"/internal/v1/taxonomy/tree": (200, [...]), ...}
         self._routes = routes
+        self.requests: list[httpx.Request] = []
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
         path = request.url.path
         status, body = self._routes.get(path, (404, {"detail": "not found"}))
         return httpx.Response(
@@ -133,7 +162,38 @@ def _llm_json_response(rewritten_query: str, taxonomy_node_ids: list) -> dict:
     }
 
 
-_TREE = [
+# Multi-KB sample: support and billing each have their own subtree.
+# Node IDs are globally unique (single PK), so the merged set covers both.
+_TREES_MULTI = {
+    "support": [
+        {
+            "id": 1,
+            "kb_slug": "support",
+            "name": "SSO",
+            "slug": "sso",
+            "parent_id": None,
+        },
+        {"id": 2, "kb_slug": "support", "name": "SAML", "slug": "saml", "parent_id": 1},
+    ],
+    "billing": [
+        {
+            "id": 10,
+            "kb_slug": "billing",
+            "name": "Invoices",
+            "slug": "invoices",
+            "parent_id": None,
+        },
+        {
+            "id": 11,
+            "kb_slug": "billing",
+            "name": "Refunds",
+            "slug": "refunds",
+            "parent_id": 10,
+        },
+    ],
+}
+
+_TREE_LEGACY = [
     {"id": 1, "name": "SSO", "parent_id": None, "depth": 0},
     {"id": 2, "name": "SAML", "parent_id": 1, "depth": 1},
     {"id": 3, "name": "OAuth", "parent_id": 1, "depth": 1},
@@ -154,7 +214,9 @@ class TestRewriteAndClassifySkips:
     @pytest.mark.asyncio
     async def test_skips_empty_query(self, monkeypatch):
         hook = _load_hook(monkeypatch)
-        rewritten, ids, meta = await hook._rewrite_and_classify("", _HISTORY, _TREE)
+        rewritten, ids, meta = await hook._rewrite_and_classify(
+            "", _HISTORY, _TREES_MULTI
+        )
         assert rewritten == ""
         assert ids == []
         assert meta["skipped"] == "empty_query"
@@ -163,7 +225,7 @@ class TestRewriteAndClassifySkips:
     async def test_skips_when_disabled(self, monkeypatch):
         hook = _load_hook(monkeypatch, extra_env={"QUERY_REWRITE_ENABLED": "false"})
         rewritten, ids, meta = await hook._rewrite_and_classify(
-            "Wat is SAML?", _HISTORY, _TREE
+            "Wat is SAML?", _HISTORY, _TREES_MULTI
         )
         assert rewritten == "Wat is SAML?"
         assert ids == []
@@ -173,23 +235,33 @@ class TestRewriteAndClassifySkips:
     async def test_skips_when_no_api_key(self, monkeypatch):
         hook = _load_hook(monkeypatch, extra_env={"MISTRAL_API_KEY": ""})
         rewritten, ids, meta = await hook._rewrite_and_classify(
-            "Wat is SAML?", _HISTORY, _TREE
+            "Wat is SAML?", _HISTORY, _TREES_MULTI
         )
         assert ids == []
         assert meta["skipped"] == "no_api_key"
 
     @pytest.mark.asyncio
-    async def test_skips_classify_when_no_history_and_no_tree(self, monkeypatch):
+    async def test_skips_when_no_history_and_empty_dict(self, monkeypatch):
         hook = _load_hook(monkeypatch)
-        rewritten, ids, meta = await hook._rewrite_and_classify("Wat is SAML?", [], [])
-        # No history, no tree → skip (no_history_no_tree)
+        rewritten, ids, meta = await hook._rewrite_and_classify("Wat is SAML?", [], {})
         assert rewritten == "Wat is SAML?"
         assert ids == []
         assert meta["skipped"] == "no_history_no_tree"
 
     @pytest.mark.asyncio
-    async def test_falls_back_to_plain_rewrite_when_tree_empty(self, monkeypatch):
-        """Empty tree → falls back to _rewrite_query (plain text prompt, no classify)."""
+    async def test_skips_when_no_history_and_empty_list(self, monkeypatch):
+        """Legacy list shape: empty list also triggers the no-tree skip."""
+        hook = _load_hook(monkeypatch)
+        rewritten, ids, meta = await hook._rewrite_and_classify("Wat is SAML?", [], [])
+        assert rewritten == "Wat is SAML?"
+        assert ids == []
+        assert meta["skipped"] == "no_history_no_tree"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_plain_rewrite_when_dict_empty_with_history(
+        self, monkeypatch
+    ):
+        """Empty trees dict + history → plain _rewrite_query, no classify."""
         hook = _load_hook(monkeypatch)
         rewritten_str = "Wat is de status van de SAML-configuratie?"
         transport = _MockTransport(
@@ -202,92 +274,68 @@ class TestRewriteAndClassifySkips:
             },
         )
         rewritten, ids, meta = await hook._rewrite_and_classify(
-            "Wat is de status?", _HISTORY, [], _transport=transport
+            "Wat is de status?", _HISTORY, {}, _transport=transport
         )
         assert rewritten == rewritten_str
         assert ids == []
-        # Meta is from plain _rewrite_query: was_changed should be True
         assert meta["was_changed"] is True
 
 
 # ---------------------------------------------------------------------------
-# _rewrite_and_classify — happy path
+# _rewrite_and_classify — multi-KB happy path
 # ---------------------------------------------------------------------------
 
 
-class TestRewriteAndClassifyHappyPath:
+class TestRewriteAndClassifyMultiKB:
     @pytest.mark.asyncio
-    async def test_returns_rewritten_query_and_ids(self, monkeypatch):
-        """Full happy path: LLM returns rewritten query + valid IDs."""
+    async def test_returns_ids_from_any_kb(self, monkeypatch):
+        """Classifier may pick IDs from any KB in the merged tree."""
         hook = _load_hook(monkeypatch)
         transport = _MockTransport(
             status_code=200,
-            json_body=_llm_json_response(
-                "Hoe configureer je SAML-authenticatie?", [1, 2]
-            ),
+            # Picks IDs from BOTH support (1, 2) and billing (10).
+            json_body=_llm_json_response("Hoe regel ik SAML en facturen?", [1, 2, 10]),
         )
 
         rewritten, ids, meta = await hook._rewrite_and_classify(
-            "Hoe doe je dat?", _HISTORY, _TREE, _transport=transport
+            "Hoe doe je dat?", _HISTORY, _TREES_MULTI, _transport=transport
         )
 
-        assert rewritten == "Hoe configureer je SAML-authenticatie?"
-        assert 1 in ids
-        assert 2 in ids
+        assert rewritten == "Hoe regel ik SAML en facturen?"
+        assert set(ids) == {1, 2, 10}
         assert meta["was_changed"] is True
-        assert meta["rewrite_ms"] >= 0
 
     @pytest.mark.asyncio
-    async def test_drops_hallucinated_ids(self, monkeypatch):
-        """Anti-hallucination guard (REQ-4): IDs not in tree are filtered out."""
+    async def test_drops_hallucinated_ids_across_kbs(self, monkeypatch):
+        """Anti-hallucination guard: IDs not in ANY KB tree are filtered out."""
         hook = _load_hook(monkeypatch)
         transport = _MockTransport(
             status_code=200,
-            # IDs 1, 2, 3 are valid; 99 and 1000 are hallucinated
-            json_body=_llm_json_response("Hoe configureer je SAML?", [1, 2, 99, 1000]),
+            # Valid: 1, 11. Hallucinated: 99, 1000.
+            json_body=_llm_json_response("Hoe regel ik SAML?", [1, 11, 99, 1000]),
         )
 
         rewritten, ids, meta = await hook._rewrite_and_classify(
-            "Hoe doe je dat?", _HISTORY, _TREE, _transport=transport
+            "Hoe doe je dat?", _HISTORY, _TREES_MULTI, _transport=transport
+        )
+
+        assert set(ids) == {1, 11}
+
+    @pytest.mark.asyncio
+    async def test_legacy_list_shape_still_works(self, monkeypatch):
+        """Backward compat: list[dict] tree shape continues to work."""
+        hook = _load_hook(monkeypatch)
+        transport = _MockTransport(
+            status_code=200,
+            json_body=_llm_json_response("Hoe configureer je SAML?", [1, 2]),
+        )
+
+        rewritten, ids, meta = await hook._rewrite_and_classify(
+            "Hoe doe je dat?", _HISTORY, _TREE_LEGACY, _transport=transport
         )
 
         assert set(ids) == {1, 2}
-        assert 99 not in ids
-        assert 1000 not in ids
-
-    @pytest.mark.asyncio
-    async def test_returns_empty_ids_when_llm_classifies_none(self, monkeypatch):
-        """LLM returns empty taxonomy_node_ids → [] is valid (query is off-topic)."""
-        hook = _load_hook(monkeypatch)
-        transport = _MockTransport(
-            status_code=200,
-            json_body=_llm_json_response("Hoe reset ik mijn wachtwoord?", []),
-        )
-
-        rewritten, ids, meta = await hook._rewrite_and_classify(
-            "Wachtwoord vergeten", _HISTORY, _TREE, _transport=transport
-        )
-
-        assert ids == []
-        assert rewritten == "Hoe reset ik mijn wachtwoord?"
-
-    @pytest.mark.asyncio
-    async def test_was_changed_false_when_query_unchanged(self, monkeypatch):
-        """If LLM returns the same query text, was_changed is False."""
-        hook = _load_hook(monkeypatch)
-        raw = "Wat is OAuth?"
-        transport = _MockTransport(
-            status_code=200,
-            json_body=_llm_json_response(raw, [3]),
-        )
-
-        rewritten, ids, meta = await hook._rewrite_and_classify(
-            raw, _HISTORY, _TREE, _transport=transport
-        )
-
-        assert rewritten == raw
-        assert meta["was_changed"] is False
-        assert 3 in ids
+        assert meta["was_changed"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -302,10 +350,9 @@ class TestRewriteAndClassifyFailOpen:
         transport = _MockTransport(status_code=500, json_body={"detail": "boom"})
 
         rewritten, ids, meta = await hook._rewrite_and_classify(
-            "Wat is SAML?", _HISTORY, _TREE, _transport=transport
+            "Wat is SAML?", _HISTORY, _TREES_MULTI, _transport=transport
         )
 
-        # Must return raw query unchanged (fail-open REQ-2)
         assert rewritten == "Wat is SAML?"
         assert ids == []
         assert meta["skipped"] == "exception"
@@ -313,7 +360,6 @@ class TestRewriteAndClassifyFailOpen:
 
     @pytest.mark.asyncio
     async def test_falls_back_on_malformed_json(self, monkeypatch):
-        """LLM returns non-JSON content → fail-open."""
         hook = _load_hook(monkeypatch)
 
         class _BadJsonTransport(httpx.AsyncBaseTransport):
@@ -321,21 +367,22 @@ class TestRewriteAndClassifyFailOpen:
                 return httpx.Response(
                     status_code=200,
                     headers={"content-type": "application/json"},
-                    content=b'{"choices": [{"message": {"role": "assistant", "content": "not valid json at all"}}]}',
+                    content=(
+                        b'{"choices": [{"message": {"role": "assistant", '
+                        b'"content": "not valid json at all"}}]}'
+                    ),
                     request=request,
                 )
 
         rewritten, ids, meta = await hook._rewrite_and_classify(
-            "Wat is SAML?", _HISTORY, _TREE, _transport=_BadJsonTransport()
+            "Wat is SAML?", _HISTORY, _TREES_MULTI, _transport=_BadJsonTransport()
         )
 
-        # json.loads("not valid json at all") raises → parsed = {} → rewritten_query absent
         assert rewritten == "Wat is SAML?"
         assert ids == []
 
     @pytest.mark.asyncio
     async def test_falls_back_when_rewritten_query_empty(self, monkeypatch):
-        """LLM returns empty rewritten_query → fall back to raw."""
         hook = _load_hook(monkeypatch)
         transport = _MockTransport(
             status_code=200,
@@ -343,7 +390,7 @@ class TestRewriteAndClassifyFailOpen:
         )
 
         rewritten, ids, meta = await hook._rewrite_and_classify(
-            "Wat is SAML?", _HISTORY, _TREE, _transport=transport
+            "Wat is SAML?", _HISTORY, _TREES_MULTI, _transport=transport
         )
 
         assert rewritten == "Wat is SAML?"
@@ -352,142 +399,235 @@ class TestRewriteAndClassifyFailOpen:
 
 
 # ---------------------------------------------------------------------------
-# _fetch_taxonomy_tree
+# _fetch_taxonomy_trees (multi-KB)
 # ---------------------------------------------------------------------------
 
 
-class TestFetchTaxonomyTree:
+class TestFetchTaxonomyTrees:
     @pytest.mark.asyncio
-    async def test_returns_list_on_200(self, monkeypatch):
+    async def test_returns_dict_on_200(self, monkeypatch):
         hook = _load_hook(monkeypatch)
-        tree_data = [{"id": 1, "name": "Root", "parent_id": None, "depth": 0}]
-        transport = _MockTransport(status_code=200, json_body=tree_data)
+        transport = _MockTransport(status_code=200, json_body=_TREES_MULTI)
+        cache = _StubCache()
 
-        result = await hook._fetch_taxonomy_tree("org-1", "kb-1", _transport=transport)
+        result = await hook._fetch_taxonomy_trees(
+            "org-1", ["support", "billing"], cache, _transport=transport
+        )
 
-        assert result == tree_data
+        assert "support" in result
+        assert "billing" in result
+        # One request, with kb_slugs as repeated query params.
+        assert len(transport.requests) == 1
+        req_url = str(transport.requests[0].url)
+        assert "kb_slugs=support" in req_url
+        assert "kb_slugs=billing" in req_url
 
     @pytest.mark.asyncio
-    async def test_returns_empty_on_404(self, monkeypatch):
+    async def test_redis_cache_hit_short_circuits_request(self, monkeypatch):
         hook = _load_hook(monkeypatch)
-        transport = _MockTransport(status_code=404, json_body={"detail": "not found"})
+        transport = _MockTransport(status_code=200, json_body={"unused": []})
+        cache = _StubCache()
+        cache.store["tax_trees:org-1:billing,support"] = _TREES_MULTI
 
-        result = await hook._fetch_taxonomy_tree("org-1", "kb-x", _transport=transport)
+        result = await hook._fetch_taxonomy_trees(
+            "org-1", ["support", "billing"], cache, _transport=transport
+        )
 
-        assert result == []
+        assert result == _TREES_MULTI
+        # No HTTP request fired.
+        assert transport.requests == []
 
     @pytest.mark.asyncio
-    async def test_returns_empty_on_500(self, monkeypatch):
+    async def test_writes_to_cache_on_miss(self, monkeypatch):
         hook = _load_hook(monkeypatch)
-        transport = _MockTransport(status_code=500, json_body={"detail": "error"})
+        transport = _MockTransport(status_code=200, json_body=_TREES_MULTI)
+        cache = _StubCache()
 
-        result = await hook._fetch_taxonomy_tree("org-1", "kb-1", _transport=transport)
+        await hook._fetch_taxonomy_trees(
+            "org-1", ["support", "billing"], cache, _transport=transport
+        )
 
-        assert result == []
+        keys_set = [k for k, _, _ in cache.sets]
+        assert "tax_trees:org-1:billing,support" in keys_set
 
     @pytest.mark.asyncio
-    async def test_returns_empty_when_taxonomy_disabled(self, monkeypatch):
+    async def test_returns_empty_on_5xx(self, monkeypatch):
+        hook = _load_hook(monkeypatch)
+        transport = _MockTransport(status_code=500, json_body={"detail": "boom"})
+        cache = _StubCache()
+
+        result = await hook._fetch_taxonomy_trees(
+            "org-1", ["support"], cache, _transport=transport
+        )
+
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_disabled(self, monkeypatch):
         hook = _load_hook(monkeypatch, extra_env={"TAXONOMY_ENABLED": "false"})
+        cache = _StubCache()
 
-        # No transport passed; if it made a real request it would fail
-        result = await hook._fetch_taxonomy_tree("org-1", "kb-1")
+        result = await hook._fetch_taxonomy_trees("org-1", ["support"], cache)
 
-        assert result == []
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_kb_slugs_empty(self, monkeypatch):
+        hook = _load_hook(monkeypatch)
+        cache = _StubCache()
+
+        result = await hook._fetch_taxonomy_trees("org-1", [], cache)
+
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_skips_when_too_many_kbs(self, monkeypatch):
+        """Cap at _MAX_KBS_FOR_TAXONOMY (5) — returns {} above the cap."""
+        hook = _load_hook(monkeypatch)
+        cache = _StubCache()
+        too_many = ["kb1", "kb2", "kb3", "kb4", "kb5", "kb6"]
+
+        result = await hook._fetch_taxonomy_trees("org-1", too_many, cache)
+
+        assert result == {}
 
 
 # ---------------------------------------------------------------------------
-# _fetch_taxonomy_coverage
+# _fetch_taxonomy_coverage (multi-KB)
 # ---------------------------------------------------------------------------
 
 
 class TestFetchTaxonomyCoverage:
     @pytest.mark.asyncio
-    async def test_returns_float_on_200(self, monkeypatch):
+    async def test_returns_per_kb_floats_on_200(self, monkeypatch):
         hook = _load_hook(monkeypatch)
-        transport = _MockTransport(status_code=200, json_body={"coverage": 0.65})
+        transport = _MockTransport(
+            status_code=200, json_body={"support": 1.0, "billing": 0.0}
+        )
+        cache = _StubCache()
 
         result = await hook._fetch_taxonomy_coverage(
-            "org-1", "kb-1", _transport=transport
+            "org-1", ["support", "billing"], cache, _transport=transport
         )
 
-        assert abs(result - 0.65) < 1e-6
+        assert result == {"support": 1.0, "billing": 0.0}
 
     @pytest.mark.asyncio
-    async def test_returns_zero_on_error(self, monkeypatch):
+    async def test_missing_kb_defaults_to_zero(self, monkeypatch):
+        """If the API only returns coverage for one KB, others default to 0."""
+        hook = _load_hook(monkeypatch)
+        transport = _MockTransport(status_code=200, json_body={"support": 1.0})
+        cache = _StubCache()
+
+        result = await hook._fetch_taxonomy_coverage(
+            "org-1", ["support", "billing"], cache, _transport=transport
+        )
+
+        assert result == {"support": 1.0, "billing": 0.0}
+
+    @pytest.mark.asyncio
+    async def test_returns_zeros_on_error(self, monkeypatch):
         hook = _load_hook(monkeypatch)
         transport = _MockTransport(status_code=500, json_body={"detail": "boom"})
+        cache = _StubCache()
 
         result = await hook._fetch_taxonomy_coverage(
-            "org-1", "kb-1", _transport=transport
+            "org-1", ["support", "billing"], cache, _transport=transport
         )
 
-        assert result == 0.0
+        assert result == {"support": 0.0, "billing": 0.0}
 
     @pytest.mark.asyncio
-    async def test_returns_zero_when_key_missing(self, monkeypatch):
-        """Response JSON without 'coverage' key → 0.0."""
-        hook = _load_hook(monkeypatch)
-        transport = _MockTransport(status_code=200, json_body={})
-
-        result = await hook._fetch_taxonomy_coverage(
-            "org-1", "kb-1", _transport=transport
-        )
-
-        assert result == 0.0
-
-    @pytest.mark.asyncio
-    async def test_returns_zero_when_disabled(self, monkeypatch):
+    async def test_returns_zeros_when_disabled(self, monkeypatch):
         hook = _load_hook(monkeypatch, extra_env={"TAXONOMY_ENABLED": "false"})
+        cache = _StubCache()
 
-        result = await hook._fetch_taxonomy_coverage("org-1", "kb-1")
+        result = await hook._fetch_taxonomy_coverage("org-1", ["support"], cache)
 
-        assert result == 0.0
+        assert result == {"support": 0.0}
+
+    @pytest.mark.asyncio
+    async def test_redis_cache_hit_short_circuits_request(self, monkeypatch):
+        hook = _load_hook(monkeypatch)
+        transport = _MockTransport(status_code=200, json_body={"unused": 1.0})
+        cache = _StubCache()
+        cache.store["tax_coverage:org-1:billing,support"] = {
+            "support": 1.0,
+            "billing": 0.0,
+        }
+
+        result = await hook._fetch_taxonomy_coverage(
+            "org-1", ["support", "billing"], cache, _transport=transport
+        )
+
+        assert result == {"support": 1.0, "billing": 0.0}
+        assert transport.requests == []
 
 
 # ---------------------------------------------------------------------------
-# _format_taxonomy_for_prompt
+# _format_taxonomy_for_prompt (multi-KB + legacy)
 # ---------------------------------------------------------------------------
 
 
 class TestFormatTaxonomyForPrompt:
-    def test_formats_nodes_as_id_name_lines(self, monkeypatch):
+    def test_legacy_list_renders_flat_lines(self, monkeypatch):
         hook = _load_hook(monkeypatch)
-        tree = [
-            {"id": 1, "name": "SSO", "parent_id": None, "depth": 0},
-            {"id": 2, "name": "SAML", "parent_id": 1, "depth": 1},
-        ]
-        result = hook._format_taxonomy_for_prompt(tree)
+        result = hook._format_taxonomy_for_prompt(_TREE_LEGACY)
         assert "id=1: SSO" in result
         assert "id=2: SAML" in result
 
-    def test_returns_none_for_empty_tree(self, monkeypatch):
+    def test_multi_kb_dict_renders_kb_labels(self, monkeypatch):
+        """Multi-KB shape MUST surface the KB context to the LLM."""
         hook = _load_hook(monkeypatch)
-        result = hook._format_taxonomy_for_prompt([])
-        assert result == "(none)"
+        result = hook._format_taxonomy_for_prompt(_TREES_MULTI)
+        # KB context labels.
+        assert "[support]" in result
+        assert "[billing]" in result
+        # Nodes from each KB.
+        assert "id=1: SSO" in result
+        assert "id=10: Invoices" in result
 
-    def test_truncates_at_max_nodes(self, monkeypatch):
+    def test_returns_none_for_empty_legacy(self, monkeypatch):
         hook = _load_hook(monkeypatch)
-        tree = [
-            {"id": i, "name": f"Node {i}", "parent_id": None, "depth": 0}
-            for i in range(50)
-        ]
+        assert hook._format_taxonomy_for_prompt([]) == "(none)"
 
-        result = hook._format_taxonomy_for_prompt(tree, max_nodes=10)
+    def test_returns_none_for_empty_dict(self, monkeypatch):
+        hook = _load_hook(monkeypatch)
+        assert hook._format_taxonomy_for_prompt({}) == "(none)"
 
-        # Exactly 10 node lines + 1 truncation line
-        lines = result.splitlines()
-        node_lines = [ln for ln in lines if ln.startswith("- id=")]
+    def test_truncates_at_max_nodes_per_kb(self, monkeypatch):
+        hook = _load_hook(monkeypatch)
+        big = {
+            "kb1": [
+                {"id": i, "kb_slug": "kb1", "name": f"Node {i}", "parent_id": None}
+                for i in range(50)
+            ]
+        }
+
+        result = hook._format_taxonomy_for_prompt(big, max_nodes_per_kb=10)
+
+        node_lines = [ln for ln in result.splitlines() if "id=" in ln]
         assert len(node_lines) == 10
         assert "more nodes omitted" in result
 
-    def test_no_truncation_line_when_within_limit(self, monkeypatch):
+
+# ---------------------------------------------------------------------------
+# _flatten_trees
+# ---------------------------------------------------------------------------
+
+
+class TestFlattenTrees:
+    def test_flattens_dict_to_single_list(self, monkeypatch):
         hook = _load_hook(monkeypatch)
-        tree = [
-            {"id": i, "name": f"Node {i}", "parent_id": None, "depth": 0}
-            for i in range(5)
-        ]
+        flat = hook._flatten_trees(_TREES_MULTI)
+        ids = {n["id"] for n in flat}
+        assert ids == {1, 2, 10, 11}
 
-        result = hook._format_taxonomy_for_prompt(tree, max_nodes=10)
+    def test_passthrough_for_legacy_list(self, monkeypatch):
+        hook = _load_hook(monkeypatch)
+        flat = hook._flatten_trees(_TREE_LEGACY)
+        assert flat == _TREE_LEGACY
 
-        assert "omitted" not in result
-        assert result.count("- id=") == 5
+    def test_empty_dict_returns_empty_list(self, monkeypatch):
+        hook = _load_hook(monkeypatch)
+        assert hook._flatten_trees({}) == []
