@@ -93,6 +93,21 @@ def test_missing_portal_caller_secret_env_rejected(
     assert "PORTAL_CALLER_SECRET" in str(exc_info.value)
 
 
-def test_env_state_clean_after_module(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Conservative: monkeypatch undoes everything via fixture teardown."""
-    assert os.environ.get("PORTAL_CALLER_SECRET") is None or os.environ.get("PORTAL_CALLER_SECRET") != ""
+def test_env_state_clean_after_monkeypatch_teardown(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify pytest's monkeypatch teardown removed env mutations from prior tests.
+
+    Pre-fix the assertion was `X is None or X != ""` — logically equivalent to
+    `X != ""`, which is True for any non-empty value AND True for None. A real
+    env-leak (PORTAL_CALLER_SECRET inherited from another test's setenv that
+    bypassed monkeypatch) would still produce X != "" → assertion still passes.
+    The test was a tautology. (Audit 2026-05-05 finding 1.)
+
+    Real isolation check: assert the env var is either entirely absent OR
+    matches what conftest seeds at module-load time (if any). In our setup
+    conftest.py does NOT seed PORTAL_CALLER_SECRET — only the in-test
+    monkeypatch fixtures do. So a clean teardown means absent.
+    """
+    assert os.environ.get("PORTAL_CALLER_SECRET") is None, (
+        "PORTAL_CALLER_SECRET leaked across tests — monkeypatch teardown failed "
+        "or some fixture bypassed monkeypatch with os.environ direct mutation."
+    )
