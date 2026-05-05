@@ -10,17 +10,19 @@
 
 ## Won't-fix in original PRs (cosmetic / non-blocking)
 
+> **Update 2026-05-05 (later in session)**: 5 items previously in this
+> section were actually addressed in follow-up commits — moved to the
+> "Fixed in-session" table below. The `Why not fixed in PR` column for
+> those items would now read "fixed via per-PR amend; see Fixed table".
+
+Items that genuinely will not be addressed in the original PRs:
+
 | Audit ref | Item | Why not fixed in PR | Follow-up |
 |---|---|---|---|
-| #1 F5 | connector test `importlib.reload` not isolation-safe | xdist-style nit; tests are not run in parallel mode in CI today | Bundle into a future "test-isolation hardening" SPEC |
-| #1 F6 | knowledge-ingest `taxonomy_auto_categorise` test asserts on error-message text | brittle if InternalSecretMiddleware error-text reformats; LOW value to fix in isolation | Bundle |
-| #1 F9 | `test_valid_env_constructs_settings` is low-marginal-value | adds defence-in-depth without proving any specific validator | Leave; remove only if test count budget tightens |
-| #1 F10 | ast-grep CI step skips silently if `uvx` is absent | works on developer machines; CI containers have `uvx` available | Add `uvx` install to ast-grep CI step in a CI-hardening PR |
 | #2 MED | knowledge-ingest + scribe-api push `:sha` tag on every PR build | operational concern (GHCR storage growth); not a security issue | Separate **SPEC-CI-GHCR-RETENTION-001** if storage cost climbs |
-| #3 MED 8 | `_FakeSession` regex SQL parsing fragile | SQLAlchemy compile-format dialect-sensitive; could silently mismatch | Migrate to direct `Mock(execute)` counter pattern in test-quality SPEC |
-| #3 MED 10 | G3 idempotency test uses 2 separate mock pools | bypasses real "DELETE on empty set = 0" invariant; works as smoke-test | Live-PG fixture in CI (separate **SPEC-CI-PG-FIXTURE-001**) |
+| #3 MED 8 | `_FakeSession` regex SQL parsing fragile | refactor scope > audit-pass; needs SQLAlchemy statement-inspection rewrite | Separate PR — SPEC-TEST-QUALITY-001 deferred |
+| #3 MED 10 | G3 idempotency test uses 2 separate mock pools | bypasses real "DELETE on empty set = 0" invariant; works as smoke-test | Live-PG fixture in CI — **SPEC-CI-PG-FIXTURE-001** stub PR #356 |
 | #3 MED 11 | Qdrant klai_focus filter key claim unverified in CI | live-prod-probe done 2026-05-05 (`tenant_id` confirmed); future drift not auto-detected | Same SPEC-CI-PG-FIXTURE-001 — extend with Qdrant integration |
-| #4 MED A2 | `setup_logging` default param drift between mailer wrapper and shared lib | wrapper makes mailer-side ergonomic; drift only confuses future adopters | Document explicitly in `klai-libs/log-utils/README.md` |
 | #4 MED B1 | `RequestContextMiddleware` not E2E-tested in mailer | shared-lib tests cover the unit; mailer integration would duplicate | Bundle into shared-lib-adoption SPEC |
 | #4 MED D1 | Dockerfile trailing-slash cosmetic conflict #319 ↔ #335 | merge resolution decides; both forms work | Resolve at merge time (whoever lands second) |
 | #4 LOW B2 | `test_notify_replay` redundant patch after pop+reimport | works; cosmetic redundancy | Leave |
@@ -55,6 +57,11 @@ For traceability — these items were closed by per-PR amendments during the
 | #4 HIGH C4 | rate_limit.py still used redis_asyncio.from_url (pitfall class) | #335 | `7fc0ae8f` |
 | #4 HIGH A1 | klai-log-utils missing from #335 [project.dependencies] | #335 | `7fc0ae8f` |
 | #4 MED E1 | portal_client.py inline guards not documented vs validator | #326 | `c208c678` |
+| #1 F5 | connector test `importlib.reload` not isolation-safe | #324 | `9dd66d09` (later in session) |
+| #1 F6 | knowledge-ingest 401 detail-string brittle | #355 | `86ce8924` (documented trade-off + cross-ref) |
+| #1 F9 | `test_valid_env_constructs_settings` low marginal value | #323 | `73fd28c9` (added canary-vs-conftest-drift docstring) |
+| #1 F10 | ast-grep CI step would skip silently | #356 | `8ee2209f` (new `rules-tests.yml` workflow with uv install) |
+| #4 MED A2 | `setup_logging` default param drift wrapper-vs-shared-lib | #319 | `81f30abb` (verified-from-source README in same SPEC) |
 
 ---
 
