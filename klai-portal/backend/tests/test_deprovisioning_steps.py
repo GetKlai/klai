@@ -471,7 +471,7 @@ class TestDeleteFalkordbGraph:
             mock_settings.knowledge_ingest_secret = "secret"
             with patch("app.trace.get_trace_headers", return_value={}):
                 with respx_router(base_url="http://knowledge-ingest:8000") as router:
-                    router.post("/internal/v1/orgs/42/wipe-graph").mock(
+                    router.post("/internal/v1/orgs/zitadel-org-abc/wipe-graph").mock(
                         return_value=httpx.Response(200, json={"nodes_deleted": 5, "status": "ok"})
                     )
                     from app.services.provisioning.deprovisioning_steps import _delete_falkordb_graph
@@ -488,7 +488,7 @@ class TestDeleteFalkordbGraph:
             mock_settings.knowledge_ingest_secret = "secret"
             with patch("app.trace.get_trace_headers", return_value={}):
                 with respx_router(base_url="http://knowledge-ingest:8000") as router:
-                    router.post("/internal/v1/orgs/42/wipe-graph").mock(return_value=httpx.Response(404))
+                    router.post("/internal/v1/orgs/zitadel-org-abc/wipe-graph").mock(return_value=httpx.Response(404))
                     from app.services.provisioning.deprovisioning_steps import _delete_falkordb_graph
 
                     await _delete_falkordb_graph(state)
@@ -521,7 +521,7 @@ class TestWipeKnowledgePostgres:
             mock_settings.knowledge_ingest_secret = "secret"
             with patch("app.trace.get_trace_headers", return_value={}):
                 with respx_router(base_url="http://knowledge-ingest:8000") as router:
-                    router.post("/internal/v1/orgs/42/wipe-postgres").mock(
+                    router.post("/internal/v1/orgs/zitadel-org-abc/wipe-postgres").mock(
                         return_value=httpx.Response(
                             200,
                             json={
@@ -548,7 +548,7 @@ class TestWipeKnowledgePostgres:
             mock_settings.knowledge_ingest_secret = "secret"
             with patch("app.trace.get_trace_headers", return_value={}):
                 with respx_router(base_url="http://knowledge-ingest:8000") as router:
-                    router.post("/internal/v1/orgs/42/wipe-postgres").mock(return_value=httpx.Response(404))
+                    router.post("/internal/v1/orgs/zitadel-org-abc/wipe-postgres").mock(return_value=httpx.Response(404))
                     from app.services.provisioning.deprovisioning_steps import _wipe_knowledge_postgres
 
                     await _wipe_knowledge_postgres(state)
@@ -574,7 +574,7 @@ class TestWipeKnowledgePostgres:
             mock_settings.knowledge_ingest_secret = "secret"
             with patch("app.trace.get_trace_headers", return_value={}):
                 with respx_router(base_url="http://knowledge-ingest:8000") as router:
-                    router.post("/internal/v1/orgs/42/wipe-postgres").mock(return_value=httpx.Response(500))
+                    router.post("/internal/v1/orgs/zitadel-org-abc/wipe-postgres").mock(return_value=httpx.Response(500))
                     from app.services.provisioning.deprovisioning_steps import _wipe_knowledge_postgres
 
                     with pytest.raises(httpx.HTTPStatusError):
@@ -597,7 +597,7 @@ class TestWipeKlaiConnectorState:
             mock_settings.klai_connector_secret = "connector-secret"
             with patch("app.trace.get_trace_headers", return_value={}):
                 with respx_router(base_url="http://klai-connector:8200") as router:
-                    router.post("/internal/v1/orgs/42/wipe-state").mock(
+                    router.post("/internal/v1/orgs/zitadel-org-abc/wipe-state").mock(
                         return_value=httpx.Response(200, json={"rows_deleted": 7, "status": "ok"})
                     )
                     from app.services.provisioning.deprovisioning_steps import _wipe_klai_connector_state
@@ -622,7 +622,7 @@ class TestWipeKlaiConnectorState:
             mock_settings.klai_connector_secret = "connector-secret-12345"
             with patch("app.trace.get_trace_headers", return_value={}):
                 with respx_router(base_url="http://klai-connector:8200") as router:
-                    router.post("/internal/v1/orgs/42/wipe-state").mock(side_effect=_capture)
+                    router.post("/internal/v1/orgs/zitadel-org-abc/wipe-state").mock(side_effect=_capture)
                     from app.services.provisioning.deprovisioning_steps import _wipe_klai_connector_state
 
                     await _wipe_klai_connector_state(state)
@@ -639,7 +639,7 @@ class TestWipeKlaiConnectorState:
             mock_settings.klai_connector_secret = "secret"
             with patch("app.trace.get_trace_headers", return_value={}):
                 with respx_router(base_url="http://klai-connector:8200") as router:
-                    router.post("/internal/v1/orgs/42/wipe-state").mock(return_value=httpx.Response(404))
+                    router.post("/internal/v1/orgs/zitadel-org-abc/wipe-state").mock(return_value=httpx.Response(404))
                     from app.services.provisioning.deprovisioning_steps import _wipe_klai_connector_state
 
                     await _wipe_klai_connector_state(state)

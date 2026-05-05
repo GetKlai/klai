@@ -232,7 +232,19 @@ async def _flush_redis_tenant_keys(state: _DeprovisionState) -> None:
 
 
 async def _delete_qdrant_points(state: _DeprovisionState) -> None:
-    """Delete all Qdrant points matching org_id={org_id} from shared collections.
+    """Delete all Qdrant points matching {payload_key}={zitadel_org_id} from shared collections.
+
+    Both Qdrant collections (klai_knowledge + klai_focus) store the Zitadel
+    resourceowner ID (string like "362757920133283846") in their per-point
+    payload, NOT the portal_orgs integer PK. Each collection uses a different
+    payload key — verified live 2026-05-05:
+      * klai_knowledge → payload key "org_id"      → value = Zitadel resourceowner
+      * klai_focus     → payload key "tenant_id"   → value = Zitadel resourceowner
+
+    Pre-fix every deprovisioning since SPEC-INFRA-TENANT-DELETE-001 landed
+    silently filtered with the int PK, matching zero points (a HIGH-severity
+    GDPR purge gap surfaced by audit 2026-05-05). Now uses
+    state.zitadel_org_id consistently with the writer-side IDs.
 
     # @MX:NOTE: idempotent — al-weg = geen exception. SPEC R3.
     """
@@ -264,7 +276,7 @@ async def _delete_qdrant_points(state: _DeprovisionState) -> None:
                         must=[
                             FieldCondition(
                                 key=filter_key,
-                                match=MatchValue(value=state.org_id),
+                                match=MatchValue(value=state.zitadel_org_id),
                             )
                         ]
                     ),
@@ -273,6 +285,7 @@ async def _delete_qdrant_points(state: _DeprovisionState) -> None:
                     "qdrant_points_deleted",
                     slug=state.slug,
                     org_id=state.org_id,
+                    zitadel_org_id=state.zitadel_org_id,
                     collection=collection,
                     filter_key=filter_key,
                 )
@@ -304,9 +317,18 @@ async def _delete_falkordb_graph(state: _DeprovisionState) -> None:
     from app.trace import get_trace_headers
 
     if not settings.knowledge_ingest_url:
-        logger.warning("falkordb_wipe_skipped_no_url", org_id=state.org_id, slug=state.slug)
+        logger.warning(
+            "falkordb_wipe_skipped_no_url",
+            org_id=state.org_id,
+            zitadel_org_id=state.zitadel_org_id,
+            slug=state.slug,
+        )
         return
 
+    # CRIT fix (audit 2026-05-05): FalkorDB writer (knowledge-ingest's Graphiti
+    # adapter) stores group_id as the Zitadel resourceowner ID. Passing
+    # state.org_id (portal_orgs int PK) here matched zero nodes — pre-existing
+    # bug since SPEC-INFRA-TENANT-DELETE-001 landed.
     async with httpx.AsyncClient(
         base_url=settings.knowledge_ingest_url,
         headers={
@@ -315,15 +337,21 @@ async def _delete_falkordb_graph(state: _DeprovisionState) -> None:
         },
         timeout=60.0,
     ) as client:
-        resp = await client.post(f"/internal/v1/orgs/{state.org_id}/wipe-graph")
+        resp = await client.post(f"/internal/v1/orgs/{state.zitadel_org_id}/wipe-graph")
         if resp.status_code == 404:
-            logger.info("falkordb_graph_already_absent", org_id=state.org_id, slug=state.slug)
+            logger.info(
+                "falkordb_graph_already_absent",
+                org_id=state.org_id,
+                zitadel_org_id=state.zitadel_org_id,
+                slug=state.slug,
+            )
             return
         resp.raise_for_status()
         data = resp.json()
         logger.info(
             "falkordb_graph_wiped",
             org_id=state.org_id,
+            zitadel_org_id=state.zitadel_org_id,
             slug=state.slug,
             nodes_deleted=data.get("nodes_deleted", 0),
         )
@@ -353,9 +381,18 @@ async def _wipe_knowledge_postgres(state: _DeprovisionState) -> None:
     from app.trace import get_trace_headers
 
     if not settings.knowledge_ingest_url:
-        logger.warning("knowledge_postgres_wipe_skipped_no_url", org_id=state.org_id, slug=state.slug)
+        logger.warning(
+            "knowledge_postgres_wipe_skipped_no_url",
+            org_id=state.org_id,
+            zitadel_org_id=state.zitadel_org_id,
+            slug=state.slug,
+        )
         return
 
+    # CRIT fix (audit 2026-05-05): knowledge.* tables store the Zitadel
+    # resourceowner ID in their org_id columns (verified live: values like
+    # "362757920133283846" not portal_orgs.id integer "1"). Pass
+    # state.zitadel_org_id so the WHERE clauses match.
     async with httpx.AsyncClient(
         base_url=settings.knowledge_ingest_url,
         headers={
@@ -364,7 +401,7 @@ async def _wipe_knowledge_postgres(state: _DeprovisionState) -> None:
         },
         timeout=60.0,
     ) as client:
-        resp = await client.post(f"/internal/v1/orgs/{state.org_id}/wipe-postgres")
+        resp = await client.post(f"/internal/v1/orgs/{state.zitadel_org_id}/wipe-postgres")
         if resp.status_code == 404:
             # Endpoint not deployed yet (rolling deploy ordering). Idempotent
             # safe-ish: rows persist until next deprovision retry, but the
@@ -373,15 +410,29 @@ async def _wipe_knowledge_postgres(state: _DeprovisionState) -> None:
             logger.warning(
                 "knowledge_postgres_wipe_endpoint_not_found",
                 org_id=state.org_id,
+                zitadel_org_id=state.zitadel_org_id,
                 slug=state.slug,
                 status=resp.status_code,
             )
             return
+        if resp.status_code >= 400:
+            # Surface body before raise_for_status so retry-failure root
+            # cause (auth misconfig, schema drift) is one VictoriaLogs query
+            # away, not buried in retry-exhausted exception.
+            logger.error(
+                "knowledge_postgres_wipe_endpoint_error",
+                org_id=state.org_id,
+                zitadel_org_id=state.zitadel_org_id,
+                slug=state.slug,
+                status=resp.status_code,
+                body=resp.text[:500],
+            )
         resp.raise_for_status()
         data = resp.json()
         logger.info(
             "knowledge_postgres_wiped",
             org_id=state.org_id,
+            zitadel_org_id=state.zitadel_org_id,
             slug=state.slug,
             rows_deleted=data.get("rows_deleted", {}),
         )
@@ -410,9 +461,17 @@ async def _wipe_klai_connector_state(state: _DeprovisionState) -> None:
     from app.trace import get_trace_headers
 
     if not settings.klai_connector_url:
-        logger.warning("klai_connector_state_wipe_skipped_no_url", org_id=state.org_id, slug=state.slug)
+        logger.warning(
+            "klai_connector_state_wipe_skipped_no_url",
+            org_id=state.org_id,
+            zitadel_org_id=state.zitadel_org_id,
+            slug=state.slug,
+        )
         return
 
+    # CRIT fix (audit 2026-05-05): connector.sync_runs.org_id stores the Zitadel
+    # resourceowner ID (VARCHAR(255) like "368884765035593759"), NOT the
+    # portal_orgs int PK. Same fix-shape as the qdrant + falkordb steps above.
     async with httpx.AsyncClient(
         base_url=settings.klai_connector_url,
         headers={
@@ -424,20 +483,31 @@ async def _wipe_klai_connector_state(state: _DeprovisionState) -> None:
         },
         timeout=60.0,
     ) as client:
-        resp = await client.post(f"/internal/v1/orgs/{state.org_id}/wipe-state")
+        resp = await client.post(f"/internal/v1/orgs/{state.zitadel_org_id}/wipe-state")
         if resp.status_code == 404:
             logger.warning(
                 "klai_connector_state_wipe_endpoint_not_found",
                 org_id=state.org_id,
+                zitadel_org_id=state.zitadel_org_id,
                 slug=state.slug,
                 status=resp.status_code,
             )
             return
+        if resp.status_code >= 400:
+            logger.error(
+                "klai_connector_state_wipe_endpoint_error",
+                org_id=state.org_id,
+                zitadel_org_id=state.zitadel_org_id,
+                slug=state.slug,
+                status=resp.status_code,
+                body=resp.text[:500],
+            )
         resp.raise_for_status()
         data = resp.json()
         logger.info(
             "klai_connector_state_wiped",
             org_id=state.org_id,
+            zitadel_org_id=state.zitadel_org_id,
             slug=state.slug,
             rows_deleted=data.get("rows_deleted", 0),
         )
