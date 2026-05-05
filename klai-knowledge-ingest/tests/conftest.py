@@ -13,6 +13,8 @@ import os
 
 os.environ.setdefault("KNOWLEDGE_INGEST_SECRET", "test-secret-value-123")
 os.environ.setdefault("PORTAL_INTERNAL_TOKEN", "test-portal-internal-token-456")  # SEC-014
+# SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-12 — gitea webhook HMAC secret.
+os.environ.setdefault("GITEA_WEBHOOK_SECRET", "test-gitea-webhook-secret-789")
 
 # Imports below need the env vars above — keep this order to allow the
 # module-level ``settings = Settings()`` call in ``knowledge_ingest.config``
