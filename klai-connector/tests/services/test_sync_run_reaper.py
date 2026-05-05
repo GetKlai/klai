@@ -78,7 +78,7 @@ def _make_reaper(
         result = MagicMock()
         result.scalars = MagicMock(return_value=MagicMock(all=lambda: candidate_rows))
         sess.execute = AsyncMock(return_value=result)
-        sess.get = AsyncMock(side_effect=lambda model, row_id: registry.get(row_id))
+        sess.get = AsyncMock(side_effect=lambda model, row_id, **kwargs: registry.get(row_id))
         sess.commit = AsyncMock()
         return sess
 

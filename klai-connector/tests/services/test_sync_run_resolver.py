@@ -71,13 +71,17 @@ def _make_resolver(
     finalized: dict = {}
 
     def _make_session_mock() -> MagicMock:
-        # The resolver calls session.get(SyncRun, id) inside _finalize.
+        # The resolver calls
+        # session.get(SyncRun, id, with_for_update=True) inside _finalize.
         # We use a closure over the row passed to .resolve() so the
         # finalize path mutates the same MagicMock the test inspects.
+        # **kwargs swallows ``with_for_update=True`` (and any future
+        # session.get options) so the lambda accepts the resolver's
+        # actual signature.
         sess = MagicMock()
         sess.__aenter__ = AsyncMock(return_value=sess)
         sess.__aexit__ = AsyncMock(return_value=False)
-        sess.get = AsyncMock(side_effect=lambda model, row_id: finalized.get(row_id))
+        sess.get = AsyncMock(side_effect=lambda model, row_id, **kwargs: finalized.get(row_id))
         sess.commit = AsyncMock()
         sess.refresh = AsyncMock()
         return sess
@@ -288,6 +292,28 @@ class TestResolveCache:
         await resolver.resolve(_row(remote_job_id="job-a"))
         await resolver.resolve(_row(remote_job_id="job-b"))
         assert crawl_client.crawl_sync_status.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_cache_gc_drops_stale_entries(self) -> None:
+        """A new write evicts cache entries older than the GC window so
+        the cache cannot grow unbounded across the process lifetime."""
+        from app.services.sync_run_resolver import _CACHE_GC_S
+        resolver, _, _, _ = _make_resolver(
+            status_responses=[
+                {"job_id": "old-job", "status": "running",
+                 "pages_done": 1, "pages_total": 10, "error": None},
+                {"job_id": "new-job", "status": "running",
+                 "pages_done": 2, "pages_total": 20, "error": None},
+            ],
+        )
+        await resolver.resolve(_row(remote_job_id="old-job"))
+        # Backdate the existing cache entry past the GC window.
+        old_entry = resolver._cache["old-job"]
+        old_entry.fetched_at = time.monotonic() - _CACHE_GC_S - 1.0
+        # A miss for "new-job" triggers the GC sweep before insertion.
+        await resolver.resolve(_row(remote_job_id="new-job"))
+        assert "old-job" not in resolver._cache
+        assert "new-job" in resolver._cache
 
 
 class TestResolveIdempotence:

@@ -44,11 +44,11 @@ export function SyncStatusBadge({
 }) {
   switch (status?.toUpperCase()) {
     case 'RUNNING': {
-      // Phase 1 (discovery) — total unknown. Resolver returned valid live
-      // payload but pages_total is null/0.
       if (liveResolutionFailed) {
         return <Badge variant="accent">{m.admin_connectors_status_running_unknown()}</Badge>
       }
+      // Phase 2 (processing) — pages_total known and > 0. Crawler has
+      // finished discovery and is iterating per-page ingest.
       if (pagesTotal && pagesTotal > 0 && pagesDone !== null && pagesDone !== undefined) {
         return (
           <Badge variant="accent">
@@ -59,7 +59,17 @@ export function SyncStatusBadge({
           </Badge>
         )
       }
-      if (pagesDone !== null && pagesDone !== undefined && pagesDone === 0 && pagesTotal === null) {
+      // Phase 1 (discovery) — knowledge.crawl_jobs.pages_total defaults to 0
+      // and is updated to len(results) only AFTER crawl_site() returns.
+      // While the row carries pages_total = 0 and pages_done = 0 we know
+      // the crawl is still gathering URLs, not iterating per-page.
+      // Treat the live live-progress payload as "phase 1" iff at least one
+      // of pages_done / pages_total has been observed (so we don't
+      // misrender a non-crawler RUNNING run that has no live payload).
+      if (
+        (pagesDone !== null && pagesDone !== undefined)
+        || (pagesTotal !== null && pagesTotal !== undefined)
+      ) {
         return <Badge variant="accent">{m.admin_connectors_status_running_collecting()}</Badge>
       }
       return <Badge variant="accent">{m.admin_connectors_status_running()}</Badge>

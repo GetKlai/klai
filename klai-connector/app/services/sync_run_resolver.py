@@ -44,6 +44,12 @@ logger = get_logger(__name__)
 # within one cache window.
 _CACHE_TTL_S: float = 30.0
 
+# Cache GC threshold — entries older than this are dropped on the next
+# write. 10x TTL keeps fresh entries safe from premature eviction while
+# preventing unbounded growth from terminalised runs whose entries the
+# resolver never reads again.
+_CACHE_GC_S: float = _CACHE_TTL_S * 10
+
 
 @dataclass(slots=True)
 class _CacheEntry:
@@ -153,6 +159,12 @@ class SyncRunResolver:
         On cache hit returns the cached payload. On expiry/miss calls
         knowledge-ingest and refreshes. Exceptions propagate so the
         caller can render a degraded snapshot.
+
+        Cache size is bounded by sweeping entries older than
+        ``_CACHE_GC_S`` on every miss. Without this the cache
+        accumulates entries for terminalised runs that the resolver
+        never reads again — small per entry but unbounded over the
+        process lifetime of a long-running connector container.
         """
         now = time.monotonic()
         entry = self._cache.get(remote_job_id)
@@ -160,8 +172,20 @@ class SyncRunResolver:
             return entry.payload
 
         payload = await self._crawl_sync_client.crawl_sync_status(remote_job_id)
+        self._gc_cache(now=now)
         self._cache[remote_job_id] = _CacheEntry(fetched_at=now, payload=payload)
         return payload
+
+    def _gc_cache(self, *, now: float) -> None:
+        """Drop cache entries older than ``_CACHE_GC_S`` seconds.
+
+        Runs synchronously inside ``_fetch_status`` (the only writer)
+        so no separate task or lock is needed. Worst case: one O(n)
+        walk per upstream call. n is bounded by activity in the last
+        GC window.
+        """
+        cutoff = now - _CACHE_GC_S
+        self._cache = {k: v for k, v in self._cache.items() if v.fetched_at >= cutoff}
 
     async def _finalize(self, sync_run: SyncRun, live: dict[str, Any]) -> SyncRun:
         """Write terminal state to the local row and notify portal.
@@ -197,7 +221,14 @@ class SyncRunResolver:
 
         completed_at = datetime.now(UTC)
         async with self._session_maker() as session:
-            row = await session.get(SyncRun, sync_run.id)
+            # SELECT ... FOR UPDATE serialises concurrent finalisers on
+            # the same sync_run. Two readers that both see status=RUNNING
+            # would otherwise both commit a terminal transition AND both
+            # call ``report_sync_status`` — at-most-twice instead of the
+            # SPEC's exactly-once contract. with_for_update blocks the
+            # second reader until the first commits; the second then
+            # observes status != RUNNING and short-circuits below.
+            row = await session.get(SyncRun, sync_run.id, with_for_update=True)
             if row is None:
                 logger.warning(
                     "sync_run_resolver_row_disappeared",
@@ -221,7 +252,11 @@ class SyncRunResolver:
                 "remote_status": live_status,
             }
             await session.commit()
-            await session.refresh(row)
+            # No session.refresh after commit — expire_on_commit=False
+            # keeps the in-memory attribute writes intact, and a refresh
+            # would open a fresh implicit transaction that could trip
+            # RLS guards on category-D tables (see klai-portal
+            # portal-backend.md "Post-commit db.refresh on RLS tables").
 
         # Best-effort callback to portal so the connector's last_sync_*
         # fields update. SPEC says this happens exactly once per run; the
