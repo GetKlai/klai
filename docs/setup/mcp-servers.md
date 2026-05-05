@@ -54,8 +54,14 @@ It is **cross-platform** — all platform-specific settings live in local config
     },
     "playwright": {
       "type": "stdio",
+      "command": "node",
+      "args": [".claude/scripts/playwright-launcher.mjs"],
+      "env": {}
+    },
+    "playwright-isolated": {
+      "type": "stdio",
       "command": "npx",
-      "args": ["@playwright/mcp@0.0.70", "--config", ".claude/playwright-config-win.json"],
+      "args": ["@playwright/mcp@0.0.70", "--browser", "chromium", "--isolated", "--headless"],
       "env": {}
     },
     "codeindex": {
@@ -90,81 +96,66 @@ It is **cross-platform** — all platform-specific settings live in local config
 |--------|---------|
 | **serena** | Semantic code navigation (symbol search, references, go-to-definition) and persistent project memories. Uses LSP for Python and TypeScript. |
 | **context7** | Up-to-date library documentation (React, FastAPI, Next.js, etc.). Prefer over web search for API docs. |
-| **playwright** | Browser automation for E2E spot-checks and visual verification. Uses a persistent browser profile so login sessions survive across Claude Code restarts. |
+| **playwright** | Browser automation for E2E spot-checks and visual verification. Persistent Chromium profile so login state survives Claude Code restarts. Single-instance — for parallel sessions, use `playwright-isolated`. |
+| **playwright-isolated** | Ephemeral headless Chromium for CSS debugging and parallel browser work. No login state, no profile lock conflicts. |
 | **codeindex** | Graph-powered code intelligence — call graphs, impact analysis, semantic search, communities, and enrichment queries (git hotspots, SPEC links, test coverage, PageRank). |
 | **grafana** | Read-only access to Grafana dashboards, Prometheus/VictoriaMetrics queries, and alerts. Cannot query VictoriaLogs — use the `victorialogs` MCP for log queries instead. |
 | **victorialogs** | Production log queries via LogsQL against VictoriaLogs. Requires SSH tunnel (`./scripts/victorialogs-tunnel.sh`) and `VICTORIALOGS_BASIC_AUTH_B64` env var. Preferred over `docker logs` for investigating issues. |
 
-## 3. Set up Playwright (per machine)
+## 3. Set up Playwright
 
-Playwright uses **platform-specific config files** committed to git. The `.mcp.json` points to
-the Windows config by default. Mac developers update the `--config` arg to point to the Mac file.
+No per-machine setup. The `playwright` server in `.mcp.json` invokes
+`.claude/scripts/playwright-launcher.mjs` (committed, cross-platform). The launcher:
 
-| Platform | Config file |
-|----------|-------------|
-| **Windows** | `.claude/playwright-config-win.json` |
-| **macOS** | `.claude/playwright-config-mac.json` |
+- Uses Playwright's bundled Chromium — no Brave, Chrome, or other locally-installed browser
+- Passes `--user-data-dir ~/.claude/mcp-chromium-profile` as a CLI flag (cross-platform path
+  via `os.homedir()`, no per-developer edits needed)
+- Pins `@playwright/mcp@0.0.70`
 
-Update `.mcp.json` to point to the right file for your platform:
+### Why a launcher script and not a JSON `--config` file
 
-```json
-"args": ["@playwright/mcp@0.0.70", "--config", ".claude/playwright-config-mac.json"]
-```
+[microsoft/playwright-mcp#1446](https://github.com/microsoft/playwright-mcp/issues/1446):
+on `@playwright/mcp@0.0.70`, the `userDataDir` set inside a JSON `--config` file is silently
+ignored — the browser falls back to an in-memory profile and login state is lost on every
+restart. Passing `--user-data-dir` as a CLI flag works correctly. The launcher is the
+cross-platform vehicle for that flag.
 
-### Config files
+### Single-instance limitation (and the workaround)
 
-**Windows** (`.claude/playwright-config-win.json`):
+A persistent Chromium profile can only be opened by **one** browser instance at a time. If a
+second concurrent Claude Code session tries to launch the same `playwright` MCP server, the
+second one fails with `Browser is already in use`.
 
-```json
-{
-  "browser": {
-    "browserName": "chromium",
-    "userDataDir": "C:\\Users\\yourname\\.claude\\mcp-brave-profile"
-  }
-}
-```
+Workaround in this repo: a **second** MCP server is wired in `.mcp.json` called
+`playwright-isolated`. It uses `--isolated --headless` (ephemeral, no persistent profile) and
+is meant for parallel sessions where login state is not required (CSS debugging, visual
+verification). Use the `playwright` server for anything that needs an authenticated session,
+and `playwright-isolated` everywhere else.
 
-**macOS** (`.claude/playwright-config-mac.json`):
-
-```json
-{
-  "browser": {
-    "browserName": "chromium",
-    "userDataDir": "/Users/yourname/.claude/mcp-brave-profile"
-  }
-}
-```
-
-Update `yourname` to match your local username.
-
-### How it works: bundled Chromium + userDataDir
-
-Playwright uses its **bundled Chromium** (not Brave or Chrome). This avoids a Windows limitation
-where Brave/Chrome cannot run two simultaneous instances with different user profiles — the second
-instance becomes a background process with no visible window.
-
-Login state persists across Claude Code sessions via `userDataDir` — a directory on disk where
-Chromium stores cookies, localStorage, and session data. The profile accumulates logins over time;
-you only need to log in once per site.
+For the full failure-mode cycle and anti-patterns to avoid, see
+`playwright-mcp-config-cycle (HIGH)` in `.claude/rules/klai/pitfalls/process-rules.md`.
 
 ### First-time login
 
-On first use, Playwright opens Chromium at the login page. Log in manually in that window.
-Credentials are saved to `userDataDir` automatically. Subsequent sessions start logged in.
+On first invocation, the launcher opens Chromium at whatever URL you navigate to. Log in
+manually in that window. Cookies and localStorage are written to
+`~/.claude/mcp-chromium-profile/` automatically. Subsequent sessions start logged in.
 
-### Starting from scratch
+### Starting from scratch (logged-out state)
 
-Delete the profile directory to reset to a logged-out state:
+Delete the profile directory:
 
-```bash
-# Windows (Git Bash)
-rm -rf ~/.claude/mcp-brave-profile
-
-# macOS / Linux
-rm -rf ~/.claude/mcp-brave-profile
+```powershell
+# Windows (PowerShell)
+Remove-Item -Recurse -Force "$env:USERPROFILE\.claude\mcp-chromium-profile"
 ```
 
-Then restart Claude Code. Log in again on first use.
+```bash
+# macOS / Linux
+rm -rf ~/.claude/mcp-chromium-profile
+```
+
+Restart Claude Code. Log in again on first use.
 
 For session management rules (when to open/close the browser), see
 `.claude/rules/klai/lang/testing.md`.
@@ -334,9 +325,10 @@ uvx mcp-grafana --help
    on every startup → MCP timeout → Serena never available. Fix: use `"command": "serena"`.
 3. **MCP timeout** — Serena takes too long to index. Check `.serena/project.yml` for overly broad
    file patterns.
-4. **Playwright config missing** — config file not found. Fix: verify `.claude/playwright-config-win.json` or `.claude/playwright-config-mac.json` exists (both are committed to git). Check `--config` arg in `.mcp.json` points to the right platform file.
-5. **Playwright browser runs as background process, no visible window** — Brave/Chrome is already running. Playwright cannot launch a second instance of the same browser with a different profile on Windows. Fix: use bundled `"browserName": "chromium"` (no `executablePath`).
-6. **Playwright browser window not visible after login** — `userDataDir` path incorrect or doesn't exist yet. Fix: verify the path in the config file matches your username and that the parent directory (`~/.claude/`) exists.
+4. **Playwright launcher fails to start** — `node` not on PATH or the launcher script missing. Fix: verify `node --version` works in your shell and `.claude/scripts/playwright-launcher.mjs` exists. Restart Claude Code.
+5. **Playwright login does not persist across restarts** — `userDataDir` was silently ignored (microsoft/playwright-mcp#1446). Fix: confirm `.mcp.json` runs the launcher (`"command": "node", "args": [".claude/scripts/playwright-launcher.mjs"]`) and not `--config <some.json>`. The launcher uses CLI flags which work correctly.
+6. **Playwright fails with `Browser is already in use`** — a second Claude Code session is trying to use the persistent profile. Fix: in the second session, use the `playwright-isolated` MCP server instead. If no other session is running, a previous Chromium process crashed and is holding the lock — kill it (`taskkill /F /IM chrome.exe` on Windows; `pkill -f mcp-chromium-profile` on Mac/Linux) and retry.
+7. **Playwright browser window not visible after login** — `~/.claude/mcp-chromium-profile/` parent directory doesn't exist. Fix: confirm `~/.claude/` exists; the launcher creates the profile sub-directory itself on first run.
 9. **CodeIndex not found** — `codeindex` command not available. Fix: `npm install -g klai-private/tools/codeindex-1.3.56.tgz`
 10. **CodeIndex stale index** — Index behind HEAD. Symptoms: impact analysis misses recent code. Fix: `codeindex update && node scripts/codeindex-enrich.mjs`
 11. **VictoriaLogs tunnel not running** — MCP queries fail silently or timeout. Fix: `./scripts/victorialogs-tunnel.sh` then restart Claude Code.

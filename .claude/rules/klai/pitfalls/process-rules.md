@@ -1148,3 +1148,88 @@ deploy (PR #296, 12:11 CEST) used UIDs `spec-infra-container-hygiene-001-tenant-
 3. `scripts/reset-grafana-orphan-alert.sh` accepts UIDs matching `^(obs-[0-9]+|spec-[a-z][a-z-]*-[0-9]+)-` so multi-word abbreviations work for the cleanup-by-uid path. (Shorter abbrevs are still preferred — the 40-char limit doesn't change.)
 
 4. The `rsync without --delete` quirk is a SEPARATE class: `deploy-compose.yml` syncs `deploy/grafana/provisioning/` to `/opt/klai/grafana/provisioning/` with `rsync -ac` (no `--delete`). Revert-removed files persist on disk. For any future revert that removes provisioning files, the operator MUST `ssh core-01 "rm /opt/klai/grafana/provisioning/<deleted-path>"` after the revert merges. Long-term fix is to add `--delete` to the rsync (separate SPEC — `--delete` has its own blast-radius considerations because server-only files would also disappear).
+
+## playwright-mcp-config-cycle (HIGH)
+The `@playwright/mcp` configuration in `.mcp.json` has been "fixed" at least
+four times since April 2026 (commits `940d079e`, `0ceab6b6`, `b26d5e01`,
+`0a423697`) — each fix re-introduced the failure mode that the previous fix
+was trying to eliminate. The user has explicitly named this an
+"every-time-you-fix-it-it-breaks-the-other-thing" cycle. Before changing
+ANYTHING about this config, you MUST internalise this entry, because the
+failure modes look like ordinary bugs each time you encounter them.
+
+**The two-horned trap.** `@playwright/mcp` only supports two profile modes,
+both confirmed verbatim in the upstream README and in
+[microsoft/playwright-mcp#1530](https://github.com/microsoft/playwright-mcp/issues/1530)
+(closed Not Planned, May 2026):
+
+- Persistent `--user-data-dir`: login state survives restarts, BUT
+  "A persistent profile can only be used by one browser instance at a time,
+  so concurrent MCP clients sharing the same workspace will conflict."
+  Symptom: the second Claude Code session fails with `Browser is already in use`.
+- `--isolated`: parallel sessions work, BUT "every time you ask MCP to close
+  the browser, the session is closed and all the storage state for this
+  session is lost." Login state is gone on every restart.
+
+There is **no** built-in third option that gives both. `--storage-state` is
+read-only at startup; `saveSession` writes traces to the output directory,
+NOT cookies back to the storage-state file. Microsoft has explicitly declined
+to build named-session management. Do not waste a half-day rediscovering this.
+
+**Why this slips through.** Each individual symptom looks like a config bug
+with an obvious fix. "Login lost" → add persistent `userDataDir`. "Browser
+lock on parallel session" → add `--isolated`. "Session expired again" → add
+`--storage-state`. Each of those edits is locally correct and globally wrong;
+you have just walked the cycle one more lap.
+
+**Anti-patterns — do NOT propose any of these without re-reading this entry:**
+
+1. `--config <some.json>` with `userDataDir` set inside the JSON. **Silently
+   broken on `@playwright/mcp@0.0.70`** ([issue #1446](https://github.com/microsoft/playwright-mcp/issues/1446)):
+   the JSON `userDataDir` is ignored and the browser launches with an
+   in-memory profile. Login is lost on every restart. CLI flag works, JSON
+   does not.
+2. `--isolated` on the primary playwright server. Login state evaporates
+   per session. Will be re-removed within 24 hours by the next user complaint.
+3. `--isolated --storage-state <path>` without an automatic write-back
+   mechanism. The storage state is read-only at startup; nothing writes it
+   back at session close. Cookies expire (~3 weeks for Google) and login
+   silently breaks. The `scripts/export-mcp-session.mjs` that used to provide
+   write-back was lost in the cross-platform refactor on 2026-04-16.
+4. `--executable-path <Brave/Chrome>` for the primary browser. On Windows,
+   Brave/Chrome cannot run a second instance with a different profile —
+   the second instance becomes a background process with no visible window.
+   Use Playwright's bundled Chromium (omit `--executable-path` entirely).
+5. "Just remove all profile config and let Playwright pick its default" —
+   default IS persistent `userDataDir`, so this re-triggers anti-pattern (2)
+   from the other direction (parallel sessions break with browser lock).
+
+**The current working setup (do not change without strong cause):**
+
+- Primary `playwright` server in `.mcp.json` invokes
+  `.claude/scripts/playwright-launcher.mjs`, which spawns
+  `npx @playwright/mcp@0.0.70 --browser chromium --user-data-dir
+  ~/.claude/mcp-chromium-profile`. CLI flag, not JSON config — sidesteps
+  issue #1446. Bundled Chromium — sidesteps the Windows browser-lock.
+- Secondary `playwright-isolated` server in `.mcp.json` runs `--isolated
+  --headless` with no profile. This is the parallel-session escape hatch.
+  When a second concurrent Claude Code session needs a browser, it uses
+  this server, NOT the primary.
+- Single-instance restriction on the primary is documented and accepted.
+  Browser-lock errors after a crashed Chromium process are recovered with
+  `taskkill /F /IM chrome.exe` (Windows) or `pkill -f mcp-chromium-profile`
+  (Mac/Linux), not by adding `--isolated`.
+
+**Prevention — symptom → correct response:**
+
+| Symptom | Correct response | Wrong response |
+|---|---|---|
+| Login expires on every restart | Verify `.mcp.json` runs the launcher (CLI flag), not `--config <json>`. Verify `~/.claude/mcp-chromium-profile/` exists and has cookies. | Add `--isolated` (loops you back to anti-pattern 2) |
+| `Browser is already in use` | Use `playwright-isolated` for the second session, OR kill the leftover Chromium process | Remove `--user-data-dir` (loops you back to login-loss) |
+| User says "iedere keer hetzelfde probleem" | Stop. Re-read this entry. Do not propose a config change. | Propose another config edit |
+| You "found a fix online" that flips between persistent and isolated | The fix is wrong for this repo's constraints. Constraint is: BOTH login persistence AND parallel sessions. Microsoft does not support both in one server — that's why we run two MCP servers, not one. | Change the primary server's mode |
+
+If a future @playwright/mcp version introduces named-session management
+(see [issue #1530](https://github.com/microsoft/playwright-mcp/issues/1530))
+or auto-write-back of storage state, the two-server setup can collapse into
+one. Until then, do not collapse it.
