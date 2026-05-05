@@ -67,15 +67,25 @@ class WipePostgresResponse(BaseModel):
 #   - embedding_queue    -> no FK to artifacts, no org_id; shared infra table
 #   - rag_eval_results   -> eval/analytics table, no tenant ownership column
 # ---------------------------------------------------------------------------
-_LEAF_TABLES: list[str] = [
-    "page_links",
-    "crawled_pages",
-    "crawl_jobs",
-    "crawl_domains",
-    "kb_config",
-    "org_config",
-    "entities",
-]
+# Pre-formed DELETE statements indexed by table-name. Avoiding an f-string
+# inside the wipe loop keeps three semgrep "asyncpg-sqli" / "raw-query"
+# findings green — the table identifier is hardcoded once, never built from
+# user input. The mapping is the single source of truth: any future column-
+# scoping change can update the SQL here without touching call sites.
+_LEAF_TABLE_DELETES: tuple[tuple[str, str], ...] = (
+    ("page_links", "DELETE FROM knowledge.page_links WHERE org_id = $1"),
+    ("crawled_pages", "DELETE FROM knowledge.crawled_pages WHERE org_id = $1"),
+    ("crawl_jobs", "DELETE FROM knowledge.crawl_jobs WHERE org_id = $1"),
+    ("crawl_domains", "DELETE FROM knowledge.crawl_domains WHERE org_id = $1"),
+    ("kb_config", "DELETE FROM knowledge.kb_config WHERE org_id = $1"),
+    ("org_config", "DELETE FROM knowledge.org_config WHERE org_id = $1"),
+    ("entities", "DELETE FROM knowledge.entities WHERE org_id = $1"),
+)
+
+# Backwards-compat alias: the schema-regression-guard test imports
+# ``_LEAF_TABLES`` to cross-check against ``information_schema.tables``.
+# Derived from the canonical mapping so the two cannot drift.
+_LEAF_TABLES: list[str] = [t for t, _ in _LEAF_TABLE_DELETES]
 
 
 async def _wipe_org_postgres(org_id: str) -> dict[str, int]:
@@ -92,11 +102,8 @@ async def _wipe_org_postgres(org_id: str) -> dict[str, int]:
                 org_id,
             )
 
-            for table in _LEAF_TABLES:
-                result = await conn.execute(
-                    f"DELETE FROM knowledge.{table} WHERE org_id = $1",  # noqa: S608
-                    org_id,
-                )
+            for table, query in _LEAF_TABLE_DELETES:
+                result = await conn.execute(query, org_id)
                 # asyncpg returns "DELETE N" as a string
                 count = int(result.split()[-1])
                 rows_deleted[table] = count
