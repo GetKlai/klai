@@ -1221,6 +1221,7 @@ dependencies = [
     { name = "httpx" },
     { name = "klai-connector-credentials" },
     { name = "klai-image-storage" },
+    { name = "langdetect" },
     { name = "minio" },
     { name = "procrastinate" },
     { name = "pydantic" },
@@ -1260,6 +1261,7 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "klai-connector-credentials", editable = "../klai-libs/connector-credentials" },
     { name = "klai-image-storage", editable = "../klai-libs/image-storage" },
+    { name = "langdetect", specifier = ">=1.0.9" },
     { name = "minio", specifier = ">=7.2" },
     { name = "procrastinate", specifier = ">=3.0,<4" },
     { name = "pydantic", specifier = ">=2.9" },
@@ -1396,6 +1398,15 @@ sdist = { url = "https://files.pythonhosted.org/packages/26/9f/6c545900fefb7b00d
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d3/26/1ef06f56198d631296d646a6223de35bcc6cf9795ceb2442816bc963b84c/langchain_text_splitters-1.1.2-py3-none-any.whl", hash = "sha256:a2de0d799ff31886429fd6e2e0032df275b60ec817c19059a7b46181cc1c2f10", size = 35903 },
 ]
+
+[[package]]
+name = "langdetect"
+version = "1.0.9"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "six" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0e/72/a3add0e4eec4eb9e2569554f7c70f4a3c27712f40e3284d483e88094cc0e/langdetect-1.0.9.tar.gz", hash = "sha256:cbc1fef89f8d062739774bd51eda3da3274006b3661d199c2655f6b3f6d605a0", size = 981474 }
 
 [[package]]
 name = "langgraph"
