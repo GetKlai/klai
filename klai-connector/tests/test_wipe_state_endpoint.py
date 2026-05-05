@@ -38,8 +38,21 @@ class _FakeDeleteResult:
 
 
 class _FakeSession:
-    def __init__(self, rows: list[dict[str, Any]] | None = None) -> None:
-        self._rows: list[dict[str, Any]] = list(rows or [])
+    """Two-table-aware fake session.
+
+    SPEC-INFRA-TENANT-DELETE-002 G6 expansion: the wipe-state endpoint
+    deletes from both `connector.sync_runs` AND `connector.connectors`.
+    The fake session keeps separate row-lists per table name and routes
+    DELETE statements based on the compiled SQL's table identifier.
+    """
+
+    def __init__(
+        self,
+        sync_run_rows: list[dict[str, Any]] | None = None,
+        connector_rows: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self._sync_runs: list[dict[str, Any]] = list(sync_run_rows or [])
+        self._connectors: list[dict[str, Any]] = list(connector_rows or [])
 
     async def execute(self, stmt: Any) -> _FakeDeleteResult:
         import re
@@ -58,20 +71,38 @@ class _FakeSession:
                 re.IGNORECASE,
             )
             target_org_id: str | None = match.group(1) if match else None
+            table_match = re.search(r"DELETE FROM\s+(?:connector\.)?(\w+)", sql_str, re.IGNORECASE)
+            table = table_match.group(1).lower() if table_match else None
         except Exception:
             target_org_id = None
+            table = None
 
-        before = len(self._rows)
-        if target_org_id is not None:
-            self._rows = [r for r in self._rows if r.get("org_id") != target_org_id]
-        deleted = before - len(self._rows)
-        return _FakeDeleteResult(rowcount=deleted)
+        if target_org_id is None:
+            return _FakeDeleteResult(rowcount=0)
+
+        if table == "sync_runs":
+            before = len(self._sync_runs)
+            self._sync_runs = [r for r in self._sync_runs if r.get("org_id") != target_org_id]
+            return _FakeDeleteResult(rowcount=before - len(self._sync_runs))
+        if table == "connectors":
+            before = len(self._connectors)
+            self._connectors = [r for r in self._connectors if r.get("org_id") != target_org_id]
+            return _FakeDeleteResult(rowcount=before - len(self._connectors))
+        return _FakeDeleteResult(rowcount=0)
 
     async def commit(self) -> None:
         return None
 
+    def remaining_sync_runs(self) -> list[dict[str, Any]]:
+        return list(self._sync_runs)
+
+    def remaining_connectors(self) -> list[dict[str, Any]]:
+        return list(self._connectors)
+
+    # Backwards-compat shim so existing tests calling .remaining_rows() still work
+    # — combines both tables into one list.
     def remaining_rows(self) -> list[dict[str, Any]]:
-        return list(self._rows)
+        return [*self._sync_runs, *self._connectors]
 
 
 def _build_client(
@@ -99,40 +130,77 @@ def _build_client(
 
 
 def test_wipe_state_deletes_only_target_org_rows(monkeypatch: pytest.MonkeyPatch) -> None:
-    rows: list[dict[str, Any]] = (
+    sync_runs = (
         [{"id": str(uuid.uuid4()), "org_id": _ORG_A} for _ in range(5)]
         + [{"id": str(uuid.uuid4()), "org_id": _ORG_B} for _ in range(3)]
         + [{"id": str(uuid.uuid4()), "org_id": None} for _ in range(2)]
     )
-    session = _FakeSession(rows=rows)
+    connectors = (
+        [{"id": str(uuid.uuid4()), "org_id": _ORG_A} for _ in range(2)]
+        + [{"id": str(uuid.uuid4()), "org_id": _ORG_B} for _ in range(1)]
+    )
+    session = _FakeSession(sync_run_rows=sync_runs, connector_rows=connectors)
     client = _build_client(monkeypatch, session=session)
 
     resp = client.post(f"/internal/v1/orgs/{_ORG_A}/wipe-state")
 
     assert resp.status_code == 200, f"expected 200, got {resp.status_code}: {resp.text}"
     body = resp.json()
-    assert body["rows_deleted"] == 5, f"expected 5 rows deleted, got {body[chr(39) + 'rows_deleted' + chr(39)]}"
+    # 5 sync_runs + 2 connectors for tenant-a = 7 total
+    assert body["rows_deleted"] == 7, f"expected 7 total rows deleted, got {body['rows_deleted']}"
+    assert body["per_table"] == {"sync_runs": 5, "connectors": 2}, (
+        f"per_table breakdown wrong: {body['per_table']}"
+    )
     assert body["status"] == "ok"
 
-    remaining = session.remaining_rows()
-    assert len(remaining) == 5, f"expected 5 remaining rows, got {len(remaining)}"
-    assert all(r["org_id"] != _ORG_A for r in remaining)
-    assert len([r for r in remaining if r["org_id"] == _ORG_B]) == 3
-    assert len([r for r in remaining if r["org_id"] is None]) == 2
+    # tenant-a wiped from BOTH tables
+    remaining_sync = session.remaining_sync_runs()
+    remaining_conn = session.remaining_connectors()
+    assert all(r["org_id"] != _ORG_A for r in remaining_sync)
+    assert all(r["org_id"] != _ORG_A for r in remaining_conn)
+    # tenant-b + NULL-org rows preserved on both tables
+    assert len([r for r in remaining_sync if r["org_id"] == _ORG_B]) == 3
+    assert len([r for r in remaining_sync if r["org_id"] is None]) == 2
+    assert len([r for r in remaining_conn if r["org_id"] == _ORG_B]) == 1
+
+
+def test_wipe_state_purges_connectors_table(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression-guard for the SPEC G6 connector.connectors expansion.
+
+    Pre-fix the endpoint only deleted from sync_runs; connector config rows
+    (with at-rest encrypted credentials in portal_secret_id) survived
+    deprovisioning. This test asserts both tables are touched: a tenant
+    with ZERO sync_runs but >0 connectors is still purged correctly.
+    """
+    sync_runs: list[dict[str, Any]] = []
+    connectors = [{"id": str(uuid.uuid4()), "org_id": _ORG_A} for _ in range(3)]
+    session = _FakeSession(sync_run_rows=sync_runs, connector_rows=connectors)
+    client = _build_client(monkeypatch, session=session)
+
+    resp = client.post(f"/internal/v1/orgs/{_ORG_A}/wipe-state")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["rows_deleted"] == 3
+    assert body["per_table"] == {"sync_runs": 0, "connectors": 3}
+    assert len(session.remaining_connectors()) == 0
 
 
 def test_wipe_state_idempotent_second_call_returns_zero(monkeypatch: pytest.MonkeyPatch) -> None:
-    rows: list[dict[str, Any]] = [{"id": str(uuid.uuid4()), "org_id": _ORG_A} for _ in range(3)]
-    session = _FakeSession(rows=rows)
+    session = _FakeSession(
+        sync_run_rows=[{"id": str(uuid.uuid4()), "org_id": _ORG_A} for _ in range(3)],
+        connector_rows=[{"id": str(uuid.uuid4()), "org_id": _ORG_A} for _ in range(2)],
+    )
     client = _build_client(monkeypatch, session=session)
 
     resp1 = client.post(f"/internal/v1/orgs/{_ORG_A}/wipe-state")
     assert resp1.status_code == 200
-    assert resp1.json()["rows_deleted"] == 3
+    assert resp1.json()["rows_deleted"] == 5  # 3 sync_runs + 2 connectors
 
     resp2 = client.post(f"/internal/v1/orgs/{_ORG_A}/wipe-state")
     assert resp2.status_code == 200
     assert resp2.json()["rows_deleted"] == 0
+    assert resp2.json()["per_table"] == {"sync_runs": 0, "connectors": 0}
     assert resp2.json()["status"] == "ok"
 
 
@@ -164,12 +232,16 @@ def test_wipe_state_non_portal_caller_returns_403() -> None:
 
 
 def test_wipe_state_preserves_null_org_rows(monkeypatch: pytest.MonkeyPatch) -> None:
-    null_rows: list[dict[str, Any]] = [{"id": str(uuid.uuid4()), "org_id": None} for _ in range(4)]
-    session = _FakeSession(rows=null_rows)
+    """NULL-org rows on BOTH tables are intentionally preserved."""
+    session = _FakeSession(
+        sync_run_rows=[{"id": str(uuid.uuid4()), "org_id": None} for _ in range(4)],
+        connector_rows=[{"id": str(uuid.uuid4()), "org_id": None} for _ in range(2)],
+    )
     client = _build_client(monkeypatch, session=session)
 
     resp = client.post(f"/internal/v1/orgs/{_ORG_A}/wipe-state")
 
     assert resp.status_code == 200
     assert resp.json()["rows_deleted"] == 0
-    assert len(session.remaining_rows()) == 4
+    assert len(session.remaining_sync_runs()) == 4
+    assert len(session.remaining_connectors()) == 2
