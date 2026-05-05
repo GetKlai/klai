@@ -177,6 +177,31 @@ class Settings(BaseSettings):
             )
         return v
 
+    @field_validator("portal_caller_secret", mode="after")
+    @classmethod
+    def _require_portal_caller_secret(cls, v: str) -> str:
+        """SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-11: fail-closed on missing
+        PORTAL_CALLER_SECRET.
+
+        klai-connector verifies portal-api's inbound calls (sync trigger,
+        OAuth callbacks) by comparing the X-Internal-Secret header against
+        this value via hmac.compare_digest. An empty/whitespace value
+        would make every comparison succeed against a literal-empty
+        attacker request — fail-open-auth pitfall.
+
+        Env-parity: PORTAL_CALLER_SECRET (sourced from PORTAL_API_KLAI_CONNECTOR_SECRET
+        in the compose file) must exist in klai-infra/core-01/.env.sops
+        BEFORE merge. Pre-flight verified 2026-05-05: value populated
+        in /opt/klai/.env on core-01.
+        """
+        if not v or not v.strip():
+            raise ValueError(
+                "Missing required: PORTAL_CALLER_SECRET (SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-11). "
+                "klai-connector verifies portal-api's inbound X-Internal-Secret against this; "
+                "an empty value would accept any caller. Set it in SOPS before starting klai-connector."
+            )
+        return v
+
     # ------------------------------------------------------------------
     # SPEC-SEC-AUDIT-2026-04 B2: fail-closed startup on empty audience.
     # Before this fix the middleware had a warn-only fallback that silently

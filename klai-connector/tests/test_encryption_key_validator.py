@@ -37,6 +37,10 @@ def _required_settings_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setenv("KNOWLEDGE_INGEST_URL", "http://knowledge-ingest:8000")
     monkeypatch.setenv("KNOWLEDGE_INGEST_SECRET", valid_secret)
     monkeypatch.setenv("PORTAL_INTERNAL_SECRET", valid_secret)
+    # SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-11 — PORTAL_CALLER_SECRET is now
+    # also fail-closed validated, so it must be set for tests that drive
+    # only the encryption_key validator.
+    monkeypatch.setenv("PORTAL_CALLER_SECRET", valid_secret)
     yield
 
 
