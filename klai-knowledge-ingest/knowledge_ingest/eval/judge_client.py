@@ -70,18 +70,39 @@ def _make_async_openai_client():
     )
 
 
-def _build_ragas_llm(model: str | None = None):
+# Faithfulness's NLI verdicts prompt produces a multi-statement JSON
+# (one verdict object per atomic statement). RAGAS' default cap is
+# 1024 tokens — too small once the answer has > 5 statements, which
+# yields a truncated completion and "The output is incomplete due to
+# a max_tokens length limit." parse failure. 8192 covers the longest
+# Voys answers comfortably and is well within klai-medium's output
+# budget. Light metrics (precision/recall, answer_relevancy) emit
+# small JSON; the default cap is fine for them.
+_FAITHFULNESS_MAX_TOKENS = 8192
+
+
+def _build_ragas_llm(
+    model: str | None = None,
+    *,
+    max_tokens: int | None = None,
+):
     """Build a RAGAS LLM wrapper pointed at the LiteLLM proxy.
 
     Falls back to ``settings.rag_eval_judge_model`` when ``model`` is None,
     keeping the original generate_answer / light-metric path unchanged.
-    Faithfulness gets the heavier Mistral Medium 3.5 via klai-medium.
+    Faithfulness gets the heavier Mistral Medium 3.5 via klai-medium AND
+    a higher ``max_tokens`` so the multi-statement NLI verdicts prompt
+    isn't truncated at 1024 tokens (RAGAS' default).
     """
     from ragas.llms import llm_factory
 
+    extra: dict[str, int] = {}
+    if max_tokens is not None:
+        extra["max_tokens"] = max_tokens
     return llm_factory(
         model or settings.rag_eval_judge_model,
         client=_make_async_openai_client(),
+        **extra,
     )
 
 
@@ -256,7 +277,10 @@ async def evaluate_query(
 
         # Per-metric model assignment (see module docstring).
         light_llm = _build_ragas_llm()
-        heavy_llm = _build_ragas_llm(model=settings.rag_eval_faithfulness_model)
+        heavy_llm = _build_ragas_llm(
+            model=settings.rag_eval_faithfulness_model,
+            max_tokens=_FAITHFULNESS_MAX_TOKENS,
+        )
         embeddings = _build_ragas_embeddings()
 
         ctx_precision = ContextPrecision(llm=light_llm)
