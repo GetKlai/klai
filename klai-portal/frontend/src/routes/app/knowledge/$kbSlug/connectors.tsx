@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useAuth } from '@/lib/auth'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
 import {
   RefreshCw, Trash2, Loader2, Plus, Pencil, Globe, FileText, CheckCircle2, AlertTriangle, X,
@@ -99,6 +99,49 @@ function ConnectorsTab() {
       }
       return false
     },
+  })
+
+  // SPEC-CRAWLER-006 REQ-08: for every running connector, fetch the latest
+  // sync_run so the badge can render live progress (pages_done/pages_total
+  // for crawler runs). The connector list endpoint does not carry these
+  // fields — they live on connector.sync_runs and are surfaced by
+  // SyncRunResolver. Backend caches the upstream call 30s per remote_job_id,
+  // so a UI-side 5s poll only generates one upstream call every six ticks.
+  const runningConnectorIds = connectors
+    .filter((c) => c.last_sync_status?.toUpperCase() === 'RUNNING')
+    .map((c) => c.id)
+  const liveProgressQueries = useQueries({
+    queries: runningConnectorIds.map((connectorId) => ({
+      queryKey: ['connector-sync-latest', kbSlug, connectorId],
+      queryFn: async () => {
+        const runs = await apiFetch<Array<{
+          id: string
+          status: string
+          pages_done?: number | null
+          pages_total?: number | null
+          live_resolution_failed?: boolean
+        }>>(`/api/app/knowledge-bases/${kbSlug}/connectors/${connectorId}/syncs?limit=1`)
+        return runs[0] ?? null
+      },
+      refetchInterval: 5000,
+      enabled: auth.isAuthenticated,
+    })),
+  })
+  // Build an id → live-progress map for the JSX below. Empty for terminal rows.
+  const liveProgressById: Record<string, {
+    pagesDone: number | null
+    pagesTotal: number | null
+    liveResolutionFailed: boolean
+  } | undefined> = {}
+  runningConnectorIds.forEach((connectorId, index) => {
+    const run = liveProgressQueries[index]?.data
+    if (run) {
+      liveProgressById[connectorId] = {
+        pagesDone: run.pages_done ?? null,
+        pagesTotal: run.pages_total ?? null,
+        liveResolutionFailed: run.live_resolution_failed ?? false,
+      }
+    }
   })
 
   const deleteMutation = useMutation({
@@ -209,7 +252,13 @@ function ConnectorsTab() {
                     <span className="text-xs text-[var(--color-muted-foreground)]">{typeLabel}</span>
                   </td>
                   <td className="py-4 pr-4 align-top w-32">
-                    <SyncStatusBadge status={c.last_sync_status} lastSyncAt={c.last_sync_at} />
+                    <SyncStatusBadge
+                      status={c.last_sync_status}
+                      lastSyncAt={c.last_sync_at}
+                      pagesDone={liveProgressById[c.id]?.pagesDone}
+                      pagesTotal={liveProgressById[c.id]?.pagesTotal}
+                      liveResolutionFailed={liveProgressById[c.id]?.liveResolutionFailed ?? false}
+                    />
                     {isOwner
                       && c.last_sync_status?.toUpperCase() === 'AUTH_ERROR'
                       && OAUTH_RECONNECTABLE.has(c.connector_type) && (
