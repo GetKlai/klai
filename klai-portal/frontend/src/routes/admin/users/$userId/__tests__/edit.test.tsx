@@ -43,41 +43,9 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }))
 
-vi.mock('@/paraglide/messages', () => ({
-  admin_users_edit_heading: () => 'Edit user',
-  admin_users_edit_subtitle: () =>
-    'Profiles control what tools the user can use. Groups control which knowledge bases the user can access within those tools.',
-  admin_users_edit_submit: () => 'Save',
-  admin_users_edit_submit_loading: () => 'Saving...',
-  admin_users_field_first_name: () => 'First name',
-  admin_users_field_last_name: () => 'Last name',
-  admin_users_field_language: () => 'Language',
-  admin_users_field_profile: () => 'Profile',
-  admin_users_language_nl: () => 'Dutch',
-  admin_users_language_en: () => 'English',
-  admin_users_cancel: () => 'Cancel',
-  admin_users_error_edit_generic: () => 'Failed',
-  admin_users_action_suspend: () => 'Suspend',
-  admin_users_action_reactivate: () => 'Reactivate',
-  admin_users_action_offboard: () => 'Offboard',
-  admin_users_confirm_suspend_title: () => 'Suspend user?',
-  admin_users_confirm_suspend_description: () => '...',
-  admin_users_confirm_offboard_title: () => 'Offboard user?',
-  admin_users_confirm_offboard_description: () => '...',
-  admin_settings_saved: () => 'Saved',
-  profile_picker_title: () => 'Profile',
-  profile_picker_self_edit_hint: () => 'You cannot change your own profile.',
-  profile_personal_label: () => 'Personal chat',
-  profile_personal_description: () => 'Personal description',
-  profile_company_label: () => 'Company chat',
-  profile_company_description: () => 'Company description',
-  profile_kb_manager_label: () => 'Knowledge manager',
-  profile_kb_manager_description: () => 'KB manager description',
-  profile_group_manager_label: () => 'Group manager',
-  profile_group_manager_description: () => 'Group manager description',
-  profile_admin_label: () => 'Admin',
-  profile_admin_description: () => 'Admin description',
-}))
+import { adminMessageMocks } from '../../../_components/__tests__/_messages'
+
+vi.mock('@/paraglide/messages', () => ({ ...adminMessageMocks }))
 
 import { Route as RouteCfg } from '../edit'
 

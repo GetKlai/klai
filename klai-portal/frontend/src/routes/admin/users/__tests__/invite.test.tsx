@@ -26,25 +26,9 @@ vi.mock('@/lib/auth', () => ({
   useAuth: () => ({ isAuthenticated: true }),
 }))
 
-vi.mock('@/paraglide/messages', () => ({
-  admin_users_invite_button: () => 'Invite user',
-  admin_users_field_first_name: () => 'First name',
-  admin_users_field_last_name: () => 'Last name',
-  admin_users_field_email: () => 'Email',
-  admin_users_field_profile: () => 'Profile',
-  admin_users_field_language: () => 'Language',
-  admin_users_language_nl: () => 'Dutch',
-  admin_users_language_en: () => 'English',
-  admin_users_invite_submit: () => 'Send',
-  admin_users_invite_submit_loading: () => 'Sending...',
-  admin_users_cancel: () => 'Cancel',
-  admin_users_error_invite_generic: () => 'Failed',
-  profile_personal_label: () => 'Personal chat',
-  profile_company_label: () => 'Company chat',
-  profile_kb_manager_label: () => 'Knowledge manager',
-  profile_group_manager_label: () => 'Group manager',
-  profile_admin_label: () => 'Admin',
-}))
+import { adminMessageMocks } from '../../_components/__tests__/_messages'
+
+vi.mock('@/paraglide/messages', () => ({ ...adminMessageMocks }))
 
 import { Route as RouteCfg } from '../invite'
 

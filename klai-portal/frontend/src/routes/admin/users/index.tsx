@@ -42,6 +42,7 @@ import { adminLogger } from '@/lib/logger'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import { useSuspendUser, useReactivateUser, useOffboardUser } from '@/hooks/useUserLifecycle'
 import { PROFILE_LADDER, type ProfileRole } from '@/lib/profiles'
+import { cleanErrorMessage } from '../_components/errors'
 
 export const Route = createFileRoute('/admin/users/')({
   component: UsersPage,
@@ -175,11 +176,13 @@ function UsersPage() {
     },
   })
 
+  // SPEC-PORTAL-ADMIN-UI-001 REQ-16: strip "<status>: " prefix from
+  // apiFetch-formatted errors so the banner reads as natural prose.
   const mutationError =
-    (deleteMutation.error instanceof Error ? deleteMutation.error.message : deleteMutation.error ? m.admin_users_error_delete_generic() : null) ??
-    (resendInviteMutation.error instanceof Error ? resendInviteMutation.error.message : resendInviteMutation.error ? m.admin_users_error_resend_invite_generic() : null) ??
-    (changeProfileMutation.error instanceof Error ? changeProfileMutation.error.message : changeProfileMutation.error ? m.admin_profiles_error_change() : null) ??
-    (leaveWorkspaceMutation.error instanceof Error ? leaveWorkspaceMutation.error.message : leaveWorkspaceMutation.error ? m.admin_users_error_leave_workspace() : null)
+    (deleteMutation.error ? cleanErrorMessage(deleteMutation.error, m.admin_users_error_delete_generic()) : null) ??
+    (resendInviteMutation.error ? cleanErrorMessage(resendInviteMutation.error, m.admin_users_error_resend_invite_generic()) : null) ??
+    (changeProfileMutation.error ? cleanErrorMessage(changeProfileMutation.error, m.admin_profiles_error_change()) : null) ??
+    (leaveWorkspaceMutation.error ? cleanErrorMessage(leaveWorkspaceMutation.error, m.admin_users_error_leave_workspace()) : null)
 
   // SPEC-PORTAL-ADMIN-UI-001 REQ-1: columns Name | Email | Profile | Status | Last active | Actions.
   // "Last active" rendered from created_at (Invited date) — backend has no
