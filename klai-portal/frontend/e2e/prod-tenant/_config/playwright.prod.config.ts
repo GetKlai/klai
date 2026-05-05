@@ -60,7 +60,14 @@ if (E2E_MODE === 'isolated-tenant') {
 
 const STORAGE_STATE_ISOLATED = path.resolve(__dirname, 'storageState.json')
 const STORAGE_STATE_VOYS = path.resolve(__dirname, 'storageState.voys.json')
-const STORAGE_STATE = E2E_MODE === 'voys-attached' ? STORAGE_STATE_VOYS : STORAGE_STATE_ISOLATED
+// Exported so J01-login.spec.ts can persist storage-state to the same
+// path Playwright's projects read from. Without the export, the
+// `import { STORAGE_STATE } from '...'` statement in J01 resolves to
+// undefined at module-load time and the suite exits before the first
+// test runs — root cause of E2E prod-tenant's 0/46 green runs since
+// commit 13da91d0 on 2026-05-04.
+export const STORAGE_STATE =
+  E2E_MODE === 'voys-attached' ? STORAGE_STATE_VOYS : STORAGE_STATE_ISOLATED
 
 export default defineConfig({
   testDir: path.resolve(__dirname, '..'),
