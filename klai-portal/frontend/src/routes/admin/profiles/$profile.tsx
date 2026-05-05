@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute, Link, redirect } from '@tanstack/react-router'
 import { useAuth } from '@/lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
@@ -19,8 +19,11 @@ import { PROFILE_LADDER, type ProfileRole } from '@/lib/profiles'
 export const Route = createFileRoute('/admin/profiles/$profile')({
   component: ProfileDrillInPage,
   beforeLoad: ({ params }) => {
+    // Unknown ladder values redirect to the index instead of rendering a
+    // broken page. (5-rung ladder is fixed; future profiles require a
+    // SPEC + frontend update.)
     if (!PROFILE_LADDER.includes(params.profile as ProfileRole)) {
-      throw new Error(`Unknown profile: ${params.profile}`)
+      throw redirect({ to: '/admin/profiles' })
     }
   },
 })

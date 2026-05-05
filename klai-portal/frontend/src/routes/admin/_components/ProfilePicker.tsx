@@ -1,3 +1,4 @@
+import { useId } from 'react'
 import { PROFILE_LADDER, type ProfileRole } from '@/lib/profiles'
 import * as m from '@/paraglide/messages'
 
@@ -26,6 +27,9 @@ export function ProfilePicker({
   compact = false,
 }: ProfilePickerProps) {
   const msgs = m as unknown as Record<string, (() => string) | undefined>
+  // Unique radio-group name so multiple <ProfilePicker> instances on the
+  // same page don't share selection state.
+  const radioGroupName = useId()
 
   return (
     <div className="space-y-3">
@@ -48,7 +52,7 @@ export function ProfilePicker({
             >
               <input
                 type="radio"
-                name="profile-picker"
+                name={radioGroupName}
                 value={role}
                 checked={isSelected}
                 disabled={disabled}
