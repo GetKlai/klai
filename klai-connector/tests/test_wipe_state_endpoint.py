@@ -55,27 +55,67 @@ class _FakeSession:
         self._connectors: list[dict[str, Any]] = list(connector_rows or [])
 
     async def execute(self, stmt: Any) -> _FakeDeleteResult:
-        import re
+        """Inspect the SQLAlchemy DELETE statement structurally.
 
-        try:
-            from sqlalchemy.dialects import postgresql
+        Audit 2026-05-05 finding MED 8: previous version compiled the
+        statement with ``literal_binds=True`` and regex'd the resulting
+        SQL string for `WHERE ... org_id = 'value'`. That approach is
+        dialect-sensitive (postgresql vs sqlite render differently),
+        format-sensitive (whitespace, quoting), and silently returns
+        rowcount=0 if the regex misses — a test could then "pass"
+        idempotency while the first call deleted nothing.
 
-            compiled = stmt.compile(
-                dialect=postgresql.dialect(),
-                compile_kwargs={"literal_binds": True},
-            )
-            sql_str = str(compiled)
-            match = re.search(
-                r"WHERE\s+.*?org_id\s*=\s*'([^']*)'",
-                sql_str,
-                re.IGNORECASE,
-            )
-            target_org_id: str | None = match.group(1) if match else None
-            table_match = re.search(r"DELETE FROM\s+(?:connector\.)?(\w+)", sql_str, re.IGNORECASE)
-            table = table_match.group(1).lower() if table_match else None
-        except Exception:
-            target_org_id = None
-            table = None
+        Replaced with structural inspection via SQLAlchemy's expression
+        API:
+          - `isinstance(stmt, Delete)` — only DELETE statements have a
+            `.table` attribute that we can map to one of our tracked
+            tables; SELECT/UPDATE/INSERT no-op (return rowcount=0).
+          - `stmt.table.name` — the target table identifier from the
+            DELETE; no string parsing required.
+          - `visitors.iterate(stmt.whereclause)` — yields every element
+            in the WHERE expression tree (columns, BindParameter,
+            BinaryExpression, BooleanClauseList). We search for the
+            first BindParameter whose key starts with `org_id`
+            (SQLAlchemy auto-generates names like `org_id_1`).
+        """
+        from sqlalchemy.sql import visitors
+        from sqlalchemy.sql.elements import BinaryExpression, BindParameter, ColumnElement
+        from sqlalchemy.sql.expression import Delete
+
+        if not isinstance(stmt, Delete):
+            # SELECT / UPDATE / INSERT — fake session does not model these.
+            return _FakeDeleteResult(rowcount=0)
+
+        table = stmt.table.name.lower()
+
+        # Walk the WHERE clause looking for a BinaryExpression of the shape
+        # `<col 'org_id'> == <BindParameter>`. SQLAlchemy 2.x auto-generates
+        # bind-keys that look like ``%(<id> org_id)s`` (anonymous) — the
+        # column-side identification is more reliable than matching the
+        # bind-key directly.
+        target_org_id: str | None = None
+        if stmt.whereclause is not None:
+            for elt in visitors.iterate(stmt.whereclause):
+                if not isinstance(elt, BinaryExpression):
+                    continue
+                left = elt.left
+                right = elt.right
+                left_name = getattr(left, "name", None) or getattr(left, "key", None)
+                if left_name == "org_id" and isinstance(right, BindParameter):
+                    if right.effective_value is not None:
+                        target_org_id = str(right.effective_value)
+                    break
+                # Also handle the inverse `<BindParameter> == <col>` shape
+                # in case a future caller writes WHERE `'foo' == col` for
+                # whatever reason. Defensive only — current code uses col-LHS.
+                right_name = getattr(right, "name", None) or getattr(right, "key", None)
+                if right_name == "org_id" and isinstance(left, BindParameter):
+                    if left.effective_value is not None:
+                        target_org_id = str(left.effective_value)
+                    break
+                # Suppress unused-import lint when the import isn't strictly
+                # needed at runtime (ColumnElement is for type hints / future use).
+                _ = ColumnElement
 
         if target_org_id is None:
             return _FakeDeleteResult(rowcount=0)
@@ -245,3 +285,25 @@ def test_wipe_state_preserves_null_org_rows(monkeypatch: pytest.MonkeyPatch) -> 
     assert resp.json()["rows_deleted"] == 0
     assert len(session.remaining_sync_runs()) == 4
     assert len(session.remaining_connectors()) == 2
+
+
+@pytest.mark.asyncio
+async def test_fake_session_handles_named_bindparam_shape() -> None:
+    """Audit MED 8 regression-guard: structural inspection must work for
+    explicitly-named `bindparam("oid")` shapes too, not just the auto-bound
+    `Model.col == value` form. The endpoint code uses the auto-bound form
+    today, but a future caller may use an explicit bindparam (e.g. when
+    re-using a compiled statement). The inspector should still find the
+    org_id column on the LHS.
+    """
+    from sqlalchemy import bindparam, delete
+
+    from app.models.sync_run import SyncRun
+
+    session = _FakeSession(
+        sync_run_rows=[{"id": str(uuid.uuid4()), "org_id": _ORG_A} for _ in range(2)]
+    )
+    stmt = delete(SyncRun).where(SyncRun.org_id == bindparam("oid", value=_ORG_A))
+    result = await session.execute(stmt)
+    assert result.rowcount == 2
+    assert len(session.remaining_sync_runs()) == 0
