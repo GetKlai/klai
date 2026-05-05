@@ -656,10 +656,20 @@ as a hand-applied fix before this entrypoint pattern landed.
 
 `portal_api` is the role that runs `alembic upgrade head` from the
 portal-api `entrypoint.sh`. Tables created with RLS (or any table whose
-ownership is `klai` superuser instead of `portal_api`) cannot be dropped
-by `op.drop_table(...)` — Postgres raises
+ownership is `klai` superuser instead of `portal_api`) cannot be **DROPPED,
+have RLS ENABLED on them, or have CREATE POLICY applied** by `op.execute(...)`
+in a normal alembic migration — Postgres raises
 `InsufficientPrivilegeError: must be owner of table <name>`. The
 entrypoint then crash-loops and the deploy lands in 502.
+
+The full list of owner-required DDL is broader than DROP TABLE:
+- `DROP TABLE` (original incident, SPEC-AUTH-009)
+- `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` (SPEC-SEC-PORTAL-RLS-001 #364, 2026-05-05)
+- `ALTER TABLE ... FORCE ROW LEVEL SECURITY`
+- `CREATE POLICY` / `DROP POLICY` (when target is owned by klai)
+- `ALTER TABLE ... OWNER TO ...`
+
+All of these need the post-deploy SQL pattern below.
 
 This bit SPEC-AUTH-009 (PR #259, 2026-05-04). Migration `ed5b78b296f5`
 ended with `op.drop_table("portal_org_allowed_domains")`. The table was
