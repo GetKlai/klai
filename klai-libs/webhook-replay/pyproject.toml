@@ -1,0 +1,65 @@
+[project]
+name = "klai-webhook-replay"
+version = "0.1.0"
+description = "Shared Redis-backed webhook replay-protection nonce store for Klai services (SPEC-SEC-AUTH-HARDENING-001)."
+requires-python = ">=3.12"
+readme = "README.md"
+license = { text = "Proprietary" }
+authors = [{ name = "Klai" }]
+
+# Runtime dependencies. Consumer services already pin concrete versions
+# of redis and structlog; we express compatible lower bounds.
+dependencies = [
+    "redis>=5.0",
+    "structlog>=25.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "fakeredis>=2.24",
+    "ruff>=0.8",
+    "pyright>=1.1.390",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "fakeredis>=2.24",
+    "ruff>=0.8",
+    "pyright>=1.1.390",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["webhook_replay"]
+
+[tool.hatch.build.targets.wheel.sources]
+"webhook_replay/py.typed" = "webhook_replay/py.typed"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "S", "RUF", "G", "LOG"]
+ignore = [
+    "S101",  # asserts are fine in tests
+    "S105",  # hardcoded passwords — too many false positives on config defaults
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S105", "S106", "S311"]  # test fixtures use literal fake secrets
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
