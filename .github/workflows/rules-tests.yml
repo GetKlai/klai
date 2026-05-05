@@ -42,4 +42,4 @@ jobs:
       - name: Run rules/tests
         # Tests are stand-alone pytest invocations against ast-grep CLI;
         # no service .venv needed. uv brings pytest in via tool-run.
-        run: uv tool run --with pytest pytest rules/tests/ -v
+        run: uv tool run --with pytest --with pyyaml pytest rules/tests/ -v
