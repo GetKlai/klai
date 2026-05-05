@@ -1,5 +1,5 @@
 import { createFileRoute, Outlet } from '@tanstack/react-router'
-import { LayoutDashboard, Users, FolderKanban, Settings, CreditCard, Puzzle, Key, MessageSquare, Sliders, Skull, type LucideIcon } from 'lucide-react'
+import { LayoutDashboard, Users, FolderKanban, Settings, CreditCard, Puzzle, Key, MessageSquare, Sliders, Skull, ShieldCheck, type LucideIcon } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { HelpButton } from '@/components/help/HelpButton'
 import * as m from '@/paraglide/messages'
@@ -16,6 +16,8 @@ export const Route = createFileRoute('/admin')({
 const ADMIN_NAV_ITEMS: Array<{ to: string; label: string; icon: LucideIcon; minRole: ProfileRole; end?: boolean }> = [
   { to: '/admin', label: m.admin_nav_overview(), icon: LayoutDashboard, minRole: 'kb_manager', end: true },
   { to: '/admin/users', label: m.admin_nav_users(), icon: Users, minRole: 'admin' },
+  // SPEC-PORTAL-ADMIN-UI-001 REQ-11: Profiles between Users and Groups.
+  { to: '/admin/profiles', label: m.admin_nav_profiles(), icon: ShieldCheck, minRole: 'admin' },
   { to: '/admin/groups', label: m.admin_nav_groups(), icon: FolderKanban, minRole: 'group_manager' },
   { to: '/admin/billing', label: m.admin_nav_billing(), icon: CreditCard, minRole: 'admin' },
   { to: '/admin/api-keys', label: m.admin_nav_api_keys(), icon: Key, minRole: 'admin' },

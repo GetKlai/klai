@@ -240,9 +240,14 @@ function AdminGroups() {
   return (
     <div className="mx-auto max-w-4xl px-6 py-10 space-y-6">
       <div className="flex items-start justify-between">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-          {m.admin_groups_title()}
-        </h1>
+        <div className="space-y-1">
+          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+            {m.admin_groups_title()}
+          </h1>
+          <p className="text-sm text-[var(--color-muted-foreground)]">
+            {m.admin_groups_subtitle()}
+          </p>
+        </div>
         <Button size="sm" onClick={() => void navigate({ to: '/admin/groups/new' })}>
           <Plus className="h-4 w-4 mr-2" />
           {m.admin_groups_create()}
@@ -258,11 +263,8 @@ function AdminGroups() {
         </p>
       ) : groups.length === 0 ? (
         <div className="py-12 text-center space-y-3">
-          <p className="text-sm font-medium text-[var(--color-foreground)]">
-            {m.admin_groups_empty()}
-          </p>
           <p className="text-sm text-[var(--color-muted-foreground)]">
-            {m.admin_groups_empty_description()}
+            {m.admin_groups_empty()}
           </p>
         </div>
       ) : (

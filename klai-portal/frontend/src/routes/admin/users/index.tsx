@@ -7,9 +7,10 @@ import {
   flexRender,
   createColumnHelper,
 } from '@tanstack/react-table'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { Tooltip } from '@/components/ui/tooltip'
 import {
@@ -18,6 +19,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
   AlertDialog,
@@ -29,7 +33,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { Trash2, Send, Loader2, Pencil, MoreHorizontal, Pause, Play, UserX, ShieldCheck, ShieldMinus, LogOut } from 'lucide-react'
+import { Trash2, Send, Loader2, Pencil, MoreHorizontal, Pause, Play, UserX, LogOut, ShieldCheck } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
 import { datetime, plural } from '@/paraglide/registry'
@@ -37,12 +41,11 @@ import { apiFetch } from '@/lib/apiFetch'
 import { adminLogger } from '@/lib/logger'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import { useSuspendUser, useReactivateUser, useOffboardUser } from '@/hooks/useUserLifecycle'
+import { PROFILE_LADDER, type ProfileRole } from '@/lib/profiles'
 
 export const Route = createFileRoute('/admin/users/')({
   component: UsersPage,
 })
-
-type Role = 'admin' | 'member'
 
 type UserStatus = 'active' | 'suspended' | 'offboarded'
 
@@ -51,7 +54,7 @@ interface User {
   email: string
   first_name: string
   last_name: string
-  role: Role
+  role: ProfileRole
   status: UserStatus
   preferred_language: 'nl' | 'en'
   created_at: string
@@ -66,12 +69,18 @@ function formatDate(isoString: string): string {
   })
 }
 
-function RoleBadge({ role, pending }: { role: Role; pending?: boolean }) {
-  return role === 'admin'
-    ? <Badge variant="accent">{m.admin_users_role_admin()}</Badge>
-    : pending
-      ? <Badge variant="warning">{m.admin_users_role_member_pending()}</Badge>
-      : <Badge variant="secondary">{m.admin_users_role_member()}</Badge>
+function profileLabel(role: ProfileRole): string {
+  const msgs = m as unknown as Record<string, (() => string) | undefined>
+  const labelFn = msgs[`profile_${role}_label`]
+  return labelFn ? labelFn() : role
+}
+
+function ProfileBadge({ role, pending }: { role: ProfileRole; pending?: boolean }) {
+  const variant = role === 'admin' ? 'accent' : 'secondary'
+  if (pending) {
+    return <Badge variant="warning">{profileLabel(role)}</Badge>
+  }
+  return <Badge variant={variant}>{profileLabel(role)}</Badge>
 }
 
 function StatusBadge({ status }: { status: UserStatus }) {
@@ -97,6 +106,7 @@ function UsersPage() {
   const [confirmingOffboardId, setConfirmingOffboardId] = useState<string | null>(null)
   // R6: confirm dialog for "Leave workspace" (self-removal)
   const [confirmingLeave, setConfirmingLeave] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
 
   const suspendMutation = useSuspendUser()
   const reactivateMutation = useReactivateUser()
@@ -108,15 +118,16 @@ function UsersPage() {
     enabled: auth.isAuthenticated,
   })
 
-  const users = data?.users ?? []
+  const users = useMemo(() => data?.users ?? [], [data])
 
-  const { data: membershipsData } = useQuery({
-    queryKey: ['admin-group-memberships'],
-    queryFn: async () => apiFetch<{ memberships: Record<string, { id: number; name: string; products: string[] }[]> }>(`/api/admin/group-memberships`),
-    enabled: auth.isAuthenticated,
-  })
-
-  const membershipsByUser = membershipsData?.memberships ?? {}
+  const filteredUsers = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase()
+    if (!query) return users
+    return users.filter((user) => {
+      const fullName = `${user.first_name} ${user.last_name}`.toLowerCase()
+      return fullName.includes(query) || user.email.toLowerCase().includes(query)
+    })
+  }, [users, searchQuery])
 
   const resendInviteMutation = useMutation({
     mutationFn: async (user: User) => {
@@ -138,24 +149,17 @@ function UsersPage() {
     },
   })
 
-  // R6: promote to admin
-  const promoteAdminMutation = useMutation({
-    mutationFn: async (userId: string) => {
-      await apiFetch(`/api/admin/users/${userId}/promote-admin`, { method: 'POST' })
+  // SPEC-PORTAL-ADMIN-UI-001 REQ-2: unified change-profile via PATCH /role.
+  // Replaces legacy promote-admin / demote-admin endpoints in the UI.
+  const changeProfileMutation = useMutation({
+    mutationFn: async ({ userId, role }: { userId: string; role: ProfileRole }) => {
+      await apiFetch(`/api/admin/users/${userId}/role`, {
+        method: 'PATCH',
+        body: JSON.stringify({ role }),
+      })
     },
-    onSuccess: (_data, userId) => {
-      adminLogger.info('User promoted to admin', { userId })
-      void queryClient.invalidateQueries({ queryKey: ['admin-users'] })
-    },
-  })
-
-  // R6: demote admin to member
-  const demoteAdminMutation = useMutation({
-    mutationFn: async (userId: string) => {
-      await apiFetch(`/api/admin/users/${userId}/demote-admin`, { method: 'POST' })
-    },
-    onSuccess: (_data, userId) => {
-      adminLogger.info('User demoted to member', { userId })
+    onSuccess: (_data, vars) => {
+      adminLogger.info('Profile changed', { userId: vars.userId, role: vars.role })
       void queryClient.invalidateQueries({ queryKey: ['admin-users'] })
     },
   })
@@ -167,7 +171,6 @@ function UsersPage() {
     },
     onSuccess: () => {
       adminLogger.info('Left workspace')
-      // Redirect to login/home after leaving
       window.location.href = '/'
     },
   })
@@ -175,13 +178,16 @@ function UsersPage() {
   const mutationError =
     (deleteMutation.error instanceof Error ? deleteMutation.error.message : deleteMutation.error ? m.admin_users_error_delete_generic() : null) ??
     (resendInviteMutation.error instanceof Error ? resendInviteMutation.error.message : resendInviteMutation.error ? m.admin_users_error_resend_invite_generic() : null) ??
-    (promoteAdminMutation.error instanceof Error ? promoteAdminMutation.error.message : promoteAdminMutation.error ? m.admin_users_error_role_change() : null) ??
-    (demoteAdminMutation.error instanceof Error ? demoteAdminMutation.error.message : demoteAdminMutation.error ? m.admin_users_error_role_change() : null) ??
+    (changeProfileMutation.error instanceof Error ? changeProfileMutation.error.message : changeProfileMutation.error ? m.admin_profiles_error_change() : null) ??
     (leaveWorkspaceMutation.error instanceof Error ? leaveWorkspaceMutation.error.message : leaveWorkspaceMutation.error ? m.admin_users_error_leave_workspace() : null)
 
+  // SPEC-PORTAL-ADMIN-UI-001 REQ-1: columns Name | Email | Profile | Status | Last active | Actions.
+  // "Last active" rendered from created_at (Invited date) — backend has no
+  // last_active_at field; rename is a future SPEC. Label uses col_invited so
+  // the data we display matches the data we have.
   const columns = [
     columnHelper.accessor((row) => `${row.first_name} ${row.last_name}`, {
-      id: 'naam',
+      id: 'name',
       header: () => m.admin_users_col_name(),
       cell: (info) => info.getValue(),
     }),
@@ -190,38 +196,21 @@ function UsersPage() {
       cell: (info) => info.getValue(),
     }),
     columnHelper.accessor('role', {
-      header: () => m.admin_users_col_role(),
+      header: () => m.admin_users_field_profile(),
       cell: (info) => (
-        <RoleBadge role={info.getValue()} pending={info.row.original.invite_pending} />
+        <ProfileBadge role={info.getValue()} pending={info.row.original.invite_pending} />
       ),
     }),
     columnHelper.accessor('status', {
       header: () => m.admin_users_col_status(),
       cell: (info) => <StatusBadge status={info.getValue()} />,
     }),
-    columnHelper.display({
-      id: 'groups',
-      header: () => 'Groups',
-      cell: ({ row }) => {
-        const groups = membershipsByUser[row.original.zitadel_user_id] ?? []
-        if (groups.length === 0) return <span className="text-xs text-[var(--color-muted-foreground)]">—</span>
-        return (
-          <div className="flex flex-wrap gap-1">
-            {groups.map((g) => (
-              <Badge key={g.id} variant="secondary" className="text-xs">
-                {g.name}
-              </Badge>
-            ))}
-          </div>
-        )
-      },
-    }),
     columnHelper.accessor('created_at', {
       header: () => m.admin_users_col_invited(),
       cell: (info) => formatDate(info.getValue()),
     }),
     columnHelper.display({
-      id: 'acties',
+      id: 'actions',
       header: () => m.admin_users_col_actions(),
       cell: ({ row }) => {
         const user = row.original
@@ -290,24 +279,35 @@ function UsersPage() {
                     </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    {/* R6: role management actions (C6.6) */}
-                    {user.role !== 'admin' && (
-                      <DropdownMenuItem
-                        onClick={() => promoteAdminMutation.mutate(user.zitadel_user_id)}
-                        disabled={promoteAdminMutation.isPending}
-                      >
-                        <ShieldCheck className="mr-2 h-4 w-4" />
-                        {m.admin_users_action_make_admin()}
-                      </DropdownMenuItem>
-                    )}
-                    {user.role === 'admin' && !isSelf && (
-                      <DropdownMenuItem
-                        onClick={() => demoteAdminMutation.mutate(user.zitadel_user_id)}
-                        disabled={demoteAdminMutation.isPending}
-                      >
-                        <ShieldMinus className="mr-2 h-4 w-4" />
-                        {m.admin_users_action_remove_admin()}
-                      </DropdownMenuItem>
+                    {/* SPEC-PORTAL-ADMIN-UI-001 REQ-2: change profile submenu */}
+                    {!isSelf && (
+                      <DropdownMenuSub>
+                        <DropdownMenuSubTrigger>
+                          <ShieldCheck className="mr-2 h-4 w-4" />
+                          {m.admin_users_action_change_profile()}
+                        </DropdownMenuSubTrigger>
+                        <DropdownMenuSubContent>
+                          {PROFILE_LADDER.map((targetRole) => (
+                            <DropdownMenuItem
+                              key={targetRole}
+                              disabled={user.role === targetRole || changeProfileMutation.isPending}
+                              onClick={() =>
+                                changeProfileMutation.mutate({
+                                  userId: user.zitadel_user_id,
+                                  role: targetRole,
+                                })
+                              }
+                            >
+                              {profileLabel(targetRole)}
+                              {user.role === targetRole && (
+                                <span className="ml-2 text-xs text-[var(--color-muted-foreground)]">
+                                  ({m.admin_settings_saved()})
+                                </span>
+                              )}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuSubContent>
+                      </DropdownMenuSub>
                     )}
                     {isSelf && (
                       <DropdownMenuItem
@@ -318,9 +318,7 @@ function UsersPage() {
                         {m.admin_users_action_leave_workspace()}
                       </DropdownMenuItem>
                     )}
-                    {(user.role !== 'admin' || !isSelf) && user.role !== 'admin' && (
-                      <DropdownMenuSeparator />
-                    )}
+                    {!isSelf && <DropdownMenuSeparator />}
                     {!isSelf && (
                       <>
                         {user.status === 'active' && (
@@ -361,7 +359,7 @@ function UsersPage() {
 
   // eslint-disable-next-line react-hooks/incompatible-library -- useReactTable returns functions that React Compiler cannot memoize safely; this is expected TanStack Table behaviour
   const table = useReactTable({
-    data: users,
+    data: filteredUsers,
     columns,
     getCoreRowModel: getCoreRowModel(),
   })
@@ -393,11 +391,30 @@ function UsersPage() {
         <p className="text-sm text-[var(--color-destructive)]">{mutationError}</p>
       )}
 
+      {/* SPEC-PORTAL-ADMIN-UI-001 Sparring decision #5: search-input above the
+          table, client-side filter on name + email. (Replaces filter chips
+          from the v0.1.0 draft of REQ-3 — see PR description.) */}
+      {users.length > 0 && (
+        <div className="max-w-sm">
+          <Input
+            type="search"
+            placeholder={m.admin_users_search_placeholder()}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            aria-label={m.admin_users_search_placeholder()}
+          />
+        </div>
+      )}
+
       {isLoading ? (
         <p className="py-8 text-sm text-[var(--color-muted-foreground)]">
           {m.admin_users_loading()}
         </p>
       ) : users.length === 0 ? (
+        <p className="py-8 text-sm text-[var(--color-muted-foreground)]">
+          {m.admin_users_empty()}
+        </p>
+      ) : filteredUsers.length === 0 ? (
         <p className="py-8 text-sm text-[var(--color-muted-foreground)]">
           {m.admin_users_empty()}
         </p>
