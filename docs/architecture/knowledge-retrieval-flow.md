@@ -46,16 +46,31 @@ User types a message (LibreChat | Partner API consumer | chat widget on external
         │
         ├──▶ Fetch rules (strict guardrails) + templates (response scaffolds) for org/KB
         │
+        ├──▶ Multi-KB taxonomy lookup (parallel) — trees + binary coverage map
+        │       (Redis-cached at hook layer, single retrieval-api roundtrip,
+        │       SPEC-RAG-TAXONOMY-001 multi-KB)
+        │
+        ├──▶ Combined query rewrite + taxonomy classify (single klai-fast call)
+        │       (resolve pronouns + classify into the merged taxonomy nodes
+        │       across all in-scope KBs, anti-hallucination guard against
+        │       union of valid IDs, SPEC-RAG-QUERY-REWRITE-001 + SPEC-RAG-TAXONOMY-001)
+        │
         ├──▶ POST to retrieval-api → returns ranked knowledge chunks
         │         │
-        │         ├── Coreference resolution (resolve pronouns)
+        │         ├── Coreference resolution (retrieval-api side, internal pronoun pass)
         │         ├── Generate embeddings (dense + sparse, parallel)
         │         ├── Retrieval gate (is KB retrieval even needed?)
         │         ├── Hybrid vector search in Qdrant (3-leg RRF) + parallel graph search (FalkorDB)
+        │         │   (chunks carry document_summary + context_prefix from
+        │         │    SPEC-RAG-CONTEXTUAL-001 — Anthropic-pattern contextual retrieval)
+        │         ├── Apply taxonomy_node_ids filter (when classifier returned IDs
+        │         │   AND in-scope KB has coverage)
         │         ├── Source-aware selection (mentioned / diversify mode, SPEC-KB-021)
         │         ├── Reranking (cross-encoder scores each chunk against the query)
+        │         ├── Parent expansion — expand each top-K child to its parent chunk
+        │         │   text via parent_chunk_id (SPEC-RAG-PARENT-CHILD-001)
         │         ├── Quality score boost (feedback signals from Qdrant payload)
-        │         └── Return top-K chunks
+        │         └── Return top-K chunks (parent text where expansion succeeded)
         │
         ├──▶ Write retrieval log to Redis (fire-and-forget, for feedback correlation)
         │
@@ -196,7 +211,66 @@ against is no longer the current version.
 
 The retrieval API (`klai-retrieval-api`) is a standalone service that owns the complete
 search pipeline. The LiteLLM hook calls it with a query and gets back a ranked list of
-text chunks. Everything below happens inside that service.
+text chunks.
+
+Before the call to `/retrieve`, the hook itself does two things: it **rewrites the query
+and classifies it into the multi-KB taxonomy in a single LLM round-trip**. After the
+chunks come back, the retrieval API also runs **parent expansion** — replacing each
+matched child chunk with its larger parent for better LLM context. The original
+"coreference resolution" step inside retrieval-api is still there as an internal pass.
+
+---
+
+### Step 0: Hook-side rewrite + taxonomy classify (single klai-fast call)
+
+**Simple:** Two pieces of preparation happen in the LiteLLM hook *before* it calls
+the search engine. First, "What did he say about it?" gets rewritten into a fully
+self-contained question. Second, the question gets categorised into one of the customer's
+knowledge-base topic tags (when the customer has a curated taxonomy). Both happen in a
+single AI call to keep the latency overhead near zero.
+
+**Technical:** The hook fires three small lookups in parallel before retrieval:
+
+1. **Multi-KB taxonomy trees + coverage map.** A single GET to
+   `retrieval-api/internal/v1/taxonomy/trees?kb_slugs=a&kb_slugs=b&...` returns
+   `{kb_slug: [node, ...]}` for every in-scope KB. A second parallel GET to
+   `/internal/v1/taxonomy/coverage` returns `{kb_slug: 0.0|1.0}` — a binary signal
+   marking which KBs have a curated taxonomy. Both are Redis-cached at the hook layer
+   (TTL 300s, deterministic key sorted on `kb_slugs`) so high-traffic chats don't keep
+   re-fetching. Capped at 5 KBs in scope; above that, taxonomy is skipped fail-open.
+   See `SPEC-RAG-TAXONOMY-001`.
+
+2. **Combined rewrite + classify.** The hook makes a single `klai-fast` call (Mistral
+   Small) with both the conversation history (last 4 turns) AND the merged taxonomy
+   trees from KBs that meet the coverage threshold. The model returns:
+
+   ```json
+   { "rewritten_query": "<self-contained question>",
+     "taxonomy_node_ids": [12, 18] }
+   ```
+
+   Anti-hallucination guard: returned IDs are filtered against the *union* of valid IDs
+   across all provided KBs (taxonomy node IDs are globally unique on
+   `portal_taxonomy_nodes`, so cross-KB collisions are impossible). When no KB has
+   coverage, the call falls back to a plain rewrite-only prompt — the classifier path
+   simply isn't invoked. See `SPEC-RAG-QUERY-REWRITE-001` (REQ-5: zero added roundtrip)
+   and `SPEC-RAG-TAXONOMY-001`.
+
+3. **Filter decision.** The hook then decides whether to attach `taxonomy_node_ids` to
+   the `/retrieve` request body. The filter applies iff (a) at least one in-scope KB has
+   coverage above `KLAI_TAXONOMY_COVERAGE_THRESHOLD` (default 0.30, i.e. has at least one
+   taxonomy node), AND (b) the classifier returned at least one valid node ID. Otherwise
+   the filter is skipped fail-open and retrieval runs with the standard org/KB scope
+   filter only.
+
+The whole hook-side rewrite + classify path is fail-open: any LLM timeout, any malformed
+JSON, any retrieval-api error during the taxonomy lookup logs a warning and falls back to
+the raw user query without the taxonomy filter. The chat keeps working — just without the
+narrowing.
+
+Tenants that haven't curated their taxonomy yet (Voys-support, today): every query logs
+`taxonomy_classify ... skip_reason=all_kbs_low_coverage` and the filter is never applied.
+The rewrite path still runs for them.
 
 ---
 
@@ -274,6 +348,17 @@ downstream hooks can observe the decision.
 **Simple:** Qdrant is the database that holds all the knowledge chunks as vectors. We
 search it three ways at once: by semantic meaning, by the questions each chunk answers,
 and by exact keywords. The results are merged into a single ranked list.
+
+> Each chunk in Qdrant is *contextually enriched* per the Anthropic-pattern
+> retrieval (`SPEC-RAG-CONTEXTUAL-001`). Two payload fields ride along with the
+> chunk text and improve embedding quality at ingest time:
+> - `document_summary` — one short summary per artifact, generated once at
+>   ingest and shared across every child chunk.
+> - `context_prefix` — a per-chunk one-liner placing the chunk in its document
+>   context. Embedded together with the chunk text.
+>
+> The reranker (Step 5) sees `context_prefix + text` — the same shape stored in
+> Qdrant — so reranker scoring stays calibrated to the embedded representation.
 
 **Technical:** Against the `klai_knowledge` collection, a three-leg prefetch query is
 executed:
@@ -446,6 +531,40 @@ These fields enable post-retrieval analysis: which sources does the router recom
 which the diversity algorithm selects vs. which actually end up in the top-K.
 
 The final `top_k` chunks (default: 5) are returned to the LiteLLM hook.
+
+---
+
+### Step 5d: Parent expansion (SPEC-RAG-PARENT-CHILD-001)
+
+**Simple:** When ingest chunks a document it actually creates two layers — small *child*
+chunks (good for matching, bad for context because they cut sentences) and large *parent*
+chunks (good for context, too noisy for matching). The retrieval engine matches on
+children to stay precise, then swaps each match for its parent text before sending the
+result to the LLM. The model sees broader context without the matching step getting
+diluted.
+
+**Technical:** Each Qdrant child chunk carries a `parent_chunk_id` payload field
+referencing a row in PostgreSQL `knowledge.parent_chunks`. After Step 5c, retrieval-api
+runs a single batched lookup:
+
+```sql
+SELECT id, text FROM knowledge.parent_chunks WHERE id = ANY($1::bigint[])
+```
+
+For each top-K child whose `parent_chunk_id` resolves, the chunk's `text` field is
+replaced with the parent's `text` and `is_parent_text` is set to `true` on the
+`ChunkResult`. Children without a `parent_chunk_id` (legacy artifacts ingested before
+SPEC-RAG-PARENT-CHILD-001 landed, or artifacts where rebuild_kb hasn't yet propagated the
+linkage) fall back to their own chunk text — fail-open.
+
+The reranker (Step 5) still scores against the *child* text — that's where matching
+precision lives. Parent expansion only changes what the LLM ultimately reads.
+
+Backfill for legacy artifacts: `rebuild_kb_inline(org_id, kb_slug)` reconstructs document
+text from existing Qdrant chunks (lossy but workable), re-chunks with parent-child
+chunking, and re-upserts to Qdrant with the new `parent_chunk_id` linkage. See the
+operator runbook in `docs/runbooks/rag-quality.md` and `klai-knowledge-ingest/
+knowledge_ingest/rebuild_tasks.py`.
 
 ---
 
@@ -691,7 +810,21 @@ The retrieval pipeline above is exercised nightly by a RAGAS-based evaluation ha
 | Alert rule | `deploy/grafana/provisioning/alerting/rag-eval-rules.yaml` |
 | Triage runbook | [docs/runbooks/rag-quality.md](../runbooks/rag-quality.md) |
 
-**Voys baseline (2026-05-05):** `context_precision=0.25`, `context_recall=0.26`, `retrieval_ms=542`. Faithfulness/answer_relevance have known tuning gaps documented in the roadmap. The low precision/recall is the **expected starting point** that Tier 1 SPECs will improve.
+**Voys baseline → post-stack measurements (2026-05-05, chat suite, n=30):**
+
+| Metric | `baseline-v4` (pre-stack) | `post_pr_abcdefg_v1` (full Tier 1+2 live) | Δ |
+|---|---|---|---|
+| `context_precision` | 0.231 | **0.372** | +0.141 (+61%) |
+| `context_recall` | 0.253 | **0.642** | +0.389 (+154%) |
+| `faithfulness` | NaN (judge truncation) | **0.812** | first measurable |
+| `answer_relevance` | 0.706 | 0.711 | +0.005 |
+
+The eval-harness calls retrieval-api directly and bypasses the LiteLLM hook, so query
+rewriting and taxonomy classifying (which live in the hook) are NOT measured by the
+numbers above. Their effect shows up only on real chat traffic. The +61% precision /
++154% recall / first-measurable faithfulness come from contextual-retrieval chunks +
+parent-child expansion + the rebuild_kb backfill alone. Detailed roadmap closing
+snapshot: [docs/architecture/retrieval-improvements-roadmap.md](retrieval-improvements-roadmap.md).
 
 **Multi-tenant by design:** every query in a suite YAML carries its own `org_zitadel_id`. v1 ships with Voys-only suites. Adding additional tenants post-launch is a YAML drop-in — no service split, no per-tenant deployment.
 

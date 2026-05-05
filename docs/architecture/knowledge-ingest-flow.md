@@ -345,15 +345,23 @@ payload, not `[]`. Retrieval-api reads list-shaped keys (`anchor_texts`, `links_
 key-absent, `None`, and non-list values all as `[]`, so the two shapes are
 interchangeable at the consumer boundary.
 
-Chunking is done by a custom `chunker.py` inside knowledge-ingest:
+Chunking is done by `chunker.chunk_markdown_with_parents` (SPEC-RAG-PARENT-CHILD-001).
+It produces TWO chunk layers per document — *children* for matching and *parents* for
+LLM context — in a single pass:
+
 1. **Heading split** — the document is first split at H1/H2/H3 headings
    (`^(#{1,3})\s+(.+)$`). Each section keeps its heading prepended so chunks are
-   self-contained.
-2. **Size split** — sections that are still larger than `chunk_size` (default 1500
-   **characters**, roughly 300–400 tokens for BGE-M3) are further split at paragraph
-   boundaries (`\n\n`) or sentence boundaries (`. `).
-3. **Overlap** — consecutive chunks share a 200-character tail/head overlap to prevent
-   answers from falling between chunks.
+   self-contained. Each section becomes one **parent chunk**.
+2. **Size split (children)** — within each parent, the text is further split at
+   paragraph (`\n\n`) or sentence (`. `) boundaries until each *child* fits in
+   `chunk_size` (default 1500 chars, roughly 300–400 tokens for BGE-M3).
+3. **Overlap** — consecutive children share a 200-character tail/head overlap so an
+   answer doesn't fall between two children.
+4. **Parent-child linkage** — every child carries `parent_index` pointing to its
+   parent in the parents list. Parents are persisted to PostgreSQL `knowledge.parent_chunks`
+   AT enrichment time (so the row IDs are then threaded into each child's Qdrant
+   payload as `parent_chunk_id`). Retrieval-api uses that linkage to expand each
+   matched child back to its parent text after reranking.
 
 The content profile defines `chunk_tokens_max` per document type. The chunker converts
 this to characters (`tokens × 4`) and uses it as `chunk_size`. Effective chunk sizes:
@@ -422,9 +430,29 @@ surrounding context from the document and generates:
 - 3–5 *hypothetical questions* the chunk would answer.
 
 The context strategy (from the profile) determines which surrounding text goes into the
-prompt: `first_n` uses the document's opening paragraphs, `rolling_window` uses nearby
-chunks, `front_matter` uses YAML metadata, and `most_recent` uses the most recent chunks
-(useful for email threads where the latest message is most relevant).
+prompt. As of SPEC-RAG-CONTEXTUAL-001 (Anthropic-pattern contextual retrieval), the
+heaviest path is the new **document_summary** strategy:
+
+- **Document summary** — generated **once per artifact** before chunk enrichment starts
+  (`contextual.generate_document_summary`, klai-fast, 1–2 Dutch/English sentences).
+  Persisted on `extra_payload["document_summary"]` so re-ingest of the same content
+  returns it from cache. The per-chunk enrichment prompt then references this short
+  summary instead of the full document body — ~8x reduction in per-chunk input tokens
+  for a 20-chunk document.
+- **Document language** — auto-detected once via `lingua-language-detector` and cached
+  on `document_language` so the prompt picks the right Dutch/English template
+  per-document (a Dutch tenant can have English vendor docs).
+
+Other context strategies still exist for non-summary content types:
+`first_n` uses the document's opening paragraphs, `rolling_window` uses nearby chunks,
+`front_matter` uses YAML metadata, and `most_recent` uses the most recent chunks (useful
+for email threads where the latest message is most relevant).
+
+The summary itself rides along on every Qdrant point — `document_summary` is a payload
+field on the chunk so retrieval-api can surface it for source-label rendering and for
+the LLM at injection time. Combined with the chunk's own `context_prefix`, the LLM gets
+a layered context: artifact-level summary + chunk-level prefix + chunk text + parent
+text (after expansion at retrieval time).
 
 If the LLM call fails, the chunk falls back to its original text — enrichment failure
 never blocks a chunk from being retrievable.
@@ -722,6 +750,58 @@ to do and returns cleanly. Verified end-to-end against Voys on 2026-04-30
 with 0 cross-store residue across all 9 affected stores (portal_connectors,
 sync_runs, artifacts, crawl_jobs, artifact_images, crawled_pages, Qdrant
 chunks, FalkorDB nodes, Garage S3 objects).
+
+---
+
+### Phase 7: Operator-triggered rebuild (SPEC-RAG-REBUILD-KB-001)
+
+When pipeline-shaping changes ship — new chunking strategy, new chunk metadata, new
+embedding pre-processing — every active artifact needs to be re-run through the
+pipeline. We do this via the operator-triggered `rebuild_kb` task instead of
+re-fetching from source connectors. Source-fetch isn't always possible (deleted Notion
+pages, expired crawl content) and would be 100x more expensive than reusing what's
+already in Qdrant.
+
+**Two source-text paths.** For each artifact, the rebuild reads document text from one
+of two places:
+1. **`extra.document_text`** — persisted at ingest time since SPEC-RAG-CONTEXTUAL-001
+   shipped. Re-ingests after that change rebuild without any reconstruction step.
+2. **Reconstruction from Qdrant** — for *legacy* artifacts ingested before the persist
+   path landed: `_reconstruct_document_text` pulls every existing Qdrant chunk for the
+   artifact's path in `chunk_index` order and concatenates the (non-enriched) text
+   values. Lossy — markdown frontmatter is dropped, chunk overlap leaves duplication —
+   but enough material to feed the new chunker + summary generator.
+
+**What rebuild does per artifact.** Inside a bounded `asyncio.Semaphore(_SEMAPHORE_LIMIT=4)`:
+1. Read `extra.document_text` or reconstruct from Qdrant.
+2. Re-chunk with `chunker.chunk_markdown_with_parents` (children + parents +
+   parent_index_per_child).
+3. Delete stale `parent_chunks` rows for the artifact.
+4. Call `_enrich_document` with `parents` + `parent_index_per_child` — *that* is what
+   threads the generated `parent_chunks.id` into each child's Qdrant payload as
+   `parent_chunk_id`. Calling `_enrich_document` without those kwargs upserts every
+   child with `parent_chunk_id=None` and parent expansion silently degrades
+   (regression that PR #357 fixed; the test
+   `test_rebuild_kb_threads_parents_into_enrich_document` locks the contract).
+5. `_enrich_document` itself runs the same enrichment + embedding + Qdrant
+   delete-then-upsert as fresh ingest.
+
+**Concurrency contract.** Procrastinate `queueing_lock=f"rebuild-kb-{org_id}-{kb_slug}"`
+prevents concurrent rebuilds for the same KB; `AlreadyEnqueued` is raised at defer time
+on duplicate. Inline runbook variant: `rebuild_kb_inline(org_id, kb_slug)` for direct
+operator invocation.
+
+**Operator runbook:**
+```bash
+docker exec klai-core-knowledge-ingest-1 python -c \
+  "import asyncio; from knowledge_ingest.rebuild_tasks import rebuild_kb_inline; \
+   print(asyncio.run(rebuild_kb_inline('<org_zitadel_id>', '<kb_slug>')))"
+```
+
+Used post-deploy whenever a SPEC changes how chunks are produced — recent example: PR
+#357 (parent_chunk_id threading) required Voys to be re-rebuilt to populate
+`parent_chunk_id` on chunks ingested before the fix landed. 515 artifacts processed,
+~5400 chunks regenerated.
 
 ---
 

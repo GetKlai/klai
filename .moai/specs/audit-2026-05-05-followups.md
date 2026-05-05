@@ -20,11 +20,11 @@ Items that genuinely will not be addressed in the original PRs:
 | Audit ref | Item | Why not fixed in PR | Follow-up |
 |---|---|---|---|
 | #2 MED | knowledge-ingest + scribe-api push `:sha` tag on every PR build | operational concern (GHCR storage growth); not a security issue | Separate **SPEC-CI-GHCR-RETENTION-001** if storage cost climbs |
-| #3 MED 8 | `_FakeSession` regex SQL parsing fragile | refactor scope > audit-pass; needs SQLAlchemy statement-inspection rewrite | Separate PR — SPEC-TEST-QUALITY-001 deferred |
-| #3 MED 10 | G3 idempotency test uses 2 separate mock pools | bypasses real "DELETE on empty set = 0" invariant; works as smoke-test | Live-PG fixture in CI — **SPEC-CI-PG-FIXTURE-001** stub PR #356 |
+| #3 MED 8 | `_FakeSession` regex SQL parsing fragile | DONE 2026-05-05 in #332 commit `d12d8274` — refactored to SQLAlchemy structural inspection (BinaryExpression walk + BindParameter introspection) | Closed |
+| #3 MED 10 | G3 idempotency test uses 2 separate mock pools | bypasses real "DELETE on empty set = 0" invariant; works as smoke-test | Live-PG fixture in CI — **SPEC-CI-PG-FIXTURE-001** stub PR #356 (merged) |
 | #3 MED 11 | Qdrant klai_focus filter key claim unverified in CI | live-prod-probe done 2026-05-05 (`tenant_id` confirmed); future drift not auto-detected | Same SPEC-CI-PG-FIXTURE-001 — extend with Qdrant integration |
 | #4 MED B1 | `RequestContextMiddleware` not E2E-tested in mailer | shared-lib tests cover the unit; mailer integration would duplicate | Bundle into shared-lib-adoption SPEC |
-| #4 MED D1 | Dockerfile trailing-slash cosmetic conflict #319 ↔ #335 | merge resolution decides; both forms work | Resolve at merge time (whoever lands second) |
+| #4 MED D1 | Dockerfile trailing-slash cosmetic conflict #319 ↔ #335 | DONE 2026-05-05 — additive merge during #335 rebase; combined log-utils + webhook-replay COPY lines | Closed |
 | #4 LOW B2 | `test_notify_replay` redundant patch after pop+reimport | works; cosmetic redundancy | Leave |
 | #4 LOW C5 | `klai-libs/log-utils` declares `starlette>=0.40` runtime dep | every klai service already depends on FastAPI (transitively pulls Starlette) | Leave — explicit dep is correct hygiene |
 | #4 LOW D2 | Stage 1 of mailer Dockerfile installs `git` (vestigial) | no runtime impact; reserved for future VCS-deps | Drop in next mailer Dockerfile pass |
@@ -81,3 +81,17 @@ For traceability — these items were closed by per-PR amendments during the
 - **Documentation cluster**: items #4 MED A2 + LOW B2 + #1 F8's docstring
   comment + portal_client guard relationship — all "small documentation
   improvements". Could ride along with the next manager-docs sync pass.
+
+---
+
+## Post-batch additions (2026-05-05 evening session)
+
+Beyond the original audit-pass scope, these landed in the same evening
+session and are tracked here for traceability:
+
+| Ref | Item | PR | Notes |
+|---|---|---|---|
+| BFF-PARITY | `BFF_SESSION_KEY` validator-env-parity miss → 4-min prod outage | #360 (noodklep) → klai-infra#4 (SOPS) → #361 (cleanup) | Pattern: silent in-code fallback (`A or B`) deletion + new validator without SOPS pre-flight. Documented as proposed pitfall in `validator-env-parity` section of process-rules.md (extend in next pass). |
+| RLS-A-OWNER | #364 RLS migration crashed portal-api: `ALTER TABLE ENABLE ROW LEVEL SECURITY` requires klai owner | #367 | Migration body emptied; DDL moved to `post_deploy_2f7d1eae1198.sql`. Pitfall `alembic-cannot-drop-non-portal_api-tables` extended to enumerate all owner-required DDL (DROP TABLE, ENABLE/FORCE RLS, CREATE/DROP POLICY, ALTER OWNER). |
+| RLS-PIVOT | #318 closed (superseded). Original ast-grep rule + connector adoption replaced by RLS-on-sync_runs SPEC | SPEC-SEC-CONNECTOR-RLS-001 (skeleton) | Analysis showed ast-grep rule is heuristic application-level; RLS at DB level is the right layer. New SPEC implements it via Category D + cross_org_session helper. |
+| ALEMBIC-NOOP | knowledge-ingest #337 alembic baseline already stamped on prod | n/a | Verified `knowledge.alembic_version = '0001_baseline'` before merge — entrypoint's `alembic upgrade head` is no-op. |
