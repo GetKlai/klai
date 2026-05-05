@@ -28,6 +28,7 @@ from app.models.sync_run import SyncRun
 from app.routes.connectors import router as connectors_router
 from app.routes.fingerprint import router as fingerprint_router
 from app.routes.health import router as health_router
+from app.routes.internal import router as internal_router
 from app.routes.sync import router as sync_router
 from app.services.crypto import PostgresSecretsStore
 from app.services.portal_client import PortalClient
@@ -207,6 +208,7 @@ def create_app() -> FastAPI:
     app.include_router(connectors_router, prefix="/api/v1")
     app.include_router(sync_router, prefix="/api/v1")
     app.include_router(fingerprint_router, prefix="/api/v1")
+    app.include_router(internal_router)
 
     return app
 
