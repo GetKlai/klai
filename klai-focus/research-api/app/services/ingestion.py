@@ -10,7 +10,6 @@ from pathlib import Path
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.source import Source
 from app.services import chunker, docling, tei, youtube

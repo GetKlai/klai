@@ -15,7 +15,6 @@ import json
 import logging
 import time
 
-import asyncpg
 from qdrant_client import AsyncQdrantClient
 
 from knowledge_ingest.config import settings

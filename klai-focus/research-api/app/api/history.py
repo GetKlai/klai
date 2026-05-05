@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import CurrentUser, get_current_user
 from app.core.database import get_db
 from app.models.chat_message import ChatMessage
-from app.models.notebook import Notebook
 from app.api.notebooks import _get_notebook_or_404
 
 router = APIRouter(prefix="/v1", tags=["history"])
