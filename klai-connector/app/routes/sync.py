@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.core.database import get_session
+from app.core.database import get_session, set_tenant
 from app.core.enums import SyncStatus
 from app.core.logging import get_logger
 from app.models.sync_run import SyncRun
@@ -85,6 +85,15 @@ async def trigger_sync(
     _require_portal_call(request)
     org_id = _require_portal_org_id(request, settings)
 
+    # SPEC-SEC-CONNECTOR-RLS-001: bind tenant context for RLS on
+    # connector.sync_runs. Without this the strict policy returns zero
+    # rows on SELECT and refuses INSERT with 42501. The route already
+    # rejects None below — this set_tenant call is a no-op on legacy
+    # transition paths where org_id is None (set_tenant raises on empty,
+    # so we guard).
+    if org_id is not None:
+        await set_tenant(session, org_id)
+
     # Active-sync guard. SPEC-SEC-TENANT-001 REQ-7.4: when org_id is
     # asserted, scope the guard so one tenant's running sync cannot block
     # another tenant's trigger attempt for the same connector_id (which
@@ -127,7 +136,7 @@ async def trigger_sync(
 
     sync_engine = getattr(request.app.state, "sync_engine", None)
     if sync_engine:
-        background_tasks.add_task(sync_engine.run_sync, connector_id, sync_run.id)
+        background_tasks.add_task(sync_engine.run_sync, connector_id, sync_run.id, org_id)
 
     logger.info(
         "Sync triggered for connector %s",
@@ -166,6 +175,12 @@ async def list_sync_runs(
     """
     _require_portal_call(request)
     org_id = _require_portal_org_id(request, settings)
+
+    # SPEC-SEC-CONNECTOR-RLS-001: bind tenant for RLS. None during
+    # transition path leaves the GUC empty — strict policy returns 0
+    # rows, which mirrors the legacy "missing X-Org-ID = no data".
+    if org_id is not None:
+        await set_tenant(session, org_id)
 
     query = (
         select(SyncRun)
@@ -219,6 +234,10 @@ async def get_sync_run(
     """
     _require_portal_call(request)
     org_id = _require_portal_org_id(request, settings)
+
+    # SPEC-SEC-CONNECTOR-RLS-001: bind tenant for RLS on the row lookup.
+    if org_id is not None:
+        await set_tenant(session, org_id)
 
     sync_run = await session.get(SyncRun, run_id)
     if sync_run is None or sync_run.connector_id != connector_id:

@@ -61,6 +61,7 @@ def _make_sync_run_mock() -> MagicMock:
 
 
 def _make_engine(
+    monkeypatch: pytest.MonkeyPatch,
     *,
     enqueue_response: dict | None = None,
     enqueue_exc: Exception | None = None,
@@ -76,8 +77,21 @@ def _make_engine(
     session.__aexit__ = AsyncMock(return_value=False)
     session.get = AsyncMock(return_value=sync_run)
     session.commit = AsyncMock()
+    # SPEC-SEC-CONNECTOR-RLS-001: tenant_scoped_session calls
+    # session.connection() (pin) + session.execute(SELECT set_config...)
+    # + session.rollback() (cleanup). Mock all three async.
+    session.connection = AsyncMock(return_value=MagicMock())
+    session.rollback = AsyncMock()
+    session.execute = AsyncMock()
 
     session_maker = MagicMock(return_value=session)
+    # SPEC-SEC-CONNECTOR-RLS-001: SyncEngine now opens its sessions via
+    # ``tenant_scoped_session(org_id)`` which uses the module-level
+    # ``session_maker`` from app.core.database. Patch so the mock factory
+    # is reached.
+    import app.core.database as _db_module  # noqa: PLC0415
+
+    monkeypatch.setattr(_db_module, "session_maker", session_maker)
 
     crawl_sync_client = MagicMock()
     if enqueue_exc is not None:
@@ -114,8 +128,9 @@ class TestFireAndForgetDelegation:
     """REQ-CRAWLER-006-01..03: enqueue, store remote_job_id, return."""
 
     @pytest.mark.asyncio
-    async def test_successful_enqueue_leaves_run_in_running_state(self) -> None:
+    async def test_successful_enqueue_leaves_run_in_running_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
         engine, session, sync_run, report_mock = _make_engine(
+            monkeypatch,
             enqueue_response={"job_id": "abc123", "status": "queued"},
         )
         connector_id = uuid.uuid4()
@@ -125,6 +140,7 @@ class TestFireAndForgetDelegation:
             portal_config=_make_portal_config(),
             connector_id=connector_id,
             sync_run_id=sync_run_id,
+            org_id="362757920133283846",
             start_time=datetime.now(UTC).timestamp(),
         )
 
@@ -152,7 +168,7 @@ class TestFireAndForgetDelegation:
         report_mock.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_enqueue_http_error_fails_sync_synchronously(self) -> None:
+    async def test_enqueue_http_error_fails_sync_synchronously(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """AC-01.2: non-2xx from /crawl/sync -> FAILED, http_<code> error."""
         fake_response = httpx.Response(
             503,
@@ -160,6 +176,7 @@ class TestFireAndForgetDelegation:
             text="service unavailable",
         )
         engine, _, sync_run, report_mock = _make_engine(
+            monkeypatch,
             enqueue_exc=httpx.HTTPStatusError(
                 "503 service unavailable",
                 request=fake_response.request,
@@ -170,6 +187,7 @@ class TestFireAndForgetDelegation:
             portal_config=_make_portal_config(),
             connector_id=uuid.uuid4(),
             sync_run_id=uuid.uuid4(),
+            org_id="362757920133283846",
             start_time=datetime.now(UTC).timestamp(),
         )
 
@@ -184,14 +202,16 @@ class TestFireAndForgetDelegation:
         assert report_mock.await_args.kwargs["sync_status"] == SyncStatus.FAILED
 
     @pytest.mark.asyncio
-    async def test_enqueue_network_error_fails_sync_synchronously(self) -> None:
+    async def test_enqueue_network_error_fails_sync_synchronously(self, monkeypatch: pytest.MonkeyPatch) -> None:
         engine, _, sync_run, report_mock = _make_engine(
+            monkeypatch,
             enqueue_exc=httpx.ConnectError("connection refused"),
         )
         await engine._run_web_crawler_delegation(
             portal_config=_make_portal_config(),
             connector_id=uuid.uuid4(),
             sync_run_id=uuid.uuid4(),
+            org_id="362757920133283846",
             start_time=datetime.now(UTC).timestamp(),
         )
 
@@ -228,7 +248,8 @@ class TestCrawlSyncClientContract:
         transport = httpx.MockTransport(_handler)
         client = CrawlSyncClient(base_url="http://knowledge-ingest:8000", internal_secret="s3cr3t")
         client._client = httpx.AsyncClient(  # type: ignore[attr-defined]
-            base_url="http://knowledge-ingest:8000", transport=transport,
+            base_url="http://knowledge-ingest:8000",
+            transport=transport,
         )
 
         out = await client.crawl_sync(

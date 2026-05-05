@@ -27,14 +27,17 @@ lifecycle is the source of truth on whether a job should still be alive.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
-from sqlalchemy import and_, select
+from sqlalchemy import and_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.clients.knowledge_ingest import CrawlSyncClient
+from app.core.database import _pin_and_reset_connection, _set_cross_org_admin
 from app.core.enums import SyncStatus
 from app.core.logging import get_logger
 from app.models.sync_run import SyncRun
@@ -74,6 +77,34 @@ class SyncRunReaper:
         self._finalize_after = finalize_after_seconds
         self._force_fail_after = force_fail_after_seconds
 
+    @contextlib.asynccontextmanager
+    async def _cross_org_session(self) -> AsyncIterator[AsyncSession]:
+        """Yield a cross-org session for SyncRun queries.
+
+        SPEC-SEC-CONNECTOR-RLS-001: the reaper sweeps stuck runs across
+        all tenants by design (no caller, no tenant context). Sets
+        ``app.cross_org_admin = '1'`` so the RLS policy on
+        ``connector.sync_runs`` permits SELECT/UPDATE across tenants.
+        Centralised here so every reaper session goes through the same
+        binding and a future refactor cannot accidentally drop it on one
+        of the three call sites (scan / finalise_completed /
+        finalise_failed). Uses ``self._session_maker`` so unit tests can
+        mock the underlying factory while the GUC binding remains
+        production-realistic.
+        """
+        async with self._session_maker() as session:
+            await _pin_and_reset_connection(session)
+            try:
+                await _set_cross_org_admin(session)
+                yield session
+            finally:
+                # Cleanup mirrors database._reset_tenant_context — best-
+                # effort, suppressed on aborted-transaction state.
+                with contextlib.suppress(Exception):
+                    await session.rollback()
+                with contextlib.suppress(Exception):
+                    await session.execute(text("SELECT set_config('app.cross_org_admin', '', false)"))
+
     async def async_run(self) -> None:
         """Run forever, ticking at the configured interval.
 
@@ -110,7 +141,7 @@ class SyncRunReaper:
         force_fail_cutoff = datetime.now(UTC) - timedelta(seconds=self._force_fail_after)
 
         finalised = 0
-        async with self._session_maker() as session:
+        async with self._cross_org_session() as session:
             stmt = select(SyncRun).where(
                 and_(
                     SyncRun.status == SyncStatus.RUNNING,
@@ -194,10 +225,14 @@ class SyncRunReaper:
         return False
 
     async def _finalise_completed(
-        self, row: SyncRun, *, pages_done: int, pages_total: int,
+        self,
+        row: SyncRun,
+        *,
+        pages_done: int,
+        pages_total: int,
     ) -> None:
         completed_at = datetime.now(UTC)
-        async with self._session_maker() as session:
+        async with self._cross_org_session() as session:
             # FOR UPDATE — see SyncRunResolver._finalize for the same
             # rationale (block concurrent finalisers; second reader
             # short-circuits on the post-commit non-RUNNING read).
@@ -252,7 +287,7 @@ class SyncRunReaper:
                 "remote_job_id": str(remote_job_id) if remote_job_id else None,
             },
         ]
-        async with self._session_maker() as session:
+        async with self._cross_org_session() as session:
             db_row = await session.get(SyncRun, row.id, with_for_update=True)
             if db_row is None or db_row.status != SyncStatus.RUNNING:
                 return

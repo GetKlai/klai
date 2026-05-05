@@ -31,6 +31,7 @@ from app.adapters.oauth_base import OAuthReconnectRequiredError
 from app.adapters.registry import AdapterRegistry
 from app.clients.knowledge_ingest import CrawlSyncClient, KnowledgeIngestClient
 from app.core.config import Settings
+from app.core.database import tenant_scoped_session
 from app.core.enums import SyncStatus
 from app.core.logging import get_logger
 from app.core.sanitize import sanitize_response_body  # SPEC-SEC-INTERNAL-001 REQ-4 + REQ-10
@@ -112,7 +113,8 @@ class SyncEngine:
         if image_store:
             self._image_transport = PinnedResolverTransport()
             self._image_http = httpx.AsyncClient(
-                transport=self._image_transport, timeout=30.0,
+                transport=self._image_transport,
+                timeout=30.0,
             )
         else:
             self._image_transport = None
@@ -127,7 +129,12 @@ class SyncEngine:
             self._connector_locks[connector_id] = asyncio.Lock()
         return self._connector_locks[connector_id]
 
-    async def run_sync(self, connector_id: uuid.UUID, sync_run_id: uuid.UUID) -> None:
+    async def run_sync(
+        self,
+        connector_id: uuid.UUID,
+        sync_run_id: uuid.UUID,
+        org_id: str,
+    ) -> None:
         """Execute a full sync cycle for a connector.
 
         Designed to be called as a background task. Skips silently if a sync
@@ -137,6 +144,12 @@ class SyncEngine:
         Args:
             connector_id: UUID of the connector to sync (portal_connectors.id).
             sync_run_id: UUID of the pre-created SyncRun record.
+            org_id: Zitadel-resourceowner string (the connector's tenant).
+                SPEC-SEC-CONNECTOR-RLS-001: required so every internal
+                session can bind ``app.current_org_id`` for RLS. Both
+                callers (``routes/sync.py:trigger_sync`` and
+                ``ConnectorScheduler._trigger_sync``) have it available
+                at the moment they enqueue this background task.
         """
         lock = self._get_connector_lock(connector_id)
         if lock.locked():
@@ -144,9 +157,14 @@ class SyncEngine:
             return
 
         async with lock, self._global_semaphore:
-            await self._execute_sync(connector_id, sync_run_id)
+            await self._execute_sync(connector_id, sync_run_id, org_id)
 
-    async def _execute_sync(self, connector_id: uuid.UUID, sync_run_id: uuid.UUID) -> None:
+    async def _execute_sync(
+        self,
+        connector_id: uuid.UUID,
+        sync_run_id: uuid.UUID,
+        org_id: str,
+    ) -> None:
         """Internal sync execution with full error handling and metrics."""
         start_time = time.monotonic()
         documents_total = 0
@@ -169,11 +187,15 @@ class SyncEngine:
                 exc.response.status_code,
                 connector_id,
             )
-            await self._fail_sync_run(sync_run_id, f"Portal config fetch failed: HTTP {exc.response.status_code}")
+            await self._fail_sync_run(
+                sync_run_id,
+                org_id,
+                f"Portal config fetch failed: HTTP {exc.response.status_code}",
+            )
             return
         except Exception:
             logger.exception("Failed to fetch connector config from portal for %s", connector_id)
-            await self._fail_sync_run(sync_run_id, "Portal config fetch failed")
+            await self._fail_sync_run(sync_run_id, org_id, "Portal config fetch failed")
             return
 
         # SPEC-CRAWLER-004 Fase D: delegate web_crawler syncs to
@@ -181,19 +203,17 @@ class SyncEngine:
         # instead it POSTs the config to /ingest/v1/crawl/sync and polls
         # the returned job_id. Keeps sync_runs ownership + product_events
         # on the connector side; moves pipeline execution to ingest.
-        if (
-            portal_config.connector_type == "web_crawler"
-            and self._crawl_sync_client is not None
-        ):
+        if portal_config.connector_type == "web_crawler" and self._crawl_sync_client is not None:
             await self._run_web_crawler_delegation(
                 portal_config=portal_config,
                 connector_id=connector_id,
                 sync_run_id=sync_run_id,
+                org_id=org_id,
                 start_time=start_time,
             )
             return
 
-        async with self._session_maker() as session:
+        async with tenant_scoped_session(org_id) as session:
             sync_run = await session.get(SyncRun, sync_run_id)
             if sync_run is None:
                 logger.error("SyncRun not found: %s", sync_run_id)
@@ -429,11 +449,13 @@ class SyncEngine:
                 # client or HTTP request was issued — the guard fired
                 # inside ``_extract_config``.
                 status = SyncStatus.FAILED
-                error_details.append({
-                    "error": err.error_code,
-                    "hostname": err.hostname or "",
-                    "reason": str(err),
-                })
+                error_details.append(
+                    {
+                        "error": err.error_code,
+                        "hostname": err.hostname or "",
+                        "reason": str(err),
+                    }
+                )
                 logger.warning(
                     "Sync blocked for connector %s: persisted URL failed SSRF guard",
                     connector_id,
@@ -511,6 +533,7 @@ class SyncEngine:
         portal_config: Any,
         connector_id: uuid.UUID,
         sync_run_id: uuid.UUID,
+        org_id: str,
         start_time: float,
     ) -> None:
         """SPEC-CRAWLER-006 fire-and-forget delegation path.
@@ -535,7 +558,7 @@ class SyncEngine:
         """
         assert self._crawl_sync_client is not None
 
-        async with self._session_maker() as session:
+        async with tenant_scoped_session(org_id) as session:
             sync_run = await session.get(SyncRun, sync_run_id)
             if sync_run is None:
                 logger.error("SyncRun not found: %s", sync_run_id)
@@ -720,9 +743,21 @@ class SyncEngine:
             pin_transport=self._image_transport,
         )
 
-    async def _fail_sync_run(self, sync_run_id: uuid.UUID, error_message: str) -> None:
-        """Mark a sync run as failed without a full portal config."""
-        async with self._session_maker() as session:
+    async def _fail_sync_run(
+        self,
+        sync_run_id: uuid.UUID,
+        org_id: str,
+        error_message: str,
+    ) -> None:
+        """Mark a sync run as failed without a full portal config.
+
+        SPEC-SEC-CONNECTOR-RLS-001: ``org_id`` is required so the RLS
+        policy on ``connector.sync_runs`` permits the UPDATE. Without
+        a bound tenant the strict policy returns zero rows on the
+        ``session.get(SyncRun, ...)`` lookup and the failure status
+        never lands.
+        """
+        async with tenant_scoped_session(org_id) as session:
             sync_run = await session.get(SyncRun, sync_run_id)
             if sync_run:
                 sync_run.status = SyncStatus.FAILED
