@@ -396,6 +396,47 @@ class TestDeleteQdrantPoints:
         assert "klai_focus" in call_args
 
     @pytest.mark.asyncio
+    async def test_filter_key_differs_per_collection(self) -> None:
+        """SPEC-INFRA-TENANT-DELETE-002 G4 regression-guard.
+
+        klai_knowledge stores the tenant ID under payload field ``org_id``;
+        klai_focus stores it under ``tenant_id``. Pre-fix the step iterated
+        with a hardcoded ``org_id`` key, silently leaving every klai_focus
+        point of the deprovisioned tenant untouched — a HIGH-severity GDPR
+        purge gap. This test asserts BOTH collections are deleted with the
+        correct payload key, so a future refactor that re-unifies the keys
+        without verifying the schemas is caught at CI.
+        """
+        state = _make_state(org_id=99, slug="testorg")
+        mock_client = AsyncMock()
+        mock_client.close = AsyncMock()
+
+        with (
+            patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings,
+            patch("qdrant_client.AsyncQdrantClient", return_value=mock_client),
+        ):
+            mock_settings.qdrant_url = "http://qdrant:6333"
+            mock_settings.qdrant_api_key = ""
+            from app.services.provisioning.deprovisioning_steps import _delete_qdrant_points
+
+            await _delete_qdrant_points(state)
+
+        # Reconstruct (collection, filter_key) tuples from the mock calls.
+        # The Filter is positional/kwargs as `points_selector=...`. Walk the
+        # FieldCondition.key inside.
+        seen: list[tuple[str, str]] = []
+        for call in mock_client.delete.await_args_list:
+            collection = call.kwargs.get("collection_name") or call.args[0]
+            filt = call.kwargs.get("points_selector")
+            assert filt is not None, "delete() must pass points_selector kwarg"
+            # filt.must is a list of FieldCondition; pick the first key.
+            key = filt.must[0].key
+            seen.append((collection, key))
+
+        assert ("klai_knowledge", "org_id") in seen, f"Expected ('klai_knowledge', 'org_id'), got {seen}"
+        assert ("klai_focus", "tenant_id") in seen, f"Expected ('klai_focus', 'tenant_id'), got {seen}"
+
+    @pytest.mark.asyncio
     async def test_collection_not_found_is_idempotent(self) -> None:
         """404-like exception from Qdrant must not propagate."""
         state = _make_state(org_id=42, slug="acme")
@@ -753,15 +794,20 @@ class TestFinalizePostgresDelete:
 
     @pytest.mark.asyncio
     async def test_execute_called_for_each_non_cascading_child_table(self) -> None:
-        """db.execute called exactly 8 times: 7 explicit child DELETEs + 1 portal_orgs DELETE.
+        """db.execute called exactly 9 times: 8 explicit child DELETEs + 1 portal_orgs DELETE.
 
         Order MUST be: portal_knowledge_bases, portal_kb_tombstones, vexa_meetings,
-        portal_groups, portal_products, portal_templates, portal_users, portal_orgs.
+        portal_groups, portal_products, portal_templates, portal_users,
+        portal_join_requests, portal_orgs.
 
         This list is the source of truth for the FK audit. If a new non-cascading
         FK is added to portal_orgs, this test must be updated AND the step's
         DELETE list extended — otherwise the production deprovision will fail
         on FK violation.
+
+        SPEC-INFRA-TENANT-DELETE-002 G1 added portal_join_requests after
+        portal_users (ordering matters: portal_users may be referenced by
+        join requests via inviting_user_id).
         """
         state = _make_state(org_id=42, slug="acme")
 
@@ -777,7 +823,7 @@ class TestFinalizePostgresDelete:
 
             await _finalize_postgres_delete(state)
 
-        assert state.db.execute.await_count == 8
+        assert state.db.execute.await_count == 9
 
         # Verify the table-name + order of every executed DELETE.
         expected_tables_in_order = [
@@ -788,6 +834,7 @@ class TestFinalizePostgresDelete:
             "portal_products",
             "portal_templates",
             "portal_users",
+            "portal_join_requests",
             "portal_orgs",
         ]
         actual_tables = []
