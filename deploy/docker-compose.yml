@@ -654,7 +654,12 @@ services:
       - -auth.config=/etc/vmauth/config.yml
       - -httpListenAddr=:8427
       - -configCheckInterval=30s
+      - -logInvalidAuthTokens=true
       # On config reload, vmauth picks up changes within 30s without restart.
+      # logInvalidAuthTokens=true logs the actual reason on every 401 from
+      # auth-failure (signature, exp, iss, claim mismatch). The token value
+      # itself is logged — acceptable for our internal-only monitoring net,
+      # but reconsider before exposing logs publicly.
     environment:
       # vmauth injects upstream basic-auth toward victorialogs using the
       # SAME base64-encoded credential Caddy already uses for logs-ingest.
