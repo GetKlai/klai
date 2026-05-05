@@ -69,30 +69,50 @@ def _make_cache(feature_enabled: bool | None = None, feature: dict | None = None
     Two-level cache structure:
     - kb_ver:{org_id}:{user_id}               → version string ("0")
     - kb_feature:{org_id}:{user_id}:{version} → feature dict
+
+    Templates cache key (``templates:{org_id}:{user_id}``) is pre-seeded
+    with ``[]`` regardless of branch — that short-circuits ``_get_templates``
+    out of its HTTP path so tests don't need to mock ``client.get`` for the
+    portal templates endpoint. Tests that specifically exercise the
+    templates HTTP path can shadow this by passing their own mock
+    ``cache.async_get_cache``.
     """
     cache = MagicMock()
     cache.async_set_cache = AsyncMock()
 
     if feature is None and feature_enabled is None:
-        # Cache miss — both levels return None, forces portal HTTP call
-        cache.async_get_cache = AsyncMock(return_value=None)
+        # Cache miss for KB feature — both kb_ver and kb_feature keys return
+        # None to force the portal HTTP call. Templates cache still seeded so
+        # the templates roundtrip stays out of the way of feature-flag tests.
+        async def _get(key: str) -> object:
+            if key.startswith("templates:"):
+                return []
+            return None
+
+        cache.async_get_cache = AsyncMock(side_effect=_get)
     else:
-        feat: dict = feature or {
-            "enabled": bool(feature_enabled),
+        # Default feature dict — tests that pass a custom ``feature`` get
+        # this as the base and override only the keys they care about. That
+        # way every cached feature still carries a resolved
+        # ``zitadel_user_id`` (required since 2026-05-05 for /retrieve
+        # identity-verify) without each test having to remember it.
+        default_feat: dict = {
+            "enabled": bool(feature_enabled) if feature is None else True,
             "kb_retrieval_enabled": True,
             "kb_personal_enabled": True,
             "kb_slugs_filter": None,
             "version": 0,
-            # Resolved Zitadel sub — required since 2026-05-05 to make
-            # /retrieve identity-verify and personal-KB scope filter work.
             "zitadel_user_id": "362901948573220875",
         }
+        feat: dict = {**default_feat, **(feature or {})}
 
         async def _get(key: str) -> object:
             if key.startswith("kb_ver:"):
                 return "0"
             if key.startswith("kb_feature:"):
                 return feat
+            if key.startswith("templates:"):
+                return []
             return None
 
         cache.async_get_cache = AsyncMock(side_effect=_get)
@@ -799,7 +819,10 @@ class TestKlaiKnowledgeHookKB010:
             post_call = mc.post.call_args
             body = post_call.kwargs.get("json") or {}
             assert body.get("scope") == "both"
-            assert body.get("user_id") == "aabbcc112233445566778899"
+            # /retrieve receives the resolved zitadel_user_id (not the
+            # LibreChat ObjectId) since identity-verify shipped 2026-05-05.
+            # The default _make_cache feature dict pre-seeds this sub.
+            assert body.get("user_id") == "362901948573220875"
 
     @pytest.mark.asyncio
     async def test_conversation_history_passed(self, monkeypatch):
@@ -853,7 +876,9 @@ class TestKlaiKnowledgeHookKB010:
 
         system_msgs = [m for m in result.get("messages", []) if m.get("role") == "system"]
         assert not system_msgs
-        assert result["_klai_kb_meta"]["gate_bypassed"] is True
+        # _klai_kb_meta lives under data["metadata"] for downstream hooks
+        # (TokenRouter reads it from data.get("metadata", {})).
+        assert result["metadata"]["_klai_kb_meta"]["gate_bypassed"] is True
 
     @pytest.mark.asyncio
     async def test_provenance_labels(self, monkeypatch):
@@ -908,10 +933,13 @@ class TestKlaiKnowledgeHookKB010:
 
             result = await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
 
-        meta = result.get("_klai_kb_meta")
+        # _klai_kb_meta lives under data["metadata"] for downstream hooks.
+        meta = result.get("metadata", {}).get("_klai_kb_meta")
         assert meta is not None
         assert meta["org_id"] == "org123"
-        assert meta["user_id"] == "aabbcc112233445566778899"
+        # user_id on the meta is the zitadel sub (matches the resolved sub
+        # that gets sent to /retrieve).
+        assert meta["user_id"] == "362901948573220875"
         assert meta["chunks_injected"] == 1
         assert meta["gate_bypassed"] is False
 
@@ -921,24 +949,56 @@ class TestKlaiKnowledgeHookKB010:
 class TestTokenRouterKB010:
     @pytest.mark.asyncio
     async def test_token_router_skips_downgrade_when_kb_injected(self, monkeypatch):
-        """AC-010-17: model stays klai-primary when _klai_kb_meta present, even > 3000 tokens."""
-        # Mock litellm token_counter to return a high count
+        """AC-010-17: model stays klai-primary when _klai_kb_meta present.
+
+        Specifically guards the *safety-net* downgrade at the bottom of the
+        router (long total context → klai-fast). The long-user-message
+        downgrade higher up the chain still fires regardless of KB context
+        — that's by design: a long single user message means an analytical
+        request, not a KB lookup. So we mock the per-call token_counter to
+        return a number BELOW the per-message threshold but ABOVE the total
+        threshold, exercising only the safety-net path that KB context is
+        meant to bypass.
+        """
         litellm_mod = sys.modules["litellm"]
-        litellm_mod.token_counter = MagicMock(return_value=4000)
+
+        def _fake_token_counter(*, model: str, messages: list, **_) -> int:
+            # If only one message is being counted → it's the per-user-message
+            # check. Return a value BELOW USER_MESSAGE_THRESHOLD (300).
+            # Otherwise → it's the total-context safety net. Return a value
+            # ABOVE SEARCH_TOKEN_THRESHOLD (3000).
+            if len(messages) == 1:
+                return 50
+            return 4000
+
+        litellm_mod.token_counter = MagicMock(side_effect=_fake_token_counter)
 
         sys.modules.pop("custom_router", None)
         import custom_router
+
         importlib.reload(custom_router)
 
         router = custom_router.TokenRouter()
         uak = MagicMock()
 
-        # Simulate 4000 tokens worth of messages with KB meta set
-        messages = [{"role": "user", "content": "x" * 100}]
+        # Two messages so the safety-net branch is exercised (total-context
+        # counter is the one that would route to klai-fast without KB meta).
+        messages = [
+            {"role": "user", "content": "x" * 100},
+            {"role": "assistant", "content": "y" * 100},
+        ]
         data = {
             "model": "klai-primary",
             "messages": messages,
-            "_klai_kb_meta": {"org_id": "org1", "user_id": "u1", "chunks_injected": 3},
+            # The hook stores _klai_kb_meta under data["metadata"] — the router
+            # reads it from there, not from the top level.
+            "metadata": {
+                "_klai_kb_meta": {
+                    "org_id": "org1",
+                    "user_id": "u1",
+                    "chunks_injected": 3,
+                }
+            },
         }
 
         result = await router.async_pre_call_hook(uak, None, data, "completion")
@@ -1423,8 +1483,14 @@ class TestKlaiKnowledgeHookKB013:
             {"role": "user", "content": "Wat is de winstmarge van Q2?"}
         ]}
 
-        # Old-format portal response: just {enabled: True}, missing new KB pref fields
-        portal_resp = _make_resp({"enabled": True})
+        # "Old-format" portal response: only the enabled flag and the
+        # resolved zitadel_user_id, missing the optional KB-pref fields
+        # (kb_retrieval_enabled / kb_personal_enabled / kb_slugs_filter).
+        # zitadel_user_id is mandatory since the 2026-05-05 identity-verify
+        # rollout — without it the hook fails-loud with no retrieval call.
+        portal_resp = _make_resp(
+            {"enabled": True, "zitadel_user_id": "362901948573220875"}
+        )
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
