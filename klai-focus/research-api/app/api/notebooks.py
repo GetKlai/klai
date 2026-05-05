@@ -6,6 +6,7 @@ Notebook CRUD endpoints:
   PATCH  /v1/notebooks/{nb_id}
   DELETE /v1/notebooks/{nb_id}
 """
+
 import uuid
 from datetime import datetime
 from typing import Literal
@@ -25,6 +26,7 @@ router = APIRouter(prefix="/v1", tags=["notebooks"])
 
 
 # ── Request / response models ────────────────────────────────────────────────
+
 
 class NotebookCreate(BaseModel):
     name: str
@@ -64,6 +66,7 @@ class NotebookListResponse(BaseModel):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _nb_id() -> str:
     return "nb_" + uuid.uuid4().hex[:24]
 
@@ -78,9 +81,26 @@ async def _get_notebook_or_404(
     if nb is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notebook niet gevonden")
 
-    # Access check
-    if nb.scope == "personal" and nb.owner_user_id != user.user_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notebook niet gevonden")
+    # Access check — both scope branches MUST check tenant_id to prevent
+    # cross-tenant access after org switches (Finding A-10 / A-12).
+    #
+    # personal scope: user must be the owner AND the notebook must belong
+    # to the user's current tenant. A user moved between orgs retains their
+    # personal notebooks but those notebooks belong to the original tenant —
+    # they must not be visible in the new tenant's context.
+    # [DRAFT] Spec is silent on whether an org-admin can share a personal
+    # notebook across tenants; current assumption is no — personal notebooks
+    # are strictly per-tenant. Revisit if cross-tenant personal sharing is added.
+    if nb.scope == "personal":
+        owner_ok = nb.owner_user_id == user.user_id
+        tenant_ok = str(nb.tenant_id) == user.tenant_id
+        if not (owner_ok and tenant_ok):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Notebook niet gevonden",
+            )
+
+    # org scope: any member of the same tenant can access the notebook.
     if nb.scope == "org" and str(nb.tenant_id) != user.tenant_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notebook niet gevonden")
 
@@ -89,6 +109,7 @@ async def _get_notebook_or_404(
 
 async def _sources_count(db: AsyncSession, nb_id: str) -> int:
     from app.models.source import Source
+
     result = await db.execute(
         select(func.count()).select_from(Source).where(Source.notebook_id == nb_id)
     )
@@ -96,6 +117,7 @@ async def _sources_count(db: AsyncSession, nb_id: str) -> int:
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
 
 @router.post("/notebooks", response_model=NotebookResponse, status_code=201)
 async def create_notebook(
@@ -116,8 +138,12 @@ async def create_notebook(
     await db.commit()
     await db.refresh(nb)
 
-    emit_event("notebook.created", tenant_id=user.tenant_id, user_id=user.user_id,
-               properties={"scope": body.scope})
+    emit_event(
+        "notebook.created",
+        tenant_id=user.tenant_id,
+        user_id=user.user_id,
+        properties={"scope": body.scope},
+    )
 
     return NotebookResponse(
         id=nb.id,
@@ -149,9 +175,7 @@ async def list_notebooks(
         ),
     )
 
-    total_result = await db.execute(
-        select(func.count()).select_from(Notebook).where(access_filter)
-    )
+    total_result = await db.execute(select(func.count()).select_from(Notebook).where(access_filter))
     total = total_result.scalar_one()
 
     rows = await db.execute(
@@ -193,8 +217,12 @@ async def get_notebook(
     nb = await _get_notebook_or_404(nb_id, db, user)
     count = await _sources_count(db, nb.id)
 
-    emit_event("notebook.opened", tenant_id=user.tenant_id, user_id=user.user_id,
-               properties={"scope": nb.scope})
+    emit_event(
+        "notebook.opened",
+        tenant_id=user.tenant_id,
+        user_id=user.user_id,
+        properties={"scope": nb.scope},
+    )
 
     return NotebookResponse(
         id=nb.id,
@@ -272,9 +300,7 @@ async def delete_notebook(
     from app.models.source import Source
     from app.services import qdrant_store
 
-    source_ids_result = await db.execute(
-        select(Source.id).where(Source.notebook_id == nb_id)
-    )
+    source_ids_result = await db.execute(select(Source.id).where(Source.notebook_id == nb_id))
     source_ids = [row[0] for row in source_ids_result.fetchall()]
 
     if source_ids:

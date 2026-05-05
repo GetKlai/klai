@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import TIMESTAMP, VARCHAR, Boolean, Column, Text
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, relationship
 
 
@@ -13,7 +14,9 @@ class Notebook(Base):
     __table_args__ = {"schema": "research"}
 
     id = Column(VARCHAR(32), primary_key=True)
-    tenant_id = Column(VARCHAR(64), nullable=False, index=True)
+    # UUID matches the DB column type from 0001_create_research_schema.py.
+    # SPEC-TI-004-RLS-RESEARCH: RLS _rls_current_org_id() returns uuid.
+    tenant_id = Column(UUID(as_uuid=True), nullable=False, index=True)
     owner_user_id = Column(Text, nullable=False, index=True)
     scope = Column(VARCHAR(16), nullable=False, default="personal")
     name = Column(Text, nullable=False)
