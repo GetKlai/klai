@@ -27,14 +27,22 @@ class TestFrontendUrlAllowed:
         # portal_url falls back to https://portal.{domain}
         assert s.portal_url == f"https://portal.{s.domain}"
 
-    def test_whitespace_only_does_not_raise_validator(self) -> None:
-        # Whitespace-only is treated as empty by our validator (no exception).
-        # Note: the `portal_url` property's `or`-fallback only triggers on
-        # truly-empty strings, so whitespace propagates verbatim. Out of scope
-        # for this validator — covered by SPEC-CODEBASE-AUDIT-001 cleanup.
+    def test_whitespace_only_normalises_to_empty(self) -> None:
+        """Audit 2026-05-05 finding: pre-fix the validator early-returned on
+        whitespace, which the `portal_url or fallback` property treated as
+        truthy → portal_url returned the whitespace string verbatim, breaking
+        OAuth redirect_uri construction. Now the validator normalises
+        whitespace-only frontend_url to "" so the fallback path triggers.
+        """
         s = Settings(frontend_url="   ")
-        # Just assert no ValidationError was raised
-        assert s.frontend_url == "   "
+        assert s.frontend_url == ""
+        assert s.portal_url == f"https://portal.{s.domain}"
+
+    def test_tab_newline_only_normalises_to_empty(self) -> None:
+        """Same as test_whitespace_only_normalises_to_empty for \\t / \\n inputs."""
+        s = Settings(frontend_url="\t\n ")
+        assert s.frontend_url == ""
+        assert s.portal_url == f"https://portal.{s.domain}"
 
     def test_canonical_login_subdomain_passes(self) -> None:
         s = Settings(frontend_url="https://my.getklai.com")
