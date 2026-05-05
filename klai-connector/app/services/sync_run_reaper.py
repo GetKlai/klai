@@ -35,6 +35,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.clients.knowledge_ingest import CrawlSyncClient
+from app.core.database import cross_org_session, tenant_scoped_session
 from app.core.enums import SyncStatus
 from app.core.logging import get_logger
 from app.models.sync_run import SyncRun
@@ -110,7 +111,13 @@ class SyncRunReaper:
         force_fail_cutoff = datetime.now(UTC) - timedelta(seconds=self._force_fail_after)
 
         finalised = 0
-        async with self._session_maker() as session:
+        # cross-org-by-design: the reaper must scan ALL tenants' orphaned
+        # delegated sync_runs. A per-tenant session would miss rows from other
+        # tenants and leave them stuck. The write path (_finalise_*) uses
+        # tenant_scoped_session(row.org_id) so each UPDATE passes the
+        # Cat-D WITH CHECK constraint (org_id = _rls_current_org_id()).
+        # SPEC-TI-002.
+        async with cross_org_session() as session:
             stmt = select(SyncRun).where(
                 and_(
                     SyncRun.status == SyncStatus.RUNNING,
@@ -194,10 +201,17 @@ class SyncRunReaper:
         return False
 
     async def _finalise_completed(
-        self, row: SyncRun, *, pages_done: int, pages_total: int,
+        self,
+        row: SyncRun,
+        *,
+        pages_done: int,
+        pages_total: int,
     ) -> None:
         completed_at = datetime.now(UTC)
-        async with self._session_maker() as session:
+        # Use tenant_scoped_session so the UPDATE passes the WITH CHECK
+        # constraint (org_id = _rls_current_org_id()). SPEC-TI-002.
+        assert row.org_id is not None, "Cannot finalise a sync_run with no org_id"
+        async with tenant_scoped_session(row.org_id) as session:
             # FOR UPDATE — see SyncRunResolver._finalize for the same
             # rationale (block concurrent finalisers; second reader
             # short-circuits on the post-commit non-RUNNING read).
@@ -252,7 +266,10 @@ class SyncRunReaper:
                 "remote_job_id": str(remote_job_id) if remote_job_id else None,
             },
         ]
-        async with self._session_maker() as session:
+        # Use tenant_scoped_session so the UPDATE passes the WITH CHECK
+        # constraint (org_id = _rls_current_org_id()). SPEC-TI-002.
+        assert row.org_id is not None, "Cannot finalise a sync_run with no org_id"
+        async with tenant_scoped_session(row.org_id) as session:
             db_row = await session.get(SyncRun, row.id, with_for_update=True)
             if db_row is None or db_row.status != SyncStatus.RUNNING:
                 return
