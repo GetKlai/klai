@@ -2,8 +2,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useAuth } from '@/lib/auth'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
-import { ArrowLeft, Loader2, Trash2 } from 'lucide-react'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { ArrowLeft, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -26,6 +25,7 @@ import { useSuspendUser, useReactivateUser, useOffboardUser } from '@/hooks/useU
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { PROFILE_LADDER, type ProfileRole } from '@/lib/profiles'
 import { ProfilePicker } from '../../_components/ProfilePicker'
+import { cleanErrorMessage } from '../../_components/errors'
 
 export const Route = createFileRoute('/admin/users/$userId/edit')({
   component: EditUserPage,
@@ -42,11 +42,7 @@ interface User {
   preferred_language: Language
   status: UserStatus
   invite_pending: boolean
-}
-
-interface Group {
-  id: number
-  name: string
+  role: ProfileRole
 }
 
 function EditUserPage() {
@@ -55,20 +51,15 @@ function EditUserPage() {
   const navigate = useNavigate()
   const { userId } = Route.useParams()
   const { user: currentUser } = useCurrentUser()
+  const isSelf = userId === currentUser?.user_id
 
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
   const [language, setLanguage] = useState<Language>('nl')
-  // Local staged group state: the desired final membership
-  const [memberGroupIds, setMemberGroupIds] = useState<Set<number>>(new Set())
-  const [groupsInitialized, setGroupsInitialized] = useState(false)
-  const [selectedGroupId, setSelectedGroupId] = useState('')
-  const [confirmRemoveId, setConfirmRemoveId] = useState<number | null>(null)
-  const [saving, setSaving] = useState(false)
   const [selectedProfile, setSelectedProfile] = useState<ProfileRole | ''>('')
-  const [savingProfile, setSavingProfile] = useState(false)
-  const [profileSaved, setProfileSaved] = useState(false)
-  const [profileError, setProfileError] = useState<string | null>(null)
+  const [originalProfile, setOriginalProfile] = useState<ProfileRole | ''>('')
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   const { data: usersData } = useQuery({
     queryKey: ['admin-users'],
@@ -83,368 +74,213 @@ function EditUserPage() {
       setFirstName(user.first_name)
       setLastName(user.last_name)
       setLanguage(user.preferred_language)
-      if ('portal_role' in user && user.portal_role && PROFILE_LADDER.includes(user.portal_role as ProfileRole)) {
-        setSelectedProfile(user.portal_role as ProfileRole)
+      if (user.role && PROFILE_LADDER.includes(user.role)) {
+        setSelectedProfile(user.role)
+        setOriginalProfile(user.role)
       }
     }
   }, [user])
-
-  const { data: userGroupsData } = useQuery({
-    queryKey: ['admin-user-groups', userId],
-    queryFn: async () => {
-      try {
-        return await apiFetch<{ groups: Group[] }>(`/api/admin/users/${userId}/groups`)
-      } catch {
-        return { groups: [] as Group[] }
-      }
-    },
-    enabled: auth.isAuthenticated,
-  })
-
-  const { data: allGroupsData } = useQuery({
-    queryKey: ['admin-groups'],
-    queryFn: async () => {
-      try {
-        return await apiFetch<{ groups: Group[] }>(`/api/admin/groups`)
-      } catch {
-        return { groups: [] as Group[] }
-      }
-    },
-    enabled: auth.isAuthenticated,
-  })
-
-  const allGroups = allGroupsData?.groups ?? []
-
-  // Initialize staged group state once server data arrives
-  useEffect(() => {
-    if (!groupsInitialized && userGroupsData) {
-      setMemberGroupIds(new Set(userGroupsData.groups.map((g) => g.id)))
-      setGroupsInitialized(true)
-    }
-  }, [userGroupsData, groupsInitialized])
-
-  const currentGroups = allGroups.filter((g) => memberGroupIds.has(g.id))
-  const availableGroups = allGroups.filter((g) => !memberGroupIds.has(g.id))
-
-  function stageAdd(groupId: number) {
-    setMemberGroupIds((prev) => new Set([...prev, groupId]))
-    setSelectedGroupId('')
-  }
-
-  function stageRemove(groupId: number) {
-    setMemberGroupIds((prev) => {
-      const next = new Set(prev)
-      next.delete(groupId)
-      return next
-    })
-  }
-
-  const originalGroupIds = new Set(userGroupsData?.groups.map((g) => g.id) ?? [])
-
-  async function handleSave(e: React.FormEvent) {
-    e.preventDefault()
-    if (!user) return
-    setSaving(true)
-    try {
-      const groupsToAdd = [...memberGroupIds].filter((id) => !originalGroupIds.has(id))
-      const groupsToRemove = [...originalGroupIds].filter((id) => !memberGroupIds.has(id))
-
-      await Promise.all([
-        apiFetch(`/api/admin/users/${userId}`, {
-          method: 'PATCH',
-          body: JSON.stringify({ first_name: firstName, last_name: lastName, preferred_language: language }),
-        }),
-        ...groupsToAdd.map((id) =>
-          apiFetch(`/api/admin/groups/${id}/members`, {
-            method: 'POST',
-            body: JSON.stringify({ zitadel_user_id: userId }),
-          }),
-        ),
-        ...groupsToRemove.map((id) =>
-          apiFetch(`/api/admin/groups/${id}/members/${userId}`, { method: 'DELETE' }),
-        ),
-      ])
-
-      void queryClient.invalidateQueries({ queryKey: ['admin-users'] })
-      void queryClient.invalidateQueries({ queryKey: ['admin-user-groups', userId] })
-      void queryClient.invalidateQueries({ queryKey: ['admin-group-members'] })
-      void queryClient.invalidateQueries({ queryKey: ['admin-group-memberships'] })
-      void navigate({ to: '/admin/users' })
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : m.admin_users_error_edit_generic())
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function handleSaveProfile() {
-    if (!selectedProfile) return
-    setSavingProfile(true)
-    setProfileError(null)
-    try {
-      await apiFetch(`/api/admin/users/${userId}/role`, {
-        method: 'PATCH',
-        body: JSON.stringify({ role: selectedProfile }),
-      })
-      void queryClient.invalidateQueries({ queryKey: ['admin-users'] })
-      setProfileSaved(true)
-      setTimeout(() => setProfileSaved(false), 2500)
-    } catch (err) {
-      setProfileError(err instanceof Error ? err.message : m.admin_users_error_edit_generic())
-    } finally {
-      setSavingProfile(false)
-    }
-  }
 
   const suspendMutation = useSuspendUser()
   const reactivateMutation = useReactivateUser()
   const offboardMutation = useOffboardUser()
 
+  // SPEC-PORTAL-ADMIN-UI-001 v0.3.0 REQ-12: ÉÉN form, ÉÉN save. Submit-handler
+  // stuurt PATCH /users/<id> voor naam/taal en — alleen als profile gewijzigd
+  // is — PATCH /users/<id>/role. Sequentieel zodat de role-update niet stilletjes
+  // overgeslagen wordt als de basis-update een 400/422 oplevert.
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault()
+    if (!user) return
+    setSaving(true)
+    setSaveError(null)
+    try {
+      await apiFetch(`/api/admin/users/${userId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          first_name: firstName,
+          last_name: lastName,
+          preferred_language: language,
+        }),
+      })
+
+      const profileChanged = selectedProfile && selectedProfile !== originalProfile
+      if (profileChanged && !isSelf) {
+        await apiFetch(`/api/admin/users/${userId}/role`, {
+          method: 'PATCH',
+          body: JSON.stringify({ role: selectedProfile }),
+        })
+      }
+
+      void queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+      toast.success(m.admin_settings_saved())
+      void navigate({ to: '/admin/users' })
+    } catch (err) {
+      setSaveError(cleanErrorMessage(err, m.admin_users_error_edit_generic()))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
-    <div className="mx-auto max-w-lg px-6 py-10">
-      <div className="flex items-start justify-between mb-6">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-          {m.admin_users_edit_heading()}
-        </h1>
-        <Button type="button" variant="ghost" size="sm" onClick={() => void navigate({ to: '/admin/users' })}>
+    <div className="mx-auto max-w-lg px-6 py-10 space-y-6">
+      <div className="flex items-start justify-between">
+        <div className="space-y-2">
+          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+            {m.admin_users_edit_heading()}
+          </h1>
+          <p className="text-sm text-[var(--color-muted-foreground)]">
+            {m.admin_users_edit_subtitle()}
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => void navigate({ to: '/admin/users' })}
+        >
           <ArrowLeft className="h-4 w-4 mr-2" />
           {m.admin_users_cancel()}
         </Button>
       </div>
 
-      <Card>
-        <CardContent className="pt-6">
-          <form onSubmit={(e) => void handleSave(e)} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="first-name">{m.admin_users_field_first_name()}</Label>
-                <Input
-                  id="first-name"
-                  type="text"
-                  required
-                  value={firstName}
-                  onChange={(e) => setFirstName(e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="last-name">{m.admin_users_field_last_name()}</Label>
-                <Input
-                  id="last-name"
-                  type="text"
-                  required
-                  value={lastName}
-                  onChange={(e) => setLastName(e.target.value)}
-                />
-              </div>
-            </div>
+      <form onSubmit={(e) => void handleSave(e)} className="space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="first-name">{m.admin_users_field_first_name()}</Label>
+            <Input
+              id="first-name"
+              type="text"
+              required
+              value={firstName}
+              onChange={(e) => setFirstName(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="last-name">{m.admin_users_field_last_name()}</Label>
+            <Input
+              id="last-name"
+              type="text"
+              required
+              value={lastName}
+              onChange={(e) => setLastName(e.target.value)}
+            />
+          </div>
+        </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="language">{m.admin_users_field_language()}</Label>
-              <Select
-                id="language"
-                value={language}
-                onChange={(e) => setLanguage(e.target.value as Language)}
-              >
-                <option value="nl">{m.admin_users_language_nl()}</option>
-                <option value="en">{m.admin_users_language_en()}</option>
-              </Select>
-            </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="language">{m.admin_users_field_language()}</Label>
+          <Select
+            id="language"
+            value={language}
+            onChange={(e) => setLanguage(e.target.value as Language)}
+          >
+            <option value="nl">{m.admin_users_language_nl()}</option>
+            <option value="en">{m.admin_users_language_en()}</option>
+          </Select>
+        </div>
 
-            <div className="border-t pt-4">
-              <Label className="mb-2 block">{m.admin_users_groups_title()}</Label>
-
-              {currentGroups.length === 0 ? (
-                <p className="text-sm text-muted-foreground mb-3">{m.admin_users_groups_empty()}</p>
-              ) : (
-                <div className="space-y-1 mb-3">
-                  {currentGroups.map((group) => (
-                    <div key={group.id} className="flex items-center justify-between py-1">
-                      <span className="text-sm text-[var(--color-foreground)]">
-                        {group.name}
-                      </span>
-                      <div className="flex items-center gap-1">
-                        {confirmRemoveId === group.id ? (
-                          <>
-                            <Button
-                              type="button"
-                              size="sm"
-                              className="bg-[var(--color-destructive)] text-white hover:opacity-90"
-                              onClick={() => { stageRemove(group.id); setConfirmRemoveId(null) }}
-                            >
-                              {m.admin_users_confirm_remove_group_title()}
-                            </Button>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => setConfirmRemoveId(null)}
-                            >
-                              {m.admin_users_cancel()}
-                            </Button>
-                          </>
-                        ) : (
-                          <button
-                            onClick={() => setConfirmRemoveId(group.id)}
-                            className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {availableGroups.length > 0 && (
-                <div className="flex gap-2">
-                  <Select
-                    value={selectedGroupId}
-                    onChange={(e) => setSelectedGroupId(e.target.value)}
-                    className="flex-1"
-                  >
-                    <option value="">— {m.admin_users_groups_add()} —</option>
-                    {availableGroups.map((g) => (
-                      <option key={g.id} value={String(g.id)}>
-                        {g.name}
-                      </option>
-                    ))}
-                  </Select>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={!selectedGroupId}
-                    onClick={() => stageAdd(Number(selectedGroupId))}
-                  >
-                    {m.admin_users_groups_add()}
-                  </Button>
-                </div>
-              )}
-            </div>
-
-            <div className="pt-2 flex gap-2">
-              <Button type="submit" disabled={saving || !user}>
-                {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                {saving ? m.admin_users_edit_submit_loading() : m.admin_users_edit_submit()}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => void navigate({ to: '/admin/users' })}
-              >
-                {m.admin_users_cancel()}
-              </Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
-
-      {/* Profile card — SPEC-PORTAL-PROFILES-001 P3.5 */}
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>{m.profile_picker_title()}</CardTitle>
-          <CardDescription>{m.profile_picker_description()}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
+        <div className="space-y-1.5">
+          <Label>{m.admin_users_field_profile()}</Label>
           <ProfilePicker
             value={selectedProfile}
             onChange={setSelectedProfile}
-            disabled={userId === currentUser?.user_id}
+            disabled={isSelf}
             disabledMessage={m.profile_picker_self_edit_hint()}
           />
-          {profileError && (
-            <p className="text-sm text-[var(--color-destructive)]">{profileError}</p>
-          )}
+        </div>
+
+        {saveError && (
+          <p className="text-sm text-[var(--color-destructive)]">{saveError}</p>
+        )}
+
+        <div className="pt-2 flex items-center gap-3">
+          <Button type="submit" disabled={saving || !user}>
+            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+            {saving ? m.admin_users_edit_submit_loading() : m.admin_users_edit_submit()}
+          </Button>
           <Button
             type="button"
-            onClick={() => void handleSaveProfile()}
-            disabled={savingProfile || profileSaved || !selectedProfile || userId === currentUser?.user_id}
+            variant="ghost"
+            onClick={() => void navigate({ to: '/admin/users' })}
           >
-            {savingProfile && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-            {profileSaved
-              ? m.admin_settings_saved()
-              : savingProfile
-                ? m.admin_settings_saving()
-                : m.profile_picker_save()}
+            {m.admin_users_cancel()}
           </Button>
-        </CardContent>
-      </Card>
+        </div>
+      </form>
 
       {/* Lifecycle actions — destructive, separate from save */}
       {user && (user.status === 'suspended' || (user.status === 'active' && !user.invite_pending)) && (
-        <Card className="mt-6">
-          <CardContent className="pt-6 flex flex-wrap gap-3">
-            {user.status === 'active' && !user.invite_pending && (
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button variant="outline" disabled={suspendMutation.isPending}>
-                    {suspendMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+        <div className="border-t pt-6 flex flex-wrap gap-3">
+          {user.status === 'active' && !user.invite_pending && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline" disabled={suspendMutation.isPending}>
+                  {suspendMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  {m.admin_users_action_suspend()}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>{m.admin_users_confirm_suspend_title()}</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {m.admin_users_confirm_suspend_description()}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>{m.admin_users_cancel()}</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => suspendMutation.mutate(userId)}>
                     {m.admin_users_action_suspend()}
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>{m.admin_users_confirm_suspend_title()}</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      {m.admin_users_confirm_suspend_description()}
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>{m.admin_users_cancel()}</AlertDialogCancel>
-                    <AlertDialogAction onClick={() => suspendMutation.mutate(userId)}>
-                      {m.admin_users_action_suspend()}
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            )}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
 
-            {user.status === 'suspended' && (
-              <Button
-                variant="outline"
-                disabled={reactivateMutation.isPending}
-                onClick={() => reactivateMutation.mutate(userId)}
-              >
-                {reactivateMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                {m.admin_users_action_reactivate()}
-              </Button>
-            )}
+          {user.status === 'suspended' && (
+            <Button
+              variant="outline"
+              disabled={reactivateMutation.isPending}
+              onClick={() => reactivateMutation.mutate(userId)}
+            >
+              {reactivateMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              {m.admin_users_action_reactivate()}
+            </Button>
+          )}
 
-            {(user.status === 'active' || user.status === 'suspended') && !user.invite_pending && (
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button variant="destructive" disabled={offboardMutation.isPending}>
-                    {offboardMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+          {(user.status === 'active' || user.status === 'suspended') && !user.invite_pending && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="destructive" disabled={offboardMutation.isPending}>
+                  {offboardMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  {m.admin_users_action_offboard()}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>{m.admin_users_confirm_offboard_title()}</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {m.admin_users_confirm_offboard_description()}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>{m.admin_users_cancel()}</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() => {
+                      offboardMutation.mutate(userId, {
+                        onSuccess: () => {
+                          void navigate({ to: '/admin/users' })
+                        },
+                      })
+                    }}
+                  >
                     {m.admin_users_action_offboard()}
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>{m.admin_users_confirm_offboard_title()}</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      {m.admin_users_confirm_offboard_description()}
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>{m.admin_users_cancel()}</AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={() => {
-                        offboardMutation.mutate(userId, {
-                          onSuccess: () => {
-                            void navigate({ to: '/admin/users' })
-                          },
-                        })
-                      }}
-                    >
-                      {m.admin_users_action_offboard()}
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            )}
-          </CardContent>
-        </Card>
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+        </div>
       )}
     </div>
   )

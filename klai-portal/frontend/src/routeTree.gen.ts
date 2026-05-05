@@ -64,7 +64,6 @@ import { Route as AdminWidgetsNewRouteImport } from './routes/admin/widgets/new'
 import { Route as AdminWidgetsIdRouteImport } from './routes/admin/widgets/$id'
 import { Route as AdminUsersInviteRouteImport } from './routes/admin/users/invite'
 import { Route as AdminTemplatesNewRouteImport } from './routes/admin/templates/new'
-import { Route as AdminProfilesProfileRouteImport } from './routes/admin/profiles/$profile'
 import { Route as AdminMcpsNewRouteImport } from './routes/admin/mcps/new'
 import { Route as AdminMcpsServerIdRouteImport } from './routes/admin/mcps/$serverId'
 import { Route as AdminGroupsNewRouteImport } from './routes/admin/groups/new'
@@ -76,6 +75,7 @@ import { Route as AppKnowledgeKbSlugRouteRouteImport } from './routes/app/knowle
 import { Route as AppDocsKbSlugRouteRouteImport } from './routes/app/docs/$kbSlug/route'
 import { Route as AppKnowledgeKbSlugIndexRouteImport } from './routes/app/knowledge/$kbSlug/index'
 import { Route as AppDocsKbSlugIndexRouteImport } from './routes/app/docs/$kbSlug/index'
+import { Route as AdminProfilesProfileIndexRouteImport } from './routes/admin/profiles/$profile/index'
 import { Route as AdminGroupsGroupIdIndexRouteImport } from './routes/admin/groups/$groupId/index'
 import { Route as AppTemplatesSlugEditRouteImport } from './routes/app/templates/$slug.edit'
 import { Route as AppKnowledgeKbSlugAddSourceRouteImport } from './routes/app/knowledge/$kbSlug_.add-source'
@@ -91,6 +91,7 @@ import { Route as AppDocsKbSlugEditRouteImport } from './routes/app/docs/$kbSlug
 import { Route as AppDocsKbSlugPageIdRouteImport } from './routes/app/docs/$kbSlug/$pageId'
 import { Route as AdminUsersUserIdEditRouteImport } from './routes/admin/users/$userId/edit'
 import { Route as AdminTemplatesSlugEditRouteImport } from './routes/admin/templates/$slug.edit'
+import { Route as AdminProfilesProfileAddMemberRouteImport } from './routes/admin/profiles/$profile/add-member'
 import { Route as AdminGroupsGroupIdEditRouteImport } from './routes/admin/groups/$groupId/edit'
 import { Route as AdminGroupsGroupIdAddMemberRouteImport } from './routes/admin/groups/$groupId/add-member'
 import { Route as AppKnowledgeKbSlugEditConnectorConnectorIdRouteImport } from './routes/app/knowledge/$kbSlug_.edit-connector.$connectorId'
@@ -372,11 +373,6 @@ const AdminTemplatesNewRoute = AdminTemplatesNewRouteImport.update({
   path: '/templates/new',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const AdminProfilesProfileRoute = AdminProfilesProfileRouteImport.update({
-  id: '/profiles/$profile',
-  path: '/profiles/$profile',
-  getParentRoute: () => AdminRouteRoute,
-} as any)
 const AdminMcpsNewRoute = AdminMcpsNewRouteImport.update({
   id: '/mcps/new',
   path: '/mcps/new',
@@ -432,6 +428,12 @@ const AppDocsKbSlugIndexRoute = AppDocsKbSlugIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppDocsKbSlugRouteRoute,
 } as any)
+const AdminProfilesProfileIndexRoute =
+  AdminProfilesProfileIndexRouteImport.update({
+    id: '/profiles/$profile/',
+    path: '/profiles/$profile/',
+    getParentRoute: () => AdminRouteRoute,
+  } as any)
 const AdminGroupsGroupIdIndexRoute = AdminGroupsGroupIdIndexRouteImport.update({
   id: '/groups/$groupId/',
   path: '/groups/$groupId/',
@@ -517,6 +519,12 @@ const AdminTemplatesSlugEditRoute = AdminTemplatesSlugEditRouteImport.update({
   path: '/templates/$slug/edit',
   getParentRoute: () => AdminRouteRoute,
 } as any)
+const AdminProfilesProfileAddMemberRoute =
+  AdminProfilesProfileAddMemberRouteImport.update({
+    id: '/profiles/$profile/add-member',
+    path: '/profiles/$profile/add-member',
+    getParentRoute: () => AdminRouteRoute,
+  } as any)
 const AdminGroupsGroupIdEditRoute = AdminGroupsGroupIdEditRouteImport.update({
   id: '/groups/$groupId/edit',
   path: '/groups/$groupId/edit',
@@ -575,7 +583,6 @@ export interface FileRoutesByFullPath {
   '/admin/groups/new': typeof AdminGroupsNewRoute
   '/admin/mcps/$serverId': typeof AdminMcpsServerIdRoute
   '/admin/mcps/new': typeof AdminMcpsNewRoute
-  '/admin/profiles/$profile': typeof AdminProfilesProfileRoute
   '/admin/templates/new': typeof AdminTemplatesNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/admin/widgets/$id': typeof AdminWidgetsIdRoute
@@ -603,6 +610,7 @@ export interface FileRoutesByFullPath {
   '/app/transcribe/': typeof AppTranscribeIndexRoute
   '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
   '/admin/groups/$groupId/edit': typeof AdminGroupsGroupIdEditRoute
+  '/admin/profiles/$profile/add-member': typeof AdminProfilesProfileAddMemberRoute
   '/admin/templates/$slug/edit': typeof AdminTemplatesSlugEditRoute
   '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
   '/app/docs/$kbSlug/$pageId': typeof AppDocsKbSlugPageIdRoute
@@ -618,6 +626,7 @@ export interface FileRoutesByFullPath {
   '/app/knowledge/$kbSlug/add-source': typeof AppKnowledgeKbSlugAddSourceRoute
   '/app/templates/$slug/edit': typeof AppTemplatesSlugEditRoute
   '/admin/groups/$groupId/': typeof AdminGroupsGroupIdIndexRoute
+  '/admin/profiles/$profile/': typeof AdminProfilesProfileIndexRoute
   '/app/docs/$kbSlug/': typeof AppDocsKbSlugIndexRoute
   '/app/knowledge/$kbSlug/': typeof AppKnowledgeKbSlugIndexRoute
   '/app/knowledge/$kbSlug/edit-connector/$connectorId': typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
@@ -657,7 +666,6 @@ export interface FileRoutesByTo {
   '/admin/groups/new': typeof AdminGroupsNewRoute
   '/admin/mcps/$serverId': typeof AdminMcpsServerIdRoute
   '/admin/mcps/new': typeof AdminMcpsNewRoute
-  '/admin/profiles/$profile': typeof AdminProfilesProfileRoute
   '/admin/templates/new': typeof AdminTemplatesNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/admin/widgets/$id': typeof AdminWidgetsIdRoute
@@ -685,6 +693,7 @@ export interface FileRoutesByTo {
   '/app/transcribe': typeof AppTranscribeIndexRoute
   '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
   '/admin/groups/$groupId/edit': typeof AdminGroupsGroupIdEditRoute
+  '/admin/profiles/$profile/add-member': typeof AdminProfilesProfileAddMemberRoute
   '/admin/templates/$slug/edit': typeof AdminTemplatesSlugEditRoute
   '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
   '/app/docs/$kbSlug/$pageId': typeof AppDocsKbSlugPageIdRoute
@@ -700,6 +709,7 @@ export interface FileRoutesByTo {
   '/app/knowledge/$kbSlug/add-source': typeof AppKnowledgeKbSlugAddSourceRoute
   '/app/templates/$slug/edit': typeof AppTemplatesSlugEditRoute
   '/admin/groups/$groupId': typeof AdminGroupsGroupIdIndexRoute
+  '/admin/profiles/$profile': typeof AdminProfilesProfileIndexRoute
   '/app/docs/$kbSlug': typeof AppDocsKbSlugIndexRoute
   '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugIndexRoute
   '/app/knowledge/$kbSlug/edit-connector/$connectorId': typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
@@ -745,7 +755,6 @@ export interface FileRoutesById {
   '/admin/groups/new': typeof AdminGroupsNewRoute
   '/admin/mcps/$serverId': typeof AdminMcpsServerIdRoute
   '/admin/mcps/new': typeof AdminMcpsNewRoute
-  '/admin/profiles/$profile': typeof AdminProfilesProfileRoute
   '/admin/templates/new': typeof AdminTemplatesNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/admin/widgets/$id': typeof AdminWidgetsIdRoute
@@ -773,6 +782,7 @@ export interface FileRoutesById {
   '/app/transcribe/': typeof AppTranscribeIndexRoute
   '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
   '/admin/groups/$groupId/edit': typeof AdminGroupsGroupIdEditRoute
+  '/admin/profiles/$profile/add-member': typeof AdminProfilesProfileAddMemberRoute
   '/admin/templates/$slug/edit': typeof AdminTemplatesSlugEditRoute
   '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
   '/app/docs/$kbSlug/$pageId': typeof AppDocsKbSlugPageIdRoute
@@ -788,6 +798,7 @@ export interface FileRoutesById {
   '/app/knowledge/$kbSlug_/add-source': typeof AppKnowledgeKbSlugAddSourceRoute
   '/app/templates/$slug/edit': typeof AppTemplatesSlugEditRoute
   '/admin/groups/$groupId/': typeof AdminGroupsGroupIdIndexRoute
+  '/admin/profiles/$profile/': typeof AdminProfilesProfileIndexRoute
   '/app/docs/$kbSlug/': typeof AppDocsKbSlugIndexRoute
   '/app/knowledge/$kbSlug/': typeof AppKnowledgeKbSlugIndexRoute
   '/app/knowledge/$kbSlug_/edit-connector/$connectorId': typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
@@ -834,7 +845,6 @@ export interface FileRouteTypes {
     | '/admin/groups/new'
     | '/admin/mcps/$serverId'
     | '/admin/mcps/new'
-    | '/admin/profiles/$profile'
     | '/admin/templates/new'
     | '/admin/users/invite'
     | '/admin/widgets/$id'
@@ -862,6 +872,7 @@ export interface FileRouteTypes {
     | '/app/transcribe/'
     | '/admin/groups/$groupId/add-member'
     | '/admin/groups/$groupId/edit'
+    | '/admin/profiles/$profile/add-member'
     | '/admin/templates/$slug/edit'
     | '/admin/users/$userId/edit'
     | '/app/docs/$kbSlug/$pageId'
@@ -877,6 +888,7 @@ export interface FileRouteTypes {
     | '/app/knowledge/$kbSlug/add-source'
     | '/app/templates/$slug/edit'
     | '/admin/groups/$groupId/'
+    | '/admin/profiles/$profile/'
     | '/app/docs/$kbSlug/'
     | '/app/knowledge/$kbSlug/'
     | '/app/knowledge/$kbSlug/edit-connector/$connectorId'
@@ -916,7 +928,6 @@ export interface FileRouteTypes {
     | '/admin/groups/new'
     | '/admin/mcps/$serverId'
     | '/admin/mcps/new'
-    | '/admin/profiles/$profile'
     | '/admin/templates/new'
     | '/admin/users/invite'
     | '/admin/widgets/$id'
@@ -944,6 +955,7 @@ export interface FileRouteTypes {
     | '/app/transcribe'
     | '/admin/groups/$groupId/add-member'
     | '/admin/groups/$groupId/edit'
+    | '/admin/profiles/$profile/add-member'
     | '/admin/templates/$slug/edit'
     | '/admin/users/$userId/edit'
     | '/app/docs/$kbSlug/$pageId'
@@ -959,6 +971,7 @@ export interface FileRouteTypes {
     | '/app/knowledge/$kbSlug/add-source'
     | '/app/templates/$slug/edit'
     | '/admin/groups/$groupId'
+    | '/admin/profiles/$profile'
     | '/app/docs/$kbSlug'
     | '/app/knowledge/$kbSlug'
     | '/app/knowledge/$kbSlug/edit-connector/$connectorId'
@@ -1003,7 +1016,6 @@ export interface FileRouteTypes {
     | '/admin/groups/new'
     | '/admin/mcps/$serverId'
     | '/admin/mcps/new'
-    | '/admin/profiles/$profile'
     | '/admin/templates/new'
     | '/admin/users/invite'
     | '/admin/widgets/$id'
@@ -1031,6 +1043,7 @@ export interface FileRouteTypes {
     | '/app/transcribe/'
     | '/admin/groups/$groupId/add-member'
     | '/admin/groups/$groupId/edit'
+    | '/admin/profiles/$profile/add-member'
     | '/admin/templates/$slug/edit'
     | '/admin/users/$userId/edit'
     | '/app/docs/$kbSlug/$pageId'
@@ -1046,6 +1059,7 @@ export interface FileRouteTypes {
     | '/app/knowledge/$kbSlug_/add-source'
     | '/app/templates/$slug/edit'
     | '/admin/groups/$groupId/'
+    | '/admin/profiles/$profile/'
     | '/app/docs/$kbSlug/'
     | '/app/knowledge/$kbSlug/'
     | '/app/knowledge/$kbSlug_/edit-connector/$connectorId'
@@ -1459,13 +1473,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminTemplatesNewRouteImport
       parentRoute: typeof AdminRouteRoute
     }
-    '/admin/profiles/$profile': {
-      id: '/admin/profiles/$profile'
-      path: '/profiles/$profile'
-      fullPath: '/admin/profiles/$profile'
-      preLoaderRoute: typeof AdminProfilesProfileRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
     '/admin/mcps/new': {
       id: '/admin/mcps/new'
       path: '/mcps/new'
@@ -1542,6 +1549,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/app/docs/$kbSlug/'
       preLoaderRoute: typeof AppDocsKbSlugIndexRouteImport
       parentRoute: typeof AppDocsKbSlugRouteRoute
+    }
+    '/admin/profiles/$profile/': {
+      id: '/admin/profiles/$profile/'
+      path: '/profiles/$profile'
+      fullPath: '/admin/profiles/$profile/'
+      preLoaderRoute: typeof AdminProfilesProfileIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
     }
     '/admin/groups/$groupId/': {
       id: '/admin/groups/$groupId/'
@@ -1648,6 +1662,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminTemplatesSlugEditRouteImport
       parentRoute: typeof AdminRouteRoute
     }
+    '/admin/profiles/$profile/add-member': {
+      id: '/admin/profiles/$profile/add-member'
+      path: '/profiles/$profile/add-member'
+      fullPath: '/admin/profiles/$profile/add-member'
+      preLoaderRoute: typeof AdminProfilesProfileAddMemberRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
     '/admin/groups/$groupId/edit': {
       id: '/admin/groups/$groupId/edit'
       path: '/groups/$groupId/edit'
@@ -1712,7 +1733,6 @@ interface AdminRouteRouteChildren {
   AdminGroupsNewRoute: typeof AdminGroupsNewRoute
   AdminMcpsServerIdRoute: typeof AdminMcpsServerIdRoute
   AdminMcpsNewRoute: typeof AdminMcpsNewRoute
-  AdminProfilesProfileRoute: typeof AdminProfilesProfileRoute
   AdminTemplatesNewRoute: typeof AdminTemplatesNewRoute
   AdminUsersInviteRoute: typeof AdminUsersInviteRoute
   AdminWidgetsIdRoute: typeof AdminWidgetsIdRoute
@@ -1726,9 +1746,11 @@ interface AdminRouteRouteChildren {
   AdminWidgetsIndexRoute: typeof AdminWidgetsIndexRoute
   AdminGroupsGroupIdAddMemberRoute: typeof AdminGroupsGroupIdAddMemberRoute
   AdminGroupsGroupIdEditRoute: typeof AdminGroupsGroupIdEditRoute
+  AdminProfilesProfileAddMemberRoute: typeof AdminProfilesProfileAddMemberRoute
   AdminTemplatesSlugEditRoute: typeof AdminTemplatesSlugEditRoute
   AdminUsersUserIdEditRoute: typeof AdminUsersUserIdEditRoute
   AdminGroupsGroupIdIndexRoute: typeof AdminGroupsGroupIdIndexRoute
+  AdminProfilesProfileIndexRoute: typeof AdminProfilesProfileIndexRoute
 }
 
 const AdminRouteRouteChildren: AdminRouteRouteChildren = {
@@ -1743,7 +1765,6 @@ const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminGroupsNewRoute: AdminGroupsNewRoute,
   AdminMcpsServerIdRoute: AdminMcpsServerIdRoute,
   AdminMcpsNewRoute: AdminMcpsNewRoute,
-  AdminProfilesProfileRoute: AdminProfilesProfileRoute,
   AdminTemplatesNewRoute: AdminTemplatesNewRoute,
   AdminUsersInviteRoute: AdminUsersInviteRoute,
   AdminWidgetsIdRoute: AdminWidgetsIdRoute,
@@ -1757,9 +1778,11 @@ const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminWidgetsIndexRoute: AdminWidgetsIndexRoute,
   AdminGroupsGroupIdAddMemberRoute: AdminGroupsGroupIdAddMemberRoute,
   AdminGroupsGroupIdEditRoute: AdminGroupsGroupIdEditRoute,
+  AdminProfilesProfileAddMemberRoute: AdminProfilesProfileAddMemberRoute,
   AdminTemplatesSlugEditRoute: AdminTemplatesSlugEditRoute,
   AdminUsersUserIdEditRoute: AdminUsersUserIdEditRoute,
   AdminGroupsGroupIdIndexRoute: AdminGroupsGroupIdIndexRoute,
+  AdminProfilesProfileIndexRoute: AdminProfilesProfileIndexRoute,
 }
 
 const AdminRouteRouteWithChildren = AdminRouteRoute._addFileChildren(
