@@ -35,12 +35,18 @@ def _import_settings_class():
 
 
 def test_valid_gitea_webhook_secret_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Sanity: non-empty value passes."""
+    """Sanity: non-empty value lets the module import + the singleton construct.
+
+    Imports knowledge_ingest.config to exercise the actual production code
+    path (module-level ``settings = Settings()`` runs under the patched env),
+    not just direct ``Settings()`` construction. Audit 2026-05-05 finding 2:
+    the previous test bypassed import-time validation and would silently
+    pass even if the module-level singleton was broken.
+    """
     monkeypatch.setenv("GITEA_WEBHOOK_SECRET", "valid-non-empty-webhook-secret")
     _reload_config_module(monkeypatch)
-    SettingsCls = _import_settings_class()
-    s = SettingsCls()
-    assert s.gitea_webhook_secret == "valid-non-empty-webhook-secret"
+    config_module = importlib.import_module("knowledge_ingest.config")
+    assert config_module.settings.gitea_webhook_secret == "valid-non-empty-webhook-secret"
 
 
 @pytest.mark.parametrize("value", ["", "   ", "\t\n "], ids=["empty", "spaces", "whitespace"])
