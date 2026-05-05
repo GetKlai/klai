@@ -506,6 +506,157 @@ class TestDeleteFalkordbGraph:
 
 
 # ---------------------------------------------------------------------------
+# Step 9a — _wipe_knowledge_postgres (SPEC-INFRA-TENANT-DELETE-002 G3)
+# ---------------------------------------------------------------------------
+
+
+class TestWipeKnowledgePostgres:
+    @pytest.mark.asyncio
+    async def test_200_ok_logs_per_table_counts(self) -> None:
+        """200 response with per-table rows_deleted dict means wipe succeeded."""
+        state = _make_state(org_id=42, slug="acme")
+
+        with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
+            mock_settings.knowledge_ingest_url = "http://knowledge-ingest:8000"
+            mock_settings.knowledge_ingest_secret = "secret"
+            with patch("app.trace.get_trace_headers", return_value={}):
+                with respx_router(base_url="http://knowledge-ingest:8000") as router:
+                    router.post("/internal/v1/orgs/42/wipe-postgres").mock(
+                        return_value=httpx.Response(
+                            200,
+                            json={
+                                "rows_deleted": {
+                                    "page_links": 12,
+                                    "crawled_pages": 5,
+                                    "artifacts": 3,
+                                },
+                                "status": "ok",
+                            },
+                        )
+                    )
+                    from app.services.provisioning.deprovisioning_steps import _wipe_knowledge_postgres
+
+                    await _wipe_knowledge_postgres(state)
+
+    @pytest.mark.asyncio
+    async def test_404_is_idempotent(self) -> None:
+        """404 — endpoint not deployed yet (rolling deploy ordering). Logged WARN, no raise."""
+        state = _make_state(org_id=42, slug="acme")
+
+        with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
+            mock_settings.knowledge_ingest_url = "http://knowledge-ingest:8000"
+            mock_settings.knowledge_ingest_secret = "secret"
+            with patch("app.trace.get_trace_headers", return_value={}):
+                with respx_router(base_url="http://knowledge-ingest:8000") as router:
+                    router.post("/internal/v1/orgs/42/wipe-postgres").mock(return_value=httpx.Response(404))
+                    from app.services.provisioning.deprovisioning_steps import _wipe_knowledge_postgres
+
+                    await _wipe_knowledge_postgres(state)
+
+    @pytest.mark.asyncio
+    async def test_skips_when_no_url(self) -> None:
+        """Empty knowledge_ingest_url skips gracefully (matches falkordb-step pattern)."""
+        state = _make_state(org_id=42, slug="acme")
+
+        with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
+            mock_settings.knowledge_ingest_url = ""
+            from app.services.provisioning.deprovisioning_steps import _wipe_knowledge_postgres
+
+            await _wipe_knowledge_postgres(state)  # must not raise or make network calls
+
+    @pytest.mark.asyncio
+    async def test_500_propagates_for_retry(self) -> None:
+        """5xx must propagate so the orchestrator retries (per SPEC R8 retry policy)."""
+        state = _make_state(org_id=42, slug="acme")
+
+        with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
+            mock_settings.knowledge_ingest_url = "http://knowledge-ingest:8000"
+            mock_settings.knowledge_ingest_secret = "secret"
+            with patch("app.trace.get_trace_headers", return_value={}):
+                with respx_router(base_url="http://knowledge-ingest:8000") as router:
+                    router.post("/internal/v1/orgs/42/wipe-postgres").mock(return_value=httpx.Response(500))
+                    from app.services.provisioning.deprovisioning_steps import _wipe_knowledge_postgres
+
+                    with pytest.raises(httpx.HTTPStatusError):
+                        await _wipe_knowledge_postgres(state)
+
+
+# ---------------------------------------------------------------------------
+# Step 9b — _wipe_klai_connector_state (SPEC-INFRA-TENANT-DELETE-002 G6)
+# ---------------------------------------------------------------------------
+
+
+class TestWipeKlaiConnectorState:
+    @pytest.mark.asyncio
+    async def test_200_ok(self) -> None:
+        """200 response with rows_deleted count means wipe succeeded."""
+        state = _make_state(org_id=42, slug="acme")
+
+        with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
+            mock_settings.klai_connector_url = "http://klai-connector:8200"
+            mock_settings.klai_connector_secret = "connector-secret"
+            with patch("app.trace.get_trace_headers", return_value={}):
+                with respx_router(base_url="http://klai-connector:8200") as router:
+                    router.post("/internal/v1/orgs/42/wipe-state").mock(
+                        return_value=httpx.Response(200, json={"rows_deleted": 7, "status": "ok"})
+                    )
+                    from app.services.provisioning.deprovisioning_steps import _wipe_klai_connector_state
+
+                    await _wipe_klai_connector_state(state)
+
+    @pytest.mark.asyncio
+    async def test_uses_authorization_bearer_header(self) -> None:
+        """G6 endpoint authenticates via Authorization Bearer (klai-connector
+        ``portal_caller_secret`` matches ``klai_connector_secret`` portal-side).
+        """
+        state = _make_state(org_id=42, slug="acme")
+
+        captured_headers: dict[str, str] = {}
+
+        def _capture(request: httpx.Request) -> httpx.Response:
+            captured_headers.update(request.headers)
+            return httpx.Response(200, json={"rows_deleted": 0, "status": "ok"})
+
+        with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
+            mock_settings.klai_connector_url = "http://klai-connector:8200"
+            mock_settings.klai_connector_secret = "connector-secret-12345"
+            with patch("app.trace.get_trace_headers", return_value={}):
+                with respx_router(base_url="http://klai-connector:8200") as router:
+                    router.post("/internal/v1/orgs/42/wipe-state").mock(side_effect=_capture)
+                    from app.services.provisioning.deprovisioning_steps import _wipe_klai_connector_state
+
+                    await _wipe_klai_connector_state(state)
+
+        assert captured_headers.get("authorization") == "Bearer connector-secret-12345"
+
+    @pytest.mark.asyncio
+    async def test_404_is_idempotent(self) -> None:
+        """404 — endpoint not deployed yet. Logged WARN, no raise."""
+        state = _make_state(org_id=42, slug="acme")
+
+        with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
+            mock_settings.klai_connector_url = "http://klai-connector:8200"
+            mock_settings.klai_connector_secret = "secret"
+            with patch("app.trace.get_trace_headers", return_value={}):
+                with respx_router(base_url="http://klai-connector:8200") as router:
+                    router.post("/internal/v1/orgs/42/wipe-state").mock(return_value=httpx.Response(404))
+                    from app.services.provisioning.deprovisioning_steps import _wipe_klai_connector_state
+
+                    await _wipe_klai_connector_state(state)
+
+    @pytest.mark.asyncio
+    async def test_skips_when_no_url(self) -> None:
+        """Empty klai_connector_url skips gracefully."""
+        state = _make_state(org_id=42, slug="acme")
+
+        with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
+            mock_settings.klai_connector_url = ""
+            from app.services.provisioning.deprovisioning_steps import _wipe_klai_connector_state
+
+            await _wipe_klai_connector_state(state)
+
+
+# ---------------------------------------------------------------------------
 # Step 10 — _delete_scribe_artifacts
 # ---------------------------------------------------------------------------
 
@@ -862,11 +1013,45 @@ class TestFinalizePostgresDelete:
 
 
 class TestStepsList:
-    def test_has_17_entries(self) -> None:
-        """STEPS must contain exactly 17 entries (step 0..16)."""
+    def test_has_19_entries(self) -> None:
+        """STEPS must contain exactly 19 entries.
+
+        Original SPEC-INFRA-TENANT-DELETE-001 had 17 steps. SPEC-INFRA-TENANT-DELETE-002
+        G3 + G6 inserted two adjacent wipes-via-internal-endpoint steps after
+        ``_delete_falkordb_graph``: ``_wipe_knowledge_postgres`` (G3) and
+        ``_wipe_klai_connector_state`` (G6). Total: 17 + 2 = 19.
+        """
         from app.services.provisioning.deprovisioning_steps import STEPS
 
-        assert len(STEPS) == 17
+        assert len(STEPS) == 19
+
+    def test_g3_g6_steps_are_adjacent_to_falkordb(self) -> None:
+        """SPEC-INFRA-TENANT-DELETE-002 G3+G6 ordering invariant.
+
+        The two new wipe-via-internal-endpoint steps MUST come AFTER
+        ``_delete_falkordb_graph`` (so they share the "external service
+        purges its own tenant rows" pattern as a contiguous block) and
+        BEFORE ``_finalize_postgres_delete`` (so the portal_orgs DELETE
+        cannot proceed before all tenant rows in external services are
+        gone — order matters because once portal_orgs is gone, the
+        deprovisioner has no source of truth for the org_id to pass to
+        the wipes).
+        """
+        from app.services.provisioning.deprovisioning_steps import (
+            STEPS,
+            _delete_falkordb_graph,
+            _finalize_postgres_delete,
+            _wipe_klai_connector_state,
+            _wipe_knowledge_postgres,
+        )
+
+        idx_falkordb = STEPS.index(_delete_falkordb_graph)
+        idx_kp = STEPS.index(_wipe_knowledge_postgres)
+        idx_kc = STEPS.index(_wipe_klai_connector_state)
+        idx_finalize = STEPS.index(_finalize_postgres_delete)
+
+        assert idx_falkordb < idx_kp < idx_finalize, "G3 step must come AFTER falkordb and BEFORE finalize"
+        assert idx_falkordb < idx_kc < idx_finalize, "G6 step must come AFTER falkordb and BEFORE finalize"
 
     def test_all_entries_are_callables(self) -> None:
         """Every entry in STEPS must be an async callable."""
