@@ -1,5 +1,6 @@
 """FastAPI application factory for klai-connector."""
 
+import asyncio
 import base64
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -33,6 +34,7 @@ from app.services.crypto import PostgresSecretsStore
 from app.services.portal_client import PortalClient
 from app.services.scheduler import ConnectorScheduler
 from app.services.sync_engine import SyncEngine
+from app.services.sync_run_reaper import SyncRunReaper
 from app.services.sync_run_resolver import SyncRunResolver
 
 logger = get_logger(__name__)
@@ -182,6 +184,17 @@ def create_app() -> FastAPI:
             portal_client=portal_client,
         )
 
+        # SPEC-CRAWLER-006 REQ-06: background reaper for orphan delegated
+        # sync_runs that nobody reads via the resolver-on-read path.
+        reaper = SyncRunReaper(
+            crawl_sync_client=crawl_sync_client,
+            session_maker=_db.session_maker,
+            portal_client=portal_client,
+        )
+        reaper_task = asyncio.create_task(reaper.async_run())
+        app.state.sync_run_reaper = reaper
+        app.state.sync_run_reaper_task = reaper_task
+
         # Scheduler
         scheduler = ConnectorScheduler()
         app.state.scheduler = scheduler
@@ -192,6 +205,11 @@ def create_app() -> FastAPI:
 
         # -- Shutdown --
         logger.info("Shutting down klai-connector")
+        reaper_task.cancel()
+        try:
+            await reaper_task
+        except (asyncio.CancelledError, Exception):
+            pass
         await scheduler.shutdown()
         await registry.aclose()
         await ingest_client.aclose()
