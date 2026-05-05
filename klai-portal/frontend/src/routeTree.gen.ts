@@ -47,6 +47,7 @@ import { Route as AppDocsIndexRouteImport } from './routes/app/docs/index'
 import { Route as AdminWidgetsIndexRouteImport } from './routes/admin/widgets/index'
 import { Route as AdminUsersIndexRouteImport } from './routes/admin/users/index'
 import { Route as AdminTemplatesIndexRouteImport } from './routes/admin/templates/index'
+import { Route as AdminProfilesIndexRouteImport } from './routes/admin/profiles/index'
 import { Route as AdminMcpsIndexRouteImport } from './routes/admin/mcps/index'
 import { Route as AdminGroupsIndexRouteImport } from './routes/admin/groups/index'
 import { Route as AdminApiKeysIndexRouteImport } from './routes/admin/api-keys/index'
@@ -63,6 +64,7 @@ import { Route as AdminWidgetsNewRouteImport } from './routes/admin/widgets/new'
 import { Route as AdminWidgetsIdRouteImport } from './routes/admin/widgets/$id'
 import { Route as AdminUsersInviteRouteImport } from './routes/admin/users/invite'
 import { Route as AdminTemplatesNewRouteImport } from './routes/admin/templates/new'
+import { Route as AdminProfilesProfileRouteImport } from './routes/admin/profiles/$profile'
 import { Route as AdminMcpsNewRouteImport } from './routes/admin/mcps/new'
 import { Route as AdminMcpsServerIdRouteImport } from './routes/admin/mcps/$serverId'
 import { Route as AdminGroupsNewRouteImport } from './routes/admin/groups/new'
@@ -284,6 +286,11 @@ const AdminTemplatesIndexRoute = AdminTemplatesIndexRouteImport.update({
   path: '/templates/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
+const AdminProfilesIndexRoute = AdminProfilesIndexRouteImport.update({
+  id: '/profiles/',
+  path: '/profiles/',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
 const AdminMcpsIndexRoute = AdminMcpsIndexRouteImport.update({
   id: '/mcps/',
   path: '/mcps/',
@@ -363,6 +370,11 @@ const AdminUsersInviteRoute = AdminUsersInviteRouteImport.update({
 const AdminTemplatesNewRoute = AdminTemplatesNewRouteImport.update({
   id: '/templates/new',
   path: '/templates/new',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminProfilesProfileRoute = AdminProfilesProfileRouteImport.update({
+  id: '/profiles/$profile',
+  path: '/profiles/$profile',
   getParentRoute: () => AdminRouteRoute,
 } as any)
 const AdminMcpsNewRoute = AdminMcpsNewRouteImport.update({
@@ -563,6 +575,7 @@ export interface FileRoutesByFullPath {
   '/admin/groups/new': typeof AdminGroupsNewRoute
   '/admin/mcps/$serverId': typeof AdminMcpsServerIdRoute
   '/admin/mcps/new': typeof AdminMcpsNewRoute
+  '/admin/profiles/$profile': typeof AdminProfilesProfileRoute
   '/admin/templates/new': typeof AdminTemplatesNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/admin/widgets/$id': typeof AdminWidgetsIdRoute
@@ -579,6 +592,7 @@ export interface FileRoutesByFullPath {
   '/admin/api-keys/': typeof AdminApiKeysIndexRoute
   '/admin/groups/': typeof AdminGroupsIndexRoute
   '/admin/mcps/': typeof AdminMcpsIndexRoute
+  '/admin/profiles/': typeof AdminProfilesIndexRoute
   '/admin/templates/': typeof AdminTemplatesIndexRoute
   '/admin/users/': typeof AdminUsersIndexRoute
   '/admin/widgets/': typeof AdminWidgetsIndexRoute
@@ -643,6 +657,7 @@ export interface FileRoutesByTo {
   '/admin/groups/new': typeof AdminGroupsNewRoute
   '/admin/mcps/$serverId': typeof AdminMcpsServerIdRoute
   '/admin/mcps/new': typeof AdminMcpsNewRoute
+  '/admin/profiles/$profile': typeof AdminProfilesProfileRoute
   '/admin/templates/new': typeof AdminTemplatesNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/admin/widgets/$id': typeof AdminWidgetsIdRoute
@@ -659,6 +674,7 @@ export interface FileRoutesByTo {
   '/admin/api-keys': typeof AdminApiKeysIndexRoute
   '/admin/groups': typeof AdminGroupsIndexRoute
   '/admin/mcps': typeof AdminMcpsIndexRoute
+  '/admin/profiles': typeof AdminProfilesIndexRoute
   '/admin/templates': typeof AdminTemplatesIndexRoute
   '/admin/users': typeof AdminUsersIndexRoute
   '/admin/widgets': typeof AdminWidgetsIndexRoute
@@ -729,6 +745,7 @@ export interface FileRoutesById {
   '/admin/groups/new': typeof AdminGroupsNewRoute
   '/admin/mcps/$serverId': typeof AdminMcpsServerIdRoute
   '/admin/mcps/new': typeof AdminMcpsNewRoute
+  '/admin/profiles/$profile': typeof AdminProfilesProfileRoute
   '/admin/templates/new': typeof AdminTemplatesNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/admin/widgets/$id': typeof AdminWidgetsIdRoute
@@ -745,6 +762,7 @@ export interface FileRoutesById {
   '/admin/api-keys/': typeof AdminApiKeysIndexRoute
   '/admin/groups/': typeof AdminGroupsIndexRoute
   '/admin/mcps/': typeof AdminMcpsIndexRoute
+  '/admin/profiles/': typeof AdminProfilesIndexRoute
   '/admin/templates/': typeof AdminTemplatesIndexRoute
   '/admin/users/': typeof AdminUsersIndexRoute
   '/admin/widgets/': typeof AdminWidgetsIndexRoute
@@ -816,6 +834,7 @@ export interface FileRouteTypes {
     | '/admin/groups/new'
     | '/admin/mcps/$serverId'
     | '/admin/mcps/new'
+    | '/admin/profiles/$profile'
     | '/admin/templates/new'
     | '/admin/users/invite'
     | '/admin/widgets/$id'
@@ -832,6 +851,7 @@ export interface FileRouteTypes {
     | '/admin/api-keys/'
     | '/admin/groups/'
     | '/admin/mcps/'
+    | '/admin/profiles/'
     | '/admin/templates/'
     | '/admin/users/'
     | '/admin/widgets/'
@@ -896,6 +916,7 @@ export interface FileRouteTypes {
     | '/admin/groups/new'
     | '/admin/mcps/$serverId'
     | '/admin/mcps/new'
+    | '/admin/profiles/$profile'
     | '/admin/templates/new'
     | '/admin/users/invite'
     | '/admin/widgets/$id'
@@ -912,6 +933,7 @@ export interface FileRouteTypes {
     | '/admin/api-keys'
     | '/admin/groups'
     | '/admin/mcps'
+    | '/admin/profiles'
     | '/admin/templates'
     | '/admin/users'
     | '/admin/widgets'
@@ -981,6 +1003,7 @@ export interface FileRouteTypes {
     | '/admin/groups/new'
     | '/admin/mcps/$serverId'
     | '/admin/mcps/new'
+    | '/admin/profiles/$profile'
     | '/admin/templates/new'
     | '/admin/users/invite'
     | '/admin/widgets/$id'
@@ -997,6 +1020,7 @@ export interface FileRouteTypes {
     | '/admin/api-keys/'
     | '/admin/groups/'
     | '/admin/mcps/'
+    | '/admin/profiles/'
     | '/admin/templates/'
     | '/admin/users/'
     | '/admin/widgets/'
@@ -1316,6 +1340,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminTemplatesIndexRouteImport
       parentRoute: typeof AdminRouteRoute
     }
+    '/admin/profiles/': {
+      id: '/admin/profiles/'
+      path: '/profiles'
+      fullPath: '/admin/profiles/'
+      preLoaderRoute: typeof AdminProfilesIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
     '/admin/mcps/': {
       id: '/admin/mcps/'
       path: '/mcps'
@@ -1426,6 +1457,13 @@ declare module '@tanstack/react-router' {
       path: '/templates/new'
       fullPath: '/admin/templates/new'
       preLoaderRoute: typeof AdminTemplatesNewRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/profiles/$profile': {
+      id: '/admin/profiles/$profile'
+      path: '/profiles/$profile'
+      fullPath: '/admin/profiles/$profile'
+      preLoaderRoute: typeof AdminProfilesProfileRouteImport
       parentRoute: typeof AdminRouteRoute
     }
     '/admin/mcps/new': {
@@ -1674,6 +1712,7 @@ interface AdminRouteRouteChildren {
   AdminGroupsNewRoute: typeof AdminGroupsNewRoute
   AdminMcpsServerIdRoute: typeof AdminMcpsServerIdRoute
   AdminMcpsNewRoute: typeof AdminMcpsNewRoute
+  AdminProfilesProfileRoute: typeof AdminProfilesProfileRoute
   AdminTemplatesNewRoute: typeof AdminTemplatesNewRoute
   AdminUsersInviteRoute: typeof AdminUsersInviteRoute
   AdminWidgetsIdRoute: typeof AdminWidgetsIdRoute
@@ -1681,6 +1720,7 @@ interface AdminRouteRouteChildren {
   AdminApiKeysIndexRoute: typeof AdminApiKeysIndexRoute
   AdminGroupsIndexRoute: typeof AdminGroupsIndexRoute
   AdminMcpsIndexRoute: typeof AdminMcpsIndexRoute
+  AdminProfilesIndexRoute: typeof AdminProfilesIndexRoute
   AdminTemplatesIndexRoute: typeof AdminTemplatesIndexRoute
   AdminUsersIndexRoute: typeof AdminUsersIndexRoute
   AdminWidgetsIndexRoute: typeof AdminWidgetsIndexRoute
@@ -1703,6 +1743,7 @@ const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminGroupsNewRoute: AdminGroupsNewRoute,
   AdminMcpsServerIdRoute: AdminMcpsServerIdRoute,
   AdminMcpsNewRoute: AdminMcpsNewRoute,
+  AdminProfilesProfileRoute: AdminProfilesProfileRoute,
   AdminTemplatesNewRoute: AdminTemplatesNewRoute,
   AdminUsersInviteRoute: AdminUsersInviteRoute,
   AdminWidgetsIdRoute: AdminWidgetsIdRoute,
@@ -1710,6 +1751,7 @@ const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminApiKeysIndexRoute: AdminApiKeysIndexRoute,
   AdminGroupsIndexRoute: AdminGroupsIndexRoute,
   AdminMcpsIndexRoute: AdminMcpsIndexRoute,
+  AdminProfilesIndexRoute: AdminProfilesIndexRoute,
   AdminTemplatesIndexRoute: AdminTemplatesIndexRoute,
   AdminUsersIndexRoute: AdminUsersIndexRoute,
   AdminWidgetsIndexRoute: AdminWidgetsIndexRoute,
