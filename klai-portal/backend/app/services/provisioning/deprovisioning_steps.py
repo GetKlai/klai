@@ -244,16 +244,26 @@ async def _delete_qdrant_points(state: _DeprovisionState) -> None:
         api_key=settings.qdrant_api_key or None,
         timeout=30,
     )
-    collections = ["klai_knowledge", "klai_focus"]
+    # SPEC-INFRA-TENANT-DELETE-002 G4 — the two collections store the tenant
+    # ID under DIFFERENT payload keys. klai_knowledge uses ``org_id`` (set by
+    # knowledge-ingest's writer), klai_focus uses ``tenant_id`` (set by the
+    # legacy research-api / focus pipeline). Iterating with a single hardcoded
+    # key would silently skip every klai_focus point of the deprovisioned
+    # tenant — a HIGH-severity GDPR purge gap. Tuple-pair the collection with
+    # its payload key so adding a future collection forces an explicit choice.
+    collections: list[tuple[str, str]] = [
+        ("klai_knowledge", "org_id"),
+        ("klai_focus", "tenant_id"),
+    ]
     try:
-        for collection in collections:
+        for collection, filter_key in collections:
             try:
                 await client.delete(
                     collection_name=collection,
                     points_selector=Filter(
                         must=[
                             FieldCondition(
-                                key="org_id",
+                                key=filter_key,
                                 match=MatchValue(value=state.org_id),
                             )
                         ]
@@ -264,6 +274,7 @@ async def _delete_qdrant_points(state: _DeprovisionState) -> None:
                     slug=state.slug,
                     org_id=state.org_id,
                     collection=collection,
+                    filter_key=filter_key,
                 )
             except Exception as exc:
                 # Collection might not exist (404-like) — treat as idempotent
@@ -588,6 +599,18 @@ async def _finalize_postgres_delete(state: _DeprovisionState) -> None:
     await db.execute(text("DELETE FROM portal_templates WHERE org_id = :id"), {"id": state.org_id})
     # portal_users — last of the non-cascading children that other tables may FK to.
     await db.execute(text("DELETE FROM portal_users WHERE org_id = :id"), {"id": state.org_id})
+    # SPEC-INFRA-TENANT-DELETE-002 G1 — portal_join_requests has a single FK
+    # `portal_join_requests_org_id_fkey FOREIGN KEY (org_id) REFERENCES
+    # portal_orgs(id) ON DELETE SET NULL` (verified 2026-05-05 against prod).
+    # WITHOUT this explicit DELETE, the portal_orgs DELETE below would simply
+    # NULL the org_id on every join_request row — leaving the email/name PII
+    # in place as orphaned data. With this DELETE, the rows are gone before
+    # the parent. Ordering is independent of portal_users (no FK between them
+    # — verified). Idempotent: zero rows for a tenant with no in-flight join
+    # requests is a no-op. SPEC-AUTH-009 R2 will drop portal_org_allowed_domains
+    # entirely, so G2 is moot post-AUTH-009 and that table is intentionally
+    # NOT in this list.
+    await db.execute(text("DELETE FROM portal_join_requests WHERE org_id = :id"), {"id": state.org_id})
 
     # 3. Hard-delete the org row — cascades the auto-CASCADE tables (connectors,
     #    widgets, feedback_events, retrieval_gaps, partner_api_keys) and SET NULLs
