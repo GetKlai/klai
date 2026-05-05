@@ -446,101 +446,221 @@ _QUERY_REWRITE_AND_CLASSIFY_PROMPT = (
 )
 
 
-def _format_taxonomy_for_prompt(tree: list[dict], max_nodes: int = 30) -> str:
-    """Format taxonomy tree as 'id: name' lines for the LLM prompt."""
-    if not tree:
+def _format_taxonomy_for_prompt(
+    trees: dict[str, list[dict]] | list[dict],
+    max_nodes_per_kb: int = 30,
+) -> str:
+    """Format taxonomy nodes for the classifier prompt.
+
+    Accepts either:
+      * the multi-KB shape ``{kb_slug: [node, ...]}``; renders KB-context
+        labels so the LLM can disambiguate name-collisions across KBs
+        ("Beleid" in voys-support vs voys-billing point at different
+        IDs even though they share a name).
+      * the legacy single-KB shape ``[node, ...]``; renders flat lines.
+
+    Both branches cap node count per KB to keep prompt size bounded.
+    """
+    # Legacy single-KB shape.
+    if isinstance(trees, list):
+        if not trees:
+            return "(none)"
+        lines = [
+            f"- id={node['id']}: {node['name']}" for node in trees[:max_nodes_per_kb]
+        ]
+        if len(trees) > max_nodes_per_kb:
+            lines.append(f"... ({len(trees) - max_nodes_per_kb} more nodes omitted)")
+        return "\n".join(lines)
+
+    # Multi-KB shape.
+    if not trees:
         return "(none)"
-    lines = [f"- id={node['id']}: {node['name']}" for node in tree[:max_nodes]]
-    if len(tree) > max_nodes:
-        lines.append(f"... ({len(tree) - max_nodes} more nodes omitted)")
-    return "\n".join(lines)
+    lines: list[str] = []
+    for kb_slug in sorted(trees.keys()):
+        nodes = trees[kb_slug]
+        if not nodes:
+            continue
+        lines.append(f"[{kb_slug}]")
+        for node in nodes[:max_nodes_per_kb]:
+            lines.append(f"  - id={node['id']}: {node['name']}")
+        if len(nodes) > max_nodes_per_kb:
+            lines.append(f"  ... ({len(nodes) - max_nodes_per_kb} more nodes omitted)")
+    return "\n".join(lines) if lines else "(none)"
 
 
-async def _fetch_taxonomy_tree(
+def _flatten_trees(trees: dict[str, list[dict]] | list[dict]) -> list[dict]:
+    """Return one flat node list across all KBs (for valid_ids lookup)."""
+    if isinstance(trees, list):
+        return list(trees)
+    flat: list[dict] = []
+    for nodes in trees.values():
+        flat.extend(nodes)
+    return flat
+
+
+# SPEC-RAG-TAXONOMY-001 (multi-KB + Redis cache).
+#
+# Cache key: tax_trees:{org_id}:{sorted_kb_slugs_csv}. TTL 300s — short
+# enough that taxonomy changes propagate within minutes without manual
+# bust, long enough that high-traffic chats hit Redis instead of the
+# DB through retrieval-api on every turn.
+_TAXONOMY_TREES_TTL_S = 300
+_TAXONOMY_COVERAGE_TTL_S = 300
+_MAX_KBS_FOR_TAXONOMY = 5
+
+
+def _taxonomy_cache_keys(org_id: str, kb_slugs: list[str]) -> tuple[str, str]:
+    """Stable cache keys for trees + coverage, sorted for determinism."""
+    sig = ",".join(sorted(set(kb_slugs)))
+    return (f"tax_trees:{org_id}:{sig}", f"tax_coverage:{org_id}:{sig}")
+
+
+async def _fetch_taxonomy_trees(
     org_id: str,
-    kb_slug: str,
+    kb_slugs: list[str],
+    cache,
     *,
     _transport: httpx.AsyncBaseTransport | None = None,
-) -> list[dict]:
-    """Fetch the taxonomy tree from retrieval-api /internal/v1/taxonomy/tree.
+) -> dict[str, list[dict]]:
+    """Fetch trees for all KBs in scope. Returns ``{kb_slug: [node, ...]}``.
 
-    Returns [] on any error (fail-open per REQ-2).
+    Multi-KB by design: a single retrieval-api roundtrip handles N slugs.
+    Redis-cached via the LiteLLM DualCache passed by the proxy — a hit
+    returns the same dict shape as the live fetch. Fail-open on any
+    error: returns {} so the hook proceeds without taxonomy narrowing.
+
+    Caps at ``_MAX_KBS_FOR_TAXONOMY`` slugs — beyond that the prompt
+    grows past the single-call budget and the filter is skipped.
     """
-    if not TAXONOMY_ENABLED or not _RETRIEVAL_BASE_URL:
-        return []
-    url = f"{_RETRIEVAL_BASE_URL}/internal/v1/taxonomy/tree"
+    if not TAXONOMY_ENABLED or not _RETRIEVAL_BASE_URL or not kb_slugs:
+        return {}
+    if len(kb_slugs) > _MAX_KBS_FOR_TAXONOMY:
+        logger.info(
+            "KlaiKnowledgeHook: taxonomy_skipped reason=too_many_kbs count=%d",
+            len(kb_slugs),
+        )
+        return {}
+
+    cache_key, _ = _taxonomy_cache_keys(org_id, kb_slugs)
+    if cache is not None:
+        try:
+            cached = await cache.async_get_cache(cache_key)
+        except Exception:
+            cached = None
+        if isinstance(cached, dict):
+            return cached
+
+    url = f"{_RETRIEVAL_BASE_URL}/internal/v1/taxonomy/trees"
     legacy_headers = _retrieve_legacy_headers()
     client_kwargs: dict = {"timeout": TAXONOMY_FETCH_TIMEOUT}
     if _transport is not None:
         client_kwargs["transport"] = _transport
+
+    # httpx serialises list[str] params as repeated query keys when given
+    # a list of (key, value) tuples — that's the shape FastAPI's
+    # ``Query(...)`` decoder expects for kb_slugs=a&kb_slugs=b.
+    params = [("org_id", org_id)] + [("kb_slugs", s) for s in kb_slugs]
     try:
         async with httpx.AsyncClient(**client_kwargs) as client:
-            resp = await client.get(
-                url,
-                params={"org_id": org_id, "kb_slug": kb_slug},
-                headers=legacy_headers,
-            )
+            resp = await client.get(url, params=params, headers=legacy_headers)
             resp.raise_for_status()
-            return resp.json()  # list[dict] with id, name, parent_id, depth
+            data = resp.json()
     except Exception as exc:
         logger.warning(
-            "KlaiKnowledgeHook: taxonomy_tree_fetch_failed org=%s kb=%s error=%s",
+            "KlaiKnowledgeHook: taxonomy_trees_fetch_failed org=%s kbs=%s error=%s",
             org_id,
-            kb_slug,
+            kb_slugs,
             str(exc)[:120],
         )
-        return []
+        return {}
+
+    if not isinstance(data, dict):
+        return {}
+
+    if cache is not None:
+        try:
+            await cache.async_set_cache(cache_key, data, ttl=_TAXONOMY_TREES_TTL_S)
+        except Exception:
+            pass
+    return data
 
 
 async def _fetch_taxonomy_coverage(
     org_id: str,
-    kb_slug: str,
+    kb_slugs: list[str],
+    cache,
     *,
     _transport: httpx.AsyncBaseTransport | None = None,
-) -> float:
-    """Fetch the taxonomy coverage ratio from retrieval-api /internal/v1/taxonomy/coverage.
+) -> dict[str, float]:
+    """Fetch per-KB coverage ratios. Returns ``{kb_slug: 0.0|1.0}``.
 
-    Returns 0.0 on any error (fail-open — caller skips filter when 0.0 < threshold).
+    Redis-cached. Missing KBs default to 0.0. Fail-open on any error.
     """
-    if not TAXONOMY_ENABLED or not _RETRIEVAL_BASE_URL:
-        return 0.0
+    if not TAXONOMY_ENABLED or not _RETRIEVAL_BASE_URL or not kb_slugs:
+        return {slug: 0.0 for slug in kb_slugs}
+
+    _, cache_key = _taxonomy_cache_keys(org_id, kb_slugs)
+    if cache is not None:
+        try:
+            cached = await cache.async_get_cache(cache_key)
+        except Exception:
+            cached = None
+        if isinstance(cached, dict):
+            return {slug: float(cached.get(slug, 0.0)) for slug in kb_slugs}
+
     url = f"{_RETRIEVAL_BASE_URL}/internal/v1/taxonomy/coverage"
     legacy_headers = _retrieve_legacy_headers()
     client_kwargs: dict = {"timeout": TAXONOMY_FETCH_TIMEOUT}
     if _transport is not None:
         client_kwargs["transport"] = _transport
+    params = [("org_id", org_id)] + [("kb_slugs", s) for s in kb_slugs]
     try:
         async with httpx.AsyncClient(**client_kwargs) as client:
-            resp = await client.get(
-                url,
-                params={"org_id": org_id, "kb_slug": kb_slug},
-                headers=legacy_headers,
-            )
+            resp = await client.get(url, params=params, headers=legacy_headers)
             resp.raise_for_status()
-            return float(resp.json().get("coverage", 0.0))
+            data = resp.json()
     except Exception as exc:
         logger.warning(
-            "KlaiKnowledgeHook: taxonomy_coverage_fetch_failed org=%s kb=%s error=%s",
+            "KlaiKnowledgeHook: taxonomy_coverage_fetch_failed org=%s kbs=%s error=%s",
             org_id,
-            kb_slug,
+            kb_slugs,
             str(exc)[:120],
         )
-        return 0.0
+        return {slug: 0.0 for slug in kb_slugs}
+
+    coverage = {slug: float(data.get(slug, 0.0)) for slug in kb_slugs}
+    if cache is not None:
+        try:
+            await cache.async_set_cache(
+                cache_key, coverage, ttl=_TAXONOMY_COVERAGE_TTL_S
+            )
+        except Exception:
+            pass
+    return coverage
 
 
 async def _rewrite_and_classify(
     raw_query: str,
     history: list[dict],
-    taxonomy_tree: list[dict],
+    taxonomy_trees: dict[str, list[dict]] | list[dict],
     *,
     _transport: httpx.AsyncBaseTransport | None = None,
 ) -> tuple[str, list[int], dict]:
     """Return ``(rewritten_query, classified_node_ids, debug_meta)`` in one LLM call.
 
-    Replaces the standalone ``_rewrite_query`` call when taxonomy_tree is non-empty.
-    When taxonomy_tree is empty, falls back to plain rewrite (no classification).
+    Accepts either the multi-KB shape ``{kb_slug: [node, ...]}`` or the
+    legacy single-KB ``[node, ...]`` for backward compat. Internally the
+    classifier sees one merged prompt with KB-context labels (multi-KB)
+    or a flat list (single-KB). Returned IDs are always the unfiltered
+    flat unique-id space — retrieval-api's ANY-of filter does the rest.
 
-    Anti-hallucination guard (REQ-4): only returns node IDs that exist in tree.
+    Replaces the standalone ``_rewrite_query`` call when at least one
+    KB has taxonomy nodes. With empty trees it falls back to plain
+    rewrite (no classification).
+
+    Anti-hallucination guard (REQ-4): only returns node IDs that exist
+    in the union of all provided trees.
+
     Fail-open on any error: falls back to (raw_query, [], meta_with_skip_reason).
     """
     import json as _json  # noqa: PLC0415 — local import avoids shadowing module-level vars
@@ -558,13 +678,15 @@ async def _rewrite_and_classify(
         meta["skipped"] = "no_api_key"
         return raw_query, [], meta
 
+    flat_tree = _flatten_trees(taxonomy_trees)
+
     # No history AND no taxonomy → nothing to do
-    if not history and not taxonomy_tree:
+    if not history and not flat_tree:
         meta["skipped"] = "no_history_no_tree"
         return raw_query, [], meta
 
     # Fall back to plain text prompt when no taxonomy is available
-    if not taxonomy_tree:
+    if not flat_tree:
         rewritten, rewrite_meta = await _rewrite_query(
             raw_query, history, _transport=_transport
         )
@@ -572,7 +694,7 @@ async def _rewrite_and_classify(
 
     # Build combined prompt
     history_str = _format_history_for_rewrite(history) if history else "(none)"
-    taxonomy_str = _format_taxonomy_for_prompt(taxonomy_tree)
+    taxonomy_str = _format_taxonomy_for_prompt(taxonomy_trees)
     prompt = _QUERY_REWRITE_AND_CLASSIFY_PROMPT.format(
         history=history_str,
         raw_query=raw_query,
@@ -593,7 +715,7 @@ async def _rewrite_and_classify(
     if _transport is not None:
         client_kwargs["transport"] = _transport
 
-    valid_ids: set[int] = {int(n["id"]) for n in taxonomy_tree}
+    valid_ids: set[int] = {int(n["id"]) for n in flat_tree}
     t_start = time.monotonic()
     try:
         async with httpx.AsyncClient(**client_kwargs) as client:
@@ -1108,29 +1230,51 @@ class KlaiKnowledgeHook(CustomLogger):
 
         conversation_history = _build_conversation_history(messages)
 
-        # SPEC-RAG-TAXONOMY-001: fetch taxonomy tree for the first KB in scope.
-        # Good-enough heuristic for v1: multi-KB queries skip taxonomy filter.
-        # Fail-open: empty tree = no classify, no filter (REQ-2).
-        first_kb_slug: str | None = (
-            kb_slugs_for_request[0] if kb_slugs_for_request else None
+        # SPEC-RAG-TAXONOMY-001 (multi-KB): fetch taxonomy trees + coverage for
+        # every KB the request is scoped to in a single retrieval-api roundtrip,
+        # Redis-cached. v1 was first-KB-only; v2 merges trees across KBs and
+        # uses per-KB coverage so a mixed-coverage request still benefits from
+        # the KBs that *do* have a curated taxonomy.
+        #
+        # Scope rules:
+        #   * `kb_slugs_for_request is None` → "all org KBs". We don't know the
+        #     full set client-side, so taxonomy is skipped (no_kbs_in_scope).
+        #     Fail-open: retrieval-api still applies its org/scope filters.
+        #   * personal-only scope ("personal") → no org KBs → skip taxonomy.
+        kbs_in_scope: list[str] = (
+            list(kb_slugs_for_request) if kb_slugs_for_request else []
         )
-        taxonomy_tree: list[dict] = []
-        taxonomy_coverage: float = 0.0
-        if first_kb_slug and TAXONOMY_ENABLED and scope in ("org", "both"):
-            taxonomy_tree, taxonomy_coverage = await asyncio.gather(
-                _fetch_taxonomy_tree(org_id, first_kb_slug),
-                _fetch_taxonomy_coverage(org_id, first_kb_slug),
+        taxonomy_trees: dict[str, list[dict]] = {}
+        taxonomy_coverage_map: dict[str, float] = {}
+        if kbs_in_scope and TAXONOMY_ENABLED and scope in ("org", "both"):
+            taxonomy_trees, taxonomy_coverage_map = await asyncio.gather(
+                _fetch_taxonomy_trees(org_id, kbs_in_scope, cache),
+                _fetch_taxonomy_coverage(org_id, kbs_in_scope, cache),
             )
+
+        # Filter to KBs that meet the coverage threshold. The classifier sees
+        # ONLY trees from these KBs so it cannot return IDs from a KB without
+        # curated taxonomy (REQ-1+2: low-coverage KBs run unfiltered).
+        kbs_with_coverage: list[str] = [
+            slug
+            for slug in kbs_in_scope
+            if taxonomy_coverage_map.get(slug, 0.0) >= KLAI_TAXONOMY_COVERAGE_THRESHOLD
+        ]
+        trees_for_classify: dict[str, list[dict]] = {
+            slug: taxonomy_trees.get(slug, []) for slug in kbs_with_coverage
+        }
 
         # SPEC-RAG-QUERY-REWRITE-001 + SPEC-RAG-TAXONOMY-001:
         # Combined rewrite + classify in a single LLM call (REQ-5 zero added roundtrip).
-        # When taxonomy_tree is empty, falls back to plain rewrite (no classification).
+        # When trees_for_classify is empty, falls back to plain rewrite.
+        # Anti-hallucination guard inside _rewrite_and_classify filters IDs to
+        # the union of all valid IDs across the provided KBs (REQ-4).
         # Fail-open: any failure returns (raw_query, [], meta_with_skip_reason).
         (
             rewritten_query,
             classified_node_ids,
             rewrite_meta,
-        ) = await _rewrite_and_classify(query, conversation_history, taxonomy_tree)
+        ) = await _rewrite_and_classify(query, conversation_history, trees_for_classify)
         try:
             logger.info(
                 "query_rewrite org_id=%s user_id=%s raw_query=%r rewritten_query=%r "
@@ -1147,29 +1291,38 @@ class KlaiKnowledgeHook(CustomLogger):
             # Logging itself must never abort the hook (REQ-2 fail-open).
             pass
 
-        # SPEC-RAG-TAXONOMY-001 REQ-1+2: inject taxonomy filter iff coverage >= threshold
-        # AND the classifier returned at least one valid node ID.
+        # SPEC-RAG-TAXONOMY-001 REQ-1+2: inject taxonomy filter iff at least
+        # one in-scope KB has coverage AND the classifier returned >= 1 valid
+        # node ID. node IDs are globally unique across portal_taxonomy_nodes,
+        # so retrieval-api's ANY-of filter is collision-free across KBs.
         taxonomy_applied = False
         taxonomy_skip_reason: str | None = None
-        if TAXONOMY_ENABLED and first_kb_slug:
-            if taxonomy_coverage < KLAI_TAXONOMY_COVERAGE_THRESHOLD:
-                taxonomy_skip_reason = "low_coverage"
-            elif not classified_node_ids:
-                taxonomy_skip_reason = "empty_classify"
-            else:
-                taxonomy_applied = True
+        if not TAXONOMY_ENABLED:
+            taxonomy_skip_reason = "disabled"
+        elif not kbs_in_scope:
+            taxonomy_skip_reason = "no_kbs_in_scope"
+        elif not kbs_with_coverage:
+            taxonomy_skip_reason = "all_kbs_low_coverage"
+        elif not classified_node_ids:
+            taxonomy_skip_reason = "empty_classify"
         else:
-            taxonomy_skip_reason = "no_kb_slug" if not first_kb_slug else "disabled"
+            taxonomy_applied = True
 
         # REQ-7: log taxonomy_classify event on every classify invocation.
-        if TAXONOMY_ENABLED and first_kb_slug:
+        if TAXONOMY_ENABLED and kbs_in_scope:
             try:
+                coverage_repr = ",".join(
+                    f"{slug}={taxonomy_coverage_map.get(slug, 0.0):.2f}"
+                    for slug in kbs_in_scope
+                )
                 logger.info(
-                    "taxonomy_classify org_id=%s kb_slug=%s coverage_ratio=%.3f "
-                    "classified_node_ids=%s was_applied=%s skip_reason=%s",
+                    "taxonomy_classify org_id=%s kb_slugs=%s coverage=%s "
+                    "kbs_with_coverage=%s classified_node_ids=%s "
+                    "was_applied=%s skip_reason=%s",
                     org_id,
-                    first_kb_slug,
-                    taxonomy_coverage,
+                    ",".join(kbs_in_scope),
+                    coverage_repr,
+                    ",".join(kbs_with_coverage),
                     classified_node_ids,
                     taxonomy_applied,
                     taxonomy_skip_reason,
