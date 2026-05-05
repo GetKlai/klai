@@ -64,6 +64,42 @@ def test_register_eval_tasks_registers_nightly_task():
     assert hasattr(app, "evaluate_retrieval_quality_nightly")
 
 
+def test_register_eval_tasks_registers_periodic_schedule():
+    """register_eval_tasks() must schedule one periodic deferral per suite
+    so the PeriodicDeferrer fires the nightly run at 02:00 UTC without any
+    host-level cron job.
+
+    The original v1 of the harness left this gap intentionally — the task
+    was registered but never scheduled, requiring an operator to defer
+    every night. This test locks the contract so a future refactor can't
+    silently drop the periodic registration and turn the dashboard into a
+    flat line again.
+    """
+    from knowledge_ingest.eval.ragas_runner import register_eval_tasks
+
+    app, _connector = _make_app()
+    register_eval_tasks(app)
+
+    # Procrastinate stores periodic registrations on the registry.
+    periodic_entries = list(app.periodic_registry.periodic_tasks.values())
+    suite_ids = {entry.periodic_id for entry in periodic_entries}
+
+    assert "rag-eval-chat" in suite_ids, (
+        f"expected periodic registration for 'rag-eval-chat', got {suite_ids}"
+    )
+    assert "rag-eval-knowledge_org" in suite_ids, (
+        f"expected periodic registration for 'rag-eval-knowledge_org', got {suite_ids}"
+    )
+
+    # All periodic entries must run at 02:00 UTC (cron "0 2 * * *").
+    for entry in periodic_entries:
+        if entry.periodic_id.startswith("rag-eval-"):
+            cron_str = str(entry.cron)
+            assert "0 2" in cron_str, (
+                f"expected '0 2 ...' cron for {entry.periodic_id}, got {cron_str!r}"
+            )
+
+
 # ---------------------------------------------------------------------------
 # Test 2 - variant from env var
 # ---------------------------------------------------------------------------
