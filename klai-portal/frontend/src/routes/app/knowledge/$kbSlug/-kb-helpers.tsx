@@ -25,9 +25,45 @@ export function roleBadge(role: string) {
   return <Badge variant="secondary">{(labels[role] ?? (() => role))()}</Badge>
 }
 
-export function SyncStatusBadge({ status, lastSyncAt }: { status: string | null; lastSyncAt?: string | null }) {
+export function SyncStatusBadge({
+  status,
+  lastSyncAt,
+  pagesDone = null,
+  pagesTotal = null,
+  liveResolutionFailed = false,
+}: {
+  status: string | null
+  lastSyncAt?: string | null
+  // SPEC-CRAWLER-006 REQ-08: live progress for delegated web_crawler runs.
+  // Crawler has two phases — discovery (pages_total = NULL) and processing
+  // (pages_total = N). Other connector types pass null/null and render
+  // the plain "Bezig" label.
+  pagesDone?: number | null
+  pagesTotal?: number | null
+  liveResolutionFailed?: boolean
+}) {
   switch (status?.toUpperCase()) {
-    case 'RUNNING': return <Badge variant="accent">{m.admin_connectors_status_running()}</Badge>
+    case 'RUNNING': {
+      // Phase 1 (discovery) — total unknown. Resolver returned valid live
+      // payload but pages_total is null/0.
+      if (liveResolutionFailed) {
+        return <Badge variant="accent">{m.admin_connectors_status_running_unknown()}</Badge>
+      }
+      if (pagesTotal && pagesTotal > 0 && pagesDone !== null && pagesDone !== undefined) {
+        return (
+          <Badge variant="accent">
+            {m.admin_connectors_status_running_processing({
+              done: String(pagesDone),
+              total: String(pagesTotal),
+            })}
+          </Badge>
+        )
+      }
+      if (pagesDone !== null && pagesDone !== undefined && pagesDone === 0 && pagesTotal === null) {
+        return <Badge variant="accent">{m.admin_connectors_status_running_collecting()}</Badge>
+      }
+      return <Badge variant="accent">{m.admin_connectors_status_running()}</Badge>
+    }
     case 'COMPLETED': {
       if (!lastSyncAt) return <Badge variant="success">{m.admin_connectors_status_completed()}</Badge>
       const exact = new Date(lastSyncAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
