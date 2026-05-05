@@ -1,164 +1,157 @@
-"""Taxonomy tree and coverage helpers for query-time taxonomy filtering.
+"""Taxonomy tree + coverage helpers for query-time taxonomy filtering.
 
-Fetches the KB taxonomy tree and coverage stats from the klai database via the
-shared asyncpg pool (events.py pool). Results are cached in-process with TTLs:
+Reads from the actual portal taxonomy schema:
+  - ``portal_taxonomy_nodes`` (per-KB taxonomy tree, ``kb_id`` FK)
+  - ``portal_knowledge_bases`` (slug + org_id resolution)
+  - ``portal_orgs`` (zitadel_org_id → id resolution)
 
-  - Taxonomy tree: 60 s per (org_id, kb_slug)
-  - Coverage ratio: 300 s per (org_id, kb_slug)
+Multi-KB by design: the tree fetch accepts a list of slugs and returns
+a single flat list with ``kb_slug`` annotated on each node. Taxonomy
+node IDs are globally unique (single PK across all KBs of all tenants),
+so the merged tree is collision-free — the LLM classifier can return
+any subset of valid IDs and the retrieval-api ANY-of filter does the
+rest at query time.
 
-All functions are fail-open: on any DB error they return empty / 0.0 so
-retrieval proceeds without taxonomy narrowing (SPEC-RAG-TAXONOMY-001 REQ-2).
+Coverage proxy: a KB has "taxonomy coverage" iff it has ≥ 1 node
+defined. Binary signal — KBs with curated taxonomy → 1.0; KBs without
+→ 0.0. Future v2 can refine to "fraction of chunks tagged" if the
+binary signal proves too coarse.
+
+All functions are fail-open: any DB error returns empty / zero so the
+hook proceeds without taxonomy narrowing (SPEC-RAG-TAXONOMY-001 REQ-2).
+
+Caching lives one layer up in the LiteLLM hook (Redis-backed,
+cross-process) — this module only owns the DB lookup.
 """
 
 from __future__ import annotations
 
-import time
 from typing import TypedDict
 
 import structlog
 
 logger = structlog.get_logger()
 
-# ---------------------------------------------------------------------------
-# In-process TTL caches
-# ---------------------------------------------------------------------------
-
-# (org_id, kb_slug) -> (expires_at: float, value: list[dict])
-_tree_cache: dict[tuple[str, str], tuple[float, list[dict]]] = {}
-_TREE_TTL: float = 60.0  # seconds
-
-# (org_id, kb_slug) -> (expires_at: float, coverage: float)
-_coverage_cache: dict[tuple[str, str], tuple[float, float]] = {}
-_COVERAGE_TTL: float = 300.0  # 5 minutes
-
 
 class TaxonomyNode(TypedDict):
     id: int
+    kb_slug: str
     name: str
+    slug: str
     parent_id: int | None
-    depth: int
 
 
 # ---------------------------------------------------------------------------
 # SQL queries
 # ---------------------------------------------------------------------------
 
-# Returns the flat taxonomy tree for a KB.
-# Tables: portal_orgs (for zitadel_org_id→id resolution), portal_kb_nodes
-_TREE_SQL = """
+# Single-trip multi-KB tree fetch. Returns one row per node, annotated
+# with the KB slug so callers can group by KB if needed for prompt
+# disambiguation. ``ANY($2::text[])`` accepts a list of slugs.
+_TREES_SQL = """
     SELECT
         n.id,
+        kb.slug AS kb_slug,
         n.name,
-        n.parent_id,
-        n.depth
-    FROM portal_kb_nodes n
-    JOIN portal_kbs kb ON kb.id = n.kb_id
+        n.slug AS node_slug,
+        n.parent_id
+    FROM portal_taxonomy_nodes n
+    JOIN portal_knowledge_bases kb ON kb.id = n.kb_id
     JOIN portal_orgs org ON org.id = kb.org_id
     WHERE org.zitadel_org_id = $1
-      AND kb.slug = $2
-    ORDER BY n.depth, n.id
+      AND kb.slug = ANY($2::text[])
+    ORDER BY kb.slug, n.parent_id NULLS FIRST, n.sort_order, n.id
 """
 
-# Coverage = fraction of chunks in the KB that have at least one taxonomy_node_id tagged.
-# We proxy "tagged" chunks via `knowledge.artifacts` rows that have taxonomy_node_ids
-# set. The query is intentionally simple and approximate.
+# Coverage = does the KB have taxonomy nodes defined? Binary signal.
+# Single-trip multi-KB lookup so the hook can decide per-KB.
 _COVERAGE_SQL = """
     SELECT
-        COUNT(*) FILTER (
-            WHERE a.extra->'taxonomy_node_ids' IS NOT NULL
-              AND jsonb_array_length(a.extra->'taxonomy_node_ids') > 0
-        )::float
-            / NULLIF(COUNT(*), 0) AS coverage_ratio
-    FROM knowledge.artifacts a
-    JOIN portal_kbs kb ON kb.slug = a.kb_slug
+        kb.slug AS kb_slug,
+        COUNT(n.id) AS node_count
+    FROM portal_knowledge_bases kb
     JOIN portal_orgs org ON org.id = kb.org_id
+    LEFT JOIN portal_taxonomy_nodes n ON n.kb_id = kb.id
     WHERE org.zitadel_org_id = $1
-      AND a.kb_slug = $2
+      AND kb.slug = ANY($2::text[])
+    GROUP BY kb.slug
 """
 
 
-async def get_taxonomy_tree(org_id: str, kb_slug: str) -> list[TaxonomyNode]:
-    """Return the flat taxonomy node list for the KB, cached 60 s.
+async def get_taxonomy_trees(
+    org_id: str,
+    kb_slugs: list[str],
+) -> dict[str, list[TaxonomyNode]]:
+    """Return ``{kb_slug: [node, ...]}`` for the requested KBs.
 
-    Returns an empty list on any error (fail-open per REQ-2).
+    Empty input → empty dict. Missing KBs are simply absent from the
+    result. Fail-open on any DB error: returns ``{}`` so the hook
+    proceeds without taxonomy narrowing.
     """
-    cache_key = (org_id, kb_slug)
-    now = time.monotonic()
+    if not kb_slugs:
+        return {}
 
-    entry = _tree_cache.get(cache_key)
-    if entry is not None:
-        expires_at, cached_tree = entry
-        if now < expires_at:
-            return cached_tree
+    from retrieval_api.services.events import get_pool
 
-    # Cache miss — fetch from DB
+    pool = get_pool()
+    if pool is None:
+        logger.debug("taxonomy_lookup_skipped", reason="no_db_pool", org_id=org_id)
+        return {}
+
     try:
-        from retrieval_api.services.events import _pool
-
-        if _pool is None:
-            logger.debug(
-                "taxonomy_lookup_skipped",
-                reason="no_db_pool",
-                org_id=org_id,
-                kb_slug=kb_slug,
-            )
-            return []
-
-        rows = await _pool.fetch(_TREE_SQL, org_id, kb_slug)
-        tree: list[TaxonomyNode] = [
-            TaxonomyNode(
-                id=row["id"],
-                name=row["name"],
-                parent_id=row["parent_id"],
-                depth=row["depth"],
-            )
-            for row in rows
-        ]
-    except Exception:
+        rows = await pool.fetch(_TREES_SQL, org_id, list(kb_slugs))
+    except Exception as exc:
         logger.warning(
             "taxonomy_tree_fetch_failed",
             org_id=org_id,
-            kb_slug=kb_slug,
-            exc_info=True,
+            kb_slugs=kb_slugs,
+            error=str(exc)[:200],
         )
-        return []
+        return {}
 
-    _tree_cache[cache_key] = (now + _TREE_TTL, tree)
-    return tree
+    grouped: dict[str, list[TaxonomyNode]] = {}
+    for row in rows:
+        node: TaxonomyNode = {
+            "id": int(row["id"]),
+            "kb_slug": row["kb_slug"],
+            "name": row["name"],
+            "slug": row["node_slug"],
+            "parent_id": int(row["parent_id"]) if row["parent_id"] is not None else None,
+        }
+        grouped.setdefault(row["kb_slug"], []).append(node)
+    return grouped
 
 
-async def get_kb_taxonomy_coverage(org_id: str, kb_slug: str) -> float:
-    """Return the fraction of KB artifacts that have taxonomy tags, cached 5 min.
+async def get_kb_taxonomy_coverage(
+    org_id: str,
+    kb_slugs: list[str],
+) -> dict[str, float]:
+    """Return ``{kb_slug: coverage_ratio}`` for the requested KBs.
 
-    Returns 0.0 on any error (fail-open — caller skips filter when coverage is low).
+    v1: binary signal — 1.0 if the KB has ≥ 1 taxonomy node, 0.0 otherwise.
+    Missing KBs default to 0.0. Fail-open on any DB error.
     """
-    cache_key = (org_id, kb_slug)
-    now = time.monotonic()
+    if not kb_slugs:
+        return {}
 
-    entry = _coverage_cache.get(cache_key)
-    if entry is not None:
-        expires_at, cached_cov = entry
-        if now < expires_at:
-            return cached_cov
+    from retrieval_api.services.events import get_pool
+
+    pool = get_pool()
+    if pool is None:
+        return {slug: 0.0 for slug in kb_slugs}
 
     try:
-        from retrieval_api.services.events import _pool
-
-        if _pool is None:
-            return 0.0
-
-        row = await _pool.fetchrow(_COVERAGE_SQL, org_id, kb_slug)
-        coverage: float = (
-            float(row["coverage_ratio"]) if row and row["coverage_ratio"] is not None else 0.0
-        )
-    except Exception:
+        rows = await pool.fetch(_COVERAGE_SQL, org_id, list(kb_slugs))
+    except Exception as exc:
         logger.warning(
             "taxonomy_coverage_fetch_failed",
             org_id=org_id,
-            kb_slug=kb_slug,
-            exc_info=True,
+            kb_slugs=kb_slugs,
+            error=str(exc)[:200],
         )
-        coverage = 0.0
+        return {slug: 0.0 for slug in kb_slugs}
 
-    _coverage_cache[cache_key] = (now + _COVERAGE_TTL, coverage)
+    coverage: dict[str, float] = {slug: 0.0 for slug in kb_slugs}
+    for row in rows:
+        coverage[row["kb_slug"]] = 1.0 if int(row["node_count"]) > 0 else 0.0
     return coverage
