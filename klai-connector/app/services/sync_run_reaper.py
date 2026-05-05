@@ -198,7 +198,10 @@ class SyncRunReaper:
     ) -> None:
         completed_at = datetime.now(UTC)
         async with self._session_maker() as session:
-            db_row = await session.get(SyncRun, row.id)
+            # FOR UPDATE — see SyncRunResolver._finalize for the same
+            # rationale (block concurrent finalisers; second reader
+            # short-circuits on the post-commit non-RUNNING read).
+            db_row = await session.get(SyncRun, row.id, with_for_update=True)
             if db_row is None or db_row.status != SyncStatus.RUNNING:
                 return  # Race: resolver got there first.
             db_row.status = SyncStatus.COMPLETED
@@ -250,7 +253,7 @@ class SyncRunReaper:
             },
         ]
         async with self._session_maker() as session:
-            db_row = await session.get(SyncRun, row.id)
+            db_row = await session.get(SyncRun, row.id, with_for_update=True)
             if db_row is None or db_row.status != SyncStatus.RUNNING:
                 return
             db_row.status = SyncStatus.FAILED
