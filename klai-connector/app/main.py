@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import contextlib
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -206,10 +207,8 @@ def create_app() -> FastAPI:
         # -- Shutdown --
         logger.info("Shutting down klai-connector")
         reaper_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError, Exception):
             await reaper_task
-        except (asyncio.CancelledError, Exception):
-            pass
         await scheduler.shutdown()
         await registry.aclose()
         await ingest_client.aclose()
