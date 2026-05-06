@@ -28,7 +28,29 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: klai-knowledge-mcp
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies (incl. dev extras)
+        # `uv sync` resolves the path-deps `klai-identity-assert` and
+        # `klai-log-utils` from ../klai-libs/ — same pattern as the runtime
+        # Dockerfile uses for editable installs.
+        run: uv sync --extra dev
+
+      - name: Test (pytest)
+        run: uv run pytest -q --tb=short
+
   build-push:
+    needs: test
     runs-on: ubuntu-latest
 
     steps:
