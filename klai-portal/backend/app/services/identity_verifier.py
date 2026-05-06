@@ -92,8 +92,11 @@ ReasonCode = Literal[
     # F2 fix-forward (retrieval coupling audit 2026-05-06): partner-key paths.
     "partner_key_not_found",
     "partner_key_org_mismatch",
+    # Tenant-only path: org not found in portal_orgs (no live row).
+    "tenant_not_found",
 ]
-Evidence = Literal["jwt", "membership", "partner_key"]
+UserBoundEvidence = Literal["jwt", "membership", "partner_key"]
+Evidence = Literal["jwt", "membership", "partner_key", "tenant_only"]
 
 # Synthetic identity prefix used by partner_chat for org-level RAG calls.
 # SPEC-API-001 explicitly states partners "have no concept of end users",
@@ -137,6 +140,24 @@ class VerifyDecision:
             org_slug=org_slug,
             reason=None,
             evidence=evidence,
+        )
+
+    @classmethod
+    def allow_tenant(cls, *, org_id: str, org_slug: str) -> VerifyDecision:
+        """Construct a verified tenant-only decision (no end-user identity).
+
+        Used exclusively for service-to-service calls where there is no
+        end-user (e.g. dashboard stats endpoints). The ``user_id`` field is
+        intentionally ``None``; callers MUST NOT use this on user-bound
+        endpoints — use :meth:`allow` instead.
+        """
+        return cls(
+            verified=True,
+            user_id=None,
+            org_id=org_id,
+            org_slug=org_slug,
+            reason=None,
+            evidence="tenant_only",
         )
 
 
@@ -478,3 +499,38 @@ async def _resolve_org_slug(
     )
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
+
+
+async def verify_tenant_claim(
+    *,
+    db: AsyncSession,
+    caller_service: str,
+    claimed_org_id: str,
+    claimed_org_slug: str | None = None,
+) -> VerifyDecision:
+    """Resolve a tenant-only identity claim to an authoritative allow/deny decision.
+
+    No JWT and no ``claimed_user_id`` — this path is for service-to-service
+    calls where there is no end-user (e.g. portal-api → knowledge-ingest stats
+    endpoints). The function is HTTP- and cache-agnostic; the endpoint layer
+    wraps it.
+
+    Does NOT touch ``verify_identity_claim`` — the two code paths are fully
+    independent so a future caller that accidentally passes ``None`` as
+    ``claimed_user_id`` cannot silently fall through to a tenant-only result.
+    """
+
+    if caller_service not in KNOWN_CALLER_SERVICES:
+        logger.info(
+            "identity_verify_tenant_unknown_caller",
+            extra={"caller_service": caller_service},
+        )
+        return VerifyDecision.deny("unknown_caller_service")
+
+    org_slug = await _resolve_org_slug(db=db, zitadel_org_id=claimed_org_id)
+    if org_slug is None:
+        return VerifyDecision.deny("tenant_not_found")
+    if claimed_org_slug is not None and claimed_org_slug != org_slug:
+        return VerifyDecision.deny("org_slug_mismatch")
+
+    return VerifyDecision.allow_tenant(org_id=claimed_org_id, org_slug=org_slug)

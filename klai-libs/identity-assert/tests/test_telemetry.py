@@ -77,3 +77,39 @@ def test_emit_call_logs_at_warning_level_with_reason_on_deny() -> None:
     assert entry["verified"] is False
     assert entry["reason"] == "no_membership"
     assert "evidence" not in entry  # only present on allow
+
+
+def test_hash_user_id_returns_sentinel_for_none() -> None:
+    """hash_user_id(None) must return the '<service>' sentinel, not crash."""
+    result = hash_user_id(None)
+    assert result == "<service>"
+
+
+def test_hash_user_id_still_works_for_real_user_id() -> None:
+    """Regression guard: real user_id still produces a 16-char hex hash."""
+    result = hash_user_id("user-123")
+    assert len(result) == 16
+    assert result != "<service>"
+
+
+def test_emit_call_with_none_user_id_emits_sentinel() -> None:
+    """emit_call with claimed_user_id=None must emit '<service>' as the hash.
+
+    This is the exact scenario that crashed production: knowledge-ingest stats
+    endpoint passed claimed_user_id=None into verify(), which then called
+    emit_call() with None, which crashed in hash_user_id(None).
+    """
+    result = VerifyResult.deny("portal_unreachable")
+
+    with capture_logs() as captured:
+        emit_call(
+            caller_service="portal-api",
+            claimed_user_id=None,
+            claimed_org_id="o-1",
+            result=result,
+            latency_ms=1.0,
+        )
+
+    assert len(captured) == 1
+    entry = captured[0]
+    assert entry["claimed_user_id_hash"] == "<service>"

@@ -30,6 +30,7 @@ from app.services.identity_verifier import (
     KNOWN_CALLER_SERVICES,
     VerifyDecision,
     verify_identity_claim,
+    verify_tenant_claim,
 )
 
 
@@ -703,6 +704,84 @@ class TestPartnerKeyPath:
 
         assert decision.verified is True
         assert decision.org_slug == "canonical"
+
+
+class TestVerifyTenantClaim:
+    """Tests for verify_tenant_claim — the tenant-only service-to-service path."""
+
+    async def test_allow_tenant_when_org_exists(self, mock_db: AsyncMock) -> None:
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none = MagicMock(return_value="acme")
+        mock_db.execute.return_value = mock_result
+
+        decision = await verify_tenant_claim(
+            db=mock_db,
+            caller_service="portal-api",
+            claimed_org_id="o-1",
+        )
+
+        assert decision.verified is True
+        assert decision.evidence == "tenant_only"
+        assert decision.org_id == "o-1"
+        assert decision.org_slug == "acme"
+        assert decision.user_id is None
+        assert decision.reason is None
+
+    async def test_deny_tenant_not_found_when_org_missing(self, mock_db: AsyncMock) -> None:
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none = MagicMock(return_value=None)
+        mock_db.execute.return_value = mock_result
+
+        decision = await verify_tenant_claim(
+            db=mock_db,
+            caller_service="portal-api",
+            claimed_org_id="o-missing",
+        )
+
+        assert decision.verified is False
+        assert decision.reason == "tenant_not_found"
+
+    async def test_deny_org_slug_mismatch_when_slug_differs(self, mock_db: AsyncMock) -> None:
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none = MagicMock(return_value="acme")
+        mock_db.execute.return_value = mock_result
+
+        decision = await verify_tenant_claim(
+            db=mock_db,
+            caller_service="portal-api",
+            claimed_org_id="o-1",
+            claimed_org_slug="wrong-slug",
+        )
+
+        assert decision.verified is False
+        assert decision.reason == "org_slug_mismatch"
+
+    async def test_deny_unknown_caller_service(self, mock_db: AsyncMock) -> None:
+        decision = await verify_tenant_claim(
+            db=mock_db,
+            caller_service="unknown-service",
+            claimed_org_id="o-1",
+        )
+
+        assert decision.verified is False
+        assert decision.reason == "unknown_caller_service"
+        # No DB call should have happened — allowlist check is the first gate.
+        mock_db.execute.assert_not_called()
+
+    async def test_allow_when_org_slug_matches(self, mock_db: AsyncMock) -> None:
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none = MagicMock(return_value="acme")
+        mock_db.execute.return_value = mock_result
+
+        decision = await verify_tenant_claim(
+            db=mock_db,
+            caller_service="portal-api",
+            claimed_org_id="o-1",
+            claimed_org_slug="acme",
+        )
+
+        assert decision.verified is True
+        assert decision.org_slug == "acme"
 
 
 class TestLibraryPortalSymmetry:

@@ -3,15 +3,14 @@ Stats routes:
   GET /ingest/v1/graph-stats?org_id={org_id}  - entity/edge counts from FalkorDB
   GET /ingest/v1/source-count?org_id={org_id}&kb_slug={kb_slug}  - artifact count from PostgreSQL
 """
-import structlog
 
+import structlog
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 
-from knowledge_ingest import db
 from knowledge_ingest.config import settings
 from knowledge_ingest.db import tenant_scoped_connection
-from knowledge_ingest.identity import assert_caller_identity
+from knowledge_ingest.identity import assert_caller_identity_tenant_only
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -25,6 +24,7 @@ def _get_falkordb():
     global _falkordb_client
     if _falkordb_client is None:
         from falkordb import FalkorDB as FalkorDBClient
+
         _falkordb_client = FalkorDBClient(
             host=settings.falkordb_host,
             port=settings.falkordb_port,
@@ -53,15 +53,16 @@ async def get_source_count(
     AC-9: tenant_scoped_connection so RLS context is set for the SELECT.
     """
     try:
-        verified_org_id = await assert_caller_identity(request, claimed_org_id=org_id)
+        verified_org_id = await assert_caller_identity_tenant_only(request, claimed_org_id=org_id)
         async with tenant_scoped_connection(verified_org_id) as conn:
             count = await conn.fetchval(
                 "SELECT COUNT(*) FROM knowledge.artifacts "
                 "WHERE org_id = $1 AND kb_slug = $2 AND superseded_by IS NULL",
-                verified_org_id, kb_slug,
+                verified_org_id,
+                kb_slug,
             )
         return SourceCountResponse(source_count=count)
-    except Exception as exc:
+    except Exception:
         logger.warning("stats_source_count_failed", org_id=org_id, kb_slug=kb_slug, exc_info=True)
         return SourceCountResponse()
 
@@ -80,7 +81,7 @@ async def get_graph_stats(
         return GraphStatsResponse()
 
     try:
-        verified_org_id = await assert_caller_identity(request, claimed_org_id=org_id)
+        verified_org_id = await assert_caller_identity_tenant_only(request, claimed_org_id=org_id)
     except Exception:
         return GraphStatsResponse()
 
@@ -90,20 +91,14 @@ async def get_graph_stats(
 
         # Count entity nodes
         try:
-            entity_result = graph.query(
-                "MATCH (n:Entity) RETURN count(n) AS cnt"
-            )
+            entity_result = graph.query("MATCH (n:Entity) RETURN count(n) AS cnt")
             entity_count = entity_result.result_set[0][0] if entity_result.result_set else 0
         except Exception:
-            entity_result = graph.query(
-                "MATCH (n) RETURN count(n) AS cnt"
-            )
+            entity_result = graph.query("MATCH (n) RETURN count(n) AS cnt")
             entity_count = entity_result.result_set[0][0] if entity_result.result_set else 0
 
         # Count relationships between nodes
-        edge_result = graph.query(
-            "MATCH ()-[r]->() RETURN count(r) AS cnt"
-        )
+        edge_result = graph.query("MATCH ()-[r]->() RETURN count(r) AS cnt")
         edge_count = edge_result.result_set[0][0] if edge_result.result_set else 0
 
         return GraphStatsResponse(entity_count=entity_count, edge_count=edge_count)
@@ -111,6 +106,6 @@ async def get_graph_stats(
     except ImportError:
         logger.warning("falkordb package not available - skipping graph stats")
         return GraphStatsResponse()
-    except Exception as exc:
+    except Exception:
         logger.warning("stats_graph_stats_failed", org_id=org_id, exc_info=True)
         return GraphStatsResponse()
