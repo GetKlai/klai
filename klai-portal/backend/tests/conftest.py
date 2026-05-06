@@ -6,9 +6,10 @@ Sets required env vars before any app module is imported.
 
 import os
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
+import pytest
 import pytest_asyncio
 
 # ---------------------------------------------------------------------------
@@ -82,6 +83,47 @@ from auth_test_helpers import respx_zitadel  # noqa: E402, F401
 # ---------------------------------------------------------------------------
 # Shared fakeredis fixture for SPEC-SEC-SESSION-001 + future Redis-backed code
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _stub_webhook_nonce_stores() -> Iterator[None]:
+    """SPEC-TI-006: stub the module-scope WebhookNonceStore instances with
+    a fakeredis client so tests don't hit a real Redis or fail with
+    RedisUnavailableError on empty REDIS_URL in CI.
+
+    Without this fixture, tests that POST to /api/webhooks/moneybird (or
+    any other webhook with replay-protection) get HTTP 503 because the
+    nonce-store falls back to RedisUnavailableError when REDIS_URL is
+    unset/malformed.
+    """
+    import fakeredis.aioredis
+
+    fake = fakeredis.aioredis.FakeRedis(decode_responses=False)
+    stubbed = []
+
+    # Moneybird webhook nonce-store
+    try:
+        from app.api.webhooks import _moneybird_nonce_store
+
+        _moneybird_nonce_store.set_client(fake)
+        stubbed.append(_moneybird_nonce_store)
+    except (ImportError, AttributeError):
+        pass
+
+    # Vexa webhook nonce-store (added in SPEC-TI-006)
+    try:
+        from app.api.meetings import _vexa_nonce_store
+
+        _vexa_nonce_store.set_client(fake)
+        stubbed.append(_vexa_nonce_store)
+    except (ImportError, AttributeError):
+        pass
+
+    try:
+        yield
+    finally:
+        for store in stubbed:
+            store.reset_client()
 
 
 @pytest_asyncio.fixture
