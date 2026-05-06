@@ -100,12 +100,14 @@ async def get_taxonomy_trees(
 
     try:
         rows = await pool.fetch(_TREES_SQL, org_id, list(kb_slugs))
-    except Exception as exc:
+    except Exception:
+        # SPEC-SEC-HYGIENE-001 REQ-43.3 / TRY401: exc_info=True preserves the
+        # traceback that error=str(exc)[:200] dropped. F6 audit cleanup.
         logger.warning(
             "taxonomy_tree_fetch_failed",
             org_id=org_id,
             kb_slugs=kb_slugs,
-            error=str(exc)[:200],
+            exc_info=True,
         )
         return {}
 
@@ -142,12 +144,14 @@ async def get_kb_taxonomy_coverage(
 
     try:
         rows = await pool.fetch(_COVERAGE_SQL, org_id, list(kb_slugs))
-    except Exception as exc:
+    except Exception:
+        # SPEC-SEC-HYGIENE-001 REQ-43.3 / TRY401: exc_info=True preserves the
+        # traceback that error=str(exc)[:200] dropped. F6 audit cleanup.
         logger.warning(
             "taxonomy_coverage_fetch_failed",
             org_id=org_id,
             kb_slugs=kb_slugs,
-            error=str(exc)[:200],
+            exc_info=True,
         )
         return {slug: 0.0 for slug in kb_slugs}
 
