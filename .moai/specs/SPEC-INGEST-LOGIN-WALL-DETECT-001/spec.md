@@ -1,24 +1,36 @@
 ---
 id: SPEC-INGEST-LOGIN-WALL-DETECT-001
-version: "1.0"
-status: draft
+version: "1.1"
+status: superseded
+superseded_by: SPEC-INGEST-LOGIN-WALL-DETECT-002
 created: 2026-05-06
 updated: 2026-05-06
 author: Mark Vletter
 priority: high
 issue_number: TBD
 related_specs:
+  - SPEC-INGEST-LOGIN-WALL-DETECT-002 (replaces phrase-detector with SimHash near-duplicate clustering)
   - SPEC-CRAWLER-004 (authenticated login-indicator guard — complementary)
   - SPEC-KB-014 (gap detection — complementary, fires on low reranker scores)
   - SPEC-KB-015 (quality_boost — extended here with hard floor filter)
   - SPEC-INGEST-QUEUE-SEPARATION-001 (queue infrastructure for backfill task)
 ---
 
+> **Superseded by SPEC-INGEST-LOGIN-WALL-DETECT-002.**
+>
+> The phrase-substring detector defined here was found to FP at 2.6% on
+> production voys/support content (4 NL + 1 EN). v2 replaces the detector
+> with SimHash near-duplicate clustering — same caller signature, same
+> mode flags, but the underlying detection mechanism targets templating
+> structure instead of phrasing. See `../SPEC-INGEST-LOGIN-WALL-DETECT-002/`
+> for the redesign and rationale.
+
 ## HISTORY
 
 | Version | Date | Author | Change |
 |---------|------|--------|--------|
 | 1.0 | 2026-05-06 | Mark Vletter | Initial draft after voys/support-KB redcactus retrieval incident — 150/422 (35%) crawled pages were anonymous-crawl login-stubs surfacing in retrieval with reranker scores 0.71–0.84. |
+| 1.1 | 2026-05-06 | Mark Vletter | Marked superseded by SPEC-INGEST-LOGIN-WALL-DETECT-002 after the production canary on voys/support exposed v1's substring-matching detector as fundamentally wrong (FP rate 2.6% on legitimate content). v2 replaces the detector logic with SimHash near-duplicate clustering; mode flags and caller signature are preserved. |
 
 ---
 

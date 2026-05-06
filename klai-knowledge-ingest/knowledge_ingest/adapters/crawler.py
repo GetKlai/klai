@@ -28,6 +28,7 @@ from knowledge_ingest.utils.auth_wall_detector import (
     AuthWallSignal,
     detect_anonymous_auth_wall,
 )
+from knowledge_ingest.utils.content_fingerprint import compute_simhash
 
 logger = structlog.get_logger()
 
@@ -410,19 +411,32 @@ async def _ingest_crawl_result(
             logger.info("crawl_skipped_html_noise", url=url, org_id=org_id, kb_slug=kb_slug)
             return
 
-    # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-03 — anonymous-crawl auth-wall
-    # detection. Runs AFTER dedup (don't waste work on already-seen pages)
-    # and BEFORE image upload + Qdrant write (cheaper to bail early). Skipped
-    # entirely when login_indicator_selector is set, because the authenticated
-    # path has its own halt-on-success=False guard above (lines 260-266) and
-    # we don't want to double-detect.
+    # SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-01 — compute the page's SimHash
+    # once, BEFORE the detector call (the detector reuses it for cluster
+    # lookup) and store it AFTER the upsert below so the next crawl can
+    # cluster against it. Computed unconditionally — even with detection
+    # disabled, the fingerprint is needed for the operator-triggered
+    # backfill / validation script.
+    page_simhash = compute_simhash(text)
+
+    # SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-02 — anonymous-crawl auth-wall
+    # detection by SimHash near-duplicate clustering. Runs AFTER dedup (don't
+    # waste work on already-seen pages) and BEFORE image upload + Qdrant
+    # write (cheaper to bail early). Skipped when login_indicator_selector
+    # is set — the authenticated path has its own halt-on-success=False
+    # guard above and we don't want to double-detect.
     login_wall_signal: AuthWallSignal | None = None
     login_wall_mode: str | None = None
     if settings.ingest_login_wall_detect_enabled and login_indicator_selector is None:
-        login_wall_signal = detect_anonymous_auth_wall(
+        login_wall_signal = await detect_anonymous_auth_wall(
             result.raw_markdown or "",
             fit_markdown=result.fit_markdown or None,
             url=url,
+            org_id=org_id,
+            kb_slug=kb_slug,
+            conn=conn,
+            cluster_min=settings.ingest_template_cluster_min,
+            target_simhash=page_simhash,
         )
         if login_wall_signal is not None:
             login_wall_mode = _resolve_login_wall_mode()
@@ -541,6 +555,18 @@ async def _ingest_crawl_result(
         content_hash=content_hash,
         raw_markdown=text,
         crawled_at=int(time.time()),
+    )
+
+    # SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-01 — persist the page's SimHash
+    # so the next crawl in this KB can include it in cluster lookups. Done
+    # AFTER upsert_crawled_page so the row exists; the helper does an UPDATE
+    # by (org_id, kb_slug, url).
+    await pg_store.update_crawled_page_simhash(
+        conn,
+        org_id=org_id,
+        kb_slug=kb_slug,
+        url=url,
+        content_simhash=page_simhash,
     )
 
 

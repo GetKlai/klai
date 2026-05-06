@@ -73,6 +73,7 @@ async def test_ingest_crawl_result_populates_link_fields():
     ):
         mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
         mock_pg.upsert_crawled_page = AsyncMock()
+        mock_pg.update_crawled_page_simhash = AsyncMock()
         mock_pg.upsert_page_links = AsyncMock()
 
         mock_ingest.return_value = {"chunks": 2}
@@ -124,6 +125,7 @@ async def test_ingest_crawl_result_graceful_on_link_graph_error():
     ):
         mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
         mock_pg.upsert_crawled_page = AsyncMock()
+        mock_pg.update_crawled_page_simhash = AsyncMock()
         mock_pg.upsert_page_links = AsyncMock()
 
         mock_ingest.return_value = {"chunks": 1}
@@ -206,6 +208,7 @@ async def test_run_crawl_job_calls_build_link_graph_before_ingest():
         mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
         mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
         mock_pg.upsert_crawled_page = AsyncMock()
+        mock_pg.update_crawled_page_simhash = AsyncMock()
         mock_pg.upsert_page_links = AsyncMock(side_effect=_fake_upsert_links)
 
         from knowledge_ingest.adapters.crawler import run_crawl_job
