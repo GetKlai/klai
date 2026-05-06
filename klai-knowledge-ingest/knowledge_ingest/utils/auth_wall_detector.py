@@ -140,6 +140,18 @@ async def detect_anonymous_auth_wall(
     via fail-open; their warning log surfaces the misconfiguration without
     blocking the ingest pipeline.
 
+    @MX:ANCHOR — invariant. Two callers depend on this exact contract:
+    ``crawler._ingest_crawl_result`` (passes ``conn`` for live cluster
+    lookup at ingest time) and ``backfill_tasks._ensure_simhashes``
+    consumers via the validation report. Removing the fail-open branch
+    would break boot scenarios where the DB pool isn't ready yet; raising
+    on missing args would convert a wiring bug into a 100% ingest outage.
+    @MX:NOTE — pattern field is pinned to ``"template_cluster"`` and
+    confidence to ``0.9``. Mode handlers in crawler.py (reject/degrade/
+    audit_only) rely on these strings for log formatting and downstream
+    quality_score=0.0 decisions; renaming requires coordinated update.
+    Reason: SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-02, REQ-06, REQ-07.
+
     Args:
         markdown: ``raw_markdown`` from the crawl result.
         fit_markdown: ``crawl4ai.fit_markdown`` (chrome-stripped). Preferred
