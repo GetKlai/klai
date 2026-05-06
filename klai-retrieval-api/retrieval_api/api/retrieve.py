@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from retrieval_api.config import settings
 from retrieval_api.metrics import (
+    quality_floor_filtered_total,
     retrieval_chunks_total,
     retrieval_requests_total,
     step_latency_seconds,
@@ -282,6 +283,14 @@ async def retrieve(
             reranked, floor=settings.retrieval_quality_floor
         )
         decision_record["quality_floor_filtered"] = quality_floor_filtered
+        if quality_floor_filtered > 0:
+            # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-08 — labelled by org_id so
+            # per-tenant pollution is visible in Grafana. Only increment on
+            # non-zero to keep metric cardinality predictable for tenants
+            # whose chunks never trip the floor.
+            quality_floor_filtered_total.labels(org_id=req.org_id).inc(
+                quality_floor_filtered
+            )
 
         # 5b. Source-aware selection (SPEC-KB-021)
         # Replaces separate router + quota: uses reranker scores to decide.

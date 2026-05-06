@@ -1,0 +1,184 @@
+# SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-08 — alert rules.
+#
+# Two rules, both VictoriaLogs-based (knowledge-ingest is a logs-only service
+# without Prometheus exposure):
+#
+#   R1  login_wall_burst                  HIGH   >50 detections in 10m
+#   R2  login_wall_detector_misconfigured WARN   any "config_invalid" log
+#
+# Routed via spec=SPEC-INGEST-LOGIN-WALL-DETECT-001 → klai-ops-alerts-email.
+#
+# Field shape verified against the structured logs emitted by Phase B:
+#   service:knowledge-ingest
+#   event:login_wall_reject     (mode=reject)
+#   event:login_wall_degrade    (mode=degrade)
+#   event:login_wall_detected   (mode=audit_only)
+#   event:login_wall_detector_config_invalid (fail-safe trigger)
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: spec-login-wall-detect-001-ingest
+    folder: Klai
+    interval: 1m
+    rules:
+
+      # ── R1: login_wall_burst ─────────────────────────────────────────────
+      # Looks back 10m, fires when total login-wall detections (across all
+      # three modes) exceed 50. Threshold deliberately generous: voys's first
+      # backfill processes ~150 walls in one go and we don't want a noisy
+      # alert during normal cleanup. A sustained 50-per-10-min rate AFTER
+      # backfill = 300/hr = a connector misconfigured on a freshly-onboarded
+      # tenant or a vendor that changed their auth model.
+      #
+      # for: 0s — once across, fire immediately. The 10m lookback already
+      # smooths out single-job spikes.
+      - uid: spec-login-wall-detect-001-burst
+        title: login_wall_burst
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:knowledge-ingest AND (event:login_wall_reject OR event:login_wall_degrade OR event:login_wall_detected)'
+              queryType: instant
+          - refId: count
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: count
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: count
+              conditions:
+                - evaluator: { params: [50], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Alerting
+        for: 0s
+        keepFiringFor: 30m
+        isPaused: false
+        labels:
+          severity: warning
+          spec: SPEC-INGEST-LOGIN-WALL-DETECT-001
+          service_group: ingest
+        annotations:
+          summary: 'knowledge-ingest detected >50 login-wall pages in 10 min'
+          runbook_url: 'docs/runbooks/login-wall-burst.md'
+          description: |
+            knowledge-ingest is logging more than 50 login-wall detections
+            in the last 10 minutes. Common causes:
+
+              - **Backfill is running** — expected the first time a tenant
+                runs `python -m knowledge_ingest.backfill_tasks --org X`.
+                Voys's first backfill alone processes ~150 walls. Wait for
+                the task to finish and check that the rate drops.
+
+              - **Newly-onboarded tenant with credential-less crawl** — the
+                new connector is hitting 35-40% walled pages. Configure
+                cookies via the existing connector wizard (SPEC-CRAWLER-004
+                cookie path) and re-crawl.
+
+              - **Vendor changed login model** — a previously-public site
+                added a paywall. Investigate which `org_id` + page domains
+                dominate and decide between adding cookies or accepting
+                the loss.
+
+            Triage:
+              1. VictoriaLogs:
+                   service:knowledge-ingest AND (event:login_wall_reject OR event:login_wall_degrade OR event:login_wall_detected)
+                   | stats by(org_id, kb_slug) count() | sort desc
+              2. Top org_id → check connector_id for that tenant's KB.
+              3. If backfill: confirm `event=backfill_login_walls_complete`
+                 logged within the last hour.
+
+      # ── R2: login_wall_detector_config_invalid ───────────────────────────
+      # Fires on ANY log line indicating a typo in
+      # KLAI_INGEST_LOGIN_WALL_DETECT_MODE. Detector falls back to audit_only
+      # so the pipeline keeps running, but operators must fix the env value.
+      - uid: spec-login-wall-detect-001-config-invalid
+        title: login_wall_detector_config_invalid
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:knowledge-ingest AND event:login_wall_detector_config_invalid'
+              queryType: instant
+          - refId: count
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: count
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: count
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Alerting
+        for: 0s
+        keepFiringFor: 30m
+        isPaused: false
+        labels:
+          severity: warning
+          spec: SPEC-INGEST-LOGIN-WALL-DETECT-001
+          service_group: ingest
+        annotations:
+          summary: 'login-wall detector mode is mis-configured'
+          description: |
+            knowledge-ingest's KLAI_INGEST_LOGIN_WALL_DETECT_MODE env var
+            contains an unrecognised value. The detector has fallen back
+            to "audit_only" (fail-safe) so no crawls are blocked, but the
+            intended behaviour (reject / degrade) is NOT in effect.
+
+            Triage:
+              1. ssh core-01 "docker exec klai-core-knowledge-ingest-1 \
+                                printenv KLAI_INGEST_LOGIN_WALL_DETECT_MODE"
+              2. Valid values: reject | degrade | audit_only
+              3. Fix in SOPS .env, redeploy via:
+                   /opt/klai/scripts/compose-up.sh knowledge-ingest
