@@ -13,7 +13,7 @@ import json
 import math
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -106,9 +106,7 @@ def classify_by_centroid(
 
 def load_centroids(org_id: str, kb_slug: str) -> CentroidStore | None:
     """Load centroid store from JSON sidecar. Returns None if not found or stale."""
-    path = os.path.expanduser(
-        f"{settings.taxonomy_centroids_dir}/{org_id}_{kb_slug}.json"
-    )
+    path = os.path.expanduser(f"{settings.taxonomy_centroids_dir}/{org_id}_{kb_slug}.json")
     if not os.path.exists(path):
         return None
     try:
@@ -175,6 +173,116 @@ def save_centroids(store: CentroidStore) -> None:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f)
     logger.info("centroid_store_saved", path=path, clusters=len(store.clusters))
+
+
+# ---------------------------------------------------------------------------
+# SPEC-TAXONOMY-V2-001: Bootstrap clustering helpers
+# ---------------------------------------------------------------------------
+
+
+def compute_min_cluster_size(doc_count: int, floor: int = 5) -> int:
+    """Compute adaptive min_cluster_size for HDBSCAN.
+
+    Formula: max(floor, doc_count // 50). Adapts to corpus size per SPEC-TAXONOMY-V2-001.
+    """
+    return max(floor, doc_count // 50)
+
+
+def cluster_documents_hdbscan(
+    embeddings: Any,
+    min_cluster_size: int = 5,
+) -> tuple[Any, dict]:
+    """Run HDBSCAN on document embeddings and return (labels, metrics).
+
+    SPEC-TAXONOMY-V2-001 AC-1, AC-16.
+
+    Args:
+        embeddings: (n_docs, dim) float32 array of unit-normalised embeddings.
+        min_cluster_size: minimum cluster size for HDBSCAN.
+
+    Returns:
+        labels: (n_docs,) int array; -1 = outlier/noise.
+        metrics: dict with keys clusters_found, outlier_count, silhouette_score.
+                 silhouette_score is None when <= 1 cluster found (undefined).
+    """
+    import numpy as np
+
+    try:
+        from sklearn.cluster import HDBSCAN
+        from sklearn.metrics import silhouette_score
+    except ImportError:
+        logger.error("clustering_sklearn_not_available_v2")
+        # Return all-outlier labels as fallback
+        n = len(embeddings)
+        return np.full(n, -1, dtype=np.int32), {
+            "clusters_found": 0,
+            "outlier_count": n,
+            "silhouette_score": None,
+        }
+
+    hdb = HDBSCAN(min_cluster_size=min_cluster_size, metric="cosine")
+    labels = hdb.fit_predict(embeddings)
+
+    cluster_ids = set(int(lbl) for lbl in labels if lbl >= 0)
+    clusters_found = len(cluster_ids)
+    outlier_count = int((labels == -1).sum())
+
+    # Silhouette score requires >= 2 clusters and >= 2 samples per cluster
+    sil_score: float | None = None
+    if clusters_found >= 2:
+        try:
+            # Only compute on non-outlier points
+            mask = labels >= 0
+            if mask.sum() >= clusters_found * 2:
+                sil_score = float(silhouette_score(embeddings[mask], labels[mask], metric="cosine"))
+        except Exception:
+            # Silhouette can fail on degenerate inputs — treat as undefined
+            sil_score = None
+
+    return labels, {
+        "clusters_found": clusters_found,
+        "outlier_count": outlier_count,
+        "silhouette_score": sil_score,
+    }
+
+
+def closest_to_centroid(
+    cluster_indices: list[int],
+    embeddings: Any,
+    n: int = 8,
+) -> list[int]:
+    """Return indices of the N documents closest to the cluster centroid.
+
+    SPEC-TAXONOMY-V2-001 AC-4 — per the SPEC pseudocode.
+
+    Args:
+        cluster_indices: list of row indices into embeddings that belong to this cluster.
+        embeddings: full (n_docs, dim) embedding matrix.
+        n: max number of indices to return.
+
+    Returns:
+        List of up to n indices from cluster_indices, sorted by cosine similarity
+        to the cluster centroid (highest first).
+    """
+    import numpy as np
+
+    if not cluster_indices:
+        return []
+
+    cluster_vecs = embeddings[cluster_indices]
+    centroid = cluster_vecs.mean(axis=0)
+    centroid_norm = np.linalg.norm(centroid)
+    if centroid_norm == 0.0:
+        return cluster_indices[:n]
+
+    vec_norms = np.linalg.norm(cluster_vecs, axis=1)
+    # Avoid division by zero for zero-norm vectors
+    denom = vec_norms * centroid_norm
+    denom = np.where(denom == 0.0, 1e-10, denom)
+    sims = (cluster_vecs @ centroid) / denom
+
+    top_n_local = list(np.argsort(-sims)[:n])
+    return [cluster_indices[i] for i in top_n_local]
 
 
 # ---------------------------------------------------------------------------

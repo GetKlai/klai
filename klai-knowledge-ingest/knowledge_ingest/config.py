@@ -72,6 +72,12 @@ class Settings(BaseSettings):
     taxonomy_cluster_trigger_count: int = 20
     taxonomy_centroid_max_age_hours: int = 48
 
+    # SPEC-TAXONOMY-V2-001 bootstrap settings
+    taxonomy_bootstrap_min_cluster_size_floor: int = 5
+    taxonomy_bootstrap_max_clusters: int = 20
+    taxonomy_bootstrap_top_n_per_cluster: int = 8
+    taxonomy_bootstrap_v2_enabled: bool = True
+
     # SPEC-CRAWLER-004 Fase A — Garage S3 for consolidated crawl image pipeline.
     # Feature-flagged via empty endpoint: when ``garage_s3_endpoint`` is blank
     # the crawler skips image upload and writes no ``image_urls`` into Qdrant.
