@@ -15,7 +15,10 @@ from typing import Literal
 # ``partner_key`` (F2 fix-forward, retrieval coupling audit 2026-05-06):
 # evidence used for synthetic ``partner:<key_id>`` identities verified
 # against the partner_api_keys table by portal-api.
-Evidence = Literal["jwt", "membership", "partner_key"]
+# ``tenant_only``: used exclusively for tenant-level service-to-service calls
+# where there is no end-user identity (e.g. portal-api → knowledge-ingest stats
+# endpoints). Only returned by verify_tenant() / verify_tenant_or_raise().
+Evidence = Literal["jwt", "membership", "partner_key", "tenant_only"]
 
 # Stable reject codes — mirrors portal-api REQ-1.7 stable_code list. Plus two
 # consumer-side codes the library raises before ever reaching portal:
@@ -33,6 +36,8 @@ ReasonCode = Literal[
     # F2 fix-forward (retrieval coupling audit 2026-05-06): partner-key paths.
     "partner_key_not_found",
     "partner_key_org_mismatch",
+    # Tenant-only path: org not found in portal_orgs (no live row).
+    "tenant_not_found",
 ]
 
 
@@ -105,6 +110,31 @@ class VerifyResult:
             org_slug=org_slug,
             reason=None,
             evidence=evidence,
+            cached=cached,
+        )
+
+    @classmethod
+    def allow_tenant(
+        cls,
+        *,
+        org_id: str,
+        org_slug: str,
+        cached: bool = False,
+    ) -> VerifyResult:
+        """Construct a verified tenant-only result (no end-user identity).
+
+        Used exclusively for service-to-service calls where there is no
+        end-user (e.g. dashboard stats endpoints). The ``user_id`` field is
+        intentionally ``None``; callers MUST NOT use this on user-bound
+        endpoints — use :meth:`allow` instead to keep the type system strict.
+        """
+        return cls(
+            verified=True,
+            user_id=None,
+            org_id=org_id,
+            org_slug=org_slug,
+            reason=None,
+            evidence="tenant_only",
             cached=cached,
         )
 

@@ -34,6 +34,19 @@ class _CacheKey:
     jwt_fingerprint: str
 
 
+@dataclass(frozen=True, slots=True)
+class _TenantCacheKey:
+    """Cache key for tenant-only entries — no user_id, no JWT fingerprint.
+
+    Kept as a separate dataclass (not a mode flag on _CacheKey) so there is
+    zero possibility of a user-bound key and a tenant-only key comparing equal
+    even when both carry the same (caller_service, claimed_org_id).
+    """
+
+    caller_service: str
+    claimed_org_id: str
+
+
 def _fingerprint_jwt(bearer_jwt: str | None) -> str:
     """Return a fingerprint that distinguishes JWT-bearing from JWT-less calls.
 
@@ -64,6 +77,9 @@ class IdentityCache:
         self._ttl_seconds = ttl_seconds
         self._max_entries = max_entries
         self._store: OrderedDict[_CacheKey, tuple[float, VerifyResult]] = OrderedDict()
+        # Separate store for tenant-only entries — kept independent so a user-bound
+        # key and a tenant-only key can never collide, even sharing the same org.
+        self._tenant_store: OrderedDict[_TenantCacheKey, tuple[float, VerifyResult]] = OrderedDict()
         self._lock = threading.Lock()
 
     def _key(
@@ -141,10 +157,59 @@ class IdentityCache:
             while len(self._store) > self._max_entries:
                 self._store.popitem(last=False)
 
+    def get_tenant(
+        self,
+        *,
+        caller_service: str,
+        claimed_org_id: str,
+        now: float | None = None,
+    ) -> VerifyResult | None:
+        """Return a cached tenant-only verified result, or ``None`` on miss / expiry."""
+        key = _TenantCacheKey(caller_service=caller_service, claimed_org_id=claimed_org_id)
+        current = time.monotonic() if now is None else now
+        with self._lock:
+            entry = self._tenant_store.get(key)
+            if entry is None:
+                return None
+            expires_at, result = entry
+            if current >= expires_at:
+                del self._tenant_store[key]
+                return None
+            self._tenant_store.move_to_end(key)
+            return VerifyResult(
+                verified=result.verified,
+                user_id=result.user_id,
+                org_id=result.org_id,
+                org_slug=result.org_slug,
+                reason=result.reason,
+                evidence=result.evidence,
+                cached=True,
+            )
+
+    def put_tenant(
+        self,
+        *,
+        caller_service: str,
+        claimed_org_id: str,
+        result: VerifyResult,
+        now: float | None = None,
+    ) -> None:
+        """Cache a tenant-only verified result. No-op for non-verified results."""
+        if not result.verified:
+            return
+        key = _TenantCacheKey(caller_service=caller_service, claimed_org_id=claimed_org_id)
+        current = time.monotonic() if now is None else now
+        with self._lock:
+            self._tenant_store[key] = (current + self._ttl_seconds, result)
+            self._tenant_store.move_to_end(key)
+            while len(self._tenant_store) > self._max_entries:
+                self._tenant_store.popitem(last=False)
+
     def clear(self) -> None:
         """Drop every cached entry. Test-only."""
         with self._lock:
             self._store.clear()
+            self._tenant_store.clear()
 
     def __len__(self) -> int:
         with self._lock:

@@ -22,9 +22,7 @@ def test_allow_factory_sets_verified_true_with_canonical_identity() -> None:
 
 
 def test_allow_factory_supports_membership_evidence() -> None:
-    result = VerifyResult.allow(
-        user_id="u-1", org_id="o-1", org_slug="acme", evidence="membership", cached=True
-    )
+    result = VerifyResult.allow(user_id="u-1", org_id="o-1", org_slug="acme", evidence="membership", cached=True)
 
     assert result.evidence == "membership"
     assert result.org_slug == "acme"

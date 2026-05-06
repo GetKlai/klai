@@ -22,7 +22,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 import redis.asyncio as aioredis
 import structlog
@@ -1370,6 +1370,7 @@ async def verify_identity(
 
     from app.services.identity_verifier import (
         KNOWN_CALLER_SERVICES,
+        UserBoundEvidence,
         verify_identity_claim,
     )
     from app.services.identity_verify_cache import (
@@ -1487,7 +1488,9 @@ async def verify_identity(
                 org_id=cached.org_id,
                 org_slug=cached.org_slug,
                 cache_ttl_seconds=60,
-                evidence=cached.evidence,
+                # cached.evidence is UserBoundEvidence — the user-bound cache
+                # only stores "jwt" / "membership" / "partner_key" values.
+                evidence=cast("UserBoundEvidence", cached.evidence),
             ).model_dump_json(),
             status_code=status.HTTP_200_OK,
             media_type="application/json",
@@ -1573,7 +1576,249 @@ async def verify_identity(
             org_id=decision.org_id,
             org_slug=decision.org_slug,
             cache_ttl_seconds=60,
-            evidence=decision.evidence,
+            # decision.evidence is UserBoundEvidence here — verify_identity_claim
+            # only produces "jwt", "membership", or "partner_key" for the
+            # user-bound path.
+            evidence=cast("UserBoundEvidence", decision.evidence),
+        ).model_dump_json(),
+        status_code=status.HTTP_200_OK,
+        media_type="application/json",
+    )
+
+
+# ---------------------------------------------------------------------------
+# SPEC-SEC-IDENTITY-ASSERT-001 tenant-only path: /internal/identity/verify-tenant
+# ---------------------------------------------------------------------------
+#
+# Opt-in primitive for service-to-service calls that carry no end-user identity
+# (e.g. portal-api → knowledge-ingest stats endpoints). Separated from
+# /internal/identity/verify so the type system prevents a user-bound endpoint
+# from accidentally receiving a tenant-only result when claimed_user_id=None.
+# See the architecture decision in identity.py and the retro entry for the
+# 2026-05-06 crash.
+
+
+class IdentityVerifyTenantRequest(BaseModel):
+    """Request body for POST /internal/identity/verify-tenant.
+
+    Intentionally has NO ``claimed_user_id`` and NO ``bearer_jwt`` fields.
+    A tenant-only call with a JWT would be a contract violation — the JWT
+    asserts an end-user, which is precisely what this path does not have.
+    """
+
+    caller_service: str
+    claimed_org_id: str
+    claimed_org_slug: str | None = None
+
+
+class IdentityVerifyTenantSuccess(BaseModel):
+    """200 response body for the tenant-only verification endpoint.
+
+    Intentionally has NO ``user_id`` field — there is no end-user on this path.
+    """
+
+    verified: Literal[True] = True
+    org_id: str
+    org_slug: str
+    cache_ttl_seconds: int
+    evidence: Literal["tenant_only"]
+
+
+@router.post(
+    "/identity/verify-tenant",
+    response_model=None,
+)
+async def verify_tenant_identity(
+    request: Request,
+    body: IdentityVerifyTenantRequest,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Verify a tenant-only service-asserted identity claim.
+
+    Implements the tenant-only split from SPEC-SEC-IDENTITY-ASSERT-001. Used
+    by knowledge-ingest stats endpoints (and any future tenant-level endpoints)
+    where there is no end-user. The response body carries no ``user_id`` field.
+
+    Failure modes:
+    - ``unknown_caller_service`` → HTTP 400.
+    - ``tenant_not_found``       → HTTP 403 (org_id has no live portal_orgs row).
+    - ``org_slug_mismatch``      → HTTP 403 (REQ-2.6: slug mismatch).
+    - ``cache_unavailable``      → HTTP 503 (Redis call failed; fails closed).
+    """
+
+    from app.services.identity_verifier import (
+        KNOWN_CALLER_SERVICES,
+        verify_tenant_claim,
+    )
+    from app.services.identity_verify_cache import (
+        CacheUnavailable,
+        cache_verified_tenant_decision,
+        get_cached_tenant_decision,
+    )
+
+    await _require_internal_token(request)
+
+    if body.caller_service not in KNOWN_CALLER_SERVICES:
+        await _audit_internal_call(request, org_id=0)
+        structlog_logger.warning(
+            "identity_verify_tenant_decision",
+            caller_service=body.caller_service,
+            claimed_user_id_hash="<service>",
+            claimed_org_id=body.claimed_org_id,
+            verified=False,
+            reason="unknown_caller_service",
+        )
+        return Response(
+            content=IdentityVerifyDeny(reason="unknown_caller_service").model_dump_json(),
+            status_code=status.HTTP_400_BAD_REQUEST,
+            media_type="application/json",
+        )
+
+    redis_pool = await get_redis_pool()
+
+    if redis_pool is None:
+        await _audit_internal_call(request, org_id=0)
+        structlog_logger.warning(
+            "identity_verify_tenant_decision",
+            caller_service=body.caller_service,
+            claimed_user_id_hash="<service>",
+            claimed_org_id=body.claimed_org_id,
+            verified=False,
+            reason="cache_unavailable",
+        )
+        return Response(
+            content=IdentityVerifyDeny(reason="cache_unavailable").model_dump_json(),
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            media_type="application/json",
+        )
+
+    try:
+        cached = await get_cached_tenant_decision(
+            redis=redis_pool,
+            caller_service=body.caller_service,
+            claimed_org_id=body.claimed_org_id,
+        )
+    except CacheUnavailable:
+        await _audit_internal_call(request, org_id=0)
+        structlog_logger.warning(
+            "identity_verify_tenant_decision",
+            caller_service=body.caller_service,
+            claimed_user_id_hash="<service>",
+            claimed_org_id=body.claimed_org_id,
+            verified=False,
+            reason="cache_unavailable",
+        )
+        return Response(
+            content=IdentityVerifyDeny(reason="cache_unavailable").model_dump_json(),
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            media_type="application/json",
+        )
+
+    if cached is not None and cached.org_id is not None and cached.org_slug is not None:
+        if body.claimed_org_slug is not None and body.claimed_org_slug != cached.org_slug:
+            await _audit_internal_call(request, org_id=0)
+            structlog_logger.warning(
+                "identity_verify_tenant_decision",
+                caller_service=body.caller_service,
+                claimed_user_id_hash="<service>",
+                claimed_org_id=body.claimed_org_id,
+                verified=False,
+                reason="org_slug_mismatch",
+                cache_hit=True,
+            )
+            return Response(
+                content=IdentityVerifyDeny(reason="org_slug_mismatch").model_dump_json(),
+                status_code=status.HTTP_403_FORBIDDEN,
+                media_type="application/json",
+            )
+
+        await _audit_internal_call(request, org_id=0)
+        structlog_logger.info(
+            "identity_verify_tenant_decision",
+            caller_service=body.caller_service,
+            claimed_user_id_hash="<service>",
+            claimed_org_id=body.claimed_org_id,
+            verified=True,
+            evidence="tenant_only",
+            cache_hit=True,
+        )
+        return Response(
+            content=IdentityVerifyTenantSuccess(
+                org_id=cached.org_id,
+                org_slug=cached.org_slug,
+                cache_ttl_seconds=60,
+                evidence="tenant_only",
+            ).model_dump_json(),
+            status_code=status.HTTP_200_OK,
+            media_type="application/json",
+        )
+
+    # Cache miss: run the verifier.
+    decision = await verify_tenant_claim(
+        db=db,
+        caller_service=body.caller_service,
+        claimed_org_id=body.claimed_org_id,
+        claimed_org_slug=body.claimed_org_slug,
+    )
+
+    if not decision.verified:
+        await _audit_internal_call(request, org_id=0)
+        structlog_logger.warning(
+            "identity_verify_tenant_decision",
+            caller_service=body.caller_service,
+            claimed_user_id_hash="<service>",
+            claimed_org_id=body.claimed_org_id,
+            verified=False,
+            reason=decision.reason,
+            cache_hit=False,
+        )
+        return Response(
+            content=IdentityVerifyDeny(reason=decision.reason or "unknown").model_dump_json(),
+            status_code=status.HTTP_403_FORBIDDEN,
+            media_type="application/json",
+        )
+
+    # Verified: cache and return 200.
+    try:
+        await cache_verified_tenant_decision(
+            redis=redis_pool,
+            caller_service=body.caller_service,
+            claimed_org_id=body.claimed_org_id,
+            decision=decision,
+        )
+    except CacheUnavailable:
+        await _audit_internal_call(request, org_id=0)
+        structlog_logger.warning(
+            "identity_verify_tenant_decision",
+            caller_service=body.caller_service,
+            claimed_user_id_hash="<service>",
+            claimed_org_id=body.claimed_org_id,
+            verified=False,
+            reason="cache_unavailable",
+        )
+        return Response(
+            content=IdentityVerifyDeny(reason="cache_unavailable").model_dump_json(),
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            media_type="application/json",
+        )
+
+    await _audit_internal_call(request, org_id=0)
+    assert decision.org_id is not None and decision.org_slug is not None
+    structlog_logger.info(
+        "identity_verify_tenant_decision",
+        caller_service=body.caller_service,
+        claimed_user_id_hash="<service>",
+        claimed_org_id=body.claimed_org_id,
+        verified=True,
+        evidence="tenant_only",
+        cache_hit=False,
+    )
+    return Response(
+        content=IdentityVerifyTenantSuccess(
+            org_id=decision.org_id,
+            org_slug=decision.org_slug,
+            cache_ttl_seconds=60,
+            evidence="tenant_only",
         ).model_dump_json(),
         status_code=status.HTTP_200_OK,
         media_type="application/json",
