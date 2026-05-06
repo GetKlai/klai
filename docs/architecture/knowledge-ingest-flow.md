@@ -1,7 +1,7 @@
 # Knowledge Ingestion & Retrieval: How It Works
 
 > Engineering reference for the running system on core-01.
-> Verified against `klai-knowledge-ingest/knowledge_ingest/` and `klai-retrieval-api/` — April 2026 (updated 2026-04-16).
+> Verified against `klai-knowledge-ingest/knowledge_ingest/` and `klai-retrieval-api/` — April 2026 (updated 2026-05-06 for SPEC-INGEST-RECONCILE-001 — discovery/fetch separation, fetch_outcomes JSONB, skip_reasons JSONB).
 >
 > For the research backing these design decisions, see
 > [knowledge-system-fundamentals.md](knowledge-system-fundamentals.md).
@@ -311,13 +311,55 @@ Qdrant payload as `image_urls: ["/kb-images/{org_id}/images/{kb_slug}/{sha256}.{
 The github + notion adapters in klai-connector keep using their own
 `sync_engine._upload_images` path for now — consolidation tracked in SPEC-KB-IMAGE-002.
 
-**Two-phase crawl ordering (SPEC-CRAWLER-005 REQ-01).** `run_crawl_job` splits the bulk
-crawl into two explicit phases so `anchor_texts`, `links_to`, and `incoming_link_count`
-are correct on every Qdrant chunk at first write — no post-crawl `set_payload` band-aid:
+**Discovery + fetch separation (SPEC-INGEST-RECONCILE-001).** Since 2026-05-06
+`crawl_site` decouples URL discovery from page fetching. Discovery enumerates
+candidates from the union of `sitemap.xml` + a one-shot BFS seed of `start_url`'s
+internal links (canonicalised, deduped, capped at `max_pages` with sitemap-priority
+on the cap). The candidate list — minus `start_url` itself, which is already
+fetched as the seed — is submitted in **one** `POST /crawl` bulk call to crawl4ai,
+whose server-side `MemoryAdaptiveDispatcher` handles concurrency. This replaces an
+earlier design that fanned out `crawl_page` calls in an unbounded `asyncio.gather`
+loop and silently dropped ~80% of pages on `help.voys.nl` (Bug A in the SPEC's
+motivation section). A repo-wide CI lint rule
+(`rules/no-unbounded-gather-crawl-page.yml`) now blocks reintroduction of that
+anti-pattern.
+
+`crawl_site` returns `(results, fetch_outcomes)`. `fetch_outcomes` is a JSONB-shaped
+list with one entry per discovered candidate URL:
 
 ```
-crawl_site(...) returns N CrawlResults
-          │
+{"url": str, "reason_code": str, "status_code": int|null, "content_length": int}
+```
+
+`reason_code` is a member of `FetchReasonCode` (success, http_4xx, http_5xx,
+timeout, dns_error, connection_error, auth_error, parse_error, rate_limited,
+unknown_exception). The list is written to `knowledge.crawl_jobs.fetch_outcomes`
+JSONB so operators can answer "where did the missing pages go?" without log
+forensics. A same-domain guard on the post-redirect positional fallback prevents
+crawl4ai response-reordering from silently mislabelling outcomes with cross-site
+content.
+
+**Persist-stage drop visibility (SPEC-INGEST-RECONCILE-001 / klai-connector side).**
+`sync_engine._execute_sync` aggregates per-sync drops in a `skip_reasons: dict[str,
+int]` accumulator (keyed by `PersistSkipReason` — content_too_short,
+auth_wall_detected, dedupe_*, non_text_content, excluded_by_kb_config,
+taxonomy_classify_failed). The JSONB is persisted to
+`connector.sync_runs.skip_reasons` at run completion with a Postgres CHECK
+constraint that rejects keys outside the enum (form: `skip_reasons - allowed[]
+= '{}'::jsonb` — chosen because Postgres rejects scalar subqueries inside CHECK).
+`documents_ok` is now defined as `documents_total - documents_failed -
+sum(skip_reasons.values())`, so portal consumers reading the column see
+"persisted-as-artifact" rather than the historic "submitted-to-ingest" inflation.
+
+**Two-phase crawl ordering (SPEC-CRAWLER-005 REQ-01).** `run_crawl_job` splits the
+ingest of `crawl_site`'s results into two explicit phases so `anchor_texts`,
+`links_to`, and `incoming_link_count` are correct on every Qdrant chunk at first
+write — no post-crawl `set_payload` band-aid:
+
+```
+crawl_site(...) returns (N CrawlResults, M FetchOutcomes)
+          │              ↓
+          │              persisted to crawl_jobs.fetch_outcomes JSONB
           ▼
 ┌─────────────────────────────────────────────────────┐
 │ Phase 1 — _build_link_graph(results, org, kb, pool) │
