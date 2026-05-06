@@ -354,33 +354,39 @@ class TestJwtPathStillRejectsBodyMismatch:
 
 
 # ---------------------------------------------------------------------------
-# F2 (audit retrieval-coupling-2026-05-06): partner_chat sends synthetic
-# `partner:<key_id>` user_id. retrieval-api MUST recognize the prefix,
-# pin verified_caller without portal verify, and emit knowledge.queried.
+# F2 fix-forward (audit retrieval-coupling-2026-05-06): partner_chat sends
+# synthetic `partner:<key_id>` user_id. retrieval-api routes this through
+# the SAME portal verify path as every other internal-secret caller — there
+# is NO in-process bypass. Portal-side identity_verifier resolves the key
+# against partner_api_keys and confirms the key's owning org matches the
+# claim; a forged body claiming `(partner:any-key, victim-tenant)` is
+# denied at the portal, not pinned by retrieval-api.
 # ---------------------------------------------------------------------------
 
 
 class TestPartnerSyntheticIdentity:
-    def test_partner_user_id_pins_verified_caller_without_portal_verify(
-        self, monkeypatch, app_client
-    ):
-        """partner_chat sends `user_id="partner:<key_id>"` — retrieval-api
-        SHALL pin the synthetic tuple as verified_caller without calling
-        portal /internal/identity/verify (which would 403 — there's no real
-        Zitadel user with that synthetic id)."""
-        verify_called: list = []
+    def test_partner_user_id_routed_through_portal_verify(self, monkeypatch, app_client):
+        """retrieval-api delegates partner: identities to portal verify.
 
-        class _PortalShouldNotBeCalled:
-            async def verify(self, **_kw):
-                verify_called.append(_kw)
-                raise AssertionError(
-                    "portal verify must NOT be called for partner: prefix; "
-                    "the partner key was already validated upstream."
+        Portal allows after validating against partner_api_keys, returns the
+        canonical (user_id, org_id) tuple — retrieval-api pins it and emits
+        ``knowledge.queried``. No special-case bypass exists in retrieval-api.
+        """
+        verify_calls: list[dict] = []
+
+        class _AllowAsserter:
+            async def verify(self, **kw) -> VerifyResult:
+                verify_calls.append(kw)
+                return VerifyResult.allow(
+                    user_id=kw["claimed_user_id"],
+                    org_id=kw["claimed_org_id"],
+                    org_slug="acme",
+                    evidence="partner_key",
                 )
 
         monkeypatch.setattr(
             "retrieval_api.middleware.auth._get_asserter",
-            lambda: _PortalShouldNotBeCalled(),
+            lambda: _AllowAsserter(),
         )
 
         emit_calls: list[dict] = []
@@ -410,10 +416,15 @@ class TestPartnerSyntheticIdentity:
             )
 
         assert resp.status_code == 200, resp.text
-        assert verify_called == [], (
-            "portal /internal/identity/verify MUST NOT be called for partner: prefix"
+        # Portal verify WAS consulted — there is no in-process bypass.
+        assert len(verify_calls) == 1, (
+            "Portal /internal/identity/verify MUST be consulted for partner: identities. "
+            "If this is empty, the F2 in-process bypass has been re-introduced and the "
+            "defense-in-depth from retrieval-coupling-2026-05-06 audit is broken."
         )
-        # emit_event was called for knowledge.queried with the synthetic tuple.
+        assert verify_calls[0]["claimed_user_id"] == "partner:abc-123"
+        assert verify_calls[0]["claimed_org_id"] == "tenant-acme"
+        # knowledge.queried event is emitted with the verified tuple.
         assert any(
             "knowledge.queried" in (call["args"] + tuple(call["kwargs"].values()))
             and call["kwargs"].get("tenant_id") == "tenant-acme"
@@ -421,15 +432,64 @@ class TestPartnerSyntheticIdentity:
             for call in emit_calls
         ), f"knowledge.queried event missing or wrong tuple: {emit_calls}"
 
-    def test_partner_prefix_only_for_portal_api_caller_service(self, monkeypatch, app_client):
-        """The partner: prefix bypass is GATED on caller_service == "portal-api".
-        Other services with `partner:` user_id MUST go through the portal
-        verify path (and reject, since no real user has that id)."""
-        from klai_identity_assert import VerifyResult
+    def test_partner_user_id_with_forged_org_denied_by_portal(self, monkeypatch, app_client):
+        """Pin the security contract: a forged body with a real-looking partner
+        key + a victim org is denied at the portal, not pinned by retrieval-api.
+
+        This test would FAIL if anyone re-introduces the in-process bypass that
+        was removed in F2 fix-forward.
+        """
 
         class _DenyAsserter:
-            async def verify(self, **_kw):
-                return VerifyResult.deny(reason="user_not_in_org")
+            async def verify(self, **_kw) -> VerifyResult:
+                return VerifyResult.deny("partner_key_org_mismatch")
+
+        monkeypatch.setattr(
+            "retrieval_api.middleware.auth._get_asserter",
+            lambda: _DenyAsserter(),
+        )
+
+        emit_calls: list[dict] = []
+        monkeypatch.setattr(
+            "retrieval_api.api.retrieve.emit_event",
+            lambda *a, **kw: emit_calls.append({"args": a, "kwargs": kw}),
+        )
+
+        with (
+            _patch_retrieval_pipeline_to_bypass()[0],
+            _patch_retrieval_pipeline_to_bypass()[1],
+            _patch_retrieval_pipeline_to_bypass()[2],
+            _patch_retrieval_pipeline_to_bypass()[3],
+        ):
+            resp = app_client.post(
+                "/retrieve",
+                json={
+                    "query": "q",
+                    "org_id": "victim-tenant",  # forged claim
+                    "user_id": "partner:real-looking-key",
+                    "scope": "org",
+                },
+                headers={
+                    "X-Internal-Secret": "test-internal-secret-do-not-use-in-prod",
+                    "X-Caller-Service": "portal-api",
+                },
+            )
+
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == {"error": "identity_assertion_failed"}
+        # No emit happened — the forged claim never reached the retrieve path.
+        assert emit_calls == [], (
+            "knowledge.queried emitted on a denied claim — "
+            "this would mean a forged partner identity poisons product_events."
+        )
+
+    def test_partner_user_id_with_other_caller_service_denied(self, monkeypatch, app_client):
+        """Only portal-api mints partner identities; portal denies attempts
+        from any other caller_service. Defense against cross-service abuse."""
+
+        class _DenyAsserter:
+            async def verify(self, **_kw) -> VerifyResult:
+                return VerifyResult.deny("partner_key_not_found")
 
         monkeypatch.setattr(
             "retrieval_api.middleware.auth._get_asserter",
@@ -452,11 +512,9 @@ class TestPartnerSyntheticIdentity:
                 },
                 headers={
                     "X-Internal-Secret": "test-internal-secret-do-not-use-in-prod",
-                    # Different caller — bypass MUST NOT apply.
                     "X-Caller-Service": "knowledge-mcp",
                 },
             )
 
-        # Falls through to portal verify, which denies, → 403.
         assert resp.status_code == 403
         assert resp.json()["detail"] == {"error": "identity_assertion_failed"}
