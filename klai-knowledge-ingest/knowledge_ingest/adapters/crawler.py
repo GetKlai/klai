@@ -23,8 +23,17 @@ from knowledge_ingest import pg_store
 from knowledge_ingest.config import settings
 from knowledge_ingest.crawl4ai_client import CrawlResult, crawl_site
 from knowledge_ingest.models import IngestRequest
+from knowledge_ingest.utils.auth_wall_detector import (
+    AuthWallSignal,
+    detect_anonymous_auth_wall,
+)
 
 logger = structlog.get_logger()
+
+# SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-05 — recognised modes; anything else
+# is treated as ``audit_only`` (fail-safe, REQ-05 AC-05.2). Defining the
+# whitelist as a tuple keeps the validation cheap and easy to extend.
+_VALID_LOGIN_WALL_MODES = ("reject", "degrade", "audit_only")
 
 
 # @MX:ANCHOR: AuthWallDetected -- propagates login-indicator triggers from _ingest_crawl_result
@@ -45,6 +54,52 @@ class AuthWallDetected(Exception):
     def __init__(self, selector: str) -> None:
         super().__init__(f"auth_wall_detected: {selector}")
         self.selector = selector
+
+
+# @MX:ANCHOR: AnonymousAuthWallDetected -- raised by _ingest_crawl_result for
+#   anonymous-crawl walls. Distinct from AuthWallDetected: that one halts BFS
+#   (session expired = downstream pages also walled). Anonymous walls are
+#   per-page (one URL is gated, sibling URLs may be public) so the BFS handler
+#   in run_crawl_job logs + skips + continues. See SPEC-INGEST-LOGIN-WALL-
+#   DETECT-001 REQ-04 for the BFS-continuity contract.
+# @MX:SPEC: SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-03
+class AnonymousAuthWallDetected(Exception):
+    """Raised when a page's content looks like a login-wall stub from an
+    anonymous (no-cookies) crawl.
+
+    Unlike :class:`AuthWallDetected`, this does NOT halt the BFS. The caller
+    in ``run_crawl_job`` is expected to log + record + continue iteration
+    (Phase C wires this fully; Phase B falls into the existing generic
+    ``except Exception`` handler which counts the page as failed).
+
+    Attributes:
+        url: The page URL that was flagged.
+        signal: The :class:`AuthWallSignal` describing which pattern matched.
+    """
+
+    def __init__(self, url: str, signal: AuthWallSignal) -> None:
+        super().__init__(f"anonymous_auth_wall_detected: {url} ({signal.pattern})")
+        self.url = url
+        self.signal = signal
+
+
+def _resolve_login_wall_mode() -> str:
+    """Return the configured detection mode, falling back to ``audit_only``.
+
+    REQ-05 AC-05.2: an invalid configured value MUST NOT crash the pipeline.
+    We log a warning the first time we encounter the bad value (logger.warning
+    is rate-limited at the structlog level) and treat it as audit_only so the
+    crawl still runs and operators can investigate.
+    """
+    mode = settings.ingest_login_wall_detect_mode
+    if mode not in _VALID_LOGIN_WALL_MODES:
+        logger.warning(
+            "login_wall_detector_config_invalid",
+            configured=mode,
+            falling_back_to="audit_only",
+        )
+        return "audit_only"
+    return mode
 
 
 def _build_image_store() -> ImageStore | None:
@@ -306,7 +361,62 @@ async def _ingest_crawl_result(
             logger.info("crawl_skipped_html_noise", url=url, org_id=org_id, kb_slug=kb_slug)
             return
 
+    # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-03 — anonymous-crawl auth-wall
+    # detection. Runs AFTER dedup (don't waste work on already-seen pages)
+    # and BEFORE image upload + Qdrant write (cheaper to bail early). Skipped
+    # entirely when login_indicator_selector is set, because the authenticated
+    # path has its own halt-on-success=False guard above (lines 260-266) and
+    # we don't want to double-detect.
+    login_wall_signal: AuthWallSignal | None = None
+    login_wall_mode: str | None = None
+    if settings.ingest_login_wall_detect_enabled and login_indicator_selector is None:
+        login_wall_signal = detect_anonymous_auth_wall(
+            result.raw_markdown or "",
+            fit_markdown=result.fit_markdown or None,
+            url=url,
+        )
+        if login_wall_signal is not None:
+            login_wall_mode = _resolve_login_wall_mode()
+            if login_wall_mode == "reject":
+                logger.info(
+                    "login_wall_reject",
+                    url=url,
+                    org_id=org_id,
+                    kb_slug=kb_slug,
+                    pattern=login_wall_signal.pattern,
+                    confidence=login_wall_signal.confidence,
+                )
+                raise AnonymousAuthWallDetected(url, login_wall_signal)
+            if login_wall_mode == "degrade":
+                logger.info(
+                    "login_wall_degrade",
+                    url=url,
+                    org_id=org_id,
+                    kb_slug=kb_slug,
+                    pattern=login_wall_signal.pattern,
+                    confidence=login_wall_signal.confidence,
+                )
+            else:  # audit_only
+                logger.warning(
+                    "login_wall_detected",
+                    url=url,
+                    org_id=org_id,
+                    kb_slug=kb_slug,
+                    pattern=login_wall_signal.pattern,
+                    confidence=login_wall_signal.confidence,
+                    mode="audit_only",
+                )
+
     extra: dict = {"source_url": url, "crawled_at": int(time.time())}
+    # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-03 — degrade mode pushes
+    # quality_score=0.0 + ingest_warning into extra, which qdrant_store's
+    # base_payload.update(_extra_payload_for_qdrant(extra_payload)) then
+    # overrides over its hard-coded default of 0.5. The retrieval-side floor
+    # filter (Phase E) refuses to serve quality_score < 0.05 chunks, which
+    # is the actual exclusion mechanism.
+    if login_wall_mode == "degrade":
+        extra["quality_score"] = 0.0
+        extra["ingest_warning"] = "login_wall_detected"
     if connector_id:
         # SPEC-CRAWLER-005 Fase 6 follow-up: wire source_connector_id through
         # so connector-delete (qdrant_store.delete_connector +
