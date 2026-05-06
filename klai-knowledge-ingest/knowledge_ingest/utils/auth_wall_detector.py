@@ -83,11 +83,21 @@ _CANONICAL_EN: tuple[str, ...] = (
     "please log in",
 )
 
+# NL phrases must include a continuation token ("om verder", "om door", "om dit
+# te lezen") to distinguish a wall ("you must log in to continue") from
+# instructional content ("Log in to the Bubble web portal" as a setup step).
+# Production canary on voys/support found 4 false positives at 2.6% FP-rate
+# when using bare phrases like "meld u aan" or "in te loggen" — they matched
+# legitimate tutorials. The continuation tokens enforce the wall-specific
+# meaning. See test_auth_wall_detector_nl_continuation.py for the regression
+# fixtures captured directly from production.
 _CANONICAL_NL: tuple[str, ...] = (
-    "in te loggen",  # covers "u dient in te loggen"
-    "log in om",  # covers "log in om dit te lezen"
-    "meld u aan",  # covers "meld u aan om verder te gaan"
-    "aanmelden om",  # covers "aanmelden om verder te gaan"
+    "u dient in te loggen",  # explicit Dutch wall ("you must log in")
+    "log in om dit",  # "log in om dit te lezen / te zien"
+    "meld u aan om verder",  # "meld u aan om verder te gaan / te lezen"
+    "meld u aan om door",  # "meld u aan om door te gaan"
+    "aanmelden om verder",  # "aanmelden om verder te gaan / te lezen"
+    "aanmelden om door",  # "aanmelden om door te gaan"
 )
 
 # Condition B — substring count threshold.
