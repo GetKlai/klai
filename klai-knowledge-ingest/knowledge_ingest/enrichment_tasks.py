@@ -104,6 +104,14 @@ def init_app(connector: Any) -> Any:
 
     register_rebuild_tasks(_procrastinate_app)
 
+    # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-06: operator-triggered backfill
+    # that scans an existing tenant's crawled_pages, detects login-walled
+    # stubs, deletes the corresponding Qdrant points, and marks the page row
+    # so the next crawl re-ingests through the new ingest-time guard.
+    from knowledge_ingest.backfill_tasks import register_backfill_login_walls_task
+
+    register_backfill_login_walls_task(_procrastinate_app)
+
     return _procrastinate_app
 
 

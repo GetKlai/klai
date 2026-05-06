@@ -20,6 +20,14 @@ class Settings(BaseSettings):
     # Max chars per chunk (roughly 300-400 tokens for BGE-M3)
     chunk_size: int = 1500
     chunk_overlap: int = 200
+    # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-05 — anonymous-crawl auth-wall
+    # detection. ``mode`` is one of "reject" (default, skip page entirely),
+    # "audit_only" (log + ingest unchanged), or "degrade" (ingest with
+    # quality_score=0.0 + ingest_warning metadata for audit-trail tenants).
+    # Invalid values fail-safe to "audit_only" — never block the crawl pipe
+    # due to a config typo.
+    ingest_login_wall_detect_enabled: bool = True
+    ingest_login_wall_detect_mode: str = "reject"
     # LLM enrichment (contextual prefix + HyPE questions via LiteLLM proxy)
     litellm_url: str = "http://litellm:4000"
     litellm_api_key: str = ""
