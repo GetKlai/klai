@@ -4,10 +4,12 @@ TEI runs on gpu-01 and is accessible via SSH tunnel at 172.18.0.1:7997.
 Note: TEI uses the OpenAI-compatible /v1/embeddings API — do not confuse with
 Infinity (port 7998), which is a separate service used exclusively for reranking.
 """
+
 import asyncio
-import structlog
+import random
 
 import httpx
+import structlog
 
 from knowledge_ingest.config import settings
 
@@ -19,13 +21,39 @@ _EMBED_MODEL = "BAAI/bge-m3"
 # Batch size for Infinity requests — keeps queue_time manageable
 _BATCH_SIZE = 32
 
+# Audit 2026-05-06 finding 6: retry budget tuned for the realistic
+# TEI-restart window on gpu-01 (BGE-M3 model reload typically 15-45s).
+# Five attempts with full-jitter exponential backoff (capped at 30s
+# per sleep) gives a worst-case sleep budget of ~62s and a mean of ~30s
+# — enough to ride out a container restart without burning the call.
+#
+# Full jitter (random.uniform(0, base)) is the AWS-recommended pattern
+# for thundering-herd protection: bulk-sync of 50 pages no longer wakes
+# all in-flight retries at the same wall-clock instant during recovery.
+_MAX_ATTEMPTS = 5
+_MAX_BACKOFF_SECONDS = 30
 
-async def _embed_batch(
-    client: httpx.AsyncClient, texts: list[str]
-) -> list[list[float]]:
-    """Embed a single batch with retry on transient errors."""
+
+def _jitter_backoff(attempt: int) -> float:
+    """Full-jitter backoff: ``random.uniform(0, min(2**attempt, _MAX_BACKOFF_SECONDS))``.
+
+    Extracted as a helper so the ruff ``S311`` (cryptographic randomness)
+    suppression has a single, well-scoped home — jitter for retry
+    spacing has no security implication.
+    """
+    return random.uniform(0, min(2**attempt, _MAX_BACKOFF_SECONDS))  # noqa: S311
+
+
+async def _embed_batch(client: httpx.AsyncClient, texts: list[str]) -> list[list[float]]:
+    """Embed a single batch with retry on transient errors.
+
+    Retries on httpx.ReadTimeout, httpx.ConnectTimeout, and HTTP 5xx.
+    Final exhaustion logs at error level so the existing
+    obs-001-ingest-error-rate-elevated Grafana alert (level:error) fires.
+    """
     last_exc: Exception | None = None
-    for attempt in range(3):
+    last_status: int | None = None
+    for attempt in range(_MAX_ATTEMPTS):
         try:
             resp = await client.post(
                 "/v1/embeddings",
@@ -37,10 +65,11 @@ async def _embed_batch(
             return [item["embedding"] for item in data]
         except (httpx.ReadTimeout, httpx.ConnectTimeout) as exc:
             last_exc = exc
-            wait = 2**attempt
+            wait = _jitter_backoff(attempt)
             logger.warning(
                 "tei_embed_timeout",
                 attempt=attempt + 1,
+                max_attempts=_MAX_ATTEMPTS,
                 texts=len(texts),
                 wait_s=wait,
             )
@@ -48,17 +77,33 @@ async def _embed_batch(
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code >= 500:
                 last_exc = exc
-                wait = 2**attempt
+                last_status = exc.response.status_code
+                wait = _jitter_backoff(attempt)
                 logger.warning(
                     "tei_embed_5xx",
                     attempt=attempt + 1,
-                    status=exc.response.status_code,
+                    max_attempts=_MAX_ATTEMPTS,
+                    status=last_status,
                     wait_s=wait,
                 )
                 await asyncio.sleep(wait)
             else:
                 raise
-    raise last_exc  # type: ignore[misc]
+
+    # All retries exhausted. Promote to error so the existing
+    # ingest-error-rate Grafana alert fires; bulk-sync callers
+    # currently swallow embed exceptions and skip the page silently
+    # (see audit finding 6 — combines with finding 5 silent-degrade).
+    assert last_exc is not None
+    logger.error(
+        "tei_embed_failed_max_attempts",
+        attempts=_MAX_ATTEMPTS,
+        last_status=last_status,
+        texts=len(texts),
+        error_type=type(last_exc).__name__,
+        error_message=str(last_exc),
+    )
+    raise last_exc
 
 
 async def embed(texts: list[str]) -> list[list[float]]:
