@@ -146,7 +146,21 @@ async def test_run_crawl_job_populates_link_fields_on_every_page():
         patch(
             "knowledge_ingest.adapters.crawler.crawl_site",
             new_callable=AsyncMock,
-            return_value=results,
+            # SPEC-INGEST-RECONCILE-001 AC-4: crawl_site returns
+            # ``(results, fetch_outcomes)`` — synthesise a success outcome
+            # per CrawlResult so the adapter persists fetch_outcomes JSONB.
+            return_value=(
+                results,
+                [
+                    {
+                        "url": r.url,
+                        "reason_code": "success" if r.success else "unknown_exception",
+                        "status_code": 200 if r.success else None,
+                        "content_length": len(r.html or ""),
+                    }
+                    for r in results
+                ],
+            ),
         ),
         patch(
             "knowledge_ingest.adapters.crawler._update_job",
@@ -245,7 +259,21 @@ async def test_run_crawl_job_no_post_crawl_link_counts_call():
         patch(
             "knowledge_ingest.adapters.crawler.crawl_site",
             new_callable=AsyncMock,
-            return_value=results,
+            # SPEC-INGEST-RECONCILE-001 AC-4: crawl_site returns
+            # ``(results, fetch_outcomes)`` — synthesise a success outcome
+            # per CrawlResult so the adapter persists fetch_outcomes JSONB.
+            return_value=(
+                results,
+                [
+                    {
+                        "url": r.url,
+                        "reason_code": "success" if r.success else "unknown_exception",
+                        "status_code": 200 if r.success else None,
+                        "content_length": len(r.html or ""),
+                    }
+                    for r in results
+                ],
+            ),
         ),
         patch(
             "knowledge_ingest.adapters.crawler._update_job",
