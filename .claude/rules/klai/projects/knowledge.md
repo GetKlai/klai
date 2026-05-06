@@ -108,6 +108,10 @@ any row that reads from it gets processed. See
 `knowledge_ingest/adapters/crawler.py` and
 `docs/architecture/knowledge-ingest-flow.md` § Part 2.
 
+## HDBSCAN on raw high-dim embeddings fails (HIGH)
+
+Density-based clustering (HDBSCAN) on raw 1024-dim bge-m3 embeddings is unreliable in practice — the curse of dimensionality makes "density" meaningless. Empirical: V2 bootstrap on `voys/support` (501 docs) gave 2 huge clusters + 26.5% outliers instead of an expected 5-15. **Always UMAP-reduce to 5-15 dimensions before HDBSCAN** (defaults: `n_components=10`, `n_neighbors=15`, UMAP metric `cosine`, HDBSCAN metric `euclidean` post-UMAP). Synthetic test fixtures hide this — only real bge-m3 exposes it. See `reports/taxonomy-v2-baseline-2026-05-06/baseline.md` and SPEC-TAXONOMY-V2-001-FOLLOWUP-001.
+
 ## Qdrant empty-list == absent (MED)
 
 Qdrant strips empty-list payload keys (`[]`) on upsert. A page with no inbound links
