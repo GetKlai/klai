@@ -154,6 +154,7 @@ def build_crawl_config(
 # REST API helpers
 # ---------------------------------------------------------------------------
 
+
 def _auth_headers() -> dict[str, str]:
     if settings.crawl4ai_api_key:
         return {"Authorization": f"Bearer {settings.crawl4ai_api_key}"}
@@ -320,7 +321,6 @@ def _extract_result(url: str, page: dict[str, Any]) -> CrawlResult:
     )
 
 
-
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -362,8 +362,13 @@ async def crawl_page(
         except Exception as exc:
             logger.warning("crawl4ai_request_failed", url=url, error=str(exc))
             return CrawlResult(
-                url=url, fit_markdown="", raw_markdown="", html="",
-                word_count=0, success=False, error_message=str(exc),
+                url=url,
+                fit_markdown="",
+                raw_markdown="",
+                html="",
+                word_count=0,
+                success=False,
+                error_message=str(exc),
             )
 
     results = data.get("results", [])
@@ -372,8 +377,13 @@ async def crawl_page(
 
     if not results:
         return CrawlResult(
-            url=url, fit_markdown="", raw_markdown="", html="",
-            word_count=0, success=False, error_message="No results returned",
+            url=url,
+            fit_markdown="",
+            raw_markdown="",
+            html="",
+            word_count=0,
+            success=False,
+            error_message="No results returned",
         )
 
     result = _extract_result(url, results[0])
@@ -488,29 +498,46 @@ async def crawl_site(
     # Step 3 — Bulk fetch. crawl4ai's MemoryAdaptiveDispatcher handles
     # concurrency server-side; we get per-URL ``success`` + ``error_message``
     # in the response body.
+    #
+    # CHUNKED: crawl4ai 0.8 server enforces ``List should have at most 100
+    # items after validation`` on POST /crawl ``urls``. Submitting all
+    # candidates in a single request returns 422 the moment a site has
+    # more than 100 sitemap entries — observed live on help.voys.nl
+    # (208 sitemap URLs → 1 ingested instead of 207). We submit in
+    # batches of ``_BULK_CHUNK_SIZE`` and concatenate the responses.
+    # Sequential dispatch keeps memory bounded; crawl4ai's own dispatcher
+    # parallelises within a batch.
     # ------------------------------------------------------------------
     raw_results: list[dict[str, Any]] = []
     transport_error: BaseException | None = None
 
     if bulk_candidates:
-        payload: dict[str, Any] = {
-            "urls": bulk_candidates,
-            "crawler_config": {"type": "CrawlerRunConfig", "params": crawler_config},
-        }
-        if cookies:
-            payload["hooks"] = _build_cookie_hooks(cookies)
-        try:
-            async with httpx.AsyncClient(timeout=_BULK_CRAWL_TIMEOUT) as client:
-                data = await _crawl_sync(client, payload)
-            raw_results = _normalise_results_block(data)
-        except Exception as exc:
-            transport_error = exc
-            logger.warning(
-                "crawl_site_bulk_request_failed",
-                start_url=start_url,
-                candidates=len(bulk_candidates),
-                error=str(exc),
-            )
+        for chunk_start in range(0, len(bulk_candidates), _BULK_CHUNK_SIZE):
+            chunk_urls = bulk_candidates[chunk_start : chunk_start + _BULK_CHUNK_SIZE]
+            payload: dict[str, Any] = {
+                "urls": chunk_urls,
+                "crawler_config": {"type": "CrawlerRunConfig", "params": crawler_config},
+            }
+            if cookies:
+                payload["hooks"] = _build_cookie_hooks(cookies)
+            try:
+                async with httpx.AsyncClient(timeout=_BULK_CRAWL_TIMEOUT) as client:
+                    data = await _crawl_sync(client, payload)
+                raw_results.extend(_normalise_results_block(data))
+            except Exception as exc:
+                transport_error = exc
+                logger.warning(
+                    "crawl_site_bulk_request_failed",
+                    start_url=start_url,
+                    chunk_index=chunk_start // _BULK_CHUNK_SIZE,
+                    chunk_size=len(chunk_urls),
+                    candidates=len(bulk_candidates),
+                    error=str(exc),
+                )
+                # Continue submitting remaining chunks: a transient failure
+                # on one chunk shouldn't tank the whole crawl. Per-URL
+                # missing-result handling in _combine_bulk_responses surfaces
+                # the affected URLs as transport-error outcomes.
 
     # ------------------------------------------------------------------
     # Step 4 — Combine seed + bulk into ``crawl_results`` and ``outcomes``.
@@ -743,10 +770,7 @@ def _combine_bulk_responses(
                 pos_canonical = _canonicalise_url(pos_url)
                 pos_owner_idx = canonical_to_idx.get(pos_canonical)
                 pos_domain = urlparse(pos_url).netloc.lower()
-                if (
-                    (pos_owner_idx is None or pos_owner_idx == i)
-                    and pos_domain == base_domain
-                ):
+                if (pos_owner_idx is None or pos_owner_idx == i) and pos_domain == base_domain:
                     page = positional
                     claimed_response_indices.add(i)
 
@@ -774,6 +798,12 @@ def _combine_bulk_responses(
 # the whole batch. Voys-scale Voys/support (~500 candidates) completes
 # well under 90s on the production container — tuned to give 5x headroom.
 _BULK_CRAWL_TIMEOUT = 5 * 60.0
+
+# crawl4ai 0.8 server enforces ``List should have at most 100 items after
+# validation`` on POST /crawl ``urls``. The constant lives here so it can
+# be raised in lock-step with any future crawl4ai schema relaxation.
+# Discovered live on help.voys.nl (208 sitemap entries → 422 → 1 ingested).
+_BULK_CHUNK_SIZE = 100
 
 
 def _normalise_results_block(data: dict[str, Any]) -> list[dict[str, Any]]:
