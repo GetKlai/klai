@@ -39,16 +39,30 @@ def _make_mock_app(side_effect=None):
     return mock_app, task_fn, configured
 
 
+def _make_mock_conn() -> MagicMock:
+    conn = MagicMock()
+    conn.execute = AsyncMock(return_value=None)
+    conn.fetch = AsyncMock(return_value=[])
+    conn.fetchval = AsyncMock(return_value=None)
+    conn.fetchrow = AsyncMock(return_value=None)
+    return conn
+
+
 def _base_patches(mock_app):
-    """Return a context manager stack with all ingest_document dependencies mocked."""
+    """Return a context manager stack with all ingest_document dependencies mocked.
+
+    SPEC-TI-003-FOLLOWUP-001: ingest_document now takes conn explicitly,
+    so we no longer patch knowledge_ingest.routes.ingest.get_pool (it does
+    not exist after the refactor).
+    """
     import contextlib
 
     @contextlib.asynccontextmanager
     async def _stack():
         with (
             patch(
-                "knowledge_ingest.routes.ingest.chunker.chunk_markdown",
-                return_value=[MagicMock(text="chunk text")],
+                "knowledge_ingest.routes.ingest.chunker.chunk_markdown_with_parents",
+                return_value=([MagicMock(text="chunk text", parent_index=0)], []),
             ),
             patch(
                 "knowledge_ingest.routes.ingest.embedder.embed",
@@ -77,7 +91,6 @@ def _base_patches(mock_app):
                 "knowledge_ingest.routes.ingest.qdrant_store.upsert_chunks",
                 new_callable=AsyncMock,
             ),
-            patch("knowledge_ingest.routes.ingest.get_pool", new_callable=AsyncMock),
             patch(
                 "knowledge_ingest.routes.ingest.org_config.is_enrichment_enabled",
                 new_callable=AsyncMock,
@@ -88,13 +101,19 @@ def _base_patches(mock_app):
                 new_callable=AsyncMock,
                 return_value="internal",
             ),
-            patch.dict(
-                sys.modules,
-                {
-                    "knowledge_ingest.enrichment_tasks": types.SimpleNamespace(
-                        get_app=lambda: mock_app
-                    )
-                },
+            patch(
+                "knowledge_ingest.portal_client.fetch_taxonomy_nodes",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "knowledge_ingest.content_labeler.generate_content_label",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "knowledge_ingest.enrichment_tasks.get_app",
+                return_value=mock_app,
             ),
             patch("knowledge_ingest.routes.ingest.settings") as mock_settings,
         ):
@@ -104,6 +123,7 @@ def _base_patches(mock_app):
             mock_settings.chunk_size = 1500
             mock_settings.chunk_overlap = 200
             mock_settings.enrichment_enabled = True
+            mock_settings.taxonomy_centroid_match_threshold = 0.85
             yield
 
     return _stack()
@@ -116,6 +136,7 @@ async def test_queueing_lock_uses_org_kb_path():
     from knowledge_ingest.routes.ingest import ingest_document
 
     mock_app, task_fn, _ = _make_mock_app()
+    conn = _make_mock_conn()
     req = IngestRequest(
         org_id="org-1",
         kb_slug="my-kb",
@@ -126,7 +147,7 @@ async def test_queueing_lock_uses_org_kb_path():
     )
 
     async with _base_patches(mock_app):
-        result = await ingest_document(req)
+        result = await ingest_document(conn, req)
 
     assert result["status"] == "ok"
     task_fn.configure.assert_called_once_with(queueing_lock="org-1:my-kb:docs/page.md")
@@ -139,6 +160,7 @@ async def test_already_enqueued_does_not_propagate():
     from knowledge_ingest.routes.ingest import ingest_document
 
     mock_app, task_fn, _ = _make_mock_app(side_effect=_AlreadyEnqueued())
+    conn = _make_mock_conn()
     req = IngestRequest(
         org_id="org-1",
         kb_slug="my-kb",
@@ -149,7 +171,7 @@ async def test_already_enqueued_does_not_propagate():
     )
 
     async with _base_patches(mock_app):
-        result = await ingest_document(req)
+        result = await ingest_document(conn, req)
 
     assert result["status"] == "ok"
     # configure was still called (lock was set)
@@ -170,6 +192,7 @@ async def test_two_ingests_same_path_only_one_enrichment():
     mock_app = MagicMock()
     mock_app.enrich_document_bulk = task_fn
 
+    conn = _make_mock_conn()
     req = IngestRequest(
         org_id="org-2",
         kb_slug="kb-slug",
@@ -180,8 +203,8 @@ async def test_two_ingests_same_path_only_one_enrichment():
     )
 
     async with _base_patches(mock_app):
-        result1 = await ingest_document(req)
-        result2 = await ingest_document(req)
+        result1 = await ingest_document(conn, req)
+        result2 = await ingest_document(conn, req)
 
     assert result1["status"] == "ok"
     assert result2["status"] == "ok"

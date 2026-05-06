@@ -87,7 +87,7 @@ def _get_outbound_urls_from_graph(
     graph: dict[str, list[dict]],
 ) -> AsyncMock:
     """Return an AsyncMock for link_graph.get_outbound_urls backed by in-memory graph."""
-    async def _impl(url: str, org_id: str, kb_slug: str, pool: object) -> list[str]:
+    async def _impl(conn: object, url: str, org_id: str, kb_slug: str) -> list[str]:
         return [link["href"] for link in graph.get(url, [])]
     return AsyncMock(side_effect=_impl)
 
@@ -96,7 +96,7 @@ def _get_anchor_texts_from_graph(
     graph: dict[str, list[dict]],
 ) -> AsyncMock:
     """Return an AsyncMock for link_graph.get_anchor_texts backed by in-memory graph."""
-    async def _impl(url: str, org_id: str, kb_slug: str, pool: object) -> list[str]:
+    async def _impl(conn: object, url: str, org_id: str, kb_slug: str) -> list[str]:
         texts = []
         for _from_url, links in graph.items():
             for link in links:
@@ -110,7 +110,7 @@ def _get_incoming_count_from_graph(
     graph: dict[str, list[dict]],
 ) -> AsyncMock:
     """Return an AsyncMock for link_graph.get_incoming_count backed by in-memory graph."""
-    async def _impl(url: str, org_id: str, kb_slug: str, pool: object) -> int:
+    async def _impl(conn: object, url: str, org_id: str, kb_slug: str) -> int:
         count = 0
         for _from_url, links in graph.items():
             for link in links:
@@ -136,7 +136,9 @@ async def test_run_crawl_job_populates_link_fields_on_every_page():
     # Capture all ingest calls to verify extra dicts
     captured_ingest_calls: list[dict] = []
 
-    async def _fake_ingest(req):  # type: ignore[no-untyped-def]
+    async def _fake_ingest(*args, **kwargs):  # type: ignore[no-untyped-def]
+        # SPEC-TI-003-FOLLOWUP-001: ingest_document(conn, req); req is args[1]
+        req = args[1] if len(args) > 1 else kwargs.get("req")
         captured_ingest_calls.append({"url": req.path, "extra": dict(req.extra)})
         return {"chunks": 1}
 
@@ -145,11 +147,6 @@ async def test_run_crawl_job_populates_link_fields_on_every_page():
             "knowledge_ingest.adapters.crawler.crawl_site",
             new_callable=AsyncMock,
             return_value=results,
-        ),
-        patch(
-            "knowledge_ingest.adapters.crawler.get_pool",
-            new_callable=AsyncMock,
-            return_value=mock_pool,
         ),
         patch(
             "knowledge_ingest.adapters.crawler._update_job",
@@ -171,7 +168,10 @@ async def test_run_crawl_job_populates_link_fields_on_every_page():
 
         from knowledge_ingest.adapters.crawler import run_crawl_job
 
+        from tests.test_crawl_registry_dedup import _make_mock_conn as _make_conn
+
         await run_crawl_job(
+            _make_conn(),
             job_id="job-test",
             org_id="org-1",
             kb_slug="docs",
@@ -248,11 +248,6 @@ async def test_run_crawl_job_no_post_crawl_link_counts_call():
             return_value=results,
         ),
         patch(
-            "knowledge_ingest.adapters.crawler.get_pool",
-            new_callable=AsyncMock,
-            return_value=mock_pool,
-        ),
-        patch(
             "knowledge_ingest.adapters.crawler._update_job",
             new_callable=AsyncMock,
         ),
@@ -278,7 +273,10 @@ async def test_run_crawl_job_no_post_crawl_link_counts_call():
         ) as mock_update_link_counts:
             from knowledge_ingest.adapters.crawler import run_crawl_job
 
+            from tests.test_crawl_registry_dedup import _make_mock_conn as _make_conn
+
             await run_crawl_job(
+                _make_conn(),
                 job_id="job-test",
                 org_id="org-1",
                 kb_slug="docs",

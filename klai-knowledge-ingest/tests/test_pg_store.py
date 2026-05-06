@@ -1,38 +1,47 @@
 """
 Tests for pg_store functions.
+
+SPEC-TI-003-FOLLOWUP-001: pg_store helpers no longer acquire pool
+connections themselves -- callers pass the GUC-pinned ``asyncpg.Connection``
+in. These unit tests therefore construct a mock conn and assert against
+``conn.execute`` / ``conn.fetch`` / ``conn.fetchval`` / ``conn.fetchrow``
+directly.
 """
+
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from knowledge_ingest import pg_store
 
 _SENTINEL = 253402300800
 
 
-def _make_pool():
-    pool = MagicMock()
-    pool.execute = AsyncMock(return_value=None)
-    pool.fetch = AsyncMock(return_value=[])
-    pool.fetchval = AsyncMock(return_value=0)
-    pool.fetchrow = AsyncMock(return_value=None)
-    return pool
+def _make_conn() -> MagicMock:
+    conn = MagicMock()
+    conn.execute = AsyncMock(return_value=None)
+    conn.executemany = AsyncMock(return_value=None)
+    conn.fetch = AsyncMock(return_value=[])
+    conn.fetchval = AsyncMock(return_value=0)
+    conn.fetchrow = AsyncMock(return_value=None)
+    return conn
 
 
 @pytest.mark.asyncio
 async def test_create_artifact_returns_uuid():
-    pool = _make_pool()
-    with patch("knowledge_ingest.pg_store.get_pool", new_callable=AsyncMock, return_value=pool):
-        artifact_id = await pg_store.create_artifact(
-            org_id="362757920133283846",
-            kb_slug="personal-user456",
-            path="note.md",
-            provenance_type="observed",
-            assertion_mode="factual",
-            synthesis_depth=0,
-            confidence=None,
-            belief_time_start=1705276800,
-            belief_time_end=_SENTINEL,
-        )
+    conn = _make_conn()
+    artifact_id = await pg_store.create_artifact(
+        conn,
+        org_id="362757920133283846",
+        kb_slug="personal-user456",
+        path="note.md",
+        provenance_type="observed",
+        assertion_mode="factual",
+        synthesis_depth=0,
+        confidence=None,
+        belief_time_start=1705276800,
+        belief_time_end=_SENTINEL,
+    )
     assert isinstance(artifact_id, str)
     assert len(artifact_id) == 36  # UUID format
     assert artifact_id.count("-") == 4
@@ -40,22 +49,22 @@ async def test_create_artifact_returns_uuid():
 
 @pytest.mark.asyncio
 async def test_create_artifact_executes_insert():
-    pool = _make_pool()
-    with patch("knowledge_ingest.pg_store.get_pool", new_callable=AsyncMock, return_value=pool):
-        await pg_store.create_artifact(
-            org_id="org123",
-            kb_slug="docs",
-            path="spec.md",
-            provenance_type="synthesized",
-            assertion_mode="belief",
-            synthesis_depth=3,
-            confidence="high",
-            belief_time_start=1705276800,
-            belief_time_end=_SENTINEL,
-            user_id="user456",
-        )
-    pool.execute.assert_called_once()
-    call_args = pool.execute.call_args[0]
+    conn = _make_conn()
+    await pg_store.create_artifact(
+        conn,
+        org_id="org123",
+        kb_slug="docs",
+        path="spec.md",
+        provenance_type="synthesized",
+        assertion_mode="belief",
+        synthesis_depth=3,
+        confidence="high",
+        belief_time_start=1705276800,
+        belief_time_end=_SENTINEL,
+        user_id="user456",
+    )
+    conn.execute.assert_called_once()
+    call_args = conn.execute.call_args[0]
     # Verify all values are passed in correct order
     assert "INSERT INTO knowledge.artifacts" in call_args[0]
     values = call_args[1:]
@@ -71,20 +80,22 @@ async def test_create_artifact_executes_insert():
 
 @pytest.mark.asyncio
 async def test_create_artifact_generates_unique_ids():
-    pool = _make_pool()
-    with patch("knowledge_ingest.pg_store.get_pool", new_callable=AsyncMock, return_value=pool):
-        id1 = await pg_store.create_artifact("o", "kb", "p1.md", "observed", "factual", 0, None, 0, _SENTINEL)
-        id2 = await pg_store.create_artifact("o", "kb", "p2.md", "observed", "factual", 0, None, 0, _SENTINEL)
+    conn = _make_conn()
+    id1 = await pg_store.create_artifact(
+        conn, "o", "kb", "p1.md", "observed", "factual", 0, None, 0, _SENTINEL
+    )
+    id2 = await pg_store.create_artifact(
+        conn, "o", "kb", "p2.md", "observed", "factual", 0, None, 0, _SENTINEL
+    )
     assert id1 != id2
 
 
 @pytest.mark.asyncio
 async def test_soft_delete_updates_belief_time_end():
-    pool = _make_pool()
-    with patch("knowledge_ingest.pg_store.get_pool", new_callable=AsyncMock, return_value=pool):
-        await pg_store.soft_delete_artifact("org123", "personal", "note.md")
-    pool.execute.assert_called_once()
-    call_args = pool.execute.call_args[0]
+    conn = _make_conn()
+    await pg_store.soft_delete_artifact(conn, "org123", "personal", "note.md")
+    conn.execute.assert_called_once()
+    call_args = conn.execute.call_args[0]
     assert "UPDATE knowledge.artifacts" in call_args[0]
     assert "belief_time_end" in call_args[0]
     values = call_args[1:]
@@ -97,10 +108,9 @@ async def test_soft_delete_updates_belief_time_end():
 @pytest.mark.asyncio
 async def test_soft_delete_only_updates_active_records():
     """Verifies the WHERE belief_time_end = SENTINEL constraint is present."""
-    pool = _make_pool()
-    with patch("knowledge_ingest.pg_store.get_pool", new_callable=AsyncMock, return_value=pool):
-        await pg_store.soft_delete_artifact("org", "kb", "path.md")
-    sql = pool.execute.call_args[0][0]
+    conn = _make_conn()
+    await pg_store.soft_delete_artifact(conn, "org", "kb", "path.md")
+    sql = conn.execute.call_args[0][0]
     # Must filter on sentinel to avoid touching already-deleted records
     assert str(_SENTINEL) in sql or "$5" in sql
 
@@ -110,13 +120,12 @@ async def test_soft_delete_only_updates_active_records():
 
 @pytest.mark.asyncio
 async def test_list_personal_artifacts_queries_correct_params():
-    pool = _make_pool()
-    pool.fetch = AsyncMock(return_value=[])
-    with patch("knowledge_ingest.pg_store.get_pool", new_callable=AsyncMock, return_value=pool):
-        result = await pg_store.list_personal_artifacts("org1", "user1", limit=10, offset=5)
+    conn = _make_conn()
+    conn.fetch = AsyncMock(return_value=[])
+    result = await pg_store.list_personal_artifacts(conn, "org1", "user1", limit=10, offset=5)
     assert result == []
-    pool.fetch.assert_called_once()
-    call_args = pool.fetch.call_args[0]
+    conn.fetch.assert_called_once()
+    call_args = conn.fetch.call_args[0]
     sql = call_args[0]
     assert "knowledge.artifacts" in sql
     assert "kb_slug = $3" in sql
@@ -131,16 +140,18 @@ async def test_list_personal_artifacts_queries_correct_params():
 
 @pytest.mark.asyncio
 async def test_list_personal_artifacts_returns_dicts():
-    fake_row = MagicMock()
-    fake_row.__iter__ = MagicMock(return_value=iter([("id", "abc"), ("path", "note.md")]))
-    fake_row.items = MagicMock(return_value=[("id", "abc"), ("path", "note.md")])
-    fake_row.keys = MagicMock(return_value=["id", "path"])
-    fake_row.__getitem__ = lambda self, key: {"id": "abc", "path": "note.md"}[key]
-
-    pool = _make_pool()
-    pool.fetch = AsyncMock(return_value=[{"id": "abc", "path": "note.md", "assertion_mode": "fact", "created_at": 1700000000}])
-    with patch("knowledge_ingest.pg_store.get_pool", new_callable=AsyncMock, return_value=pool):
-        result = await pg_store.list_personal_artifacts("org1", "user1")
+    conn = _make_conn()
+    conn.fetch = AsyncMock(
+        return_value=[
+            {
+                "id": "abc",
+                "path": "note.md",
+                "assertion_mode": "fact",
+                "created_at": 1700000000,
+            }
+        ]
+    )
+    result = await pg_store.list_personal_artifacts(conn, "org1", "user1")
     assert len(result) == 1
     assert result[0]["id"] == "abc"
 
@@ -150,23 +161,21 @@ async def test_list_personal_artifacts_returns_dicts():
 
 @pytest.mark.asyncio
 async def test_count_personal_artifacts_returns_int():
-    pool = _make_pool()
-    pool.fetchval = AsyncMock(return_value=42)
-    with patch("knowledge_ingest.pg_store.get_pool", new_callable=AsyncMock, return_value=pool):
-        count = await pg_store.count_personal_artifacts("org1", "user1")
+    conn = _make_conn()
+    conn.fetchval = AsyncMock(return_value=42)
+    count = await pg_store.count_personal_artifacts(conn, "org1", "user1")
     assert count == 42
-    pool.fetchval.assert_called_once()
-    sql = pool.fetchval.call_args[0][0]
+    conn.fetchval.assert_called_once()
+    sql = conn.fetchval.call_args[0][0]
     assert "COUNT(*)" in sql
     assert "kb_slug = $3" in sql
 
 
 @pytest.mark.asyncio
 async def test_count_personal_artifacts_returns_zero_on_none():
-    pool = _make_pool()
-    pool.fetchval = AsyncMock(return_value=None)
-    with patch("knowledge_ingest.pg_store.get_pool", new_callable=AsyncMock, return_value=pool):
-        count = await pg_store.count_personal_artifacts("org1", "user1")
+    conn = _make_conn()
+    conn.fetchval = AsyncMock(return_value=None)
+    count = await pg_store.count_personal_artifacts(conn, "org1", "user1")
     assert count == 0
 
 
@@ -175,37 +184,34 @@ async def test_count_personal_artifacts_returns_zero_on_none():
 
 @pytest.mark.asyncio
 async def test_get_personal_artifact_returns_dict_when_found():
-    pool = _make_pool()
-    pool.fetchrow = AsyncMock(return_value={"id": "abc-123", "path": "note.md"})
-    with patch("knowledge_ingest.pg_store.get_pool", new_callable=AsyncMock, return_value=pool):
-        result = await pg_store.get_personal_artifact("abc-123", "org1", "user1")
+    conn = _make_conn()
+    conn.fetchrow = AsyncMock(return_value={"id": "abc-123", "path": "note.md"})
+    result = await pg_store.get_personal_artifact(conn, "abc-123", "org1", "user1")
     assert result is not None
     assert result["id"] == "abc-123"
     assert result["path"] == "note.md"
-    sql = pool.fetchrow.call_args[0][0]
+    sql = conn.fetchrow.call_args[0][0]
     assert "kb_slug = $4" in sql
 
 
 @pytest.mark.asyncio
 async def test_get_personal_artifact_returns_none_when_not_found():
-    pool = _make_pool()
-    pool.fetchrow = AsyncMock(return_value=None)
-    with patch("knowledge_ingest.pg_store.get_pool", new_callable=AsyncMock, return_value=pool):
-        result = await pg_store.get_personal_artifact("nonexistent", "org1", "user1")
+    conn = _make_conn()
+    conn.fetchrow = AsyncMock(return_value=None)
+    result = await pg_store.get_personal_artifact(conn, "nonexistent", "org1", "user1")
     assert result is None
 
 
 @pytest.mark.asyncio
-async def test_update_artifact_extra_merges_jsonb(monkeypatch):
+async def test_update_artifact_extra_merges_jsonb():
     """update_artifact_extra issues a JSONB merge UPDATE (AC-2)."""
     import json as json_mod
 
-    pool = _make_pool()
-    with patch("knowledge_ingest.pg_store.get_pool", new_callable=AsyncMock, return_value=pool):
-        await pg_store.update_artifact_extra("art-001", {"graphiti_episode_id": "ep-xyz"})
+    conn = _make_conn()
+    await pg_store.update_artifact_extra(conn, "art-001", {"graphiti_episode_id": "ep-xyz"})
 
-    pool.execute.assert_called_once()
-    call_args = pool.execute.call_args[0]
+    conn.execute.assert_called_once()
+    call_args = conn.execute.call_args[0]
     sql = call_args[0]
     assert "UPDATE knowledge.artifacts" in sql
     assert "COALESCE" in sql

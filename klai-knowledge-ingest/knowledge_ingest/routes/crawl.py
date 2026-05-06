@@ -5,27 +5,34 @@ Crawl route:
 
 All crawling goes through the shared Crawl4AI Docker container via crawl4ai_client.
 Pipeline selection (SPEC-CRAWL-001 / R-1) is handled by crawl4ai_client.build_crawl_config().
+
+SPEC-TI-003-FOLLOWUP-001 AC-1: handlers that touch knowledge.* open a
+tenant_scoped_connection on the body's org_id and pass conn into pg_store /
+link_graph / domain_selectors / ingest_document.
 """
+
 import asyncio
+import contextlib
 import hashlib
 import re
 import time
 from urllib.parse import urlparse
 
+import asyncpg
 import structlog
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from knowledge_ingest import pg_store
-from knowledge_ingest.identity import assert_caller_identity
 from knowledge_ingest.crawl4ai_client import crawl_dom_summary, crawl_page
-from knowledge_ingest.db import get_pool
+from knowledge_ingest.db import tenant_scoped_connection
 from knowledge_ingest.domain_selectors import (
     extract_domain,
     get_domain_selector,
     upsert_domain_selector,
 )
 from knowledge_ingest.fingerprint import compute_content_fingerprint
+from knowledge_ingest.identity import assert_caller_identity
 from knowledge_ingest.models import CrawlRequest, CrawlResponse, IngestRequest
 from knowledge_ingest.routes.ingest import ingest_document
 from knowledge_ingest.selector_ai import (
@@ -123,6 +130,21 @@ async def _run_crawl(
     return fit_md, result.word_count, result.html
 
 
+@contextlib.asynccontextmanager
+async def _maybe_tenant_conn(org_id: str):
+    """Yield a GUC-pinned conn when org_id is present, else None.
+
+    preview_crawl is the only handler that may legitimately run without
+    org_id (anonymous preview); all other paths must have org_id and use
+    tenant_scoped_connection directly.
+    """
+    if not org_id:
+        yield None
+        return
+    async with tenant_scoped_connection(org_id) as conn:
+        yield conn
+
+
 @router.post("/ingest/v1/crawl/preview", response_model=CrawlPreviewResponse)
 async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPreviewResponse:
     """Fetch a URL with PruningContentFilter and return the filtered markdown preview.
@@ -148,55 +170,76 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
         effective_selector = body.content_selector
         selector_source = "user" if effective_selector else None
 
-        if not effective_selector and body.org_id:
-            stored = await get_domain_selector(extract_domain(body.url), body.org_id)
-            if stored:
-                effective_selector, selector_source = stored
+        async with _maybe_tenant_conn(body.org_id) as conn:
+            if not effective_selector and conn is not None:
+                stored = await get_domain_selector(conn, extract_domain(body.url), body.org_id)
+                if stored:
+                    effective_selector, selector_source = stored
 
-        # Initial crawl
-        fit_md, word_count, _ = await _run_crawl(body.url, effective_selector, cookies=body.cookies)
-        warnings: list[str] = _detect_nav_contamination(fit_md)
+            # Initial crawl (HTTP, no DB)
+            fit_md, word_count, _ = await _run_crawl(
+                body.url, effective_selector, cookies=body.cookies
+            )
+            warnings: list[str] = _detect_nav_contamination(fit_md)
 
-        # AI-assisted selector detection — only when explicitly requested via try_ai flag
-        # SPEC-CRAWL-001 / R-4
-        if body.try_ai and word_count < _MIN_WORD_COUNT and not effective_selector and body.org_id:
-            dom_summary = await crawl_dom_summary(body.url)
-            if dom_summary:
-                ai_selector = await detect_selector_via_llm(dom_summary)
-                if ai_selector:
-                    try:
-                        recrawl_md, recrawl_wc, _ = await _run_crawl(
-                            body.url, ai_selector, cookies=body.cookies,
-                        )
-                        if recrawl_wc >= _MIN_WORD_COUNT:
-                            await upsert_domain_selector(
-                                extract_domain(body.url), body.org_id, ai_selector, "ai"
+            # AI-assisted selector detection — only when explicitly requested via try_ai flag
+            # SPEC-CRAWL-001 / R-4
+            if (
+                body.try_ai
+                and word_count < _MIN_WORD_COUNT
+                and not effective_selector
+                and conn is not None
+            ):
+                dom_summary = await crawl_dom_summary(body.url)
+                if dom_summary:
+                    ai_selector = await detect_selector_via_llm(dom_summary)
+                    if ai_selector:
+                        try:
+                            recrawl_md, recrawl_wc, _ = await _run_crawl(
+                                body.url, ai_selector, cookies=body.cookies
                             )
-                            fit_md = recrawl_md
-                            word_count = recrawl_wc
-                            warnings = _detect_nav_contamination(fit_md)
-                            effective_selector = ai_selector
-                            selector_source = "ai"
-                        else:
-                            # Re-crawl also thin — return original, do not store
+                            if recrawl_wc >= _MIN_WORD_COUNT:
+                                await upsert_domain_selector(
+                                    conn,
+                                    extract_domain(body.url),
+                                    body.org_id,
+                                    ai_selector,
+                                    "ai",
+                                )
+                                fit_md = recrawl_md
+                                word_count = recrawl_wc
+                                warnings = _detect_nav_contamination(fit_md)
+                                effective_selector = ai_selector
+                                selector_source = "ai"
+                            else:
+                                # Re-crawl also thin — return original, do not store
+                                if "low_word_count" not in warnings:
+                                    warnings.append("low_word_count")
+                        except Exception as exc:
+                            logger.warning(
+                                "crawl_ai_recrawl_failed",
+                                url=body.url,
+                                ai_selector=ai_selector,
+                                error=str(exc),
+                            )
                             if "low_word_count" not in warnings:
                                 warnings.append("low_word_count")
-                    except Exception as exc:
-                        logger.warning(
-                            "crawl_ai_recrawl_failed",
-                            url=body.url,
-                            ai_selector=ai_selector,
-                            error=str(exc),
-                        )
-                        if "low_word_count" not in warnings:
-                            warnings.append("low_word_count")
 
-        # Persist selector after a successful crawl (>= 100 words), if we have one
-        # SPEC-CRAWL-001 / R-3
-        if word_count >= _MIN_WORD_COUNT and effective_selector and body.org_id and selector_source:
-            await upsert_domain_selector(
-                extract_domain(body.url), body.org_id, effective_selector, selector_source
-            )
+            # Persist selector after a successful crawl (>= 100 words), if we have one
+            # SPEC-CRAWL-001 / R-3
+            if (
+                word_count >= _MIN_WORD_COUNT
+                and effective_selector
+                and conn is not None
+                and selector_source
+            ):
+                await upsert_domain_selector(
+                    conn,
+                    extract_domain(body.url),
+                    body.org_id,
+                    effective_selector,
+                    selector_source,
+                )
 
         # SPEC-CRAWL-004: auto-detect auth guard when cookies are present and
         # the crawl succeeded with real content. The preview URL becomes the
@@ -216,9 +259,7 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
                         indicator = await detect_login_indicator_via_llm(dom_summary)
                         if indicator:
                             auth_guard.login_indicator_selector = indicator
-                            auth_guard.login_indicator_description = (
-                                f"Detected: {indicator}"
-                            )
+                            auth_guard.login_indicator_description = f"Detected: {indicator}"
                 except Exception:
                     logger.debug(
                         "auth_guard_login_indicator_detection_skipped",
@@ -262,97 +303,106 @@ async def crawl_url(request: CrawlRequest, http_request: Request) -> CrawlRespon
         slug = parsed.path.strip("/").replace("/", "-") or parsed.netloc
         return f"{slug}.md"
 
-    # Resolve stored domain selector so the right pipeline is used
-    # SPEC-CRAWL-001 / R-2
-    effective_selector: str | None = None
-    if request.org_id:
-        stored_sel = await get_domain_selector(extract_domain(request.url), request.org_id)
-        if stored_sel:
-            effective_selector, _ = stored_sel
-
-    # WARNING (pipeline config change): modifying crawl4ai settings in
-    # crawl4ai_client.build_crawl_config() changes content_hash for every page
-    # even when the actual page content has not changed.  After such a change,
-    # force a full re-ingest by clearing content_hash:
-    #   UPDATE knowledge.crawled_pages
-    #      SET content_hash = ''
-    #    WHERE org_id = '<org>' AND kb_slug = '<slug>';
-    fit_md, _word_count, raw_html = await _run_crawl(request.url, effective_selector)
-
-    # Dual-hash dedup (see migration 012):
-    #   1. raw_html_hash unchanged → skip everything (fast path)
-    #   2. raw_html_hash changed, content_hash unchanged → JS/tracking update, skip ingest
-    #   3. both changed → real content change → full ingest
-    raw_html_hash = hashlib.sha256(raw_html.encode()).hexdigest()
-    stored = await pg_store.get_crawled_page_stored(
-        request.org_id, request.kb_slug, request.url
-    )
-
-    if stored is not None:
-        stored_raw, _stored_content = stored
-        if stored_raw is not None and stored_raw == raw_html_hash:
-            logger.info("crawl_skipped_unchanged", url=request.url)
-            return CrawlResponse(url=request.url, path=_derive_path(), chunks_ingested=0)
-
-    content_hash = hashlib.sha256(fit_md.encode()).hexdigest()
-
-    if stored is not None:
-        _, stored_content = stored
-        if stored_content is not None and stored_content == content_hash:
-            # HTML changed (JS / tracking pixel) but article content is identical
-            # → update raw_html_hash so future crawls hit the fast path, skip ingest
-            await pg_store.upsert_crawled_page(
-                org_id=request.org_id,
-                kb_slug=request.kb_slug,
-                url=request.url,
-                raw_html_hash=raw_html_hash,
-                content_hash=content_hash,
-                raw_markdown=fit_md,
-                crawled_at=int(time.time()),
+    async with tenant_scoped_connection(request.org_id) as conn:
+        # Resolve stored domain selector so the right pipeline is used
+        # SPEC-CRAWL-001 / R-2
+        effective_selector: str | None = None
+        if request.org_id:
+            stored_sel = await get_domain_selector(
+                conn, extract_domain(request.url), request.org_id
             )
-            logger.info("crawl_skipped_html_noise", url=request.url)
-            return CrawlResponse(url=request.url, path=_derive_path(), chunks_ingested=0)
+            if stored_sel:
+                effective_selector, _ = stored_sel
 
-    await pg_store.upsert_crawled_page(
-        org_id=request.org_id,
-        kb_slug=request.kb_slug,
-        url=request.url,
-        raw_html_hash=raw_html_hash,
-        content_hash=content_hash,
-        raw_markdown=fit_md,
-        crawled_at=int(time.time()),
-    )
+        # WARNING (pipeline config change): modifying crawl4ai settings in
+        # crawl4ai_client.build_crawl_config() changes content_hash for every page
+        # even when the actual page content has not changed.  After such a change,
+        # force a full re-ingest by clearing content_hash:
+        #   UPDATE knowledge.crawled_pages
+        #      SET content_hash = ''
+        #    WHERE org_id = '<org>' AND kb_slug = '<slug>';
+        fit_md, _word_count, raw_html = await _run_crawl(request.url, effective_selector)
 
-    path = _derive_path()
-
-    # Ingest using existing pipeline (expects IngestRequest, returns dict)
-    # SPEC-CRAWL-001 / R-5: include source_url in extra
-    # SPEC-CRAWLER-003 R11: populate link graph fields when source_url present
-    extra: dict = {"source_url": request.url}
-    try:
-        from knowledge_ingest import link_graph
-        pool = await get_pool()
-        outbound, anchors, incoming = await asyncio.gather(
-            link_graph.get_outbound_urls(request.url, request.org_id, request.kb_slug, pool),
-            link_graph.get_anchor_texts(request.url, request.org_id, request.kb_slug, pool),
-            link_graph.get_incoming_count(request.url, request.org_id, request.kb_slug, pool),
+        # Dual-hash dedup (see migration 012):
+        #   1. raw_html_hash unchanged → skip everything (fast path)
+        #   2. raw_html_hash changed, content_hash unchanged → JS/tracking update, skip ingest
+        #   3. both changed → real content change → full ingest
+        raw_html_hash = hashlib.sha256(raw_html.encode()).hexdigest()
+        stored = await pg_store.get_crawled_page_stored(
+            conn, request.org_id, request.kb_slug, request.url
         )
-        extra["links_to"] = outbound[:20]
-        extra["anchor_texts"] = anchors
-        extra["incoming_link_count"] = incoming
-    except Exception as exc:
-        logger.warning("link_graph_query_failed", url=request.url, error=str(exc))
-    ingest_req = IngestRequest(
-        org_id=request.org_id,
-        kb_slug=request.kb_slug,
-        path=path,
-        content=fit_md,
-        source_type="crawl",
-        source_domain=urlparse(request.url).netloc,
-        extra=extra,
-    )
-    result = await ingest_document(ingest_req)
-    n_chunks = result.get("chunks", 0)
+
+        if stored is not None:
+            stored_raw, _stored_content = stored
+            if stored_raw is not None and stored_raw == raw_html_hash:
+                logger.info("crawl_skipped_unchanged", url=request.url)
+                return CrawlResponse(url=request.url, path=_derive_path(), chunks_ingested=0)
+
+        content_hash = hashlib.sha256(fit_md.encode()).hexdigest()
+
+        if stored is not None:
+            _, stored_content = stored
+            if stored_content is not None and stored_content == content_hash:
+                # HTML changed (JS / tracking pixel) but article content is identical
+                # → update raw_html_hash so future crawls hit the fast path, skip ingest
+                await pg_store.upsert_crawled_page(
+                    conn,
+                    org_id=request.org_id,
+                    kb_slug=request.kb_slug,
+                    url=request.url,
+                    raw_html_hash=raw_html_hash,
+                    content_hash=content_hash,
+                    raw_markdown=fit_md,
+                    crawled_at=int(time.time()),
+                )
+                logger.info("crawl_skipped_html_noise", url=request.url)
+                return CrawlResponse(url=request.url, path=_derive_path(), chunks_ingested=0)
+
+        await pg_store.upsert_crawled_page(
+            conn,
+            org_id=request.org_id,
+            kb_slug=request.kb_slug,
+            url=request.url,
+            raw_html_hash=raw_html_hash,
+            content_hash=content_hash,
+            raw_markdown=fit_md,
+            crawled_at=int(time.time()),
+        )
+
+        path = _derive_path()
+
+        # Ingest using existing pipeline (expects IngestRequest, returns dict)
+        # SPEC-CRAWL-001 / R-5: include source_url in extra
+        # SPEC-CRAWLER-003 R11: populate link graph fields when source_url present
+        extra: dict = {"source_url": request.url}
+        try:
+            from knowledge_ingest import link_graph
+
+            outbound, anchors, incoming = await asyncio.gather(
+                link_graph.get_outbound_urls(conn, request.url, request.org_id, request.kb_slug),
+                link_graph.get_anchor_texts(conn, request.url, request.org_id, request.kb_slug),
+                link_graph.get_incoming_count(conn, request.url, request.org_id, request.kb_slug),
+            )
+            extra["links_to"] = outbound[:20]
+            extra["anchor_texts"] = anchors
+            extra["incoming_link_count"] = incoming
+        except Exception as exc:
+            logger.warning("link_graph_query_failed", url=request.url, error=str(exc))
+        ingest_req = IngestRequest(
+            org_id=request.org_id,
+            kb_slug=request.kb_slug,
+            path=path,
+            content=fit_md,
+            source_type="crawl",
+            source_domain=urlparse(request.url).netloc,
+            extra=extra,
+        )
+        result = await ingest_document(conn, ingest_req)
+        n_chunks = result.get("chunks", 0)
 
     logger.info("crawl_ingest_complete", url=request.url, path=path, chunks=n_chunks)
     return CrawlResponse(url=request.url, path=path, chunks_ingested=n_chunks)
+
+
+# Type-only import to silence unused warning for asyncpg.Connection
+_ = asyncpg.Connection

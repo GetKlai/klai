@@ -1,18 +1,22 @@
 """
 Tests for link_graph async query helpers (SPEC-CRAWLER-003, TASK-002).
+
+SPEC-TI-003-FOLLOWUP-001: helpers now take asyncpg.Connection (not Pool).
 """
-import pytest
+
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from knowledge_ingest import link_graph
 
 
-def _make_pool():
-    pool = MagicMock()
-    pool.execute = AsyncMock(return_value=None)
-    pool.fetch = AsyncMock(return_value=[])
-    pool.fetchval = AsyncMock(return_value=0)
-    return pool
+def _make_conn() -> MagicMock:
+    conn = MagicMock()
+    conn.execute = AsyncMock(return_value=None)
+    conn.fetch = AsyncMock(return_value=[])
+    conn.fetchval = AsyncMock(return_value=0)
+    return conn
 
 
 # -- Scenario 1.1: get_outbound_urls returns correct URLs --
@@ -20,17 +24,16 @@ def _make_pool():
 
 @pytest.mark.asyncio
 async def test_get_outbound_urls_returns_to_urls():
-    pool = _make_pool()
-    pool.fetch = AsyncMock(return_value=[
-        {"to_url": "https://docs.example.com/b"},
-        {"to_url": "https://docs.example.com/c"},
-    ])
+    conn = _make_conn()
+    conn.fetch = AsyncMock(
+        return_value=[
+            {"to_url": "https://docs.example.com/b"},
+            {"to_url": "https://docs.example.com/c"},
+        ]
+    )
 
     result = await link_graph.get_outbound_urls(
-        url="https://docs.example.com/a",
-        org_id="org-1",
-        kb_slug="docs",
-        pool=pool,
+        conn, url="https://docs.example.com/a", org_id="org-1", kb_slug="docs"
     )
 
     assert result == [
@@ -41,14 +44,11 @@ async def test_get_outbound_urls_returns_to_urls():
 
 @pytest.mark.asyncio
 async def test_get_outbound_urls_empty_when_no_links():
-    pool = _make_pool()
-    pool.fetch = AsyncMock(return_value=[])
+    conn = _make_conn()
+    conn.fetch = AsyncMock(return_value=[])
 
     result = await link_graph.get_outbound_urls(
-        url="https://docs.example.com/orphan",
-        org_id="org-1",
-        kb_slug="docs",
-        pool=pool,
+        conn, url="https://docs.example.com/orphan", org_id="org-1", kb_slug="docs"
     )
 
     assert result == []
@@ -59,20 +59,19 @@ async def test_get_outbound_urls_empty_when_no_links():
 
 @pytest.mark.asyncio
 async def test_get_anchor_texts_returns_non_empty_texts():
-    pool = _make_pool()
-    pool.fetch = AsyncMock(return_value=[
-        {"link_text": "Pagina B"},
-        {"link_text": ""},
-        {"link_text": "   "},
-        {"link_text": "Pagina C"},
-        {"link_text": None},
-    ])
+    conn = _make_conn()
+    conn.fetch = AsyncMock(
+        return_value=[
+            {"link_text": "Pagina B"},
+            {"link_text": ""},
+            {"link_text": "   "},
+            {"link_text": "Pagina C"},
+            {"link_text": None},
+        ]
+    )
 
     result = await link_graph.get_anchor_texts(
-        url="https://docs.example.com/target",
-        org_id="org-1",
-        kb_slug="docs",
-        pool=pool,
+        conn, url="https://docs.example.com/target", org_id="org-1", kb_slug="docs"
     )
 
     assert result == ["Pagina B", "Pagina C"]
@@ -80,18 +79,17 @@ async def test_get_anchor_texts_returns_non_empty_texts():
 
 @pytest.mark.asyncio
 async def test_get_anchor_texts_empty_when_all_blank():
-    pool = _make_pool()
-    pool.fetch = AsyncMock(return_value=[
-        {"link_text": ""},
-        {"link_text": "   "},
-        {"link_text": None},
-    ])
+    conn = _make_conn()
+    conn.fetch = AsyncMock(
+        return_value=[
+            {"link_text": ""},
+            {"link_text": "   "},
+            {"link_text": None},
+        ]
+    )
 
     result = await link_graph.get_anchor_texts(
-        url="https://docs.example.com/target",
-        org_id="org-1",
-        kb_slug="docs",
-        pool=pool,
+        conn, url="https://docs.example.com/target", org_id="org-1", kb_slug="docs"
     )
 
     assert result == []
@@ -102,14 +100,11 @@ async def test_get_anchor_texts_empty_when_all_blank():
 
 @pytest.mark.asyncio
 async def test_get_incoming_count_returns_integer():
-    pool = _make_pool()
-    pool.fetchval = AsyncMock(return_value=7)
+    conn = _make_conn()
+    conn.fetchval = AsyncMock(return_value=7)
 
     result = await link_graph.get_incoming_count(
-        url="https://docs.example.com/popular",
-        org_id="org-1",
-        kb_slug="docs",
-        pool=pool,
+        conn, url="https://docs.example.com/popular", org_id="org-1", kb_slug="docs"
     )
 
     assert result == 7
@@ -118,14 +113,11 @@ async def test_get_incoming_count_returns_integer():
 
 @pytest.mark.asyncio
 async def test_get_incoming_count_returns_zero_when_none():
-    pool = _make_pool()
-    pool.fetchval = AsyncMock(return_value=None)
+    conn = _make_conn()
+    conn.fetchval = AsyncMock(return_value=None)
 
     result = await link_graph.get_incoming_count(
-        url="https://docs.example.com/orphan",
-        org_id="org-1",
-        kb_slug="docs",
-        pool=pool,
+        conn, url="https://docs.example.com/orphan", org_id="org-1", kb_slug="docs"
     )
 
     assert result == 0
@@ -136,67 +128,54 @@ async def test_get_incoming_count_returns_zero_when_none():
 
 @pytest.mark.asyncio
 async def test_get_outbound_urls_passes_org_and_kb_to_query():
-    pool = _make_pool()
+    conn = _make_conn()
 
     await link_graph.get_outbound_urls(
-        url="https://example.com/page",
-        org_id="org-42",
-        kb_slug="help-center",
-        pool=pool,
+        conn, url="https://example.com/page", org_id="org-42", kb_slug="help-center"
     )
 
-    pool.fetch.assert_called_once()
-    call_args = pool.fetch.call_args[0]
+    conn.fetch.assert_called_once()
+    call_args = conn.fetch.call_args[0]
     assert "org-42" in call_args
     assert "help-center" in call_args
 
 
 @pytest.mark.asyncio
 async def test_get_anchor_texts_passes_org_and_kb_to_query():
-    pool = _make_pool()
+    conn = _make_conn()
 
     await link_graph.get_anchor_texts(
-        url="https://example.com/page",
-        org_id="org-42",
-        kb_slug="help-center",
-        pool=pool,
+        conn, url="https://example.com/page", org_id="org-42", kb_slug="help-center"
     )
 
-    pool.fetch.assert_called_once()
-    call_args = pool.fetch.call_args[0]
+    conn.fetch.assert_called_once()
+    call_args = conn.fetch.call_args[0]
     assert "org-42" in call_args
     assert "help-center" in call_args
 
 
 @pytest.mark.asyncio
 async def test_get_incoming_count_passes_org_and_kb_to_query():
-    pool = _make_pool()
+    conn = _make_conn()
 
     await link_graph.get_incoming_count(
-        url="https://example.com/page",
-        org_id="org-42",
-        kb_slug="help-center",
-        pool=pool,
+        conn, url="https://example.com/page", org_id="org-42", kb_slug="help-center"
     )
 
-    pool.fetchval.assert_called_once()
-    call_args = pool.fetchval.call_args[0]
+    conn.fetchval.assert_called_once()
+    call_args = conn.fetchval.call_args[0]
     assert "org-42" in call_args
     assert "help-center" in call_args
 
 
 @pytest.mark.asyncio
 async def test_compute_incoming_counts_passes_org_and_kb_to_query():
-    pool = _make_pool()
+    conn = _make_conn()
 
-    await link_graph.compute_incoming_counts(
-        org_id="org-42",
-        kb_slug="help-center",
-        pool=pool,
-    )
+    await link_graph.compute_incoming_counts(conn, org_id="org-42", kb_slug="help-center")
 
-    pool.fetch.assert_called_once()
-    call_args = pool.fetch.call_args[0]
+    conn.fetch.assert_called_once()
+    call_args = conn.fetch.call_args[0]
     assert "org-42" in call_args
     assert "help-center" in call_args
 
@@ -206,18 +185,16 @@ async def test_compute_incoming_counts_passes_org_and_kb_to_query():
 
 @pytest.mark.asyncio
 async def test_compute_incoming_counts_returns_url_count_dict():
-    pool = _make_pool()
-    pool.fetch = AsyncMock(return_value=[
-        {"to_url": "https://docs.example.com/a", "cnt": 5},
-        {"to_url": "https://docs.example.com/b", "cnt": 1},
-        {"to_url": "https://docs.example.com/c", "cnt": 12},
-    ])
-
-    result = await link_graph.compute_incoming_counts(
-        org_id="org-1",
-        kb_slug="docs",
-        pool=pool,
+    conn = _make_conn()
+    conn.fetch = AsyncMock(
+        return_value=[
+            {"to_url": "https://docs.example.com/a", "cnt": 5},
+            {"to_url": "https://docs.example.com/b", "cnt": 1},
+            {"to_url": "https://docs.example.com/c", "cnt": 12},
+        ]
     )
+
+    result = await link_graph.compute_incoming_counts(conn, org_id="org-1", kb_slug="docs")
 
     assert result == {
         "https://docs.example.com/a": 5,
@@ -228,13 +205,9 @@ async def test_compute_incoming_counts_returns_url_count_dict():
 
 @pytest.mark.asyncio
 async def test_compute_incoming_counts_empty_when_no_links():
-    pool = _make_pool()
-    pool.fetch = AsyncMock(return_value=[])
+    conn = _make_conn()
+    conn.fetch = AsyncMock(return_value=[])
 
-    result = await link_graph.compute_incoming_counts(
-        org_id="org-1",
-        kb_slug="docs",
-        pool=pool,
-    )
+    result = await link_graph.compute_incoming_counts(conn, org_id="org-1", kb_slug="docs")
 
     assert result == {}

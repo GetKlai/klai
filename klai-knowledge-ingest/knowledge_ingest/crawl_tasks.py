@@ -1,4 +1,5 @@
 """Procrastinate task for async bulk web crawling."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -57,10 +58,17 @@ def register_crawl_tasks(procrastinate_app: Any) -> None:
             )
 
         from knowledge_ingest.adapters.crawler import run_crawl_job
-        # SPEC-TI-003 AC-9: set RLS GUC for all knowledge.* writes inside run_crawl_job
-        async with tenant_scoped_connection(org_id) as _conn:
-            del _conn  # connection held open to keep GUC set; pg_store uses pool
+
+        # SPEC-TI-003-FOLLOWUP-001 AC-1: pass the GUC-pinned connection down
+        # into run_crawl_job so every knowledge.* query inside (crawl_jobs
+        # progress updates, page hash dedup, link graph, ingest) sees the
+        # tenant context. The previous shape (``del _conn``) was the bug
+        # this SPEC-FOLLOWUP fixes -- pg_store.* would grab a different
+        # pool connection without the GUC, leaving RLS silently default-deny
+        # once SPEC-TI-011 lands FORCE.
+        async with tenant_scoped_connection(org_id) as conn:
             await run_crawl_job(
+                conn,
                 job_id=job_id,
                 org_id=org_id,
                 kb_slug=kb_slug,

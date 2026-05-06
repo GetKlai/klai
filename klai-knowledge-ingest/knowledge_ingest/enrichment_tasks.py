@@ -41,7 +41,7 @@ from knowledge_ingest import (
     sparse_embedder,
 )
 from knowledge_ingest.content_profiles import get_profile
-from knowledge_ingest.db import get_pool
+from knowledge_ingest.db import cross_org_admin_connection, tenant_scoped_connection
 
 logger = structlog.get_logger()
 
@@ -123,7 +123,12 @@ async def _load_and_enrich(artifact_id: str) -> None:
     by the connector purge orchestrator), the function returns silently —
     same soft-skip semantics as ``ingest_graphiti_episode`` uses.
     """
-    artifact = await pg_store.read_artifact_for_enrichment(artifact_id)
+    # SPEC-TI-003-FOLLOWUP-001: lookup-by-artifact_id is a cross-org read --
+    # we don't know the org until we have the row. Use cross_org_admin so the
+    # GUC marks the conn as a deliberate admin caller. Once we have org_id,
+    # _enrich_document opens its own tenant_scoped_connection for the rest.
+    async with cross_org_admin_connection() as admin_conn:
+        artifact = await pg_store.read_artifact_for_enrichment(admin_conn, artifact_id)
     if artifact is None:
         logger.info("enrichment_aborted_artifact_missing", artifact_id=artifact_id)
         return
@@ -226,33 +231,40 @@ def _register_tasks(procrastinate_app: Any) -> None:
         Closes the regrow window — graphiti tasks have no
         ``source_connector_id`` arg, so the artifact-presence check is the
         canonical signal here.
+
+        SPEC-TI-003-FOLLOWUP-001 AC-1: opens a tenant_scoped_connection on
+        ``org_id`` so artifact_exists + update_artifact_extra both run with
+        the RLS GUC pinned to this tenant.
         """
         from knowledge_ingest import pg_store
 
-        if not await pg_store.artifact_exists(artifact_id):
+        async with tenant_scoped_connection(org_id) as conn:
+            if not await pg_store.artifact_exists(conn, artifact_id):
+                logger.info(
+                    "graphiti_aborted_artifact_missing",
+                    artifact_id=artifact_id,
+                    org_id=org_id,
+                )
+                return
             logger.info(
-                "graphiti_aborted_artifact_missing",
+                "graphiti_episode_started",
                 artifact_id=artifact_id,
                 org_id=org_id,
+                content_type=content_type,
             )
-            return
-        logger.info(
-            "graphiti_episode_started",
-            artifact_id=artifact_id,
-            org_id=org_id,
-            content_type=content_type,
-        )
-        from knowledge_ingest import graph as graph_module
+            from knowledge_ingest import graph as graph_module
 
-        episode_id = await graph_module.ingest_episode(
-            artifact_id=artifact_id,
-            document_text=document_text,
-            org_id=org_id,
-            content_type=content_type,
-            belief_time_start=belief_time_start,
-        )
-        if episode_id:
-            await pg_store.update_artifact_extra(artifact_id, {"graphiti_episode_id": episode_id})
+            episode_id = await graph_module.ingest_episode(
+                artifact_id=artifact_id,
+                document_text=document_text,
+                org_id=org_id,
+                content_type=content_type,
+                belief_time_start=belief_time_start,
+            )
+            if episode_id:
+                await pg_store.update_artifact_extra(
+                    conn, artifact_id, {"graphiti_episode_id": episode_id}
+                )
 
     procrastinate_app.ingest_graphiti_episode = ingest_graphiti_episode  # type: ignore[attr-defined]
 
@@ -414,26 +426,29 @@ async def _enrich_document(
 
         # Refresh visibility from kb_config at write time — catches any visibility
         # change that happened while this task was queued or running.
-        pool = await get_pool()
-        extra_payload["visibility"] = await kb_config.get_kb_visibility(org_id, kb_slug, pool)
+        # SPEC-TI-003-FOLLOWUP-001 AC-1: tenant_scoped_connection so kb_config +
+        # insert_parent_chunks see the RLS GUC for this org.
+        async with tenant_scoped_connection(org_id) as conn:
+            extra_payload["visibility"] = await kb_config.get_kb_visibility(conn, org_id, kb_slug)
 
-        # SPEC-RAG-PARENT-CHILD-001: persist parents to Postgres NOW so the
-        # generated row ids can be threaded into each child's Qdrant payload.
-        # Skipped (parent_chunk_ids list of None) when this ingest path was
-        # called without parents — keeps backward-compat for any caller that
-        # hasn't been switched to chunk_markdown_with_parents yet.
-        parent_chunk_ids: list[int | None] = [None] * len(enriched_chunks)
-        if parents and parent_index_per_child:
-            from knowledge_ingest import pg_store
+            # SPEC-RAG-PARENT-CHILD-001: persist parents to Postgres NOW so the
+            # generated row ids can be threaded into each child's Qdrant payload.
+            # Skipped (parent_chunk_ids list of None) when this ingest path was
+            # called without parents — keeps backward-compat for any caller that
+            # hasn't been switched to chunk_markdown_with_parents yet.
+            parent_chunk_ids: list[int | None] = [None] * len(enriched_chunks)
+            if parents and parent_index_per_child:
+                from knowledge_ingest import pg_store
 
-            inserted_ids = await pg_store.insert_parent_chunks(
-                artifact_id=artifact_id,
-                org_id=org_id,
-                parents=parents,
-            )
-            for i, parent_idx in enumerate(parent_index_per_child):
-                if parent_idx is not None and 0 <= parent_idx < len(inserted_ids):
-                    parent_chunk_ids[i] = inserted_ids[parent_idx]
+                inserted_ids = await pg_store.insert_parent_chunks(
+                    conn,
+                    artifact_id=artifact_id,
+                    org_id=org_id,
+                    parents=parents,
+                )
+                for i, parent_idx in enumerate(parent_index_per_child):
+                    if parent_idx is not None and 0 <= parent_idx < len(inserted_ids):
+                        parent_chunk_ids[i] = inserted_ids[parent_idx]
 
         # Step 4: Upsert enriched chunks to Qdrant
         t0 = time.monotonic()

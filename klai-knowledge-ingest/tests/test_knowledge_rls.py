@@ -11,6 +11,10 @@ These tests verify:
 All tests use asyncpg mocks — no live DB required. The mock captures
 the sequence of SET CONFIG calls to verify the tenant-pinning contract.
 
+SPEC-TI-003-FOLLOWUP-001: this file exercises ``tenant_scoped_connection``
+itself, so it opts out of the autouse ``_mock_db_helpers`` fixture (which
+patches the helper to a no-op for every other test).
+
 For live-DB integration tests, see tests/integration/ (not committed here).
 """
 
@@ -18,6 +22,10 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+pytestmark = pytest.mark.no_mock_db_helpers
 
 import pytest
 
