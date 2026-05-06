@@ -212,9 +212,17 @@ def test_save_and_load_centroids_roundtrip():
     with tempfile.TemporaryDirectory() as tmpdir:
         mock_settings = type("S", (), {"taxonomy_centroids_dir": tmpdir, "taxonomy_centroid_max_age_hours": 48})()
 
+        # Use ``now`` as ``computed_at`` so the staleness check
+        # (max_age_hours=48) does not reject the round-tripped data.
+        # The original hard-coded "2026-04-06T12:00:00Z" worked when the
+        # test was first written; it ages out of the window the moment
+        # wall-clock time advances past 48h after that date.
+        from datetime import UTC, datetime
+        computed_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
         store = CentroidStore(
             version=1,
-            computed_at="2026-04-06T12:00:00Z",
+            computed_at=computed_at,
             kb_slug="voys",
             org_id="org-42",
             clusters=[
