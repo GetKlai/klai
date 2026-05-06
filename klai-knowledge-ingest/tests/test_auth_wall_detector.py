@@ -1,19 +1,18 @@
-"""Tests for the anonymous-crawl login-wall detector.
+"""SPEC-INGEST-LOGIN-WALL-DETECT-002 Phase B.2 -- detector cluster tests.
 
-SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-01, REQ-02.
+Replaces v1's phrase-substring tests with v2's cluster-detection tests. The
+detector flags a page as a wall iff N or more OTHER pages in the same
+``(org_id, kb_slug)`` have a SimHash within Hamming distance 3 of the page's
+own SimHash. ``N`` defaults to 5 per REQ-02; the Hamming threshold is fixed.
 
-The detector is a pure synchronous function that scans markdown for signs that
-the page is a login-walled stub captured during an anonymous crawl. The most
-critical case is REAL captured RedCactus content (see
-tests/fixtures/auth_walls/redcactus_hubspot.md): the page has 3243 content
-words but only 2 occurrences of the canonical phrase — the detector must still
-flag it, because content-word count alone cannot distinguish boilerplate
-template chrome from real article content.
+The detector is async because cluster lookup queries the database. Tests
+inject a stub ``_FakeConn`` instead of asyncpg so the unit tests stay
+hermetic; pytest-asyncio auto-mode (set in ``pyproject.toml``) handles the
+event loop.
 """
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 
 import pytest
@@ -22,255 +21,443 @@ from knowledge_ingest.utils.auth_wall_detector import (
     AuthWallSignal,
     detect_anonymous_auth_wall,
 )
+from knowledge_ingest.utils.content_fingerprint import (
+    compute_simhash,
+    hamming_distance,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 WALLS = FIXTURES / "auth_walls"
 CLEAN = FIXTURES / "clean_pages"
 
 
-def _read(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
+def _read(p: Path) -> str:
+    return p.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
-# REQ-01 — Pure detector function
+# Fake asyncpg connection
 # ---------------------------------------------------------------------------
 
 
-class TestDetectorPurity:
-    """AC-01.1: importable, pure, deterministic, side-effect-free."""
+class _FakeConn:
+    """Stub for ``asyncpg.Connection`` exposing only ``fetch``.
 
-    def test_returns_dataclass_or_none(self) -> None:
-        result = detect_anonymous_auth_wall("plain text with no login phrases.")
-        assert result is None or isinstance(result, AuthWallSignal)
+    Records every fetch invocation (query string + positional args) so tests
+    can assert on tenant scoping and self-exclusion in the SQL.
+    """
 
-    def test_deterministic(self) -> None:
-        text = _read(WALLS / "redcactus_hubspot.md")
-        first = detect_anonymous_auth_wall(text)
-        second = detect_anonymous_auth_wall(text)
-        third = detect_anonymous_auth_wall(text)
-        assert first is not None
-        assert second is not None
-        assert third is not None
-        # Same pattern + evidence each time.
-        assert first.pattern == second.pattern == third.pattern
-        assert first.evidence == second.evidence == third.evidence
-        assert first.confidence == second.confidence == third.confidence
+    def __init__(self, simhashes: list[int | None]) -> None:
+        self._simhashes: list[int | None] = simhashes
+        self.fetch_calls: list[tuple[str, tuple]] = []
 
-    def test_no_exception_on_empty_input(self) -> None:
-        assert detect_anonymous_auth_wall("") is None
-        assert detect_anonymous_auth_wall("   \n\n\t  ") is None
-
-    def test_no_exception_on_huge_input(self) -> None:
-        # 1 MB of garbage should not crash. Performance asserted separately.
-        text = "lorem ipsum " * 100_000
-        result = detect_anonymous_auth_wall(text)
-        assert result is None
+    async def fetch(self, query: str, *args):
+        self.fetch_calls.append((query, args))
+        return [{"content_simhash": h} for h in self._simhashes]
 
 
-class TestDetectorPerformance:
-    """AC-01.2: p99 latency < 1ms on 100KB input."""
+def _hash_with_low_bits_flipped(base: int, flip_bits: int) -> int:
+    """Return ``base`` with the lowest ``flip_bits`` bits flipped.
 
-    def test_p99_under_1ms_on_100kb(self) -> None:
-        # Real walled fixture is ~31KB; pad with template-chrome-style copy
-        # to get to ~100KB.
-        base = _read(WALLS / "redcactus_hubspot.md")
-        padded = base + ("\n\n## More boilerplate\n\nSome content paragraph. " * 1500)
-        # Sanity: aim for >= 100KB.
-        assert len(padded) >= 100_000
-
-        timings_ms = []
-        for _ in range(200):  # smaller N — keep test runtime reasonable in CI.
-            t0 = time.perf_counter()
-            detect_anonymous_auth_wall(padded)
-            timings_ms.append((time.perf_counter() - t0) * 1000)
-
-        timings_ms.sort()
-        p50 = timings_ms[len(timings_ms) // 2]
-        p99 = timings_ms[int(len(timings_ms) * 0.99)]
-        assert p50 < 0.5, f"p50 {p50:.3f}ms exceeds 0.5ms budget"
-        assert p99 < 1.0, f"p99 {p99:.3f}ms exceeds 1ms budget"
-
-
-class TestFitMarkdownPrecedence:
-    """AC-01.3: fit_markdown takes precedence over raw_markdown for FP-guard."""
-
-    def test_clean_fit_markdown_wins_over_dirty_raw(self) -> None:
-        # raw has 6 weak-signal redirect_to= matches in nav chrome.
-        raw = "[Login](/login?redirect_to=/a) " * 6 + "Some short text."
-        # fit is a clean tutorial (>= 500 non-login content words).
-        fit = "Lorem ipsum dolor sit amet. " * 200
-        assert detect_anonymous_auth_wall(raw, fit_markdown=fit) is None
-
-    def test_dirty_fit_markdown_overrides_clean_raw(self) -> None:
-        raw = "Plain product description with no login terminology."
-        fit = "you will have to log in with your example account to continue"
-        result = detect_anonymous_auth_wall(raw, fit_markdown=fit)
-        assert result is not None
-        assert result.pattern == "canonical_phrase_en"
+    Hamming distance from ``base`` is exactly ``flip_bits`` — useful for
+    testing boundary conditions on the Hamming threshold without hand-rolling
+    SimHash inputs.
+    """
+    base_u64 = base & 0xFFFFFFFFFFFFFFFF
+    return base_u64 ^ ((1 << flip_bits) - 1)
 
 
 # ---------------------------------------------------------------------------
-# REQ-02 — Detection patterns
+# REQ-02 cluster-based detection
 # ---------------------------------------------------------------------------
 
 
-class TestCanonicalPhraseEN:
-    """AC-02.1, AC-02.7: English canonical phrases are STRONG signals."""
+class TestClusterDetection:
+    """Cluster size >= cluster_min OTHER pages → flag (AC-02.1, AC-02.4)."""
 
-    @pytest.mark.parametrize(
-        "phrase",
-        [
-            "Please log in to read the rest of this article.",
-            "You will need to sign in to continue.",
-            "you will have to log in to view this content",
-            "Please log in with your account to access these docs.",
-            "This article requires authentication to view.",
-            "Please sign in to view the full article.",
-        ],
+    @pytest.mark.asyncio
+    async def test_flags_when_5_others_match_exactly(self) -> None:
+        wall_text = _read(WALLS / "redcactus_hubspot.md")
+        target = compute_simhash(wall_text)
+        siblings = [target] * 5  # 5 OTHERS, all at distance 0
+        conn = _FakeConn(siblings)
+
+        signal = await detect_anonymous_auth_wall(
+            wall_text,
+            org_id="org-1",
+            kb_slug="kb-1",
+            url="https://x/wall",
+            conn=conn,
+        )
+        assert signal is not None
+        assert signal.pattern == "template_cluster"
+        assert signal.evidence == ("cluster_size=5 hamming<=3",)
+        assert signal.confidence == 0.9
+
+    @pytest.mark.asyncio
+    async def test_no_flag_when_only_4_others_match(self) -> None:
+        """AC-02.4: cluster boundary at strict-N OTHERS (4 < 5 → no cluster)."""
+        wall_text = _read(WALLS / "redcactus_hubspot.md")
+        target = compute_simhash(wall_text)
+        siblings = [target] * 4
+        conn = _FakeConn(siblings)
+
+        signal = await detect_anonymous_auth_wall(
+            wall_text,
+            org_id="org-1",
+            kb_slug="kb-1",
+            url="https://x/wall",
+            conn=conn,
+        )
+        assert signal is None
+
+    @pytest.mark.asyncio
+    async def test_hamming_4_not_counted_strict_threshold(self) -> None:
+        """AC-02.5: Hamming distance == 4 is OUTSIDE the cluster boundary."""
+        wall_text = _read(WALLS / "redcactus_hubspot.md")
+        target = compute_simhash(wall_text)
+        far_sibling = _hash_with_low_bits_flipped(target, 4)
+        # Sanity: the helper produced exactly Hamming 4.
+        assert hamming_distance(target, far_sibling) == 4
+
+        conn = _FakeConn([far_sibling] * 5)
+        signal = await detect_anonymous_auth_wall(
+            wall_text,
+            org_id="org-1",
+            kb_slug="kb-1",
+            url="https://x/wall",
+            conn=conn,
+        )
+        assert signal is None
+
+    @pytest.mark.asyncio
+    async def test_hamming_3_counted_at_threshold(self) -> None:
+        """The boundary is inclusive: Hamming 3 IS in the cluster."""
+        wall_text = _read(WALLS / "redcactus_hubspot.md")
+        target = compute_simhash(wall_text)
+        boundary_sibling = _hash_with_low_bits_flipped(target, 3)
+        assert hamming_distance(target, boundary_sibling) == 3
+
+        conn = _FakeConn([boundary_sibling] * 5)
+        signal = await detect_anonymous_auth_wall(
+            wall_text,
+            org_id="org-1",
+            kb_slug="kb-1",
+            url="https://x/wall",
+            conn=conn,
+        )
+        assert signal is not None
+        assert "cluster_size=5" in signal.evidence[0]
+
+    @pytest.mark.asyncio
+    async def test_148_redcactus_walls_form_cluster(self) -> None:
+        """AC-02.1: 149-page production cluster yields cluster_size=148.
+
+        Production scenario: voys/support has 149 RedCactus walls. When we
+        evaluate any one wall, the cluster query returns the OTHER 148 (URL
+        exclusion drops the page's own row).
+        """
+        wall_text = _read(WALLS / "redcactus_hubspot.md")
+        target = compute_simhash(wall_text)
+        conn = _FakeConn([target] * 148)
+
+        signal = await detect_anonymous_auth_wall(
+            wall_text,
+            org_id="org-voys",
+            kb_slug="support",
+            url="https://wiki.redcactus.cloud/nl/crm-software/HubSpot",
+            conn=conn,
+        )
+        assert signal is not None
+        assert signal.pattern == "template_cluster"
+        assert "cluster_size=148" in signal.evidence[0]
+
+
+# ---------------------------------------------------------------------------
+# REQ-03 cold-start permissiveness
+# ---------------------------------------------------------------------------
+
+
+class TestColdStart:
+    """Pages in tenants with too few siblings return None (AC-03)."""
+
+    @pytest.mark.asyncio
+    async def test_zero_siblings_returns_none(self) -> None:
+        """AC-03.1: brand-new tenant, 1 page total → None."""
+        wall_text = _read(WALLS / "redcactus_hubspot.md")
+        conn = _FakeConn([])  # no other pages in this KB yet
+
+        signal = await detect_anonymous_auth_wall(
+            wall_text,
+            org_id="new-tenant",
+            kb_slug="support",
+            url="https://x/page-1",
+            conn=conn,
+        )
+        assert signal is None
+
+    @pytest.mark.asyncio
+    async def test_below_threshold_siblings_returns_none(self) -> None:
+        """AC-03.3: 4 OTHERS clustering → still below default 5 → None."""
+        wall_text = _read(WALLS / "redcactus_hubspot.md")
+        target = compute_simhash(wall_text)
+        conn = _FakeConn([target] * 4)
+
+        signal = await detect_anonymous_auth_wall(
+            wall_text,
+            org_id="small-tenant",
+            kb_slug="kb-1",
+            url="https://x/page-1",
+            conn=conn,
+        )
+        assert signal is None
+
+    @pytest.mark.asyncio
+    async def test_null_simhash_rows_skipped(self) -> None:
+        """Sibling rows with NULL content_simhash (legacy, pre-backfill) are skipped."""
+        wall_text = _read(WALLS / "redcactus_hubspot.md")
+        target = compute_simhash(wall_text)
+        # 4 NULL siblings + 5 real → 5 cluster members, NULLs ignored
+        siblings: list[int | None] = [None] * 4 + [target] * 5
+        conn = _FakeConn(siblings)
+
+        signal = await detect_anonymous_auth_wall(
+            wall_text,
+            org_id="x",
+            kb_slug="y",
+            url="https://x/p",
+            conn=conn,
+        )
+        assert signal is not None
+        assert "cluster_size=5" in signal.evidence[0]
+
+
+# ---------------------------------------------------------------------------
+# REQ-02.2 production FPs do NOT cluster against RedCactus walls
+# ---------------------------------------------------------------------------
+
+
+class TestProductionFalsePositives:
+    """The 5 captured production FPs must NOT cluster with RedCactus walls.
+
+    Production scenario: voys/support has 148 RedCactus walls plus a handful
+    of legitimate tutorials. When any FP page is evaluated against the wall
+    cluster, its content fingerprint differs enough that 0 wall-siblings fall
+    within Hamming 3 — so the FP returns None.
+    """
+
+    FP_FIXTURES = (
+        "voys_account_toegang.md",
+        "redcactus_ifttt.md",
+        "redcactus_zoom_setup_nl.md",
+        "auth_documentation_tutorial.md",
+        "de_only_login.md",
     )
-    def test_english_canonical_phrases_fire(self, phrase: str) -> None:
-        result = detect_anonymous_auth_wall(phrase)
-        assert result is not None
-        assert result.pattern == "canonical_phrase_en"
-        assert result.confidence >= 0.9
-        assert any(
-            kw in evidence.lower()
-            for evidence in result.evidence
-            for kw in ("log in", "sign in", "authentication")
+
+    @pytest.mark.parametrize("fp_name", FP_FIXTURES)
+    @pytest.mark.asyncio
+    async def test_fp_not_in_redcactus_wall_cluster(self, fp_name: str) -> None:
+        fp_text = _read(CLEAN / fp_name)
+        wall_text = _read(WALLS / "redcactus_hubspot.md")
+        wall_hash = compute_simhash(wall_text)
+        wall_cluster = [wall_hash] * 148  # production-scale wall cluster
+
+        conn = _FakeConn(wall_cluster)
+        signal = await detect_anonymous_auth_wall(
+            fp_text,
+            org_id="org-voys",
+            kb_slug="support",
+            url=f"https://x/{fp_name}",
+            conn=conn,
+        )
+        assert signal is None, (
+            f"{fp_name} clustered with the RedCactus wall cluster — FP regression"
         )
 
-    def test_real_redcactus_hubspot_fixture_fires(self) -> None:
-        """AC-02.7: real captured RedCactus HubSpot page must flag positive."""
-        text = _read(WALLS / "redcactus_hubspot.md")
-        result = detect_anonymous_auth_wall(text)
-        assert result is not None
-        assert result.pattern == "canonical_phrase_en"
-        assert result.confidence >= 0.9
 
-    def test_real_redcactus_hubspot_embedded_fixture_fires(self) -> None:
-        text = _read(WALLS / "redcactus_hubspot_embedded.md")
-        result = detect_anonymous_auth_wall(text)
-        assert result is not None
-        assert result.pattern == "canonical_phrase_en"
+# ---------------------------------------------------------------------------
+# REQ-06 caller signature stability + fail-open
+# ---------------------------------------------------------------------------
 
 
-class TestCanonicalPhraseNL:
-    """AC-02.2: Dutch canonical phrases are STRONG signals."""
+class TestSignatureStability:
+    """v1 callers (no DB args) must still work — they get None (AC-06)."""
+
+    @pytest.mark.asyncio
+    async def test_no_db_args_returns_none(self) -> None:
+        """AC-06.2: missing org_id/kb_slug/conn → fail-open None."""
+        signal = await detect_anonymous_auth_wall(
+            "any text", fit_markdown="more text", url="https://x"
+        )
+        assert signal is None
+
+    @pytest.mark.asyncio
+    async def test_partial_db_args_returns_none(self) -> None:
+        """org_id without conn → still fail-open."""
+        signal = await detect_anonymous_auth_wall(
+            "any text", org_id="x", kb_slug="y", url="https://x"
+        )
+        assert signal is None
+
+    @pytest.mark.asyncio
+    async def test_empty_input_returns_none(self) -> None:
+        conn = _FakeConn([])
+        signal = await detect_anonymous_auth_wall(
+            "", org_id="x", kb_slug="y", url="https://x", conn=conn
+        )
+        assert signal is None
+
+
+# ---------------------------------------------------------------------------
+# REQ-09 tenant isolation in the SQL
+# ---------------------------------------------------------------------------
+
+
+class TestTenantIsolation:
+    """SQL must filter by both org_id AND kb_slug (AC-09.1)."""
+
+    @pytest.mark.asyncio
+    async def test_query_filters_by_org_and_kb(self) -> None:
+        wall_text = _read(WALLS / "redcactus_hubspot.md")
+        conn = _FakeConn([])
+
+        await detect_anonymous_auth_wall(
+            wall_text,
+            org_id="org-voys",
+            kb_slug="support",
+            url="https://x/p",
+            conn=conn,
+        )
+        assert len(conn.fetch_calls) == 1
+        query, args = conn.fetch_calls[0]
+        assert "org_id" in query, "SQL must filter by org_id"
+        assert "kb_slug" in query, "SQL must filter by kb_slug"
+        assert "org-voys" in args
+        assert "support" in args
+
+    @pytest.mark.asyncio
+    async def test_query_excludes_self_via_url(self) -> None:
+        """Backfill path: target page is in DB → must NOT count itself."""
+        wall_text = _read(WALLS / "redcactus_hubspot.md")
+        conn = _FakeConn([])
+        page_url = "https://x/the-page"
+
+        await detect_anonymous_auth_wall(
+            wall_text,
+            org_id="org-1",
+            kb_slug="kb-1",
+            url=page_url,
+            conn=conn,
+        )
+        query, args = conn.fetch_calls[0]
+        # Either explicit URL exclusion clause is acceptable — Postgres syntax
+        # allows both `<>` and `!=`.
+        lower = query.lower()
+        assert "url <>" in lower or "url !=" in lower, (
+            "URL exclusion clause missing — backfill would count target page itself"
+        )
+        assert page_url in args
+
+
+# ---------------------------------------------------------------------------
+# REQ-07 signal shape (constant pattern + evidence shape)
+# ---------------------------------------------------------------------------
+
+
+class TestSignalShape:
+    """The AuthWallSignal returned matches v2 contract (REQ-07)."""
+
+    @pytest.mark.asyncio
+    async def test_signal_pattern_is_template_cluster(self) -> None:
+        wall_text = _read(WALLS / "redcactus_hubspot.md")
+        target = compute_simhash(wall_text)
+        conn = _FakeConn([target] * 5)
+
+        signal = await detect_anonymous_auth_wall(
+            wall_text,
+            org_id="x",
+            kb_slug="y",
+            url="https://x/p",
+            conn=conn,
+        )
+        assert signal is not None
+        assert signal.pattern == "template_cluster"
+        assert signal.confidence == 0.9
+        assert len(signal.evidence) == 1
+        assert "cluster_size=" in signal.evidence[0]
+        assert "hamming<=3" in signal.evidence[0]
+
+    def test_authwall_signal_dataclass_fields(self) -> None:
+        """The dataclass remains usable from sync code (e.g., the exception)."""
+        signal = AuthWallSignal(
+            pattern="template_cluster",
+            evidence=("cluster_size=10 hamming<=3",),
+            confidence=0.9,
+        )
+        assert signal.pattern == "template_cluster"
+        assert signal.evidence == ("cluster_size=10 hamming<=3",)
+        assert signal.confidence == 0.9
+
+
+# ---------------------------------------------------------------------------
+# REQ-02.3 synthetic CMS fixtures
+# ---------------------------------------------------------------------------
+
+
+class TestSyntheticCmsClusters:
+    """Synthetic Confluence/WordPress/Notion fixtures cluster (AC-02.3)."""
 
     @pytest.mark.parametrize(
-        "phrase",
-        [
-            "U dient in te loggen om verder te gaan.",
-            "Log in om dit te lezen.",
-            "Meld u aan om verder te gaan met dit artikel.",
-        ],
-    )
-    def test_dutch_canonical_phrases_fire(self, phrase: str) -> None:
-        result = detect_anonymous_auth_wall(phrase)
-        assert result is not None
-        assert result.pattern == "canonical_phrase_nl"
-        assert result.confidence >= 0.9
-
-
-class TestGermanNotMatched:
-    """AC-02.2b: DE-only login content is NOT flagged in v1 (documented gap)."""
-
-    def test_de_only_does_not_fire(self) -> None:
-        text = _read(CLEAN / "de_only_login.md")
-        result = detect_anonymous_auth_wall(text)
-        assert result is None, (
-            "DE-only login pages without redirect_to= density should NOT "
-            "fire in v1. If a DE tenant onboards, extend canonical_phrase_de "
-            "in a follow-up SPEC and update this test."
-        )
-
-
-class TestRedirectDensity:
-    """AC-02.3: weak signal — redirect_to= ≥ 5 matches."""
-
-    def test_high_redirect_density_fires(self) -> None:
-        # 6 redirect_to= occurrences, no canonical phrase, short content.
-        raw = (
-            "[a](/login?redirect_to=/page1) "
-            "[b](/login?redirect_to=/page2) "
-            "[c](/login?redirect_to=/page3) "
-            "[d](/login?redirect_to=/page4) "
-            "[e](/login?redirect_to=/page5) "
-            "[f](/login?redirect_to=/page6) "
-            "Members only."
-        )
-        result = detect_anonymous_auth_wall(raw)
-        assert result is not None
-        assert result.pattern == "redirect_density"
-        assert "6" in " ".join(result.evidence)
-
-    def test_low_redirect_density_does_not_fire(self) -> None:
-        raw = "[a](/login?redirect_to=/page1) [b](/login?redirect_to=/page2)"
-        result = detect_anonymous_auth_wall(raw)
-        assert result is None
-
-
-class TestLoginLinkRepetition:
-    """AC-02.4: weak signal — same /login href repeated ≥ 5 times."""
-
-    def test_repeated_login_anchor_fires(self) -> None:
-        raw = ("[Sign in](https://example.com/login) " * 6) + "Members only."
-        result = detect_anonymous_auth_wall(raw)
-        assert result is not None
-        assert result.pattern in ("login_link_repetition", "redirect_density")
-        # Either pattern is acceptable here — the repeated href contains /login.
-
-
-class TestContentLoginRatio:
-    """AC-02.5: weak signal — < 100 content words AND >= 3 login anchors."""
-
-    def test_short_page_with_many_login_links_fires(self) -> None:
-        raw = "[Sign in](/login/a) [Sign in](/login/b) [Sign in](/login/c) Short page."
-        result = detect_anonymous_auth_wall(raw)
-        assert result is not None
-
-
-class TestFalsePositiveGuard:
-    """AC-02.6, AC-02.6b: FP-guard protects WEAK signals only."""
-
-    def test_clean_redcactus_ifttt_does_not_fire(self) -> None:
-        text = _read(CLEAN / "redcactus_ifttt.md")
-        result = detect_anonymous_auth_wall(text)
-        assert result is None
-
-    def test_auth_documentation_tutorial_does_not_fire(self) -> None:
-        """AC-02.6: WEAK signals (6x /login anchors) + 500+ content words -> None."""
-        text = _read(CLEAN / "auth_documentation_tutorial.md")
-        result = detect_anonymous_auth_wall(text)
-        assert result is None, (
-            "Tutorial pages discussing authentication should not fire — "
-            "they contain login links in chrome but have no canonical "
-            "wall phrase and abundant clean content."
-        )
-
-    def test_canonical_phrase_overrides_word_count(self) -> None:
-        """AC-02.6b: Condition A is STRONG; word count cannot veto it."""
-        # 3243-word RedCactus page must STILL fire.
-        text = _read(WALLS / "redcactus_hubspot.md")
-        result = detect_anonymous_auth_wall(text)
-        assert result is not None
-        assert result.pattern == "canonical_phrase_en"
-
-
-class TestSyntheticFixtures:
-    """Verify synthetic Confluence/WordPress/Notion fixtures all fire."""
-
-    @pytest.mark.parametrize(
-        "fixture_name",
+        "wall_name",
         [
             "confluence_login_required.md",
             "wordpress_login_redirect.md",
             "notion_private_page.md",
         ],
     )
-    def test_synthetic_walls_fire(self, fixture_name: str) -> None:
-        text = _read(WALLS / fixture_name)
-        result = detect_anonymous_auth_wall(text)
-        assert result is not None, f"{fixture_name} did not fire"
-        assert result.confidence >= 0.7
+    @pytest.mark.asyncio
+    async def test_synthetic_cms_walls_cluster(self, wall_name: str) -> None:
+        wall_text = _read(WALLS / wall_name)
+        target = compute_simhash(wall_text)
+        conn = _FakeConn([target] * 5)
+
+        signal = await detect_anonymous_auth_wall(
+            wall_text,
+            org_id="x",
+            kb_slug="y",
+            url=f"https://x/{wall_name}",
+            conn=conn,
+        )
+        assert signal is not None
+        assert signal.pattern == "template_cluster"
+
+
+# ---------------------------------------------------------------------------
+# Configurable cluster_min argument
+# ---------------------------------------------------------------------------
+
+
+class TestConfigurableThreshold:
+    """``cluster_min`` arg overrides the default 5."""
+
+    @pytest.mark.asyncio
+    async def test_lower_threshold_flags_smaller_cluster(self) -> None:
+        wall_text = _read(WALLS / "redcactus_hubspot.md")
+        target = compute_simhash(wall_text)
+        conn = _FakeConn([target] * 3)  # 3 OTHERS
+
+        # Default 5 → no flag
+        assert await detect_anonymous_auth_wall(
+            wall_text, org_id="x", kb_slug="y", url="https://x", conn=conn
+        ) is None
+        # Lowered to 3 → flag
+        signal = await detect_anonymous_auth_wall(
+            wall_text,
+            org_id="x",
+            kb_slug="y",
+            url="https://x",
+            conn=conn,
+            cluster_min=3,
+        )
+        assert signal is not None
+        assert "cluster_size=3" in signal.evidence[0]

@@ -90,9 +90,9 @@ class TestBFSContinuity:
                 raise AnonymousAuthWallDetected(
                     url,
                     AuthWallSignal(
-                        pattern="canonical_phrase_en",
+                        pattern="template_cluster",
                         evidence=("have to log in",),
-                        confidence=0.95,
+                        confidence=0.9,
                     ),
                 )
             ingested_urls.append(url)
@@ -157,7 +157,7 @@ class TestErrorSummaryWritten:
             if "wall" in url:
                 raise AnonymousAuthWallDetected(
                     url,
-                    AuthWallSignal(pattern="canonical_phrase_en", confidence=0.95),
+                    AuthWallSignal(pattern="template_cluster", confidence=0.9),
                 )
 
         patches = _patch_crawler_externals([clean, *walls], ingest_side_effect)
@@ -215,7 +215,7 @@ class TestFailedPartial:
             url = args[2] if len(args) >= 3 else kwargs.get("url")
             raise AnonymousAuthWallDetected(
                 url,
-                AuthWallSignal(pattern="canonical_phrase_en", confidence=0.95),
+                AuthWallSignal(pattern="template_cluster", confidence=0.9),
             )
 
         patches = _patch_crawler_externals(walls, ingest_side_effect)
@@ -251,7 +251,7 @@ class TestFailedPartial:
             if "wall" in url:
                 raise AnonymousAuthWallDetected(
                     url,
-                    AuthWallSignal(pattern="canonical_phrase_en", confidence=0.95),
+                    AuthWallSignal(pattern="template_cluster", confidence=0.9),
                 )
 
         patches = _patch_crawler_externals([clean, *walls], ingest_side_effect)

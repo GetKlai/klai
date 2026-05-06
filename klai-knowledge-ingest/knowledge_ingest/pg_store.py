@@ -709,6 +709,30 @@ async def delete_connector_crawl_jobs(
     return int(result or 0)
 
 
+async def update_crawled_page_simhash(
+    conn: asyncpg.Connection,
+    org_id: str,
+    kb_slug: str,
+    url: str,
+    content_simhash: int,
+) -> None:
+    """SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-01 -- store the SimHash on the row.
+
+    Called after ``upsert_crawled_page`` (so the row exists). Idempotent: a
+    re-run with the same hash is a no-op write. Tenant-scoped: the WHERE
+    clause filters by ``org_id`` AND ``kb_slug`` AND ``url``.
+    """
+    await conn.execute(
+        "UPDATE knowledge.crawled_pages "
+        "SET content_simhash = $1 "
+        "WHERE org_id = $2 AND kb_slug = $3 AND url = $4",
+        content_simhash,
+        org_id,
+        kb_slug,
+        url,
+    )
+
+
 async def upsert_crawled_page(
     conn: asyncpg.Connection,
     org_id: str,
