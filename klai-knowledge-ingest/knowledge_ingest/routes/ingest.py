@@ -34,6 +34,7 @@ from knowledge_ingest.config import settings
 from knowledge_ingest.content_labeler import generate_content_label
 from knowledge_ingest.content_profiles import get_profile
 from knowledge_ingest.db import get_pool
+from knowledge_ingest.identity import assert_caller_identity
 from knowledge_ingest.models import (
     BulkSyncRequest,
     GiteaPushEvent,
@@ -41,7 +42,6 @@ from knowledge_ingest.models import (
     KBWebhookRequest,
     UpdateKBVisibilityRequest,
 )
-from knowledge_ingest.identity import assert_caller_identity
 from knowledge_ingest.portal_client import fetch_taxonomy_nodes
 from knowledge_ingest.taxonomy_classifier import classify_document
 
@@ -372,7 +372,19 @@ async def ingest_document(req: IngestRequest) -> dict:
                         taxonomy_node_ids = centroid_result
                         centroid_matched = True
         except Exception:
-            logger.debug("centroid_lookup_failed", exc_info=True)
+            # Audit 2026-05-06 finding 5: this used to log at debug, which is below
+            # the production INFO floor (logging_setup.py) and thus invisible in
+            # VictoriaLogs. Centroid failures are infrastructure events (corrupt
+            # blob, TEI down, numpy mismatch), not user-content errors — they
+            # silently force every document onto the expensive LLM-classification
+            # path until somebody correlates a token-cost spike. Bumping to
+            # warning surfaces the event without triggering level:error alerts.
+            logger.warning(
+                "centroid_lookup_failed",
+                exc_info=True,
+                org_id=req.org_id,
+                kb_slug=req.kb_slug,
+            )
 
         if not centroid_matched:
             matched_nodes, llm_tags = await classify_document(
@@ -619,9 +631,7 @@ async def ingest_document(req: IngestRequest) -> dict:
 @router.post("/ingest/v1/document")
 async def ingest_document_route(req: IngestRequest, request: Request) -> dict:
     """Ingest a document. SPEC-TI-003 AC-6: identity assertion on body org_id."""
-    await assert_caller_identity(
-        request, claimed_org_id=req.org_id, claimed_user_id=req.user_id
-    )
+    await assert_caller_identity(request, claimed_org_id=req.org_id, claimed_user_id=req.user_id)
     return await ingest_document(req)
 
 

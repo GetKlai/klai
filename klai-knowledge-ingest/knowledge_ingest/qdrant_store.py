@@ -7,6 +7,7 @@ Single collection: klai_knowledge
   - vector_sparse (sparse): BM25-style lexical matching via BGE-M3
 Tenant isolation via org_id payload filter.
 """
+
 import asyncio
 import time
 import uuid
@@ -79,34 +80,80 @@ async def ensure_collection() -> None:
     collection_info = await client.get_collection(COLLECTION)
     indexed_fields = set((collection_info.payload_schema or {}).keys())
     for field in (
-        "org_id", "kb_slug", "artifact_id", "content_type",
-        "user_id", "entity_uuids", "taxonomy_node_id", "source_connector_id",
-        "taxonomy_node_ids", "tags", "content_label", "source_label",
+        "org_id",
+        "kb_slug",
+        "artifact_id",
+        "content_type",
+        "user_id",
+        "entity_uuids",
+        "taxonomy_node_id",
+        "source_connector_id",
+        "taxonomy_node_ids",
+        "tags",
+        "content_label",
+        "source_label",
         "chunk_type",
     ):
         if field not in indexed_fields:
             await client.create_payload_index(
-                COLLECTION, field_name=field, field_schema="keyword",
+                COLLECTION,
+                field_name=field,
+                field_schema="keyword",
             )
             logger.info("qdrant_payload_index_created", field=field, collection=COLLECTION)
 
     # source_url: keyword index for payload-filter-based chunk lookup (SPEC-CRAWLER-003)
     if "source_url" not in indexed_fields:
         await client.create_payload_index(
-            COLLECTION, field_name="source_url", field_schema="keyword",
+            COLLECTION,
+            field_name="source_url",
+            field_schema="keyword",
         )
         logger.info("qdrant_payload_index_created", field="source_url", collection=COLLECTION)
 
     # incoming_link_count: integer index for authority boost queries (SPEC-CRAWLER-003)
     if "incoming_link_count" not in indexed_fields:
         await client.create_payload_index(
-            COLLECTION, field_name="incoming_link_count", field_schema="integer",
+            COLLECTION,
+            field_name="incoming_link_count",
+            field_schema="integer",
         )
         logger.info(
             "qdrant_payload_index_created",
             field="incoming_link_count",
             collection=COLLECTION,
         )
+
+
+# Audit 2026-05-06 finding 4: deny-list of extra_payload keys that the
+# pipeline carries through Procrastinate task args + PG `artifacts.extra`
+# but that should NOT land in Qdrant per-chunk payload. Each of these is
+# either huge (full document body) or only useful at processing time
+# (cache hits across Phase-2 retries). All are excluded from the
+# read-side filter `_ALLOWED_METADATA_FIELDS` below; storing them in
+# Qdrant is dead weight.
+#
+# - document_text:     ~100 KB raw body x N chunks = MB per document
+# - document_summary:  ~1-2 KB Anthropic contextual-retrieval summary
+# - document_language: 2-3 char ISO code, but lives in extra_payload
+#                      only for Phase-2 cache parity with summary
+#
+# The fields stay in PG (`artifacts.extra->>'document_text'`, used by
+# rebuild_kb) and in the Procrastinate task args (used by
+# `_enrich_document` for cache hits across retries). Stripping them at
+# the Qdrant boundary keeps both consumers working.
+_QDRANT_PAYLOAD_DENY_LIST: frozenset[str] = frozenset(
+    {"document_text", "document_summary", "document_language"}
+)
+
+
+def _extra_payload_for_qdrant(extra_payload: dict | None) -> dict:
+    """Return ``extra_payload`` minus keys that should not be persisted in
+    Qdrant chunk-payload. Returns an empty dict for None input.
+    """
+    if not extra_payload:
+        return {}
+    return {k: v for k, v in extra_payload.items() if k not in _QDRANT_PAYLOAD_DENY_LIST}
 
 
 async def upsert_chunks(
@@ -170,8 +217,7 @@ async def upsert_chunks(
     # Store content_label when not None — includes [] (labeler ran but failed)
     if content_label is not None:
         base_payload["content_label"] = content_label
-    if extra_payload:
-        base_payload.update(extra_payload)
+    base_payload.update(_extra_payload_for_qdrant(extra_payload))
 
     points = [
         PointStruct(
@@ -241,8 +287,7 @@ async def upsert_enriched_chunks(
         base_payload["valid_until"] = belief_time_end
     if user_id:
         base_payload["user_id"] = user_id
-    if extra_payload:
-        base_payload.update(extra_payload)
+    base_payload.update(_extra_payload_for_qdrant(extra_payload))
 
     # Default sparse_vectors to all None if not provided
     if sparse_vectors is None:
@@ -340,7 +385,9 @@ async def delete_connector(org_id: str, kb_slug: str, connector_id: str) -> None
     )
     logger.info(
         "connector_chunks_deleted",
-        org_id=org_id, kb_slug=kb_slug, connector_id=connector_id,
+        org_id=org_id,
+        kb_slug=kb_slug,
+        connector_id=connector_id,
     )
 
 
@@ -360,13 +407,27 @@ async def update_kb_visibility(org_id: str, kb_slug: str, visibility: str) -> No
     logger.info("kb_visibility_updated", org_id=org_id, kb_slug=kb_slug, visibility=visibility)
 
 
-_ALLOWED_METADATA_FIELDS = frozenset({
-    "title", "kb_slug", "chunk_index", "created_at",
-    "source_type", "source_connector_id", "source_ref", "visibility",
-    "tags", "provenance_type", "confidence",
-    "artifact_id", "content_type", "valid_from", "valid_until", "ingested_at",
-    "assertion_mode",
-})
+_ALLOWED_METADATA_FIELDS = frozenset(
+    {
+        "title",
+        "kb_slug",
+        "chunk_index",
+        "created_at",
+        "source_type",
+        "source_connector_id",
+        "source_ref",
+        "visibility",
+        "tags",
+        "provenance_type",
+        "confidence",
+        "artifact_id",
+        "content_type",
+        "valid_from",
+        "valid_until",
+        "ingested_at",
+        "assertion_mode",
+    }
+)
 
 
 async def search(
@@ -443,12 +504,12 @@ async def search(
     return [
         {
             "text": p.payload.get("text", "") if p.payload else "",
-            "source": f"{p.payload.get('kb_slug', '')}/{p.payload.get('path', '')}" if p.payload else "",  # noqa: E501
+            "source": f"{p.payload.get('kb_slug', '')}/{p.payload.get('path', '')}"
+            if p.payload
+            else "",
             "score": p.score,
             "metadata": {
-                k: v
-                for k, v in (p.payload or {}).items()
-                if k in _ALLOWED_METADATA_FIELDS
+                k: v for k, v in (p.payload or {}).items() if k in _ALLOWED_METADATA_FIELDS
             },
         }
         for p in points
@@ -542,9 +603,7 @@ async def update_link_counts(
                     timeout=5.0,
                 )
             except TimeoutError:
-                logger.warning(
-                    "link_count_update_timeout", url=url, org_id=org_id, kb_slug=kb_slug
-                )
+                logger.warning("link_count_update_timeout", url=url, org_id=org_id, kb_slug=kb_slug)
 
     t0 = time.time()
     await asyncio.gather(*(_update_one(url, count) for url, count in url_to_count.items()))
