@@ -351,3 +351,112 @@ class TestJwtPathStillRejectsBodyMismatch:
             )
         assert resp.status_code == 403
         assert resp.json()["detail"] == {"error": "org_mismatch"}
+
+
+# ---------------------------------------------------------------------------
+# F2 (audit retrieval-coupling-2026-05-06): partner_chat sends synthetic
+# `partner:<key_id>` user_id. retrieval-api MUST recognize the prefix,
+# pin verified_caller without portal verify, and emit knowledge.queried.
+# ---------------------------------------------------------------------------
+
+
+class TestPartnerSyntheticIdentity:
+    def test_partner_user_id_pins_verified_caller_without_portal_verify(
+        self, monkeypatch, app_client
+    ):
+        """partner_chat sends `user_id="partner:<key_id>"` — retrieval-api
+        SHALL pin the synthetic tuple as verified_caller without calling
+        portal /internal/identity/verify (which would 403 — there's no real
+        Zitadel user with that synthetic id)."""
+        verify_called: list = []
+
+        class _PortalShouldNotBeCalled:
+            async def verify(self, **_kw):
+                verify_called.append(_kw)
+                raise AssertionError(
+                    "portal verify must NOT be called for partner: prefix; "
+                    "the partner key was already validated upstream."
+                )
+
+        monkeypatch.setattr(
+            "retrieval_api.middleware.auth._get_asserter",
+            lambda: _PortalShouldNotBeCalled(),
+        )
+
+        emit_calls: list[dict] = []
+        monkeypatch.setattr(
+            "retrieval_api.api.retrieve.emit_event",
+            lambda *a, **kw: emit_calls.append({"args": a, "kwargs": kw}),
+        )
+
+        with (
+            _patch_retrieval_pipeline_to_bypass()[0],
+            _patch_retrieval_pipeline_to_bypass()[1],
+            _patch_retrieval_pipeline_to_bypass()[2],
+            _patch_retrieval_pipeline_to_bypass()[3],
+        ):
+            resp = app_client.post(
+                "/retrieve",
+                json={
+                    "query": "q",
+                    "org_id": "tenant-acme",
+                    "user_id": "partner:abc-123",
+                    "scope": "org",
+                },
+                headers={
+                    "X-Internal-Secret": "test-internal-secret-do-not-use-in-prod",
+                    "X-Caller-Service": "portal-api",
+                },
+            )
+
+        assert resp.status_code == 200, resp.text
+        assert verify_called == [], (
+            "portal /internal/identity/verify MUST NOT be called for partner: prefix"
+        )
+        # emit_event was called for knowledge.queried with the synthetic tuple.
+        assert any(
+            "knowledge.queried" in (call["args"] + tuple(call["kwargs"].values()))
+            and call["kwargs"].get("tenant_id") == "tenant-acme"
+            and call["kwargs"].get("user_id") == "partner:abc-123"
+            for call in emit_calls
+        ), f"knowledge.queried event missing or wrong tuple: {emit_calls}"
+
+    def test_partner_prefix_only_for_portal_api_caller_service(self, monkeypatch, app_client):
+        """The partner: prefix bypass is GATED on caller_service == "portal-api".
+        Other services with `partner:` user_id MUST go through the portal
+        verify path (and reject, since no real user has that id)."""
+        from klai_identity_assert import VerifyResult
+
+        class _DenyAsserter:
+            async def verify(self, **_kw):
+                return VerifyResult.deny(reason="user_not_in_org")
+
+        monkeypatch.setattr(
+            "retrieval_api.middleware.auth._get_asserter",
+            lambda: _DenyAsserter(),
+        )
+
+        with (
+            _patch_retrieval_pipeline_to_bypass()[0],
+            _patch_retrieval_pipeline_to_bypass()[1],
+            _patch_retrieval_pipeline_to_bypass()[2],
+            _patch_retrieval_pipeline_to_bypass()[3],
+        ):
+            resp = app_client.post(
+                "/retrieve",
+                json={
+                    "query": "q",
+                    "org_id": "tenant-acme",
+                    "user_id": "partner:abc-123",
+                    "scope": "org",
+                },
+                headers={
+                    "X-Internal-Secret": "test-internal-secret-do-not-use-in-prod",
+                    # Different caller — bypass MUST NOT apply.
+                    "X-Caller-Service": "knowledge-mcp",
+                },
+            )
+
+        # Falls through to portal verify, which denies, → 403.
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == {"error": "identity_assertion_failed"}

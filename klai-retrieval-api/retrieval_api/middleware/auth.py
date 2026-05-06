@@ -543,6 +543,37 @@ async def verify_body_identity(
             detail={"error": "unknown_caller_service"},
         )
 
+    # F2 from retrieval coupling audit (2026-05-06): partner-API operates at
+    # org-level only — SPEC-API-001 explicitly states partners "have no
+    # concept of end users". The synthetic `partner:<key_id>` user_id used
+    # by partner_chat is NOT a real Zitadel user; portal-api
+    # /internal/identity/verify would 403 on it because the (user_id, org_id)
+    # tuple does not exist in portal_users.
+    #
+    # The partner key has already been validated by portal-api's
+    # get_partner_key dependency upstream — by the time this request reaches
+    # retrieval-api, portal-api has confirmed the bearer is a valid partner
+    # key for this org. The X-Internal-Secret + X-Caller-Service: portal-api
+    # combination is therefore a sufficient trust gate for this synthetic
+    # identity to flow through. Pin it directly so retrieval-api's
+    # emit_event sources the right tenant tag in product_events.
+    #
+    # Restricted to caller_service == "portal-api": no other service is
+    # supposed to manage partner keys, and the prefix bypass is the only
+    # path that skips the portal verify call. Audit ref:
+    # .moai/audits/retrieval-coupling-2026-05-06/findings/F2-...md
+    if caller_service == "portal-api" and str(body_user_id).startswith("partner:"):
+        logger.info(
+            "partner_synthetic_identity_pinned",
+            caller_service=caller_service,
+            partner_user_hash=_hash_sub(str(body_user_id)),
+            path=request.url.path,
+        )
+        request.state.verified_caller = VerifiedCaller(
+            user_id=str(body_user_id), org_id=str(body_org_id)
+        )
+        return
+
     asserter = _get_asserter()
     result = await asserter.verify(
         caller_service=caller_service,
