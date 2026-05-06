@@ -12,6 +12,7 @@ allow-result so the assertion_mode validation path is actually reached.
 Without the mock the tests pass through ``_ERR_IDENTITY_REJECTED`` and
 silently never exercise the taxonomy logic.
 """
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -35,20 +36,20 @@ def _patch_env(monkeypatch):
 
 
 def _valid_ctx():
-    return _make_ctx({
-        "x-user-id": "user1",
-        "x-org-id": "org1",
-        "x-org-slug": "testorg",
-        "x-internal-secret": "test-secret",
-    })
+    return _make_ctx(
+        {
+            "x-user-id": "user1",
+            "x-org-id": "org1",
+            "x-org-slug": "testorg",
+            "x-internal-secret": "test-secret",
+        }
+    )
 
 
 def _allow() -> VerifyResult:
     """Mirror of the helper in test_identity_assert.py — keeps every taxonomy
     test focused on assertion_mode behaviour, not the identity-verify chain."""
-    return VerifyResult.allow(
-        user_id="user1", org_id="org1", org_slug="testorg", evidence="jwt"
-    )  # type: ignore[arg-type]
+    return VerifyResult.allow(user_id="user1", org_id="org1", org_slug="testorg", evidence="jwt")  # type: ignore[arg-type]
 
 
 class TestAssertionModeType:
@@ -62,11 +63,19 @@ class TestAssertionModeType:
         )
 
     def test_assertion_mode_literal_exists(self, _patch_env):
-        from main import AssertionMode
         from typing import get_args
 
+        from main import AssertionMode
+
         args = set(get_args(AssertionMode))
-        assert args == {"factual", "belief", "hypothesis", "procedural", "quoted", "unknown"}
+        assert args == {
+            "factual",
+            "belief",
+            "hypothesis",
+            "procedural",
+            "quoted",
+            "unknown",
+        }
 
 
 class TestAssertionModeValidation:
@@ -109,7 +118,10 @@ class TestAssertionModeValidValues:
     """All 6 valid assertion_mode values must be accepted."""
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("mode", ["factual", "belief", "hypothesis", "procedural", "quoted", "unknown"])
+    @pytest.mark.parametrize(
+        "mode",
+        ["factual", "belief", "hypothesis", "procedural", "quoted", "unknown"],
+    )
     async def test_valid_mode_accepted(self, _patch_env, mode):
         from main import save_personal_knowledge
 
@@ -140,7 +152,16 @@ class TestMissingAssertionModeDefaultsToUnknown:
         ctx = _valid_ctx()
         captured_mode = {}
 
-        async def _capture_ingest(org_id, kb_slug, title, content, assertion_mode, tags, source_note, user_id=None):
+        async def _capture_ingest(
+            org_id,
+            kb_slug,
+            title,
+            content,
+            assertion_mode,
+            tags,
+            source_note,
+            user_id=None,
+        ):
             captured_mode["value"] = assertion_mode
             return True
 
