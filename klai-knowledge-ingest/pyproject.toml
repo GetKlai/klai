@@ -19,6 +19,7 @@ dependencies = [
     "procrastinate>=3.0,<4",
     "structlog>=25.0",
     "scikit-learn>=1.3.0",
+    "umap-learn>=0.5.6",
     "graphiti-core[falkordb]>=0.28,<0.29",
     "klai-connector-credentials",
     "klai-image-storage",
@@ -58,6 +59,8 @@ ignore = [
 "knowledge_ingest/crawl4ai_client.py" = ["E501"]  # JS strings in multiline literals
 "alembic/versions/*.py" = ["E501"]  # SQL DDL lines legitimately exceed 100 chars
 "tests/test_alembic_bootstrap.py" = ["E501", "S603", "S607"]  # test file calls subprocess with known-safe args
+"tests/test_clustering_umap.py" = ["E501"]  # patch() strings and assert messages legitimately exceed 100 chars
+"tests/test_taxonomy_v2_bootstrap.py" = ["E501"]  # patch() strings and docstrings legitimately exceed 100 chars
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
