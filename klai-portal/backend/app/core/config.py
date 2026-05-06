@@ -208,6 +208,7 @@ class Settings(BaseSettings):
     garage_s3_access_key: str = ""
     garage_s3_secret_key: str = ""
     garage_s3_bucket: str = "klai-scribe"  # default bucket name for scribe artifacts
+    garage_kb_bucket: str = "klai-images"  # SPEC-TI-009: bucket for KB images (auth-proxied via portal-api)
 
     # SPEC-INFRA-TENANT-DELETE-001 R1: platform-org slug guard for admin deprovision endpoint.
     # The DELETE /api/admin/orgs/{slug}/deprovision endpoint requires the caller to be

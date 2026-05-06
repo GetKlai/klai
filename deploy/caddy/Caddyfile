@@ -231,10 +231,13 @@
         }
     }
 
-    # Knowledge base images served via Garage S3 website endpoint (anonymous reads)
+    # Knowledge base images -- auth-proxied via portal-api (SPEC-TI-009 / B-4).
+    # CHANGED: no longer serves directly from Garage website-mode (anonymous reads).
+    # portal-api verifies session.org_id == path[org_id] before streaming from S3.
+    # Operator step: disable Garage website-mode ->
+    #   ssh core-01 "docker exec klai-core-garage-1 garage bucket website --deny klai-images"
     handle_path /kb-images/* {
-        reverse_proxy garage:3902 {
-            header_up Host klai-images.web.garage
+        reverse_proxy portal-api:8000 {
             header_up -X-Internal-Secret
             header_up -X-Caller-Service
             header_up -X-Org-ID
