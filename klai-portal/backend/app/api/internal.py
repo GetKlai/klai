@@ -610,107 +610,192 @@ class KnowledgeFeatureResponse(BaseModel):
     zitadel_user_id: str | None = None
 
 
+# @MX:ANCHOR: [AUTO] Public API boundary -- LiteLLM knowledge hook on every chat request
+# @MX:REASON: fan_in >= 3 callers (litellm hook, partner_chat, integration tests)
+# @MX:SPEC: SPEC-TI-010C B-6
 @router.get("/v1/users/{librechat_user_id}/feature/knowledge", response_model=KnowledgeFeatureResponse)
 async def get_knowledge_feature(
     librechat_user_id: str,
-    org_id: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    org_id: str | None = None,  # SPEC-TI-010C B-6: deprecated; server resolves tenant
 ) -> KnowledgeFeatureResponse:
     """Check whether a user has the knowledge product entitlement.
 
     Called by the LiteLLM knowledge hook on every chat request. Auth-gated (fail-closed):
-    any error or unknown user returns enabled=False so KB injection never leaks to
-    unauthorized users.
+    any error or unknown user returns enabled=False so KB injection never leaks.
 
-    Lazy mapping: on first call for an unknown librechat_user_id, performs a MongoDB
-    lookup in the tenant's LibreChat database to resolve the Zitadel user ID and caches
-    it in portal_users.librechat_user_id for all subsequent calls (pure PostgreSQL).
+    SPEC-TI-010C B-6: tenant context is now resolved server-side via three-step lookup:
+      1. Fast path: portal_users.librechat_user_id cached mapping (pure PostgreSQL, no
+         tenant context needed -- portal_users has a category-A RLS policy on NULL GUC).
+      2. Slow path A: portal_users_librechat_index table (pre-seeded by bootstrap script).
+      3. Slow path B: MongoDB walk across all orgs (original lazy-mapping behaviour).
+    The caller-supplied org_id query param is IGNORED for tenant resolution.
     """
     await _require_internal_token(request)
 
-    # Set tenant context early using the org_id query param (Zitadel org ID).
-    # This is needed so subsequent queries on RLS-protected tables work correctly.
-    org_lookup = await db.execute(select(PortalOrg.id).where(PortalOrg.zitadel_org_id == org_id))
-    portal_org_id = org_lookup.scalar_one_or_none()
-    if portal_org_id is not None:
-        await set_tenant(db, portal_org_id)
-
-    audit_org_id = portal_org_id or 0
-
-    # Step 1: fast path — librechat_user_id already mapped in PostgreSQL
+    # ------------------------------------------------------------------
+    # Step 1: fast path -- librechat_user_id already mapped in PostgreSQL.
+    # portal_users has a category-A RLS policy (permissive on NULL GUC),
+    # so we can query without calling set_tenant() first.
+    # ------------------------------------------------------------------
     result = await db.execute(select(PortalUser).where(PortalUser.librechat_user_id == librechat_user_id))
     user = result.scalar_one_or_none()
 
-    if user is None:
-        # Step 2: lazy MongoDB lookup to resolve LibreChat ObjectId → Zitadel user ID
-        if not settings.librechat_mongo_root_uri:
-            logger.warning("KB authz: LIBRECHAT_MONGO_ROOT_URI not set — fail-closed for user %s", librechat_user_id)
-            await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False)
+    if user is not None:
+        await set_tenant(db, user.org_id)
+        await _audit_internal_call(request, org_id=user.org_id or 0)
+        if user.role == "admin":
+            enabled = True
+        else:
+            products = await get_effective_products(user.zitadel_user_id, db)
+            enabled = "knowledge" in products
+        return KnowledgeFeatureResponse(
+            enabled=enabled,
+            kb_retrieval_enabled=user.kb_retrieval_enabled,
+            kb_personal_enabled=user.kb_personal_enabled,
+            kb_slugs_filter=user.kb_slugs_filter,
+            kb_narrow=user.kb_narrow,
+            kb_pref_version=user.kb_pref_version,
+            zitadel_user_id=user.zitadel_user_id,
+        )
 
-        # Look up the org to get its LibreChat container name (= MongoDB database name)
-        org_result = await db.execute(select(PortalOrg).where(PortalOrg.zitadel_org_id == org_id))
-        org = org_result.scalar_one_or_none()
-        if org is None or not org.librechat_container:
-            logger.warning("KB authz: org %s has no librechat_container — fail-closed", org_id)
-            await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False)
+    # ------------------------------------------------------------------
+    # Step 2: slow path A -- portal_users_librechat_index lookup.
+    # Populated on every successful MongoDB walk (step 3 below) and
+    # pre-seeded by scripts/bootstrap_librechat_index.py.
+    # ------------------------------------------------------------------
+    index_result = await db.execute(
+        text(
+            "SELECT org_id, zitadel_user_id FROM portal_users_librechat_index"
+            " WHERE librechat_object_id = :oid"
+        ),
+        {"oid": librechat_user_id},
+    )
+    index_row = index_result.fetchone()
 
-        try:
-            oid = ObjectId(librechat_user_id)
-        except InvalidId:
-            logger.warning("KB authz: invalid ObjectId %s — fail-closed", librechat_user_id)
-            await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False)
-
-        mongo_client: AsyncIOMotorClient | None = None
-        try:
-            mongo_client = AsyncIOMotorClient(settings.librechat_mongo_root_uri)
-            mongo_user = await mongo_client[org.librechat_container]["users"].find_one({"_id": oid})
-        except Exception as exc:
-            logger.warning(
-                "KB authz: MongoDB lookup failed for %s — fail-closed: %s",
-                librechat_user_id,
-                exc,
-                exc_info=True,
-            )
-            await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False)
-        finally:
-            if mongo_client is not None:
-                mongo_client.close()
-
-        if mongo_user is None:
-            logger.warning("KB authz: no LibreChat user found for ObjectId %s — fail-closed", librechat_user_id)
-            await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False)
-
-        zitadel_user_id = mongo_user.get("openidId") or mongo_user.get("openid_id") or mongo_user.get("sub")
-        if not zitadel_user_id:
-            logger.warning("KB authz: LibreChat user %s has no openidId/sub — fail-closed", librechat_user_id)
-            await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False)
-
-        # Resolve portal user and cache the mapping
-        portal_result = await db.execute(select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id))
+    if index_row is not None:
+        resolved_org_id, resolved_zitadel_user_id = index_row
+        await set_tenant(db, resolved_org_id)
+        portal_result = await db.execute(
+            select(PortalUser).where(PortalUser.zitadel_user_id == resolved_zitadel_user_id)
+        )
         user = portal_result.scalar_one_or_none()
-        if user is None:
-            logger.warning("KB authz: no portal user for zitadel_user_id %s — fail-closed", zitadel_user_id)
-            await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False)
+        if user is not None:
+            user.librechat_user_id = librechat_user_id
+            await db.commit()
+            await _audit_internal_call(request, org_id=user.org_id or 0)
+            if user.role == "admin":
+                enabled = True
+            else:
+                products = await get_effective_products(user.zitadel_user_id, db)
+                enabled = "knowledge" in products
+            return KnowledgeFeatureResponse(
+                enabled=enabled,
+                kb_retrieval_enabled=user.kb_retrieval_enabled,
+                kb_personal_enabled=user.kb_personal_enabled,
+                kb_slugs_filter=user.kb_slugs_filter,
+                kb_narrow=user.kb_narrow,
+                kb_pref_version=user.kb_pref_version,
+                zitadel_user_id=user.zitadel_user_id,
+            )
 
-        user.librechat_user_id = librechat_user_id
-        await db.commit()
+    # ------------------------------------------------------------------
+    # Step 3: slow path B -- MongoDB walk across all orgs.
+    # org_id is resolved server-side; caller-supplied param is ignored.
+    # ------------------------------------------------------------------
+    if not settings.librechat_mongo_root_uri:
+        logger.warning("KB authz: LIBRECHAT_MONGO_ROOT_URI not set -- fail-closed for user %s", librechat_user_id)
+        await _audit_internal_call(request, org_id=0)
+        return KnowledgeFeatureResponse(enabled=False)
 
-    # Org-admins always get knowledge access
+    try:
+        oid = ObjectId(librechat_user_id)
+    except InvalidId:
+        logger.warning("KB authz: invalid ObjectId %s -- fail-closed", librechat_user_id)
+        await _audit_internal_call(request, org_id=0)
+        return KnowledgeFeatureResponse(enabled=False)
+
+    # Walk all orgs that have a librechat_container -- server-side resolution, no caller trust
+    orgs_result = await db.execute(
+        select(PortalOrg).where(PortalOrg.librechat_container.isnot(None))
+    )
+    orgs = orgs_result.scalars().all()
+
+    mongo_client: AsyncIOMotorClient | None = None
+    resolved_org: PortalOrg | None = None
+    zitadel_user_id: str | None = None
+
+    try:
+        mongo_client = AsyncIOMotorClient(settings.librechat_mongo_root_uri)
+        for org in orgs:
+            try:
+                mongo_user = await mongo_client[org.librechat_container]["users"].find_one({"_id": oid})
+            except Exception as exc:
+                logger.warning(
+                    "KB authz: MongoDB lookup failed for org %s container %s: %s",
+                    org.id,
+                    org.librechat_container,
+                    exc,
+                )
+                continue
+            if mongo_user is not None:
+                candidate = (
+                    mongo_user.get("openidId") or mongo_user.get("openid_id") or mongo_user.get("sub")
+                )
+                if candidate:
+                    resolved_org = org
+                    zitadel_user_id = candidate
+                    break
+    except Exception as exc:
+        logger.warning("KB authz: MongoDB connection failed -- fail-closed: %s", exc, exc_info=True)
+        await _audit_internal_call(request, org_id=0)
+        return KnowledgeFeatureResponse(enabled=False)
+    finally:
+        if mongo_client is not None:
+            mongo_client.close()
+
+    if resolved_org is None or zitadel_user_id is None:
+        logger.warning(
+            "KB authz: no LibreChat user found for ObjectId %s across all orgs -- fail-closed",
+            librechat_user_id,
+        )
+        await _audit_internal_call(request, org_id=0)
+        return KnowledgeFeatureResponse(enabled=False)
+
+    # Set tenant context using server-resolved org_id (never caller-supplied)
+    await set_tenant(db, resolved_org.id)
+
+    portal_result = await db.execute(select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id))
+    user = portal_result.scalar_one_or_none()
+    if user is None:
+        logger.warning("KB authz: no portal user for zitadel_user_id %s -- fail-closed", zitadel_user_id)
+        await _audit_internal_call(request, org_id=resolved_org.id)
+        return KnowledgeFeatureResponse(enabled=False)
+
+    # Cache in portal_users (fast path for future calls)
+    user.librechat_user_id = librechat_user_id
+
+    # Cache in portal_users_librechat_index (slow-path-A for future calls)
+    await db.execute(
+        text(
+            "INSERT INTO portal_users_librechat_index"
+            " (librechat_object_id, org_id, zitadel_user_id, created_at)"
+            " VALUES (:oid, :org_id, :zitadel_user_id, now())"
+            " ON CONFLICT (librechat_object_id) DO NOTHING"
+        ),
+        {"oid": librechat_user_id, "org_id": resolved_org.id, "zitadel_user_id": zitadel_user_id},
+    )
+    await db.commit()
+
+    await _audit_internal_call(request, org_id=user.org_id or 0)
+
     if user.role == "admin":
         enabled = True
     else:
         products = await get_effective_products(user.zitadel_user_id, db)
         enabled = "knowledge" in products
 
-    await _audit_internal_call(request, org_id=user.org_id or audit_org_id)
     return KnowledgeFeatureResponse(
         enabled=enabled,
         kb_retrieval_enabled=user.kb_retrieval_enabled,
@@ -720,7 +805,6 @@ async def get_knowledge_feature(
         kb_pref_version=user.kb_pref_version,
         zitadel_user_id=user.zitadel_user_id,
     )
-
 
 class PageSavedNotification(BaseModel):
     kb_slug: str
@@ -842,8 +926,10 @@ async def post_kb_feedback(
     await set_tenant(db, org.id)
 
     # 2. Idempotency check (REQ-KB-015-12)
+    # B-9 (SPEC-TI-010B): prefix with org.id so the same (message_id,
+    # conversation_id) from two different orgs do NOT deduplicate each other.
     redis_pool = await get_redis_pool()
-    idem_key = f"fb:{body.message_id}:{body.conversation_id}"
+    idem_key = f"fb:{org.id}:{body.conversation_id}:{body.message_id}"
     if redis_pool:
         existing = await redis_pool.get(idem_key)
         if existing:
