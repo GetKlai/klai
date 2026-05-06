@@ -56,18 +56,14 @@
 
     # ─── Services that are NOT internet-reachable ────────────────────────────
     # The handlers below cover only services that are intentionally exposed
-    # via Caddy. The following services are Docker-internal only — adding an
-    # HTTP upstream for any of them here is a security-review event, not a
-    # routing tweak. SPEC-SEC-HYGIENE-001 REQ-45 lists them:
+    # via Caddy. Adding an HTTP upstream for a Docker-internal-only service
+    # here is a security-review event, not a routing tweak — SPEC-SEC-
+    # HYGIENE-001 REQ-45.
     #
-    #   - klai-knowledge-mcp  (Docker-internal MCP for LibreChat; FastMCP
-    #     DNS-rebinding protection is currently disabled because the service
-    #     is not public — see klai-knowledge-mcp/main.py @MX:WARN block. If
-    #     you add an upstream for this service, flip that flag back to True
-    #     in the same commit. Otherwise: leave this comment in place.)
-    #
-    # Removing or shortening this block without updating the matching MX:WARN
-    # in the service code is a SPEC-SEC-HYGIENE-001 violation.
+    # NOTE: klai-knowledge-mcp WAS in this list pre-SPEC-MCP-AUTH-001. As of
+    # the OAuth surface rollout it is internet-reachable via mcp.${DOMAIN}
+    # (handler below). DNS-rebinding protection is now enabled in
+    # FastMCP TransportSecuritySettings (see main.py @MX:ANCHOR block).
     # ────────────────────────────────────────────────────────────────────────
 
     # SPEC-SEC-AUDIT-2026-04 C1: strip internal-trust headers on every inbound
@@ -228,6 +224,44 @@
             header_up -X-Caller-Service
             header_up -X-Org-ID
             header_up -X-User-ID
+        }
+    }
+
+    # MCP OAuth resource server (SPEC-MCP-AUTH-001 Fase 5)
+    # ─────────────────────────────────────────────────────
+    # Public bearer-token endpoint that lets third-party MCP clients
+    # (Claude Desktop, Cursor, ChatGPT custom connectors) talk to
+    # klai-knowledge-mcp. The MCP server itself is the OAuth 2.1
+    # protected resource (RFC 9728); the authorization server is
+    # portal-api at my.${DOMAIN} via /oauth/* routes (handled by the
+    # portal-api block above).
+    #
+    # Header strip is essential here: external traffic must NEVER inject
+    # X-Internal-Secret / X-User-ID / X-Org-ID / X-Org-Slug. Those headers
+    # are LibreChat-pad credentials and would bypass token verification
+    # if accepted. The dispatcher in main.py branches on the
+    # Authorization: Bearer klai_mcp_<...> prefix; without those prefix
+    # tokens incoming traffic falls through to the LibreChat pad which
+    # would then fail X-Internal-Secret check — but defense-in-depth
+    # demands strip-at-edge anyway.
+    #
+    # /.well-known/oauth-protected-resource is cached 5 min by the MCP
+    # itself; no extra Caddy cache directive needed.
+    @mcp host mcp.{$DOMAIN}
+    handle @mcp {
+        rate_limit {
+            zone mcp_per_ip {
+                key {remote_host}
+                events 600
+                window 1m
+            }
+        }
+        reverse_proxy klai-knowledge-mcp:8080 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-User-ID
+            header_up -X-Org-Slug
         }
     }
 
