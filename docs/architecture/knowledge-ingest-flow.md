@@ -927,6 +927,13 @@ link-graph signals are applied before reranking:
   important — this boost surfaces them ahead of equally-similar but less-linked pages.
   Default `link_authority_boost = 0.05` (configurable per deployment).
 
+> **Instrumentation (F3 phase 1, audit retrieval-coupling-2026-05-06):** the
+> `retrieval_decision_record` log entry carries a `link_expand` block measuring how
+> many expanded chunks survive the reranker into the served top-K
+> (`expanded_in_top_k`, `seed_in_top_k`, `expanded_top_k_chunk_ids`). Phase 2 (whether
+> to migrate to RRF-merge across dense/authority/expansion ranklists, recalibrate the
+> coefficient, or disable) is gated on ~7 days of this telemetry.
+
 **4b. Rerank.** The top candidates are reranked by `infinity-reranker`
 (bge-reranker-v2-m3 on GPU — gpu-01 via SSH tunnel at 172.18.0.1:7998). The reranker applies a cross-attention model that scores
 each (query, chunk) pair more precisely than vector distance alone. Top 5–10 survive.
@@ -1369,6 +1376,17 @@ The [evidence-weighted knowledge research programme](../research/README.md) inve
 6. **Corroboration scoring: deferred.** Three prerequisites must be met first: near-duplicate detection (SemHash), source-level grouping (`source_document_id`), and entity resolution validation (>90% precision, >85% recall). See [Corroboration Scoring](../research/corroboration/corroboration-scoring.md).
 
 **Evaluation protocol before activating weights:** 150 test queries (50 curated + 100 RAGAS-synthetic), Context Precision + NDCG@10 + Faithfulness metrics, Wilcoxon signed-rank paired tests, shadow scoring before cutover. See [RAG Evaluation Framework](../research/evaluation/rag-evaluation-framework.md).
+
+> **The existing evidence-tier scoring** (content_type / temporal_decay / pagerank
+> weights, U-shape ordering) shipped in shadow mode in March 2026 and is governed by
+> a separate activation track — `SPEC-EVIDENCE-001-FOLLOWUP-001` (audit
+> retrieval-coupling-2026-05-06). That SPEC sets a 30-day deadline to either activate
+> (5%/50%/100% staged rollout), activate `evidence_tier_temporal_only`, decommission,
+> or move to `EVIDENCE_SHADOW_MODE=disabled`. The `RAG_EVAL_VARIANT` mechanism from
+> `SPEC-RAG-EVAL-001` (#369) is what runs the A/B. See
+> [knowledge-retrieval-flow.md § Evidence tier scoring](knowledge-retrieval-flow.md#step-6-evidence-tier-scoring-shadow-mode).
+> The assertion-mode activation discussed in this section is the *next* dimension on
+> top of that — its own gating by `SPEC-EVIDENCE-002` is independent.
 
 ### Remaining open questions
 
