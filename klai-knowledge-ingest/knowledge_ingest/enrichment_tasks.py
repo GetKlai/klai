@@ -30,7 +30,16 @@ from typing import Any
 
 import structlog
 
-from knowledge_ingest import embedder, enrichment, kb_config, qdrant_store, queues, sparse_embedder
+from knowledge_ingest import (
+    chunker,
+    embedder,
+    enrichment,
+    kb_config,
+    pg_store,
+    qdrant_store,
+    queues,
+    sparse_embedder,
+)
 from knowledge_ingest.content_profiles import get_profile
 from knowledge_ingest.db import get_pool
 
@@ -98,6 +107,74 @@ def init_app(connector: Any) -> Any:
     return _procrastinate_app
 
 
+async def _load_and_enrich(artifact_id: str) -> None:
+    """SPEC-INGEST-CONTENT-PG-001 (audit finding 1): single entry point for
+    both enrichment task variants.
+
+    Re-reads the artifact's content + extra_payload from PostgreSQL at
+    execution time, re-derives the chunk + parent decomposition from the
+    current document body, and delegates to the existing
+    ``_enrich_document`` body. This is the canonical pattern that closes
+    the race-window where a second direct-POST overwrote the raw Qdrant
+    vectors while the worker still processed an older content snapshot
+    frozen in the task args.
+
+    If the artifact has been deleted between enqueue and dequeue (typically
+    by the connector purge orchestrator), the function returns silently —
+    same soft-skip semantics as ``ingest_graphiti_episode`` uses.
+    """
+    artifact = await pg_store.read_artifact_for_enrichment(artifact_id)
+    if artifact is None:
+        logger.info("enrichment_aborted_artifact_missing", artifact_id=artifact_id)
+        return
+
+    extra: dict = artifact["extra"] or {}
+    document_text: str = extra.get("document_text", "") or ""
+    if not document_text:
+        # Pre-SPEC-INGEST-CONTENT-PG-001 artifact rows may have no
+        # document_text on extra. Without a body we cannot enrich; the
+        # rebuild_kb path is the right tool to repair these legacy rows.
+        logger.info(
+            "enrichment_aborted_no_document_text",
+            artifact_id=artifact_id,
+            kb_slug=artifact["kb_slug"],
+            path=artifact["path"],
+        )
+        return
+
+    title: str = extra.get("title") or ""
+    # Re-derive chunks deterministically from the current PG body so
+    # Phase-2 always operates on the same content the artifact row claims
+    # is current, regardless of what was in flight at enqueue time.
+    children, parents = chunker.chunk_markdown_with_parents(document_text)
+    chunks_text = [c.text for c in children]
+    parents_serialised: list[dict] = [
+        {
+            "text": p.text,
+            "token_count": chunker._approx_token_count(p.text),
+            "position": p.position,
+        }
+        for p in parents
+    ]
+    parent_index_per_child: list[int | None] = [c.parent_index for c in children]
+
+    await _enrich_document(
+        org_id=artifact["org_id"],
+        kb_slug=artifact["kb_slug"],
+        path=artifact["path"],
+        document_text=document_text,
+        chunks=chunks_text,
+        title=title,
+        artifact_id=artifact_id,
+        user_id=artifact["user_id"],
+        extra_payload=extra,
+        synthesis_depth=artifact["synthesis_depth"],
+        content_type=artifact["content_type"] or "unknown",
+        parents=parents_serialised,
+        parent_index_per_child=parent_index_per_child,
+    )
+
+
 def _register_tasks(procrastinate_app: Any) -> None:
     """Register task functions on the given App instance."""
     import procrastinate
@@ -105,72 +182,23 @@ def _register_tasks(procrastinate_app: Any) -> None:
     @procrastinate_app.task(
         queue=queues.ENRICH_INTERACTIVE, retry=procrastinate.RetryStrategy(max_attempts=2)
     )
-    async def enrich_document_interactive(
-        org_id: str,
-        kb_slug: str,
-        path: str,
-        document_text: str,
-        chunks: list[str],
-        title: str,
-        artifact_id: str,
-        user_id: str | None,
-        extra_payload: dict,
-        synthesis_depth: int,
-        content_type: str = "unknown",
-        parents: list[dict] | None = None,
-        parent_index_per_child: list[int | None] | None = None,
-    ) -> None:
-        """Enrich chunks for a single-doc upload (high priority)."""
-        await _enrich_document(
-            org_id,
-            kb_slug,
-            path,
-            document_text,
-            chunks,
-            title,
-            artifact_id,
-            user_id,
-            extra_payload,
-            synthesis_depth,
-            content_type=content_type,
-            parents=parents,
-            parent_index_per_child=parent_index_per_child,
-        )
+    async def enrich_document_interactive(artifact_id: str) -> None:
+        """Enrich chunks for a single-doc upload (high priority).
+
+        SPEC-INGEST-CONTENT-PG-001: takes only ``artifact_id``; all other
+        fields are loaded from PostgreSQL at execution time.
+        """
+        await _load_and_enrich(artifact_id)
 
     @procrastinate_app.task(
         queue=queues.ENRICH_BULK, retry=procrastinate.RetryStrategy(max_attempts=2)
     )
-    async def enrich_document_bulk(
-        org_id: str,
-        kb_slug: str,
-        path: str,
-        document_text: str,
-        chunks: list[str],
-        title: str,
-        artifact_id: str,
-        user_id: str | None,
-        extra_payload: dict,
-        synthesis_depth: int,
-        content_type: str = "unknown",
-        parents: list[dict] | None = None,
-        parent_index_per_child: list[int | None] | None = None,
-    ) -> None:
-        """Enrich chunks for crawl/import jobs (lower priority)."""
-        await _enrich_document(
-            org_id,
-            kb_slug,
-            path,
-            document_text,
-            chunks,
-            title,
-            artifact_id,
-            user_id,
-            extra_payload,
-            synthesis_depth,
-            content_type=content_type,
-            parents=parents,
-            parent_index_per_child=parent_index_per_child,
-        )
+    async def enrich_document_bulk(artifact_id: str) -> None:
+        """Enrich chunks for crawl/import jobs (lower priority).
+
+        SPEC-INGEST-CONTENT-PG-001: takes only ``artifact_id``.
+        """
+        await _load_and_enrich(artifact_id)
 
     # Expose task functions via app attributes for use in ingest.py
     procrastinate_app.enrich_document_interactive = enrich_document_interactive  # type: ignore[attr-defined]
@@ -455,14 +483,13 @@ async def _enrich_document(
         # After max_attempts the job lands in permanent-failed state — visible in
         # logs and the Procrastinate dashboard.
         total_ms = int((time.monotonic() - t_total) * 1000)
-        logger.error(
+        logger.exception(
             "enrichment_failed_will_retry",
             kb_slug=kb_slug,
             path=path,
             org_id=org_id,
             artifact_id=artifact_id,
             total_ms=total_ms,
-            exc_info=True,
         )
         raise  # Procrastinate retry handles this
 
@@ -472,12 +499,11 @@ async def _enrich_document(
         # basic embeddings.  These are infrastructure issues, not data quality
         # issues, so retrying the enrichment LLM call would not help.
         total_ms = int((time.monotonic() - t_total) * 1000)
-        logger.error(
+        logger.exception(
             "enrichment_infra_failed",
             kb_slug=kb_slug,
             path=path,
             org_id=org_id,
             artifact_id=artifact_id,
             total_ms=total_ms,
-            exc_info=True,
         )

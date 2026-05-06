@@ -531,6 +531,60 @@ async def get_active_image_hashes_for_kb(org_id: str, kb_slug: str) -> set[str]:
     return {r["content_hash"] for r in rows}
 
 
+async def read_artifact_for_enrichment(artifact_id: str) -> dict | None:
+    """Return the full row + parsed extra JSONB for the enrichment worker.
+
+    SPEC-INGEST-CONTENT-PG-001 (audit finding 1): the enrichment task no
+    longer carries the document body or any payload metadata in its args.
+    It receives only ``artifact_id`` and re-reads the canonical state from
+    PostgreSQL at execution time. This closes the race-window where a
+    second direct-POST could overwrite the raw Qdrant vectors while the
+    worker still processed the older content from frozen task args.
+
+    Returns ``None`` if the artifact has been deleted between enqueue and
+    dequeue (e.g. by the connector purge orchestrator). Callers should
+    treat ``None`` as a soft-skip, the same way ``artifact_exists()`` is
+    used by the graphiti task today.
+    """
+    if not artifact_id:
+        return None
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        """
+        SELECT id, org_id, kb_slug, path, user_id,
+               content_type, synthesis_depth,
+               assertion_mode, provenance_type, confidence,
+               belief_time_start, belief_time_end,
+               extra
+        FROM knowledge.artifacts
+        WHERE id = $1::uuid
+        """,
+        artifact_id,
+    )
+    if row is None:
+        return None
+    raw_extra = row["extra"]
+    if isinstance(raw_extra, str):
+        extra: dict = json.loads(raw_extra) if raw_extra else {}
+    else:
+        extra = dict(raw_extra) if raw_extra else {}
+    return {
+        "artifact_id": str(row["id"]),
+        "org_id": row["org_id"],
+        "kb_slug": row["kb_slug"],
+        "path": row["path"],
+        "user_id": row["user_id"],
+        "content_type": row["content_type"],
+        "synthesis_depth": row["synthesis_depth"],
+        "assertion_mode": row["assertion_mode"],
+        "provenance_type": row["provenance_type"],
+        "confidence": row["confidence"],
+        "belief_time_start": row["belief_time_start"],
+        "belief_time_end": row["belief_time_end"],
+        "extra": extra,
+    }
+
+
 async def artifact_exists(artifact_id: str) -> bool:
     """SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-07: existence-guard helper.
 
