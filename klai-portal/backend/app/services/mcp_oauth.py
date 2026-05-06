@@ -183,11 +183,16 @@ class VerifyResult:
 
     Mirrors the existing ``IdentityVerifySuccess`` / ``IdentityVerifyDeny``
     union-shape so the calling library can switch on ``verified``.
+
+    Note: ``user_id`` and ``org_id`` are strings (portal_users.zitadel_user_id
+    and portal_orgs.id-as-string respectively) to keep parity with the
+    existing identity-verify wire shape — knowledge-ingest and klai-docs
+    callers expect strings.
     """
 
     verified: bool
-    user_id: int | None = None
-    org_id: int | None = None
+    user_id: str | None = None
+    org_id: str | None = None
     org_slug: str | None = None
     scopes: tuple[str, ...] = ()
     resource_uri: str | None = None
@@ -383,8 +388,12 @@ async def verify_access_token(
 
     success = VerifyResult(
         verified=True,
-        user_id=token_row.user_id,
-        org_id=token_row.org_id,
+        # portal_users.zitadel_user_id is the canonical identifier downstream
+        # services key on (matches IdentityAsserter.verify return shape).
+        user_id=user_row.zitadel_user_id,
+        # str(portal_orgs.id) — knowledge-ingest expects the integer-as-string
+        # representation; matches /internal/identity/verify wire shape.
+        org_id=str(token_row.org_id),
         org_slug=org_row.slug,
         scopes=tuple(token_row.scopes or [DEFAULT_SCOPE]),
         resource_uri=token_row.resource_uri,

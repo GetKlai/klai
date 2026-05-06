@@ -1897,11 +1897,17 @@ class McpTokenVerifyRequest(BaseModel):
 
 
 class McpTokenVerifySuccess(BaseModel):
-    """200 response when the token is valid."""
+    """200 response when the token is valid.
+
+    ``user_id`` and ``org_id`` are strings (zitadel_user_id and
+    str(portal_orgs.id) respectively) to mirror the existing
+    /internal/identity/verify wire shape — knowledge-ingest and klai-docs
+    callers expect strings.
+    """
 
     verified: Literal[True] = True
-    user_id: int
-    org_id: int
+    user_id: str
+    org_id: str
     org_slug: str | None
     scopes: list[str]
     resource_uri: str
