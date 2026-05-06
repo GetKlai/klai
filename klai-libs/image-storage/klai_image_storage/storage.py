@@ -6,9 +6,10 @@ was a straight port of ``klai-connector/app/services/s3_storage.py``).
 The store wraps the synchronous minio client with :func:`asyncio.to_thread`
 so the embedding service's event loop (FastAPI endpoints, Procrastinate
 workers, connector sync tasks) stays non-blocking. Images are uploaded
-authenticated over the S3 API (Garage on :3900) and served anonymously
-via Garage website mode through a Caddy reverse proxy at
-``/kb-images/{object_key}``.
+authenticated over the S3 API (Garage on :3900) and served through
+an auth-proxy at ``GET /kb-images/{org_id}/{kb_slug}/{filename}`` in
+portal-api (SPEC-TI-009 / finding B-4). Direct anonymous reads via
+Garage website mode (:3902) were closed as part of that SPEC.
 
 Content-addressed keys (SHA-256 of bytes) give free deduplication across
 tenants' own KBs. The key format + URL prefix are wire-level contracts;

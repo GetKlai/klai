@@ -23,6 +23,7 @@ from app.api.connectors import router as connectors_router
 from app.api.groups import router as groups_router
 from app.api.internal import router as internal_router
 from app.api.internal_connectors import router as internal_connectors_router
+from app.api.kb_images import router as kb_images_router
 from app.api.knowledge import router as knowledge_router
 from app.api.knowledge_bases import router as knowledge_bases_router
 from app.api.mcp_servers import router as mcp_servers_router
@@ -277,6 +278,7 @@ app.include_router(app_gaps_router)
 app.include_router(connectors_router)
 app.include_router(taxonomy_router)
 app.include_router(vitals_router)
+app.include_router(kb_images_router)
 app.include_router(mcp_servers_router)
 app.include_router(admin_api_keys_router)
 app.include_router(admin_widgets_router)
