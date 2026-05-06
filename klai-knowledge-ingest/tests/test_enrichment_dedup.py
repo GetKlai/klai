@@ -5,6 +5,7 @@ Verifies that:
 - AlreadyEnqueued raised by defer_async is caught and logged (not propagated)
 - ingest_document returns ok even when the enrichment task is already queued
 """
+
 from __future__ import annotations
 
 import sys
@@ -69,6 +70,10 @@ def _base_patches(mock_app):
                 return_value="art-test",
             ),
             patch(
+                "knowledge_ingest.routes.ingest.pg_store.update_artifact_extra",
+                new_callable=AsyncMock,
+            ),
+            patch(
                 "knowledge_ingest.routes.ingest.qdrant_store.upsert_chunks",
                 new_callable=AsyncMock,
             ),
@@ -85,9 +90,20 @@ def _base_patches(mock_app):
             ),
             patch.dict(
                 sys.modules,
-                {"knowledge_ingest.enrichment_tasks": types.SimpleNamespace(get_app=lambda: mock_app)},
+                {
+                    "knowledge_ingest.enrichment_tasks": types.SimpleNamespace(
+                        get_app=lambda: mock_app
+                    )
+                },
             ),
+            patch("knowledge_ingest.routes.ingest.settings") as mock_settings,
         ):
+            # Disable the graphiti enqueue branch — these tests focus on
+            # the enrichment-defer contract, not the FalkorDB pipeline.
+            mock_settings.graphiti_enabled = False
+            mock_settings.chunk_size = 1500
+            mock_settings.chunk_overlap = 200
+            mock_settings.enrichment_enabled = True
             yield
 
     return _stack()
