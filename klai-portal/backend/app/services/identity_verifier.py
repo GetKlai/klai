@@ -89,8 +89,19 @@ ReasonCode = Literal[
     "jwt_identity_mismatch",
     "no_membership",
     "org_slug_mismatch",
+    # F2 fix-forward (retrieval coupling audit 2026-05-06): partner-key paths.
+    "partner_key_not_found",
+    "partner_key_org_mismatch",
 ]
-Evidence = Literal["jwt", "membership"]
+Evidence = Literal["jwt", "membership", "partner_key"]
+
+# Synthetic identity prefix used by partner_chat for org-level RAG calls.
+# SPEC-API-001 explicitly states partners "have no concept of end users",
+# so we mint a synthetic id `partner:<partner_api_keys.id>` and route it
+# through this service via the dedicated branch in `verify_identity_claim`.
+# The check resolves the key against the partner_api_keys table and confirms
+# that key.org_id maps to the claimed Zitadel org_id.
+_PARTNER_USER_PREFIX = "partner:"
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,6 +223,20 @@ async def verify_identity_claim(
         )
         return VerifyDecision.deny("unknown_caller_service")
 
+    # F2 fix-forward (retrieval coupling audit 2026-05-06): synthetic partner
+    # identity. partner_chat sends `claimed_user_id="partner:<partner_api_keys.id>"`
+    # and the claimed Zitadel org_id. The branch is delegated to
+    # ``_verify_partner_claim`` to keep this orchestrator's complexity low.
+    if claimed_user_id.startswith(_PARTNER_USER_PREFIX):
+        return await _verify_partner_claim(
+            db=db,
+            caller_service=caller_service,
+            claimed_user_id=claimed_user_id,
+            claimed_org_id=claimed_org_id,
+            claimed_org_slug=claimed_org_slug,
+            bearer_jwt=bearer_jwt,
+        )
+
     if bearer_jwt is not None:
         claims = _decode_user_jwt(bearer_jwt, jwks_resolver)
         if claims is None:
@@ -267,6 +292,138 @@ async def verify_identity_claim(
         org_slug=org_slug,
         evidence="membership",
     )
+
+
+async def _verify_partner_claim(
+    *,
+    db: AsyncSession,
+    caller_service: str,
+    claimed_user_id: str,
+    claimed_org_id: str,
+    claimed_org_slug: str | None,
+    bearer_jwt: str | None,
+) -> VerifyDecision:
+    """Verify a ``partner:<key_id>`` claim against ``partner_api_keys``.
+
+    Caller-service is restricted to ``"portal-api"`` (only that service
+    mints partner identities); other callers presenting a ``partner:``
+    prefix are treated as misconfigured and denied.
+
+    Bearer JWT + partner: prefix is rejected because partner keys are the
+    only credential — mixing the two indicates a malformed call.
+
+    F2 fix-forward (retrieval coupling audit 2026-05-06).
+    """
+
+    if caller_service != "portal-api":
+        logger.info(
+            "identity_verify_partner_wrong_caller",
+            extra={"caller_service": caller_service},
+        )
+        return VerifyDecision.deny("partner_key_not_found")
+    if bearer_jwt is not None:
+        return VerifyDecision.deny("invalid_jwt")
+
+    partner_key_id = claimed_user_id[len(_PARTNER_USER_PREFIX) :]
+    org_slug, reason = await _resolve_partner_key_org_slug(
+        db=db,
+        partner_key_id=partner_key_id,
+        claimed_zitadel_org_id=claimed_org_id,
+    )
+    if reason is not None:
+        return VerifyDecision.deny(reason)
+    # reason==None implies allow → org_slug is guaranteed non-None
+    # by _resolve_partner_key_org_slug's contract.
+    if org_slug is None:  # pragma: no cover — defensive type narrowing
+        return VerifyDecision.deny("partner_key_not_found")
+    if claimed_org_slug is not None and claimed_org_slug != org_slug:
+        return VerifyDecision.deny("org_slug_mismatch")
+    return VerifyDecision.allow(
+        user_id=claimed_user_id,
+        org_id=claimed_org_id,
+        org_slug=org_slug,
+        evidence="partner_key",
+    )
+
+
+async def _resolve_partner_key_org_slug(
+    *,
+    db: AsyncSession,
+    partner_key_id: str,
+    claimed_zitadel_org_id: str,
+) -> tuple[str | None, ReasonCode | None]:
+    """Validate a ``partner:<key_id>`` identity against ``partner_api_keys``.
+
+    Returns ``(org_slug, None)`` when the key exists, the owning portal_orgs
+    row is not soft-deleted, and ``portal_orgs.zitadel_org_id`` matches
+    ``claimed_zitadel_org_id``.
+
+    Returns ``(None, "partner_key_not_found")`` when the key does not exist,
+    is malformed, or the owning org is soft-deleted.
+
+    Returns ``(None, "partner_key_org_mismatch")`` when the key exists but
+    its owning org's Zitadel id does not match the claimed value — defends
+    against a forged claim that pairs a real partner key with a victim org.
+
+    F2 fix-forward (retrieval coupling audit 2026-05-06).
+    """
+
+    from sqlalchemy.exc import DataError
+
+    from app.models.partner_api_keys import PartnerAPIKey
+
+    # Validate the partner_key_id is a sensible-length string before hitting
+    # the DB. Fast reject saves a query on obviously-malformed inputs and
+    # avoids forwarding garbage into asyncpg's UUID parser.
+    if not partner_key_id or len(partner_key_id) > 64:
+        return None, "partner_key_not_found"
+
+    # partner_api_keys is RLS Category-B — SELECT works without tenant
+    # context, which is essential because this lookup runs on the
+    # /internal/identity/verify path BEFORE any tenant context is set.
+    stmt = (
+        select(PortalOrg.zitadel_org_id, PortalOrg.slug)
+        .select_from(PartnerAPIKey)
+        .join(PortalOrg, PortalOrg.id == PartnerAPIKey.org_id)
+        .where(
+            PartnerAPIKey.id == partner_key_id,
+            PortalOrg.deleted_at.is_(None),
+        )
+        .limit(1)
+    )
+    try:
+        result = await db.execute(stmt)
+    except DataError:
+        # Malformed UUID input surfaces as ``sqlalchemy.exc.DataError``
+        # wrapping ``asyncpg.exceptions.DataError`` ("invalid input syntax for
+        # type uuid"). This is caller-supplied garbage — treat as "not found"
+        # rather than 503.
+        logger.info("identity_verify_partner_malformed_uuid")
+        return None, "partner_key_not_found"
+    # NOTE: do NOT catch broader Exception here. A real DB outage
+    # (OperationalError, connection refused) MUST bubble up so the
+    # /internal/identity/verify endpoint converts it to HTTP 503
+    # cache_unavailable rather than masquerading as a partner_key
+    # rejection. Audit: post-F2 polish 2026-05-06.
+
+    row = result.one_or_none()
+    if row is None:
+        return None, "partner_key_not_found"
+
+    actual_zitadel_org_id, org_slug = row
+    if actual_zitadel_org_id != claimed_zitadel_org_id:
+        # Real key, wrong org — log loudly because this is the shape of
+        # a deliberate cross-tenant probe.
+        logger.warning(
+            "identity_verify_partner_org_mismatch",
+            extra={
+                "claimed_zitadel_org_id": claimed_zitadel_org_id,
+                "actual_zitadel_org_id_hash": actual_zitadel_org_id[:8] + "…",
+            },
+        )
+        return None, "partner_key_org_mismatch"
+
+    return org_slug, None
 
 
 async def _resolve_active_membership_org_slug(

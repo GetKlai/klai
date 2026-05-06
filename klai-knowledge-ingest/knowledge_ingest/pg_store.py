@@ -17,8 +17,18 @@ import time
 import uuid
 
 import asyncpg
+import structlog
+
+logger = structlog.get_logger()
 
 _SENTINEL = 253402300800  # 9999-12-31 — sentinel value for "still active"
+
+# SPEC-INGEST-UNIQUE-ARTIFACT-001 — name of the partial unique index
+# created by alembic 0003_artifacts_unique_active_path.py. The
+# UniqueViolationError handler below uses this constraint name to
+# distinguish race-loss from any other unique-violation that might
+# surface in the future.
+_ACTIVE_ARTIFACT_UNIQUE_INDEX = "uq_artifacts_active_path"
 
 
 async def get_active_content_hash(
@@ -58,38 +68,93 @@ async def create_artifact(
     extra: dict | None = None,
     content_hash: str | None = None,
 ) -> str:
-    """Create a knowledge artifact record. Returns the artifact UUID."""
+    """Create a knowledge artifact record. Returns the artifact UUID.
+
+    SPEC-INGEST-UNIQUE-ARTIFACT-001 (audit finding 7): on
+    ``UniqueViolationError`` from the partial unique index
+    ``uq_artifacts_active_path``, this function silently resolves
+    the race by fetching the winning artifact's id and returning it.
+    The race event is logged at error level (fires the existing
+    ``obs-001-ingest-error-rate-elevated`` Grafana alert) so
+    operators always know when this happens. Caller (ingest_document
+    + downstream MCP / connector / scribe) receives a normal return
+    value and a consistent artifact_id.
+    """
     artifact_id = str(uuid.uuid4())
     now = int(time.time())
     extra_json = json.dumps(extra) if extra else "{}"
-    await conn.execute(
-        """
-        INSERT INTO knowledge.artifacts
-          (id, org_id, user_id, kb_slug, path,
-           provenance_type, assertion_mode,
-           synthesis_depth, confidence,
-           belief_time_start, belief_time_end,
-           content_type, extra, content_hash,
-           created_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-        """,
-        artifact_id,
-        org_id,
-        user_id,
-        kb_slug,
-        path,
-        provenance_type,
-        assertion_mode,
-        synthesis_depth,
-        confidence,
-        belief_time_start,
-        belief_time_end,
-        content_type,
-        extra_json,
-        content_hash,
-        now,
-    )
-    return artifact_id
+    try:
+        await conn.execute(
+            """
+            INSERT INTO knowledge.artifacts
+              (id, org_id, user_id, kb_slug, path,
+               provenance_type, assertion_mode,
+               synthesis_depth, confidence,
+               belief_time_start, belief_time_end,
+               content_type, extra, content_hash,
+               created_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+            """,
+            artifact_id,
+            org_id,
+            user_id,
+            kb_slug,
+            path,
+            provenance_type,
+            assertion_mode,
+            synthesis_depth,
+            confidence,
+            belief_time_start,
+            belief_time_end,
+            content_type,
+            extra_json,
+            content_hash,
+            now,
+        )
+        return artifact_id
+    except asyncpg.UniqueViolationError as exc:
+        # SPEC-INGEST-UNIQUE-ARTIFACT-001 — concurrent ingest race.
+        # Only swallow the violation that originates from our active-path
+        # constraint. Any other unique violation (e.g. id collision —
+        # vanishingly unlikely but possible) is a real bug; re-raise it.
+        constraint_name = getattr(exc, "constraint_name", "") or ""
+        if _ACTIVE_ARTIFACT_UNIQUE_INDEX not in constraint_name:
+            raise
+
+        winning_artifact_id = await conn.fetchval(
+            """
+            SELECT id FROM knowledge.artifacts
+            WHERE org_id = $1 AND kb_slug = $2 AND path = $3
+              AND belief_time_end = $4
+            """,
+            org_id,
+            kb_slug,
+            path,
+            _SENTINEL,
+        )
+        # Defensive: if the winning row vanished between INSERT and SELECT
+        # (e.g. a concurrent soft_delete), surface a clear error rather
+        # than returning None and letting the caller hit a downstream
+        # NULL violation.
+        if winning_artifact_id is None:
+            logger.error(
+                "artifact_create_race_lost_no_winner",
+                org_id=org_id,
+                kb_slug=kb_slug,
+                path=path,
+                my_attempt_id=artifact_id,
+            )
+            raise
+
+        logger.error(
+            "artifact_create_race_lost",
+            org_id=org_id,
+            kb_slug=kb_slug,
+            path=path,
+            winning_artifact_id=str(winning_artifact_id),
+            my_attempt_id=artifact_id,
+        )
+        return str(winning_artifact_id)
 
 
 def _personal_slug(user_id: str) -> str:
@@ -531,6 +596,61 @@ async def get_active_image_hashes_for_kb(
         kb_slug,
     )
     return {r["content_hash"] for r in rows}
+
+
+async def read_artifact_for_enrichment(conn: asyncpg.Connection, artifact_id: str) -> dict | None:
+    """Return the full row + parsed extra JSONB for the enrichment worker.
+
+    SPEC-INGEST-CONTENT-PG-001 (audit finding 1): the enrichment task no
+    longer carries the document body or any payload metadata in its args.
+    It receives only ``artifact_id`` and re-reads the canonical state from
+    PostgreSQL at execution time. This closes the race-window where a
+    second direct-POST could overwrite the raw Qdrant vectors while the
+    worker still processed the older content from frozen task args.
+
+    Returns ``None`` if the artifact has been deleted between enqueue and
+    dequeue (e.g. by the connector purge orchestrator). Callers should
+    treat ``None`` as a soft-skip, the same way ``artifact_exists()`` is
+    used by the graphiti task today.
+
+    SPEC-TI-003-FOLLOWUP-001 AC-1: caller passes the GUC-pinned ``conn``.
+    """
+    if not artifact_id:
+        return None
+    row = await conn.fetchrow(
+        """
+        SELECT id, org_id, kb_slug, path, user_id,
+               content_type, synthesis_depth,
+               assertion_mode, provenance_type, confidence,
+               belief_time_start, belief_time_end,
+               extra
+        FROM knowledge.artifacts
+        WHERE id = $1::uuid
+        """,
+        artifact_id,
+    )
+    if row is None:
+        return None
+    raw_extra = row["extra"]
+    if isinstance(raw_extra, str):
+        extra: dict = json.loads(raw_extra) if raw_extra else {}
+    else:
+        extra = dict(raw_extra) if raw_extra else {}
+    return {
+        "artifact_id": str(row["id"]),
+        "org_id": row["org_id"],
+        "kb_slug": row["kb_slug"],
+        "path": row["path"],
+        "user_id": row["user_id"],
+        "content_type": row["content_type"],
+        "synthesis_depth": row["synthesis_depth"],
+        "assertion_mode": row["assertion_mode"],
+        "provenance_type": row["provenance_type"],
+        "confidence": row["confidence"],
+        "belief_time_start": row["belief_time_start"],
+        "belief_time_end": row["belief_time_end"],
+        "extra": extra,
+    }
 
 
 async def artifact_exists(conn: asyncpg.Connection, artifact_id: str) -> bool:

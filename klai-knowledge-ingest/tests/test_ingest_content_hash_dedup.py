@@ -9,6 +9,11 @@ any chunking, embedding, or Qdrant upserts.
 SPEC-TI-003-FOLLOWUP-001: ingest_document now takes asyncpg.Connection
 as its first argument. The patches below address the helpers it calls
 on that conn -- conn itself is a mock instance.
+
+SPEC-INGEST-CONTENT-PG-001: ingest_document persists extra_payload via
+pg_store.update_artifact_extra before defer; the enrichment task takes
+only artifact_id. The new ``update_artifact_extra`` mock keeps these
+tests aligned with the merged contract.
 """
 
 from __future__ import annotations
@@ -88,6 +93,7 @@ async def test_proceeds_when_content_changed():
             new_callable=AsyncMock,
             return_value="artifact-uuid-1",
         ),
+        patch("knowledge_ingest.pg_store.update_artifact_extra", new_callable=AsyncMock),
         patch(
             "knowledge_ingest.embedder.embed",
             new_callable=AsyncMock,
@@ -146,6 +152,7 @@ async def test_proceeds_when_no_previous_artifact():
             new_callable=AsyncMock,
             return_value="artifact-uuid-2",
         ),
+        patch("knowledge_ingest.pg_store.update_artifact_extra", new_callable=AsyncMock),
         patch(
             "knowledge_ingest.embedder.embed",
             new_callable=AsyncMock,
@@ -203,6 +210,7 @@ async def test_content_hash_stored_on_create():
         ),
         patch("knowledge_ingest.pg_store.soft_delete_artifact", new_callable=AsyncMock),
         patch("knowledge_ingest.pg_store.create_artifact", mock_create),
+        patch("knowledge_ingest.pg_store.update_artifact_extra", new_callable=AsyncMock),
         patch(
             "knowledge_ingest.embedder.embed",
             new_callable=AsyncMock,

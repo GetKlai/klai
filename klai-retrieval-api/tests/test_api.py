@@ -356,16 +356,85 @@ class TestLinkExpandInstrumentation:
             resp = client.post("/retrieve", json=sample_retrieve_request)
 
         assert resp.status_code == 200
-        # Find the retrieval_decision_record structlog event
-        rec = next(
-            (r for r in caplog.records if "retrieval_decision_record" in r.getMessage()),
-            None,
+
+        # The retrieval_decision_record structlog event MUST be present.
+        # Polish 2026-05-06: dropped the previous `or` in the assertion that
+        # let the test pass when `rec is None`. structlog routes through
+        # stdlib `logging` via ProcessorFormatter, so caplog DOES capture
+        # these records — if it doesn't, the F3 instrumentation contract is
+        # broken and we want the test to fail loudly.
+        record_messages = [r.getMessage() for r in caplog.records]
+        decision_records = [m for m in record_messages if "retrieval_decision_record" in m]
+        assert decision_records, (
+            "retrieval_decision_record log line missing from caplog. "
+            f"Captured records: {record_messages}"
         )
-        # structlog emits as plain log message; verify the key fields are
-        # in the record's structured-data attrs.
-        assert rec is not None or any("link_expand" in r.getMessage() for r in caplog.records), (
-            "decision_record log should contain a link_expand block"
+
+        # Verify the link_expand block actually appears with its required keys.
+        # The structlog kwargs end up in the record's attribute dict via
+        # ProcessorFormatter — search the record's __dict__ for our keys.
+        rec = next(r for r in caplog.records if "retrieval_decision_record" in r.getMessage())
+        rec_attrs = " ".join(f"{k}={v}" for k, v in rec.__dict__.items())
+        for required_key in (
+            "link_expand",
+            "expanded_in_top_k",
+            "seed_in_top_k",
+            "served_top_k",
+        ):
+            assert required_key in rec_attrs, (
+                f"link_expand block missing required key '{required_key}'. "
+                f"Record attrs: {rec.__dict__}"
+            )
+
+    def test_link_expanded_flag_survives_evidence_tier_deep_copy(self):
+        """The instrumentation tag MUST survive `copy.deepcopy(reranked)`
+        inside ``evidence_tier.apply`` so that when EVIDENCE_SHADOW_MODE=false
+        flips on (per SPEC-EVIDENCE-001-FOLLOWUP-001) the deep-copied scored
+        chunks STILL carry the flag for ``decision_record.link_expand``.
+
+        This is a contract test on Python semantics — `copy.deepcopy` of a
+        dict preserves all keys, and `evidence_tier.apply` mutates in place
+        without stripping unknown fields. Pinned here so a future refactor
+        of evidence_tier (e.g. switch to a typed constructor that drops
+        unknown keys) doesn't silently break F3 instrumentation in the
+        post-shadow-mode world.
+        """
+        import copy
+
+        from retrieval_api.services.evidence_tier import apply
+
+        original = [
+            {
+                "chunk_id": "expanded-1",
+                "text": "expanded chunk",
+                "score": 0.5,
+                "reranker_score": 0.8,
+                "content_type": "kb_article",
+                "ingested_at": None,
+                "assertion_mode": None,
+                "_link_expanded": True,
+            },
+            {
+                "chunk_id": "seed-1",
+                "text": "seed chunk",
+                "score": 0.9,
+                "reranker_score": 0.95,
+                "content_type": "kb_article",
+                "ingested_at": None,
+                "assertion_mode": None,
+            },
+        ]
+        # Simulate the retrieve.py pattern: deepcopy then apply scoring.
+        scored = apply(copy.deepcopy(original))
+
+        flagged = [c for c in scored if c.get("_link_expanded") is True]
+        assert len(flagged) == 1, (
+            f"_link_expanded flag dropped after deepcopy + evidence_tier.apply: "
+            f"{[c.get('chunk_id') for c in scored]}. F3 instrumentation broken."
         )
+        assert flagged[0]["chunk_id"] == "expanded-1"
+        # Original list MUST be untouched (deepcopy guarantee).
+        assert "final_score" not in original[0], "deepcopy was lost — apply mutated input"
 
 
 class TestHealthEndpoint:

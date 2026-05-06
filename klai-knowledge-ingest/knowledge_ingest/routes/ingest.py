@@ -335,8 +335,8 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         if not chunks:
             return {"status": "skipped", "reason": "empty document", "chunks": 0}
         texts = [c.text for c in chunks]
-        parent_index_per_child: list[int | None] = [c.parent_index for c in chunks]
-        parents_serialised: list[dict] = [
+        [c.parent_index for c in chunks]
+        [
             {
                 "text": p.text,
                 "token_count": chunker._approx_token_count(p.text),
@@ -391,7 +391,19 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
                         taxonomy_node_ids = centroid_result
                         centroid_matched = True
         except Exception:
-            logger.debug("centroid_lookup_failed", exc_info=True)
+            # Audit 2026-05-06 finding 5: this used to log at debug, which is below
+            # the production INFO floor (logging_setup.py) and thus invisible in
+            # VictoriaLogs. Centroid failures are infrastructure events (corrupt
+            # blob, TEI down, numpy mismatch), not user-content errors — they
+            # silently force every document onto the expensive LLM-classification
+            # path until somebody correlates a token-cost spike. Bumping to
+            # warning surfaces the event without triggering level:error alerts.
+            logger.warning(
+                "centroid_lookup_failed",
+                exc_info=True,
+                org_id=req.org_id,
+                kb_slug=req.kb_slug,
+            )
 
         if not centroid_matched:
             matched_nodes, llm_tags = await classify_document(
@@ -549,7 +561,19 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     # (proposal_generator.py::_MIN_UNMATCHED_FOR_PROPOSAL). Removed via
     # SPEC-KB-027 R2 cleanup (PR #90 obsolete; harvested as standalone fix).
 
-    # Enqueue enrichment as async Procrastinate task (non-blocking)
+    # SPEC-INGEST-CONTENT-PG-001 (audit finding 1): persist the full
+    # extra_payload onto the artifact row so the enrichment worker can
+    # reconstruct everything from artifact_id alone. The task no longer
+    # carries the document body or any payload metadata in its args.
+    # JSONB merge semantics — fields written here add to the pg_extra
+    # already attached at create_artifact time.
+    await pg_store.update_artifact_extra(conn, artifact_id, extra_payload)
+
+    # Enqueue enrichment as async Procrastinate task (non-blocking).
+    # SPEC-INGEST-CONTENT-PG-001: task takes only artifact_id; all other
+    # fields are loaded from PostgreSQL at execution time. Closes the
+    # race-window where two POSTs in quick succession could leave the
+    # worker processing a stale (frozen-in-args) content snapshot.
     if await org_config.is_enrichment_enabled(conn, req.org_id):
         from knowledge_ingest import enrichment_tasks
 
@@ -564,21 +588,7 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
 
             await task_fn.configure(
                 queueing_lock=f"{req.org_id}:{req.kb_slug}:{req.path}",
-            ).defer_async(
-                org_id=req.org_id,
-                kb_slug=req.kb_slug,
-                path=req.path,
-                document_text=req.content,
-                chunks=texts,
-                title=title,
-                artifact_id=artifact_id,
-                user_id=req.user_id,
-                extra_payload=extra_payload,
-                synthesis_depth=kf["synthesis_depth"],
-                content_type=req.content_type,
-                parents=parents_serialised,
-                parent_index_per_child=parent_index_per_child,
-            )
+            ).defer_async(artifact_id=artifact_id)
         except AlreadyEnqueued:
             logger.info(
                 "enrichment_already_queued",

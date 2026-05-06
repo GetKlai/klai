@@ -1286,7 +1286,10 @@ class IdentityVerifySuccess(BaseModel):
     org_id: str
     org_slug: str
     cache_ttl_seconds: int
-    evidence: Literal["jwt", "membership"]
+    # ``partner_key`` (F2 fix-forward, retrieval coupling audit 2026-05-06):
+    # evidence used for synthetic ``partner:<key_id>`` identities verified
+    # against partner_api_keys.
+    evidence: Literal["jwt", "membership", "partner_key"]
 
 
 class IdentityVerifyDeny(BaseModel):

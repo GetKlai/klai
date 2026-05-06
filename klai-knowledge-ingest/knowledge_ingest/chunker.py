@@ -50,15 +50,76 @@ def _strip_frontmatter(text: str) -> tuple[str, str]:
     return "", text
 
 
+def _find_code_block_ranges(text: str) -> list[tuple[int, int]]:
+    """Return ``(start, end)`` char ranges of fenced code blocks.
+
+    Recognises CommonMark fenced code blocks: an opening line of 3+
+    backticks (``` ``` ```) or 3+ tildes (``~~~``), terminated by a
+    line of the same fence character with at least as many markers.
+    Unterminated fences extend to end-of-text.
+
+    Audit 2026-05-06 finding 8 — without this, ``# something`` lines
+    inside a Python / shell code example get parsed as headings and
+    leak into the chunked document's ``heading_path``.
+    """
+    fence_re = re.compile(r"^([`~]{3,})", re.MULTILINE)
+    matches = list(fence_re.finditer(text))
+
+    ranges: list[tuple[int, int]] = []
+    i = 0
+    while i < len(matches):
+        opener = matches[i]
+        opener_chars = opener.group(1)
+        opener_char = opener_chars[0]
+        opener_len = len(opener_chars)
+
+        # Look for the next fence that closes this one: same character,
+        # length >= opener length. Anything in between (including other
+        # fence-like lines that don't match) is body of the block.
+        j = i + 1
+        closed = False
+        while j < len(matches):
+            closer = matches[j]
+            closer_chars = closer.group(1)
+            if closer_chars[0] == opener_char and len(closer_chars) >= opener_len:
+                ranges.append((opener.start(), closer.end()))
+                i = j + 1
+                closed = True
+                break
+            j += 1
+        if not closed:
+            # Unterminated fence — block runs to end of text.
+            ranges.append((opener.start(), len(text)))
+            break
+
+    return ranges
+
+
 def _split_by_headings(text: str) -> list[tuple[str, str]]:
-    """Return list of (heading_path, section_text) pairs."""
+    """Return list of (heading_path, section_text) pairs.
+
+    Skips heading-shaped lines (`# ...`) that fall inside fenced code
+    blocks — see ``_find_code_block_ranges``.
+    """
     heading_re = re.compile(r"^(#{1,3})\s+(.+)$", re.MULTILINE)
     sections: list[tuple[str, str]] = []
     heading_stack: list[tuple[int, str]] = []  # (level, title)
     last_pos = 0
     last_heading_path = ""
 
+    code_ranges = _find_code_block_ranges(text)
+
+    def _inside_code_block(pos: int) -> bool:
+        for start, end in code_ranges:
+            if start <= pos < end:
+                return True
+        return False
+
     for match in heading_re.finditer(text):
+        # Audit finding 8: skip code-comment lines inside fenced blocks.
+        if _inside_code_block(match.start()):
+            continue
+
         if match.start() > last_pos:
             body = text[last_pos : match.start()].strip()
             if body:
@@ -188,11 +249,7 @@ def chunk_markdown_with_parents(
                 continue
             parent_idx = len(parents)
             parent = ParentChunk(
-                text=(
-                    f"{heading_path}\n\n{parent_text}".strip()
-                    if heading_path
-                    else parent_text
-                ),
+                text=(f"{heading_path}\n\n{parent_text}".strip() if heading_path else parent_text),
                 heading_path=heading_path,
                 char_start=char_pos,
                 position=parent_position,
@@ -205,11 +262,7 @@ def chunk_markdown_with_parents(
             for child_text in child_texts:
                 if not child_text.strip():
                     continue
-                display = (
-                    f"{heading_path}\n\n{child_text}".strip()
-                    if heading_path
-                    else child_text
-                )
+                display = f"{heading_path}\n\n{child_text}".strip() if heading_path else child_text
                 child_idx = len(children)
                 children.append(
                     Chunk(
