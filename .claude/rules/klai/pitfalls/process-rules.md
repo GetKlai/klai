@@ -1558,3 +1558,86 @@ deze guard nodig — refuse-by-default + getypte-string-override-input.
 Niet alleen voor SOPS env: ook voor migrations die DROP TABLE doen,
 voor terraform destroy, voor docker prune in CI. De pattern is
 generic: destructieve ops moeten een getypte intent-bewijs hebben.
+
+## alembic-multi-pr-head-split (CRIT)
+
+When two PRs each add an Alembic migration with the same `down_revision`,
+both PR builds pass green (each migration in isolation is valid) but
+production crashes on `alembic upgrade head` with:
+
+```
+Multiple head revisions are present for given argument 'head'
+```
+
+The merge-first PR lands cleanly. The second-merging PR turns the chain
+into two heads. `alembic upgrade head` refuses to proceed because the
+target is ambiguous; the entrypoint loops on `FAILED` and the container
+restartloops.
+
+Klai hit this once on 2026-05-06:
+
+1. PR #440 (SPEC-INGEST-RECONCILE-001) added `0005_crawl_jobs_fetch_outcomes`
+   chained on `603787256fb8`.
+2. PR #441 (SPEC-INGEST-LOGIN-WALL-DETECT-002) added `0005_crawled_pages_simhash`
+   chained on the same `603787256fb8`.
+
+#440 merged 7 minutes before #441. Production deployed `:latest` after
+#441 and the knowledge-ingest container restartlooped for ~5 minutes.
+The recovery used both available remediations in parallel: hotfix #442
+rebased the second migration onto the first (`down_revision`:
+`603787256fb8` → `a8c5e1d2f3b4`) AND hotfix #443 shipped a no-op merge
+migration declaring both heads as parents. Either alone would have
+unblocked the entrypoint; doing both is safe (one becomes redundant).
+
+The schema columns themselves were independent (`crawl_jobs.fetch_outcomes`
+vs `crawled_pages.content_simhash` — different tables) so no data
+corruption happened; only the alembic graph needed linearisation.
+
+**Prevention (process):**
+
+1. **Before merging an alembic migration, rebase if main has moved.** A
+   PR built on yesterday's `main` whose chain still references the
+   yesterday-head is NOT mergeable today if another migration landed on
+   the same parent. Treat alembic as a serial resource: the moment a
+   migration lands on main, ALL other open PRs with an alembic
+   migration are stale.
+
+2. **Run `alembic heads` in CI on every PR build.** The check is offline
+   (no DB needed) and catches the head split at PR-build time, not at
+   container-start time. Add to the existing build-push workflow:
+   ```yaml
+   - name: Verify single alembic head
+     run: |
+       cd klai-knowledge-ingest
+       heads=$(alembic heads | wc -l)
+       if [ "$heads" -ne 1 ]; then
+         echo "::error::Multiple alembic heads detected (got $heads, expected 1)"
+         alembic heads
+         exit 1
+       fi
+   ```
+   This is the only protection that doesn't depend on developer
+   discipline. Same pattern applies to all 4 services with alembic
+   migrations: knowledge-ingest, connector, portal-api, scribe.
+
+3. **When the head split DOES land in production**, two equally valid
+   recoveries:
+   - **Rebase** the second-merging migration onto the first head
+     (preferred when the migration files are still recent and rename
+     is cheap). What #442 did.
+   - **Merge migration** that declares both heads as parents with a
+     no-op body. What #443 did. Useful when the rebase would require
+     coordinating across teams or downgrade safety matters.
+
+   Both are safe and additive. Doing both at once is also safe (one
+   becomes redundant); pick one.
+
+4. **The compose-up restart loop is the loud signal.** If a
+   `:latest`-image deploy puts a container in `Restarting` state with
+   `failed: alembic upgrade head` in logs, the head-split is the most
+   common cause for any service with > 1 alembic migration in flight.
+   Check `alembic heads` first before debugging any other symptom.
+
+Reference: PR #441 → crashloop → hotfix #442 (rebase) + #443 (merge
+migration). Operator timeline: 5 minutes from deploy to crashloop, 13
+minutes from crashloop to recovered deploy.

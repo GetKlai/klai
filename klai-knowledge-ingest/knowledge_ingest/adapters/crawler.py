@@ -10,7 +10,6 @@ runs on that same connection so RLS sees the tenant context.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import time
@@ -28,6 +27,7 @@ from knowledge_ingest.utils.auth_wall_detector import (
     AuthWallSignal,
     detect_anonymous_auth_wall,
 )
+from knowledge_ingest.utils.content_fingerprint import compute_simhash
 
 logger = structlog.get_logger()
 
@@ -210,7 +210,12 @@ async def run_crawl_job(
     auth_wall_pages: list[str] = []
 
     try:
-        results = await crawl_site(
+        # SPEC-INGEST-RECONCILE-001 AC-4: crawl_site now returns
+        # ``(results, outcomes)``. ``outcomes`` is a JSONB-shaped list with
+        # one entry per discovered candidate URL — written to
+        # ``crawl_jobs.fetch_outcomes`` so operators can answer "where did
+        # the missing pages go?" without log forensics.
+        results, fetch_outcomes = await crawl_site(
             start_url=start_url,
             selector=content_selector,
             max_depth=max_depth,
@@ -226,9 +231,16 @@ async def run_crawl_job(
         # keeps the public signature stable for Fase D delegation.
         _ = (canary_url, canary_fingerprint)
 
+        # SPEC-INGEST-RECONCILE-001 AC-4: persist per-URL outcomes alongside
+        # the page-count rollup. ``pages_total`` keeps its existing semantics
+        # ("how many CrawlResults reached the ingest loop"); the JSONB
+        # ``fetch_outcomes`` is the per-candidate breakdown.
         await conn.execute(
-            "UPDATE knowledge.crawl_jobs SET pages_total=$1, updated_at=$2 WHERE id=$3",
+            "UPDATE knowledge.crawl_jobs "
+            "SET pages_total=$1, fetch_outcomes=$2::jsonb, updated_at=$3 "
+            "WHERE id=$4",
             len(results),
+            json.dumps(fetch_outcomes),
             int(time.time()),
             job_id,
         )
@@ -410,19 +422,40 @@ async def _ingest_crawl_result(
             logger.info("crawl_skipped_html_noise", url=url, org_id=org_id, kb_slug=kb_slug)
             return
 
-    # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-03 — anonymous-crawl auth-wall
-    # detection. Runs AFTER dedup (don't waste work on already-seen pages)
-    # and BEFORE image upload + Qdrant write (cheaper to bail early). Skipped
-    # entirely when login_indicator_selector is set, because the authenticated
-    # path has its own halt-on-success=False guard above (lines 260-266) and
-    # we don't want to double-detect.
+    # SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-01 — compute the page's SimHash
+    # once, BEFORE the detector call (the detector reuses it for cluster
+    # lookup) and store it AFTER the upsert below so the next crawl can
+    # cluster against it. Computed unconditionally — even with detection
+    # disabled, the fingerprint is needed for the operator-triggered
+    # backfill / validation script.
+    #
+    # Empty / whitespace-only content yields ``compute_simhash == 0``. Storing
+    # 0 would let "empty" pages cluster together (all match Hamming 0), which
+    # would falsely flag a tenant whose crawl results were 5+ rendered-but-
+    # empty pages. We treat the missing-content case as "no fingerprint" by
+    # leaving content_simhash NULL, matching the cold-start contract.
+    page_simhash: int | None = compute_simhash(text)
+    if page_simhash == 0:
+        page_simhash = None
+
+    # SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-02 — anonymous-crawl auth-wall
+    # detection by SimHash near-duplicate clustering. Runs AFTER dedup (don't
+    # waste work on already-seen pages) and BEFORE image upload + Qdrant
+    # write (cheaper to bail early). Skipped when login_indicator_selector
+    # is set — the authenticated path has its own halt-on-success=False
+    # guard above and we don't want to double-detect.
     login_wall_signal: AuthWallSignal | None = None
     login_wall_mode: str | None = None
     if settings.ingest_login_wall_detect_enabled and login_indicator_selector is None:
-        login_wall_signal = detect_anonymous_auth_wall(
+        login_wall_signal = await detect_anonymous_auth_wall(
             result.raw_markdown or "",
             fit_markdown=result.fit_markdown or None,
             url=url,
+            org_id=org_id,
+            kb_slug=kb_slug,
+            conn=conn,
+            cluster_min=settings.ingest_template_cluster_min,
+            target_simhash=page_simhash,
         )
         if login_wall_signal is not None:
             login_wall_mode = _resolve_login_wall_mode()
@@ -476,15 +509,24 @@ async def _ingest_crawl_result(
     if is_pdf and front_matter:
         extra["front_matter"] = front_matter
 
-    # SPEC-CRAWLER-003 R11: populate link graph fields after page_links upsert
+    # SPEC-CRAWLER-003 R11: populate link graph fields after page_links upsert.
+    #
+    # SEQUENTIAL not gather: asyncpg.Connection is NOT safe for concurrent use.
+    # Submitting three queries through asyncio.gather on the same conn raises
+    # ``InterfaceError: cannot perform operation: another operation is in
+    # progress`` and leaves the conn in an unusable state — every subsequent
+    # ``conn.execute`` in run_crawl_job (the per-page UPDATE on knowledge.crawl_jobs
+    # at the bottom of the loop, and the terminal _update_job) then re-raises
+    # the same error, killing the whole crawl. Discovered live on Voys help
+    # 2026-05-06 — symptom: 0 of N pages ingested, procrastinate retry-loop.
+    # Gather buys nothing here: a single asyncpg conn serialises queries on
+    # the wire anyway.
     try:
         from knowledge_ingest import link_graph
 
-        outbound, anchors, incoming = await asyncio.gather(
-            link_graph.get_outbound_urls(conn, url, org_id, kb_slug),
-            link_graph.get_anchor_texts(conn, url, org_id, kb_slug),
-            link_graph.get_incoming_count(conn, url, org_id, kb_slug),
-        )
+        outbound = await link_graph.get_outbound_urls(conn, url, org_id, kb_slug)
+        anchors = await link_graph.get_anchor_texts(conn, url, org_id, kb_slug)
+        incoming = await link_graph.get_incoming_count(conn, url, org_id, kb_slug)
         extra["links_to"] = outbound[:20]
         extra["anchor_texts"] = anchors
         extra["incoming_link_count"] = incoming
@@ -542,6 +584,20 @@ async def _ingest_crawl_result(
         raw_markdown=text,
         crawled_at=int(time.time()),
     )
+
+    # SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-01 — persist the page's SimHash
+    # so the next crawl in this KB can include it in cluster lookups. Done
+    # AFTER upsert_crawled_page so the row exists; the helper does an UPDATE
+    # by (org_id, kb_slug, url). Skipped for empty/whitespace-only content
+    # (page_simhash is None) so 0-fingerprints never reach the DB.
+    if page_simhash is not None:
+        await pg_store.update_crawled_page_simhash(
+            conn,
+            org_id=org_id,
+            kb_slug=kb_slug,
+            url=url,
+            content_simhash=page_simhash,
+        )
 
 
 async def _update_job(

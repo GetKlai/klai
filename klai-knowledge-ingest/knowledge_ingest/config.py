@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     # due to a config typo.
     ingest_login_wall_detect_enabled: bool = True
     ingest_login_wall_detect_mode: str = "reject"
+    # SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-02 — cluster threshold. A page is
+    # flagged as a wall iff this many OR MORE OTHER pages in the same
+    # (org_id, kb_slug) have a SimHash within Hamming distance 3 of the page's
+    # own. Default 5 catches RedCactus's 149-page cluster easily and protects
+    # single/few-page pseudo-walls under cold-start permissiveness (REQ-03).
+    ingest_template_cluster_min: int = 5
     # LLM enrichment (contextual prefix + HyPE questions via LiteLLM proxy)
     litellm_url: str = "http://litellm:4000"
     litellm_api_key: str = ""

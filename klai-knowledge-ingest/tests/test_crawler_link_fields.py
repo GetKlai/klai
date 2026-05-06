@@ -52,8 +52,15 @@ async def test_ingest_crawl_result_populates_link_fields():
     result = _make_crawl_result()
 
     outbound_urls = ["https://example.com/b"]
+    # ``make_pg_store_mock`` from conftest returns
+    # ``AsyncMock(spec=pg_store)`` — every helper auto-mocked, no per-method
+    # AsyncMock assignment needed. Future pg_store helper additions don't
+    # silently break this test.
+    from tests.conftest import make_pg_store_mock
+
+    mock_pg = make_pg_store_mock()
     with (
-        patch("knowledge_ingest.adapters.crawler.pg_store") as mock_pg,
+        patch("knowledge_ingest.adapters.crawler.pg_store", mock_pg),
         patch.object(
             link_graph, "get_outbound_urls",
             new_callable=AsyncMock, return_value=outbound_urls,
@@ -71,10 +78,6 @@ async def test_ingest_crawl_result_populates_link_fields():
             new_callable=AsyncMock,
         ) as mock_ingest,
     ):
-        mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
-        mock_pg.upsert_crawled_page = AsyncMock()
-        mock_pg.upsert_page_links = AsyncMock()
-
         mock_ingest.return_value = {"chunks": 2}
 
         from knowledge_ingest.adapters.crawler import _ingest_crawl_result
@@ -103,8 +106,11 @@ async def test_ingest_crawl_result_graceful_on_link_graph_error():
     mock_conn = _make_mock_conn()
     result = _make_crawl_result()
 
+    from tests.conftest import make_pg_store_mock
+
+    mock_pg = make_pg_store_mock()
     with (
-        patch("knowledge_ingest.adapters.crawler.pg_store") as mock_pg,
+        patch("knowledge_ingest.adapters.crawler.pg_store", mock_pg),
         patch.object(
             link_graph, "get_outbound_urls",
             new_callable=AsyncMock, side_effect=Exception("DB down"),
@@ -122,10 +128,6 @@ async def test_ingest_crawl_result_graceful_on_link_graph_error():
             new_callable=AsyncMock,
         ) as mock_ingest,
     ):
-        mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
-        mock_pg.upsert_crawled_page = AsyncMock()
-        mock_pg.upsert_page_links = AsyncMock()
-
         mock_ingest.return_value = {"chunks": 1}
 
         from knowledge_ingest.adapters.crawler import _ingest_crawl_result
@@ -178,7 +180,19 @@ async def test_run_crawl_job_calls_build_link_graph_before_ingest():
         patch(
             "knowledge_ingest.adapters.crawler.crawl_site",
             new_callable=AsyncMock,
-            return_value=[mock_result],
+            # SPEC-INGEST-RECONCILE-001 AC-4: crawl_site returns
+            # ``(results, fetch_outcomes)``.
+            return_value=(
+                [mock_result],
+                [
+                    {
+                        "url": mock_result.url,
+                        "reason_code": "success",
+                        "status_code": 200,
+                        "content_length": len(mock_result.html or ""),
+                    }
+                ],
+            ),
         ),
         patch.object(
             link_graph,
@@ -206,6 +220,7 @@ async def test_run_crawl_job_calls_build_link_graph_before_ingest():
         mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
         mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
         mock_pg.upsert_crawled_page = AsyncMock()
+        mock_pg.update_crawled_page_simhash = AsyncMock()
         mock_pg.upsert_page_links = AsyncMock(side_effect=_fake_upsert_links)
 
         from knowledge_ingest.adapters.crawler import run_crawl_job

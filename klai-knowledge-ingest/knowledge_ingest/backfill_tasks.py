@@ -1,28 +1,33 @@
-"""Backfill task: detect + purge anonymous-crawl login-wall stubs.
+"""Backfill + recovery tasks for SPEC-INGEST-LOGIN-WALL-DETECT-002.
 
-SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-06.
+Two operator-triggered Procrastinate tasks (NOT auto-on-deploy):
 
-Operator-triggered (NOT auto-on-deploy) Procrastinate task that scans an
-existing tenant's ``knowledge.crawled_pages`` rows, runs the same anonymous-
-auth-wall detector used at ingest time (Phase A), and for every match:
+* ``backfill_detect_login_walls(org_id, kb_slug)`` — re-evaluates an existing
+  tenant's KB under v2 cluster logic. For every page in
+  ``knowledge.crawled_pages`` whose ``content_simhash`` is NULL, computes the
+  SimHash and stores it; then for every non-placeholder page, counts how
+  many OTHER pages in the same KB cluster within Hamming 3. Pages in clusters
+  of >= ``cluster_min`` (default 5) are purged: Qdrant points deleted (filter
+  scoped by ``org_id + kb_slug + path``, REQ-09.1) and ``content_hash`` set
+  to ``__login_wall_purged__`` so the next scheduled crawl re-fetches them
+  through the new ingest-time guard. Idempotent: pages already at the
+  placeholder are filtered out at SQL level.
 
-1. Deletes the corresponding Qdrant points (filtered by
-   ``org_id + kb_slug + path`` — REQ-09.1 tenant isolation).
-2. Marks the page row's ``content_hash`` to a placeholder
-   (``__login_wall_purged__``) so the next scheduled crawl detects
-   "stored != current" and re-ingests through the new ingest-time guard.
+* ``recover_purged_pages(org_id, kb_slug)`` — undoes v1 false-positive purges
+  by clearing the placeholder hash for any page whose v2 cluster size has
+  dropped below threshold. The next scheduled crawl re-ingests these pages
+  cleanly.
 
-Idempotent: pages whose ``content_hash`` already equals the placeholder are
-filtered out at SQL level — re-running the task on the same tenant after a
-clean run is a no-op.
-
-CLI entry-point::
+CLI (operator entry point)::
 
     python -m knowledge_ingest.backfill_tasks --org voys --kb support
+    python -m knowledge_ingest.backfill_tasks --org getklai --kb voys-test --recover
 
-The CLI resolves ``--org`` (slug) to ``zitadel_org_id`` via the existing
-``portal_orgs`` table over the same tenant-scoped connection used elsewhere
-in this module.
+Both tasks resolve ``--org`` (slug) to ``zitadel_org_id`` via ``portal_orgs``
+over a regular pool connection (the slug→id table lives in the public schema
+and is not RLS-restricted to the knowledge schema's tenant context). The
+``backfill`` and ``recover`` operations themselves go through
+``tenant_scoped_connection`` so the knowledge-schema RLS GUC is set.
 """
 
 from __future__ import annotations
@@ -34,11 +39,18 @@ from typing import Any
 import structlog
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 
-from knowledge_ingest import queues
+from knowledge_ingest import pg_store, queues
 from knowledge_ingest.db import tenant_scoped_connection
 from knowledge_ingest.qdrant_store import COLLECTION
 from knowledge_ingest.qdrant_store import get_client as get_qdrant_client
-from knowledge_ingest.utils.auth_wall_detector import detect_anonymous_auth_wall
+from knowledge_ingest.utils.auth_wall_detector import (
+    DEFAULT_CLUSTER_MIN,
+    DEFAULT_HAMMING_MAX,
+)
+from knowledge_ingest.utils.content_fingerprint import (
+    compute_simhash,
+    hamming_distance,
+)
 
 logger = structlog.get_logger()
 
@@ -51,37 +63,133 @@ PURGED_PLACEHOLDER_HASH = "__login_wall_purged__"
 
 
 # ---------------------------------------------------------------------------
-# Core async function — used by both the Procrastinate task and the CLI.
+# Cluster evaluation helper — shared between backfill and recovery.
+# ---------------------------------------------------------------------------
+
+
+def _count_cluster_siblings(
+    target_url: str,
+    target_hash: int,
+    url_to_hash: dict[str, int],
+    *,
+    hamming_max: int,
+) -> int:
+    """Count OTHER URLs whose SimHash is within ``hamming_max`` of ``target``.
+
+    O(N) per call, O(N^2) over the whole KB. Acceptable at klai's scale
+    (low thousands per KB; SPEC REQ-08 budgets 50 ms per cluster query at
+    1000-page KB). LSH banding is deferred — see research.md §4.2.
+
+    ``compute_simhash`` returns 0 for empty / whitespace-only normalised
+    content. Pages with hash 0 share "nothing" rather than a template, so
+    they MUST NOT cluster with each other; the crawler skips storing 0
+    fingerprints, but legacy rows from before that guard could still
+    surface here. Filter both directions: a 0-target returns 0, and
+    0-siblings are not counted.
+
+    @MX:NOTE — the 0-skip is a defensive double-check. The crawler and
+    backfill ``_ensure_simhashes`` already skip persisting hash=0, so in
+    a clean DB no zero-siblings exist. This filter handles legacy rows
+    + any future caller that bypasses the storage guards. Removing the
+    filter would let a tenant with several rendered-but-empty crawl
+    results false-positive cluster as walls.
+    Reason: SPEC-INGEST-LOGIN-WALL-DETECT-002 follow-up (PR #445).
+    """
+    if target_hash == 0:
+        return 0
+    return sum(
+        1
+        for other_url, other_hash in url_to_hash.items()
+        if other_url != target_url
+        and other_hash != 0
+        and hamming_distance(target_hash, other_hash) <= hamming_max
+    )
+
+
+# ---------------------------------------------------------------------------
+# Pass 1: SimHash backfill — populate content_simhash for any NULL rows.
+# ---------------------------------------------------------------------------
+
+
+async def _ensure_simhashes(
+    conn: Any,
+    rows: list[Any],
+    *,
+    org_id: str,
+    kb_slug: str,
+) -> dict[str, int]:
+    """Compute + persist SimHash for any row missing one; return url→hash map.
+
+    Existing fingerprints are reused; missing ones are computed from
+    ``raw_markdown`` and written via the standard helper so the path matches
+    crawler ingest. Returned map covers every row (including those already
+    populated) for the cluster scan in pass 2.
+    """
+    url_to_hash: dict[str, int] = {}
+    for row in rows:
+        sh = row["content_simhash"]
+        if sh is None:
+            sh = compute_simhash(row["raw_markdown"] or "")
+            # 0 is the empty-content sentinel; do not persist it (would let
+            # rendered-but-empty crawl results falsely cluster). Match the
+            # crawler's ingest-time behaviour and leave the column NULL.
+            if sh != 0:
+                await pg_store.update_crawled_page_simhash(
+                    conn,
+                    org_id=org_id,
+                    kb_slug=kb_slug,
+                    url=row["url"],
+                    content_simhash=sh,
+                )
+        url_to_hash[row["url"]] = sh
+    return url_to_hash
+
+
+# ---------------------------------------------------------------------------
+# backfill_detect_login_walls — operator-triggered task.
 # ---------------------------------------------------------------------------
 
 
 async def backfill_detect_login_walls(
     org_id: str,
     kb_slug: str,
+    *,
+    cluster_min: int = DEFAULT_CLUSTER_MIN,
+    hamming_max: int = DEFAULT_HAMMING_MAX,
 ) -> dict[str, int]:
-    """Scan ``crawled_pages`` for ``(org_id, kb_slug)``, detect walls, purge.
+    """Detect + purge wall clusters in ``(org_id, kb_slug)``.
 
-    Returns:
-        ``{"processed": N, "flagged": M, "qdrant_deleted": K}``. ``processed``
-        excludes already-purged rows (SQL-level filter). ``flagged`` ≤
-        ``processed``. ``qdrant_deleted`` ≤ ``flagged`` (one Qdrant delete
-        call per flagged page).
+    Returns ``{"processed": N, "flagged": M, "qdrant_deleted": K}``.
+    ``processed`` excludes rows already at the placeholder hash (SQL-level
+    filter, makes re-runs free). ``flagged`` is the number of pages whose
+    cluster size hits the threshold; each flagged page incurs one Qdrant
+    delete and one Postgres UPDATE.
 
     REQ-09: All Postgres reads/writes go through ``tenant_scoped_connection``
     so RLS enforces ``org_id`` server-side. Qdrant deletes carry an
     ``org_id + kb_slug + path`` triple in ``Filter.must`` to comply with the
     tenant-isolation semgrep rule.
+
+    @MX:ANCHOR — invariant. Operator-triggered task. The Qdrant filter
+    triple (``org_id + kb_slug + path``) is enforced by the semgrep rule
+    in ``.github/workflows/tenant-isolation-review.yml``. Removing any
+    field is a tenant-isolation breach (would let a delete cross
+    tenants).
+    @MX:WARN — concurrent crawl race. Running this task while a
+    ``run_crawl_job`` is executing on the same ``(org_id, kb_slug)`` can
+    leave new pages without simhashes (read-then-write split): pass-1
+    snapshots rows; concurrent ingest inserts new rows AFTER the
+    snapshot; pass-2 evaluates the snapshot. Operators MUST ensure no
+    crawl is in flight before triggering. @MX:REASON — Procrastinate's
+    queueing_lock would help but is not wired in this task.
+    Reason: SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-04, REQ-09.
     """
     qdrant = get_qdrant_client()
     log = logger.bind(org_id=org_id, kb_slug=kb_slug)
 
-    processed = 0
-    flagged = 0
-    qdrant_deleted = 0
-
     async with tenant_scoped_connection(org_id) as conn:
         rows = await conn.fetch(
-            "SELECT url, raw_markdown, content_hash "
+            "SELECT url, raw_markdown, content_hash, content_simhash "
             "FROM knowledge.crawled_pages "
             "WHERE org_id = $1 AND kb_slug = $2 "
             "AND content_hash <> $3 "
@@ -91,13 +199,22 @@ async def backfill_detect_login_walls(
             PURGED_PLACEHOLDER_HASH,
         )
 
-        for row in rows:
-            processed += 1
-            url = row["url"]
-            raw_markdown = row["raw_markdown"]
+        # Pass 1: ensure every row has a SimHash (Phase D, plan.md item 1).
+        url_to_hash = await _ensure_simhashes(
+            conn, list(rows), org_id=org_id, kb_slug=kb_slug
+        )
 
-            signal = detect_anonymous_auth_wall(raw_markdown or "")
-            if signal is None:
+        # Pass 2: cluster eval in-memory (single O(N^2) scan, no extra SQL).
+        processed = len(rows)
+        flagged = 0
+        qdrant_deleted = 0
+        for row in rows:
+            url = row["url"]
+            target_hash = url_to_hash[url]
+            cluster_size = _count_cluster_siblings(
+                url, target_hash, url_to_hash, hamming_max=hamming_max
+            )
+            if cluster_size < cluster_min:
                 continue
 
             flagged += 1
@@ -130,8 +247,8 @@ async def backfill_detect_login_walls(
             log.info(
                 "backfill_login_wall_purged",
                 url=url,
-                pattern=signal.pattern,
-                confidence=signal.confidence,
+                pattern="template_cluster",
+                cluster_size=cluster_size,
             )
 
     log.info(
@@ -148,20 +265,122 @@ async def backfill_detect_login_walls(
 
 
 # ---------------------------------------------------------------------------
+# recover_purged_pages — un-purge v1 false-positive pages.
+# ---------------------------------------------------------------------------
+
+
+async def recover_purged_pages(
+    org_id: str,
+    kb_slug: str,
+    *,
+    cluster_min: int = DEFAULT_CLUSTER_MIN,
+    hamming_max: int = DEFAULT_HAMMING_MAX,
+) -> dict[str, int]:
+    """Un-purge pages whose v2 cluster size dropped below threshold.
+
+    Returns ``{"processed": N, "recovered": M}``. ``processed`` counts only
+    pages currently at the placeholder hash; ``recovered`` is how many of
+    them are no longer cluster members under v2 and got their content_hash
+    cleared (forcing re-ingest at the next scheduled crawl).
+
+    Designed for one-shot operator use immediately after v2 deploys — to
+    undo v1 phrase-detector FPs that v2's cluster mechanism exonerates.
+
+    @MX:ANCHOR — invariant. Recovery sets ``content_hash = ''`` (empty
+    string), NOT NULL. The empty string is the "force re-fetch" sentinel
+    that the crawler's dedup-skip branch relies on (``stored_content !=
+    None and stored_content == content_hash``). NULL would be treated as
+    "never crawled" and fall through to the regular crawl path with a
+    spurious initial state.
+    @MX:NOTE — recovered pages with template-stub content WILL re-purge
+    after the next crawl: crawl4ai re-fetches current source content; if
+    it's still a wall stub, the v2 ingest detector re-flags via cluster
+    membership. Operators see "recovered: N" but expect that count to
+    shrink toward "true FPs" after re-crawl. Documented in
+    ``acceptance.md`` AC-05.1 recovery semantics note.
+    Reason: SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-05.
+    """
+    log = logger.bind(org_id=org_id, kb_slug=kb_slug)
+
+    async with tenant_scoped_connection(org_id) as conn:
+        # Fetch ALL rows (including purged) so we can both un-purge purged
+        # rows and use the live rows as cluster context.
+        rows = await conn.fetch(
+            "SELECT url, raw_markdown, content_hash, content_simhash "
+            "FROM knowledge.crawled_pages "
+            "WHERE org_id = $1 AND kb_slug = $2 "
+            "ORDER BY id",
+            org_id,
+            kb_slug,
+        )
+
+        url_to_hash = await _ensure_simhashes(
+            conn, list(rows), org_id=org_id, kb_slug=kb_slug
+        )
+
+        processed = 0
+        recovered = 0
+        for row in rows:
+            if row["content_hash"] != PURGED_PLACEHOLDER_HASH:
+                continue
+            processed += 1
+            url = row["url"]
+            target_hash = url_to_hash[url]
+            cluster_size = _count_cluster_siblings(
+                url, target_hash, url_to_hash, hamming_max=hamming_max
+            )
+            if cluster_size >= cluster_min:
+                # Still in a cluster under v2 — leave purged.
+                continue
+            # Cluster shrunk below threshold → un-purge so next crawl
+            # re-ingests through the v2 ingest-time detector.
+            await conn.execute(
+                "UPDATE knowledge.crawled_pages "
+                "SET content_hash = '' "
+                "WHERE org_id = $1 AND kb_slug = $2 AND url = $3",
+                org_id,
+                kb_slug,
+                url,
+            )
+            recovered += 1
+            log.info(
+                "recover_purged_page_unpurged",
+                url=url,
+                cluster_size=cluster_size,
+            )
+
+    log.info(
+        "recover_purged_pages_complete",
+        processed=processed,
+        recovered=recovered,
+    )
+    return {"processed": processed, "recovered": recovered}
+
+
+# ---------------------------------------------------------------------------
 # Procrastinate task registration — called from enrichment_tasks.init_app
 # alongside the other registrations (same pattern as connector_purge_tasks).
 # ---------------------------------------------------------------------------
 
 
 def register_backfill_login_walls_task(procrastinate_app: Any) -> None:
-    """Register the ``backfill_detect_login_walls`` task on the given app."""
+    """Register the backfill + recover tasks on the given app."""
 
     @procrastinate_app.task(queue=queues.ENRICH_BULK)
-    async def backfill_detect_login_walls_task(org_id: str, kb_slug: str) -> dict[str, int]:
+    async def backfill_detect_login_walls_task(
+        org_id: str, kb_slug: str
+    ) -> dict[str, int]:
         return await backfill_detect_login_walls(org_id=org_id, kb_slug=kb_slug)
+
+    @procrastinate_app.task(queue=queues.ENRICH_BULK)
+    async def recover_purged_pages_task(org_id: str, kb_slug: str) -> dict[str, int]:
+        return await recover_purged_pages(org_id=org_id, kb_slug=kb_slug)
 
     procrastinate_app.backfill_detect_login_walls_task = (  # type: ignore[attr-defined]
         backfill_detect_login_walls_task
+    )
+    procrastinate_app.recover_purged_pages_task = (  # type: ignore[attr-defined]
+        recover_purged_pages_task
     )
 
 
@@ -171,10 +390,11 @@ def register_backfill_login_walls_task(procrastinate_app: Any) -> None:
 
 
 async def _resolve_org_slug_to_zitadel_id(org_slug: str) -> str:
-    """Translate ``portal_orgs.slug`` → ``zitadel_org_id`` (the org_id used
-    everywhere downstream). Reads via a regular pool connection because
-    ``portal_orgs`` lives in the public schema and is not RLS-restricted to
-    the ``knowledge`` schema's tenant context.
+    """Translate ``portal_orgs.slug`` → ``zitadel_org_id``.
+
+    Uses a regular pool connection (not tenant-scoped) because ``portal_orgs``
+    lives in the public schema and is not RLS-restricted to the ``knowledge``
+    schema's tenant context.
     """
     from knowledge_ingest.db import get_pool
 
@@ -193,22 +413,28 @@ async def _cli_main(args: argparse.Namespace) -> None:
         org_id = args.org_id
     else:
         org_id = await _resolve_org_slug_to_zitadel_id(args.org)
-    result = await backfill_detect_login_walls(org_id=org_id, kb_slug=args.kb)
-    # Print to stdout for ops piping; structured log already carries the
-    # same data into VictoriaLogs.
-    print(
-        f"backfill complete: org={org_id} kb={args.kb} "
-        f"processed={result['processed']} flagged={result['flagged']} "
-        f"qdrant_deleted={result['qdrant_deleted']}"
-    )
+
+    if args.recover:
+        result = await recover_purged_pages(org_id=org_id, kb_slug=args.kb)
+        print(
+            f"recover complete: org={org_id} kb={args.kb} "
+            f"processed={result['processed']} recovered={result['recovered']}"
+        )
+    else:
+        result = await backfill_detect_login_walls(org_id=org_id, kb_slug=args.kb)
+        print(
+            f"backfill complete: org={org_id} kb={args.kb} "
+            f"processed={result['processed']} flagged={result['flagged']} "
+            f"qdrant_deleted={result['qdrant_deleted']}"
+        )
 
 
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="python -m knowledge_ingest.backfill_tasks",
         description=(
-            "SPEC-INGEST-LOGIN-WALL-DETECT-001 — backfill: detect + purge "
-            "anonymous-crawl login-wall stubs from a tenant's KB."
+            "SPEC-INGEST-LOGIN-WALL-DETECT-002 — backfill + recover login-wall "
+            "purges via SimHash near-duplicate clustering."
         ),
     )
     p.add_argument(
@@ -220,6 +446,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Bypass slug resolution and pass zitadel_org_id directly.",
     )
     p.add_argument("--kb", required=True, help="KB slug (e.g. 'support').")
+    p.add_argument(
+        "--recover",
+        action="store_true",
+        help=(
+            "Run recover_purged_pages instead of backfill_detect_login_walls. "
+            "Clears __login_wall_purged__ placeholder for pages whose v2 "
+            "cluster size dropped below threshold."
+        ),
+    )
     return p
 
 

@@ -389,7 +389,7 @@ class TestAssertCallerIdentityUnit:
         request = StarletteRequest(scope)
 
         with pytest.raises(Exception) as exc_info:
-            await assert_caller_identity(request, claimed_org_id="org-1")
+            await assert_caller_identity(request, claimed_org_id="org-1", claimed_user_id="user-1")
         exc = exc_info.value
         assert hasattr(exc, "status_code"), f"Expected HTTPException, got {type(exc)}"
         assert exc.status_code == 400
@@ -410,7 +410,7 @@ class TestAssertCallerIdentityUnit:
         request = StarletteRequest(scope)
 
         with pytest.raises(Exception) as exc_info:
-            await assert_caller_identity(request, claimed_org_id="org-1")
+            await assert_caller_identity(request, claimed_org_id="org-1", claimed_user_id="user-1")
         exc = exc_info.value
         assert hasattr(exc, "status_code"), f"Expected HTTPException, got {type(exc)}"
         assert exc.status_code == 400
@@ -438,7 +438,9 @@ class TestAssertCallerIdentityUnit:
         request = StarletteRequest(scope)
 
         with pytest.raises(Exception) as exc_info:
-            await mod.assert_caller_identity(request, claimed_org_id="org-attacker")
+            await mod.assert_caller_identity(
+                request, claimed_org_id="org-attacker", claimed_user_id="user-1"
+            )
         exc = exc_info.value
         assert hasattr(exc, "status_code"), f"Expected HTTPException, got {type(exc)}"
         assert exc.status_code == 403
@@ -467,5 +469,149 @@ class TestAssertCallerIdentityUnit:
         }
         request = StarletteRequest(scope)
 
-        verified_org_id = await mod.assert_caller_identity(request, claimed_org_id="org-1")
+        verified_org_id = await mod.assert_caller_identity(
+            request, claimed_org_id="org-1", claimed_user_id="user-1"
+        )
         assert verified_org_id == "org-confirmed"
+
+
+# ---------------------------------------------------------------------------
+# Regression: tenant-only routes must NOT use the user-bound assert_caller_identity
+# ---------------------------------------------------------------------------
+
+
+class TestTenantOnlyRoutesUseTenantAssertion:
+    """Regression for the assert_caller_identity vs tenant-only mix-up.
+
+    Routes that have no end-user context (KB delete, connector purge — both async
+    and sync admin variants) MUST call ``assert_caller_identity_tenant_only``.
+    Calling ``assert_caller_identity(request, claimed_org_id=...)`` without
+    ``claimed_user_id`` raises ``TypeError`` at runtime because the user-bound
+    function requires it (no default). The bug surfaced as portal-side delete
+    returning 500 → connector stuck in state='deleting'.
+
+    These tests fail-fast if a future PR re-introduces the user-bound call on
+    these endpoints.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _patches(self, mock_pool, monkeypatch):
+        monkeypatch.setattr("knowledge_ingest.db.get_pool", AsyncMock(return_value=mock_pool))
+        monkeypatch.setattr("knowledge_ingest.db.close_pool", AsyncMock())
+        monkeypatch.setattr("knowledge_ingest.qdrant_store.ensure_collection", AsyncMock())
+        monkeypatch.setattr("knowledge_ingest.config.settings.enrichment_enabled", False)
+
+    @pytest.fixture()
+    def _strict_user_bound_identity(self, monkeypatch):
+        """Mock that mirrors the real signature: claimed_user_id is REQUIRED.
+
+        Previous mocks gave ``claimed_user_id=None`` a default, hiding the production
+        TypeError. This fixture re-injects the strict signature so any route that
+        forgets ``claimed_user_id`` blows up under the test client just like in prod.
+        """
+
+        async def _strict(request, claimed_org_id, claimed_user_id):  # no default
+            return claimed_org_id
+
+        async def _strict_tenant_only(request, *, claimed_org_id):
+            return claimed_org_id
+
+        for path in [
+            "knowledge_ingest.identity.assert_caller_identity",
+            "knowledge_ingest.routes.ingest.assert_caller_identity",
+        ]:
+            try:
+                monkeypatch.setattr(path, _strict)
+            except AttributeError:
+                pass
+        for path in [
+            "knowledge_ingest.identity.assert_caller_identity_tenant_only",
+            "knowledge_ingest.routes.ingest.assert_caller_identity_tenant_only",
+        ]:
+            try:
+                monkeypatch.setattr(path, _strict_tenant_only)
+            except AttributeError:
+                pass
+
+    def test_delete_kb_uses_tenant_only(self, _strict_user_bound_identity, client):
+        """DELETE /ingest/v1/kb is tenant-scoped — must not require user_id.
+
+        Before the fix this returned 500 with TypeError on missing claimed_user_id.
+        """
+        # Stub graph + qdrant + pg_store so the route body doesn't try to talk
+        # to FalkorDB / Qdrant / a real pool during the assertion-path test.
+        from unittest.mock import patch
+
+        with (
+            patch(
+                "knowledge_ingest.routes.ingest.pg_store.get_episode_ids",
+                AsyncMock(return_value=[]),
+            ),
+            patch(
+                "knowledge_ingest.routes.ingest.graph_module.delete_kb_episodes",
+                AsyncMock(),
+            ),
+            patch("knowledge_ingest.routes.ingest.qdrant_store.delete_kb", AsyncMock()),
+            patch("knowledge_ingest.routes.ingest.pg_store.delete_kb", AsyncMock()),
+        ):
+            resp = client.delete(
+                "/ingest/v1/kb",
+                headers=_CALLER,
+                params={"org_id": "org-1", "kb_slug": "kb-1"},
+            )
+        assert resp.status_code == 200, (
+            f"Got {resp.status_code} — tenant-only assertion regression. body={resp.text}"
+        )
+
+    def test_enqueue_connector_purge_uses_tenant_only(self, _strict_user_bound_identity, client):
+        """POST /ingest/v1/connector/purge — async path, tenant-only.
+
+        Reproduces the original bug: portal-api → 500 on delete because the route
+        called ``assert_caller_identity(request, claimed_org_id=...)`` without
+        ``claimed_user_id``. After the fix it must return 202.
+        """
+        from unittest.mock import patch
+
+        mock_app = MagicMock()
+        mock_app.connector_purge_task.defer_async = AsyncMock(return_value=None)
+        with patch("knowledge_ingest.enrichment_tasks.get_app", return_value=mock_app):
+            resp = client.post(
+                "/ingest/v1/connector/purge",
+                headers=_CALLER,
+                params={
+                    "org_id": "org-1",
+                    "kb_slug": "kb-1",
+                    "connector_id": "00000000-0000-0000-0000-000000000001",
+                },
+            )
+        assert resp.status_code == 202, (
+            f"Got {resp.status_code} — connector purge tenant-only regression. body={resp.text}"
+        )
+
+    def test_delete_connector_uses_tenant_only(self, _strict_user_bound_identity, client):
+        """DELETE /ingest/v1/connector — sync admin path, tenant-only."""
+        from unittest.mock import patch
+
+        from knowledge_ingest.connector_cleanup import CleanupReport
+
+        empty_report = CleanupReport()
+        mock_app = MagicMock()
+        with (
+            patch("knowledge_ingest.enrichment_tasks.get_app", return_value=mock_app),
+            patch(
+                "knowledge_ingest.connector_cleanup.purge_connector",
+                AsyncMock(return_value=empty_report),
+            ),
+        ):
+            resp = client.delete(
+                "/ingest/v1/connector",
+                headers=_CALLER,
+                params={
+                    "org_id": "org-1",
+                    "kb_slug": "kb-1",
+                    "connector_id": "00000000-0000-0000-0000-000000000001",
+                },
+            )
+        assert resp.status_code == 200, (
+            f"Got {resp.status_code} — admin purge tenant-only regression. body={resp.text}"
+        )

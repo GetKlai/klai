@@ -47,11 +47,25 @@ def patched_pool():
 def _patch_crawler_externals(crawl_results: list[CrawlResult], ingest_side_effect):
     """Helper that returns a context-manager bundle patching all externals
     of run_crawl_job — crawl_site, get_pool, pg_store, _ingest_crawl_result.
+
+    SPEC-INGEST-RECONCILE-001 AC-4: crawl_site now returns the tuple
+    ``(results, fetch_outcomes)``. We synthesise an outcomes list from
+    the crawl_results so the adapter's JSONB persistence path is
+    exercised by the same fixture.
     """
+    fetch_outcomes = [
+        {
+            "url": r.url,
+            "reason_code": "success" if r.success else "unknown_exception",
+            "status_code": 200 if r.success else None,
+            "content_length": len(r.html or ""),
+        }
+        for r in crawl_results
+    ]
     return [
         patch(
             "knowledge_ingest.adapters.crawler.crawl_site",
-            new=AsyncMock(return_value=crawl_results),
+            new=AsyncMock(return_value=(crawl_results, fetch_outcomes)),
         ),
         patch(
             "knowledge_ingest.adapters.crawler.pg_store.upsert_page_links",
@@ -90,9 +104,9 @@ class TestBFSContinuity:
                 raise AnonymousAuthWallDetected(
                     url,
                     AuthWallSignal(
-                        pattern="canonical_phrase_en",
+                        pattern="template_cluster",
                         evidence=("have to log in",),
-                        confidence=0.95,
+                        confidence=0.9,
                     ),
                 )
             ingested_urls.append(url)
@@ -157,7 +171,7 @@ class TestErrorSummaryWritten:
             if "wall" in url:
                 raise AnonymousAuthWallDetected(
                     url,
-                    AuthWallSignal(pattern="canonical_phrase_en", confidence=0.95),
+                    AuthWallSignal(pattern="template_cluster", confidence=0.9),
                 )
 
         patches = _patch_crawler_externals([clean, *walls], ingest_side_effect)
@@ -215,7 +229,7 @@ class TestFailedPartial:
             url = args[2] if len(args) >= 3 else kwargs.get("url")
             raise AnonymousAuthWallDetected(
                 url,
-                AuthWallSignal(pattern="canonical_phrase_en", confidence=0.95),
+                AuthWallSignal(pattern="template_cluster", confidence=0.9),
             )
 
         patches = _patch_crawler_externals(walls, ingest_side_effect)
@@ -251,7 +265,7 @@ class TestFailedPartial:
             if "wall" in url:
                 raise AnonymousAuthWallDetected(
                     url,
-                    AuthWallSignal(pattern="canonical_phrase_en", confidence=0.95),
+                    AuthWallSignal(pattern="template_cluster", confidence=0.9),
                 )
 
         patches = _patch_crawler_externals([clean, *walls], ingest_side_effect)

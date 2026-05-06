@@ -1,5 +1,59 @@
 # Changelog
 
+## [Unreleased] — 2026-05-06 — SPEC-INGEST-RECONCILE-001: Coverage-complete + observable connector ingestion
+
+Two empirical silent-drop bugs (Voys Help NL: 41/208 sitemap pages ingested;
+Voys Notion: 79/120 pages persisted) and the underlying recurrence pattern.
+Four bundled fixes shipped across PRs #440, #443 (hotfix), #444 (followup), and
+#447 (positional-fallback hardening).
+
+### Added
+
+- **`knowledge.crawl_jobs.fetch_outcomes`** — JSONB column with one entry per
+  discovered candidate URL: `{url, reason_code, status_code, content_length}`.
+  Operators can now answer "where did the missing pages go?" without log
+  forensics. CHECK constraint enforces array shape; element-level
+  `reason_code` validation is application-side (alembic
+  `0005_crawl_jobs_fetch_outcomes.py`, knowledge-schema head
+  `c1d4e7f2a8b6 (mergepoint)`).
+- **`connector.sync_runs.skip_reasons`** — JSONB column mapping
+  `{reason_code: count}` for documents fetched/parsed but not persisted as
+  artifacts. CHECK constraint enforces every key is a member of
+  `PersistSkipReason` via `skip_reasons - allowed[] = '{}'::jsonb` (no
+  subquery — Postgres rejects those in CHECK). Migration 009.
+- **`FetchReasonCode`** + **`PersistSkipReason`** stable enums
+  (`knowledge_ingest/reason_codes.py` + mirror in `klai-connector/app/`).
+  Drift between the two copies caught by the parity tests on both sides.
+- **`rules/no-unbounded-gather-crawl-page.yml`** — ast-grep CI lint that
+  blocks reintroduction of unbounded `asyncio.gather` over `crawl_page`
+  (the supplement-loop anti-pattern that produced Bug A).
+- **Same-domain guard** on `_combine_bulk_responses`'s positional fallback —
+  prevents response-reordering from silently mislabelling outcomes with
+  cross-site content.
+
+### Changed
+
+- **`crawl_site` rewritten** to decouple discovery from fetch. Discovery =
+  `union(sitemap_xml, BFS_seed_from_homepage)`, canonicalised + deduped +
+  capped (sitemap-priority on cap). Fetch = single `POST /crawl` bulk call
+  whose server-side `MemoryAdaptiveDispatcher` owns concurrency.
+- **`crawl_site` return shape** is now `(results, fetch_outcomes)` tuple.
+  Five test files updated for the new contract.
+- **`_fetch_seed_page`** now uses the same `crawler_config` (incl.
+  `login_indicator_selector`) as the bulk path. Previously the seed went
+  through `crawl_page` which silently dropped the indicator — auth-walled
+  sites would extract login-form anchors as BFS seeds.
+- **`documents_ok` arithmetic** redefined per AC-7:
+  `documents_total - documents_failed - sum(skip_reasons.values())`.
+  Application layer maintains this invariant by `continue`-ing on every
+  skip and never incrementing `documents_ok` for skipped or failed docs.
+
+### Removed
+
+- Custom `asyncio.gather(*[crawl_page(u) for u in supplement_urls])` loop
+  in `crawl4ai_client.crawl_site`. Replaced by `POST /crawl` bulk
+  submission that surfaces per-URL outcomes natively.
+
 ## [Unreleased] — 2026-05-XX — SPEC-DECOMM-FOCUS-001: Drop Klai Focus / research-api
 
 Final cleanup of the SPEC-PORTAL-UNIFY-KB-001 (April 2026) decommission. The
