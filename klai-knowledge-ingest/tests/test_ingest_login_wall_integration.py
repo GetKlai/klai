@@ -1,11 +1,17 @@
-"""Integration tests for SPEC-INGEST-LOGIN-WALL-DETECT-001 Phase B.
+"""Integration tests for SPEC-INGEST-LOGIN-WALL-DETECT-002 Phase C.
 
-REQ-03 (reject behaviour) + REQ-05 (config flags) covered here.
+REQ-07 (reject / degrade / audit_only modes) + REQ-05 (config flags)
+covered here.
 
-We test ``_ingest_crawl_result`` end-to-end with the detector wired in. Real
-Postgres / Qdrant / S3 are mocked — we verify *control flow*: did we raise,
-did we set ``extra["quality_score"]``, did we log, did we still call
-``ingest_document``?
+We test ``_ingest_crawl_result`` end-to-end with the v2 cluster detector
+wired in. Real Postgres / Qdrant / S3 are mocked — we verify *control flow*:
+did we raise, did we set ``extra["quality_score"]``, did we log, did we
+still call ``ingest_document``?
+
+The detector now requires a DB query (``pool.fetch`` is awaited inside
+``detect_anonymous_auth_wall``). Walled tests inject a fake cluster
+(5 siblings sharing the wall's SimHash) so the detector fires; clean tests
+inject an empty result so the detector returns None.
 """
 
 from __future__ import annotations
@@ -20,6 +26,7 @@ from knowledge_ingest.adapters.crawler import (
     _ingest_crawl_result,
 )
 from knowledge_ingest.crawl4ai_client import CrawlResult
+from knowledge_ingest.utils.content_fingerprint import compute_simhash
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -60,15 +67,24 @@ def _clean_result() -> CrawlResult:
 
 
 # Common mocks: stub everything except the login-wall branching logic.
-def _patch_chain():
-    """Patch all external dependencies of _ingest_crawl_result.
+def _patch_chain(*, cluster_simhashes: list[int] | None = None):
+    """Patch all external dependencies of ``_ingest_crawl_result``.
 
-    Returns the ingest_document mock so tests can assert on its calls.
+    Args:
+        cluster_simhashes: Optional list of SimHash values returned by
+            ``pool.fetch`` to simulate sibling pages. Walled tests inject
+            5+ entries matching the wall's SimHash so the detector fires;
+            clean tests omit / pass [] so the detector returns None.
     """
     pool = MagicMock()
+    rows = [{"content_simhash": h} for h in (cluster_simhashes or [])]
+    pool.fetch = AsyncMock(return_value=rows)
+
     pg_store_mock = MagicMock()
     pg_store_mock.get_crawled_page_stored = AsyncMock(return_value=None)
     pg_store_mock.upsert_crawled_page = AsyncMock(return_value=None)
+    # SPEC-INGEST-LOGIN-WALL-DETECT-002: SimHash store helper called after upsert.
+    pg_store_mock.update_crawled_page_simhash = AsyncMock(return_value=None)
 
     ingest_document_mock = AsyncMock(return_value=None)
 
@@ -82,6 +98,17 @@ def _patch_chain():
     return pool, pg_store_mock, ingest_document_mock, link_graph_mock
 
 
+def _wall_cluster(result: CrawlResult, *, count: int = 5) -> list[int]:
+    """Return ``count`` SimHashes identical to the result's content fingerprint.
+
+    Models the production scenario where a templated wall stub is duplicated
+    across many URLs in the same KB; injecting these into ``pool.fetch`` makes
+    the v2 detector flag the page.
+    """
+    text = result.fit_markdown or result.raw_markdown
+    return [compute_simhash(text)] * count
+
+
 # ---------------------------------------------------------------------------
 # REQ-03 — Reject behaviour
 # ---------------------------------------------------------------------------
@@ -92,7 +119,8 @@ class TestRejectMode:
 
     @pytest.mark.asyncio()
     async def test_walled_page_raises_in_reject_mode(self) -> None:
-        pool, pg, ingest, lg = _patch_chain()
+        walled = _walled_result()
+        pool, pg, ingest, lg = _patch_chain(cluster_simhashes=_wall_cluster(walled))
         with (
             patch("knowledge_ingest.adapters.crawler.pg_store", pg),
             patch("knowledge_ingest.adapters.crawler._build_image_store", return_value=None),
@@ -104,7 +132,7 @@ class TestRejectMode:
             with pytest.raises(AnonymousAuthWallDetected) as excinfo:
                 await _ingest_crawl_result(
                     pool,
-                    _walled_result(),
+                    walled,
                     "https://wiki.redcactus.cloud/nl/crm-software/HubSpot",
                     org_id="368884765035593759",
                     kb_slug="support",
@@ -113,7 +141,7 @@ class TestRejectMode:
                 )
 
         assert excinfo.value.url == "https://wiki.redcactus.cloud/nl/crm-software/HubSpot"
-        assert excinfo.value.signal.pattern == "canonical_phrase_en"
+        assert excinfo.value.signal.pattern == "template_cluster"
         # ingest_document MUST NOT have been called for a rejected page.
         ingest.assert_not_called()
         # crawled_pages MUST NOT have been updated (no Postgres write either).
@@ -125,7 +153,8 @@ class TestDegradeMode:
 
     @pytest.mark.asyncio()
     async def test_walled_page_ingests_with_quality_score_zero(self) -> None:
-        pool, pg, ingest, lg = _patch_chain()
+        walled = _walled_result()
+        pool, pg, ingest, lg = _patch_chain(cluster_simhashes=_wall_cluster(walled))
         with (
             patch("knowledge_ingest.adapters.crawler.pg_store", pg),
             patch("knowledge_ingest.adapters.crawler._build_image_store", return_value=None),
@@ -136,7 +165,7 @@ class TestDegradeMode:
         ):
             await _ingest_crawl_result(
                 pool,
-                _walled_result(),
+                walled,
                 "https://wiki.redcactus.cloud/nl/crm-software/HubSpot",
                 org_id="368884765035593759",
                 kb_slug="support",
@@ -155,7 +184,8 @@ class TestAuditOnlyMode:
 
     @pytest.mark.asyncio()
     async def test_walled_page_ingests_unchanged(self) -> None:
-        pool, pg, ingest, lg = _patch_chain()
+        walled = _walled_result()
+        pool, pg, ingest, lg = _patch_chain(cluster_simhashes=_wall_cluster(walled))
         with (
             patch("knowledge_ingest.adapters.crawler.pg_store", pg),
             patch("knowledge_ingest.adapters.crawler._build_image_store", return_value=None),
@@ -169,7 +199,7 @@ class TestAuditOnlyMode:
         ):
             await _ingest_crawl_result(
                 pool,
-                _walled_result(),
+                walled,
                 "https://wiki.redcactus.cloud/nl/crm-software/HubSpot",
                 org_id="368884765035593759",
                 kb_slug="support",
@@ -263,7 +293,8 @@ class TestInvalidModeFailsSafe:
         audit_only (log + ingest). Never block the entire crawl pipeline due
         to a config typo.
         """
-        pool, pg, ingest, lg = _patch_chain()
+        walled = _walled_result()
+        pool, pg, ingest, lg = _patch_chain(cluster_simhashes=_wall_cluster(walled))
         with (
             patch("knowledge_ingest.adapters.crawler.pg_store", pg),
             patch("knowledge_ingest.adapters.crawler._build_image_store", return_value=None),
@@ -278,7 +309,7 @@ class TestInvalidModeFailsSafe:
             # Should NOT raise.
             await _ingest_crawl_result(
                 pool,
-                _walled_result(),
+                walled,
                 "https://wiki.redcactus.cloud/nl/crm-software/HubSpot",
                 org_id="368884765035593759",
                 kb_slug="support",
