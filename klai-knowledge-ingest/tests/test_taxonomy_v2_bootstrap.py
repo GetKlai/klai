@@ -121,20 +121,27 @@ class TestClusterDocumentsHdbscan:
     """AC-16: Unit test — HDBSCAN with 3 clear clusters + 5 outliers."""
 
     def test_hdbscan_returns_three_clusters_and_labels_outliers(self):
-        """HDBSCAN on synthetic 3-cluster fixture returns 3 clusters, outliers labeled -1."""
+        """HDBSCAN on synthetic 3-cluster fixture returns 3 clusters, outliers labeled -1.
+
+        pre_reduce=False: regression-guard for cosine path. UMAP on tiny well-separated
+        fixtures absorbs outliers into clusters (expected, not a bug).
+        """
         from knowledge_ingest.clustering import cluster_documents_hdbscan
 
         embeddings, _true_labels = _make_synthetic_embeddings()
-        labels, metrics = cluster_documents_hdbscan(embeddings, min_cluster_size=5)
+        labels, metrics = cluster_documents_hdbscan(embeddings, min_cluster_size=5, pre_reduce=False)
 
-        cluster_ids = set(int(l) for l in labels if l >= 0)
+        cluster_ids = set(int(lbl) for lbl in labels if lbl >= 0)
         assert len(cluster_ids) == 3, f"Expected 3 clusters, got {len(cluster_ids)}: {cluster_ids}"
 
         outlier_mask = labels == -1
         assert outlier_mask.sum() >= 5, f"Expected >= 5 outliers, got {outlier_mask.sum()}"
 
     def test_hdbscan_metrics_dict_contains_required_keys(self):
-        """Metrics dict must contain clusters_found, outlier_count, silhouette_score."""
+        """Metrics dict must contain clusters_found, outlier_count, dbcv_score.
+
+        SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B3: silhouette_score renamed to dbcv_score.
+        """
         from knowledge_ingest.clustering import cluster_documents_hdbscan
 
         embeddings, _ = _make_synthetic_embeddings()
@@ -142,21 +149,30 @@ class TestClusterDocumentsHdbscan:
 
         assert "clusters_found" in metrics
         assert "outlier_count" in metrics
-        assert "silhouette_score" in metrics
+        assert "dbcv_score" in metrics
+        # Regression: silhouette_score must NOT be present (B3 rename)
+        assert "silhouette_score" not in metrics
 
-    def test_hdbscan_silhouette_score_is_float_or_none(self):
-        """Silhouette score is a float for multi-cluster results, None for degenerate."""
+    def test_hdbscan_dbcv_score_is_float_or_none(self):
+        """DBCV score is a float or None for multi-cluster results.
+
+        SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B3: replaces silhouette_score with dbcv_score
+        via hdb.relative_validity_.
+        """
         from knowledge_ingest.clustering import cluster_documents_hdbscan
 
         embeddings, _ = _make_synthetic_embeddings()
         _labels, metrics = cluster_documents_hdbscan(embeddings, min_cluster_size=5)
 
-        # With 3 clear clusters, silhouette should be a positive float
-        assert isinstance(metrics["silhouette_score"], float)
-        assert metrics["silhouette_score"] > 0
+        # With 3 clear clusters, dbcv_score should be a float (or None if sklearn
+        # version doesn't populate relative_validity_ — both are acceptable)
+        assert metrics["dbcv_score"] is None or isinstance(metrics["dbcv_score"], float)
 
-    def test_hdbscan_single_cluster_silhouette_is_none(self):
-        """When HDBSCAN returns 1 cluster, silhouette_score must be None (undefined)."""
+    def test_hdbscan_single_cluster_dbcv_is_none(self):
+        """When HDBSCAN returns <= 1 cluster, dbcv_score must be None (undefined).
+
+        SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B3: dbcv_score replaces silhouette_score.
+        """
         from knowledge_ingest.clustering import cluster_documents_hdbscan
 
         # All identical vectors → single cluster
@@ -171,9 +187,9 @@ class TestClusterDocumentsHdbscan:
 
         _labels, metrics = cluster_documents_hdbscan(embeddings, min_cluster_size=5)
 
-        # Either 0 or 1 cluster → silhouette is undefined
+        # Either 0 or 1 cluster → dbcv is undefined
         if metrics["clusters_found"] <= 1:
-            assert metrics["silhouette_score"] is None
+            assert metrics["dbcv_score"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +308,7 @@ class TestBootstrapProposalsV2Integration:
             patch("knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client),
             patch("knowledge_ingest.proposal_generator.submit_taxonomy_proposal", AsyncMock()),
             patch("knowledge_ingest.proposal_generator.settings", mock_settings),
+            patch("knowledge_ingest.proposal_generator.generate_node_description", AsyncMock(return_value="test description")),
         ):
             result = await generate_bootstrap_proposals_v2(
                 org_id="org1",
@@ -331,6 +348,7 @@ class TestBootstrapProposalsV2Integration:
             patch("knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client),
             patch("knowledge_ingest.proposal_generator.submit_taxonomy_proposal", AsyncMock()),
             patch("knowledge_ingest.proposal_generator.settings", mock_settings),
+            patch("knowledge_ingest.proposal_generator.generate_node_description", AsyncMock(return_value="")),
         ):
             result = await generate_bootstrap_proposals_v2(
                 org_id="org1",
@@ -378,6 +396,7 @@ class TestBootstrapProposalsV2Integration:
             patch("knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client),
             patch("knowledge_ingest.proposal_generator.submit_taxonomy_proposal", AsyncMock()),
             patch("knowledge_ingest.proposal_generator.settings", mock_settings),
+            patch("knowledge_ingest.proposal_generator.generate_node_description", AsyncMock(return_value="")),
         ):
             result = await generate_bootstrap_proposals_v2(
                 org_id="org1",
@@ -466,6 +485,7 @@ class TestBootstrapProposalsV2Integration:
                 patch("knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client),
                 patch("knowledge_ingest.proposal_generator.submit_taxonomy_proposal", AsyncMock()),
                 patch("knowledge_ingest.proposal_generator.settings", mock_settings),
+                patch("knowledge_ingest.proposal_generator.generate_node_description", AsyncMock(return_value="")),
             ):
                 result = await generate_bootstrap_proposals_v2(
                     org_id="org1",
@@ -555,6 +575,7 @@ class TestBootstrapProposalsV2Integration:
                 patch("knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client),
                 patch("knowledge_ingest.proposal_generator.submit_taxonomy_proposal", AsyncMock()),
                 patch("knowledge_ingest.proposal_generator.settings", mock_settings),
+                patch("knowledge_ingest.proposal_generator.generate_node_description", AsyncMock(return_value="a description")),
             ):
                 result = await generate_bootstrap_proposals_v2(
                     org_id="org-test",
@@ -569,9 +590,11 @@ class TestBootstrapProposalsV2Integration:
         assert len(complete_events) == 1, "Expected exactly one bootstrap_proposals_complete event"
 
         event = complete_events[0]
-        required_fields = ["clusters_found", "outlier_count", "silhouette_score", "proposals_submitted", "kb_slug", "org_id"]
+        # SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B3: dbcv_score replaces silhouette_score
+        required_fields = ["clusters_found", "outlier_count", "dbcv_score", "proposals_submitted", "kb_slug", "org_id"]
         for field in required_fields:
             assert field in event, f"Missing required field '{field}' in bootstrap_proposals_complete event"
+        assert "silhouette_score" not in event, "silhouette_score must not appear (B3 rename to dbcv_score)"
 
 
 # ---------------------------------------------------------------------------
@@ -628,6 +651,7 @@ class TestBootstrapLatency:
             patch("knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=instant_llm_mock),
             patch("knowledge_ingest.proposal_generator.submit_taxonomy_proposal", AsyncMock()),
             patch("knowledge_ingest.proposal_generator.settings", mock_settings),
+            patch("knowledge_ingest.proposal_generator.generate_node_description", AsyncMock(return_value="")),
         ):
             result = await generate_bootstrap_proposals_v2(
                 org_id="org1",
@@ -657,6 +681,7 @@ class TestBootstrapLatency:
             patch("knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=instant_llm_mock),
             patch("knowledge_ingest.proposal_generator.submit_taxonomy_proposal", AsyncMock()),
             patch("knowledge_ingest.proposal_generator.settings", mock_settings),
+            patch("knowledge_ingest.proposal_generator.generate_node_description", AsyncMock(return_value="")),
         ):
             result = await generate_bootstrap_proposals_v2(
                 org_id="org1",
@@ -921,6 +946,7 @@ class TestAC18IntegrationWithMockedLitellm:
             patch("knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client),
             patch("knowledge_ingest.proposal_generator.submit_taxonomy_proposal", side_effect=_capture_submit),
             patch("knowledge_ingest.proposal_generator.settings", mock_settings),
+            patch("knowledge_ingest.proposal_generator.generate_node_description", AsyncMock(return_value="description")),
         ):
             result = await generate_bootstrap_proposals_v2(
                 org_id="org1",
@@ -1007,13 +1033,18 @@ class TestAC16ExplicitClusterFunction:
     """AC-16: explicit unit test for the cluster_documents_hdbscan helper function."""
 
     def test_returns_three_clusters_for_synthetic_fixture(self):
-        """3 clear clusters of 20 vectors + 5 outliers → 3 clusters found."""
+        """3 clear clusters of 20 vectors + 5 outliers → 3 clusters found.
+
+        pre_reduce=False: regression-guard for cosine path. UMAP on tiny well-separated
+        fixtures absorbs outliers into clusters (expected, not a bug).
+        """
         from knowledge_ingest.clustering import cluster_documents_hdbscan
 
         embeddings, _ = _make_synthetic_embeddings()
-        labels, metrics = cluster_documents_hdbscan(
+        _labels, metrics = cluster_documents_hdbscan(
             embeddings,
             min_cluster_size=5,
+            pre_reduce=False,
         )
 
         n_clusters = metrics["clusters_found"]

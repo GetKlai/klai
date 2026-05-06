@@ -78,6 +78,11 @@ class Settings(BaseSettings):
     taxonomy_bootstrap_top_n_per_cluster: int = 8
     taxonomy_bootstrap_v2_enabled: bool = True
 
+    # SPEC-TAXONOMY-V2-001-FOLLOWUP-001: UMAP pre-reduction settings (B1)
+    taxonomy_bootstrap_umap_n_components: int = 10
+    taxonomy_bootstrap_umap_n_neighbors: int = 15
+    taxonomy_bootstrap_umap_random_state: int = 42  # for reproducibility
+
     # SPEC-CRAWLER-004 Fase A — Garage S3 for consolidated crawl image pipeline.
     # Feature-flagged via empty endpoint: when ``garage_s3_endpoint`` is blank
     # the crawler skips image upload and writes no ``image_urls`` into Qdrant.

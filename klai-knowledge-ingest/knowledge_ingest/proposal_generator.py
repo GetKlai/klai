@@ -402,16 +402,19 @@ async def generate_bootstrap_proposals_v2(
         )
 
     # Step 3: HDBSCAN clustering (AC-1, AC-16, AC-17)
+    # SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B1: pre_reduce=True enables UMAP before HDBSCAN.
     min_cluster_size = compute_min_cluster_size(
         doc_count,
         floor=settings.taxonomy_bootstrap_min_cluster_size_floor,
     )
     labels, metrics = cluster_documents_hdbscan(
-        document_embeddings, min_cluster_size=min_cluster_size
+        document_embeddings,
+        min_cluster_size=min_cluster_size,
+        pre_reduce=True,
     )
     clusters_found: int = metrics["clusters_found"]
     outlier_count: int = metrics["outlier_count"]
-    silhouette_score: float | None = metrics["silhouette_score"]
+    dbcv_score: float | None = metrics["dbcv_score"]
 
     if clusters_found == 0:
         logger.info(
@@ -420,7 +423,7 @@ async def generate_bootstrap_proposals_v2(
             kb_slug=kb_slug,
             clusters_found=0,
             outlier_count=outlier_count,
-            silhouette_score=silhouette_score,
+            dbcv_score=dbcv_score,
             proposals_submitted=0,
         )
         return BootstrapResult(
@@ -522,7 +525,7 @@ async def generate_bootstrap_proposals_v2(
                 kb_slug=kb_slug,
                 clusters_found=clusters_found,
                 outlier_count=outlier_count,
-                silhouette_score=silhouette_score,
+                dbcv_score=dbcv_score,
                 proposals_submitted=0,
             )
             return BootstrapResult(
@@ -532,29 +535,56 @@ async def generate_bootstrap_proposals_v2(
                 reason="all_duplicates",
             )
 
+    # SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B2: generate descriptions in parallel
+    # (V1 had this; V2 dropped it — this restores it).
+    desc_tasks = [
+        generate_node_description(
+            name,
+            None,
+            [doc.title for doc in cluster_doc_lists.get(cid, [])[:5]],
+        )
+        for cid, name in proposals_to_submit
+    ]
+    desc_results = await asyncio.gather(*desc_tasks, return_exceptions=True)
+
     # Step 8: submit proposals (AC-18)
     submitted = 0
-    for cid, name in proposals_to_submit:
+    for i, (cid, name) in enumerate(proposals_to_submit):
         cluster_doc_list = cluster_doc_lists.get(cid, [])
         sample_titles = [doc.title for doc in cluster_doc_list[:5]]
+
+        # Use generated description if available; fall back to "" on failure (AC-7)
+        raw_desc = desc_results[i] if i < len(desc_results) else Exception("index out of range")
+        if isinstance(raw_desc, str):
+            description = raw_desc
+        else:
+            description = ""
+            logger.warning(
+                "bootstrap_description_generation_failed",
+                kb_slug=kb_slug,
+                cluster_id=cid,
+                error=str(raw_desc) if raw_desc is not None else None,
+            )
+
         proposal = TaxonomyProposal(
             proposal_type="new_node",
             suggested_name=name,
             document_count=len(cluster_doc_list),
             sample_titles=sample_titles,
-            description="",
+            description=description,
         )
         await submit_taxonomy_proposal(kb_slug=kb_slug, org_id=org_id, proposal=proposal)
         submitted += 1
 
     # Step 9: AC-9 log
+    # SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B3: log dbcv_score instead of silhouette_score
     logger.info(
         "bootstrap_proposals_complete",
         org_id=org_id,
         kb_slug=kb_slug,
         clusters_found=clusters_found,
         outlier_count=outlier_count,
-        silhouette_score=silhouette_score,
+        dbcv_score=dbcv_score,
         proposals_submitted=submitted,
     )
 
