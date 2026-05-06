@@ -79,11 +79,21 @@ def _count_cluster_siblings(
     O(N) per call, O(N^2) over the whole KB. Acceptable at klai's scale
     (low thousands per KB; SPEC REQ-08 budgets 50 ms per cluster query at
     1000-page KB). LSH banding is deferred — see research.md §4.2.
+
+    ``compute_simhash`` returns 0 for empty / whitespace-only normalised
+    content. Pages with hash 0 share "nothing" rather than a template, so
+    they MUST NOT cluster with each other; the crawler skips storing 0
+    fingerprints, but legacy rows from before that guard could still
+    surface here. Filter both directions: a 0-target returns 0, and
+    0-siblings are not counted.
     """
+    if target_hash == 0:
+        return 0
     return sum(
         1
         for other_url, other_hash in url_to_hash.items()
         if other_url != target_url
+        and other_hash != 0
         and hamming_distance(target_hash, other_hash) <= hamming_max
     )
 
@@ -112,13 +122,17 @@ async def _ensure_simhashes(
         sh = row["content_simhash"]
         if sh is None:
             sh = compute_simhash(row["raw_markdown"] or "")
-            await pg_store.update_crawled_page_simhash(
-                conn,
-                org_id=org_id,
-                kb_slug=kb_slug,
-                url=row["url"],
-                content_simhash=sh,
-            )
+            # 0 is the empty-content sentinel; do not persist it (would let
+            # rendered-but-empty crawl results falsely cluster). Match the
+            # crawler's ingest-time behaviour and leave the column NULL.
+            if sh != 0:
+                await pg_store.update_crawled_page_simhash(
+                    conn,
+                    org_id=org_id,
+                    kb_slug=kb_slug,
+                    url=row["url"],
+                    content_simhash=sh,
+                )
         url_to_hash[row["url"]] = sh
     return url_to_hash
 

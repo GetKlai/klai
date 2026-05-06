@@ -721,16 +721,31 @@ async def update_crawled_page_simhash(
     Called after ``upsert_crawled_page`` (so the row exists). Idempotent: a
     re-run with the same hash is a no-op write. Tenant-scoped: the WHERE
     clause filters by ``org_id`` AND ``kb_slug`` AND ``url``.
+
+    Uses ``RETURNING url`` so we notice the race where the row was deleted
+    or never inserted between ``upsert_crawled_page`` and this call. A
+    silent zero-row UPDATE would leave ``content_simhash`` NULL forever
+    while the rest of the ingest path assumed the fingerprint is stored.
+    Logs a structlog warning instead of raising — fingerprint storage is
+    not critical-path; the next backfill pass populates the value.
     """
-    await conn.execute(
+    returned = await conn.fetchval(
         "UPDATE knowledge.crawled_pages "
         "SET content_simhash = $1 "
-        "WHERE org_id = $2 AND kb_slug = $3 AND url = $4",
+        "WHERE org_id = $2 AND kb_slug = $3 AND url = $4 "
+        "RETURNING url",
         content_simhash,
         org_id,
         kb_slug,
         url,
     )
+    if returned is None:
+        logger.warning(
+            "crawled_pages_simhash_update_no_row",
+            org_id=org_id,
+            kb_slug=kb_slug,
+            url=url,
+        )
 
 
 async def upsert_crawled_page(

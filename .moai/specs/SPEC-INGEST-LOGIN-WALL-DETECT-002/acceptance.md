@@ -182,13 +182,42 @@ Then every page in (org_id, kb_slug) has a non-NULL content_simhash after
 ### AC-04.2: Backfill purges template clusters
 
 ```gherkin
-Given voys/support before backfill (149 RedCactus walls + 273 other pages)
+Given voys/support before backfill (template-stub pages + non-stub pages)
   And no SimHashes are populated yet
 When backfill_detect_login_walls runs
-Then the result reports {"processed": 422, "flagged": 149, "qdrant_deleted": 149}
+Then the result reports the cluster members as flagged
   And each flagged page has content_hash = '__login_wall_purged__'
   And none of the 5 known FP URLs is flagged
 ```
+
+**Production result (2026-05-06 rollout, voys/support):**
+
+The SQL pre-filters rows already at ``__login_wall_purged__`` (= 150
+v1-purged rows from PR #419). The remaining 272 active rows ran through
+v2 clustering. 199 of those 272 hit the cluster threshold and were
+flagged + Qdrant-deleted + placeholder-set:
+
+```
+{"processed": 272, "flagged": 199, "qdrant_deleted": 199}
+```
+
+The validation script (read-only, sees ALL rows including v1-purged)
+reports the larger union — 4 connected components of sizes
+``[214, 74, 25, 3]`` totalling **316 wall pages**, all under
+``wiki.redcactus.cloud``. The 117 difference (316 − 199) is the v1-
+purged subset already at placeholder; backfill leaves them alone.
+
+**v2 vs v1 effectiveness:** v1's phrase-substring detector found 150;
+v2's clustering finds 316. The 166 extra pages have the same boilerplate
+template as v1's 150 but their phrasing varies enough that no canonical
+phrase matched. v2's structural detection generalises across phrasing
+variants. The SPEC's drafted "149 walls" estimate was pulled from the
+v1 phrase-distribution count, not the v2 cluster count.
+
+The exact ``flagged`` number depends on how many pages are already at
+the placeholder hash on the day backfill runs; tests pin behaviour for
+a synthetic 6-page cluster (see ``tests/test_backfill_login_walls.py``)
+rather than a fixed production count.
 
 ### AC-04.3: Idempotency
 
@@ -227,6 +256,34 @@ Then the result reports {"processed": 1, "recovered": 1}
   And /2fa-freedom's content_hash is now empty string
   And the next scheduled crawl re-ingests it normally
 ```
+
+**Recovery semantics — re-purge after re-crawl (operational note):**
+
+A "recovered" placeholder does NOT mean the page is permanently a
+not-wall. It means the page's STORED ``raw_markdown`` (frozen from the
+v1-purge era) is no longer in a cluster under v2 — the cluster of
+matching pages either shrank (other members were purged or evolved) or
+the stored markdown predates the current template.
+
+When the next scheduled crawl re-fetches the URL, crawl4ai returns the
+CURRENT page content. If the source CMS still serves a templated stub
+to anonymous visitors, the new ``raw_markdown`` will fingerprint into
+the active wall cluster and v2's ingest-time detector will re-flag the
+page (mode=reject by default). Net effect: the page transitions from
+purged-stale → temporarily un-purged → re-purged-with-current-data.
+
+**Production observation (2026-05-06 rollout):** voys/support recovery
+returned ``{"processed": 349, "recovered": 33}``. Of those 33 recovery
+candidates, 32 are ``wiki.redcactus.cloud/...`` URLs whose stored
+markdown predates the current v2-detected wall cluster — they will
+re-purge after re-crawl. 1 is ``https://help.voys.nl/2fa-freedom``, a
+real Voys tutorial that v1 mistakenly phrase-matched and v2 correctly
+exonerates; this one will stay un-purged after re-crawl.
+
+Operators should expect the apparent recovered-count to shrink toward
+the "true FPs" count (roughly 1-of-33 here) as scheduled crawls
+re-evaluate the candidates. This is correct, self-healing behaviour;
+NOT a regression in v2.
 
 ### AC-05.2: No spurious recovery
 
