@@ -368,6 +368,8 @@ async def _resolve_partner_key_org_slug(
     F2 fix-forward (retrieval coupling audit 2026-05-06).
     """
 
+    from sqlalchemy.exc import DataError
+
     from app.models.partner_api_keys import PartnerAPIKey
 
     # Validate the partner_key_id is a sensible-length string before hitting
@@ -391,12 +393,18 @@ async def _resolve_partner_key_org_slug(
     )
     try:
         result = await db.execute(stmt)
-    except Exception:
-        # Malformed UUIDs surface as DataError from asyncpg/SQLAlchemy.
-        # Treat as partner_key_not_found to avoid leaking internal error
-        # state to the consumer.
-        logger.warning("identity_verify_partner_db_error", exc_info=True)
+    except DataError:
+        # Malformed UUID input surfaces as ``sqlalchemy.exc.DataError``
+        # wrapping ``asyncpg.exceptions.DataError`` ("invalid input syntax for
+        # type uuid"). This is caller-supplied garbage — treat as "not found"
+        # rather than 503.
+        logger.info("identity_verify_partner_malformed_uuid")
         return None, "partner_key_not_found"
+    # NOTE: do NOT catch broader Exception here. A real DB outage
+    # (OperationalError, connection refused) MUST bubble up so the
+    # /internal/identity/verify endpoint converts it to HTTP 503
+    # cache_unavailable rather than masquerading as a partner_key
+    # rejection. Audit: post-F2 polish 2026-05-06.
 
     row = result.one_or_none()
     if row is None:
