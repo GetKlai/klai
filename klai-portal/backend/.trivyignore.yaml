@@ -1,0 +1,27 @@
+# Per-service Trivy ignore-list for portal-api.
+# Schema reference: https://trivy.dev/v0.69/docs/configuration/filtering/
+# Policy: SPEC-CI-TRIVY-POLICY-001 REQ-5 — every entry SHALL include
+#   `id`, `statement` (concrete rationale, not "low priority"),
+#   and `expired_at` (YYYY-MM-DD, ≤12 months from creation).
+#
+# This file is referenced by .github/workflows/portal-api.yml via
+# `trivyignores:` (added in PR #3 of SPEC-CI-TRIVY-POLICY-001).
+
+vulnerabilities:
+  - id: CVE-2026-6357
+    statement: |
+      Affects pip 26.0.1 — the GitHub Actions runner image's bootstrap pip,
+      NOT an app dependency resolved by uv at runtime. uv handles all
+      package resolution post-build; the container never invokes pip after
+      the image is built. The vulnerable code path requires user-controlled
+      package install, which the runtime container never performs.
+
+      The same CVE is already explicitly ignored in the workflow's
+      pip-audit step (.github/workflows/portal-api.yml line 74) under
+      its alternative GHSA reference CVE-2026-3219. This entry brings the
+      Trivy scan in line with that pre-existing decision.
+
+      Re-evaluate when actions/runner-images ships a default pip ≥26.1.
+    expired_at: 2026-09-01
+    purls:
+      - "pkg:pypi/pip@26.0.1"
