@@ -77,7 +77,7 @@ async def close_pool() -> None:
         _pool = None
 
 
-def get_pool() -> "asyncpg.Pool | None":
+def get_pool() -> asyncpg.Pool | None:
     """Return the shared klai-DB pool for use by other modules.
 
     SPEC-RAG-PARENT-CHILD-001 reuses this pool for the parent_lookup

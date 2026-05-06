@@ -2,8 +2,51 @@
 paths:
   - "klai-knowledge-ingest/**"
   - "klai-connector/**"
+  - "klai-retrieval-api/**"
+  - "klai-portal/backend/app/services/partner_chat.py"
+  - "klai-libs/chat-prompts/**"
 ---
 # Knowledge Domain Patterns
+
+## chat system prompt — single source of truth (HIGH)
+
+The grounded chat system prompt lives in **exactly one place**:
+`klai-libs/chat-prompts/klai_chat_prompts/__init__.py`
+(`GROUNDED_CHAT_SYSTEM_PROMPT`). Both `klai-retrieval-api`'s
+`services/synthesis.py` and `klai-portal/backend/app/services/partner_chat.py`
+import the constant; neither inlines it.
+
+**Why:** before SPEC-RAG-MULTILINGUAL-CHAT-001, the prompt was
+duplicated in two services with hardcoded `Als de gebruiker Nederlands
+schrijft, antwoord je in het Nederlands` switching. Two copies, no
+enforcement of byte-equality, drift inevitable on the next edit. Plus
+the NL/EN-only switch shut out DE / FR / PT / ES users entirely.
+
+**Prevention:**
+- Never inline a copy of the prompt in a new chat surface. Import
+  `from klai_chat_prompts import GROUNDED_CHAT_SYSTEM_PROMPT`.
+- The CI lint `scripts/lint-no-duplicate-chat-prompt.sh` runs in
+  per-service CI and rejects PRs that re-introduce hardcoded copies
+  of the prompt's anchor lines outside `klai-libs/chat-prompts/`.
+- Do NOT re-introduce explicit language allow-lists in the prompt
+  ("if the user writes Dutch", "if the user writes English"). The
+  prompt detects any language the LLM understands and applies three
+  guards (substantive-message threshold, single-foreign-word
+  tolerance, substantive-switch persistence). Adding back a
+  hand-curated language list breaks every non-listed language.
+- bge-m3 retrieval is already polyglot — never add a query-translation
+  layer ahead of retrieval.
+
+**Detection in production:** `event:chat_synthesis_complete` events in
+VictoriaLogs carry `query_language_detected`,
+`response_language_detected`, and `language_correctness`. A drop in
+language-correctness rate for one language is the signal that the
+prompt has drifted.
+
+**See:** SPEC-RAG-MULTILINGUAL-CHAT-001,
+`docs/runbooks/multilingual-chat-observability.md`,
+`klai-retrieval-api/evaluation/cross_lingual_runner.py` (the pre-merge
+eval gate).
 
 ## connector_id must thread through the crawl pipeline (HIGH)
 
