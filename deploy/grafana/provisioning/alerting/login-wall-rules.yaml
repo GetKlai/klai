@@ -34,7 +34,7 @@ groups:
       #
       # for: 0s — once across, fire immediately. The 10m lookback already
       # smooths out single-job spikes.
-      - uid: spec-login-wall-detect-001-burst
+      - uid: spec-lwd-001-burst
         title: login_wall_burst
         condition: threshold
         data:
@@ -118,7 +118,7 @@ groups:
       # Fires on ANY log line indicating a typo in
       # KLAI_INGEST_LOGIN_WALL_DETECT_MODE. Detector falls back to audit_only
       # so the pipeline keeps running, but operators must fix the env value.
-      - uid: spec-login-wall-detect-001-config-invalid
+      - uid: spec-lwd-001-config-invalid
         title: login_wall_detector_config_invalid
         condition: threshold
         data:
