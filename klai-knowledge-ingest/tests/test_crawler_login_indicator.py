@@ -136,10 +136,33 @@ class TestRunCrawlJobAuthWall:
         mock_conn.fetchval = AsyncMock(return_value=None)
         mock_conn.fetchrow = AsyncMock(return_value=None)
 
+        # SPEC-INGEST-RECONCILE-001 AC-4: crawl_site returns
+        # ``(results, fetch_outcomes)``. Synthesise the outcomes that
+        # would correspond to these CrawlResults.
+        _login_outcomes = [
+            {
+                "url": happy.url,
+                "reason_code": "success",
+                "status_code": 200,
+                "content_length": len(happy.html),
+            },
+            {
+                "url": walled.url,
+                "reason_code": "auth_error",
+                "status_code": 401,
+                "content_length": 0,
+            },
+            {
+                "url": never_reached.url,
+                "reason_code": "success",
+                "status_code": 200,
+                "content_length": len(never_reached.html),
+            },
+        ]
         with (
             patch(
                 "knowledge_ingest.adapters.crawler.crawl_site",
-                new=AsyncMock(return_value=[happy, walled, never_reached]),
+                new=AsyncMock(return_value=([happy, walled, never_reached], _login_outcomes)),
             ),
             patch(
                 "knowledge_ingest.adapters.crawler.pg_store.get_crawled_page_hashes",
