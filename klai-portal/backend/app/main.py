@@ -26,7 +26,9 @@ from app.api.internal_connectors import router as internal_connectors_router
 from app.api.kb_images import router as kb_images_router
 from app.api.knowledge import router as knowledge_router
 from app.api.knowledge_bases import router as knowledge_bases_router
+from app.api.mcp_oauth import router as mcp_oauth_router
 from app.api.mcp_servers import router as mcp_servers_router
+from app.api.me_mcp_tokens import router as me_mcp_tokens_router
 from app.api.meetings import router as meetings_router
 from app.api.oauth import router as oauth_router
 from app.api.partner import router as partner_router
@@ -258,6 +260,8 @@ from app.api.auth_bff import router as auth_bff_router  # noqa: E402
 
 app.include_router(signup.router)
 app.include_router(me.router)
+app.include_router(me_mcp_tokens_router)
+app.include_router(mcp_oauth_router)
 app.include_router(auth_router)
 app.include_router(auth_bff_router)
 from app.api.auth_join import router as auth_join_router  # noqa: E402
