@@ -6,6 +6,7 @@ backwards compatibility — it re-runs the basic happy/sad path against the
 real middleware (no mocking of ``knowledge_ingest.middleware.auth.settings``)
 to make sure nothing else in the tree relies on the removed fail-open branch.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -45,9 +46,7 @@ def test_health_without_secret(secured_client):
     """GET /health should always work without auth — middleware must not block it."""
     mock_resp = MagicMock(status_code=200)
     mock_ctx = MagicMock()
-    mock_ctx.__aenter__ = AsyncMock(
-        return_value=MagicMock(get=AsyncMock(return_value=mock_resp))
-    )
+    mock_ctx.__aenter__ = AsyncMock(return_value=MagicMock(get=AsyncMock(return_value=mock_resp)))
     mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
     with (

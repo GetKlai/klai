@@ -12,6 +12,7 @@ and update the @MX:NOTE in routes/ingest.py."
 
 SPEC-SEC-AUDIT-2026-04 C3 — do NOT delete or loosen this test without a SPEC.
 """
+
 from __future__ import annotations
 
 import re
@@ -77,7 +78,16 @@ def _find_callers() -> frozenset[str]:
        comment-only mentions, model docstrings, and route definitions
        slip through unflagged.
     """
-    noise_dirs = {".venv", "__pycache__", "site-packages", "tests", ".moai", ".serena", ".claude", "docs"}
+    noise_dirs = {
+        ".venv",
+        "__pycache__",
+        "site-packages",
+        "tests",
+        ".moai",
+        ".serena",
+        ".claude",
+        "docs",
+    }
     callers: set[str] = set()
     for py_file in _REPO_ROOT.rglob("*.py"):
         parts = set(py_file.parts)
@@ -120,7 +130,7 @@ def test_ingest_v1_document_caller_set_is_known() -> None:
     # When running in a context that only has klai-knowledge-ingest checked out,
     # skip rather than fail on a partial scan.
     if not (_REPO_ROOT / "klai-portal").exists():
-        import pytest  # noqa: PLC0415
+        import pytest
 
         pytest.skip("Full monorepo not present — skipping cross-service caller scan")
 
