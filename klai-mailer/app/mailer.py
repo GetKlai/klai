@@ -5,12 +5,11 @@ Supports both STARTTLS (port 587) and implicit TLS (port 465).
 Fails loudly on SMTP errors so Zitadel can retry via HTTP 5xx.
 """
 
+import html as html_lib
 import logging
+import re
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-import html as html_lib
-import re
-
 from email.utils import formataddr, formatdate, make_msgid
 
 import aiosmtplib
