@@ -35,6 +35,7 @@ from app.core.enums import SyncStatus
 from app.core.logging import get_logger
 from app.core.sanitize import sanitize_response_body  # SPEC-SEC-INTERNAL-001 REQ-4 + REQ-10
 from app.models.sync_run import SyncRun
+from app.reason_codes import PersistSkipReason  # SPEC-INGEST-RECONCILE-001 AC-9
 from app.services.parser import parse_document_with_images
 from app.services.portal_client import PortalClient
 from app.services.url_guard import (
@@ -152,11 +153,26 @@ class SyncEngine:
         documents_total = 0
         documents_ok = 0
         documents_failed = 0
-        # Docs whose parsed text was below the 50-char ingest threshold
-        # (Notion containers, empty Confluence pages, ms_docs placeholders).
-        # Tracked separately so ``documents_ok`` accurately reflects what is
-        # actually persisted in knowledge.artifacts.
-        documents_short_skipped = 0
+        # SPEC-INGEST-RECONCILE-001 AC-6 — per-sync skip-reason aggregation
+        # ``{PersistSkipReason: count}``. Persisted to
+        # ``connector.sync_runs.skip_reasons`` JSONB at the end of the run
+        # (CHECK-constrained to PersistSkipReason enum values via migration
+        # 009). Replaces the previous ``documents_short_skipped`` counter
+        # that only ever reached structlog and was lost after the 5-day
+        # retention window.
+        #
+        # ``documents_ok`` arithmetic note (SPEC AC-7): the SPEC defines
+        #   documents_ok = documents_total - documents_failed - sum(skip_reasons.values())
+        # In this codebase the per-loop counter already excludes short-skip
+        # (the ``continue`` branch never reaches the ``documents_ok += 1``
+        # line) and excludes failures (separate ``except`` branch), so the
+        # formula is a no-op for the only skip reason emitted today
+        # (content_too_short). It will become a meaningful correction once
+        # adapter-side handlers start incrementing other PersistSkipReason
+        # codes (auth_wall_detected, dedupe_*, ...) — at that point the
+        # counter and the formula stay aligned because every increment is
+        # accompanied by a ``continue`` that skips the success branch.
+        skip_reasons: dict[str, int] = {}
         bytes_processed = 0
         error_details: list[dict[str, str]] = []
 
@@ -334,7 +350,13 @@ class SyncEngine:
                                 ref.path,
                                 len(text.strip()),
                             )
-                            documents_short_skipped += 1
+                            # SPEC-INGEST-RECONCILE-001 AC-6 — replaces the
+                            # legacy ``documents_short_skipped`` int counter.
+                            # Same site (~30+ events on Voys Notion); now
+                            # observable via sync_runs.skip_reasons JSONB.
+                            skip_reasons[PersistSkipReason.CONTENT_TOO_SHORT.value] = (
+                                skip_reasons.get(PersistSkipReason.CONTENT_TOO_SHORT.value, 0) + 1
+                            )
                             resume_ingested_refs.add(ref_key)
                             continue
 
@@ -466,6 +488,11 @@ class SyncEngine:
             sync_run.documents_failed = documents_failed
             sync_run.bytes_processed = bytes_processed
             sync_run.error_details = error_details if error_details else None
+            # SPEC-INGEST-RECONCILE-001 AC-6: persist per-reason skip counts.
+            # Empty dict (no skips) is the default '{}' from the migration —
+            # we still write it explicitly so the operator-visible row is
+            # always JSONB rather than a stale server_default.
+            sync_run.skip_reasons = skip_reasons
             # Store all discovered refs for reconciliation on the next sync.
             # This is the full set from the adapter — new refs appear here, deleted
             # refs disappear. The sync engine compares against this on the next run.
@@ -487,7 +514,13 @@ class SyncEngine:
                     "documents_total": documents_total,
                     "documents_ok": documents_ok,
                     "documents_failed": documents_failed,
-                    "documents_short_skipped": documents_short_skipped,
+                    # Backwards-compat alias for log consumers (Grafana panels
+                    # still query ``documents_short_skipped``); ``skip_reasons``
+                    # is the structured form added by SPEC-INGEST-RECONCILE-001.
+                    "documents_short_skipped": skip_reasons.get(
+                        PersistSkipReason.CONTENT_TOO_SHORT.value, 0
+                    ),
+                    "skip_reasons": dict(skip_reasons),
                     "bytes_processed": bytes_processed,
                 },
             )

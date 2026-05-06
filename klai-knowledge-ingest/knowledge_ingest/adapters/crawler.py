@@ -210,7 +210,12 @@ async def run_crawl_job(
     auth_wall_pages: list[str] = []
 
     try:
-        results = await crawl_site(
+        # SPEC-INGEST-RECONCILE-001 AC-4: crawl_site now returns
+        # ``(results, outcomes)``. ``outcomes`` is a JSONB-shaped list with
+        # one entry per discovered candidate URL — written to
+        # ``crawl_jobs.fetch_outcomes`` so operators can answer "where did
+        # the missing pages go?" without log forensics.
+        results, fetch_outcomes = await crawl_site(
             start_url=start_url,
             selector=content_selector,
             max_depth=max_depth,
@@ -226,9 +231,16 @@ async def run_crawl_job(
         # keeps the public signature stable for Fase D delegation.
         _ = (canary_url, canary_fingerprint)
 
+        # SPEC-INGEST-RECONCILE-001 AC-4: persist per-URL outcomes alongside
+        # the page-count rollup. ``pages_total`` keeps its existing semantics
+        # ("how many CrawlResults reached the ingest loop"); the JSONB
+        # ``fetch_outcomes`` is the per-candidate breakdown.
         await conn.execute(
-            "UPDATE knowledge.crawl_jobs SET pages_total=$1, updated_at=$2 WHERE id=$3",
+            "UPDATE knowledge.crawl_jobs "
+            "SET pages_total=$1, fetch_outcomes=$2::jsonb, updated_at=$3 "
+            "WHERE id=$4",
             len(results),
+            json.dumps(fetch_outcomes),
             int(time.time()),
             job_id,
         )

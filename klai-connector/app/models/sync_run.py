@@ -42,6 +42,13 @@ class SyncRun(Base):
         cursor_state: JSONB -- bookmark for incremental sync
         quality_status: VARCHAR(20) -- 'healthy' | 'degraded' | 'failed' | NULL
             Added by SPEC-CRAWL-003 migration 005. NULL on historical rows (no backfill).
+        skip_reasons: JSONB -- {reason_code: count} for docs not persisted
+            Added by SPEC-INGEST-RECONCILE-001 migration 009. Default '{}'.
+            Keys must be members of PersistSkipReason (CHECK constraint
+            ``sync_runs_skip_reasons_valid_keys``). Populated by
+            ``sync_engine._execute_sync`` at run completion. Historical rows
+            keep '{}' (no backfill — pointless and migration-risky per
+            SPEC §"Not migrating existing sync_runs rows").
     """
 
     __tablename__ = "sync_runs"
@@ -72,3 +79,13 @@ class SyncRun(Base):
     # SPEC-CRAWL-003 REQ-2: content quality guardrail result per sync run.
     # Values: 'healthy' | 'degraded' | 'failed' | NULL (historical rows keep NULL).
     quality_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+    # SPEC-INGEST-RECONCILE-001 AC-6: per-sync skip-reason aggregation.
+    # JSONB ``{reason_code: count}``; keys validated by Postgres CHECK
+    # against ``PersistSkipReason`` (see migration 009). Defaults to ``{}``.
+    skip_reasons: Mapped[dict] = mapped_column(  # type: ignore[type-arg]
+        JSONB,
+        nullable=False,
+        server_default="{}",
+        default=dict,
+    )
