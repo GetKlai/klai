@@ -1,17 +1,22 @@
 #!/bin/bash
-# Pre-commit hook — run image-tag validators when deploy compose files change.
+# Pre-commit hook — runs targeted validators based on which files are staged.
 #
 # Activate locally with: git config core.hooksPath .githooks
 #
-# Catches the PR #269 class of bug at commit time: a vexaai/* image
-# reference that is not pullable from Docker Hub and does not match a
-# locally-built convention.
+# Triggers:
+#   1. deploy/ image-tag validators — when compose files / image-tag scripts
+#      / VERSIONS.md change. Catches PR #269-class bugs (unpullable
+#      vexaai/* tags). See docs/retros/2026-05-03-vexa-transcription-tag.md.
+#   2. .trivyignore.yaml validator — when any **/.trivyignore.yaml is staged.
+#      Enforces SPEC-CI-TRIVY-POLICY-001 REQ-5 (id + ≥40-char statement
+#      + expired_at within 12 months). See docs/runbooks/trivy-policy.md.
 
 set -e
 
 CHANGED=$(git diff --cached --name-only --diff-filter=ACM)
 
-# Only run when relevant files are staged.
+# ---- Trigger 1: deploy/ image-tag validators ----
+
 if echo "$CHANGED" | grep -qE '^deploy/(docker-compose.*\.ya?ml|check-image-.*\.sh|VERSIONS\.md)$'; then
     echo "[pre-commit] deploy/ change detected — validating image tags..."
 
@@ -27,6 +32,18 @@ if echo "$CHANGED" | grep -qE '^deploy/(docker-compose.*\.ya?ml|check-image-.*\.
         else
             echo "[pre-commit] docker not available — skipping pullable check (CI will catch)."
         fi
+    fi
+fi
+
+# ---- Trigger 2: .trivyignore.yaml validator ----
+
+if echo "$CHANGED" | grep -qE '(^|/)\.trivyignore\.ya?ml$'; then
+    echo "[pre-commit] .trivyignore.yaml change detected — validating REQ-5 fields..."
+
+    if [ -x scripts/validate-trivyignore.sh ]; then
+        sh scripts/validate-trivyignore.sh
+    else
+        echo "[pre-commit] WARN: scripts/validate-trivyignore.sh not found / not executable. Skipping (CI will catch)."
     fi
 fi
 

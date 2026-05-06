@@ -48,17 +48,24 @@ jobs:
           # internal + local builds we scan via per-service workflows.
           #
           # Excluded patterns (with rationale):
-          #   ghcr.io/getklai/*     — our own CI-built images; scanned per service
-          #   */klai                — on-server local builds (vexa-*:klai)
-          #   */local               — on-server local builds (retrieval-api:local)
-          #   mendableai/firecrawl  — built locally from source on the server
+          #   ghcr.io/getklai/*                — our own CI-built images; scanned per service
+          #   */klai                           — legacy on-server local builds (vexa-*:klai)
+          #   */local                          — legacy on-server local builds (retrieval-api:local)
+          #   *:*-local-YYMMDD-HHMM            — current convention for locally-built tags
+          #                                      per .claude/rules/klai/infra/container-hygiene.md
+          #                                      "Verify image pullable before pinning a tag" rule
+          #                                      (e.g. vexaai/transcription-service:0.10.6-local-260503-0858).
+          #                                      SKIP-tier of SPEC-CI-TRIVY-POLICY-001 REQ-4: these
+          #                                      images do not exist on Docker Hub so a `docker
+          #                                      manifest inspect` always 404s.
+          #   mendableai/firecrawl             — built locally from source on the server
           IMAGES=$(yq eval-all '.services[].image' \
             deploy/docker-compose.yml \
             deploy/docker-compose.gpu.yml \
             docker-compose.dev.yml \
             2>/dev/null \
             | sort -u \
-            | grep -vE '^(ghcr\.io/getklai/|ghcr\.io/mendableai/firecrawl|[^:]+:klai$|[^:]+:local$|---)' \
+            | grep -vE '^(ghcr\.io/getklai/|ghcr\.io/mendableai/firecrawl|[^:]+:klai$|[^:]+:local$|[^:]+:.*-local-[0-9]{6}-[0-9]{4}$|---)' \
             | grep -vE '^(null|~)$' \
             | jq -R . | jq -sc .)
 
