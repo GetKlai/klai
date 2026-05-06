@@ -15,7 +15,7 @@ through to using the child's own text.
 
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 
 import structlog
 
@@ -36,7 +36,7 @@ async def fetch_parents(parent_ids: Iterable[int]) -> dict[int, str]:
 
     pool = events.get_pool()
     if pool is None:
-        logger.warning("parent_lookup_no_pool count=%d", len(unique_ids))
+        logger.warning("parent_lookup_no_pool", count=len(unique_ids))
         return {}
 
     try:
@@ -44,12 +44,10 @@ async def fetch_parents(parent_ids: Iterable[int]) -> dict[int, str]:
             "SELECT id, text FROM knowledge.parent_chunks WHERE id = ANY($1::bigint[])",
             unique_ids,
         )
-    except Exception as exc:
-        logger.warning(
-            "parent_lookup_failed count=%d error=%s",
-            len(unique_ids),
-            str(exc)[:200],
-        )
+    except Exception:
+        # SPEC-SEC-HYGIENE-001 REQ-43.3 / TRY401: exc_info=True preserves the
+        # traceback that the previous str(exc)[:200] dropped. F6 audit cleanup.
+        logger.warning("parent_lookup_failed", count=len(unique_ids), exc_info=True)
         return {}
 
     return {int(row["id"]): row["text"] for row in rows}
