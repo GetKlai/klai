@@ -147,6 +147,12 @@ class SyncEngine:
         async with lock, self._global_semaphore:
             await self._execute_sync(connector_id, sync_run_id)
 
+    # @MX:NOTE SPEC-INGEST-RECONCILE-001 AC-6/AC-7 — orchestrates the
+    #   per-sync drop-reason accumulation (``skip_reasons``) and the
+    #   corrected ``documents_ok`` arithmetic. New PersistSkipReason
+    #   codes plug in via ``skip_reasons[code] += 1`` from inside the
+    #   adapter loop; the JSONB write at run-end is unchanged.
+    # @MX:SPEC: SPEC-INGEST-RECONCILE-001
     async def _execute_sync(self, connector_id: uuid.UUID, sync_run_id: uuid.UUID) -> None:
         """Internal sync execution with full error handling and metrics."""
         start_time = time.monotonic()

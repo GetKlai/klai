@@ -20,6 +20,12 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+# @MX:ANCHOR — connector-side mirror of knowledge_ingest.reason_codes.
+#   Drift is caught by ``tests/test_reason_codes_parity.py``. New values
+#   require a coordinated change in BOTH services AND the relevant
+#   alembic migration's CHECK constraint (009 here, 0005 on the
+#   knowledge-ingest side). See SPEC-INGEST-RECONCILE-001 §"Fix 3".
+
 
 class FetchReasonCode(StrEnum):
     """See knowledge_ingest.reason_codes.FetchReasonCode."""
