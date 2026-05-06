@@ -74,29 +74,39 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # STRICT-tier scan per SPEC-CI-TRIVY-POLICY-001:
-      # severity / ignore-unfixed / scanners come from .trivy.yaml (REQ-1).
-      # exit-code: '1' blocks the build on unfixed HIGH/CRITICAL (REQ-2).
-      # limit-severities-for-sarif: 'true' makes the severity filter actually
-      # apply (neutralises trivy-action 0.35.0 SARIF severity-filter unset).
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.35.0
+      # STRICT-tier scan per SPEC-CI-TRIVY-POLICY-001 (REQ-2).
+      #
+      # We invoke Trivy CLI directly instead of via aquasecurity/trivy-action
+      # because that wrapper has a bug in 0.35.0 / 0.36.0 with `format: sarif`:
+      # the `severity` filter is honoured for the SARIF body but NOT for the
+      # exit-code — meaning a MEDIUM/LOW finding still triggers exit-code 1
+      # even when we asked for CRITICAL+HIGH gating only. Caddy / docs /
+      # whisper-server hit this bug on PR #3's first main run (e2303848)
+      # because they had findings in the SARIF that the wrapper let through
+      # to the exit-code check.
+      #
+      # Direct trivy CLI honours `--severity` for both detection and
+      # exit-code, so the filter actually applies. Same flags map 1:1 to
+      # `.trivy.yaml` keys and per-service `.trivyignore.yaml`. When
+      # trivy-action lands a fix (issue: aquasecurity/trivy-action ?), we
+      # can collapse this back to the wrapper.
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@e6c2c5e321ed9123bda567646e2f96565e34abe1  # v0.2.5
         with:
-          image-ref: ghcr.io/getklai/caddy-hetzner:${{ github.sha }}
-          trivy-config: .trivy.yaml
-          trivyignores: deploy/caddy/.trivyignore.yaml
-          # Inline duplicates are required: trivy-action 0.35.0's
-          # `limit-severities-for-sarif: true` only acts on INPUT_SEVERITY,
-          # not on config-file severity. Same for scanners. Keep .trivy.yaml
-          # as the canonical policy reference; remove these inlines once
-          # trivy-action lands proper config-file precedence.
-          scanners: 'vuln'
-          severity: 'CRITICAL,HIGH'
-          ignore-unfixed: true
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          exit-code: '1'
-          limit-severities-for-sarif: 'true'
+          version: v0.69.3
+          cache: true
+
+      - name: Run Trivy vulnerability scanner
+        run: |
+          trivy image \
+            --format sarif \
+            --output trivy-results.sarif \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --scanners vuln \
+            --exit-code 1 \
+            --ignorefile deploy/caddy/.trivyignore.yaml \
+            ghcr.io/getklai/caddy-hetzner:${{ github.sha }}
 
       - name: Upload Trivy SARIF to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v4

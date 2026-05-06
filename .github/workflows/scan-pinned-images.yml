@@ -95,25 +95,30 @@ jobs:
           echo "name=$SAFE" >> "$GITHUB_OUTPUT"
 
       # WARN-tier scan per SPEC-CI-TRIVY-POLICY-001 REQ-3.
-      # severity / ignore-unfixed / scanners come from .trivy.yaml (REQ-1).
-      # exit-code: '0' keeps this warn-only — Renovate handles upgrade pressure
-      # on the external base-images we pin in compose.
-      - name: Trivy scan
-        uses: aquasecurity/trivy-action@0.35.0
+      # `--exit-code 0` keeps this warn-only — Renovate handles upgrade
+      # pressure on the external base-images we pin in compose.
+      #
+      # Direct CLI invocation bypasses an aquasecurity/trivy-action bug
+      # (0.35.0/0.36.0): with `format: sarif` the `severity` filter is
+      # honoured for the SARIF body but NOT for the exit-code. Keeping
+      # the invocation consistent with STRICT-tier scans simplifies
+      # operations.
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@e6c2c5e321ed9123bda567646e2f96565e34abe1  # v0.2.5
         with:
-          image-ref: ${{ matrix.image }}
-          trivy-config: .trivy.yaml
-          # Inline duplicates are required: trivy-action 0.35.0's
-          # `limit-severities-for-sarif: true` only acts on INPUT_SEVERITY,
-          # not on config-file severity. Keep .trivy.yaml as the canonical
-          # policy reference; remove these inlines once trivy-action lands
-          # proper config-file precedence.
-          scanners: 'vuln'
-          severity: 'CRITICAL,HIGH'
-          ignore-unfixed: true
-          format: 'sarif'
-          output: 'trivy-${{ steps.safe.outputs.name }}.sarif'
-          exit-code: '0'  # Don't fail the job — Security tab is the alert surface
+          version: v0.69.3
+          cache: true
+
+      - name: Trivy scan
+        run: |
+          trivy image \
+            --format sarif \
+            --output trivy-${{ steps.safe.outputs.name }}.sarif \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --scanners vuln \
+            --exit-code 0 \
+            ${{ matrix.image }}
 
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v4

@@ -302,40 +302,33 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # STRICT-tier scan per SPEC-CI-TRIVY-POLICY-001:
-      # - severity / ignore-unfixed / scanners come from .trivy.yaml (REQ-1)
-      # - exit-code: '1' blocks the build on any unfixed HIGH/CRITICAL not
-      #   listed in klai-portal/backend/.trivyignore.yaml (REQ-2)
-      # - limit-severities-for-sarif: 'true' makes the severity filter
-      #   actually apply to both the SARIF output AND the exit-code check.
-      #   Without it, trivy-action 0.35.0's entrypoint unsets TRIVY_SEVERITY
-      #   for `format: sarif`, causing exit-code 1 to fire on MEDIUM/LOW too.
+      # STRICT-tier scan per SPEC-CI-TRIVY-POLICY-001 (REQ-2).
       #
-      # vuln-only matters because Trivy's secret scanner matches strings
-      # inside third-party Python libraries shipped under /repo/.../site-
-      # packages — yt-dlp's per-streaming-service extractors hardcode
-      # public API tokens (NBC, Vice, ESPN, Shahid, …) that flag as
-      # CRITICAL aws-access-key-id / HIGH jwt-token false positives.
-      # Source-level secret scanning is covered by Semgrep + Gitleaks.
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.35.0
+      # Direct CLI invocation bypasses an aquasecurity/trivy-action
+      # bug (0.35.0/0.36.0): with `format: sarif` the `severity` filter
+      # is honoured for the SARIF body but NOT for the exit-code, so
+      # a MEDIUM/LOW finding triggers exit-code 1 even when we asked
+      # for CRITICAL+HIGH gating. trivy CLI's `--severity` flag is
+      # honoured for both detection AND exit-code. .trivy.yaml stays
+      # in the repo as the canonical policy reference until the
+      # action lands proper config-file precedence.
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@e6c2c5e321ed9123bda567646e2f96565e34abe1  # v0.2.5
         with:
-          image-ref: ghcr.io/getklai/portal-api:${{ github.sha }}
-          trivy-config: .trivy.yaml
-          trivyignores: klai-portal/backend/.trivyignore.yaml
-          # Inline duplicates are required: trivy-action 0.35.0's
-          # `limit-severities-for-sarif: true` only acts on INPUT_SEVERITY,
-          # not on config-file severity. Same for scanners. Keep .trivy.yaml
-          # as the canonical policy reference; remove these inlines once
-          # trivy-action lands proper config-file precedence.
-          scanners: 'vuln'
-          severity: 'CRITICAL,HIGH'
-          ignore-unfixed: true
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          exit-code: '1'
-          limit-severities-for-sarif: 'true'
+          version: v0.69.3
+          cache: true
 
+      - name: Run Trivy vulnerability scanner
+        run: |
+          trivy image \
+            --format sarif \
+            --output trivy-results.sarif \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --scanners vuln \
+            --exit-code 1 \
+            --ignorefile klai-portal/backend/.trivyignore.yaml \
+            ghcr.io/getklai/portal-api:${{ github.sha }}
       - name: Upload Trivy SARIF to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v4
         if: always()

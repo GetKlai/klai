@@ -1,29 +1,64 @@
 # Per-service Trivy ignore-list for caddy-hetzner.
 # Schema: SPEC-CI-TRIVY-POLICY-001 REQ-5 (id + ≥40-char statement + expired_at).
 # Referenced from .github/workflows/caddy.yml via `trivyignores:`.
+#
+# Caddy 2.11.2 still ships several vulnerable Go deps that have upstream
+# fixes but haven't been bumped in Caddy's go.mod yet. xcaddy builds use
+# Caddy's go.sum verbatim, so we can't override versions without forking
+# Caddy. All entries here have a 2-month expiry — Renovate watches the
+# `caddy:*-alpine` tag and the action.yaml of `xcaddy` will pick up
+# upstream Caddy patches that bump these deps.
 
 vulnerabilities:
+  - id: CVE-2026-34986
+    statement: |
+      Go JOSE DoS via crafted JWE on go-jose v3.0.4 + v4.1.3
+      (fix in v3.0.5 / v4.1.4). Caddy uses go-jose only for ACME-style
+      flows (Let's Encrypt JWS-signed orders); our deployment terminates
+      ACME via Hetzner DNS-01 and never accepts user-supplied JWE,
+      so the DoS attack surface (crafted external JWE → CPU starvation)
+      has no path. Re-evaluate when Caddy 2.11.3+ bumps go-jose.
+    expired_at: 2026-08-01
+
+  - id: CVE-2026-30836
+    statement: |
+      smallstep/certificates v0.30.0-rc3 (fix in 0.30.0): unauthenticated
+      cert issuance via SCEP Update Request. Caddy bundles smallstep as
+      its ACME backend implementation. Our Caddy is a reverse-proxy
+      issuing client certs ONLY through Let's Encrypt's ACME
+      (DNS-01 challenge with Hetzner). SCEP is not enabled, no SCEP
+      endpoint exists, no SCEP requests can reach the running Caddy
+      container. CRITICAL severity reflects worst-case ACME-CA
+      deployment, not our reverse-proxy use. Re-evaluate when Caddy
+      bumps smallstep.
+    expired_at: 2026-08-01
+
+  - id: CVE-2026-39883
+    statement: |
+      OpenTelemetry Go SDK PATH hijack via BSD kenv on v1.40.0 (fix in
+      v1.43.0). Caddy uses OTEL only for outbound telemetry export when
+      configured; our Caddyfile has NO `tracing` directive and NO OTLP
+      exporter, so the SDK code path that calls `kenv` is never reached.
+      Compile-time inclusion via Caddy's go.mod doesn't expose the
+      kenv-call site at runtime when the tracing feature is unused.
+    expired_at: 2026-08-01
+
+  - id: CVE-2026-33186
+    statement: |
+      google.golang.org/grpc v1.79.1 (fix in v1.79.3): DoS in HTTP/2
+      handler. grpc is in Caddy's transitive dep tree via OTEL gRPC
+      exporter — same OTEL story above: no tracing directive, no gRPC
+      endpoint exposed, no inbound HTTP/2 to grpc handler possible
+      from our compose Caddyfile. CRITICAL severity reflects worst-case
+      gRPC service exposure, not transitively-bundled-but-unused.
+    expired_at: 2026-08-01
+
   - id: CVE-2026-29181
     statement: |
-      go.opentelemetry.io/otel v1.40.0 → fixed in v1.41.0. Caddy 2.11.2's
-      go.mod still pins v1.40.0 transitively. Telemetry surface in our
-      Caddy build is disabled (no OTLP exporter, no telemetry endpoints
-      configured in Caddyfile) so the vulnerable codepath has no live
-      reach. Renovate watches the Caddy image; we expect Caddy 2.11.3 or
-      2.12.x to bump otel within the expiry window. Re-evaluate then.
+      go.opentelemetry.io/otel HIGH (advisory variant of the otel
+      family). Same exposure analysis as CVE-2026-39883 above: our
+      Caddyfile has no `tracing` directive and no OTLP exporter, so
+      the OTEL SDK code path is not exercised at runtime. Renovate
+      watches caddy:* tags for upstream go.mod bumps.
     expired_at: 2026-08-01
-    purls:
-      - "pkg:golang/go.opentelemetry.io/otel@v1.40.0"
 
-  - id: CVE-2026-27135
-    statement: |
-      nghttp2-libs 1.68.0-r0 → fixed in 1.68.1. Caddy 2.11.2-alpine ships
-      Alpine 3.21 which still has 1.68.0-r0 in its package index. Alpine's
-      next package-set update (typically every ~6 weeks) will pick up
-      1.68.1. Caddy uses nghttp2 only for HTTP/2 backend transport; our
-      reverse-proxy upstreams are local Docker network HTTP/1.1 services,
-      so the H2-DoS attack surface is upstream-side TLS terminator only.
-      Renovate watches caddy:* tags for new patches.
-    expired_at: 2026-08-01
-    purls:
-      - "pkg:apk/alpine/nghttp2-libs@1.68.0-r0"
