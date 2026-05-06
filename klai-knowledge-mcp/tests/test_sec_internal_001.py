@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tests.conftest import allow_verify_result
+from tests._helpers import allow_verify_result
 
 
 def _make_ctx(headers: dict | None = None) -> MagicMock:
