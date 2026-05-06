@@ -1,10 +1,21 @@
-"""Tests for SPEC-TAXONOMY-001: assertion_mode taxonomy alignment in knowledge-mcp.
+"""Tests for SPEC-TAXONOMY-001 (revised): assertion_mode taxonomy in knowledge-mcp.
 
-RED phase: these tests define the expected behavior for the new 6-value taxonomy.
+The 6-value vocabulary uses the original DB-flavoured names + ``unknown``,
+matching the live ``artifacts_assertion_mode_check`` constraint and the
+``VALID_ASSERTION_MODES`` set in ``klai-knowledge-ingest``. See the
+Realignment Note in ``.moai/specs/SPEC-TAXONOMY-001/spec.md`` for why
+DD-1's ``fact/claim/speculation`` rename was reverted.
+
+Identity verification (SPEC-SEC-IDENTITY-ASSERT-001 REQ-2) sits in front of
+every save_* tool. These tests mock ``main._asserter.verify`` with an
+allow-result so the assertion_mode validation path is actually reached.
+Without the mock the tests pass through ``_ERR_IDENTITY_REJECTED`` and
+silently never exercise the taxonomy logic.
 """
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from klai_identity_assert import VerifyResult
 
 
 def _make_ctx(headers: dict | None = None):
@@ -19,6 +30,8 @@ def _patch_env(monkeypatch):
     monkeypatch.setenv("DOCS_INTERNAL_SECRET", "docs-secret")
     monkeypatch.setenv("KNOWLEDGE_INGEST_URL", "http://knowledge-ingest:8000")
     monkeypatch.setenv("KNOWLEDGE_INGEST_SECRET", "test-secret")
+    monkeypatch.setenv("PORTAL_API_URL", "http://portal-api:8010")
+    monkeypatch.setenv("PORTAL_INTERNAL_SECRET", "portal-test-secret")
 
 
 def _valid_ctx():
@@ -30,6 +43,14 @@ def _valid_ctx():
     })
 
 
+def _allow() -> VerifyResult:
+    """Mirror of the helper in test_identity_assert.py — keeps every taxonomy
+    test focused on assertion_mode behaviour, not the identity-verify chain."""
+    return VerifyResult.allow(
+        user_id="user1", org_id="org1", org_slug="testorg", evidence="jwt"
+    )  # type: ignore[arg-type]
+
+
 class TestAssertionModeType:
     """The AssertionMode Literal and VALID_ASSERTION_MODES frozenset must exist."""
 
@@ -37,7 +58,7 @@ class TestAssertionModeType:
         from main import VALID_ASSERTION_MODES
 
         assert VALID_ASSERTION_MODES == frozenset(
-            {"fact", "claim", "speculation", "procedural", "quoted", "unknown"}
+            {"factual", "belief", "hypothesis", "procedural", "quoted", "unknown"}
         )
 
     def test_assertion_mode_literal_exists(self, _patch_env):
@@ -45,7 +66,7 @@ class TestAssertionModeType:
         from typing import get_args
 
         args = set(get_args(AssertionMode))
-        assert args == {"fact", "claim", "speculation", "procedural", "quoted", "unknown"}
+        assert args == {"factual", "belief", "hypothesis", "procedural", "quoted", "unknown"}
 
 
 class TestAssertionModeValidation:
@@ -56,13 +77,14 @@ class TestAssertionModeValidation:
         from main import save_personal_knowledge
 
         ctx = _valid_ctx()
-        result = await save_personal_knowledge(
-            title="Test",
-            content="content",
-            assertion_mode="invalid_mode",
-            tags=["test"],
-            ctx=ctx,
-        )
+        with patch("main._asserter.verify", new_callable=AsyncMock, return_value=_allow()):
+            result = await save_personal_knowledge(
+                title="Test",
+                content="content",
+                assertion_mode="invalid_mode",
+                tags=["test"],
+                ctx=ctx,
+            )
         # Must return an error string, not silently fallback
         assert "Error" in result or "invalid" in result.lower()
 
@@ -72,13 +94,14 @@ class TestAssertionModeValidation:
         from main import save_personal_knowledge
 
         ctx = _valid_ctx()
-        result = await save_personal_knowledge(
-            title="Test",
-            content="content",
-            assertion_mode="note",
-            tags=["test"],
-            ctx=ctx,
-        )
+        with patch("main._asserter.verify", new_callable=AsyncMock, return_value=_allow()):
+            result = await save_personal_knowledge(
+                title="Test",
+                content="content",
+                assertion_mode="note",
+                tags=["test"],
+                ctx=ctx,
+            )
         assert "Error" in result or "invalid" in result.lower()
 
 
@@ -86,12 +109,15 @@ class TestAssertionModeValidValues:
     """All 6 valid assertion_mode values must be accepted."""
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("mode", ["fact", "claim", "speculation", "procedural", "quoted", "unknown"])
+    @pytest.mark.parametrize("mode", ["factual", "belief", "hypothesis", "procedural", "quoted", "unknown"])
     async def test_valid_mode_accepted(self, _patch_env, mode):
         from main import save_personal_knowledge
 
         ctx = _valid_ctx()
-        with patch("main._save_to_ingest", new_callable=AsyncMock, return_value=True):
+        with (
+            patch("main._asserter.verify", new_callable=AsyncMock, return_value=_allow()),
+            patch("main._save_to_ingest", new_callable=AsyncMock, return_value=True),
+        ):
             result = await save_personal_knowledge(
                 title="Test",
                 content="content",
@@ -100,6 +126,8 @@ class TestAssertionModeValidValues:
                 ctx=ctx,
             )
         assert "Error" not in result
+        # Positive assertion: the success path must actually be reached.
+        assert "Opgeslagen" in result
 
 
 class TestMissingAssertionModeDefaultsToUnknown:
@@ -116,7 +144,10 @@ class TestMissingAssertionModeDefaultsToUnknown:
             captured_mode["value"] = assertion_mode
             return True
 
-        with patch("main._save_to_ingest", side_effect=_capture_ingest):
+        with (
+            patch("main._asserter.verify", new_callable=AsyncMock, return_value=_allow()),
+            patch("main._save_to_ingest", side_effect=_capture_ingest),
+        ):
             # Pass empty string to simulate missing/empty assertion_mode
             await save_personal_knowledge(
                 title="Test",

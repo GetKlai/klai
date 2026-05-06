@@ -79,7 +79,13 @@ _KNOWN_SECRETS: frozenset[str] = frozenset(
 # Path validation patterns
 _KB_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
-AssertionMode = Literal["factual", "procedural", "quoted", "belief", "hypothesis"]
+# SPEC-TAXONOMY-001 (revised): vocabulary matches the live DB constraint
+# (artifacts_assertion_mode_check) and klai-knowledge-ingest. ``unknown`` is
+# the system default for content with no epistemic classification — keeps
+# untagged content out of the (future) feit-boost in retrieval scoring
+# (DD-2 in spec.md). See the Realignment Note in
+# .moai/specs/SPEC-TAXONOMY-001/spec.md.
+AssertionMode = Literal["factual", "belief", "hypothesis", "procedural", "quoted", "unknown"]
 VALID_ASSERTION_MODES: frozenset[str] = frozenset(get_args(AssertionMode))
 
 # Error messages (bilingual NL/EN)
@@ -379,8 +385,10 @@ something for their own reference.
 PARAMETERS:
   title          - short, descriptive title (max 80 chars); you generate this
   content        - the text to save; may be a summary, quote, or elaboration
-  assertion_mode - pick the best fit: "factual", "procedural", "quoted",
-                   "belief", or "hypothesis"
+  assertion_mode - pick the best fit: "factual", "belief", "hypothesis",
+                   "procedural", "quoted", or "unknown" (use "unknown" if
+                   the epistemic status is unclear; it is also the system
+                   default for missing values)
   tags           - 1-5 tags; free-form or from seed list
   source_note    - (optional) source reference if mentioned by user
 """
@@ -405,7 +413,9 @@ async def save_personal_knowledge(
         return _ERR_IDENTITY_REJECTED
 
     if not assertion_mode:
-        assertion_mode = "factual"
+        # SPEC-TAXONOMY-001 DD-2: missing → "unknown", not "factual".
+        # Avoids an unwarranted feit-boost in (future) retrieval scoring.
+        assertion_mode = "unknown"
     elif assertion_mode not in VALID_ASSERTION_MODES:
         return _ERR_ASSERTION_MODE.format(assertion_mode)
 
@@ -448,8 +458,10 @@ or expresses intent to share knowledge with the whole organisation.
 PARAMETERS:
   title          - short, descriptive title (max 80 chars); you generate this
   content        - the text to save; may be a summary, quote, or elaboration
-  assertion_mode - pick the best fit: "factual", "procedural", "quoted",
-                   "belief", or "hypothesis"
+  assertion_mode - pick the best fit: "factual", "belief", "hypothesis",
+                   "procedural", "quoted", or "unknown" (use "unknown" if
+                   the epistemic status is unclear; it is also the system
+                   default for missing values)
   tags           - 1-5 tags; free-form or from seed list
   source_note    - (optional) source reference if mentioned by user
 """
@@ -474,7 +486,9 @@ async def save_org_knowledge(
         return _ERR_IDENTITY_REJECTED
 
     if not assertion_mode:
-        assertion_mode = "factual"
+        # SPEC-TAXONOMY-001 DD-2: missing → "unknown", not "factual".
+        # Avoids an unwarranted feit-boost in (future) retrieval scoring.
+        assertion_mode = "unknown"
     elif assertion_mode not in VALID_ASSERTION_MODES:
         return _ERR_ASSERTION_MODE.format(assertion_mode)
 
