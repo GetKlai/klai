@@ -42,6 +42,7 @@ def _row(
 
 
 def _make_reaper(
+    monkeypatch: pytest.MonkeyPatch,
     *,
     candidate_rows: list[MagicMock],
     status_responses: list[dict | Exception] | None = None,
@@ -50,6 +51,11 @@ def _make_reaper(
 ) -> tuple[SyncRunReaper, MagicMock, MagicMock, MagicMock, dict]:
     """Build a reaper wired to mocks. Returns
     (reaper, crawl_client, session_mock, portal_client, registry).
+
+    SPEC-SEC-CONNECTOR-RLS-001: the reaper now opens its sessions via
+    the public ``cross_org_session()`` in app.core.database, which uses
+    the module-level ``session_maker``. Monkeypatch that so the mock
+    factory is reached AND the GUC-binding code path stays exercised.
     """
     crawl_client = MagicMock()
     if status_responses is not None:
@@ -63,8 +69,6 @@ def _make_reaper(
     # Registry maps row.id -> row mock for session.get inside _finalise_*.
     registry: dict = {r.id: r for r in candidate_rows}
 
-    # Two distinct session-mock factories: one for the SELECT (returns
-    # the candidate list), one for the per-row UPDATE inside _finalise_*.
     def _make_session() -> MagicMock:
         sess = MagicMock()
         sess.__aenter__ = AsyncMock(return_value=sess)
@@ -75,22 +79,23 @@ def _make_reaper(
         sess.execute = AsyncMock(return_value=result)
         sess.get = AsyncMock(side_effect=lambda model, row_id, **kwargs: registry.get(row_id))
         sess.commit = AsyncMock()
-        # SPEC-SEC-CONNECTOR-RLS-001: the reaper's _cross_org_session
-        # calls session.connection() (pin) + session.rollback() (reset
-        # cleanup) in addition to execute/get/commit. Mock both as async
-        # so the GUC-binding code path stays exercised.
+        # cross_org_session calls session.connection() (pin) +
+        # session.rollback() (reset cleanup) in addition to
+        # execute/get/commit. Mock both async.
         sess.connection = AsyncMock(return_value=MagicMock())
         sess.rollback = AsyncMock()
         return sess
 
     session_maker = MagicMock(side_effect=_make_session)
+    import app.core.database as _db_module  # noqa: PLC0415
+
+    monkeypatch.setattr(_db_module, "session_maker", session_maker)
 
     portal_client = MagicMock()
     portal_client.report_sync_status = AsyncMock()
 
     reaper = SyncRunReaper(
         crawl_sync_client=crawl_client,
-        session_maker=session_maker,
         portal_client=portal_client,
         tick_seconds=1.0,
         finalize_after_seconds=finalize_after_h * 3600.0,
@@ -103,10 +108,11 @@ class TestReaperFinalisesTerminalRemote:
     """AC-06.1: a remote job that has terminated is reflected in the local row."""
 
     @pytest.mark.asyncio
-    async def test_completed_remote_writes_terminal_state_and_reports(self) -> None:
+    async def test_completed_remote_writes_terminal_state_and_reports(self, monkeypatch: pytest.MonkeyPatch) -> None:
         old = datetime.now(UTC) - timedelta(hours=25)
         row = _row(started_at=old)
         reaper, crawl_client, _, portal, _ = _make_reaper(
+            monkeypatch,
             candidate_rows=[row],
             status_responses=[
                 {"job_id": "abc123", "status": "completed", "pages_done": 100, "pages_total": 100, "error": None},
@@ -127,10 +133,11 @@ class TestReaperFinalisesTerminalRemote:
         crawl_client.crawl_sync_cancel.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_failed_remote_writes_failed_with_error(self) -> None:
+    async def test_failed_remote_writes_failed_with_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         old = datetime.now(UTC) - timedelta(hours=25)
         row = _row(started_at=old)
         reaper, _, _, portal, _ = _make_reaper(
+            monkeypatch,
             candidate_rows=[row],
             status_responses=[
                 {
@@ -159,7 +166,7 @@ class TestReaper404IsRemoteJobLost:
     """AC-06.2: 404 from knowledge-ingest -> remote_job_lost."""
 
     @pytest.mark.asyncio
-    async def test_404_marks_failed_with_remote_job_lost(self) -> None:
+    async def test_404_marks_failed_with_remote_job_lost(self, monkeypatch: pytest.MonkeyPatch) -> None:
         old = datetime.now(UTC) - timedelta(hours=25)
         row = _row(started_at=old)
         fake_404 = httpx.HTTPStatusError(
@@ -168,6 +175,7 @@ class TestReaper404IsRemoteJobLost:
             response=httpx.Response(404, text="job not found"),
         )
         reaper, _, _, portal, _ = _make_reaper(
+            monkeypatch,
             candidate_rows=[row],
             status_responses=[fake_404],
         )
@@ -186,10 +194,11 @@ class TestReaperLeavesYoungRunningRowsAlone:
     """AC-06.3: a still-running remote on a row younger than 7d stays."""
 
     @pytest.mark.asyncio
-    async def test_running_under_7d_is_left_alone(self) -> None:
+    async def test_running_under_7d_is_left_alone(self, monkeypatch: pytest.MonkeyPatch) -> None:
         old = datetime.now(UTC) - timedelta(hours=25)  # >24h, <7d
         row = _row(started_at=old)
         reaper, _, _, portal, _ = _make_reaper(
+            monkeypatch,
             candidate_rows=[row],
             status_responses=[
                 {"job_id": "abc123", "status": "running", "pages_done": 1, "pages_total": 100, "error": None},
@@ -207,10 +216,11 @@ class TestReaperForceFailsAfter7Days:
     """AC-06.4: 7+ day old still-running rows force-fail with remote_job_stuck."""
 
     @pytest.mark.asyncio
-    async def test_running_over_7d_force_fails(self) -> None:
+    async def test_running_over_7d_force_fails(self, monkeypatch: pytest.MonkeyPatch) -> None:
         old = datetime.now(UTC) - timedelta(days=8)
         row = _row(started_at=old)
         reaper, _, _, portal, _ = _make_reaper(
+            monkeypatch,
             candidate_rows=[row],
             status_responses=[
                 {"job_id": "abc123", "status": "running", "pages_done": 50, "pages_total": 100, "error": None},
@@ -229,10 +239,11 @@ class TestReaperUpstreamUnreachable:
     """Knowledge-ingest down -> reaper logs and retries on next tick."""
 
     @pytest.mark.asyncio
-    async def test_connect_error_is_swallowed(self) -> None:
+    async def test_connect_error_is_swallowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         old = datetime.now(UTC) - timedelta(hours=25)
         row = _row(started_at=old)
         reaper, _, _, portal, _ = _make_reaper(
+            monkeypatch,
             candidate_rows=[row],
             status_responses=[httpx.ConnectError("connection refused")],
         )
@@ -248,7 +259,7 @@ class TestReaperRaceWithResolver:
     """If the resolver-on-read finalised the row first, the reaper is a no-op."""
 
     @pytest.mark.asyncio
-    async def test_already_terminal_row_is_skipped_in_finalise(self) -> None:
+    async def test_already_terminal_row_is_skipped_in_finalise(self, monkeypatch: pytest.MonkeyPatch) -> None:
         old = datetime.now(UTC) - timedelta(hours=25)
         # Build a row that LOOKS like the candidate query found it, but
         # by the time the reaper does session.get(...) it's already
@@ -261,6 +272,7 @@ class TestReaperRaceWithResolver:
         registry_row.id = candidate.id  # same row, post-resolver state
 
         reaper, _, _, portal, registry = _make_reaper(
+            monkeypatch,
             candidate_rows=[candidate],
             status_responses=[
                 {"job_id": "abc123", "status": "completed", "pages_done": 10, "pages_total": 10, "error": None},

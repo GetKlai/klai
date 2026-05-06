@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import AsyncGenerator, AsyncIterator
-from typing import Any
 
 import structlog
 from sqlalchemy import text
@@ -204,24 +203,27 @@ async def tenant_scoped_session(org_id: str) -> AsyncIterator[AsyncSession]:
 async def cross_org_session() -> AsyncIterator[AsyncSession]:
     """Async context manager for the legitimate cross-org sites.
 
-    Two callers in klai-connector today:
-    - Lifespan crash-recovery in app/main.py — resets stuck RUNNING runs
-      from a previous crash, no tenant context exists yet.
+    Three callers in klai-connector today:
+    - Lifespan crash-recovery in app/main.py — resets stuck RUNNING
+      runs from a previous crash, no tenant context exists yet.
     - SyncRunReaper.finalise_stuck_runs — periodic sweep across all
       tenants for runs that hung past the deadline.
+    - ConnectorScheduler.start — bootstraps cron schedules across all
+      tenants at app startup.
 
     Sets ``app.cross_org_admin = '1'`` so the policy's escape branch
-    permits SELECT / UPDATE / DELETE across all tenants. Logs entry +
-    exit at INFO so any unexpected use shows up in VictoriaLogs queries
-    (`service:klai-connector AND event:cross_org_session_*`).
+    permits SELECT / UPDATE / DELETE across all tenants. Entry / exit
+    are logged at DEBUG (queryable in dev / when VictoriaLogs filter
+    enables debug for klai-connector); the reaper ticks every 5 min,
+    so INFO would dominate the log volume without payoff.
 
-    Adding a third caller? Document the rationale here. Cross-org access
-    is the bug-class we are protecting against; every legitimate use
-    should be small and auditable.
+    Adding a fourth caller? Document the rationale here. Cross-org
+    access is the bug-class we are protecting against; every
+    legitimate use should be small and auditable.
     """
     if session_maker is None:
         raise RuntimeError("Database engine not initialised. Call init_engine() first.")
-    logger.info("cross_org_session_entered")
+    logger.debug("cross_org_session_entered")
     async with session_maker() as session:
         await _pin_and_reset_connection(session)
         try:
@@ -229,7 +231,7 @@ async def cross_org_session() -> AsyncIterator[AsyncSession]:
             yield session
         finally:
             await _reset_tenant_context(session)
-            logger.info("cross_org_session_exited")
+            logger.debug("cross_org_session_exited")
 
 
 # ---------------------------------------------------------------------------
@@ -247,12 +249,3 @@ __all__: list[str] = [
     "set_tenant",
     "tenant_scoped_session",
 ]
-
-
-def __getattr__(name: str) -> Any:  # pragma: no cover - module-level dynamic access
-    """Fallback so module-level reads of ``engine`` / ``session_maker`` see the
-    current global value rather than the import-time ``None``.
-    """
-    if name in {"engine", "session_maker"}:
-        return globals()[name]
-    raise AttributeError(name)
