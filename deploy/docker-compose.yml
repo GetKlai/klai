@@ -1290,6 +1290,14 @@ services:
       # via POST /ingest/v1/crawl/sync. Shares portal-api's KEK so every
       # service decrypts the same blobs. Empty disables the endpoint.
       ENCRYPTION_KEY: ${PORTAL_API_ENCRYPTION_KEY}
+      # SPEC-INGEST-LOGIN-WALL-DETECT-001 — anonymous-crawl auth-wall
+      # detection. Production target: enabled=true + mode=reject. Override
+      # KLAI_INGEST_LOGIN_WALL_DETECT_MODE=audit_only in /opt/klai/.env
+      # for the canary window, then remove the override to fall back to
+      # "reject" once FP-rate is verified. The default values in
+      # knowledge_ingest/config.py match the compose defaults below.
+      KLAI_INGEST_LOGIN_WALL_DETECT_ENABLED: ${KLAI_INGEST_LOGIN_WALL_DETECT_ENABLED:-true}
+      KLAI_INGEST_LOGIN_WALL_DETECT_MODE: ${KLAI_INGEST_LOGIN_WALL_DETECT_MODE:-reject}
     networks:
       - klai-net
       - net-postgres
