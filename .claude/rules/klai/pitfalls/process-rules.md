@@ -1574,7 +1574,7 @@ into two heads. `alembic upgrade head` refuses to proceed because the
 target is ambiguous; the entrypoint loops on `FAILED` and the container
 restartloops.
 
-Klai hit this twice on 2026-05-06 inside one hour:
+Klai hit this once on 2026-05-06:
 
 1. PR #440 (SPEC-INGEST-RECONCILE-001) added `0005_crawl_jobs_fetch_outcomes`
    chained on `603787256fb8`.
@@ -1582,10 +1582,12 @@ Klai hit this twice on 2026-05-06 inside one hour:
    chained on the same `603787256fb8`.
 
 #440 merged 7 minutes before #441. Production deployed `:latest` after
-#441 and the knowledge-ingest container restartlooped for ~5 minutes
-until hotfix #442 rebased the second migration onto the first
-(`down_revision`: `603787256fb8` → `a8c5e1d2f3b4`). #443 added a no-op
-merge migration in parallel for belt-and-braces.
+#441 and the knowledge-ingest container restartlooped for ~5 minutes.
+The recovery used both available remediations in parallel: hotfix #442
+rebased the second migration onto the first (`down_revision`:
+`603787256fb8` → `a8c5e1d2f3b4`) AND hotfix #443 shipped a no-op merge
+migration declaring both heads as parents. Either alone would have
+unblocked the entrypoint; doing both is safe (one becomes redundant).
 
 The schema columns themselves were independent (`crawl_jobs.fetch_outcomes`
 vs `crawled_pages.content_simhash` — different tables) so no data
