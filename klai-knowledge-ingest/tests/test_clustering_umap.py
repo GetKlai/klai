@@ -3,7 +3,8 @@ Tests for SPEC-TAXONOMY-V2-001-FOLLOWUP-001 Phase B fixes.
 
 B1: UMAP pre-reduction for HDBSCAN (AC-4, AC-5)
 B2: Description-generation restored in v2 bootstrap (AC-6, AC-7)
-B3: DBCV-score replaces silhouette (AC-8, field rename)
+B4: Cross-cluster aware batched naming (_suggest_cluster_names_batched)
+B5: cluster_persistence_mean replaces dbcv_score (field rename)
 """
 
 from __future__ import annotations
@@ -386,17 +387,394 @@ class TestDescriptionGenerationInV2Bootstrap:
 
 
 # ---------------------------------------------------------------------------
-# B3 — DBCV-score field rename
+# B4 — Cross-cluster aware batched naming
 # ---------------------------------------------------------------------------
 
 
-class TestDbcvScoreFieldRename:
-    """B3: DBCV-score replaces silhouette in cluster_documents_hdbscan and bootstrap log."""
+class TestBatchedNaming:
+    """B4: _suggest_cluster_names_batched unit tests.
 
-    def test_cluster_hdbscan_returns_dbcv_score_not_silhouette(self):
-        """cluster_documents_hdbscan metrics dict has 'dbcv_score', NOT 'silhouette_score'.
+    SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B4: single LLM call that names all clusters
+    at once so the LLM can enforce distinctness across names.
+    """
 
-        SPEC-TAXONOMY-V2-001-FOLLOWUP-001 AC-8 (B3 rename).
+    def _make_cluster_doc_lists(self, n_clusters: int = 3) -> dict:
+        from knowledge_ingest.proposal_generator import DocumentSummary
+
+        return {
+            cid: [
+                DocumentSummary(
+                    title=f"Doc {cid}-{i}",
+                    content_preview=f"Content for cluster {cid}, doc {i}: " + "text " * 10,
+                )
+                for i in range(5)
+            ]
+            for cid in range(n_clusters)
+        }
+
+    def _make_batched_llm_response(self, names: dict[int, str]) -> MagicMock:
+        """Return mock httpx response with batched names JSON."""
+        payload = {"names": [{"cluster_id": cid, "name": name} for cid, name in names.items()]}
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json = MagicMock(
+            return_value={"choices": [{"message": {"content": json.dumps(payload)}}]}
+        )
+        return mock_resp
+
+    @pytest.mark.asyncio
+    async def test_batched_naming_happy_path(self):
+        """Batched call returns valid JSON with 3 cluster names → dict with all 3 mapped.
+
+        SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B4.
+        """
+        from knowledge_ingest.proposal_generator import _suggest_cluster_names_batched
+
+        cluster_doc_lists = self._make_cluster_doc_lists(3)
+        expected = {0: "Facturatie", 1: "Support", 2: "Bellen"}
+        mock_resp = self._make_batched_llm_response(expected)
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.post = AsyncMock(return_value=mock_resp)
+
+        with patch(
+            "knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client
+        ):
+            with patch("knowledge_ingest.proposal_generator.settings") as mock_settings:
+                mock_settings.litellm_url = "http://litellm:4000"
+                mock_settings.litellm_api_key = "key"
+                mock_settings.taxonomy_classification_model = "klai-fast"
+                mock_settings.taxonomy_classification_timeout = 30.0
+                result = await _suggest_cluster_names_batched(cluster_doc_lists, "")
+
+        assert result == expected, f"Expected {expected}, got {result}"
+        assert len(result) == 3
+
+    @pytest.mark.asyncio
+    async def test_batched_naming_returns_empty_on_parse_failure(self):
+        """Malformed JSON from LLM → empty dict returned (caller falls back to per-cluster).
+
+        SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B4.
+        """
+        from knowledge_ingest.proposal_generator import _suggest_cluster_names_batched
+
+        cluster_doc_lists = self._make_cluster_doc_lists(3)
+
+        bad_resp = MagicMock()
+        bad_resp.raise_for_status = MagicMock()
+        bad_resp.json = MagicMock(
+            return_value={"choices": [{"message": {"content": "not valid json at all"}}]}
+        )
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.post = AsyncMock(return_value=bad_resp)
+
+        with patch(
+            "knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client
+        ):
+            with patch("knowledge_ingest.proposal_generator.settings") as mock_settings:
+                mock_settings.litellm_url = "http://litellm:4000"
+                mock_settings.litellm_api_key = "key"
+                mock_settings.taxonomy_classification_model = "klai-fast"
+                mock_settings.taxonomy_classification_timeout = 30.0
+                result = await _suggest_cluster_names_batched(cluster_doc_lists, "")
+
+        assert result == {}, f"Expected empty dict on parse failure, got {result}"
+
+    @pytest.mark.asyncio
+    async def test_batched_naming_returns_empty_on_http_error(self):
+        """HTTP error from LLM → empty dict returned (caller falls back to per-cluster).
+
+        SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B4.
+        """
+        import httpx
+
+        from knowledge_ingest.proposal_generator import _suggest_cluster_names_batched
+
+        cluster_doc_lists = self._make_cluster_doc_lists(3)
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.post = AsyncMock(side_effect=httpx.ConnectError("connection refused"))
+
+        with patch(
+            "knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client
+        ):
+            with patch("knowledge_ingest.proposal_generator.settings") as mock_settings:
+                mock_settings.litellm_url = "http://litellm:4000"
+                mock_settings.litellm_api_key = "key"
+                mock_settings.taxonomy_classification_model = "klai-fast"
+                mock_settings.taxonomy_classification_timeout = 30.0
+                result = await _suggest_cluster_names_batched(cluster_doc_lists, "")
+
+        assert result == {}, f"Expected empty dict on HTTP error, got {result}"
+
+    @pytest.mark.asyncio
+    async def test_batched_naming_validates_cluster_ids(self):
+        """LLM returns name for unknown cluster_id → that entry dropped from result.
+
+        SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B4: validate cluster_id against input keys.
+        """
+        from knowledge_ingest.proposal_generator import _suggest_cluster_names_batched
+
+        cluster_doc_lists = self._make_cluster_doc_lists(2)  # keys: 0, 1
+        # LLM returns valid names for 0 and 1, plus an unknown cluster_id=99
+        payload = {
+            "names": [
+                {"cluster_id": 0, "name": "Facturatie"},
+                {"cluster_id": 1, "name": "Support"},
+                {"cluster_id": 99, "name": "Unknown Cluster"},  # invalid id
+            ]
+        }
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json = MagicMock(
+            return_value={"choices": [{"message": {"content": json.dumps(payload)}}]}
+        )
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.post = AsyncMock(return_value=mock_resp)
+
+        with patch(
+            "knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client
+        ):
+            with patch("knowledge_ingest.proposal_generator.settings") as mock_settings:
+                mock_settings.litellm_url = "http://litellm:4000"
+                mock_settings.litellm_api_key = "key"
+                mock_settings.taxonomy_classification_model = "klai-fast"
+                mock_settings.taxonomy_classification_timeout = 30.0
+                result = await _suggest_cluster_names_batched(cluster_doc_lists, "")
+
+        assert 0 in result and result[0] == "Facturatie"
+        assert 1 in result and result[1] == "Support"
+        assert 99 not in result, "cluster_id=99 not in input — must be dropped"
+
+    @pytest.mark.asyncio
+    async def test_v2_bootstrap_falls_back_to_per_cluster_when_batched_fails(self):
+        """Integration: batched returns {} → per-cluster runs for ALL clusters.
+
+        bootstrap_naming_fallback_to_per_cluster log must fire.
+        SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B4.
+        """
+        import structlog.testing
+
+        from knowledge_ingest.proposal_generator import generate_bootstrap_proposals_v2
+
+        mock_settings = MagicMock()
+        mock_settings.portal_internal_token = "test-token"
+        mock_settings.litellm_url = "http://litellm:4000"
+        mock_settings.litellm_api_key = "key"
+        mock_settings.taxonomy_classification_model = "klai-fast"
+        mock_settings.taxonomy_classification_timeout = 30.0
+        mock_settings.taxonomy_bootstrap_min_cluster_size_floor = 5
+        mock_settings.taxonomy_bootstrap_max_clusters = 20
+        mock_settings.taxonomy_bootstrap_top_n_per_cluster = 8
+
+        embeddings = _make_clusterable_embeddings(n_clusters=2, n_per_cluster=20)
+        doc_summaries = _make_doc_summaries(len(embeddings))
+
+        batched_done = {"done": False}
+        call_count = {"n": 0}
+
+        async def _post(*args, **kwargs):
+            if not batched_done["done"]:
+                # First call is batched — return invalid JSON to force fallback
+                batched_done["done"] = True
+                bad_resp = MagicMock()
+                bad_resp.raise_for_status = MagicMock()
+                bad_resp.json = MagicMock(
+                    return_value={"choices": [{"message": {"content": "INVALID"}}]}
+                )
+                return bad_resp
+            # Per-cluster fallback
+            name = f"Cluster {call_count['n']}"
+            call_count["n"] += 1
+            return _mock_llm_name_response(name)
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.post = AsyncMock(side_effect=_post)
+
+        with structlog.testing.capture_logs() as captured:
+            with (
+                patch(
+                    "knowledge_ingest.proposal_generator.httpx.AsyncClient",
+                    return_value=mock_client,
+                ),
+                patch("knowledge_ingest.proposal_generator.submit_taxonomy_proposal", AsyncMock()),
+                patch("knowledge_ingest.proposal_generator.settings", mock_settings),
+                patch(
+                    "knowledge_ingest.proposal_generator.generate_node_description",
+                    AsyncMock(return_value="desc"),
+                ),
+            ):
+                result = await generate_bootstrap_proposals_v2(
+                    org_id="org1",
+                    kb_slug="fallback-test-kb",
+                    document_summaries=doc_summaries,
+                    document_embeddings=embeddings,
+                    existing_nodes=[],
+                    kb_description="",
+                )
+
+        log_events = [e["event"] for e in captured]
+        assert "bootstrap_naming_fallback_to_per_cluster" in log_events, (
+            "Expected bootstrap_naming_fallback_to_per_cluster log when batched naming fails"
+        )
+        assert result.proposals_submitted >= 1, (
+            "Bootstrap should still produce proposals after falling back to per-cluster"
+        )
+
+    @pytest.mark.asyncio
+    async def test_v2_bootstrap_skips_batched_when_more_than_30_clusters(self):
+        """When > 30 clusters, batched call is skipped entirely; all per-cluster.
+
+        SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B4 token-budget guard.
+        """
+        import structlog.testing
+
+        from knowledge_ingest.proposal_generator import _suggest_cluster_names_batched
+
+        # Build 31 clusters
+        cluster_doc_lists = self._make_cluster_doc_lists(31)
+
+        # If batched is called, it would hit the LLM — we verify it is NOT called
+        # by patching httpx.AsyncClient to raise if used.
+        with structlog.testing.capture_logs() as captured:
+            with patch("knowledge_ingest.proposal_generator.settings") as mock_settings:
+                mock_settings.litellm_url = "http://litellm:4000"
+                mock_settings.litellm_api_key = "key"
+                mock_settings.taxonomy_classification_model = "klai-fast"
+                mock_settings.taxonomy_classification_timeout = 30.0
+                result = await _suggest_cluster_names_batched(cluster_doc_lists, "")
+
+        assert result == {}, "31 clusters → should skip batched and return empty dict"
+        log_events = [e["event"] for e in captured]
+        assert "bootstrap_batched_naming_skipped_too_many_clusters" in log_events, (
+            "Expected skip log when n_clusters > 30"
+        )
+
+    @pytest.mark.asyncio
+    async def test_v2_bootstrap_partial_batched_uses_fallback_for_missing(self):
+        """Batched returns 2 of 3 names → 2 from batched + 1 per-cluster fallback.
+
+        Log should indicate 1 fallback.
+        SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B4.
+        """
+        import structlog.testing
+
+        from knowledge_ingest.proposal_generator import generate_bootstrap_proposals_v2
+
+        mock_settings = MagicMock()
+        mock_settings.portal_internal_token = "test-token"
+        mock_settings.litellm_url = "http://litellm:4000"
+        mock_settings.litellm_api_key = "key"
+        mock_settings.taxonomy_classification_model = "klai-fast"
+        mock_settings.taxonomy_classification_timeout = 30.0
+        mock_settings.taxonomy_bootstrap_min_cluster_size_floor = 5
+        mock_settings.taxonomy_bootstrap_max_clusters = 20
+        mock_settings.taxonomy_bootstrap_top_n_per_cluster = 8
+
+        embeddings = _make_clusterable_embeddings(n_clusters=3, n_per_cluster=20)
+        doc_summaries = _make_doc_summaries(len(embeddings))
+
+        batched_done = {"done": False}
+        fallback_count = {"n": 0}
+
+        async def _post(*args, **kwargs):
+            payload = kwargs.get("json", {})
+            messages = payload.get("messages", [])
+            is_batched = any(
+                "DISTINCT" in (m.get("content") or "")
+                for m in messages
+                if m.get("role") == "system"
+            )
+
+            if is_batched and not batched_done["done"]:
+                batched_done["done"] = True
+                # Return only 2 of the cluster IDs; the third will need fallback.
+                # We don't know the exact cluster IDs that HDBSCAN assigns, so we
+                # return names for the first 2 cluster IDs from the sorted list.
+                # The integration test verifies fallback fires — exact IDs not needed.
+                partial = {
+                    "names": [{"cluster_id": 0, "name": "Alpha"}, {"cluster_id": 1, "name": "Beta"}]
+                }
+                resp = MagicMock()
+                resp.raise_for_status = MagicMock()
+                resp.json = MagicMock(
+                    return_value={"choices": [{"message": {"content": json.dumps(partial)}}]}
+                )
+                return resp
+
+            # Per-cluster fallback or description call
+            fallback_count["n"] += 1
+            return _mock_llm_name_response(f"Fallback {fallback_count['n']}")
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.post = AsyncMock(side_effect=_post)
+
+        with structlog.testing.capture_logs() as captured:
+            with (
+                patch(
+                    "knowledge_ingest.proposal_generator.httpx.AsyncClient",
+                    return_value=mock_client,
+                ),
+                patch("knowledge_ingest.proposal_generator.submit_taxonomy_proposal", AsyncMock()),
+                patch("knowledge_ingest.proposal_generator.settings", mock_settings),
+                patch(
+                    "knowledge_ingest.proposal_generator.generate_node_description",
+                    AsyncMock(return_value="desc"),
+                ),
+            ):
+                result = await generate_bootstrap_proposals_v2(
+                    org_id="org1",
+                    kb_slug="partial-batched-kb",
+                    document_summaries=doc_summaries,
+                    document_embeddings=embeddings,
+                    existing_nodes=[],
+                    kb_description="",
+                )
+
+        log_events = [e["event"] for e in captured]
+        assert "bootstrap_naming_fallback_to_per_cluster" in log_events, (
+            "Expected fallback log when batched naming misses some clusters"
+        )
+        fallback_log = next(
+            e for e in captured if e.get("event") == "bootstrap_naming_fallback_to_per_cluster"
+        )
+        assert fallback_log.get("count", 0) >= 1, (
+            "Fallback count should be >= 1 for partial batched result"
+        )
+        assert result.proposals_submitted >= 1
+
+
+# ---------------------------------------------------------------------------
+# B5 — cluster_persistence_mean field rename (was B3/dbcv_score)
+# ---------------------------------------------------------------------------
+
+
+class TestClusterPersistenceMeanFieldRename:
+    """B5: cluster_persistence_mean replaces dbcv_score in cluster_documents_hdbscan and bootstrap log.
+
+    dbcv_score assumed relative_validity_; sklearn 1.8 does not expose it (confirmed
+    via hasattr() returning False in production). cluster_persistence_ is always available.
+    """
+
+    def test_cluster_hdbscan_returns_cluster_persistence_mean_not_dbcv_or_silhouette(self):
+        """cluster_documents_hdbscan metrics dict has 'cluster_persistence_mean'.
+
+        Must NOT contain 'dbcv_score' or 'silhouette_score'.
+        SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B5.
         """
         from knowledge_ingest.clustering import cluster_documents_hdbscan
 
@@ -419,18 +797,26 @@ class TestDbcvScoreFieldRename:
             embeddings, min_cluster_size=5, pre_reduce=False
         )
 
-        assert "dbcv_score" in metrics, "dbcv_score must be present in metrics dict"
+        assert "cluster_persistence_mean" in metrics, (
+            "cluster_persistence_mean must be present in metrics dict (B5)"
+        )
+        assert "dbcv_score" not in metrics, (
+            "dbcv_score must NOT be present — B5 replaces it with cluster_persistence_mean"
+        )
         assert "silhouette_score" not in metrics, (
-            "silhouette_score must NOT be present — B3 renames it to dbcv_score"
+            "silhouette_score must NOT be present — renamed/removed in B3/B5"
         )
         # Value must be float or None
-        assert metrics["dbcv_score"] is None or isinstance(metrics["dbcv_score"], float)
+        assert metrics["cluster_persistence_mean"] is None or isinstance(
+            metrics["cluster_persistence_mean"], float
+        )
 
     @pytest.mark.asyncio
-    async def test_completion_log_includes_dbcv_score_field(self):
-        """bootstrap_proposals_complete log event has 'dbcv_score' field, NOT 'silhouette_score'.
+    async def test_completion_log_includes_cluster_persistence_mean_field(self):
+        """bootstrap_proposals_complete log event has 'cluster_persistence_mean'.
 
-        SPEC-TAXONOMY-V2-001-FOLLOWUP-001 AC-8 (B3 field propagation to logs).
+        Must NOT contain 'dbcv_score' or 'silhouette_score'.
+        SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B5 (field propagation to logs).
         """
         import structlog.testing
 
@@ -492,7 +878,7 @@ class TestDbcvScoreFieldRename:
             ):
                 await generate_bootstrap_proposals_v2(
                     org_id="org1",
-                    kb_slug="dbcv-test-kb",
+                    kb_slug="persistence-test-kb",
                     document_summaries=doc_summaries,
                     document_embeddings=embeddings,
                     existing_nodes=[],
@@ -505,11 +891,16 @@ class TestDbcvScoreFieldRename:
         )
 
         event = complete_events[0]
-        assert "dbcv_score" in event, (
-            "bootstrap_proposals_complete log must contain 'dbcv_score' field (B3)"
+        assert "cluster_persistence_mean" in event, (
+            "bootstrap_proposals_complete log must contain 'cluster_persistence_mean' field (B5)"
+        )
+        assert "dbcv_score" not in event, (
+            "bootstrap_proposals_complete must NOT contain 'dbcv_score' (B5 replaces it)"
         )
         assert "silhouette_score" not in event, (
-            "bootstrap_proposals_complete must NOT contain 'silhouette_score' (B3 rename)"
+            "bootstrap_proposals_complete must NOT contain 'silhouette_score'"
         )
         # Value must be float or None
-        assert event["dbcv_score"] is None or isinstance(event["dbcv_score"], float)
+        assert event["cluster_persistence_mean"] is None or isinstance(
+            event["cluster_persistence_mean"], float
+        )

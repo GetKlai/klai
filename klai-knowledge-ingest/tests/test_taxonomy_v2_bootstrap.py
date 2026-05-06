@@ -7,6 +7,7 @@ All tests in RED state before implementation; they import symbols that don't exi
 Fixture strategy: pre-generated embeddings with numpy.random.RandomState(seed=42),
 3 clear clusters of 20 vectors each + 5 outliers in 1024-dim space.
 """
+
 from __future__ import annotations
 
 import json
@@ -73,8 +74,11 @@ def _make_synthetic_embeddings(seed: int = 42) -> tuple[np.ndarray, np.ndarray]:
 def _make_doc_summaries(n: int) -> list:
     """Return n synthetic DocumentSummary objects with title and content_preview."""
     from knowledge_ingest.proposal_generator import DocumentSummary
+
     return [
-        DocumentSummary(title=f"Document {i}", content_preview=f"Content about topic {i % 3}: " + "text " * 20)
+        DocumentSummary(
+            title=f"Document {i}", content_preview=f"Content about topic {i % 3}: " + "text " * 20
+        )
         for i in range(n)
     ]
 
@@ -82,14 +86,13 @@ def _make_doc_summaries(n: int) -> list:
 def _make_taxonomy_nodes(names: list[str]) -> list:
     """Return TaxonomyNode-compatible objects."""
     from knowledge_ingest.taxonomy_classifier import TaxonomyNode
+
     return [TaxonomyNode(id=i + 1, name=name) for i, name in enumerate(names)]
 
 
 def _mock_llm_response(name: str) -> MagicMock:
     """Return a mock httpx response returning a single category_name."""
-    response_json = {
-        "choices": [{"message": {"content": json.dumps({"category_name": name})}}]
-    }
+    response_json = {"choices": [{"message": {"content": json.dumps({"category_name": name})}}]}
     mock_resp = MagicMock()
     mock_resp.raise_for_status = MagicMock()
     mock_resp.json = MagicMock(return_value=response_json)
@@ -129,7 +132,9 @@ class TestClusterDocumentsHdbscan:
         from knowledge_ingest.clustering import cluster_documents_hdbscan
 
         embeddings, _true_labels = _make_synthetic_embeddings()
-        labels, metrics = cluster_documents_hdbscan(embeddings, min_cluster_size=5, pre_reduce=False)
+        labels, metrics = cluster_documents_hdbscan(
+            embeddings, min_cluster_size=5, pre_reduce=False
+        )
 
         cluster_ids = set(int(lbl) for lbl in labels if lbl >= 0)
         assert len(cluster_ids) == 3, f"Expected 3 clusters, got {len(cluster_ids)}: {cluster_ids}"
@@ -138,9 +143,10 @@ class TestClusterDocumentsHdbscan:
         assert outlier_mask.sum() >= 5, f"Expected >= 5 outliers, got {outlier_mask.sum()}"
 
     def test_hdbscan_metrics_dict_contains_required_keys(self):
-        """Metrics dict must contain clusters_found, outlier_count, dbcv_score.
+        """Metrics dict must contain clusters_found, outlier_count, cluster_persistence_mean.
 
-        SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B3: silhouette_score renamed to dbcv_score.
+        SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B5: cluster_persistence_mean replaces dbcv_score.
+        B3: silhouette_score was renamed; B5: dbcv_score replaced by cluster_persistence_mean.
         """
         from knowledge_ingest.clustering import cluster_documents_hdbscan
 
@@ -149,33 +155,36 @@ class TestClusterDocumentsHdbscan:
 
         assert "clusters_found" in metrics
         assert "outlier_count" in metrics
-        assert "dbcv_score" in metrics
-        # Regression: silhouette_score must NOT be present (B3 rename)
+        assert "cluster_persistence_mean" in metrics
+        # Regression: neither silhouette_score nor dbcv_score must be present
         assert "silhouette_score" not in metrics
+        assert "dbcv_score" not in metrics
 
-    def test_hdbscan_dbcv_score_is_float_or_none(self):
-        """DBCV score is a float or None for multi-cluster results.
+    def test_hdbscan_cluster_persistence_mean_is_float_or_none(self):
+        """cluster_persistence_mean is a float or None for multi-cluster results.
 
-        SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B3: replaces silhouette_score with dbcv_score
-        via hdb.relative_validity_.
+        SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B5: replaces dbcv_score (which assumed
+        relative_validity_; sklearn 1.8 does not expose it).
         """
         from knowledge_ingest.clustering import cluster_documents_hdbscan
 
         embeddings, _ = _make_synthetic_embeddings()
         _labels, metrics = cluster_documents_hdbscan(embeddings, min_cluster_size=5)
 
-        # With 3 clear clusters, dbcv_score should be a float (or None if sklearn
-        # version doesn't populate relative_validity_ — both are acceptable)
-        assert metrics["dbcv_score"] is None or isinstance(metrics["dbcv_score"], float)
+        # With 3 clear clusters, cluster_persistence_mean should be a float
+        # (or None if cluster_persistence_ unavailable — both are acceptable)
+        assert metrics["cluster_persistence_mean"] is None or isinstance(
+            metrics["cluster_persistence_mean"], float
+        )
 
-    def test_hdbscan_single_cluster_dbcv_is_none(self):
-        """When HDBSCAN returns <= 1 cluster, dbcv_score must be None (undefined).
+    def test_hdbscan_zero_clusters_persistence_mean_is_none(self):
+        """When HDBSCAN returns 0 clusters, cluster_persistence_mean must be None.
 
-        SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B3: dbcv_score replaces silhouette_score.
+        SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B5: cluster_persistence_mean replaces dbcv_score.
         """
         from knowledge_ingest.clustering import cluster_documents_hdbscan
 
-        # All identical vectors → single cluster
+        # All identical vectors → single cluster or no clusters
         rng = np.random.RandomState(1)
         # Tight cluster to force single cluster result
         center = np.zeros(64, dtype=np.float32)
@@ -187,9 +196,9 @@ class TestClusterDocumentsHdbscan:
 
         _labels, metrics = cluster_documents_hdbscan(embeddings, min_cluster_size=5)
 
-        # Either 0 or 1 cluster → dbcv is undefined
-        if metrics["clusters_found"] <= 1:
-            assert metrics["dbcv_score"] is None
+        # 0 clusters → cluster_persistence_mean is undefined (None)
+        if metrics["clusters_found"] == 0:
+            assert metrics["cluster_persistence_mean"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -215,13 +224,16 @@ class TestAdaptiveClusterCount:
         rng = np.random.RandomState(42)
         center = np.array([1.0, 0.0, 0.0, 0.0])
         # Make 5 vectors: first 3 close to center, last 2 far
-        vecs = np.array([
-            [0.99, 0.01, 0.0, 0.0],
-            [0.98, 0.02, 0.0, 0.0],
-            [0.97, 0.03, 0.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0],  # far
-            [0.0, 0.0, 1.0, 0.0],  # far
-        ], dtype=np.float32)
+        vecs = np.array(
+            [
+                [0.99, 0.01, 0.0, 0.0],
+                [0.98, 0.02, 0.0, 0.0],
+                [0.97, 0.03, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],  # far
+                [0.0, 0.0, 1.0, 0.0],  # far
+            ],
+            dtype=np.float32,
+        )
         # Normalize
         vecs = vecs / np.linalg.norm(vecs, axis=1, keepdims=True)
         embeddings = vecs
@@ -305,10 +317,15 @@ class TestBootstrapProposalsV2Integration:
         mock_client.post = AsyncMock(side_effect=_mock_post)
 
         with (
-            patch("knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client),
+            patch(
+                "knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client
+            ),
             patch("knowledge_ingest.proposal_generator.submit_taxonomy_proposal", AsyncMock()),
             patch("knowledge_ingest.proposal_generator.settings", mock_settings),
-            patch("knowledge_ingest.proposal_generator.generate_node_description", AsyncMock(return_value="test description")),
+            patch(
+                "knowledge_ingest.proposal_generator.generate_node_description",
+                AsyncMock(return_value="test description"),
+            ),
         ):
             result = await generate_bootstrap_proposals_v2(
                 org_id="org1",
@@ -325,17 +342,32 @@ class TestBootstrapProposalsV2Integration:
 
     @pytest.mark.asyncio
     async def test_ac4_top_n_docs_per_cluster_sent_to_llm(self, mock_settings):
-        """AC-4: each LLM call receives exactly N=8 document summaries (or fewer if cluster is smaller)."""
+        """AC-4: per-cluster LLM calls receive at most N=8 document summaries.
+
+        B4 note: the first LLM call is the batched naming call (contains all clusters).
+        Per-cluster fallback calls (when batched fails or is partial) respect the N=8 limit.
+        This test forces the batched call to fail so we exercise the per-cluster path.
+        """
         from knowledge_ingest.proposal_generator import generate_bootstrap_proposals_v2
 
         embeddings, _ = _make_synthetic_embeddings()
         doc_summaries = _make_doc_summaries(len(embeddings))
         captured_payloads = []
+        batched_done = {"done": False}
 
         async def _capture_post(*args, **kwargs):
-            # Capture the json body to inspect doc count
             payload = kwargs.get("json", {})
             captured_payloads.append(payload)
+            if not batched_done["done"]:
+                # First call is batched — return invalid JSON to force per-cluster fallback
+                batched_done["done"] = True
+                bad_resp = MagicMock()
+                bad_resp.raise_for_status = MagicMock()
+                bad_resp.json = MagicMock(
+                    return_value={"choices": [{"message": {"content": "not json"}}]}
+                )
+                return bad_resp
+            # Per-cluster fallback calls
             resp = _mock_llm_response("Some Category")
             return resp
 
@@ -345,12 +377,17 @@ class TestBootstrapProposalsV2Integration:
         mock_client.post = AsyncMock(side_effect=_capture_post)
 
         with (
-            patch("knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client),
+            patch(
+                "knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client
+            ),
             patch("knowledge_ingest.proposal_generator.submit_taxonomy_proposal", AsyncMock()),
             patch("knowledge_ingest.proposal_generator.settings", mock_settings),
-            patch("knowledge_ingest.proposal_generator.generate_node_description", AsyncMock(return_value="")),
+            patch(
+                "knowledge_ingest.proposal_generator.generate_node_description",
+                AsyncMock(return_value=""),
+            ),
         ):
-            result = await generate_bootstrap_proposals_v2(
+            await generate_bootstrap_proposals_v2(
                 org_id="org1",
                 kb_slug="test-kb",
                 document_summaries=doc_summaries,
@@ -359,11 +396,15 @@ class TestBootstrapProposalsV2Integration:
                 kb_description="",
             )
 
-        # Each LLM call's user message should contain at most N=8 doc summaries
-        for payload in captured_payloads:
+        # Skip the first payload (batched call). Per-cluster calls should have <= N=8 docs.
+        per_cluster_payloads = captured_payloads[1:]
+        assert len(per_cluster_payloads) > 0, (
+            "Expected at least one per-cluster fallback call after batched parse failure"
+        )
+        for payload in per_cluster_payloads:
             messages = payload.get("messages", [])
             user_msg = next((m["content"] for m in messages if m["role"] == "user"), "")
-            doc_lines = [l for l in user_msg.split("\n") if l.strip().startswith("-")]
+            doc_lines = [ln for ln in user_msg.split("\n") if ln.strip().startswith("-")]
             assert len(doc_lines) <= mock_settings.taxonomy_bootstrap_top_n_per_cluster, (
                 f"Expected <= {mock_settings.taxonomy_bootstrap_top_n_per_cluster} docs, "
                 f"got {len(doc_lines)}"
@@ -393,10 +434,15 @@ class TestBootstrapProposalsV2Integration:
         mock_client.post = AsyncMock(side_effect=_capture_post)
 
         with (
-            patch("knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client),
+            patch(
+                "knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client
+            ),
             patch("knowledge_ingest.proposal_generator.submit_taxonomy_proposal", AsyncMock()),
             patch("knowledge_ingest.proposal_generator.settings", mock_settings),
-            patch("knowledge_ingest.proposal_generator.generate_node_description", AsyncMock(return_value="")),
+            patch(
+                "knowledge_ingest.proposal_generator.generate_node_description",
+                AsyncMock(return_value=""),
+            ),
         ):
             result = await generate_bootstrap_proposals_v2(
                 org_id="org1",
@@ -437,7 +483,10 @@ class TestBootstrapProposalsV2Integration:
         mock_submit = AsyncMock()
         with structlog.testing.capture_logs() as captured:
             with (
-                patch("knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client),
+                patch(
+                    "knowledge_ingest.proposal_generator.httpx.AsyncClient",
+                    return_value=mock_client,
+                ),
                 patch("knowledge_ingest.proposal_generator.submit_taxonomy_proposal", mock_submit),
                 patch("knowledge_ingest.proposal_generator.settings", mock_settings),
             ):
@@ -482,10 +531,16 @@ class TestBootstrapProposalsV2Integration:
 
         with structlog.testing.capture_logs() as captured:
             with (
-                patch("knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client),
+                patch(
+                    "knowledge_ingest.proposal_generator.httpx.AsyncClient",
+                    return_value=mock_client,
+                ),
                 patch("knowledge_ingest.proposal_generator.submit_taxonomy_proposal", AsyncMock()),
                 patch("knowledge_ingest.proposal_generator.settings", mock_settings),
-                patch("knowledge_ingest.proposal_generator.generate_node_description", AsyncMock(return_value="")),
+                patch(
+                    "knowledge_ingest.proposal_generator.generate_node_description",
+                    AsyncMock(return_value=""),
+                ),
             ):
                 result = await generate_bootstrap_proposals_v2(
                     org_id="org1",
@@ -507,16 +562,22 @@ class TestBootstrapProposalsV2Integration:
     @pytest.mark.asyncio
     async def test_ac8_all_duplicates_returns_reason(self, mock_settings):
         """AC-8: all proposed names duplicate existing → response includes reason='all_duplicates'."""
-        from knowledge_ingest.proposal_generator import BootstrapResult, generate_bootstrap_proposals_v2
+        from knowledge_ingest.proposal_generator import (
+            BootstrapResult,
+            generate_bootstrap_proposals_v2,
+        )
 
         embeddings, _ = _make_synthetic_embeddings()
         doc_summaries = _make_doc_summaries(len(embeddings))
 
         # Build nodes that match all possible category names the LLM will return
         # We'll use a fixed response of "Existing Category" for all clusters
-        existing_nodes = _make_taxonomy_nodes([
-            f"Category {i}" for i in range(50)  # cover all possible LLM responses
-        ])
+        existing_nodes = _make_taxonomy_nodes(
+            [
+                f"Category {i}"
+                for i in range(50)  # cover all possible LLM responses
+            ]
+        )
 
         call_count = {"n": 0}
 
@@ -532,7 +593,9 @@ class TestBootstrapProposalsV2Integration:
         mock_client.post = AsyncMock(side_effect=_dup_post)
 
         with (
-            patch("knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client),
+            patch(
+                "knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client
+            ),
             patch("knowledge_ingest.proposal_generator.submit_taxonomy_proposal", AsyncMock()),
             patch("knowledge_ingest.proposal_generator.settings", mock_settings),
         ):
@@ -572,10 +635,16 @@ class TestBootstrapProposalsV2Integration:
 
         with structlog.testing.capture_logs() as captured:
             with (
-                patch("knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client),
+                patch(
+                    "knowledge_ingest.proposal_generator.httpx.AsyncClient",
+                    return_value=mock_client,
+                ),
                 patch("knowledge_ingest.proposal_generator.submit_taxonomy_proposal", AsyncMock()),
                 patch("knowledge_ingest.proposal_generator.settings", mock_settings),
-                patch("knowledge_ingest.proposal_generator.generate_node_description", AsyncMock(return_value="a description")),
+                patch(
+                    "knowledge_ingest.proposal_generator.generate_node_description",
+                    AsyncMock(return_value="a description"),
+                ),
             ):
                 result = await generate_bootstrap_proposals_v2(
                     org_id="org-test",
@@ -590,11 +659,23 @@ class TestBootstrapProposalsV2Integration:
         assert len(complete_events) == 1, "Expected exactly one bootstrap_proposals_complete event"
 
         event = complete_events[0]
-        # SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B3: dbcv_score replaces silhouette_score
-        required_fields = ["clusters_found", "outlier_count", "dbcv_score", "proposals_submitted", "kb_slug", "org_id"]
+        # SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B5: cluster_persistence_mean replaces dbcv_score
+        required_fields = [
+            "clusters_found",
+            "outlier_count",
+            "cluster_persistence_mean",
+            "proposals_submitted",
+            "kb_slug",
+            "org_id",
+        ]
         for field in required_fields:
-            assert field in event, f"Missing required field '{field}' in bootstrap_proposals_complete event"
-        assert "silhouette_score" not in event, "silhouette_score must not appear (B3 rename to dbcv_score)"
+            assert field in event, (
+                f"Missing required field '{field}' in bootstrap_proposals_complete event"
+            )
+        assert "silhouette_score" not in event, "silhouette_score must not appear (removed in B3)"
+        assert "dbcv_score" not in event, (
+            "dbcv_score must not appear (replaced by cluster_persistence_mean in B5)"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -648,10 +729,16 @@ class TestBootstrapLatency:
 
         start = time.monotonic()
         with (
-            patch("knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=instant_llm_mock),
+            patch(
+                "knowledge_ingest.proposal_generator.httpx.AsyncClient",
+                return_value=instant_llm_mock,
+            ),
             patch("knowledge_ingest.proposal_generator.submit_taxonomy_proposal", AsyncMock()),
             patch("knowledge_ingest.proposal_generator.settings", mock_settings),
-            patch("knowledge_ingest.proposal_generator.generate_node_description", AsyncMock(return_value="")),
+            patch(
+                "knowledge_ingest.proposal_generator.generate_node_description",
+                AsyncMock(return_value=""),
+            ),
         ):
             result = await generate_bootstrap_proposals_v2(
                 org_id="org1",
@@ -678,10 +765,16 @@ class TestBootstrapLatency:
 
         start = time.monotonic()
         with (
-            patch("knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=instant_llm_mock),
+            patch(
+                "knowledge_ingest.proposal_generator.httpx.AsyncClient",
+                return_value=instant_llm_mock,
+            ),
             patch("knowledge_ingest.proposal_generator.submit_taxonomy_proposal", AsyncMock()),
             patch("knowledge_ingest.proposal_generator.settings", mock_settings),
-            patch("knowledge_ingest.proposal_generator.generate_node_description", AsyncMock(return_value="")),
+            patch(
+                "knowledge_ingest.proposal_generator.generate_node_description",
+                AsyncMock(return_value=""),
+            ),
         ):
             result = await generate_bootstrap_proposals_v2(
                 org_id="org1",
@@ -765,13 +858,24 @@ class TestDuplicatePreventionRegression:
         """AC-14: existing 14 nodes — bootstrap must not propose names duplicating any."""
         from knowledge_ingest.proposal_generator import generate_bootstrap_proposals_v2
 
-        voys_nodes = _make_taxonomy_nodes([
-            "VoIP-apparaten", "Bellen & Bereikbaarheid", "Facturatie & Abonnementen",
-            "Nummers & Portabiliteit", "Apps & Integraties", "Gebruikersbeheer",
-            "Wachtrijen & IVR", "Gesprekskwaliteit", "Veiligheid & Privacy",
-            "Ondersteuning & Storingen", "Klantportal", "Activering & Onboarding",
-            "Contracten & SLA", "Overig",
-        ])
+        voys_nodes = _make_taxonomy_nodes(
+            [
+                "VoIP-apparaten",
+                "Bellen & Bereikbaarheid",
+                "Facturatie & Abonnementen",
+                "Nummers & Portabiliteit",
+                "Apps & Integraties",
+                "Gebruikersbeheer",
+                "Wachtrijen & IVR",
+                "Gesprekskwaliteit",
+                "Veiligheid & Privacy",
+                "Ondersteuning & Storingen",
+                "Klantportal",
+                "Activering & Onboarding",
+                "Contracten & SLA",
+                "Overig",
+            ]
+        )
         mock_settings = MagicMock()
         mock_settings.portal_internal_token = "test-token"
         mock_settings.litellm_url = "http://litellm:4000"
@@ -802,7 +906,9 @@ class TestDuplicatePreventionRegression:
         mock_submit = AsyncMock()
 
         with (
-            patch("knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client),
+            patch(
+                "knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client
+            ),
             patch("knowledge_ingest.proposal_generator.submit_taxonomy_proposal", mock_submit),
             patch("knowledge_ingest.proposal_generator.settings", mock_settings),
         ):
@@ -815,7 +921,9 @@ class TestDuplicatePreventionRegression:
                 kb_description="Voys VoIP helpdesk knowledge base",
             )
 
-        assert mock_submit.call_count == 0, "Should not submit proposals that duplicate existing nodes"
+        assert mock_submit.call_count == 0, (
+            "Should not submit proposals that duplicate existing nodes"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -903,7 +1011,7 @@ class TestAC18IntegrationWithMockedLitellm:
         # Create 5 clear clusters for this test
         centers = np.zeros((5, 64), dtype=np.float32)
         for i in range(5):
-            centers[i, i * 12: i * 12 + 12] = 1.0
+            centers[i, i * 12 : i * 12 + 12] = 1.0
             centers[i] = centers[i] / np.linalg.norm(centers[i])
 
         embeddings_list = []
@@ -943,10 +1051,18 @@ class TestAC18IntegrationWithMockedLitellm:
         mock_client.post = AsyncMock(side_effect=_distinct_post)
 
         with (
-            patch("knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client),
-            patch("knowledge_ingest.proposal_generator.submit_taxonomy_proposal", side_effect=_capture_submit),
+            patch(
+                "knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client
+            ),
+            patch(
+                "knowledge_ingest.proposal_generator.submit_taxonomy_proposal",
+                side_effect=_capture_submit,
+            ),
             patch("knowledge_ingest.proposal_generator.settings", mock_settings),
-            patch("knowledge_ingest.proposal_generator.generate_node_description", AsyncMock(return_value="description")),
+            patch(
+                "knowledge_ingest.proposal_generator.generate_node_description",
+                AsyncMock(return_value="description"),
+            ),
         ):
             result = await generate_bootstrap_proposals_v2(
                 org_id="org1",
@@ -974,9 +1090,16 @@ class TestAC19VoysRegressionNoNewDuplicates:
         """AC-19: voys KB with 6 existing nodes, LLM returns matching names → 0 proposals."""
         from knowledge_ingest.proposal_generator import generate_bootstrap_proposals_v2
 
-        existing_nodes = _make_taxonomy_nodes([
-            "Bellen", "Facturatie", "Nummers", "Apps", "Ondersteuning", "Overig",
-        ])
+        existing_nodes = _make_taxonomy_nodes(
+            [
+                "Bellen",
+                "Facturatie",
+                "Nummers",
+                "Apps",
+                "Ondersteuning",
+                "Overig",
+            ]
+        )
 
         mock_settings = MagicMock()
         mock_settings.portal_internal_token = "test-token"
@@ -1007,7 +1130,9 @@ class TestAC19VoysRegressionNoNewDuplicates:
         mock_submit = AsyncMock()
 
         with (
-            patch("knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client),
+            patch(
+                "knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client
+            ),
             patch("knowledge_ingest.proposal_generator.submit_taxonomy_proposal", mock_submit),
             patch("knowledge_ingest.proposal_generator.settings", mock_settings),
         ):

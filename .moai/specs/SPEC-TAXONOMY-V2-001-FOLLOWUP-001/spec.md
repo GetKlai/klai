@@ -54,7 +54,13 @@ Verder: zonder echte gebruikers betekent niet "we kunnen niet valideren" — we 
    ```
 5. **Baseline metrics** vastleggen in `reports/taxonomy-v2-baseline-2026-05-06/` (markdown)
 
-#### Fase B: drie fixes (één PR, drie commits)
+#### Fase B: vijf fixes (twee PRs)
+
+**B1-B3** landde in PR #418 (merged 2026-05-06).
+
+**B4-B5** opgenomen in een follow-up PR na empirisch waarnemen van twee resterende issues tijdens Phase C V2.1 trigger:
+- B4: cross-cluster aware batched naming (V2.1 op `voys/support` produceerde 17 clusters waarvan 7 bijna-identieke namen rond "CRM integraties" — UMAP+HDBSCAN vond geldige sub-clusters maar de per-cluster LLM-naming had geen awareness van andere clusters)
+- B5: `dbcv_score` werd altijd None gelogd want sklearn 1.8 HDBSCAN heeft geen `relative_validity_` attribute (mijn ontwerp-aanname klopte niet). Vervangen door `cluster_persistence_mean` op basis van sklearn's beschikbare `cluster_persistence_`.
 
 6. **UMAP-pre-reduction** voor HDBSCAN:
    - Dep `umap-learn>=0.5.6` in `klai-knowledge-ingest/pyproject.toml`
