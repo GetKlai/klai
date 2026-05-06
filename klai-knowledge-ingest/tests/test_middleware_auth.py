@@ -8,6 +8,7 @@ Coverage:
   * REQ-5.5 — wrong-length headers are compared without crashing
     (:func:`hmac.compare_digest` tolerance)
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -47,9 +48,7 @@ class TestStartupFailsOnEmptySecret:
             text=True,
             check=False,
         )
-        assert result.returncode != 0, (
-            "Expected non-zero exit on empty KNOWLEDGE_INGEST_SECRET"
-        )
+        assert result.returncode != 0, "Expected non-zero exit on empty KNOWLEDGE_INGEST_SECRET"
         assert "KNOWLEDGE_INGEST_SECRET" in (result.stderr + result.stdout)
 
     def test_whitespace_knowledge_ingest_secret_fails_import(self):
@@ -300,9 +299,7 @@ class TestRouteHelperEnforcement:
         _GUARDED_ROUTES,
         ids=[r[1] + ":" + r[0] for r in _GUARDED_ROUTES],
     )
-    def test_missing_header_returns_401(
-        self, secured_client, method, path, body, params
-    ):
+    def test_missing_header_returns_401(self, secured_client, method, path, body, params):
         resp = secured_client.request(
             method,
             path,
@@ -316,9 +313,7 @@ class TestRouteHelperEnforcement:
         _GUARDED_ROUTES,
         ids=[r[1] + ":" + r[0] for r in _GUARDED_ROUTES],
     )
-    def test_wrong_header_returns_401(
-        self, secured_client, method, path, body, params
-    ):
+    def test_wrong_header_returns_401(self, secured_client, method, path, body, params):
         resp = secured_client.request(
             method,
             path,
