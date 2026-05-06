@@ -1,9 +1,10 @@
 ---
 id: SPEC-INGEST-RECONCILE-001
 version: "0.2.0"
-status: approved
+status: shipped
 created: 2026-05-06
 updated: 2026-05-06
+shipped: 2026-05-06
 author: Mark Vletter
 priority: high
 related:
@@ -334,3 +335,87 @@ Plus one independent PR for the ast-grep rule (Fix 4). Three PRs total.
 Earlier draft proposed a 4-stage pipeline (`discovery → fetch → persist → reconcile`) with two new tables (`discovery_candidates`, `fetch_outcomes`), a `BaseAdapter` contract change touching 7 adapters, a 5-phase feature-flag rollout, and 9 PRs. **Rejected after evidence showed crawl4ai's `/crawl` REST endpoint already provides per-URL outcomes with built-in concurrency dispatch**, removing the need for ~70% of the proposed orchestration. The remaining ~30% (reason-code registry, JSONB persistence of skip counts, ast-grep prevention) is what this v0.2 implements.
 
 The lesson captured in the rewrite: research industry patterns AND check whether the libraries already in the stack expose those patterns natively before designing a new layer.
+
+## Shipped — 2026-05-06
+
+The SPEC landed on production (`my.getklai.com`) across four pull requests on
+2026-05-06.
+
+| PR | Squash commit | Scope | Status |
+|----|--------------|-------|--------|
+| [#440](https://github.com/GetKlai/klai/pull/440) | `904d8ef0` | Initial implementation: all four fixes + tests + ast-grep rule | merged |
+| [#443](https://github.com/GetKlai/klai/pull/443) | `9b710f6e` | Hotfix: alembic dual-head merge migration + Postgres subquery-in-CHECK rewrite | merged |
+| [#444](https://github.com/GetKlai/klai/pull/444) | `fd90b6b7` | Followup: redundant start_url fetch, login_indicator on seed, redirect classification, symmetric parity test | merged |
+| [#447](https://github.com/GetKlai/klai/pull/447) | `7118266c` | Hardening: same-domain guard on positional fallback in `_combine_bulk_responses` | merged |
+
+**Production state verified post-deploy:**
+
+- `klai-core-knowledge-ingest-1` alembic head: `c1d4e7f2a8b6 (mergepoint)` — covers
+  both `0005_crawl_jobs_fetch_outcomes` and the parallel `0005_crawled_pages_simhash`
+  from SPEC-INGEST-LOGIN-WALL-DETECT-002.
+- `klai-core-klai-connector-1` alembic head: `009_sync_runs_skip_reasons`.
+- `connector.sync_runs.skip_reasons jsonb NOT NULL DEFAULT '{}'` —
+  CHECK `sync_runs_skip_reasons_valid_keys` (PersistSkipReason members only,
+  `jsonb - text[]` form, no subquery).
+- `knowledge.crawl_jobs.fetch_outcomes jsonb NOT NULL DEFAULT '[]'` — CHECK
+  `crawl_jobs_fetch_outcomes_is_array` (array shape; element-level reason_code
+  validation is application-side).
+- 7 historical `sync_runs` and 11 historical `crawl_jobs` rows received the JSONB
+  defaults without violation; no backfill performed.
+
+### Empirical AC validation — operator-driven
+
+The empirical acceptance criteria require a real Voys connector trigger and are
+NOT covered by automated CI. Run-book:
+
+**AC-5 (Voys/support webcrawler ≥ 200 fetch_outcomes, ≥ 180 success):**
+
+```sql
+SELECT
+  jsonb_array_length(fetch_outcomes) AS total_candidates,
+  (SELECT count(*) FROM jsonb_array_elements(fetch_outcomes) e
+   WHERE e->>'reason_code' = 'success') AS successful,
+  (SELECT jsonb_object_agg(reason, cnt) FROM (
+     SELECT e->>'reason_code' AS reason, count(*) AS cnt
+     FROM jsonb_array_elements(fetch_outcomes) e
+     GROUP BY 1
+   ) x) AS by_reason
+FROM knowledge.crawl_jobs
+WHERE org_id = '<voys-org-id>' AND kb_slug = 'support'
+ORDER BY created_at DESC LIMIT 1;
+```
+
+**AC-8 (Voys Notion sync — `skip_reasons.content_too_short ≥ 30`, `documents_ok ≤ 80`):**
+
+```sql
+SELECT documents_total, documents_ok, documents_failed, skip_reasons
+FROM connector.sync_runs
+WHERE connector_id = '<voys-notion-connector-id>'
+ORDER BY started_at DESC LIMIT 1;
+```
+
+### Operator-facing signals
+
+- Excessive `unknown_exception` in `fetch_outcomes` → likely the same-domain
+  guard rejecting cross-domain positional matches (PR #447). Expected gedrag
+  voor dispatcher-reordering; alarming if systematic.
+- `IntegrityError` in connector logs referencing
+  `sync_runs_skip_reasons_valid_keys` → application emitted a key not in the
+  PersistSkipReason allowed-set; bug in enum/migration sync.
+- `crawl_site_seed_login_indicator_triggered` warnings on connectors NOT
+  configured as auth-walled → seed-page hit a login-indicator-like selector
+  unexpectedly; investigate selector specificity.
+
+### Production blockers encountered (and addressed in PR #443)
+
+- **Alembic multiple heads.** PR #441 (SPEC-INGEST-LOGIN-WALL-DETECT-002) merged
+  with `0005_crawled_pages_simhash` (`down_revision = 603787256fb8`); this SPEC's
+  `0005_crawl_jobs_fetch_outcomes` carried the same parent. Resolved with
+  `0006_merge_fetch_outcomes_simhash.py` (no-op merge migration).
+- **Postgres rejects subquery in CHECK.** Migration 009's first form used
+  `SELECT bool_and(key IN (...)) FROM jsonb_object_keys(...)`. Postgres has
+  rejected scalar subqueries in CHECK since 9.x. Rewritten to
+  `(skip_reasons - allowed[]) = '{}'::jsonb` — same semantics, no subquery.
+
+A retrospective covering both blockers is captured in
+`docs/retros/2026-05-06-ingest-reconcile-deploy.md`.
