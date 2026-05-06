@@ -72,7 +72,10 @@ def test_alert_faithfulness_rule_present() -> None:
     rule = next(r for r in rules if r["uid"] == "rag-eval-001-faithfulness-low")
     assert rule["title"] == "rag_eval_faithfulness_low"
     raw_sql = rule["data"][0]["model"]["rawSql"]
-    assert "0.85" in raw_sql
+    # PR #363 deliberately lowered the rag_eval_faithfulness_low
+    # threshold from 0.85 to 0.80. The alert rule is the source of
+    # truth; this assertion follows.
+    assert "0.80" in raw_sql
     assert "variant = 'baseline'" in raw_sql
     assert "HAVING COUNT(*) = 2" in raw_sql
 
