@@ -93,17 +93,39 @@ Rule `python.lang.security.audit.logging.logger-credential-leak.python-logger-cr
 Schedule: Monday 05:00 Amsterdam. Automerge: patch (any), minor (devDeps only).
 Docker images: grouped manual PR. Trigger: `gh workflow run renovate.yml`.
 
-## Trivy scanning
-Every Docker build workflow needs `scan` job after `build-push` with `security-events: write`.
+## Trivy scanning (CRIT)
 
-**Vulnerability scanning only — set `scanners: 'vuln'` on the trivy-action.**
-Built images contain third-party Python/JS libraries that embed public API
-tokens in their source files (e.g. yt-dlp's per-streaming-service extractors
-hardcode NBC, Vice, ESPN, Shahid tokens). Trivy's secret scanner classifies
-those as CRITICAL `aws-access-key-id` / HIGH `jwt-token` and breaks the scan
-job — false positives, every time. Source-level secret scanning is covered
-separately by Semgrep (`SAST — Semgrep` workflow) and Gitleaks. If a service
-ever needs a CVE allowlist, prefer a `.trivyignore` over disabling the gate.
+Defined and enforced by SPEC-CI-TRIVY-POLICY-001. Three-tier model based on
+who can fix the finding:
+
+| Tier | Workflows | Behaviour |
+|---|---|---|
+| **STRICT** | 10 internal `ghcr.io/getklai/*` builds (portal-api, caddy, whisper-server, knowledge-ingest, klai-knowledge-mcp, retrieval-api, klai-connector, klai-mailer, docs, scribe-api) | `exit-code: '1'` blocks the build on any unfixed HIGH/CRITICAL not listed in the service's `.trivyignore.yaml`. `limit-severities-for-sarif: 'true'` neutralises the trivy-action 0.35.0 quirk that otherwise unsets `TRIVY_SEVERITY` for SARIF format. |
+| **WARN** | `scan-pinned-images.yml` (external compose pins) | `exit-code: '0'` — SARIF only. We can't fix upstream, Renovate handles upgrade pressure on Monday-morning cadence. |
+| **SKIP** | Locally-built tags (`*-local-YYMMDD-HHMM` per `infra/container-hygiene.md`) | Excluded from the `scan-pinned-images.yml` enumerate matrix — they don't exist on any registry so a manifest-fetch always 404s. |
+
+**Severity policy lives in one place: `.trivy.yaml` at repo root.** Every CI Trivy invocation references it via `trivy-config: .trivy.yaml`. No workflow inlines `severity` / `ignore-unfixed` / `scanners`.
+
+**Vulnerability-scanner only.** `.trivy.yaml` sets `scan.scanners: [vuln]`. Built images contain third-party Python/JS libraries that embed public API tokens (e.g. yt-dlp's per-streaming-service extractors hardcode NBC, Vice, ESPN, Shahid tokens). Trivy's secret scanner classifies those as CRITICAL `aws-access-key-id` / HIGH `jwt-token` — false positives, every time. Source-level secret scanning is covered separately by Semgrep (`SAST — Semgrep` workflow) and Gitleaks.
+
+**Documented exemptions live in per-service `.trivyignore.yaml`.** Each entry MUST carry `id`, ≥40-char `statement` (rationale, no boilerplate like "low priority"), and `expired_at` (YYYY-MM-DD within 12 months). Mechanically enforced at commit time via `.githooks/pre-commit` and at PR time via `.github/workflows/validate-trivyignore.yml`. Implementation: `scripts/validate-trivyignore.sh` + `scripts/_validate_trivyignore.py`.
+
+**Recipes** — adding an exemption, rotating expired entries, running the smoke-test, reading the Security tab: see `docs/runbooks/trivy-policy.md`.
+
+**Adding a new internal-image workflow.** Required Trivy step:
+```yaml
+- name: Run Trivy vulnerability scanner
+  uses: aquasecurity/trivy-action@0.35.0
+  with:
+    image-ref: ghcr.io/getklai/<svc>:${{ github.sha }}
+    trivy-config: .trivy.yaml
+    trivyignores: <service-relative-path>/.trivyignore.yaml  # only if file exists
+    format: 'sarif'
+    output: 'trivy-results.sarif'
+    exit-code: '1'
+    limit-severities-for-sarif: 'true'
+```
+Plus the `Upload Trivy SARIF` step (`github/codeql-action/upload-sarif@v4`) and `permissions: security-events: write` on the scan job. The scan job MUST `needs: build-push` so it runs against the freshly built image.
 
 ## No manual server edits (CRIT)
 Never edit compose/env on server — repo is source of truth. CI overwrites on next push.

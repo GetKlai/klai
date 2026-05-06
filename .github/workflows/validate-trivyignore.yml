@@ -1,0 +1,57 @@
+name: Validate .trivyignore.yaml
+
+# Mechanical guard for SPEC-CI-TRIVY-POLICY-001 REQ-5: every entry in any
+# `.trivyignore.yaml` MUST carry `id`, ≥40-char `statement`, and `expired_at`
+# (YYYY-MM-DD, within 12 months). Stops perpetual / boilerplate exemptions
+# at PR-time before they reach main.
+#
+# Logic lives in scripts/validate-trivyignore.sh (mode-detected: ci here)
+# which delegates to scripts/_validate_trivyignore.py for parsing.
+#
+# Why a separate workflow: the per-service Trivy `scan` jobs only run on
+# their respective image-build workflows (path-filtered). A `.trivyignore.yaml`
+# can be added in a PR that touches *no* image-build paths (e.g. a documentation
+# PR adding a future ignore-entry), so we need an independent guard.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '**/.trivyignore.yaml'
+      - '**/.trivyignore.yml'
+      - 'scripts/validate-trivyignore.sh'
+      - 'scripts/_validate_trivyignore.py'
+      - '.github/workflows/validate-trivyignore.yml'
+  push:
+    branches: [main]
+    paths:
+      - '**/.trivyignore.yaml'
+      - '**/.trivyignore.yml'
+      - 'scripts/validate-trivyignore.sh'
+      - 'scripts/_validate_trivyignore.py'
+      - '.github/workflows/validate-trivyignore.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  validate:
+    name: Validate REQ-5 fields
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install pyyaml
+        run: pip install --no-cache-dir pyyaml
+
+      - name: Run validator
+        run: ./scripts/validate-trivyignore.sh
