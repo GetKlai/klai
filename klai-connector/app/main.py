@@ -195,7 +195,7 @@ def create_app() -> FastAPI:
         # Scheduler
         scheduler = ConnectorScheduler()
         app.state.scheduler = scheduler
-        await scheduler.start(_db.session_maker, sync_engine.run_sync)
+        await scheduler.start(sync_engine.run_sync)
 
         logger.info("klai-connector started successfully")
         yield
