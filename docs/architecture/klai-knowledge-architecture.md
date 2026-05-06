@@ -4,7 +4,9 @@
 >
 > Source synthesis: `helpdesk-extractie-pipeline.md` (2026-03-18) + `Sovereign Knowledge, Augmented` (2026-01-13). The helpdesk pipeline is now treated as one ingestion adapter, not the product goal. The product goal is Klai Knowledge.
 >
-> *Last updated: 2026-03-30. For platform-wide infrastructure and stack decisions, see [architecture/platform.md](platform.md). For the research backing evidence-weighted scoring (§7.4) and assertion mode weights (§3.2, §13.4), see [Evidence-Weighted Knowledge Retrieval: Research Synthesis](../research/README.md).*
+> *Last updated: 2026-05-06 (post retrieval-coupling audit). For platform-wide infrastructure and stack decisions, see [architecture/platform.md](platform.md). For the research backing evidence-weighted scoring (§7.4) and assertion mode weights (§3.2, §13.4), see [Evidence-Weighted Knowledge Retrieval: Research Synthesis](../research/README.md).*
+>
+> *2026-05-06: §2 rewritten to remove the "Two products, one infrastructure" framing — Klai Focus / research-api was decommissioned by `SPEC-PORTAL-UNIFY-KB-001` (April 2026) and `SPEC-DECOMM-FOCUS-001` (May 2026). Klai Knowledge is now the single knowledge product. §7.4 evidence-tier activation track aligned with `SPEC-EVIDENCE-001-FOLLOWUP-001`.*
 
 ---
 
@@ -122,140 +124,75 @@ The BlockNote editor **currently lives in `klai-portal`** (frontend SPA). It was
 
 ## 2. Platform Service Architecture
 
-Klai Knowledge does not exist in isolation. It is one of two knowledge-oriented products on the platform. Understanding the boundary between them — and what they share — is a prerequisite for building either correctly.
+Klai Knowledge is the platform's single knowledge product. The earlier "Klai Focus + Klai Knowledge" two-product framing was unwound by `SPEC-PORTAL-UNIFY-KB-001` (April 2026) and `SPEC-DECOMM-FOCUS-001` (May 2026). The historical Focus narrative (notebook-based research, `notebook_*` scopes, hybrid `broad` mode) is preserved only in those two SPECs and the git history; this document describes the current state.
 
-### 2.1 Two products, one infrastructure layer
+### 2.1 Knowledge as a single product on shared infrastructure
 
-**Klai Focus** is a notebook-based research tool. A user assembles a specific set of documents, works with them intensively, and extracts insights. It is ephemeral and task-scoped. The outcome of a Focus session is a conclusion, a synthesis, a decision.
-
-**Klai Knowledge** is the organizational memory layer. It is persistent, curated, and broad. It accumulates what the organization knows over time. It is not a workspace — it is a record.
-
-These are complementary, not competing. The intended flow is:
-
-```
-Focus (narrow research on specific files)
-  → user reaches a conclusion
-  → "Save to Knowledge" action
-  → knowledge_artifact lands in personal or org scope
-  → optionally promoted to org KB
-```
-
-### 2.2 Shared infrastructure layer
-
-Both products run on top of shared platform services. Neither owns these services — they call them.
+Klai Knowledge is the organizational memory layer: persistent, curated, broad. It accumulates what the organization knows over time. There is no separate ephemeral notebook product — `/app/focus/*` redirects to `/app/knowledge`, and personal-notes-style use cases live as personal-scope knowledge artifacts.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                  Shared Platform Services                │
 │                                                         │
-│  embedding-service   BGE-M3 via FlagEmbedding           │
-│                      one HTTP service, called by both   │
-│                                                         │
-│  chunking-service    docling-serve HybridChunker        │
-│                      one HTTP service, called by both   │
-│                                                         │
-│  Qdrant cluster      one instance, scoped by tenant_id  │
-│                      all scopes live here               │
+│  TEI (embeddings)      BGE-M3 dense + bge-m3-sparse     │
+│  Infinity (reranker)   bge-reranker-v2-m3               │
+│  docling-serve         HybridChunker                    │
+│  Qdrant                klai_knowledge collection only   │
+│  FalkorDB              Graphiti knowledge graph         │
 └─────────────────────────────────────────────────────────┘
-          ▲                            ▲
-          │                            │
-┌─────────────────┐          ┌──────────────────────┐
-│  Focus Service  │          │  Knowledge Service   │
-│  /research/v1   │  calls   │  /knowledge/v1       │
-│                 │─────────▶│  Retrieval API       │
-│  (broad mode)   │          │                      │
-└─────────────────┘          └──────────────────────┘
+          ▲
+          │
+┌──────────────────────┐
+│  Knowledge Service   │
+│  retrieval-api +     │
+│  knowledge-ingest    │
+│                      │
+│  POST /retrieve      │
+│  POST /ingest        │
+└──────────────────────┘
 ```
 
-### 2.7 LibreChat integration via LiteLLM hook
+### 2.2 LibreChat + Partner API integration via LiteLLM hook
 
-LibreChat tenants access organizational knowledge automatically through a pre-call hook in the LiteLLM proxy. This is the primary consumer interface for §9.5.
+LibreChat tenants and Partner-API consumers reach knowledge automatically through a pre-call hook in the LiteLLM proxy. This is the primary consumer interface for §9.
 
 ```
-LibreChat-{slug} container
-  │  LITELLM_API_KEY = team-scoped key (metadata: org_id)
-  ▼
-LiteLLM proxy (klai-core stack)
-  │  KlaiKnowledgeHook.async_pre_call_hook
-  │    ├── trivial? → skip
-  │    ├── GET org_id from key metadata
-  │    └── POST /knowledge/v1/retrieve  (2s timeout, graceful degrade)
-  ▼
-klai-primary / klai-fast / klai-large (per .claude/rules/klai/platform/litellm.md)
+LibreChat-{slug} container          Partner-API consumer / Widget
+  │  LITELLM_API_KEY (org_id)         │  pk_live_... or widget JWT
+  ▼                                   ▼
+                LiteLLM proxy (klai-core)
+                  │  KlaiKnowledgeHook.async_pre_call_hook
+                  │    ├── trivial? → skip
+                  │    ├── resolve identity:
+                  │    │    LibreChat   → real Zitadel user_id
+                  │    │    Partner/Widget → synthetic `partner:<key_id>`
+                  │    └── POST /retrieve  (3s timeout, graceful degrade)
+                  ▼
+                klai-primary / klai-fast / klai-large
 ```
 
-Tenant isolation: one LiteLLM team key per LibreChat container, carrying `org_id` in key metadata. The hook uses this to scope every retrieval query. Containers provisioned before this change (using master key) will skip retrieval — no breakage, no context injection.
-
-**No tech stack duplication.** If Focus chunks a PDF, it calls the shared chunking-service. If Knowledge chunks a help article, it calls the same service. BGE-M3 runs once. Qdrant runs once.
+Tenant isolation: one LiteLLM team key per LibreChat container, carrying `org_id` in metadata. The hook uses this to scope every retrieval query. Partner-API and widget traffic carries an explicit `org_id` from the partner key's owning tenant (validated via portal `/internal/identity/verify` against `partner_api_keys` — see [knowledge-retrieval-flow.md § Identity verification](knowledge-retrieval-flow.md#identity-verification-on-every-retrieve-call)).
 
 ### 2.3 Qdrant scope conventions
 
-All scopes live in one Qdrant collection with `tenant_id` payload indexing.
+All knowledge lives in the `klai_knowledge` Qdrant collection with `org_id` payload indexing. Scope identifiers use Zitadel IDs — the stable cross-system identifiers available on `PortalOrg.zitadel_org_id` and `PortalUser.zitadel_user_id`. Not PostgreSQL integer PKs, not UUIDs.
 
-**Scope identifiers use Zitadel IDs** — the stable cross-system identifiers available on `PortalOrg.zitadel_org_id` and `PortalUser.zitadel_user_id`. Not PostgreSQL integer PKs (internal only), not UUIDs (no UUID column exists on these models).
-
-| `tenant_id` pattern | Owner | Used by |
+| Payload field | Scope semantic | Set by |
 |---|---|---|
-| `org_{zitadel_org_id}` | Organization | Knowledge Service (org KB) |
-| `user_{zitadel_org_id}_{zitadel_user_id}` | User | Knowledge Service (personal KB) |
-| `notebook_{notebook_uuid}` | User | Focus Service |
-| `gap_{zitadel_org_id}` | Organization | Knowledge Service (gap registry) |
-
-Focus owns the `notebook_*` scopes. Knowledge owns the rest. Neither reads the other's scopes directly — cross-scope retrieval goes through the owning service's API.
+| `org_id` | Organization (always required) | knowledge-ingest at upsert |
+| `user_id` | Personal scope (optional, only on personal artifacts) | knowledge-ingest |
+| `visibility` | `public` / `internal` / `private` (per-chunk) | knowledge-ingest from KB config |
+| `kb_slug` | Per-KB partition within an org | knowledge-ingest |
 
 **Interface-to-scope mapping:**
 
 | Interface | Org scope | Personal scope | Notes |
 |---|---|---|---|
-| LiteLLM pre-call hook | Yes (`org_{zitadel_org_id}`) | No | Automatic enrichment; no user identity available at this layer |
+| LiteLLM pre-call hook (LibreChat) | Yes (`org` or `both`) | Yes when `kb_personal_enabled=true` | KBScopeBar controls scope |
+| LiteLLM pre-call hook (Partner/Widget) | Yes (`org` only) | No | Scope-locked at credential creation |
 | MCP server tools | Yes | Yes | Explicit user action; Zitadel session provides both IDs |
 
-The hook retrieves org scope only — the team key metadata carries `zitadel_org_id`, but the hook has no reliable way to obtain the Zitadel user ID from a shared-key LibreChat request. Personal scope retrieval and saving go through the MCP server, which runs within a Zitadel-authenticated session.
-
-### 2.4 Chat modes in Focus
-
-The three Focus modes map directly onto retrieval scope:
-
-| Mode | Retrieval scope |
-|---|---|
-| `narrow` | `notebook_{notebook_uuid}` only |
-| `broad` | `notebook_{notebook_uuid}` + Knowledge Service retrieval API (`org_{org_uuid}`) |
-| `web` | `broad` + web search (Tavily / Brave) |
-
-`broad` mode is a hybrid retrieval call: Focus retrieves from its notebook scope in parallel with a call to the Knowledge retrieval API for the org scope. Results are merged with RRF before being passed to the LLM.
-
-This means **Focus broad mode is already a consumer of Klai Knowledge** — by design, not by accident. When the org KB has no relevant content yet, broad falls back gracefully to notebook-only results.
-
-### 2.5 The "Save to Knowledge" action
-
-A Focus session produces insights. Those insights should not die in the notebook. The "Save to Knowledge" action promotes a user-written synthesis from Focus into Klai Knowledge:
-
-```
-User writes conclusion in Focus chat or as a note
-  → "Save to Knowledge" (personal) or "Share to org KB"
-  → POST to Knowledge Service
-  → knowledge_artifact created with:
-      provenance_type: synthesized
-      synthesis_depth: 1
-      derived_from: [source UUIDs from the notebook]
-      assertion_mode: factual | belief | hypothesis (user selects)
-  → lands in user_{org_uuid}_{user_uuid} (personal) or org_{org_uuid} (org)
-```
-
-The notebook sources that fed the synthesis become the `derived_from` chain — the provenance is preserved automatically.
-
-### 2.6 What the Focus rewrite requires
-
-The current `/research/v1` backend has its own chunking and embedding pipeline. That is the duplication to remove.
-
-Concrete changes:
-1. Remove own chunking code → call shared chunking-service
-2. Remove own embedding code → call shared embedding-service
-3. Remove own Qdrant connection → use shared cluster with `notebook_{uuid}` scope
-4. Implement `broad` mode as hybrid retrieval: notebook scope + Knowledge retrieval API, merged with RRF
-5. Add "Save to Knowledge" endpoint: POST synthesis → Knowledge Service
-
-The Focus data model (notebooks, sources, history) stays in Focus's own PostgreSQL schema. Only the vector pipeline moves to shared infrastructure.
+`scope=notebook` and `scope=broad` were the integration points with the now-decommissioned Focus service. Both literals were removed from `RetrieveRequest` in `SPEC-DECOMM-FOCUS-001`; the only valid scopes today are `personal`, `org`, `both`.
 
 ---
 
@@ -811,46 +748,48 @@ The cross-encoder reads query + document together and assesses relevance at clai
 
 ### 7.4 Evidence-weighted scoring [LIVE — shadow mode]
 
-> Research backing: [Evidence-Weighted Knowledge Retrieval: Research Synthesis](../research/README.md)
+> Research backing: [Evidence-Weighted Knowledge Retrieval: Research Synthesis](../research/README.md). Activation track: [`SPEC-EVIDENCE-001-FOLLOWUP-001`](../../.moai/specs/SPEC-EVIDENCE-001-FOLLOWUP-001/spec.md). User-facing flow: [knowledge-retrieval-flow.md § Evidence tier scoring](knowledge-retrieval-flow.md#step-6-evidence-tier-scoring-shadow-mode).
 
 Evidence-weighted scoring runs in Step 6 of the retrieval pipeline. Currently in shadow mode (`EVIDENCE_SHADOW_MODE=true`): scores are computed and logged but do not reorder results. This is a **post-retrieval scoring adjustment**, not a replacement for semantic search.
 
-**Four scoring dimensions:**
+**Four scoring dimensions (multiplicative, each per-dimension feature-flagged):**
 
-| Dimension | Signal | V1 approach | Research evidence |
+| Dimension | Signal | V1 approach | Feature flag |
 |---|---|---|---|
-| Content type | `content_type` (kb_article, crawl, transcript, ...) | Tier-based weight: curated KB articles > web crawls > raw transcripts | RA-RAG: +51% accuracy; TREC Health: +60% MAP via credibility-weighted fusion |
-| Assertion mode | `assertion_mode` (factual, procedural, ...) | **Flat weights (all 1.00)** — activate only after A/B evaluation | Concept is novel — no empirical data for RAG specifically. See [Assertion Mode Weights research](../research/assertion-modes/assertion-mode-weights.md) |
-| Temporal decay | `ingested_at` / `belief_time_start` | Conservative linear decay, max 0.15 spread (0.85–1.00) | Conceptually sound but calibration is unsolved |
-| Chunk ordering | Position in context window | U-shape: strongest chunks first and last, weakest in middle | Lost in the Middle (Liu et al. 2023): >30% accuracy degradation for mid-positioned relevant content |
+| Content type | `content_type` (kb_article, pdf_document, web_crawl, ...) | Per-type weight, see table below | `EVIDENCE_CONTENT_TYPE_ENABLED` (default `true`) |
+| Temporal decay | `ingested_at` age | Step function across <30d / 30-180d / 180-365d / >365d brackets | `EVIDENCE_TEMPORAL_DECAY_ENABLED` (default `true`) |
+| PageRank | `entity_pagerank_max` from FalkorDB | `1 + 0.20 * log1p(pagerank * 100)` — capped ~+25% | `EVIDENCE_PAGERANK_ENABLED` (default `true`) |
+| Assertion mode | `assertion_mode` (factual, procedural, ...) | **Flat weights (all 1.00)** — activate via `SPEC-EVIDENCE-002` after A/B | `EVIDENCE_ASSERTION_MODE_ENABLED` (default `true`, but flat-weights neuter the effect) |
 
-**Why flat weights for assertion mode:**
+After scoring, chunks are reordered into a **U-shape** (strongest at position 0, second-strongest at the last position, mid-strength clustered in the middle) per Liu et al. 2023 "Lost in the Middle" ([arXiv:2307.03172](https://arxiv.org/abs/2307.03172)).
 
-The [weights research](../research/assertion-modes/assertion-mode-weights.md) established that the maximum safe weight spread for an ~85% accurate classifier is **0.20** (minimum weight 0.80 if maximum is 1.00). With four multiplicative scoring dimensions at ~85% accuracy each, there is a 48% chance of at least one misclassification per chunk. Starting flat eliminates this compounding risk.
-
-**Evaluation gate before widening weights:**
-
-1. 200+ chunk classification evaluation on Klai content (not biomedical proxy data)
-2. A/B retrieval test: 150 queries (50 curated + 100 RAGAS-synthetic), Wilcoxon signed-rank test
-3. Shadow scoring in production before cutover
-
-See [RAG Evaluation Framework](../research/evaluation/rag-evaluation-framework.md) for the full evaluation protocol.
-
-**Formula (V1):**
+**Formula:**
 
 ```
-evidence_score = base_rrf_score × content_type_weight × temporal_decay
+final_score = reranker_score × content_type_weight × assertion_mode_weight × temporal_decay × pagerank_weight
 ```
 
-Assertion mode and corroboration are **not multiplied in V1** — they are logged for shadow evaluation only.
+**Content type weights (production defaults):**
 
-**Content type tier mapping:**
+| Content type | Weight |
+|---|---|
+| `kb_article` | 1.00 |
+| `pdf_document` | 0.90 |
+| `meeting_transcript`, `1on1_transcript` | 0.80 |
+| `graph_edge` (Graphiti facts) | 0.70 |
+| `web_crawl` | 0.65 |
+| `unknown` (fallback) | 0.55 |
 
-| Tier | Content types | Weight |
-|---|---|---|
-| Tier 1 — Curated | `kb_article`, `procedure` | 1.00 |
-| Tier 2 — Structured | `faq`, `api_doc`, `changelog` | 0.95 |
-| Tier 3 — Imported | `web_crawl`, `email`, `transcript` | 0.90 |
+**Activation track (post-audit, SPEC-EVIDENCE-001-FOLLOWUP-001):** the shadow mode has been the default since 2026-03-30. The follow-up SPEC sets a 30-day deadline to choose one of four terminal states using a 7-day RAGAS A/B (`baseline` vs. `evidence_tier_full` vs. `evidence_tier_temporal_only`):
+
+1. **Activate** — staged 5%/50%/100% rollout with auto-revert on quality regression
+2. **Activate temporal-only** — narrow rollout of the dimension with strongest theoretical justification
+3. **Decommission** — remove `evidence_tier.apply()` + payload fields, free up CPU
+4. **Retain-flags-off** — `EVIDENCE_SHADOW_MODE=disabled` becomes the new default, code preserved
+
+Decision criteria: ≥+0.02 mean uplift on RAGAS Context Precision **and** Faithfulness with Wilcoxon paired `p<0.05` against baseline on the 50-curated query subset.
+
+**Assertion mode weight activation** is governed by a separate SPEC (`SPEC-EVIDENCE-002`) — it remains flat-1.00 in V1 even after the FOLLOWUP-001 decision because the multiplicative compounding risk (4 dimensions at ~85% classifier accuracy → 48% chance of misclassification per chunk) demands its own calibration cycle. See [Assertion Mode Weights research](../research/assertion-modes/assertion-mode-weights.md).
 
 **Corroboration scoring: deferred.** Cross-source corroboration requires three prerequisites not yet met: near-duplicate detection (SemHash), source-level grouping, and entity resolution validation (>90% precision, >85% recall). See [Corroboration Scoring research](../research/corroboration/corroboration-scoring.md).
 
@@ -1476,7 +1415,7 @@ No existing tool combines: Notion-quality web editor + Git as storage + wikilink
 - LibreChat webSearch enabled: SearXNG + Firecrawl scraper + Infinity reranker (bge-reranker-v2-m3, CPU)
 - Infinity reranker is shared infrastructure — will also serve the Knowledge retrieval pipeline (§7.1) when deployed
 
-The platform currently uses SearXNG (self-hosted, `http://searxng:8888`) for web search in LibreChat and Klai Focus. Web search is a user-initiated, opt-in action — not part of the Knowledge ingestion pipeline.
+The platform currently uses SearXNG (self-hosted, `http://searxng:8888`) for web search in LibreChat. Web search is a user-initiated, opt-in action — not part of the Knowledge ingestion pipeline.
 
 **Platform constraint:** all components must be open-source and privacy-friendly. Cloud APIs that send queries to US companies (Tavily, Brave Search API) are excluded regardless of GDPR compliance claims.
 
