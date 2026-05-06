@@ -188,28 +188,76 @@ def compute_min_cluster_size(doc_count: int, floor: int = 5) -> int:
     return max(floor, doc_count // 50)
 
 
+def reduce_embeddings_umap(
+    embeddings: Any,
+    n_components: int = 10,
+    n_neighbors: int = 15,
+    random_state: int = 42,
+) -> Any:
+    """Reduce high-dimensional embeddings via UMAP before clustering.
+
+    SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B1: curse-of-dimensionality mitigation.
+    HDBSCAN density estimation degrades in 1024-dim space; UMAP projects to a
+    lower-dimensional manifold where density-based clustering is reliable.
+
+    Args:
+        embeddings: (n_docs, dim) float32 array of unit-normalised embeddings.
+        n_components: target dimensionality after reduction (default: 10, BERTopic best-practice).
+        n_neighbors: UMAP n_neighbors parameter (default: 15, BERTopic best-practice).
+        random_state: for reproducibility (default: 42).
+
+    Returns:
+        Reduced (n_docs, n_components) array, or the original embeddings unchanged
+        when umap-learn is not installed (with a warning log).
+    """
+    try:
+        import umap
+    except ImportError:
+        logger.warning(
+            "bootstrap_umap_unavailable_fallback",
+            reason="umap-learn not installed; running HDBSCAN on raw embeddings",
+        )
+        return embeddings
+
+    n_samples = len(embeddings)
+    # n_neighbors must be < n_samples; clamp to avoid umap ValueError on small corpora
+    effective_n_neighbors = min(n_neighbors, max(2, n_samples - 1))
+    reducer = umap.UMAP(
+        n_components=n_components,
+        n_neighbors=effective_n_neighbors,
+        metric="cosine",
+        random_state=random_state,
+    )
+    return reducer.fit_transform(embeddings)
+
+
 def cluster_documents_hdbscan(
     embeddings: Any,
     min_cluster_size: int = 5,
+    pre_reduce: bool = True,
 ) -> tuple[Any, dict]:
     """Run HDBSCAN on document embeddings and return (labels, metrics).
 
     SPEC-TAXONOMY-V2-001 AC-1, AC-16.
+    SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B1: UMAP pre-reduction (pre_reduce=True by default).
+    SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B3: DBCV-score via hdb.relative_validity_.
 
     Args:
         embeddings: (n_docs, dim) float32 array of unit-normalised embeddings.
         min_cluster_size: minimum cluster size for HDBSCAN.
+        pre_reduce: when True (default), reduce embeddings via UMAP before HDBSCAN
+                    and switch HDBSCAN metric to "euclidean" (UMAP output is not cosine-meaningful).
+                    When False, run HDBSCAN directly with metric="cosine" (legacy behaviour).
 
     Returns:
         labels: (n_docs,) int array; -1 = outlier/noise.
-        metrics: dict with keys clusters_found, outlier_count, silhouette_score.
-                 silhouette_score is None when <= 1 cluster found (undefined).
+        metrics: dict with keys clusters_found, outlier_count, dbcv_score.
+                 dbcv_score is None when <= 1 cluster found or relative_validity_ unavailable.
     """
     import numpy as np
 
     try:
         from sklearn.cluster import HDBSCAN
-        from sklearn.metrics import silhouette_score
     except ImportError:
         logger.error("clustering_sklearn_not_available_v2")
         # Return all-outlier labels as fallback
@@ -217,32 +265,42 @@ def cluster_documents_hdbscan(
         return np.full(n, -1, dtype=np.int32), {
             "clusters_found": 0,
             "outlier_count": n,
-            "silhouette_score": None,
+            "dbcv_score": None,
         }
 
-    hdb = HDBSCAN(min_cluster_size=min_cluster_size, metric="cosine")
+    if pre_reduce:
+        # Settings drive UMAP runtime params so env-overrides take effect
+        # (FOLLOWUP-001 B1). Defaults match BERTopic best-practice for 1k-10k corpora.
+        embeddings = reduce_embeddings_umap(
+            embeddings,
+            n_components=settings.taxonomy_bootstrap_umap_n_components,
+            n_neighbors=settings.taxonomy_bootstrap_umap_n_neighbors,
+            random_state=settings.taxonomy_bootstrap_umap_random_state,
+        )
+        hdbscan_metric = "euclidean"
+    else:
+        hdbscan_metric = "cosine"
+
+    hdb = HDBSCAN(min_cluster_size=min_cluster_size, metric=hdbscan_metric)
     labels = hdb.fit_predict(embeddings)
 
     cluster_ids = set(int(lbl) for lbl in labels if lbl >= 0)
     clusters_found = len(cluster_ids)
     outlier_count = int((labels == -1).sum())
 
-    # Silhouette score requires >= 2 clusters and >= 2 samples per cluster
-    sil_score: float | None = None
-    if clusters_found >= 2:
+    # DBCV score: use sklearn HDBSCAN's relative_validity_ attribute.
+    # Only available when >= 2 clusters were found.
+    dbcv: float | None = None
+    if clusters_found >= 2 and hasattr(hdb, "relative_validity_"):
         try:
-            # Only compute on non-outlier points
-            mask = labels >= 0
-            if mask.sum() >= clusters_found * 2:
-                sil_score = float(silhouette_score(embeddings[mask], labels[mask], metric="cosine"))
+            dbcv = float(hdb.relative_validity_)
         except Exception:
-            # Silhouette can fail on degenerate inputs — treat as undefined
-            sil_score = None
+            dbcv = None
 
     return labels, {
         "clusters_found": clusters_found,
         "outlier_count": outlier_count,
-        "silhouette_score": sil_score,
+        "dbcv_score": dbcv,
     }
 
 
