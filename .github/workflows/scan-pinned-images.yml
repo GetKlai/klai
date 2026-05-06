@@ -75,6 +75,10 @@ jobs:
         image: ${{ fromJSON(needs.enumerate.outputs.images) }}
       fail-fast: false  # One bad image shouldn't skip the rest
     steps:
+      # Checkout is required so trivy-action can find .trivy.yaml
+      # (`trivy-config:` resolves relative to repo root).
+      - uses: actions/checkout@v6
+
       - name: Sanitize image name for artefact
         id: safe
         run: |
@@ -83,18 +87,25 @@ jobs:
           SAFE=$(echo '${{ matrix.image }}' | tr '/:' '__')
           echo "name=$SAFE" >> "$GITHUB_OUTPUT"
 
-      # Trivy policy lives in .trivy.yaml at repo root (SPEC-CI-TRIVY-POLICY-001 REQ-1).
-      # External-pin scans stay warn-only (REQ-3): Renovate handles upgrade
-      # pressure. Inline `severity` + `ignore-unfixed` stay until PR #3 cleanup.
+      # WARN-tier scan per SPEC-CI-TRIVY-POLICY-001 REQ-3.
+      # severity / ignore-unfixed / scanners come from .trivy.yaml (REQ-1).
+      # exit-code: '0' keeps this warn-only — Renovate handles upgrade pressure
+      # on the external base-images we pin in compose.
       - name: Trivy scan
         uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: ${{ matrix.image }}
           trivy-config: .trivy.yaml
-          format: 'sarif'
-          output: 'trivy-${{ steps.safe.outputs.name }}.sarif'
+          # Inline duplicates are required: trivy-action 0.35.0's
+          # `limit-severities-for-sarif: true` only acts on INPUT_SEVERITY,
+          # not on config-file severity. Keep .trivy.yaml as the canonical
+          # policy reference; remove these inlines once trivy-action lands
+          # proper config-file precedence.
+          scanners: 'vuln'
           severity: 'CRITICAL,HIGH'
           ignore-unfixed: true
+          format: 'sarif'
+          output: 'trivy-${{ steps.safe.outputs.name }}.sarif'
           exit-code: '0'  # Don't fail the job — Security tab is the alert surface
 
       - name: Upload SARIF
