@@ -15,6 +15,15 @@ Pattern mirrors app/services/events.py but:
 - Uses CAST(:param AS jsonb) per portal-backend.md SQLAlchemy+RLS rule.
 - Runs synchronously within the caller's transaction (no separate session,
   no asyncio.create_task).
+
+# SPEC-TI-005 / A-6: SELECT from tenant_lifecycle_events requires
+# app.is_platform_admin='1' GUC set per call via set_config(..., is_local=true).
+# is_local=true means the GUC resets at end-of-transaction. If you query
+# tenant_lifecycle_events across multiple transaction boundaries on the same
+# connection, you must call set_config('app.is_platform_admin', '1', true)
+# at the start of EACH transaction. The admin/__init__.py _get_caller_org
+# already handles this for the request-scoped path. Background tasks that
+# SELECT this table must call set_config explicitly before each transaction.
 """
 
 from __future__ import annotations
