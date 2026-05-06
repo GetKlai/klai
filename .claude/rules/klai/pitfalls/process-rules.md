@@ -82,6 +82,38 @@ WITH CHECK (org_id = NULLIF(current_setting('app.current_org_id', true), '')::in
   in the same PR, or extend the rls-policy-smoke-test CI job to import
   `app.main` and invoke the lifespan assertion.
 
+## asyncpg-pool-guc-not-shared (HIGH)
+Postgres GUCs (`current_setting('app.foo', true)`) are **connection-local**,
+not pool-local. Setting the GUC on connection A does NOT propagate to
+connection B that a later `pool.acquire()` returns. Pinning one
+connection in an outer `async with tenant_scoped_connection(...)` and
+letting the body call `pool.acquire()` on its own gives the body a
+DIFFERENT connection without the GUC — every query against an
+RLS-protected table raises ERRCODE 42501.
+
+Reference: SPEC-TI-003 (PR #376, 2026-05-06).
+
+```python
+# WRONG — the SPEC author wrote this literally:
+async with tenant_scoped_connection(org_id) as _conn:
+    del _conn  # connection held open to keep GUC set; pg_store uses pool
+    await run_crawl_job(...)  # → pg_store grabs a DIFFERENT pool conn → 42501
+```
+
+Fix: pass the `conn` from the helper through every function that issues
+SQL, or have the leaf function open its own `tenant_scoped_connection`.
+
+**Prevention:**
+- `tenant_scoped_connection` helpers MUST yield a `Connection` callers
+  PASS through — never pin-and-pray.
+- Code review for any RLS helper: grep `pool.acquire()` / `get_pool()`
+  in the same service. Every site must accept a `conn` parameter, be
+  inside the helper, or never touch RLS-protected tables.
+- contextvars and per-request middleware do NOT help — they carry
+  Python state, not Postgres connection state.
+- Pre-merge: run a smoke-test against a clean Postgres with the
+  FORCE-RLS post-deploy SQL applied. Any wiring gap surfaces as 42501.
+
 ## scale-the-answer-to-the-problem (HIGH)
 When a user asks "what is industry standard?" do not autopilot to the
 most architecturally-elegant answer in the search results. Anchor on
