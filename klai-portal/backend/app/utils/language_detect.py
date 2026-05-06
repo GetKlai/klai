@@ -17,7 +17,7 @@ moment to extract.
 
 from __future__ import annotations
 
-from typing import Final
+from typing import Any, Final
 
 import structlog
 
@@ -35,10 +35,10 @@ _SAMPLE_CHARS: Final[int] = 500
 UNKNOWN_LANGUAGE: Final[str] = "und"
 
 
-_lingua_detector: object | None = None
+_lingua_detector: Any | None = None
 
 
-def _get_lingua_detector() -> object | None:
+def _get_lingua_detector() -> Any | None:
     """Return a cached LanguageDetector instance. Built lazily."""
     global _lingua_detector
     if _lingua_detector is not None:

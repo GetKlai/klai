@@ -21,7 +21,7 @@ package.
 from __future__ import annotations
 
 import logging
-from typing import Final
+from typing import Any, Final
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +41,10 @@ _SAMPLE_CHARS: Final[int] = 500
 UNKNOWN_LANGUAGE: Final[str] = "und"
 
 
-_lingua_detector: object | None = None
+_lingua_detector: Any | None = None
 
 
-def _get_lingua_detector() -> object | None:
+def _get_lingua_detector() -> Any | None:
     """Return a cached LanguageDetector covering the six target languages
     plus a small set of European neighbours. Built lazily so importing
     this module stays cheap.
