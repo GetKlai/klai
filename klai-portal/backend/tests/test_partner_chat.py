@@ -431,3 +431,113 @@ async def test_retrieve_context_sends_caller_service_header(monkeypatch):
         "X-Caller-Service header missing — retrieval-api 400s and partner chat returns no KB context. See pitfalls."
     )
     assert captured["headers"].get("X-Internal-Secret") == "test-retrieval-secret"
+
+
+# ---------------------------------------------------------------------------
+# F2 (audit retrieval-coupling-2026-05-06): synthetic partner user_id
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_retrieve_context_passes_partner_user_id(monkeypatch):
+    """When `partner_user_id` is given, /retrieve body carries `user_id`.
+
+    Without this, retrieval-api's verify_body_identity returns early without
+    pinning verified_caller, so emit_event drops the knowledge.queried event
+    via the product_event_skipped_no_identity warning branch.
+    """
+    from app.services.partner_chat import retrieve_context
+
+    captured: dict = {}
+
+    class _MockResp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"chunks": []}
+
+    class _MockClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def post(self, url, json=None, headers=None):
+            captured["body"] = json
+            return _MockResp()
+
+    monkeypatch.setattr(
+        "app.services.partner_chat.httpx.AsyncClient",
+        lambda timeout: _MockClient(),
+    )
+
+    fake_settings = MagicMock()
+    fake_settings.knowledge_retrieve_url = "http://retrieval-api:8040"
+    fake_settings.retrieval_api_internal_secret = "secret"
+    fake_settings.internal_secret = "fallback"
+
+    await retrieve_context(
+        org_id=42,
+        zitadel_org_id="z-1",
+        kb_slugs=[],
+        messages=[{"role": "user", "content": "hello"}],
+        settings=fake_settings,
+        partner_user_id="partner:key-abc-123",
+    )
+
+    assert captured["body"]["user_id"] == "partner:key-abc-123", (
+        "partner_user_id MUST flow through to retrieve body or knowledge.queried events drop. F2 audit ref."
+    )
+
+
+@pytest.mark.asyncio
+async def test_retrieve_context_omits_user_id_when_partner_user_id_none(monkeypatch):
+    """Backwards-compat: existing callers without partner_user_id parameter
+    MUST NOT have a user_id field in the body. Existing /retrieve behaviour
+    relies on this for non-partner internal callers."""
+    from app.services.partner_chat import retrieve_context
+
+    captured: dict = {}
+
+    class _MockResp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"chunks": []}
+
+    class _MockClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def post(self, url, json=None, headers=None):
+            captured["body"] = json
+            return _MockResp()
+
+    monkeypatch.setattr(
+        "app.services.partner_chat.httpx.AsyncClient",
+        lambda timeout: _MockClient(),
+    )
+
+    fake_settings = MagicMock()
+    fake_settings.knowledge_retrieve_url = "http://retrieval-api:8040"
+    fake_settings.retrieval_api_internal_secret = "s"
+    fake_settings.internal_secret = "s"
+
+    await retrieve_context(
+        org_id=42,
+        zitadel_org_id="z-1",
+        kb_slugs=[],
+        messages=[{"role": "user", "content": "hello"}],
+        settings=fake_settings,
+        # Note: no partner_user_id
+    )
+
+    assert "user_id" not in captured["body"], (
+        f"user_id leaked into body without explicit partner_user_id: {captured['body']}"
+    )
