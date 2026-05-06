@@ -83,10 +83,14 @@ jobs:
           SAFE=$(echo '${{ matrix.image }}' | tr '/:' '__')
           echo "name=$SAFE" >> "$GITHUB_OUTPUT"
 
+      # Trivy policy lives in .trivy.yaml at repo root (SPEC-CI-TRIVY-POLICY-001 REQ-1).
+      # External-pin scans stay warn-only (REQ-3): Renovate handles upgrade
+      # pressure. Inline `severity` + `ignore-unfixed` stay until PR #3 cleanup.
       - name: Trivy scan
         uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: ${{ matrix.image }}
+          trivy-config: .trivy.yaml
           format: 'sarif'
           output: 'trivy-${{ steps.safe.outputs.name }}.sarif'
           severity: 'CRITICAL,HIGH'
