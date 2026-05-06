@@ -13,7 +13,16 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -326,7 +335,8 @@ async def delete_source(
     from app.services import qdrant_store
 
     await db.execute(delete(Chunk).where(Chunk.source_id == src_id))
-    qdrant_store.delete_by_source(src_id)
+    # SPEC-TI-010C B-7: pass tenant_id to scope delete to current tenant
+    qdrant_store.delete_by_source(src_id, tenant_id=user.tenant_id)
 
     # Trigger 1 of the upload-retention policy: delete file when the
     # source is removed by the user. See app/services/upload_storage.py.
