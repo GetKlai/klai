@@ -6,9 +6,21 @@ import json
 import time
 import uuid
 
+import asyncpg
+import structlog
+
 from knowledge_ingest.db import get_pool
 
+logger = structlog.get_logger()
+
 _SENTINEL = 253402300800  # 9999-12-31 — sentinel value for "still active"
+
+# SPEC-INGEST-UNIQUE-ARTIFACT-001 — name of the partial unique index
+# created by alembic 0003_artifacts_unique_active_path.py. The
+# UniqueViolationError handler below uses this constraint name to
+# distinguish race-loss from any other unique-violation that might
+# surface in the future.
+_ACTIVE_ARTIFACT_UNIQUE_INDEX = "uq_artifacts_active_path"
 
 
 async def get_active_content_hash(org_id: str, kb_slug: str, path: str) -> str | None:
@@ -46,39 +58,93 @@ async def create_artifact(
     extra: dict | None = None,
     content_hash: str | None = None,
 ) -> str:
-    """Create a knowledge artifact record. Returns the artifact UUID."""
+    """Create a knowledge artifact record. Returns the artifact UUID.
+
+    SPEC-INGEST-UNIQUE-ARTIFACT-001 (audit finding 7): on
+    ``UniqueViolationError`` from the partial unique index
+    ``uq_artifacts_active_path``, this function silently resolves
+    the race by fetching the winning artifact's id and returning it.
+    The race event is logged at error level (fires the existing
+    ``obs-001-ingest-error-rate-elevated`` Grafana alert) so
+    operators always know when this happens. Caller (ingest_document
+    + downstream MCP / connector / scribe) receives a normal return
+    value and a consistent artifact_id.
+    """
     artifact_id = str(uuid.uuid4())
     now = int(time.time())
     pool = await get_pool()
     extra_json = json.dumps(extra) if extra else "{}"
-    await pool.execute(
-        """
-        INSERT INTO knowledge.artifacts
-          (id, org_id, user_id, kb_slug, path,
-           provenance_type, assertion_mode,
-           synthesis_depth, confidence,
-           belief_time_start, belief_time_end,
-           content_type, extra, content_hash,
-           created_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-        """,
-        artifact_id,
-        org_id,
-        user_id,
-        kb_slug,
-        path,
-        provenance_type,
-        assertion_mode,
-        synthesis_depth,
-        confidence,
-        belief_time_start,
-        belief_time_end,
-        content_type,
-        extra_json,
-        content_hash,
-        now,
-    )
-    return artifact_id
+    try:
+        await pool.execute(
+            """
+            INSERT INTO knowledge.artifacts
+              (id, org_id, user_id, kb_slug, path,
+               provenance_type, assertion_mode,
+               synthesis_depth, confidence,
+               belief_time_start, belief_time_end,
+               content_type, extra, content_hash,
+               created_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+            """,
+            artifact_id,
+            org_id,
+            user_id,
+            kb_slug,
+            path,
+            provenance_type,
+            assertion_mode,
+            synthesis_depth,
+            confidence,
+            belief_time_start,
+            belief_time_end,
+            content_type,
+            extra_json,
+            content_hash,
+            now,
+        )
+        return artifact_id
+    except asyncpg.UniqueViolationError as exc:
+        # Only swallow the violation that originates from our active-path
+        # constraint. Any other unique violation (e.g. id collision —
+        # vanishingly unlikely but possible) is a real bug; re-raise it.
+        constraint_name = getattr(exc, "constraint_name", "") or ""
+        if _ACTIVE_ARTIFACT_UNIQUE_INDEX not in constraint_name:
+            raise
+
+        winning_artifact_id = await pool.fetchval(
+            """
+            SELECT id FROM knowledge.artifacts
+            WHERE org_id = $1 AND kb_slug = $2 AND path = $3
+              AND belief_time_end = $4
+            """,
+            org_id,
+            kb_slug,
+            path,
+            _SENTINEL,
+        )
+        # Defensive: if the winning row vanished between INSERT and SELECT
+        # (e.g. a concurrent soft_delete), surface a clear error rather
+        # than returning None and letting the caller hit a downstream
+        # NULL violation.
+        if winning_artifact_id is None:
+            logger.error(
+                "artifact_create_race_lost_no_winner",
+                org_id=org_id,
+                kb_slug=kb_slug,
+                path=path,
+                my_attempt_id=artifact_id,
+            )
+            raise
+
+        logger.error(
+            "artifact_create_race_lost",
+            org_id=org_id,
+            kb_slug=kb_slug,
+            path=path,
+            winning_artifact_id=str(winning_artifact_id),
+            my_attempt_id=artifact_id,
+        )
+        return str(winning_artifact_id)
 
 
 def _personal_slug(user_id: str) -> str:
