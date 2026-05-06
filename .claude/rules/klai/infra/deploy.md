@@ -100,32 +100,88 @@ who can fix the finding:
 
 | Tier | Workflows | Behaviour |
 |---|---|---|
-| **STRICT** | 10 internal `ghcr.io/getklai/*` builds (portal-api, caddy, whisper-server, knowledge-ingest, klai-knowledge-mcp, retrieval-api, klai-connector, klai-mailer, docs, scribe-api) | `exit-code: '1'` blocks the build on any unfixed HIGH/CRITICAL not listed in the service's `.trivyignore.yaml`. `limit-severities-for-sarif: 'true'` neutralises the trivy-action 0.35.0 quirk that otherwise unsets `TRIVY_SEVERITY` for SARIF format. |
-| **WARN** | `scan-pinned-images.yml` (external compose pins) | `exit-code: '0'` — SARIF only. We can't fix upstream, Renovate handles upgrade pressure on Monday-morning cadence. |
+| **STRICT** | 10 internal `ghcr.io/getklai/*` builds (portal-api, caddy, whisper-server, knowledge-ingest, klai-knowledge-mcp, retrieval-api, klai-connector, klai-mailer, docs, scribe-api) | `--exit-code 1` blocks the build on any unfixed HIGH/CRITICAL not listed in the service's `.trivyignore.yaml`. |
+| **WARN** | `scan-pinned-images.yml` (external compose pins) | `--exit-code 0` — SARIF only. We can't fix upstream, Renovate handles upgrade pressure on Monday-morning cadence. |
 | **SKIP** | Locally-built tags (`*-local-YYMMDD-HHMM` per `infra/container-hygiene.md`) | Excluded from the `scan-pinned-images.yml` enumerate matrix — they don't exist on any registry so a manifest-fetch always 404s. |
 
-**Severity policy lives in one place: `.trivy.yaml` at repo root.** Every CI Trivy invocation references it via `trivy-config: .trivy.yaml`. No workflow inlines `severity` / `ignore-unfixed` / `scanners`.
+**Severity policy lives in `.trivy.yaml` at repo root** as the canonical reference. trivy-action 0.35.0/0.36.0 has a known limitation that keeps it from being the only source for `severity` / `ignore-unfixed` / `scanners` — those flags must also appear inline as CLI args. See "trivy-action 0.35.0 SARIF/severity-filter bug" below.
 
-**Vulnerability-scanner only.** `.trivy.yaml` sets `scan.scanners: [vuln]`. Built images contain third-party Python/JS libraries that embed public API tokens (e.g. yt-dlp's per-streaming-service extractors hardcode NBC, Vice, ESPN, Shahid tokens). Trivy's secret scanner classifies those as CRITICAL `aws-access-key-id` / HIGH `jwt-token` — false positives, every time. Source-level secret scanning is covered separately by Semgrep (`SAST — Semgrep` workflow) and Gitleaks.
+**Vulnerability-scanner only.** Built images contain third-party Python/JS libraries that embed public API tokens (e.g. yt-dlp's per-streaming-service extractors hardcode NBC, Vice, ESPN, Shahid tokens). Trivy's secret scanner classifies those as CRITICAL `aws-access-key-id` / HIGH `jwt-token` — false positives, every time. Source-level secret scanning is covered separately by Semgrep (`SAST — Semgrep` workflow) and Gitleaks.
 
 **Documented exemptions live in per-service `.trivyignore.yaml`.** Each entry MUST carry `id`, ≥40-char `statement` (rationale, no boilerplate like "low priority"), and `expired_at` (YYYY-MM-DD within 12 months). Mechanically enforced at commit time via `.githooks/pre-commit` and at PR time via `.github/workflows/validate-trivyignore.yml`. Implementation: `scripts/validate-trivyignore.sh` + `scripts/_validate_trivyignore.py`.
 
 **Recipes** — adding an exemption, rotating expired entries, running the smoke-test, reading the Security tab: see `docs/runbooks/trivy-policy.md`.
 
-**Adding a new internal-image workflow.** Required Trivy step:
+### Required scan-job pattern (CRIT)
+
+Every internal-image scan job MUST follow this skeleton:
+
 ```yaml
-- name: Run Trivy vulnerability scanner
-  uses: aquasecurity/trivy-action@0.35.0
-  with:
-    image-ref: ghcr.io/getklai/<svc>:${{ github.sha }}
-    trivy-config: .trivy.yaml
-    trivyignores: <service-relative-path>/.trivyignore.yaml  # only if file exists
-    format: 'sarif'
-    output: 'trivy-results.sarif'
-    exit-code: '1'
-    limit-severities-for-sarif: 'true'
+scan:
+  needs: build-push
+  permissions:
+    security-events: write
+    packages: read
+  steps:
+    - uses: actions/checkout@v6     # REQ — see "scan-job checkout" below
+    - uses: docker/login-action@v4  # for ghcr.io pull
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    - uses: aquasecurity/setup-trivy@e6c2c5e321ed9123bda567646e2f96565e34abe1  # v0.2.5
+      with:
+        version: v0.69.3
+        cache: true
+    - run: |
+        trivy image \
+          --format sarif \
+          --output trivy-results.sarif \
+          --severity CRITICAL,HIGH \
+          --ignore-unfixed \
+          --scanners vuln \
+          --exit-code 1 \
+          --ignorefile <service>/.trivyignore.yaml \   # only if file exists
+          ghcr.io/getklai/<svc>:${{ github.sha }}
+    - uses: github/codeql-action/upload-sarif@v4
+      if: always()
+      with:
+        sarif_file: trivy-results.sarif
 ```
-Plus the `Upload Trivy SARIF` step (`github/codeql-action/upload-sarif@v4`) and `permissions: security-events: write` on the scan job. The scan job MUST `needs: build-push` so it runs against the freshly built image.
+
+For workflows with a `deploy` job: `deploy.needs` MUST be `[build-push, scan]` so a failed scan blocks the deploy step. Without that, the gate fails CI status but still rolls out the image.
+
+### trivy-action 0.35.0 SARIF/severity-filter bug (HIGH)
+
+trivy-action 0.35.0 (and 0.36.0) honours the `severity` input for the SARIF body but NOT for the exit-code when `format: sarif`. A MEDIUM/LOW finding triggers `exit-code 1` even when the workflow asks for CRITICAL+HIGH gating. `limit-severities-for-sarif: true` filters the SARIF body, not the exit-code path.
+
+**Why:** the wrapper's entrypoint shell-script unsets `TRIVY_SEVERITY` before calling Trivy CLI under specific format conditions, then post-processes the SARIF instead of letting Trivy filter natively.
+
+**Workaround:** klai now invokes Trivy CLI directly via `aquasecurity/setup-trivy@v0.2.5` + `run: trivy image --severity CRITICAL,HIGH ...`. CLI honours `--severity` for both detection AND exit-code. Drop the workaround when trivy-action lands proper precedence (track upstream).
+
+**See:** `docs/retros/2026-05-06-trivy-spec-iteration.md` § Lesson 1.
+
+### Scan-job checkout requirement (CRIT)
+
+`trivy-config:` and `trivyignores:` paths resolve from `$GITHUB_WORKSPACE`. Without `actions/checkout@v6` as the first scan-job step, those paths point at an empty workspace and Trivy logs `cannot find ignorefile` (and silently uses defaults for trivy-config). Pre-PR #3 of SPEC-CI-TRIVY-POLICY-001, none of klai's 11 scan jobs had checkout — for ~9 months the documented `severity` filter appeared not to work because the config-file simply wasn't on disk.
+
+### Trivy DB lag false-positives (MED)
+
+Trivy's vulnerability database sometimes lags upstream advisory databases (npm, PyPI, Debian security tracker). A package can be at the upstream-confirmed fix-version and still flagged by Trivy until the next DB refresh. Pattern observed for `picomatch 4.0.4` (NVD says 4.0.4 IS the fix for CVE-2026-33671 — Trivy still flags it). When you bump a dep to the announced fix-version and Trivy still complains, cross-check NVD before assuming the bump didn't take.
+
+### Diagnose-first when a gate behaves unexpectedly (HIGH)
+
+When a scan job fails and the SARIF / Code-Scanning Alerts API don't show enough findings to explain the exit-code, add a temporary `--format table` step BEFORE the gate-step. `--format sarif` writes to a file with no stdout summary; `--format table` prints `Total: N (HIGH: X, CRITICAL: Y)` plus a per-package breakdown. This is the difference between "blind fix-and-pray" and "concrete debugging".
+
+```yaml
+- name: Diagnose — table output (no gate)
+  run: |
+    trivy image --format table --severity CRITICAL,HIGH --ignore-unfixed --scanners vuln --exit-code 0 <image>
+```
+
+### Adding a new internal-image workflow
+
+Copy the scan-job skeleton above. Default `--ignorefile` line is omitted unless the service has a `.trivyignore.yaml`. Verify on first run that the scan job appears in `gh run list --workflow <new>.yml` results — workflows without `pull_request:` triggers will only run after merge to main.
 
 ## No manual server edits (CRIT)
 Never edit compose/env on server — repo is source of truth. CI overwrites on next push.

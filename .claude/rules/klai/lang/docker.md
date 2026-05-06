@@ -80,3 +80,15 @@ docker compose up -d <service>
 ```
 
 **Prevention:** Any time you add `USER app` (uid 1000) to a Dockerfile that mounts a volume, immediately chown the host volume dir before deploy. Validate with `docker exec <ctr> touch /path/to/volume/test` after recreate.
+
+## `apt purge --auto-remove` does not remove apt-hard-deps (HIGH)
+
+`apt-get purge -y --auto-remove gnupg gnupg2` removes most of the gnupg family (`gpg`, `gpg-agent`, `gpgsm`, `dirmngr`, `gnupg-utils`, `gnupg-l10n`, `gpg-wks-server`, `gpg-wks-client`, `keyboxd`) — but NOT `gpgv`. `gpgv` is a hard dependency of `apt` itself (apt uses it for repo signature verification at install time), so `--auto-remove` cannot touch it.
+
+**Why:** debian/ubuntu mark certain packages as "essential" or hard-dep of essential packages. `--auto-remove` respects that boundary by design — removing those would break the package manager.
+
+**Workaround for runtime-only containers:** `apt-get purge -y --allow-remove-essential gpgv`. After this, the image cannot run `apt install` anymore. Acceptable only if the runtime container never invokes apt (most uvicorn/inference containers fit). Test with `docker run --rm <image> sh -c 'apt-get update'` — should fail.
+
+**For build-stage Dockerfiles:** keep gpgv. Vulnerable code-path requires a malicious keybox file, which has no path in a deployed image that doesn't run apt. Document via `.trivyignore.yaml` per `infra/deploy.md` § Trivy scanning.
+
+**See:** `docs/retros/2026-05-06-trivy-spec-iteration.md` § Lesson 3.
