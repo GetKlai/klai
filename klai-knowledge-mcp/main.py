@@ -286,26 +286,24 @@ def _log_identity_deny(claimed: _ClaimedIdentity, result: VerifyResult) -> None:
 # Both paths converge on a frozen ``_VerifiedIdentity``. Tool bodies stay
 # untouched — they receive the same shape regardless of which pad ran.
 
-# Access-token prefix for the dispatcher branch — matches
-# ``app.services.mcp_oauth.ACCESS_TOKEN_PREFIX``. Refresh-tokens
-# (``klai_mcp_rt_``) MUST NOT be used as bearer credentials on knowledge-mcp
-# (they only work on /oauth/token in portal).
-_OAUTH_ACCESS_PREFIX = "klai_mcp_"
-_OAUTH_REFRESH_PREFIX = "klai_mcp_rt_"
+# Dispatcher primitives live in dispatcher.py so unit-tests can exercise
+# them without pulling in FastMCP / klai-libs heavy imports. The prefixes
+# below are part of the cross-service contract with
+# ``app.services.mcp_oauth.ACCESS_TOKEN_PREFIX`` in portal-api.
+from dispatcher import (  # noqa: E402 — module-level after env validation by design
+    OAUTH_ACCESS_PREFIX as _OAUTH_ACCESS_PREFIX,
+)
+from dispatcher import (  # noqa: E402
+    OAUTH_REFRESH_PREFIX as _OAUTH_REFRESH_PREFIX,
+)
+from dispatcher import (  # noqa: E402
+    looks_like_oauth_access_token as _looks_like_oauth_access_token,
+)
 
-
-def _looks_like_oauth_access_token(authorization: str) -> bool:
-    """True iff the Authorization header carries a klai_mcp_<...> access token.
-
-    Refresh-token prefix (``klai_mcp_rt_``) returns False — refresh tokens
-    are never valid bearer credentials on knowledge-mcp.
-    """
-    if not authorization.lower().startswith("bearer "):
-        return False
-    token = authorization.split(" ", 1)[1].strip()
-    if token.startswith(_OAUTH_REFRESH_PREFIX):
-        return False
-    return token.startswith(_OAUTH_ACCESS_PREFIX)
+# Quiet "imported but unused" — these are re-exported as module-level
+# attributes for any test or downstream code that references them via
+# the ``_-prefixed`` aliases.
+_ = (_OAUTH_ACCESS_PREFIX, _OAUTH_REFRESH_PREFIX, _looks_like_oauth_access_token)
 
 
 class _IdentificationFailed(RuntimeError):
