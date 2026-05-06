@@ -4,7 +4,7 @@ Tests for SPEC-TAXONOMY-V2-001-FOLLOWUP-001 Phase B fixes.
 B1: UMAP pre-reduction for HDBSCAN (AC-4, AC-5)
 B2: Description-generation restored in v2 bootstrap (AC-6, AC-7)
 B4: Cross-cluster aware batched naming (_suggest_cluster_names_batched)
-B5: cluster_persistence_mean replaces dbcv_score (field rename)
+B5: cluster_probability_mean replaces dbcv_score (field rename)
 """
 
 from __future__ import annotations
@@ -759,19 +759,19 @@ class TestBatchedNaming:
 
 
 # ---------------------------------------------------------------------------
-# B5 — cluster_persistence_mean field rename (was B3/dbcv_score)
+# B5 — cluster_probability_mean field rename (was B3/dbcv_score)
 # ---------------------------------------------------------------------------
 
 
 class TestClusterPersistenceMeanFieldRename:
-    """B5: cluster_persistence_mean replaces dbcv_score in cluster_documents_hdbscan and bootstrap log.
+    """B5: cluster_probability_mean replaces dbcv_score in cluster_documents_hdbscan and bootstrap log.
 
     dbcv_score assumed relative_validity_; sklearn 1.8 does not expose it (confirmed
     via hasattr() returning False in production). cluster_persistence_ is always available.
     """
 
-    def test_cluster_hdbscan_returns_cluster_persistence_mean_not_dbcv_or_silhouette(self):
-        """cluster_documents_hdbscan metrics dict has 'cluster_persistence_mean'.
+    def test_cluster_hdbscan_returns_cluster_probability_mean_not_dbcv_or_silhouette(self):
+        """cluster_documents_hdbscan metrics dict has 'cluster_probability_mean'.
 
         Must NOT contain 'dbcv_score' or 'silhouette_score'.
         SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B5.
@@ -797,23 +797,23 @@ class TestClusterPersistenceMeanFieldRename:
             embeddings, min_cluster_size=5, pre_reduce=False
         )
 
-        assert "cluster_persistence_mean" in metrics, (
-            "cluster_persistence_mean must be present in metrics dict (B5)"
+        assert "cluster_probability_mean" in metrics, (
+            "cluster_probability_mean must be present in metrics dict (B5)"
         )
         assert "dbcv_score" not in metrics, (
-            "dbcv_score must NOT be present — B5 replaces it with cluster_persistence_mean"
+            "dbcv_score must NOT be present — B5 replaces it with cluster_probability_mean"
         )
         assert "silhouette_score" not in metrics, (
             "silhouette_score must NOT be present — renamed/removed in B3/B5"
         )
         # Value must be float or None
-        assert metrics["cluster_persistence_mean"] is None or isinstance(
-            metrics["cluster_persistence_mean"], float
+        assert metrics["cluster_probability_mean"] is None or isinstance(
+            metrics["cluster_probability_mean"], float
         )
 
     @pytest.mark.asyncio
-    async def test_completion_log_includes_cluster_persistence_mean_field(self):
-        """bootstrap_proposals_complete log event has 'cluster_persistence_mean'.
+    async def test_completion_log_includes_cluster_probability_mean_field(self):
+        """bootstrap_proposals_complete log event has 'cluster_probability_mean'.
 
         Must NOT contain 'dbcv_score' or 'silhouette_score'.
         SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B5 (field propagation to logs).
@@ -891,8 +891,8 @@ class TestClusterPersistenceMeanFieldRename:
         )
 
         event = complete_events[0]
-        assert "cluster_persistence_mean" in event, (
-            "bootstrap_proposals_complete log must contain 'cluster_persistence_mean' field (B5)"
+        assert "cluster_probability_mean" in event, (
+            "bootstrap_proposals_complete log must contain 'cluster_probability_mean' field (B5)"
         )
         assert "dbcv_score" not in event, (
             "bootstrap_proposals_complete must NOT contain 'dbcv_score' (B5 replaces it)"
@@ -901,6 +901,6 @@ class TestClusterPersistenceMeanFieldRename:
             "bootstrap_proposals_complete must NOT contain 'silhouette_score'"
         )
         # Value must be float or None
-        assert event["cluster_persistence_mean"] is None or isinstance(
-            event["cluster_persistence_mean"], float
+        assert event["cluster_probability_mean"] is None or isinstance(
+            event["cluster_probability_mean"], float
         )

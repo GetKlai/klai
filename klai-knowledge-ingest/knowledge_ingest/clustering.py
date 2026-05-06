@@ -240,7 +240,7 @@ def cluster_documents_hdbscan(
 
     SPEC-TAXONOMY-V2-001 AC-1, AC-16.
     SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B1: UMAP pre-reduction (pre_reduce=True by default).
-    SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B5: cluster_persistence_mean replaces dbcv_score.
+    SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B5: cluster_probability_mean replaces dbcv_score.
         sklearn 1.8 HDBSCAN does NOT expose relative_validity_ (confirmed in production via
         hasattr() returning False). Use cluster_persistence_ (always available) instead.
 
@@ -253,8 +253,8 @@ def cluster_documents_hdbscan(
 
     Returns:
         labels: (n_docs,) int array; -1 = outlier/noise.
-        metrics: dict with keys clusters_found, outlier_count, cluster_persistence_mean.
-                 cluster_persistence_mean is None when 0 clusters found or attribute unavailable.
+        metrics: dict with keys clusters_found, outlier_count, cluster_probability_mean.
+                 cluster_probability_mean is None when 0 clusters found or attribute unavailable.
     """
     import numpy as np
 
@@ -267,7 +267,7 @@ def cluster_documents_hdbscan(
         return np.full(n, -1, dtype=np.int32), {
             "clusters_found": 0,
             "outlier_count": n,
-            "cluster_persistence_mean": None,
+            "cluster_probability_mean": None,
         }
 
     if pre_reduce:
@@ -290,23 +290,28 @@ def cluster_documents_hdbscan(
     clusters_found = len(cluster_ids)
     outlier_count = int((labels == -1).sum())
 
-    # Cluster persistence — sklearn HDBSCAN's native per-cluster quality metric.
-    # Mean across clusters is a meaningful quality summary.
-    # (replaces dbcv_score which assumed relative_validity_; sklearn 1.8 doesn't
-    #  expose it — confirmed via hasattr() returning False in production.)
-    cluster_persistence_mean: float | None = None
-    if clusters_found >= 1 and hasattr(hdb, "cluster_persistence_"):
+    # Mean cluster-membership probability — sklearn HDBSCAN's actually-available
+    # quality proxy. Higher = more confident clustering (per-point probability of
+    # belonging to its assigned cluster, averaged over non-outlier points).
+    #
+    # Note: sklearn 1.8's HDBSCAN port does NOT expose either `relative_validity_`
+    # (DBCV, B3 attempt) or `cluster_persistence_` (B5 attempt). Both attributes
+    # exist only in the standalone `hdbscan` package. We use `probabilities_`
+    # which sklearn does populate. SPEC-TAXONOMY-V2-001-FOLLOWUP-001 cleanup.
+    cluster_probability_mean: float | None = None
+    if clusters_found >= 1 and hasattr(hdb, "probabilities_"):
         try:
-            persistence = hdb.cluster_persistence_
-            if persistence is not None and len(persistence) > 0:
-                cluster_persistence_mean = float(persistence.mean())
+            probs = hdb.probabilities_
+            mask = labels >= 0
+            if probs is not None and mask.sum() > 0:
+                cluster_probability_mean = float(probs[mask].mean())
         except Exception:
-            cluster_persistence_mean = None
+            cluster_probability_mean = None
 
     return labels, {
         "clusters_found": clusters_found,
         "outlier_count": outlier_count,
-        "cluster_persistence_mean": cluster_persistence_mean,
+        "cluster_probability_mean": cluster_probability_mean,
     }
 
 
