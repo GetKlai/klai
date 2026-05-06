@@ -1,0 +1,652 @@
+[
+  {
+    "query": "What is the company refund policy?",
+    "language": "en",
+    "intent_id": "refund_policy",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-refund-001", "chunk-refund-002"],
+    "expected_answer": "The company offers a 30-day refund policy for all products.",
+    "category": "policy",
+    "difficulty": "easy"
+  },
+  {
+    "query": "How do I set up two-factor authentication?",
+    "language": "en",
+    "intent_id": "2fa_setup",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-2fa-001"],
+    "expected_answer": "Two-factor authentication can be enabled from Settings > Security > Enable 2FA.",
+    "category": "how-to",
+    "difficulty": "easy"
+  },
+  {
+    "query": "What are the data retention requirements for EU customers?",
+    "language": "en",
+    "intent_id": "gdpr_retention",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-gdpr-001", "chunk-gdpr-002", "chunk-retention-001"],
+    "expected_answer": "EU customer data must be retained for a minimum of 5 years per GDPR requirements, stored in EU-based data centers.",
+    "category": "compliance",
+    "difficulty": "medium"
+  },
+  {
+    "query": "How do I configure SSO with Zitadel?",
+    "language": "en",
+    "intent_id": "sso_zitadel",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-sso-001", "chunk-sso-002"],
+    "expected_answer": "SSO with Zitadel requires creating an OIDC application in the Zitadel console and configuring the redirect URIs.",
+    "category": "how-to",
+    "difficulty": "hard"
+  },
+  {
+    "query": "How can I reset my password?",
+    "language": "en",
+    "intent_id": "password_reset",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-pwd-001"],
+    "expected_answer": "Visit the login page and click 'Forgot password' to receive a reset link by email.",
+    "category": "how-to",
+    "difficulty": "easy"
+  },
+  {
+    "query": "What is the vacation policy for new employees?",
+    "language": "en",
+    "intent_id": "vacation_policy",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-vacation-001"],
+    "expected_answer": "New employees accrue 25 vacation days per year from their start date.",
+    "category": "policy",
+    "difficulty": "easy"
+  },
+  {
+    "query": "Where can I find the latest invoice for my organization?",
+    "language": "en",
+    "intent_id": "billing_invoice",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-billing-001"],
+    "expected_answer": "Invoices are available under Settings > Billing > Invoices.",
+    "category": "how-to",
+    "difficulty": "easy"
+  },
+  {
+    "query": "How do I integrate the API with our CRM system?",
+    "language": "en",
+    "intent_id": "api_integration",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-api-001", "chunk-api-002"],
+    "expected_answer": "Generate an API key from Settings > Developer and use it in the Authorization header of your CRM webhook configuration.",
+    "category": "how-to",
+    "difficulty": "medium"
+  },
+  {
+    "query": "What security audits has the platform completed?",
+    "language": "en",
+    "intent_id": "security_audits",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-sec-001"],
+    "expected_answer": "The platform completed an ISO 27001 certification and an annual penetration test by a third-party firm.",
+    "category": "compliance",
+    "difficulty": "medium"
+  },
+  {
+    "query": "How long does it take to onboard a new tenant?",
+    "language": "en",
+    "intent_id": "tenant_onboarding",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-onboard-001"],
+    "expected_answer": "Tenant onboarding typically completes within 5 minutes after sign-up.",
+    "category": "how-to",
+    "difficulty": "easy"
+  },
+  {
+    "query": "Wat is het terugbetalingsbeleid van het bedrijf?",
+    "language": "nl",
+    "intent_id": "refund_policy",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-refund-001", "chunk-refund-002"],
+    "expected_answer": "Het bedrijf hanteert een terugbetalingsbeleid van 30 dagen voor alle producten.",
+    "category": "policy",
+    "difficulty": "easy"
+  },
+  {
+    "query": "Hoe stel ik tweefactorauthenticatie in?",
+    "language": "nl",
+    "intent_id": "2fa_setup",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-2fa-001"],
+    "expected_answer": "Tweefactorauthenticatie kan worden ingeschakeld via Instellingen > Beveiliging > 2FA inschakelen.",
+    "category": "how-to",
+    "difficulty": "easy"
+  },
+  {
+    "query": "Wat zijn de bewaartermijnen voor gegevens van EU-klanten?",
+    "language": "nl",
+    "intent_id": "gdpr_retention",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-gdpr-001", "chunk-gdpr-002", "chunk-retention-001"],
+    "expected_answer": "Gegevens van EU-klanten moeten conform AVG minimaal 5 jaar worden bewaard, in datacenters binnen de EU.",
+    "category": "compliance",
+    "difficulty": "medium"
+  },
+  {
+    "query": "Hoe configureer ik SSO met Zitadel?",
+    "language": "nl",
+    "intent_id": "sso_zitadel",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-sso-001", "chunk-sso-002"],
+    "expected_answer": "SSO met Zitadel vereist een OIDC-applicatie aanmaken in de Zitadel-console en de redirect-URI's configureren.",
+    "category": "how-to",
+    "difficulty": "hard"
+  },
+  {
+    "query": "Hoe kan ik mijn wachtwoord resetten?",
+    "language": "nl",
+    "intent_id": "password_reset",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-pwd-001"],
+    "expected_answer": "Ga naar de inlogpagina en klik op 'Wachtwoord vergeten' om een reset-link per e-mail te ontvangen.",
+    "category": "how-to",
+    "difficulty": "easy"
+  },
+  {
+    "query": "Wat is het vakantiebeleid voor nieuwe medewerkers?",
+    "language": "nl",
+    "intent_id": "vacation_policy",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-vacation-001"],
+    "expected_answer": "Nieuwe medewerkers bouwen 25 vakantiedagen per jaar op vanaf hun startdatum.",
+    "category": "policy",
+    "difficulty": "easy"
+  },
+  {
+    "query": "Waar vind ik de laatste factuur voor mijn organisatie?",
+    "language": "nl",
+    "intent_id": "billing_invoice",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-billing-001"],
+    "expected_answer": "Facturen zijn beschikbaar onder Instellingen > Facturatie > Facturen.",
+    "category": "how-to",
+    "difficulty": "easy"
+  },
+  {
+    "query": "Hoe integreer ik de API met ons CRM-systeem?",
+    "language": "nl",
+    "intent_id": "api_integration",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-api-001", "chunk-api-002"],
+    "expected_answer": "Genereer een API-sleutel via Instellingen > Developer en gebruik die in de Authorization-header van je CRM-webhook configuratie.",
+    "category": "how-to",
+    "difficulty": "medium"
+  },
+  {
+    "query": "Welke security-audits heeft het platform afgerond?",
+    "language": "nl",
+    "intent_id": "security_audits",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-sec-001"],
+    "expected_answer": "Het platform heeft een ISO 27001-certificering behaald en doorloopt jaarlijks een penetratietest door een externe partij.",
+    "category": "compliance",
+    "difficulty": "medium"
+  },
+  {
+    "query": "Hoe lang duurt het om een nieuwe tenant te onboarden?",
+    "language": "nl",
+    "intent_id": "tenant_onboarding",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-onboard-001"],
+    "expected_answer": "Tenant-onboarding wordt normaal binnen 5 minuten na aanmelding afgerond.",
+    "category": "how-to",
+    "difficulty": "easy"
+  },
+  {
+    "query": "Wie is verantwoordelijk voor de telefooncentrale-integratie bij Voys?",
+    "language": "nl",
+    "intent_id": "voys_phone_integration",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-voys-phone-001"],
+    "expected_answer": "Het integratie-team is verantwoordelijk voor de telefooncentrale-integratie bij Voys.",
+    "category": "company",
+    "difficulty": "medium"
+  },
+  {
+    "query": "Wat ist die Rückerstattungsrichtlinie des Unternehmens?",
+    "language": "de",
+    "intent_id": "refund_policy",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-refund-001", "chunk-refund-002"],
+    "expected_answer": "Das Unternehmen bietet eine 30-tägige Rückerstattungsrichtlinie für alle Produkte.",
+    "category": "policy",
+    "difficulty": "easy"
+  },
+  {
+    "query": "Wie richte ich die Zwei-Faktor-Authentifizierung ein?",
+    "language": "de",
+    "intent_id": "2fa_setup",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-2fa-001"],
+    "expected_answer": "Die Zwei-Faktor-Authentifizierung kann unter Einstellungen > Sicherheit > 2FA aktivieren eingeschaltet werden.",
+    "category": "how-to",
+    "difficulty": "easy"
+  },
+  {
+    "query": "Welche Datenaufbewahrungspflichten gelten für EU-Kunden?",
+    "language": "de",
+    "intent_id": "gdpr_retention",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-gdpr-001", "chunk-gdpr-002", "chunk-retention-001"],
+    "expected_answer": "EU-Kundendaten müssen gemäß DSGVO mindestens 5 Jahre lang in EU-Rechenzentren aufbewahrt werden.",
+    "category": "compliance",
+    "difficulty": "medium"
+  },
+  {
+    "query": "Wie konfiguriere ich SSO mit Zitadel?",
+    "language": "de",
+    "intent_id": "sso_zitadel",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-sso-001", "chunk-sso-002"],
+    "expected_answer": "SSO mit Zitadel erfordert das Erstellen einer OIDC-Anwendung in der Zitadel-Konsole und die Konfiguration der Redirect-URIs.",
+    "category": "how-to",
+    "difficulty": "hard"
+  },
+  {
+    "query": "Wie kann ich mein Passwort zurücksetzen?",
+    "language": "de",
+    "intent_id": "password_reset",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-pwd-001"],
+    "expected_answer": "Besuchen Sie die Anmeldeseite und klicken Sie auf 'Passwort vergessen', um einen Reset-Link per E-Mail zu erhalten.",
+    "category": "how-to",
+    "difficulty": "easy"
+  },
+  {
+    "query": "Welche Urlaubsregelung gilt für neue Mitarbeiter?",
+    "language": "de",
+    "intent_id": "vacation_policy",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-vacation-001"],
+    "expected_answer": "Neue Mitarbeiter erhalten ab ihrem Eintrittsdatum 25 Urlaubstage pro Jahr.",
+    "category": "policy",
+    "difficulty": "easy"
+  },
+  {
+    "query": "Wo finde ich die letzte Rechnung für meine Organisation?",
+    "language": "de",
+    "intent_id": "billing_invoice",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-billing-001"],
+    "expected_answer": "Rechnungen sind unter Einstellungen > Abrechnung > Rechnungen verfügbar.",
+    "category": "how-to",
+    "difficulty": "easy"
+  },
+  {
+    "query": "Wie integriere ich die API mit unserem CRM-System?",
+    "language": "de",
+    "intent_id": "api_integration",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-api-001", "chunk-api-002"],
+    "expected_answer": "Erstellen Sie einen API-Schlüssel unter Einstellungen > Entwickler und verwenden Sie ihn im Authorization-Header Ihrer CRM-Webhook-Konfiguration.",
+    "category": "how-to",
+    "difficulty": "medium"
+  },
+  {
+    "query": "Welche Sicherheitsaudits wurden für die Plattform abgeschlossen?",
+    "language": "de",
+    "intent_id": "security_audits",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-sec-001"],
+    "expected_answer": "Die Plattform hat eine ISO-27001-Zertifizierung erhalten und wird jährlich von einer externen Firma auf Penetrationstests geprüft.",
+    "category": "compliance",
+    "difficulty": "medium"
+  },
+  {
+    "query": "Wie lange dauert das Onboarding eines neuen Mandanten?",
+    "language": "de",
+    "intent_id": "tenant_onboarding",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-onboard-001"],
+    "expected_answer": "Das Mandanten-Onboarding wird in der Regel innerhalb von 5 Minuten nach der Registrierung abgeschlossen.",
+    "category": "how-to",
+    "difficulty": "easy"
+  },
+  {
+    "query": "Welches Team kümmert sich um die Telefonanlagen-Integration bei Voys?",
+    "language": "de",
+    "intent_id": "voys_phone_integration",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-voys-phone-001"],
+    "expected_answer": "Das Integrationsteam ist für die Telefonanlagen-Integration bei Voys verantwortlich.",
+    "category": "company",
+    "difficulty": "medium"
+  },
+  {
+    "query": "Quelle est la politique de remboursement de l'entreprise?",
+    "language": "fr",
+    "intent_id": "refund_policy",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-refund-001", "chunk-refund-002"],
+    "expected_answer": "L'entreprise propose une politique de remboursement de 30 jours pour tous ses produits.",
+    "category": "policy",
+    "difficulty": "easy"
+  },
+  {
+    "query": "Comment configurer l'authentification à deux facteurs?",
+    "language": "fr",
+    "intent_id": "2fa_setup",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-2fa-001"],
+    "expected_answer": "L'authentification à deux facteurs peut être activée dans Paramètres > Sécurité > Activer 2FA.",
+    "category": "how-to",
+    "difficulty": "easy"
+  },
+  {
+    "query": "Quelles sont les exigences de conservation des données pour les clients de l'UE?",
+    "language": "fr",
+    "intent_id": "gdpr_retention",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-gdpr-001", "chunk-gdpr-002", "chunk-retention-001"],
+    "expected_answer": "Les données des clients de l'UE doivent être conservées au moins 5 ans conformément au RGPD, dans des centres de données situés dans l'UE.",
+    "category": "compliance",
+    "difficulty": "medium"
+  },
+  {
+    "query": "Comment configurer le SSO avec Zitadel?",
+    "language": "fr",
+    "intent_id": "sso_zitadel",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-sso-001", "chunk-sso-002"],
+    "expected_answer": "Le SSO avec Zitadel nécessite la création d'une application OIDC dans la console Zitadel et la configuration des URI de redirection.",
+    "category": "how-to",
+    "difficulty": "hard"
+  },
+  {
+    "query": "Comment puis-je réinitialiser mon mot de passe?",
+    "language": "fr",
+    "intent_id": "password_reset",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-pwd-001"],
+    "expected_answer": "Rendez-vous sur la page de connexion et cliquez sur 'Mot de passe oublié' pour recevoir un lien de réinitialisation par e-mail.",
+    "category": "how-to",
+    "difficulty": "easy"
+  },
+  {
+    "query": "Quelle est la politique de congés pour les nouveaux employés?",
+    "language": "fr",
+    "intent_id": "vacation_policy",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-vacation-001"],
+    "expected_answer": "Les nouveaux employés acquièrent 25 jours de congés par an à compter de leur date d'entrée.",
+    "category": "policy",
+    "difficulty": "easy"
+  },
+  {
+    "query": "Où puis-je trouver la dernière facture de mon organisation?",
+    "language": "fr",
+    "intent_id": "billing_invoice",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-billing-001"],
+    "expected_answer": "Les factures sont disponibles dans Paramètres > Facturation > Factures.",
+    "category": "how-to",
+    "difficulty": "easy"
+  },
+  {
+    "query": "Comment intégrer l'API avec notre système CRM?",
+    "language": "fr",
+    "intent_id": "api_integration",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-api-001", "chunk-api-002"],
+    "expected_answer": "Générez une clé API dans Paramètres > Développeur et utilisez-la dans l'en-tête Authorization de la configuration du webhook de votre CRM.",
+    "category": "how-to",
+    "difficulty": "medium"
+  },
+  {
+    "query": "Quels audits de sécurité la plateforme a-t-elle réalisés?",
+    "language": "fr",
+    "intent_id": "security_audits",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-sec-001"],
+    "expected_answer": "La plateforme a obtenu une certification ISO 27001 et fait l'objet d'un test d'intrusion annuel par un cabinet externe.",
+    "category": "compliance",
+    "difficulty": "medium"
+  },
+  {
+    "query": "Combien de temps prend l'intégration d'un nouveau locataire?",
+    "language": "fr",
+    "intent_id": "tenant_onboarding",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-onboard-001"],
+    "expected_answer": "L'onboarding d'un locataire est généralement terminé dans les 5 minutes suivant l'inscription.",
+    "category": "how-to",
+    "difficulty": "easy"
+  },
+  {
+    "query": "Quelle équipe gère l'intégration du système téléphonique chez Voys?",
+    "language": "fr",
+    "intent_id": "voys_phone_integration",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-voys-phone-001"],
+    "expected_answer": "L'équipe d'intégration est responsable de l'intégration du système téléphonique chez Voys.",
+    "category": "company",
+    "difficulty": "medium"
+  },
+  {
+    "query": "Qual é a política de reembolso da empresa?",
+    "language": "pt",
+    "intent_id": "refund_policy",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-refund-001", "chunk-refund-002"],
+    "expected_answer": "A empresa oferece uma política de reembolso de 30 dias para todos os produtos.",
+    "category": "policy",
+    "difficulty": "easy"
+  },
+  {
+    "query": "Como configuro a autenticação de dois fatores?",
+    "language": "pt",
+    "intent_id": "2fa_setup",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-2fa-001"],
+    "expected_answer": "A autenticação de dois fatores pode ser ativada em Configurações > Segurança > Ativar 2FA.",
+    "category": "how-to",
+    "difficulty": "easy"
+  },
+  {
+    "query": "Quais são os requisitos de retenção de dados para clientes da UE?",
+    "language": "pt",
+    "intent_id": "gdpr_retention",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-gdpr-001", "chunk-gdpr-002", "chunk-retention-001"],
+    "expected_answer": "Os dados dos clientes da UE devem ser mantidos por pelo menos 5 anos, conforme o RGPD, em data centers localizados na UE.",
+    "category": "compliance",
+    "difficulty": "medium"
+  },
+  {
+    "query": "Como configuro o SSO com o Zitadel?",
+    "language": "pt",
+    "intent_id": "sso_zitadel",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-sso-001", "chunk-sso-002"],
+    "expected_answer": "O SSO com o Zitadel requer a criação de uma aplicação OIDC no console do Zitadel e a configuração dos URIs de redirecionamento.",
+    "category": "how-to",
+    "difficulty": "hard"
+  },
+  {
+    "query": "Como posso redefinir minha senha?",
+    "language": "pt",
+    "intent_id": "password_reset",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-pwd-001"],
+    "expected_answer": "Acesse a página de login e clique em 'Esqueci minha senha' para receber um link de redefinição por e-mail.",
+    "category": "how-to",
+    "difficulty": "easy"
+  },
+  {
+    "query": "Qual é a política de férias para novos funcionários?",
+    "language": "pt",
+    "intent_id": "vacation_policy",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-vacation-001"],
+    "expected_answer": "Novos funcionários acumulam 25 dias de férias por ano a partir da data de admissão.",
+    "category": "policy",
+    "difficulty": "easy"
+  },
+  {
+    "query": "Onde encontro a última fatura da minha organização?",
+    "language": "pt",
+    "intent_id": "billing_invoice",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-billing-001"],
+    "expected_answer": "As faturas estão disponíveis em Configurações > Faturamento > Faturas.",
+    "category": "how-to",
+    "difficulty": "easy"
+  },
+  {
+    "query": "Como integro a API com o nosso sistema CRM?",
+    "language": "pt",
+    "intent_id": "api_integration",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-api-001", "chunk-api-002"],
+    "expected_answer": "Gere uma chave de API em Configurações > Desenvolvedor e utilize-a no cabeçalho Authorization da configuração do webhook do seu CRM.",
+    "category": "how-to",
+    "difficulty": "medium"
+  },
+  {
+    "query": "Que auditorias de segurança a plataforma concluiu?",
+    "language": "pt",
+    "intent_id": "security_audits",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-sec-001"],
+    "expected_answer": "A plataforma obteve a certificação ISO 27001 e passa anualmente por um teste de penetração realizado por uma empresa externa.",
+    "category": "compliance",
+    "difficulty": "medium"
+  },
+  {
+    "query": "Quanto tempo leva a integração de um novo inquilino?",
+    "language": "pt",
+    "intent_id": "tenant_onboarding",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-onboard-001"],
+    "expected_answer": "A integração de um inquilino normalmente é concluída em 5 minutos após o registro.",
+    "category": "how-to",
+    "difficulty": "easy"
+  },
+  {
+    "query": "Qual equipa é responsável pela integração do sistema telefónico na Voys?",
+    "language": "pt",
+    "intent_id": "voys_phone_integration",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-voys-phone-001"],
+    "expected_answer": "A equipa de integração é responsável pela integração do sistema telefónico na Voys.",
+    "category": "company",
+    "difficulty": "medium"
+  },
+  {
+    "query": "¿Cuál es la política de reembolso de la empresa?",
+    "language": "es",
+    "intent_id": "refund_policy",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-refund-001", "chunk-refund-002"],
+    "expected_answer": "La empresa ofrece una política de reembolso de 30 días para todos los productos.",
+    "category": "policy",
+    "difficulty": "easy"
+  },
+  {
+    "query": "¿Cómo configuro la autenticación de dos factores?",
+    "language": "es",
+    "intent_id": "2fa_setup",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-2fa-001"],
+    "expected_answer": "La autenticación de dos factores se puede activar desde Configuración > Seguridad > Activar 2FA.",
+    "category": "how-to",
+    "difficulty": "easy"
+  },
+  {
+    "query": "¿Cuáles son los requisitos de retención de datos para clientes de la UE?",
+    "language": "es",
+    "intent_id": "gdpr_retention",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-gdpr-001", "chunk-gdpr-002", "chunk-retention-001"],
+    "expected_answer": "Los datos de los clientes de la UE deben conservarse al menos 5 años conforme al RGPD, en centros de datos ubicados en la UE.",
+    "category": "compliance",
+    "difficulty": "medium"
+  },
+  {
+    "query": "¿Cómo configuro SSO con Zitadel?",
+    "language": "es",
+    "intent_id": "sso_zitadel",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-sso-001", "chunk-sso-002"],
+    "expected_answer": "El SSO con Zitadel requiere crear una aplicación OIDC en la consola de Zitadel y configurar las URI de redirección.",
+    "category": "how-to",
+    "difficulty": "hard"
+  },
+  {
+    "query": "¿Cómo puedo restablecer mi contraseña?",
+    "language": "es",
+    "intent_id": "password_reset",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-pwd-001"],
+    "expected_answer": "Visite la página de inicio de sesión y haga clic en 'Olvidé mi contraseña' para recibir un enlace de restablecimiento por correo electrónico.",
+    "category": "how-to",
+    "difficulty": "easy"
+  },
+  {
+    "query": "¿Cuál es la política de vacaciones para los empleados nuevos?",
+    "language": "es",
+    "intent_id": "vacation_policy",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-vacation-001"],
+    "expected_answer": "Los empleados nuevos acumulan 25 días de vacaciones al año desde su fecha de inicio.",
+    "category": "policy",
+    "difficulty": "easy"
+  },
+  {
+    "query": "¿Dónde puedo encontrar la última factura de mi organización?",
+    "language": "es",
+    "intent_id": "billing_invoice",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-billing-001"],
+    "expected_answer": "Las facturas están disponibles en Configuración > Facturación > Facturas.",
+    "category": "how-to",
+    "difficulty": "easy"
+  },
+  {
+    "query": "¿Cómo integro la API con nuestro sistema CRM?",
+    "language": "es",
+    "intent_id": "api_integration",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-api-001", "chunk-api-002"],
+    "expected_answer": "Genere una clave de API en Configuración > Desarrollador y úsela en el encabezado Authorization de la configuración del webhook de su CRM.",
+    "category": "how-to",
+    "difficulty": "medium"
+  },
+  {
+    "query": "¿Qué auditorías de seguridad ha completado la plataforma?",
+    "language": "es",
+    "intent_id": "security_audits",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-sec-001"],
+    "expected_answer": "La plataforma obtuvo la certificación ISO 27001 y se somete anualmente a una prueba de penetración por parte de una firma externa.",
+    "category": "compliance",
+    "difficulty": "medium"
+  },
+  {
+    "query": "¿Cuánto tarda la incorporación de un nuevo inquilino?",
+    "language": "es",
+    "intent_id": "tenant_onboarding",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-onboard-001"],
+    "expected_answer": "La incorporación de un inquilino normalmente se completa en 5 minutos después del registro.",
+    "category": "how-to",
+    "difficulty": "easy"
+  },
+  {
+    "query": "¿Qué equipo se encarga de la integración del sistema telefónico en Voys?",
+    "language": "es",
+    "intent_id": "voys_phone_integration",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-voys-phone-001"],
+    "expected_answer": "El equipo de integración es responsable de la integración del sistema telefónico en Voys.",
+    "category": "company",
+    "difficulty": "medium"
+  }
+]
