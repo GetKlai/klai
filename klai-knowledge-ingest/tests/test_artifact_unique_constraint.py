@@ -13,11 +13,15 @@ These tests exercise the error-handling branch directly via ``asyncpg``
 mocking. The migration itself is not exercised (it requires a real PG
 instance with the partial-unique-index applied) — manual smoke test on
 deploy is acceptance criterion 2 of the SPEC.
+
+SPEC-TI-003-FOLLOWUP-001: ``create_artifact`` now takes
+``asyncpg.Connection`` as its first argument. Tests pass a mock conn
+instead of patching pg_store.get_pool.
 """
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import asyncpg
 import pytest
@@ -25,33 +29,61 @@ import structlog.testing
 
 
 def _build_unique_violation(constraint_name: str) -> asyncpg.UniqueViolationError:
-    """Construct a UniqueViolationError carrying the given constraint name.
-
-    ``asyncpg.UniqueViolationError`` accepts an optional message and reads
-    constraint_name from the args — but the asyncpg public path sets it
-    via ``__init__`` of PostgresError. The simplest portable approach is
-    to construct the exception then attach the attribute directly.
-    """
+    """Construct a UniqueViolationError carrying the given constraint name."""
     err = asyncpg.UniqueViolationError("simulated unique violation")
-    # asyncpg stores constraint_name as a Python attribute on the
-    # exception instance (read by getattr in production code).
     err.constraint_name = constraint_name  # type: ignore[attr-defined]
     return err
+
+
+def _make_mock_conn() -> MagicMock:
+    conn = MagicMock()
+    conn.execute = AsyncMock(return_value=None)
+    conn.fetch = AsyncMock(return_value=[])
+    conn.fetchval = AsyncMock(return_value=None)
+    conn.fetchrow = AsyncMock(return_value=None)
+    return conn
 
 
 @pytest.mark.asyncio
 async def test_happy_path_returns_new_artifact_id():
     """No race: INSERT succeeds, function returns the freshly-generated id."""
-    mock_pool = MagicMock()
-    mock_pool.execute = AsyncMock(return_value=None)
-    mock_pool.fetchval = AsyncMock()  # not called on happy path
+    conn = _make_mock_conn()
 
-    with patch(
-        "knowledge_ingest.pg_store.get_pool", new_callable=AsyncMock, return_value=mock_pool
-    ):
-        from knowledge_ingest.pg_store import create_artifact
+    from knowledge_ingest.pg_store import create_artifact
 
-        artifact_id = await create_artifact(
+    artifact_id = await create_artifact(
+        conn,
+        org_id="org1",
+        kb_slug="kb1",
+        path="docs/page.md",
+        provenance_type="extracted",
+        assertion_mode="factual",
+        synthesis_depth=0,
+        confidence=None,
+        belief_time_start=0,
+        belief_time_end=253402300800,
+    )
+
+    assert isinstance(artifact_id, str)
+    assert len(artifact_id) == 36  # uuid4 hex with dashes
+    conn.execute.assert_awaited_once()
+    conn.fetchval.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_race_returns_winning_artifact_id_and_logs_error():
+    """UniqueViolation from uq_artifacts_active_path: SELECT winner, log, return."""
+    winning_id = "11111111-2222-3333-4444-555555555555"
+
+    conn = _make_mock_conn()
+    conn.execute = AsyncMock(side_effect=_build_unique_violation("uq_artifacts_active_path"))
+    conn.fetchval = AsyncMock(return_value=winning_id)
+
+    from knowledge_ingest.pg_store import create_artifact
+
+    with structlog.testing.capture_logs() as captured:
+        returned = await create_artifact(
+            conn,
             org_id="org1",
             kb_slug="kb1",
             path="docs/page.md",
@@ -62,39 +94,6 @@ async def test_happy_path_returns_new_artifact_id():
             belief_time_start=0,
             belief_time_end=253402300800,
         )
-
-    assert isinstance(artifact_id, str)
-    assert len(artifact_id) == 36  # uuid4 hex with dashes
-    mock_pool.execute.assert_awaited_once()
-    mock_pool.fetchval.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_race_returns_winning_artifact_id_and_logs_error():
-    """UniqueViolation from uq_artifacts_active_path: SELECT winner, log, return."""
-    winning_id = "11111111-2222-3333-4444-555555555555"
-
-    mock_pool = MagicMock()
-    mock_pool.execute = AsyncMock(side_effect=_build_unique_violation("uq_artifacts_active_path"))
-    mock_pool.fetchval = AsyncMock(return_value=winning_id)
-
-    with patch(
-        "knowledge_ingest.pg_store.get_pool", new_callable=AsyncMock, return_value=mock_pool
-    ):
-        from knowledge_ingest.pg_store import create_artifact
-
-        with structlog.testing.capture_logs() as captured:
-            returned = await create_artifact(
-                org_id="org1",
-                kb_slug="kb1",
-                path="docs/page.md",
-                provenance_type="extracted",
-                assertion_mode="factual",
-                synthesis_depth=0,
-                confidence=None,
-                belief_time_start=0,
-                belief_time_end=253402300800,
-            )
 
     assert returned == winning_id
 
@@ -116,99 +115,15 @@ async def test_race_returns_winning_artifact_id_and_logs_error():
 
 @pytest.mark.asyncio
 async def test_unrelated_unique_violation_reraises():
-    """A unique violation from a different constraint must NOT be swallowed.
+    """A unique violation from a different constraint must NOT be swallowed."""
+    conn = _make_mock_conn()
+    conn.execute = AsyncMock(side_effect=_build_unique_violation("artifacts_pkey"))
 
-    The race-handling logic is scoped to ``uq_artifacts_active_path``. If
-    a future schema change introduces another unique constraint (e.g. on
-    artifact_id PK), a violation there is a real bug, not a race — the
-    caller must see the exception.
-    """
-    mock_pool = MagicMock()
-    mock_pool.execute = AsyncMock(side_effect=_build_unique_violation("artifacts_pkey"))
-    mock_pool.fetchval = AsyncMock()
+    from knowledge_ingest.pg_store import create_artifact
 
-    with patch(
-        "knowledge_ingest.pg_store.get_pool", new_callable=AsyncMock, return_value=mock_pool
-    ):
-        from knowledge_ingest.pg_store import create_artifact
-
-        with pytest.raises(asyncpg.UniqueViolationError):
-            await create_artifact(
-                org_id="org1",
-                kb_slug="kb1",
-                path="docs/page.md",
-                provenance_type="extracted",
-                assertion_mode="factual",
-                synthesis_depth=0,
-                confidence=None,
-                belief_time_start=0,
-                belief_time_end=253402300800,
-            )
-
-    mock_pool.fetchval.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_race_with_vanished_winner_logs_and_reraises():
-    """Edge case: winning row was soft-deleted between INSERT and SELECT.
-
-    If fetchval returns None (no active row matches the path anymore), we
-    must NOT return None and let the caller hit a downstream NULL — log
-    the anomaly at error level and re-raise the original violation so the
-    caller knows something is off.
-    """
-    violation = _build_unique_violation("uq_artifacts_active_path")
-    mock_pool = MagicMock()
-    mock_pool.execute = AsyncMock(side_effect=violation)
-    mock_pool.fetchval = AsyncMock(return_value=None)  # winner vanished
-
-    with patch(
-        "knowledge_ingest.pg_store.get_pool", new_callable=AsyncMock, return_value=mock_pool
-    ):
-        from knowledge_ingest.pg_store import create_artifact
-
-        with structlog.testing.capture_logs() as captured:
-            with pytest.raises(asyncpg.UniqueViolationError):
-                await create_artifact(
-                    org_id="org1",
-                    kb_slug="kb1",
-                    path="docs/page.md",
-                    provenance_type="extracted",
-                    assertion_mode="factual",
-                    synthesis_depth=0,
-                    confidence=None,
-                    belief_time_start=0,
-                    belief_time_end=253402300800,
-                )
-
-    # The "no winner" anomaly must be loud
-    no_winner_events = [
-        e for e in captured if e.get("event") == "artifact_create_race_lost_no_winner"
-    ]
-    assert len(no_winner_events) == 1
-    assert no_winner_events[0]["log_level"] == "error"
-
-
-@pytest.mark.asyncio
-async def test_race_returns_string_not_uuid_object():
-    """asyncpg can return a UUID object; ingest_document expects a str.
-    Without explicit str() conversion the artifact_id propagates as a UUID
-    and downstream JSON serialisation in extra_payload silently fails.
-    """
-    import uuid as _uuid
-
-    winning_uuid = _uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
-
-    mock_pool = MagicMock()
-    mock_pool.execute = AsyncMock(side_effect=_build_unique_violation("uq_artifacts_active_path"))
-    mock_pool.fetchval = AsyncMock(return_value=winning_uuid)
-
-    with patch(
-        "knowledge_ingest.pg_store.get_pool", new_callable=AsyncMock, return_value=mock_pool
-    ):
-        from knowledge_ingest.pg_store import create_artifact
-
-        returned = await create_artifact(
+    with pytest.raises(asyncpg.UniqueViolationError):
+        await create_artifact(
+            conn,
             org_id="org1",
             kb_slug="kb1",
             path="docs/page.md",
@@ -220,8 +135,69 @@ async def test_race_returns_string_not_uuid_object():
             belief_time_end=253402300800,
         )
 
+    conn.fetchval.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_race_with_vanished_winner_logs_and_reraises():
+    """Edge case: winning row was soft-deleted between INSERT and SELECT."""
+    violation = _build_unique_violation("uq_artifacts_active_path")
+    conn = _make_mock_conn()
+    conn.execute = AsyncMock(side_effect=violation)
+    conn.fetchval = AsyncMock(return_value=None)  # winner vanished
+
+    from knowledge_ingest.pg_store import create_artifact
+
+    with structlog.testing.capture_logs() as captured:
+        with pytest.raises(asyncpg.UniqueViolationError):
+            await create_artifact(
+                conn,
+                org_id="org1",
+                kb_slug="kb1",
+                path="docs/page.md",
+                provenance_type="extracted",
+                assertion_mode="factual",
+                synthesis_depth=0,
+                confidence=None,
+                belief_time_start=0,
+                belief_time_end=253402300800,
+            )
+
+    no_winner_events = [
+        e for e in captured if e.get("event") == "artifact_create_race_lost_no_winner"
+    ]
+    assert len(no_winner_events) == 1
+    assert no_winner_events[0]["log_level"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_race_returns_string_not_uuid_object():
+    """asyncpg can return a UUID object; ingest_document expects a str."""
+    import uuid as _uuid
+
+    winning_uuid = _uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+
+    conn = _make_mock_conn()
+    conn.execute = AsyncMock(side_effect=_build_unique_violation("uq_artifacts_active_path"))
+    conn.fetchval = AsyncMock(return_value=winning_uuid)
+
+    from knowledge_ingest.pg_store import create_artifact
+
+    returned = await create_artifact(
+        conn,
+        org_id="org1",
+        kb_slug="kb1",
+        path="docs/page.md",
+        provenance_type="extracted",
+        assertion_mode="factual",
+        synthesis_depth=0,
+        confidence=None,
+        belief_time_start=0,
+        belief_time_end=253402300800,
+    )
+
     assert isinstance(returned, str), (
-        "create_artifact must return str even when asyncpg returns UUID — "
+        "create_artifact must return str even when asyncpg returns UUID -- "
         "downstream code (extra_payload, JSON in Procrastinate args) "
         "depends on string identity."
     )

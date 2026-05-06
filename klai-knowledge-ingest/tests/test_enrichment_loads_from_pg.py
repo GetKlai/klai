@@ -9,6 +9,10 @@ Pin the contract:
   ``extra.document_text``, not from any frozen task arg.
 - Procrastinate task variants accept only ``artifact_id``; all other
   fields flow through PG.
+
+SPEC-TI-003-FOLLOWUP-001: ``read_artifact_for_enrichment`` now takes
+``conn`` as its first argument; ``_load_and_enrich`` opens a
+``cross_org_admin_connection`` to look up the org_id from artifact_id.
 """
 
 from __future__ import annotations
@@ -42,6 +46,15 @@ def _install_procrastinate_stub() -> None:
 _install_procrastinate_stub()
 
 
+def _make_mock_conn() -> MagicMock:
+    conn = MagicMock()
+    conn.execute = AsyncMock(return_value=None)
+    conn.fetch = AsyncMock(return_value=[])
+    conn.fetchval = AsyncMock(return_value=None)
+    conn.fetchrow = AsyncMock(return_value=None)
+    return conn
+
+
 # ---------------------------------------------------------------------------
 # read_artifact_for_enrichment
 # ---------------------------------------------------------------------------
@@ -49,14 +62,12 @@ _install_procrastinate_stub()
 
 @pytest.mark.asyncio
 async def test_read_artifact_returns_none_for_missing():
-    mock_pool = MagicMock()
-    mock_pool.fetchrow = AsyncMock(return_value=None)
-    with patch(
-        "knowledge_ingest.pg_store.get_pool", new_callable=AsyncMock, return_value=mock_pool
-    ):
-        from knowledge_ingest.pg_store import read_artifact_for_enrichment
+    conn = _make_mock_conn()
+    conn.fetchrow = AsyncMock(return_value=None)
 
-        result = await read_artifact_for_enrichment("00000000-0000-0000-0000-000000000000")
+    from knowledge_ingest.pg_store import read_artifact_for_enrichment
+
+    result = await read_artifact_for_enrichment(conn, "00000000-0000-0000-0000-000000000000")
 
     assert result is None
 
@@ -64,11 +75,12 @@ async def test_read_artifact_returns_none_for_missing():
 @pytest.mark.asyncio
 async def test_read_artifact_returns_none_for_empty_id():
     """Defensive: empty/None id short-circuits without a DB hit."""
-    with patch("knowledge_ingest.pg_store.get_pool", new_callable=AsyncMock) as get_pool:
-        from knowledge_ingest.pg_store import read_artifact_for_enrichment
+    conn = _make_mock_conn()
 
-        assert await read_artifact_for_enrichment("") is None
-        get_pool.assert_not_called()
+    from knowledge_ingest.pg_store import read_artifact_for_enrichment
+
+    assert await read_artifact_for_enrichment(conn, "") is None
+    conn.fetchrow.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -89,15 +101,12 @@ async def test_read_artifact_returns_dict_with_parsed_extra():
         "belief_time_end": 253402300800,
         "extra": '{"document_text": "# Hi", "title": "Hi", "tags": ["onboarding"]}',
     }
-    mock_pool = MagicMock()
-    mock_pool.fetchrow = AsyncMock(return_value=fake_row)
+    conn = _make_mock_conn()
+    conn.fetchrow = AsyncMock(return_value=fake_row)
 
-    with patch(
-        "knowledge_ingest.pg_store.get_pool", new_callable=AsyncMock, return_value=mock_pool
-    ):
-        from knowledge_ingest.pg_store import read_artifact_for_enrichment
+    from knowledge_ingest.pg_store import read_artifact_for_enrichment
 
-        result = await read_artifact_for_enrichment("11111111-2222-3333-4444-555555555555")
+    result = await read_artifact_for_enrichment(conn, "11111111-2222-3333-4444-555555555555")
 
     assert result is not None
     assert result["org_id"] == "org1"
@@ -130,15 +139,12 @@ async def test_read_artifact_handles_dict_extra():
         "belief_time_end": 253402300800,
         "extra": {"document_text": "body", "title": "T"},
     }
-    mock_pool = MagicMock()
-    mock_pool.fetchrow = AsyncMock(return_value=fake_row)
+    conn = _make_mock_conn()
+    conn.fetchrow = AsyncMock(return_value=fake_row)
 
-    with patch(
-        "knowledge_ingest.pg_store.get_pool", new_callable=AsyncMock, return_value=mock_pool
-    ):
-        from knowledge_ingest.pg_store import read_artifact_for_enrichment
+    from knowledge_ingest.pg_store import read_artifact_for_enrichment
 
-        result = await read_artifact_for_enrichment("11111111-2222-3333-4444-555555555555")
+    result = await read_artifact_for_enrichment(conn, "11111111-2222-3333-4444-555555555555")
 
     assert isinstance(result["extra"], dict)
     assert result["extra"]["document_text"] == "body"
@@ -292,10 +298,6 @@ def test_task_variants_have_single_arg_signature():
 
     from knowledge_ingest import enrichment_tasks
 
-    # We can introspect the underlying functions via _register_tasks's
-    # inner closures. The simplest contract: the enrich variants are
-    # exposed on the procrastinate app object after init. Here we only
-    # verify the inner shim signature, which the task wrappers call.
     sig = inspect.signature(enrichment_tasks._load_and_enrich)
     params = list(sig.parameters.values())
     assert len(params) == 1, f"_load_and_enrich must take 1 param, got {params}"

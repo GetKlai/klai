@@ -178,11 +178,14 @@ def _build_request(
 async def _run_with_mocks(req: IngestRequest, mock_proc_app: _MockProcApp) -> dict:
     """Run ``ingest_document`` with all I/O mocked so the test only
     exercises the Phase-1 extra_payload assembly + defer_async wiring.
+
+    SPEC-TI-003-FOLLOWUP-001: ingest_document takes conn as first arg.
     """
-    mock_pool = MagicMock()
-    mock_pool.execute = AsyncMock(return_value=None)
-    mock_pool.fetchval = AsyncMock(return_value=None)
-    mock_pool.fetchrow = AsyncMock(return_value=None)
+    conn = MagicMock()
+    conn.execute = AsyncMock(return_value=None)
+    conn.fetch = AsyncMock(return_value=[])
+    conn.fetchval = AsyncMock(return_value=None)
+    conn.fetchrow = AsyncMock(return_value=None)
 
     with (
         patch(
@@ -198,6 +201,10 @@ async def _run_with_mocks(req: IngestRequest, mock_proc_app: _MockProcApp) -> di
             "knowledge_ingest.pg_store.create_artifact",
             new_callable=AsyncMock,
             return_value="artifact-uuid-contract",
+        ),
+        patch(
+            "knowledge_ingest.pg_store.update_artifact_extra",
+            new_callable=AsyncMock,
         ),
         patch(
             "knowledge_ingest.embedder.embed",
@@ -217,11 +224,6 @@ async def _run_with_mocks(req: IngestRequest, mock_proc_app: _MockProcApp) -> di
             "knowledge_ingest.routes.ingest.kb_config.get_kb_visibility",
             new_callable=AsyncMock,
             return_value="internal",
-        ),
-        patch(
-            "knowledge_ingest.routes.ingest.get_pool",
-            new_callable=AsyncMock,
-            return_value=mock_pool,
         ),
         patch(
             "knowledge_ingest.routes.ingest.fetch_taxonomy_nodes",
@@ -254,7 +256,7 @@ async def _run_with_mocks(req: IngestRequest, mock_proc_app: _MockProcApp) -> di
 
         from knowledge_ingest.routes.ingest import ingest_document
 
-        return await ingest_document(req)
+        return await ingest_document(conn, req)
 
 
 # ---------------------------------------------------------------------------

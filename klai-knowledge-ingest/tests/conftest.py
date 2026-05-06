@@ -146,6 +146,7 @@ def _mock_db_helpers(request):
     admin_targets = [
         "knowledge_ingest.db.cross_org_admin_connection",
         "knowledge_ingest.backfill.cross_org_admin_connection",
+        "knowledge_ingest.enrichment_tasks.cross_org_admin_connection",
     ]
 
     patchers = []
