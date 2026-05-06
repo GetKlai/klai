@@ -17,6 +17,8 @@ WORKDIR /repo
 COPY --chown=app:app klai-libs/connector-credentials klai-libs/connector-credentials
 # SPEC-KB-IMAGE-002 Fase 3: shared image-storage package path-dep
 COPY --chown=app:app klai-libs/image-storage klai-libs/image-storage
+# SPEC-TI-007 / C-9: webhook-replay path-dep (Gitea webhook nonce store).
+COPY --chown=app:app klai-libs/webhook-replay klai-libs/webhook-replay
 COPY --chown=app:app klai-knowledge-ingest/pyproject.toml klai-knowledge-ingest/pyproject.toml
 COPY --chown=app:app klai-knowledge-ingest/uv.lock klai-knowledge-ingest/uv.lock
 

@@ -21,6 +21,8 @@ COPY klai-libs/log-utils klai-libs/log-utils
 # `uv sync --frozen --no-dev` does NOT install it. Copying anyway is a
 # small overhead and keeps the workspace consistent for future dev-deps.
 COPY klai-libs/identity-assert klai-libs/identity-assert
+# SPEC-TI-006 / C-9: webhook-replay path-dep (Moneybird + Vexa nonce store).
+COPY klai-libs/webhook-replay klai-libs/webhook-replay
 COPY klai-portal/backend/pyproject.toml klai-portal/backend/pyproject.toml
 COPY klai-portal/backend/uv.lock klai-portal/backend/uv.lock
 
