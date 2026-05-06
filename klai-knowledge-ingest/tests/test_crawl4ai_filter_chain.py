@@ -9,7 +9,9 @@ substring filter. These tests pin the new behaviour:
 - When ``include_patterns`` is set, only matching candidates reach the
   bulk request body.
 - When ``include_patterns`` is None, every same-domain candidate from
-  sitemap+BFS-union reaches the request body.
+  sitemap + BFS-union reaches the request body — but ``start_url`` is
+  NOT in the bulk submission (it is fetched separately as the seed; see
+  followup PR §"redundant start_url fetch").
 - The crawler_config payload no longer carries a ``deep_crawl_strategy``
   key (regression guard against the legacy BFS path being reintroduced
   alongside the bulk path).
@@ -40,11 +42,24 @@ def _seed_result(url: str, internal_hrefs: list[str]) -> CrawlResult:
     )
 
 
+def _patch_seed(monkeypatch: pytest.MonkeyPatch, seed_result: CrawlResult) -> None:
+    """Stub ``_fetch_seed_page`` so the seed call doesn't hit httpx.
+
+    The bulk path (the focus of these tests) still goes through the real
+    ``httpx.AsyncClient.post`` so the test can capture its payload.
+    """
+
+    async def _fake_seed(*, start_url: str, **_kwargs: Any) -> CrawlResult:
+        return seed_result
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_seed_page", _fake_seed)
+
+
 @pytest.mark.asyncio
 async def test_crawl_site_applies_include_patterns_to_candidates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """include_patterns acts as a substring filter on the candidate URL set."""
+    """include_patterns acts as a substring filter on the bulk candidate set."""
     sitemap_urls = [
         "https://wiki.redcactus.cloud/nl/getting-started",
         "https://wiki.redcactus.cloud/en/getting-started",
@@ -58,11 +73,8 @@ async def test_crawl_site_applies_include_patterns_to_candidates(
     async def _fake_sitemap(_base: str) -> list[str]:
         return sitemap_urls
 
-    async def _fake_seed(url: str, **_kwargs: Any) -> CrawlResult:
-        return _seed_result(url, bfs_links)
-
     monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
-    monkeypatch.setattr(crawl4ai_client, "crawl_page", _fake_seed)
+    _patch_seed(monkeypatch, _seed_result("https://wiki.redcactus.cloud", bfs_links))
 
     captured: dict[str, Any] = {}
 
@@ -80,13 +92,18 @@ async def test_crawl_site_applies_include_patterns_to_candidates(
             include_patterns=["/nl/"],
         )
 
-    assert results == []
+    # Seed (start_url) is included in results because the synthesised seed
+    # is success + has content + same-domain.
+    assert any(r.url == "https://wiki.redcactus.cloud" for r in results)
+
     payload = captured["payload"]
     urls_submitted = payload["urls"]
     # include_patterns is a substring filter — start_url with empty path
-    # does NOT contain "/nl/" so it is correctly excluded. Every URL that
-    # made it through MUST match.
-    assert urls_submitted, "expected at least one /nl/ candidate to survive"
+    # does not match "/nl/" anyway, but the more important guard is that
+    # it never reaches the bulk request because the seed already covered it.
+    assert "https://wiki.redcactus.cloud" not in urls_submitted, (
+        "start_url must not be in the bulk submission (it is the seed)"
+    )
     for u in urls_submitted:
         assert "/nl/" in u, f"include_patterns leaked a non-/nl/ URL: {u}"
     assert "https://wiki.redcactus.cloud/nl/getting-started" in urls_submitted
@@ -95,29 +112,26 @@ async def test_crawl_site_applies_include_patterns_to_candidates(
     assert "https://wiki.redcactus.cloud/en/getting-started" not in urls_submitted
     assert "https://wiki.redcactus.cloud/en/blog" not in urls_submitted
     assert "deep_crawl_strategy" not in payload["crawler_config"]["params"]
-    # AC-4: every candidate produces an outcome record.
-    assert len(outcomes) == len(urls_submitted)
+    # AC-4: every candidate produces an outcome record. Seed + bulk.
+    assert len(outcomes) == 1 + len(urls_submitted)
 
 
 @pytest.mark.asyncio
 async def test_crawl_site_no_include_patterns_passes_all_same_domain(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Without include_patterns, every same-domain candidate reaches /crawl."""
+    """Without include_patterns, every same-domain non-seed candidate reaches /crawl."""
     sitemap_urls = [
         "https://example.com/page-a",
         "https://example.com/page-b",
-        "https://other.com/skipped",  # cross-domain, must be filtered out by candidate-set
+        "https://other.com/skipped",  # cross-domain, must be filtered out
     ]
 
     async def _fake_sitemap(_base: str) -> list[str]:
         return sitemap_urls
 
-    async def _fake_seed(url: str, **_kwargs: Any) -> CrawlResult:
-        return _seed_result(url, ["https://example.com/page-c"])
-
     monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
-    monkeypatch.setattr(crawl4ai_client, "crawl_page", _fake_seed)
+    _patch_seed(monkeypatch, _seed_result("https://example.com", ["https://example.com/page-c"]))
 
     captured: dict[str, Any] = {}
 
@@ -135,7 +149,10 @@ async def test_crawl_site_no_include_patterns_passes_all_same_domain(
 
     payload = captured["payload"]
     urls_submitted = payload["urls"]
-    assert "https://example.com" in urls_submitted
+    # start_url is the seed — not in the bulk submission.
+    assert "https://example.com" not in urls_submitted, (
+        "start_url must not be in the bulk submission (it is the seed)"
+    )
     assert "https://example.com/page-a" in urls_submitted
     assert "https://example.com/page-b" in urls_submitted
     assert "https://example.com/page-c" in urls_submitted

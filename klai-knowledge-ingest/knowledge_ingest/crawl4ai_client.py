@@ -401,53 +401,78 @@ async def crawl_site(
     @MX:NOTE SPEC-INGEST-RECONCILE-001 Fix 1 — replaces the old BFS-with-
     post-supplement design that silently dropped sitemap URLs in an
     unbounded ``asyncio.gather`` loop (Bug A: 41/208 ingested for
-    help.voys.nl). Discovery and fetch are now decoupled:
+    help.voys.nl). Discovery and fetch are decoupled:
 
-    1. **Discovery** — union(sitemap_xml_urls, BFS_seeds_from_homepage),
-       canonicalised + deduped + capped at ``max_pages``. Sitemap takes
-       priority on cap (AC-2: site-owner truth beats best-effort BFS).
+    1. **Seed** — fetch ``start_url`` once via ``_fetch_seed_page`` using the
+       same crawler config as the bulk path (login_indicator + cookies
+       included). The result is the homepage CrawlResult AND the source of
+       the BFS link list. The seed is NOT re-fetched in step 3.
+    2. **Discovery** — union(sitemap_xml_urls, BFS_seeds_from_homepage),
+       canonicalised + deduped + capped, EXCLUDING ``start_url`` (already
+       fetched as the seed). Sitemap takes priority on cap (AC-2).
        AC-3: missing sitemap → BFS-only fallback, never crawl failure.
-    2. **Fetch** — single ``POST /crawl`` bulk call with the candidate
-       URL list. crawl4ai's server-side ``MemoryAdaptiveDispatcher``
+    3. **Bulk fetch** — single ``POST /crawl`` call for all non-seed
+       candidates. crawl4ai's server-side ``MemoryAdaptiveDispatcher``
        handles concurrency.
-    3. **Outcome capture** — every candidate URL produces one entry in
-       the returned ``outcomes`` list (AC-4) keyed by ``FetchReasonCode``.
+    4. **Outcome capture** — every candidate URL (seed + bulk) produces one
+       entry in ``outcomes`` (AC-4) keyed by ``FetchReasonCode``.
+
+    Candidate ↔ response matching is canonical-URL first, with a positional
+    fallback for redirect cases where crawl4ai's ``response.url`` reflects
+    the redirect TARGET rather than the submitted candidate (e.g.
+    ``/old-page`` → ``/new-page``). The fallback is bounded to candidates
+    whose canonical key is unmatched after the first pass; positional index
+    is trusted because crawl4ai's bulk endpoint preserves submission order.
 
     Returns ``(crawl_results, outcomes)``:
     - ``crawl_results``: same-domain pages with non-empty markdown (the
       caller's old contract: pages worth ingesting).
     - ``outcomes``: per-URL records ``{"url", "reason_code", "status_code",
-      "content_length"}`` — written to ``crawl_jobs.fetch_outcomes`` JSONB
-      so operators can answer "where did the missing pages go?".
+      "content_length"}`` written to ``crawl_jobs.fetch_outcomes`` JSONB so
+      operators can answer "where did the missing pages go?".
 
     ``max_depth`` is accepted for caller-signature compatibility but no
-    longer drives discovery (we explicitly enumerate candidates instead
-    of recursing). ``include_patterns``, when set, is applied as a
-    candidate-side substring filter against the union before submission.
+    longer drives discovery (we explicitly enumerate candidates instead of
+    recursing). ``include_patterns``, when set, is applied as a candidate-
+    side substring filter against the union before submission.
     """
-    config = build_crawl_config(selector, login_indicator_selector=login_indicator_selector)
     parsed = urlparse(start_url)
     base_domain = parsed.netloc.lower()
-
-    # ------------------------------------------------------------------
-    # Discovery — sitemap + shallow BFS seed, union, dedup, cap.
-    # ------------------------------------------------------------------
-    sitemap_urls = await _fetch_sitemap_urls(start_url)
-
-    bfs_seed_urls = await _bfs_discover_seed_urls(
-        start_url=start_url,
-        selector=selector,
+    crawler_config = build_crawl_config(
+        selector,
         login_indicator_selector=login_indicator_selector,
+    )
+
+    # ------------------------------------------------------------------
+    # Step 1 — Seed: one fetch of start_url with the FULL config (incl.
+    # login_indicator). Re-using ``crawl_page`` here would silently drop
+    # the indicator (it builds its own config without the kwarg) — that
+    # produced a latent bug where auth-walled homepages were treated as
+    # successful "content" and their login-form anchors became BFS seeds.
+    # ------------------------------------------------------------------
+    seed_result = await _fetch_seed_page(
+        start_url=start_url,
+        crawler_config=crawler_config,
         cookies=cookies,
     )
 
-    candidates = _build_candidate_set(
+    bfs_seed_urls = _extract_bfs_seeds(seed_result, base_domain=base_domain)
+
+    # ------------------------------------------------------------------
+    # Step 2 — Discovery union, EXCLUDING start_url (already in results).
+    # Reserve one slot of max_pages for the seed itself.
+    # ------------------------------------------------------------------
+    sitemap_urls = await _fetch_sitemap_urls(start_url)
+
+    bulk_max = max(0, max_pages - 1)
+    bulk_candidates = _build_candidate_set(
         start_url=start_url,
         sitemap_urls=sitemap_urls,
         bfs_seed_urls=bfs_seed_urls,
         base_domain=base_domain,
-        max_pages=max_pages,
+        max_pages=bulk_max,
         include_patterns=include_patterns,
+        include_start_url=False,
     )
 
     logger.info(
@@ -455,118 +480,281 @@ async def crawl_site(
         start_url=start_url,
         sitemap_urls=len(sitemap_urls),
         bfs_seed_urls=len(bfs_seed_urls),
-        candidates=len(candidates),
+        bulk_candidates=len(bulk_candidates),
         max_pages=max_pages,
     )
 
-    if not candidates:
-        logger.warning("crawl_site_no_candidates", start_url=start_url)
-        return [], []
+    # ------------------------------------------------------------------
+    # Step 3 — Bulk fetch. crawl4ai's MemoryAdaptiveDispatcher handles
+    # concurrency server-side; we get per-URL ``success`` + ``error_message``
+    # in the response body.
+    # ------------------------------------------------------------------
+    raw_results: list[dict[str, Any]] = []
+    transport_error: BaseException | None = None
+
+    if bulk_candidates:
+        payload: dict[str, Any] = {
+            "urls": bulk_candidates,
+            "crawler_config": {"type": "CrawlerRunConfig", "params": crawler_config},
+        }
+        if cookies:
+            payload["hooks"] = _build_cookie_hooks(cookies)
+        try:
+            async with httpx.AsyncClient(timeout=_BULK_CRAWL_TIMEOUT) as client:
+                data = await _crawl_sync(client, payload)
+            raw_results = _normalise_results_block(data)
+        except Exception as exc:
+            transport_error = exc
+            logger.warning(
+                "crawl_site_bulk_request_failed",
+                start_url=start_url,
+                candidates=len(bulk_candidates),
+                error=str(exc),
+            )
 
     # ------------------------------------------------------------------
-    # Fetch — single bulk POST /crawl. Server-side dispatcher handles
-    # concurrency; we get per-URL ``success`` + ``error_message`` in
-    # the response body.
+    # Step 4 — Combine seed + bulk into ``crawl_results`` and ``outcomes``.
     # ------------------------------------------------------------------
+    crawl_results: list[CrawlResult] = []
+    outcomes: list[FetchOutcome] = []
+
+    seed_outcome = _build_outcome_from_result(start_url, seed_result)
+    outcomes.append(seed_outcome)
+    if _result_is_ingestable(seed_result, base_domain=base_domain):
+        crawl_results.append(seed_result)
+
+    bulk_results, bulk_outcomes = _combine_bulk_responses(
+        candidates=bulk_candidates,
+        raw_results=raw_results,
+        transport_error=transport_error,
+        base_domain=base_domain,
+    )
+    crawl_results.extend(bulk_results)
+    outcomes.extend(bulk_outcomes)
+
+    success_count = sum(1 for o in outcomes if o["reason_code"] == FetchReasonCode.SUCCESS.value)
+    logger.info(
+        "crawl_site_complete",
+        start_url=start_url,
+        candidates=len(outcomes),
+        results=len(crawl_results),
+        success_outcomes=success_count,
+        non_success_outcomes=len(outcomes) - success_count,
+    )
+
+    return crawl_results, outcomes
+
+
+# ---------------------------------------------------------------------------
+# crawl_site internals — kept module-private for testability.
+# ---------------------------------------------------------------------------
+
+
+async def _fetch_seed_page(
+    *,
+    start_url: str,
+    crawler_config: dict[str, Any],
+    cookies: list[dict[str, Any]] | None,
+) -> CrawlResult:
+    """Fetch ``start_url`` once with the SAME config the bulk path uses.
+
+    Distinct from ``crawl_page`` because crawl_page rebuilds config from
+    ``selector`` only — it has no knob for ``login_indicator_selector``,
+    so reusing it for the seed would silently strip auth-wall detection
+    and let the seed succeed on a login page (extracting login-form
+    anchors as BFS seeds, then auth-failing every URL in the bulk).
+    """
     payload: dict[str, Any] = {
-        "urls": candidates,
-        "crawler_config": {"type": "CrawlerRunConfig", "params": config},
+        "urls": [start_url],
+        "crawler_config": {"type": "CrawlerRunConfig", "params": crawler_config},
     }
     if cookies:
         payload["hooks"] = _build_cookie_hooks(cookies)
 
-    raw_results: list[dict[str, Any]] = []
-    transport_error: BaseException | None = None
-
     try:
-        async with httpx.AsyncClient(timeout=_BULK_CRAWL_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=90.0) as client:
             data = await _crawl_sync(client, payload)
-        raw_results = _normalise_results_block(data)
     except Exception as exc:
-        # Whole-batch transport failure: every candidate gets the same
-        # transport-classified outcome (AC-4: no candidate is "lost",
-        # they all surface a reason). The caller's existing failure
-        # path then reads the outcomes to decide.
-        transport_error = exc
         logger.warning(
-            "crawl_site_bulk_request_failed",
+            "crawl_site_seed_request_failed",
             start_url=start_url,
-            candidates=len(candidates),
             error=str(exc),
         )
+        return CrawlResult(
+            url=start_url,
+            fit_markdown="",
+            raw_markdown="",
+            html="",
+            word_count=0,
+            success=False,
+            error_message=str(exc),
+        )
 
-    # Map results back to candidates by URL (canonicalised). crawl4ai
-    # keeps URL ordering but we don't rely on it.
-    by_url: dict[str, dict[str, Any]] = {}
+    pages = _normalise_results_block(data)
+    if not pages:
+        logger.warning("crawl_site_seed_empty_response", start_url=start_url)
+        return CrawlResult(
+            url=start_url,
+            fit_markdown="",
+            raw_markdown="",
+            html="",
+            word_count=0,
+            success=False,
+            error_message="empty response",
+        )
+
+    return _extract_result(start_url, pages[0])
+
+
+def _extract_bfs_seeds(seed_result: CrawlResult, *, base_domain: str) -> list[str]:
+    """Extract same-domain internal links from the seed page.
+
+    Returns an empty list when the seed itself failed (auth wall, 5xx,
+    etc.) — the candidate set then degrades cleanly to sitemap-only.
+    """
+    if not seed_result.success:
+        return []
+    internal = (seed_result.links or {}).get("internal") or []
+    seeds: list[str] = []
+    for entry in internal:
+        href = entry.get("href") if isinstance(entry, dict) else None
+        if not href:
+            continue
+        if urlparse(href).netloc.lower() != base_domain:
+            continue
+        seeds.append(href)
+    return seeds
+
+
+def _build_outcome_from_result(url: str, result: CrawlResult) -> FetchOutcome:
+    """Map a CrawlResult (the seed path) to a fetch_outcomes JSONB entry."""
+    if result.success:
+        reason_code = FetchReasonCode.SUCCESS.value
+    else:
+        # Synthesise a page-shape dict for the classifier so the same
+        # error_message → FetchReasonCode mapping applies as for the
+        # bulk path.
+        reason_code = _classify_fetch_outcome(
+            {
+                "success": False,
+                "status_code": None,
+                "error_message": result.error_message or "",
+            },
+        )
+    return {
+        "url": url,
+        "reason_code": reason_code,
+        "status_code": None,
+        "content_length": len(result.html or ""),
+    }
+
+
+def _result_is_ingestable(result: CrawlResult, *, base_domain: str) -> bool:
+    """Same-domain + non-empty + success — the legacy ingest-loop contract."""
+    if not result.success:
+        return False
+    if not (result.fit_markdown or result.raw_markdown):
+        return False
+    return urlparse(result.url).netloc.lower() == base_domain
+
+
+def _combine_bulk_responses(
+    *,
+    candidates: list[str],
+    raw_results: list[dict[str, Any]],
+    transport_error: BaseException | None,
+    base_domain: str,
+) -> tuple[list[CrawlResult], list[FetchOutcome]]:
+    """Match bulk candidates to crawl4ai responses; produce results + outcomes.
+
+    Matching uses canonical-URL lookup first. For unmatched candidates we
+    fall back to positional alignment with the response list — crawl4ai's
+    bulk endpoint preserves submission order, and a redirect (``/old-page``
+    → ``/new-page``) is the only common reason for a candidate's canonical
+    to disappear from the response set. The fallback only claims a
+    positional response that has not already been canonical-matched to a
+    different candidate, so a redirect doesn't silently shadow a legitimate
+    direct hit.
+    """
+    crawl_results: list[CrawlResult] = []
+    outcomes: list[FetchOutcome] = []
+
+    if not candidates:
+        return crawl_results, outcomes
+
+    # Canonical-URL → response, populated from the bulk response body.
+    by_canonical: dict[str, dict[str, Any]] = {}
     for page in raw_results:
         if not page:
             continue
         result_url = page.get("url") or ""
         if not result_url:
             continue
-        by_url[_canonicalise_url(result_url)] = page
+        by_canonical[_canonicalise_url(result_url)] = page
 
-    crawl_results: list[CrawlResult] = []
-    outcomes: list[FetchOutcome] = []
+    candidate_canonicals = [_canonicalise_url(c) for c in candidates]
+    canonical_to_idx: dict[str, int] = {c: i for i, c in enumerate(candidate_canonicals)}
+    # Track which positional response has already been claimed by canonical
+    # match. Prevents the redirect-fallback from re-claiming.
+    claimed_response_indices: set[int] = set()
+    for canonical in candidate_canonicals:
+        page = by_canonical.get(canonical)
+        if page is None:
+            continue
+        # Locate the positional index of this matched response so the
+        # redirect fallback won't claim it again.
+        for j, raw in enumerate(raw_results):
+            if raw is page:
+                claimed_response_indices.add(j)
+                break
 
-    for url in candidates:
-        canonical = _canonicalise_url(url)
-        page = by_url.get(canonical)
+    for i, url in enumerate(candidates):
         if transport_error is not None:
-            reason_code = _classify_fetch_outcome(None, error=transport_error)
             outcomes.append(
                 {
                     "url": url,
-                    "reason_code": reason_code,
+                    "reason_code": _classify_fetch_outcome(None, error=transport_error),
                     "status_code": None,
                     "content_length": 0,
                 }
             )
             continue
 
-        reason_code = _classify_fetch_outcome(page)
-        content_length = len((page or {}).get("html", "") or "")
+        page = by_canonical.get(candidate_canonicals[i])
+
+        # Redirect fallback: positional alignment when canonical match
+        # missed AND the response at this index hasn't been claimed AND
+        # its URL doesn't canonical-match a DIFFERENT candidate (which
+        # would be ambiguous).
+        if (
+            page is None
+            and len(raw_results) == len(candidates)
+            and i < len(raw_results)
+            and i not in claimed_response_indices
+        ):
+            positional = raw_results[i]
+            if positional and positional.get("url"):
+                pos_canonical = _canonicalise_url(positional["url"])
+                pos_owner_idx = canonical_to_idx.get(pos_canonical)
+                if pos_owner_idx is None or pos_owner_idx == i:
+                    page = positional
+                    claimed_response_indices.add(i)
+
         outcomes.append(
             {
                 "url": url,
-                "reason_code": reason_code,
+                "reason_code": _classify_fetch_outcome(page),
                 "status_code": (page or {}).get("status_code"),
-                "content_length": content_length,
+                "content_length": len((page or {}).get("html", "") or ""),
             }
         )
 
         if page is None:
-            # crawl4ai didn't return this URL — uncommon, but record it.
             continue
 
         result = _extract_result(url, page)
-        # Same-domain filter as the legacy BFS path: external links
-        # discovered via sitemap noise or rewrites stay out.
-        if urlparse(result.url).netloc != parsed.netloc:
-            continue
-        # Only successful, non-empty pages reach the ingest loop. Failed
-        # fetches stay in ``outcomes`` (where operators look for the
-        # breakdown via ``crawl_jobs.fetch_outcomes``) so the caller's
-        # ``pages_total`` reflects pages that actually have content. This
-        # also preserves the legacy login_indicator semantics: a single
-        # ``success=False`` result that the indicator caller sees triggers
-        # ``AuthWallDetected`` — surfacing transient 5xx noise as
-        # auth-walled would be a regression.
-        if not result.success:
-            continue
-        if not (result.fit_markdown or result.raw_markdown):
-            continue
-        crawl_results.append(result)
-
-    success_count = sum(1 for o in outcomes if o["reason_code"] == FetchReasonCode.SUCCESS.value)
-    logger.info(
-        "crawl_site_complete",
-        start_url=start_url,
-        candidates=len(candidates),
-        results=len(crawl_results),
-        success_outcomes=success_count,
-        non_success_outcomes=len(outcomes) - success_count,
-    )
+        if _result_is_ingestable(result, base_domain=base_domain):
+            crawl_results.append(result)
 
     return crawl_results, outcomes
 
@@ -588,55 +776,6 @@ def _normalise_results_block(data: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
-async def _bfs_discover_seed_urls(
-    *,
-    start_url: str,
-    selector: str | None,
-    login_indicator_selector: str | None,
-    cookies: list[dict[str, Any]] | None,
-) -> list[str]:
-    """Shallow BFS — fetch start_url once, return its same-domain internal links.
-
-    @MX:NOTE Replaces the previous deep-BFS via ``/crawl/job``. We only
-    need the homepage's link set as the BFS contribution to the union;
-    the rest of crawl4ai's BFS (recursive expansion) is the layer that
-    duplicated work in the old design and produced no coverage signal.
-    """
-    base_domain = urlparse(start_url).netloc.lower()
-
-    seed_result = await crawl_page(
-        start_url,
-        selector=selector,
-        cookies=cookies,
-    )
-    if not seed_result.success:
-        if login_indicator_selector:
-            logger.warning(
-                "crawl_site_seed_login_indicator_triggered",
-                start_url=start_url,
-                login_indicator_selector=login_indicator_selector,
-            )
-        else:
-            logger.warning(
-                "crawl_site_seed_fetch_failed",
-                start_url=start_url,
-                error=seed_result.error_message,
-            )
-        return []
-
-    # crawl4ai links shape: {"internal": [{"href": "...", "text": "..."}], "external": [...]}.
-    internal = seed_result.links.get("internal") or []
-    seeds: list[str] = []
-    for entry in internal:
-        href = entry.get("href") if isinstance(entry, dict) else None
-        if not href:
-            continue
-        if urlparse(href).netloc.lower() != base_domain:
-            continue
-        seeds.append(href)
-    return seeds
-
-
 def _build_candidate_set(
     *,
     start_url: str,
@@ -645,17 +784,23 @@ def _build_candidate_set(
     base_domain: str,
     max_pages: int,
     include_patterns: list[str] | None,
+    include_start_url: bool = True,
 ) -> list[str]:
     """Union(sitemap, BFS-seeds), filtered to same-domain, deduped, capped.
 
-    AC-2: when union exceeds max_pages, sitemap entries take priority
+    AC-2: when union exceeds ``max_pages``, sitemap entries take priority
     over BFS-discovered URLs. ``include_patterns`` (when set) restricts
-    candidates by simple substring match on the path — same semantics
-    as the old crawl4ai URLPatternFilter without the deserialisation
+    candidates by simple substring match on the path — same semantics as
+    the old crawl4ai URLPatternFilter without the deserialisation
     fragility (SPEC-CRAWL-001 v0.8.6 issue).
 
-    The starting URL is always included as candidate index 0 so the
-    homepage is in the bulk fetch and never silently dropped on cap.
+    ``include_start_url`` controls whether ``start_url`` is added as the
+    first candidate. ``crawl_site`` sets it to ``False`` because the seed
+    is fetched separately (with full config including login_indicator) and
+    re-submitting it in the bulk would be a redundant fetch. Even when
+    excluded, ``start_url``'s canonical form is recorded in the dedupe
+    ``seen`` set so a sitemap entry that points back to the homepage
+    doesn't sneak in as a duplicate.
     """
 
     def _same_domain(u: str) -> bool:
@@ -682,9 +827,14 @@ def _build_candidate_set(
         seen.add(canonical)
         ordered.append(u)
 
-    # Priority order: start_url first, then sitemap (site-owner truth),
-    # then BFS-discovered (best-effort).
-    _add(start_url)
+    # Priority order: start_url first (when included), then sitemap (site-
+    # owner truth), then BFS-discovered (best-effort).
+    if include_start_url:
+        _add(start_url)
+    elif start_url:
+        # Reserve start_url's canonical so dedupe excludes it without
+        # adding it to the candidate list.
+        seen.add(_canonicalise_url(start_url))
     for u in sitemap_urls:
         _add(u)
     for u in bfs_seed_urls:
