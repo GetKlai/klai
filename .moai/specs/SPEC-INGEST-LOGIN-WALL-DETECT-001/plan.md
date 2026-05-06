@@ -1,5 +1,15 @@
 # Implementation Plan — SPEC-INGEST-LOGIN-WALL-DETECT-001
 
+> **SUPERSEDED — Phases A–E replaced by SPEC-INGEST-LOGIN-WALL-DETECT-002.**
+>
+> v1 shipped the phrase-substring detector described below. v2 replaces it
+> wholesale with SimHash near-duplicate clustering. The mode flags
+> (reject/degrade/audit_only), the BFS continuity behaviour (Phase C), the
+> backfill task skeleton (Phase D) and the retrieval-side floor (Phase E)
+> all carry over to v2 unchanged in spirit; only the detector logic in
+> Phase A and B is rewritten. See
+> `../SPEC-INGEST-LOGIN-WALL-DETECT-002/plan.md` for the v2 phase plan.
+
 Phased rollout: prevention first, then backfill the existing pollution, then
 verify with a real re-crawl test, then add the retrieval-side defence.
 Last phase is the authenticated re-crawl as a separate effort outside this SPEC.
