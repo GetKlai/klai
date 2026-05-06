@@ -305,6 +305,47 @@ class Settings(BaseSettings):
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",")]
 
+    # ─── SPEC-MCP-AUTH-001: OAuth 2.1 authorization-server config ─────────
+    # Issuer base URL — must equal the canonical portal-login host (currently
+    # https://my.getklai.com per servers.md). Drives /.well-known/oauth-
+    # authorization-server response and `iss` claim shape.
+    mcp_oauth_issuer_base_url: str = ""  # MCP_OAUTH_ISSUER_BASE_URL
+    # Canonical resource URI of the protected MCP server. RFC 8707 audience
+    # binding. Tokens are issued for exactly this resource and validated
+    # case-sensitively by knowledge-mcp.
+    mcp_oauth_resource_url: str = ""  # MCP_OAUTH_RESOURCE_URL
+    # Access-token TTL in days. 30 default — short enough for revoke-bound
+    # safety, long enough to keep refresh frequency low for power-users.
+    mcp_oauth_token_ttl_days: int = 30
+    # Refresh-token TTL in days. 90 default — drives the silent-reconnect
+    # cadence in Claude Desktop & Cursor.
+    mcp_oauth_refresh_ttl_days: int = 90
+    # Per-IP rate-limit on the DCR endpoint (POST /oauth/register). 10/h
+    # default. Tunable via env without code changes.
+    mcp_oauth_dcr_rate_limit_per_hour: int = 10
+
+    @model_validator(mode="after")
+    def _require_mcp_oauth_urls(self) -> "Settings":
+        """SPEC-MCP-AUTH-001: fail-closed on empty issuer / resource URL.
+
+        Both URLs are functionally required for the OAuth surface to operate.
+        An empty value at boot would cause /.well-known endpoints to return
+        broken JSON and audience-validation to silently succeed for any
+        token. Fail fast at startup — same pattern as the other auth-class
+        secrets (secret-fail-closed-on-empty rule in portal-security-auth.md).
+        """
+        if not self.mcp_oauth_issuer_base_url.strip():
+            raise ValueError("mcp_oauth_issuer_base_url must be non-empty (SPEC-MCP-AUTH-001 REQ-7)")
+        if not self.mcp_oauth_resource_url.strip():
+            raise ValueError("mcp_oauth_resource_url must be non-empty (SPEC-MCP-AUTH-001 REQ-8 / REQ-14)")
+        if self.mcp_oauth_token_ttl_days < 1:
+            raise ValueError("mcp_oauth_token_ttl_days must be >= 1")
+        if self.mcp_oauth_refresh_ttl_days < self.mcp_oauth_token_ttl_days:
+            raise ValueError("mcp_oauth_refresh_ttl_days must be >= mcp_oauth_token_ttl_days")
+        if self.mcp_oauth_dcr_rate_limit_per_hour < 1:
+            raise ValueError("mcp_oauth_dcr_rate_limit_per_hour must be >= 1")
+        return self
+
     @model_validator(mode="after")
     def _require_vexa_webhook_secret(self) -> "Settings":
         """SEC-013 F-033: fail-closed on missing vexa_webhook_secret.

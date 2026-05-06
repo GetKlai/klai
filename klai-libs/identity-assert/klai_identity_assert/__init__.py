@@ -43,6 +43,10 @@ from klai_identity_assert.exceptions import (
     IdentityDenied,
     PortalUnreachable,
 )
+from klai_identity_assert.mcp_token_client import (
+    McpTokenAsserter,
+    McpTokenVerifyResult,
+)
 from klai_identity_assert.models import (
     KNOWN_CALLER_SERVICES,
     Evidence,
@@ -56,6 +60,8 @@ __all__ = [
     "IdentityAssertError",
     "IdentityAsserter",
     "IdentityDenied",
+    "McpTokenAsserter",
+    "McpTokenVerifyResult",
     "PortalUnreachable",
     "ReasonCode",
     "VerifyResult",
