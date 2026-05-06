@@ -61,6 +61,8 @@ async def _run_stuck_detector() -> None:
         from app.core.database import AsyncSessionLocal as _AsyncSessionLocal
         from app.services.provisioning.stuck_detector import reconcile_stuck_provisionings
 
+        # cross-org-by-design: stuck-detector must scan all orgs at startup to
+        # recover from crashes mid-provisioning. SPEC-TI-010A / C-4.
         async with _AsyncSessionLocal() as reconcile_db:
             reconciled = await reconcile_stuck_provisionings(reconcile_db)
         if reconciled:

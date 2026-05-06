@@ -26,7 +26,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import get_db, set_tenant
 from app.models.connectors import PortalConnector
 
 logger = logging.getLogger(__name__)
@@ -74,6 +74,8 @@ async def finalize_connector_delete(
     """
     _verify_internal_bearer(authorization)
 
+    # cross-org-by-design: internal callback from knowledge-ingest connector_purge_task;
+    # resolves tenant from connector.org_id after lookup. SPEC-TI-010A / C-5.
     result = await db.execute(select(PortalConnector).where(PortalConnector.id == connector_id))
     connector = result.scalar_one_or_none()
     if connector is None:
@@ -83,6 +85,8 @@ async def finalize_connector_delete(
             extra={"connector_id": connector_id},
         )
         return None
+
+    await set_tenant(db, connector.org_id)
 
     if connector.state != "deleting":
         # Worker bug or stale message: refuse to drop an active row.
