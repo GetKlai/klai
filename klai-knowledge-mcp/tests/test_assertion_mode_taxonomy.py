@@ -16,7 +16,8 @@ silently never exercise the taxonomy logic.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from klai_identity_assert import VerifyResult
+
+from tests.conftest import allow_verify_result
 
 
 def _make_ctx(headers: dict | None = None):
@@ -44,12 +45,6 @@ def _valid_ctx():
             "x-internal-secret": "test-secret",
         }
     )
-
-
-def _allow() -> VerifyResult:
-    """Mirror of the helper in test_identity_assert.py — keeps every taxonomy
-    test focused on assertion_mode behaviour, not the identity-verify chain."""
-    return VerifyResult.allow(user_id="user1", org_id="org1", org_slug="testorg", evidence="jwt")  # type: ignore[arg-type]
 
 
 class TestAssertionModeType:
@@ -86,7 +81,9 @@ class TestAssertionModeValidation:
         from main import save_personal_knowledge
 
         ctx = _valid_ctx()
-        with patch("main._asserter.verify", new_callable=AsyncMock, return_value=_allow()):
+        with patch(
+            "main._asserter.verify", new_callable=AsyncMock, return_value=allow_verify_result()
+        ):
             result = await save_personal_knowledge(
                 title="Test",
                 content="content",
@@ -103,7 +100,9 @@ class TestAssertionModeValidation:
         from main import save_personal_knowledge
 
         ctx = _valid_ctx()
-        with patch("main._asserter.verify", new_callable=AsyncMock, return_value=_allow()):
+        with patch(
+            "main._asserter.verify", new_callable=AsyncMock, return_value=allow_verify_result()
+        ):
             result = await save_personal_knowledge(
                 title="Test",
                 content="content",
@@ -127,7 +126,9 @@ class TestAssertionModeValidValues:
 
         ctx = _valid_ctx()
         with (
-            patch("main._asserter.verify", new_callable=AsyncMock, return_value=_allow()),
+            patch(
+                "main._asserter.verify", new_callable=AsyncMock, return_value=allow_verify_result()
+            ),
             patch("main._save_to_ingest", new_callable=AsyncMock, return_value=True),
         ):
             result = await save_personal_knowledge(
@@ -166,7 +167,9 @@ class TestMissingAssertionModeDefaultsToUnknown:
             return True
 
         with (
-            patch("main._asserter.verify", new_callable=AsyncMock, return_value=_allow()),
+            patch(
+                "main._asserter.verify", new_callable=AsyncMock, return_value=allow_verify_result()
+            ),
             patch("main._save_to_ingest", side_effect=_capture_ingest),
         ):
             # Pass empty string to simulate missing/empty assertion_mode
