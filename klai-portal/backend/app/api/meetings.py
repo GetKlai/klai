@@ -19,6 +19,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from webhook_replay import NonceReplayError, RedisUnavailableError, WebhookNonceStore
 
 from app.api.dependencies import _get_caller_org, bearer, require_product
 from app.core.config import settings
@@ -41,6 +42,14 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/api/bots", tags=["meetings"])
 
 ACTIVE_STATUSES = ("pending", "joining", "recording")
+
+# @MX:ANCHOR: SPEC-TI-006 / C-9 -- Vexa replay-protection nonce store.
+# @MX:REASON: Single module-scope instance; set_client() is the test hook.
+_vexa_nonce_store = WebhookNonceStore(
+    redis_url=settings.redis_url,
+    prefix="portal:vexa-nonce:",
+    ttl_seconds=300,
+)
 _BILLABLE_STATUSES = (*ACTIVE_STATUSES, "stopping")
 MAX_CONCURRENT_BOTS = 2
 
@@ -680,6 +689,26 @@ async def vexa_webhook(
 ) -> dict:
     _require_webhook_secret(request)
 
+    # SPEC-TI-006 / C-9: replay-protection check.
+    # Order: auth verify (above) -> replay check -> tenant resolution -> side-effects.
+    _nonce_parts = (
+        str(payload.vexa_meeting_id or ""),
+        str(payload.status or ""),
+        str(payload.ended_at or ""),
+    )
+    try:
+        await _vexa_nonce_store.check_and_record(*_nonce_parts)
+    except NonceReplayError:
+        logger.warning(
+            "vexa_webhook_replay_blocked",
+            vexa_meeting_id=payload.vexa_meeting_id,
+            status=payload.status,
+        )
+        raise HTTPException(status_code=409, detail="replay_blocked") from None
+    except RedisUnavailableError:
+        logger.exception("vexa_webhook_redis_down")
+        raise HTTPException(status_code=503, detail="webhook_replay_protection_unavailable") from None
+
     # SPEC-VEXA-003: upstream `fire_post_meeting_hooks` omits native_meeting_id from the
     # payload (only `meeting.id` + `meeting.platform`). Fall back to vexa_meeting_id
     # lookup when the envelope lacks the natural key.
@@ -715,6 +744,21 @@ async def vexa_webhook(
                 .where(VexaMeeting.vexa_meeting_id == payload.vexa_meeting_id)
                 .order_by(VexaMeeting.created_at.desc())
             )
+            # SPEC-TI-006 / C-10: reject events for inactive meetings on the
+            # vexa_meeting_id branch (the platform+native_meeting_id branch already
+            # filters by status in the WHERE clause below).
+            if (
+                meeting is not None
+                and payload.status not in (None, "completed")
+                and meeting.status not in (*ACTIVE_STATUSES, "stopping")
+            ):
+                logger.warning(
+                    "vexa_webhook_inactive_meeting",
+                    vexa_meeting_id=payload.vexa_meeting_id,
+                    meeting_status=meeting.status,
+                    payload_status=payload.status,
+                )
+                return {"status": "ignored", "reason": "meeting_not_active"}
         else:
             meeting = await lookup_db.scalar(
                 select(VexaMeeting)

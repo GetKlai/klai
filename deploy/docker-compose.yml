@@ -1268,6 +1268,8 @@ services:
       DOCS_INTERNAL_SECRET: ${DOCS_INTERNAL_SECRET}
       KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
       GITEA_WEBHOOK_SECRET: ${GITEA_WEBHOOK_SECRET}
+      # SPEC-TI-006 / C-9: Redis URL for Gitea webhook replay-protection nonce store.
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       LITELLM_URL: http://litellm:4000
       LITELLM_API_KEY: ${LITELLM_MASTER_KEY}
       FALKORDB_HOST: falkordb
