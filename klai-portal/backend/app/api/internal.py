@@ -1823,3 +1823,52 @@ async def verify_tenant_identity(
         status_code=status.HTTP_200_OK,
         media_type="application/json",
     )
+
+
+# ---------------------------------------------------------------------------
+# SPEC-TAXONOMY-V2-001: KB metadata endpoint for knowledge-ingest bootstrap
+# ---------------------------------------------------------------------------
+
+
+class KbMetadataResponse(BaseModel):
+    slug: str
+    description: str | None
+
+
+@router.get(
+    "/knowledge-bases/{kb_slug}/metadata",
+    response_model=KbMetadataResponse,
+)
+async def get_kb_metadata_internal(
+    kb_slug: str,
+    zitadel_org_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> KbMetadataResponse:
+    """Return KB metadata (description) for knowledge-ingest bootstrap.
+
+    SPEC-TAXONOMY-V2-001 AC-5: provides kb.description for the LLM naming prompt.
+    Requires ?zitadel_org_id to scope the RLS tenant.
+    Returns 404 when KB not found — knowledge-ingest treats this as best-effort.
+    """
+    await _require_internal_token(request)
+
+    org_result = await db.execute(select(PortalOrg).where(PortalOrg.zitadel_org_id == zitadel_org_id))
+    org = org_result.scalar_one_or_none()
+    if not org:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Org not found")
+
+    await set_tenant(db, org.id)
+    await _audit_internal_call(request, org_id=org.id)
+
+    kb_result = await db.execute(
+        select(PortalKnowledgeBase).where(
+            PortalKnowledgeBase.slug == kb_slug,
+            PortalKnowledgeBase.org_id == org.id,
+        )
+    )
+    kb = kb_result.scalar_one_or_none()
+    if not kb:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="KB not found")
+
+    return KbMetadataResponse(slug=kb.slug, description=kb.description)

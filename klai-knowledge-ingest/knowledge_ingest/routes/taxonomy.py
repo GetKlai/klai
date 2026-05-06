@@ -41,6 +41,7 @@ from knowledge_ingest.portal_client import fetch_taxonomy_nodes  # noqa: E402
 from knowledge_ingest.proposal_generator import (  # noqa: E402
     DocumentSummary,
     generate_bootstrap_proposals,
+    generate_bootstrap_proposals_v2,
 )
 from knowledge_ingest.taxonomy_classifier import classify_document  # noqa: E402
 
@@ -76,6 +77,8 @@ class BootstrapRequest(BaseModel):
 class BootstrapResponse(BaseModel):
     documents_scanned: int
     proposals_submitted: int
+    clusters_found: int | None = None
+    reason: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -214,14 +217,22 @@ async def taxonomy_bootstrap_proposals(
 ) -> BootstrapResponse:
     """Scan existing Qdrant chunks and generate bootstrap taxonomy proposals.
 
-    Reads existing chunks for this KB, groups by document, sends up to 50 document
-    summaries to klai-fast which identifies 3-8 logical top-level categories,
-    then submits one proposal per category to the portal review queue.
+    SPEC-TAXONOMY-V2-001: when taxonomy_bootstrap_v2_enabled=True (default), uses the
+    new Clio-style density-driven path that:
+    - Samples ALL documents (not just first 50)
+    - Uses HDBSCAN clustering to determine category count
+    - Names each cluster with a separate focused LLM call
+
+    Falls back to v1 (single-shot LLM) when flag is False.
 
     Use this to bootstrap a KB taxonomy from scratch when no nodes exist yet.
     After accepting proposals in the portal, run /backfill to tag all chunks.
     """
-    client = AsyncQdrantClient(
+    import numpy as np
+
+    from knowledge_ingest.portal_client import fetch_kb_metadata
+
+    qdrant_client = AsyncQdrantClient(
         url=settings.qdrant_url,
         api_key=settings.qdrant_api_key or None,
     )
@@ -233,68 +244,135 @@ async def taxonomy_bootstrap_proposals(
         ]
     )
 
-    # Scroll chunks, one per artifact_id (we only need the first chunk per document)
-    seen_artifacts: set[str] = set()
-    documents: list[DocumentSummary] = []
-    offset = None
+    # Fetch existing taxonomy nodes for dedup
+    existing_nodes = await fetch_taxonomy_nodes(req.kb_slug, req.org_id)
 
-    while len(documents) < 50:
-        points, next_offset = await asyncio.wait_for(
-            client.scroll(
-                collection_name=COLLECTION,
-                scroll_filter=scroll_filter,
-                limit=req.batch_size,
-                offset=offset,
-                with_payload=True,
-                with_vectors=False,
-            ),
-            timeout=30.0,
+    if not settings.taxonomy_bootstrap_v2_enabled:
+        # V1 fallback: scroll up to 50 docs, single-shot LLM
+        seen_artifacts: set[str] = set()
+        documents_v1: list[DocumentSummary] = []
+        offset = None
+
+        while len(documents_v1) < 50:
+            points, next_offset = await asyncio.wait_for(
+                qdrant_client.scroll(
+                    collection_name=COLLECTION,
+                    scroll_filter=scroll_filter,
+                    limit=req.batch_size,
+                    offset=offset,
+                    with_payload=True,
+                    with_vectors=False,
+                ),
+                timeout=30.0,
+            )
+            if not points:
+                break
+            for point in points:
+                payload = point.payload or {}
+                artifact_id = payload.get("artifact_id") or str(point.id)
+                if artifact_id in seen_artifacts:
+                    continue
+                seen_artifacts.add(artifact_id)
+                title = payload.get("title") or payload.get("path") or artifact_id
+                preview = payload.get("text", "")[:300]
+                documents_v1.append(DocumentSummary(title=title, content_preview=preview))
+                if len(documents_v1) >= 50:
+                    break
+            if next_offset is None:
+                break
+            offset = next_offset
+
+        if not documents_v1:
+            logger.info("bootstrap_proposals_no_documents", kb_slug=req.kb_slug, org_id=req.org_id)
+            return BootstrapResponse(documents_scanned=0, proposals_submitted=0)
+
+        existing_names = [n.name for n in existing_nodes]
+        proposals_submitted = await generate_bootstrap_proposals(
+            org_id=req.org_id,
+            kb_slug=req.kb_slug,
+            documents=documents_v1,
+            existing_category_names=existing_names,
+        )
+        return BootstrapResponse(
+            documents_scanned=len(documents_v1),
+            proposals_submitted=proposals_submitted,
         )
 
+    # V2 path: scroll ALL docs with vectors, group by artifact_id, average vectors
+    seen_artifacts_v2: set[str] = set()
+    doc_summaries: list[DocumentSummary] = []
+    doc_vecs: list[list[float]] = []
+    offset_v2 = None
+
+    while True:
+        points, next_offset = await asyncio.wait_for(
+            qdrant_client.scroll(
+                collection_name=COLLECTION,
+                scroll_filter=scroll_filter,
+                limit=100,
+                offset=offset_v2,
+                with_payload=True,
+                with_vectors=["vector_chunk"],
+            ),
+            timeout=60.0,
+        )
         if not points:
             break
 
         for point in points:
             payload = point.payload or {}
             artifact_id = payload.get("artifact_id") or str(point.id)
-            if artifact_id in seen_artifacts:
+            if artifact_id in seen_artifacts_v2:
                 continue
-            seen_artifacts.add(artifact_id)
+            seen_artifacts_v2.add(artifact_id)
+
+            # Extract vector
+            vec = None
+            if hasattr(point, "vector") and point.vector:
+                if isinstance(point.vector, dict):
+                    vec = point.vector.get("vector_chunk")
+                elif isinstance(point.vector, list):
+                    vec = point.vector
+            if vec is None:
+                continue
+
             title = payload.get("title") or payload.get("path") or artifact_id
             preview = payload.get("text", "")[:300]
-            documents.append(DocumentSummary(title=title, content_preview=preview))
-            if len(documents) >= 50:
-                break
+            doc_summaries.append(DocumentSummary(title=title, content_preview=preview))
+            doc_vecs.append(vec)
 
         if next_offset is None:
             break
-        offset = next_offset
+        offset_v2 = next_offset
 
-    if not documents:
+    if not doc_summaries:
         logger.info("bootstrap_proposals_no_documents", kb_slug=req.kb_slug, org_id=req.org_id)
         return BootstrapResponse(documents_scanned=0, proposals_submitted=0)
 
-    # Fetch existing category names so the LLM doesn't propose duplicates.
-    existing_nodes = await fetch_taxonomy_nodes(req.kb_slug, req.org_id)
-    existing_names = [n.name for n in existing_nodes]
+    # Fetch KB description for LLM context (best-effort)
+    kb_meta = await fetch_kb_metadata(req.kb_slug, req.org_id)
+    kb_description = (kb_meta or {}).get("description") or ""
 
-    proposals_submitted = await generate_bootstrap_proposals(
+    embeddings = np.array(doc_vecs, dtype=np.float32)
+    # Normalize each vector (unit norm)
+    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+    norms = np.where(norms == 0, 1.0, norms)
+    embeddings = embeddings / norms
+
+    result = await generate_bootstrap_proposals_v2(
         org_id=req.org_id,
         kb_slug=req.kb_slug,
-        documents=documents,
-        existing_category_names=existing_names,
+        document_summaries=doc_summaries,
+        document_embeddings=embeddings,
+        existing_nodes=existing_nodes,
+        kb_description=kb_description,
     )
 
-    logger.info(
-        "taxonomy_bootstrap_complete",
-        org_id=req.org_id,
-        kb_slug=req.kb_slug,
-        documents_scanned=len(documents),
-        proposals_submitted=proposals_submitted,
-    )
     return BootstrapResponse(
-        documents_scanned=len(documents),
-        proposals_submitted=proposals_submitted,
+        documents_scanned=result.documents_scanned,
+        proposals_submitted=result.proposals_submitted,
+        clusters_found=result.clusters_found,
+        reason=result.reason,
     )
 
 
