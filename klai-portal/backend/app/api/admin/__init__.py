@@ -97,6 +97,24 @@ def _require_admin(caller_user: "PortalUser") -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: admin role required")
 
 
+def _require_platform_admin(caller_org: "PortalOrg") -> None:
+    """Raise 403 unless the caller's org is the platform-admin org.
+
+    # @MX:NOTE: SPEC-INFRA-TENANT-DELETE-001 R1 — platform-admin guard. Uses
+    #   _app_settings.platform_org_slug (default 'getklai') to identify the
+    #   platform org.
+    # @MX:ANCHOR fan_in=3 — every cross-tenant admin endpoint that operates on
+    #   a `slug` URL-parameter for an org other than the caller's own MUST
+    #   call this guard immediately after `_require_admin`. Failing to do so
+    #   is the audit-tenant-isolation-2026-05-05 finding C-2 class.
+    """
+    if caller_org.slug != _app_settings.platform_org_slug:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: platform admin org required",
+        )
+
+
 # --- Sub-router inclusion (no prefix on sub-routers!) ---
 from .audit import router as audit_router  # noqa: E402
 from .deprovision_org import router as deprovision_org_router  # noqa: E402
@@ -117,6 +135,7 @@ router.include_router(deprovision_org_router)
 __all__ = [
     "_get_caller_org",
     "_require_admin",
+    "_require_platform_admin",
     "bearer",
     "router",
 ]
