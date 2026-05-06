@@ -22,8 +22,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.admin import _get_caller_org, _require_admin, bearer
-from app.core.config import settings
+from app.api.admin import _get_caller_org, _require_admin, _require_platform_admin, bearer
 from app.core.database import get_db
 from app.models.portal import PortalOrg
 from app.services.provisioning.deprovisioning_orchestrator import deprovision_tenant
@@ -119,17 +118,10 @@ def _guard_entry_state(org: PortalOrg) -> None:
         )
 
 
-def _require_platform_admin(caller_org: PortalOrg) -> None:
-    """Raise 403 unless the caller's org is the platform-admin org.
-
-    # @MX:NOTE: SPEC-INFRA-TENANT-DELETE-001 R1 — platform-admin guard. Uses
-    #   settings.platform_org_slug (default 'getklai') to identify the platform org.
-    """
-    if caller_org.slug != settings.platform_org_slug:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied: platform admin org required",
-        )
+# NOTE: _require_platform_admin moved to app.api.admin.__init__ in
+# fix/audit-tenant-isolation/c-2-retry-provisioning-platform-admin so that
+# every admin endpoint can use the same guard without cross-importing
+# between sibling modules. Imported above.
 
 
 # ---------------------------------------------------------------------------
