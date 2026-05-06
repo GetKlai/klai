@@ -291,6 +291,10 @@ jobs:
       security-events: write
       packages: read
     steps:
+      # Checkout is required so trivy-action can find .trivy.yaml + the
+      # service's .trivyignore.yaml (paths are relative to repo root).
+      - uses: actions/checkout@v6
+
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
@@ -298,34 +302,39 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Trivy policy reference lives in .trivy.yaml at repo root
-      # (SPEC-CI-TRIVY-POLICY-001 REQ-1). PR #1 wires every workflow to it.
-      # Inline `severity` + `ignore-unfixed` stay during PR #1 to guarantee
-      # zero behaviour change. PR #3 removes them together with `exit-code: '1'`
-      # + `limit-severities-for-sarif: 'true'` (the latter neutralises the
-      # trivy-action 0.35.0 SARIF severity-filter unset).
+      # STRICT-tier scan per SPEC-CI-TRIVY-POLICY-001:
+      # - severity / ignore-unfixed / scanners come from .trivy.yaml (REQ-1)
+      # - exit-code: '1' blocks the build on any unfixed HIGH/CRITICAL not
+      #   listed in klai-portal/backend/.trivyignore.yaml (REQ-2)
+      # - limit-severities-for-sarif: 'true' makes the severity filter
+      #   actually apply to both the SARIF output AND the exit-code check.
+      #   Without it, trivy-action 0.35.0's entrypoint unsets TRIVY_SEVERITY
+      #   for `format: sarif`, causing exit-code 1 to fire on MEDIUM/LOW too.
       #
-      # `scanners: 'vuln'` matters specifically here: Trivy's secret scanner
-      # runs against the BUILT image and matches strings inside third-party
-      # Python libraries shipped under /repo/.../site-packages. yt-dlp's
-      # site-extractor modules embed dozens of public API tokens
-      # (NBC, Vice, ESPN, Shahid, …) that consistently flag as CRITICAL
-      # aws-access-key-id / HIGH jwt-token — false positives that clutter
-      # the GitHub Security tab. Source-level secret scanning is covered
-      # separately by Semgrep + Gitleaks. After PR #3 this is enforced via
-      # `.trivy.yaml`'s `scan.scanners: [vuln]` for every internal workflow,
-      # not only portal-api.
+      # vuln-only matters because Trivy's secret scanner matches strings
+      # inside third-party Python libraries shipped under /repo/.../site-
+      # packages — yt-dlp's per-streaming-service extractors hardcode
+      # public API tokens (NBC, Vice, ESPN, Shahid, …) that flag as
+      # CRITICAL aws-access-key-id / HIGH jwt-token false positives.
+      # Source-level secret scanning is covered by Semgrep + Gitleaks.
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: ghcr.io/getklai/portal-api:${{ github.sha }}
           trivy-config: .trivy.yaml
+          trivyignores: klai-portal/backend/.trivyignore.yaml
+          # Inline duplicates are required: trivy-action 0.35.0's
+          # `limit-severities-for-sarif: true` only acts on INPUT_SEVERITY,
+          # not on config-file severity. Same for scanners. Keep .trivy.yaml
+          # as the canonical policy reference; remove these inlines once
+          # trivy-action lands proper config-file precedence.
           scanners: 'vuln'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
           ignore-unfixed: true
+          format: 'sarif'
+          output: 'trivy-results.sarif'
           exit-code: '1'
+          limit-severities-for-sarif: 'true'
 
       - name: Upload Trivy SARIF to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v4
@@ -334,7 +343,11 @@ jobs:
           sarif_file: 'trivy-results.sarif'
 
   deploy:
-    needs: [build-push]
+    # `needs: scan` ensures Trivy gate from SPEC-CI-TRIVY-POLICY-001 REQ-2
+    # actually blocks production deploy: if scan job exits 1 on a HIGH/CRIT
+    # finding, deploy is skipped. Previously deploy only depended on
+    # build-push, so a failed scan would still let the image roll out.
+    needs: [build-push, scan]
     runs-on: ubuntu-latest
     steps:
       # Audit 2026-05-05: defence-in-depth gate. The deploy job is gated
