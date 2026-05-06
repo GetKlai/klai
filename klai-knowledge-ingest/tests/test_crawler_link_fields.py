@@ -14,12 +14,15 @@ from knowledge_ingest import link_graph
 from knowledge_ingest.crawl4ai_client import CrawlResult
 
 
-def _make_mock_pool():
-    pool = MagicMock()
-    pool.execute = AsyncMock(return_value=None)
-    pool.fetch = AsyncMock(return_value=[])
-    pool.fetchval = AsyncMock(return_value=0)
-    return pool
+def _make_mock_conn():
+    """SPEC-TI-003-FOLLOWUP-001: helpers take asyncpg.Connection directly."""
+    conn = MagicMock()
+    conn.execute = AsyncMock(return_value=None)
+    conn.executemany = AsyncMock(return_value=None)
+    conn.fetch = AsyncMock(return_value=[])
+    conn.fetchval = AsyncMock(return_value=0)
+    conn.fetchrow = AsyncMock(return_value=None)
+    return conn
 
 
 def _make_crawl_result(
@@ -45,7 +48,7 @@ def _make_crawl_result(
 @pytest.mark.asyncio
 async def test_ingest_crawl_result_populates_link_fields():
     """_ingest_crawl_result populates extra with links_to, anchor_texts, incoming_link_count."""
-    mock_pool = _make_mock_pool()
+    mock_conn = _make_mock_conn()
     result = _make_crawl_result()
 
     outbound_urls = ["https://example.com/b"]
@@ -77,17 +80,18 @@ async def test_ingest_crawl_result_populates_link_fields():
         from knowledge_ingest.adapters.crawler import _ingest_crawl_result
 
         await _ingest_crawl_result(
+            mock_conn,
             result,
             url="https://example.com/a",
             org_id="org-1",
             kb_slug="docs",
-            pool=mock_pool,
             stored=None,
         )
 
         # Verify ingest_document was called with link fields
         mock_ingest.assert_called_once()
-        ingest_req = mock_ingest.call_args[0][0]
+        # SPEC-TI-003-FOLLOWUP-001: ingest_document(conn, req); req is args[1]
+        ingest_req = mock_ingest.call_args[0][1]
         assert ingest_req.extra["links_to"] == ["https://example.com/b"]
         assert ingest_req.extra["anchor_texts"] == ["Link to B"]
         assert ingest_req.extra["incoming_link_count"] == 3
@@ -96,7 +100,7 @@ async def test_ingest_crawl_result_populates_link_fields():
 @pytest.mark.asyncio
 async def test_ingest_crawl_result_graceful_on_link_graph_error():
     """When link_graph raises, _ingest_crawl_result still ingests without link fields."""
-    mock_pool = _make_mock_pool()
+    mock_conn = _make_mock_conn()
     result = _make_crawl_result()
 
     with (
@@ -127,16 +131,17 @@ async def test_ingest_crawl_result_graceful_on_link_graph_error():
         from knowledge_ingest.adapters.crawler import _ingest_crawl_result
 
         await _ingest_crawl_result(
+            mock_conn,
             result,
             url="https://example.com/a",
             org_id="org-1",
             kb_slug="docs",
-            pool=mock_pool,
             stored=None,
         )
 
         mock_ingest.assert_called_once()
-        ingest_req = mock_ingest.call_args[0][0]
+        # SPEC-TI-003-FOLLOWUP-001: ingest_document(conn, req); req is args[1]
+        ingest_req = mock_ingest.call_args[0][1]
         assert ingest_req.extra["source_url"] == "https://example.com/a"
         assert "links_to" not in ingest_req.extra
 
@@ -150,25 +155,21 @@ async def test_run_crawl_job_calls_build_link_graph_before_ingest():
     is called for all pages before any page is ingested, so link graph queries
     in _ingest_crawl_result always see the full graph.
     """
-    mock_pool = _make_mock_pool()
+    mock_conn = _make_mock_conn()
     mock_result = _make_crawl_result(
         links={"internal": [{"href": "https://example.com/b", "text": "B"}]},
     )
 
     call_order: list[str] = []
 
-    async def _fake_upsert_links(**kwargs):  # type: ignore[no-untyped-def]
+    async def _fake_upsert_links(*args, **kwargs):  # type: ignore[no-untyped-def]
         call_order.append("upsert_page_links")
 
-    async def _fake_ingest(req):  # type: ignore[no-untyped-def]
+    async def _fake_ingest(*args, **kwargs):  # type: ignore[no-untyped-def]
         call_order.append("ingest_document")
         return {"chunks": 1}
 
     with (
-        patch(
-            "knowledge_ingest.adapters.crawler.get_pool",
-            new_callable=AsyncMock, return_value=mock_pool,
-        ),
         patch(
             "knowledge_ingest.adapters.crawler._update_job",
             new_callable=AsyncMock,
@@ -176,19 +177,26 @@ async def test_run_crawl_job_calls_build_link_graph_before_ingest():
         patch("knowledge_ingest.adapters.crawler.pg_store") as mock_pg,
         patch(
             "knowledge_ingest.adapters.crawler.crawl_site",
-            new_callable=AsyncMock, return_value=[mock_result],
+            new_callable=AsyncMock,
+            return_value=[mock_result],
         ),
         patch.object(
-            link_graph, "get_outbound_urls",
-            new_callable=AsyncMock, return_value=[],
+            link_graph,
+            "get_outbound_urls",
+            new_callable=AsyncMock,
+            return_value=[],
         ),
         patch.object(
-            link_graph, "get_anchor_texts",
-            new_callable=AsyncMock, return_value=[],
+            link_graph,
+            "get_anchor_texts",
+            new_callable=AsyncMock,
+            return_value=[],
         ),
         patch.object(
-            link_graph, "get_incoming_count",
-            new_callable=AsyncMock, return_value=0,
+            link_graph,
+            "get_incoming_count",
+            new_callable=AsyncMock,
+            return_value=0,
         ),
         patch(
             "knowledge_ingest.routes.ingest.ingest_document",
@@ -203,6 +211,7 @@ async def test_run_crawl_job_calls_build_link_graph_before_ingest():
         from knowledge_ingest.adapters.crawler import run_crawl_job
 
         await run_crawl_job(
+            mock_conn,
             job_id="job-1",
             org_id="org-1",
             kb_slug="docs",
