@@ -93,9 +93,25 @@ async def rescore_open_gaps(
     # body. We send `system` here in user_id, but the header is still
     # validated. Without it: 400 missing_caller_service → silent rescore
     # noop. See pitfalls → retrieve-caller-service-header-mismatch.
-    headers = {"X-Caller-Service": "portal-api", **get_trace_headers()}
-    if settings.internal_secret:
-        headers["Authorization"] = f"Bearer {settings.internal_secret}"
+    #
+    # SPEC-SEC-010 REQ-1: retrieval-api's AuthMiddleware treats
+    # `Authorization: Bearer <token>` strictly as a JWT — non-JWT strings
+    # (like our shared `internal_secret`) fail decode and return 401
+    # `invalid_jwt_signature`. There is NO fallback to X-Internal-Secret
+    # when the Bearer arm is taken. So this caller MUST send
+    # X-Internal-Secret like every other portal-api → retrieval-api
+    # caller (partner_chat, klai_connector_client, litellm hook).
+    # Use the dedicated retrieval_api_internal_secret rotation
+    # boundary (REQ-6.1) — falls back to internal_secret for
+    # backwards-compat with envs that haven't split the secret yet.
+    # Audit reference: .moai/audits/retrieval-coupling-2026-05-06/
+    # findings/F1-gap-rescorer-bearer-auth.md
+    retrieval_secret = settings.retrieval_api_internal_secret or settings.internal_secret
+    headers = {
+        "X-Internal-Secret": retrieval_secret,
+        "X-Caller-Service": "portal-api",
+        **get_trace_headers(),
+    }
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
         for row in gap_queries:
