@@ -101,6 +101,84 @@ class TestMeOrgFound:
         assert response.org_found is False
 
     @pytest.mark.asyncio
+    async def test_set_tenant_called_after_org_resolved(self) -> None:
+        """`set_tenant(db, org.id)` MUST be called once a portal_users row resolves.
+
+        Regression for the 2026-05-06 portal_users 500-incident:
+        portal_users WITH CHECK is strict — the display_name/email cache
+        update at the end of the org-found block (`db.commit()`) requires
+        the GUC to be set. Without `set_tenant` the commit raises 42501.
+
+        See `reports/audit-tenant-isolation-2026-05-05/spec-ti-003-incident/`.
+        """
+        from app.api.me import me
+
+        org = _mock_org()
+        org.id = 42
+        portal_user = _mock_portal_user()
+
+        mock_row = MagicMock()
+        mock_row.__iter__ = lambda self: iter((org, portal_user))
+
+        mock_result = MagicMock()
+        mock_result.one_or_none.return_value = mock_row
+
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=mock_result)
+        mock_db.commit = AsyncMock()
+
+        mock_credentials = MagicMock()
+        mock_credentials.credentials = "test-token"
+
+        userinfo = {"sub": "user-789", "email": "test@acme.nl", "name": "Test User"}
+
+        with (
+            patch("app.api.me.zitadel") as mock_zitadel,
+            patch("app.api.me.get_effective_products", return_value=[]),
+            patch("app.api.me.set_tenant", new_callable=AsyncMock) as mock_set_tenant,
+        ):
+            mock_zitadel.get_userinfo = AsyncMock(return_value=userinfo)
+            mock_zitadel.has_any_mfa = AsyncMock(return_value=False)
+
+            await me(credentials=mock_credentials, db=mock_db)
+
+        mock_set_tenant.assert_called_once_with(mock_db, 42)
+
+    @pytest.mark.asyncio
+    async def test_set_tenant_NOT_called_when_org_not_found(self) -> None:
+        """`set_tenant` MUST NOT be called when no portal_users row exists.
+
+        Without an org we have no tenant context to bind. The portal_users
+        SELECT was Cat-A permissive, so it returned no rows. Calling
+        set_tenant with a None / 0 id would either fail or silently bind
+        the wrong tenant — either way wrong.
+        """
+        from app.api.me import me
+
+        mock_result = MagicMock()
+        mock_result.one_or_none.return_value = None
+
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        mock_credentials = MagicMock()
+        mock_credentials.credentials = "test-token"
+
+        userinfo = {"sub": "user-456", "email": "nobody@example.com", "name": "Nobody"}
+
+        with (
+            patch("app.api.me.zitadel") as mock_zitadel,
+            patch("app.api.me.get_effective_products", return_value=[]),
+            patch("app.api.me.set_tenant", new_callable=AsyncMock) as mock_set_tenant,
+        ):
+            mock_zitadel.get_userinfo = AsyncMock(return_value=userinfo)
+            mock_zitadel.has_any_mfa = AsyncMock(return_value=False)
+
+            await me(credentials=mock_credentials, db=mock_db)
+
+        mock_set_tenant.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_org_found_in_response_model(self) -> None:
         """MeResponse model should include org_found field with default False."""
         from app.api.me import MeResponse

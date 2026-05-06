@@ -28,25 +28,46 @@ BEGIN;
 --      IS-NULL branch allows cross-org INSERT (Finding A-1).
 -- ============================================================
 
--- portal_users
+-- portal_users — Cat-A AUTH-SEED
+-- HOTFIX 2026-05-06 (round 2): USING uses inline NULLIF pattern with literal
+-- "IS NULL" in the expression, NOT the helper-function `_rls_current_org_id()`.
+--
+-- Why not the helper:
+--   `_rls_current_org_id()` is fail-loud (RAISES 42501 when GUC not set).
+--   That is correct for Cat-D tenant tables where every caller MUST have
+--   `set_tenant()` first. But `portal_users` is Cat-A AUTH-SEED — `/api/me`
+--   and `_get_caller_org` look up (org, user) BY zitadel_user_id BEFORE
+--   they know which tenant to set. Calling `_rls_current_org_id()` from
+--   that lookup raises 42501 → every authenticated request returns 500.
+--
+-- Why the inline `NULLIF(...) = ''` IS NULL form:
+--   1. Permissive on missing GUC → /api/me lookup works.
+--   2. Contains the literal substring "IS NULL" → satisfies the existing
+--      lifespan guard `assert_portal_users_rls_ready()` (substring match).
+--   3. WITH CHECK keeps A-1 hardening — every INSERT/UPDATE must carry an
+--      explicit org_id matching the calling tenant context.
+--
+-- See pitfall: rls-policy-shape-must-match-lifespan-assert (HIGH).
 DROP POLICY IF EXISTS tenant_isolation ON portal_users;
 CREATE POLICY tenant_isolation ON portal_users
     FOR ALL TO portal_api
     USING (
         org_id = NULLIF(current_setting('app.current_org_id', true), '')::integer
-        OR current_setting('app.current_org_id', true) = ''
+        OR NULLIF(current_setting('app.current_org_id', true), '') IS NULL
     )
     WITH CHECK (
         org_id = NULLIF(current_setting('app.current_org_id', true), '')::integer
     );
 
--- portal_connectors
+-- portal_connectors — also AUTH-SEED-adjacent
+-- OAuth callbacks resolve the connector row by callback-token BEFORE setting
+-- the tenant context. Same Cat-A reasoning as portal_users above.
 DROP POLICY IF EXISTS tenant_isolation ON portal_connectors;
 CREATE POLICY tenant_isolation ON portal_connectors
     FOR ALL TO portal_api
     USING (
         org_id = NULLIF(current_setting('app.current_org_id', true), '')::integer
-        OR current_setting('app.current_org_id', true) = ''
+        OR NULLIF(current_setting('app.current_org_id', true), '') IS NULL
     )
     WITH CHECK (
         org_id = NULLIF(current_setting('app.current_org_id', true), '')::integer

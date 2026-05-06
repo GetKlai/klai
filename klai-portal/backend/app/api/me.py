@@ -109,6 +109,14 @@ async def me(
         if row:
             org, portal_user = row
             org_found = True
+            # SPEC-TI-005 follow-up: now that we have resolved the tenant,
+            # bind the connection's RLS context BEFORE issuing any further
+            # query or commit. The portal_users WITH CHECK is strict (Cat-A
+            # AUTH-SEED reads are permissive but writes require an explicit
+            # GUC). Without this set_tenant, the `db.commit()` below for the
+            # display_name/email refresh fails with 42501. The SELECT above
+            # is allowed because portal_users USING has the unset-GUC branch.
+            await set_tenant(db, org.id)
             provisioning_status = org.provisioning_status
             mfa_policy = org.mfa_policy
             preferred_language = portal_user.preferred_language
