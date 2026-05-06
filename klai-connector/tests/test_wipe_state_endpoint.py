@@ -54,7 +54,7 @@ class _FakeSession:
         self._sync_runs: list[dict[str, Any]] = list(sync_run_rows or [])
         self._connectors: list[dict[str, Any]] = list(connector_rows or [])
 
-    async def execute(self, stmt: Any) -> _FakeDeleteResult:
+    async def execute(self, stmt: Any, *args: Any, **kwargs: Any) -> _FakeDeleteResult:
         """Inspect the SQLAlchemy DELETE statement structurally.
 
         Audit 2026-05-05 finding MED 8: previous version compiled the
@@ -175,10 +175,9 @@ def test_wipe_state_deletes_only_target_org_rows(monkeypatch: pytest.MonkeyPatch
         + [{"id": str(uuid.uuid4()), "org_id": _ORG_B} for _ in range(3)]
         + [{"id": str(uuid.uuid4()), "org_id": None} for _ in range(2)]
     )
-    connectors = (
-        [{"id": str(uuid.uuid4()), "org_id": _ORG_A} for _ in range(2)]
-        + [{"id": str(uuid.uuid4()), "org_id": _ORG_B} for _ in range(1)]
-    )
+    connectors = [{"id": str(uuid.uuid4()), "org_id": _ORG_A} for _ in range(2)] + [
+        {"id": str(uuid.uuid4()), "org_id": _ORG_B} for _ in range(1)
+    ]
     session = _FakeSession(sync_run_rows=sync_runs, connector_rows=connectors)
     client = _build_client(monkeypatch, session=session)
 
@@ -188,9 +187,7 @@ def test_wipe_state_deletes_only_target_org_rows(monkeypatch: pytest.MonkeyPatch
     body = resp.json()
     # 5 sync_runs + 2 connectors for tenant-a = 7 total
     assert body["rows_deleted"] == 7, f"expected 7 total rows deleted, got {body['rows_deleted']}"
-    assert body["per_table"] == {"sync_runs": 5, "connectors": 2}, (
-        f"per_table breakdown wrong: {body['per_table']}"
-    )
+    assert body["per_table"] == {"sync_runs": 5, "connectors": 2}, f"per_table breakdown wrong: {body['per_table']}"
     assert body["status"] == "ok"
 
     # tenant-a wiped from BOTH tables
@@ -300,9 +297,7 @@ async def test_fake_session_handles_named_bindparam_shape() -> None:
 
     from app.models.sync_run import SyncRun
 
-    session = _FakeSession(
-        sync_run_rows=[{"id": str(uuid.uuid4()), "org_id": _ORG_A} for _ in range(2)]
-    )
+    session = _FakeSession(sync_run_rows=[{"id": str(uuid.uuid4()), "org_id": _ORG_A} for _ in range(2)])
     stmt = delete(SyncRun).where(SyncRun.org_id == bindparam("oid", value=_ORG_A))
     result = await session.execute(stmt)
     assert result.rowcount == 2
