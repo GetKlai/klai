@@ -34,17 +34,42 @@ SGCONFIG = REPO_ROOT / "sgconfig.yml"
 RULE_FILE = RULES_DIR / "no-unbounded-gather-crawl-page.yml"
 
 
+def _is_ast_grep_binary(path: str) -> bool:
+    """Return True iff ``path`` is actually ast-grep.
+
+    Ubuntu ships ``/usr/bin/sg`` (set-group ID command from util-linux) which
+    has nothing to do with ast-grep, and ``shutil.which("sg")`` finds it on
+    default GHA runners. Verify by running ``<bin> --version`` and looking
+    for "ast-grep" in the output. Falls back gracefully on FileNotFoundError
+    or non-zero exit. Pattern copied from
+    ``rules/tests/test_cors_middleware_last_lint.py`` for parity.
+    """
+    try:
+        result = subprocess.run(
+            [path, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+    blob = (result.stdout or "") + (result.stderr or "")
+    return "ast-grep" in blob.lower()
+
+
 def _ast_grep_command() -> list[str]:
     """Resolve a runnable ast-grep CLI invocation.
 
     Order:
-    1. ``ast-grep`` on PATH (developer machines via brew/apt).
-    2. ``sg`` on PATH (the alternate name shipped on some platforms).
+    1. ``ast-grep`` on PATH (developer machines via brew/apt) — verified.
+    2. ``sg`` on PATH (the alternate name) — verified to actually be ast-grep.
     3. ``uvx --from ast-grep-cli ast-grep`` (CI fallback — no global install).
     """
     for name in ("ast-grep", "sg"):
-        if shutil.which(name):
-            return [name]
+        path = shutil.which(name)
+        if path and _is_ast_grep_binary(path):
+            return [path]
     if shutil.which("uvx"):
         return ["uvx", "--from", "ast-grep-cli", "ast-grep"]
     pytest.skip("ast-grep / sg / uvx not available on PATH — skipping lint regression test")
