@@ -214,10 +214,22 @@ class TestMiddlewareEnforcement:
         assert resp.status_code == 401
 
     def test_valid_header_passes_middleware(self, secured_client):
-        with patch(
-            "knowledge_ingest.routes.ingest.ingest_document",
-            new_callable=AsyncMock,
-            return_value={"status": "ok", "chunks": 1, "title": "test"},
+        # SPEC-TI-003 added an identity-assertion layer on top of the
+        # secret middleware. This test is about the *middleware* layer;
+        # mock the identity layer so the assertion stays focused. The
+        # identity contract has its own dedicated test file
+        # (test_ingest_endpoints_identity_assertion.py).
+        with (
+            patch(
+                "knowledge_ingest.routes.ingest.ingest_document",
+                new_callable=AsyncMock,
+                return_value={"status": "ok", "chunks": 1, "title": "test"},
+            ),
+            patch(
+                "knowledge_ingest.routes.ingest.assert_caller_identity",
+                new_callable=AsyncMock,
+                return_value="org1",
+            ),
         ):
             resp = secured_client.post(
                 "/ingest/v1/document",

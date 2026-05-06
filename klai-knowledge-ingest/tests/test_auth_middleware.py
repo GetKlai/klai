@@ -108,11 +108,25 @@ def test_request_with_wrong_secret_returns_401(secured_client):
 
 
 def test_request_with_correct_secret_passes(secured_client):
-    """Request with correct secret should pass middleware (may fail downstream)."""
-    with patch(
-        "knowledge_ingest.routes.ingest.ingest_document",
-        new_callable=AsyncMock,
-        return_value={"status": "ok", "chunks": 1, "title": "test"},
+    """Request with correct secret should pass middleware (may fail downstream).
+
+    SPEC-TI-003 added an identity-assertion layer (``assert_caller_identity``)
+    on top of the secret middleware -- the route now also requires a valid
+    ``X-Caller-Service`` header. This test is *about* the secret middleware,
+    so we mock the identity layer to keep it focused; the identity contract
+    is exercised in test_ingest_endpoints_identity_assertion.py.
+    """
+    with (
+        patch(
+            "knowledge_ingest.routes.ingest.ingest_document",
+            new_callable=AsyncMock,
+            return_value={"status": "ok", "chunks": 1, "title": "test"},
+        ),
+        patch(
+            "knowledge_ingest.routes.ingest.assert_caller_identity",
+            new_callable=AsyncMock,
+            return_value="org1",
+        ),
     ):
         resp = secured_client.post(
             "/ingest/v1/document",
