@@ -62,6 +62,18 @@ async def validate_login_wall_detector(
     graph whose size meets ``cluster_min`` + 1 (= the threshold +
     self). ``recovery_candidates`` are URLs currently at the placeholder
     hash whose cluster size has dropped below threshold under v2.
+
+    @MX:ANCHOR — invariant. This is the merge-gate report consumed by
+    ``scripts/validate_login_wall_detector.py`` and operator dashboards.
+    The schema (top-level keys + cluster shape) is the contract; new
+    fields can be added but existing names/types MUST NOT change without
+    updating the script's ``_print_human`` formatter and any downstream
+    JSON consumers.
+    @MX:NOTE — read-only. NULL ``content_simhash`` rows have their hash
+    computed in memory but NOT written back to the DB. Persistence is
+    the backfill task's job (REQ-04); the validation script must not
+    mutate state because operators run it before deciding to backfill.
+    Reason: SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-10.
     """
     async with tenant_scoped_connection(org_id) as conn:
         rows = await conn.fetch(
