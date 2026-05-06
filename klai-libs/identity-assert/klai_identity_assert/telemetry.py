@@ -30,9 +30,22 @@ if TYPE_CHECKING:
 
 _logger = structlog.get_logger("klai_identity_assert")
 
+# Sentinel emitted in ``claimed_user_id_hash`` for tenant-only calls where
+# no end-user identity exists.  Chosen to be recognisable in log dashboards
+# without requiring special-case parsing.
+_TENANT_ONLY_USER_HASH = "<service>"
 
-def hash_user_id(user_id: str) -> str:
-    """Return a 16-hex-char prefix of SHA-256 — same convention as retrieval-api."""
+
+def hash_user_id(user_id: str | None) -> str:
+    """Return a 16-hex-char prefix of SHA-256 — same convention as retrieval-api.
+
+    When ``user_id`` is ``None`` (tenant-only call, no end-user) returns the
+    sentinel ``"<service>"`` instead of crashing. This is purely defensive:
+    the production code path for tenant-only calls is ``verify_tenant()`` which
+    never calls ``hash_user_id`` with a real user id.
+    """
+    if user_id is None:
+        return _TENANT_ONLY_USER_HASH
     return hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:16]
 
 
@@ -56,7 +69,7 @@ def measure_latency() -> Generator[dict[str, float], None, None]:
 def emit_call(
     *,
     caller_service: str,
-    claimed_user_id: str,
+    claimed_user_id: str | None,
     claimed_org_id: str,
     result: VerifyResult,
     latency_ms: float,

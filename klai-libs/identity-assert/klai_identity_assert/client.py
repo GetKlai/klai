@@ -46,6 +46,44 @@ _DEFAULT_TIMEOUT_SECONDS = 2.0
 _DEFAULT_CACHE_TTL_SECONDS = 60.0
 
 
+def _interpret_tenant_response(payload: Any) -> VerifyResult:
+    """Map a JSON body from /internal/identity/verify-tenant to a VerifyResult.
+
+    Accepts only ``evidence="tenant_only"`` responses. Any unexpected shape
+    (including an evidence value other than "tenant_only") fails closed as
+    ``portal_unreachable`` — this keeps the user-bound ``verify()`` code path
+    strictly separated at the interpreter level.
+    """
+
+    if not isinstance(payload, dict):
+        return VerifyResult.deny("portal_unreachable")
+    body = cast("dict[str, Any]", payload)
+
+    if not bool(body.get("verified")):
+        reason = body.get("reason")
+        known: tuple[str, ...] = (
+            "unknown_caller_service",
+            "org_slug_mismatch",
+            "cache_unavailable",
+            "tenant_not_found",
+        )
+        if isinstance(reason, str) and reason in known:
+            return VerifyResult.deny(reason)  # type: ignore[arg-type]
+        return VerifyResult.deny("portal_unreachable")
+
+    org_id = body.get("org_id")
+    org_slug = body.get("org_slug")
+    evidence = body.get("evidence")
+    if not isinstance(org_id, str) or not isinstance(org_slug, str):
+        return VerifyResult.deny("portal_unreachable")
+    if evidence != "tenant_only":
+        # Any evidence other than "tenant_only" from this endpoint is a
+        # contract violation — fail closed so user-bound evidence can never
+        # slip into a tenant-only call path.
+        return VerifyResult.deny("portal_unreachable")
+    return VerifyResult.allow_tenant(org_id=org_id, org_slug=org_slug)
+
+
 def _interpret_response(payload: Any) -> VerifyResult:
     """Map a JSON body from /internal/identity/verify to a VerifyResult.
 
@@ -185,11 +223,7 @@ class IdentityAsserter:
             # canonical one we resolved at first verification. The canonical
             # slug is stable across the cache TTL so we can deny without a
             # portal round-trip.
-            if (
-                claimed_org_slug is not None
-                and cached.org_slug is not None
-                and claimed_org_slug != cached.org_slug
-            ):
+            if claimed_org_slug is not None and cached.org_slug is not None and claimed_org_slug != cached.org_slug:
                 with measure_latency() as latency:
                     pass
                 deny = VerifyResult.deny("org_slug_mismatch")
@@ -339,4 +373,168 @@ class IdentityAsserter:
             return result
         if result.reason == "portal_unreachable":
             raise PortalUnreachable(f"portal /internal/identity/verify failed for {caller_service}")
+        raise IdentityDenied(result.reason or "unknown")
+
+    async def verify_tenant(
+        self,
+        *,
+        caller_service: str,
+        claimed_org_id: str,
+        claimed_org_slug: str | None = None,
+        request_headers: Mapping[str, str] | None = None,
+    ) -> VerifyResult:
+        """Verify a tenant-only identity claim against portal-api.
+
+        This is the opt-in primitive for service-to-service calls that carry
+        no end-user identity (e.g. dashboard stats endpoints). There is no
+        ``claimed_user_id`` parameter and no ``bearer_jwt`` parameter — a
+        tenant-only call with a JWT would be a contract violation, since there
+        is no user the JWT could assert.
+
+        The type system enforces the separation: callers of user-bound endpoints
+        MUST call :meth:`verify` (strict ``claimed_user_id: str``); they cannot
+        accidentally get a tenant-only result by passing ``None``.
+
+        Returns
+        -------
+        VerifyResult
+            Always returns a result; never raises for portal/network failure.
+            Use :meth:`verify_tenant_or_raise` for exception-driven flow.
+        """
+
+        if caller_service not in KNOWN_CALLER_SERVICES:
+            result = VerifyResult.deny("library_misconfigured")
+            with measure_latency() as latency:
+                pass
+            emit_call(
+                caller_service=caller_service,
+                claimed_user_id=None,
+                claimed_org_id=claimed_org_id,
+                result=result,
+                latency_ms=latency["latency_ms"],
+            )
+            return result
+
+        cached = self._cache.get_tenant(
+            caller_service=caller_service,
+            claimed_org_id=claimed_org_id,
+        )
+        if cached is not None:
+            with measure_latency() as latency:
+                pass
+            emit_call(
+                caller_service=caller_service,
+                claimed_user_id=None,
+                claimed_org_id=claimed_org_id,
+                result=cached,
+                latency_ms=latency["latency_ms"],
+            )
+            return cached
+
+        body: dict[str, str | None] = {
+            "caller_service": caller_service,
+            "claimed_org_id": claimed_org_id,
+            "claimed_org_slug": claimed_org_slug,
+        }
+        headers: dict[str, str] = {
+            "Authorization": f"Bearer {self._internal_secret}",
+            "Content-Type": "application/json",
+        }
+        if request_headers is not None:
+            request_id = request_headers.get("X-Request-ID") or request_headers.get("x-request-id")
+            if request_id:
+                headers["X-Request-ID"] = request_id
+
+        with measure_latency() as latency:
+            try:
+                response = await self._http.post(
+                    f"{self._portal_base_url}/internal/identity/verify-tenant",
+                    json=body,
+                    headers=headers,
+                )
+            except httpx.HTTPError as exc:
+                _logger.warning(
+                    "identity_assert_portal_unreachable",
+                    caller_service=caller_service,
+                    error=str(exc),
+                )
+                result = VerifyResult.deny("portal_unreachable")
+                emit_call(
+                    caller_service=caller_service,
+                    claimed_user_id=None,
+                    claimed_org_id=claimed_org_id,
+                    result=result,
+                    latency_ms=latency["latency_ms"],
+                )
+                return result
+
+        if response.status_code >= 500:
+            result = VerifyResult.deny("portal_unreachable")
+            emit_call(
+                caller_service=caller_service,
+                claimed_user_id=None,
+                claimed_org_id=claimed_org_id,
+                result=result,
+                latency_ms=latency["latency_ms"],
+            )
+            return result
+
+        try:
+            payload = response.json()
+        except ValueError:
+            result = VerifyResult.deny("portal_unreachable")
+            emit_call(
+                caller_service=caller_service,
+                claimed_user_id=None,
+                claimed_org_id=claimed_org_id,
+                result=result,
+                latency_ms=latency["latency_ms"],
+            )
+            return result
+
+        result = _interpret_tenant_response(payload)
+        if result.verified:
+            self._cache.put_tenant(
+                caller_service=caller_service,
+                claimed_org_id=claimed_org_id,
+                result=result,
+            )
+
+        emit_call(
+            caller_service=caller_service,
+            claimed_user_id=None,
+            claimed_org_id=claimed_org_id,
+            result=result,
+            latency_ms=latency["latency_ms"],
+        )
+        return result
+
+    async def verify_tenant_or_raise(
+        self,
+        *,
+        caller_service: str,
+        claimed_org_id: str,
+        claimed_org_slug: str | None = None,
+        request_headers: Mapping[str, str] | None = None,
+    ) -> VerifyResult:
+        """Like :meth:`verify_tenant` but raises on every non-verified outcome.
+
+        Same exception mapping as :meth:`verify_or_raise`:
+
+        - :class:`~klai_identity_assert.exceptions.PortalUnreachable` for
+          network errors and ``portal_unreachable``-coded results.
+        - :class:`~klai_identity_assert.exceptions.IdentityDenied` for every
+          other denial (``tenant_not_found``, ``org_slug_mismatch``, etc.).
+        """
+
+        result = await self.verify_tenant(
+            caller_service=caller_service,
+            claimed_org_id=claimed_org_id,
+            claimed_org_slug=claimed_org_slug,
+            request_headers=request_headers,
+        )
+        if result.verified:
+            return result
+        if result.reason == "portal_unreachable":
+            raise PortalUnreachable(f"portal /internal/identity/verify-tenant failed for {caller_service}")
         raise IdentityDenied(result.reason or "unknown")

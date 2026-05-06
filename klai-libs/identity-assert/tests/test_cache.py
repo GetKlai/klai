@@ -15,12 +15,15 @@ def _verified() -> VerifyResult:
 def test_get_returns_none_on_miss() -> None:
     cache = IdentityCache()
 
-    assert cache.get(
-        caller_service="scribe",
-        claimed_user_id="u-1",
-        claimed_org_id="o-1",
-        bearer_jwt=None,
-    ) is None
+    assert (
+        cache.get(
+            caller_service="scribe",
+            claimed_user_id="u-1",
+            claimed_org_id="o-1",
+            bearer_jwt=None,
+        )
+        is None
+    )
 
 
 def test_put_then_get_returns_cached_with_cached_flag_true() -> None:
@@ -83,12 +86,15 @@ def test_put_does_not_cache_denied_results() -> None:
     )
 
     assert len(cache) == 0
-    assert cache.get(
-        caller_service="scribe",
-        claimed_user_id="u-1",
-        claimed_org_id="o-1",
-        bearer_jwt=None,
-    ) is None
+    assert (
+        cache.get(
+            caller_service="scribe",
+            claimed_user_id="u-1",
+            claimed_org_id="o-1",
+            bearer_jwt=None,
+        )
+        is None
+    )
 
 
 def test_jwt_fingerprint_distinguishes_callers() -> None:
@@ -170,20 +176,26 @@ def test_lru_eviction_drops_oldest_when_capacity_exceeded() -> None:
         now=3.0,
     )
 
-    assert cache.get(
-        caller_service="scribe",
-        claimed_user_id="u-B",
-        claimed_org_id="o-1",
-        bearer_jwt=None,
-        now=4.0,
-    ) is None
-    assert cache.get(
-        caller_service="scribe",
-        claimed_user_id="u-A",
-        claimed_org_id="o-1",
-        bearer_jwt=None,
-        now=4.0,
-    ) is not None
+    assert (
+        cache.get(
+            caller_service="scribe",
+            claimed_user_id="u-B",
+            claimed_org_id="o-1",
+            bearer_jwt=None,
+            now=4.0,
+        )
+        is None
+    )
+    assert (
+        cache.get(
+            caller_service="scribe",
+            claimed_user_id="u-A",
+            claimed_org_id="o-1",
+            bearer_jwt=None,
+            now=4.0,
+        )
+        is not None
+    )
 
 
 def test_init_rejects_invalid_ttl() -> None:
@@ -196,3 +208,90 @@ def test_init_rejects_invalid_ttl() -> None:
 def test_init_rejects_invalid_max_entries() -> None:
     with pytest.raises(ValueError, match="max_entries"):
         IdentityCache(max_entries=0)
+
+
+# ---------------------------------------------------------------------------
+# Tenant cache tests
+# ---------------------------------------------------------------------------
+
+
+def _verified_tenant() -> VerifyResult:
+    return VerifyResult.allow_tenant(org_id="o-1", org_slug="acme")
+
+
+def test_tenant_put_then_get_returns_cached_with_flag_true() -> None:
+    cache = IdentityCache()
+    cache.put_tenant(
+        caller_service="portal-api",
+        claimed_org_id="o-1",
+        result=_verified_tenant(),
+        now=0.0,
+    )
+
+    cached = cache.get_tenant(
+        caller_service="portal-api",
+        claimed_org_id="o-1",
+        now=30.0,
+    )
+
+    assert cached is not None
+    assert cached.verified is True
+    assert cached.cached is True
+    assert cached.org_id == "o-1"
+    assert cached.org_slug == "acme"
+    assert cached.evidence == "tenant_only"
+    assert cached.user_id is None
+
+
+def test_tenant_get_returns_none_after_ttl() -> None:
+    cache = IdentityCache(ttl_seconds=60.0)
+    cache.put_tenant(
+        caller_service="portal-api",
+        claimed_org_id="o-1",
+        result=_verified_tenant(),
+        now=0.0,
+    )
+
+    expired = cache.get_tenant(
+        caller_service="portal-api",
+        claimed_org_id="o-1",
+        now=61.0,
+    )
+
+    assert expired is None
+
+
+def test_tenant_cache_key_cannot_match_user_bound_entry() -> None:
+    """A user-bound put for (portal-api, o-1) MUST NOT be returned by get_tenant.
+
+    This is the core isolation guarantee: the two stores are completely
+    separate — no key structure can bridge them.
+    """
+    cache = IdentityCache()
+    # Put a user-bound entry for the same (service, org).
+    cache.put(
+        caller_service="portal-api",
+        claimed_user_id="u-1",
+        claimed_org_id="o-1",
+        bearer_jwt=None,
+        result=_verified(),
+        now=0.0,
+    )
+
+    # Tenant-only lookup MUST miss — it has its own store.
+    tenant_hit = cache.get_tenant(
+        caller_service="portal-api",
+        claimed_org_id="o-1",
+        now=1.0,
+    )
+    assert tenant_hit is None
+
+    # The original user-bound entry is still there.
+    user_hit = cache.get(
+        caller_service="portal-api",
+        claimed_user_id="u-1",
+        claimed_org_id="o-1",
+        bearer_jwt=None,
+        now=1.0,
+    )
+    assert user_hit is not None
