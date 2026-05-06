@@ -240,7 +240,9 @@ def cluster_documents_hdbscan(
 
     SPEC-TAXONOMY-V2-001 AC-1, AC-16.
     SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B1: UMAP pre-reduction (pre_reduce=True by default).
-    SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B3: DBCV-score via hdb.relative_validity_.
+    SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B5: cluster_persistence_mean replaces dbcv_score.
+        sklearn 1.8 HDBSCAN does NOT expose relative_validity_ (confirmed in production via
+        hasattr() returning False). Use cluster_persistence_ (always available) instead.
 
     Args:
         embeddings: (n_docs, dim) float32 array of unit-normalised embeddings.
@@ -251,8 +253,8 @@ def cluster_documents_hdbscan(
 
     Returns:
         labels: (n_docs,) int array; -1 = outlier/noise.
-        metrics: dict with keys clusters_found, outlier_count, dbcv_score.
-                 dbcv_score is None when <= 1 cluster found or relative_validity_ unavailable.
+        metrics: dict with keys clusters_found, outlier_count, cluster_persistence_mean.
+                 cluster_persistence_mean is None when 0 clusters found or attribute unavailable.
     """
     import numpy as np
 
@@ -265,7 +267,7 @@ def cluster_documents_hdbscan(
         return np.full(n, -1, dtype=np.int32), {
             "clusters_found": 0,
             "outlier_count": n,
-            "dbcv_score": None,
+            "cluster_persistence_mean": None,
         }
 
     if pre_reduce:
@@ -288,19 +290,23 @@ def cluster_documents_hdbscan(
     clusters_found = len(cluster_ids)
     outlier_count = int((labels == -1).sum())
 
-    # DBCV score: use sklearn HDBSCAN's relative_validity_ attribute.
-    # Only available when >= 2 clusters were found.
-    dbcv: float | None = None
-    if clusters_found >= 2 and hasattr(hdb, "relative_validity_"):
+    # Cluster persistence — sklearn HDBSCAN's native per-cluster quality metric.
+    # Mean across clusters is a meaningful quality summary.
+    # (replaces dbcv_score which assumed relative_validity_; sklearn 1.8 doesn't
+    #  expose it — confirmed via hasattr() returning False in production.)
+    cluster_persistence_mean: float | None = None
+    if clusters_found >= 1 and hasattr(hdb, "cluster_persistence_"):
         try:
-            dbcv = float(hdb.relative_validity_)
+            persistence = hdb.cluster_persistence_
+            if persistence is not None and len(persistence) > 0:
+                cluster_persistence_mean = float(persistence.mean())
         except Exception:
-            dbcv = None
+            cluster_persistence_mean = None
 
     return labels, {
         "clusters_found": clusters_found,
         "outlier_count": outlier_count,
-        "dbcv_score": dbcv,
+        "cluster_persistence_mean": cluster_persistence_mean,
     }
 
 

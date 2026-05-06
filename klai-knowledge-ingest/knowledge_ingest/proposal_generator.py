@@ -335,6 +335,128 @@ async def _suggest_cluster_name(
         return parsed.get("category_name") or None
 
 
+_BATCHED_NAMING_SYSTEM_PROMPT_TEMPLATE = (
+    "You are naming N pre-clustered groups of documents from a knowledge base."
+    "{kb_description_block}"
+    "\n\nThe clustering algorithm has already identified these as DISTINCT topics — "
+    "your job is to label each one with a concise, DIFFERENTIATED name.\n\n"
+    "Constraints:\n"
+    "- Each name 2-5 words\n"
+    "- All N names MUST be DISTINCT — no near-duplicates, no overlapping concepts\n"
+    "- Use the user's domain language (Dutch terms if docs are in Dutch)\n"
+    '- If clusters appear thematically related (e.g., multiple sub-types of "X"), '
+    "differentiate by what's UNIQUE about each "
+    "(specific tool, specific use-case, specific audience)\n\n"
+    "Reply ONLY with JSON, no markdown:\n"
+    '{{"names": [{{"cluster_id": <int>, "name": "<string>"}}, ...]}}'
+)
+
+
+async def _suggest_cluster_names_batched(
+    cluster_doc_lists: dict[int, list[DocumentSummary]],
+    kb_description: str,
+) -> dict[int, str | None]:
+    """Single-call cross-cluster aware naming.
+
+    Returns {cluster_id: name | None}. None means parse failure or LLM
+    omitted that cluster — caller falls back to per-cluster naming for
+    those slots.
+
+    SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B4: cross-cluster awareness so the
+    LLM picks differentiated names instead of 7 variants of "CRM integraties".
+    """
+    n_clusters = len(cluster_doc_lists)
+
+    # Token-budget guard: too many clusters saturate context; fall back to per-cluster.
+    if n_clusters > 30:
+        logger.info(
+            "bootstrap_batched_naming_skipped_too_many_clusters",
+            n_clusters=n_clusters,
+            threshold=30,
+        )
+        return {}
+
+    kb_description_block = ""
+    if kb_description and kb_description.strip():
+        kb_description_block = f"\nThe knowledge base is described as:\n{kb_description.strip()}"
+
+    system_prompt = _BATCHED_NAMING_SYSTEM_PROMPT_TEMPLATE.format(
+        kb_description_block=kb_description_block,
+    )
+
+    # Build user message: enumerate clusters with up to 8 sample doc-titles each
+    cluster_lines: list[str] = []
+    for cid, docs in sorted(cluster_doc_lists.items()):
+        titles = [doc.title[:200] for doc in docs[:8]]
+        titles_str = "\n".join(f"  - {t}" for t in titles)
+        cluster_lines.append(f"Cluster {cid}:\n{titles_str}")
+    user_message = "\n\n".join(cluster_lines)
+
+    try:
+        async with httpx.AsyncClient(timeout=settings.taxonomy_classification_timeout) as client:
+            resp = await client.post(
+                f"{settings.litellm_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.litellm_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": settings.taxonomy_classification_model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message},
+                    ],
+                    "temperature": 0.3,
+                    "max_tokens": 1500,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            content = (data["choices"][0]["message"]["content"] or "").strip()
+            # Strip markdown code fences if present
+            if content.startswith("```"):
+                content = content.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            parsed = json.loads(content)
+    except Exception as exc:
+        logger.warning(
+            "bootstrap_batched_naming_failed",
+            error=str(exc),
+            n_clusters=n_clusters,
+        )
+        return {}
+
+    # Validate structure
+    if not isinstance(parsed, dict) or "names" not in parsed:
+        logger.warning(
+            "bootstrap_batched_naming_invalid_response",
+            reason="missing 'names' key",
+        )
+        return {}
+
+    names_list = parsed["names"]
+    if not isinstance(names_list, list):
+        logger.warning(
+            "bootstrap_batched_naming_invalid_response",
+            reason="'names' is not a list",
+        )
+        return {}
+
+    result: dict[int, str | None] = {}
+    valid_cids = set(cluster_doc_lists.keys())
+    for item in names_list:
+        if not isinstance(item, dict):
+            continue
+        cid = item.get("cluster_id")
+        name = item.get("name")
+        if not isinstance(cid, int) or cid not in valid_cids:
+            continue
+        if not isinstance(name, str) or not name.strip():
+            continue
+        result[cid] = name.strip()
+
+    return result
+
+
 async def generate_bootstrap_proposals_v2(
     org_id: str,
     kb_slug: str,
@@ -414,7 +536,7 @@ async def generate_bootstrap_proposals_v2(
     )
     clusters_found: int = metrics["clusters_found"]
     outlier_count: int = metrics["outlier_count"]
-    dbcv_score: float | None = metrics["dbcv_score"]
+    cluster_persistence_mean: float | None = metrics["cluster_persistence_mean"]
 
     if clusters_found == 0:
         logger.info(
@@ -423,7 +545,7 @@ async def generate_bootstrap_proposals_v2(
             kb_slug=kb_slug,
             clusters_found=0,
             outlier_count=outlier_count,
-            dbcv_score=dbcv_score,
+            cluster_persistence_mean=cluster_persistence_mean,
             proposals_submitted=0,
         )
         return BootstrapResult(
@@ -470,7 +592,9 @@ async def generate_bootstrap_proposals_v2(
             cluster_docs = [document_summaries[i] for i in top_indices]
         cluster_doc_lists[cid] = cluster_docs
 
-    # Step 6: parallel LLM naming with Semaphore (AC-4)
+    # Step 6: batched cross-cluster naming (B4), per-cluster fallback for misses
+    # SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B4: single LLM call names all clusters at once
+    # so it can enforce distinctness across names (prevents 7 variants of "CRM integraties").
     semaphore = asyncio.Semaphore(5)
 
     async def _name_cluster(cid: int, docs: list[DocumentSummary]) -> tuple[int, str | None]:
@@ -490,8 +614,27 @@ async def generate_bootstrap_proposals_v2(
                 )
                 return cid, None
 
-    naming_tasks = [_name_cluster(cid, docs) for cid, docs in cluster_doc_lists.items()]
-    naming_results: list[tuple[int, str | None]] = await asyncio.gather(*naming_tasks)
+    # Try batched naming first (cross-cluster aware)
+    batched_names = await _suggest_cluster_names_batched(cluster_doc_lists, kb_description)
+    naming_results: list[tuple[int, str | None]] = []
+
+    # Collect results from batched call; identify clusters that need per-cluster fallback
+    missing_cids = [cid for cid in cluster_doc_lists if not batched_names.get(cid)]
+    for cid in cluster_doc_lists:
+        name_from_batch = batched_names.get(cid)
+        if name_from_batch:
+            naming_results.append((cid, name_from_batch))
+
+    # Per-cluster fallback ONLY for clusters batched call didn't name
+    if missing_cids:
+        logger.info(
+            "bootstrap_naming_fallback_to_per_cluster",
+            kb_slug=kb_slug,
+            count=len(missing_cids),
+        )
+        fallback_tasks = [_name_cluster(cid, cluster_doc_lists[cid]) for cid in missing_cids]
+        fallback_results: list[tuple[int, str | None]] = await asyncio.gather(*fallback_tasks)
+        naming_results.extend(fallback_results)
 
     # Step 7: filter duplicates (AC-6)
     existing_names_lower = {node.name.lower() for node in existing_nodes}
@@ -525,7 +668,7 @@ async def generate_bootstrap_proposals_v2(
                 kb_slug=kb_slug,
                 clusters_found=clusters_found,
                 outlier_count=outlier_count,
-                dbcv_score=dbcv_score,
+                cluster_persistence_mean=cluster_persistence_mean,
                 proposals_submitted=0,
             )
             return BootstrapResult(
@@ -577,14 +720,15 @@ async def generate_bootstrap_proposals_v2(
         submitted += 1
 
     # Step 9: AC-9 log
-    # SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B3: log dbcv_score instead of silhouette_score
+    # SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B5: log cluster_persistence_mean instead of dbcv_score.
+    # dbcv_score assumed relative_validity_ which sklearn 1.8 does not expose.
     logger.info(
         "bootstrap_proposals_complete",
         org_id=org_id,
         kb_slug=kb_slug,
         clusters_found=clusters_found,
         outlier_count=outlier_count,
-        dbcv_score=dbcv_score,
+        cluster_persistence_mean=cluster_persistence_mean,
         proposals_submitted=submitted,
     )
 
