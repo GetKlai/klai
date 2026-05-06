@@ -17,11 +17,74 @@ mock connection so unit tests that exercise the FastAPI app via
 from __future__ import annotations
 
 import os
+import sys
+import types
 
 os.environ.setdefault("KNOWLEDGE_INGEST_SECRET", "test-secret-value-123")
 os.environ.setdefault("PORTAL_INTERNAL_TOKEN", "test-portal-internal-token-456")  # SEC-014
 # SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-12 — gitea webhook HMAC secret.
 os.environ.setdefault("GITEA_WEBHOOK_SECRET", "test-gitea-webhook-secret-789")
+# Default ``enrichment_enabled = True`` makes the FastAPI lifespan spawn a
+# real Procrastinate worker, which fails in the test environment (no libpq).
+# Force the kill-switch off via env var so every fresh ``Settings()``
+# instantiation -- including ones triggered by test files that pop
+# ``knowledge_ingest.config`` from ``sys.modules`` -- starts with the worker
+# disabled. Tests that *want* to exercise the enrichment path patch
+# ``settings.enrichment_enabled = True`` themselves.
+os.environ.setdefault("ENRICHMENT_ENABLED", "false")
+
+
+# ---------------------------------------------------------------------------
+# Procrastinate stub (see audit-2026-05-06 finding: module-level stubs in
+# individual test files left an INCOMPLETE ``procrastinate`` module in
+# ``sys.modules``. Subsequent tests that triggered ``WorkerLifecycle`` (via the
+# default ``settings.enrichment_enabled = True``) cascaded with
+# ``AttributeError: module 'procrastinate' has no attribute 'PsycopgConnector'``.
+#
+# The fix: install a *complete* stub here at conftest import time (before any
+# test module loads). The stub covers every attribute production code reads
+# (``PsycopgConnector``, ``App``, ``RetryStrategy``, ``BaseRetryStrategy``,
+# ``JobContext``, ``RetryDecision``, plus ``exceptions.AlreadyEnqueued``).
+# Individual test files keep their own ``_install_procrastinate_stub()``
+# helpers as no-ops because they all guard with
+# ``if "procrastinate" in sys.modules: return``.
+# ---------------------------------------------------------------------------
+
+
+class _AlreadyEnqueued(Exception):
+    """Stub for procrastinate.exceptions.AlreadyEnqueued."""
+
+
+def _install_procrastinate_stub() -> None:
+    if "procrastinate" in sys.modules:
+        return
+    exceptions_mod = types.ModuleType("procrastinate.exceptions")
+    exceptions_mod.AlreadyEnqueued = _AlreadyEnqueued  # type: ignore[attr-defined]
+
+    pkg = types.ModuleType("procrastinate")
+    pkg.exceptions = exceptions_mod  # type: ignore[attr-defined]
+
+    # Production code does decorator chains like
+    # ``@procrastinate_app.task(queue=..., retry=procrastinate.RetryStrategy(...))``
+    # where ``procrastinate_app = procrastinate.App(connector=connector)``.
+    # ``MagicMock`` lets us absorb arbitrary attribute / call chains without
+    # forcing each test that imports a module-level decorated task to mock
+    # everything by hand.
+    from unittest.mock import MagicMock  # local import: only needed here
+
+    pkg.PsycopgConnector = MagicMock(name="PsycopgConnector")  # type: ignore[attr-defined]
+    pkg.App = MagicMock(name="App")  # type: ignore[attr-defined]
+    pkg.RetryStrategy = MagicMock(name="RetryStrategy")  # type: ignore[attr-defined]
+    pkg.BaseRetryStrategy = type("BaseRetryStrategy", (), {})  # type: ignore[attr-defined]
+    pkg.JobContext = MagicMock(name="JobContext")  # type: ignore[attr-defined]
+    pkg.RetryDecision = MagicMock(name="RetryDecision")  # type: ignore[attr-defined]
+
+    sys.modules["procrastinate"] = pkg
+    sys.modules["procrastinate.exceptions"] = exceptions_mod
+
+
+_install_procrastinate_stub()
+
 
 # Imports below need the env vars above — keep this order to allow the
 # module-level ``settings = Settings()`` call in ``knowledge_ingest.config``
