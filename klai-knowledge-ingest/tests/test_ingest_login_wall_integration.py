@@ -80,11 +80,15 @@ def _patch_chain(*, cluster_simhashes: list[int] | None = None):
     rows = [{"content_simhash": h} for h in (cluster_simhashes or [])]
     pool.fetch = AsyncMock(return_value=rows)
 
-    pg_store_mock = MagicMock()
-    pg_store_mock.get_crawled_page_stored = AsyncMock(return_value=None)
-    pg_store_mock.upsert_crawled_page = AsyncMock(return_value=None)
-    # SPEC-INGEST-LOGIN-WALL-DETECT-002: SimHash store helper called after upsert.
-    pg_store_mock.update_crawled_page_simhash = AsyncMock(return_value=None)
+    # ``make_pg_store_mock`` from conftest returns
+    # ``AsyncMock(spec=pg_store)`` so every helper — current AND any
+    # future addition — is auto-mocked as an async no-op. Avoids the
+    # fragility of manually re-listing AsyncMock assignments per helper
+    # (which silently breaks when a new pg_store helper is added — the
+    # case that hit ``update_crawled_page_simhash`` in this SPEC).
+    from tests.conftest import make_pg_store_mock
+
+    pg_store_mock = make_pg_store_mock()
 
     ingest_document_mock = AsyncMock(return_value=None)
 
