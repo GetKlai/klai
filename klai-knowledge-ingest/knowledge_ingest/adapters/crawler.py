@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import time
 
 import asyncpg
@@ -202,6 +203,11 @@ async def run_crawl_job(
 
     pages_done = 0
     pages_failed = 0
+    # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-04 — anonymous-wall tracking. URLs
+    # that hit AnonymousAuthWallDetected during ingest. After the BFS, this
+    # populates crawl_jobs.error_summary (separate from `error`, which the
+    # cookie-path AuthWallDetected handler still owns).
+    auth_wall_pages: list[str] = []
 
     try:
         results = await crawl_site(
@@ -259,6 +265,18 @@ async def run_crawl_job(
                 # Halt the whole BFS — downstream handler in the except block
                 # writes the job row; do not keep ingesting follow-up pages.
                 raise
+            except AnonymousAuthWallDetected as wall_exc:
+                # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-04.1 — per-page wall,
+                # NOT a session-wide failure. Record + continue BFS so sibling
+                # URLs (which may be public) still ingest.
+                auth_wall_pages.append(wall_exc.url)
+                logger.info(
+                    "crawl_page_login_wall",
+                    url=url,
+                    job_id=job_id,
+                    pattern=wall_exc.signal.pattern,
+                    confidence=wall_exc.signal.confidence,
+                )
             except Exception as exc:
                 logger.warning("crawl_page_failed", url=url, job_id=job_id, error=str(exc))
                 pages_failed += 1
@@ -270,12 +288,43 @@ async def run_crawl_job(
                 job_id,
             )
 
-        await _update_job(conn, job_id, status="completed")
+        # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-04.2/04.3 — terminal status:
+        # - failed_partial when 0 pages ingested AND >= 1 wall skipped (no real
+        #   content reached Qdrant; surface that to operators distinctly from
+        #   plain "completed but no walls" or "failed catastrophically").
+        # - completed otherwise (legacy alias retained for back-compat with
+        #   existing UI / Grafana queries during rollout; future SPEC may
+        #   migrate the alias to "succeeded").
+        if auth_wall_pages and pages_done == 0:
+            terminal_status = "failed_partial"
+        else:
+            terminal_status = "completed"
+
+        if auth_wall_pages:
+            summary_json = json.dumps(
+                {
+                    "login_walls_skipped": len(auth_wall_pages),
+                    "sample_urls": auth_wall_pages[:10],
+                }
+            )
+            await conn.execute(
+                "UPDATE knowledge.crawl_jobs SET status=$1, error_summary=$2::jsonb, "
+                "updated_at=$3 WHERE id=$4",
+                terminal_status,
+                summary_json,
+                int(time.time()),
+                job_id,
+            )
+        else:
+            await _update_job(conn, job_id, status=terminal_status)
+
         logger.info(
             "crawl_job_complete",
             job_id=job_id,
             pages_done=pages_done,
             pages_failed=pages_failed,
+            login_walls_skipped=len(auth_wall_pages),
+            status=terminal_status,
         )
 
     except AuthWallDetected as exc:
