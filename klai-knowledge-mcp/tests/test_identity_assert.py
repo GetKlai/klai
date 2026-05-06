@@ -21,7 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from klai_identity_assert import VerifyResult  # used for VerifyResult.deny() below
 
-from tests.conftest import allow_verify_result
+from tests._helpers import allow_verify_result
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
