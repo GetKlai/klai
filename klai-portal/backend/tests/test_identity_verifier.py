@@ -486,3 +486,184 @@ class TestOrgSlugCheck:
         assert decision.verified is True
         assert decision.org_slug == "acme"
         assert decision.evidence == "membership"
+
+
+class TestPartnerKeyPath:
+    """F2 fix-forward (retrieval coupling audit 2026-05-06):
+    `partner:<key_id>` claims are verified against partner_api_keys + portal_orgs.
+
+    Tests pin the security contract:
+
+    1. Allow only when key exists AND key.org_id maps to claimed_zitadel_org_id.
+    2. Deny on missing key, malformed key, soft-deleted org, or org mismatch.
+    3. Restricted to caller_service="portal-api" (only that service mints
+       partner identities) — defense against cross-service prefix abuse.
+    4. Bearer JWT + partner: prefix → invalid_jwt (defensive guard).
+    5. DB errors fail closed to partner_key_not_found.
+    """
+
+    async def test_allow_when_key_exists_and_org_matches(self, mock_db: AsyncMock) -> None:
+        # _resolve_partner_key_org_slug runs `result.one_or_none()` and gets
+        # a (zitadel_org_id, slug) tuple. Mock that.
+        mock_result = MagicMock()
+        mock_result.one_or_none = MagicMock(return_value=("zitadel-org-acme", "acme"))
+        mock_db.execute.return_value = mock_result
+
+        decision = await verify_identity_claim(
+            db=mock_db,
+            jwks_resolver=_FakeJwksResolver(),
+            caller_service="portal-api",
+            claimed_user_id="partner:abc-123",
+            claimed_org_id="zitadel-org-acme",
+            bearer_jwt=None,
+        )
+
+        assert decision.verified is True
+        assert decision.evidence == "partner_key"
+        assert decision.user_id == "partner:abc-123"
+        assert decision.org_id == "zitadel-org-acme"
+        assert decision.org_slug == "acme"
+
+    async def test_deny_when_key_not_found(self, mock_db: AsyncMock) -> None:
+        mock_result = MagicMock()
+        mock_result.one_or_none = MagicMock(return_value=None)
+        mock_db.execute.return_value = mock_result
+
+        decision = await verify_identity_claim(
+            db=mock_db,
+            jwks_resolver=_FakeJwksResolver(),
+            caller_service="portal-api",
+            claimed_user_id="partner:does-not-exist",
+            claimed_org_id="zitadel-org-acme",
+            bearer_jwt=None,
+        )
+
+        assert decision.verified is False
+        assert decision.reason == "partner_key_not_found"
+        assert decision.evidence is None
+        assert decision.org_id is None
+
+    async def test_deny_on_org_mismatch(self, mock_db: AsyncMock) -> None:
+        # Real key exists but its owning org's Zitadel id does not match the
+        # claim — the shape of a deliberate cross-tenant probe.
+        mock_result = MagicMock()
+        mock_result.one_or_none = MagicMock(return_value=("zitadel-org-actual", "actual"))
+        mock_db.execute.return_value = mock_result
+
+        decision = await verify_identity_claim(
+            db=mock_db,
+            jwks_resolver=_FakeJwksResolver(),
+            caller_service="portal-api",
+            claimed_user_id="partner:abc-123",
+            claimed_org_id="zitadel-org-victim",  # forged claim
+            bearer_jwt=None,
+        )
+
+        assert decision.verified is False
+        assert decision.reason == "partner_key_org_mismatch"
+
+    async def test_deny_when_caller_service_not_portal_api(self, mock_db: AsyncMock) -> None:
+        # Bypass-prevention: only portal-api mints partner identities.
+        # Other callers presenting a `partner:` prefix are denied without
+        # ever hitting partner_api_keys — short-circuits would-be probes.
+        decision = await verify_identity_claim(
+            db=mock_db,
+            jwks_resolver=_FakeJwksResolver(),
+            caller_service="knowledge-mcp",  # NOT portal-api
+            claimed_user_id="partner:abc-123",
+            claimed_org_id="zitadel-org-acme",
+            bearer_jwt=None,
+        )
+
+        assert decision.verified is False
+        assert decision.reason == "partner_key_not_found"
+        # No DB call should have happened on the gating reject.
+        mock_db.execute.assert_not_called()
+
+    async def test_deny_when_malformed_key_length(self, mock_db: AsyncMock) -> None:
+        # Fast reject: avoid forwarding garbage into asyncpg's UUID parser.
+        decision = await verify_identity_claim(
+            db=mock_db,
+            jwks_resolver=_FakeJwksResolver(),
+            caller_service="portal-api",
+            claimed_user_id="partner:" + "x" * 65,
+            claimed_org_id="zitadel-org-acme",
+            bearer_jwt=None,
+        )
+
+        assert decision.verified is False
+        assert decision.reason == "partner_key_not_found"
+        mock_db.execute.assert_not_called()
+
+    async def test_deny_when_partner_prefix_with_bearer_jwt(self, mock_db: AsyncMock) -> None:
+        # Defensive guard: partner credentials are the partner-key, never a
+        # bearer JWT. Mixing the two indicates a malformed call.
+        decision = await verify_identity_claim(
+            db=mock_db,
+            jwks_resolver=_FakeJwksResolver(),
+            caller_service="portal-api",
+            claimed_user_id="partner:abc-123",
+            claimed_org_id="zitadel-org-acme",
+            bearer_jwt="some.jwt.value",
+        )
+
+        assert decision.verified is False
+        assert decision.reason == "invalid_jwt"
+        mock_db.execute.assert_not_called()
+
+    async def test_deny_on_db_error_fails_closed(self, mock_db: AsyncMock) -> None:
+        # Malformed UUIDs surface as DataError; treat as not_found rather
+        # than leaking internal state to the consumer.
+        mock_db.execute = AsyncMock(side_effect=Exception("invalid uuid format"))
+
+        decision = await verify_identity_claim(
+            db=mock_db,
+            jwks_resolver=_FakeJwksResolver(),
+            caller_service="portal-api",
+            claimed_user_id="partner:not-a-uuid",
+            claimed_org_id="zitadel-org-acme",
+            bearer_jwt=None,
+        )
+
+        assert decision.verified is False
+        assert decision.reason == "partner_key_not_found"
+
+    async def test_deny_on_org_slug_mismatch_after_allow(self, mock_db: AsyncMock) -> None:
+        # Key + org match, but caller asserts a different X-Org-Slug than the
+        # canonical one — REQ-2.6 still applies.
+        mock_result = MagicMock()
+        mock_result.one_or_none = MagicMock(return_value=("zitadel-org-acme", "acme"))
+        mock_db.execute.return_value = mock_result
+
+        decision = await verify_identity_claim(
+            db=mock_db,
+            jwks_resolver=_FakeJwksResolver(),
+            caller_service="portal-api",
+            claimed_user_id="partner:abc-123",
+            claimed_org_id="zitadel-org-acme",
+            bearer_jwt=None,
+            claimed_org_slug="impostor-slug",
+        )
+
+        assert decision.verified is False
+        assert decision.reason == "org_slug_mismatch"
+
+    async def test_returns_canonical_slug_when_no_org_slug_claimed(self, mock_db: AsyncMock) -> None:
+        # Same shape as TestOrgSlugCheck::test_jwt_path_returns_canonical_slug_when_no_claim:
+        # the canonical slug always flows back so cache re-checks work.
+        mock_result = MagicMock()
+        mock_result.one_or_none = MagicMock(return_value=("zitadel-org-acme", "canonical"))
+        mock_db.execute.return_value = mock_result
+
+        decision = await verify_identity_claim(
+            db=mock_db,
+            jwks_resolver=_FakeJwksResolver(),
+            caller_service="portal-api",
+            claimed_user_id="partner:abc-123",
+            claimed_org_id="zitadel-org-acme",
+            bearer_jwt=None,
+            claimed_org_slug=None,
+        )
+
+        assert decision.verified is True
+        assert decision.org_slug == "canonical"
