@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import CallerIdentity, get_authenticated_caller, get_current_user_id
+from app.core.auth import CallerIdentity, get_authenticated_caller
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.transcription import Transcription
@@ -126,7 +126,8 @@ def _to_response(record: Transcription) -> TranscriptionResponse:
 async def transcribe(
     file: UploadFile = File(...),
     language: str | None = Form(default=None),
-    user_id: str = Depends(get_current_user_id),
+    # SPEC-TI-010A A-9: org_id captured at INSERT time for tenant isolation.
+    caller: CallerIdentity = Depends(get_authenticated_caller),
     db: AsyncSession = Depends(get_db),
 ) -> TranscriptionResponse:
     """Upload audio, persist to disk, attempt transcription.
@@ -154,7 +155,7 @@ async def transcribe(
     # sub), but the SPEC asks the caller to map ValueError → 400.
     txn_id = "txn_" + uuid.uuid4().hex
     try:
-        audio_path = await loop.run_in_executor(None, save_audio, user_id, txn_id, wav_bytes)
+        audio_path = await loop.run_in_executor(None, save_audio, caller.user_id, txn_id, wav_bytes)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -162,9 +163,11 @@ async def transcribe(
         ) from exc
 
     # Create DB record with status=processing
+    # SPEC-TI-010A A-9: org_id from portal-verified CallerIdentity.
     record = Transcription(
         id=txn_id,
-        user_id=user_id,
+        org_id=caller.org_id,
+        user_id=caller.user_id,
         name=filename if filename != "upload" else None,
         status="processing",
         audio_path=audio_path,
@@ -213,14 +216,16 @@ async def transcribe(
 async def retry_transcription(
     txn_id: str,
     language: str | None = Query(default=None),
-    user_id: str = Depends(get_current_user_id),
+    # SPEC-TI-010A A-9: org_id-scoped lookup.
+    caller: CallerIdentity = Depends(get_authenticated_caller),
     db: AsyncSession = Depends(get_db),
 ) -> TranscriptionResponse:
     """Retry transcription for a failed record using the preserved audio file."""
     result = await db.execute(
         select(Transcription).where(
             Transcription.id == txn_id,
-            Transcription.user_id == user_id,
+            Transcription.user_id == caller.user_id,
+            Transcription.org_id == caller.org_id,
         )
     )
     record = result.scalar_one_or_none()
@@ -275,17 +280,24 @@ async def retry_transcription(
 async def list_transcriptions(
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
-    user_id: str = Depends(get_current_user_id),
+    # SPEC-TI-010A A-9: org_id-scoped listing.
+    caller: CallerIdentity = Depends(get_authenticated_caller),
     db: AsyncSession = Depends(get_db),
 ) -> TranscriptionListResponse:
     total_result = await db.execute(
-        select(func.count()).select_from(Transcription).where(Transcription.user_id == user_id)
+        select(func.count()).select_from(Transcription).where(
+            Transcription.user_id == caller.user_id,
+            Transcription.org_id == caller.org_id,
+        )
     )
     total = total_result.scalar_one()
 
     rows = await db.execute(
         select(Transcription)
-        .where(Transcription.user_id == user_id)
+        .where(
+            Transcription.user_id == caller.user_id,
+            Transcription.org_id == caller.org_id,
+        )
         .order_by(Transcription.created_at.desc())
         .limit(limit)
         .offset(offset)
@@ -315,13 +327,15 @@ async def list_transcriptions(
 @router.get("/transcriptions/{txn_id}", response_model=TranscriptionResponse)
 async def get_transcription(
     txn_id: str,
-    user_id: str = Depends(get_current_user_id),
+    # SPEC-TI-010A A-9: org_id-scoped lookup.
+    caller: CallerIdentity = Depends(get_authenticated_caller),
     db: AsyncSession = Depends(get_db),
 ) -> TranscriptionResponse:
     result = await db.execute(
         select(Transcription).where(
             Transcription.id == txn_id,
-            Transcription.user_id == user_id,
+            Transcription.user_id == caller.user_id,
+            Transcription.org_id == caller.org_id,
         )
     )
     record = result.scalar_one_or_none()
@@ -337,14 +351,16 @@ async def get_transcription(
 async def patch_transcription(
     txn_id: str,
     body: TranscriptionPatch,
-    user_id: str = Depends(get_current_user_id),
+    # SPEC-TI-010A A-9: org_id-scoped lookup.
+    caller: CallerIdentity = Depends(get_authenticated_caller),
     db: AsyncSession = Depends(get_db),
 ) -> TranscriptionResponse:
     """Update the name of a transcription."""
     result = await db.execute(
         select(Transcription).where(
             Transcription.id == txn_id,
-            Transcription.user_id == user_id,
+            Transcription.user_id == caller.user_id,
+            Transcription.org_id == caller.org_id,
         )
     )
     record = result.scalar_one_or_none()
@@ -363,13 +379,15 @@ async def patch_transcription(
 @router.delete("/transcriptions/{txn_id}", status_code=204)
 async def delete_transcription(
     txn_id: str,
-    user_id: str = Depends(get_current_user_id),
+    # SPEC-TI-010A A-9: org_id-scoped lookup.
+    caller: CallerIdentity = Depends(get_authenticated_caller),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     result = await db.execute(
         select(Transcription).where(
             Transcription.id == txn_id,
-            Transcription.user_id == user_id,
+            Transcription.user_id == caller.user_id,
+            Transcription.org_id == caller.org_id,
         )
     )
     record = result.scalar_one_or_none()
@@ -382,7 +400,8 @@ async def delete_transcription(
     await db.execute(
         delete(Transcription).where(
             Transcription.id == txn_id,
-            Transcription.user_id == user_id,
+            Transcription.user_id == caller.user_id,
+            Transcription.org_id == caller.org_id,
         )
     )
     await db.commit()
@@ -395,14 +414,16 @@ async def summarize_transcription(
     txn_id: str,
     body: SummarizeRequest,
     force: bool = Query(default=False),
-    user_id: str = Depends(get_current_user_id),
+    # SPEC-TI-010A A-9: org_id-scoped lookup.
+    caller: CallerIdentity = Depends(get_authenticated_caller),
     db: AsyncSession = Depends(get_db),
 ) -> SummarizeResponse:
     """Generate an AI summary for a transcription."""
     result = await db.execute(
         select(Transcription).where(
             Transcription.id == txn_id,
-            Transcription.user_id == user_id,
+            Transcription.user_id == caller.user_id,
+            Transcription.org_id == caller.org_id,
         )
     )
     record = result.scalar_one_or_none()

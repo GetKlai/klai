@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import cross_org_session
+from app.core.database import cross_org_session, tenant_scoped_session
 from app.models.meetings import VexaMeeting
 from app.services.ical_parser import ParsedInvite
 from app.services.vexa import vexa
@@ -124,19 +124,25 @@ async def _join_meeting(invite: ParsedInvite, zitadel_user_id: str, org_id: int 
         return
 
     try:
-        # Final dedup at join-time: iCal UIDs are globally unique so the
-        # scan must cross tenants. The new row's org_id is set on the INSERT
-        # below — but the SELECT scan must see competing rows in every org,
-        # which is why this uses `cross_org_session` instead of scoping to
-        # the new row's own org_id.
+        # Final dedup at join-time: iCal UIDs are globally unique so the scan
+        # must cross tenants. SPEC-TI-010A C-3: the SELECT uses cross_org_session()
+        # to see competing rows from every org; the INSERT uses a separate
+        # tenant_scoped_session(org_id) so RLS WITH CHECK (org_id = GUC) is
+        # satisfied and the new row is correctly scoped to the owning tenant.
         # @MX:SPEC: SPEC-SEC-007
-        async with cross_org_session() as db:
-            # Final dedup check
-            existing = await db.scalar(select(VexaMeeting.id).where(VexaMeeting.ical_uid == invite.uid))
+        async with cross_org_session() as scan_db:
+            # Final dedup check - must see all orgs to avoid duplicate joins.
+            existing = await scan_db.scalar(select(VexaMeeting.id).where(VexaMeeting.ical_uid == invite.uid))
             if existing is not None:
                 logger.info("Meeting already exists at join time: uid=%s", invite.uid)
                 return
 
+        # INSERT in a tenant-scoped session so the RLS WITH CHECK constraint
+        # (org_id = _rls_current_org_id()) is satisfied. SPEC-TI-010A C-3.
+        if org_id is None:
+            logger.error("Cannot create VexaMeeting: org_id is None for uid=%s", invite.uid)
+            return
+        async with tenant_scoped_session(org_id) as db:
             meeting = VexaMeeting(
                 zitadel_user_id=zitadel_user_id,
                 org_id=org_id,

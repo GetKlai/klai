@@ -13,6 +13,11 @@ class Transcription(Base):
     __table_args__ = {"schema": "scribe"}
 
     id = Column(VARCHAR(64), primary_key=True)
+    # SPEC-TI-010A A-9: org_id added for per-tenant isolation.  Zitadel org
+    # resource-owner ID (string, NOT int) so it aligns with the Zitadel
+    # org namespace rather than the portal_orgs.id surrogate key.
+    # Populated at INSERT time from CallerIdentity.org_id (portal-verified).
+    org_id = Column(VARCHAR(255), nullable=False, default="", index=False)
     user_id = Column(VARCHAR(128), nullable=False, index=True)
     name = Column(VARCHAR(255), nullable=True)
     status = Column(VARCHAR(16), nullable=False, default="transcribed")
@@ -27,7 +32,7 @@ class Transcription(Base):
     recording_type = Column(VARCHAR(32), nullable=True)
     segments_json = Column(JSON, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=datetime.utcnow)
-    # SPEC-SEC-HYGIENE-001 REQ-35 — populated by the stranded-row reaper
+    # SPEC-SEC-HYGIENE-001 REQ-35 -- populated by the stranded-row reaper
     # (`app.services.reaper.reap_stranded`) when a row is flipped from
     # `processing` to `failed` after worker restart. Nullable: legitimate
     # transitions to `failed` (whisper error during transcribe) leave it null.

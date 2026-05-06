@@ -53,6 +53,10 @@ async def reap_stranded(session: AsyncSession, timeout_min: int) -> int:
 
     SPEC-SEC-HYGIENE-001 REQ-35.1, REQ-35.2, REQ-35.3.
     """
+    # cross-user-by-design: Transcription has user_id (and now org_id from A-9).
+    # Reaper sweeps all users/tenants at startup to recover stranded rows regardless of
+    # org context; filtered per-tenant queries happen in the regular endpoints.
+    # SPEC-TI-010A / C-8.
     cutoff = datetime.now(UTC) - timedelta(minutes=timeout_min)
 
     result = await session.execute(
