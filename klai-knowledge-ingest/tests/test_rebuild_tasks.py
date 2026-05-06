@@ -200,20 +200,35 @@ async def test_rebuild_kb_threads_parents_into_enrich_document(monkeypatch):
 
     mock_enrich = AsyncMock()
 
+    # CPython resolves ``from package import submodule`` via attribute
+    # lookup on the parent package, so ``patch.dict(sys.modules, ...)`` is
+    # not enough -- the lazy ``from knowledge_ingest import chunker`` inside
+    # ``_rebuild_kb_core`` would still pick up the real module. Patch the
+    # specific symbols on the real modules instead.
     with (
         patch(
             "knowledge_ingest.rebuild_tasks._list_active_artifacts",
             new_callable=AsyncMock,
         ) as mock_list,
-        patch.dict(
-            sys.modules,
-            {
-                "knowledge_ingest.enrichment_tasks": types.SimpleNamespace(
-                    _enrich_document=mock_enrich
-                ),
-                "knowledge_ingest.chunker": mock_chunker,
-                "knowledge_ingest.pg_store": mock_pg,
-            },
+        patch(
+            "knowledge_ingest.enrichment_tasks._enrich_document",
+            mock_enrich,
+        ),
+        patch(
+            "knowledge_ingest.chunker.chunk_markdown_with_parents",
+            mock_chunker.chunk_markdown_with_parents,
+        ),
+        patch(
+            "knowledge_ingest.chunker._approx_token_count",
+            mock_chunker._approx_token_count,
+        ),
+        patch(
+            "knowledge_ingest.pg_store.delete_parent_chunks_for_artifact",
+            mock_pg.delete_parent_chunks_for_artifact,
+        ),
+        patch(
+            "knowledge_ingest.pg_store.insert_parent_chunks",
+            mock_pg.insert_parent_chunks,
         ),
     ):
         mock_list.return_value = [
