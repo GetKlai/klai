@@ -1225,7 +1225,7 @@ async def crawl_preview(
     result = await knowledge_ingest_client.preview_crawl(
         url=body.url,
         content_selector=body.content_selector,
-        org_id=str(org.id),
+        org_id=org.zitadel_org_id,  # B-2: use Zitadel string, not int PK
         try_ai=body.try_ai,
         cookies=body.cookies,
     )

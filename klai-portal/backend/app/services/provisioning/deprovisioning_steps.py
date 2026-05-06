@@ -180,7 +180,19 @@ async def _delete_meilisearch_index(state: _DeprovisionState) -> None:
 
 
 async def _flush_redis_tenant_keys(state: _DeprovisionState) -> None:
-    """SCAN MATCH configs:{slug}:* + UNLINK all matching keys.
+    """SCAN MATCH + UNLINK all Redis keys belonging to this tenant.
+
+    Flushes all namespaces that are keyed on either the tenant slug or the
+    Zitadel org_id string (B-10, SPEC-TI-010B):
+
+      configs:{slug}:*            — LibreChat per-tenant config overrides
+      templates:{zitadel_org_id}:*  — LiteLLM template cache (writer: klai_knowledge.py)
+      kb_ver:{zitadel_org_id}:*     — KB version pointer (30-s TTL)
+      kb_feature:{zitadel_org_id}:* — KB feature flag cache
+      connector_rl:read:{zitadel_org_id}   — connector rate-limit read token
+      connector_rl:write:{zitadel_org_id}  — connector rate-limit write token
+      rl:{zitadel_org_id}:*         — general rate-limiter keys
+      templates_rl:{zitadel_org_id} — templates rate-limiter key
 
     Uses the synchronous redis client wrapped in asyncio.to_thread so the
     SCAN loop does not block the event loop. The sync client is intentional —
@@ -199,7 +211,21 @@ async def _flush_redis_tenant_keys(state: _DeprovisionState) -> None:
 
     import redis
 
-    pattern = f"configs:{state.slug}:*"
+    zid = state.zitadel_org_id
+
+    # Patterns that use SCAN (wildcards) and exact keys (single DEL).
+    scan_patterns = [
+        f"configs:{state.slug}:*",
+        f"templates:{zid}:*",
+        f"kb_ver:{zid}:*",
+        f"kb_feature:{zid}:*",
+        f"rl:{zid}:*",
+    ]
+    exact_keys = [
+        f"connector_rl:read:{zid}",
+        f"connector_rl:write:{zid}",
+        f"templates_rl:{zid}",
+    ]
 
     def _sync_flush() -> int:
         r = redis.Redis(
@@ -209,21 +235,31 @@ async def _flush_redis_tenant_keys(state: _DeprovisionState) -> None:
             decode_responses=True,
         )
         local_deleted = 0
-        batch: list[str] = []
         try:
-            for key in r.scan_iter(match=pattern, count=100):
-                batch.append(key)
-                if len(batch) >= 100:
+            # SCAN-based patterns
+            for pat in scan_patterns:
+                batch: list[str] = []
+                for key in r.scan_iter(match=pat, count=100):
+                    batch.append(key)
+                    if len(batch) >= 100:
+                        local_deleted += int(r.unlink(*batch))  # type: ignore[arg-type]
+                        batch.clear()
+                if batch:
                     local_deleted += int(r.unlink(*batch))  # type: ignore[arg-type]
-                    batch.clear()
-            if batch:
-                local_deleted += int(r.unlink(*batch))  # type: ignore[arg-type]
+            # Exact keys (single UNLINK call — no-op when key absent)
+            if exact_keys:
+                local_deleted += int(r.unlink(*exact_keys))  # type: ignore[arg-type]
         finally:
             r.close()
         return local_deleted
 
     deleted = await asyncio.to_thread(_sync_flush)
-    logger.info("redis_tenant_keys_flushed", slug=state.slug, pattern=pattern, deleted=deleted)
+    logger.info(
+        "redis_tenant_keys_flushed",
+        slug=state.slug,
+        zitadel_org_id=zid,
+        deleted=deleted,
+    )
 
 
 # ---------------------------------------------------------------------------

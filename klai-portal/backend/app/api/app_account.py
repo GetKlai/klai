@@ -30,11 +30,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/app/account", tags=["app-account"])
 
 
-async def _invalidate_litellm_kb_cache(org_id: int, librechat_user_id: str) -> None:
+async def _invalidate_litellm_kb_cache(zitadel_org_id: str, librechat_user_id: str) -> None:
     """Delete the LiteLLM version pointer key so the next LLM call fetches fresh KB prefs.
 
     Fire-and-forget — failures are logged but never bubble up to the caller.
-    Key format mirrors klai_knowledge.py: kb_ver:{org_id}:{user_id}.
+    Key format mirrors klai_knowledge.py: kb_ver:{zitadel_org_id}:{user_id}.
+    B-5 (SPEC-TI-010B): must use Zitadel org_id string, not int PK.
     """
     try:
         r = aioredis.Redis(
@@ -44,7 +45,7 @@ async def _invalidate_litellm_kb_cache(org_id: int, librechat_user_id: str) -> N
             socket_connect_timeout=1.0,
         )
         async with r:
-            await r.delete(f"kb_ver:{org_id}:{librechat_user_id}")
+            await r.delete(f"kb_ver:{zitadel_org_id}:{librechat_user_id}")
     except Exception as exc:
         logger.warning(
             "KB pref: Redis cache invalidation failed (%s) — hook picks up within 30s",
@@ -200,9 +201,10 @@ async def patch_kb_preference(
     await db.commit()
 
     if user.librechat_user_id:
-        asyncio.get_running_loop().create_task(_invalidate_litellm_kb_cache(org.id, user.librechat_user_id))
+        # B-5 (SPEC-TI-010B): pass zitadel_org_id (str), not org.id (int)
+        asyncio.get_running_loop().create_task(_invalidate_litellm_kb_cache(org.zitadel_org_id, user.librechat_user_id))
         if active_templates_changed:
-            asyncio.get_running_loop().create_task(invalidate_templates(org.id, user.librechat_user_id))
+            asyncio.get_running_loop().create_task(invalidate_templates(org.zitadel_org_id, user.librechat_user_id))
 
     return KBPreferenceOut(
         kb_retrieval_enabled=user.kb_retrieval_enabled,

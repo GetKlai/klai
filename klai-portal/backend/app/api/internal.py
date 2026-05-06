@@ -842,8 +842,10 @@ async def post_kb_feedback(
     await set_tenant(db, org.id)
 
     # 2. Idempotency check (REQ-KB-015-12)
+    # B-9 (SPEC-TI-010B): prefix with org.id so the same (message_id,
+    # conversation_id) from two different orgs do NOT deduplicate each other.
     redis_pool = await get_redis_pool()
-    idem_key = f"fb:{body.message_id}:{body.conversation_id}"
+    idem_key = f"fb:{org.id}:{body.conversation_id}:{body.message_id}"
     if redis_pool:
         existing = await redis_pool.get(idem_key)
         if existing:
