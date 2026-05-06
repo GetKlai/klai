@@ -27,6 +27,7 @@ from knowledge_ingest.crawl4ai_client import (
     _build_candidate_set,
     _canonicalise_url,
     _classify_fetch_outcome,
+    _combine_bulk_responses,
 )
 from knowledge_ingest.reason_codes import FetchReasonCode
 
@@ -595,3 +596,103 @@ class TestBuildCandidateSetExcludeStartUrl:
                 "HTTPS://Example.com",
                 "https://example.com#frag",
             ), f"start_url variant {candidate} leaked through include_start_url=False"
+
+
+# ---------------------------------------------------------------------------
+# _combine_bulk_responses — same-domain guard on positional fallback
+# ---------------------------------------------------------------------------
+
+
+class TestCombineBulkResponsesPositionalGuard:
+    """The positional fallback only matches a same-origin response.
+
+    Without the guard, an out-of-order or mis-routed response from
+    crawl4ai's MemoryAdaptiveDispatcher could silently shadow a candidate
+    with content from a completely different site, surfacing as a fake
+    SUCCESS/HTTP_5XX outcome on the wrong URL. The same-domain check
+    forces such corruption to fall through to UNKNOWN_EXCEPTION (visible
+    to operators) rather than mislabel.
+    """
+
+    def test_positional_match_accepted_for_same_domain_redirect(self) -> None:
+        """A canonical-miss + same-domain positional response = redirect.
+        That response is accepted, and the outcome's reason_code reflects
+        the redirected page's success state."""
+        candidates = ["https://example.com/old-page"]
+        raw_results = [
+            {
+                "url": "https://example.com/new-page",  # redirected
+                "success": True,
+                "status_code": 200,
+                "html": "<html>content</html>",
+                "markdown": "content",
+                "links": {"internal": []},
+                "media": {},
+            }
+        ]
+        results, outcomes = _combine_bulk_responses(
+            candidates=candidates,
+            raw_results=raw_results,
+            transport_error=None,
+            base_domain="example.com",
+        )
+        assert len(outcomes) == 1
+        assert outcomes[0]["url"] == "https://example.com/old-page"
+        assert outcomes[0]["reason_code"] == FetchReasonCode.SUCCESS.value
+        assert outcomes[0]["status_code"] == 200
+        # The CrawlResult inherits the response's URL (post-redirect),
+        # which is correct — the ingest pipeline ingests the resolved page.
+        assert len(results) == 1
+
+    def test_positional_match_rejected_for_cross_domain_response(self) -> None:
+        """If the positional response is on a different domain (e.g. crawl4ai
+        reordered the response list under load), the fallback MUST refuse
+        to claim it. The candidate falls through to UNKNOWN_EXCEPTION."""
+        candidates = ["https://example.com/old-page"]
+        raw_results = [
+            {
+                # WRONG site — out-of-order response from a parallel batch.
+                "url": "https://attacker.com/exploit",
+                "success": True,
+                "status_code": 200,
+                "html": "<html>not ours</html>",
+                "markdown": "not ours",
+                "links": {"internal": []},
+                "media": {},
+            }
+        ]
+        results, outcomes = _combine_bulk_responses(
+            candidates=candidates,
+            raw_results=raw_results,
+            transport_error=None,
+            base_domain="example.com",
+        )
+        # Outcome surfaces as UNKNOWN_EXCEPTION, NOT as a fake SUCCESS on
+        # the candidate URL with attacker.com's content.
+        assert outcomes[0]["url"] == "https://example.com/old-page"
+        assert outcomes[0]["reason_code"] == FetchReasonCode.UNKNOWN_EXCEPTION.value
+        # No CrawlResult — we refused to fabricate one from cross-domain data.
+        assert results == []
+
+    def test_canonical_match_unaffected_by_same_domain_guard(self) -> None:
+        """Direct canonical match still works regardless of domain logic."""
+        candidates = ["https://example.com/page"]
+        raw_results = [
+            {
+                "url": "https://example.com/page",
+                "success": True,
+                "status_code": 200,
+                "html": "<html>content</html>",
+                "markdown": "content",
+                "links": {"internal": []},
+                "media": {},
+            }
+        ]
+        results, outcomes = _combine_bulk_responses(
+            candidates=candidates,
+            raw_results=raw_results,
+            transport_error=None,
+            base_domain="example.com",
+        )
+        assert outcomes[0]["reason_code"] == FetchReasonCode.SUCCESS.value
+        assert len(results) == 1
