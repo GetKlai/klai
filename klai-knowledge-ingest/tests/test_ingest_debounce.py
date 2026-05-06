@@ -192,7 +192,10 @@ def test_webhook_already_enqueued_is_silent(webhook_client, caplog):
 
     assert resp.status_code == 200
     assert resp.json()["queued"] == 0
-    assert any("debounce active" in r.message for r in caplog.records)
+    # Production now emits ``"ingest_debounced"`` (with kb_slug + path
+    # bound as structured fields). The old ``"debounce active"`` literal
+    # was renamed at some point; this assertion was no longer matching.
+    assert any("ingest_debounced" in r.message for r in caplog.records)
 
 
 def test_webhook_delete_is_immediate(webhook_client):
@@ -230,8 +233,14 @@ def test_webhook_delete_is_immediate(webhook_client):
 
     assert resp.status_code == 200
     assert resp.json()["deleted"] == 1
+    # SPEC-TI-003-FOLLOWUP-001: pg_store.soft_delete_artifact now takes
+    # ``conn`` as its first argument. qdrant_store.delete_document is
+    # unchanged (no PG connection required). Use ``ANY`` for the conn
+    # so the assertion stays focused on the tenant scoping arguments.
+    from unittest.mock import ANY
+
     mock_delete.assert_called_once_with("zitadel-org-123", "my-kb", "docs/old.md")
-    mock_soft_delete.assert_called_once_with("zitadel-org-123", "my-kb", "docs/old.md")
+    mock_soft_delete.assert_called_once_with(ANY, "zitadel-org-123", "my-kb", "docs/old.md")
 
 
 @pytest.mark.asyncio
