@@ -114,7 +114,6 @@ def _make_engine(
     registry = MagicMock()
 
     engine = SyncEngine(
-        session_maker=session_maker,
         registry=registry,
         ingest_client=ingest_client,
         portal_client=portal_client,

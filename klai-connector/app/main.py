@@ -163,7 +163,6 @@ def create_app() -> FastAPI:
         if _db.session_maker is None:
             raise RuntimeError("Database session maker not initialised")
         sync_engine = SyncEngine(
-            session_maker=_db.session_maker,
             registry=registry,
             ingest_client=ingest_client,
             portal_client=portal_client,
@@ -187,7 +186,6 @@ def create_app() -> FastAPI:
         # sync_runs that nobody reads via the resolver-on-read path.
         reaper = SyncRunReaper(
             crawl_sync_client=crawl_sync_client,
-            session_maker=_db.session_maker,
             portal_client=portal_client,
         )
         reaper_task = asyncio.create_task(reaper.async_run())

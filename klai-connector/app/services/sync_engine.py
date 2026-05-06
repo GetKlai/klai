@@ -24,7 +24,7 @@ from klai_image_storage import (
     download_and_upload_adapter_images,
 )
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.base import DocumentRef
 from app.adapters.oauth_base import OAuthReconnectRequiredError
@@ -74,10 +74,15 @@ class SyncEngine:
     the single source of truth — no local config copy is required.
 
     Args:
-        session_maker: Async session factory for database access.
         registry: Adapter registry mapping connector types to adapters.
         ingest_client: Client for the knowledge-ingest service.
         portal_client: Client for the portal control plane API.
+
+    SPEC-SEC-CONNECTOR-RLS-001: SyncEngine no longer takes a
+    ``session_maker``; all DB access goes through
+    ``tenant_scoped_session(org_id)`` from ``app.core.database``,
+    which uses the module-level session_maker initialised by
+    ``init_engine`` at lifespan startup.
     """
 
     # SPEC-CRAWLER-006: web_crawler delegation is fire-and-forget — the
@@ -87,7 +92,6 @@ class SyncEngine:
 
     def __init__(
         self,
-        session_maker: async_sessionmaker[AsyncSession],
         registry: AdapterRegistry,
         ingest_client: KnowledgeIngestClient,
         portal_client: PortalClient,
@@ -95,7 +99,6 @@ class SyncEngine:
         image_store: ImageStore | None = None,
         crawl_sync_client: CrawlSyncClient | None = None,
     ) -> None:
-        self._session_maker = session_maker
         self._registry = registry
         self._ingest_client = ingest_client
         self._portal_client = portal_client

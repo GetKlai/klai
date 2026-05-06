@@ -108,7 +108,6 @@ async def test_oauth_reconnect_required_marks_run_auth_error(monkeypatch: pytest
     crawl_sync_client = MagicMock()
 
     engine = SyncEngine(
-        session_maker=session_maker_mock,
         registry=registry,
         ingest_client=ingest_client,
         portal_client=portal_client,
@@ -173,7 +172,6 @@ async def test_generic_exception_falls_through_to_failed_not_auth_error(monkeypa
     registry.get = MagicMock(return_value=adapter)
 
     engine = SyncEngine(
-        session_maker=session_maker_mock,
         registry=registry,
         ingest_client=MagicMock(ingest=AsyncMock()),
         portal_client=portal_client,
