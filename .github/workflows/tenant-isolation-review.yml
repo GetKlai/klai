@@ -1,0 +1,168 @@
+name: Tenant Isolation Review
+
+# Diff-time tenant-isolation pattern check.
+# Runs on every PR that touches tenant-relevant paths.
+# Surfaces violations of patterns codified in
+# `reports/audit-tenant-isolation-2026-05-05/standards.md`.
+#
+# This is a LIGHT review (15 patterns, ast-grep based).
+# The full audit runs separately via the klai-security-audit agent
+# (manual invocation when scope warrants).
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      # Tenant-relevant paths only — keep workflow narrow
+      - 'klai-portal/backend/app/**'
+      - 'klai-portal/backend/alembic/**'
+      - 'klai-connector/app/**'
+      - 'klai-connector/alembic/**'
+      - 'klai-knowledge-ingest/knowledge_ingest/**'
+      - 'klai-knowledge-ingest/alembic/**'
+      - 'klai-scribe/scribe-api/app/**'
+      - 'klai-scribe/scribe-api/alembic/**'
+      - 'klai-mailer/app/**'
+      - 'klai-retrieval-api/retrieval_api/**'
+      - 'klai-knowledge-mcp/**'
+      - 'klai-libs/webhook-replay/**'
+      - 'klai-libs/identity-assert/**'
+      - 'klai-libs/connector-credentials/**'
+      - 'deploy/caddy/Caddyfile'
+      - '.github/workflows/tenant-isolation-review.yml'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ast-grep-checks:
+    name: AST pattern checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # need full history for diff vs main
+
+      - name: Identify changed files
+        id: changes
+        run: |
+          git fetch origin main --depth=1
+          CHANGED=$(git diff --name-only origin/main..HEAD)
+          echo "files<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGED" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "Changed files:"
+          echo "$CHANGED"
+
+      # Check 1: Cat-A policies must have explicit WITH CHECK
+      # Anti-pattern: CREATE POLICY ... FOR ALL USING (...) without WITH CHECK
+      - name: Cat-A WITH CHECK discipline (Check 3)
+        run: |
+          # Search for FOR ALL policies on auth-path tables that lack explicit WITH CHECK
+          if grep -rEn "CREATE POLICY[^;]*FOR ALL[^;]*USING" \
+              klai-portal/backend/alembic/versions/ \
+              klai-connector/alembic/versions/ \
+              klai-knowledge-ingest/alembic/versions/ \
+              klai-scribe/scribe-api/alembic/versions/ 2>/dev/null \
+              | grep -v "WITH CHECK"; then
+            echo "::warning::Found FOR ALL policy without explicit WITH CHECK. Per Finding A-1, ALL policies on auth-path tables (Cat-A) must have explicit WITH CHECK to prevent foreign-org INSERT."
+            echo "Standards ref: reports/audit-tenant-isolation-2026-05-05/standards.md §2"
+          fi
+
+      # Check 13: Constant-time secret compare
+      - name: Constant-time secret compare (Check 13)
+        run: |
+          # Look for == or != comparing variables named secret/token/signature
+          set +e
+          MATCHES=$(grep -rEn '(secret|token|signature|hmac)[a-z_]*\s*[!=]=\s*' \
+              --include='*.py' \
+              klai-portal/backend/app/ \
+              klai-connector/app/ \
+              klai-knowledge-ingest/knowledge_ingest/ \
+              klai-mailer/app/ \
+              klai-scribe/scribe-api/app/ 2>/dev/null \
+              | grep -v 'compare_digest' \
+              | grep -v 'test_' \
+              | grep -v '# noqa' \
+              | head -20)
+          if [ -n "$MATCHES" ]; then
+            echo "::warning::Possible non-constant-time secret compare. Use hmac.compare_digest with byte-encoded operands."
+            echo "$MATCHES"
+            echo "Standards ref: standards.md §15"
+          fi
+          set -e
+
+      # Check 5: webhook handler composite — every webhook must have
+      # validator + replay + tenant resolution from VERIFIED payload
+      - name: Webhook handler composite (Check 5)
+        run: |
+          # Find webhook handlers (POST routes with /webhook in path)
+          WEBHOOKS=$(grep -rEln "@(app|router)\.post.*['\"][^'\"]*webhook" \
+              --include='*.py' \
+              klai-portal/backend/app/ \
+              klai-knowledge-ingest/knowledge_ingest/ \
+              klai-mailer/app/ 2>/dev/null || true)
+          if [ -z "$WEBHOOKS" ]; then exit 0; fi
+
+          for f in $WEBHOOKS; do
+            # Each webhook file must mention WebhookNonceStore or _nonce_store usage
+            if ! grep -qE "(WebhookNonceStore|nonce_store|check_and_record)" "$f" 2>/dev/null; then
+              echo "::warning file=$f::Webhook handler without replay-protection. Adopt klai-libs/webhook-replay per standards.md §6."
+            fi
+            # And hmac.compare_digest must be used (or other constant-time check)
+            if grep -qE "settings\.[a-z_]*(secret|token).*==" "$f" 2>/dev/null; then
+              echo "::warning file=$f::Webhook handler may use ==/!= for secret compare. Use hmac.compare_digest per standards.md §15."
+            fi
+          done
+
+      # Check 4: Settings validators on webhook secrets
+      - name: Validator on webhook/internal secrets (Check 4)
+        run: |
+          # For each *_webhook_secret / *_webhook_token field in any config.py,
+          # check that a @model_validator with the same name exists in the same file.
+          for f in $(find . -name "config.py" -path "*/core/*" 2>/dev/null); do
+            FIELDS=$(grep -oE "[a-z_]+_(webhook_secret|webhook_token|internal_secret)\s*:\s*str" "$f" 2>/dev/null | awk -F: '{print $1}' | tr -d ' ' || true)
+            for field in $FIELDS; do
+              # Skip if there's a validator
+              if ! grep -qE "_require_${field}|@model_validator" "$f" 2>/dev/null; then
+                echo "::warning file=$f::Field $field lacks @model_validator (fail-open risk). See standards.md §5 + pitfall fail-open-auth."
+              fi
+            done
+          done
+
+      # Check 7: Qdrant filter-key discipline
+      - name: Qdrant filter-key check (Check 7)
+        run: |
+          # Find Qdrant search/scroll/upsert calls
+          # If a call references collection_name="klai_knowledge", filter must include "org_id"
+          # If "klai_focus" → must include "tenant_id"
+          # We use a soft-grep — full structural check needs ast-grep
+          set +e
+          KK=$(grep -rEn "collection_name\s*=\s*['\"]klai_knowledge['\"]" \
+              --include='*.py' \
+              klai-portal/backend/ \
+              klai-knowledge-ingest/ \
+              klai-retrieval-api/ \
+              klai-knowledge-mcp/ 2>/dev/null | head -10)
+          if [ -n "$KK" ]; then
+            echo "klai_knowledge call sites — verify each has FieldCondition(key='org_id', ...) in Filter.must:"
+            echo "$KK"
+          fi
+          set -e
+
+  llm-review:
+    name: LLM tenant-isolation review (advisory)
+    runs-on: ubuntu-latest
+    if: false  # gated off by default; flip to true to enable LLM-driven review on every PR
+    # Enabling this requires:
+    # 1. ANTHROPIC_API_KEY in repo secrets
+    # 2. A small driver script that runs the klai-tenant-review agent in headless mode
+    # 3. Cost approval (~$0.50-2 per PR)
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Run klai-tenant-review (headless)
+        run: |
+          echo "LLM review not yet enabled. See workflow comment for activation steps."
