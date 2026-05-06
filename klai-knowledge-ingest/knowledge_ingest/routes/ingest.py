@@ -5,6 +5,11 @@ Ingest routes:
   POST /ingest/v1/kb/webhook      — register Gitea webhook for a KB
   DELETE /ingest/v1/kb/webhook    — de-register Gitea webhook for a KB
   POST /ingest/v1/kb/sync         — bulk re-index all pages of a KB
+
+SPEC-TI-003-FOLLOWUP-001 AC-1: ``ingest_document`` and the route handlers
+take an ``asyncpg.Connection`` from a ``tenant_scoped_connection(org_id)``
+block; every pg_store / kb_config / org_config call is threaded through it
+so RLS sees the tenant context.
 """
 
 import hashlib
@@ -13,6 +18,7 @@ import json
 import time
 from datetime import UTC, datetime
 
+import asyncpg
 import httpx
 import structlog
 import yaml
@@ -33,7 +39,8 @@ from knowledge_ingest.clustering import classify_by_centroid, load_centroids
 from knowledge_ingest.config import settings
 from knowledge_ingest.content_labeler import generate_content_label
 from knowledge_ingest.content_profiles import get_profile
-from knowledge_ingest.db import get_pool
+from knowledge_ingest.db import tenant_scoped_connection
+from knowledge_ingest.identity import assert_caller_identity
 from knowledge_ingest.models import (
     BulkSyncRequest,
     GiteaPushEvent,
@@ -41,7 +48,6 @@ from knowledge_ingest.models import (
     KBWebhookRequest,
     UpdateKBVisibilityRequest,
 )
-from knowledge_ingest.identity import assert_caller_identity
 from knowledge_ingest.portal_client import fetch_taxonomy_nodes
 from knowledge_ingest.taxonomy_classifier import classify_document
 
@@ -221,13 +227,20 @@ def _parse_image_refs(image_urls: list) -> list[tuple[str, str]]:
 
 
 async def _graphiti_background(
+    conn: asyncpg.Connection,
     artifact_id: str,
     document_text: str,
     org_id: str,
     content_type: str,
     belief_time_start: int,
 ) -> None:
-    """Background task: ingest document into Graphiti, then store episode_id (AC-1, AC-2)."""
+    """Background task: ingest document into Graphiti, then store episode_id (AC-1, AC-2).
+
+    Currently dead code -- the graphiti pipeline runs through the procrastinate
+    task ``ingest_graphiti_episode`` in enrichment_tasks.py. Kept for now with
+    the SPEC-TI-003-FOLLOWUP-001 conn signature so an accidental revival picks
+    up the right contract.
+    """
     episode_id = await graph_module.ingest_episode(
         artifact_id=artifact_id,
         document_text=document_text,
@@ -236,11 +249,17 @@ async def _graphiti_background(
         belief_time_start=belief_time_start,
     )
     if episode_id:
-        await pg_store.update_artifact_extra(artifact_id, {"graphiti_episode_id": episode_id})
+        await pg_store.update_artifact_extra(conn, artifact_id, {"graphiti_episode_id": episode_id})
 
 
-async def ingest_document(req: IngestRequest) -> dict:
-    """Core ingest pipeline: chunk -> embed -> upsert."""
+async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
+    """Core ingest pipeline: chunk -> embed -> upsert.
+
+    SPEC-TI-003-FOLLOWUP-001 AC-1: ``conn`` carries the RLS GUC for
+    ``req.org_id``. All pg_store / kb_config / org_config calls below run on
+    this same connection. Callers must wrap this function in
+    ``tenant_scoped_connection(req.org_id)``.
+    """
     t_ingest = time.monotonic()
 
     # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-07: existence-guard for the
@@ -274,7 +293,7 @@ async def ingest_document(req: IngestRequest) -> dict:
 
     # Early exit if content is unchanged since last ingest
     content_hash = hashlib.sha256(req.content.encode()).hexdigest()
-    stored_hash = await pg_store.get_active_content_hash(req.org_id, req.kb_slug, req.path)
+    stored_hash = await pg_store.get_active_content_hash(conn, req.org_id, req.kb_slug, req.path)
     if stored_hash is not None and stored_hash == content_hash:
         logger.info(
             "ingest_skipped",
@@ -401,7 +420,7 @@ async def ingest_document(req: IngestRequest) -> dict:
         merged_tags = llm_tags
 
     # Soft-delete previous artifact for this path (AC-5: re-ingest creates new row)
-    await pg_store.soft_delete_artifact(req.org_id, req.kb_slug, req.path)
+    await pg_store.soft_delete_artifact(conn, req.org_id, req.kb_slug, req.path)
 
     # Merge connector provenance fields into extra so PG tracks the same metadata as Qdrant.
     # This enables delete_connector_artifacts() to find and remove PG records by connector.
@@ -420,6 +439,7 @@ async def ingest_document(req: IngestRequest) -> dict:
         pg_extra["document_text"] = req.content
 
     artifact_id = await pg_store.create_artifact(
+        conn,
         org_id=req.org_id,
         kb_slug=req.kb_slug,
         path=req.path,
@@ -447,7 +467,7 @@ async def ingest_document(req: IngestRequest) -> dict:
         image_refs = _parse_image_refs(image_urls)
         if image_refs:
             try:
-                await pg_store.insert_artifact_image_refs(artifact_id, image_refs)
+                await pg_store.insert_artifact_image_refs(conn, artifact_id, image_refs)
             except Exception:
                 # Bookkeeping failure must not block ingest. The image
                 # is in S3; if we ever lose this row the worst case is
@@ -458,8 +478,7 @@ async def ingest_document(req: IngestRequest) -> dict:
                     count=len(image_refs),
                 )
 
-    pool = await get_pool()
-    visibility = await kb_config.get_kb_visibility(req.org_id, req.kb_slug, pool)
+    visibility = await kb_config.get_kb_visibility(conn, req.org_id, req.kb_slug)
 
     extra_payload: dict = {"title": title, "artifact_id": artifact_id}
 
@@ -531,7 +550,7 @@ async def ingest_document(req: IngestRequest) -> dict:
     # SPEC-KB-027 R2 cleanup (PR #90 obsolete; harvested as standalone fix).
 
     # Enqueue enrichment as async Procrastinate task (non-blocking)
-    if await org_config.is_enrichment_enabled(req.org_id, pool):
+    if await org_config.is_enrichment_enabled(conn, req.org_id):
         from knowledge_ingest import enrichment_tasks
 
         proc_app = enrichment_tasks.get_app()
@@ -619,10 +638,9 @@ async def ingest_document(req: IngestRequest) -> dict:
 @router.post("/ingest/v1/document")
 async def ingest_document_route(req: IngestRequest, request: Request) -> dict:
     """Ingest a document. SPEC-TI-003 AC-6: identity assertion on body org_id."""
-    await assert_caller_identity(
-        request, claimed_org_id=req.org_id, claimed_user_id=req.user_id
-    )
-    return await ingest_document(req)
+    await assert_caller_identity(request, claimed_org_id=req.org_id, claimed_user_id=req.user_id)
+    async with tenant_scoped_connection(req.org_id) as conn:
+        return await ingest_document(conn, req)
 
 
 @router.post("/ingest/v1/webhook/gitea")
@@ -752,7 +770,8 @@ async def gitea_webhook(request: Request) -> dict:
                 user_id=webhook_user_id,
             )
             try:
-                await ingest_document(req)
+                async with tenant_scoped_connection(org_id) as conn:
+                    await ingest_document(conn, req)
                 queued += 1
             except Exception as exc:
                 logger.warning("ingest_failed", path=path, error=str(exc))
@@ -760,56 +779,60 @@ async def gitea_webhook(request: Request) -> dict:
     # Delete removed files — immediate, no debounce needed
     # Order: Qdrant → fetch episode IDs → Graphiti → PG metadata → PG soft-delete
     # Each step has its own try/except so partial failures don't block subsequent steps.
-    for path in removed:
-        try:
-            await qdrant_store.delete_document(org_id, kb_slug, path)
-        except Exception as exc:
-            logger.warning(
-                "page_qdrant_delete_failed",
-                org_id=org_id,
-                kb_slug=kb_slug,
-                path=path,
-                error=str(exc),
-            )
+    if removed:
+        async with tenant_scoped_connection(org_id) as conn:
+            for path in removed:
+                try:
+                    await qdrant_store.delete_document(org_id, kb_slug, path)
+                except Exception as exc:
+                    logger.warning(
+                        "page_qdrant_delete_failed",
+                        org_id=org_id,
+                        kb_slug=kb_slug,
+                        path=path,
+                        error=str(exc),
+                    )
 
-        # Graphiti cleanup: fetch episode IDs before soft-delete (reads extra field)
-        if settings.graphiti_enabled:
-            try:
-                episode_ids = await pg_store.get_page_episode_ids(org_id, kb_slug, path)
-                if episode_ids:
-                    await graph_module.delete_kb_episodes(org_id, episode_ids)
-            except Exception as exc:
-                logger.warning(
-                    "page_graph_cleanup_failed",
-                    org_id=org_id,
-                    kb_slug=kb_slug,
-                    path=path,
-                    error=str(exc),
-                )
+                # Graphiti cleanup: fetch episode IDs before soft-delete (reads extra field)
+                if settings.graphiti_enabled:
+                    try:
+                        episode_ids = await pg_store.get_page_episode_ids(
+                            conn, org_id, kb_slug, path
+                        )
+                        if episode_ids:
+                            await graph_module.delete_kb_episodes(org_id, episode_ids)
+                    except Exception as exc:
+                        logger.warning(
+                            "page_graph_cleanup_failed",
+                            org_id=org_id,
+                            kb_slug=kb_slug,
+                            path=path,
+                            error=str(exc),
+                        )
 
-        # Metadata cleanup: derivations, artifact_entities, embedding_queue
-        try:
-            await pg_store.cleanup_page_metadata(org_id, kb_slug, path)
-        except Exception as exc:
-            logger.warning(
-                "page_metadata_cleanup_failed",
-                org_id=org_id,
-                kb_slug=kb_slug,
-                path=path,
-                error=str(exc),
-            )
+                # Metadata cleanup: derivations, artifact_entities, embedding_queue
+                try:
+                    await pg_store.cleanup_page_metadata(conn, org_id, kb_slug, path)
+                except Exception as exc:
+                    logger.warning(
+                        "page_metadata_cleanup_failed",
+                        org_id=org_id,
+                        kb_slug=kb_slug,
+                        path=path,
+                        error=str(exc),
+                    )
 
-        try:
-            await pg_store.soft_delete_artifact(org_id, kb_slug, path)
-            deleted += 1
-        except Exception as exc:
-            logger.warning(
-                "page_soft_delete_failed",
-                org_id=org_id,
-                kb_slug=kb_slug,
-                path=path,
-                error=str(exc),
-            )
+                try:
+                    await pg_store.soft_delete_artifact(conn, org_id, kb_slug, path)
+                    deleted += 1
+                except Exception as exc:
+                    logger.warning(
+                        "page_soft_delete_failed",
+                        org_id=org_id,
+                        kb_slug=kb_slug,
+                        path=path,
+                        error=str(exc),
+                    )
 
     return {"status": "ok", "queued": queued, "deleted": deleted, "org_slug": org_slug}
 
@@ -844,10 +867,11 @@ async def delete_kb_route(request: Request, org_id: str, kb_slug: str) -> dict:
     _verify_internal_secret(request)
     await assert_caller_identity(request, claimed_org_id=org_id)
     # Fetch episode IDs before PG deletion — graph cleanup requires them.
-    episode_ids = await pg_store.get_episode_ids(org_id, kb_slug)
-    await graph_module.delete_kb_episodes(org_id, episode_ids)
-    await qdrant_store.delete_kb(org_id, kb_slug)
-    await pg_store.delete_kb(org_id, kb_slug)
+    async with tenant_scoped_connection(org_id) as conn:
+        episode_ids = await pg_store.get_episode_ids(conn, org_id, kb_slug)
+        await graph_module.delete_kb_episodes(org_id, episode_ids)
+        await qdrant_store.delete_kb(org_id, kb_slug)
+        await pg_store.delete_kb(conn, org_id, kb_slug)
     logger.info("kb_deleted", org_id=org_id, kb_slug=kb_slug, episodes_deleted=len(episode_ids))
     return {"status": "ok"}
 
@@ -925,8 +949,8 @@ async def delete_connector_route(
 async def update_kb_visibility_route(request: Request, req: UpdateKBVisibilityRequest) -> dict:
     """Update visibility for a KB: persists to kb_config table and backfills all Qdrant chunks."""
     _verify_internal_secret(request)
-    pool = await get_pool()
-    await kb_config.set_kb_visibility(req.org_id, req.kb_slug, req.visibility, pool)
+    async with tenant_scoped_connection(req.org_id) as conn:
+        await kb_config.set_kb_visibility(conn, req.org_id, req.kb_slug, req.visibility)
     await qdrant_store.update_kb_visibility(req.org_id, req.kb_slug, req.visibility)
     return {"status": "ok"}
 
@@ -1036,23 +1060,24 @@ async def bulk_sync_kb_route(request: Request, req: BulkSyncRequest) -> dict:
     _verify_internal_secret(request)
     pages = await _list_gitea_md_files(req.gitea_repo)
     ingested = 0
-    for path in pages:
-        content = await _fetch_gitea_file(req.gitea_repo, path)
-        if content is None:
-            logger.warning("gitea_fetch_failed", path=path, repo=req.gitea_repo)
-            continue
-        ingest_req = IngestRequest(
-            org_id=req.org_id,
-            kb_slug=req.kb_slug,
-            path=path,
-            content=content,
-            source_type="docs",
-            content_type="kb_article",
-        )
-        try:
-            await ingest_document(ingest_req)
-            ingested += 1
-        except Exception as exc:
-            logger.warning("bulk_sync_failed", path=path, error=str(exc))
+    async with tenant_scoped_connection(req.org_id) as conn:
+        for path in pages:
+            content = await _fetch_gitea_file(req.gitea_repo, path)
+            if content is None:
+                logger.warning("gitea_fetch_failed", path=path, repo=req.gitea_repo)
+                continue
+            ingest_req = IngestRequest(
+                org_id=req.org_id,
+                kb_slug=req.kb_slug,
+                path=path,
+                content=content,
+                source_type="docs",
+                content_type="kb_article",
+            )
+            try:
+                await ingest_document(conn, ingest_req)
+                ingested += 1
+            except Exception as exc:
+                logger.warning("bulk_sync_failed", path=path, error=str(exc))
     logger.info("bulk_sync_complete", org_id=req.org_id, kb_slug=req.kb_slug, pages=ingested)
     return {"status": "ok", "pages": ingested}
