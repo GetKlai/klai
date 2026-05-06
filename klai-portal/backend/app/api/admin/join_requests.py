@@ -4,12 +4,16 @@ Admin endpoints for managing join requests (SPEC-AUTH-006 R8).
 GET    /api/admin/join-requests            -- list pending requests for org
 POST   /api/admin/join-requests/{id}/approve -- approve and create portal_users row
 POST   /api/admin/join-requests/{id}/deny    -- deny request
+
+SPEC-TI-010C C-11:
+- Token-based approval path now enforces per-IP rate limit (10 attempts / hour).
+- Failed token verify now logs WARNING with request_id and caller_ip.
 """
 
 from datetime import UTC, datetime
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -21,10 +25,48 @@ from app.core.database import get_db
 from app.models.portal import PortalJoinRequest, PortalUser
 from app.services.join_request_token import verify_approval_token
 from app.services.notifications import notify_user_join_approved
+from app.services.redis_client import get_redis_pool
+from app.services.request_ip import resolve_caller_ip
 
 logger = structlog.get_logger()
 
 router = APIRouter()
+
+# SPEC-TI-010C C-11: Rate limit constants for token-based approval
+_TOKEN_RL_LIMIT = 10  # maximum token-approve attempts per hour per IP
+_TOKEN_RL_WINDOW_SECONDS = 3600  # 1-hour sliding window
+
+
+async def _check_token_approve_rate_limit(request: Request) -> None:
+    """Enforce per-IP rate limit on token-based join-request approval.
+
+    Uses a Redis INCR+EXPIRE counter with a 1-hour window.
+    Raises HTTP 429 when the limit is exceeded.
+    """
+    caller_ip = resolve_caller_ip(request)
+    redis_key = f"join_token_rl:{caller_ip}"
+    try:
+        redis_pool = await get_redis_pool()
+        count = await redis_pool.incr(redis_key)
+        if count == 1:
+            # First hit — set the expiry for this window
+            await redis_pool.expire(redis_key, _TOKEN_RL_WINDOW_SECONDS)
+        if count > _TOKEN_RL_LIMIT:
+            logger.warning(
+                "join_token_approve_rate_limited",
+                caller_ip=caller_ip,
+                count=count,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many approval attempts. Try again later.",
+                headers={"Retry-After": str(_TOKEN_RL_WINDOW_SECONDS)},
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        # Redis failure: fail-open to avoid blocking legitimate approvals
+        logger.warning("join_token_approve_rate_limit_redis_error", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +133,7 @@ async def list_join_requests(
 @router.post("/join-requests/{request_id}/approve", response_model=ApproveResponse)
 async def approve_join_request(
     request_id: int,
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
     db: AsyncSession = Depends(get_db),
     token: str | None = Query(default=None),
@@ -100,9 +143,14 @@ async def approve_join_request(
     Can be called with:
     - Bearer token (admin UI) — requires admin role
     - ?token= query param (email one-click link) — no Bearer required
+
+    SPEC-TI-010C C-11: token path enforces per-IP rate limit (10/hour).
     """
     # Token-based approval (email link)
     if token:
+        # SPEC-TI-010C C-11: rate-limit before any DB work
+        await _check_token_approve_rate_limit(request)
+
         jr_result = await db.execute(
             select(PortalJoinRequest).where(
                 PortalJoinRequest.id == request_id,
@@ -114,6 +162,12 @@ async def approve_join_request(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
 
         if not verify_approval_token(token, jr.id, jr.zitadel_user_id):
+            # SPEC-TI-010C C-11: log failed token verify at WARNING level
+            logger.warning(
+                "join_token_approve_invalid_token",
+                request_id=request_id,
+                caller_ip=resolve_caller_ip(request),
+            )
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid approval token")
 
         if jr.expires_at and jr.expires_at < datetime.now(tz=UTC):

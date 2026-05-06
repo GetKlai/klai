@@ -5,7 +5,7 @@ Manages the klai_focus collection: creation, upsert, search, and deletion.
 import logging
 import uuid
 import warnings
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 # Qdrant client warns about API key over HTTP; safe inside Docker network
 warnings.filterwarnings("ignore", message="Api key is used with an insecure connection")
@@ -109,7 +109,7 @@ def upsert_chunks(
                     "content": chunk_data["content"],
                     "chunk_index": chunk_data.get("chunk_index", 0),
                     "metadata": chunk_data.get("metadata") or {},
-                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "created_at": datetime.now(UTC).isoformat(),
                     # SPEC-SEC-IDENTITY-ASSERT-001 REQ-5: visibility + owner.
                     # Required keys — KeyError here means the ingestion layer
                     # did not look up the notebook scope, which is a programmer
@@ -123,8 +123,15 @@ def upsert_chunks(
         client.upsert(collection_name=settings.qdrant_collection, points=points)
 
 
-def delete_by_source(source_id: str) -> None:
-    """Delete all vectors for a given source_id."""
+# @MX:ANCHOR: [AUTO] Qdrant delete path -- must include tenant_id to prevent cross-tenant wipe
+# @MX:REASON: SPEC-TI-010C B-7: missing tenant_id filter allowed cross-tenant vector deletion
+# @MX:SPEC: SPEC-TI-010C B-7
+def delete_by_source(source_id: str, tenant_id: str) -> None:
+    """Delete all vectors for a given source_id scoped to tenant_id.
+
+    SPEC-TI-010C B-7: tenant_id is now REQUIRED to prevent cross-tenant Qdrant deletion.
+    Both source_id and tenant_id must match for a point to be deleted.
+    """
     client = get_client()
     client.delete(
         collection_name=settings.qdrant_collection,
@@ -134,7 +141,11 @@ def delete_by_source(source_id: str) -> None:
                     qdrant_models.FieldCondition(
                         key="source_id",
                         match=qdrant_models.MatchValue(value=source_id),
-                    )
+                    ),
+                    qdrant_models.FieldCondition(
+                        key="tenant_id",
+                        match=qdrant_models.MatchValue(value=tenant_id),
+                    ),
                 ]
             )
         ),

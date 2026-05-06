@@ -12,6 +12,19 @@ from app.trace import get_trace_headers
 logger = logging.getLogger(__name__)
 
 
+def _ingest_headers() -> dict[str, str]:
+    """Build headers for knowledge-ingest API calls.
+
+    SPEC-TI-010C B-8: includes X-Caller-Service so knowledge-ingest can enforce
+    per-endpoint identity-assertion on top of the shared X-Internal-Secret check.
+    """
+    return {
+        "X-Internal-Secret": settings.knowledge_ingest_secret,
+        "X-Caller-Service": "portal-api",
+        **get_trace_headers(),
+    }
+
+
 async def get_graph_stats(org_id: str) -> dict[str, int | None]:
     """Fetch entity/edge counts from knowledge-ingest (FalkorDB graph).
 
@@ -21,7 +34,7 @@ async def get_graph_stats(org_id: str) -> dict[str, int | None]:
     try:
         async with httpx.AsyncClient(
             base_url=settings.knowledge_ingest_url,
-            headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
+            headers=_ingest_headers(),
             timeout=5.0,
         ) as client:
             resp = await client.get(
@@ -40,7 +53,7 @@ async def get_source_count(org_id: str, kb_slug: str) -> int | None:
     try:
         async with httpx.AsyncClient(
             base_url=settings.knowledge_ingest_url,
-            headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
+            headers=_ingest_headers(),
             timeout=5.0,
         ) as client:
             resp = await client.get(
