@@ -5,10 +5,14 @@ Stores and retrieves the best known CSS selector per (domain, org_id) pair so
 that repeat crawls of the same domain do not need manual selector entry.
 
 SPEC-CRAWL-001 / R-2, R-3
+SPEC-TI-003-FOLLOWUP-001 AC-1: helpers take an asyncpg.Connection from a
+tenant_scoped_connection(org_id) block instead of acquiring a fresh pool
+connection (which would not see the RLS GUC).
 """
+
 from urllib.parse import urlparse
 
-from knowledge_ingest.db import get_pool
+import asyncpg
 
 
 def extract_domain(url: str) -> str:
@@ -16,13 +20,14 @@ def extract_domain(url: str) -> str:
     return urlparse(url).netloc
 
 
-async def get_domain_selector(domain: str, org_id: str) -> tuple[str, str] | None:
+async def get_domain_selector(
+    conn: asyncpg.Connection, domain: str, org_id: str
+) -> tuple[str, str] | None:
     """Return (css_selector, selector_source) for the given domain+org, or None.
 
     selector_source is 'user' or 'ai'.
     """
-    pool = await get_pool()
-    row = await pool.fetchrow(
+    row = await conn.fetchrow(
         """
         SELECT css_selector, selector_source
         FROM knowledge.crawl_domains
@@ -37,6 +42,7 @@ async def get_domain_selector(domain: str, org_id: str) -> tuple[str, str] | Non
 
 
 async def upsert_domain_selector(
+    conn: asyncpg.Connection,
     domain: str,
     org_id: str,
     css_selector: str,
@@ -48,8 +54,7 @@ async def upsert_domain_selector(
     A user selector always overwrites an AI selector (enforced by caller — no
     special logic needed here since the caller only calls this when appropriate).
     """
-    pool = await get_pool()
-    await pool.execute(
+    await conn.execute(
         """
         INSERT INTO knowledge.crawl_domains
             (domain, org_id, css_selector, selector_source, created_at, updated_at)

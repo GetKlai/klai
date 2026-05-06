@@ -62,8 +62,10 @@ class TestIngestCrawlResultAuthWall:
             success=False,
             error_message="wait_for timeout",
         )
+        mock_conn = MagicMock()
         with pytest.raises(AuthWallDetected) as excinfo:
             await _ingest_crawl_result(
+                mock_conn,
                 failed,
                 url=failed.url,
                 org_id="org",
@@ -84,8 +86,10 @@ class TestIngestCrawlResultAuthWall:
             success=False,
             error_message="network timeout",
         )
+        mock_conn = MagicMock()
         with pytest.raises(ValueError, match="Crawl failed"):
             await _ingest_crawl_result(
+                mock_conn,
                 failed,
                 url=failed.url,
                 org_id="org",
@@ -126,17 +130,16 @@ class TestRunCrawlJobAuthWall:
             success=True,
         )
 
-        pool = MagicMock()
-        pool.execute = AsyncMock(return_value=None)
+        mock_conn = MagicMock()
+        mock_conn.execute = AsyncMock(return_value=None)
+        mock_conn.fetch = AsyncMock(return_value=[])
+        mock_conn.fetchval = AsyncMock(return_value=None)
+        mock_conn.fetchrow = AsyncMock(return_value=None)
 
         with (
             patch(
                 "knowledge_ingest.adapters.crawler.crawl_site",
                 new=AsyncMock(return_value=[happy, walled, never_reached]),
-            ),
-            patch(
-                "knowledge_ingest.adapters.crawler.get_pool",
-                new=AsyncMock(return_value=pool),
             ),
             patch(
                 "knowledge_ingest.adapters.crawler.pg_store.get_crawled_page_hashes",
@@ -148,6 +151,7 @@ class TestRunCrawlJobAuthWall:
             ) as ingest_mock,
         ):
             await run_crawl_job(
+                mock_conn,
                 job_id="job-1",
                 org_id="org",
                 kb_slug="support",
@@ -157,19 +161,20 @@ class TestRunCrawlJobAuthWall:
 
         # The happy page must have been ingested exactly once.
         assert ingest_mock.call_count == 1
+        # SPEC-TI-003-FOLLOWUP-001: _ingest_crawl_result(conn, result, url, org, kb, ...)
         ingest_mock.assert_awaited_with(
+            mock_conn,
             happy,
             happy.url,
             "org",
             "support",
-            pool=pool,
             stored=None,
             login_indicator_selector="#login-form",
             connector_id=None,
         )
 
         # Verify at least one UPDATE marked the job as failed with auth_wall_detected.
-        update_calls = pool.execute.await_args_list
+        update_calls = mock_conn.execute.await_args_list
         failed_updates = [
             c
             for c in update_calls
@@ -183,6 +188,5 @@ class TestRunCrawlJobAuthWall:
             and "#login-form" in c.args[2]
         ]
         assert failed_updates, (
-            f"Expected a failed status update with auth_wall_detected, "
-            f"got {update_calls}"
+            f"Expected a failed status update with auth_wall_detected, got {update_calls}"
         )

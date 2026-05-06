@@ -115,17 +115,24 @@ CREATE POLICY tenant_isolation ON knowledge.artifact_images
     )
   );
 
+-- SPEC-TI-003-FOLLOWUP-001 AC-8: knowledge.derivations has columns (child_id,
+-- parent_id) -- there is no source_id column. The original SPEC-TI-003 SQL
+-- referenced source_id, which would have failed at apply-time; a hot-fix on
+-- 2026-05-06 reapplied the policy with child_id directly on prod. This back-
+-- fills that hot-fix into source. child_id is the new artifact in a
+-- derivation pair; gating reads/writes on child_id ownership matches how the
+-- pipeline produces derivations (always for the local org's child).
 DROP POLICY IF EXISTS tenant_isolation ON knowledge.derivations;
 CREATE POLICY tenant_isolation ON knowledge.derivations
   AS RESTRICTIVE
   USING (
-    source_id IN (
+    child_id IN (
       SELECT id FROM knowledge.artifacts
       WHERE org_id = knowledge._rls_current_org_id()
     )
   )
   WITH CHECK (
-    source_id IN (
+    child_id IN (
       SELECT id FROM knowledge.artifacts
       WHERE org_id = knowledge._rls_current_org_id()
     )

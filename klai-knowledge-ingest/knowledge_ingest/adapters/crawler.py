@@ -1,26 +1,27 @@
 """
 Web crawler adapter: bulk-crawls a website and ingests each page.
 Uses the Crawl4AI REST API (shared Docker container) for all crawling.
+
+SPEC-TI-003-FOLLOWUP-001 AC-1: ``run_crawl_job`` and its helpers take the
+GUC-pinned ``asyncpg.Connection`` from the calling task's
+``tenant_scoped_connection(org_id)`` block. Every knowledge.* read or write
+runs on that same connection so RLS sees the tenant context.
 """
+
 from __future__ import annotations
 
 import asyncio
 import hashlib
 import time
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    import asyncpg
-
+import asyncpg
 import httpx
 import structlog
-
 from klai_image_storage import ImageStore, download_and_upload_crawl_images
 
 from knowledge_ingest import pg_store
 from knowledge_ingest.config import settings
 from knowledge_ingest.crawl4ai_client import CrawlResult, crawl_site
-from knowledge_ingest.db import get_pool
 from knowledge_ingest.models import IngestRequest
 
 logger = structlog.get_logger()
@@ -69,10 +70,10 @@ def _build_image_store() -> ImageStore | None:
 #   guarantee that get_anchor_texts() and get_incoming_count() return final values.
 # @MX:SPEC: SPEC-CRAWLER-005 REQ-01.2
 async def _build_link_graph(
+    conn: asyncpg.Connection,
     results: list[CrawlResult],
     org_id: str,
     kb_slug: str,
-    pool: asyncpg.Pool,
 ) -> None:
     """Phase 1 of the two-phase crawl pipeline: upsert every page's
     outbound links BEFORE any page is ingested. This guarantees that
@@ -92,6 +93,7 @@ async def _build_link_graph(
         if not internal:
             continue
         await pg_store.upsert_page_links(
+            conn,
             org_id=org_id,
             kb_slug=kb_slug,
             from_url=result.url,
@@ -103,6 +105,7 @@ _UNSET = object()  # sentinel: stored_hash not yet fetched from DB
 
 
 async def run_crawl_job(
+    conn: asyncpg.Connection,
     job_id: str,
     org_id: str,
     kb_slug: str,
@@ -135,8 +138,12 @@ async def run_crawl_job(
     page. If any page is flagged as auth-walled the job is marked failed
     with ``error='auth_wall_detected: {selector}'`` and no further pages
     are ingested.
+
+    SPEC-TI-003-FOLLOWUP-001 AC-1: ``conn`` carries the RLS GUC from the
+    caller's ``tenant_scoped_connection(org_id)`` block. Every knowledge.*
+    statement below runs on this same connection.
     """
-    await _update_job(job_id, status="running")
+    await _update_job(conn, job_id, status="running")
 
     pages_done = 0
     pages_failed = 0
@@ -158,19 +165,20 @@ async def run_crawl_job(
         # keeps the public signature stable for Fase D delegation.
         _ = (canary_url, canary_fingerprint)
 
-        pool = await get_pool()
-        await pool.execute(
+        await conn.execute(
             "UPDATE knowledge.crawl_jobs SET pages_total=$1, updated_at=$2 WHERE id=$3",
-            len(results), int(time.time()), job_id,
+            len(results),
+            int(time.time()),
+            job_id,
         )
 
         # SPEC-CRAWLER-005 Fase 1: build link graph BEFORE per-page ingest so
         # late pages don't read an empty graph. REQ-01.1.
-        await _build_link_graph(results, org_id, kb_slug, pool)
+        await _build_link_graph(conn, results, org_id, kb_slug)
 
         # Batch-fetch all known content hashes in a single query
         urls = [r.url for r in results]
-        known_hashes = await pg_store.get_crawled_page_hashes(org_id, kb_slug, urls)
+        known_hashes = await pg_store.get_crawled_page_hashes(conn, org_id, kb_slug, urls)
 
         for result in results:
             url = result.url
@@ -182,8 +190,11 @@ async def run_crawl_job(
                 raise AuthWallDetected(login_indicator_selector)
             try:
                 await _ingest_crawl_result(
-                    result, url, org_id, kb_slug,
-                    pool=pool,
+                    conn,
+                    result,
+                    url,
+                    org_id,
+                    kb_slug,
                     stored=known_hashes.get(url),
                     login_indicator_selector=login_indicator_selector,
                     connector_id=connector_id,
@@ -197,35 +208,41 @@ async def run_crawl_job(
                 logger.warning("crawl_page_failed", url=url, job_id=job_id, error=str(exc))
                 pages_failed += 1
 
-            await pool.execute(
+            await conn.execute(
                 "UPDATE knowledge.crawl_jobs SET pages_done=$1, updated_at=$2 WHERE id=$3",
-                pages_done, int(time.time()), job_id,
+                pages_done,
+                int(time.time()),
+                job_id,
             )
 
-        await _update_job(job_id, status="completed")
+        await _update_job(conn, job_id, status="completed")
         logger.info(
-            "crawl_job_complete", job_id=job_id,
-            pages_done=pages_done, pages_failed=pages_failed,
+            "crawl_job_complete",
+            job_id=job_id,
+            pages_done=pages_done,
+            pages_failed=pages_failed,
         )
 
     except AuthWallDetected as exc:
         # SPEC-CRAWLER-004 REQ-02.3: one structured error per sync, no artifacts.
         logger.error(
             "crawl_job_auth_wall",
-            job_id=job_id, selector=exc.selector, pages_ingested=pages_done,
+            job_id=job_id,
+            selector=exc.selector,
+            pages_ingested=pages_done,
         )
-        await _update_job(job_id, status="failed", error=str(exc))
+        await _update_job(conn, job_id, status="failed", error=str(exc))
     except Exception as exc:
         logger.exception("crawl_job_error", job_id=job_id, error=str(exc))
-        await _update_job(job_id, status="failed", error=str(exc))
+        await _update_job(conn, job_id, status="failed", error=str(exc))
 
 
 async def _ingest_crawl_result(
+    conn: asyncpg.Connection,
     result: CrawlResult,
     url: str,
     org_id: str,
     kb_slug: str,
-    pool: object | None = None,
     stored: pg_store.PageHashes | None | object = _UNSET,
     login_indicator_selector: str | None = None,
     connector_id: str | None = None,
@@ -258,7 +275,7 @@ async def _ingest_crawl_result(
 
     # Dual-hash dedup (see migration 012)
     if stored is _UNSET:
-        stored = await pg_store.get_crawled_page_stored(org_id, kb_slug, url)
+        stored = await pg_store.get_crawled_page_stored(conn, org_id, kb_slug, url)
 
     raw_html = result.html or ""
     raw_html_hash = hashlib.sha256(raw_html.encode()).hexdigest()
@@ -277,6 +294,7 @@ async def _ingest_crawl_result(
         _, stored_content = stored  # type: ignore[misc]
         if stored_content is not None and stored_content == content_hash:
             await pg_store.upsert_crawled_page(
+                conn,
                 org_id=org_id,
                 kb_slug=kb_slug,
                 url=url,
@@ -304,9 +322,9 @@ async def _ingest_crawl_result(
         from knowledge_ingest import link_graph
 
         outbound, anchors, incoming = await asyncio.gather(
-            link_graph.get_outbound_urls(url, org_id, kb_slug, pool),
-            link_graph.get_anchor_texts(url, org_id, kb_slug, pool),
-            link_graph.get_incoming_count(url, org_id, kb_slug, pool),
+            link_graph.get_outbound_urls(conn, url, org_id, kb_slug),
+            link_graph.get_anchor_texts(conn, url, org_id, kb_slug),
+            link_graph.get_incoming_count(conn, url, org_id, kb_slug),
         )
         extra["links_to"] = outbound[:20]
         extra["anchor_texts"] = anchors
@@ -341,18 +359,22 @@ async def _ingest_crawl_result(
     # SPEC-CRAWLER-005 Fase 6 follow-up: was "connector"; crawl chunks now carry
     # source_type="crawl" so retrieval + assertions can distinguish them from
     # non-crawl connector artifacts (notion, github, gdrive).
-    await ingest_document(IngestRequest(
-        org_id=org_id,
-        kb_slug=kb_slug,
-        path=url,
-        content=text,
-        source_type="crawl",
-        content_type=content_type,
-        synthesis_depth=1,
-        extra=extra,
-    ))
+    await ingest_document(
+        conn,
+        IngestRequest(
+            org_id=org_id,
+            kb_slug=kb_slug,
+            path=url,
+            content=text,
+            source_type="crawl",
+            content_type=content_type,
+            synthesis_depth=1,
+            extra=extra,
+        ),
+    )
 
     await pg_store.upsert_crawled_page(
+        conn,
         org_id=org_id,
         kb_slug=kb_slug,
         url=url,
@@ -363,9 +385,13 @@ async def _ingest_crawl_result(
     )
 
 
-async def _update_job(job_id: str, status: str, error: str | None = None) -> None:
-    pool = await get_pool()
-    await pool.execute(
+async def _update_job(
+    conn: asyncpg.Connection, job_id: str, status: str, error: str | None = None
+) -> None:
+    await conn.execute(
         "UPDATE knowledge.crawl_jobs SET status=$1, error=$2, updated_at=$3 WHERE id=$4",
-        status, error, int(time.time()), job_id,
+        status,
+        error,
+        int(time.time()),
+        job_id,
     )

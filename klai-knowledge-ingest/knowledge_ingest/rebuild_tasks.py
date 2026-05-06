@@ -319,9 +319,12 @@ async def _rebuild_artifact(
             # _enrich_document re-inserts them. Without this, the prior
             # rebuild's parent rows pile up and child→parent lookup at retrieval
             # time hits the wrong target.
+            # SPEC-TI-003-FOLLOWUP-001 AC-1: pin RLS GUC on org_id for the
+            # delete; _enrich_document opens its own tsc internally.
             from knowledge_ingest import pg_store as _pg_store
 
-            await _pg_store.delete_parent_chunks_for_artifact(artifact_id)
+            async with tenant_scoped_connection(org_id) as conn:
+                await _pg_store.delete_parent_chunks_for_artifact(conn, artifact_id)
 
             # Steps 2-3: enrichment + TEI/sparse embedding + Qdrant
             # delete-then-upsert. _enrich_document inserts parent_chunks rows
