@@ -59,6 +59,7 @@ async def embed_sparse(text: str) -> SparseVector | None:
             resp.raise_for_status()
             item = resp.json()["results"][0]
             return SparseVector(indices=item["indices"], values=item["values"])
-    except Exception as exc:
-        logger.warning("sparse_sidecar_unavailable: %s", exc)
+    except Exception:
+        # F6 audit cleanup (TRY401): exc_info=True preserves traceback.
+        logger.warning("sparse_sidecar_unavailable", exc_info=True)
         return None

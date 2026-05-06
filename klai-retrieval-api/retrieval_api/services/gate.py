@@ -61,8 +61,9 @@ async def _ensure_reference_vectors() -> list[list[float]]:
 
         texts = [q["query"] for q in queries]
         _reference_vectors = await embed_batch(texts)
-    except Exception as exc:
-        logger.warning("Failed to embed gate reference queries: %s", exc)
+    except Exception:
+        # F6 audit cleanup (TRY401): exc_info=True preserves traceback.
+        logger.warning("Failed to embed gate reference queries", exc_info=True)
         _reference_vectors = []
 
     return _reference_vectors
