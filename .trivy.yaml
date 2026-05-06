@@ -1,7 +1,7 @@
-# .trivy.yaml — single source of truth for klai's CVE scanning policy.
+# .trivy.yaml — canonical reference for klai's CVE scanning policy.
 #
 # Referenced by every CI Trivy invocation via `trivy-config: .trivy.yaml`.
-# Defined and enforced by SPEC-CI-TRIVY-POLICY-001 (REQ-1).
+# Defined by SPEC-CI-TRIVY-POLICY-001 (REQ-1).
 #
 # Tier model (see .claude/rules/klai/infra/deploy.md):
 #   STRICT — 10 internal `ghcr.io/getklai/*` workflows. Block CI on
@@ -13,7 +13,19 @@
 #            (per `infra/container-hygiene.md`). Filtered out of
 #            `scan-pinned-images.yml` enumerate matrix.
 #
-# Schema reference: https://trivy.dev/v0.69/docs/references/configuration/config-file/
+# IMPORTANT — current limitation:
+# trivy-action 0.35.0 only honours `severity` / `scanners` / `ignore-unfixed`
+# from its INPUT layer (workflow `with:` keys), NOT from this config-file.
+# `limit-severities-for-sarif: true` operates on INPUT_SEVERITY, so without
+# inline duplication the SARIF includes ALL severities and the gate fires
+# on LOW/MEDIUM. Until trivy-action lands proper config-file precedence
+# (tracking issue: trivy-action #...), every workflow's Trivy step keeps
+# inline `scanners: 'vuln'`, `severity: 'CRITICAL,HIGH'`, `ignore-unfixed: true`
+# alongside `trivy-config: .trivy.yaml`. This file remains the canonical
+# reference: when the action is upgraded, the inline duplicates can be
+# dropped in one PR without changing policy.
+#
+# Schema reference: https://trivy.dev/latest/docs/references/configuration/config-file/
 
 severity:
   - CRITICAL

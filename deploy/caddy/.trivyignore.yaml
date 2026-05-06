@@ -1,0 +1,29 @@
+# Per-service Trivy ignore-list for caddy-hetzner.
+# Schema: SPEC-CI-TRIVY-POLICY-001 REQ-5 (id + ≥40-char statement + expired_at).
+# Referenced from .github/workflows/caddy.yml via `trivyignores:`.
+
+vulnerabilities:
+  - id: CVE-2026-29181
+    statement: |
+      go.opentelemetry.io/otel v1.40.0 → fixed in v1.41.0. Caddy 2.11.2's
+      go.mod still pins v1.40.0 transitively. Telemetry surface in our
+      Caddy build is disabled (no OTLP exporter, no telemetry endpoints
+      configured in Caddyfile) so the vulnerable codepath has no live
+      reach. Renovate watches the Caddy image; we expect Caddy 2.11.3 or
+      2.12.x to bump otel within the expiry window. Re-evaluate then.
+    expired_at: 2026-08-01
+    purls:
+      - "pkg:golang/go.opentelemetry.io/otel@v1.40.0"
+
+  - id: CVE-2026-27135
+    statement: |
+      nghttp2-libs 1.68.0-r0 → fixed in 1.68.1. Caddy 2.11.2-alpine ships
+      Alpine 3.21 which still has 1.68.0-r0 in its package index. Alpine's
+      next package-set update (typically every ~6 weeks) will pick up
+      1.68.1. Caddy uses nghttp2 only for HTTP/2 backend transport; our
+      reverse-proxy upstreams are local Docker network HTTP/1.1 services,
+      so the H2-DoS attack surface is upstream-side TLS terminator only.
+      Renovate watches caddy:* tags for new patches.
+    expired_at: 2026-08-01
+    purls:
+      - "pkg:apk/alpine/nghttp2-libs@1.68.0-r0"
