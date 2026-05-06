@@ -122,6 +122,18 @@ def compute_simhash(text: str) -> int:
     Empty input returns 0. The function is deterministic across runs and
     Python interpreters: blake2b is content-only and Python's hash
     randomisation does not affect us.
+
+    @MX:ANCHOR — invariant. Output bits MUST stay deterministic across
+    process restarts and host hardware. Every persisted ``content_simhash``
+    in ``knowledge.crawled_pages`` is an anchor: changing the hash function,
+    the normalisation order, or the bit-accumulation order silently breaks
+    every existing cluster (Hamming distance to old hashes becomes random).
+    A breaking change requires a SPEC and a full re-hash backfill.
+    @MX:NOTE — empty/whitespace input returns 0 as a sentinel. Callers
+    persisting hashes MUST skip 0 (the crawler and backfill do — see
+    SPEC-002 follow-ups). 0 is left in the int range because filtering it
+    out at compute-time would mask legitimate empty-text edge cases.
+    Reason: SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-01.
     """
     if not text:
         return 0
@@ -169,5 +181,13 @@ def hamming_distance(a: int, b: int) -> int:
     Inputs may be signed (post round-trip from PostgreSQL bigint) or unsigned;
     masking to 64 bits before XOR avoids Python's arbitrary-precision negative
     bit semantics.
+
+    @MX:ANCHOR — invariant. The 64-bit signed/unsigned mask is load-bearing
+    for cluster correctness. PostgreSQL ``bigint`` round-trips negatives, so
+    a naive ``(a ^ b).bit_count()`` on a negative input gives a count that
+    includes Python's sign-extension bits — wildly wrong distance. Removing
+    the ``& _UINT64_MASK`` would cause every cluster query against a
+    previously-stored negative simhash to return 0 matches. SPEC REQ-02
+    fixes the threshold at 3; SPEC REQ-09 audits the SQL filter.
     """
     return ((a & _UINT64_MASK) ^ (b & _UINT64_MASK)).bit_count()
