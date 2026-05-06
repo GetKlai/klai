@@ -30,11 +30,7 @@ env:
 jobs:
   quality:
     # Mirrors the portal-api quality job: lint, format-check, type-check,
-    # then tests. Build + image scan only run when this is green.
-    # pip-audit is intentionally NOT wired here yet — there are 3 known
-    # CVEs in transitive deps (cryptography, pygments, python-multipart)
-    # that need triage before pip-audit can become a hard gate. Tracked
-    # as a separate follow-up.
+    # pip-audit, then tests. Build + image scan only run when this is green.
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -60,6 +56,19 @@ jobs:
 
       - name: Type check (pyright)
         run: uv run --with pyright pyright
+
+      # Issue #422 follow-up to PR #421: pip-audit wired as a hard gate.
+      # The three CVEs that originally blocked this step (CVE-2026-39892
+      # cryptography, CVE-2026-4539 pygments, CVE-2026-40347 python-multipart)
+      # were all resolved via `uv lock --upgrade-package` — no
+      # `--ignore-vuln` flags needed. Mirrors the portal-api pattern:
+      # pip-audit runs against the locked, fully-resolved dep tree before
+      # pytest, so a regression in any direct or transitive package
+      # surfaces here before tests. If a future CVE has no fix available,
+      # add `--ignore-vuln <id>` with rationale comment, mirroring
+      # portal-api.yml lines 73-74.
+      - name: Dependency vulnerability scan (pip-audit)
+        run: uv run --with pip-audit pip-audit
 
       - name: Test (pytest)
         run: uv run pytest -q --tb=short
