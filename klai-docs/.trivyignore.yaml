@@ -1,0 +1,20 @@
+# Per-service Trivy ignore-list for klai-docs.
+# Schema: SPEC-CI-TRIVY-POLICY-001 REQ-5 (id + ≥40-char statement + expired_at).
+# Referenced from .github/workflows/docs.yml via `trivyignores:`.
+
+vulnerabilities:
+  - id: CVE-2026-33671
+    statement: |
+      Trivy DB false-positive: per NVD (nvd.nist.gov/vuln/detail/
+      CVE-2026-33671), picomatch 4.0.4 IS the fix-version for this
+      CVE — affected range is 4.0.0..<4.0.4. PR #411 of
+      SPEC-CI-TRIVY-POLICY-001 bumped picomatch to 4.0.4 (and 2.3.2
+      for the chokidar tier), so per upstream advisory we are on the
+      patched version. Trivy's vulnerability database still flags
+      4.0.4 instances — this is a Trivy DB lag, not a real exposure.
+      As secondary defense, picomatch is build-tooling only
+      (chokidar / tinyglobby file-watching, Vite glob resolution);
+      runtime app code never invokes `picomatch.compile()` on user
+      input. Re-evaluate when Trivy DB recategorises 4.0.4 as fixed
+      OR when picomatch 4.1.x ships.
+    expired_at: 2026-08-01
