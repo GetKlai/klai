@@ -87,10 +87,22 @@ async def retrieve_context(
     kb_slugs: list[str],
     messages: list[dict],
     settings: Settings,
+    *,
+    partner_user_id: str | None = None,
 ) -> tuple[list[dict], str]:
     """Call retrieval-api and return (chunks, augmented_system_prompt).
 
     Follows the pattern from deploy/litellm/klai_knowledge.py.
+
+    ``partner_user_id`` (F2 audit cleanup, 2026-05-06): when given, attached
+    to the /retrieve body as ``user_id``. retrieval-api recognizes the
+    ``partner:`` prefix and pins ``verified_caller`` for product_events
+    integrity (SPEC-SEC-IDENTITY-ASSERT-001 REQ-6) without a round-trip
+    to portal-api's /internal/identity/verify (which would 403 on the
+    synthetic identity). Without this, ``knowledge.queried`` events for
+    partner traffic are silently dropped via the
+    ``product_event_skipped_no_identity`` warning branch in retrieve.py.
+    Audit ref: .moai/audits/retrieval-coupling-2026-05-06/findings/F2-...md.
     """
     query = _last_user_message(messages)
     if not query:
@@ -114,6 +126,9 @@ async def retrieve_context(
     }
     if kb_slugs:
         retrieve_body["kb_slugs"] = kb_slugs
+    if partner_user_id is not None:
+        # F2: synthetic partner-level identity for product_events tagging.
+        retrieve_body["user_id"] = partner_user_id
 
     retrieval_url = settings.knowledge_retrieve_url
     if not retrieval_url:

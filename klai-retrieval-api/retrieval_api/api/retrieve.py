@@ -125,6 +125,15 @@ async def retrieve(
     graph_search_ms: float | None = None
     link_expand_ms: float | None = None
     link_expand_count = 0
+    # F3 phase 1 instrumentation (audit retrieval-coupling-2026-05-06):
+    # capture seed/expanded sets across the pipeline so the final
+    # decision_record can measure link-expansion's contribution to
+    # the served top-k. Without this, we cannot tell whether the
+    # expanded chunks ever survive the reranker + source-select +
+    # quality-boost + evidence-tier passes — i.e. whether the
+    # extra Qdrant scroll-call buys anything in practice.
+    link_expand_seed_chunk_ids: set[str] = set()
+    link_expand_candidate_urls = 0
 
     # 3b. Query router — identifies relevant sources for post-rerank selection
     router_meta: dict = {"router_decision": None, "router_layer_used": "skipped"}
@@ -209,6 +218,12 @@ async def retrieve(
                 if len(candidate_urls) >= settings.link_expand_max_urls:
                     break
 
+            # F3 phase 1: capture seed chunk_ids before expansion so we can
+            # measure later how many of the served top-k were original-seed
+            # vs newly-expanded vs neither.
+            link_expand_seed_chunk_ids = {c["chunk_id"] for c in seed_chunks}
+            link_expand_candidate_urls = len(candidate_urls)
+
             if candidate_urls:
                 expansion_chunks = await search.fetch_chunks_by_urls(
                     candidate_urls, req, settings.link_expand_candidates
@@ -216,6 +231,12 @@ async def retrieve(
                 existing_ids = {r["chunk_id"] for r in raw_results}
                 new_chunks = [c for c in expansion_chunks if c["chunk_id"] not in existing_ids]
                 link_expand_count = len(new_chunks)
+                # F3 phase 1: tag the expansion chunks. Underscore prefix
+                # keeps the field internal — Pydantic ChunkResult ignores
+                # unknown fields by default and the build loop only reads
+                # explicit keys, so this never leaks to the response body.
+                for c in new_chunks:
+                    c["_link_expanded"] = True
                 raw_results = raw_results + new_chunks
 
             link_expand_ms = (time.perf_counter() - t_expand) * 1000
@@ -309,15 +330,34 @@ async def retrieve(
         else:
             serving = scored
 
+        # F3 phase 1 instrumentation: emit link-expansion contribution to
+        # the served top-k. Lets us answer "did the extra Qdrant scroll
+        # ever produce a chunk that beat the reranker top-k cut-off?"
+        # before deciding on phase 2 (RRF migration vs disable).
+        # Audit ref: .moai/audits/retrieval-coupling-2026-05-06/findings/
+        # F3-link-expansion-dead-weight.md
+        expanded_in_top_k_ids = [r["chunk_id"] for r in serving if r.get("_link_expanded")]
+        seed_in_top_k_ids = [
+            r["chunk_id"] for r in serving if r["chunk_id"] in link_expand_seed_chunk_ids
+        ]
+        decision_record["link_expand"] = {
+            "enabled": settings.link_expand_enabled,
+            "seed_k": len(link_expand_seed_chunk_ids),
+            "candidate_urls": link_expand_candidate_urls,
+            "expanded_added": link_expand_count,
+            "expanded_in_top_k": len(expanded_in_top_k_ids),
+            "expanded_top_k_chunk_ids": expanded_in_top_k_ids,
+            "seed_in_top_k": len(seed_in_top_k_ids),
+            "served_top_k": len(serving),
+        }
+
         # 6b. SPEC-RAG-PARENT-CHILD-001: swap child text for the parent's
         # broader-context text. Fetched in one batch query against
         # knowledge.parent_chunks. Children with no parent_chunk_id (legacy
         # ingests) keep their own text — REQ-3 fall-through.
         from retrieval_api.services import parent_lookup
 
-        parent_id_per_serving: list[int | None] = [
-            r.get("parent_chunk_id") for r in serving
-        ]
+        parent_id_per_serving: list[int | None] = [r.get("parent_chunk_id") for r in serving]
         parent_text_by_id = await parent_lookup.fetch_parents(
             pid for pid in parent_id_per_serving if pid is not None
         )

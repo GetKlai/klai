@@ -543,6 +543,16 @@ async def verify_body_identity(
             detail={"error": "unknown_caller_service"},
         )
 
+    # F2 fix-forward (retrieval coupling audit 2026-05-06): synthetic
+    # `partner:<key_id>` identities go through the SAME portal verify path
+    # as every other internal-secret caller. Portal-side identity_verifier
+    # has a dedicated branch that resolves the key against partner_api_keys
+    # and confirms the key's owning org matches the claim — so a forged
+    # body claiming `(partner:any-key, victim-tenant)` is denied at the
+    # portal, not pinned by retrieval-api. The earlier in-process bypass
+    # was removed because it weakened defense-in-depth: an attacker
+    # holding X-Internal-Secret could pin any (synthetic_user, any_org)
+    # tuple as verified_caller and read the org's data.
     asserter = _get_asserter()
     result = await asserter.verify(
         caller_service=caller_service,
