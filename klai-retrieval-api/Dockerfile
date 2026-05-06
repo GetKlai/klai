@@ -14,6 +14,8 @@ RUN useradd --create-home --uid 1000 --shell /bin/bash app
 # Repo-mirror layout — klai-libs path-deps must resolve from the workspace root
 WORKDIR /repo
 COPY --chown=app:app klai-libs/identity-assert klai-libs/identity-assert
+# SPEC-RAG-MULTILINGUAL-CHAT-001 REQ-02: shared chat-prompt constant.
+COPY --chown=app:app klai-libs/chat-prompts klai-libs/chat-prompts
 COPY --chown=app:app klai-retrieval-api/pyproject.toml klai-retrieval-api/pyproject.toml
 
 WORKDIR /repo/klai-retrieval-api
