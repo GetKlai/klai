@@ -1,0 +1,46 @@
+[
+  {
+    "name": "CRM integrations",
+    "description": "Vragen en handleidingen over het koppelen van CRM-systemen aan telefoon- en bedrijfssoftware.",
+    "sample_titles": [
+      "https://help.voys.nl/firewall-configuratie",
+      "https://wiki.redcactus.cloud/nl/11-faq",
+      "https://wiki.redcactus.cloud/nl/crm-software",
+      "https://wiki.redcactus.cloud/nl/39-webconfigurator",
+      "https://wiki.redcactus.cloud/nl/47"
+    ]
+  },
+  {
+    "name": "Telefonie integraties",
+    "description": "Vragen en handleidingen over het integreren van telefoonsystemen met andere software en diensten.",
+    "sample_titles": [
+      "https://help.voys.nl/firewall-configuratie",
+      "https://wiki.redcactus.cloud/nl/11-faq",
+      "https://wiki.redcactus.cloud/nl/crm-software",
+      "https://wiki.redcactus.cloud/nl/39-webconfigurator",
+      "https://wiki.redcactus.cloud/nl/47"
+    ]
+  },
+  {
+    "name": "Software handleidingen",
+    "description": "Handleidingen en FAQ's voor het installeren, configureren en gebruiken van software.",
+    "sample_titles": [
+      "https://help.voys.nl/firewall-configuratie",
+      "https://wiki.redcactus.cloud/nl/11-faq",
+      "https://wiki.redcactus.cloud/nl/crm-software",
+      "https://wiki.redcactus.cloud/nl/39-webconfigurator",
+      "https://wiki.redcactus.cloud/nl/47"
+    ]
+  },
+  {
+    "name": "Partner portaal",
+    "description": "Documentatie en handleidingen voor het instellen en beheren van partnerportalen en gerelateerde software.",
+    "sample_titles": [
+      "https://help.voys.nl/firewall-configuratie",
+      "https://wiki.redcactus.cloud/nl/11-faq",
+      "https://wiki.redcactus.cloud/nl/crm-software",
+      "https://wiki.redcactus.cloud/nl/39-webconfigurator",
+      "https://wiki.redcactus.cloud/nl/47"
+    ]
+  }
+]
