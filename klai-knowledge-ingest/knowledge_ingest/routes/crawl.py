@@ -11,7 +11,6 @@ tenant_scoped_connection on the body's org_id and pass conn into pg_store /
 link_graph / domain_selectors / ingest_document.
 """
 
-import asyncio
 import contextlib
 import hashlib
 import re
@@ -374,14 +373,20 @@ async def crawl_url(request: CrawlRequest, http_request: Request) -> CrawlRespon
         # Ingest using existing pipeline (expects IngestRequest, returns dict)
         # SPEC-CRAWL-001 / R-5: include source_url in extra
         # SPEC-CRAWLER-003 R11: populate link graph fields when source_url present
+        # SEQUENTIAL not gather — asyncpg.Connection is not concurrent-safe.
+        # See crawler.py adapter for the full incident note (Voys help 2026-05-06).
         extra: dict = {"source_url": request.url}
         try:
             from knowledge_ingest import link_graph
 
-            outbound, anchors, incoming = await asyncio.gather(
-                link_graph.get_outbound_urls(conn, request.url, request.org_id, request.kb_slug),
-                link_graph.get_anchor_texts(conn, request.url, request.org_id, request.kb_slug),
-                link_graph.get_incoming_count(conn, request.url, request.org_id, request.kb_slug),
+            outbound = await link_graph.get_outbound_urls(
+                conn, request.url, request.org_id, request.kb_slug
+            )
+            anchors = await link_graph.get_anchor_texts(
+                conn, request.url, request.org_id, request.kb_slug
+            )
+            incoming = await link_graph.get_incoming_count(
+                conn, request.url, request.org_id, request.kb_slug
             )
             extra["links_to"] = outbound[:20]
             extra["anchor_texts"] = anchors

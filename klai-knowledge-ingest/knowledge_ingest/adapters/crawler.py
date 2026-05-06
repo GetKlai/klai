@@ -10,7 +10,6 @@ runs on that same connection so RLS sees the tenant context.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import time
@@ -510,15 +509,24 @@ async def _ingest_crawl_result(
     if is_pdf and front_matter:
         extra["front_matter"] = front_matter
 
-    # SPEC-CRAWLER-003 R11: populate link graph fields after page_links upsert
+    # SPEC-CRAWLER-003 R11: populate link graph fields after page_links upsert.
+    #
+    # SEQUENTIAL not gather: asyncpg.Connection is NOT safe for concurrent use.
+    # Submitting three queries through asyncio.gather on the same conn raises
+    # ``InterfaceError: cannot perform operation: another operation is in
+    # progress`` and leaves the conn in an unusable state — every subsequent
+    # ``conn.execute`` in run_crawl_job (the per-page UPDATE on knowledge.crawl_jobs
+    # at the bottom of the loop, and the terminal _update_job) then re-raises
+    # the same error, killing the whole crawl. Discovered live on Voys help
+    # 2026-05-06 — symptom: 0 of N pages ingested, procrastinate retry-loop.
+    # Gather buys nothing here: a single asyncpg conn serialises queries on
+    # the wire anyway.
     try:
         from knowledge_ingest import link_graph
 
-        outbound, anchors, incoming = await asyncio.gather(
-            link_graph.get_outbound_urls(conn, url, org_id, kb_slug),
-            link_graph.get_anchor_texts(conn, url, org_id, kb_slug),
-            link_graph.get_incoming_count(conn, url, org_id, kb_slug),
-        )
+        outbound = await link_graph.get_outbound_urls(conn, url, org_id, kb_slug)
+        anchors = await link_graph.get_anchor_texts(conn, url, org_id, kb_slug)
+        incoming = await link_graph.get_incoming_count(conn, url, org_id, kb_slug)
         extra["links_to"] = outbound[:20]
         extra["anchor_texts"] = anchors
         extra["incoming_link_count"] = incoming
