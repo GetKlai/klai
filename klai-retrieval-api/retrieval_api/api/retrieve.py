@@ -20,6 +20,7 @@ from retrieval_api.metrics import (
 from retrieval_api.middleware.auth import AuthContext, require_scope, verify_body_identity
 from retrieval_api.models import ChunkResult, RetrieveMetadata, RetrieveRequest, RetrieveResponse
 from retrieval_api.quality_boost import quality_boost
+from retrieval_api.quality_floor import filter_quality_floor
 from retrieval_api.services import coreference, evidence_tier, gate, graph_search, reranker, search
 from retrieval_api.services.diversity import source_aware_select
 from retrieval_api.services.events import emit_event
@@ -270,6 +271,17 @@ async def retrieve(
         else:
             reranked = raw_results[: req.top_k]
             reranked_to = len(reranked)
+
+        # 5a-bis. Quality-floor filter (SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-07).
+        # Removes chunks explicitly degraded to quality_score=0.0 BEFORE the
+        # source-quota algorithm picks candidates — otherwise a walled chunk
+        # could burn a diversity slot. The default floor (0.05) cannot
+        # accidentally filter neutral 0.5 chunks; an operator must set the
+        # threshold > 0.5 explicitly.
+        reranked, quality_floor_filtered = filter_quality_floor(
+            reranked, floor=settings.retrieval_quality_floor
+        )
+        decision_record["quality_floor_filtered"] = quality_floor_filtered
 
         # 5b. Source-aware selection (SPEC-KB-021)
         # Replaces separate router + quota: uses reranker scores to decide.

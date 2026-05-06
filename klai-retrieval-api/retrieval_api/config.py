@@ -51,6 +51,14 @@ class Settings(BaseSettings):
     source_quota_enabled: bool = True
     source_quota_max_per_source: int = 2
 
+    # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-07 — defence-in-depth floor.
+    # Chunks with ``quality_score < retrieval_quality_floor`` are removed
+    # immediately after rerank, before source-aware-select + quality_boost.
+    # Default 0.05 means: only chunks explicitly degraded to 0.0 (e.g.,
+    # ingest-time auth-wall ``degrade`` mode) are filtered. The default
+    # ``quality_score=0.5`` chunks always pass.
+    retrieval_quality_floor: float = 0.05
+
     # Query router (SPEC-KB-021)
     # Pre-search: identifies relevant sources, passes decision to source_aware_select.
     # Centroids computed from actual chunk vectors (not label strings).
