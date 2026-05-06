@@ -23,9 +23,24 @@ from pydantic import ValidationError
 
 def _reload_config_module(monkeypatch: pytest.MonkeyPatch):
     """Re-import knowledge_ingest.config so the module-level Settings()
-    instantiation re-runs under the test's monkey-patched env."""
+    instantiation re-runs under the test's monkey-patched env.
+
+    Saves and restores the original ``knowledge_ingest.config`` module
+    via ``monkeypatch.setitem`` so subsequent tests in the suite still
+    see the original ``settings`` singleton. Without this restoration,
+    the autouse fixture in ``conftest.py`` that patches
+    ``settings.enrichment_enabled = False`` ends up patching a stale
+    settings instance, which in turn lets the FastAPI lifespan hit the
+    enrichment-worker bootstrap and cascade-fail across ~50 unrelated
+    TestClient-based tests.
+    """
+    original = sys.modules.get("knowledge_ingest.config")
+    if original is not None:
+        # Snapshot the current module so monkeypatch puts it back on
+        # teardown. ``monkeypatch.setitem`` restores both the value and
+        # the key's presence/absence, mirroring the contract.
+        monkeypatch.setitem(sys.modules, "knowledge_ingest.config", original)
     sys.modules.pop("knowledge_ingest.config", None)
-    sys.modules.pop("knowledge_ingest", None)
 
 
 def _import_settings_class():
@@ -85,6 +100,5 @@ def test_module_level_settings_singleton_fails_on_empty(monkeypatch: pytest.Monk
     which is the actual production behaviour: container fails to start."""
     monkeypatch.setenv("GITEA_WEBHOOK_SECRET", "")
     sys.modules.pop("knowledge_ingest.config", None)
-    sys.modules.pop("knowledge_ingest", None)
     with pytest.raises(ValidationError):
         importlib.import_module("knowledge_ingest.config")
