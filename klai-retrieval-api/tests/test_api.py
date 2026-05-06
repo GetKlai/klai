@@ -367,6 +367,56 @@ class TestLinkExpandInstrumentation:
             "decision_record log should contain a link_expand block"
         )
 
+    def test_link_expanded_flag_survives_evidence_tier_deep_copy(self):
+        """The instrumentation tag MUST survive `copy.deepcopy(reranked)`
+        inside ``evidence_tier.apply`` so that when EVIDENCE_SHADOW_MODE=false
+        flips on (per SPEC-EVIDENCE-001-FOLLOWUP-001) the deep-copied scored
+        chunks STILL carry the flag for ``decision_record.link_expand``.
+
+        This is a contract test on Python semantics — `copy.deepcopy` of a
+        dict preserves all keys, and `evidence_tier.apply` mutates in place
+        without stripping unknown fields. Pinned here so a future refactor
+        of evidence_tier (e.g. switch to a typed constructor that drops
+        unknown keys) doesn't silently break F3 instrumentation in the
+        post-shadow-mode world.
+        """
+        import copy
+
+        from retrieval_api.services.evidence_tier import apply
+
+        original = [
+            {
+                "chunk_id": "expanded-1",
+                "text": "expanded chunk",
+                "score": 0.5,
+                "reranker_score": 0.8,
+                "content_type": "kb_article",
+                "ingested_at": None,
+                "assertion_mode": None,
+                "_link_expanded": True,
+            },
+            {
+                "chunk_id": "seed-1",
+                "text": "seed chunk",
+                "score": 0.9,
+                "reranker_score": 0.95,
+                "content_type": "kb_article",
+                "ingested_at": None,
+                "assertion_mode": None,
+            },
+        ]
+        # Simulate the retrieve.py pattern: deepcopy then apply scoring.
+        scored = apply(copy.deepcopy(original))
+
+        flagged = [c for c in scored if c.get("_link_expanded") is True]
+        assert len(flagged) == 1, (
+            f"_link_expanded flag dropped after deepcopy + evidence_tier.apply: "
+            f"{[c.get('chunk_id') for c in scored]}. F3 instrumentation broken."
+        )
+        assert flagged[0]["chunk_id"] == "expanded-1"
+        # Original list MUST be untouched (deepcopy guarantee).
+        assert "final_score" not in original[0], "deepcopy was lost — apply mutated input"
+
 
 class TestHealthEndpoint:
     def test_health_all_ok(self, client):
