@@ -37,6 +37,7 @@ _REQUIRES_INTEGRATION = os.getenv("RUN_INTEGRATION") != "1"
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.no_mock_db_helpers
 @pytest.mark.skipif(
     _REQUIRES_INTEGRATION,
     reason=(
@@ -94,6 +95,7 @@ async def test_concurrent_tenant_scoped_connections_no_guc_bleed() -> None:
     )
 
 
+@pytest.mark.no_mock_db_helpers
 @pytest.mark.skipif(
     _REQUIRES_INTEGRATION,
     reason=(

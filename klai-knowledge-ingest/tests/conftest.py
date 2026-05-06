@@ -5,6 +5,13 @@ variable — ``Settings()`` raises ``ValidationError`` when it is missing.
 We set a test value before any ``knowledge_ingest`` module is imported so
 ``config.py``'s module-level ``settings = Settings()`` succeeds during
 test collection. The real production deploy injects this via SOPS.
+
+SPEC-TI-003-FOLLOWUP-001: ``tenant_scoped_connection`` now does
+``pool.acquire()`` and yields the connection to callers. The mock pool
+fixture exposes ``acquire()`` as an async context manager yielding a
+mock connection so unit tests that exercise the FastAPI app via
+``TestClient`` -- and therefore go through ``tenant_scoped_connection``
+-- still work without a real Postgres.
 """
 
 from __future__ import annotations
@@ -19,6 +26,7 @@ os.environ.setdefault("GITEA_WEBHOOK_SECRET", "test-gitea-webhook-secret-789")
 # Imports below need the env vars above — keep this order to allow the
 # module-level ``settings = Settings()`` call in ``knowledge_ingest.config``
 # to succeed under the SPEC-SEC-011 / SEC-014 validators.
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -30,18 +38,141 @@ from fastapi.testclient import TestClient
 _INTERNAL_HEADER = {"X-Internal-Secret": os.environ["KNOWLEDGE_INGEST_SECRET"]}
 
 
+def _make_mock_conn():
+    """Return a mock asyncpg.Connection that returns benign defaults.
+
+    Tests that need specific behaviour patch the pg_store helper directly
+    (e.g. ``patch("knowledge_ingest.pg_store.create_artifact", AsyncMock(...))``)
+    rather than reaching through this stub.
+    """
+    conn = MagicMock()
+    conn.execute = AsyncMock(return_value=None)
+    conn.executemany = AsyncMock(return_value=None)
+    conn.fetch = AsyncMock(return_value=[])
+    conn.fetchrow = AsyncMock(return_value=None)
+    conn.fetchval = AsyncMock(return_value=None)
+
+    # Transaction context manager (used by pg_store helpers like delete_kb).
+    @asynccontextmanager
+    async def _tx():
+        yield None
+
+    conn.transaction = MagicMock(side_effect=_tx)
+    return conn
+
+
 def _make_mock_pool():
-    """Return a mock asyncpg pool that does nothing."""
+    """Return a mock asyncpg pool that yields a mock conn from acquire().
+
+    Mirrors the asyncpg.Pool surface that ``tenant_scoped_connection`` and
+    ``cross_org_admin_connection`` exercise: ``async with pool.acquire() as
+    conn`` must yield something the caller can ``execute`` / ``fetch`` /
+    ``fetchval`` against without raising.
+    """
     pool = MagicMock()
     pool.execute = AsyncMock(return_value=None)
     pool.fetch = AsyncMock(return_value=[])
+    pool.fetchval = AsyncMock(return_value=None)
+    pool.fetchrow = AsyncMock(return_value=None)
     pool.close = AsyncMock(return_value=None)
+
+    conn = _make_mock_conn()
+
+    @asynccontextmanager
+    async def _acquire():
+        yield conn
+
+    pool.acquire = MagicMock(side_effect=_acquire)
+    # Expose the conn so tests can assert against it if needed.
+    pool._mock_conn = conn  # type: ignore[attr-defined]
     return pool
 
 
 @pytest.fixture
 def mock_pool():
     return _make_mock_pool()
+
+
+@pytest.fixture(autouse=True)
+def _mock_db_helpers(request):
+    """Autouse: replace tenant_scoped_connection + cross_org_admin_connection
+    with no-op async context managers yielding a mock conn.
+
+    SPEC-TI-003-FOLLOWUP-001 turned every pg_store / kb_config / org_config
+    call into a ``conn``-passing call, and the route / task entry points
+    now wrap each request in ``tenant_scoped_connection``. Tests that hit
+    the FastAPI app via TestClient would otherwise need a real Postgres
+    just to satisfy the helper's ``pool.acquire()`` call. This fixture
+    intercepts both helpers so tests can run without one.
+
+    Tests that exercise the real helper (``test_db_rls_wiring.py``) opt out
+    by adding the ``no_mock_db_helpers`` marker, e.g.::
+
+        @pytest.mark.no_mock_db_helpers
+        async def test_real_postgres_thing(): ...
+    """
+    if request.node.get_closest_marker("no_mock_db_helpers"):
+        yield
+        return
+
+    @asynccontextmanager
+    async def _fake_tenant(org_id: str):  # noqa: ARG001
+        yield _make_mock_conn()
+
+    @asynccontextmanager
+    async def _fake_admin():
+        yield _make_mock_conn()
+
+    # Reset the module-level pool global so a prior test that triggered
+    # the real get_pool() does not leak a half-connected pool into this
+    # test's patched view.
+    try:
+        import knowledge_ingest.db as _db_mod
+
+        _db_mod._pool = None
+    except Exception:
+        pass
+
+    targets = [
+        "knowledge_ingest.db.tenant_scoped_connection",
+        "knowledge_ingest.routes.ingest.tenant_scoped_connection",
+        "knowledge_ingest.routes.crawl.tenant_scoped_connection",
+        "knowledge_ingest.routes.personal.tenant_scoped_connection",
+        "knowledge_ingest.crawl_tasks.tenant_scoped_connection",
+        "knowledge_ingest.rebuild_tasks.tenant_scoped_connection",
+        "knowledge_ingest.enrichment_tasks.tenant_scoped_connection",
+        "knowledge_ingest.connector_cleanup.tenant_scoped_connection",
+    ]
+    admin_targets = [
+        "knowledge_ingest.db.cross_org_admin_connection",
+        "knowledge_ingest.backfill.cross_org_admin_connection",
+    ]
+
+    patchers = []
+    for target in targets:
+        try:
+            p = patch(target, _fake_tenant)
+            p.start()
+            patchers.append(p)
+        except (ImportError, AttributeError, ModuleNotFoundError):
+            # Module not yet imported by this test session; harmless.
+            continue
+    for target in admin_targets:
+        try:
+            p = patch(target, _fake_admin)
+            p.start()
+            patchers.append(p)
+        except (ImportError, AttributeError, ModuleNotFoundError):
+            continue
+
+    try:
+        yield
+    finally:
+        for p in patchers:
+            try:
+                p.stop()
+            except RuntimeError:
+                pass
 
 
 @pytest.fixture
