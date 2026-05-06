@@ -4,13 +4,14 @@ Tests for _parse_knowledge_fields() and db._parse_dsn().
 These are pure functions — no mocking needed.
 """
 
-from knowledge_ingest.routes.ingest import _parse_knowledge_fields
 from knowledge_ingest.db import _parse_dsn
+from knowledge_ingest.routes.ingest import _parse_knowledge_fields
 
 _SENTINEL = 253402300800
 
 
 # ── _parse_knowledge_fields ──────────────────────────────────────────────────
+
 
 class TestParseKnowledgeFieldsDefaults:
     def test_no_frontmatter_returns_defaults(self):
@@ -100,6 +101,7 @@ class TestParseKnowledgeFieldsFromFrontmatter:
 
     def test_belief_time_start_invalid_string_falls_back_to_now(self):
         import time
+
         content = "---\nbelief_time_start: 'not-a-date'\n---\n# Doc"
         before = int(time.time()) - 1
         result = _parse_knowledge_fields(content, None)
@@ -116,6 +118,7 @@ class TestParseKnowledgeFieldsFromFrontmatter:
 
 
 # ── db._parse_dsn ────────────────────────────────────────────────────────────
+
 
 class TestParseDsn:
     def test_basic_dsn(self):

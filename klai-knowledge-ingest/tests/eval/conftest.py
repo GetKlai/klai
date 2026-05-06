@@ -44,4 +44,32 @@ def _stub_psycopg_if_absent() -> None:
     sys.modules["psycopg_pool"] = pool_mod
 
 
+def _swap_in_real_procrastinate() -> None:
+    """Replace the parent conftest's procrastinate stub with the real
+    package. The eval suite needs the genuine
+    ``procrastinate.testing.InMemoryConnector`` to drive queueing-lock
+    semantics; the parent stub only exposes attribute placeholders. With
+    psycopg already stubbed (above), the real procrastinate import does
+    not need a libpq backend.
+
+    Importantly: eagerly re-import real procrastinate **here** so that
+    every module collected after this point sees ``procrastinate`` in
+    ``sys.modules``. Test files like ``test_extra_payload_contract.py``
+    install their own *partial* stub at module-level guarded by
+    ``if "procrastinate" in sys.modules: return`` -- if we just pop the
+    entry without forcing the real load, the next test module's guard
+    sees an empty slot and races to install a partial stub that lacks
+    ``App``, breaking the eval tests downstream.
+    """
+    sys.modules.pop("procrastinate", None)
+    sys.modules.pop("procrastinate.exceptions", None)
+    sys.modules.pop("procrastinate.testing", None)
+    # Force the real import now; the per-file guards in test_*.py modules
+    # will skip on the next pytest pass because the entry is populated.
+    import procrastinate
+    import procrastinate.exceptions
+    import procrastinate.testing  # noqa: F401
+
+
 _stub_psycopg_if_absent()
+_swap_in_real_procrastinate()

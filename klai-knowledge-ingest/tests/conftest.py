@@ -79,8 +79,16 @@ def _install_procrastinate_stub() -> None:
     pkg.JobContext = MagicMock(name="JobContext")  # type: ignore[attr-defined]
     pkg.RetryDecision = MagicMock(name="RetryDecision")  # type: ignore[attr-defined]
 
+    # ``procrastinate.testing`` exposes ``InMemoryConnector`` -- the eval
+    # suite imports it to exercise queueing-lock semantics without a real
+    # database. Provide a placeholder so the import succeeds.
+    testing_mod = types.ModuleType("procrastinate.testing")
+    testing_mod.InMemoryConnector = MagicMock(name="InMemoryConnector")  # type: ignore[attr-defined]
+    pkg.testing = testing_mod  # type: ignore[attr-defined]
+
     sys.modules["procrastinate"] = pkg
     sys.modules["procrastinate.exceptions"] = exceptions_mod
+    sys.modules["procrastinate.testing"] = testing_mod
 
 
 _install_procrastinate_stub()
@@ -89,11 +97,11 @@ _install_procrastinate_stub()
 # Imports below need the env vars above — keep this order to allow the
 # module-level ``settings = Settings()`` call in ``knowledge_ingest.config``
 # to succeed under the SPEC-SEC-011 / SEC-014 validators.
-from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, MagicMock, patch
+from contextlib import asynccontextmanager  # noqa: E402
+from unittest.mock import AsyncMock, MagicMock, patch  # noqa: E402
 
-import pytest
-from fastapi.testclient import TestClient
+import pytest  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 
 # Default header that lets existing TestClient requests pass through the
 # SPEC-SEC-011 ``InternalSecretMiddleware`` without each test having to set
@@ -179,7 +187,7 @@ def _mock_db_helpers(request):
         return
 
     @asynccontextmanager
-    async def _fake_tenant(org_id: str):  # noqa: ARG001
+    async def _fake_tenant(org_id: str):
         yield _make_mock_conn()
 
     @asynccontextmanager

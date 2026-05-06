@@ -7,22 +7,24 @@ The webhook handler must:
 - Fall back to immediate ingest when enrichment is disabled
 - Always process deletes immediately (no debounce)
 """
+
 from __future__ import annotations
 
-import sys
-import types
 import datetime
-import json
 import hashlib
 import hmac
+import json
 import logging
-import pytest
+import sys
+import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Minimal procrastinate stub (same pattern as test_ingest_enrichment_dedup)
 # ---------------------------------------------------------------------------
+
 
 class _AlreadyEnqueued(Exception):
     pass
@@ -65,6 +67,7 @@ def _sign(body: bytes, secret: str) -> str:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def mock_pool():
     pool = MagicMock()
@@ -81,17 +84,18 @@ def webhook_client(mock_pool):
     """Test client with enrichment disabled at app startup (no Procrastinate init),
     but route-level settings mock reports enrichment_enabled=True so the debounce
     path is exercised without needing a real psycopg/libpq."""
-    with patch("knowledge_ingest.config.settings.enrichment_enabled", False), \
-         patch("knowledge_ingest.config.settings.gitea_webhook_secret", WEBHOOK_SECRET), \
-         patch("knowledge_ingest.routes.ingest.settings") as mock_settings, \
-         patch("knowledge_ingest.qdrant_store.ensure_collection", new_callable=AsyncMock), \
-         patch("knowledge_ingest.db.get_pool", new_callable=AsyncMock, return_value=mock_pool), \
-         patch("knowledge_ingest.db.close_pool", new_callable=AsyncMock):
-
+    with (
+        patch("knowledge_ingest.config.settings.enrichment_enabled", False),
+        patch("knowledge_ingest.config.settings.gitea_webhook_secret", WEBHOOK_SECRET),
+        patch("knowledge_ingest.routes.ingest.settings") as mock_settings,
+        patch("knowledge_ingest.qdrant_store.ensure_collection", new_callable=AsyncMock),
+        patch("knowledge_ingest.db.get_pool", new_callable=AsyncMock, return_value=mock_pool),
+        patch("knowledge_ingest.db.close_pool", new_callable=AsyncMock),
+    ):
         mock_settings.gitea_webhook_secret = WEBHOOK_SECRET
         mock_settings.gitea_url = "http://gitea:3000"
         mock_settings.gitea_token = "token"
-        mock_settings.enrichment_enabled = True   # route sees True → debounce path
+        mock_settings.enrichment_enabled = True  # route sees True → debounce path
         mock_settings.ingest_debounce_seconds = 180
         mock_settings.graphiti_enabled = False
         mock_settings.chunk_size = 1500
@@ -100,19 +104,19 @@ def webhook_client(mock_pool):
         import os
 
         from fastapi.testclient import TestClient
+
         from knowledge_ingest.app import app
 
         with TestClient(app, raise_server_exceptions=False) as c:
             # SPEC-SEC-011: middleware now requires the header.
-            c.headers.update(
-                {"X-Internal-Secret": os.environ["KNOWLEDGE_INGEST_SECRET"]}
-            )
+            c.headers.update({"X-Internal-Secret": os.environ["KNOWLEDGE_INGEST_SECRET"]})
             yield c, mock_settings
 
 
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 def test_webhook_defers_debounced_task(webhook_client):
     """Valid webhook should defer ingest_from_gitea with queueing_lock + schedule_in."""
@@ -127,13 +131,16 @@ def test_webhook_defers_debounced_task(webhook_client):
     mock_proc_app = MagicMock()
     mock_proc_app.ingest_from_gitea = mock_task
 
-    with patch(
-        "knowledge_ingest.routes.ingest._get_org_id",
-        new_callable=AsyncMock,
-        return_value="zitadel-org-123",
-    ), patch(
-        "knowledge_ingest.enrichment_tasks.get_app",
-        return_value=mock_proc_app,
+    with (
+        patch(
+            "knowledge_ingest.routes.ingest._get_org_id",
+            new_callable=AsyncMock,
+            return_value="zitadel-org-123",
+        ),
+        patch(
+            "knowledge_ingest.enrichment_tasks.get_app",
+            return_value=mock_proc_app,
+        ),
     ):
         resp = client.post(
             "/ingest/v1/webhook/gitea",
@@ -176,14 +183,18 @@ def test_webhook_already_enqueued_is_silent(webhook_client, caplog):
     mock_proc_app = MagicMock()
     mock_proc_app.ingest_from_gitea = mock_task
 
-    with patch(
-        "knowledge_ingest.routes.ingest._get_org_id",
-        new_callable=AsyncMock,
-        return_value="zitadel-org-123",
-    ), patch(
-        "knowledge_ingest.enrichment_tasks.get_app",
-        return_value=mock_proc_app,
-    ), caplog.at_level(logging.DEBUG, logger="knowledge_ingest.routes.ingest"):
+    with (
+        patch(
+            "knowledge_ingest.routes.ingest._get_org_id",
+            new_callable=AsyncMock,
+            return_value="zitadel-org-123",
+        ),
+        patch(
+            "knowledge_ingest.enrichment_tasks.get_app",
+            return_value=mock_proc_app,
+        ),
+        caplog.at_level(logging.DEBUG, logger="knowledge_ingest.routes.ingest"),
+    ):
         resp = client.post(
             "/ingest/v1/webhook/gitea",
             content=body,
@@ -214,16 +225,20 @@ def test_webhook_delete_is_immediate(webhook_client):
     mock_delete = AsyncMock(return_value=None)
     mock_soft_delete = AsyncMock(return_value=None)
 
-    with patch(
-        "knowledge_ingest.routes.ingest._get_org_id",
-        new_callable=AsyncMock,
-        return_value="zitadel-org-123",
-    ), patch(
-        "knowledge_ingest.qdrant_store.delete_document",
-        mock_delete,
-    ), patch(
-        "knowledge_ingest.pg_store.soft_delete_artifact",
-        mock_soft_delete,
+    with (
+        patch(
+            "knowledge_ingest.routes.ingest._get_org_id",
+            new_callable=AsyncMock,
+            return_value="zitadel-org-123",
+        ),
+        patch(
+            "knowledge_ingest.qdrant_store.delete_document",
+            mock_delete,
+        ),
+        patch(
+            "knowledge_ingest.pg_store.soft_delete_artifact",
+            mock_soft_delete,
+        ),
     ):
         resp = client.post(
             "/ingest/v1/webhook/gitea",
@@ -249,12 +264,15 @@ async def test_ingest_from_gitea_task_fetches_latest_content():
     mock_fetch = AsyncMock(return_value="# Latest content\nFresh text")
     mock_ingest = AsyncMock(return_value={"status": "ok", "chunks": 1})
 
-    with patch(
-        "knowledge_ingest.routes.ingest._fetch_gitea_file",
-        mock_fetch,
-    ), patch(
-        "knowledge_ingest.routes.ingest.ingest_document",
-        mock_ingest,
+    with (
+        patch(
+            "knowledge_ingest.routes.ingest._fetch_gitea_file",
+            mock_fetch,
+        ),
+        patch(
+            "knowledge_ingest.routes.ingest.ingest_document",
+            mock_ingest,
+        ),
     ):
         from knowledge_ingest.ingest_tasks import register_ingest_tasks
 
@@ -266,6 +284,7 @@ async def test_ingest_from_gitea_task_fetches_latest_content():
                 def decorator(fn):
                     registered_tasks["ingest_from_gitea"] = fn
                     return fn
+
                 return decorator
 
         app = _MockApp()

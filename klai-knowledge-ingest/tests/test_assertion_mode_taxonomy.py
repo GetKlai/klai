@@ -10,9 +10,6 @@ match the actual production behaviour so the suite stays green. The SPEC vs.
 code drift is real and out of scope for the test-cleanup pass; tracked
 separately for someone with SPEC-author context to resolve.
 """
-import time
-
-import pytest
 
 from knowledge_ingest.routes.ingest import _parse_knowledge_fields
 
@@ -33,8 +30,9 @@ class TestAssertionModeType:
         )
 
     def test_assertion_mode_literal_exists(self):
-        from knowledge_ingest.models import AssertionMode
         from typing import get_args
+
+        from knowledge_ingest.models import AssertionMode
 
         args = set(get_args(AssertionMode))
         assert args == {"factual", "belief", "hypothesis", "procedural", "quoted", "unknown"}

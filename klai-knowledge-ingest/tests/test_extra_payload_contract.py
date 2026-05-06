@@ -290,9 +290,7 @@ def _captured_extra_payload(update_extra_mock: AsyncMock) -> dict:
         return args[2]
     if "extra" in kwargs:
         return kwargs["extra"]
-    raise AssertionError(
-        f"update_artifact_extra called with unexpected shape: {args=} {kwargs=}"
-    )
+    raise AssertionError(f"update_artifact_extra called with unexpected shape: {args=} {kwargs=}")
 
 
 @pytest.mark.asyncio
