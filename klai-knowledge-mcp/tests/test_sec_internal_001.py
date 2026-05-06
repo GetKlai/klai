@@ -274,7 +274,7 @@ class TestNoSilentOmitGuardsRemain:
         # Any return statement that interpolates resp.text into a user-visible
         # error string would re-introduce the leak.
         forbidden = [
-            "return f\"Error: klai-docs returned HTTP",
+            'return f"Error: klai-docs returned HTTP',
             "return f'Error: klai-docs returned HTTP",
         ]
         for pattern in forbidden:
