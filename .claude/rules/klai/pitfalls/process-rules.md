@@ -51,6 +51,37 @@ post-deploy SQL, then back-filling the source tree
    alembic migration ENABLE+FORCEs RLS, or the table becomes default-
    deny with no recourse from the application layer.
 
+## rls-policy-shape-must-match-lifespan-assert (HIGH)
+The portal-api lifespan substring-matches the literal text `"IS NULL"` in
+the `portal_users.tenant_isolation` USING clause and raises if absent.
+RLS policy DDL must (a) keep that substring AND (b) match the table's
+auth category — Cat-A AUTH-SEED tables (`portal_users`,
+`portal_connectors`) are queried BEFORE tenant context is set, so they
+MUST use the inline NULLIF pattern; calling the `_rls_current_org_id()`
+helper raises ERRCODE 42501 and 500s every authenticated request.
+Cat-D strict tenant tables MUST use the helper (fail-loud is correct).
+
+Reference: SPEC-TI-005 (PR #377, 2026-05-06).
+
+```sql
+-- Cat-A (portal_users, portal_connectors) — inline NULLIF, no helper call:
+USING (
+    org_id = NULLIF(current_setting('app.current_org_id', true), '')::integer
+    OR NULLIF(current_setting('app.current_org_id', true), '') IS NULL
+)
+WITH CHECK (org_id = NULLIF(current_setting('app.current_org_id', true), '')::integer)
+```
+
+**Prevention:**
+- Cat-A tables: inline NULLIF only. Cat-D tables: helper. Never swap.
+- `curl /api/me → 401` does NOT validate Cat-A reads (401 short-circuits
+  before the DB query). Hit an authenticated endpoint, or run
+  `SET ROLE portal_api; RESET app.current_org_id; SELECT COUNT(*) FROM portal_users;`
+  and confirm no 42501.
+- Any USING-shape change MUST update `assert_portal_users_rls_ready()`
+  in the same PR, or extend the rls-policy-smoke-test CI job to import
+  `app.main` and invoke the lifespan assertion.
+
 ## scale-the-answer-to-the-problem (HIGH)
 When a user asks "what is industry standard?" do not autopilot to the
 most architecturally-elegant answer in the search results. Anchor on

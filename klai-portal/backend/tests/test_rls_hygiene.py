@@ -76,15 +76,63 @@ def test_a1_portal_connectors_with_check_excludes_null_branch() -> None:
 
 
 def test_a1_portal_users_using_retains_null_branch() -> None:
-    """portal_users USING clause MUST keep the IS-NULL branch (Cat-A)."""
+    """portal_users USING clause MUST keep an unset-GUC branch (Cat-A).
+
+    portal_users is AUTH-SEED — `/api/me` and `_get_caller_org` look up
+    (org, user) BEFORE knowing the tenant. The USING clause MUST evaluate
+    permissively when `app.current_org_id` is unset, otherwise every
+    authenticated request 500s.
+
+    Two structurally-equivalent shapes both deliver the unset-GUC branch:
+      - inline NULLIF pattern:   ``... OR NULLIF(current_setting('app.current_org_id', true), '') IS NULL``
+      - alternate inline form:   ``... OR current_setting('app.current_org_id', true) = ''``
+
+    Both contain the literal substring "IS NULL" so the lifespan guard
+    `assert_portal_users_rls_ready()` accepts them. See pitfall:
+    `rls-policy-shape-must-match-lifespan-assert` (HIGH).
+    """
     sql = _read_sql()
     m = re.search(r"CREATE POLICY tenant_isolation ON portal_users.*?;\n", sql, re.DOTALL)
     assert m
-    um = re.search(r"USING \((.+?)\)\s+WITH CHECK", m.group(0), re.DOTALL)
+    # Robust against nested parens in NULLIF/IS NULL expressions.
+    um = re.search(r"USING\s+(.+?)\s+WITH CHECK", m.group(0), re.DOTALL)
     assert um, "Cannot parse USING from portal_users policy"
-    assert re.search(r"current_setting.*?=\s*''", um.group(1)), (
-        "portal_users USING must keep empty-GUC branch. Got: " + um.group(1)
+    body = um.group(1)
+    has_unset_branch = bool(re.search(r"current_setting.*?=\s*''", body) or re.search(r"IS NULL", body))
+    assert has_unset_branch, (
+        "portal_users USING must keep an unset-GUC branch — either "
+        "`NULLIF(...) IS NULL` or `current_setting(...) = ''`. "
+        "Got: " + body
     )
+
+
+def test_a1_portal_users_using_does_not_call_raising_helper() -> None:
+    """portal_users USING MUST NOT call `_rls_current_org_id()`.
+
+    Cat-A AUTH-SEED tables are queried BEFORE the tenant context is set
+    (e.g. `/api/me` resolves the user by `zitadel_user_id` to discover
+    the tenant). `_rls_current_org_id()` is the strict Cat-D helper that
+    RAISES `42501` on missing GUC, so any USING that calls it makes the
+    auth-seed lookup fail with 500.
+
+    Regression for the 2026-05-06 portal_users 500 outage where an
+    intermediate hot-fix migrated USING to the helper-function pattern,
+    breaking every authenticated request. See incident-report:
+    `reports/audit-tenant-isolation-2026-05-05/spec-ti-003-incident/`.
+    """
+    sql = _read_sql()
+    for table in ("portal_users", "portal_connectors"):
+        m = re.search(rf"CREATE POLICY tenant_isolation ON {table}.*?;\n", sql, re.DOTALL)
+        assert m, f"{table} CREATE POLICY not found"
+        um = re.search(r"USING\s+(.+?)\s+WITH CHECK", m.group(0), re.DOTALL)
+        assert um, f"Cannot parse USING from {table} policy"
+        body = um.group(1)
+        assert "_rls_current_org_id" not in body, (
+            f"{table} USING must NOT call `_rls_current_org_id()` — that helper "
+            "RAISES 42501 on missing GUC and would break Cat-A AUTH-SEED reads. "
+            "Use inline `NULLIF(current_setting('app.current_org_id', true), '')::integer` "
+            "instead. Got: " + body
+        )
 
 
 # ---------------------------------------------------------------------------
