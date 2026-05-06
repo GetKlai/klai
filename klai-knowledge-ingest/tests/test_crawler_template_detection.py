@@ -73,10 +73,14 @@ def _patch_chain(*, cluster_simhashes: list[int] | None = None):
     rows = [{"content_simhash": h} for h in (cluster_simhashes or [])]
     pool.fetch = AsyncMock(return_value=rows)
 
-    pg_store_mock = MagicMock()
-    pg_store_mock.get_crawled_page_stored = AsyncMock(return_value=None)
-    pg_store_mock.upsert_crawled_page = AsyncMock(return_value=None)
-    pg_store_mock.update_crawled_page_simhash = AsyncMock(return_value=None)
+    # ``make_pg_store_mock`` from conftest returns ``AsyncMock(spec=pg_store)``
+    # so every helper — current AND any future addition — is auto-mocked
+    # as an async no-op. Replaces the previous MagicMock + per-method
+    # AsyncMock-assignment pattern that broke whenever a new pg_store
+    # helper landed (e.g. ``update_crawled_page_simhash`` from this SPEC).
+    from tests.conftest import make_pg_store_mock
+
+    pg_store_mock = make_pg_store_mock()
 
     ingest_document_mock = AsyncMock(return_value=None)
 

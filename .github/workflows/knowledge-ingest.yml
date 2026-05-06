@@ -61,15 +61,30 @@ jobs:
       # alembic heads, blocking `alembic upgrade head` at container
       # start. This offline guard runs on every PR + push and rejects
       # any state with > 1 head before merge instead of in production.
+      #
+      # The guard runs alembic via ``uv run`` so it uses the version
+      # pinned in ``pyproject.toml`` / ``uv.lock`` — keeps the CI check
+      # in lockstep with the version that runs at container entrypoint
+      # rather than drifting against a hardcoded pin.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
       - name: Guard — single alembic head (knowledge schema)
+        working-directory: klai-knowledge-ingest
+        env:
+          # Alembic's env.py loads sqlalchemy.url from DATABASE_URL but only
+          # ``alembic heads`` (script-graph walk) is offline and never opens
+          # a connection. Stub URL keeps env.py from crashing on missing var.
+          DATABASE_URL: postgresql://x:x@localhost/x
         run: |
           set -euo pipefail
-          cd klai-knowledge-ingest
-          pipx install --quiet alembic==1.16.5
-          heads=$(alembic heads 2>&1 | grep -E "\(head\)$" | wc -l | tr -d ' ')
+          uv sync --frozen --quiet
+          heads=$(uv run --frozen alembic heads 2>&1 | grep -E "\(head\)$" | wc -l | tr -d ' ')
           if [ "$heads" -ne 1 ]; then
             echo "::error::Multiple alembic heads detected (got $heads, expected 1)"
-            alembic heads
+            uv run --frozen alembic heads
             echo
             echo "Hotfix: rebase the second-merging migration's down_revision"
             echo "onto the first head, OR add a no-op merge migration with"
