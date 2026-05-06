@@ -35,6 +35,16 @@ def stub_procrastinate(monkeypatch):
       * ``proc_app.run_worker_async(...)`` → coroutine that runs forever
     Each is mocked so we can observe the calls.
     """
+    # CPython's ``from package import submodule`` resolves to
+    # ``getattr(package, submodule)`` after the import, which means a bare
+    # ``monkeypatch.setitem(sys.modules, ...)`` is NOT sufficient -- the
+    # parent package attribute still points at the original module. Patch
+    # both the inner symbols (so any reference style picks up the stub)
+    # and use ``monkeypatch.setattr`` on the package attribute as a
+    # defence-in-depth fallback.
+
+    # 1) Replace ``procrastinate.PsycopgConnector`` -- WorkerLifecycle
+    #    constructs the connector with this name.
     proc_stub = types.ModuleType("procrastinate")
     proc_stub.PsycopgConnector = MagicMock(return_value="connector-sentinel")
     monkeypatch.setitem(sys.modules, "procrastinate", proc_stub)
@@ -56,21 +66,29 @@ def stub_procrastinate(monkeypatch):
 
     proc_app.run_worker_async = _never_complete
 
-    # Stub enrichment_tasks.init_app
-    et_stub = types.ModuleType("knowledge_ingest.enrichment_tasks")
-    et_stub.init_app = MagicMock(return_value=proc_app)
-    monkeypatch.setitem(sys.modules, "knowledge_ingest.enrichment_tasks", et_stub)
+    # 2) Stub ``init_app`` on the *real* enrichment_tasks module so
+    #    ``from knowledge_ingest import enrichment_tasks`` returns the
+    #    actual module (with its real symbol table) but the function
+    #    we care about is mocked.
+    init_app_mock = MagicMock(return_value=proc_app)
+    monkeypatch.setattr(
+        "knowledge_ingest.enrichment_tasks.init_app",
+        init_app_mock,
+    )
 
-    # Stub zombie_recovery.recover_zombie_jobs (best-effort no-op).
-    zr_stub = types.ModuleType("knowledge_ingest.zombie_recovery")
-    zr_stub.recover_zombie_jobs = AsyncMock(return_value={"workers_pruned": 0, "jobs_retried": 0})
-    monkeypatch.setitem(sys.modules, "knowledge_ingest.zombie_recovery", zr_stub)
+    # 3) Same trick for zombie_recovery.recover_zombie_jobs. The
+    #    lifecycle imports it lazily inside ``__aenter__``.
+    recover_mock = AsyncMock(return_value={"workers_pruned": 0, "jobs_retried": 0})
+    monkeypatch.setattr(
+        "knowledge_ingest.zombie_recovery.recover_zombie_jobs",
+        recover_mock,
+    )
 
     return {
         "proc_app": proc_app,
         "run_worker_calls": run_worker_calls,
-        "init_app": et_stub.init_app,
-        "recover_zombie_jobs": zr_stub.recover_zombie_jobs,
+        "init_app": init_app_mock,
+        "recover_zombie_jobs": recover_mock,
     }
 
 
