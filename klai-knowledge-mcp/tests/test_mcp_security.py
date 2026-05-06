@@ -3,7 +3,8 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from klai_identity_assert import VerifyResult
+
+from tests.conftest import allow_verify_result
 
 
 # Minimal mock for FastMCP Context
@@ -11,17 +12,6 @@ def _make_ctx(headers: dict | None = None):
     ctx = MagicMock()
     ctx.request_context.request.headers = headers or {}
     return ctx
-
-
-def _verified_allow() -> VerifyResult:
-    """Default 'identity verified' stub for tests not exercising the verify gate.
-
-    SPEC-SEC-IDENTITY-ASSERT-001 REQ-2 routes every tool through portal-api
-    /internal/identity/verify before any upstream call. Tests focused on
-    OTHER concerns (path traversal, secret validation) substitute this stub
-    so the verify gate doesn't shadow what they're really testing.
-    """
-    return VerifyResult.allow(user_id="user1", org_id="org1", org_slug="testorg", evidence="jwt")
 
 
 @pytest.fixture(autouse=True)
@@ -56,7 +46,9 @@ class TestPathTraversalValidation:
         from main import save_to_docs
 
         ctx = _make_ctx(_VALID_HEADERS)
-        with patch("main._asserter.verify", new_callable=AsyncMock, return_value=_verified_allow()):
+        with patch(
+            "main._asserter.verify", new_callable=AsyncMock, return_value=allow_verify_result()
+        ):
             result = await save_to_docs(
                 title="Test",
                 content="content",
@@ -72,7 +64,9 @@ class TestPathTraversalValidation:
         from main import save_to_docs
 
         ctx = _make_ctx(_VALID_HEADERS)
-        with patch("main._asserter.verify", new_callable=AsyncMock, return_value=_verified_allow()):
+        with patch(
+            "main._asserter.verify", new_callable=AsyncMock, return_value=allow_verify_result()
+        ):
             result = await save_to_docs(
                 title="Test",
                 content="content",
@@ -87,7 +81,9 @@ class TestPathTraversalValidation:
         from main import save_to_docs
 
         ctx = _make_ctx(_VALID_HEADERS)
-        with patch("main._asserter.verify", new_callable=AsyncMock, return_value=_verified_allow()):
+        with patch(
+            "main._asserter.verify", new_callable=AsyncMock, return_value=allow_verify_result()
+        ):
             result = await save_to_docs(
                 title="Test",
                 content="content",
@@ -103,7 +99,9 @@ class TestPathTraversalValidation:
         from main import save_to_docs
 
         ctx = _make_ctx(_VALID_HEADERS)
-        with patch("main._asserter.verify", new_callable=AsyncMock, return_value=_verified_allow()):
+        with patch(
+            "main._asserter.verify", new_callable=AsyncMock, return_value=allow_verify_result()
+        ):
             result = await save_to_docs(
                 title="Test",
                 content="content",
@@ -118,7 +116,9 @@ class TestPathTraversalValidation:
         from main import save_to_docs
 
         ctx = _make_ctx(_VALID_HEADERS)
-        with patch("main._asserter.verify", new_callable=AsyncMock, return_value=_verified_allow()):
+        with patch(
+            "main._asserter.verify", new_callable=AsyncMock, return_value=allow_verify_result()
+        ):
             result = await save_to_docs(
                 title="Test",
                 content="content",
@@ -134,7 +134,9 @@ class TestPathTraversalValidation:
 
         ctx = _make_ctx(_VALID_HEADERS)
         with (
-            patch("main._asserter.verify", new_callable=AsyncMock, return_value=_verified_allow()),
+            patch(
+                "main._asserter.verify", new_callable=AsyncMock, return_value=allow_verify_result()
+            ),
             patch("main.httpx.AsyncClient") as mock_client_cls,
         ):
             mock_resp = MagicMock()
@@ -209,7 +211,9 @@ class TestIncomingAuth:
 
         ctx = _make_ctx(_VALID_HEADERS)
         with (
-            patch("main._asserter.verify", new_callable=AsyncMock, return_value=_verified_allow()),
+            patch(
+                "main._asserter.verify", new_callable=AsyncMock, return_value=allow_verify_result()
+            ),
             patch("main._save_to_ingest", new_callable=AsyncMock, return_value=True),
         ):
             result = await save_personal_knowledge(
