@@ -18,9 +18,18 @@ alembic_version table is separate from portal-api's ``public.alembic_version``
 and connector's ``connector.alembic_version`` (see ``alembic/env.py``).
 
 Revision ID: 7f2e8a1c5b4d
-Revises: 603787256fb8
+Revises: a8c5e1d2f3b4
 Create Date: 2026-05-06
 SPEC: SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-01
+
+Note: rebased from down_revision=603787256fb8 to a8c5e1d2f3b4 in the
+hotfix branch fix/login-wall-detect-002-alembic-head — PR #440
+(SPEC-INGEST-RECONCILE-001) merged with revision a8c5e1d2f3b4 chained
+on the same parent (603787256fb8) ~7 minutes before this migration
+landed, leaving alembic with two heads. Re-chaining onto a8c5e1d2f3b4
+serialises the chain. The two columns added (crawl_jobs.fetch_outcomes
+in 0005, crawled_pages.content_simhash in 0006) target different
+tables; no schema conflict.
 """
 
 from collections.abc import Sequence
@@ -28,7 +37,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "7f2e8a1c5b4d"
-down_revision: str | None = "603787256fb8"
+down_revision: str | None = "a8c5e1d2f3b4"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
