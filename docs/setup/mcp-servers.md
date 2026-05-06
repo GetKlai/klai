@@ -310,7 +310,39 @@ curl -s -H "Authorization: Basic $VICTORIALOGS_BASIC_AUTH_B64" \
 
 For usage patterns and LogsQL queries, see `.claude/rules/klai/infra/observability.md`.
 
-## 9. Grafana MCP (dashboards and metrics only)
+## 9. Install Agent Browser (CLI, not MCP)
+
+Agent Browser is a Rust-based browser CLI by vercel-labs. **Not an MCP server** — agents call
+it directly via Bash. Used alongside (not instead of) Playwright MCP. Routing rules and
+parallel-session patterns: `.claude/rules/klai/lang/agent-browser.md`.
+
+```bash
+npm install -g agent-browser   # installs CLI globally
+agent-browser install          # downloads bundled Chrome (~170MB, one-time)
+```
+
+Verify: `npx agent-browser --version`.
+
+For authenticated portal flows, generate a state file once:
+
+```bash
+agent-browser open https://app.getklai.com   # log in manually in opened window
+agent-browser state save ~/.claude/agent-browser-state.json
+chmod 600 ~/.claude/agent-browser-state.json
+agent-browser close
+```
+
+Refresh when sessions start logged-out (cookie expiry, ~weeks).
+
+**When to use which browser tool:**
+
+| You know exactly what to verify? | Tool |
+|---|---|
+| Yes — bekende selectors, regression test | `playwright` MCP |
+| No — exploratory, smoke check, a11y/copy audit | Agent Browser CLI |
+| One-off CSS check, no auth needed | `playwright-isolated` MCP |
+
+## 10. Grafana MCP (dashboards and metrics only)
 
 Grafana MCP provides read-only access to dashboards, Prometheus/VictoriaMetrics queries, and
 alerts. It **cannot query VictoriaLogs** — the `query_loki_logs` tool speaks Loki protocol,
@@ -358,4 +390,4 @@ uvx mcp-grafana --help
 11. **VictoriaLogs tunnel not running** — MCP queries fail silently or timeout. Fix: `./scripts/victorialogs-tunnel.sh` then restart Claude Code.
 12. **VictoriaLogs auth missing** — `VICTORIALOGS_BASIC_AUTH_B64` not set in `~/.zshrc`. Symptoms: MCP connects but queries return 401. Fix: get the base64 value from SOPS and export it.
 13. **VictoriaLogs container IP changed** — Tunnel connects but queries fail. Cause: VictoriaLogs container restarted, got a new IP. Fix: `./scripts/victorialogs-tunnel.sh --stop && ./scripts/victorialogs-tunnel.sh` (re-resolves IP).
-14. **Grafana token missing** — `GRAFANA_SERVICE_ACCOUNT_TOKEN` not set. Symptoms: Grafana MCP fails to connect. Fix: create a per-developer service account in Grafana (see section 9) and export the token in your shell profile.
+14. **Grafana token missing** — `GRAFANA_SERVICE_ACCOUNT_TOKEN` not set. Symptoms: Grafana MCP fails to connect. Fix: create a per-developer service account in Grafana (see section 10) and export the token in your shell profile.
