@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_session
+from app.core.database import get_session, set_tenant
 from app.core.logging import get_logger
 from app.models.connector import Connector
 from app.models.sync_run import SyncRun
@@ -97,8 +97,16 @@ async def wipe_org_state(
       No inline secret comparison here — auth is the middleware's job.
     - Single transaction: both DELETEs commit together. If the second
       fails, the first rolls back (no half-purged state).
+    - SPEC-TI-002: ``set_tenant(session, org_id)`` pins the Cat-D RLS
+      context so both DELETE statements satisfy the WITH CHECK constraint
+      (org_id = _rls_current_org_id()).
     """
     _require_portal_call(request)
+
+    # SPEC-TI-002: set RLS tenant context so the Cat-D WITH CHECK
+    # constraint passes for both DELETEs. get_session() resets the GUC
+    # at checkout; we must set it again here before any DML.
+    await set_tenant(session, org_id)
 
     logger.info(
         "wipe_org_state_requested",
@@ -106,12 +114,8 @@ async def wipe_org_state(
     )
 
     # Delete sync_runs first (FK child), then connectors (FK parent).
-    sync_runs_result = await session.execute(
-        delete(SyncRun).where(SyncRun.org_id == org_id)
-    )
-    connectors_result = await session.execute(
-        delete(Connector).where(Connector.org_id == org_id)
-    )
+    sync_runs_result = await session.execute(delete(SyncRun).where(SyncRun.org_id == org_id))
+    connectors_result = await session.execute(delete(Connector).where(Connector.org_id == org_id))
     await session.commit()
 
     sync_runs_deleted: int = sync_runs_result.rowcount if sync_runs_result.rowcount is not None else 0

@@ -21,8 +21,23 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
+import app.core.database as _db_module
 from app.core.enums import SyncStatus
 from app.services.sync_run_resolver import SyncRunResolver
+
+
+@pytest.fixture(autouse=True)
+def _reset_db_session_maker():
+    """Save and restore app.core.database.session_maker around each test.
+
+    _make_resolver() writes the mock session_maker into the module so that
+    tenant_scoped_session() inside SyncRunResolver._finalize() works without
+    a real database engine.  This fixture guarantees a clean state after
+    each test regardless of whether the test passes or fails.
+    """
+    original = _db_module.session_maker
+    yield
+    _db_module.session_maker = original
 
 
 def _row(
@@ -46,11 +61,7 @@ def _row(
     row.documents_failed = documents_failed
     row.bytes_processed = 0
     row.error_details = error_details
-    row.cursor_state = (
-        {"remote_job_id": remote_job_id, "remote_status": "queued"}
-        if remote_job_id
-        else None
-    )
+    row.cursor_state = {"remote_job_id": remote_job_id, "remote_status": "queued"} if remote_job_id else None
     return row
 
 
@@ -64,8 +75,7 @@ def _make_resolver(
         crawl_client.crawl_sync_status = AsyncMock(side_effect=status_responses)
     else:
         crawl_client.crawl_sync_status = AsyncMock(
-            return_value={"job_id": "abc123", "status": "running",
-                          "pages_done": 5, "pages_total": 100, "error": None},
+            return_value={"job_id": "abc123", "status": "running", "pages_done": 5, "pages_total": 100, "error": None},
         )
 
     finalized: dict = {}
@@ -84,10 +94,21 @@ def _make_resolver(
         sess.get = AsyncMock(side_effect=lambda model, row_id, **kwargs: finalized.get(row_id))
         sess.commit = AsyncMock()
         sess.refresh = AsyncMock()
+        # SPEC-TI-002: _pin_and_reset_connection calls await session.connection()
+        # and await session.rollback() inside tenant_scoped_session.
+        sess.connection = AsyncMock()
+        sess.rollback = AsyncMock()
+        # execute is called by set_config GUC statements inside the session helpers.
+        sess.execute = AsyncMock()
         return sess
 
     session = _make_session_mock()
     session_maker = MagicMock(return_value=session)
+
+    # SPEC-TI-002: tenant_scoped_session() is a module-level helper that
+    # checks app.core.database.session_maker.  Inject the mock so _finalize()
+    # works without a real database engine.
+    _db_module.session_maker = session_maker
 
     portal = MagicMock()
     portal.report_sync_status = AsyncMock()
@@ -113,8 +134,7 @@ class TestResolveDispatch:
     @pytest.mark.asyncio
     async def test_terminal_row_does_not_call_upstream(self) -> None:
         resolver, crawl_client, _, portal = _make_resolver()
-        row = _row(status=SyncStatus.COMPLETED, documents_total=20, documents_ok=20,
-                   completed_at=datetime.now(UTC))
+        row = _row(status=SyncStatus.COMPLETED, documents_total=20, documents_ok=20, completed_at=datetime.now(UTC))
         snap = await resolver.resolve(row)
         crawl_client.crawl_sync_status.assert_not_awaited()
         portal.report_sync_status.assert_not_awaited()
@@ -142,8 +162,7 @@ class TestResolveRunningCrawler:
     async def test_running_returns_live_pages_done(self) -> None:
         resolver, crawl_client, session, portal = _make_resolver(
             status_responses=[
-                {"job_id": "abc123", "status": "running",
-                 "pages_done": 42, "pages_total": 500, "error": None},
+                {"job_id": "abc123", "status": "running", "pages_done": 42, "pages_total": 500, "error": None},
             ],
         )
         row = _row()
@@ -165,8 +184,7 @@ class TestResolveTerminalCompleted:
     async def test_completed_writes_terminal_state_and_reports(self) -> None:
         resolver, crawl_client, session, portal = _make_resolver(
             status_responses=[
-                {"job_id": "abc123", "status": "completed",
-                 "pages_done": 368, "pages_total": 368, "error": None},
+                {"job_id": "abc123", "status": "completed", "pages_done": 368, "pages_total": 368, "error": None},
             ],
         )
         row = _row()
@@ -199,8 +217,13 @@ class TestResolveTerminalFailed:
     async def test_failed_writes_terminal_state_with_error(self) -> None:
         resolver, crawl_client, session, portal = _make_resolver(
             status_responses=[
-                {"job_id": "abc123", "status": "failed",
-                 "pages_done": 17, "pages_total": 500, "error": "timeout_per_page"},
+                {
+                    "job_id": "abc123",
+                    "status": "failed",
+                    "pages_done": 17,
+                    "pages_total": 500,
+                    "error": "timeout_per_page",
+                },
             ],
         )
         row = _row()
@@ -248,9 +271,9 @@ class TestResolveCache:
     async def test_repeated_calls_within_ttl_hit_cache(self) -> None:
         resolver, crawl_client, _, _ = _make_resolver(
             status_responses=[
-                {"job_id": "abc123", "status": "running",
-                 "pages_done": 1, "pages_total": 100, "error": None},
-            ] * 3,
+                {"job_id": "abc123", "status": "running", "pages_done": 1, "pages_total": 100, "error": None},
+            ]
+            * 3,
         )
         row = _row()
         await resolver.resolve(row)
@@ -263,10 +286,8 @@ class TestResolveCache:
     async def test_cache_expires_after_ttl(self) -> None:
         resolver, crawl_client, _, _ = _make_resolver(
             status_responses=[
-                {"job_id": "abc123", "status": "running",
-                 "pages_done": 1, "pages_total": 100, "error": None},
-                {"job_id": "abc123", "status": "running",
-                 "pages_done": 5, "pages_total": 100, "error": None},
+                {"job_id": "abc123", "status": "running", "pages_done": 1, "pages_total": 100, "error": None},
+                {"job_id": "abc123", "status": "running", "pages_done": 5, "pages_total": 100, "error": None},
             ],
         )
         row = _row()
@@ -283,10 +304,8 @@ class TestResolveCache:
         """Two distinct job_ids do not share a cache slot."""
         resolver, crawl_client, _, _ = _make_resolver(
             status_responses=[
-                {"job_id": "job-a", "status": "running",
-                 "pages_done": 1, "pages_total": 10, "error": None},
-                {"job_id": "job-b", "status": "running",
-                 "pages_done": 2, "pages_total": 20, "error": None},
+                {"job_id": "job-a", "status": "running", "pages_done": 1, "pages_total": 10, "error": None},
+                {"job_id": "job-b", "status": "running", "pages_done": 2, "pages_total": 20, "error": None},
             ],
         )
         await resolver.resolve(_row(remote_job_id="job-a"))
@@ -298,12 +317,11 @@ class TestResolveCache:
         """A new write evicts cache entries older than the GC window so
         the cache cannot grow unbounded across the process lifetime."""
         from app.services.sync_run_resolver import _CACHE_GC_S
+
         resolver, _, _, _ = _make_resolver(
             status_responses=[
-                {"job_id": "old-job", "status": "running",
-                 "pages_done": 1, "pages_total": 10, "error": None},
-                {"job_id": "new-job", "status": "running",
-                 "pages_done": 2, "pages_total": 20, "error": None},
+                {"job_id": "old-job", "status": "running", "pages_done": 1, "pages_total": 10, "error": None},
+                {"job_id": "new-job", "status": "running", "pages_done": 2, "pages_total": 20, "error": None},
             ],
         )
         await resolver.resolve(_row(remote_job_id="old-job"))
@@ -325,9 +343,9 @@ class TestResolveIdempotence:
         side-effects beyond the cached upstream payload."""
         resolver, crawl_client, session, portal = _make_resolver(
             status_responses=[
-                {"job_id": "abc123", "status": "completed",
-                 "pages_done": 10, "pages_total": 10, "error": None},
-            ] * 5,
+                {"job_id": "abc123", "status": "completed", "pages_done": 10, "pages_total": 10, "error": None},
+            ]
+            * 5,
         )
         row = _row()
         _register(resolver, row)

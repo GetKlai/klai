@@ -83,7 +83,9 @@ class _FakeSession:
         self._rows = rows or []
         self._run_by_id = run_by_id
 
-    async def execute(self, _stmt: Any) -> _FakeExecuteResult:
+    async def execute(self, _stmt: Any, *args: Any, **kwargs: Any) -> _FakeExecuteResult:
+        # SPEC-TI-002: set_tenant() passes a params dict as a positional arg;
+        # accept but ignore it so GUC calls don't break the fake session.
         return _FakeExecuteResult(self._rows)
 
     async def get(self, _model: type, _key: uuid.UUID) -> SyncRun | None:
@@ -284,9 +286,7 @@ def test_sync_require_org_id_settings_default_is_true() -> None:
     from app.core.config import Settings
 
     default = Settings.model_fields["sync_require_org_id"].default
-    assert default is True, (
-        f"sync_require_org_id default must be True (transition closed per REQ-8.5), got {default!r}"
-    )
+    assert default is True, f"sync_require_org_id default must be True (transition closed per REQ-8.5), got {default!r}"
 
 
 def test_sync_request_without_org_id_returns_400(monkeypatch: pytest.MonkeyPatch) -> None:

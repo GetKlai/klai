@@ -31,6 +31,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.clients.knowledge_ingest import CrawlSyncClient
+from app.core.database import tenant_scoped_session
 from app.core.enums import SyncStatus
 from app.core.logging import get_logger
 from app.models.sync_run import SyncRun
@@ -111,8 +112,7 @@ class SyncRunResolver:
         """
         remote_job_id = self._extract_remote_job_id(sync_run)
         if sync_run.status != SyncStatus.RUNNING or remote_job_id is None:
-            return self._snapshot(sync_run, pages_done=None, pages_total=None,
-                                  live_resolution_failed=False)
+            return self._snapshot(sync_run, pages_done=None, pages_total=None, live_resolution_failed=False)
 
         try:
             live = await self._fetch_status(remote_job_id)
@@ -126,16 +126,17 @@ class SyncRunResolver:
                     "error": str(exc),
                 },
             )
-            return self._snapshot(sync_run, pages_done=None, pages_total=None,
-                                  live_resolution_failed=True)
+            return self._snapshot(sync_run, pages_done=None, pages_total=None, live_resolution_failed=True)
 
         live_status = str(live.get("status", "running"))
         if live_status in ("completed", "failed"):
             sync_run = await self._finalize(sync_run, live)
-            return self._snapshot(sync_run,
-                                  pages_done=live.get("pages_done"),
-                                  pages_total=live.get("pages_total"),
-                                  live_resolution_failed=False)
+            return self._snapshot(
+                sync_run,
+                pages_done=live.get("pages_done"),
+                pages_total=live.get("pages_total"),
+                live_resolution_failed=False,
+            )
 
         # Still running — surface live counts, don't mutate the row.
         return self._snapshot(
@@ -220,7 +221,10 @@ class SyncRunResolver:
             quality_status = None
 
         completed_at = datetime.now(UTC)
-        async with self._session_maker() as session:
+        # Use tenant_scoped_session so the UPDATE passes the WITH CHECK
+        # constraint (org_id = _rls_current_org_id()). SPEC-TI-002.
+        assert sync_run.org_id is not None, "Cannot finalise a sync_run with no org_id"
+        async with tenant_scoped_session(sync_run.org_id) as session:
             # SELECT ... FOR UPDATE serialises concurrent finalisers on
             # the same sync_run. Two readers that both see status=RUNNING
             # would otherwise both commit a terminal transition AND both

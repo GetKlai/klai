@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_session
+from app.core.database import get_session, set_tenant
 from app.core.logging import get_logger
 from app.models.connector import Connector
 from app.routes.deps import enforce_org_rate_limit, get_org_id
@@ -33,6 +33,7 @@ async def create_connector(
     The connector is scoped to the authenticated user's org_id.
     """
     org_id = get_org_id(request)
+    await set_tenant(session, org_id)  # SPEC-TI-002: Cat-D RLS context
     connector = Connector(
         org_id=org_id,
         name=body.name,
@@ -65,6 +66,7 @@ async def list_connectors(
 ) -> list[Connector]:
     """List all connectors belonging to the authenticated org."""
     org_id = get_org_id(request)
+    await set_tenant(session, org_id)  # SPEC-TI-002: Cat-D RLS context
     result = await session.execute(
         select(Connector).where(Connector.org_id == org_id).order_by(Connector.created_at.desc())
     )
@@ -83,6 +85,7 @@ async def get_connector(
 ) -> Connector:
     """Get a single connector by ID, scoped to org."""
     org_id = get_org_id(request)
+    await set_tenant(session, org_id)  # SPEC-TI-002: Cat-D RLS context
     connector = await session.get(Connector, connector_id)
     if connector is None or connector.org_id != org_id:
         raise HTTPException(status_code=404, detail="Connector not found")
@@ -102,6 +105,7 @@ async def update_connector(
 ) -> Connector:
     """Update a connector configuration."""
     org_id = get_org_id(request)
+    await set_tenant(session, org_id)  # SPEC-TI-002: Cat-D RLS context
     connector = await session.get(Connector, connector_id)
     if connector is None or connector.org_id != org_id:
         raise HTTPException(status_code=404, detail="Connector not found")
@@ -137,6 +141,7 @@ async def delete_connector(
 ) -> None:
     """Delete a connector and all associated sync runs."""
     org_id = get_org_id(request)
+    await set_tenant(session, org_id)  # SPEC-TI-002: Cat-D RLS context
     connector = await session.get(Connector, connector_id)
     if connector is None or connector.org_id != org_id:
         raise HTTPException(status_code=404, detail="Connector not found")

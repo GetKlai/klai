@@ -3,11 +3,11 @@
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.core.database import get_session
+from app.core.database import get_session, set_tenant
 from app.core.enums import SyncStatus
 from app.core.logging import get_logger
 from app.models.sync_run import SyncRun
@@ -84,6 +84,16 @@ async def trigger_sync(
     """
     _require_portal_call(request)
     org_id = _require_portal_org_id(request, settings)
+
+    # SPEC-TI-002: set tenant context on the session so the Cat-D RLS
+    # policy on connector.sync_runs admits the query. When org_id is None
+    # (transition period, sync_require_org_id=False) we enable the
+    # cross-org bypass so the active-sync guard can still read; that path
+    # is rejected below (the None-org INSERT guard) before any write occurs.
+    if org_id is not None:
+        await set_tenant(session, org_id)
+    else:
+        await session.execute(text("SELECT set_config('app.cross_org_admin', 'true', false)"))
 
     # Active-sync guard. SPEC-SEC-TENANT-001 REQ-7.4: when org_id is
     # asserted, scope the guard so one tenant's running sync cannot block
@@ -167,6 +177,12 @@ async def list_sync_runs(
     _require_portal_call(request)
     org_id = _require_portal_org_id(request, settings)
 
+    # SPEC-TI-002: set tenant context before querying RLS-protected table.
+    if org_id is not None:
+        await set_tenant(session, org_id)
+    else:
+        await session.execute(text("SELECT set_config('app.cross_org_admin', 'true', false)"))
+
     query = (
         select(SyncRun)
         .where(SyncRun.connector_id == connector_id)
@@ -219,6 +235,12 @@ async def get_sync_run(
     """
     _require_portal_call(request)
     org_id = _require_portal_org_id(request, settings)
+
+    # SPEC-TI-002: set tenant context before querying RLS-protected table.
+    if org_id is not None:
+        await set_tenant(session, org_id)
+    else:
+        await session.execute(text("SELECT set_config('app.cross_org_admin', 'true', false)"))
 
     sync_run = await session.get(SyncRun, run_id)
     if sync_run is None or sync_run.connector_id != connector_id:
