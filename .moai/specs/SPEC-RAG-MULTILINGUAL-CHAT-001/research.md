@@ -125,7 +125,7 @@ NL.
 | File | Issue | In scope? |
 |---|---|---|
 | `klai-knowledge-ingest/knowledge_ingest/clustering_tasks.py:280-287` | Taxonomy category-name suggestions hardcoded to Dutch | No — admin-internal labels, not user-facing chat |
-| `klai-retrieval-api/retrieval_api/eval/judge_client.py:187` | "Dutch RAG prompt" comment + NL-only LLM-as-judge | **Yes** — REQ-2 covers this |
+| `klai-retrieval-api/evaluation/cross_lingual_runner.py:187` | "Dutch RAG prompt" comment + NL-only LLM-as-judge | **Yes** — REQ-2 covers this |
 | `klai-retrieval-api/scripts/generate_gate_reference.py:35,44` | Reference-set generator: "Generate 50% in Dutch and 50% in English" | **Yes** — REQ-2 covers this |
 | `klai-portal/backend/app/services/default_templates.py:40` | Seed template "Klantenservice" hardcoded NL prompt | No — user-editable product content owned by product team (per `@MX:NOTE` in file) |
 
@@ -331,7 +331,7 @@ For REQ-2 (cross-lingual eval):
 - XRAG benchmark methodology (arXiv 2505.10089)
 - BordIRlines benchmark (referenced in 2026 Multilingual RAG ACL paper
   for cultural-sensitivity test cases)
-- Existing `klai-retrieval-api/retrieval_api/eval/` patterns
+- Existing `klai-retrieval-api/evaluation/` patterns
   (judge_client + reference generator) — this SPEC extends, does not
   replace
 
@@ -367,9 +367,9 @@ To prevent scope creep during implementation:
 | `klai-retrieval-api/retrieval_api/services/synthesis.py` | Remove `_SYSTEM_PROMPT`, import from new library | ~15 lines replaced |
 | `klai-portal/backend/app/services/partner_chat.py` | Same removal + import | ~15 lines replaced |
 | `klai-retrieval-api/pyproject.toml` + `klai-portal/backend/pyproject.toml` | Wire new dep | ~2 lines each |
-| `klai-retrieval-api/retrieval_api/eval/judge_client.py` | Add multilingual judge prompt support | ~50 lines |
+| `klai-retrieval-api/evaluation/cross_lingual_runner.py` | Add multilingual judge prompt support | ~50 lines |
 | `klai-retrieval-api/scripts/generate_gate_reference.py` | Extend reference generation to all six languages | ~30 lines |
-| `klai-retrieval-api/retrieval_api/eval/` (new file) | Cross-lingual test set | ~120 lines (data) |
+| `klai-retrieval-api/evaluation/` (new file) | Cross-lingual test set | ~120 lines (data) |
 | Grafana dashboard JSON | New language_correctness panel | ~30 lines |
 | CI lint (ast-grep rule or shell script) | Catch prompt re-duplication in future services | ~10 lines |
 

@@ -14,18 +14,18 @@ against, and any cross-lingual quality regression goes undetected.
 
 **Files**:
 
-- `klai-retrieval-api/retrieval_api/eval/judge_client.py` — replace
+- `klai-retrieval-api/evaluation/cross_lingual_runner.py` — replace
   hardcoded Dutch judge prompt with language-agnostic version that
   takes `query_language` parameter; add `language_correctness` boolean
   to scored output.
-- `klai-retrieval-api/retrieval_api/eval/test_set.py` (new file or
+- `klai-retrieval-api/evaluation/test_queries_cross_lingual.json` (new file or
   extension of existing) — define cross-lingual test fixture: 20
   queries per language × 6 languages = 120 queries against the existing
   Dutch reference corpus.
 - `klai-retrieval-api/scripts/generate_gate_reference.py` — extend to
   generate reference answers in all six languages, replacing the
   current 50/50 NL/EN behaviour.
-- `klai-retrieval-api/retrieval_api/eval/runner.py` (or equivalent
+- `klai-retrieval-api/evaluation/eval_runner.py` (or equivalent
   entry point) — add per-language score aggregation and the
   `language_correctness` metric to the report output.
 - `klai-retrieval-api/tests/eval/` — unit tests for the new judge
@@ -225,7 +225,7 @@ Files where @MX annotations are appropriate after implementation:
 | `klai-libs/chat-prompts/klai_chat_prompts/__init__.py` | `@MX:ANCHOR` on `GROUNDED_CHAT_SYSTEM_PROMPT` | High fan_in: imported by retrieval-api and portal-api; any change affects all chat behaviour platform-wide |
 | `klai-retrieval-api/retrieval_api/services/synthesis.py` | `@MX:NOTE` on the import | Points future readers to the shared library as source of truth |
 | `klai-portal/backend/app/services/partner_chat.py` | `@MX:NOTE` on the import | Same reasoning |
-| `klai-retrieval-api/retrieval_api/eval/judge_client.py` | `@MX:NOTE` on the multilingual judge prompt | Magic constants for language codes; future translators must update both the test set and this dispatch |
+| `klai-retrieval-api/evaluation/cross_lingual_runner.py` | `@MX:NOTE` on the multilingual judge prompt | Magic constants for language codes; future translators must update both the test set and this dispatch |
 
 @MX:REASON sub-lines must follow the @MX TAG protocol per
 `.claude/rules/moai/workflow/mx-tag-protocol.md`.

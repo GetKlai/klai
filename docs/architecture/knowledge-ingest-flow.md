@@ -944,6 +944,40 @@ that directly answers the query. Sparse search finds keyword matches. The rerank
 a final precision pass. Together they reduce retrieval failures significantly compared to
 dense-only search.
 
+**Multilingual chat (SPEC-RAG-MULTILINGUAL-CHAT-001).** Synthesis is
+language-agnostic from May 2026. The `_synthesize` step (and its
+mirror in `klai-portal/backend/app/services/partner_chat`) loads its
+system prompt from the shared library `klai-libs/chat-prompts`
+(`GROUNDED_CHAT_SYSTEM_PROMPT`). The prompt instructs the LLM to:
+
+- detect the language of the user's most recent **substantive** message
+  (≥ 5 words; shorter messages inherit the prior language);
+- ignore single foreign-language words inside an otherwise consistent
+  message (no flip on "thanks!", "merci", "ok gracias");
+- switch on a clearly substantive switch and stay switched.
+
+Six target languages: NL, EN, DE, FR, PT, ES. Retrieval itself does
+not change — bge-m3 already embeds 100+ languages into a shared space,
+so a Spanish query retrieves Dutch chunks without query translation.
+The chat layer translates cited content into the user's language; the
+`[n]` citation always links back to the original source URL regardless
+of source language.
+
+A passive `lingua` detector emits `chat_synthesis_complete` log events
+with `query_language_detected`, `response_language_detected`, and
+`language_correctness` (Boolean: did the response language match the
+query language?). The detector never alters synthesis behaviour — it
+exists for VictoriaLogs / Grafana monitoring per
+`docs/runbooks/multilingual-chat-observability.md`. The pre-merge gate
+that prompt changes must clear is `evaluation/cross_lingual_runner.py`,
+which scores ≥ 95% language-correctness per language against the
+cross-lingual test set (`evaluation/test_queries_cross_lingual.json`).
+
+**Per-tenant model override is explicitly NOT in scope** for V1. All
+tenants use `klai-fast` (Mistral Small) for synthesis. If Phase-2 eval
+shows that `klai-fast` is insufficient for a particular language, the
+escape valve is a future SPEC, not an in-line override.
+
 ### 3.3 Gap detection (SPEC-KB-014)
 
 After every retrieval call, the LiteLLM hook classifies the result before injecting

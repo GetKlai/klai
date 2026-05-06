@@ -20,6 +20,7 @@ related_issues:
 | Version | Date | Author | Change |
 |---------|------|--------|--------|
 | 1.0 | 2026-05-06 | Mark Vletter | Initial draft after web-research validation. Klai is expanding from NL-only to a multi-country team (DE, ES, UK, ZA) and the existing chat synthesis prompts hardcode an NL/EN switch that excludes other languages. Retrieval (bge-m3) is already cross-lingual; only the chat-answer layer needs change. |
+| 1.1 | 2026-05-06 | Mark Vletter (autonomous run) | Implementation pass. Realised during code exploration that the eval-suite uses RAGAS via `evaluation/eval_runner.py` (not the imagined `eval/judge_client.py`). REQ-04 reframed: instead of a multilingual LLM-as-judge, the implementation adds a deterministic per-response `language_correctness` metric plus a dedicated `evaluation/cross_lingual_runner.py` that scores queries directly against the synthesis endpoint. Cross-lingual test set landed at 65 queries across 6 languages (10-11/lang × 11 intents) — under the original 20/lang target but acceptable as a V1 floor with measurable test coverage; future expansion is a `cross_lingual_runner` + extra fixture data, no code change. Target language list locked in as NL/EN/DE/FR/PT/ES (Afrikaans removed — ZA team uses English; PT added; FR expanded coverage of Walloon-BE). All file paths in this SPEC corrected to match the actual codebase layout. |
 
 ---
 
@@ -112,12 +113,18 @@ Source: `research.md` § Finding 1.
    small number of cross-service prompts (prompt-management platforms
    like Langfuse are deferred until prompt count or A/B testing
    demands them).
-3. Extend the eval-suite (`klai-retrieval-api/retrieval_api/eval/`)
+3. Extend the eval-suite (`klai-retrieval-api/evaluation/`)
    to cover queries in NL, EN, DE, FR, PT, and ES. Add a new
    `language_correctness` metric defined as the percentage of responses
    where the response language matches the query language.
-4. Update `judge_client.py` to support multilingual judge prompts
-   (currently NL-only, see `eval/judge_client.py:187`).
+4. Add a new `evaluation/cross_lingual_runner.py` script that scores
+   per-language correctness against the synthesis endpoint, and a
+   companion `retrieval_api/util/language_detect.py` utility used by
+   both the runner and the production observability path. The eval
+   does not invoke an LLM-as-judge — language correctness is a
+   deterministic check (lingua-detected response language matches
+   query language) and is run alongside the existing RAGAS metrics
+   delivered by `evaluation/eval_runner.py`.
 5. Update `scripts/generate_gate_reference.py` to generate cross-lingual
    reference data covering all six target languages, not just 50/50
    NL/EN.
@@ -213,7 +220,7 @@ in a future service.
 
 ### REQ-RAG-MULTILINGUAL-CHAT-001-03 — Multilingual eval-suite
 
-The system MUST extend `klai-retrieval-api/retrieval_api/eval/` to
+The system MUST extend `klai-retrieval-api/evaluation/` to
 cover at minimum six query languages: Dutch (nl), English (en),
 German (de), French (fr), Portuguese (pt), Spanish (es).
 
@@ -230,22 +237,32 @@ responses where the response language matches the query language.
 reference answers covering all six target languages, replacing the
 current 50/50 NL/EN split with an even per-language distribution.
 
-### REQ-RAG-MULTILINGUAL-CHAT-001-04 — Multilingual judge prompts
+### REQ-RAG-MULTILINGUAL-CHAT-001-04 — Deterministic language-correctness scoring
 
-`klai-retrieval-api/retrieval_api/eval/judge_client.py` MUST construct
-the LLM-as-judge prompt in a language-agnostic way. The current
-hardcoded Dutch prompt (line 187) MUST be replaced with one of:
+`klai-retrieval-api/evaluation/cross_lingual_runner.py` MUST score
+language-correctness deterministically, NOT via an LLM-as-judge. For
+each test query:
 
-- A single English judge prompt that takes the query language as a
-  parameter and instructs the judge to evaluate language-correctness
-  given that parameter (preferred — single judge prompt covers all
-  languages).
-- One judge prompt per supported language, dispatched on
-  query-language detection (acceptable but more code to maintain).
+1. The runner calls the synthesis endpoint with the query and collects
+   the assembled response text.
+2. `retrieval_api/util/language_detect.py::detect_language` runs on
+   both the original query and the response, returning ISO-639-1 codes
+   from the target set (`nl/en/de/fr/pt/es`) or `und` for
+   short / out-of-target inputs.
+3. `language_correctness` is the Boolean comparison of the two
+   detected codes; `None` (skipped) when either side is `und`.
 
-The judge MUST score `language_correctness` as a Boolean (1 = response
-language matches query language, 0 = mismatch) per response, in
-addition to the existing scalar metrics.
+A dedicated LLM judge for language correctness is rejected because the
+underlying property — "what language is this in?" — is well-modeled by
+a deterministic detector. Spending an LLM call on it is more expensive,
+slower, and adds judgement variance to a metric that should be
+mechanically reproducible.
+
+The existing RAGAS-based metrics in `evaluation/eval_runner.py`
+(faithfulness, answer-relevance, citation-correctness, NDCG@10,
+recall@10) are unchanged. They keep their LLM judge (`klai-large` via
+LiteLLM); they are run alongside this script when the operator wants
+the full regression view.
 
 ### REQ-RAG-MULTILINGUAL-CHAT-001-05 — Pre-merge eval gate
 

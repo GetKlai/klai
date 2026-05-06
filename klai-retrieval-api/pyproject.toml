@@ -21,10 +21,18 @@ dependencies = [
     # callers' body identity against portal-api. Editable install — same
     # pattern as klai-knowledge-mcp (Phase B) and klai-knowledge-ingest.
     "klai-identity-assert",
+    # SPEC-RAG-MULTILINGUAL-CHAT-001 REQ-07: passive language detection
+    # on user query + LLM response for the chat_synthesis_complete log
+    # event. Same pin as knowledge-ingest's contextual.detect_language.
+    "lingua-language-detector>=2.2.0",
+    # SPEC-RAG-MULTILINGUAL-CHAT-001 REQ-02: shared chat-prompt constant.
+    # Editable install — same pattern as klai-identity-assert.
+    "klai-chat-prompts",
 ]
 
 [tool.uv.sources]
 klai-identity-assert = { path = "../klai-libs/identity-assert", editable = true }
+klai-chat-prompts = { path = "../klai-libs/chat-prompts", editable = true }
 
 [project.optional-dependencies]
 dev = [
