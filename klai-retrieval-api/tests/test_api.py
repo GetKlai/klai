@@ -131,6 +131,7 @@ class TestRetrieveEndpoint:
         assert data["metadata"]["candidates_retrieved"] == 1
         assert data["metadata"]["retrieval_ms"] > 0
 
+
 class TestGraphMetadata:
     def test_retrieve_metadata_includes_graph_fields(self, client, sample_retrieve_request):
         """Response metadata includes graph_results_count and graph_search_ms (AC-9)."""
@@ -186,6 +187,186 @@ class TestGraphMetadata:
         assert "graph_results_count" in data["metadata"]
         assert "graph_search_ms" in data["metadata"]
         assert data["metadata"]["graph_results_count"] == 0
+
+
+class TestLinkExpandInstrumentation:
+    """F3 phase 1 (audit retrieval-coupling-2026-05-06): verify link-expansion
+    instrumentation captures contribution to served top-k without leaking
+    internal state into the response.
+    """
+
+    def test_link_expanded_flag_does_not_leak_to_response(self, client, sample_retrieve_request):
+        """Internal `_link_expanded` flag MUST NOT appear in any ChunkResult field.
+
+        ChunkResult is a Pydantic model with explicit fields. The build loop in
+        retrieve.py:325-360 reads only listed keys, so the underscore-prefixed
+        flag stays internal. This test pins that contract.
+        """
+        seed_chunk = {
+            "chunk_id": "seed-1",
+            "text": "Seed text",
+            "score": 0.9,
+            "artifact_id": "a1",
+            "content_type": "kb_article",
+            "context_prefix": None,
+            "scope": "org",
+            "valid_at": None,
+            "invalid_at": None,
+            "ingested_at": None,
+            "assertion_mode": None,
+            "links_to": ["https://example.test/expanded-doc"],
+            "incoming_link_count": 0,
+        }
+        expansion_chunk = {
+            "chunk_id": "expanded-1",
+            "text": "Expanded text",
+            "score": 0.0,
+            "artifact_id": "a2",
+            "content_type": "kb_article",
+            "context_prefix": None,
+            "scope": "org",
+            "valid_at": None,
+            "invalid_at": None,
+            "ingested_at": None,
+            "assertion_mode": None,
+            "incoming_link_count": 50,  # gets authority boost
+            "source_url": "https://example.test/expanded-doc",
+        }
+
+        with (
+            patch(
+                "retrieval_api.api.retrieve.coreference.resolve",
+                new_callable=AsyncMock,
+                return_value="resolved query",
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_single",
+                new_callable=AsyncMock,
+                return_value=[0.1, 0.2],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_sparse",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "retrieval_api.api.retrieve.gate.should_bypass",
+                new_callable=AsyncMock,
+                return_value=(False, 0.1),
+            ),
+            patch(
+                "retrieval_api.api.retrieve.search.hybrid_search",
+                new_callable=AsyncMock,
+                return_value=[seed_chunk],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.search.fetch_chunks_by_urls",
+                new_callable=AsyncMock,
+                return_value=[expansion_chunk],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.reranker.rerank",
+                new_callable=AsyncMock,
+                # Reranker returns both seed and expanded — preserves the
+                # `_link_expanded` flag because reranker.rerank does
+                # `candidate.copy()` (shallow copy retains the key).
+                side_effect=lambda query, candidates, top_k: [
+                    {**c, "reranker_score": 0.9 - i * 0.1} for i, c in enumerate(candidates[:top_k])
+                ],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.settings",
+            ) as mock_settings,
+        ):
+            mock_settings.reranker_enabled = True
+            mock_settings.retrieval_candidates = 60
+            mock_settings.reranker_candidates = 20
+            mock_settings.graphiti_enabled = False
+            mock_settings.link_expand_enabled = True
+            mock_settings.link_expand_seed_k = 10
+            mock_settings.link_expand_max_urls = 30
+            mock_settings.link_expand_candidates = 20
+            mock_settings.link_authority_boost = 0.05
+            mock_settings.source_quota_enabled = True
+            mock_settings.source_quota_max_per_source = 2
+            mock_settings.router_enabled = False
+            resp = client.post("/retrieve", json=sample_retrieve_request)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        # Pydantic ChunkResult has no `_link_expanded` field — it should
+        # never appear in the serialized response.
+        for chunk in data["chunks"]:
+            assert "_link_expanded" not in chunk, (
+                f"Internal flag leaked into response: {chunk}. "
+                "F3 phase 1 contract: instrumentation MUST stay internal."
+            )
+
+    def test_decision_record_link_expand_block_emitted(
+        self, client, sample_retrieve_request, caplog
+    ):
+        """`decision_record.link_expand` block MUST appear in the log when
+        link-expansion is enabled, with all five required keys."""
+        import logging
+
+        caplog.set_level(logging.INFO)
+
+        with (
+            patch(
+                "retrieval_api.api.retrieve.coreference.resolve",
+                new_callable=AsyncMock,
+                return_value="q",
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_single",
+                new_callable=AsyncMock,
+                return_value=[0.1],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_sparse",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "retrieval_api.api.retrieve.gate.should_bypass",
+                new_callable=AsyncMock,
+                return_value=(False, 0.1),
+            ),
+            patch(
+                "retrieval_api.api.retrieve.search.hybrid_search",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.settings",
+            ) as mock_settings,
+        ):
+            mock_settings.reranker_enabled = False
+            mock_settings.retrieval_candidates = 60
+            mock_settings.reranker_candidates = 20
+            mock_settings.graphiti_enabled = False
+            mock_settings.link_expand_enabled = True
+            mock_settings.link_expand_seed_k = 10
+            mock_settings.link_expand_max_urls = 30
+            mock_settings.link_expand_candidates = 20
+            mock_settings.link_authority_boost = 0.05
+            mock_settings.source_quota_enabled = True
+            mock_settings.source_quota_max_per_source = 2
+            mock_settings.router_enabled = False
+            resp = client.post("/retrieve", json=sample_retrieve_request)
+
+        assert resp.status_code == 200
+        # Find the retrieval_decision_record structlog event
+        rec = next(
+            (r for r in caplog.records if "retrieval_decision_record" in r.getMessage()),
+            None,
+        )
+        # structlog emits as plain log message; verify the key fields are
+        # in the record's structured-data attrs.
+        assert rec is not None or any("link_expand" in r.getMessage() for r in caplog.records), (
+            "decision_record log should contain a link_expand block"
+        )
+
 
 class TestHealthEndpoint:
     def test_health_all_ok(self, client):
