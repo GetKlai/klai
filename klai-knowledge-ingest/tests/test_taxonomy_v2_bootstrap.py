@@ -143,10 +143,10 @@ class TestClusterDocumentsHdbscan:
         assert outlier_mask.sum() >= 5, f"Expected >= 5 outliers, got {outlier_mask.sum()}"
 
     def test_hdbscan_metrics_dict_contains_required_keys(self):
-        """Metrics dict must contain clusters_found, outlier_count, cluster_persistence_mean.
+        """Metrics dict must contain clusters_found, outlier_count, cluster_probability_mean.
 
-        SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B5: cluster_persistence_mean replaces dbcv_score.
-        B3: silhouette_score was renamed; B5: dbcv_score replaced by cluster_persistence_mean.
+        SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B5: cluster_probability_mean replaces dbcv_score.
+        B3: silhouette_score was renamed; B5: dbcv_score replaced by cluster_probability_mean.
         """
         from knowledge_ingest.clustering import cluster_documents_hdbscan
 
@@ -155,13 +155,13 @@ class TestClusterDocumentsHdbscan:
 
         assert "clusters_found" in metrics
         assert "outlier_count" in metrics
-        assert "cluster_persistence_mean" in metrics
+        assert "cluster_probability_mean" in metrics
         # Regression: neither silhouette_score nor dbcv_score must be present
         assert "silhouette_score" not in metrics
         assert "dbcv_score" not in metrics
 
-    def test_hdbscan_cluster_persistence_mean_is_float_or_none(self):
-        """cluster_persistence_mean is a float or None for multi-cluster results.
+    def test_hdbscan_cluster_probability_mean_is_float_or_none(self):
+        """cluster_probability_mean is a float or None for multi-cluster results.
 
         SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B5: replaces dbcv_score (which assumed
         relative_validity_; sklearn 1.8 does not expose it).
@@ -171,16 +171,16 @@ class TestClusterDocumentsHdbscan:
         embeddings, _ = _make_synthetic_embeddings()
         _labels, metrics = cluster_documents_hdbscan(embeddings, min_cluster_size=5)
 
-        # With 3 clear clusters, cluster_persistence_mean should be a float
+        # With 3 clear clusters, cluster_probability_mean should be a float
         # (or None if cluster_persistence_ unavailable — both are acceptable)
-        assert metrics["cluster_persistence_mean"] is None or isinstance(
-            metrics["cluster_persistence_mean"], float
+        assert metrics["cluster_probability_mean"] is None or isinstance(
+            metrics["cluster_probability_mean"], float
         )
 
     def test_hdbscan_zero_clusters_persistence_mean_is_none(self):
-        """When HDBSCAN returns 0 clusters, cluster_persistence_mean must be None.
+        """When HDBSCAN returns 0 clusters, cluster_probability_mean must be None.
 
-        SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B5: cluster_persistence_mean replaces dbcv_score.
+        SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B5: cluster_probability_mean replaces dbcv_score.
         """
         from knowledge_ingest.clustering import cluster_documents_hdbscan
 
@@ -196,9 +196,9 @@ class TestClusterDocumentsHdbscan:
 
         _labels, metrics = cluster_documents_hdbscan(embeddings, min_cluster_size=5)
 
-        # 0 clusters → cluster_persistence_mean is undefined (None)
+        # 0 clusters → cluster_probability_mean is undefined (None)
         if metrics["clusters_found"] == 0:
-            assert metrics["cluster_persistence_mean"] is None
+            assert metrics["cluster_probability_mean"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -659,11 +659,11 @@ class TestBootstrapProposalsV2Integration:
         assert len(complete_events) == 1, "Expected exactly one bootstrap_proposals_complete event"
 
         event = complete_events[0]
-        # SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B5: cluster_persistence_mean replaces dbcv_score
+        # SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B5: cluster_probability_mean replaces dbcv_score
         required_fields = [
             "clusters_found",
             "outlier_count",
-            "cluster_persistence_mean",
+            "cluster_probability_mean",
             "proposals_submitted",
             "kb_slug",
             "org_id",
@@ -674,7 +674,7 @@ class TestBootstrapProposalsV2Integration:
             )
         assert "silhouette_score" not in event, "silhouette_score must not appear (removed in B3)"
         assert "dbcv_score" not in event, (
-            "dbcv_score must not appear (replaced by cluster_persistence_mean in B5)"
+            "dbcv_score must not appear (replaced by cluster_probability_mean in B5)"
         )
 
 

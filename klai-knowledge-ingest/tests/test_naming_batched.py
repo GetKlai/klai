@@ -2,14 +2,14 @@
 Tests for SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B4 and B5.
 
 B4: Cross-cluster aware batched naming (_suggest_cluster_names_batched)
-B5: cluster_persistence_mean replaces dbcv_score in clustering metrics
+B5: cluster_probability_mean replaces dbcv_score in clustering metrics
 
 Six new tests:
 1. test_batched_naming_happy_path
 2. test_batched_naming_falls_back_when_parse_fails
 3. test_batched_naming_partial_response_falls_back_for_missing
 4. test_batched_naming_skipped_for_too_many_clusters
-5. test_cluster_persistence_mean_is_float_or_none
+5. test_cluster_probability_mean_is_float_or_none
 6. test_cluster_persistence_field_present_in_completion_log
 """
 
@@ -360,15 +360,15 @@ class TestBatchedNaming:
 
 
 # ---------------------------------------------------------------------------
-# B5 — cluster_persistence_mean
+# B5 — cluster_probability_mean
 # ---------------------------------------------------------------------------
 
 
 class TestClusterPersistenceMean:
-    """B5: cluster_persistence_mean metric tests."""
+    """B5: cluster_probability_mean metric tests."""
 
-    def test_cluster_persistence_mean_is_float_or_none(self):
-        """cluster_documents_hdbscan metrics dict has cluster_persistence_mean (float or None).
+    def test_cluster_probability_mean_is_float_or_none(self):
+        """cluster_documents_hdbscan metrics dict has cluster_probability_mean (float or None).
 
         NOT dbcv_score. NOT silhouette_score.
         SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B5.
@@ -393,25 +393,25 @@ class TestClusterPersistenceMean:
             embeddings, min_cluster_size=5, pre_reduce=False
         )
 
-        # B5: cluster_persistence_mean present, dbcv_score absent
-        assert "cluster_persistence_mean" in metrics, (
-            "cluster_persistence_mean must be in metrics (B5)"
+        # B5: cluster_probability_mean present, dbcv_score absent
+        assert "cluster_probability_mean" in metrics, (
+            "cluster_probability_mean must be in metrics (B5)"
         )
         assert "dbcv_score" not in metrics, (
-            "dbcv_score must NOT be in metrics (replaced by cluster_persistence_mean in B5)"
+            "dbcv_score must NOT be in metrics (replaced by cluster_probability_mean in B5)"
         )
         assert "silhouette_score" not in metrics, (
             "silhouette_score must NOT be in metrics (removed in B3)"
         )
 
-        val = metrics["cluster_persistence_mean"]
+        val = metrics["cluster_probability_mean"]
         assert val is None or isinstance(val, float), (
-            f"cluster_persistence_mean must be float or None, got {type(val)}"
+            f"cluster_probability_mean must be float or None, got {type(val)}"
         )
 
     @pytest.mark.asyncio
     async def test_cluster_persistence_field_present_in_completion_log(self):
-        """bootstrap_proposals_complete log event contains cluster_persistence_mean.
+        """bootstrap_proposals_complete log event contains cluster_probability_mean.
 
         dbcv_score and silhouette_score must NOT be present.
         Full regression guard for B3 + B5.
@@ -489,9 +489,9 @@ class TestClusterPersistenceMean:
         assert len(complete_events) >= 1, "Expected at least one bootstrap_proposals_complete event"
 
         event = complete_events[0]
-        # B5: cluster_persistence_mean present
-        assert "cluster_persistence_mean" in event, (
-            "bootstrap_proposals_complete must contain cluster_persistence_mean (B5)"
+        # B5: cluster_probability_mean present
+        assert "cluster_probability_mean" in event, (
+            "bootstrap_proposals_complete must contain cluster_probability_mean (B5)"
         )
         # Full regression: neither old field must appear
         assert "dbcv_score" not in event, (
@@ -501,7 +501,7 @@ class TestClusterPersistenceMean:
             "silhouette_score must NOT appear in bootstrap_proposals_complete (removed in B3)"
         )
         # Type check
-        val = event["cluster_persistence_mean"]
+        val = event["cluster_probability_mean"]
         assert val is None or isinstance(val, float), (
-            f"cluster_persistence_mean in log must be float or None, got {type(val)}"
+            f"cluster_probability_mean in log must be float or None, got {type(val)}"
         )
