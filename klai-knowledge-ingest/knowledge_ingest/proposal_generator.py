@@ -536,7 +536,7 @@ async def generate_bootstrap_proposals_v2(
     )
     clusters_found: int = metrics["clusters_found"]
     outlier_count: int = metrics["outlier_count"]
-    cluster_persistence_mean: float | None = metrics["cluster_persistence_mean"]
+    cluster_probability_mean: float | None = metrics["cluster_probability_mean"]
 
     if clusters_found == 0:
         logger.info(
@@ -545,7 +545,7 @@ async def generate_bootstrap_proposals_v2(
             kb_slug=kb_slug,
             clusters_found=0,
             outlier_count=outlier_count,
-            cluster_persistence_mean=cluster_persistence_mean,
+            cluster_probability_mean=cluster_probability_mean,
             proposals_submitted=0,
         )
         return BootstrapResult(
@@ -668,7 +668,7 @@ async def generate_bootstrap_proposals_v2(
                 kb_slug=kb_slug,
                 clusters_found=clusters_found,
                 outlier_count=outlier_count,
-                cluster_persistence_mean=cluster_persistence_mean,
+                cluster_probability_mean=cluster_probability_mean,
                 proposals_submitted=0,
             )
             return BootstrapResult(
@@ -720,7 +720,7 @@ async def generate_bootstrap_proposals_v2(
         submitted += 1
 
     # Step 9: AC-9 log
-    # SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B5: log cluster_persistence_mean instead of dbcv_score.
+    # SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B5: log cluster_probability_mean instead of dbcv_score.
     # dbcv_score assumed relative_validity_ which sklearn 1.8 does not expose.
     logger.info(
         "bootstrap_proposals_complete",
@@ -728,7 +728,7 @@ async def generate_bootstrap_proposals_v2(
         kb_slug=kb_slug,
         clusters_found=clusters_found,
         outlier_count=outlier_count,
-        cluster_persistence_mean=cluster_persistence_mean,
+        cluster_probability_mean=cluster_probability_mean,
         proposals_submitted=submitted,
     )
 
