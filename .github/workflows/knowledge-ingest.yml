@@ -55,6 +55,31 @@ jobs:
           config: sgconfig.yml
           paths: klai-knowledge-ingest/knowledge_ingest/
 
+      # Pitfall: alembic-multi-pr-head-split (process-rules.md). Two PRs
+      # each adding a migration with the same down_revision both build
+      # green individually but the second-merging one creates two
+      # alembic heads, blocking `alembic upgrade head` at container
+      # start. This offline guard runs on every PR + push and rejects
+      # any state with > 1 head before merge instead of in production.
+      - name: Guard — single alembic head (knowledge schema)
+        run: |
+          set -euo pipefail
+          cd klai-knowledge-ingest
+          pipx install --quiet alembic==1.16.5
+          heads=$(alembic heads 2>&1 | grep -E "\(head\)$" | wc -l | tr -d ' ')
+          if [ "$heads" -ne 1 ]; then
+            echo "::error::Multiple alembic heads detected (got $heads, expected 1)"
+            alembic heads
+            echo
+            echo "Hotfix: rebase the second-merging migration's down_revision"
+            echo "onto the first head, OR add a no-op merge migration with"
+            echo "down_revision = (head_a, head_b). See"
+            echo ".claude/rules/klai/pitfalls/process-rules.md"
+            echo "(alembic-multi-pr-head-split)."
+            exit 1
+          fi
+          echo "OK — single alembic head"
+
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:

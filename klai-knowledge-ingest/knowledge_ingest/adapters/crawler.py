@@ -429,7 +429,15 @@ async def _ingest_crawl_result(
     # cluster against it. Computed unconditionally — even with detection
     # disabled, the fingerprint is needed for the operator-triggered
     # backfill / validation script.
-    page_simhash = compute_simhash(text)
+    #
+    # Empty / whitespace-only content yields ``compute_simhash == 0``. Storing
+    # 0 would let "empty" pages cluster together (all match Hamming 0), which
+    # would falsely flag a tenant whose crawl results were 5+ rendered-but-
+    # empty pages. We treat the missing-content case as "no fingerprint" by
+    # leaving content_simhash NULL, matching the cold-start contract.
+    page_simhash: int | None = compute_simhash(text)
+    if page_simhash == 0:
+        page_simhash = None
 
     # SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-02 — anonymous-crawl auth-wall
     # detection by SimHash near-duplicate clustering. Runs AFTER dedup (don't
@@ -572,14 +580,16 @@ async def _ingest_crawl_result(
     # SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-01 — persist the page's SimHash
     # so the next crawl in this KB can include it in cluster lookups. Done
     # AFTER upsert_crawled_page so the row exists; the helper does an UPDATE
-    # by (org_id, kb_slug, url).
-    await pg_store.update_crawled_page_simhash(
-        conn,
-        org_id=org_id,
-        kb_slug=kb_slug,
-        url=url,
-        content_simhash=page_simhash,
-    )
+    # by (org_id, kb_slug, url). Skipped for empty/whitespace-only content
+    # (page_simhash is None) so 0-fingerprints never reach the DB.
+    if page_simhash is not None:
+        await pg_store.update_crawled_page_simhash(
+            conn,
+            org_id=org_id,
+            kb_slug=kb_slug,
+            url=url,
+            content_simhash=page_simhash,
+        )
 
 
 async def _update_job(
