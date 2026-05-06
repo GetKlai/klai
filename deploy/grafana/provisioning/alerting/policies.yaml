@@ -86,3 +86,20 @@ policies:
         group_interval: 5m
         repeat_interval: 24h
         continue: false
+
+      # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-08 — login-wall detection
+      # alerts. Burst alert (R1) fires on >50 detections in 10m; config-
+      # invalid alert (R2) fires on any mis-configured mode env. Both are
+      # warning-severity and route to ops with a 4h repeat — long enough to
+      # avoid noise while a tenant's first backfill drains, short enough to
+      # keep on-call aware if the rate doesn't drop.
+      - receiver: klai-ops-alerts-email
+        matchers:
+          - spec = SPEC-INGEST-LOGIN-WALL-DETECT-001
+        group_by:
+          - alertname
+          - service_group
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 4h
+        continue: false

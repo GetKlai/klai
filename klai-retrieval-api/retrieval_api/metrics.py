@@ -74,3 +74,18 @@ retrieval_events_dropped_total = Counter(
     "retrieval_events_dropped_total",
     "Product events dropped because the pending-tasks cap was reached",
 )
+
+# SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-08 — chunks removed by the hard
+# quality-score floor (Phase E). Most increments are zero in steady state;
+# spikes signal either:
+#   - degrade-mode tenants whose backfill is still running (expected),
+#   - or an ingest-time detector miss (regression alert).
+# Labelled by org_id so per-tenant pollution is distinguishable from a
+# system-wide regression. We do NOT label by chunk_id (high-cardinality);
+# the chunk IDs are still emitted at DEBUG level in the per-request logs
+# for forensic lookup.
+quality_floor_filtered_total = Counter(
+    "klai_retrieval_quality_floor_filtered_total",
+    "Chunks removed by the quality-floor filter (SPEC-INGEST-LOGIN-WALL-DETECT-001)",
+    ["org_id"],
+)
