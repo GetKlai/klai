@@ -84,10 +84,31 @@ function CoverageWidget({
   }
 
   if (coverage.nodes.length === 0) {
+    // Empty-state: KB has no taxonomy nodes yet. When chunks exist (>= 10) we
+    // surface the Suggest CTA here too — without it the user faces a catch-22:
+    // no Suggest button until nodes exist, no nodes until Suggest is clicked.
+    // Threshold mirrors the populated-coverage Suggest gate below (>= 10
+    // untagged chunks); for an empty KB every chunk counts as untagged.
     return (
-      <p className="text-sm text-[var(--color-muted-foreground)]">
-        {m.knowledge_taxonomy_coverage_empty()}
-      </p>
+      <div className="space-y-3">
+        <p className="text-sm text-[var(--color-muted-foreground)]">
+          {m.knowledge_taxonomy_coverage_empty()}
+        </p>
+        {onSuggest && total >= 10 && (
+          <button
+            type="button"
+            onClick={onSuggest}
+            disabled={isSuggesting}
+            className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium bg-[var(--color-accent)] text-[var(--color-accent-foreground)] hover:opacity-90 transition-opacity disabled:opacity-50"
+          >
+            {isSuggesting
+              ? <Loader2 className="h-3 w-3 animate-spin" />
+              : <Sparkles className="h-3 w-3" />
+            }
+            {m.knowledge_taxonomy_suggest_categories()}
+          </button>
+        )}
+      </div>
     )
   }
 
