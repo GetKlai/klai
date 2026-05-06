@@ -1,5 +1,56 @@
 # Process Rules
 
+## postgres-no-return-type-overload (HIGH)
+PostgreSQL does NOT support function overloading by return type alone.
+Two zero-argument functions with the same name and different return
+types cannot coexist in the same schema. `CREATE OR REPLACE FUNCTION`
+on an existing function with a different return type fails with:
+
+```
+ERROR:  cannot change return type of existing function
+HINT:  Use DROP FUNCTION _rls_current_org_id() first.
+```
+
+Reference: SPEC-TI-002 (PR #375, 2026-05-06). The post-deploy SQL
+declared `_rls_current_org_id() RETURNS text` next to portal-api's
+existing `_rls_current_org_id() RETURNS integer`. The SPEC author
+believed Postgres allowed return-type overloading; it does not. The
+migration's ENABLE+FORCE RLS step succeeded but the policy creation
+aborted, leaving connector.connectors and connector.sync_runs with
+default-deny RLS and no policies — a 100% read/write block on every
+connector operation.
+
+Recovered by hot-renaming to `_rls_current_org_text()` in prod via
+post-deploy SQL, then back-filling the source tree
+(fix/SPEC-TI-002-rls-function-name-collision).
+
+**Prevention:**
+
+1. **Schema-qualify per-service RLS helpers.** Each service that needs a
+   different-typed `_rls_current_org_id` should put it in its own
+   schema (e.g. `connector._rls_current_org_id() RETURNS text`,
+   `knowledge._rls_current_org_id() RETURNS text`,
+   `public._rls_current_org_id() RETURNS integer`). Schema-qualified
+   functions don't collide. SPEC-TI-003 already does this correctly
+   with `knowledge._rls_current_org_id()`.
+
+2. **Or use a clearly-different name.** `_rls_current_org_text()` /
+   `_rls_current_org_int()` / `_rls_current_<service>_org()` make the
+   type explicit at the call site and remove ambiguity in policy
+   definitions.
+
+3. **Never rely on "return type overloading".** It is not a Postgres
+   feature regardless of how the docs read at first glance. The actual
+   overloading dimension is parameter list (zero-arg vs one-arg vs
+   two-arg, OR same arity but different parameter types). Return type
+   alone is never enough.
+
+4. **Smoke-test the post-deploy SQL on a non-prod DB before merging
+   the SPEC.** Apply against a snapshot or stage DB. Any error here is
+   a deployment-blocker — production policies must exist BEFORE the
+   alembic migration ENABLE+FORCEs RLS, or the table becomes default-
+   deny with no recourse from the application layer.
+
 ## scale-the-answer-to-the-problem (HIGH)
 When a user asks "what is industry standard?" do not autopilot to the
 most architecturally-elegant answer in the search results. Anchor on
