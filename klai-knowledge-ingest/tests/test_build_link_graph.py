@@ -4,7 +4,11 @@ Tests for _build_link_graph helper in adapters/crawler.py (SPEC-CRAWLER-005).
 Phase 1 of the two-phase crawl pipeline: build the full link graph BEFORE
 any per-page ingest begins. This guarantees get_anchor_texts() and
 get_incoming_count() return final values during Phase 2.
+
+SPEC-TI-003-FOLLOWUP-001: ``_build_link_graph`` now takes
+``asyncpg.Connection`` as its first arg.
 """
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,12 +16,14 @@ import pytest
 from knowledge_ingest.crawl4ai_client import CrawlResult
 
 
-def _make_mock_pool() -> MagicMock:
-    pool = MagicMock()
-    pool.execute = AsyncMock(return_value=None)
-    pool.fetch = AsyncMock(return_value=[])
-    pool.fetchval = AsyncMock(return_value=0)
-    return pool
+def _make_mock_conn() -> MagicMock:
+    conn = MagicMock()
+    conn.execute = AsyncMock(return_value=None)
+    conn.executemany = AsyncMock(return_value=None)
+    conn.fetch = AsyncMock(return_value=[])
+    conn.fetchval = AsyncMock(return_value=0)
+    conn.fetchrow = AsyncMock(return_value=None)
+    return conn
 
 
 def _make_crawl_result(
@@ -46,18 +52,20 @@ async def test_build_link_graph_calls_upsert_for_each_result_with_internal_links
     results = [
         _make_crawl_result(
             url=f"https://example.com/page-{i}",
-            links={"internal": [{"href": f"https://example.com/page-{i+1}", "text": f"Link {i}"}]},
+            links={
+                "internal": [{"href": f"https://example.com/page-{i + 1}", "text": f"Link {i}"}]
+            },
         )
         for i in range(3)
     ]
-    mock_pool = _make_mock_pool()
+    mock_conn = _make_mock_conn()
 
     with patch("knowledge_ingest.adapters.crawler.pg_store") as mock_pg:
         mock_pg.upsert_page_links = AsyncMock()
 
         from knowledge_ingest.adapters.crawler import _build_link_graph
 
-        await _build_link_graph(results, "org-1", "kb-slug", mock_pool)
+        await _build_link_graph(mock_conn, results, "org-1", "kb-slug")
 
     assert mock_pg.upsert_page_links.call_count == 3
     # Verify correct from_url and links for each call
@@ -95,14 +103,14 @@ async def test_build_link_graph_skips_failed_results():
             links={"internal": [{"href": "https://example.com/d", "text": "D"}]},
         ),
     ]
-    mock_pool = _make_mock_pool()
+    mock_conn = _make_mock_conn()
 
     with patch("knowledge_ingest.adapters.crawler.pg_store") as mock_pg:
         mock_pg.upsert_page_links = AsyncMock()
 
         from knowledge_ingest.adapters.crawler import _build_link_graph
 
-        await _build_link_graph(results, "org-1", "kb-slug", mock_pool)
+        await _build_link_graph(mock_conn, results, "org-1", "kb-slug")
 
     # Only 2 successful results should trigger upsert
     assert mock_pg.upsert_page_links.call_count == 2
@@ -132,14 +140,14 @@ async def test_build_link_graph_skips_empty_internal_links():
             links={"external": [{"href": "https://other.com/page", "text": "Other"}]},
         ),
     ]
-    mock_pool = _make_mock_pool()
+    mock_conn = _make_mock_conn()
 
     with patch("knowledge_ingest.adapters.crawler.pg_store") as mock_pg:
         mock_pg.upsert_page_links = AsyncMock()
 
         from knowledge_ingest.adapters.crawler import _build_link_graph
 
-        await _build_link_graph(results, "org-1", "kb-slug", mock_pool)
+        await _build_link_graph(mock_conn, results, "org-1", "kb-slug")
 
     # No upsert calls — no result has non-empty internal links
     mock_pg.upsert_page_links.assert_not_called()
@@ -154,7 +162,7 @@ async def test_build_link_graph_no_qdrant_no_ingest():
             links={"internal": [{"href": "https://example.com/b", "text": "B"}]},
         ),
     ]
-    mock_pool = _make_mock_pool()
+    mock_conn = _make_mock_conn()
 
     with (
         patch("knowledge_ingest.adapters.crawler.pg_store") as mock_pg,
@@ -171,7 +179,7 @@ async def test_build_link_graph_no_qdrant_no_ingest():
 
         from knowledge_ingest.adapters.crawler import _build_link_graph
 
-        await _build_link_graph(results, "org-1", "kb-slug", mock_pool)
+        await _build_link_graph(mock_conn, results, "org-1", "kb-slug")
 
     # crawl_site should not be called from _build_link_graph
     mock_crawl.assert_not_called()
