@@ -178,7 +178,19 @@ async def test_run_crawl_job_calls_build_link_graph_before_ingest():
         patch(
             "knowledge_ingest.adapters.crawler.crawl_site",
             new_callable=AsyncMock,
-            return_value=[mock_result],
+            # SPEC-INGEST-RECONCILE-001 AC-4: crawl_site returns
+            # ``(results, fetch_outcomes)``.
+            return_value=(
+                [mock_result],
+                [
+                    {
+                        "url": mock_result.url,
+                        "reason_code": "success",
+                        "status_code": 200,
+                        "content_length": len(mock_result.html or ""),
+                    }
+                ],
+            ),
         ),
         patch.object(
             link_graph,
