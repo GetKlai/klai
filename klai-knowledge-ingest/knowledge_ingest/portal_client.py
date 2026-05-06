@@ -9,6 +9,7 @@ Portal API client for taxonomy + connector lifecycle operations.
 
 Missing PORTAL_INTERNAL_TOKEN → returns empty list / skips submission with warning.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -143,6 +144,44 @@ async def submit_taxonomy_proposal(
             kb_slug=kb_slug,
             error=str(exc),
         )
+
+
+async def fetch_kb_metadata(kb_slug: str, org_id: str) -> dict | None:
+    """Fetch KB metadata (description) from portal-api.
+
+    Best-effort — returns None on any error.
+
+    SPEC-TAXONOMY-V2-001 AC-5: provides kb.description for the LLM naming prompt.
+    Returns None when PORTAL_INTERNAL_TOKEN is missing or portal is unreachable.
+    Bootstrap continues with empty description in that case.
+    """
+    if not settings.portal_internal_token:
+        return None
+
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(
+                f"{settings.portal_url}/internal/knowledge-bases/{kb_slug}/metadata",
+                headers={"Authorization": f"Bearer {settings.portal_internal_token}"},
+                params={"zitadel_org_id": org_id},
+            )
+            if resp.status_code == 404:
+                return None
+            if resp.status_code != 200:
+                logger.warning(
+                    "kb_metadata_fetch_failed",
+                    kb_slug=kb_slug,
+                    status=resp.status_code,
+                )
+                return None
+            return resp.json()
+    except Exception as exc:
+        logger.warning(
+            "kb_metadata_fetch_error",
+            kb_slug=kb_slug,
+            error=str(exc),
+        )
+        return None
 
 
 async def finalize_connector_delete(connector_id: str) -> None:
