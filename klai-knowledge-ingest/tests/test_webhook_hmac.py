@@ -139,7 +139,7 @@ def test_webhook_personal_kb_extracts_user_id(hmac_client):
 
     captured: list = []
 
-    async def _fake_ingest(req):
+    async def _fake_ingest(conn, req):
         captured.append(req)
         return {"status": "ok", "chunks": 1, "title": "Note"}
 
@@ -184,7 +184,7 @@ def test_webhook_non_personal_kb_no_user_id(hmac_client):
 
     captured: list = []
 
-    async def _fake_ingest(req):
+    async def _fake_ingest(conn, req):
         captured.append(req)
         return {"status": "ok", "chunks": 1, "title": "Doc"}
 
