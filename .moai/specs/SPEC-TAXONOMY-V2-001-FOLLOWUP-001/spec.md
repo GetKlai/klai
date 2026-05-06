@@ -1,7 +1,7 @@
 ---
 id: SPEC-TAXONOMY-V2-001-FOLLOWUP-001
 version: "0.1.0"
-status: draft
+status: implemented
 created: 2026-05-06
 updated: 2026-05-06
 author: Mark Vletter
