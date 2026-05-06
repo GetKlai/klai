@@ -45,11 +45,15 @@ class McpTokenVerifyResult:
     set defined by SPEC-MCP-AUTH-001 REQ-9). All other fields are None.
     On ``verified=True``: ``user_id``, ``org_id``, ``org_slug``, ``scopes``
     and ``resource_uri`` are populated.
+
+    Note: ``user_id`` and ``org_id`` are strings (zitadel_user_id and
+    str(portal_orgs.id) respectively) — same wire shape as IdentityAsserter's
+    ``VerifyResult`` so consumers can treat both verifiers symmetrically.
     """
 
     verified: bool
-    user_id: int | None = None
-    org_id: int | None = None
+    user_id: str | None = None
+    org_id: str | None = None
     org_slug: str | None = None
     scopes: tuple[str, ...] = ()
     resource_uri: str | None = None
@@ -59,8 +63,8 @@ class McpTokenVerifyResult:
     def allow(
         cls,
         *,
-        user_id: int,
-        org_id: int,
+        user_id: str,
+        org_id: str,
         org_slug: str | None,
         scopes: tuple[str, ...],
         resource_uri: str | None,
@@ -112,7 +116,7 @@ def _interpret_response(payload: Any) -> McpTokenVerifyResult:
     scopes = body.get("scopes") or []
     resource_uri = body.get("resource_uri")
 
-    if not isinstance(user_id, int) or not isinstance(org_id, int):
+    if not isinstance(user_id, str) or not isinstance(org_id, str):
         return McpTokenVerifyResult.deny("portal_unreachable")
     if org_slug is not None and not isinstance(org_slug, str):
         return McpTokenVerifyResult.deny("portal_unreachable")

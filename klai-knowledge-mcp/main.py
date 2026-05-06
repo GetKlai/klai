@@ -26,7 +26,11 @@ from datetime import date
 from typing import Literal, get_args
 
 import httpx
-from klai_identity_assert import IdentityAsserter, VerifyResult
+from klai_identity_assert import (
+    IdentityAsserter,
+    McpTokenAsserter,
+    VerifyResult,
+)
 from log_utils import sanitize_response_body, verify_shared_secret
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
@@ -50,6 +54,15 @@ KNOWLEDGE_INGEST_SECRET = os.environ["KNOWLEDGE_INGEST_SECRET"]
 # coordinates. Both required at startup -- fail-closed if missing.
 PORTAL_API_URL = os.environ["PORTAL_API_URL"]
 PORTAL_INTERNAL_SECRET = os.environ["PORTAL_INTERNAL_SECRET"]
+# SPEC-MCP-AUTH-001 REQ-8 + REQ-14: canonical resource URI for RFC 8707
+# audience binding. Tokens issued for any other resource are rejected by
+# portal-api; the PRM-endpoint advertises this URI back to clients.
+# Kept optional with a sensible default so existing LibreChat-only deploys
+# don't crash if the env-var hasn't been added to SOPS yet.
+MCP_OAUTH_RESOURCE_URL = os.environ.get("MCP_OAUTH_RESOURCE_URL", "https://mcp.getklai.com")
+# SPEC-MCP-AUTH-001: portal-api OAuth issuer base URL — appears in PRM as
+# the authorization-server location (RFC 9728).
+MCP_OAUTH_ISSUER_BASE_URL = os.environ.get("MCP_OAUTH_ISSUER_BASE_URL", "https://my.getklai.com")
 
 # SPEC-SEC-INTERNAL-001 REQ-9.5: enforce non-empty values. ``os.environ[...]``
 # above raises KeyError on missing; the assertions below close the
@@ -197,12 +210,30 @@ def _validate_incoming_secret(ctx: Context) -> None:
 
 
 # -- Identity verification ---------------------------------------------------
-# Module-level singleton: the IdentityAsserter pools an httpx.AsyncClient and
-# carries a per-process LRU cache, so it MUST be reused across tool calls.
+# Module-level singletons: each Asserter pools an httpx.AsyncClient and
+# carries a per-process LRU cache, so they MUST be reused across tool calls.
 _asserter = IdentityAsserter(
     portal_base_url=PORTAL_API_URL,
     internal_secret=PORTAL_INTERNAL_SECRET,
 )
+# SPEC-MCP-AUTH-001 Fase 3 — sibling asserter for the OAuth-token pad. Same
+# httpx pool semantics as IdentityAsserter; different portal endpoint
+# (/internal/mcp-token/verify) and different request shape (raw_token).
+_mcp_token_asserter = McpTokenAsserter(
+    portal_base_url=PORTAL_API_URL,
+    internal_secret=PORTAL_INTERNAL_SECRET,
+    caller_service="knowledge-mcp",
+)
+
+
+# SPEC-MCP-AUTH-001 REQ-12: unified verified-identity shape for both auth
+# paths. Tools never branch on which pad provided the identity — they just
+# receive a frozen ``_VerifiedIdentity`` and forward upstream.
+@dataclass(frozen=True, slots=True)
+class _VerifiedIdentity:
+    user_id: str
+    org_id: str
+    org_slug: str
 
 
 async def _verify_identity(ctx: Context, claimed: _ClaimedIdentity) -> VerifyResult:
@@ -240,6 +271,129 @@ def _log_identity_deny(claimed: _ClaimedIdentity, result: VerifyResult) -> None:
         claimed.org_id,
         claimed.org_slug,
     )
+
+
+# -- SPEC-MCP-AUTH-001 dispatcher ---------------------------------------------
+# Tools call ``_identify_request(ctx)``. The dispatcher branches on the
+# Authorization header:
+#
+#   - ``Authorization: Bearer klai_mcp_<...>``  (NOT klai_mcp_rt_)
+#         → OAuth-token pad: portal /internal/mcp-token/verify lookup
+#   - anything else (including absent / Zitadel-JWT / X-Internal-Secret)
+#         → existing LibreChat pad (X-Internal-Secret + claimed-identity
+#           headers + portal /internal/identity/verify)
+#
+# Both paths converge on a frozen ``_VerifiedIdentity``. Tool bodies stay
+# untouched — they receive the same shape regardless of which pad ran.
+
+# Access-token prefix for the dispatcher branch — matches
+# ``app.services.mcp_oauth.ACCESS_TOKEN_PREFIX``. Refresh-tokens
+# (``klai_mcp_rt_``) MUST NOT be used as bearer credentials on knowledge-mcp
+# (they only work on /oauth/token in portal).
+_OAUTH_ACCESS_PREFIX = "klai_mcp_"
+_OAUTH_REFRESH_PREFIX = "klai_mcp_rt_"
+
+
+def _looks_like_oauth_access_token(authorization: str) -> bool:
+    """True iff the Authorization header carries a klai_mcp_<...> access token.
+
+    Refresh-token prefix (``klai_mcp_rt_``) returns False — refresh tokens
+    are never valid bearer credentials on knowledge-mcp.
+    """
+    if not authorization.lower().startswith("bearer "):
+        return False
+    token = authorization.split(" ", 1)[1].strip()
+    if token.startswith(_OAUTH_REFRESH_PREFIX):
+        return False
+    return token.startswith(_OAUTH_ACCESS_PREFIX)
+
+
+class _IdentificationFailed(RuntimeError):
+    """Raised when neither auth pad produced a verified identity.
+
+    The string carrier is intentionally a generic NL/EN message — reason
+    codes stay in logs (info-leak prevention). Specific tools convert this
+    into the bilingual user-facing error.
+    """
+
+
+async def _identify_via_oauth_token(ctx: Context, raw_token: str) -> _VerifiedIdentity:
+    """Verify a klai_mcp_<...> bearer token against portal-api.
+
+    Audience-binding: portal-api validates the token's resource_uri matches
+    the canonical ``MCP_OAUTH_RESOURCE_URL``. We propagate that as a header
+    only for trace-correlation; the actual binding happens server-side in
+    the verify endpoint.
+    """
+    request_headers = dict(_request_headers(ctx))
+    result = await _mcp_token_asserter.verify(
+        raw_token=raw_token,
+        request_headers=request_headers,
+    )
+    if not result.verified:
+        logger.warning(
+            "knowledge_mcp_oauth_token_rejected: reason=%s",
+            result.reason,
+        )
+        raise _IdentificationFailed(_ERR_IDENTITY_REJECTED)
+    assert result.user_id is not None
+    assert result.org_id is not None
+    assert result.org_slug is not None
+    return _VerifiedIdentity(
+        user_id=result.user_id,
+        org_id=result.org_id,
+        org_slug=result.org_slug,
+    )
+
+
+async def _identify_via_internal_secret(ctx: Context) -> _VerifiedIdentity:
+    """Existing LibreChat pad: X-Internal-Secret + claimed identity headers.
+
+    Behaviourally identical to the pre-SPEC-MCP-AUTH-001 flow — kept verbatim
+    so LibreChat regression cannot drift. Wraps the three discrete steps
+    (validate-secret + extract-claim + verify-claim) into one call.
+    """
+    _validate_incoming_secret(ctx)  # raises ValueError on miss/mismatch
+    claimed = _get_claimed_identity(ctx)  # raises ValueError on missing headers
+    verified = await _verify_identity(ctx, claimed)
+    if not verified.verified:
+        _log_identity_deny(claimed, verified)
+        raise _IdentificationFailed(_ERR_IDENTITY_REJECTED)
+    assert verified.user_id is not None
+    assert verified.org_id is not None
+    assert verified.org_slug is not None
+    return _VerifiedIdentity(
+        user_id=verified.user_id,
+        org_id=verified.org_id,
+        org_slug=verified.org_slug,
+    )
+
+
+async def _identify_request(ctx: Context) -> _VerifiedIdentity:
+    """Single entry point used by every tool.
+
+    Branch on the Authorization header. The OAuth-token pad is selected
+    only when the token-prefix is exactly ``klai_mcp_`` (not ``klai_mcp_rt_``);
+    every other shape (no auth header, Zitadel-JWT bearer, X-Internal-Secret
+    only) falls through to the LibreChat pad.
+
+    @MX:ANCHOR fan_in=high — called from save_personal_knowledge,
+    save_org_knowledge, save_to_docs (and any future tool). Cross-service
+    contract: the returned ``_VerifiedIdentity`` shape MUST stay aligned with
+    ``IdentityAsserter.VerifyResult`` so downstream upstream-calls can use
+    either path indistinguishably.
+    @MX:REASON A regression here that misroutes klai_mcp_rt_ tokens to the
+    OAuth pad would cause portal /internal/mcp-token/verify to return
+    invalid_format and deny — but a regression that misroutes Zitadel-JWTs
+    (LibreChat optional bearer) would silently break the LibreChat pad.
+    @MX:SPEC SPEC-MCP-AUTH-001 REQ-15
+    """
+    headers = _request_headers(ctx)
+    authorization = headers.get("authorization", "")
+    if _looks_like_oauth_access_token(authorization):
+        raw_token = authorization.split(" ", 1)[1].strip()
+        return await _identify_via_oauth_token(ctx, raw_token)
+    return await _identify_via_internal_secret(ctx)
 
 
 # -- Helpers ------------------------------------------------------------------
@@ -339,19 +493,17 @@ def _slugify(text: str) -> str:
 mcp = FastMCP(
     "klai-knowledge",
     transport_security=TransportSecuritySettings(
-        # @MX:WARN: DNS-rebinding protection is intentionally disabled below.
-        # @MX:REASON: safe today because the MCP is not internet-reachable —
-        # Caddy has no upstream route to klai-knowledge-mcp; LibreChat reaches
-        # it via the Docker-internal hostname klai-knowledge-mcp:8080. If a
-        # future Caddy config exposes this service on an HTTP upstream, this
-        # flag MUST be flipped back to True before that change ships, or the
-        # MCP becomes vulnerable to DNS-rebinding CSRF on every tool call.
-        # See SPEC-SEC-HYGIENE-001 REQ-45 and the future SPEC-MCP-TRANSPORT-001
-        # for the full transport-hardening contract. The Caddyfile carries a
-        # matching comment listing klai-knowledge-mcp as not internet-reachable
-        # — adding an upstream there without removing that comment is a
-        # reviewer signal.
-        enable_dns_rebinding_protection=False,
+        # @MX:ANCHOR fan_in=1 — DNS-rebinding protection re-enabled by
+        # SPEC-MCP-AUTH-001 Fase 5. The MCP is now internet-reachable via
+        # Caddy at mcp.getklai.com; LibreChat still reaches it via the
+        # Docker-internal hostname (which doesn't carry a Host header that
+        # matches the allowlist, so it's exempt from DNS-rebinding checks
+        # by virtue of internal-network bypass at the Caddy level).
+        # @MX:REASON Without DNS-rebinding protection on a public MCP,
+        # any attacker page can issue cross-origin requests and have them
+        # accepted. The two-line lift here is the entire defense.
+        # @MX:SPEC SPEC-MCP-AUTH-001 REQ-A6
+        enable_dns_rebinding_protection=True,
     ),
     instructions=(
         "Je hebt toegang tot de kennisbank van de gebruiker en de organisatie.\n\n"
@@ -401,16 +553,14 @@ async def save_personal_knowledge(
     ctx: Context,
     source_note: str | None = None,
 ) -> str:
+    # SPEC-MCP-AUTH-001 REQ-12 + REQ-15: dispatcher selects OAuth-token pad
+    # vs LibreChat internal-secret pad based on Authorization header prefix.
     try:
-        _validate_incoming_secret(ctx)
-        claimed = _get_claimed_identity(ctx)
+        verified = await _identify_request(ctx)
     except ValueError as exc:
         return f"Error: {exc}"
-
-    verified = await _verify_identity(ctx, claimed)
-    if not verified.verified:
-        _log_identity_deny(claimed, verified)
-        return _ERR_IDENTITY_REJECTED
+    except _IdentificationFailed as exc:
+        return str(exc)
 
     if not assertion_mode:
         # SPEC-TAXONOMY-001 DD-2: missing → "unknown", not "factual".
@@ -474,16 +624,14 @@ async def save_org_knowledge(
     ctx: Context,
     source_note: str | None = None,
 ) -> str:
+    # SPEC-MCP-AUTH-001 REQ-12 + REQ-15: dispatcher selects OAuth-token pad
+    # vs LibreChat internal-secret pad based on Authorization header prefix.
     try:
-        _validate_incoming_secret(ctx)
-        claimed = _get_claimed_identity(ctx)
+        verified = await _identify_request(ctx)
     except ValueError as exc:
         return f"Error: {exc}"
-
-    verified = await _verify_identity(ctx, claimed)
-    if not verified.verified:
-        _log_identity_deny(claimed, verified)
-        return _ERR_IDENTITY_REJECTED
+    except _IdentificationFailed as exc:
+        return str(exc)
 
     if not assertion_mode:
         # SPEC-TAXONOMY-001 DD-2: missing → "unknown", not "factual".
@@ -532,16 +680,14 @@ async def save_to_docs(
     kb_name: str | None = None,
     page_path: str | None = None,
 ) -> str:
+    # SPEC-MCP-AUTH-001 REQ-12 + REQ-15: dispatcher selects OAuth-token pad
+    # vs LibreChat internal-secret pad based on Authorization header prefix.
     try:
-        _validate_incoming_secret(ctx)
-        claimed = _get_claimed_identity(ctx)
+        verified = await _identify_request(ctx)
     except ValueError as exc:
         return f"Error: {exc}"
-
-    verified = await _verify_identity(ctx, claimed)
-    if not verified.verified:
-        _log_identity_deny(claimed, verified)
-        return _ERR_IDENTITY_REJECTED
+    except _IdentificationFailed as exc:
+        return str(exc)
 
     # V009: reject path traversal in caller-supplied KB coordinates
     if kb_name is not None and not _KB_NAME_PATTERN.match(kb_name):
@@ -678,7 +824,72 @@ async def save_to_docs(
 
 
 # -- ASGI app -----------------------------------------------------------------
-app = mcp.streamable_http_app()
+#
+# SPEC-MCP-AUTH-001 REQ-8 + REQ-10: wrap the FastMCP ASGI app with a
+# Starlette parent that adds:
+#
+#   1. ``GET /.well-known/oauth-protected-resource`` — RFC 9728 PRM
+#   2. WWW-Authenticate header on 401 responses (added via middleware)
+#
+# Mount the FastMCP app at ``/`` so all existing MCP routes (``/mcp``,
+# ``/sse``, etc.) continue to work unchanged.
+
+from starlette.applications import Starlette  # noqa: E402
+from starlette.middleware import Middleware  # noqa: E402
+from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
+from starlette.requests import Request as StarletteRequest  # noqa: E402
+from starlette.responses import JSONResponse, Response  # noqa: E402
+from starlette.routing import Mount, Route  # noqa: E402
+
+
+async def _well_known_protected_resource(request: StarletteRequest) -> JSONResponse:
+    """RFC 9728 Protected Resource Metadata.
+
+    Per SPEC-MCP-AUTH-001 REQ-8. Lets MCP clients (Claude Desktop, Cursor,
+    ChatGPT custom connectors) auto-discover the authorization server and
+    required scopes after receiving a 401.
+    """
+    metadata = {
+        "resource": MCP_OAUTH_RESOURCE_URL,
+        "authorization_servers": [MCP_OAUTH_ISSUER_BASE_URL],
+        "scopes_supported": ["mcp:knowledge"],
+        "bearer_methods_supported": ["header"],
+    }
+    return JSONResponse(metadata, headers={"Cache-Control": "public, max-age=300"})
+
+
+class _WWWAuthenticateMiddleware(BaseHTTPMiddleware):
+    """Add WWW-Authenticate to every 401 response (REQ-10).
+
+    The header advertises both the realm and the PRM endpoint so clients
+    can auto-discover the OAuth flow without prior knowledge.
+    """
+
+    async def dispatch(self, request, call_next):  # type: ignore[override]
+        response: Response = await call_next(request)
+        if response.status_code == 401 and "www-authenticate" not in {
+            k.lower() for k in response.headers
+        }:
+            prm_url = f"{MCP_OAUTH_RESOURCE_URL}/.well-known/oauth-protected-resource"
+            response.headers["WWW-Authenticate"] = (
+                f'Bearer realm="klai-mcp", resource_metadata="{prm_url}", scope="mcp:knowledge"'
+            )
+        return response
+
+
+_mcp_app = mcp.streamable_http_app()
+app = Starlette(
+    routes=[
+        Route(
+            "/.well-known/oauth-protected-resource",
+            _well_known_protected_resource,
+            methods=["GET"],
+        ),
+        Mount("/", app=_mcp_app),
+    ],
+    middleware=[Middleware(_WWWAuthenticateMiddleware)],
+)
+
 
 if __name__ == "__main__":
     import uvicorn
