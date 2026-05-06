@@ -6,7 +6,6 @@ import uuid
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.database import cross_org_session, tenant_scoped_session
 from app.core.enums import SyncStatus
@@ -35,15 +34,10 @@ class ConnectorScheduler:
         self._scheduler = AsyncIOScheduler()
         self._sync_callback: object | None = None
 
-    async def start(
-        self,
-        session_maker: async_sessionmaker[AsyncSession],
-        sync_callback: object,
-    ) -> None:
+    async def start(self, sync_callback: object) -> None:
         """Start the scheduler and load all enabled connectors with schedules.
 
         Args:
-            session_maker: Async session factory.
             sync_callback: Callable
                 ``(connector_id: UUID, sync_run_id: UUID, org_id: str) -> Coroutine``
                 to invoke when a scheduled sync fires. Typically
@@ -52,9 +46,9 @@ class ConnectorScheduler:
         SPEC-SEC-CONNECTOR-RLS-001: the ``select(Connector)`` here loads
         schedules across all tenants — by definition a cross-org
         operation, run via ``cross_org_session()`` so the RLS policy
-        permits the read. ``session_maker`` is kept on the signature
-        for backward compatibility with existing callers / tests, but
-        the bootstrap session itself comes from ``cross_org_session()``.
+        permits the read. No ``session_maker`` arg — sessions come from
+        the module-level factory in ``app.core.database`` via
+        ``cross_org_session()`` / ``tenant_scoped_session()``.
         """
         self._sync_callback = sync_callback
         self._scheduler.start()
