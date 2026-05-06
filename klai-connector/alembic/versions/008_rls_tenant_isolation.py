@@ -14,7 +14,7 @@ cross-tenant data leak.
 
 This migration enables ENABLE + FORCE ROW LEVEL SECURITY on both tables.
 It does NOT create the RLS policies; policies (and the helper function
-_rls_current_org_id()) require CREATE FUNCTION / CREATE POLICY privileges
+_rls_current_org_text()) require CREATE FUNCTION / CREATE POLICY privileges
 that belong to the ``klai`` superuser role, NOT to the ``connector_api``
 role that alembic runs as. Those DDL statements live in the companion
 post-deploy SQL file:
