@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from knowledge_ingest import queues
+from knowledge_ingest.db import tenant_scoped_connection
 
 
 def register_crawl_tasks(procrastinate_app: Any) -> None:
@@ -56,22 +57,25 @@ def register_crawl_tasks(procrastinate_app: Any) -> None:
             )
 
         from knowledge_ingest.adapters.crawler import run_crawl_job
-        await run_crawl_job(
-            job_id=job_id,
-            org_id=org_id,
-            kb_slug=kb_slug,
-            start_url=start_url,
-            max_depth=max_depth,
-            max_pages=max_pages,
-            include_patterns=include_patterns,
-            exclude_patterns=exclude_patterns,
-            rate_limit=rate_limit,
-            content_selector=content_selector,
-            login_indicator_selector=login_indicator_selector,
-            cookies=cookies,
-            canary_url=canary_url,
-            canary_fingerprint=canary_fingerprint,
-            connector_id=connector_id,
-        )
+        # SPEC-TI-003 AC-9: set RLS GUC for all knowledge.* writes inside run_crawl_job
+        async with tenant_scoped_connection(org_id) as _conn:
+            del _conn  # connection held open to keep GUC set; pg_store uses pool
+            await run_crawl_job(
+                job_id=job_id,
+                org_id=org_id,
+                kb_slug=kb_slug,
+                start_url=start_url,
+                max_depth=max_depth,
+                max_pages=max_pages,
+                include_patterns=include_patterns,
+                exclude_patterns=exclude_patterns,
+                rate_limit=rate_limit,
+                content_selector=content_selector,
+                login_indicator_selector=login_indicator_selector,
+                cookies=cookies,
+                canary_url=canary_url,
+                canary_fingerprint=canary_fingerprint,
+                connector_id=connector_id,
+            )
 
     procrastinate_app.run_crawl = run_crawl  # type: ignore[attr-defined]
