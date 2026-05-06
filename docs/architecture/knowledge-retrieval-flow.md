@@ -1,7 +1,7 @@
 # Knowledge Retrieval Flow: How Chat with Knowledge Works
 
 > Engineering reference for the full retrieval pipeline — from user preference to LLM context injection.
-> Verified against `klai-portal/`, `klai-retrieval-api/`, and `deploy/litellm/` — April 2026 (updated 2026-05-05).
+> Verified against `klai-portal/`, `klai-retrieval-api/`, and `deploy/litellm/` — April 2026 (updated 2026-05-06 post retrieval-coupling audit).
 >
 > For how knowledge is *stored* (ingestion, chunking, embedding), see
 > [knowledge-ingest-flow.md](knowledge-ingest-flow.md).
@@ -83,6 +83,37 @@ User types a message (LibreChat | Partner API consumer | chat widget on external
 
 Everything between "user sends message" and "model starts generating" happens in well
 under a second on a warm cache. The retrieval step itself typically takes 300–500ms.
+
+---
+
+## Identity verification on every `/retrieve` call
+
+retrieval-api authenticates and **verifies the body identity** on every call before
+running any pipeline work. Two trust gates are layered:
+
+1. **Service auth** — either `Authorization: Bearer <jwt>` (Zitadel-issued service
+   JWT with the `klai:internal:retrieval:query` scope) OR `X-Internal-Secret` matching
+   the rotation-bounded shared secret. Every internal-secret caller MUST also send
+   `X-Caller-Service: <known-service>`.
+2. **Body-vs-claim verification** — the `(claimed_user_id, claimed_org_id)` tuple
+   from the request body is verified against portal-api's
+   `/internal/identity/verify`. Three branches:
+
+   | Claim shape | Verification |
+   |---|---|
+   | Real Zitadel user (`claimed_user_id` is a Zitadel sub) | Active membership lookup against `portal_users` |
+   | Bearer JWT forwarded | JWT signature + `sub == claimed_user_id` AND `resourceowner == claimed_org_id` |
+   | **Partner API** synthetic identity (`claimed_user_id="partner:<key_id>"`) | `partner_api_keys` lookup; key's owning `org_id` must map to `claimed_org_id`. **Restricted to `caller_service="portal-api"`.** Other callers presenting the prefix get `partner_key_not_found`. |
+
+The verified tuple is pinned on `request.state.verified_caller`. `emit_event` for
+`knowledge.queried` reads from this pin — never from the body — so a tampered body
+cannot poison `product_events` (SPEC-SEC-IDENTITY-ASSERT-001 REQ-6).
+
+The partner-key branch (F2 fix-forward, audit retrieval-coupling-2026-05-06)
+intentionally lives in portal-api's `identity_verifier`, not in retrieval-api itself.
+An earlier in-process bypass in retrieval-api was removed because it allowed an
+attacker holding `X-Internal-Secret` to pin any `(partner:<key>, victim_org)` tuple
+without portal verification — collapsing the layered defense for partner traffic.
 
 ---
 
@@ -398,8 +429,37 @@ KB slug filter (when active):
 FalkorDB/Graphiti runs a graph traversal in parallel with the Qdrant search, resolving
 named entities in the query and traversing relationships to find conceptually connected
 chunks. Results are merged with Qdrant results using the same RRF formula before
-reranking. Timeout: 5 seconds. `GRAPHITI_ENABLED=true` on `retrieval-api` in production;
-disabled for `scope=notebook` (AC-6 in `retrieve.py`).
+reranking. Timeout: 5 seconds. `GRAPHITI_ENABLED=true` on `retrieval-api` in production.
+
+---
+
+### Step 4b: Link expansion + authority boost (SPEC-CRAWLER-003)
+
+**Simple:** When a top-ranked chunk links to other documents, those linked documents
+are pulled in as extra candidates. Documents that many other documents link to get a
+small ranking boost — the same logic that made PageRank work for the early web.
+
+**Technical:** Two separate mechanisms run after the initial Qdrant + graph search,
+before reranking:
+
+1. **1-hop link expansion** — for the top `link_expand_seed_k=10` chunks, the
+   `links_to` payload is mined for outbound URLs (capped at `link_expand_max_urls=30`).
+   `fetch_chunks_by_urls()` then scrolls Qdrant for chunks whose `source_url` matches
+   one of those URLs (`link_expand_candidates=20` cap), tagging each newly-added chunk
+   with an internal `_link_expanded=True` flag. Score starts at 0.0 — they earn their
+   way into the top-K through the authority boost and reranker.
+
+2. **Authority boost** — every chunk (seed or expanded) gets `score +=
+   link_authority_boost * log(1 + incoming_link_count)`. Default
+   `link_authority_boost=0.05`; a chunk with 100 incoming links gets ~+0.23 score
+   uplift.
+
+**Instrumentation (F3 phase 1, audit retrieval-coupling-2026-05-06):** the
+`retrieval_decision_record` log entry carries a `link_expand` block with `seed_k`,
+`candidate_urls`, `expanded_added`, `expanded_in_top_k`, `expanded_top_k_chunk_ids`,
+`seed_in_top_k`, `served_top_k`. This lets us measure how often expanded chunks
+actually survive into the served top-K vs. dying at the reranker cut-off — Phase 2
+(RRF migration vs. recalibrate boost vs. disable) waits on ~7 days of this data.
 
 ---
 
@@ -570,16 +630,59 @@ knowledge_ingest/rebuild_tasks.py`.
 
 ### Step 6: Evidence tier scoring (shadow mode)
 
-**Simple:** This is a work-in-progress layer that will eventually sort results by how
-*confidently* each chunk makes its claims — a direct assertion beats a vague statement.
-For now it runs silently and logs the scores without affecting what gets shown.
+**Simple:** A work-in-progress layer that re-weights results by source quality, recency,
+and graph centrality before optionally reordering for the LLM. It runs silently today —
+the weighted scores are computed and logged, but the flat reranker order is what gets
+served. A nightly RAGAS A/B will decide whether to activate it, recalibrate, or
+decommission.
 
-**Technical:** Each chunk is classified into an evidence tier: `assertion` > `fact` >
-`general`. Scores are attached to `evidence_tier_metadata` on each chunk. The environment
-variable `EVIDENCE_SHADOW_MODE` (default: `"true"`) controls whether these scores
-re-order the results. When shadow mode is disabled, results are served in a U-shape
-pattern (highest-confidence + lowest-confidence chunks first, mid-confidence last) to
-give the model the strongest anchors at the boundaries of its context window.
+**Technical:** Implemented in
+[`evidence_tier.apply()`](../../klai-retrieval-api/retrieval_api/services/evidence_tier.py).
+Each chunk is multiplied by four weights along independent dimensions, gated by
+per-dimension feature flags:
+
+```
+final_score = reranker_score
+            * content_type_weight       # EVIDENCE_CONTENT_TYPE_ENABLED
+            * assertion_mode_weight     # EVIDENCE_ASSERTION_MODE_ENABLED (flat 1.00 in v1)
+            * temporal_decay            # EVIDENCE_TEMPORAL_DECAY_ENABLED
+            * pagerank_weight           # EVIDENCE_PAGERANK_ENABLED
+```
+
+| Weight | Source | Default values |
+|---|---|---|
+| `content_type_weight` | Per-chunk `content_type` payload (set at ingest) | `kb_article=1.00`, `pdf_document=0.90`, `meeting_transcript=0.80`, `1on1_transcript=0.80`, `graph_edge=0.70`, `web_crawl=0.65`, `unknown=0.55` |
+| `assertion_mode_weight` | Per-chunk `assertion_mode` payload | All flat at 1.00 in v1 — plumbing only. SPEC-EVIDENCE-002 governs activation. |
+| `temporal_decay` | Chunk `ingested_at` age | `<30d=1.00`, `30-180d=0.95`, `180-365d=0.90`, `>365d=0.85` |
+| `pagerank_weight` | Per-chunk `entity_pagerank_max` from FalkorDB | `1 + 0.20 * log1p(pagerank * 100)` — capped ~+25% for hub entities |
+
+After scoring, chunks are reordered into a **U-shape** (`_order_for_llm`): strongest
+chunk at position 0, second-strongest at the last position, mid-strength chunks
+clustered in the middle. This mitigates "Lost in the Middle" (Liu et al. 2023,
+[arXiv:2307.03172](https://arxiv.org/abs/2307.03172)) — long-context LLMs historically
+showed >30% performance degradation when the strongest evidence sat in the middle of
+the prompt. Whether this still holds for modern frontier LLMs is part of what the
+RAGAS A/B will measure.
+
+**Shadow-mode contract:** `EVIDENCE_SHADOW_MODE=true` (default) computes the
+weighted/U-shape order, logs both orders side-by-side as `shadow_eval`, and serves the
+**flat reranker order**. The CPU cost (`copy.deepcopy(reranked) + apply()`) is paid on
+every request.
+
+**Activation path (SPEC-EVIDENCE-001-FOLLOWUP-001):** the shadow mode has been the
+default since 2026-03-30. RAGAS infrastructure landed 2026-05-05 (#369). The follow-up
+SPEC sets a 30-day deadline to either:
+
+1. Activate (5%/50%/100% staged rollout with auto-revert on quality regression),
+2. Activate `evidence_tier_temporal_only` (temporal decay isolated; the dimension with
+   the strongest theoretical justification),
+3. Decommission entirely (remove the `evidence_tier.apply()` call + payload fields), or
+4. Retain-flags-off (`EVIDENCE_SHADOW_MODE=disabled` becomes the new default — stops
+   the shadow CPU cost while preserving code for future revival).
+
+The RAGAS A/B uses three `RAG_EVAL_VARIANT` values (`baseline`, `evidence_tier_full`,
+`evidence_tier_temporal_only`) over 7 consecutive days. Decision criteria: ≥+0.02 on
+RAGAS Context Precision AND Faithfulness with Wilcoxon `p<0.05` against baseline.
 
 ---
 
@@ -762,7 +865,15 @@ Trailing punctuation and whitespace are ignored. "Ok!" and "Oké." are both triv
 | `RETRIEVAL_GATE_THRESHOLD` | `0.1` | Cosine margin threshold for gate bypass |
 | `retrieval_candidates` | `60` | Raw candidates fetched from Qdrant |
 | `reranker_candidates` | `20` | Top-N sent to cross-encoder |
-| `EVIDENCE_SHADOW_MODE` | `true` | Log evidence tiers without reordering results |
+| `EVIDENCE_SHADOW_MODE` | `true` | Compute weighted score + U-shape order, log as `shadow_eval`, serve flat reranker order. Activation gated by SPEC-EVIDENCE-001-FOLLOWUP-001 (RAGAS A/B + 30-day deadline). |
+| `EVIDENCE_CONTENT_TYPE_ENABLED` | `true` | Per-dimension flag for content_type weights. |
+| `EVIDENCE_TEMPORAL_DECAY_ENABLED` | `true` | Per-dimension flag for temporal decay. |
+| `EVIDENCE_PAGERANK_ENABLED` | `true` | Per-dimension flag for entity_pagerank_max boost. |
+| `link_expand_enabled` | `true` | 1-hop link expansion + authority boost (SPEC-CRAWLER-003). |
+| `link_expand_seed_k` | `10` | Top-N raw chunks whose `links_to` payload is mined. |
+| `link_expand_max_urls` | `30` | Cap on URLs collected from seed chunks per request. |
+| `link_expand_candidates` | `20` | Cap on Qdrant scroll results when fetching link-expanded chunks. |
+| `link_authority_boost` | `0.05` | Coefficient on `log(1 + incoming_link_count)` authority boost. |
 | `graphiti_enabled` | `true` (both `retrieval-api` and `knowledge-ingest`) | Include FalkorDB graph search (parallel with Qdrant 3-leg RRF). |
 | `graph_search_timeout` | `5.0` | FalkorDB search timeout (seconds) |
 | `coreference_timeout` | `3.0` | Coreference LLM call timeout (seconds) |
@@ -843,7 +954,13 @@ snapshot: [docs/architecture/retrieval-improvements-roadmap.md](retrieval-improv
 | Coreference | `klai-retrieval-api/retrieval_api/services/coreference.py` | Pronoun resolution via `klai-fast` |
 | Embeddings | `klai-retrieval-api/retrieval_api/services/tei.py` | Dense + sparse embedding via BGE-M3 |
 | Qdrant search | `klai-retrieval-api/retrieval_api/services/search.py` | Hybrid three-leg RRF search |
-| Source-aware select | `klai-retrieval-api/retrieval_api/services/source_aware_select.py` | `mentioned` / `diversify` mode; shares `STOP_WORDS` with `diversity.py` |
+| Source-aware select | `klai-retrieval-api/retrieval_api/services/diversity.py` | `source_aware_select()` — `mentioned` / `diversify` mode + `STOP_WORDS`. Called from `retrieve.py` step 5c. |
+| Evidence tier | `klai-retrieval-api/retrieval_api/services/evidence_tier.py` | `apply()` + `_order_for_llm()` U-shape; content_type / temporal / pagerank weights. Shadow-mode default. |
+| Parent text swap | `klai-retrieval-api/retrieval_api/services/parent_lookup.py` | SPEC-RAG-PARENT-CHILD-001 — batch-fetches `knowledge.parent_chunks` rows for chunks with `parent_chunk_id`. |
+| Quality boost | `klai-retrieval-api/retrieval_api/quality_boost.py` | SPEC-KB-015 — `feedback_count >= 3` cold-start gate, ±10% boost. |
+| Identity verify (portal) | `klai-portal/backend/app/services/identity_verifier.py` | `verify_identity_claim()` — JWT / membership / `partner:<key_id>` branches. |
+| Identity asserter (lib) | `klai-libs/identity-assert/klai_identity_assert/` | Consumer-side cache + retry around `/internal/identity/verify`. |
+| F2 audit ref | `.moai/audits/retrieval-coupling-2026-05-06/findings/F2-...md` | Why partner-key verification lives portal-side (not in retrieval-api). |
 | Router (signal) | `klai-retrieval-api/retrieval_api/services/router.py` | Keyword + semantic-centroid signal for source-aware select (SPEC-KB-021) |
 | Graph search | `klai-retrieval-api/retrieval_api/services/graph_search.py` | FalkorDB/Graphiti parallel traversal, RRF-merged with Qdrant results |
 | Reranker | `klai-retrieval-api/retrieval_api/services/reranker.py` | Cross-encoder reranking via BGE-reranker-v2-m3 on gpu-01 (Infinity) |
