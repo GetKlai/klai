@@ -725,7 +725,12 @@ def _combine_bulk_responses(
         # Redirect fallback: positional alignment when canonical match
         # missed AND the response at this index hasn't been claimed AND
         # its URL doesn't canonical-match a DIFFERENT candidate (which
-        # would be ambiguous).
+        # would be ambiguous) AND the response stays on the same origin
+        # domain. The same-domain guard makes the fallback safe even if
+        # crawl4ai's MemoryAdaptiveDispatcher reorders the response list
+        # under load — at worst we miss a redirect classification and
+        # surface UNKNOWN_EXCEPTION (visible to operators) rather than
+        # silently mislabel an unrelated URL.
         if (
             page is None
             and len(raw_results) == len(candidates)
@@ -734,9 +739,14 @@ def _combine_bulk_responses(
         ):
             positional = raw_results[i]
             if positional and positional.get("url"):
-                pos_canonical = _canonicalise_url(positional["url"])
+                pos_url = positional["url"]
+                pos_canonical = _canonicalise_url(pos_url)
                 pos_owner_idx = canonical_to_idx.get(pos_canonical)
-                if pos_owner_idx is None or pos_owner_idx == i:
+                pos_domain = urlparse(pos_url).netloc.lower()
+                if (
+                    (pos_owner_idx is None or pos_owner_idx == i)
+                    and pos_domain == base_domain
+                ):
                     page = positional
                     claimed_response_indices.add(i)
 
