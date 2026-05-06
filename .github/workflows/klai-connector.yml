@@ -141,10 +141,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Trivy policy lives in .trivy.yaml at repo root (SPEC-CI-TRIVY-POLICY-001 REQ-1).
+      # PR #1 wires the config; inline `severity` + `ignore-unfixed` stay until PR #3
+      # removes them with `exit-code: '1'` + `limit-severities-for-sarif: 'true'`.
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: ghcr.io/getklai/klai-connector:${{ github.sha }}
+          trivy-config: .trivy.yaml
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
