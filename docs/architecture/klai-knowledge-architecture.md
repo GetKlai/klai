@@ -239,10 +239,11 @@ Stored as `assertion_mode` on every knowledge artifact.
 | `quoted` | Attributed to a specific source, not endorsed independently |
 | `belief` | Held as likely true but not verified ("we think this affects macOS 14 only") |
 | `hypothesis` | Explicitly speculative; requires validation |
+| `unknown` | Epistemic status not specified; system default for untagged content (SPEC-TAXONOMY-001 DD-2) |
 
 **Research finding — 3 vs. 5 assertion categories:**
 
-The DB schema stores 5 values for full expressiveness. However, [assertion modes research](../research/assertion-modes/assertion-modes-research.md) found that human inter-annotator agreement drops from ~89% at 3 categories to ~67% at 5 categories (Prieto et al. 2020, Rubin 2007). For **retrieval scoring and automated classification**, the 5 values should be grouped into 3: `assertion` (factual + quoted), `speculation` (hypothesis + belief), `procedure` (procedural). The 5-value schema remains the source of truth for storage and manual labeling; grouping happens only at the scoring/classification layer.
+The DB schema stores 6 values: 5 epistemic categories above plus `unknown` for content with no explicit classification. However, [assertion modes research](../research/assertion-modes/assertion-modes-research.md) found that human inter-annotator agreement drops from ~89% at 3 categories to ~67% at 5 categories (Prieto et al. 2020, Rubin 2007). For **retrieval scoring and automated classification**, the 5 epistemic values should be grouped into 3: `assertion` (factual + quoted), `speculation` (hypothesis + belief), `procedure` (procedural). The 6-value schema remains the source of truth for storage and manual labeling; grouping happens only at the scoring/classification layer. `unknown` carries flat/neutral weight in retrieval scoring — see [SPEC-TAXONOMY-001 Realignment Note](../../.moai/specs/SPEC-TAXONOMY-001/spec.md) for why it is not a sixth epistemic category but an explicit "no-classification" sentinel.
 
 See also: [Assertion Mode Weights](../research/assertion-modes/assertion-mode-weights.md) for starting weight recommendations and maximum safe spread derivation.
 
