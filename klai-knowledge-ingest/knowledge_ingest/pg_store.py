@@ -728,6 +728,17 @@ async def update_crawled_page_simhash(
     while the rest of the ingest path assumed the fingerprint is stored.
     Logs a structlog warning instead of raising — fingerprint storage is
     not critical-path; the next backfill pass populates the value.
+
+    @MX:ANCHOR — invariant. ``RETURNING url`` is load-bearing for race
+    detection. Reverting to bare ``conn.execute`` would re-introduce the
+    silent-zero-row failure the SPEC-002 follow-ups (PR #445) added this
+    helper to fix. The structlog event name
+    ``crawled_pages_simhash_update_no_row`` is the contract for any
+    Grafana alert hooked to this signal.
+    @MX:NOTE — fail-soft on race: warn + continue. Fingerprint storage is
+    non-critical (next backfill catches up). Raising would convert a
+    benign delete-during-ingest race into a 500 on the crawler.
+    Reason: SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-01 + follow-up.
     """
     returned = await conn.fetchval(
         "UPDATE knowledge.crawled_pages "

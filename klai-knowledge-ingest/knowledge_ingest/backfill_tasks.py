@@ -86,6 +86,14 @@ def _count_cluster_siblings(
     fingerprints, but legacy rows from before that guard could still
     surface here. Filter both directions: a 0-target returns 0, and
     0-siblings are not counted.
+
+    @MX:NOTE — the 0-skip is a defensive double-check. The crawler and
+    backfill ``_ensure_simhashes`` already skip persisting hash=0, so in
+    a clean DB no zero-siblings exist. This filter handles legacy rows
+    + any future caller that bypasses the storage guards. Removing the
+    filter would let a tenant with several rendered-but-empty crawl
+    results false-positive cluster as walls.
+    Reason: SPEC-INGEST-LOGIN-WALL-DETECT-002 follow-up (PR #445).
     """
     if target_hash == 0:
         return 0
@@ -161,6 +169,20 @@ async def backfill_detect_login_walls(
     so RLS enforces ``org_id`` server-side. Qdrant deletes carry an
     ``org_id + kb_slug + path`` triple in ``Filter.must`` to comply with the
     tenant-isolation semgrep rule.
+
+    @MX:ANCHOR — invariant. Operator-triggered task. The Qdrant filter
+    triple (``org_id + kb_slug + path``) is enforced by the semgrep rule
+    in ``.github/workflows/tenant-isolation-review.yml``. Removing any
+    field is a tenant-isolation breach (would let a delete cross
+    tenants).
+    @MX:WARN — concurrent crawl race. Running this task while a
+    ``run_crawl_job`` is executing on the same ``(org_id, kb_slug)`` can
+    leave new pages without simhashes (read-then-write split): pass-1
+    snapshots rows; concurrent ingest inserts new rows AFTER the
+    snapshot; pass-2 evaluates the snapshot. Operators MUST ensure no
+    crawl is in flight before triggering. @MX:REASON — Procrastinate's
+    queueing_lock would help but is not wired in this task.
+    Reason: SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-04, REQ-09.
     """
     qdrant = get_qdrant_client()
     log = logger.bind(org_id=org_id, kb_slug=kb_slug)
@@ -263,6 +285,20 @@ async def recover_purged_pages(
 
     Designed for one-shot operator use immediately after v2 deploys — to
     undo v1 phrase-detector FPs that v2's cluster mechanism exonerates.
+
+    @MX:ANCHOR — invariant. Recovery sets ``content_hash = ''`` (empty
+    string), NOT NULL. The empty string is the "force re-fetch" sentinel
+    that the crawler's dedup-skip branch relies on (``stored_content !=
+    None and stored_content == content_hash``). NULL would be treated as
+    "never crawled" and fall through to the regular crawl path with a
+    spurious initial state.
+    @MX:NOTE — recovered pages with template-stub content WILL re-purge
+    after the next crawl: crawl4ai re-fetches current source content; if
+    it's still a wall stub, the v2 ingest detector re-flags via cluster
+    membership. Operators see "recovered: N" but expect that count to
+    shrink toward "true FPs" after re-crawl. Documented in
+    ``acceptance.md`` AC-05.1 recovery semantics note.
+    Reason: SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-05.
     """
     log = logger.bind(org_id=org_id, kb_slug=kb_slug)
 
