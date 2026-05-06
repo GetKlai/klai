@@ -356,16 +356,35 @@ class TestLinkExpandInstrumentation:
             resp = client.post("/retrieve", json=sample_retrieve_request)
 
         assert resp.status_code == 200
-        # Find the retrieval_decision_record structlog event
-        rec = next(
-            (r for r in caplog.records if "retrieval_decision_record" in r.getMessage()),
-            None,
+
+        # The retrieval_decision_record structlog event MUST be present.
+        # Polish 2026-05-06: dropped the previous `or` in the assertion that
+        # let the test pass when `rec is None`. structlog routes through
+        # stdlib `logging` via ProcessorFormatter, so caplog DOES capture
+        # these records — if it doesn't, the F3 instrumentation contract is
+        # broken and we want the test to fail loudly.
+        record_messages = [r.getMessage() for r in caplog.records]
+        decision_records = [m for m in record_messages if "retrieval_decision_record" in m]
+        assert decision_records, (
+            "retrieval_decision_record log line missing from caplog. "
+            f"Captured records: {record_messages}"
         )
-        # structlog emits as plain log message; verify the key fields are
-        # in the record's structured-data attrs.
-        assert rec is not None or any("link_expand" in r.getMessage() for r in caplog.records), (
-            "decision_record log should contain a link_expand block"
-        )
+
+        # Verify the link_expand block actually appears with its required keys.
+        # The structlog kwargs end up in the record's attribute dict via
+        # ProcessorFormatter — search the record's __dict__ for our keys.
+        rec = next(r for r in caplog.records if "retrieval_decision_record" in r.getMessage())
+        rec_attrs = " ".join(f"{k}={v}" for k, v in rec.__dict__.items())
+        for required_key in (
+            "link_expand",
+            "expanded_in_top_k",
+            "seed_in_top_k",
+            "served_top_k",
+        ):
+            assert required_key in rec_attrs, (
+                f"link_expand block missing required key '{required_key}'. "
+                f"Record attrs: {rec.__dict__}"
+            )
 
     def test_link_expanded_flag_survives_evidence_tier_deep_copy(self):
         """The instrumentation tag MUST survive `copy.deepcopy(reranked)`
