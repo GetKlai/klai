@@ -38,8 +38,9 @@ async def _warmup_reranker() -> None:
                 },
             )
         logger.info("reranker warmup complete")
-    except Exception as exc:
-        logger.warning("reranker warmup failed (non-fatal): %s", exc)
+    except Exception:
+        # F6 audit cleanup (TRY401): exc_info=True preserves traceback.
+        logger.warning("reranker warmup failed (non-fatal)", exc_info=True)
 
 
 @asynccontextmanager

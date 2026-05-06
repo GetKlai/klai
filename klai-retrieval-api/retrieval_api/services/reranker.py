@@ -55,8 +55,9 @@ async def rerank(
             )
             resp.raise_for_status()
             data = resp.json()
-    except Exception as exc:
-        logger.warning("Reranker call failed, falling back to Qdrant scores: %s", exc)
+    except Exception:
+        # F6 audit cleanup (TRY401): exc_info=True preserves traceback.
+        logger.warning("Reranker call failed, falling back to Qdrant scores", exc_info=True)
         fallback = candidates[:top_k]
         for c in fallback:
             c["reranker_score"] = None

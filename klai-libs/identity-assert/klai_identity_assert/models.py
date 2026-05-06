@@ -12,7 +12,10 @@ from dataclasses import dataclass
 from typing import Literal
 
 # Stable evidence types — mirrors portal-api REQ-1.3 / REQ-1.4 contract.
-Evidence = Literal["jwt", "membership"]
+# ``partner_key`` (F2 fix-forward, retrieval coupling audit 2026-05-06):
+# evidence used for synthetic ``partner:<key_id>`` identities verified
+# against the partner_api_keys table by portal-api.
+Evidence = Literal["jwt", "membership", "partner_key"]
 
 # Stable reject codes — mirrors portal-api REQ-1.7 stable_code list. Plus two
 # consumer-side codes the library raises before ever reaching portal:
@@ -27,6 +30,9 @@ ReasonCode = Literal[
     "cache_unavailable",
     "portal_unreachable",
     "library_misconfigured",
+    # F2 fix-forward (retrieval coupling audit 2026-05-06): partner-key paths.
+    "partner_key_not_found",
+    "partner_key_org_mismatch",
 ]
 
 

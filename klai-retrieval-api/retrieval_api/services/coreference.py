@@ -59,8 +59,9 @@ async def resolve(query: str, history: list[dict]) -> str:
     except TimeoutError:
         logger.warning("Coreference resolution timed out, using original query")
         return query
-    except Exception as exc:
-        logger.warning("Coreference resolution failed: %s", exc)
+    except Exception:
+        # F6 audit cleanup (TRY401): exc_info=True preserves traceback.
+        logger.warning("Coreference resolution failed", exc_info=True)
         return query
 
 

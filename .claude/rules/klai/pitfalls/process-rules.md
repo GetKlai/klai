@@ -1,5 +1,119 @@
 # Process Rules
 
+## postgres-no-return-type-overload (HIGH)
+PostgreSQL does NOT support function overloading by return type alone.
+Two zero-argument functions with the same name and different return
+types cannot coexist in the same schema. `CREATE OR REPLACE FUNCTION`
+on an existing function with a different return type fails with:
+
+```
+ERROR:  cannot change return type of existing function
+HINT:  Use DROP FUNCTION _rls_current_org_id() first.
+```
+
+Reference: SPEC-TI-002 (PR #375, 2026-05-06). The post-deploy SQL
+declared `_rls_current_org_id() RETURNS text` next to portal-api's
+existing `_rls_current_org_id() RETURNS integer`. The SPEC author
+believed Postgres allowed return-type overloading; it does not. The
+migration's ENABLE+FORCE RLS step succeeded but the policy creation
+aborted, leaving connector.connectors and connector.sync_runs with
+default-deny RLS and no policies — a 100% read/write block on every
+connector operation.
+
+Recovered by hot-renaming to `_rls_current_org_text()` in prod via
+post-deploy SQL, then back-filling the source tree
+(fix/SPEC-TI-002-rls-function-name-collision).
+
+**Prevention:**
+
+1. **Schema-qualify per-service RLS helpers.** Each service that needs a
+   different-typed `_rls_current_org_id` should put it in its own
+   schema (e.g. `connector._rls_current_org_id() RETURNS text`,
+   `knowledge._rls_current_org_id() RETURNS text`,
+   `public._rls_current_org_id() RETURNS integer`). Schema-qualified
+   functions don't collide. SPEC-TI-003 already does this correctly
+   with `knowledge._rls_current_org_id()`.
+
+2. **Or use a clearly-different name.** `_rls_current_org_text()` /
+   `_rls_current_org_int()` / `_rls_current_<service>_org()` make the
+   type explicit at the call site and remove ambiguity in policy
+   definitions.
+
+3. **Never rely on "return type overloading".** It is not a Postgres
+   feature regardless of how the docs read at first glance. The actual
+   overloading dimension is parameter list (zero-arg vs one-arg vs
+   two-arg, OR same arity but different parameter types). Return type
+   alone is never enough.
+
+4. **Smoke-test the post-deploy SQL on a non-prod DB before merging
+   the SPEC.** Apply against a snapshot or stage DB. Any error here is
+   a deployment-blocker — production policies must exist BEFORE the
+   alembic migration ENABLE+FORCEs RLS, or the table becomes default-
+   deny with no recourse from the application layer.
+
+## rls-policy-shape-must-match-lifespan-assert (HIGH)
+The portal-api lifespan substring-matches the literal text `"IS NULL"` in
+the `portal_users.tenant_isolation` USING clause and raises if absent.
+RLS policy DDL must (a) keep that substring AND (b) match the table's
+auth category — Cat-A AUTH-SEED tables (`portal_users`,
+`portal_connectors`) are queried BEFORE tenant context is set, so they
+MUST use the inline NULLIF pattern; calling the `_rls_current_org_id()`
+helper raises ERRCODE 42501 and 500s every authenticated request.
+Cat-D strict tenant tables MUST use the helper (fail-loud is correct).
+
+Reference: SPEC-TI-005 (PR #377, 2026-05-06).
+
+```sql
+-- Cat-A (portal_users, portal_connectors) — inline NULLIF, no helper call:
+USING (
+    org_id = NULLIF(current_setting('app.current_org_id', true), '')::integer
+    OR NULLIF(current_setting('app.current_org_id', true), '') IS NULL
+)
+WITH CHECK (org_id = NULLIF(current_setting('app.current_org_id', true), '')::integer)
+```
+
+**Prevention:**
+- Cat-A tables: inline NULLIF only. Cat-D tables: helper. Never swap.
+- `curl /api/me → 401` does NOT validate Cat-A reads (401 short-circuits
+  before the DB query). Hit an authenticated endpoint, or run
+  `SET ROLE portal_api; RESET app.current_org_id; SELECT COUNT(*) FROM portal_users;`
+  and confirm no 42501.
+- Any USING-shape change MUST update `assert_portal_users_rls_ready()`
+  in the same PR, or extend the rls-policy-smoke-test CI job to import
+  `app.main` and invoke the lifespan assertion.
+
+## asyncpg-pool-guc-not-shared (HIGH)
+Postgres GUCs (`current_setting('app.foo', true)`) are **connection-local**,
+not pool-local. Setting the GUC on connection A does NOT propagate to
+connection B that a later `pool.acquire()` returns. Pinning one
+connection in an outer `async with tenant_scoped_connection(...)` and
+letting the body call `pool.acquire()` on its own gives the body a
+DIFFERENT connection without the GUC — every query against an
+RLS-protected table raises ERRCODE 42501.
+
+Reference: SPEC-TI-003 (PR #376, 2026-05-06).
+
+```python
+# WRONG — the SPEC author wrote this literally:
+async with tenant_scoped_connection(org_id) as _conn:
+    del _conn  # connection held open to keep GUC set; pg_store uses pool
+    await run_crawl_job(...)  # → pg_store grabs a DIFFERENT pool conn → 42501
+```
+
+Fix: pass the `conn` from the helper through every function that issues
+SQL, or have the leaf function open its own `tenant_scoped_connection`.
+
+**Prevention:**
+- `tenant_scoped_connection` helpers MUST yield a `Connection` callers
+  PASS through — never pin-and-pray.
+- Code review for any RLS helper: grep `pool.acquire()` / `get_pool()`
+  in the same service. Every site must accept a `conn` parameter, be
+  inside the helper, or never touch RLS-protected tables.
+- contextvars and per-request middleware do NOT help — they carry
+  Python state, not Postgres connection state.
+- Pre-merge: run a smoke-test against a clean Postgres with the
+  FORCE-RLS post-deploy SQL applied. Any wiring gap surfaces as 42501.
+
 ## scale-the-answer-to-the-problem (HIGH)
 When a user asks "what is industry standard?" do not autopilot to the
 most architecturally-elegant answer in the search results. Anchor on

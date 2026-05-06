@@ -180,7 +180,12 @@ async def chat_completions(
     # 5. Translate kb_ids -> kb_slugs
     kb_slugs = await _resolve_kb_slugs(kb_ids, auth.org_id, db)
 
-    # 6. Retrieve context
+    # 6. Retrieve context.
+    # F2 (audit retrieval-coupling-2026-05-06): pass synthetic partner_user_id
+    # so retrieval-api pins verified_caller and emits the
+    # `knowledge.queried` product_event with the correct (org, partner-key)
+    # tuple. Matches the existing convention used at line ~205 below for
+    # write_retrieval_log.
     try:
         chunks, system_prompt = await retrieve_context(
             org_id=auth.org_id,
@@ -188,6 +193,7 @@ async def chat_completions(
             kb_slugs=kb_slugs,
             messages=request.messages,
             settings=settings,
+            partner_user_id=f"partner:{auth.key_id}",
         )
     except (httpx.TimeoutException, httpx.ReadTimeout) as exc:
         raise HTTPException(
