@@ -235,14 +235,14 @@ async def create_template(
         org_id=org.id,
     )
 
-    # Cache invalidation.
+    # Cache invalidation. B-5 (SPEC-TI-010B): use zitadel_org_id (str).
     if template.scope == "org":
-        await invalidate_templates(org.id)
+        await invalidate_templates(org.zitadel_org_id)
     else:
         # Personal: only the creator's cache needs dropping.
         lc_uid = _librechat_user_id_or_none(caller)
         if lc_uid:
-            await invalidate_templates(org.id, lc_uid)
+            await invalidate_templates(org.zitadel_org_id, lc_uid)
 
     return _template_out(template)
 
@@ -343,12 +343,13 @@ async def update_template(
     )
 
     # Any scope change, or an org-scope write, affects the whole org.
+    # B-5 (SPEC-TI-010B): use zitadel_org_id (str).
     if template.scope == "org" or previous_scope == "org":
-        await invalidate_templates(org.id)
+        await invalidate_templates(org.zitadel_org_id)
     else:
         lc_uid = _librechat_user_id_or_none(caller)
         if lc_uid:
-            await invalidate_templates(org.id, lc_uid)
+            await invalidate_templates(org.zitadel_org_id, lc_uid)
 
     return _template_out(template)
 
@@ -382,9 +383,10 @@ async def delete_template(
         org_id=org.id,
     )
 
+    # B-5 (SPEC-TI-010B): use zitadel_org_id (str).
     if scope == "org":
-        await invalidate_templates(org.id)
+        await invalidate_templates(org.zitadel_org_id)
     else:
         lc_uid = _librechat_user_id_or_none(caller)
         if lc_uid:
-            await invalidate_templates(org.id, lc_uid)
+            await invalidate_templates(org.zitadel_org_id, lc_uid)

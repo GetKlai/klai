@@ -343,14 +343,18 @@ class TestFlushRedisTenantKeys:
         mock_redis.unlink.assert_called()
 
     @pytest.mark.asyncio
-    async def test_no_keys_no_unlink(self) -> None:
-        """When no keys match, UNLINK must not be called."""
+    async def test_no_scan_keys_still_calls_exact_key_unlink(self) -> None:
+        """When no SCAN keys match, the exact-key UNLINK (connector_rl + templates_rl)
+        is still called once (B-10, SPEC-TI-010B). Before B-10, UNLINK was never
+        called on empty SCAN. Now the step unconditionally unlinks the exact keys.
+        """
         state = _make_state(slug="acme")
 
         mock_redis = MagicMock()
         mock_redis.__enter__ = MagicMock(return_value=mock_redis)
         mock_redis.__exit__ = MagicMock(return_value=False)
         mock_redis.scan_iter.return_value = iter([])
+        mock_redis.unlink.return_value = 0  # all exact keys absent = 0 deleted
         mock_redis.close = MagicMock()
 
         with (
@@ -364,7 +368,8 @@ class TestFlushRedisTenantKeys:
 
             await _flush_redis_tenant_keys(state)
 
-        mock_redis.unlink.assert_not_called()
+        # Exactly one UNLINK call for the exact keys batch (connector_rl + templates_rl).
+        assert mock_redis.unlink.call_count == 1
 
 
 # ---------------------------------------------------------------------------

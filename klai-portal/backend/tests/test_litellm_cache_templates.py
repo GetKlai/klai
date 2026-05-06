@@ -3,6 +3,10 @@
 Locks in SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-CACHE: single DEL for
 user-specific changes, SCAN+DEL for org-wide changes, fire-and-forget
 semantics on Redis errors.
+
+Updated for SPEC-TI-010B B-5: parameter is now zitadel_org_id (str),
+not org_id (int). The Zitadel org_id string is used as the Redis key
+namespace to match the writer side (deploy/litellm/klai_knowledge.py).
 """
 
 from __future__ import annotations
@@ -10,6 +14,9 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+# Use a realistic Zitadel org_id string throughout these tests.
+_ZITADEL_ORG_ID = "362757920133283846"
 
 
 @pytest.fixture
@@ -33,9 +40,9 @@ async def test_single_user_invalidation_calls_delete_exactly_once(mock_redis_poo
     from app.services.litellm_cache import invalidate_templates
 
     with patch("app.services.litellm_cache.get_redis_pool", AsyncMock(return_value=mock_redis_pool)):
-        await invalidate_templates(org_id=42, librechat_user_id="507f1f77bcf86cd799439011")
+        await invalidate_templates(zitadel_org_id=_ZITADEL_ORG_ID, librechat_user_id="507f1f77bcf86cd799439011")
 
-    mock_redis_pool.delete.assert_awaited_once_with("templates:42:507f1f77bcf86cd799439011")
+    mock_redis_pool.delete.assert_awaited_once_with(f"templates:{_ZITADEL_ORG_ID}:507f1f77bcf86cd799439011")
     mock_redis_pool.scan_iter.assert_not_called()
 
 
@@ -46,24 +53,24 @@ async def test_org_wide_invalidation_scans_and_deletes(mock_redis_pool: MagicMoc
 
     async def _scan_with_keys(match: str, count: int = 100):
         # Simulate 3 matching keys for this org.
-        yield "templates:42:user-a"
-        yield "templates:42:user-b"
-        yield "templates:42:user-c"
+        yield f"templates:{_ZITADEL_ORG_ID}:user-a"
+        yield f"templates:{_ZITADEL_ORG_ID}:user-b"
+        yield f"templates:{_ZITADEL_ORG_ID}:user-c"
 
     mock_redis_pool.scan_iter = MagicMock(side_effect=_scan_with_keys)
 
     with patch("app.services.litellm_cache.get_redis_pool", AsyncMock(return_value=mock_redis_pool)):
-        await invalidate_templates(org_id=42)
+        await invalidate_templates(zitadel_org_id=_ZITADEL_ORG_ID)
 
     assert mock_redis_pool.delete.await_count == 3
-    mock_redis_pool.delete.assert_any_await("templates:42:user-a")
-    mock_redis_pool.delete.assert_any_await("templates:42:user-b")
-    mock_redis_pool.delete.assert_any_await("templates:42:user-c")
+    mock_redis_pool.delete.assert_any_await(f"templates:{_ZITADEL_ORG_ID}:user-a")
+    mock_redis_pool.delete.assert_any_await(f"templates:{_ZITADEL_ORG_ID}:user-b")
+    mock_redis_pool.delete.assert_any_await(f"templates:{_ZITADEL_ORG_ID}:user-c")
 
 
 @pytest.mark.asyncio
 async def test_org_wide_invalidation_passes_correct_pattern(mock_redis_pool: MagicMock) -> None:
-    """SCAN match pattern MUST be templates:{org_id}:* (star wildcard)."""
+    """SCAN match pattern MUST be templates:{zitadel_org_id}:* (star wildcard)."""
     from app.services.litellm_cache import invalidate_templates
 
     captured_match: list[str] = []
@@ -76,9 +83,9 @@ async def test_org_wide_invalidation_passes_correct_pattern(mock_redis_pool: Mag
     mock_redis_pool.scan_iter = MagicMock(side_effect=_capture_scan)
 
     with patch("app.services.litellm_cache.get_redis_pool", AsyncMock(return_value=mock_redis_pool)):
-        await invalidate_templates(org_id=7)
+        await invalidate_templates(zitadel_org_id=_ZITADEL_ORG_ID)
 
-    assert captured_match == ["templates:7:*"]
+    assert captured_match == [f"templates:{_ZITADEL_ORG_ID}:*"]
 
 
 @pytest.mark.asyncio
@@ -88,8 +95,8 @@ async def test_redis_pool_none_is_no_op() -> None:
 
     with patch("app.services.litellm_cache.get_redis_pool", AsyncMock(return_value=None)):
         # Should not raise.
-        await invalidate_templates(org_id=1, librechat_user_id="x")
-        await invalidate_templates(org_id=1)
+        await invalidate_templates(zitadel_org_id=_ZITADEL_ORG_ID, librechat_user_id="x")
+        await invalidate_templates(zitadel_org_id=_ZITADEL_ORG_ID)
 
 
 @pytest.mark.asyncio
@@ -102,7 +109,7 @@ async def test_redis_pool_raise_is_swallowed() -> None:
         AsyncMock(side_effect=RuntimeError("redis down")),
     ):
         # Must not raise.
-        await invalidate_templates(org_id=1, librechat_user_id="x")
+        await invalidate_templates(zitadel_org_id=_ZITADEL_ORG_ID, librechat_user_id="x")
 
 
 @pytest.mark.asyncio
@@ -113,7 +120,7 @@ async def test_delete_raise_is_swallowed_single(mock_redis_pool: MagicMock) -> N
     mock_redis_pool.delete = AsyncMock(side_effect=RuntimeError("connection reset"))
 
     with patch("app.services.litellm_cache.get_redis_pool", AsyncMock(return_value=mock_redis_pool)):
-        await invalidate_templates(org_id=1, librechat_user_id="x")
+        await invalidate_templates(zitadel_org_id=_ZITADEL_ORG_ID, librechat_user_id="x")
 
 
 @pytest.mark.asyncio
@@ -127,4 +134,4 @@ async def test_scan_raise_is_swallowed_org_wide(mock_redis_pool: MagicMock) -> N
     mock_redis_pool.scan_iter = MagicMock(side_effect=_boom)
 
     with patch("app.services.litellm_cache.get_redis_pool", AsyncMock(return_value=mock_redis_pool)):
-        await invalidate_templates(org_id=1)
+        await invalidate_templates(zitadel_org_id=_ZITADEL_ORG_ID)
