@@ -17,6 +17,7 @@ import httpx
 import structlog
 import yaml
 from fastapi import APIRouter, HTTPException, Request
+from webhook_replay import NonceReplayError, RedisUnavailableError, WebhookNonceStore
 
 from knowledge_ingest import (
     chunker,
@@ -49,6 +50,14 @@ _background_tasks: set = set()  # Prevents fire-and-forget tasks from being GC'd
 
 logger = structlog.get_logger()
 router = APIRouter()
+
+# @MX:ANCHOR: SPEC-TI-006 / C-9 -- Gitea replay-protection nonce store.
+# @MX:REASON: Single module-scope instance; set_client() is the test hook.
+_gitea_nonce_store = WebhookNonceStore(
+    redis_url=settings.redis_url,
+    prefix="knowledge:gitea-nonce:",
+    ttl_seconds=300,
+)
 
 
 def _verify_internal_secret(request: Request) -> None:
@@ -627,17 +636,34 @@ async def gitea_webhook(request: Request) -> dict:
     # Must read raw bytes before json.loads; body stream is consumed after first read
     raw_body = await request.body()
 
-    if settings.gitea_webhook_secret:
-        signature = request.headers.get("x-gitea-signature", "")
-        if not signature:
-            raise HTTPException(status_code=401, detail="Missing X-Gitea-Signature header")
-        expected = hmac.new(
-            settings.gitea_webhook_secret.encode(),
-            raw_body,
-            hashlib.sha256,
-        ).hexdigest()
-        if not hmac.compare_digest(signature, expected):
-            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+    # SPEC-TI-007 / C-1: HMAC verify is now unconditional.
+    # The startup validator _require_gitea_webhook_secret guarantees the secret
+    # is non-empty, so there is no "if settings.gitea_webhook_secret:" guard
+    # (that would be the fail-open-auth anti-pattern).
+    signature = request.headers.get("x-gitea-signature", "")
+    if not signature:
+        raise HTTPException(status_code=401, detail="Missing X-Gitea-Signature header")
+    expected_sig = hmac.new(
+        settings.gitea_webhook_secret.encode(),
+        raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(signature, expected_sig):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    # SPEC-TI-006 / C-9: replay-protection check.
+    # Order: HMAC verify (above) -> replay check -> tenant resolution -> side-effects.
+    delivery_id = request.headers.get("x-gitea-delivery", "")
+    if delivery_id:
+        try:
+            await _gitea_nonce_store.check_and_record(delivery_id)
+        except NonceReplayError:
+            logger.warning("gitea_webhook_replay_blocked", delivery_id=delivery_id)
+            raise HTTPException(status_code=409, detail="replay_blocked") from None
+        except RedisUnavailableError:
+            logger.exception("gitea_webhook_redis_down")
+            _detail = "webhook_replay_protection_unavailable"
+            raise HTTPException(status_code=503, detail=_detail) from None
 
     try:
         body = json.loads(raw_body)
@@ -661,10 +687,12 @@ async def gitea_webhook(request: Request) -> dict:
     kb_slug = parts[1]  # e.g. "personal"
     org_slug = gitea_org_name[4:]  # strip "org-"
 
-    # Fetch org_id (Zitadel org ID) from Gitea org metadata
-    org_id = await _get_org_id(gitea_org_name)
+    # SPEC-TI-007 / C-1: resolve org_id from trusted DB mapping instead of
+    # the spoofable Gitea-API org.description field.
+    pool = await get_pool()
+    org_id = await _get_org_id_from_db(full_name, pool)
     if not org_id:
-        logger.warning("webhook_ignored", reason="org_id_not_found", gitea_org=gitea_org_name)
+        logger.warning("webhook_ignored", reason="org_id_not_found_in_mapping", repo=full_name)
         return {"status": "ignored", "reason": "org_id not found"}
 
     # Collect changed .md files
@@ -806,10 +834,31 @@ async def gitea_webhook(request: Request) -> dict:
     return {"status": "ok", "queued": queued, "deleted": deleted, "org_slug": org_slug}
 
 
-async def _get_org_id(gitea_org_name: str) -> str | None:
+async def _get_org_id_from_db(full_name: str, pool) -> str | None:  # type: ignore[type-arg]
+    """SPEC-TI-007 / C-1: resolve org_id from knowledge.gitea_repo_to_org.
+
+    Uses the trusted DB mapping instead of the spoofable Gitea-API
+    org.description field. Returns None (not fallback to Gitea API) when the
+    mapping is absent so unknown repos are rejected with 404, not 200.
+
+    The SELECT uses no RLS tenant context (the webhook has no user session):
+    the table policy allows NULL GUC reads (see post_deploy SQL).
     """
-    Fetch the Zitadel org_id from Gitea org description field.
-    Convention: Gitea org description = Zitadel org ID.
+    try:
+        row = await pool.fetchrow(
+            "SELECT org_id FROM knowledge.gitea_repo_to_org WHERE full_name = ",
+            full_name,
+        )
+        return row["org_id"] if row else None
+    except Exception as exc:
+        logger.warning("gitea_repo_mapping_db_error", repo=full_name, error=str(exc))
+        return None
+
+
+async def _get_org_id(gitea_org_name: str) -> str | None:
+    """DEPRECATED: Gitea-API description lookup -- spoofable by repo description.
+
+    Kept for reference only; replaced by _get_org_id_from_db() per SPEC-TI-007.
     """
     try:
         async with httpx.AsyncClient(

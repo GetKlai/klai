@@ -5,6 +5,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from webhook_replay import NonceReplayError, RedisUnavailableError, WebhookNonceStore
 
 from app.core.config import settings
 from app.core.database import get_db
@@ -15,6 +16,26 @@ logger = logging.getLogger(__name__)
 _structlog_logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
+
+# @MX:ANCHOR: SPEC-TI-006 / C-9 -- Moneybird replay-protection nonce store.
+# @MX:REASON: Single module-scope instance; set_client() is the test hook.
+_moneybird_nonce_store = WebhookNonceStore(
+    redis_url=settings.redis_url,
+    prefix="portal:moneybird-nonce:",
+    ttl_seconds=300,
+)
+
+
+async def _check_moneybird_nonce(event_id: str, timestamp: str) -> None:
+    """SPEC-TI-006 / C-9: replay check extracted to keep moneybird_webhook complexity in bounds."""
+    try:
+        await _moneybird_nonce_store.check_and_record(event_id, timestamp)
+    except NonceReplayError:
+        _structlog_logger.warning("moneybird_webhook_replay_blocked", event_id=event_id)
+        raise HTTPException(status_code=409, detail="replay_blocked") from None
+    except RedisUnavailableError:
+        _structlog_logger.exception("moneybird_webhook_redis_down")
+        raise HTTPException(status_code=503, detail="webhook_replay_protection_unavailable") from None
 
 
 @router.post("/moneybird")
@@ -40,6 +61,12 @@ async def moneybird_webhook(
             entity_type=payload.get("entity_type", ""),
         )
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+    # SPEC-TI-006 / C-9: replay-protection check.
+    # Order: HMAC verify (above) -> replay check -> side-effects.
+    event_id = str(payload.get("entity_id") or payload.get("event", ""))
+    timestamp = str(payload.get("created_at") or payload.get("entity", {}).get("updated_at", ""))
+    await _check_moneybird_nonce(event_id, timestamp)
 
     entity_type: str = payload.get("entity_type", "")
     event: str = payload.get("event", "")

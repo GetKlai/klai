@@ -6,6 +6,9 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     postgres_dsn: str = "postgresql+asyncpg://klai:klai@postgres:5432/klai"
+    # SPEC-TI-006 / C-9: Redis URL for webhook replay-protection nonce store.
+    # Uses the same Redis instance as portal-api (klai-net accessible).
+    redis_url: str = "redis://redis:6379/0"
     qdrant_url: str = "http://qdrant:6333"
     qdrant_api_key: str = ""
     tei_url: str = "http://172.18.0.1:7997"
