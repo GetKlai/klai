@@ -1,7 +1,27 @@
 # F5 — Notebook scope: reachable code, geen actieve callers
 
 **Severity:** INFO — code hygiene
-**Status:** OPEN — needs verification
+**Status:** ✅ ALREADY-DONE — closed by `SPEC-DECOMM-FOCUS-001` (#368, commit `e6fabc73`, 2026-05-05).
+
+## Update na audit (2026-05-06)
+
+Het cleanup-werk dat de F5-agent voorstelde (Optie A) was al **vóór deze audit** geïmplementeerd in `SPEC-DECOMM-FOCUS-001` (PR #368, 2026-05-05). Geverifieerd op `origin/main` (HEAD = `2ac1b359`):
+
+- ✅ `_search_notebook`, `_notebook_filter` verwijderd uit `retrieval-api/services/search.py`
+- ✅ `qdrant_focus_collection` setting verwijderd uit `config.py`
+- ✅ `Literal["notebook", "broad"]` verwijderd uit `models.py`
+- ✅ `notebook_id` veld verwijderd
+- ✅ Alle `if req.scope == "notebook"` / `"broad"` branches in `retrieve.py` + `chat.py` verwijderd
+- ✅ `klai_focus` tuple verwijderd uit `provisioning/deprovisioning_steps.py:246` (comment annoteert SPEC-DECOMM-FOCUS-001)
+- ✅ `research-api` verwijderd uit `KNOWN_CALLER_SERVICES` (klai-libs/identity-assert + portal-api/identity_verifier — comments documenteren removal)
+- ✅ `klai_focus` Qdrant collection gedropped op prod (manueel via runbook in PR #368)
+- ✅ klai-focus directory volledig verwijderd
+
+De originele audit was uitgevoerd op een working tree die forkte vóór `e6fabc73`, dus de F5 finding zag een verouderde code-state. Geen verdere actie nodig.
+
+---
+
+## Originele finding (preserved for reference)
 
 ## Initial finding
 

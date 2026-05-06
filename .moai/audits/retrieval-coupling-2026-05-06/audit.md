@@ -39,7 +39,7 @@ Methodologie: pure code-following. Pipeline gevolgd vanaf [`POST /retrieve`](../
 | F2 | LOW (latent) | partner_chat dropt `knowledge.queried` events (geen user_id → geen verified_caller) | **NOT-A-BUG-BUT-DESIGN.** SPEC-API-001 zegt expliciet "partners have no end-user concept". 0 actieve partner-keys op prod, dus latente lacune. Recommended: synthetic `user_id=f"partner:{key_id}"` + auth.py `partner:`-prefix bypass. |
 | F3 | INFO | Link-expansion: score=0 + authority boost beïnvloeden top-20 reranker niet | **PARTIALLY CONFIRMED — math was wrong.** Qdrant native `Fusion.RRF` gebruikt k=2 (schaal 0.05-1.5), niet cosine 0.5-0.95. Met N≥17 inlinks beat een expanded chunk al rank-19. Niet dead-weight, wel suboptimaal score-merge tussen verschillende schalen. Phase 1: instrumenteer top-k overlap. Phase 2: RRF-merge i.p.v. additieve boost. |
 | F4 | INFO — action recommended | Evidence-tier shadow mode by default (`EVIDENCE_SHADOW_MODE=true`); content_type/temporal/pagerank weights beïnvloeden output niet | **CONFIRMED.** Geen `EVIDENCE_*` env vars op prod. RAGAS-cron wired LITERALLY GISTEREN (PR #369). 284 shadow_eval events in 8d, top-1 chunk wisselt in 2/5 sample requests, max delta 0.574 — materieel. Run RAGAS A/B nu via bestaande `variant` kolom; staged rollout of decommissioneren met 30-dagen deadline. |
-| F5 | INFO — recommend Optie A | Notebook scope (`_search_notebook`, `_notebook_filter`, `req.scope == "notebook"` branches) is onbereikbaar code geworden na klai-focus deprecation | **CONFIRMED.** 0 live callers; klai_focus Qdrant collection bestaat niet op prod (404). Test-impact: 5 files. Recommended: `SPEC-RETRIEVAL-NOTEBOOK-SCOPE-REMOVE-001` strip notebook/broad branches uit retrieval-api models/api/services/config + portal-api `deprovisioning_steps.py:268`. |
+| F5 | ✅ ALREADY-DONE | Notebook scope (`_search_notebook`, `_notebook_filter`, `req.scope == "notebook"` branches) is onbereikbaar code geworden na klai-focus deprecation | **CLOSED door `SPEC-DECOMM-FOCUS-001` (#368, commit `e6fabc73`, 2026-05-05).** Geverifieerd op origin/main: alle codepaden weg (`_search_notebook`, `_notebook_filter`, `qdrant_focus_collection`, scope literals, test-fixtures, deprovisioning tuple). Audit forkte vóór deze merge. |
 | F6 | NIT | `parent_lookup` warning-logs gebruiken format-string i.p.v. structlog kwargs (queryability-verlies in VictoriaLogs) | **CONFIRMED, harmless.** Log fired 0× per 30d. 5 andere retrieval-api files hebben gelijksoortige antipatterns. Bundelen met bredere logging-cleanup. |
 
 Per-finding details + literatuur-citaten + log-evidence staan in `findings/F<N>-*.md`.
@@ -53,12 +53,12 @@ Per-finding details + literatuur-citaten + log-evidence staan in `findings/F<N>-
 
 | Finding | Beslissing | Vehikel |
 |---|---|---|
-| F1 | **Hotfix** — voor gap-emit pipeline herstelt | PR met test (geen SPEC) |
+| F1 | **Hotfix** — voor gap-emit pipeline herstelt | PR met test (geen SPEC) — **#387** |
 | F2 | **Defer** tot eerste partner-integratie nadert | Ticket / referentie naar `F2-...md` |
 | F3 phase 1 (instrumentation) | **Quick-win** — voegt vereist signal toe voor phase 2 beslissing | PR (geen SPEC) |
 | F3 phase 2 (RRF migration) | **SPEC** — score-fusion herontwerp, A/B nodig | Toekomstige SPEC |
 | F4 | **SPEC** — `SPEC-EVIDENCE-002` of R10 op SPEC-EVIDENCE-001 | RAGAS A/B met `variant` kolom + rollout-plan |
-| F5 | **SPEC** — `SPEC-RETRIEVAL-NOTEBOOK-SCOPE-REMOVE-001` | Multi-service refactor met deletion-criteria |
+| F5 | ✅ Done | `SPEC-DECOMM-FOCUS-001` (#368, gemerged 2026-05-05) |
 | F6 | **Bundle** in opportunistic logging-cleanup | Geen aparte vehikel |
 
 ## Status
