@@ -26,6 +26,7 @@ import pytest
 
 from knowledge_ingest.backfill_tasks import (
     PURGED_PLACEHOLDER_HASH,
+    _count_cluster_siblings,
     backfill_detect_login_walls,
     recover_purged_pages,
 )
@@ -69,7 +70,9 @@ def _walled_cluster(count: int) -> list[dict]:
 
 def _make_conn(rows: list[dict]):
     """asyncpg-like connection mock: ``fetch`` returns ``rows``; ``execute``
-    is recorded for assertion."""
+    + ``fetchval`` are recorded for assertion. ``fetchval`` is required
+    because ``pg_store.update_crawled_page_simhash`` uses ``RETURNING url``
+    to detect race-deleted rows (SPEC-LOGIN-WALL-002 follow-up)."""
     conn = MagicMock()
 
     async def fetch_side_effect(_sql: str, *_args):
@@ -77,6 +80,9 @@ def _make_conn(rows: list[dict]):
 
     conn.fetch = AsyncMock(side_effect=fetch_side_effect)
     conn.execute = AsyncMock(return_value=None)
+    # Default: row found (return any non-None URL). Tests that need to
+    # exercise the no-row warning path override this per-call.
+    conn.fetchval = AsyncMock(return_value="https://x/dummy")
     return conn
 
 
@@ -236,10 +242,11 @@ class TestSimhashBackfillPass:
             kb_slug="support",
         )
 
-        # Each row triggers an UPDATE ... SET content_simhash = $1.
+        # Each row triggers an UPDATE ... SET content_simhash = $1
+        # ... RETURNING url (via conn.fetchval, not conn.execute).
         update_calls = [
             c
-            for c in conn.execute.await_args_list
+            for c in conn.fetchval.await_args_list
             if c.args and "SET content_simhash" in c.args[0]
         ]
         assert len(update_calls) == 6
@@ -266,12 +273,80 @@ class TestSimhashBackfillPass:
 
         update_calls = [
             c
-            for c in conn.execute.await_args_list
+            for c in conn.fetchval.await_args_list
             if c.args and "SET content_simhash" in c.args[0]
         ]
         assert update_calls == [], (
             "content_simhash UPDATE should not run when already populated"
         )
+
+    @pytest.mark.asyncio()
+    async def test_empty_raw_markdown_does_not_store_zero_hash(
+        self, patched_externals
+    ) -> None:
+        """Pages with empty/whitespace raw_markdown produce simhash=0; the
+        backfill MUST NOT persist 0 (would let empty pages cluster across a
+        tenant). Row stays content_simhash=NULL.
+        """
+        conn, _qdrant, set_rows = patched_externals
+        set_rows(
+            [
+                _row(url="https://x/empty-1", raw=""),
+                _row(url="https://x/whitespace", raw="\n\t  "),
+                _row(url="https://x/empty-3", raw=""),
+            ]
+        )
+
+        result = await backfill_detect_login_walls(
+            org_id="368884765035593759",
+            kb_slug="support",
+        )
+
+        assert result["flagged"] == 0
+        update_calls = [
+            c
+            for c in conn.fetchval.await_args_list
+            if c.args and "SET content_simhash" in c.args[0]
+        ]
+        assert update_calls == [], (
+            "Empty-content rows must not have content_simhash=0 written"
+        )
+
+
+class TestZeroHashSafeguard:
+    """The 0 SimHash sentinel must never cluster — neither as target nor
+    as a sibling. Otherwise empty/whitespace pages across a tenant would
+    falsely surface as a "wall" cluster.
+    """
+
+    def test_zero_target_returns_zero_count(self) -> None:
+        url_to_hash = {f"https://x/{i}": 0 for i in range(10)}
+        url_to_hash["https://x/target"] = 0
+        siblings = _count_cluster_siblings(
+            "https://x/target",
+            0,
+            url_to_hash,
+            hamming_max=3,
+        )
+        assert siblings == 0
+
+    def test_zero_siblings_filtered_for_real_target(self) -> None:
+        target_hash = compute_simhash("real content with words")
+        url_to_hash = {
+            "https://x/target": target_hash,
+            "https://x/zero-1": 0,
+            "https://x/zero-2": 0,
+            "https://x/match-1": target_hash,
+            "https://x/match-2": target_hash,
+        }
+        siblings = _count_cluster_siblings(
+            "https://x/target",
+            target_hash,
+            url_to_hash,
+            hamming_max=3,
+        )
+        # 2 zero-siblings filtered out; 2 matching siblings counted.
+        assert siblings == 2
 
 
 # ---------------------------------------------------------------------------

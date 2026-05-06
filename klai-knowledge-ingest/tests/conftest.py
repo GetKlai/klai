@@ -93,6 +93,27 @@ def mock_pool():
     return _make_mock_pool()
 
 
+def make_pg_store_mock():
+    """All-async mock for the ``knowledge_ingest.pg_store`` module.
+
+    Returns an :class:`AsyncMock` with ``spec=pg_store`` so every helper
+    (existing AND any future addition) is auto-mocked as an async no-op.
+    Use this in new tests instead of ``MagicMock()`` plus manual per-method
+    ``AsyncMock`` assignments — that pattern silently breaks every time a
+    new pg_store helper is added (e.g.
+    ``update_crawled_page_simhash`` from SPEC-INGEST-LOGIN-WALL-DETECT-002).
+    Existing tests are not retroactively migrated; the helper is opt-in.
+    """
+    import knowledge_ingest.pg_store as _pg_store_module
+
+    return AsyncMock(spec=_pg_store_module)
+
+
+@pytest.fixture
+def pg_store_mock():
+    return make_pg_store_mock()
+
+
 @pytest.fixture(autouse=True)
 def _mock_db_helpers(request):
     """Autouse: replace tenant_scoped_connection + cross_org_admin_connection
