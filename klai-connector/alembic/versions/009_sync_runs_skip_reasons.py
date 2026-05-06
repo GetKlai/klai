@@ -71,27 +71,27 @@ def upgrade() -> None:
         $$;
         """
     )
+    # Postgres rejects subqueries inside CHECK constraints
+    # ("cannot use subquery in check constraint"). The membership test
+    # is expressed via JSONB key-removal: ``skip_reasons - allowed[]``
+    # strips every allowed key from the object; if the result is
+    # ``'{}'`` then every original key was in the allowed list. Empty
+    # input is also ``'{}'`` which trivially passes.
     op.execute(
         """
         ALTER TABLE connector.sync_runs
         ADD CONSTRAINT sync_runs_skip_reasons_valid_keys
         CHECK (
             jsonb_typeof(skip_reasons) = 'object'
-            AND (
-                skip_reasons = '{}'::jsonb
-                OR (
-                    SELECT bool_and(key IN (
-                        'content_too_short',
-                        'auth_wall_detected',
-                        'dedupe_content_hash_match',
-                        'dedupe_raw_html_hash_match',
-                        'non_text_content',
-                        'excluded_by_kb_config',
-                        'taxonomy_classify_failed'
-                    ))
-                    FROM jsonb_object_keys(skip_reasons) AS key
-                )
-            )
+            AND (skip_reasons - ARRAY[
+                'content_too_short',
+                'auth_wall_detected',
+                'dedupe_content_hash_match',
+                'dedupe_raw_html_hash_match',
+                'non_text_content',
+                'excluded_by_kb_config',
+                'taxonomy_classify_failed'
+            ]::text[]) = '{}'::jsonb
         )
         """
     )
