@@ -7,6 +7,7 @@ the crawl4ai package (or a local Chromium install) as a dependency.
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import re
 from dataclasses import dataclass, field
@@ -847,9 +848,28 @@ def _build_candidate_set(
         return urlparse(u).netloc.lower() == base_domain
 
     def _matches_include(u: str) -> bool:
+        # ``include_patterns`` carry crawl4ai URLPatternFilter semantics: a
+        # value like ``/nl/*`` is a prefix glob, not a substring. Plain
+        # substring match (``p in u``) makes ``/nl/*`` literally never match
+        # because no URL contains the asterisk character — observed live on
+        # wiki.redcactus.cloud (29 BFS-discovered URLs, 0 retained as
+        # candidates → 1 page ingested instead of ~150). We honour both:
+        #
+        #   * Patterns containing ``*`` or ``?`` ⇒ ``fnmatch`` against the
+        #     full URL path (incl. query). Same contract as the old crawl4ai
+        #     URLPatternFilter.
+        #   * Plain patterns (no wildcard) ⇒ substring match on the URL —
+        #     matches the original "simple substring" intent.
         if not include_patterns:
             return True
-        return any(p in u for p in include_patterns)
+        path_with_query = urlparse(u).path
+        for p in include_patterns:
+            if "*" in p or "?" in p:
+                if fnmatch.fnmatch(path_with_query, p):
+                    return True
+            elif p in u:
+                return True
+        return False
 
     seen: set[str] = set()
     ordered: list[str] = []
