@@ -611,10 +611,21 @@ class TestPartnerKeyPath:
         assert decision.reason == "invalid_jwt"
         mock_db.execute.assert_not_called()
 
-    async def test_deny_on_db_error_fails_closed(self, mock_db: AsyncMock) -> None:
-        # Malformed UUIDs surface as DataError; treat as not_found rather
-        # than leaking internal state to the consumer.
-        mock_db.execute = AsyncMock(side_effect=Exception("invalid uuid format"))
+    async def test_deny_on_data_error_returns_not_found(self, mock_db: AsyncMock) -> None:
+        """Malformed UUID input surfaces as ``sqlalchemy.exc.DataError``;
+        treat as ``partner_key_not_found`` rather than leaking internal
+        error state to the consumer."""
+        from sqlalchemy.exc import DataError
+
+        # The DataError constructor needs (statement, params, orig). For a
+        # test we only care that the exception type matches.
+        mock_db.execute = AsyncMock(
+            side_effect=DataError(
+                "INSERT INTO ...",
+                {},
+                Exception("invalid input syntax for type uuid: 'not-a-uuid'"),
+            )
+        )
 
         decision = await verify_identity_claim(
             db=mock_db,
@@ -627,6 +638,31 @@ class TestPartnerKeyPath:
 
         assert decision.verified is False
         assert decision.reason == "partner_key_not_found"
+
+    async def test_real_db_outage_propagates(self, mock_db: AsyncMock) -> None:
+        """A real DB outage (connection refused, OperationalError) MUST
+        propagate up to the endpoint layer so it returns 503
+        ``cache_unavailable`` — not silently masquerade as a partner-key
+        rejection.
+
+        Polish guard added 2026-05-06: the previous bare ``except Exception``
+        in ``_resolve_partner_key_org_slug`` was tightened to ``DataError``
+        only. Without this test, a future regression that re-broadens the
+        catch could silently downgrade a 503 to a 403 partner_key_not_found.
+        """
+        from sqlalchemy.exc import OperationalError
+
+        mock_db.execute = AsyncMock(side_effect=OperationalError("SELECT ...", {}, Exception("connection refused")))
+
+        with pytest.raises(OperationalError):
+            await verify_identity_claim(
+                db=mock_db,
+                jwks_resolver=_FakeJwksResolver(),
+                caller_service="portal-api",
+                claimed_user_id="partner:abc-123",
+                claimed_org_id="zitadel-org-acme",
+                bearer_jwt=None,
+            )
 
     async def test_deny_on_org_slug_mismatch_after_allow(self, mock_db: AsyncMock) -> None:
         # Key + org match, but caller asserts a different X-Org-Slug than the
@@ -667,3 +703,49 @@ class TestPartnerKeyPath:
 
         assert decision.verified is True
         assert decision.org_slug == "canonical"
+
+
+class TestLibraryPortalSymmetry:
+    """Polish guard added 2026-05-06: the consumer-side library
+    (``klai_identity_assert``) must accept every ``Evidence`` and
+    ``ReasonCode`` value that portal-side ``identity_verifier`` can emit.
+
+    Without this guard a future PR can extend portal's Literal without
+    extending the library's, and the library's Pydantic-style response
+    parsing would silently drop the new value into a generic deny — or
+    worse, fail JSON parsing at runtime against a real prod payload.
+    """
+
+    def test_evidence_literal_is_identical(self) -> None:
+        """``Evidence`` is what portal emits — both sides MUST agree."""
+        from typing import get_args
+
+        from klai_identity_assert.models import Evidence as LibEvidence
+
+        from app.services.identity_verifier import Evidence as PortalEvidence
+
+        assert set(get_args(PortalEvidence)) == set(get_args(LibEvidence)), (
+            "Evidence Literal drift between portal-side identity_verifier "
+            "and klai_identity_assert library. The library will silently "
+            "miss any new evidence the portal starts emitting."
+        )
+
+    def test_portal_reason_codes_are_subset_of_library(self) -> None:
+        """``ReasonCode`` from portal is what gets returned over the wire.
+        The library extends it with consumer-side codes (`portal_unreachable`,
+        `library_misconfigured`, `cache_unavailable`) but MUST contain every
+        portal-emitted code."""
+        from typing import get_args
+
+        from klai_identity_assert.models import ReasonCode as LibReasonCode
+
+        from app.services.identity_verifier import ReasonCode as PortalReasonCode
+
+        portal_codes = set(get_args(PortalReasonCode))
+        lib_codes = set(get_args(LibReasonCode))
+
+        missing = portal_codes - lib_codes
+        assert not missing, (
+            f"Portal emits ReasonCodes the library does not accept: {sorted(missing)}. "
+            "Add them to klai-libs/identity-assert/klai_identity_assert/models.py."
+        )
