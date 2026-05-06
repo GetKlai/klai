@@ -40,7 +40,7 @@ from knowledge_ingest.config import settings
 from knowledge_ingest.content_labeler import generate_content_label
 from knowledge_ingest.content_profiles import get_profile
 from knowledge_ingest.db import tenant_scoped_connection
-from knowledge_ingest.identity import assert_caller_identity
+from knowledge_ingest.identity import assert_caller_identity, assert_caller_identity_tenant_only
 from knowledge_ingest.models import (
     BulkSyncRequest,
     GiteaPushEvent,
@@ -873,9 +873,13 @@ async def delete_kb_route(request: Request, org_id: str, kb_slug: str) -> dict:
     """Delete all data for a knowledge base: graph nodes + Qdrant chunks + PostgreSQL records.
     Called by the portal on KB deletion. Scoped to (org_id, kb_slug).
     SPEC-TI-003 AC-6: identity assertion on query-param org_id.
+
+    Tenant-only assertion: KB delete is a tenant-scoped operation; no end-user is
+    bound to the request. Using ``assert_caller_identity`` here would crash with
+    TypeError on the missing ``claimed_user_id`` arg.
     """
     _verify_internal_secret(request)
-    await assert_caller_identity(request, claimed_org_id=org_id)
+    await assert_caller_identity_tenant_only(request, claimed_org_id=org_id)
     # Fetch episode IDs before PG deletion — graph cleanup requires them.
     async with tenant_scoped_connection(org_id) as conn:
         episode_ids = await pg_store.get_episode_ids(conn, org_id, kb_slug)
@@ -900,9 +904,12 @@ async def enqueue_connector_purge_route(
     (``connector_cleanup.purge_connector``) and finally calls back to
     ``/api/internal/connectors/{id}/finalize-delete`` on the portal to
     hard-delete the row.
+
+    Tenant-only assertion: connector purge is initiated by the portal on behalf of
+    an already-authenticated user; no end-user identity is forwarded.
     """
     _verify_internal_secret(request)
-    await assert_caller_identity(request, claimed_org_id=org_id)
+    await assert_caller_identity_tenant_only(request, claimed_org_id=org_id)
     from knowledge_ingest import enrichment_tasks
 
     proc_app = enrichment_tasks.get_app()
@@ -931,9 +938,11 @@ async def delete_connector_route(
     flow (REQ-11). New portal-side calls go through
     ``POST /ingest/v1/connector/purge`` (async, returns 202).
     SPEC-TI-003 AC-6: identity assertion on query-param org_id.
+
+    Tenant-only assertion: synchronous admin force-purge has no end-user binding.
     """
     _verify_internal_secret(request)
-    await assert_caller_identity(request, claimed_org_id=org_id)
+    await assert_caller_identity_tenant_only(request, claimed_org_id=org_id)
     from knowledge_ingest import enrichment_tasks
     from knowledge_ingest.connector_cleanup import purge_connector
 
