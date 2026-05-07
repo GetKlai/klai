@@ -84,7 +84,9 @@ def _mock_session(*, scalar_results: list[Any] | None = None) -> AsyncMock:
             result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=next_value)))
         else:
             result.scalar_one_or_none = MagicMock(return_value=next_value)
-            result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[next_value] if next_value else [])))
+            result.scalars = MagicMock(
+                return_value=MagicMock(all=MagicMock(return_value=[next_value] if next_value else []))
+            )
         return result
 
     session = AsyncMock()

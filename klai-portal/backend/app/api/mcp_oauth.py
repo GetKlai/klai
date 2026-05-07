@@ -105,8 +105,7 @@ def _render_consent_page(
         .replace(
             '{% if is_newly_registered %}<span class="badge-new" title="Eerste keer dat we deze app zien">Nieuw</span>{% endif %}',
             new_badge,
-        )
-        .replace(
+        ).replace(
             '{% if is_newly_registered %}\n        <div class="warn-callout">\n            We zien deze app voor het eerst. Check of je de naam herkent en of het terugadres hieronder klopt.\n        </div>\n        {% endif %}',
             warn_callout,
         )
