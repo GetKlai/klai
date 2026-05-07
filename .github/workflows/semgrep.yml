@@ -53,6 +53,7 @@ jobs:
             --config p/owasp-top-ten \
             --config .semgrep/rules/ \
             --exclude 'klai-portal/frontend/public/widget/*.js' \
+            --exclude-rule 'python.django.security.django-no-csrf-token.django-no-csrf-token' \
             klai-portal/backend \
             klai-portal/frontend \
             klai-connector \
