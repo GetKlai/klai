@@ -715,25 +715,46 @@ function EditConnectorPage() {
                   )}
 
                   {/* Run preview button */}
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={previewMutation.isPending || !wcPreviewUrl}
-                    onClick={() => {
-                      invalidatePreview()
-                      previewMutation.mutate({
-                        url: wcPreviewUrl,
-                        content_selector: webcrawlerConfig.content_selector,
-                        cookies: parseCookies(),
-                      })
-                    }}
-                  >
-                    {previewMutation.isPending
-                      ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />{m.admin_connectors_webcrawler_preview_loading()}</>
-                      : m.admin_connectors_webcrawler_run_preview()
-                    }
-                  </Button>
+                  {/* Run preview + AI-find — same upfront affordance as add-connector. */}
+                  <div className="flex flex-wrap gap-2 items-center">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={previewMutation.isPending || !wcPreviewUrl}
+                      onClick={() => {
+                        invalidatePreview()
+                        previewMutation.mutate({
+                          url: wcPreviewUrl,
+                          content_selector: webcrawlerConfig.content_selector,
+                          cookies: parseCookies(),
+                        })
+                      }}
+                    >
+                      {previewMutation.isPending
+                        ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />{m.admin_connectors_webcrawler_preview_loading()}</>
+                        : m.admin_connectors_webcrawler_run_preview()
+                      }
+                    </Button>
+                    {!webcrawlerConfig.content_selector && (
+                      <button
+                        type="button"
+                        className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-accent)] transition-colors disabled:opacity-50"
+                        disabled={previewMutation.isPending || !wcPreviewUrl}
+                        onClick={() => {
+                          invalidatePreview()
+                          previewMutation.mutate({
+                            url: wcPreviewUrl,
+                            try_ai: true,
+                            cookies: parseCookies(),
+                          })
+                        }}
+                      >
+                        <Sparkles className="h-3 w-3" />
+                        {m.admin_connectors_webcrawler_try_ai()}
+                      </button>
+                    )}
+                  </div>
 
                   {/* Preview feedback — classification-driven single source of truth */}
                   {previewError && !previewMutation.isPending && (
