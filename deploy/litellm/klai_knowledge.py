@@ -26,6 +26,16 @@ from typing import Any
 import httpx
 from litellm.integrations.custom_logger import CustomLogger
 
+# SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): the language-detection
+# foundation that this hook prepends to every LibreChat system message,
+# matching what synthesis.py (path C) and partner_chat.py (path B) already do.
+# Imported from the vendored single-file copy at
+# deploy/litellm/klai_chat_prompts.py — see that file's docstring for the
+# vendoring rationale (mirrors klai_service_auth.py from Phase C-1). Drift
+# vs the canonical klai-libs/chat-prompts is enforced by
+# deploy/litellm/tests/test_klai_chat_prompts_drift.py.
+from klai_chat_prompts import GROUNDED_CHAT_SYSTEM_PROMPT
+
 logger = logging.getLogger(__name__)
 
 KNOWLEDGE_RETRIEVE_URL = os.getenv("KNOWLEDGE_RETRIEVE_URL")
@@ -1095,8 +1105,13 @@ def _build_template_instructions_block(instructions: list[dict]) -> str:
     """
     if not instructions:
         return ""
+    # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): English-prefixed wrapper.
+    # The model receives English instructions but answers in the language
+    # detected by GROUNDED_CHAT_SYSTEM_PROMPT (prepended above this block at
+    # the call site). Template `name` and `text` themselves are tenant-defined
+    # — they may already be in any language; we don't translate them.
     parts: list[str] = [
-        "[Klai Templates — pas onderstaande instructies toe bij je antwoord]"
+        "[Klai Templates — apply the following instructions to your answer]"
     ]
     for inst in instructions:
         name = inst.get("name") or "template"
@@ -1104,8 +1119,26 @@ def _build_template_instructions_block(instructions: list[dict]) -> str:
         if not text:
             continue
         parts.append(f"[{name}]\n{text}")
-    parts.append("[Einde templates]")
+    parts.append("[End templates]")
     return "\n\n".join(parts)
+
+
+def _compose_libre_chat_prefix(*blocks: str) -> str:
+    """Compose the system-prompt prefix for path A (LibreChat → LiteLLM).
+
+    SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10). Always leads with
+    ``GROUNDED_CHAT_SYSTEM_PROMPT`` so language detection / 3-guard switch
+    semantics apply on every LibreChat request — even branches that inject
+    nothing else (no entitlement, KB retrieval disabled, opt-out, retrieval
+    bypassed, zero chunks). Empty blocks are filtered out.
+
+    This must be called from every code path that reaches the LibreChat-only
+    branch (i.e. anywhere downstream of the ``if not librechat_user_id:
+    return data`` check). Paths B (partner_chat) and C (retrieval-api /chat)
+    construct their own prompts via the canonical ``klai_chat_prompts``
+    library — they do NOT route through this helper.
+    """
+    return "\n\n".join(b for b in (GROUNDED_CHAT_SYSTEM_PROMPT, *blocks) if b)
 
 
 class KlaiKnowledgeHook(CustomLogger):
@@ -1145,14 +1178,16 @@ class KlaiKnowledgeHook(CustomLogger):
         # Feature gate + KB scope preference (version-based cache, 30s propagation)
         feature = await _get_kb_feature(librechat_user_id, org_id, cache)
         if not feature["enabled"]:
-            # No KB entitlement. Templates still apply.
-            _prepend_system_prefix(messages, templates_block)
+            # No KB entitlement. Templates still apply. Multilingual foundation
+            # still applies — REQ-10: every LibreChat path is multilingual.
+            _prepend_system_prefix(messages, _compose_libre_chat_prefix(templates_block))
             data["messages"] = messages
             return data
 
         if not feature["kb_retrieval_enabled"]:
-            # User disabled KB retrieval. Templates still apply.
-            _prepend_system_prefix(messages, templates_block)
+            # User disabled KB retrieval. Templates still apply. Multilingual
+            # foundation still applies — REQ-10.
+            _prepend_system_prefix(messages, _compose_libre_chat_prefix(templates_block))
             data["messages"] = messages
             return data
 
@@ -1180,16 +1215,20 @@ class KlaiKnowledgeHook(CustomLogger):
                 librechat_user_id,
                 org_id,
             )
+            # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): English
+            # instruction to the model; the warning the model emits is in the
+            # user's detected language thanks to GROUNDED_CHAT_SYSTEM_PROMPT.
             kb_unavailable_notice = (
-                "[Klai Kennisbank — TIJDELIJK NIET BEREIKBAAR. Antwoord op basis "
-                "van algemene kennis. Begin je antwoord met deze waarschuwing aan "
-                "de gebruiker: 'Let op: ik kon de kennisbank niet bereiken "
-                "(identity-resolve-failed) — dit antwoord is niet gebaseerd op "
-                "jullie eigen documentatie. Probeer het later opnieuw.']\n"
+                "[Klai Knowledge Base — TEMPORARILY UNAVAILABLE. Answer using "
+                "your general knowledge. Begin your answer with a warning to "
+                "the user, written in the language you detected from their "
+                "most recent substantive message: tell them you could not "
+                "reach the knowledge base (technical reason: "
+                "identity-resolve-failed), this answer is therefore not "
+                "based on their own documentation, and they should try "
+                "again later.]\n"
             )
-            prefix = "\n\n".join(
-                b for b in (templates_block, kb_unavailable_notice) if b
-            )
+            prefix = _compose_libre_chat_prefix(templates_block, kb_unavailable_notice)
             _prepend_system_prefix(messages, prefix)
             data["messages"] = messages
             return data
@@ -1212,9 +1251,10 @@ class KlaiKnowledgeHook(CustomLogger):
         kb_narrow = feature.get("kb_narrow", False)
 
         # User explicitly opted out of every scope → skip retrieval. Templates
-        # may still apply (REQ-TEMPLATES-HOOK-U2 fail-open).
+        # may still apply (REQ-TEMPLATES-HOOK-U2 fail-open). Multilingual
+        # foundation still applies — REQ-10.
         if not kb_personal and kb_slugs == []:
-            _prepend_system_prefix(messages, templates_block)
+            _prepend_system_prefix(messages, _compose_libre_chat_prefix(templates_block))
             data["messages"] = messages
             return data
 
@@ -1386,16 +1426,19 @@ class KlaiKnowledgeHook(CustomLogger):
             retrieval_failure = type(exc).__name__
 
         if retrieval_failure is not None:
+            # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): English
+            # instruction to the model; the warning the model emits is in the
+            # user's detected language thanks to GROUNDED_CHAT_SYSTEM_PROMPT.
             kb_unavailable_notice = (
-                "[Klai Kennisbank — TIJDELIJK NIET BEREIKBAAR. Antwoord op basis "
-                "van algemene kennis. Begin je antwoord met deze waarschuwing aan "
-                f"de gebruiker: 'Let op: ik kon de kennisbank niet bereiken "
-                f"({retrieval_failure}) — dit antwoord is niet gebaseerd op jullie "
-                "eigen documentatie. Ververs of probeer het later opnieuw.']\n"
+                "[Klai Knowledge Base — TEMPORARILY UNAVAILABLE. Answer using "
+                "your general knowledge. Begin your answer with a warning to "
+                "the user, written in the language you detected from their "
+                "most recent substantive message: tell them you could not "
+                f"reach the knowledge base (technical reason: {retrieval_failure}), "
+                "this answer is therefore not based on their own documentation, "
+                "and they should refresh or try again later.]\n"
             )
-            prefix = "\n\n".join(
-                b for b in (templates_block, kb_unavailable_notice) if b
-            )
+            prefix = _compose_libre_chat_prefix(templates_block, kb_unavailable_notice)
             _prepend_system_prefix(messages, prefix)
             data["messages"] = messages
             data.setdefault("metadata", {})["_klai_kb_meta"] = {
@@ -1410,9 +1453,10 @@ class KlaiKnowledgeHook(CustomLogger):
 
         retrieval_ms = int((time.monotonic() - t0) * 1000)
 
-        # If the retrieval-gate determined no KB context is needed, skip injection
+        # If the retrieval-gate determined no KB context is needed, skip injection.
+        # Multilingual foundation still applies — REQ-10.
         if result.get("retrieval_bypassed"):
-            _prepend_system_prefix(messages, templates_block)
+            _prepend_system_prefix(messages, _compose_libre_chat_prefix(templates_block))
             data["messages"] = messages
             data.setdefault("metadata", {})["_klai_kb_meta"] = {
                 "org_id": org_id,
@@ -1445,60 +1489,87 @@ class KlaiKnowledgeHook(CustomLogger):
             _fire_retrieval_log(org_id, user_id, chunk_ids, reranker_scores, query)
 
         if not chunks:
-            # Zero chunks but templates may still apply.
-            _prepend_system_prefix(messages, templates_block)
+            # Zero chunks but templates may still apply. Multilingual
+            # foundation still applies — REQ-10.
+            _prepend_system_prefix(messages, _compose_libre_chat_prefix(templates_block))
             data["messages"] = messages
             return data
 
-        # Build context block with provenance labels per chunk
+        # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): English instructions
+        # to the model. The user-facing answer is in the user's detected
+        # language via GROUNDED_CHAT_SYSTEM_PROMPT prepended at the call site.
+        # Build context block with provenance labels per chunk.
         # Narrow: model must answer strictly from KB chunks only.
         # Broad (default): KB as additional context, general knowledge allowed.
         if kb_narrow:
             header = (
-                "[Klai Kennisbank — beantwoord uitsluitend op basis van onderstaande bronnen. "
-                "Gebruik geen algemene kennis buiten deze bronnen. "
-                "Staat het antwoord er niet in? Zeg dan: 'Ik kan dit niet vinden in de kennisbank.']\n"
+                "[Klai Knowledge Base — answer strictly using only the sources "
+                "below. Do not use general knowledge beyond these sources. "
+                "If the answer is not present, say so plainly in the user's "
+                "detected language (e.g. 'I cannot find this in the knowledge "
+                "base' / 'Dat staat niet in de kennisbank' / 'Das steht nicht "
+                "in der Wissensdatenbank').]\n"
             )
         else:
             header = (
-                "[Klai Kennisbank — gebruik dit als aanvullende context bij je antwoord. "
-                "Je mag dit aanvullen met je algemene kennis.]\n"
+                "[Klai Knowledge Base — use this as supplementary context for "
+                "your answer. You may complement it with your general "
+                "knowledge.]\n"
             )
         source_link_instruction = (
-            "[ANTWOORDFORMAAT — volg dit ALTIJD:\n"
-            "1. Begin met een korte TLDR (2-3 zinnen) van het antwoord.\n"
-            "2. Direct daarna een bronnenlijst. Gebruik ALLEEN de letterlijke source_url waarde uit elke chunk.\n"
-            "   Format: 📎 [Paginatitel](source_url_uit_chunk)\n"
-            "3. Indien noodzakelijk voor goede uitleg of indien de gebruiker het vraagt uitgebreide antwoord met inline citaties.\n"
-            "   Citeer met [n] waar n het chunknummer is. ALTIJD met een spatie ervoor: '...tekst [1].' NOOIT '...tekst1' of '...tekst[1]'.\n"
-            "   Wees bondig maar volledig. Geen muren van tekst — schrijf alsof je een collega helpt.\n\n"
-            "STRIKT:\n"
-            "- Sommige chunks hebben een 'source_url:' veld. Dat is de ENIGE URL die je mag gebruiken voor die bron.\n"
-            "- Kopieer die URL EXACT zoals hij staat. Verander geen enkel karakter.\n"
-            "- Verzin NOOIT een URL. Geen notion.so, geen portal.voys.nl, geen enkele URL die niet letterlijk als source_url in een chunk staat.\n"
-            "- Als een chunk GEEN source_url heeft, noem alleen de titel zonder link — schrijf GEEN URL.\n"
-            "- Gebruik de titel NOOIT als URL-target.\n"
-            "- Als meerdere chunks dezelfde source_url hebben, toon die URL slechts één keer.\n\n"
-            "AFBEELDINGEN:\n"
-            "- Chunks kunnen ![afbeelding](url) markdown bevatten. Neem deze ALTIJD letterlijk over in het uitgebreide antwoord (sectie 3).\n"
-            "- Verander NIETS aan de image URL. Kopieer de hele ![...](https://...) tag exact.\n"
-            "- Voeg GEEN afbeeldingen toe in de TLDR (sectie 1).]\n"
+            "[ANSWER FORMAT — always follow this:\n"
+            "1. Begin with a short TL;DR (2-3 sentences) of the answer. "
+            "Use the conventional short-summary label in the user's detected "
+            "language (TL;DR, Samenvatting, Zusammenfassung, Résumé, Resumen, "
+            "Resumo) — 'TL;DR' itself is universally understood and fine in "
+            "any language.\n"
+            "2. Immediately after, a sources list. Use ONLY the literal "
+            "source_url value from each chunk.\n"
+            "   Format: 📎 [Page title](source_url_from_chunk)\n"
+            "3. If needed for a clear explanation, or if the user asks for "
+            "more detail, follow with an extended answer with inline "
+            "citations.\n"
+            "   Cite with [n] where n is the chunk number. ALWAYS with a "
+            "leading space: '...text [1].' NEVER '...text1' or '...text[1]'.\n"
+            "   Be concise but complete. No walls of text — write as if you "
+            "are helping a colleague.\n\n"
+            "STRICT:\n"
+            "- Some chunks have a 'source_url:' field. That is the ONLY URL "
+            "you may use for that source.\n"
+            "- Copy that URL EXACTLY as it appears. Do not change a single "
+            "character.\n"
+            "- NEVER invent a URL. No notion.so, no portal.voys.nl, no URL "
+            "that does not appear literally as source_url in a chunk.\n"
+            "- If a chunk has NO source_url, mention only the title without "
+            "a link — do NOT write a URL.\n"
+            "- Never use the title as URL target.\n"
+            "- If multiple chunks have the same source_url, show that URL "
+            "only once.\n\n"
+            "IMAGES:\n"
+            "- Chunks may contain ![image](url) markdown. ALWAYS include "
+            "them literally in the extended answer (section 3).\n"
+            "- Change NOTHING about the image URL. Copy the entire "
+            "![...](https://...) tag exactly.\n"
+            "- Do NOT add images in the TL;DR (section 1).]\n"
         )
         lines = [header, source_link_instruction]
         for chunk in chunks:
             title = chunk.get("title") or chunk.get("metadata", {}).get("title", "")
             source_url = chunk.get("source_url", "")
             scope_label = chunk.get("scope", "org")
-            label = "[persoonlijk]" if scope_label == "personal" else "[org]"
+            # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): English chunk
+            # labels. These appear inside the system prompt only — the model
+            # interprets them but never echoes them to the user verbatim.
+            label = "[personal]" if scope_label == "personal" else "[org]"
             text = chunk.get("text", "").strip()
             if title and source_url:
                 lines.append(f"### [{title}]({source_url})  {label}")
             elif title:
                 lines.append(f"### {title}  {label}")
             elif source_url:
-                lines.append(f"### [Bron]({source_url})  {label}")
+                lines.append(f"### [Source]({source_url})  {label}")
             else:
-                lines.append(f"### Kennisbank  {label}")
+                lines.append(f"### Knowledge Base  {label}")
             lines.append(text)
             if source_url:
                 lines.append(f"source_url: {source_url}")
@@ -1511,12 +1582,13 @@ class KlaiKnowledgeHook(CustomLogger):
                 for i, img_url in enumerate(absolute_urls, 1):
                     lines.append(f"![afbeelding {i}]({img_url})")
             lines.append("")
-        lines.append("[Einde kennisbank-context]")
+        lines.append("[End knowledge base context]")
         context_block = "\n".join(lines)
 
         # SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-HOOK-E1: templates → KB → existing.
-        # Compose blocks in order; empty templates_block is filtered out.
-        prefix = "\n\n".join(b for b in (templates_block, context_block) if b)
+        # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): GROUNDED_CHAT_SYSTEM_PROMPT
+        # leads — same contract as paths B (partner_chat) and C (retrieval-api /chat).
+        prefix = _compose_libre_chat_prefix(templates_block, context_block)
         _prepend_system_prefix(messages, prefix)
         data["messages"] = messages
         # Signal KB injection to downstream hooks (e.g. custom_router, post-call logger)

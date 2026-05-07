@@ -1,26 +1,67 @@
 # Multilingual chat observability
 
 > Operator runbook for the `language_correctness` telemetry that ships
-> with SPEC-RAG-MULTILINGUAL-CHAT-001 (Phase 2).
+> with SPEC-RAG-MULTILINGUAL-CHAT-001 (Phase 2 + Phase 4).
 
-## What is logged
+## Three chat paths, three emit points
 
-Both `klai-retrieval-api/services/synthesis.py` and
-`klai-portal/backend/app/services/partner_chat.py` emit a structured
-log event named `chat_synthesis_complete` after every chat completion
-returns to the user.
+The `chat_synthesis_complete` log event is emitted from whichever
+chat path served the request. There are three:
 
-Fields:
+| Path | When it fires | `service:` label |
+|---|---|---|
+| A — LibreChat → LiteLLM `klai_knowledge.py` hook → Mistral | LibreChat user-facing chat traffic; presence of `data["user"]` in the LiteLLM request is the signal that this is path A | `litellm` (planned — see "Path A telemetry caveat" below) |
+| B — portal-api `/partner/v1/chat/completions` → LiteLLM (no `user` field) → Mistral | Embeddable Widget AND external Partner API tokens both flow through here | `portal-api` |
+| C — retrieval-api `/chat` (dormant) | No external callers today; reserved for SPEC-KNOW-005's feedback feature | `retrieval-api` |
+
+Path A is the most user-visible. The `klai_knowledge.py` hook is the
+canonical place where the multilingual prefix is constructed for that
+path. Paths B and C use the shared `GROUNDED_CHAT_SYSTEM_PROMPT` from
+`klai-libs/chat-prompts` directly. After Phase 4 (REQ-10), path A
+imports the same constant via the vendored single-file copy at
+`deploy/litellm/klai_chat_prompts.py` (drift-tested by
+`deploy/litellm/tests/test_klai_chat_prompts_drift.py`).
+
+### Path A telemetry caveat (Phase 4 ship → Phase D close)
+
+Phase 4 ships the multilingual *prompt* contract for path A but does
+not ship the `chat_synthesis_complete` *emit* yet. Reason: the LiteLLM
+container is a stock upstream image (`ghcr.io/berriai/litellm:v1.83.7-stable`)
+and does not bundle `lingua-language-detector`. Without `lingua`, path A
+cannot fill `query_language_detected` / `response_language_detected` /
+`language_correctness` and the emit would be a partial event of limited
+value.
+
+The plan to close this gap aligns with the Phase D pip-install plan
+already documented in `deploy/litellm/klai_service_auth.py` and
+`deploy/litellm/klai_chat_prompts.py`: build a custom litellm
+Dockerfile that `pip install`s `klai-chat-prompts` AND
+`lingua-language-detector`, then add an `async_post_call_success_hook`
+emit in `klai_knowledge.py` that mirrors the existing emits in
+`partner_chat.py` (path B) and `synthesis.py` (path C).
+
+Until then, path-A coverage of the rolling 7-day language-correctness
+gate (REQ-05) comes from:
+
+1. The pre-merge eval gate (`evaluation/cross_lingual_runner.py`) —
+   exercises path C against the same prompt foundation as path A
+   (since v1.2 they share `GROUNDED_CHAT_SYSTEM_PROMPT` byte-identical).
+2. Manual smoke tests in LibreChat after deploys (one DE/FR/PT/ES
+   query each).
+3. Path B (Widget + Partner API) telemetry — extrapolated as a proxy
+   when path A traffic shares the same target audience.
+
+## Fields
 
 | Field | Type | Source |
 |---|---|---|
 | `event` | string | hardcoded `chat_synthesis_complete` |
-| `service` | string | `retrieval-api` or `portal-api` |
+| `service` | string | `litellm`, `retrieval-api`, or `portal-api` (see table above) |
 | `query_language_detected` | string | `lingua` detection on the user's last query — `nl`, `en`, `de`, `fr`, `pt`, `es`, or `und` |
 | `response_language_detected` | string | `lingua` detection on the assembled LLM response |
 | `language_correctness` | bool \| null | `true` when both languages are known and match, `false` when known and mismatched, `null` when either side is `und` |
 | `response_length_chars` | int | length of the response text (trace-level signal) |
-| `org_id` | int \| string \| null | tenant id (only emitted by partner_chat) |
+| `org_id` | int \| string \| null | tenant id (only emitted by partner_chat — path B) |
 | `request_id` | uuid | propagated by `RequestContextMiddleware` |
 
 ## Querying VictoriaLogs

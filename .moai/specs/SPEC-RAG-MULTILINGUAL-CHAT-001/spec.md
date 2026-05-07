@@ -21,6 +21,7 @@ related_issues:
 |---------|------|--------|--------|
 | 1.0 | 2026-05-06 | Mark Vletter | Initial draft after web-research validation. Klai is expanding from NL-only to a multi-country team (DE, ES, UK, ZA) and the existing chat synthesis prompts hardcode an NL/EN switch that excludes other languages. Retrieval (bge-m3) is already cross-lingual; only the chat-answer layer needs change. |
 | 1.1 | 2026-05-06 | Mark Vletter (autonomous run) | Implementation pass. Realised during code exploration that the eval-suite uses RAGAS via `evaluation/eval_runner.py` (not the imagined `eval/judge_client.py`). REQ-04 reframed: instead of a multilingual LLM-as-judge, the implementation adds a deterministic per-response `language_correctness` metric plus a dedicated `evaluation/cross_lingual_runner.py` that scores queries directly against the synthesis endpoint. Cross-lingual test set landed at 65 queries across 6 languages (10-11/lang × 11 intents) — under the original 20/lang target but acceptable as a V1 floor with measurable test coverage; future expansion is a `cross_lingual_runner` + extra fixture data, no code change. Target language list locked in as NL/EN/DE/FR/PT/ES (Afrikaans removed — ZA team uses English; PT added; FR expanded coverage of Walloon-BE). All file paths in this SPEC corrected to match the actual codebase layout. |
+| 1.2 | 2026-05-07 | Mark Vletter (post-merge audit) | **Scope correction.** PR #454 (v1.1) shipped to main, but post-merge E2E on the live Voys LibreChat surfaced that a DE query still produced a NL response. Investigation revealed three concurrent chat paths in Klai, only two of which were touched by the v1.1 SPEC: (a) **LibreChat → LiteLLM `klai_knowledge.py` pre-call hook → Mistral** — primary user-facing chat flow; system prompt prefix is hardcoded NL inside the LiteLLM hook (header narrow + broad mode, antwoordformaat instructions, Klai Templates wrapper, KB-unavailable notice). v1.1 did NOT touch this. (b) **portal-api `/partner/v1/chat/completions` (Widget + Partner API) → `partner_chat.py` → LiteLLM (no `user` field, hook skips)** — v1.1 made this multilingual via the shared `klai-libs/chat-prompts` library. Working as intended. (c) **retrieval-api `POST /chat`** — registered endpoint with auth + tenant-isolation guards + tests but no current external callers; dormant infrastructure for a future SPEC-KNOW-005 feedback feature. v1.1 wired the new prompt here too, harmless as long as the endpoint stays dormant. v1.2 adds REQ-10 to extend the multilingual treatment to `klai_knowledge.py` so that path (a) — the primary user-visible chat — also responds in the user's language. Also corrects three derivative defects from v1.1: (1) `evaluation/cross_lingual_runner.py` POSTs to a non-existent `/synthesize` endpoint and would 404 on first run — fix to call `/chat` (or document it as a partner-API runner via `/partner/v1/chat/completions`). (2) `scripts/lint-no-duplicate-chat-prompt.sh` only catches the EN anchor from `klai-libs/chat-prompts` and misses the NL anchors that live in `klai_knowledge.py` — broaden the anchor list. (3) `docs/architecture/knowledge-ingest-flow.md`, `docs/runbooks/multilingual-chat-observability.md`, and `.claude/rules/klai/projects/knowledge.md` claim multilingual is live for the chat — that claim only holds for paths (b) and (c) and must be corrected before the `klai_knowledge.py` work lands. |
 
 ---
 
@@ -40,17 +41,50 @@ The retrieval layer (bge-m3 + Qdrant + FalkorDB) is already polyglot —
 this SPEC does not touch it. Only the chat-answer layer (system prompt
 that steers LLM generation) needs to evolve.
 
-### Two prompt locations, identical wording
+### Three chat paths in production (v1.2 corrected)
 
-`search-broadly-when-changing` audit found two services with the same
-hardcoded NL/EN switch:
+The v1.0 audit found two prompt locations and concluded the chat could
+be made multilingual by updating those. v1.1 implemented that.
+Post-merge E2E in v1.2 revealed there are actually **three paths**, and
+the most user-visible one was missed.
 
-1. `klai-retrieval-api/retrieval_api/services/synthesis.py:16-33` —
-   `_SYSTEM_PROMPT` used by the `/synthesize` streaming endpoint.
-2. `klai-portal/backend/app/services/partner_chat.py:44-61` —
-   `_GROUNDED_SYSTEM_PROMPT` used by partner-chat completions.
+**Path A — LibreChat → LiteLLM `klai_knowledge.py` pre-call hook → Mistral.**
+Primary user-facing chat (the `chat-{tenant}.getklai.com` LibreChat
+embed seen at `voys.getklai.com/app/chat`). The hook at
+`deploy/litellm/klai_knowledge.py` checks `data["user"]` (LibreChat
+sends it as a MongoDB ObjectId). When present, the hook prepends a
+hardcoded NL system-prefix containing four blocks:
 
-Both prompts contain:
+- Klai Kennisbank header (narrow + broad mode variants)
+- ANTWOORDFORMAAT instructions (TLDR, sources, citations)
+- Klai Templates wrapper (when active templates exist)
+- KB-unavailable notice (NL fallback when retrieval fails)
+
+This is what makes a DE query produce a NL response in production today.
+v1.0/v1.1 SPEC did NOT touch this path. **REQ-10 in v1.2 covers it.**
+
+**Path B — portal-api `/partner/v1/chat/completions` → `partner_chat.py`
+→ LiteLLM (no `user` field) → Mistral.** Both the embeddable Widget
+(`klai-widget/`) and external Partner API tokens flow through this
+endpoint. `partner_chat.py::chat_completion_*` POSTs to LiteLLM without
+the `user` field, so the `klai_knowledge.py` hook hits its
+`if not librechat_user_id: return data` early-exit. The system prompt
+that reaches Mistral is the one `partner_chat.py::_build_system_prompt`
+constructs. v1.1 made this multilingual by importing
+`klai_chat_prompts.GROUNDED_CHAT_SYSTEM_PROMPT`. **Working as
+intended; no v1.2 change needed.**
+
+**Path C — retrieval-api `POST /chat` (dormant).** Registered FastAPI
+route with auth + tenant-isolation guards + 17 unit tests (`tests/
+test_synthesis.py`) + endpoint tests (`tests/test_api.py`). No external
+callers in the current codebase — no LibreChat hook, no portal-api
+service, no klai-knowledge-mcp tool currently calls it. SPEC-KNOW-005
+plans to use it for a future feedback-capture feature ("done event
+uitbreiding"). v1.1 wired the new shared prompt here as a side-effect
+of the broader pattern; the change is harmless until the endpoint is
+activated by SPEC-KNOW-005 or a successor. **No v1.2 change needed.**
+
+The original prompt strings (NL/EN switch, since replaced) lived at:
 
 ```python
 "[CRITICAL] Respond in the language of the user's question. "
@@ -58,7 +92,10 @@ Both prompts contain:
 "If the user writes English, respond in English. Never switch mid-conversation."
 ```
 
-REQ-1 updates both files in lockstep.
+These were in `partner_chat.py:44-61` and `synthesis.py:16-33`. v1.1
+replaced them with the shared `GROUNDED_CHAT_SYSTEM_PROMPT` from
+`klai-libs/chat-prompts`. v1.2 leaves those in place and adds the third
+location: the LiteLLM hook prefix-builder.
 
 ### Industry-standard pattern
 
@@ -128,6 +165,29 @@ Source: `research.md` § Finding 1.
 5. Update `scripts/generate_gate_reference.py` to generate cross-lingual
    reference data covering all six target languages, not just 50/50
    NL/EN.
+6. **(v1.2)** Make the LiteLLM `klai_knowledge.py` pre-call hook
+   multilingual: import `GROUNDED_CHAT_SYSTEM_PROMPT` from
+   `klai-libs/chat-prompts` as the foundational system instruction,
+   rewrite the four hardcoded NL prefix blocks (Klai Kennisbank header
+   narrow + broad, ANTWOORDFORMAAT instructions, Klai Templates wrapper,
+   KB-unavailable notice) into multilingual variants, and extend
+   `deploy/litellm/tests/test_klai_knowledge_hook.py` with DE / FR / PT
+   / ES query → response language assertions.
+7. **(v1.2)** Fix `evaluation/cross_lingual_runner.py` to call the
+   actually-existing endpoint(s) (`/chat` on retrieval-api OR
+   `/partner/v1/chat/completions` on portal-api). The v1.1 runner
+   targets a non-existent `/synthesize` endpoint and would 404 on
+   first run.
+8. **(v1.2)** Broaden `scripts/lint-no-duplicate-chat-prompt.sh` to
+   also fail on the NL anchor strings that previously lived only in
+   `klai_knowledge.py` (they should now exist there in their
+   multilingual form via REQ-10, not duplicated elsewhere).
+9. **(v1.2)** Correct the documentation that v1.1 left over-claiming.
+   `docs/architecture/knowledge-ingest-flow.md`,
+   `docs/runbooks/multilingual-chat-observability.md`, and
+   `.claude/rules/klai/projects/knowledge.md` need scope statements
+   that distinguish path A (LibreChat) from paths B (Widget / Partner
+   API) and C (dormant `/chat`).
 
 ### Out of scope (What NOT to Build)
 
@@ -366,6 +426,104 @@ The Klai rules file
 `knowledge-ingest.md`) MUST be updated with a new pitfall entry
 "system prompt language assumptions" warning future implementers
 against re-introducing language allow-lists in chat prompts.
+
+### REQ-RAG-MULTILINGUAL-CHAT-001-10 — LiteLLM hook multilingual prefix (v1.2)
+
+This is the corrective requirement from v1.2 that closes the gap left
+by v1.1. The LiteLLM pre-call hook at
+`deploy/litellm/klai_knowledge.py` is the actual code that builds the
+system prefix that LibreChat traffic receives. v1.1 did not touch it,
+so chat-flow A (the most user-visible one) still answered Dutch
+regardless of query language.
+
+The hook MUST be reworked so that:
+
+1. The base system instruction is imported from
+   `klai_chat_prompts.GROUNDED_CHAT_SYSTEM_PROMPT` and prepended to
+   every chat completion that the hook handles. This keeps the
+   foundational language behaviour (auto-detect substantive query
+   language, three guards, no translator disclaimers) consistent
+   across all paths.
+2. The four hardcoded NL prefix blocks become multilingual:
+   - **Klai Kennisbank header** (narrow + broad variants): instruct
+     the model to obey the source-grounding rule in the language of
+     the user's question.
+   - **ANTWOORDFORMAAT instructions** (TLDR, sources list, citations,
+     image rules): rewrite as language-neutral instructions or
+     localise per query language. The semantic structure (TLDR first,
+     bronnenlijst, optional uitgebreid antwoord with `[n]` citations,
+     image markdown literal copy) MUST be preserved.
+   - **Klai Templates wrapper**: when active templates are present,
+     wrap them with a marker that does not bias the response language.
+   - **KB-unavailable notice**: when retrieval fails, prepend a
+     message that instructs the model to fall back to general
+     knowledge AND surface the failure to the user, in the user's
+     language.
+3. The shared prompt library `klai-libs/chat-prompts` MAY gain a
+   second exported constant (e.g. `KB_PREFIX_INSTRUCTION_TEMPLATE`)
+   to host these hook-specific blocks if separation aids reuse, OR
+   the hook MAY embed them inline. Implementer's choice; the
+   acceptance criterion is "no NL anchor exists outside the canonical
+   library + this hook file".
+4. The hook SHOULD emit the same `chat_synthesis_complete` log event
+   defined in REQ-07 — `query_language_detected`,
+   `response_language_detected`, `language_correctness` — so
+   observability is consistent across paths A, B, and C. Phase 4
+   ship-level explicitly defers this sub-clause: the LiteLLM container
+   is a stock upstream image without `lingua-language-detector`, and a
+   partial emit (no `query_language_detected` /
+   `response_language_detected`) provides limited observability value
+   on its own. The follow-up that closes this gap is the same custom
+   litellm Dockerfile already planned for `klai_service_auth.py`
+   (Phase D of SPEC-SEC-SERVICE-AUTH-001) — `pip install`ing
+   `klai-chat-prompts` AND `lingua-language-detector` makes both the
+   vendored single-file copies and this emit unnecessary. Until then
+   path-A coverage of the rolling 7-day language-correctness gate
+   (REQ-05) is provided by the pre-merge eval gate
+   (`evaluation/cross_lingual_runner.py`) plus path B/C telemetry as
+   proxy — see `docs/runbooks/multilingual-chat-observability.md`
+   "Path A telemetry caveat" section.
+
+The deploy target for REQ-10 is the `klai-core-litellm-1` container
+on core-01. CI's `Build and push` workflow for the LiteLLM image
+deploys automatically on merge to main; verify after deploy that the
+container is using the new hook by checking for the import line in
+`/etc/litellm/klai_knowledge.py` inside the container.
+
+### REQ-RAG-MULTILINGUAL-CHAT-001-11 — v1.1 corrections (v1.2)
+
+This requirement bundles three corrections to artefacts that landed in
+v1.1 and that turned out to be defective on closer inspection.
+
+1. **Cross-lingual runner correctness.**
+   `klai-retrieval-api/evaluation/cross_lingual_runner.py` MUST POST
+   to an endpoint that actually exists. The v1.1 runner targets
+   `/synthesize`, which retrieval-api does not register. Acceptable
+   targets: `/chat` on retrieval-api (for direct synthesis testing
+   when SPEC-KNOW-005 activates that path) OR
+   `/partner/v1/chat/completions` on portal-api (the production
+   widget / partner pathway). The runner MUST be runnable without
+   editing — pick one default that works against the current
+   production deploy.
+2. **CI-lint anchor expansion.**
+   `scripts/lint-no-duplicate-chat-prompt.sh` MUST be extended with
+   the NL anchor strings from `klai_knowledge.py` so that, after
+   REQ-10 lands, accidentally re-introducing a copy of those NL
+   blocks anywhere outside the LiteLLM hook (or the shared library
+   if they migrate there) is rejected at PR time.
+3. **Documentation scope correction.**
+   `docs/architecture/knowledge-ingest-flow.md` MUST distinguish
+   path A (LiteLLM hook → Mistral) from paths B (`partner_chat.py`)
+   and C (dormant retrieval-api `/chat`). The current claim that
+   multilingual works "for the chat" must be amended to specify
+   which path each statement applies to.
+   `docs/runbooks/multilingual-chat-observability.md` MUST clarify
+   that the `chat_synthesis_complete` log event fires from
+   whichever path emits it (post-REQ-10 that includes the LiteLLM
+   hook) and which path produces which `service:` label in the log.
+   `.claude/rules/klai/projects/knowledge.md` MUST list all three
+   locations as canonical "system prompt is here" pointers and
+   warn against making changes in only one of them.
 
 ---
 
