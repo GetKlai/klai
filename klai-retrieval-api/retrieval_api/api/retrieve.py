@@ -15,11 +15,19 @@ from retrieval_api.config import settings
 from retrieval_api.metrics import (
     quality_floor_filtered_total,
     retrieval_chunks_total,
+    retrieval_confidence_band_total,
+    retrieval_link_expand_top_k_total,
     retrieval_requests_total,
     step_latency_seconds,
 )
 from retrieval_api.middleware.auth import AuthContext, require_scope, verify_body_identity
-from retrieval_api.models import ChunkResult, RetrieveMetadata, RetrieveRequest, RetrieveResponse
+from retrieval_api.models import (
+    ChunkResult,
+    ConfidenceBand,
+    RetrieveMetadata,
+    RetrieveRequest,
+    RetrieveResponse,
+)
 from retrieval_api.quality_boost import quality_boost
 from retrieval_api.quality_floor import filter_quality_floor
 from retrieval_api.services import coreference, evidence_tier, gate, graph_search, reranker, search
@@ -42,6 +50,73 @@ _RETRIEVAL_QUERY_SCOPE = "klai:internal:retrieval:query"
 # Module-level singleton — avoids ruff B008 ("Depends in default arg") and
 # is the FastAPI-recommended pattern for repeated dependencies.
 _REQUIRE_RETRIEVAL_SCOPE = Depends(require_scope(_RETRIEVAL_QUERY_SCOPE))
+
+
+def _compute_confidence_band(
+    chunks: list[dict],
+    *,
+    high_threshold: float,
+    low_threshold: float,
+    reranker_enabled: bool,
+) -> ConfidenceBand:
+    """SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1: bucket the served result by
+    max(reranker_score). Driven by the litellm-hook anti-hallucination
+    injection (REQ-2).
+
+    Returns:
+        - ``unknown`` when reranker is disabled, every chunk's reranker_score
+          is None (fallback path), or the served list is empty
+        - ``high`` when max ≥ high_threshold
+        - ``low`` when max < low_threshold
+        - ``medium`` otherwise
+
+    Operates on the raw served list of dicts (post quality-floor +
+    source-aware-select + quality-boost), NOT on the ChunkResult objects —
+    boosted scores from REQ-3 must be reflected.
+    """
+    if not reranker_enabled or not chunks:
+        return "unknown"
+    scores = [c.get("reranker_score") for c in chunks]
+    valid_scores = [s for s in scores if isinstance(s, (int, float))]
+    if not valid_scores:
+        return "unknown"
+    max_score = max(valid_scores)
+    if max_score >= high_threshold:
+        return "high"
+    if max_score < low_threshold:
+        return "low"
+    return "medium"
+
+
+def _apply_link_expand_boost(
+    chunks: list[dict],
+    *,
+    boost: float,
+    enabled: bool,
+) -> list[dict]:
+    """SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-3: multiplicative reranker-score
+    boost (capped at 1.0) for chunks whose ``_link_expanded`` flag is set.
+
+    Applied AFTER rerank and BEFORE source-aware-select + quality-boost so
+    expanded neighbours get a fair shot at the served top-K. With
+    ``boost=1.0`` (default) this is a no-op; the SPEC ships safe and
+    operators tune via env var once the eval baseline is captured.
+
+    Mutates the input list in place (matches the surrounding pipeline's
+    style) and returns the same list for ergonomic chaining.
+    """
+    if not enabled or boost <= 1.0:
+        return chunks
+    for chunk in chunks:
+        if chunk.get("_link_expanded") and isinstance(chunk.get("reranker_score"), (int, float)):
+            boosted = chunk["reranker_score"] * boost
+            chunk["reranker_score"] = min(boosted, 1.0)
+    # Re-sort by boosted reranker_score so downstream pickers see the new order.
+    chunks.sort(
+        key=lambda c: c.get("reranker_score") or c.get("score") or 0.0,
+        reverse=True,
+    )
+    return chunks
 
 
 def _rrf_merge(qdrant_results: list[dict], graph_results: list[dict], k: int = 60) -> list[dict]:
@@ -273,6 +348,16 @@ async def retrieve(
             reranked = raw_results[: req.top_k]
             reranked_to = len(reranked)
 
+        # 5a-ter. SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-3 — link-expand
+        # reranker boost. Applied AFTER rerank and BEFORE quality-floor so
+        # expanded chunks get a fair shot at surviving source-aware-select.
+        # Default boost=1.00 is a no-op until operator tunes the env var.
+        reranked = _apply_link_expand_boost(
+            reranked,
+            boost=settings.link_expand_score_boost,
+            enabled=settings.link_expand_enabled,
+        )
+
         # 5a-bis. Quality-floor filter (SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-07).
         # Removes chunks explicitly degraded to quality_score=0.0 BEFORE the
         # source-quota algorithm picks candidates — otherwise a walled chunk
@@ -288,9 +373,7 @@ async def retrieve(
             # per-tenant pollution is visible in Grafana. Only increment on
             # non-zero to keep metric cardinality predictable for tenants
             # whose chunks never trip the floor.
-            quality_floor_filtered_total.labels(org_id=req.org_id).inc(
-                quality_floor_filtered
-            )
+            quality_floor_filtered_total.labels(org_id=req.org_id).inc(quality_floor_filtered)
 
         # 5b. Source-aware selection (SPEC-KB-021)
         # Replaces separate router + quota: uses reranker scores to decide.
@@ -425,6 +508,29 @@ async def retrieve(
     retrieval_requests_total.labels(scope=req.scope, bypassed=str(bypassed).lower()).inc()
     retrieval_chunks_total.labels(scope=req.scope).observe(len(chunks_out))
 
+    # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1 — confidence band on the
+    # served chunks. Bypass paths (gate) get None; retrieval paths always
+    # report a band so downstream consumers (litellm-hook REQ-2) can decide.
+    if bypassed:
+        confidence_band: ConfidenceBand | None = None
+    else:
+        confidence_band = _compute_confidence_band(
+            serving,
+            high_threshold=settings.confidence_band_high_threshold,
+            low_threshold=settings.confidence_band_low_threshold,
+            reranker_enabled=settings.reranker_enabled,
+        )
+        decision_record["confidence_band"] = confidence_band
+        retrieval_confidence_band_total.labels(band=confidence_band, org_id=req.org_id).inc()
+
+    # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-8 — link-expand survival
+    # outcome counter. Only count when link-expand actually contributed
+    # candidates (link_expand_count > 0). Hit = at least one expanded chunk
+    # survived to the served top-K; miss = none did.
+    if not bypassed and link_expand_count > 0:
+        outcome = "hit" if expanded_in_top_k_ids else "miss"
+        retrieval_link_expand_top_k_total.labels(outcome=outcome, org_id=req.org_id).inc()
+
     decision_record["total_ms"] = round(retrieval_ms, 1)
     try:
         logger.info(
@@ -498,4 +604,5 @@ async def retrieve(
             graph_results_count=graph_results_count,
             graph_search_ms=round(graph_search_ms, 1) if graph_search_ms is not None else None,
         ),
+        confidence_band=confidence_band,
     )

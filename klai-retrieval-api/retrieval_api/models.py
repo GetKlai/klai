@@ -57,13 +57,13 @@ class ChunkResult(BaseModel):
     assertion_mode: str | None = None
     final_score: float | None = None
     evidence_tier_metadata: dict | None = None
-    source_ref: str | None = None          # Notion page UUID, URL, or repo path
+    source_ref: str | None = None  # Notion page UUID, URL, or repo path
     source_connector_id: str | None = None  # Connector that produced this chunk
-    source_url: str | None = None           # Canonical URL for this source
-    kb_slug: str | None = None             # Knowledge base slug (SPEC-KB-021)
-    source_label: str | None = None        # Human-readable source label (SPEC-KB-021)
-    title: str | None = None               # Document title from Qdrant payload
-    image_urls: list[str] | None = None    # Presigned S3 URLs for images in this document
+    source_url: str | None = None  # Canonical URL for this source
+    kb_slug: str | None = None  # Knowledge base slug (SPEC-KB-021)
+    source_label: str | None = None  # Human-readable source label (SPEC-KB-021)
+    title: str | None = None  # Document title from Qdrant payload
+    image_urls: list[str] | None = None  # Presigned S3 URLs for images in this document
     # SPEC-RAG-PARENT-CHILD-001: when present, ``text`` already carries the
     # parent's broader-context text (matched on the smaller child chunk).
     # Clients can use this flag for debugging / display hints.
@@ -80,11 +80,19 @@ class RetrieveMetadata(BaseModel):
     graph_search_ms: float | None = None
 
 
+ConfidenceBand = Literal["high", "medium", "low", "unknown"]
+
+
 class RetrieveResponse(BaseModel):
     query_resolved: str
     retrieval_bypassed: bool
     chunks: list[ChunkResult]
     metadata: RetrieveMetadata
+    # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1: max(reranker_scores) over the
+    # served chunks mapped to a band. Consumed by the litellm-hook to decide
+    # whether to inject the anti-hallucination instruction (REQ-2).
+    # ``None`` only on retrieval-bypass (gate) paths; otherwise always set.
+    confidence_band: ConfidenceBand | None = None
 
 
 class Citation(BaseModel):
