@@ -36,6 +36,7 @@ mcp_token_client.py`` for the matching client-side library.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
@@ -182,8 +183,6 @@ def verify_pkce_s256(code_verifier: str, code_challenge: str) -> bool:
     other than S256 — REQ-13.
     """
     digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
-    import base64
-
     expected = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
     return hmac.compare_digest(expected, code_challenge)
 
@@ -235,9 +234,15 @@ class IssuedTokens:
     """Returned from ``issue_token_pair`` and forwarded to the client.
 
     The raw values are returned ONCE; subsequent reads only see hashes.
+    ``org_id`` and ``user_id`` are exposed so callers can emit accurate
+    audit-log entries for the refresh-token grant — without them the
+    audit row falls back to ``org_id=0`` because the refresh code-path
+    never sees the original portal_orgs.id otherwise.
     """
 
     token_id: int
+    org_id: int
+    user_id: int
     access_token: str
     refresh_token: str
     expires_in: int  # seconds until access-token expiry
@@ -281,6 +286,8 @@ async def issue_token_pair(
 
     return IssuedTokens(
         token_id=row.id,
+        org_id=row.org_id,
+        user_id=row.user_id,
         access_token=access_token,
         refresh_token=refresh_token,
         expires_in=int((expires_at - now).total_seconds()),
@@ -405,9 +412,14 @@ async def verify_access_token(
         # portal_users.zitadel_user_id is the canonical identifier downstream
         # services key on (matches IdentityAsserter.verify return shape).
         user_id=user_row.zitadel_user_id,
-        # str(portal_orgs.id) — knowledge-ingest expects the integer-as-string
-        # representation; matches /internal/identity/verify wire shape.
-        org_id=str(token_row.org_id),
+        # Zitadel resourceowner id (BIG number string) — matches the
+        # /internal/identity/verify wire shape exactly. Downstream services
+        # (docs-app requireOrgAccess, knowledge-ingest, retrieval-api) compare
+        # X-Org-ID against portal_orgs.zitadel_org_id; returning the small
+        # portal_orgs.id (str(token_row.org_id)) here causes 403 Forbidden
+        # because docs-app's check `payload.org_id !== org.zitadel_org_id`
+        # rejects "8" when expecting "368884765035593759".
+        org_id=org_row.zitadel_org_id,
         org_slug=org_row.slug,
         scopes=tuple(token_row.scopes or [DEFAULT_SCOPE]),
         resource_uri=token_row.resource_uri,

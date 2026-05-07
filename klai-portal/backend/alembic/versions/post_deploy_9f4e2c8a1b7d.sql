@@ -47,6 +47,19 @@ GRANT USAGE, SELECT ON SEQUENCE portal_mcp_tokens_id_seq TO portal_api;
 
 
 -- 4. portal_mcp_tokens: RLS Category-D (strict — raise on missing tenant).
+--    Uses the canonical _rls_current_org_id() helper (defined in earlier
+--    post-deploy SQL) to keep behaviour identical to portal_user_products,
+--    vexa_meetings, etc. The helper:
+--      - returns NULL when app.cross_org_admin = 'true' (cross_org_session
+--        bypass for OAuth code-exchange — the issuer needs to INSERT a token
+--        BEFORE any tenant context is bound, see /oauth/token endpoint)
+--      - RAISES 42501 when neither app.current_org_id nor cross_org_admin
+--        are set (hard fail-loud — Category-D)
+--      - returns the int org_id otherwise
+--
+--    Direct ::integer casts on `current_setting('app.current_org_id', true)`
+--    fail with "invalid input syntax for type integer: \"\"" on cross-org
+--    sessions. Always go through the helper.
 ALTER TABLE portal_mcp_tokens ENABLE ROW LEVEL SECURITY;
 ALTER TABLE portal_mcp_tokens FORCE ROW LEVEL SECURITY;
 
@@ -54,13 +67,16 @@ DROP POLICY IF EXISTS tenant_isolation ON portal_mcp_tokens;
 CREATE POLICY tenant_isolation ON portal_mcp_tokens
     FOR ALL TO portal_api
     USING (
-        org_id = current_setting('app.current_org_id', true)::integer
+        _rls_current_org_id() IS NULL
+        OR org_id = _rls_current_org_id()
     )
     WITH CHECK (
-        org_id = current_setting('app.current_org_id', true)::integer
+        _rls_current_org_id() IS NULL
+        OR org_id = _rls_current_org_id()
     );
 
--- Cross-tenant reads/writes hit ``insufficient_privilege`` (42501) — exactly
--- what the rls_guard event listener AND the smoke-test script expect for
--- Category-D tables. See app/core/rls_guard.py::RLS_DML_TABLES (must include
--- 'portal_mcp_tokens') and scripts/rls-smoke-test.sql Test sections.
+-- Cross-tenant reads/writes hit ``insufficient_privilege`` (42501) via the
+-- helper's RAISE — exactly what the rls_guard event listener AND the
+-- smoke-test script expect for Category-D tables. See
+-- app/core/rls_guard.py::RLS_DML_TABLES (must include 'portal_mcp_tokens')
+-- and scripts/rls-smoke-test.sql Test sections.

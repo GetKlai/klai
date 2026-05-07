@@ -100,6 +100,12 @@ _CSRF_EXEMPT_PREFIXES: tuple[str, ...] = (
     # /widget/ prefix has NO mounted handlers in portal-api (audited 2026-04-25:
     # grep for prefix="/widget" returns zero results). Removed per REQ-4 audit.
     # Widget traffic now lives under /partner/v1/widget-config (see partner CORS REQ-2).
+    # pre-session: /oauth/register + /oauth/token are external DCR + token-
+    # exchange callers without BFF cookies; /oauth/authorize POST is a
+    # browser <form> submit that carries its own Redis-backed form-CSRF token
+    # validated in api/mcp_oauth.py::authorize_post (SPEC-MCP-AUTH-001).
+    # REQ-21 / AC-1
+    "/oauth/",
 )
 
 
