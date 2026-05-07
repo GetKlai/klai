@@ -288,6 +288,19 @@ async def register_client(request: Request) -> JSONResponse:
                 return _oauth_error("invalid_redirect_uri", message, 400)
             return _oauth_error("invalid_request", message, 400)
 
+        # Snapshot ORM fields BEFORE exit — finally rolls back which expires
+        # the instance even with expire_on_commit=False (see authorize_post).
+        # Today this works because db.commit() runs first, but the snapshot
+        # makes intent explicit and removes a foot-gun for future edits.
+        snap_client_id = registered.client_id
+        snap_client_name = registered.client_name
+        snap_redirect_uris = list(registered.redirect_uris)
+        snap_grant_types = list(registered.grant_types)
+        snap_response_types = list(registered.response_types)
+        snap_token_endpoint_auth_method = registered.token_endpoint_auth_method
+        snap_application_type = registered.application_type
+        snap_scopes = list(registered.scopes)
+
         await db.commit()
 
     try:
@@ -296,11 +309,11 @@ async def register_client(request: Request) -> JSONResponse:
             actor=f"dcr:{source_ip}",
             action="oauth_client.registered",
             resource_type="oauth_client",
-            resource_id=registered.client_id,
+            resource_id=snap_client_id,
             details={
-                "client_name": registered.client_name,
-                "redirect_uris": registered.redirect_uris,
-                "application_type": registered.application_type,
+                "client_name": snap_client_name,
+                "redirect_uris": snap_redirect_uris,
+                "application_type": snap_application_type,
             },
         )
     except Exception:  # pragma: no cover
@@ -308,14 +321,14 @@ async def register_client(request: Request) -> JSONResponse:
 
     return JSONResponse(
         {
-            "client_id": registered.client_id,
-            "client_name": registered.client_name,
-            "redirect_uris": registered.redirect_uris,
-            "grant_types": registered.grant_types,
-            "response_types": registered.response_types,
-            "token_endpoint_auth_method": registered.token_endpoint_auth_method,
-            "application_type": registered.application_type,
-            "scopes": " ".join(registered.scopes),
+            "client_id": snap_client_id,
+            "client_name": snap_client_name,
+            "redirect_uris": snap_redirect_uris,
+            "grant_types": snap_grant_types,
+            "response_types": snap_response_types,
+            "token_endpoint_auth_method": snap_token_endpoint_auth_method,
+            "application_type": snap_application_type,
+            "scopes": " ".join(snap_scopes),
         },
         status_code=201,
     )
@@ -495,17 +508,23 @@ async def authorize_post(
         return RedirectResponse(f"{pending.redirect_uri}?{urlencode(params)}", status_code=302)
 
     # Resolve portal_users.id + portal_orgs.id for the session's user.
+    # cross_org_session() rolls back on exit (no commit here); reading ORM
+    # attributes after the with-block raises DetachedInstanceError because
+    # rollback expires the instance even with expire_on_commit=False on the
+    # sessionmaker. Extract the int ids inside the block.
     async with cross_org_session() as db:
         user_org = await _resolve_user_org(db, session.zitadel_user_id)
         if user_org is None:
             return _oauth_error("login_required", "session has no portal user", 401)
         user, org = user_org
+        user_id = user.id
+        org_id = org.id
 
     code = await svc.approve_auth_request(
         redis,
         request_id,
-        user_id=user.id,
-        org_id=org.id,
+        user_id=user_id,
+        org_id=org_id,
     )
     if code is None:
         return _oauth_error("invalid_request", "expired", 400)
@@ -565,11 +584,18 @@ async def _exchange_authorization_code(form: Any) -> JSONResponse:
         if client is None:
             return _oauth_error("invalid_grant", "unknown client", 400)
 
+        # Snapshot client fields BEFORE the with-block exits — see Bug A
+        # rationale in authorize_post: rollback in finally expires ORM
+        # instances even with expire_on_commit=False on the sessionmaker.
+        audit_client_id = client.client_id
+        audit_client_name = client.client_name
+        client_db_id = client.id
+
         issued = await svc.issue_token_pair(
             db,
             org_id=payload["org_id"],
             user_id=payload["user_id"],
-            client_db_id=client.id,
+            client_db_id=client_db_id,
             scopes=payload.get("scopes", [svc.DEFAULT_SCOPE]),
             resource_uri=payload["resource"],
         )
@@ -583,8 +609,8 @@ async def _exchange_authorization_code(form: Any) -> JSONResponse:
             resource_type="mcp_token",
             resource_id=str(issued.token_id),
             details={
-                "client_id": client.client_id,
-                "client_name": client.client_name,
+                "client_id": audit_client_id,
+                "client_name": audit_client_name,
                 "scopes": payload.get("scopes", [svc.DEFAULT_SCOPE]),
                 "expires_in": issued.expires_in,
             },
@@ -627,8 +653,11 @@ async def _exchange_refresh_token(form: Any) -> JSONResponse:
 
     issued = outcome.success
     try:
+        # IssuedTokens propagates org_id from the freshly minted row so the
+        # audit row lands under the correct tenant — pre-2026-05-07 this was
+        # hard-coded to 0 because the dataclass did not expose org_id.
         await audit.log_event(
-            org_id=0,
+            org_id=issued.org_id,
             actor=f"mcp_token:{issued.token_id}",
             action="mcp_token.refreshed",
             resource_type="mcp_token",

@@ -795,6 +795,13 @@ async def save_to_docs(
         },
     }
 
+    # Idempotency-Key is REQUIRED by docs-app for page creation (REQ-UNW-03).
+    # Updates to an existing page treat it as optional, but sending one is
+    # always safe (REQ-STA-01: same key returns the existing page). A fresh
+    # uuid4 per call keeps "second tool invocation" semantics correct: the
+    # second call creates a NEW page with a NEW path, not a replay.
+    idempotency_key = str(uuid.uuid4())
+
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.put(
@@ -805,6 +812,7 @@ async def save_to_docs(
                     "X-User-ID": verified.user_id,
                     "X-Org-ID": verified.org_id,
                     "Content-Type": "application/json",
+                    "Idempotency-Key": idempotency_key,
                 },
             )
     except httpx.RequestError as exc:
