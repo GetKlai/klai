@@ -436,6 +436,62 @@ class TestIdentityFailurePropagation:
                 await main.search_knowledge(query="q", ctx=ctx)
 
 
+# ─── Outbound auth header regression guard ────────────────────────────────
+
+
+class TestRetrievalSecretUsedForUpstream:
+    """Regression guard: retrieval-api validates against its own secret
+    (RETRIEVAL_API_INTERNAL_SECRET in SOPS), NOT KNOWLEDGE_INGEST_SECRET.
+    Using the wrong env-var name silently 401s every search_knowledge call
+    in production.
+    """
+
+    @pytest.mark.asyncio
+    async def test_retrieval_internal_secret_is_used_in_outbound_header(self) -> None:
+        from main import search_knowledge
+
+        ctx = _librechat_ctx()
+        captured: dict[str, Any] = {}
+
+        async def _capture_post(self: Any, url: str, **kwargs: Any) -> MagicMock:
+            captured["headers"] = kwargs.get("headers", {})
+            return _make_retrieve_response([])
+
+        with patch(
+            "main._asserter.verify",
+            new_callable=AsyncMock,
+            return_value=allow_verify_result(),
+        ), patch.object(httpx.AsyncClient, "post", new=_capture_post), patch(
+            "main.RETRIEVAL_INTERNAL_SECRET", "retrieval-specific-secret"
+        ):
+            await search_knowledge(query="q", ctx=ctx)
+
+        assert captured["headers"]["X-Internal-Secret"] == "retrieval-specific-secret"
+        # Ensure we are NOT sending the knowledge-ingest secret (different service)
+        assert captured["headers"]["X-Internal-Secret"] != "test-secret"
+
+    @pytest.mark.asyncio
+    async def test_caller_service_header_is_knowledge_mcp(self) -> None:
+        """AC-20: SPEC-SEC-IDENTITY-ASSERT-001 REQ-4.2 guard."""
+        from main import search_knowledge
+
+        ctx = _librechat_ctx()
+        captured: dict[str, Any] = {}
+
+        async def _capture_post(self: Any, url: str, **kwargs: Any) -> MagicMock:
+            captured["headers"] = kwargs.get("headers", {})
+            return _make_retrieve_response([])
+
+        with patch(
+            "main._asserter.verify",
+            new_callable=AsyncMock,
+            return_value=allow_verify_result(),
+        ), patch.object(httpx.AsyncClient, "post", new=_capture_post):
+            await search_knowledge(query="q", ctx=ctx)
+
+        assert captured["headers"]["X-Caller-Service"] == "knowledge-mcp"
+
+
 # ─── T-12: org_id forwarding (cross-tenant smoke) ─────────────────────────
 
 

@@ -59,6 +59,16 @@ KNOWLEDGE_INGEST_URL = os.environ["KNOWLEDGE_INGEST_URL"]  # http://knowledge-in
 KNOWLEDGE_RETRIEVE_URL = os.environ.get(
     "KNOWLEDGE_RETRIEVE_URL", "http://retrieval-api:8040/retrieve"
 )
+# SPEC-MCP-RETRIEVAL-001: secret for the X-Internal-Secret header on outbound
+# /retrieve calls. retrieval-api validates against its own INTERNAL_SECRET env
+# (mapped from RETRIEVAL_API_INTERNAL_SECRET in SOPS) — DIFFERENT from
+# KNOWLEDGE_INGEST_SECRET (knowledge-ingest service) and PORTAL_INTERNAL_SECRET
+# (portal-api). Using the wrong one yields HTTP 401 invalid_internal_secret.
+# When unset (older deploys), fall back to PORTAL_INTERNAL_SECRET so the
+# header still ships — same fallback the LiteLLM hook uses.
+RETRIEVAL_INTERNAL_SECRET = (
+    os.environ.get("RETRIEVAL_INTERNAL_SECRET") or os.environ.get("PORTAL_INTERNAL_SECRET", "")
+)
 # SPEC-SEC-INTERNAL-001 REQ-9.5: KNOWLEDGE_INGEST_SECRET is now mandatory.
 # Empty / missing causes module-load failure rather than silently omitting
 # the X-Internal-Secret header on outbound calls (the previous "gradual
@@ -933,13 +943,13 @@ async def search_knowledge(
     # on /retrieve. ``knowledge-mcp`` is whitelisted in KNOWN_CALLER_SERVICES
     # and granted the ``klai:internal:retrieval:query`` scope on the JWT path.
     #
-    # SPEC-SEC-INTERNAL-001 REQ-9.5: KNOWLEDGE_INGEST_SECRET is enforced
-    # non-empty at module-load — no conditional inclusion allowed (silent-
-    # omit anti-pattern). Always send the header; let upstream auth fail
-    # loudly if the env was misconfigured at deploy time.
+    # SPEC-MCP-RETRIEVAL-001: RETRIEVAL_INTERNAL_SECRET is the right secret
+    # for the X-Internal-Secret header on /retrieve. Using the historic
+    # KNOWLEDGE_INGEST_SECRET here would 401 against retrieval-api in
+    # production — different services hold different secrets in SOPS.
     headers: dict[str, str] = {
         "X-Caller-Service": "knowledge-mcp",
-        "X-Internal-Secret": KNOWLEDGE_INGEST_SECRET,
+        "X-Internal-Secret": RETRIEVAL_INTERNAL_SECRET,
     }
 
     t0 = time.monotonic()
