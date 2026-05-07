@@ -229,11 +229,17 @@ _mcp_token_asserter = McpTokenAsserter(
 # SPEC-MCP-AUTH-001 REQ-12: unified verified-identity shape for both auth
 # paths. Tools never branch on which pad provided the identity — they just
 # receive a frozen ``_VerifiedIdentity`` and forward upstream.
+#
+# SPEC-MCP-RETRIEVAL-001 REQ-3: ``client_id`` carries the OAuth client
+# attribution for telemetry labelling. ``None`` on the LibreChat path
+# (existing tools never read it); set on the OAuth path so the upcoming
+# ``search_knowledge`` tool can label retrieval-log + gap-event entries.
 @dataclass(frozen=True, slots=True)
 class _VerifiedIdentity:
     user_id: str
     org_id: str
     org_slug: str
+    client_id: str | None = None
 
 
 async def _verify_identity(ctx: Context, claimed: _ClaimedIdentity) -> VerifyResult:
@@ -342,6 +348,11 @@ async def _identify_via_oauth_token(ctx: Context, raw_token: str) -> _VerifiedId
         user_id=result.user_id,
         org_id=result.org_id,
         org_slug=result.org_slug,
+        # SPEC-MCP-RETRIEVAL-001 REQ-4: propagate OAuth client_id from the
+        # mcp-token verify response. ``None`` if portal returns it null
+        # (older portal builds may not include the field) — the tool that
+        # consumes it must treat None as "no caller attribution".
+        client_id=result.client_id,
     )
 
 

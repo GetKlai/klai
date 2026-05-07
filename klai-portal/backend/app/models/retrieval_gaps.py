@@ -45,5 +45,9 @@ class PortalRetrievalGap(Base):
     chunks_retrieved: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     retrieval_ms: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     taxonomy_node_ids: Mapped[list[int] | None] = mapped_column(ARRAY(Integer), nullable=True)
+    # SPEC-MCP-RETRIEVAL-001 REQ-9: optional OAuth client_id for caller
+    # attribution. ``None`` = LibreChat traffic; populated = third-party
+    # MCP client (Claude Desktop / Cursor / ChatGPT).
+    caller_client_id: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
