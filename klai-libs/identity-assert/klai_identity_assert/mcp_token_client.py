@@ -163,7 +163,7 @@ class McpTokenAsserter:
         self._client: httpx.AsyncClient | None = None
         self._cache = IdentityCache(
             ttl_seconds=cache_ttl_seconds,
-            max_size=cache_max_size,
+            max_entries=cache_max_size,
         )
 
     async def verify(

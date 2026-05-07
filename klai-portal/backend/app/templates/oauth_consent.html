@@ -236,6 +236,11 @@
             Je geeft toegang als <strong>{{ user_email | e }}</strong>{% if user_org_name %} ({{ user_org_name | e }}){% endif %}. Je kan toegang altijd intrekken in <a href="/app/integrations" style="color: var(--accent);">Instellingen → Integraties</a>.
         </p>
 
+        <!-- nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token -->
+        <!-- This is NOT a Django form. CSRF protection is implemented via
+             the csrf_token hidden input below, validated server-side in
+             POST /oauth/authorize via hmac.compare_digest against a Redis-
+             stored token. SPEC-MCP-AUTH-001 REQ-A7. -->
         <form method="POST" action="/oauth/authorize">
             <input type="hidden" name="request_id" value="{{ request_id | e }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token | e }}">
