@@ -442,10 +442,15 @@ async def crawl_site(
       "content_length"}`` written to ``crawl_jobs.fetch_outcomes`` JSONB so
       operators can answer "where did the missing pages go?".
 
-    ``max_depth`` is accepted for caller-signature compatibility but no
-    longer drives discovery (we explicitly enumerate candidates instead of
-    recursing). ``include_patterns``, when set, is applied as a candidate-
-    side substring filter against the union before submission.
+    ``max_depth`` controls multi-level BFS expansion (Step 5). With
+    ``max_depth=1`` only the seed's direct outbound links are crawled
+    (single-level BFS — the SPEC-INGEST-RECONCILE-001 default that
+    misses content-rich subtree sites without sitemaps). With
+    ``max_depth>=2`` we expand from the level-1 results' internal links,
+    following the link graph until depth or ``max_pages`` budget.
+    ``include_patterns``, when set, is applied as a candidate-side
+    substring/glob filter at every level (see
+    ``_url_matches_include_patterns``).
     """
     parsed = urlparse(start_url)
     base_domain = parsed.netloc.lower()
@@ -559,6 +564,105 @@ async def crawl_site(
     )
     crawl_results.extend(bulk_results)
     outcomes.extend(bulk_outcomes)
+
+    # ------------------------------------------------------------------
+    # Step 5 — Multi-level BFS expansion. Required when sitemap is sparse
+    # or absent: the level-1 BFS only sees links the homepage exposes
+    # directly. For wiki-style sites (wiki.redcactus.cloud has no sitemap
+    # at all, only ~26 homepage links → 25 pages ingested), each level-1
+    # category page itself contains 100s of internal links to articles —
+    # those articles are unreachable until we follow them.
+    #
+    # We keep the same chunked-fetch + canonical-dedupe contract as the
+    # initial bulk; new candidates are filtered through include_patterns
+    # and the global ``seen`` set, capped by ``max_pages`` budget.
+    # ``max_depth=1`` (the prior single-level behaviour) keeps the legacy
+    # contract; ``max_depth=2`` is the typical wiki/docs case;
+    # ``max_depth=3`` handles deeper nests.
+    # ------------------------------------------------------------------
+    if max_depth > 1 and bulk_results:
+        seen: set[str] = {_canonicalise_url(o["url"]) for o in outcomes}
+        seen.add(_canonicalise_url(start_url))
+        # Already in seen via the seed_outcome and bulk outcomes; defensive.
+        current_level_results = bulk_results
+        for depth_index in range(2, max_depth + 1):
+            remaining_budget = max_pages - len(outcomes)
+            if remaining_budget <= 0:
+                break
+            # Collect new candidates from the previous level's results.
+            new_candidates: list[str] = []
+            for result in current_level_results:
+                for url in _extract_bfs_seeds(result, base_domain=base_domain):
+                    canonical = _canonicalise_url(url)
+                    if canonical in seen:
+                        continue
+                    if not _url_matches_include_patterns(url, include_patterns):
+                        continue
+                    seen.add(canonical)
+                    new_candidates.append(url)
+                    if len(new_candidates) >= remaining_budget:
+                        break
+                if len(new_candidates) >= remaining_budget:
+                    break
+
+            if not new_candidates:
+                logger.info(
+                    "crawl_site_bfs_no_new_links",
+                    start_url=start_url,
+                    depth=depth_index,
+                )
+                break
+
+            logger.info(
+                "crawl_site_bfs_expand",
+                start_url=start_url,
+                depth=depth_index,
+                new_candidates=len(new_candidates),
+                budget_remaining=remaining_budget,
+            )
+
+            # Chunked fetch — same contract as Step 3.
+            depth_raw_results: list[dict[str, Any]] = []
+            depth_transport_error: BaseException | None = None
+            for chunk_start in range(0, len(new_candidates), _BULK_CHUNK_SIZE):
+                chunk_urls = new_candidates[chunk_start : chunk_start + _BULK_CHUNK_SIZE]
+                payload = {
+                    "urls": chunk_urls,
+                    "crawler_config": {
+                        "type": "CrawlerRunConfig",
+                        "params": crawler_config,
+                    },
+                }
+                if cookies:
+                    payload["hooks"] = _build_cookie_hooks(cookies)
+                try:
+                    async with httpx.AsyncClient(timeout=_BULK_CRAWL_TIMEOUT) as client:
+                        data = await _crawl_sync(client, payload)
+                    depth_raw_results.extend(_normalise_results_block(data))
+                except Exception as exc:
+                    depth_transport_error = exc
+                    logger.warning(
+                        "crawl_site_bfs_chunk_failed",
+                        start_url=start_url,
+                        depth=depth_index,
+                        chunk_index=chunk_start // _BULK_CHUNK_SIZE,
+                        error=str(exc),
+                    )
+
+            depth_bulk_results, depth_bulk_outcomes = _combine_bulk_responses(
+                candidates=new_candidates,
+                raw_results=depth_raw_results,
+                transport_error=depth_transport_error,
+                base_domain=base_domain,
+            )
+            crawl_results.extend(depth_bulk_results)
+            outcomes.extend(depth_bulk_outcomes)
+            current_level_results = depth_bulk_results
+
+            if not depth_bulk_results:
+                # No successful pages this level → next level would have
+                # nothing to expand from. Stop early.
+                break
 
     success_count = sum(1 for o in outcomes if o["reason_code"] == FetchReasonCode.SUCCESS.value)
     logger.info(
@@ -817,6 +921,33 @@ def _normalise_results_block(data: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+def _url_matches_include_patterns(u: str, include_patterns: list[str] | None) -> bool:
+    """Filter URL against include_patterns using crawl4ai URLPatternFilter semantics.
+
+    A pattern like ``/nl/*`` is a prefix glob (fnmatch on the URL path), NOT a
+    substring. Plain substring match made ``/nl/*`` literally never match
+    because no URL contains the asterisk — observed live on
+    wiki.redcactus.cloud (29 BFS-discovered URLs, 0 retained as candidates →
+    1 page ingested instead of ~150).
+
+    Two contracts honoured:
+      * Patterns containing ``*`` or ``?`` ⇒ ``fnmatch`` against the URL path
+        (matches the old crawl4ai URLPatternFilter contract).
+      * Plain patterns (no wildcard) ⇒ substring match on the URL —
+        matches the original "simple substring" intent.
+    """
+    if not include_patterns:
+        return True
+    path_with_query = urlparse(u).path
+    for p in include_patterns:
+        if "*" in p or "?" in p:
+            if fnmatch.fnmatch(path_with_query, p):
+                return True
+        elif p in u:
+            return True
+    return False
+
+
 def _build_candidate_set(
     *,
     start_url: str,
@@ -848,28 +979,7 @@ def _build_candidate_set(
         return urlparse(u).netloc.lower() == base_domain
 
     def _matches_include(u: str) -> bool:
-        # ``include_patterns`` carry crawl4ai URLPatternFilter semantics: a
-        # value like ``/nl/*`` is a prefix glob, not a substring. Plain
-        # substring match (``p in u``) makes ``/nl/*`` literally never match
-        # because no URL contains the asterisk character — observed live on
-        # wiki.redcactus.cloud (29 BFS-discovered URLs, 0 retained as
-        # candidates → 1 page ingested instead of ~150). We honour both:
-        #
-        #   * Patterns containing ``*`` or ``?`` ⇒ ``fnmatch`` against the
-        #     full URL path (incl. query). Same contract as the old crawl4ai
-        #     URLPatternFilter.
-        #   * Plain patterns (no wildcard) ⇒ substring match on the URL —
-        #     matches the original "simple substring" intent.
-        if not include_patterns:
-            return True
-        path_with_query = urlparse(u).path
-        for p in include_patterns:
-            if "*" in p or "?" in p:
-                if fnmatch.fnmatch(path_with_query, p):
-                    return True
-            elif p in u:
-                return True
-        return False
+        return _url_matches_include_patterns(u, include_patterns)
 
     seen: set[str] = set()
     ordered: list[str] = []
