@@ -328,15 +328,39 @@ def _extract_result(url: str, page: dict[str, Any]) -> CrawlResult:
 # ---------------------------------------------------------------------------
 
 
-def _build_cookie_hooks(cookies: list[dict[str, Any]]) -> dict[str, Any]:
-    """Build Crawl4AI hooks payload that injects cookies via on_page_context_created."""
-    cookies_json = json.dumps(cookies)
-    hook_code = f"""
-async def hook(page, context, **kwargs):
-    await context.add_cookies({cookies_json})
-    return page
-"""
-    return {"code": {"on_page_context_created": hook_code}, "timeout": 30}
+def _build_browser_config_with_cookies(
+    cookies: list[dict[str, Any]] | None,
+) -> dict[str, Any] | None:
+    """Build a BrowserConfig payload that injects cookies natively at browser
+    context creation.
+
+    Why not the ``on_page_context_created`` hook we used before? The hook
+    pattern has known timing issues — Playwright #26786 (cookies added before
+    goto can appear empty after load) and crawl4ai #322 (hook actions don't
+    always propagate to ``crawler.arun``). crawl4ai's own docs explicitly
+    recommend identity-based crawling over hooks for "robust auth":
+
+      "Run your initial login steps in a separate, well-defined process,
+      then feed that session to your main crawl — rather than shoehorning
+      complex authentication into early hooks."
+
+    crawl4ai 0.8.x's ``BrowserConfig`` accepts a ``cookies`` list directly
+    (async_configs.py line 634). The Docker REST API server deserializes it
+    via ``BrowserConfig.load`` (api.py line 567), so the same payload shape
+    works in our deployed setup.
+
+    Returns ``None`` when no cookies are provided, so callers can do:
+
+        bc = _build_browser_config_with_cookies(cookies)
+        if bc:
+            payload["browser_config"] = bc
+    """
+    if not cookies:
+        return None
+    return {
+        "type": "BrowserConfig",
+        "params": {"cookies": cookies},
+    }
 
 
 async def crawl_page(
@@ -347,36 +371,18 @@ async def crawl_page(
     """Crawl a single page via the Crawl4AI REST API.
 
     Uses the same pipeline switching as klai-connector (SPEC-CRAWL-001).
-    When cookies are provided, they are injected into the browser context
-    before the page loads via the on_page_context_created hook.
+    When cookies are provided, they are injected natively via
+    ``BrowserConfig.cookies`` so Playwright's BrowserContext receives them
+    before the page navigation starts.
     """
     config = build_crawl_config(selector)
     payload: dict[str, Any] = {
         "urls": [url],
         "crawler_config": {"type": "CrawlerRunConfig", "params": config},
     }
-    if cookies:
-        payload["hooks"] = _build_cookie_hooks(cookies)
-
-    # DIAG-COOKIE-BUG-2026-05-07 — temporary diagnostic for connector wizard
-    # cookie pass-through audit. Logs cookie NAMES and short value PREFIXES
-    # (8 chars, ~6 bits of entropy) so we can correlate which cookie shape
-    # the frontend sent vs what arrives at crawl4ai. NEVER log full values.
-    # Remove after fix is verified in production.
-    if cookies:
-        cookie_names = [c.get("name", "<missing>") for c in cookies]
-        cookie_value_prefixes = [
-            (c.get("value", "")[:8] + "..." if c.get("value") else "<empty>") for c in cookies
-        ]
-        logger.info(
-            "crawl_page_cookies_attached",
-            url=url,
-            cookie_count=len(cookies),
-            cookie_names=cookie_names,
-            cookie_value_prefixes=cookie_value_prefixes,
-        )
-    else:
-        logger.info("crawl_page_cookies_absent", url=url)
+    bc = _build_browser_config_with_cookies(cookies)
+    if bc:
+        payload["browser_config"] = bc
 
     async with httpx.AsyncClient(timeout=90.0) as client:
         try:
@@ -614,8 +620,9 @@ async def _fetch_seed_page(
         "urls": [start_url],
         "crawler_config": {"type": "CrawlerRunConfig", "params": crawler_config},
     }
-    if cookies:
-        payload["hooks"] = _build_cookie_hooks(cookies)
+    bc = _build_browser_config_with_cookies(cookies)
+    if bc:
+        payload["browser_config"] = bc
 
     try:
         async with httpx.AsyncClient(timeout=90.0) as client:
@@ -918,8 +925,9 @@ async def _bfs_deep_crawl(
         "urls": [start_url],
         "crawler_config": {"type": "CrawlerRunConfig", "params": config},
     }
-    if cookies:
-        payload["hooks"] = _build_cookie_hooks(cookies)
+    bc = _build_browser_config_with_cookies(cookies)
+    if bc:
+        payload["browser_config"] = bc
 
     try:
         async with httpx.AsyncClient(timeout=90.0) as client:
@@ -1001,8 +1009,9 @@ async def _chunked_bulk_fetch(
             "urls": chunk_urls,
             "crawler_config": {"type": "CrawlerRunConfig", "params": crawler_config},
         }
-        if cookies:
-            payload["hooks"] = _build_cookie_hooks(cookies)
+        bc = _build_browser_config_with_cookies(cookies)
+        if bc:
+            payload["browser_config"] = bc
         try:
             async with httpx.AsyncClient(timeout=_BULK_CRAWL_TIMEOUT) as client:
                 data = await _crawl_sync(client, payload)
