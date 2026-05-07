@@ -43,11 +43,11 @@
             <input type="hidden" name="request_id" value="{{ request_id | e }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token | e }}">
             <div class="actions">
-                <button type="submit" name="decision" value="deny" class="btn btn-deny">
-                    Niet nu
-                </button>
                 <button type="submit" name="decision" value="approve" class="btn btn-approve">
                     Verbinden
+                </button>
+                <button type="submit" name="decision" value="deny" class="btn btn-deny">
+                    Niet nu
                 </button>
             </div>
         </form>

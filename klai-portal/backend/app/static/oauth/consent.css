@@ -271,10 +271,15 @@ code {
 }
 .as-user a:hover { color: var(--text); }
 
+/*
+ * DOM order is intentional: primary action (Verbinden) FIRST, secondary
+ * (Niet nu) SECOND. Visual + tab-order follow DOM. Klai pattern: confirm
+ * the action first, escape route second. Mobile stacks; desktop is row.
+ */
 .actions {
     display: flex;
     gap: 10px;
-    flex-direction: column-reverse;
+    flex-direction: column;
 }
 
 .btn {
