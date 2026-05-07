@@ -62,7 +62,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 
 import httpx
 import numpy as np
@@ -212,12 +213,44 @@ class BootstrapResult:
     """Result from generate_bootstrap_proposals_v2.
 
     SPEC-TAXONOMY-V2-001 AC-8, AC-13.
+    SPEC-TAXONOMY-MERGE-DETECT-001 AC-9: base_clusters_found added.
     """
 
     documents_scanned: int
     proposals_submitted: int
     clusters_found: int
+    # When consolidate ran, clusters_found = post-consolidate parent count
+    # and base_clusters_found = pre-consolidate base count. When consolidate
+    # was skipped or fell back, base_clusters_found = clusters_found.
+    base_clusters_found: int = 0
     reason: str | None = None
+
+
+@dataclass
+class ParentCategory:
+    """One LLM-proposed parent category from consolidate step (SPEC-TAXONOMY-MERGE-DETECT-001).
+
+    Built by ``_consolidate_to_parents``; consumed by the submit-loop in
+    ``generate_bootstrap_proposals_v2`` to produce TaxonomyProposal payloads.
+    """
+
+    name: str
+    rationale: str
+    child_cluster_ids: list[int]
+    # Description is generated AFTER group-and-assign via generate_node_description
+    # — same path that production new_node proposals use.
+    description: str = ""
+    # Aggregated fields (populated by _consolidate_to_parents):
+    document_count: int = 0
+    sample_titles: list[str] = field(default_factory=list)
+    centroid: list[float] | None = None
+    child_cluster_names: list[str] = field(default_factory=list)
+    # SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 1: per-child centroids for
+    # multi-centroid auto-categorise. The aggregate ``centroid`` is too
+    # diffuse for the 0.82 match threshold; storing per-child centroids
+    # lets approve_proposal enqueue N parallel auto-categorise jobs that
+    # all tag the same node_id.
+    child_centroids: list[list[float]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -414,6 +447,380 @@ async def _suggest_cluster_names_batched(
         result[cid] = name.strip()
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Strategy 4 (SPEC-TAXONOMY-MERGE-DETECT-001): Clio-style consolidation.
+# After base clusters have been named (Strategy 3) and dedupped, this step
+# groups them into 5-9 IA-friendly parent categories in a SINGLE LLM call.
+#
+# Inspired by Anthropic Clio (arxiv 2412.13678): "propose higher-level names
+# that encompass these clusters" + "assign each base cluster to one parent",
+# but collapsed to one call because we have 5-30 clusters (no neighborhood
+# k-means step needed). Reuses _NAMING_CRITERIA so naming rules stay
+# consistent across all strategies.
+#
+# Validated on Voys/support via the dry-run script
+# (knowledge_ingest/scripts/dry_run_merge_consolidate.py): 15 base clusters
+# → 7-8 parents within target_min/target_max, parent descriptions of
+# production quality.
+# ---------------------------------------------------------------------------
+
+_MERGE_CONSOLIDATE_SYSTEM_PROMPT_TEMPLATE = (
+    "You are a knowledge taxonomy assistant. You will see {n_clusters} "
+    "fine-grained document clusters from a knowledge base. Your job: "
+    "organise them into between {target_min} and {target_max} broader parent "
+    "categories suitable for browsing/navigation."
+    "{kb_description_block}"
+    "\n\nThis is information architecture, not classification. The target "
+    "count of {target_min}-{target_max} follows Miller's Law: more would "
+    "overwhelm a sidebar, fewer would lose meaningful distinctions."
+    "\n\n"
+    f"{_NAMING_CRITERIA}"
+    "\nAdditional rules for parent categories:\n"
+    "- Each parent category SHOULD encompass 1-5 base clusters that share an "
+    "  overarching theme.\n"
+    "- A parent category MAY contain a single base cluster if that cluster "
+    "  is genuinely distinct from all others — do not force-group unrelated "
+    "  things just to lower the count.\n"
+    "- Each base cluster MUST be assigned to exactly one parent category.\n"
+    "- Parent names follow the same naming criteria as base clusters: name "
+    "  the SHARED theme, not the most salient sub-item.\n"
+    "- DO NOT keep clusters separate solely because their base names differ — "
+    "  the base names came from a per-cluster naming step instructed to "
+    "  differentiate, so naming-disagreement is expected and not a signal "
+    "  that the clusters belong apart.\n"
+    "- Aim for {target_min}-{target_max} parents. When in doubt within that "
+    "  range, BIAS toward the upper end (closer to {target_max}). Operators "
+    "  can easily reject too-granular proposals, but cannot easily split a "
+    "  too-coarse parent. If you genuinely cannot reach {target_max} without "
+    "  grouping unrelated things, fewer is OK. If staying under {target_max} "
+    "  forces you to lump unrelated topics together, slightly more is OK.\n"
+    "- Each base cluster MAY become its own parent if it is genuinely "
+    "  distinct — single-child parents are FINE and preferred over forced "
+    "  lumping. Do not invent a 'misc' or 'overig' parent just to absorb "
+    "  one stray cluster.\n"
+    "- For SINGLE-CHILD parents (one base cluster under it): propose a "
+    "  parent name that works as a top-level browse category, NOT just a "
+    "  copy of the base cluster's technical name. Example: base cluster "
+    "  'Partner-ID's en samenwerkingscodes' → parent name 'Partners' or "
+    "  'Voys-partners' (user-facing browse label), not 'Partner-ID's en "
+    "  samenwerkingscodes' (a tech detail).\n"
+    "\nBalance constraints (avoid one over-large parent — these scale with "
+    "the actual corpus, not absolute numbers):\n"
+    "- Total documents across all base clusters: {total_docs}. "
+    "Total base clusters: {n_clusters}.\n"
+    "- Soft cap on parent size: a single parent SHOULD NOT hold more than "
+    "  ~25% of total documents (~{doc_cap} docs) OR more than ~33% of base "
+    "  clusters (~{cluster_cap} clusters). If EITHER threshold is "
+    "  exceeded, prefer to split that parent into more specific "
+    "  sub-themes.\n"
+    "- These caps are SOFT — quality of grouping outranks balance. If the "
+    "  only sensible split would mix unrelated themes (e.g. forcing a "
+    "  cohesive 'CRM' parent to split into arbitrary halves), keep it "
+    "  together and accept the imbalance. Bias toward splitting when an "
+    "  internal split-line is meaningful (configuration vs hardware vs "
+    "  network), bias toward keeping when no clean split exists.\n"
+    "- Aim for roughly balanced parent sizes — no one parent should "
+    "  dominate sidebar browsing.\n"
+    "- Splitting MAY push the parent count slightly above {target_max} — "
+    "  that's acceptable. Hard cap at {hard_cap} parents.\n"
+    "\nReply ONLY with JSON, no markdown:\n"
+    '{{"parents": [{{"name": "<parent name>", "rationale": "<why these '
+    'belong together, max 200 chars>", "child_cluster_ids": [<int>, ...]}}, '
+    "...]}}"
+)
+
+
+async def _consolidate_to_parents(
+    base_proposals: list[tuple[int, str]],
+    cluster_doc_lists: dict[int, list[DocumentSummary]],
+    cluster_map: dict[int, list[int]],
+    document_embeddings: np.ndarray,
+    kb_description: str,
+    target_min: int,
+    target_max: int,
+) -> list[ParentCategory]:
+    """Single-call Clio-style group-and-assign + parallel parent descriptions.
+
+    Args:
+        base_proposals: list of (cluster_id, name) tuples from the post-dedup set.
+        cluster_doc_lists: cluster_id → list of DocumentSummary (for sample titles
+            and base-cluster description input).
+        cluster_map: cluster_id → list of doc indices into document_embeddings
+            (for centroid computation).
+        document_embeddings: (n_docs, dim) unit-normalised embedding matrix.
+        kb_description: KB description for prompt context (may be empty).
+        target_min: desired minimum number of parent categories.
+        target_max: desired maximum number of parent categories.
+
+    Returns:
+        List of ParentCategory with name, description, child_cluster_ids,
+        document_count, sample_titles (union, capped at 10), centroid
+        (doc-count-weighted unit-normalised mean), and child_cluster_names.
+
+    Raises:
+        ValueError: malformed LLM response.
+        Exception: any HTTP / timeout / JSON parsing error from the LLM call.
+
+    Caller (generate_bootstrap_proposals_v2) catches these and falls back
+    to submitting base clusters per AC-5.
+    """
+    import json as _json
+
+    if len(base_proposals) <= 1:
+        # Trivial case: nothing to consolidate.
+        return []
+
+    # We need per-cluster descriptions as input to the LLM (matches the
+    # validated dry-run script behaviour). Generate them in parallel.
+    desc_tasks_pre = [
+        generate_node_description(
+            name,
+            None,
+            [doc.title for doc in cluster_doc_lists.get(cid, [])[:5]],
+        )
+        for cid, name in base_proposals
+    ]
+    base_descriptions_results = await asyncio.gather(*desc_tasks_pre, return_exceptions=True)
+    base_descriptions: dict[int, str] = {}
+    for (cid, _), desc in zip(base_proposals, base_descriptions_results, strict=True):
+        base_descriptions[cid] = desc if isinstance(desc, str) else ""
+
+    # Build prompt context
+    kb_description_block = ""
+    if kb_description and kb_description.strip():
+        kb_description_block = f"\n\nThe knowledge base is described as:\n{kb_description.strip()}"
+
+    total_docs = sum(len(cluster_map[cid]) for cid, _ in base_proposals)
+    n_clusters = len(base_proposals)
+    doc_cap = max(1, total_docs // 4)
+    cluster_cap = max(1, n_clusters // 3)
+    hard_cap = target_max + 2
+
+    system_prompt = _MERGE_CONSOLIDATE_SYSTEM_PROMPT_TEMPLATE.format(
+        n_clusters=n_clusters,
+        total_docs=total_docs,
+        target_min=target_min,
+        target_max=target_max,
+        doc_cap=doc_cap,
+        cluster_cap=cluster_cap,
+        hard_cap=hard_cap,
+        kb_description_block=kb_description_block,
+    )
+
+    cluster_lines: list[str] = []
+    for cid, name in base_proposals:
+        docs = cluster_doc_lists.get(cid, [])
+        title_lines = "\n".join(f"      - {d.title[:140]}" for d in docs[:5])
+        descr = base_descriptions.get(cid) or "(no description)"
+        cluster_lines.append(
+            f'Cluster {cid} "{name}" ({len(cluster_map[cid])} docs):\n'
+            f"  Description: {descr}\n"
+            f"  Sample titles:\n{title_lines}"
+        )
+    user_message = "\n\n".join(cluster_lines)
+
+    max_tokens = 600 + 80 * n_clusters
+
+    async with httpx.AsyncClient(timeout=settings.taxonomy_classification_timeout) as client:
+        resp = await client.post(
+            f"{settings.litellm_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {settings.litellm_api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": settings.taxonomy_classification_model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                "temperature": 0.2,
+                "max_tokens": max_tokens,
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+    content = (data["choices"][0]["message"]["content"] or "").strip()
+    if content.startswith("```"):
+        content = content.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    parsed = _json.loads(content)
+    if not isinstance(parsed, dict) or "parents" not in parsed:
+        raise ValueError("Consolidate response missing 'parents' key")
+
+    parents_list = parsed["parents"]
+    if not isinstance(parents_list, list):
+        raise ValueError("'parents' is not a list")
+
+    valid_cids = {cid for cid, _ in base_proposals}
+    name_by_cid = {cid: name for cid, name in base_proposals}
+    parents: list[ParentCategory] = []
+    seen_cids: set[int] = set()
+
+    for item in parents_list:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        rationale = item.get("rationale") or ""
+        if not isinstance(rationale, str):
+            rationale = str(rationale)
+        children_raw = item.get("child_cluster_ids", [])
+        if not isinstance(children_raw, list):
+            children_raw = []
+        children: list[int] = []
+        for cid in children_raw:
+            if not isinstance(cid, int):
+                continue
+            if cid not in valid_cids or cid in seen_cids:
+                continue
+            seen_cids.add(cid)
+            children.append(cid)
+        if children:
+            parents.append(
+                ParentCategory(
+                    name=name.strip(),
+                    rationale=rationale.strip(),
+                    child_cluster_ids=children,
+                )
+            )
+
+    # AC-14: collect any unassigned clusters under a fallback parent so no
+    # content silently disappears. Operator can review and merge/split.
+    #
+    # Single-cluster fallback uses the base cluster's own name instead of a
+    # generic "Overig" — that label was visibly bad in production (Voys-app
+    # cluster ended up labelled "Overig" on the first live run, 2026-05-07).
+    # Multi-cluster fallback keeps the "Overig" label since no single name
+    # captures the diverse content.
+    unassigned = sorted(cid for cid in valid_cids if cid not in seen_cids)
+    if unassigned:
+        logger.warning(
+            "bootstrap_consolidate_unassigned_clusters",
+            count=len(unassigned),
+            cluster_ids=unassigned,
+        )
+        if len(unassigned) == 1:
+            only_cid = unassigned[0]
+            fallback_name = name_by_cid[only_cid]
+            fallback_rationale = (
+                "LLM did not explicitly assign this cluster — kept as "
+                "single-child parent under its base name."
+            )
+        else:
+            fallback_name = "Overig"
+            fallback_rationale = (
+                "Multiple clusters were not assigned by the LLM — operator review required."
+            )
+        parents.append(
+            ParentCategory(
+                name=fallback_name,
+                rationale=fallback_rationale,
+                child_cluster_ids=unassigned,
+            )
+        )
+
+    # Aggregate fields per parent: document_count, sample_titles, centroid,
+    # child_cluster_names, child_centroids. These are what the submit-loop
+    # turns into a TaxonomyProposal payload.
+    for p in parents:
+        # document_count = sum of children's doc_count
+        p.document_count = sum(len(cluster_map[cid]) for cid in p.child_cluster_ids)
+        # sample_titles = round-robin from children, capped at 10
+        p.sample_titles = _round_robin_titles(p.child_cluster_ids, cluster_doc_lists)
+        # centroid = doc-count-weighted unit-normalised mean of children's centroids
+        # (legacy single-centroid path; kept for backward compatibility but
+        # tagging now uses child_centroids per SPEC-TAXONOMY-REVIEW-FLOW-001)
+        p.centroid = _weighted_centroid(p.child_cluster_ids, cluster_map, document_embeddings)
+        # child_cluster_names for operator transparency
+        p.child_cluster_names = [name_by_cid[cid] for cid in p.child_cluster_ids]
+        # SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 1: per-child centroids for
+        # multi-centroid auto-categorise at approve-time.
+        p.child_centroids = _per_child_centroids(
+            p.child_cluster_ids, cluster_map, document_embeddings
+        )
+
+    # Generate user-facing descriptions per parent in parallel — same path
+    # as production new_node proposals (generate_node_description on
+    # parent_name + round-robin sample titles).
+    desc_tasks = [generate_node_description(p.name, None, p.sample_titles[:10]) for p in parents]
+    descriptions = await asyncio.gather(*desc_tasks, return_exceptions=True)
+    for p, desc in zip(parents, descriptions, strict=True):
+        p.description = desc if isinstance(desc, str) else ""
+
+    return parents
+
+
+def _round_robin_titles(
+    child_cluster_ids: list[int],
+    cluster_doc_lists: dict[int, list[DocumentSummary]],
+) -> list[str]:
+    """2 titles per child, capped at 10 total. Mirrors the dry-run script."""
+    if not child_cluster_ids:
+        return []
+    per_child = max(2, 10 // max(1, len(child_cluster_ids)))
+    titles: list[str] = []
+    for cid in child_cluster_ids:
+        for doc in cluster_doc_lists.get(cid, [])[:per_child]:
+            titles.append(doc.title)
+            if len(titles) >= 10:
+                return titles
+    return titles[:10]
+
+
+def _weighted_centroid(
+    child_cluster_ids: list[int],
+    cluster_map: dict[int, list[int]],
+    document_embeddings: np.ndarray,
+) -> list[float] | None:
+    """Doc-count-weighted unit-normalised mean of child centroids.
+
+    Returns None if all children have zero-norm centroids (defensive — should
+    not happen with bge-m3, but guards against pathological input).
+    """
+    indices: list[int] = []
+    for cid in child_cluster_ids:
+        indices.extend(cluster_map.get(cid, []))
+    if not indices:
+        return None
+    centroid = document_embeddings[indices].mean(axis=0)
+    norm = float(np.linalg.norm(centroid))
+    if norm == 0:
+        return None
+    return (centroid / norm).tolist()
+
+
+def _per_child_centroids(
+    child_cluster_ids: list[int],
+    cluster_map: dict[int, list[int]],
+    document_embeddings: np.ndarray,
+) -> list[list[float]]:
+    """Per-child unit-normalised centroids — one per base cluster.
+
+    SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 1: replaces the single aggregate
+    centroid for tagging purposes. Each child cluster's tight centroid is
+    computed as the unit-normalised mean of its OWN documents (not the
+    parent-aggregate). approve_proposal then enqueues N parallel
+    auto-categorise jobs (one per child centroid) to tag the same node_id,
+    so chunks tight against ANY child match the parent.
+
+    Skips children whose centroid is zero-norm (defensive). Returns the
+    list in the same order as child_cluster_ids.
+    """
+    out: list[list[float]] = []
+    for cid in child_cluster_ids:
+        indices = cluster_map.get(cid, [])
+        if not indices:
+            continue
+        centroid = document_embeddings[indices].mean(axis=0)
+        norm = float(np.linalg.norm(centroid))
+        if norm == 0:
+            continue
+        out.append((centroid / norm).tolist())
+    return out
 
 
 async def generate_bootstrap_proposals_v2(
@@ -638,55 +1045,125 @@ async def generate_bootstrap_proposals_v2(
                 reason="all_duplicates",
             )
 
-    # SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B2: generate descriptions in parallel
-    # (V1 had this; V2 dropped it — this restores it).
-    desc_tasks = [
-        generate_node_description(
-            name,
-            None,
-            [doc.title for doc in cluster_doc_lists.get(cid, [])[:5]],
-        )
-        for cid, name in proposals_to_submit
-    ]
-    desc_results = await asyncio.gather(*desc_tasks, return_exceptions=True)
-
-    # Step 8: submit proposals (AC-18)
-    submitted = 0
-    for i, (cid, name) in enumerate(proposals_to_submit):
-        cluster_doc_list = cluster_doc_lists.get(cid, [])
-        sample_titles = [doc.title for doc in cluster_doc_list[:5]]
-
-        # Use generated description if available; fall back to "" on failure (AC-7)
-        raw_desc = desc_results[i] if i < len(desc_results) else Exception("index out of range")
-        if isinstance(raw_desc, str):
-            description = raw_desc
-        else:
-            description = ""
-            logger.warning(
-                "bootstrap_description_generation_failed",
-                kb_slug=kb_slug,
-                cluster_id=cid,
-                error=str(raw_desc) if raw_desc is not None else None,
+    # Step 7.5: Clio-style consolidation to 5-9 parents (SPEC-TAXONOMY-MERGE-DETECT-001).
+    # Runs only if there are MORE base clusters than the IA target_max — for
+    # smaller post-dedup sets (≤ target_max) consolidation has no value.
+    # AC-5: any consolidate failure falls back to submitting base clusters.
+    base_clusters_count = len(proposals_to_submit)
+    parents: list[ParentCategory] | None = None
+    if (
+        settings.taxonomy_consolidate_enabled
+        and base_clusters_count > settings.taxonomy_consolidate_target_max
+    ):
+        consolidate_t0 = time.monotonic()
+        try:
+            parents = await _consolidate_to_parents(
+                base_proposals=proposals_to_submit,
+                cluster_doc_lists=cluster_doc_lists,
+                cluster_map=cluster_map,
+                document_embeddings=document_embeddings,
+                kb_description=kb_description,
+                target_min=settings.taxonomy_consolidate_target_min,
+                target_max=settings.taxonomy_consolidate_target_max,
             )
+            consolidate_latency_ms = int((time.monotonic() - consolidate_t0) * 1000)
+            if parents:
+                largest = max(parents, key=lambda p: p.document_count)
+                largest_doc_pct = (
+                    100.0 * largest.document_count / max(1, sum(p.document_count for p in parents))
+                )
+                logger.info(
+                    "bootstrap_consolidate_complete",
+                    kb_slug=kb_slug,
+                    org_id=org_id,
+                    base_clusters=base_clusters_count,
+                    parents=len(parents),
+                    largest_parent_doc_pct=round(largest_doc_pct, 1),
+                    largest_parent_cluster_count=len(largest.child_cluster_ids),
+                    latency_ms=consolidate_latency_ms,
+                )
+        except Exception as exc:
+            # AC-5: fall back to base clusters. Bootstrap MUST NOT fail on consolidate failure.
+            logger.warning(
+                "bootstrap_consolidate_failed",
+                kb_slug=kb_slug,
+                org_id=org_id,
+                error=str(exc),
+                base_clusters=base_clusters_count,
+                exc_info=True,
+            )
+            parents = None
 
-        proposal = TaxonomyProposal(
-            proposal_type="new_node",
-            suggested_name=name,
-            document_count=len(cluster_doc_list),
-            sample_titles=sample_titles,
-            description=description,
-        )
-        await submit_taxonomy_proposal(kb_slug=kb_slug, org_id=org_id, proposal=proposal)
-        submitted += 1
+    # Step 8: submit proposals (AC-18 base path / AC-7 consolidate path).
+    submitted = 0
+    if parents:
+        # Consolidate path: descriptions and aggregated fields are already
+        # populated inside _consolidate_to_parents.
+        for p in parents:
+            proposal = TaxonomyProposal(
+                proposal_type="new_node",
+                suggested_name=p.name,
+                document_count=p.document_count,
+                sample_titles=p.sample_titles[:5],
+                description=p.description,
+                cluster_centroid=p.centroid,
+                child_cluster_names=p.child_cluster_names,
+                # SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 1: per-child centroids
+                # for multi-centroid auto-categorise. Only set when there
+                # is more than one child (single-child parents use the
+                # legacy single-centroid path).
+                child_centroids=(p.child_centroids if len(p.child_cluster_ids) > 1 else None),
+            )
+            await submit_taxonomy_proposal(kb_slug=kb_slug, org_id=org_id, proposal=proposal)
+            submitted += 1
+    else:
+        # Base path: SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B2 (generate descriptions in parallel).
+        desc_tasks = [
+            generate_node_description(
+                name,
+                None,
+                [doc.title for doc in cluster_doc_lists.get(cid, [])[:5]],
+            )
+            for cid, name in proposals_to_submit
+        ]
+        desc_results = await asyncio.gather(*desc_tasks, return_exceptions=True)
 
-    # Step 9: AC-9 log
-    # SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B5: log cluster_probability_mean instead of dbcv_score.
-    # dbcv_score assumed relative_validity_ which sklearn 1.8 does not expose.
+        for i, (cid, name) in enumerate(proposals_to_submit):
+            cluster_doc_list = cluster_doc_lists.get(cid, [])
+            sample_titles = [doc.title for doc in cluster_doc_list[:5]]
+
+            raw_desc = desc_results[i] if i < len(desc_results) else Exception("index out of range")
+            if isinstance(raw_desc, str):
+                description = raw_desc
+            else:
+                description = ""
+                logger.warning(
+                    "bootstrap_description_generation_failed",
+                    kb_slug=kb_slug,
+                    cluster_id=cid,
+                    error=str(raw_desc) if raw_desc is not None else None,
+                )
+
+            proposal = TaxonomyProposal(
+                proposal_type="new_node",
+                suggested_name=name,
+                document_count=len(cluster_doc_list),
+                sample_titles=sample_titles,
+                description=description,
+            )
+            await submit_taxonomy_proposal(kb_slug=kb_slug, org_id=org_id, proposal=proposal)
+            submitted += 1
+
+    # Step 9: AC-9 log + SPEC-TAXONOMY-MERGE-DETECT-001 base_clusters_found.
+    # When consolidate ran, clusters_found = post-consolidate parent count.
+    # When consolidate skipped/failed, clusters_found = base count (back-compat).
+    final_clusters_found = len(parents) if parents else base_clusters_count
     logger.info(
         "bootstrap_proposals_complete",
         org_id=org_id,
         kb_slug=kb_slug,
-        clusters_found=clusters_found,
+        clusters_found=final_clusters_found,
+        base_clusters_found=base_clusters_count,
         outlier_count=outlier_count,
         cluster_probability_mean=cluster_probability_mean,
         proposals_submitted=submitted,
@@ -695,7 +1172,8 @@ async def generate_bootstrap_proposals_v2(
     return BootstrapResult(
         documents_scanned=doc_count,
         proposals_submitted=submitted,
-        clusters_found=clusters_found,
+        clusters_found=final_clusters_found,
+        base_clusters_found=base_clusters_count,
     )
 
 
