@@ -106,8 +106,9 @@ It is **cross-platform** — all platform-specific settings live in local config
 
 No per-machine setup beyond a one-time login. The `playwright` server in `.mcp.json`
 invokes `.claude/scripts/playwright-launcher.mjs` (committed, cross-platform). The launcher
-spawns `@playwright/mcp@0.0.70` with `--browser chromium --isolated --storage-state
-~/.claude/mcp-storageState.json`. Bundled Chromium, no Brave/Chrome.
+spawns `@playwright/mcp@latest` with `--browser chrome --isolated --storage-state
+~/.claude/mcp-storageState.json`. Parallel-safe (every session gets its own ephemeral
+profile) and all sessions start authenticated by preloading the same storage-state file.
 
 ### Use case this is built for
 
@@ -116,18 +117,27 @@ Playwright MCP. You log in once; the AI takes over from there. Multiple coding s
 can run in parallel — each gets a visible browser window with the same login already
 loaded.
 
-### Why `--isolated` + `--storage-state` instead of a persistent profile
+### Why `--isolated` + `--storage-state` (and not `--user-data-dir`)
 
-A persistent Chromium profile (`--user-data-dir`) is single-instance: a second simultaneous
-session fails with `Browser is already in use`. `--isolated` gives every session its own
-ephemeral profile (no lock conflicts), and `--storage-state <file>` preloads cookies and
-localStorage at startup so the session is already authenticated. This is the canonical
-Playwright multi-session authentication pattern (also what Playwright Test does via
-`globalSetup` + `storageState`).
+A persistent `--user-data-dir` is single-instance-locked: a second concurrent
+Claude Code session that needs the same profile fails with `Browser is already
+in use`. The `--isolated --storage-state` pattern dodges that lock — every
+session gets its own ephemeral profile, all preloaded with the same login
+state at startup. This is Microsoft's recommended path for parallel + login
+without the browser extension (Issue #1530, the alternative "named session
+management" feature, was closed by Microsoft as `not planned`).
 
-Storage state is read-only at startup — nothing writes it back. That is fine for this use
-case because the AI does not log out, change passwords, or otherwise mutate auth. Refresh
-the file when Google's session cookies expire (~3 weeks).
+Storage state is read-only at startup. The AI does not log out, change
+passwords, or otherwise mutate auth, so read-only is fine. Refresh the file
+when Google's session cookies expire (~3 weeks, see seed flow below).
+
+The reason this pattern looked broken for weeks in April 2026: PR #354 used
+`npx playwright codegen --save-storage` as the seed step. On macOS that save
+only fires on a specific Inspector-side close event; if you closed the
+browser the wrong way, the file never appeared. Solved May 2026 by switching
+the seed to the in-session `browser_storage_state` MCP tool (available in
+`@playwright/mcp >= 0.0.67`), which writes the file directly from the running
+MCP server — no external tooling, no Inspector window, no Ctrl+C dance.
 
 ### Why a launcher script and not a JSON `--config` file
 
@@ -138,31 +148,24 @@ vehicle for those flags.
 
 ### One-time login (and refresh)
 
-Run this once, and again whenever Google's session cookies expire (you'll know because
-sessions start logged-out):
+1. With the launcher in place but no storage-state file yet (or after deleting
+   it for a refresh), restart Claude Code so the MCP server picks up the new
+   config. Open a new Playwright MCP session — the browser starts logged-out.
+2. Have the AI `browser_navigate` to a login URL, e.g. `https://voys.getklai.com`.
+3. Log in by hand (Google SSO + 2FA), wait until you're on the chat home.
+4. Have the AI call the MCP tool `browser_storage_state` — it writes the
+   current cookies + localStorage to `~/.claude/mcp-storageState.json`.
+5. Restart Claude Code so the launcher picks the file up via `--storage-state`.
+6. From now on all MCP sessions, including parallel Claude Code instances,
+   start authenticated.
 
-```powershell
-# Windows (PowerShell)
-npx --yes playwright codegen `
-  --save-storage="$env:USERPROFILE\.claude\mcp-storageState.json" `
-  --browser=chromium `
-  https://voys.getklai.com
-```
-
-```bash
-# macOS / Linux
-npx --yes playwright codegen \
-  --save-storage="$HOME/.claude/mcp-storageState.json" \
-  --browser=chromium \
-  https://voys.getklai.com
-```
-
-A Chromium window opens. Log in to all sites you need (Google SSO, getklai, etc.). When
-done, close the codegen window. The storage-state file is written automatically. Restart
-Claude Code; every Playwright MCP session now starts authenticated.
+Refresh the same way every ~3 weeks when Google's session cookies expire.
 
 For the full failure-mode cycle and anti-patterns to avoid, see
-`playwright-mcp-config-cycle (HIGH)` in `.claude/rules/klai/pitfalls/process-rules.md`.
+`playwright-mcp-config-cycle (HIGH)` in
+`.claude/rules/klai/pitfalls/process-rules.md` (8 anti-patterns and many
+"fixes" since April 2026 — this section is the May 2026 canonical, anchored
+on Microsoft Issue #1530's outcome).
 
 ### Starting from scratch (logged-out state)
 
