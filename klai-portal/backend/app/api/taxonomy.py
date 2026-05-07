@@ -748,10 +748,12 @@ async def trigger_bootstrap(
     kb = await _get_kb_or_404(kb_slug, org.id, db)
     await _require_role(kb, caller_id, db, "contributor")
 
-    # Resolve Zitadel org_id for the ingest service call
-    org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == org.id))
-    portal_org = org_result.scalar_one_or_none()
-    zitadel_org_id = portal_org.zitadel_org_id if portal_org else str(org.id)
+    # _get_caller_org already returned a fully-loaded PortalOrg; using
+    # ``org.zitadel_org_id`` avoids both the redundant SELECT and the
+    # silent ``str(org.id)`` fallback that would leak portal_orgs.id (small
+    # int) as zitadel_org_id (BIG string) downstream — same bug class as
+    # SPEC-MCP-AUTH-001's verify_access_token wire-shape fix (2026-05-07).
+    zitadel_org_id = org.zitadel_org_id
 
     from app.services.knowledge_ingest_client import trigger_taxonomy_bootstrap
 
@@ -785,9 +787,8 @@ async def trigger_backfill(
     kb = await _get_kb_or_404(kb_slug, org.id, db)
     await _require_role(kb, caller_id, db, "contributor")
 
-    org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == org.id))
-    portal_org = org_result.scalar_one_or_none()
-    zitadel_org_id = portal_org.zitadel_org_id if portal_org else str(org.id)
+    # See trigger_bootstrap above for the rationale on the wire-shape fix.
+    zitadel_org_id = org.zitadel_org_id
 
     from app.services.knowledge_ingest_client import trigger_taxonomy_backfill
 
@@ -939,12 +940,8 @@ async def taxonomy_coverage(
     _require_admin(caller_user)
     kb = await _get_kb_or_404(kb_slug, org.id, db)
 
-    # Resolve Zitadel org_id for the ingest service call
-    from app.models.portal import PortalOrg
-
-    org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == org.id))
-    portal_org = org_result.scalar_one_or_none()
-    zitadel_org_id = portal_org.zitadel_org_id if portal_org else str(org.id)
+    # See trigger_bootstrap above for the rationale on the wire-shape fix.
+    zitadel_org_id = org.zitadel_org_id
 
     # Check cache
     cache_key = (zitadel_org_id, kb_slug)
@@ -1048,11 +1045,8 @@ async def taxonomy_top_tags(
     _, org, _ = await _get_caller_org(credentials, db)
     await _get_kb_or_404(kb_slug, org.id, db)
 
-    from app.models.portal import PortalOrg
-
-    org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == org.id))
-    portal_org = org_result.scalar_one_or_none()
-    zitadel_org_id = portal_org.zitadel_org_id if portal_org else str(org.id)
+    # See trigger_bootstrap above for the rationale on the wire-shape fix.
+    zitadel_org_id = org.zitadel_org_id
 
     cache_key = (zitadel_org_id, kb_slug, taxonomy_node_id)
     cached = _top_tags_cache.get(cache_key)
