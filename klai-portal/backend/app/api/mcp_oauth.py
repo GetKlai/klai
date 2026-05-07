@@ -51,6 +51,12 @@ _TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 # automatically HTML-escaped (no per-call ``| e`` discipline needed). The
 # previous str.replace renderer broke silently whenever a contributor edited
 # template whitespace; Jinja matches the AST, not byte-exact strings.
+#
+# nosemgrep rationale: the ``direct-use-of-jinja2`` rule expects
+# ``flask.render_template()`` which is Flask-specific. We're in FastAPI; the
+# autoescape=select_autoescape(...) on the Environment is the
+# functionally-equivalent XSS guard the rule asks for.
+# nosemgrep: python.flask.security.xss.audit.direct-use-of-jinja2.direct-use-of-jinja2
 _jinja_env = Environment(
     loader=FileSystemLoader(_TEMPLATES_DIR),
     autoescape=select_autoescape(["html", "htm", "xml"]),
