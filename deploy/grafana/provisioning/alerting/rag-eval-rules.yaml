@@ -78,3 +78,75 @@ groups:
             Investigate: did the corpus change? Did retrieval-api or LiteLLM
             misbehave? Query knowledge.rag_eval_results for details.
           runbook_url: 'docs/runbooks/rag-quality.md#faithfulness-baseline-low'
+
+      # ── R2: rag_low_confidence_served_rate ─────────────────────────────
+      # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-8b.
+      # Fires when more than 20% of served retrieval responses are classified
+      # confidence_band=low or confidence_band=unknown over the trailing 1h,
+      # per tenant. This indicates either a KB coverage gap (the vocabulary-gap
+      # failure class that motivated this SPEC), a mistune of the band
+      # thresholds, or a degraded reranker / retrieval-api.
+      # Evaluated every 5 minutes; fires after 5 minutes of sustained elevation.
+      - uid: spec-rag-001-low-confidence-rate
+        title: "RAG: Low-confidence served rate > 20%"
+        condition: low_confidence_rate_above_threshold
+        data:
+          - refId: low_confidence_served
+            datasourceUid: victoriametrics
+            queryType: ""
+            relativeTimeRange:
+              from: 3600       # 1h window matches the PromQL aggregation range
+              to: 0
+            model:
+              datasource:
+                type: prometheus
+                uid: victoriametrics
+              expr: |
+                (sum by (org_id) (rate(retrieval_confidence_band_total{band=~"low|unknown"}[1h]))
+                 / sum by (org_id) (rate(retrieval_confidence_band_total[1h])))
+              refId: low_confidence_served
+          - refId: low_confidence_rate_above_threshold
+            datasourceUid: "-100"
+            queryType: ""
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0.20
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - low_confidence_served
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: "__expr__"
+                uid: "-100"
+              expression: low_confidence_served
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: low_confidence_rate_above_threshold
+              type: threshold
+        for: 5m
+        noDataState: OK
+        execErrState: Alerting
+        labels:
+          severity: high
+          spec: SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001
+          alert_type: low_confidence_rate
+        annotations:
+          summary: "Low-confidence served rate {{ $value | humanizePercentage }} on {{ $labels.org_id }}"
+          description: |
+            More than 20% of retrieval responses for org {{ $labels.org_id }} are
+            classified confidence_band=low or confidence_band=unknown over the last hour.
+            This may indicate a KB coverage gap, a mistune of confidence thresholds,
+            or a degraded reranker / retrieval-api.
+            See runbook for triage steps.
+          runbook_url: 'docs/runbooks/rag-quality.md#low-confidence-served-rate-alert-spec-rag-low-confidence-abstain-001'

@@ -119,6 +119,10 @@ class TestRetrieveEndpoint:
             mock_settings.source_quota_enabled = True
             mock_settings.source_quota_max_per_source = 2
             mock_settings.router_enabled = False
+            # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1 / REQ-3
+            mock_settings.confidence_band_high_threshold = 0.60
+            mock_settings.confidence_band_low_threshold = 0.30
+            mock_settings.link_expand_score_boost = 1.00
             resp = client.post("/retrieve", json=sample_retrieve_request)
 
         assert resp.status_code == 200
@@ -180,6 +184,10 @@ class TestGraphMetadata:
             mock_settings.source_quota_enabled = True
             mock_settings.source_quota_max_per_source = 2
             mock_settings.router_enabled = False
+            # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1 / REQ-3
+            mock_settings.confidence_band_high_threshold = 0.60
+            mock_settings.confidence_band_low_threshold = 0.30
+            mock_settings.link_expand_score_boost = 1.00
             resp = client.post("/retrieve", json=sample_retrieve_request)
 
         assert resp.status_code == 200
@@ -290,6 +298,10 @@ class TestLinkExpandInstrumentation:
             mock_settings.source_quota_enabled = True
             mock_settings.source_quota_max_per_source = 2
             mock_settings.router_enabled = False
+            # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1 / REQ-3
+            mock_settings.confidence_band_high_threshold = 0.60
+            mock_settings.confidence_band_low_threshold = 0.30
+            mock_settings.link_expand_score_boost = 1.00
             resp = client.post("/retrieve", json=sample_retrieve_request)
 
         assert resp.status_code == 200
@@ -353,6 +365,10 @@ class TestLinkExpandInstrumentation:
             mock_settings.source_quota_enabled = True
             mock_settings.source_quota_max_per_source = 2
             mock_settings.router_enabled = False
+            # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1 / REQ-3
+            mock_settings.confidence_band_high_threshold = 0.60
+            mock_settings.confidence_band_low_threshold = 0.30
+            mock_settings.link_expand_score_boost = 1.00
             resp = client.post("/retrieve", json=sample_retrieve_request)
 
         assert resp.status_code == 200

@@ -1,173 +1,384 @@
 {
-  "annotations": { "list": [] },
-  "description": "RAG retrieval quality — nightly RAGAS metrics per suite + variant. SPEC-RAG-EVAL-001.",
-  "editable": false,
-  "graphTooltip": 1,
-  "id": null,
-  "links": [],
-  "panels": [
-    {
-      "id": 1,
-      "title": "Context precision (7-day moving average)",
-      "type": "timeseries",
-      "datasource": { "type": "postgres", "uid": "portal-postgres" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
-      "fieldConfig": {
-        "defaults": {
-          "min": 0,
-          "max": 1,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "red", "value": null },
-              { "color": "yellow", "value": 0.6 },
-              { "color": "green", "value": 0.8 }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "datasource": { "type": "postgres", "uid": "portal-postgres" },
-          "rawSql": "WITH daily AS (SELECT date_trunc('day', run_at) AS day, suite, AVG(context_precision) AS metric FROM knowledge.rag_eval_results WHERE run_at >= $__timeFrom() AND run_at <= $__timeTo() AND variant = '$variant' GROUP BY 1, 2) SELECT day AS time, suite AS metric, AVG(metric) OVER (PARTITION BY suite ORDER BY day ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS value FROM daily ORDER BY day",
-          "format": "time_series",
-          "refId": "A"
-        }
-      ]
+    "annotations": {
+        "list": []
     },
-    {
-      "id": 2,
-      "title": "Context recall (7-day moving average)",
-      "type": "timeseries",
-      "datasource": { "type": "postgres", "uid": "portal-postgres" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
-      "fieldConfig": {
-        "defaults": {
-          "min": 0,
-          "max": 1,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "red", "value": null },
-              { "color": "yellow", "value": 0.6 },
-              { "color": "green", "value": 0.8 }
+    "description": "RAG retrieval quality \u2014 nightly RAGAS metrics per suite + variant. SPEC-RAG-EVAL-001.",
+    "editable": false,
+    "graphTooltip": 1,
+    "id": null,
+    "links": [],
+    "panels": [
+        {
+            "id": 1,
+            "title": "Context precision (7-day moving average)",
+            "type": "timeseries",
+            "datasource": {
+                "type": "postgres",
+                "uid": "portal-postgres"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 0
+            },
+            "options": {
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                }
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "min": 0,
+                    "max": 1,
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 0.6
+                            },
+                            {
+                                "color": "green",
+                                "value": 0.8
+                            }
+                        ]
+                    }
+                },
+                "overrides": []
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "postgres",
+                        "uid": "portal-postgres"
+                    },
+                    "rawSql": "WITH daily AS (SELECT date_trunc('day', run_at) AS day, suite, AVG(context_precision) AS metric FROM knowledge.rag_eval_results WHERE run_at >= $__timeFrom() AND run_at <= $__timeTo() AND variant = '$variant' GROUP BY 1, 2) SELECT day AS time, suite AS metric, AVG(metric) OVER (PARTITION BY suite ORDER BY day ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS value FROM daily ORDER BY day",
+                    "format": "time_series",
+                    "refId": "A"
+                }
             ]
-          }
         },
-        "overrides": []
-      },
-      "targets": [
         {
-          "datasource": { "type": "postgres", "uid": "portal-postgres" },
-          "rawSql": "WITH daily AS (SELECT date_trunc('day', run_at) AS day, suite, AVG(context_recall) AS metric FROM knowledge.rag_eval_results WHERE run_at >= $__timeFrom() AND run_at <= $__timeTo() AND variant = '$variant' GROUP BY 1, 2) SELECT day AS time, suite AS metric, AVG(metric) OVER (PARTITION BY suite ORDER BY day ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS value FROM daily ORDER BY day",
-          "format": "time_series",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "id": 3,
-      "title": "Faithfulness (7-day moving average)",
-      "type": "timeseries",
-      "datasource": { "type": "postgres", "uid": "portal-postgres" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
-      "fieldConfig": {
-        "defaults": {
-          "min": 0,
-          "max": 1,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "red", "value": null },
-              { "color": "yellow", "value": 0.75 },
-              { "color": "green", "value": 0.85 }
+            "id": 2,
+            "title": "Context recall (7-day moving average)",
+            "type": "timeseries",
+            "datasource": {
+                "type": "postgres",
+                "uid": "portal-postgres"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 0
+            },
+            "options": {
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                }
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "min": 0,
+                    "max": 1,
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 0.6
+                            },
+                            {
+                                "color": "green",
+                                "value": 0.8
+                            }
+                        ]
+                    }
+                },
+                "overrides": []
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "postgres",
+                        "uid": "portal-postgres"
+                    },
+                    "rawSql": "WITH daily AS (SELECT date_trunc('day', run_at) AS day, suite, AVG(context_recall) AS metric FROM knowledge.rag_eval_results WHERE run_at >= $__timeFrom() AND run_at <= $__timeTo() AND variant = '$variant' GROUP BY 1, 2) SELECT day AS time, suite AS metric, AVG(metric) OVER (PARTITION BY suite ORDER BY day ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS value FROM daily ORDER BY day",
+                    "format": "time_series",
+                    "refId": "A"
+                }
             ]
-          }
         },
-        "overrides": []
-      },
-      "targets": [
         {
-          "datasource": { "type": "postgres", "uid": "portal-postgres" },
-          "rawSql": "WITH daily AS (SELECT date_trunc('day', run_at) AS day, suite, AVG(faithfulness) AS metric FROM knowledge.rag_eval_results WHERE run_at >= $__timeFrom() AND run_at <= $__timeTo() AND variant = '$variant' GROUP BY 1, 2) SELECT day AS time, suite AS metric, AVG(metric) OVER (PARTITION BY suite ORDER BY day ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS value FROM daily ORDER BY day",
-          "format": "time_series",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "id": 4,
-      "title": "Answer relevance (7-day moving average)",
-      "type": "timeseries",
-      "datasource": { "type": "postgres", "uid": "portal-postgres" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
-      "fieldConfig": {
-        "defaults": {
-          "min": 0,
-          "max": 1,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "red", "value": null },
-              { "color": "yellow", "value": 0.6 },
-              { "color": "green", "value": 0.8 }
+            "id": 3,
+            "title": "Faithfulness (7-day moving average)",
+            "type": "timeseries",
+            "datasource": {
+                "type": "postgres",
+                "uid": "portal-postgres"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 8
+            },
+            "options": {
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                }
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "min": 0,
+                    "max": 1,
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 0.75
+                            },
+                            {
+                                "color": "green",
+                                "value": 0.85
+                            }
+                        ]
+                    }
+                },
+                "overrides": []
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "postgres",
+                        "uid": "portal-postgres"
+                    },
+                    "rawSql": "WITH daily AS (SELECT date_trunc('day', run_at) AS day, suite, AVG(faithfulness) AS metric FROM knowledge.rag_eval_results WHERE run_at >= $__timeFrom() AND run_at <= $__timeTo() AND variant = '$variant' GROUP BY 1, 2) SELECT day AS time, suite AS metric, AVG(metric) OVER (PARTITION BY suite ORDER BY day ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS value FROM daily ORDER BY day",
+                    "format": "time_series",
+                    "refId": "A"
+                }
             ]
-          }
         },
-        "overrides": []
-      },
-      "targets": [
         {
-          "datasource": { "type": "postgres", "uid": "portal-postgres" },
-          "rawSql": "WITH daily AS (SELECT date_trunc('day', run_at) AS day, suite, AVG(answer_relevance) AS metric FROM knowledge.rag_eval_results WHERE run_at >= $__timeFrom() AND run_at <= $__timeTo() AND variant = '$variant' GROUP BY 1, 2) SELECT day AS time, suite AS metric, AVG(metric) OVER (PARTITION BY suite ORDER BY day ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS value FROM daily ORDER BY day",
-          "format": "time_series",
-          "refId": "A"
+            "id": 4,
+            "title": "Answer relevance (7-day moving average)",
+            "type": "timeseries",
+            "datasource": {
+                "type": "postgres",
+                "uid": "portal-postgres"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 8
+            },
+            "options": {
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                }
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "min": 0,
+                    "max": 1,
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 0.6
+                            },
+                            {
+                                "color": "green",
+                                "value": 0.8
+                            }
+                        ]
+                    }
+                },
+                "overrides": []
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "postgres",
+                        "uid": "portal-postgres"
+                    },
+                    "rawSql": "WITH daily AS (SELECT date_trunc('day', run_at) AS day, suite, AVG(answer_relevance) AS metric FROM knowledge.rag_eval_results WHERE run_at >= $__timeFrom() AND run_at <= $__timeTo() AND variant = '$variant' GROUP BY 1, 2) SELECT day AS time, suite AS metric, AVG(metric) OVER (PARTITION BY suite ORDER BY day ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS value FROM daily ORDER BY day",
+                    "format": "time_series",
+                    "refId": "A"
+                }
+            ]
+        },
+        {
+            "id": 5,
+            "title": "Failed-row count per nightly run (NULL metrics)",
+            "type": "timeseries",
+            "datasource": {
+                "type": "postgres",
+                "uid": "portal-postgres"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 24,
+                "x": 0,
+                "y": 16
+            },
+            "options": {
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "postgres",
+                        "uid": "portal-postgres"
+                    },
+                    "rawSql": "SELECT date_trunc('day', run_at) AS time, suite AS metric, COUNT(*) FILTER (WHERE faithfulness IS NULL) AS value FROM knowledge.rag_eval_results WHERE run_at >= $__timeFrom() AND run_at <= $__timeTo() AND variant = '$variant' GROUP BY 1, 2 ORDER BY 1",
+                    "format": "time_series",
+                    "refId": "A"
+                }
+            ]
+        },
+        {
+            "id": 6,
+            "title": "Low-Confidence",
+            "type": "timeseries",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "victoriametrics"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 24,
+                "x": 0,
+                "y": 24
+            },
+            "options": {
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "none"
+                }
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "min": 0,
+                    "custom": {
+                        "lineWidth": 1,
+                        "fillOpacity": 5
+                    }
+                },
+                "overrides": []
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "victoriametrics"
+                    },
+                    "expr": "sum by (band) (rate(retrieval_confidence_band_total{org_id=\"$org_id\"}[$__rate_interval]))",
+                    "legendFormat": "{{band}}",
+                    "refId": "A"
+                },
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "victoriametrics"
+                    },
+                    "expr": "sum(rate(retrieval_link_expand_top_k_total{outcome=\"hit\",org_id=\"$org_id\"}[$__rate_interval])) / sum(rate(retrieval_link_expand_top_k_total{org_id=\"$org_id\"}[$__rate_interval]))",
+                    "legendFormat": "survival rate",
+                    "refId": "B"
+                },
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "victoriametrics"
+                    },
+                    "expr": "sum by (reason) (rate(litellm_low_confidence_injection_total{org_id=\"$org_id\"}[$__rate_interval]))",
+                    "legendFormat": "{{reason}}",
+                    "refId": "C"
+                }
+            ]
         }
-      ]
+    ],
+    "schemaVersion": 39,
+    "tags": [
+        "rag",
+        "quality",
+        "ragas",
+        "spec-rag-eval-001"
+    ],
+    "templating": {
+        "list": [
+            {
+                "name": "variant",
+                "label": "Variant",
+                "type": "query",
+                "datasource": {
+                    "type": "postgres",
+                    "uid": "portal-postgres"
+                },
+                "query": "SELECT DISTINCT variant FROM knowledge.rag_eval_results ORDER BY variant",
+                "refresh": 1,
+                "current": {
+                    "selected": true,
+                    "text": "baseline",
+                    "value": "baseline"
+                },
+                "includeAll": false,
+                "multi": false
+            },
+            {
+                "name": "org_id",
+                "label": "Org ID",
+                "type": "textbox",
+                "current": {
+                    "selected": false,
+                    "text": "",
+                    "value": ""
+                },
+                "hide": 0,
+                "options": [],
+                "query": "",
+                "skipUrlSync": false
+            }
+        ]
     },
-    {
-      "id": 5,
-      "title": "Failed-row count per nightly run (NULL metrics)",
-      "type": "timeseries",
-      "datasource": { "type": "postgres", "uid": "portal-postgres" },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
-      "targets": [
-        {
-          "datasource": { "type": "postgres", "uid": "portal-postgres" },
-          "rawSql": "SELECT date_trunc('day', run_at) AS time, suite AS metric, COUNT(*) FILTER (WHERE faithfulness IS NULL) AS value FROM knowledge.rag_eval_results WHERE run_at >= $__timeFrom() AND run_at <= $__timeTo() AND variant = '$variant' GROUP BY 1, 2 ORDER BY 1",
-          "format": "time_series",
-          "refId": "A"
-        }
-      ]
-    }
-  ],
-  "schemaVersion": 39,
-  "tags": ["rag", "quality", "ragas", "spec-rag-eval-001"],
-  "templating": {
-    "list": [
-      {
-        "name": "variant",
-        "label": "Variant",
-        "type": "query",
-        "datasource": { "type": "postgres", "uid": "portal-postgres" },
-        "query": "SELECT DISTINCT variant FROM knowledge.rag_eval_results ORDER BY variant",
-        "refresh": 1,
-        "current": { "selected": true, "text": "baseline", "value": "baseline" },
-        "includeAll": false,
-        "multi": false
-      }
-    ]
-  },
-  "time": { "from": "now-30d", "to": "now" },
-  "timepicker": {},
-  "timezone": "",
-  "title": "RAG quality (RAGAS metrics)",
-  "uid": "rag-quality",
-  "version": 1
+    "time": {
+        "from": "now-30d",
+        "to": "now"
+    },
+    "timepicker": {},
+    "timezone": "",
+    "title": "RAG quality (RAGAS metrics)",
+    "uid": "rag-quality",
+    "version": 1
 }

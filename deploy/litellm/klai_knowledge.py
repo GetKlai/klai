@@ -24,7 +24,6 @@ import time
 from typing import Any
 
 import httpx
-from litellm.integrations.custom_logger import CustomLogger
 
 # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): the language-detection
 # foundation that this hook prepends to every LibreChat system message,
@@ -59,9 +58,14 @@ from klai_chat_prompts import GENERAL_CHAT_SYSTEM_PROMPT, GROUNDED_CHAT_SYSTEM_P
 # to ``None`` for all LibreChat-path emits, preserving the wire shape.
 from klai_retrieval_telemetry import (
     classify_gap as _classify_gap,
+)
+from klai_retrieval_telemetry import (
     fire_gap_event as _fire_gap_event,
+)
+from klai_retrieval_telemetry import (
     fire_retrieval_log as _fire_retrieval_log,
 )
+from litellm.integrations.custom_logger import CustomLogger
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +85,7 @@ PORTAL_INTERNAL_SECRET = os.getenv("PORTAL_INTERNAL_SECRET", "")
 # When unset (e.g. older deploys), falls back to PORTAL_INTERNAL_SECRET so the
 # hook keeps shipping headers, but in production both secrets must be set or
 # the legacy auth path on /retrieve 401s with `invalid_internal_secret`.
-RETRIEVAL_INTERNAL_SECRET = (
-    os.getenv("RETRIEVAL_INTERNAL_SECRET", "") or PORTAL_INTERNAL_SECRET
-)
+RETRIEVAL_INTERNAL_SECRET = os.getenv("RETRIEVAL_INTERNAL_SECRET", "") or PORTAL_INTERNAL_SECRET
 
 # SPEC-SEC-SERVICE-AUTH-001 Phase C-1: Zitadel client_credentials JWT auth
 # replaces the shared X-Internal-Secret. The token client is constructed lazily
@@ -117,9 +119,7 @@ def _get_token_client() -> object | None:
         return None
 
     _token_client_init_attempted = True
-    if not (
-        KLAI_OAUTH_TOKEN_URL and KLAI_LITELLM_CLIENT_ID and KLAI_LITELLM_CLIENT_SECRET
-    ):
+    if not (KLAI_OAUTH_TOKEN_URL and KLAI_LITELLM_CLIENT_ID and KLAI_LITELLM_CLIENT_SECRET):
         logger.info(
             "KlaiKnowledgeHook: jwt auth env vars missing — using legacy "
             "X-Internal-Secret path (SPEC-SEC-SERVICE-AUTH-001 Phase C-1 fallback)"
@@ -177,8 +177,7 @@ async def _retrieve_jwt_headers() -> dict[str, str] | None:
         # by ZitadelTokenClient; we just record the fallback decision.
         # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
         logger.warning(
-            "KlaiKnowledgeHook: jwt mint failed (%s) — falling back to "
-            "legacy auth header",
+            "KlaiKnowledgeHook: jwt mint failed (%s) — falling back to legacy auth header",
             exc,
         )
         return None
@@ -208,9 +207,7 @@ def _retrieve_legacy_headers() -> dict[str, str]:
     }
 
 
-async def _retrieve_with_dual_auth(
-    http: httpx.AsyncClient, body: dict[str, Any]
-) -> httpx.Response:
+async def _retrieve_with_dual_auth(http: httpx.AsyncClient, body: dict[str, Any]) -> httpx.Response:
     """POST to ``/retrieve`` preferring JWT, falling back to X-Internal-Secret.
 
     Phase C-1 dual-auth (REQ-5 safe rollout):
@@ -250,7 +247,12 @@ async def _retrieve_with_dual_auth(
 
 
 RETRIEVE_TIMEOUT = float(os.getenv("KNOWLEDGE_RETRIEVE_TIMEOUT", "3.0"))
-RETRIEVE_TOP_K = int(os.getenv("KNOWLEDGE_RETRIEVE_TOP_K", "5"))
+# SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-4: top_k raised from 5 to 20.
+# Anthropic Contextual Retrieval finding ("top-20 chunks proved more
+# effective than top-5 or top-10"). The reranker already produces 20
+# candidates server-side (reranker_candidates=20) so this only changes
+# how many chunks are forwarded to the LLM, not how many are scored.
+RETRIEVE_TOP_K = int(os.getenv("KNOWLEDGE_RETRIEVE_TOP_K", "20"))
 KLAI_GAP_SOFT_THRESHOLD = float(os.getenv("KLAI_GAP_SOFT_THRESHOLD", "0.4"))
 KLAI_GAP_DENSE_THRESHOLD = float(os.getenv("KLAI_GAP_DENSE_THRESHOLD", "0.35"))
 PORTAL_RETRIEVAL_LOG_URL = os.getenv(
@@ -258,6 +260,26 @@ PORTAL_RETRIEVAL_LOG_URL = os.getenv(
 )
 EMBEDDING_MODEL_VERSION = os.getenv("EMBEDDING_MODEL_VERSION", "bge-m3-v1")
 KB_IMAGES_BASE_URL = os.getenv("KB_IMAGES_BASE_URL", "https://getklai.getklai.com")
+
+# SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-2 — anti-hallucination injection
+# fired when retrieval-api signals confidence_band ∈ {low, unknown}. Dutch
+# baseline (Klai's primary user-facing language) — the model translates
+# into the user's detected language via the existing LANGUAGE REMINDER.
+# Tunable post-deploy by editing this constant + redeploying litellm; no
+# retrieval-api change required.
+_LOW_CONFIDENCE_INJECTION_TEXT = (
+    "[Klai retrieval — lage relevantie]\n"
+    "Het opgehaalde KB-materiaal heeft een lage relevantie-score voor "
+    "deze vraag. Citeer alleen wat letterlijk in de chunks staat. Verzin "
+    "GEEN integratie-routes, productnamen, stappen, bedragen, of "
+    "technische details die niet expliciet in de chunks voorkomen. "
+    "Sluit af met een vraag om verduidelijking aan de gebruiker als het "
+    "materiaal de vraag niet volledig dekt — dat is beter dan een "
+    "verzonnen antwoord."
+)
+_LOW_CONFIDENCE_INJECTION_DISABLED = (
+    os.getenv("KNOWLEDGE_DISABLE_LOW_CONFIDENCE_INJECTION", "0") == "1"
+)
 
 # SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-HOOK-U2: prompt-template fetch config.
 PORTAL_TEMPLATES_URL = os.getenv(
@@ -289,9 +311,7 @@ def _last_user_message(messages: list[dict]) -> str | None:
                 return content
             if isinstance(content, list):
                 # Multi-modal message — extract text parts
-                return " ".join(
-                    p.get("text", "") for p in content if p.get("type") == "text"
-                )
+                return " ".join(p.get("text", "") for p in content if p.get("type") == "text")
     return None
 
 
@@ -336,9 +356,7 @@ _RETRIEVAL_BASE_URL = (KNOWLEDGE_RETRIEVE_URL or "").rsplit("/retrieve", 1)[0]
 TAXONOMY_ENABLED = os.getenv("TAXONOMY_ENABLED", "true").lower() == "true"
 # Coverage threshold: if < this fraction of KB chunks are tagged, skip filter.
 # Default 0.30 — only skip when KB is mostly untagged (REQ-2 coverage-stats fallback).
-KLAI_TAXONOMY_COVERAGE_THRESHOLD = float(
-    os.getenv("KLAI_TAXONOMY_COVERAGE_THRESHOLD", "0.30")
-)
+KLAI_TAXONOMY_COVERAGE_THRESHOLD = float(os.getenv("KLAI_TAXONOMY_COVERAGE_THRESHOLD", "0.30"))
 # Timeout for each taxonomy HTTP call (tree fetch + coverage fetch).
 TAXONOMY_FETCH_TIMEOUT = float(os.getenv("TAXONOMY_FETCH_TIMEOUT", "0.8"))
 
@@ -472,7 +490,20 @@ _QUERY_REWRITE_AND_CLASSIFY_PROMPT = (
     "1. Rewrite the user's current question into a self-contained search query "
     "— resolve pronouns and references using the conversation history. "
     "If already clear, return it unchanged.\n"
-    "2. From the taxonomy below, select ALL node IDs whose topic is genuinely "
+    "2. SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-5 — Brand-bridging: if the "
+    "question mentions a third-party brand or product name (e.g. Salesforce, "
+    "HubSpot, Pipedrive, Zoom, Microsoft Teams, Outlook), ALSO include "
+    "2–4 broader category or related-brand terms in the rewritten query so "
+    "the search can find category-specific or partner-brand pages even when "
+    "the original brand string is absent from the source content. Stay "
+    "within the 200-char limit; same language as the user.\n"
+    "Examples:\n"
+    "- 'Hoe koppel ik Voys aan Salesforce?' → 'Voys Salesforce CRM-koppeling Bubble RedCactus'\n"
+    "- 'Ondersteunen jullie Zoom?' → 'Voys Zoom vergader-integratie telefoonkoppeling'\n"
+    "- 'Werkt Outlook met Voys?' → 'Voys Outlook e-mailkoppeling agenda-integratie'\n"
+    "If NO third-party brand is mentioned, leave the rewrite unchanged "
+    "beyond the standard pronoun resolution.\n"
+    "3. From the taxonomy below, select ALL node IDs whose topic is genuinely "
     "relevant to the rewritten query. An empty list means no narrowing.\n\n"
     "Conversation history (oldest → newest):\n{history}\n\n"
     "User's current question: {raw_query}\n\n"
@@ -502,9 +533,7 @@ def _format_taxonomy_for_prompt(
     if isinstance(trees, list):
         if not trees:
             return "(none)"
-        lines = [
-            f"- id={node['id']}: {node['name']}" for node in trees[:max_nodes_per_kb]
-        ]
+        lines = [f"- id={node['id']}: {node['name']}" for node in trees[:max_nodes_per_kb]]
         if len(trees) > max_nodes_per_kb:
             lines.append(f"... ({len(trees) - max_nodes_per_kb} more nodes omitted)")
         return "\n".join(lines)
@@ -668,9 +697,7 @@ async def _fetch_taxonomy_coverage(
     coverage = {slug: float(data.get(slug, 0.0)) for slug in kb_slugs}
     if cache is not None:
         try:
-            await cache.async_set_cache(
-                cache_key, coverage, ttl=_TAXONOMY_COVERAGE_TTL_S
-            )
+            await cache.async_set_cache(cache_key, coverage, ttl=_TAXONOMY_COVERAGE_TTL_S)
         except Exception:
             pass
     return coverage
@@ -700,7 +727,7 @@ async def _rewrite_and_classify(
 
     Fail-open on any error: falls back to (raw_query, [], meta_with_skip_reason).
     """
-    import json as _json  # noqa: PLC0415 — local import avoids shadowing module-level vars
+    import json as _json
 
     meta: dict = {"was_changed": False, "rewrite_ms": 0}
 
@@ -724,9 +751,7 @@ async def _rewrite_and_classify(
 
     # Fall back to plain text prompt when no taxonomy is available
     if not flat_tree:
-        rewritten, rewrite_meta = await _rewrite_query(
-            raw_query, history, _transport=_transport
-        )
+        rewritten, rewrite_meta = await _rewrite_query(raw_query, history, _transport=_transport)
         return rewritten, [], rewrite_meta
 
     # Build combined prompt
@@ -811,9 +836,7 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
     Backward compatible: handles old {"enabled": bool} portal responses gracefully.
     """
     if not PORTAL_INTERNAL_SECRET:
-        logger.warning(
-            "KlaiKnowledgeHook: PORTAL_INTERNAL_SECRET not set — fail-closed"
-        )
+        logger.warning("KlaiKnowledgeHook: PORTAL_INTERNAL_SECRET not set — fail-closed")
         return {
             "enabled": False,
             "kb_retrieval_enabled": True,
@@ -845,9 +868,7 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
             resp.raise_for_status()
             data = resp.json()
     except Exception as exc:
-        logger.warning(
-            "KlaiKnowledgeHook: portal feature fetch failed (%s) — fail-closed", exc
-        )
+        logger.warning("KlaiKnowledgeHook: portal feature fetch failed (%s) — fail-closed", exc)
         return {
             "enabled": False,
             "kb_retrieval_enabled": True,
@@ -876,9 +897,7 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
 
     # Store version pointer (30s) and feature data (300s) separately
     await cache.async_set_cache(version_key, str(version), ttl=30)
-    await cache.async_set_cache(
-        f"kb_feature:{org_id}:{user_id}:{version}", result, ttl=300
-    )
+    await cache.async_set_cache(f"kb_feature:{org_id}:{user_id}:{version}", result, ttl=300)
     return result
 
 
@@ -983,9 +1002,7 @@ def _prepend_system_prefix(messages: list[dict], prefix: str) -> None:
     """
     if not prefix:
         return
-    sys_idx = next(
-        (i for i, m in enumerate(messages) if m.get("role") == "system"), None
-    )
+    sys_idx = next((i for i, m in enumerate(messages) if m.get("role") == "system"), None)
     if sys_idx is not None:
         existing = messages[sys_idx].get("content", "")
         messages[sys_idx] = {
@@ -1010,9 +1027,7 @@ def _build_template_instructions_block(instructions: list[dict]) -> str:
     # detected by GROUNDED_CHAT_SYSTEM_PROMPT (prepended above this block at
     # the call site). Template `name` and `text` themselves are tenant-defined
     # — they may already be in any language; we don't translate them.
-    parts: list[str] = [
-        "[Klai Templates — apply the following instructions to your answer]"
-    ]
+    parts: list[str] = ["[Klai Templates — apply the following instructions to your answer]"]
     for inst in instructions:
         name = inst.get("name") or "template"
         text = (inst.get("text") or "").strip()
@@ -1214,9 +1229,7 @@ class KlaiKnowledgeHook(CustomLogger):
         #     full set client-side, so taxonomy is skipped (no_kbs_in_scope).
         #     Fail-open: retrieval-api still applies its org/scope filters.
         #   * personal-only scope ("personal") → no org KBs → skip taxonomy.
-        kbs_in_scope: list[str] = (
-            list(kb_slugs_for_request) if kb_slugs_for_request else []
-        )
+        kbs_in_scope: list[str] = list(kb_slugs_for_request) if kb_slugs_for_request else []
         taxonomy_trees: dict[str, list[dict]] = {}
         taxonomy_coverage_map: dict[str, float] = {}
         if kbs_in_scope and TAXONOMY_ENABLED and scope in ("org", "both"):
@@ -1285,8 +1298,7 @@ class KlaiKnowledgeHook(CustomLogger):
         if TAXONOMY_ENABLED and kbs_in_scope:
             try:
                 coverage_repr = ",".join(
-                    f"{slug}={taxonomy_coverage_map.get(slug, 0.0):.2f}"
-                    for slug in kbs_in_scope
+                    f"{slug}={taxonomy_coverage_map.get(slug, 0.0):.2f}" for slug in kbs_in_scope
                 )
                 logger.info(
                     "taxonomy_classify org_id=%s kb_slugs=%s coverage=%s "
@@ -1401,6 +1413,10 @@ class KlaiKnowledgeHook(CustomLogger):
             return data
 
         chunks = result.get("chunks", [])
+        # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-2: confidence band drives the
+        # anti-hallucination injection. None on bypass paths (fail-open).
+        confidence_band: str | None = result.get("confidence_band")
+        low_confidence_inject = confidence_band in ("low", "unknown")
 
         # --- Gap detection (KB-014) ---
         gap_type = _classify_gap(chunks)
@@ -1509,8 +1525,7 @@ class KlaiKnowledgeHook(CustomLogger):
             image_urls = chunk.get("image_urls") or []
             if image_urls:
                 absolute_urls = [
-                    f"{KB_IMAGES_BASE_URL}{u}" if u.startswith("/") else u
-                    for u in image_urls
+                    f"{KB_IMAGES_BASE_URL}{u}" if u.startswith("/") else u for u in image_urls
                 ]
                 for i, img_url in enumerate(absolute_urls, 1):
                     lines.append(f"![afbeelding {i}]({img_url})")
@@ -1527,6 +1542,19 @@ class KlaiKnowledgeHook(CustomLogger):
             "NOT the language of the source documents. Translate cited "
             "content into the user's language without translator disclaimers."
         )
+        # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-2: anti-hallucination layer.
+        # Fires when retrieval-api signals confidence_band ∈ {low, unknown}.
+        # Most-recent-instruction wins, so it goes AFTER the language reminder.
+        # Disabled when KNOWLEDGE_DISABLE_LOW_CONFIDENCE_INJECTION=1 (rollback
+        # escape hatch — toggle off without redeploying retrieval-api).
+        if low_confidence_inject and not _LOW_CONFIDENCE_INJECTION_DISABLED:
+            lines.append(_LOW_CONFIDENCE_INJECTION_TEXT)
+            logger.info(
+                "low_confidence_injection_applied org_id=%s confidence_band=%s chunks_injected=%d",
+                org_id,
+                confidence_band,
+                len(chunks),
+            )
         context_block = "\n".join(lines)
 
         # SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-HOOK-E1: templates → KB → existing.
