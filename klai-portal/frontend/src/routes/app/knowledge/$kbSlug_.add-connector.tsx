@@ -15,6 +15,7 @@ import { MultiSelect, type MultiSelectOption } from '@/components/ui/multi-selec
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { MS_SITE_URL_PATTERN } from '@/lib/ms-docs'
+import { joinSeedUrl } from './$kbSlug/-kb-helpers'
 
 // -- Types -------------------------------------------------------------------
 
@@ -921,7 +922,7 @@ function AddConnectorPage() {
                           setAuthProbeResult(null)
                           setAuthProbeError(null)
                           authProbeMutation.mutate({
-                            url: webcrawlerConfig.base_url + (webcrawlerConfig.path_prefix || ''),
+                            url: joinSeedUrl(webcrawlerConfig.base_url, webcrawlerConfig.path_prefix),
                             cookies: parseCookies(),
                           })
                         }}
