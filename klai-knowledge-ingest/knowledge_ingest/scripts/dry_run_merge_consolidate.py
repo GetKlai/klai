@@ -33,6 +33,7 @@ Usage (replay):
         --mode replay --from /tmp/merge-consolidate-support-...json \\
         --target-min 5 --target-max 9
 """
+
 from __future__ import annotations
 
 import argparse
@@ -42,7 +43,7 @@ import logging
 import sys
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -63,7 +64,7 @@ from knowledge_ingest.portal_client import (
     fetch_taxonomy_nodes,
 )
 from knowledge_ingest.proposal_generator import (
-    _NAMING_CRITERIA,
+    _MERGE_CONSOLIDATE_SYSTEM_PROMPT_TEMPLATE,
     DocumentSummary,
     _suggest_cluster_names_batched,
 )
@@ -77,63 +78,11 @@ logging.basicConfig(
 logger = logging.getLogger("dry_run_merge_consolidate")
 
 
-# ---------------------------------------------------------------------------
-# Group-and-assign prompt — Clio-style top-down hierarchy with percentage-
-# based balance caps that scale with the actual corpus.
-# ---------------------------------------------------------------------------
-
-_GROUP_AND_ASSIGN_SYSTEM_PROMPT_TEMPLATE = (
-    "You are a knowledge taxonomy assistant. You will see {n_clusters} "
-    "fine-grained document clusters from a knowledge base. Your job: "
-    "organise them into between {target_min} and {target_max} broader parent "
-    "categories suitable for browsing/navigation."
-    "{kb_description_block}"
-    "\n\nThis is information architecture, not classification. The target "
-    "count of {target_min}-{target_max} follows Miller's Law: more would "
-    "overwhelm a sidebar, fewer would lose meaningful distinctions."
-    "\n\n"
-    f"{_NAMING_CRITERIA}"
-    "\nAdditional rules for parent categories:\n"
-    "- Each parent category SHOULD encompass 1-5 base clusters that share an "
-    "  overarching theme.\n"
-    "- A parent category MAY contain a single base cluster if that cluster "
-    "  is genuinely distinct from all others — do not force-group unrelated "
-    "  things just to lower the count.\n"
-    "- Each base cluster MUST be assigned to exactly one parent category.\n"
-    "- Parent names follow the same naming criteria as base clusters: name "
-    "  the SHARED theme, not the most salient sub-item.\n"
-    "- DO NOT keep clusters separate solely because their base names differ — "
-    "  the base names came from a per-cluster naming step instructed to "
-    "  differentiate, so naming-disagreement is expected and not a signal "
-    "  that the clusters belong apart.\n"
-    "- Aim for {target_min}-{target_max} parents. If you genuinely cannot "
-    "  reach {target_max} without grouping unrelated things, fewer is OK. "
-    "  If staying under {target_max} forces you to lump unrelated topics "
-    "  together, slightly more is OK.\n"
-    "\nBalance constraints (avoid one over-large parent — these scale with "
-    "the actual corpus, not absolute numbers):\n"
-    "- Total documents across all base clusters: {total_docs}. "
-    "Total base clusters: {n_clusters}.\n"
-    "- Soft cap on parent size: a single parent SHOULD NOT hold more than "
-    "  ~25% of total documents (~{doc_cap} docs) OR more than ~33% of base "
-    "  clusters (~{cluster_cap} clusters). If EITHER threshold is "
-    "  exceeded, prefer to split that parent into more specific "
-    "  sub-themes.\n"
-    "- These caps are SOFT — quality of grouping outranks balance. If the "
-    "  only sensible split would mix unrelated themes (e.g. forcing a "
-    "  cohesive 'CRM' parent to split into arbitrary halves), keep it "
-    "  together and accept the imbalance. Bias toward splitting when an "
-    "  internal split-line is meaningful (configuration vs hardware vs "
-    "  network), bias toward keeping when no clean split exists.\n"
-    "- Aim for roughly balanced parent sizes — no one parent should "
-    "  dominate sidebar browsing.\n"
-    "- Splitting MAY push the parent count slightly above {target_max} — "
-    "  that's acceptable. Hard cap at {hard_cap} parents.\n"
-    "\nReply ONLY with JSON, no markdown:\n"
-    '{{"parents": [{{"name": "<parent name>", "rationale": "<why these '
-    'belong together, max 200 chars>", "child_cluster_ids": [<int>, ...]}}, '
-    "...]}}"
-)
+# Group-and-assign prompt is imported from proposal_generator
+# (single source of truth — bug fixes / tuning land in production prompt and
+# automatically apply here too). The prompt's format() variables are:
+#   n_clusters, total_docs, target_min, target_max, doc_cap, cluster_cap,
+#   hard_cap, kb_description_block.
 
 
 # ---------------------------------------------------------------------------
@@ -426,7 +375,7 @@ async def _group_and_assign(
     doc_cap = max(1, total_docs // 4)
     cluster_cap = max(1, n_clusters // 3)
     hard_cap = target_max + 2
-    system_prompt = _GROUP_AND_ASSIGN_SYSTEM_PROMPT_TEMPLATE.format(
+    system_prompt = _MERGE_CONSOLIDATE_SYSTEM_PROMPT_TEMPLATE.format(
         n_clusters=n_clusters,
         total_docs=total_docs,
         target_min=target_min,
@@ -442,7 +391,7 @@ async def _group_and_assign(
         title_lines = "\n".join(f"      - {t[:140]}" for t in c.sample_titles[:5])
         descr = c.description or "(no description)"
         cluster_lines.append(
-            f"Cluster {c.cluster_id} \"{c.name}\" ({c.doc_count} docs):\n"
+            f'Cluster {c.cluster_id} "{c.name}" ({c.doc_count} docs):\n'
             f"  Description: {descr}\n"
             f"  Sample titles:\n{title_lines}"
         )
@@ -527,7 +476,11 @@ async def _group_and_assign(
             seen_cids.add(cid)
             children.append(cid)
         parents.append(
-            ParentCategory(name=name.strip(), rationale=rationale.strip(), child_cluster_ids=children)
+            ParentCategory(
+                name=name.strip(),
+                rationale=rationale.strip(),
+                child_cluster_ids=children,
+            )
         )
 
     unassigned = [cid for cid in valid_cids if cid not in seen_cids]
@@ -544,9 +497,7 @@ async def _group_and_assign(
     return parents
 
 
-async def _generate_parent_descriptions(
-    bundle: CacheBundle, parents: list[ParentCategory]
-) -> None:
+async def _generate_parent_descriptions(bundle: CacheBundle, parents: list[ParentCategory]) -> None:
     """Populate parent.description in-place via generate_node_description.
 
     Uses the SAME path as production new_node proposals so the integration
@@ -569,9 +520,7 @@ async def _generate_parent_descriptions(
                 break
         return titles[:10]
 
-    desc_tasks = [
-        generate_node_description(p.name, None, _titles_for_parent(p)) for p in parents
-    ]
+    desc_tasks = [generate_node_description(p.name, None, _titles_for_parent(p)) for p in parents]
     descriptions = await asyncio.gather(*desc_tasks, return_exceptions=True)
     for p, desc in zip(parents, descriptions, strict=True):
         if isinstance(desc, str):
@@ -600,7 +549,9 @@ def _print_rapport(
     print(f"Outliers:     {bundle.outlier_count}")
     print(f"Base clusters: {len(bundle.clusters)} (post-dedup)")
     if bundle.kb_description:
-        print(f"KB description: {bundle.kb_description[:140]}{'…' if len(bundle.kb_description) > 140 else ''}")
+        kbdesc = bundle.kb_description
+        suffix = "…" if len(kbdesc) > 140 else ""
+        print(f"KB description: {kbdesc[:140]}{suffix}")
     print()
     for c in bundle.clusters:
         descr = c.description or "(no description)"
@@ -643,7 +594,7 @@ def _print_rapport(
     if cache_path is not None:
         print()
         print(f"Cache written: {cache_path}")
-        print(f"Replay: python -m knowledge_ingest.scripts.dry_run_merge_consolidate \\")
+        print("Replay: python -m knowledge_ingest.scripts.dry_run_merge_consolidate \\")
         print(f"          --mode replay --from {cache_path}")
 
 
@@ -699,8 +650,10 @@ def _deserialise_bundle(data: dict) -> CacheBundle:
 
 
 def _default_cache_path(kb_slug: str) -> Path:
-    ts = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%S")
-    return Path("/tmp") / f"merge-consolidate-{kb_slug}-{ts}.json"
+    ts = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%S")
+    # /tmp is intentional — script is operator-tool, runs inside container,
+    # cache is throwaway. Operator passes the path back via --from for replay.
+    return Path("/tmp") / f"merge-consolidate-{kb_slug}-{ts}.json"  # noqa: S108
 
 
 # ---------------------------------------------------------------------------
