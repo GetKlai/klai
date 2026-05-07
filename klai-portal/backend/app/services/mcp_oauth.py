@@ -36,6 +36,7 @@ mcp_token_client.py`` for the matching client-side library.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
@@ -182,8 +183,6 @@ def verify_pkce_s256(code_verifier: str, code_challenge: str) -> bool:
     other than S256 — REQ-13.
     """
     digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
-    import base64
-
     expected = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
     return hmac.compare_digest(expected, code_challenge)
 
