@@ -43,7 +43,7 @@ from litellm.integrations.custom_logger import CustomLogger
 # ``/opt/klai/scripts/compose-up.sh litellm`` (= ``docker compose up -d
 # --remove-orphans litellm``) so new mounts are picked up automatically —
 # matching every other klai service deploy.
-from klai_chat_prompts import GROUNDED_CHAT_SYSTEM_PROMPT
+from klai_chat_prompts import GENERAL_CHAT_SYSTEM_PROMPT, GROUNDED_CHAT_SYSTEM_PROMPT
 
 # SPEC-MCP-RETRIEVAL-001 Phase 1: telemetry helpers moved out of this file
 # into ``klai-libs/retrieval-telemetry/`` so klai-knowledge-mcp's new
@@ -1026,19 +1026,48 @@ def _build_template_instructions_block(instructions: list[dict]) -> str:
 def _compose_libre_chat_prefix(*blocks: str) -> str:
     """Compose the system-prompt prefix for path A (LibreChat → LiteLLM).
 
-    SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10). Always leads with
+    SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10). Leads with
     ``GROUNDED_CHAT_SYSTEM_PROMPT`` so language detection / 3-guard switch
-    semantics apply on every LibreChat request — even branches that inject
-    nothing else (no entitlement, KB retrieval disabled, opt-out, retrieval
-    bypassed, zero chunks). Empty blocks are filtered out.
+    semantics apply, AND so the model defaults to KB-grounded behaviour on
+    every branch where a KB scope is in play — even when retrieval returned
+    zero chunks or failed loud. Empty blocks are filtered out.
 
-    This must be called from every code path that reaches the LibreChat-only
-    branch (i.e. anywhere downstream of the ``if not librechat_user_id:
-    return data`` check). Paths B (partner_chat) and C (retrieval-api /chat)
-    construct their own prompts via the canonical ``klai_chat_prompts``
-    library — they do NOT route through this helper.
+    Used by every code path downstream of ``if not librechat_user_id:
+    return data`` EXCEPT the explicit "user opted out of every KB scope"
+    branch, which calls :func:`_compose_general_chat_prefix` instead.
+    Paths B (partner_chat) and C (retrieval-api /chat) construct their
+    own prompts via the canonical ``klai_chat_prompts`` library — they do
+    NOT route through this helper.
     """
     return "\n\n".join(b for b in (GROUNDED_CHAT_SYSTEM_PROMPT, *blocks) if b)
+
+
+def _compose_general_chat_prefix(*blocks: str) -> str:
+    """Compose the system-prompt prefix for path A when the user has
+    explicitly opted out of every KB scope (``kb_personal_enabled=False``
+    AND ``kb_slugs_filter=[]``).
+
+    This is the "Algemene AI" branch the chat-config dropdown surfaces.
+    Same language-detection contract as
+    :func:`_compose_libre_chat_prefix`, but the KB-grounding rules are
+    swapped for general-assistant rules so the model:
+
+    * does NOT emit [n] citations,
+    * does NOT say 'Dat staat niet in de kennisbank' for every question,
+    * answers from general knowledge without pretending to have sources.
+
+    Templates (active per-user/per-org template instructions) still
+    apply on this branch — they are user-controlled prompt fragments
+    independent of KB scope.
+
+    Reachable only from the no-KB branch in
+    :class:`KlaiKnowledgeHook.async_pre_call_hook`. All other branches
+    (no-entitlement, kb_retrieval disabled, retrieval failed, zero
+    chunks) keep using :func:`_compose_libre_chat_prefix` so the model
+    still acts as a KB assistant when a KB scope was intended but data
+    was unavailable.
+    """
+    return "\n\n".join(b for b in (GENERAL_CHAT_SYSTEM_PROMPT, *blocks) if b)
 
 
 class KlaiKnowledgeHook(CustomLogger):
@@ -1150,11 +1179,15 @@ class KlaiKnowledgeHook(CustomLogger):
         kb_slugs = feature.get("kb_slugs_filter")
         kb_narrow = feature.get("kb_narrow", False)
 
-        # User explicitly opted out of every scope → skip retrieval. Templates
-        # may still apply (REQ-TEMPLATES-HOOK-U2 fail-open). Multilingual
-        # foundation still applies — REQ-10.
+        # User explicitly opted out of every scope → "Algemene AI" mode.
+        # Skip retrieval AND swap KB-grounding instructions for
+        # general-assistant instructions so the model doesn't keep
+        # answering "Dat staat niet in de kennisbank" with no KB present.
+        # Templates may still apply (REQ-TEMPLATES-HOOK-U2 fail-open).
+        # Multilingual foundation still applies — REQ-10 (the language
+        # contract is shared between GROUNDED and GENERAL prompts).
         if not kb_personal and kb_slugs == []:
-            _prepend_system_prefix(messages, _compose_libre_chat_prefix(templates_block))
+            _prepend_system_prefix(messages, _compose_general_chat_prefix(templates_block))
             data["messages"] = messages
             return data
 

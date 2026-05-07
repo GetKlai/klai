@@ -580,6 +580,88 @@ class TestKlaiKnowledgeHookSlugsTriState:
             )
 
     @pytest.mark.asyncio
+    async def test_empty_slugs_and_personal_off_uses_general_chat_prompt(
+        self, monkeypatch
+    ):
+        """[] + personal=False → "Algemene AI" mode: GENERAL prompt, not GROUNDED.
+
+        Regression test for the 2026-05-07 UX bug where the user disabled
+        every collection but still got KB-grounded answers ("Dat staat niet
+        in de kennisbank"). The hook now swaps in
+        ``GENERAL_CHAT_SYSTEM_PROMPT`` on this branch so the model behaves
+        as a general assistant without pretending to have sources.
+        """
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(
+            feature={
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": False,
+                "kb_slugs_filter": [],
+                "kb_narrow": False,
+                "version": 0,
+                "zitadel_user_id": "362901948573220875",
+            }
+        )
+        data = {"user": "u1" * 12, "messages": [
+            {"role": "user", "content": "What about that thing?"}
+        ]}
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        system_msg = next(
+            (m for m in data["messages"] if m["role"] == "system"), None
+        )
+        assert system_msg is not None, (
+            "Hook MUST inject a system prompt even on the no-KB branch — "
+            "the language-detection contract still applies."
+        )
+        content = system_msg["content"]
+
+        # GENERAL marker — model behaves as general-purpose assistant.
+        assert "general-purpose assistant" in content, (
+            "no-KB branch MUST inject GENERAL_CHAT_SYSTEM_PROMPT; got: "
+            f"{content[:200]!r}"
+        )
+
+        # GROUNDED-only language MUST be absent. If any of these strings
+        # leak in, the model will either cite [n] phantoms or refuse to
+        # answer with 'Dat staat niet in de kennisbank' — exactly the
+        # regression this branch fixes.
+        assert "knowledge base chunks provided" not in content, (
+            "GROUNDED prompt body leaked into the no-KB branch; the model "
+            "will pretend to have chunks it doesn't have."
+        )
+        assert "Dat staat niet in de kennisbank" not in content, (
+            "GROUNDED 'answer not in KB' fallback leaked into the no-KB "
+            "branch; the model will refuse general-knowledge questions."
+        )
+        assert "Every factual claim gets a [n] citation" not in content, (
+            "GROUNDED citation MANDATE leaked into the no-KB branch; the "
+            "model will fabricate [n] markers without any sources."
+        )
+        # Positive form: GENERAL must EXPLICITLY forbid [n] citations,
+        # not merely omit the GROUNDED rule.
+        assert "Do NOT add [n] citations" in content, (
+            "GENERAL prompt missing the explicit [n]-citation prohibition."
+        )
+
+        # Language-detection contract MUST still hold (shared preamble).
+        assert "[CRITICAL]" in content
+        assert "SUBSTANTIVE message" in content
+
+    @pytest.mark.asyncio
     async def test_empty_slugs_and_personal_on_uses_personal_scope(self, monkeypatch):
         """[] + personal=True → scope=personal, no kb_slugs filter."""
         mod = _load_hook(monkeypatch)
