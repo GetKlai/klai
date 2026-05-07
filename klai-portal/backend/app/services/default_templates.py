@@ -37,7 +37,7 @@ DEFAULT_TEMPLATES: list[dict[str, str]] = [
         "description": "Vriendelijke, behulpzame toon voor klantcontact",
         "prompt_text": (
             "Je bent een behulpzame klantenservicemedewerker. "
-            "Antwoord altijd in het Nederlands. Gebruik een vriendelijke en professionele toon. "
+            "Gebruik een vriendelijke en professionele toon, in dezelfde taal als de vraag van de gebruiker. "
             "Houd antwoorden kort en bondig. Bied proactief oplossingen aan. "
             "Als je het antwoord niet weet, zeg dat eerlijk en verwijs door naar de juiste afdeling."
         ),
