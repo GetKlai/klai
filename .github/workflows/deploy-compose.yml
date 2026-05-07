@@ -141,11 +141,21 @@ jobs:
               # to running within 10s. Operator's recovery is `git revert
               # + push`, which triggers another sync run that rsyncs the
               # previous Caddyfile back and force-recreates caddy.
+              #
+              # Uses `docker inspect` with a Go-template (built-in to
+              # docker, no external `jq` needed). `docker compose ps -q`
+              # resolves the container ID stably regardless of compose
+              # naming convention.
               echo "::group::Caddy post-recreate health check"
               HEALTHY=0
               for i in 1 2 3 4 5; do
                 sleep 2
-                STATUS=$(docker compose --project-directory /opt/klai ps caddy --format json 2>/dev/null | jq -r '.[0].State // "missing"')
+                CID=$(docker compose --project-directory /opt/klai ps -q caddy 2>/dev/null || true)
+                if [ -z "$CID" ]; then
+                  echo "Caddy container not found (attempt ${i}/5)"
+                  continue
+                fi
+                STATUS=$(docker inspect --format '{{.State.Status}}' "$CID" 2>/dev/null || echo "missing")
                 if [ "$STATUS" = "running" ]; then
                   echo "Caddy is running (attempt ${i})"
                   HEALTHY=1
