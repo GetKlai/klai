@@ -355,6 +355,72 @@ directory-rsync block in the style of grafana provisioning sync.
 pattern" for the full Class A/A-dir/B/C inventory of current
 bind-mounts and the helper's behavioural contract.
 
+## bind-mount-content-vs-python-module-cache (HIGH)
+
+Sibling-class to `bind-mount-without-sync-workflow` and
+`docker-compose-restart-vs-recreate`. When a service imports its
+business logic from bind-mounted Python files (litellm is the only
+current example: `klai_knowledge.py`, `klai_chat_prompts.py`,
+`klai_retrieval_telemetry.py`, `klai_service_auth.py`,
+`custom_router.py` all live in `deploy/litellm/` and mount onto
+`/app/`), a deploy that ONLY changes file content — no compose
+definition diff — silently runs the old code in production.
+
+The chain:
+
+1. `litellm-hook-deploy.yml` rsyncs the new `.py` files to
+   `/opt/klai/litellm/` on core-01. The bind-mount serves them live
+   on the container's filesystem immediately.
+2. `compose-up.sh litellm` (the canonical wrapper) runs
+   `docker compose up -d --remove-orphans litellm`. Compose only
+   recreates when the compose DEFINITION diffs (volume list, env-vars,
+   image tag). File content is invisible to compose. Result: no-op.
+3. The container keeps running the same uvicorn process from the
+   previous boot. Python's `sys.modules` already cached
+   `klai_knowledge` (and friends) from that boot — re-imports return
+   the cached module object regardless of what's now on disk.
+4. CI workflow turns green, repo + host filesystem agree, but the
+   running container ignores the change.
+
+**Reference incidents:** PR #497 (no-KB GENERAL prompt) deployed
+green; live container kept the old `__all__` and old prompt body.
+Required manual `docker compose up -d --force-recreate litellm` on
+core-01. PR #501 (telemetry mount + anti-hallucination prompt)
+landed the same problem twice in two days.
+
+**Prevention (mechanical, codified in
+`deploy/scripts/compose-up.sh` + the litellm workflow):**
+
+`compose-up.sh` accepts `--force-recreate` as a flag and passes it
+through to `docker compose up -d`. Use it from any service-deploy
+workflow whose service imports bind-mounted Python (or any other
+language whose runtime caches modules — Node `require.cache`, JVM
+class loaders, etc.):
+
+```yaml
+- name: Recreate LiteLLM container
+  run: ssh core-01 "/opt/klai/scripts/compose-up.sh --force-recreate litellm"
+```
+
+For services whose code lives entirely in the image (no bind-mount
+of source files), `--force-recreate` is unnecessary and the bare
+`compose-up.sh <service>` form is correct — image-tag changes already
+trigger a recreate.
+
+**Audit (2026-05-07):** the only klai service today that imports
+bind-mounted Python at module load is litellm. If a future service
+adopts the same pattern, its deploy workflow MUST use
+`--force-recreate` from day one. Adding the flag retroactively after
+a "container runs old code" incident is the standard ramp pattern,
+but the cleaner default is to set it at workflow-create time.
+
+**Why not `docker restart <ctr>`:** equivalent effect (drops
+process, drops module cache) and lighter, BUT `restart` ignores
+compose definition diffs landed in the same deploy window
+(`docker-compose-restart-vs-recreate` pitfall). `--force-recreate`
+catches both bind-mount content AND compose definition changes in
+one pass — strictly safer.
+
 ## worktree-for-long-running-changes (HIGH)
 When you will make working-tree edits that span more than a single tool call
 — especially test fixes, refactors, or anything that produces an in-flight
