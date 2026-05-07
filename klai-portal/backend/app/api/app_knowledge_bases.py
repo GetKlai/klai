@@ -72,11 +72,19 @@ async def _qdrant_count_for_kb(zitadel_org_id: str, kb_slug: str) -> int | None:
         if resp.status_code == 404:
             return 0
         if not resp.is_success:
-            logger.debug("Qdrant count failed for KB %s: HTTP %s", kb_slug, resp.status_code)
+            logger.warning(
+                "kb_stats_qdrant_http_error",
+                kb_slug=kb_slug,
+                status=resp.status_code,
+            )
             return None
         return resp.json().get("result", {}).get("count", 0) or 0
-    except Exception as exc:
-        logger.debug("Could not reach Qdrant for KB %s: %s", kb_slug, exc)
+    except Exception:
+        logger.warning(
+            "kb_stats_qdrant_unreachable",
+            kb_slug=kb_slug,
+            exc_info=True,
+        )
         return None
 
 
@@ -407,14 +415,9 @@ async def knowledge_bases_stats_summary(
     # Usage from knowledge.queried product events for the last 30 days.
     # Each event carries a kb_slugs[] array (a single retrieve call may target
     # multiple KBs); jsonb_array_elements_text fans the array out so a query
-    # against KBs A and B counts once for A and once for B.
-    #
-    # NOTE: product_events.properties is declared JSONB in the SQLAlchemy
-    # model but the live column is `json` (schema drift, see ProductEvent).
-    # Cast properties::jsonb everywhere it touches jsonb operators/functions
-    # until that column type is migrated. The WHERE jsonb_typeof filter
-    # also guards against legacy events that lack kb_slugs (which would
-    # otherwise raise on jsonb_array_elements_text).
+    # against KBs A and B counts once for A and once for B. The
+    # `jsonb_typeof = 'array'` guard skips legacy events that predate the
+    # kb_slugs property without raising on jsonb_array_elements_text(NULL).
     usage_result = await db.execute(
         text("""
             SELECT
@@ -424,12 +427,12 @@ async def knowledge_bases_stats_summary(
                 COUNT(DISTINCT date_trunc('day', pe.created_at)) AS active_days
             FROM product_events pe
             CROSS JOIN LATERAL jsonb_array_elements_text(
-                (pe.properties::jsonb)->'kb_slugs'
+                pe.properties->'kb_slugs'
             ) AS s(kb_slug)
             WHERE pe.org_id = :org_id
               AND pe.event_type = 'knowledge.queried'
               AND pe.created_at >= :cutoff
-              AND jsonb_typeof((pe.properties::jsonb)->'kb_slugs') = 'array'
+              AND jsonb_typeof(pe.properties->'kb_slugs') = 'array'
               AND s.kb_slug = ANY(:slugs)
             GROUP BY s.kb_slug
         """),
@@ -762,7 +765,12 @@ async def get_kb_stats(
         try:
             docs_count = await docs_client.get_page_count(org.slug, kb_slug)
         except Exception:
-            logger.debug("Could not fetch docs page count for KB %s", kb_slug)
+            logger.warning(
+                "kb_stats_docs_count_failed",
+                kb_slug=kb_slug,
+                org_slug=org.slug,
+                exc_info=True,
+            )
 
     # Qdrant vector count for this KB
     volume = await _qdrant_count_for_kb(org.zitadel_org_id, kb.slug)
@@ -784,8 +792,6 @@ async def get_kb_stats(
     active_days_30d: int | None = None
     try:
         cutoff = datetime.now(tz=dt.UTC) - timedelta(days=30)
-        # NOTE: properties::jsonb cast — see stats-summary helper above for
-        # the schema-drift backstory.
         # NOTE: must use CAST(:p AS jsonb) NOT :p::jsonb — `::` immediately
         # after a bind parameter is a SQLAlchemy text() syntax collision.
         # See klai/projects/portal-backend.md.
@@ -799,7 +805,7 @@ async def get_kb_stats(
                 WHERE org_id = :org_id
                   AND event_type = 'knowledge.queried'
                   AND created_at >= :cutoff
-                  AND (properties::jsonb)->'kb_slugs' @> CAST(:slug_jsonb AS jsonb)
+                  AND properties->'kb_slugs' @> CAST(:slug_jsonb AS jsonb)
             """),
             {
                 "org_id": org.id,
@@ -814,7 +820,16 @@ async def get_kb_stats(
         unique_users_30d = row.users
         active_days_30d = row.active_days
     except Exception:
-        logger.debug("Could not fetch KB usage stats for %s", kb_slug)
+        # Fail-loud: the original "Usage unavailable" tile fell back to
+        # null when this query raised, and the debug-level log meant the
+        # failure was invisible in VictoriaLogs. Warning + traceback so
+        # the next regression surfaces in Grafana within minutes.
+        logger.warning(
+            "kb_stats_usage_query_failed",
+            kb_slug=kb_slug,
+            org_id=org.id,
+            exc_info=True,
+        )
 
     # KB-scoped gap count (7 days) — filtered by nearest_kb_slug
     org_gap_count_7d: int | None = None
@@ -832,7 +847,12 @@ async def get_kb_stats(
         )
         org_gap_count_7d = gap_result.scalar_one()
     except Exception:
-        logger.debug("Could not fetch gap count for KB stats")
+        logger.warning(
+            "kb_stats_gap_count_failed",
+            kb_slug=kb_slug,
+            org_id=org.id,
+            exc_info=True,
+        )
 
     return KBStatsOut(
         docs_count=docs_count,
