@@ -245,6 +245,7 @@ def cluster_documents_hdbscan(
     embeddings: Any,
     min_cluster_size: int = 5,
     pre_reduce: bool = True,
+    cluster_selection_method: str = "leaf",
 ) -> tuple[Any, dict]:
     """Run HDBSCAN on document embeddings and return (labels, metrics).
 
@@ -253,6 +254,11 @@ def cluster_documents_hdbscan(
     SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B5: cluster_probability_mean replaces dbcv_score.
         sklearn 1.8 HDBSCAN does NOT expose relative_validity_ (confirmed in production via
         hasattr() returning False). Use cluster_persistence_ (always available) instead.
+    SPEC-TAXONOMY-V2-CONSOLIDATION-003: cluster_selection_method default 'eom' → 'leaf'.
+        EOM under-fitted at typical KB sizes (e.g. Voys/support 154 docs → 3 clusters even
+        with min_cluster_size_floor=3) because EOM rejects smaller stable sub-clusters in
+        favour of bigger 'most stable' merges. Leaf returns the leaves of the cluster
+        hierarchy → typically 2-4× more clusters, lands in the 5-9 IA sweet spot.
 
     Args:
         embeddings: (n_docs, dim) float32 array of unit-normalised embeddings.
@@ -260,6 +266,8 @@ def cluster_documents_hdbscan(
         pre_reduce: when True (default), reduce embeddings via UMAP before HDBSCAN
                     and switch HDBSCAN metric to "euclidean" (UMAP output is not cosine-meaningful).
                     When False, run HDBSCAN directly with metric="cosine" (legacy behaviour).
+        cluster_selection_method: 'eom' (excess of mass — fewer, more stable clusters)
+                    or 'leaf' (default — finer-grained leaves of the cluster hierarchy).
 
     Returns:
         labels: (n_docs,) int array; -1 = outlier/noise.
@@ -293,7 +301,11 @@ def cluster_documents_hdbscan(
     else:
         hdbscan_metric = "cosine"
 
-    hdb = HDBSCAN(min_cluster_size=min_cluster_size, metric=hdbscan_metric)
+    hdb = HDBSCAN(
+        min_cluster_size=min_cluster_size,
+        metric=hdbscan_metric,
+        cluster_selection_method=cluster_selection_method,
+    )
     labels = hdb.fit_predict(embeddings)
 
     cluster_ids = set(int(lbl) for lbl in labels if lbl >= 0)
