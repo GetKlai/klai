@@ -1424,10 +1424,16 @@ auth) read-only is fine — refresh the file once when Google's session
 cookies expire (~3 weeks).
 
 **The canonical answer for this use case:**
-`--isolated --storage-state ~/.claude/mcp-storageState.json`. Generate the
-file with `npx playwright codegen --save-storage=...`. This is the standard
-Playwright multi-session authentication pattern (also what `globalSetup` +
-`storageState` does in Playwright Test). Do not invent something else.
+`--isolated --storage-state ~/.claude/mcp-storageState.json`. Seed the
+storage-state file via the **in-session `browser_storage_state` MCP tool**
+(available in `@playwright/mcp >= 0.0.67`) — NOT via `npx playwright
+codegen --save-storage=...`. The codegen path looks correct in Microsoft's
+docs but is flaky on macOS (the file only writes on a specific Inspector-
+side close event; closing the browser the wrong way means no file ever
+appears). PR #354's first attempt used codegen and produced a dead-end
+that cost a full day of debugging on 2026-05-06/07. The MCP-tool seed
+path writes the file directly from the running MCP server — no external
+tooling, no Inspector window, no Ctrl+C dance.
 
 **Anti-patterns — do NOT propose any of these without re-reading this entry:**
 
@@ -1459,36 +1465,60 @@ Playwright multi-session authentication pattern (also what `globalSetup` +
 7. "Just remove all profile config and let Playwright pick its default" —
    default IS persistent `--user-data-dir`, so this re-triggers
    anti-pattern (2) from the other direction.
+8. `npx playwright codegen --save-storage=...` as the seed step on macOS.
+   The codegen process only writes the file on a specific Inspector-side
+   close event; close the browser the wrong way and the file never
+   appears. PR #354 (apr 2026) shipped this as the documented seed step
+   and lost a full week of "but it should work" debugging before the
+   2026-05-07 retry confirmed the failure mode. Use the in-session
+   `browser_storage_state` MCP tool instead.
 
 **The current working setup (do not change without strong cause):**
 
 - Primary `playwright` server in `.mcp.json` invokes
   `.claude/scripts/playwright-launcher.mjs`, which spawns
-  `npx @playwright/mcp@0.0.70 --browser chromium --isolated
+  `npx @playwright/mcp@latest --browser chrome --isolated
   --storage-state ~/.claude/mcp-storageState.json`. Headed (no `--headless`).
   Multi-session safe (each launch gets its own ephemeral profile).
-  All sessions preload the same login state.
+  All sessions preload the same login state. **Note**: on
+  `@playwright/mcp >= 0.0.74` the valid `--browser` values are
+  `chrome|firefox|webkit|msedge`. `chromium` was dropped — passing it
+  silently breaks the launcher. Use `chrome` (system Google Chrome
+  install; combined with `--isolated`, gets its own ephemeral profile
+  per session and does not collide with the user's regular Chrome).
 - Secondary `playwright-isolated` server in `.mcp.json` runs `--browser
-  chromium --isolated` with NO storage-state. Headed. For one-off CSS or
+  chrome --isolated` with NO storage-state. Headed. For one-off CSS or
   unauthenticated checks where login state would just be noise.
-- Login refresh (run when storage state is missing or Google cookies have
-  expired):
-  ```
-  npx --yes playwright codegen \
-    --save-storage="$HOME/.claude/mcp-storageState.json" \
-    --browser=chromium https://voys.getklai.com
-  ```
-  Log in to all sites you need, close the codegen window, file is written.
+- Login seed/refresh (run when `~/.claude/mcp-storageState.json` is
+  missing, or when Google cookies have expired and sessions start
+  logged-out):
+  1. With the launcher in place but no storage-state file (or after
+     deleting it), restart Claude Code so the MCP server picks up the
+     new config. Open a new Playwright MCP session — the browser starts
+     logged-out.
+  2. Have the AI `browser_navigate` to a login URL (e.g.
+     `https://voys.getklai.com`).
+  3. Log in by hand (Google SSO + 2FA), wait until you're on the
+     post-login workspace.
+  4. Have the AI call the MCP tool `browser_storage_state` — it writes
+     the current cookies + localStorage to
+     `~/.claude/mcp-storageState.json`.
+  5. Restart Claude Code so the launcher picks the new file up via
+     `--storage-state` at startup.
+  6. From now on all MCP sessions, including parallel Claude Code
+     instances, start authenticated.
 
 **Prevention — symptom → correct response:**
 
 | Symptom | Correct response | Wrong response |
 |---|---|---|
-| Sessions start logged-out | Verify `~/.claude/mcp-storageState.json` exists and is recent. Run the codegen refresh command. | Add `--user-data-dir` back (anti-pattern 2) |
+| Sessions start logged-out | Verify `~/.claude/mcp-storageState.json` exists and is recent. Re-seed via the `browser_storage_state` MCP tool (see "Login seed/refresh" above). | Add `--user-data-dir` back (anti-pattern 2); fall back to `playwright codegen --save-storage` (anti-pattern 8). |
 | `Browser is already in use` on a second session | Confirm `.mcp.json` uses `--isolated` not `--user-data-dir`. Each session must get its own ephemeral profile. | Add a slot-pool launcher (anti-pattern 6) |
 | AI cannot see what the browser is doing | Confirm no `--headless` flag in the primary server. | Tell the user to "just check the browser themselves" — defeats the point |
 | User says "iedere keer hetzelfde probleem" | Stop. Re-read this entry. Do not propose a config change before identifying which anti-pattern you are about to commit. | Propose another config edit |
-| Storage state file is hand-edited / non-standard | Re-generate via `playwright codegen --save-storage`. The file format is Playwright-defined, not yours. | Hand-edit JSON in storageState |
+| `browser_storage_state` tool not visible in current session | Tool-schema-cache is from an older `@playwright/mcp` pin. Restart Claude Code so it reloads the schema list from `@latest`. | Try `browser_evaluate` to read cookies (HttpOnly cookies are invisible) or write a homegrown seed script (anti-pattern 6 territory). |
+| `--browser chromium` rejected on launch | `@playwright/mcp >= 0.0.74` dropped `chromium` as a valid value. Use `--browser chrome`. | Pin back to `@0.0.70` (loses `browser_storage_state` tool — anti-pattern 8 territory). |
+| Storage state file is hand-edited / non-standard | Delete it, re-seed via the `browser_storage_state` MCP tool. | Hand-edit JSON in storageState |
 
 If a future @playwright/mcp version introduces auto-write-back of storage
 state on session close, the manual refresh step can be removed. Until
