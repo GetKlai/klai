@@ -37,6 +37,11 @@ class TaxonomyProposal:
     sample_titles: list[str]
     description: str = ""
     cluster_centroid: list[float] | None = None
+    # SPEC-TAXONOMY-MERGE-DETECT-001: when a parent-proposal results from
+    # consolidating multiple base clusters, list the original base cluster
+    # names here for operator transparency. None for non-consolidated
+    # (single-cluster) proposals.
+    child_cluster_names: list[str] | None = None
 
 
 async def fetch_taxonomy_nodes(kb_slug: str, org_id: str) -> list[TaxonomyNode]:
@@ -129,6 +134,7 @@ async def submit_taxonomy_proposal(
                         "sample_titles": proposal.sample_titles[:5],
                         "description": proposal.description,
                         "cluster_centroid": proposal.cluster_centroid,
+                        "child_cluster_names": proposal.child_cluster_names,
                     },
                 },
             )
