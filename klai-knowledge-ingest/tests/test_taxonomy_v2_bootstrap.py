@@ -889,7 +889,9 @@ class TestDuplicatePreventionRegression:
         mock_settings.taxonomy_bootstrap_cluster_selection_method = "leaf"
         mock_settings.taxonomy_bootstrap_max_clusters = 20
         mock_settings.taxonomy_bootstrap_top_n_per_cluster = 8
-        mock_settings.taxonomy_consolidate_enabled = False  # base-path tests; new TestConsolidate enables
+        mock_settings.taxonomy_consolidate_enabled = (
+            False  # base-path tests; new TestConsolidate enables
+        )
         mock_settings.taxonomy_consolidate_target_min = 5
         mock_settings.taxonomy_consolidate_target_max = 9
 
@@ -1109,7 +1111,9 @@ class TestAC18IntegrationWithMockedLitellm:
         mock_settings.taxonomy_bootstrap_cluster_selection_method = "leaf"
         mock_settings.taxonomy_bootstrap_max_clusters = 20
         mock_settings.taxonomy_bootstrap_top_n_per_cluster = 8
-        mock_settings.taxonomy_consolidate_enabled = False  # base-path tests; new TestConsolidate enables
+        mock_settings.taxonomy_consolidate_enabled = (
+            False  # base-path tests; new TestConsolidate enables
+        )
         mock_settings.taxonomy_consolidate_target_min = 5
         mock_settings.taxonomy_consolidate_target_max = 9
 
@@ -1190,7 +1194,9 @@ class TestAC19VoysRegressionNoNewDuplicates:
         mock_settings.taxonomy_bootstrap_cluster_selection_method = "leaf"
         mock_settings.taxonomy_bootstrap_max_clusters = 20
         mock_settings.taxonomy_bootstrap_top_n_per_cluster = 8
-        mock_settings.taxonomy_consolidate_enabled = False  # base-path tests; new TestConsolidate enables
+        mock_settings.taxonomy_consolidate_enabled = (
+            False  # base-path tests; new TestConsolidate enables
+        )
         mock_settings.taxonomy_consolidate_target_min = 5
         mock_settings.taxonomy_consolidate_target_max = 9
 
@@ -1361,9 +1367,12 @@ class TestConsolidate:
     @pytest.fixture
     def cluster_doc_lists(self, base_proposals):
         from knowledge_ingest.proposal_generator import DocumentSummary
+
         return {
             cid: [
-                DocumentSummary(title=f"Doc {cid}.{j}", content_preview=f"Content for cluster {cid} doc {j}" * 5)
+                DocumentSummary(
+                    title=f"Doc {cid}.{j}", content_preview=f"Content for cluster {cid} doc {j}" * 5
+                )
                 for j in range(5)
             ]
             for cid, _name in base_proposals
@@ -1405,14 +1414,21 @@ class TestConsolidate:
         resp = MagicMock()
         resp.status_code = 200
         resp.raise_for_status = MagicMock()
-        resp.json = MagicMock(return_value={
-            "choices": [{"message": {"content": json.dumps({"parents": parents_payload})}}]
-        })
+        resp.json = MagicMock(
+            return_value={
+                "choices": [{"message": {"content": json.dumps({"parents": parents_payload})}}]
+            }
+        )
         return resp
 
     @pytest.mark.asyncio
     async def test_ac12_valid_response_produces_correct_aggregations(
-        self, base_proposals, cluster_doc_lists, cluster_map, document_embeddings, mock_consolidate_settings
+        self,
+        base_proposals,
+        cluster_doc_lists,
+        cluster_map,
+        document_embeddings,
+        mock_consolidate_settings,
     ):
         """AC-12: Valid LLM response → ParentCategory list with correct aggregated
         document_count, child_cluster_ids, sample_titles, child_cluster_names."""
@@ -1436,8 +1452,13 @@ class TestConsolidate:
 
         with (
             patch("knowledge_ingest.proposal_generator.settings", mock_consolidate_settings),
-            patch("knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client),
-            patch("knowledge_ingest.proposal_generator.generate_node_description", side_effect=fake_desc),
+            patch(
+                "knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client
+            ),
+            patch(
+                "knowledge_ingest.proposal_generator.generate_node_description",
+                side_effect=fake_desc,
+            ),
         ):
             parents = await _consolidate_to_parents(
                 base_proposals=base_proposals,
@@ -1453,7 +1474,10 @@ class TestConsolidate:
         assert all(p.document_count == 20 for p in parents)  # 4 children × 5 docs
         # Child cluster names propagated
         assert parents[0].child_cluster_names == [
-            "Cluster 0 name", "Cluster 1 name", "Cluster 2 name", "Cluster 3 name"
+            "Cluster 0 name",
+            "Cluster 1 name",
+            "Cluster 2 name",
+            "Cluster 3 name",
         ]
         # Sample titles cap at 10
         for p in parents:
@@ -1467,7 +1491,12 @@ class TestConsolidate:
 
     @pytest.mark.asyncio
     async def test_ac13_malformed_response_raises(
-        self, base_proposals, cluster_doc_lists, cluster_map, document_embeddings, mock_consolidate_settings
+        self,
+        base_proposals,
+        cluster_doc_lists,
+        cluster_map,
+        document_embeddings,
+        mock_consolidate_settings,
     ):
         """AC-13: Malformed LLM response (missing 'parents' key) → ValueError."""
         from knowledge_ingest.proposal_generator import _consolidate_to_parents
@@ -1475,9 +1504,11 @@ class TestConsolidate:
         bad_resp = MagicMock()
         bad_resp.status_code = 200
         bad_resp.raise_for_status = MagicMock()
-        bad_resp.json = MagicMock(return_value={
-            "choices": [{"message": {"content": json.dumps({"oops": "no parents key"})}}]
-        })
+        bad_resp.json = MagicMock(
+            return_value={
+                "choices": [{"message": {"content": json.dumps({"oops": "no parents key"})}}]
+            }
+        )
 
         async def fake_desc(name, parent, titles):
             return ""
@@ -1489,8 +1520,13 @@ class TestConsolidate:
 
         with (
             patch("knowledge_ingest.proposal_generator.settings", mock_consolidate_settings),
-            patch("knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client),
-            patch("knowledge_ingest.proposal_generator.generate_node_description", side_effect=fake_desc),
+            patch(
+                "knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client
+            ),
+            patch(
+                "knowledge_ingest.proposal_generator.generate_node_description",
+                side_effect=fake_desc,
+            ),
         ):
             with pytest.raises(ValueError, match="parents"):
                 await _consolidate_to_parents(
@@ -1505,7 +1541,12 @@ class TestConsolidate:
 
     @pytest.mark.asyncio
     async def test_ac14_unassigned_clusters_collected_under_overig(
-        self, base_proposals, cluster_doc_lists, cluster_map, document_embeddings, mock_consolidate_settings
+        self,
+        base_proposals,
+        cluster_doc_lists,
+        cluster_map,
+        document_embeddings,
+        mock_consolidate_settings,
     ):
         """AC-14: LLM assigns only some clusters → unassigned go under 'Overig' parent."""
         from knowledge_ingest.proposal_generator import _consolidate_to_parents
@@ -1526,8 +1567,13 @@ class TestConsolidate:
 
         with (
             patch("knowledge_ingest.proposal_generator.settings", mock_consolidate_settings),
-            patch("knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client),
-            patch("knowledge_ingest.proposal_generator.generate_node_description", side_effect=fake_desc),
+            patch(
+                "knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client
+            ),
+            patch(
+                "knowledge_ingest.proposal_generator.generate_node_description",
+                side_effect=fake_desc,
+            ),
         ):
             parents = await _consolidate_to_parents(
                 base_proposals=base_proposals,
@@ -1545,8 +1591,72 @@ class TestConsolidate:
         assert sorted(overig[0].child_cluster_ids) == [6, 7, 8, 9, 10, 11]
 
     @pytest.mark.asyncio
+    async def test_ac14b_single_unassigned_cluster_uses_child_name_not_overig(
+        self,
+        base_proposals,
+        cluster_doc_lists,
+        cluster_map,
+        document_embeddings,
+        mock_consolidate_settings,
+    ):
+        """SPEC-TAXONOMY-MERGE-DETECT-001 hardening (2026-05-07 prod incident):
+        when EXACTLY one cluster is unassigned, the fallback parent uses
+        that cluster's own name, not the generic 'Overig' label."""
+        from knowledge_ingest.proposal_generator import _consolidate_to_parents
+
+        # LLM assigns 11 of 12 clusters — one (cid=7) is unassigned.
+        parents_payload = [
+            {"name": "Group A", "rationale": "first six", "child_cluster_ids": [0, 1, 2, 3, 4, 5]},
+            {"name": "Group B", "rationale": "rest", "child_cluster_ids": [6, 8, 9, 10, 11]},
+        ]
+
+        async def fake_desc(name, parent, titles):
+            return f"Description for {name}"
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.post = AsyncMock(return_value=self._mock_llm_judgment_response(parents_payload))
+
+        with (
+            patch("knowledge_ingest.proposal_generator.settings", mock_consolidate_settings),
+            patch(
+                "knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client
+            ),
+            patch(
+                "knowledge_ingest.proposal_generator.generate_node_description",
+                side_effect=fake_desc,
+            ),
+        ):
+            parents = await _consolidate_to_parents(
+                base_proposals=base_proposals,
+                cluster_doc_lists=cluster_doc_lists,
+                cluster_map=cluster_map,
+                document_embeddings=document_embeddings,
+                kb_description="",
+                target_min=5,
+                target_max=9,
+            )
+
+        # 2 LLM-proposed + 1 fallback (single-child, named after the cluster)
+        assert len(parents) == 3
+        # Fallback parent name = base cluster name, NOT "Overig"
+        fallback = parents[-1]
+        assert fallback.child_cluster_ids == [7]
+        assert fallback.name == "Cluster 7 name", (
+            f"single-child fallback should use base cluster name; got {fallback.name!r}"
+        )
+        # No parent should be literally named "Overig" in this case
+        assert not any(p.name == "Overig" for p in parents)
+
+    @pytest.mark.asyncio
     async def test_ac15_balance_caps_present_in_prompt(
-        self, base_proposals, cluster_doc_lists, cluster_map, document_embeddings, mock_consolidate_settings
+        self,
+        base_proposals,
+        cluster_doc_lists,
+        cluster_map,
+        document_embeddings,
+        mock_consolidate_settings,
     ):
         """AC-15 (proxy): the prompt sent to the LLM includes percentage-based
         balance caps + total_docs + total_clusters context."""
@@ -1571,8 +1681,13 @@ class TestConsolidate:
 
         with (
             patch("knowledge_ingest.proposal_generator.settings", mock_consolidate_settings),
-            patch("knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client),
-            patch("knowledge_ingest.proposal_generator.generate_node_description", side_effect=fake_desc),
+            patch(
+                "knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client
+            ),
+            patch(
+                "knowledge_ingest.proposal_generator.generate_node_description",
+                side_effect=fake_desc,
+            ),
         ):
             await _consolidate_to_parents(
                 base_proposals=base_proposals,
@@ -1601,7 +1716,10 @@ class TestConsolidate:
         Verified by hooking into _consolidate_to_parents and asserting it never runs."""
         from unittest.mock import patch as _patch
 
-        from knowledge_ingest.proposal_generator import generate_bootstrap_proposals_v2, DocumentSummary
+        from knowledge_ingest.proposal_generator import (
+            generate_bootstrap_proposals_v2,
+            DocumentSummary,
+        )
 
         # Build a fixture that yields exactly 4 base clusters (well under target_max=9)
         # using the existing pipeline. We mock the naming step to return distinct names,
@@ -1623,6 +1741,7 @@ class TestConsolidate:
         ]
 
         consolidate_called = {"value": False}
+
         async def fake_consolidate(*args, **kwargs):
             consolidate_called["value"] = True
             return []
@@ -1642,10 +1761,22 @@ class TestConsolidate:
 
         with (
             _patch("knowledge_ingest.proposal_generator.settings", mock_consolidate_settings),
-            _patch("knowledge_ingest.proposal_generator._consolidate_to_parents", side_effect=fake_consolidate),
-            _patch("knowledge_ingest.proposal_generator._suggest_cluster_names_batched", side_effect=fake_naming),
-            _patch("knowledge_ingest.proposal_generator.generate_node_description", side_effect=fake_desc),
-            _patch("knowledge_ingest.proposal_generator.submit_taxonomy_proposal", side_effect=fake_submit),
+            _patch(
+                "knowledge_ingest.proposal_generator._consolidate_to_parents",
+                side_effect=fake_consolidate,
+            ),
+            _patch(
+                "knowledge_ingest.proposal_generator._suggest_cluster_names_batched",
+                side_effect=fake_naming,
+            ),
+            _patch(
+                "knowledge_ingest.proposal_generator.generate_node_description",
+                side_effect=fake_desc,
+            ),
+            _patch(
+                "knowledge_ingest.proposal_generator.submit_taxonomy_proposal",
+                side_effect=fake_submit,
+            ),
         ):
             result = await generate_bootstrap_proposals_v2(
                 org_id="o",
@@ -1670,7 +1801,10 @@ class TestConsolidate:
         successfully with base clusters submitted (not parents)."""
         from unittest.mock import patch as _patch
 
-        from knowledge_ingest.proposal_generator import generate_bootstrap_proposals_v2, DocumentSummary
+        from knowledge_ingest.proposal_generator import (
+            generate_bootstrap_proposals_v2,
+            DocumentSummary,
+        )
 
         # Build a fixture with > target_max=9 base clusters so consolidate WOULD trigger.
         # 12 well-separated clusters × 5 docs = 60 docs.
@@ -1685,7 +1819,9 @@ class TestConsolidate:
                 embs_list.append(vec)
         embeddings = np.array(embs_list, dtype=np.float32)
         doc_summaries = [
-            DocumentSummary(title=f"doc {i}", content_preview=f"content for doc {i} long enough" * 3)
+            DocumentSummary(
+                title=f"doc {i}", content_preview=f"content for doc {i} long enough" * 3
+            )
             for i in range(60)
         ]
 
@@ -1699,6 +1835,7 @@ class TestConsolidate:
             return f"description for {name}"
 
         submitted_proposals = []
+
         async def fake_submit(kb_slug, org_id, proposal):
             submitted_proposals.append(proposal)
 
@@ -1708,10 +1845,22 @@ class TestConsolidate:
         # serves the base-path fallback.
         with (
             _patch("knowledge_ingest.proposal_generator.settings", mock_consolidate_settings),
-            _patch("knowledge_ingest.proposal_generator._consolidate_to_parents", side_effect=fake_consolidate_fail),
-            _patch("knowledge_ingest.proposal_generator._suggest_cluster_names_batched", side_effect=fake_naming),
-            _patch("knowledge_ingest.proposal_generator.generate_node_description", side_effect=fake_desc),
-            _patch("knowledge_ingest.proposal_generator.submit_taxonomy_proposal", side_effect=fake_submit),
+            _patch(
+                "knowledge_ingest.proposal_generator._consolidate_to_parents",
+                side_effect=fake_consolidate_fail,
+            ),
+            _patch(
+                "knowledge_ingest.proposal_generator._suggest_cluster_names_batched",
+                side_effect=fake_naming,
+            ),
+            _patch(
+                "knowledge_ingest.proposal_generator.generate_node_description",
+                side_effect=fake_desc,
+            ),
+            _patch(
+                "knowledge_ingest.proposal_generator.submit_taxonomy_proposal",
+                side_effect=fake_submit,
+            ),
         ):
             result = await generate_bootstrap_proposals_v2(
                 org_id="o",
@@ -1725,7 +1874,9 @@ class TestConsolidate:
         # Bootstrap completed successfully despite the consolidate failure
         assert result.proposals_submitted > 0
         # base_clusters_found > target_max (consolidate was attempted)
-        assert result.base_clusters_found > mock_consolidate_settings.taxonomy_consolidate_target_max
+        assert (
+            result.base_clusters_found > mock_consolidate_settings.taxonomy_consolidate_target_max
+        )
         # clusters_found == base_clusters_found (consolidate fell back)
         assert result.clusters_found == result.base_clusters_found
         # Submitted proposals are base clusters (no child_cluster_names set)
