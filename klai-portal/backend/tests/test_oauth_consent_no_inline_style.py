@@ -38,8 +38,7 @@ def test_external_stylesheet_linked() -> None:
     """The rendered page must link to /static/oauth/consent.css."""
     html = _render()
     assert 'href="/static/oauth/consent.css"' in html, (
-        "Expected <link rel=\"stylesheet\" href=\"/static/oauth/consent.css\"> "
-        "in the rendered consent page."
+        'Expected <link rel="stylesheet" href="/static/oauth/consent.css"> in the rendered consent page.'
     )
 
 

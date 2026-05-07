@@ -26,9 +26,7 @@ def test_consent_css_served(client: TestClient) -> None:
         "Check that StaticFiles is mounted and app/static/oauth/consent.css exists."
     )
     content_type = response.headers.get("content-type", "")
-    assert "text/css" in content_type, (
-        f"Expected content-type text/css, got: {content_type}"
-    )
+    assert "text/css" in content_type, f"Expected content-type text/css, got: {content_type}"
 
 
 def test_consent_css_not_empty(client: TestClient) -> None:
