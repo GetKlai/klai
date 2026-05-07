@@ -281,9 +281,7 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
             # Initial crawl (HTTP, no DB). Capture full CrawlResult so we
             # can run the REQ-3 classifier with HTTP-level metadata
             # (status_code, redirect URL, response headers).
-            initial_result = await crawl_page(
-                body.url, effective_selector, cookies=body.cookies
-            )
+            initial_result = await crawl_page(body.url, effective_selector, cookies=body.cookies)
             fit_md = initial_result.fit_markdown or initial_result.raw_markdown
             word_count = initial_result.word_count
             raw_html = initial_result.html
@@ -306,9 +304,7 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
                             recrawl_result = await crawl_page(
                                 body.url, ai_selector, cookies=body.cookies
                             )
-                            recrawl_md = (
-                                recrawl_result.fit_markdown or recrawl_result.raw_markdown
-                            )
+                            recrawl_md = recrawl_result.fit_markdown or recrawl_result.raw_markdown
                             recrawl_wc = recrawl_result.word_count
                             if recrawl_wc >= _MIN_WORD_COUNT:
                                 await upsert_domain_selector(
@@ -383,9 +379,7 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
         # SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3 — classification
         metadata = last_result.metadata or {}
         response_headers = last_result.response_headers or {}
-        set_cookie_header = response_headers.get("set-cookie") or response_headers.get(
-            "Set-Cookie"
-        )
+        set_cookie_header = response_headers.get("set-cookie") or response_headers.get("Set-Cookie")
         classification, classification_reason = _classify_preview_outcome(
             fit_markdown=fit_md,
             raw_html=raw_html,
@@ -453,9 +447,7 @@ async def auth_probe(body: AuthProbeRequest, request: Request) -> AuthProbeRespo
 
     metadata = result.metadata or {}
     response_headers = result.response_headers or {}
-    set_cookie_header = response_headers.get("set-cookie") or response_headers.get(
-        "Set-Cookie"
-    )
+    set_cookie_header = response_headers.get("set-cookie") or response_headers.get("Set-Cookie")
     redirect_target_url = metadata.get("redirect_url") or metadata.get("location")
 
     classification = classify_auth_wall(
