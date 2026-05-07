@@ -134,10 +134,14 @@ when Google's session cookies expire (~3 weeks, see seed flow below).
 The reason this pattern looked broken for weeks in April 2026: PR #354 used
 `npx playwright codegen --save-storage` as the seed step. On macOS that save
 only fires on a specific Inspector-side close event; if you closed the
-browser the wrong way, the file never appeared. Solved May 2026 by switching
-the seed to the in-session `browser_storage_state` MCP tool (available in
-`@playwright/mcp >= 0.0.67`), which writes the file directly from the running
-MCP server — no external tooling, no Inspector window, no Ctrl+C dance.
+browser the wrong way, the file never appeared. Solved 2026-05-07 by
+switching the seed to a server-side Playwright snippet via the
+`browser_run_code_unsafe` MCP tool: `await page.context().storageState({
+path })` writes cookies + localStorage directly from the running MCP
+server's BrowserContext — no external codegen, no Inspector window, no
+Ctrl+C dance. Note: an earlier draft of these docs referenced a
+non-existent `browser_storage_state` tool. The functionality always lived
+in `browser_run_code_unsafe`; only the wording was off.
 
 ### Why a launcher script and not a JSON `--config` file
 
@@ -151,25 +155,46 @@ vehicle for those flags.
 1. With the launcher in place but no storage-state file yet (or after deleting
    it for a refresh), restart Claude Code so the MCP server picks up the new
    config. Open a new Playwright MCP session — the browser starts logged-out.
-2. Have the AI `browser_navigate` to a login URL, e.g. `https://voys.getklai.com`.
-3. Log in by hand (Google SSO + 2FA), wait until you're on the chat home.
-4. Have the AI call the MCP tool `browser_storage_state` — it writes the
-   current cookies + localStorage to `~/.claude/mcp-storageState.json`.
-5. Restart Claude Code so the launcher picks the file up via `--storage-state`.
+2. Ask Claude: **"navigate naar voys.getklai.com en seed de storage-state na
+   mijn login"**. Claude calls `browser_navigate` to open the login URL.
+3. Log in by hand in the browser-window (Google SSO + 2FA). Wait until you're
+   on `https://voys.getklai.com/app` (or `my.getklai.com` workspace).
+4. Tell Claude **"klaar"** (or "done"). Claude calls `browser_run_code_unsafe`
+   with this snippet:
+   ```js
+   async (page) => {
+     await page.context().storageState({
+       path: '/Users/<you>/.claude/mcp-storageState.json'
+     });
+     const cookies = await page.context().cookies();
+     return {
+       url: page.url(),
+       cookieCount: cookies.length,
+       klaiCookies: cookies.filter(c => c.domain.includes('getklai')).length,
+     };
+   }
+   ```
+   The tool returns immediately with the new cookie count. Sanity-check:
+   `klaiCookies` should be ≥ 6 (PARAGLIDE_LOCALE × 2, zitadel.useragent,
+   klai_sso, __Secure-klai_session, __Secure-klai_csrf).
+5. Restart Claude Code so the launcher picks the file up via `--storage-state`
+   on the next MCP-server spawn.
 6. From now on all MCP sessions, including parallel Claude Code instances,
    start authenticated.
 
-Refresh the same way every ~3 weeks when Google's session cookies expire.
+Refresh the same way every ~3 weeks when Google's session cookies expire (you
+notice because new sessions start logged-out again).
 
-For the full failure-mode cycle and anti-patterns to avoid, see
+For the full failure-mode history and anti-patterns to avoid, see
 `playwright-mcp-config-cycle (HIGH)` in
-`.claude/rules/klai/pitfalls/process-rules.md` (8 anti-patterns and many
-"fixes" since April 2026 — this section is the May 2026 canonical, anchored
-on Microsoft Issue #1530's outcome).
+`.claude/rules/klai/pitfalls/process-rules.md` (8 anti-patterns accumulated
+across many "fixes" since April 2026 — this section is the verified
+2026-05-07 canonical, anchored on Microsoft Issue #1530's outcome).
 
 ### Starting from scratch (logged-out state)
 
-Delete the storage-state file, then re-run the codegen command above:
+Delete the storage-state file, restart Claude Code, then re-run the seed
+flow above (steps 2–5):
 
 ```powershell
 # Windows (PowerShell)
@@ -180,8 +205,6 @@ Remove-Item -Force "$env:USERPROFILE\.claude\mcp-storageState.json"
 # macOS / Linux
 rm -f ~/.claude/mcp-storageState.json
 ```
-
-Then re-run the codegen command above to regenerate the file.
 
 For session management rules (when to open/close the browser), see
 `.claude/rules/klai/lang/testing.md`.
@@ -384,10 +407,10 @@ uvx mcp-grafana --help
 3. **MCP timeout** — Serena takes too long to index. Check `.serena/project.yml` for overly broad
    file patterns.
 4. **Playwright launcher fails to start** — `node` not on PATH or the launcher script missing. Fix: verify `node --version` works in your shell and `.claude/scripts/playwright-launcher.mjs` exists. Restart Claude Code.
-5. **Playwright sessions start logged-out** — `~/.claude/mcp-storageState.json` is missing or its cookies have expired. Fix: re-run the codegen command in Section 3 to regenerate the file, then restart Claude Code.
+5. **Playwright sessions start logged-out** — `~/.claude/mcp-storageState.json` is missing or its cookies have expired. Fix: re-run the seed flow in Section 3 (one-time login + `browser_run_code_unsafe` snippet), then restart Claude Code.
 6. **Playwright fails with `Browser is already in use`** — should not happen with `--isolated`. If it does, confirm `.mcp.json` still uses `--isolated --storage-state` and not a `--user-data-dir` flag. A leftover Chromium process can be killed with `taskkill /F /IM chrome.exe` (Windows) or `pkill -f playwright` (Mac/Linux).
-7. **Playwright window opens but immediately closes** — storage-state file is corrupt or in a non-Playwright format. Fix: delete `~/.claude/mcp-storageState.json` and re-run the codegen command.
-8. **Login state visible in one site but missing in another** — codegen capture only saved the sites you visited during the login dance. Fix: re-run codegen and visit + log in to every site you need before closing the window.
+7. **Playwright window opens but immediately closes** — storage-state file is corrupt or in a non-Playwright format. Fix: `rm ~/.claude/mcp-storageState.json` and re-run the seed flow in Section 3.
+8. **Login state visible in one site but missing in another** — the seed only captured cookies from the sites you actually visited before triggering `browser_run_code_unsafe`. Fix: re-seed and visit + log in to every site you need (Google, voys, my.getklai.com, etc.) BEFORE asking Claude to write the storage-state file.
 9. **CodeIndex not found** — `codeindex` command not available. Fix: `npm install -g klai-private/tools/codeindex-1.3.56.tgz`
 10. **CodeIndex stale index** — Index behind HEAD. Symptoms: impact analysis misses recent code. Fix: `codeindex update && node scripts/codeindex-enrich.mjs`
 11. **VictoriaLogs tunnel not running** — MCP queries fail silently or timeout. Fix: `./scripts/victorialogs-tunnel.sh` then restart Claude Code.
