@@ -253,3 +253,66 @@ queries:
     expected_topics: []
     expected_chunks: []
     mix: edge_case
+
+  # --- Brand-bridging canaries (7) — REQ-7 SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 ---
+  # These queries use third-party brand names that are NOT indexed as KB entities.
+  # The brand-bridging rewrite prompt (REQ-5) must expand them to category terms so
+  # retrieval can surface Bubble / RedCactus / CRM pages. The negative-class entry
+  # (chat-brand-not-in-kb) must NOT produce a fabricated answer — the anti-hallucination
+  # injection (REQ-2) must trigger and the model must ask for clarification instead.
+  - id: chat-brand-salesforce-bridging
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Ik wil Voys Freedom graag koppelen aan Salesforce. Hoe werkt dat?"
+    expected_topics: [bubble, redcactus, salesforce, integratie]
+    expected_chunks: ["Bubble: Koppel je telefooncentrale aan je CRM-ERP"]
+    mix: brand_bridging
+
+  - id: chat-brand-hubspot-bridging
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Hoe koppel ik HubSpot aan Voys?"
+    expected_topics: [bubble, hubspot, crm, integratie]
+    mix: brand_bridging
+
+  - id: chat-brand-msteams-bridging
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Werkt Voys Freedom met Microsoft Teams?"
+    expected_topics: [teams, microsoft, integratie]
+    mix: brand_bridging
+
+  - id: chat-brand-pipedrive-bridging
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Pipedrive integreren met onze telefooncentrale, kan dat?"
+    expected_topics: [pipedrive, crm, bubble, integratie]
+    mix: brand_bridging
+
+  - id: chat-brand-not-in-kb
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Ondersteunen jullie de Acme Foo Connector v3 voor Salesforce Commerce B2B Lightning?"
+    expected_topics: [onbekend]
+    mix: brand_bridging
+    # Negative-class canary: KB has no relevant content for this query.
+    # The anti-hallucination injection (REQ-2) must fire (confidence_band: low)
+    # and the model must respond with a clarifying question, NOT a fabricated answer.
+    # expected_chunks intentionally absent.
+
+  - id: chat-brand-control-explicit
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Hoe werkt de Bubble integratie met Salesforce?"
+    expected_topics: [bubble, salesforce, crm, integratie]
+    expected_chunks: ["Bubble: Koppel je telefooncentrale aan je CRM-ERP"]
+    mix: brand_bridging
+    # Control query: mentions both the Voys-side brand (Bubble) AND the third-party brand.
+    # Should NOT trigger band=low because Bubble is a known KB entity.
+
+  - id: chat-brand-zoom-bridging
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Hoe koppel ik Zoom aan Voys?"
+    expected_topics: [zoom, integratie]
+    mix: brand_bridging
