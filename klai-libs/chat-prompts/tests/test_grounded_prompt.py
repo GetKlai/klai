@@ -1,14 +1,20 @@
-"""Regression tests for GROUNDED_CHAT_SYSTEM_PROMPT.
+"""Regression tests for GROUNDED_CHAT_SYSTEM_PROMPT and
+GENERAL_CHAT_SYSTEM_PROMPT.
 
 These tests don't try to assert that the LLM behaves correctly — they
-only guard the structural invariants of the prompt string itself, so
-that a future edit can't silently strip out one of the guards SPEC-RAG-
-MULTILINGUAL-CHAT-001 REQ-01 mandates.
+only guard the structural invariants of the prompt strings, so that a
+future edit can't silently strip out one of the guards SPEC-RAG-
+MULTILINGUAL-CHAT-001 REQ-01 mandates, and so the GENERAL prompt can
+never accidentally drift back into the GROUNDED rule set (which is the
+exact regression GENERAL was introduced to fix).
 """
 
 from __future__ import annotations
 
-from klai_chat_prompts import GROUNDED_CHAT_SYSTEM_PROMPT
+from klai_chat_prompts import (
+    GENERAL_CHAT_SYSTEM_PROMPT,
+    GROUNDED_CHAT_SYSTEM_PROMPT,
+)
 
 
 def test_prompt_is_non_empty():
@@ -81,3 +87,80 @@ def test_prompt_describes_not_in_kb_fallback_multilingual():
     assert "knowledge base" in text.lower()
     assert "kennisbank" in text.lower()
     assert "Wissensdatenbank" in text
+
+
+# ─── GENERAL_CHAT_SYSTEM_PROMPT regression tests ─────────────────────
+
+
+def test_general_prompt_is_non_empty():
+    assert isinstance(GENERAL_CHAT_SYSTEM_PROMPT, str)
+    assert len(GENERAL_CHAT_SYSTEM_PROMPT) > 200
+
+
+def test_general_prompt_carries_critical_marker():
+    # The shared language-detection preamble starts with [CRITICAL].
+    assert "[CRITICAL]" in GENERAL_CHAT_SYSTEM_PROMPT
+
+
+def test_general_prompt_inherits_three_guards_from_preamble():
+    # The 3-guard contract is shared between GROUNDED and GENERAL via
+    # the private _LANGUAGE_DETECTION_PREAMBLE. If a refactor breaks
+    # that share, this test fails loud instead of silently drifting.
+    text = GENERAL_CHAT_SYSTEM_PROMPT.lower()
+    assert "substantive" in text
+    assert "5 words" in GENERAL_CHAT_SYSTEM_PROMPT
+    assert "single foreign-language words" in text or "single foreign" in text
+    assert "stays switched" in text
+
+
+def test_general_prompt_identifies_as_general_purpose_assistant():
+    # The whole point of this prompt: model behaves as a general AI,
+    # not a KB-grounded assistant.
+    assert "general-purpose assistant" in GENERAL_CHAT_SYSTEM_PROMPT
+
+
+def test_general_prompt_forbids_kb_grounding_phrases():
+    # If any of these strings reappear in GENERAL, the model will fall
+    # back to KB-RAG behaviour even though the user explicitly opted
+    # out of every scope. This is the exact regression the prompt was
+    # introduced to prevent.
+    text = GENERAL_CHAT_SYSTEM_PROMPT
+    assert "Dat staat niet in de kennisbank" not in text, (
+        "GENERAL prompt MUST NOT include the GROUNDED 'answer not in KB' "
+        "fallback — it instructs the model to refuse general-knowledge "
+        "questions when no KB is in scope."
+    )
+    assert "knowledge base chunks provided" not in text, (
+        "GENERAL prompt MUST NOT promise KB chunks — there are none."
+    )
+    assert "Every factual claim gets a [n] citation" not in text, (
+        "GENERAL prompt MUST NOT mandate [n] citations — without sources "
+        "the model will fabricate citation markers."
+    )
+
+
+def test_general_prompt_explicitly_disables_citations_and_kb_pretense():
+    # Positive form of the previous test: GENERAL must SAY 'no citations,
+    # no pretending', not just omit the GROUNDED rules.
+    text = GENERAL_CHAT_SYSTEM_PROMPT
+    assert "Do NOT add [n] citations" in text
+    assert "Do NOT pretend to have sources" in text
+
+
+def test_general_prompt_includes_klai_ai_identity():
+    assert "Klai AI" in GENERAL_CHAT_SYSTEM_PROMPT
+
+
+def test_general_and_grounded_share_language_preamble_byte_for_byte():
+    # Both prompts MUST start with the identical language-detection
+    # preamble. Drift here means the 3 guards behave differently in
+    # general-mode than in grounded-mode — that asymmetry is exactly
+    # what SPEC-RAG-MULTILINGUAL-CHAT-001 forbids.
+    preamble_end = GROUNDED_CHAT_SYSTEM_PROMPT.find("\n\nYou are Klai AI")
+    assert preamble_end > 0, "GROUNDED prompt structure changed unexpectedly"
+    grounded_preamble = GROUNDED_CHAT_SYSTEM_PROMPT[:preamble_end]
+    assert GENERAL_CHAT_SYSTEM_PROMPT.startswith(grounded_preamble + "\n\n"), (
+        "GENERAL and GROUNDED must share an identical language-detection "
+        "preamble. Refactor _LANGUAGE_DETECTION_PREAMBLE if you need to "
+        "change it — never edit one of the public constants in isolation."
+    )
