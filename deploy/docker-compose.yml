@@ -460,6 +460,10 @@ services:
       # ─── Billing — Moneybird ────────────────────────────────────
       # Validator in config.py requires MONEYBIRD_WEBHOOK_TOKEN at boot.
       MONEYBIRD_WEBHOOK_TOKEN: ${MONEYBIRD_WEBHOOK_TOKEN}
+      # ─── MCP OAuth surface (SPEC-MCP-AUTH-001) ──────────────────
+      # Validators in config.py require both URLs at boot (REQ-7 + REQ-14).
+      MCP_OAUTH_ISSUER_BASE_URL: ${MCP_OAUTH_ISSUER_BASE_URL}
+      MCP_OAUTH_RESOURCE_URL: ${MCP_OAUTH_RESOURCE_URL}
       # ─── Meeting ingress — IMAP calendar-invite listener ────────
       IMAP_HOST: mail.getklai.com
       IMAP_PORT: "993"
