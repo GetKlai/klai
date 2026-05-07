@@ -484,10 +484,22 @@ _MERGE_CONSOLIDATE_SYSTEM_PROMPT_TEMPLATE = (
     "  the base names came from a per-cluster naming step instructed to "
     "  differentiate, so naming-disagreement is expected and not a signal "
     "  that the clusters belong apart.\n"
-    "- Aim for {target_min}-{target_max} parents. If you genuinely cannot "
-    "  reach {target_max} without grouping unrelated things, fewer is OK. "
-    "  If staying under {target_max} forces you to lump unrelated topics "
-    "  together, slightly more is OK.\n"
+    "- Aim for {target_min}-{target_max} parents. When in doubt within that "
+    "  range, BIAS toward the upper end (closer to {target_max}). Operators "
+    "  can easily reject too-granular proposals, but cannot easily split a "
+    "  too-coarse parent. If you genuinely cannot reach {target_max} without "
+    "  grouping unrelated things, fewer is OK. If staying under {target_max} "
+    "  forces you to lump unrelated topics together, slightly more is OK.\n"
+    "- Each base cluster MAY become its own parent if it is genuinely "
+    "  distinct — single-child parents are FINE and preferred over forced "
+    "  lumping. Do not invent a 'misc' or 'overig' parent just to absorb "
+    "  one stray cluster.\n"
+    "- For SINGLE-CHILD parents (one base cluster under it): propose a "
+    "  parent name that works as a top-level browse category, NOT just a "
+    "  copy of the base cluster's technical name. Example: base cluster "
+    "  'Partner-ID's en samenwerkingscodes' → parent name 'Partners' or "
+    "  'Voys-partners' (user-facing browse label), not 'Partner-ID's en "
+    "  samenwerkingscodes' (a tech detail).\n"
     "\nBalance constraints (avoid one over-large parent — these scale with "
     "the actual corpus, not absolute numbers):\n"
     "- Total documents across all base clusters: {total_docs}. "
@@ -670,8 +682,14 @@ async def _consolidate_to_parents(
                 )
             )
 
-    # AC-14: collect any unassigned clusters under an "Overig" parent so no
+    # AC-14: collect any unassigned clusters under a fallback parent so no
     # content silently disappears. Operator can review and merge/split.
+    #
+    # Single-cluster fallback uses the base cluster's own name instead of a
+    # generic "Overig" — that label was visibly bad in production (Voys-app
+    # cluster ended up labelled "Overig" on the first live run, 2026-05-07).
+    # Multi-cluster fallback keeps the "Overig" label since no single name
+    # captures the diverse content.
     unassigned = sorted(cid for cid in valid_cids if cid not in seen_cids)
     if unassigned:
         logger.warning(
@@ -679,10 +697,22 @@ async def _consolidate_to_parents(
             count=len(unassigned),
             cluster_ids=unassigned,
         )
+        if len(unassigned) == 1:
+            only_cid = unassigned[0]
+            fallback_name = name_by_cid[only_cid]
+            fallback_rationale = (
+                "LLM did not explicitly assign this cluster — kept as "
+                "single-child parent under its base name."
+            )
+        else:
+            fallback_name = "Overig"
+            fallback_rationale = (
+                "Multiple clusters were not assigned by the LLM — operator review required."
+            )
         parents.append(
             ParentCategory(
-                name="Overig",
-                rationale="Niet door LLM toegewezen — operator review required.",
+                name=fallback_name,
+                rationale=fallback_rationale,
                 child_cluster_ids=unassigned,
             )
         )
