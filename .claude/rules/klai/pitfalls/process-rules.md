@@ -257,6 +257,68 @@ a compose file, run `docker manifest inspect <ref>` locally. If it
 `-local-` infix so the script's whitelist accepts it. Do not invent
 tag names; mirror what your build pipeline emits.
 
+## docker-compose-restart-vs-recreate (CRIT)
+
+`docker compose restart <svc>` keeps the existing container config —
+it ignores any drift between the running container and the current
+`docker-compose.yml` / `.env`. New volume mounts, new env-vars, new
+image tags: all silently skipped. Use `docker compose up -d <svc>`
+(or the canonical `/opt/klai/scripts/compose-up.sh <svc>` wrapper from
+SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3) so Compose recreates the
+container when its definition has changed.
+
+**Reference incident:** SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4
+(2026-05-07). PR #472 added a new `klai_chat_prompts.py` bind-mount
+for the LiteLLM container. The `litellm-hook-deploy.yml` workflow
+ran `docker compose restart litellm`, which silently ignored the new
+mount. The container kept its previous mount config, the
+`from klai_chat_prompts import …` line failed at startup with
+`ImportError`, and the proxy entered a crashloop. All path-A traffic
+(LibreChat) hung in "Stop generating" state for ~15 min until a
+hotfix inlined the constant. Structural fix landed in PR #475:
+workflow switched to `compose-up.sh`. Full retro:
+`docs/retros/2026-05-07-litellm-restart-vs-recreate.md`.
+
+**Where it bites:**
+- New volume mounts (the 2026-05-07 incident)
+- New env-vars (the comment in `deploy-compose.yml` already explains
+  this for grafana — Grafana env-var changes need `up -d`, not
+  `restart`)
+- Image tag changes (would silently keep running the old image)
+- Compose-level network / DNS / depends_on changes
+
+**Prevention (mechanical):** every klai service-deploy workflow MUST
+use `/opt/klai/scripts/compose-up.sh <svc>` for the recreate step,
+not `docker compose restart`. Canary check that any reviewer / CI can
+run:
+
+```bash
+# Find service-deploys that do compose ops without the canonical wrapper
+for f in .github/workflows/*.yml; do
+  grep -l 'docker compose' "$f" | grep -L 'compose-up.sh' || true
+done
+```
+
+This MUST return zero results (other than `deploy-compose.yml` itself,
+which is the workflow that INSTALLS `compose-up.sh`, and read-only
+diagnostic uses such as `docker compose config` / `docker compose
+exec`).
+
+**Prevention (human):** before merging a PR that adds a new bind-mount
+or env-var to `deploy/docker-compose.yml`, sanity-check the affected
+service's deploy workflow uses `compose-up.sh` (or `up -d`). If it
+uses `restart`, fix that FIRST in a separate PR, THEN ship the
+mount/env-var change. The two changes can land together but only if
+the PR's workflow change is itself triggered by the same commit (i.e.
+the workflow file is in `paths:` of its own trigger).
+
+**See also:** SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3 mandates
+`compose-up.sh` for klasse-A (compose-managed) services. Phase D of
+SPEC-RAG-MULTILINGUAL-CHAT-001 (TBD) will eliminate the underlying
+cause for this service by replacing both vendored single-files with
+a custom litellm Dockerfile that `pip install`s the deps — once that
+ships, there are no bind-mounts to forget.
+
 ## worktree-for-long-running-changes (HIGH)
 When you will make working-tree edits that span more than a single tool call
 — especially test fixes, refactors, or anything that produces an in-flight

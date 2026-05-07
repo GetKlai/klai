@@ -125,7 +125,7 @@ def test_get_source_count_sends_caller_service_header(monkeypatch) -> None:
         return mock_resp
 
     with patch.object(httpx.AsyncClient, "send", _mock_send):
-        asyncio.get_event_loop().run_until_complete(get_source_count(org_id="org-test", kb_slug="kb-slug"))
+        asyncio.run(get_source_count(org_id="org-test", kb_slug="kb-slug"))
 
     assert "x-caller-service" in captured_headers, (
         f"X-Caller-Service header was not sent; captured: {list(captured_headers.keys())}"
@@ -153,7 +153,7 @@ def test_delete_kb_sends_caller_service_header(monkeypatch) -> None:
         return mock_resp
 
     with patch.object(httpx.AsyncClient, "send", _mock_send):
-        asyncio.get_event_loop().run_until_complete(delete_kb(org_id="org-test", kb_slug="kb-slug"))
+        asyncio.run(delete_kb(org_id="org-test", kb_slug="kb-slug"))
 
     assert captured_headers.get("x-caller-service") == "portal-api", (
         f"delete_kb did not send X-Caller-Service: portal-api; captured: {captured_headers!r}"

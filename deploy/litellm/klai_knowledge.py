@@ -26,78 +26,26 @@ from typing import Any
 import httpx
 from litellm.integrations.custom_logger import CustomLogger
 
+# SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): the language-detection
+# foundation that this hook prepends to every LibreChat system message,
+# matching what synthesis.py (path C) and partner_chat.py (path B) already
+# do. Imported from the vendored single-file copy at
+# deploy/litellm/klai_chat_prompts.py — see that file's docstring for the
+# vendoring rationale (mirrors klai_service_auth.py from Phase C-1). Drift
+# vs the canonical klai-libs/chat-prompts is enforced by
+# deploy/litellm/tests/test_klai_chat_prompts_drift.py.
+#
+# Note (re-introduced 2026-05-07 after the inline-hotfix detour): the
+# original Phase 4 commit imported this and broke production because the
+# old ``Deploy LiteLLM hooks`` workflow used ``docker compose restart
+# litellm``, which silently ignores new bind-mounts. The cleanup PR that
+# restored this import ALSO switched the workflow to
+# ``/opt/klai/scripts/compose-up.sh litellm`` (= ``docker compose up -d
+# --remove-orphans litellm``) so new mounts are picked up automatically —
+# matching every other klai service deploy.
+from klai_chat_prompts import GROUNDED_CHAT_SYSTEM_PROMPT
+
 logger = logging.getLogger(__name__)
-
-
-# SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10) — HOTFIX 2026-05-07:
-#
-# The language-detection foundation that this hook prepends to every
-# LibreChat system message, matching what synthesis.py (path C) and
-# partner_chat.py (path B) already do.
-#
-# Originally Phase 4 imported this constant from a vendored single-file
-# copy at ``deploy/litellm/klai_chat_prompts.py`` (mirrors
-# ``klai_service_auth.py`` from SPEC-SEC-SERVICE-AUTH-001 Phase C-1).
-# That works locally because pytest puts ``deploy/litellm`` on
-# sys.path, but it does NOT work on production: the
-# ``Deploy LiteLLM hooks`` GitHub workflow (.github/workflows/
-# deploy-litellm-hooks.yml) only runs ``docker compose restart litellm``.
-# ``restart`` does NOT re-read docker-compose.yml volume mounts — only
-# ``up -d --force-recreate`` does. So even after Phase 4 merged, the
-# container kept running with its previous mount config (which did not
-# yet include the new ``klai_chat_prompts.py`` mount), the import
-# failed, and the proxy crashlooped.
-#
-# Hotfix: inline the constant here so the hot path has zero
-# cross-file dependencies. The vendored copy at
-# ``deploy/litellm/klai_chat_prompts.py`` and its drift test stay in
-# the repo — both still test that the canonical
-# ``klai-libs/chat-prompts/klai_chat_prompts/__init__.py`` and the
-# vendored copy are byte-identical. Drift here in this inlined copy is
-# instead caught by the lint script
-# ``scripts/lint-no-duplicate-chat-prompt.sh`` (HOOK_ALLOWED includes
-# this file) — anyone editing the canonical library must edit both
-# the canonical AND this inline copy AND the vendored single-file.
-#
-# Phase D plan (already documented in deploy/litellm/klai_chat_prompts.py
-# and in SPEC-SEC-SERVICE-AUTH-001 Phase D notes): replace BOTH vendored
-# files with a custom litellm Dockerfile that ``pip install``s
-# ``klai-chat-prompts`` AND fixes the deploy workflow to use
-# ``up -d --force-recreate``. After that the inline below can be
-# replaced with ``from klai_chat_prompts import GROUNDED_CHAT_SYSTEM_PROMPT``.
-GROUNDED_CHAT_SYSTEM_PROMPT: str = (
-    "[CRITICAL] Detect the language of the user's most recent SUBSTANTIVE message and respond "
-    "in that exact language. Apply these three guards:\n"
-    "- Messages with fewer than 5 words inherit the language of the most recent prior longer "
-    "message in the conversation. The first user message is always treated as substantive "
-    "regardless of length.\n"
-    "- Single foreign-language words inside an otherwise consistent-language message do NOT "
-    "change the response language. Brief acknowledgements ('thanks!', 'merci', 'ok gracias') "
-    "do not flip the conversation.\n"
-    "- A clearly switched substantive message (a full-sentence question or statement in a "
-    "different language) DOES switch the response language and stays switched until another "
-    "substantive switch.\n\n"
-    "You are Klai AI, a knowledge assistant. You answer questions based on the knowledge base "
-    "chunks provided. The knowledge base may be in a different language than the user's "
-    "question (often Dutch). Translate cited content into the user's language naturally. "
-    "Do NOT apologize for source-language differences. Do NOT add translator disclaimers. "
-    "Do NOT transliterate proper names — keep them as written in the source.\n\n"
-    "## How to answer\n"
-    "Start with the answer. No warm-up, no rephrasing the question, no 'great question!'\n"
-    "Simple question: 1-3 sentences. Complex question: the core answer first, then the detail.\n"
-    "Be direct. Be honest. If the sources say something unexpected, say it.\n\n"
-    "## How to cite\n"
-    "Every factual claim gets a [n] citation where n is the chunk number. "
-    "If a chunk includes a URL or help page link, include it: [n] (https://...). "
-    "Citations [n] always link to the original source URL regardless of source language. "
-    "If sources contradict each other, say so — don't pick a side silently.\n\n"
-    "## When the answer isn't there\n"
-    "Say it plainly, in the user's language: e.g. 'That's not in the knowledge base' / "
-    "'Dat staat niet in de kennisbank' / 'Das steht nicht in der Wissensdatenbank'. "
-    "Don't guess. Don't fill the gap with general knowledge. "
-    "If you're partially sure, say that too: 'The knowledge base touches on this, but doesn't "
-    "fully answer it.'"
-)
 
 KNOWLEDGE_RETRIEVE_URL = os.getenv("KNOWLEDGE_RETRIEVE_URL")
 if not KNOWLEDGE_RETRIEVE_URL:

@@ -232,6 +232,62 @@ endpoint; consumers migrate one PR each.
 | HTTP Client | httpx | >=0.28 |
 | Structured Logging | structlog | >=25.0 |
 
+### klai-libs/chat-prompts
+
+**Purpose:** Single source of truth for the multilingual chat system
+prompt (SPEC-RAG-MULTILINGUAL-CHAT-001). Exports
+`GROUNDED_CHAT_SYSTEM_PROMPT` — the language-detection foundation with
+three industry-standard guards (≥5-word substantive threshold, single-
+foreign-word tolerance, substantive-switch persistence) that gates
+per-message language detection across all chat surfaces.
+
+**Consumers:** `klai-portal/backend` (path B — partner_chat / Widget /
+Partner API), `klai-retrieval-api` (path C — dormant `/chat`), and
+`deploy/litellm/klai_knowledge.py` (path A — LibreChat hook, via
+vendored single-file copy at `deploy/litellm/klai_chat_prompts.py`
+with drift test at `deploy/litellm/tests/test_klai_chat_prompts_drift.py`).
+
+| Module | Purpose |
+|---|---|
+| `__init__` | `GROUNDED_CHAT_SYSTEM_PROMPT: Final[str]` constant |
+
+A CI lint (`scripts/lint-no-duplicate-chat-prompt.sh`) rejects any PR
+re-introducing the prompt anchors outside the canonical lib + drift-
+tested vendor copy + permitted doc paths.
+
+The vendored single-file pattern at `deploy/litellm/` exists because
+the LiteLLM container is a stock upstream image without `pip install`
+hooks. SPEC-LITELLM-CUSTOM-IMAGE-001 (drafted) replaces it with a
+custom Dockerfile that pip-installs `klai-chat-prompts` directly.
+
+### klai-libs/service-auth
+
+**Purpose:** Outbound Zitadel JWT token client for service-to-service
+auth (SPEC-SEC-SERVICE-AUTH-001 Phase C-1). Exports
+`ZitadelTokenClient` — minted short-lived JWT via OAuth 2.0 Client
+Credentials grant (RFC 6749 §4.4), with refresh at 80% of advertised
+TTL, fail-recovery window, and per-service identity in the `sub`
+claim. Replaces the long-lived shared `X-Internal-Secret` header
+(legacy fallback path retained per REQ-5; removal blocked on
+SPEC-LITELLM-CUSTOM-IMAGE-001 + SEC-SERVICE-AUTH-001 Phase D).
+
+**Consumers:** `deploy/litellm/klai_knowledge.py` (path A — via
+vendored single-file copy at `deploy/litellm/klai_service_auth.py`
+with drift test at
+`deploy/litellm/tests/test_klai_service_auth_drift.py`); future Phase
+C2-Cn migrations will adopt the same library across remaining
+service pairs.
+
+| Module | Purpose |
+|---|---|
+| `client` | `ZitadelTokenClient` — async httpx token mint + cache |
+| `scopes` | Per-endpoint scope constants (`RETRIEVAL_QUERY`, etc.) |
+
+| Layer | Technology | Version |
+|-------|-----------|---------|
+| HTTP Client | httpx | >=0.28 |
+| Structured Logging | structlog | >=25.0 |
+
 ---
 
 ## Garage S3 (deploy/garage/)
