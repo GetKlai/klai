@@ -320,9 +320,11 @@ class Settings(BaseSettings):
     # Refresh-token TTL in days. 90 default — drives the silent-reconnect
     # cadence in Claude Desktop & Cursor.
     mcp_oauth_refresh_ttl_days: int = 90
-    # Per-IP rate-limit on the DCR endpoint (POST /oauth/register). 10/h
-    # default. Tunable via env without code changes.
-    mcp_oauth_dcr_rate_limit_per_hour: int = 10
+    # Per-IP rate-limit on the DCR endpoint (POST /oauth/register).
+    # Claude.ai re-registers a client on every fresh connection (DCR is
+    # spec'd that way), so a single user iterating on connector setup can
+    # easily blow past 10/h. Default 60/h; tunable via env.
+    mcp_oauth_dcr_rate_limit_per_hour: int = 60
 
     @model_validator(mode="after")
     def _require_mcp_oauth_urls(self) -> "Settings":

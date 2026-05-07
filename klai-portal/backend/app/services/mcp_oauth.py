@@ -85,14 +85,21 @@ _CACHE_TTL_LAST_USED_SECONDS = 60  # Rate-limit last_used_at writes to 1/min/tok
 # allowlist matches exactly two host literals; ports are wildcarded.
 _NATIVE_HOSTS = frozenset({"localhost", "127.0.0.1"})
 
-# Web MCP clients (ChatGPT custom connectors, Claude.ai). Hard-coded list,
-# no subdomain wildcards (avoid attacker.openai.com.evil.com bypass — see
-# research.md §11). HTTPS only.
+# Web MCP clients (ChatGPT custom connectors, Claude.ai/.com). Hard-coded
+# list, no subdomain wildcards (avoid attacker.openai.com.evil.com bypass —
+# see research.md §11). HTTPS only.
+#
+# Claude.ai's documented redirect_uri is BOTH:
+#   - https://claude.ai/api/mcp/auth_callback
+#   - https://claude.com/api/mcp/auth_callback
+# Missing claude.com → some users hit OAuth errors depending on region.
+# (See https://claude.com/docs/connectors/building/authentication.)
 _WEB_HOST_ALLOWLIST = frozenset(
     {
         "chat.openai.com",
         "chatgpt.com",
         "claude.ai",
+        "claude.com",
     }
 )
 
