@@ -174,6 +174,15 @@ function EditConnectorPage() {
   // SPEC D-2: auth probe for the edit wizard
   const [authProbeResult, setAuthProbeResult] = useState<AuthProbeResult | null>(null)
   const [authProbeError, setAuthProbeError] = useState<string | null>(null)
+  // Save-time auth_guard config — operator-editable. Initialized from the
+  // auth-probe at step 4 → 5 transition, overwritten by preview's auth_guard
+  // on a successful Run preview, written by the editable form below the
+  // success message. Save reads this. Lives outside ``previewResult`` so we
+  // don't have to fake a ``classification: 'unknown'`` state on the bridge
+  // (which used to render an amber "Preview service did not respond" before
+  // the operator clicked anything — SPEC-CONNECTOR-INPUT-VALIDATION-001 D-2
+  // pre-pop bug).
+  const [authGuard, setAuthGuard] = useState<AuthGuardSuggestion | null>(null)
 
   async function handleGoogleDriveReconnect() {
     setIsReconnecting(true)
@@ -311,8 +320,10 @@ function EditConnectorPage() {
         if (webcrawlerConfig.path_prefix) config.path_prefix = webcrawlerConfig.path_prefix
         if (webcrawlerConfig.max_pages) config.max_pages = Number(webcrawlerConfig.max_pages)
         if (webcrawlerConfig.content_selector) config.content_selector = webcrawlerConfig.content_selector
-        // SPEC-CRAWL-004: auth guard from preview result (canary_fingerprint auto-computed)
-        const ag = previewResult?.auth_guard
+        // SPEC-CRAWL-004: auth guard from ``authGuard`` state — initialized from
+        // auth-probe at step 4 → 5 bridge, refreshed by preview onSuccess,
+        // mutated by the operator-editable form on step 5.
+        const ag = authGuard
         if (ag?.canary_url) {
           config.canary_url = ag.canary_url
           if (ag.canary_fingerprint) config.canary_fingerprint = ag.canary_fingerprint
@@ -383,6 +394,9 @@ function EditConnectorPage() {
     onSuccess: (data) => {
       setPreviewResult(data)
       setPreviewError(null)
+      // Preview is the freshest signal of effective auth state, so let its
+      // ``auth_guard`` overwrite whatever the auth-probe seeded earlier.
+      setAuthGuard(data.auth_guard)
       // Auth-wall detected: redirect back to auth-setup
       if (data.classification === 'auth_wall_detected') {
         setRequiresLogin(true)
@@ -634,17 +648,11 @@ function EditConnectorPage() {
                       size="sm"
                       disabled={authProbeResult?.classification !== 'auth_ok'}
                       onClick={() => {
-                        // Bridge auth_guard forward; selector step must still run its own preview.
-                        setPreviewResult({
-                          fit_markdown: '',
-                          word_count: authProbeResult?.word_count ?? 0,
-                          warnings: [],
-                          content_selector: null,
-                          selector_source: null,
-                          auth_guard: authProbeResult?.auth_guard ?? null,
-                          classification: 'unknown',
-                          classification_reason: null,
-                        })
+                        // Carry auth_guard forward in its own state slot — selector step
+                        // (5) starts EMPTY (previewResult stays null) so no amber
+                        // "Preview service did not respond" renders before the operator
+                        // has clicked Run preview. Save reads ``authGuard`` directly.
+                        setAuthGuard(authProbeResult?.auth_guard ?? null)
                         setWcStep('selector')
                       }}
                     >
@@ -860,8 +868,11 @@ function EditConnectorPage() {
                         </div>
                       )}
 
-                      {/* Auth guard confirmation block — success + canary_url only */}
-                      {previewResult.classification === 'success' && previewResult.auth_guard?.canary_url && (
+                      {/* Auth guard confirmation block — only after a successful
+                          preview AND when we have an auth_guard to work with
+                          (either fresh from preview or carried over from the
+                          auth-probe). Source of truth is ``authGuard`` state. */}
+                      {previewResult.classification === 'success' && authGuard?.canary_url && (
                         <div className="rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 p-3 space-y-2">
                           <div className="flex gap-2 items-center text-xs text-[var(--color-success)]">
                             <Shield className="h-3.5 w-3.5 shrink-0" />
@@ -884,10 +895,10 @@ function EditConnectorPage() {
                                 <Label className="text-xs">Canary page URL</Label>
                                 <Input
                                   className="text-xs h-7"
-                                  value={previewResult.auth_guard.canary_url ?? ''}
+                                  value={authGuard.canary_url ?? ''}
                                   onChange={(e) =>
-                                    setPreviewResult((p) =>
-                                      p ? { ...p, auth_guard: { ...p.auth_guard!, canary_url: e.target.value || null, canary_fingerprint: null } } : p
+                                    setAuthGuard((prev) =>
+                                      prev ? { ...prev, canary_url: e.target.value || null, canary_fingerprint: null } : prev
                                     )
                                   }
                                 />
@@ -897,10 +908,10 @@ function EditConnectorPage() {
                                 <Input
                                   className="text-xs h-7"
                                   placeholder=".logged-in-user-menu"
-                                  value={previewResult.auth_guard.login_indicator_selector ?? ''}
+                                  value={authGuard.login_indicator_selector ?? ''}
                                   onChange={(e) =>
-                                    setPreviewResult((p) =>
-                                      p ? { ...p, auth_guard: { ...p.auth_guard!, login_indicator_selector: e.target.value || null } } : p
+                                    setAuthGuard((prev) =>
+                                      prev ? { ...prev, login_indicator_selector: e.target.value || null } : prev
                                     )
                                   }
                                 />
