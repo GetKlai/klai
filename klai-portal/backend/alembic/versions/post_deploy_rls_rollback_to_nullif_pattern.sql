@@ -95,6 +95,12 @@ CREATE POLICY tenant_isolation ON portal_user_products
     FOR ALL TO portal_api
     USING (org_id = (NULLIF(current_setting('app.current_org_id', true), ''))::integer);
 
+-- portal_mcp_tokens (SPEC-MCP-AUTH-001)
+DROP POLICY IF EXISTS tenant_isolation ON portal_mcp_tokens;
+CREATE POLICY tenant_isolation ON portal_mcp_tokens
+    FOR ALL TO portal_api
+    USING (org_id = (NULLIF(current_setting('app.current_org_id', true), ''))::integer);
+
 -- vexa_meetings — per-cmd
 DROP POLICY IF EXISTS tenant_read ON vexa_meetings;
 CREATE POLICY tenant_read ON vexa_meetings
