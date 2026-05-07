@@ -59,6 +59,24 @@ class Settings(BaseSettings):
     # ``quality_score=0.5`` chunks always pass.
     retrieval_quality_floor: float = 0.05
 
+    # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1 — confidence-band thresholds.
+    # Computed from max(reranker_score) over the served top-K chunks. Drives
+    # the litellm-hook anti-hallucination injection (REQ-2) and Grafana panel
+    # (REQ-8). Defaults derived from the 2026-05-07 Voys-Salesforce incident
+    # (turn 1: 0.18 = low / hallucinated; turn 3 rekeningnummer: 0.96 = high).
+    # Tunable post-deploy without code change.
+    confidence_band_high_threshold: float = 0.60
+    confidence_band_low_threshold: float = 0.30
+
+    # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-3 — link-expand reranker boost.
+    # Multiplicative boost (capped at 1.0) for chunks whose ``_link_expanded``
+    # flag is set, applied AFTER rerank and BEFORE source-aware-select. With
+    # default 1.00 this requirement is no-op until the operator tunes — the
+    # SPEC ships safe and the boost activates per-tenant via env override
+    # once the eval baseline is captured. Range [1.00, 1.30] enforced by the
+    # validator so well-meaning typos can't accidentally suppress chunks.
+    link_expand_score_boost: float = 1.00
+
     # Query router (SPEC-KB-021)
     # Pre-search: identifies relevant sources, passes decision to source_aware_select.
     # Centroids computed from actual chunk vectors (not label strings).
@@ -104,6 +122,36 @@ class Settings(BaseSettings):
     # traffic through the old "trust the body" path.
     portal_api_url: str = ""
     portal_internal_secret: str = ""
+
+    @model_validator(mode="after")
+    def _validate_confidence_band_thresholds(self) -> Settings:
+        """SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1: thresholds must be
+        sane (0 ≤ low < high ≤ 1). Otherwise the band computation produces
+        nonsense (e.g. high < low → every score is "medium"). Catching this
+        at startup beats catching it via "why is every reply abstaining?".
+        """
+        low = self.confidence_band_low_threshold
+        high = self.confidence_band_high_threshold
+        if not (0.0 <= low < high <= 1.0):
+            raise ValueError(
+                "confidence_band thresholds invalid: "
+                f"low={low}, high={high}; require 0 <= low < high <= 1"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_link_expand_boost(self) -> Settings:
+        """SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-3: boost factor must be
+        in [1.00, 1.30] — values < 1 would silently suppress link-expanded
+        chunks (the opposite of intent), values > 1.3 over-distort the
+        ranking distribution.
+        """
+        if not (1.0 <= self.link_expand_score_boost <= 1.3):
+            raise ValueError(
+                "link_expand_score_boost invalid: "
+                f"{self.link_expand_score_boost}; require 1.00 <= boost <= 1.30"
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_security_settings(self) -> Settings:
