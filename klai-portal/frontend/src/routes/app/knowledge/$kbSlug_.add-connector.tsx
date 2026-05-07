@@ -22,7 +22,32 @@ type ConnectorType =
   | 'github' | 'web_crawler' | 'google_drive' | 'notion' | 'ms_docs'
   | 'airtable' | 'confluence'
   | 'google_docs' | 'google_sheets' | 'google_slides'
-type WcStep = 'details' | 'preview' | 'settings'
+// SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-1: web_crawler wizard step order is
+// Details → AuthQuestion → AuthSetup (only if requires login) → Selector → Settings.
+// AuthSetup runs the REQ-2 auth-probe; Selector gates on the REQ-3 success
+// classification. Other connector types (github/notion/...) are unaffected.
+type WcStep = 'details' | 'auth-question' | 'auth-setup' | 'selector' | 'settings'
+
+type AuthProbeClassification =
+  | 'auth_ok'
+  | 'auth_failed_no_cookies'
+  | 'auth_failed_still_walled'
+  | 'auth_failed_credentials_invalid'
+  | 'auth_failed_unreachable'
+
+interface AuthProbeResult {
+  classification: AuthProbeClassification
+  match_reasons: string[]
+  word_count: number
+  auth_guard: AuthGuardSuggestion | null
+}
+
+type PreviewClassification =
+  | 'success'
+  | 'selector_required'
+  | 'selector_returns_empty'
+  | 'requires_javascript'
+  | 'auth_wall_detected'
 
 interface GitHubConfig {
   installation_id: string
@@ -155,8 +180,14 @@ function AddConnectorPage() {
     fit_markdown: string; word_count: number; warnings: string[]
     content_selector: string | null; selector_source: string | null
     auth_guard: AuthGuardSuggestion | null
+    // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3
+    classification: PreviewClassification
+    classification_reason: string | null
   } | null>(null)
   const [showAdvancedAuthGuard, setShowAdvancedAuthGuard] = useState(false)
+  // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2: auth-probe state.
+  const [authProbeResult, setAuthProbeResult] = useState<AuthProbeResult | null>(null)
+  const [authProbeError, setAuthProbeError] = useState<string | null>(null)
 
   function parseCookies(): unknown[] | undefined {
     const raw = webcrawlerConfig.cookies.trim()
@@ -318,6 +349,8 @@ function AddConnectorPage() {
         fit_markdown: string; word_count: number; warnings: string[]; url: string
         content_selector: string | null; selector_source: string | null
         auth_guard: AuthGuardSuggestion | null
+        classification: PreviewClassification
+        classification_reason: string | null
       }>(`/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`, {
         method: 'POST',
         body: JSON.stringify({ url, content_selector: content_selector || null, try_ai: try_ai ?? false, cookies: cookies || null }),
@@ -326,13 +359,54 @@ function AddConnectorPage() {
     onSuccess: (data) => {
       setPreviewResult(data)
       setPreviewError(null)
-      // Auto-expand CSS selector section when there are problems
-      if (data.word_count === 0 || (data.warnings ?? []).length > 0) {
+      // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3: when the page is auth-walled
+      // the wizard MUST send the user back to the auth step, not show "configure
+      // your selector". Hard-jump rather than letting the user stare at amber.
+      if (data.classification === 'auth_wall_detected') {
+        setRequiresLogin(true)
+        setWcStep('auth-setup')
+        setAuthProbeResult(null)
+        return
+      }
+      // Auto-expand CSS selector section when classification points at it.
+      if (data.classification === 'selector_required' || data.classification === 'selector_returns_empty') {
         setShowAdvancedSelector(true)
       }
     },
     onError: (err) => { setPreviewError(err instanceof Error ? err.message : 'Preview failed'); setPreviewResult(null) },
   })
+
+  // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2: hits /connectors/auth-probe.
+  const authProbeMutation = useMutation({
+    mutationFn: async ({ url, cookies }: { url: string; cookies?: unknown[] }) => {
+      return apiFetch<AuthProbeResult>(
+        `/api/app/knowledge-bases/${kbSlug}/connectors/auth-probe`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ url, cookies: cookies || null }),
+        },
+      )
+    },
+    onSuccess: (data) => {
+      setAuthProbeResult(data)
+      setAuthProbeError(null)
+    },
+    onError: (err) => {
+      setAuthProbeError(err instanceof Error ? err.message : 'Auth probe failed')
+      setAuthProbeResult(null)
+    },
+  })
+
+  // SPEC-CONNECTOR-INPUT-VALIDATION-001 D-10: cache invalidation. Re-verify
+  // on any config change that affects the probe / preview outcome.
+  function invalidateAuthProbe() {
+    setAuthProbeResult(null)
+    setAuthProbeError(null)
+  }
+  function invalidatePreview() {
+    setPreviewResult(null)
+    setPreviewError(null)
+  }
 
   return (
     <div className="mx-auto max-w-xl px-6 py-10">
@@ -359,13 +433,21 @@ function AddConnectorPage() {
               { label: m.admin_connectors_step_configure() },
             ]
           : [
+              // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-1: 5-step web_crawler wizard.
               { label: m.admin_connectors_step_type(),                onClick: () => setSelectedType(null) },
               { label: m.admin_connectors_webcrawler_step_details(),  onClick: () => setWcStep('details') },
-              { label: m.admin_connectors_webcrawler_step_preview(),  onClick: () => setWcStep('preview') },
+              { label: 'Authentication',                              onClick: () => setWcStep('auth-question') },
+              { label: m.admin_connectors_webcrawler_step_preview(),  onClick: () => setWcStep('selector') },
               { label: m.admin_connectors_webcrawler_step_settings() },
             ]
 
-        const WC_STEP_INDEX: Record<WcStep, number> = { details: 1, preview: 2, settings: 3 }
+        const WC_STEP_INDEX: Record<WcStep, number> = {
+          details: 1,
+          'auth-question': 2,
+          'auth-setup': 2,
+          selector: 3,
+          settings: 4,
+        }
         const currentIndex = !selectedType
           ? 0
           : isSimple
@@ -734,9 +816,9 @@ function AddConnectorPage() {
                         disabled={!name || !webcrawlerConfig.base_url}
                         onClick={() => {
                           setWcPreviewUrl(webcrawlerConfig.base_url)
-                          setPreviewResult(null)
-                          setPreviewError(null)
-                          setWcStep('preview')
+                          invalidateAuthProbe()
+                          invalidatePreview()
+                          setWcStep('auth-question')
                         }}
                       >
                         {m.admin_connectors_webcrawler_next()}
@@ -748,57 +830,163 @@ function AddConnectorPage() {
                   </div>
                 )}
 
-                {/* Step 2: Preview — auth question first, then preview */}
-                {wcStep === 'preview' && (
+                {/* Step 3: Authentication question — Yes/No only, no other state. */}
+                {wcStep === 'auth-question' && (
                   <div className="space-y-4">
-                    {/* Authentication question — asked once, determines cookies visibility */}
-                    {requiresLogin === null && (
-                      <div className="rounded-lg border border-[var(--color-border)] p-4 space-y-3">
-                        <p className="text-sm font-medium text-[var(--color-foreground)]">
-                          Is this site behind a login?
-                        </p>
-                        <p className="text-xs text-[var(--color-muted-foreground)]">
-                          Some knowledge bases require you to be logged in to see the content.
-                        </p>
-                        <div className="flex gap-2">
-                          <Button type="button" size="sm" variant="outline" onClick={() => setRequiresLogin(false)}>
-                            No, it&apos;s public
-                          </Button>
-                          <Button type="button" size="sm" variant="outline" onClick={() => setRequiresLogin(true)}>
-                            Yes, login required
-                          </Button>
-                        </div>
+                    <div className="rounded-lg border border-[var(--color-border)] p-4 space-y-3">
+                      <p className="text-sm font-medium text-[var(--color-foreground)]">
+                        Is this site behind a login?
+                      </p>
+                      <p className="text-xs text-[var(--color-muted-foreground)]">
+                        Some knowledge bases require you to be logged in to see the content.
+                        We&apos;ll verify either way before letting you save.
+                      </p>
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={requiresLogin === false ? 'default' : 'outline'}
+                          onClick={() => {
+                            setRequiresLogin(false)
+                            setWebcrawlerConfig((p) => ({ ...p, cookies: '' }))
+                            invalidateAuthProbe()
+                            invalidatePreview()
+                          }}
+                        >
+                          No, it&apos;s public
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={requiresLogin === true ? 'default' : 'outline'}
+                          onClick={() => {
+                            setRequiresLogin(true)
+                            invalidateAuthProbe()
+                            invalidatePreview()
+                          }}
+                        >
+                          Yes, login required
+                        </Button>
                       </div>
+                    </div>
+                    <div className="flex gap-2 pt-1">
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={requiresLogin === null}
+                        onClick={() => {
+                          // Public path skips auth-setup; private path runs the probe.
+                          setWcStep(requiresLogin ? 'auth-setup' : 'selector')
+                        }}
+                      >
+                        {m.admin_connectors_webcrawler_next()}
+                      </Button>
+                      <Button type="button" size="sm" variant="ghost" onClick={() => setWcStep('details')}>
+                        {m.admin_connectors_webcrawler_back()}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Step 4: Auth setup — only reached when requiresLogin === true.
+                    Hits REQ-2 /connectors/auth-probe; gates on classification === auth_ok. */}
+                {wcStep === 'auth-setup' && (
+                  <div className="space-y-4">
+                    <div className="rounded-lg border border-[var(--color-border)] p-4 space-y-3">
+                      <p className="text-sm font-medium text-[var(--color-foreground)]">
+                        Authentication cookies
+                      </p>
+                      <textarea
+                        id="wc-cookies"
+                        className="flex min-h-[80px] w-full rounded-md border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-xs font-mono placeholder:text-[var(--color-muted-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
+                        placeholder={m.admin_connectors_webcrawler_cookies_placeholder()}
+                        value={webcrawlerConfig.cookies}
+                        onChange={(e) => {
+                          setWebcrawlerConfig((p) => ({ ...p, cookies: e.target.value }))
+                          invalidateAuthProbe()
+                          invalidatePreview()
+                        }}
+                      />
+                      <p className="text-xs text-[var(--color-muted-foreground)]">
+                        Open the site in your browser, log in, then copy the Cookie value from your
+                        browser&apos;s developer tools (Network tab &rarr; any request &rarr; Cookie header).
+                      </p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={authProbeMutation.isPending || !webcrawlerConfig.base_url}
+                        onClick={() => {
+                          setAuthProbeResult(null)
+                          setAuthProbeError(null)
+                          authProbeMutation.mutate({
+                            url: webcrawlerConfig.base_url + (webcrawlerConfig.path_prefix || ''),
+                            cookies: parseCookies(),
+                          })
+                        }}
+                      >
+                        {authProbeMutation.isPending ? (
+                          <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />Testing...</>
+                        ) : (
+                          'Test authentication'
+                        )}
+                      </Button>
+                    </div>
+
+                    {authProbeError && (
+                      <p className="text-sm text-[var(--color-destructive)]">{authProbeError}</p>
                     )}
 
-                    {/* Cookies field — only shown after "Yes, login required" */}
-                    {requiresLogin === true && (
-                      <div className="rounded-lg border border-[var(--color-border)] p-4 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <p className="text-sm font-medium text-[var(--color-foreground)]">Authentication cookies</p>
-                          <button
-                            type="button"
-                            className="text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
-                            onClick={() => { setRequiresLogin(false); setWebcrawlerConfig((p) => ({ ...p, cookies: '' })) }}
-                          >
-                            Switch to public
-                          </button>
-                        </div>
-                        <textarea
-                          id="wc-cookies"
-                          className="flex min-h-[80px] w-full rounded-md border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-xs font-mono placeholder:text-[var(--color-muted-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
-                          placeholder={m.admin_connectors_webcrawler_cookies_placeholder()}
-                          value={webcrawlerConfig.cookies}
-                          onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, cookies: e.target.value }))}
-                        />
-                        <p className="text-xs text-[var(--color-muted-foreground)]">
-                          Open the site in your browser, log in, then copy the Cookie value from your
-                          browser&apos;s developer tools (Network tab &rarr; any request &rarr; Cookie header).
-                        </p>
-                      </div>
+                    {authProbeResult && (
+                      <AuthProbeFeedback result={authProbeResult} />
                     )}
 
-                    {/* Public site confirmation — minimal, allows changing mind */}
+                    <div className="flex gap-2 pt-1">
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={authProbeResult?.classification !== 'auth_ok'}
+                        onClick={() => {
+                          // Carry the auth_guard forward to the selector step;
+                          // selector will need it for AC-3 connector save.
+                          if (authProbeResult?.auth_guard) {
+                            setPreviewResult((p) =>
+                              p
+                                ? p
+                                : {
+                                    fit_markdown: '',
+                                    word_count: authProbeResult.word_count,
+                                    warnings: [],
+                                    content_selector: null,
+                                    selector_source: null,
+                                    auth_guard: authProbeResult.auth_guard,
+                                    classification: 'success',
+                                    classification_reason: null,
+                                  },
+                            )
+                          }
+                          setWcStep('selector')
+                        }}
+                      >
+                        {m.admin_connectors_webcrawler_next()}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setWcStep('auth-question')}
+                      >
+                        {m.admin_connectors_webcrawler_back()}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Step 5: Selector — runs preview, gates on REQ-3 classification === success. */}
+                {wcStep === 'selector' && (
+                  <div className="space-y-4">
+                    {/* Auth status reminder — public sites get a banner here, authenticated
+                        sites land here only after auth-setup returned auth_ok. */}
                     {requiresLogin === false && (
                       <div className="flex items-center justify-between rounded-lg border border-[var(--color-border)] px-4 py-3">
                         <div className="flex items-center gap-2 text-xs text-[var(--color-muted-foreground)]">
@@ -808,16 +996,30 @@ function AddConnectorPage() {
                         <button
                           type="button"
                           className="text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
-                          onClick={() => setRequiresLogin(true)}
+                          onClick={() => setWcStep('auth-question')}
                         >
                           Actually, it needs login
                         </button>
                       </div>
                     )}
+                    {requiresLogin === true && authProbeResult?.classification === 'auth_ok' && (
+                      <div className="flex items-center justify-between rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 px-4 py-3">
+                        <div className="flex items-center gap-2 text-xs text-[var(--color-success)]">
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          Logged in — cookies verified
+                        </div>
+                        <button
+                          type="button"
+                          className="text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+                          onClick={() => setWcStep('auth-setup')}
+                        >
+                          Edit cookies
+                        </button>
+                      </div>
+                    )}
 
-                    {/* Preview URL — shown after auth question is answered */}
-                    {requiresLogin !== null && (
-                      <>
+                    {/* Preview URL */}
+                    <>
                         <div className="space-y-1.5">
                           <Label htmlFor="wc-preview-url">{m.admin_connectors_webcrawler_preview_url()}</Label>
                           <Input
@@ -853,8 +1055,7 @@ function AddConnectorPage() {
                             </p>
                           </div>
                         )}
-                      </>
-                    )}
+                    </>
                     {!webcrawlerConfig.content_selector && (
                       <button
                         type="button"
@@ -877,8 +1078,7 @@ function AddConnectorPage() {
                       variant="outline"
                       disabled={previewMutation.isPending || !wcPreviewUrl}
                       onClick={() => {
-                        setPreviewResult(null)
-                        setPreviewError(null)
+                        invalidatePreview()
                         previewMutation.mutate({ url: wcPreviewUrl, content_selector: webcrawlerConfig.content_selector, cookies: parseCookies() })
                       }}
                     >
@@ -887,6 +1087,13 @@ function AddConnectorPage() {
                         : m.admin_connectors_webcrawler_run_preview()
                       }
                     </Button>
+                    {/* SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3 — classification feedback. */}
+                    {previewResult && !previewMutation.isPending && (
+                      <PreviewClassificationFeedback
+                        classification={previewResult.classification}
+                        reason={previewResult.classification_reason}
+                      />
+                    )}
                     {/* Error / Result */}
                     {previewError && !previewMutation.isPending && (
                       <p className="text-sm text-[var(--color-destructive)]">{previewError}</p>
@@ -1024,13 +1231,29 @@ function AddConnectorPage() {
                       </div>
                     )}
                     <div className="flex gap-2 pt-1">
-                      <Button type="button" size="sm" onClick={() => setWcStep('settings')}>{m.admin_connectors_webcrawler_next()}</Button>
-                      <Button type="button" size="sm" variant="ghost" onClick={() => setWcStep('details')}>{m.admin_connectors_webcrawler_back()}</Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={previewResult?.classification !== 'success'}
+                        onClick={() => setWcStep('settings')}
+                      >
+                        {m.admin_connectors_webcrawler_next()}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() =>
+                          setWcStep(requiresLogin ? 'auth-setup' : 'auth-question')
+                        }
+                      >
+                        {m.admin_connectors_webcrawler_back()}
+                      </Button>
                     </div>
                   </div>
                 )}
 
-                {/* Step 3: Settings */}
+                {/* Step 6: Settings */}
                 {wcStep === 'settings' && (
                   <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate() }} className="space-y-3">
                     <div className="space-y-1.5">
@@ -1050,7 +1273,7 @@ function AddConnectorPage() {
                       <Button type="submit" size="sm" disabled={createMutation.isPending}>
                         {createMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
                       </Button>
-                      <Button type="button" size="sm" variant="ghost" onClick={() => setWcStep('preview')}>{m.admin_connectors_webcrawler_back()}</Button>
+                      <Button type="button" size="sm" variant="ghost" onClick={() => setWcStep('selector')}>{m.admin_connectors_webcrawler_back()}</Button>
                     </div>
                   </form>
                 )}
@@ -1058,6 +1281,94 @@ function AddConnectorPage() {
             )}
 
       </div>
+    </div>
+  )
+}
+
+// -- Helper components -------------------------------------------------------
+
+/**
+ * SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2 — render auth-probe outcome.
+ * Shared by add-connector and edit-connector flows.
+ */
+export function AuthProbeFeedback({ result }: { result: AuthProbeResult }) {
+  if (result.classification === 'auth_ok') {
+    return (
+      <div className="flex gap-2 items-center rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 p-3 text-xs text-[var(--color-success)]">
+        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+        <span>You&apos;re in. Continue to Selector.</span>
+      </div>
+    )
+  }
+  const reasons = result.match_reasons.length > 0
+    ? ` Detected: ${result.match_reasons.join(', ')}`
+    : ''
+  let message: string
+  switch (result.classification) {
+    case 'auth_failed_no_cookies':
+      message = 'This page requires authentication. Go back to step 3 and answer Yes.'
+      break
+    case 'auth_failed_still_walled':
+      message = `Cookies didn't unlock the content. Re-paste a fresh session cookie.${reasons}`
+      break
+    case 'auth_failed_credentials_invalid':
+      message = '401/403 — credentials rejected.'
+      break
+    case 'auth_failed_unreachable':
+      message = 'Could not reach the page. Check the Base URL.'
+      break
+    default:
+      message = `Authentication check failed.${reasons}`
+  }
+  return (
+    <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+      <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+      <span>{message}</span>
+    </div>
+  )
+}
+
+/**
+ * SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3 — render preview classification outcome.
+ */
+export function PreviewClassificationFeedback({
+  classification,
+  reason,
+}: {
+  classification: PreviewClassification
+  reason: string | null
+}) {
+  if (classification === 'success') {
+    return (
+      <div className="flex gap-2 items-center rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 p-3 text-xs text-[var(--color-success)]">
+        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+        <span>Selector matches real article content. You can save the connector.</span>
+      </div>
+    )
+  }
+  let message: string
+  switch (classification) {
+    case 'selector_required':
+      message =
+        reason ?? 'The output looks like a navigation menu. Configure a Content Selector.'
+      break
+    case 'selector_returns_empty':
+      message = "Selector matched no content. Try a different selector or click 'Let AI find'."
+      break
+    case 'requires_javascript':
+      message =
+        'Page renders via JavaScript. Configure a wait_for condition or selector for the post-render DOM.'
+      break
+    case 'auth_wall_detected':
+      message = 'This page requires authentication. Go back to step 4.'
+      break
+    default:
+      message = reason ?? 'Selector check failed.'
+  }
+  return (
+    <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+      <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+      <span>{message}</span>
     </div>
   )
 }
