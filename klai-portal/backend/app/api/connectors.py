@@ -311,6 +311,15 @@ class ConnectorOut(BaseModel):
     created_by: str
     content_type: str | None
     allowed_assertion_modes: list[str] | None
+    # SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-7 — UI badge signal.
+    # Approximation in the absence of cross-DB join: a web_crawler whose
+    # latest sync ended 'failed' is flagged. The SPEC's stronger predicate
+    # (error_details.reason == 'boilerplate_or_authwall_dominant') requires
+    # querying connector.sync_runs in the klai-connector schema, which
+    # portal-api cannot reach without an HTTP round-trip per connector.
+    # Existing Redcactus connector (id e7fac358-…) currently has
+    # last_sync_status='failed' and IS surfaced by this approximation.
+    needs_reconfiguration: bool = False
 
 
 # -- Helpers ------------------------------------------------------------------
@@ -354,6 +363,16 @@ async def _get_kb_for_org(
     return kb
 
 
+def _compute_needs_reconfiguration(c: PortalConnector) -> bool:
+    """SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-7 — UI signal predicate.
+
+    See ConnectorOut.needs_reconfiguration docstring for the trade-off
+    rationale. This proxy fires for any web_crawler whose most recent
+    sync ended 'failed' (covers AC-9: existing Redcactus connector).
+    """
+    return c.connector_type == "web_crawler" and c.last_sync_status == "failed"
+
+
 def _connector_out(c: PortalConnector) -> ConnectorOut:
     # Mask sensitive fields so they never appear in public API responses
     masked_config = dict(c.config) if c.config else {}
@@ -375,6 +394,7 @@ def _connector_out(c: PortalConnector) -> ConnectorOut:
         created_by=c.created_by,
         content_type=c.content_type,
         allowed_assertion_modes=c.allowed_assertion_modes,
+        needs_reconfiguration=_compute_needs_reconfiguration(c),
     )
 
 

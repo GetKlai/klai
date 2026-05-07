@@ -34,6 +34,19 @@ class Settings(BaseSettings):
     # own. Default 5 catches RedCactus's 149-page cluster easily and protects
     # single/few-page pseudo-walls under cold-start permissiveness (REQ-03).
     ingest_template_cluster_min: int = 5
+    # SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-4 / D-7 — sync-time hard-fail
+    # threshold. A crawl_site run with auth_wall_count / total_count above
+    # this ratio AND no cookies AND no login_indicator_selector configured
+    # MUST end with status='failed_partial' and a structured error_summary
+    # so operators see the connector is broken — instead of the silent
+    # "synced 5 days ago, 25 docs indexed" UI lie that this SPEC fixes.
+    # 0.30 is calibrated against Voys help (0% trip-rate post-PR-#459) and
+    # Redcactus 2026-05-07 morning (70% trip-rate). Env-tunable so prod
+    # can adjust if a legitimate edge case emerges without code change.
+    ingest_authwall_dirty_trip_rate: float = Field(
+        default=0.30,
+        validation_alias=AliasChoices("KLAI_INGEST_AUTHWALL_DIRTY_TRIP_RATE"),
+    )
     # LLM enrichment (contextual prefix + HyPE questions via LiteLLM proxy)
     litellm_url: str = "http://litellm:4000"
     litellm_api_key: str = ""
