@@ -37,6 +37,74 @@ logger = structlog.get_logger()
 _VALID_LOGIN_WALL_MODES = ("reject", "degrade", "audit_only")
 
 
+# SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-4: structured reason code written
+# into ``crawl_jobs.error_summary`` and ``connector.sync_runs.error_details``
+# when the dirty-content guard trips. REQ-5 surfaces this exact string in the
+# UI badge query, so it MUST stay stable.
+DIRTY_CONTENT_REASON = "boilerplate_or_authwall_dominant"
+
+_DIRTY_CONTENT_SUGGESTION = (
+    "Re-run preview from the connector edit page. The site likely now requires "
+    "authentication or the content_selector is no longer matching."
+)
+
+
+def decide_terminal_status(
+    *,
+    auth_wall_count: int,
+    total_count: int,
+    has_cookies: bool,
+    has_login_indicator: bool,
+    threshold: float,
+) -> tuple[str, dict | None]:
+    """SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-4 — pure decision function.
+
+    Decide whether a finished crawl_site run should be marked
+    ``failed_partial`` because too many pages classified as auth-walled
+    while the operator did not configure cookies or a login indicator.
+
+    @MX:NOTE — Threshold defaults to 0.30 in ``settings``; env var
+    ``KLAI_INGEST_AUTHWALL_DIRTY_TRIP_RATE`` overrides per-deployment.
+    Default calibrated against Voys help (0% trip-rate post-PR-#459)
+    and Redcactus pre-fix (70% trip-rate).
+    @MX:REASON — Loud failure beats silent skip. Operator gets actionable
+    error in connector.sync_runs.error_details; UI surfaces via REQ-5.
+
+    Args:
+        auth_wall_count: Pages that classified as auth-walled.
+        total_count: Total pages reaching the post-fetch decision.
+        has_cookies: True when the connector has cookies configured (the
+            operator EXPECTED auth-walled content; do not trip).
+        has_login_indicator: True when ``login_indicator_selector`` is
+            configured (same rationale as cookies).
+        threshold: Trip-rate at or above which the guard fires. Inclusive
+            (0.30 trips when 30/100 pages are walled).
+
+    Returns:
+        ``(terminal_status, summary_dict_or_None)``. ``summary_dict`` is
+        the JSONB payload to write into ``crawl_jobs.error_summary`` when
+        ``terminal_status == "failed_partial"`` and the guard fired.
+        Returns ``(None, None)`` semantics are NOT used — when the guard
+        does not fire, returns ``("", None)`` so the caller falls through
+        to its existing terminal-status logic.
+    """
+    if total_count <= 0:
+        return ("", None)
+    if has_cookies or has_login_indicator:
+        return ("", None)
+    trip_rate = round(auth_wall_count / total_count, 3)
+    if trip_rate < threshold:
+        return ("", None)
+    summary: dict = {
+        "reason": DIRTY_CONTENT_REASON,
+        "trip_rate": trip_rate,
+        "auth_wall_count": auth_wall_count,
+        "total_count": total_count,
+        "suggestion": _DIRTY_CONTENT_SUGGESTION,
+    }
+    return ("failed_partial", summary)
+
+
 # @MX:ANCHOR: AuthWallDetected -- propagates login-indicator triggers from _ingest_crawl_result
 #   back up to run_crawl_job, which converts them into a single structured
 #   crawl_jobs.error entry and halts the remaining BFS pages.
@@ -300,19 +368,56 @@ async def run_crawl_job(
                 job_id,
             )
 
-        # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-04.2/04.3 — terminal status:
-        # - failed_partial when 0 pages ingested AND >= 1 wall skipped (no real
-        #   content reached Qdrant; surface that to operators distinctly from
-        #   plain "completed but no walls" or "failed catastrophically").
-        # - completed otherwise (legacy alias retained for back-compat with
-        #   existing UI / Grafana queries during rollout; future SPEC may
-        #   migrate the alias to "succeeded").
-        if auth_wall_pages and pages_done == 0:
-            terminal_status = "failed_partial"
-        else:
-            terminal_status = "completed"
+        # SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-4 — dirty-content guard.
+        # Evaluate FIRST: if too many pages classified as auth-walled while
+        # no cookies / login_indicator are configured, mark failed_partial
+        # with the structured reason that REQ-5's UI badge keys on.
+        dirty_status, dirty_summary = decide_terminal_status(
+            auth_wall_count=len(auth_wall_pages),
+            total_count=len(results),
+            has_cookies=bool(cookies),
+            has_login_indicator=bool(login_indicator_selector),
+            threshold=settings.ingest_authwall_dirty_trip_rate,
+        )
 
-        if auth_wall_pages:
+        # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-04.2/04.3 — terminal status:
+        # - failed_partial when REQ-4 dirty-content guard tripped (loud failure)
+        # - failed_partial when 0 pages ingested AND >= 1 wall skipped
+        # - completed otherwise
+        if dirty_status:
+            terminal_status = dirty_status
+            summary_payload = dirty_summary or {}
+            # Preserve the existing wall-tracking diagnostics alongside the
+            # REQ-4 reason for forensic logs.
+            summary_payload.setdefault("login_walls_skipped", len(auth_wall_pages))
+            summary_payload.setdefault("sample_urls", auth_wall_pages[:10])
+            summary_json = json.dumps(summary_payload)
+            await conn.execute(
+                "UPDATE knowledge.crawl_jobs SET status=$1, error_summary=$2::jsonb, "
+                "updated_at=$3 WHERE id=$4",
+                terminal_status,
+                summary_json,
+                int(time.time()),
+                job_id,
+            )
+        elif auth_wall_pages and pages_done == 0:
+            terminal_status = "failed_partial"
+            summary_json = json.dumps(
+                {
+                    "login_walls_skipped": len(auth_wall_pages),
+                    "sample_urls": auth_wall_pages[:10],
+                }
+            )
+            await conn.execute(
+                "UPDATE knowledge.crawl_jobs SET status=$1, error_summary=$2::jsonb, "
+                "updated_at=$3 WHERE id=$4",
+                terminal_status,
+                summary_json,
+                int(time.time()),
+                job_id,
+            )
+        elif auth_wall_pages:
+            terminal_status = "completed"
             summary_json = json.dumps(
                 {
                     "login_walls_skipped": len(auth_wall_pages),
@@ -328,6 +433,7 @@ async def run_crawl_job(
                 job_id,
             )
         else:
+            terminal_status = "completed"
             await _update_job(conn, job_id, status=terminal_status)
 
         logger.info(

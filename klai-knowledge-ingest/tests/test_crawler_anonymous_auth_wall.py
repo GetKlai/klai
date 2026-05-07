@@ -257,8 +257,14 @@ class TestFailedPartial:
 
     @pytest.mark.asyncio()
     async def test_some_ingested_succeeds_despite_walls(self, patched_pool) -> None:
-        clean = _result("https://example.com/clean")
-        walls = [_result(f"https://example.com/wall-{i}") for i in range(2)]
+        # SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-4: when wall ratio exceeds
+        # KLAI_INGEST_AUTHWALL_DIRTY_TRIP_RATE (default 0.30) and no cookies /
+        # login_indicator are configured, the run is intentionally marked
+        # failed_partial. Below the threshold, the existing "some content got
+        # through → completed" semantic still holds.
+        # Ratio here: 1 wall / 9 total = 11% — comfortably below default 30%.
+        clean_pages = [_result(f"https://example.com/clean-{i}") for i in range(8)]
+        walls = [_result("https://example.com/wall-0")]
 
         async def ingest_side_effect(*args, **kwargs):
             url = args[2] if len(args) >= 3 else kwargs.get("url")
@@ -268,7 +274,7 @@ class TestFailedPartial:
                     AuthWallSignal(pattern="template_cluster", confidence=0.9),
                 )
 
-        patches = _patch_crawler_externals([clean, *walls], ingest_side_effect)
+        patches = _patch_crawler_externals([*clean_pages, *walls], ingest_side_effect)
         for p in patches:
             p.start()
         try:
