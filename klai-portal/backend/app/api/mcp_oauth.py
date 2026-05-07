@@ -289,7 +289,7 @@ async def authorize_get(
     redirect_uri: str,
     code_challenge: str,
     code_challenge_method: str,
-    resource: str,
+    resource: str = "",  # RFC 8707 — Claude.ai may omit; default to canonical
     scope: str = svc.DEFAULT_SCOPE,
     state: str = "",
     session: SessionContext | None = Depends(get_optional_session),
@@ -305,7 +305,12 @@ async def authorize_get(
         return _oauth_error("invalid_request", "PKCE S256 required", 400)
     if not code_challenge or len(code_challenge) < 43:
         return _oauth_error("invalid_request", "code_challenge missing/too short", 400)
-    if resource != settings.mcp_oauth_resource_url:
+    # RFC 8707: if client omits resource we bind to the canonical one.
+    # Claude.ai does not always pass `resource=`; rejecting on mismatch
+    # would block the consent flow before it starts.
+    if not resource:
+        resource = settings.mcp_oauth_resource_url
+    elif resource != settings.mcp_oauth_resource_url:
         return _oauth_error("invalid_target", "resource mismatch", 400)
 
     requested_scopes = scope.split()
