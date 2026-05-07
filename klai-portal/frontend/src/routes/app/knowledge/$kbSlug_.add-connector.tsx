@@ -48,6 +48,7 @@ type PreviewClassification =
   | 'selector_returns_empty'
   | 'requires_javascript'
   | 'auth_wall_detected'
+  | 'unknown'
 
 interface GitHubConfig {
   installation_id: string
@@ -947,24 +948,19 @@ function AddConnectorPage() {
                         size="sm"
                         disabled={authProbeResult?.classification !== 'auth_ok'}
                         onClick={() => {
-                          // Carry the auth_guard forward to the selector step;
-                          // selector will need it for AC-3 connector save.
-                          if (authProbeResult?.auth_guard) {
-                            setPreviewResult((p) =>
-                              p
-                                ? p
-                                : {
-                                    fit_markdown: '',
-                                    word_count: authProbeResult.word_count,
-                                    warnings: [],
-                                    content_selector: null,
-                                    selector_source: null,
-                                    auth_guard: authProbeResult.auth_guard,
-                                    classification: 'success',
-                                    classification_reason: null,
-                                  },
-                            )
-                          }
+                          // SPEC-CONNECTOR-INPUT-VALIDATION-001 D-2 + D-10: carry auth_guard
+                          // forward but do NOT pre-pass the preview gate. The selector step
+                          // must run its own preview before the save button unlocks.
+                          setPreviewResult({
+                            fit_markdown: '',
+                            word_count: authProbeResult?.word_count ?? 0,
+                            warnings: [],
+                            content_selector: null,
+                            selector_source: null,
+                            auth_guard: authProbeResult?.auth_guard ?? null,
+                            classification: 'unknown',
+                            classification_reason: null,
+                          })
                           setWcStep('selector')
                         }}
                       >
@@ -1056,21 +1052,6 @@ function AddConnectorPage() {
                           </div>
                         )}
                     </>
-                    {!webcrawlerConfig.content_selector && (
-                      <button
-                        type="button"
-                        className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-accent)] transition-colors disabled:opacity-50"
-                        disabled={previewMutation.isPending || !wcPreviewUrl}
-                        onClick={() => {
-                          setPreviewResult(null)
-                          setPreviewError(null)
-                          previewMutation.mutate({ url: wcPreviewUrl, try_ai: true, cookies: parseCookies() })
-                        }}
-                      >
-                        <Sparkles className="h-3 w-3" />
-                        {m.admin_connectors_webcrawler_try_ai()}
-                      </button>
-                    )}
                     {/* Single run preview button */}
                     <Button
                       type="button"
@@ -1087,100 +1068,73 @@ function AddConnectorPage() {
                         : m.admin_connectors_webcrawler_run_preview()
                       }
                     </Button>
-                    {/* SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3 — classification feedback. */}
-                    {previewResult && !previewMutation.isPending && (
-                      <PreviewClassificationFeedback
-                        classification={previewResult.classification}
-                        reason={previewResult.classification_reason}
-                      />
-                    )}
-                    {/* Error / Result */}
+                    {/* Error state */}
                     {previewError && !previewMutation.isPending && (
                       <p className="text-sm text-[var(--color-destructive)]">{previewError}</p>
                     )}
+                    {/* Loading state */}
                     {previewMutation.isPending && (
                       <div className="rounded-lg border border-[var(--color-border)] p-4 flex items-center gap-2 text-sm text-[var(--color-muted-foreground)]">
                         <Loader2 className="h-4 w-4 animate-spin" />
                         {m.admin_connectors_webcrawler_preview_loading()}
                       </div>
                     )}
-                    {previewResult !== null && !previewMutation.isPending && (previewResult.warnings ?? []).length === 0 && previewResult.word_count > 0 && (
-                      <div className="flex gap-2 items-center rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 p-3 text-xs text-[var(--color-success)]">
-                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                        <span>{m.admin_connectors_webcrawler_preview_looks_good({ count: String(previewResult.word_count) })}</span>
-                      </div>
+                    {/* Empty state — before any preview has run */}
+                    {!previewResult && !previewMutation.isPending && !previewError && (
+                      <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_empty()}</p>
                     )}
-                    {/* SPEC-CRAWL-004: Auth guard auto-detection confirmation */}
-                    {previewResult?.auth_guard?.canary_url && !previewMutation.isPending && (
-                      <div className="rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 p-3 space-y-2">
-                        <div className="flex gap-2 items-center text-xs text-[var(--color-success)]">
-                          <Shield className="h-3.5 w-3.5 shrink-0" />
-                          <span>Auth protection enabled</span>
-                        </div>
-                        <p className="text-xs text-[var(--color-muted-foreground)] ml-5.5">
-                          We&apos;ll check this page before every sync to detect expired logins.
-                          {previewResult.auth_guard.login_indicator_selector && (
-                            <> Pages without login indicator will be excluded.</>
-                          )}
-                        </p>
-                        <button
-                          type="button"
-                          className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors ml-5.5"
-                          onClick={() => setShowAdvancedAuthGuard(!showAdvancedAuthGuard)}
-                        >
-                          <Settings className="h-3 w-3" />
-                          Advanced settings
-                        </button>
-                        {showAdvancedAuthGuard && (
-                          <div className="ml-5.5 space-y-2 pt-1">
-                            <div className="space-y-1">
-                              <Label className="text-xs">Canary page URL</Label>
-                              <Input
-                                className="text-xs h-7"
-                                value={previewResult.auth_guard.canary_url ?? ''}
-                                onChange={(e) =>
-                                  setPreviewResult((p) =>
-                                    p ? { ...p, auth_guard: { ...p.auth_guard!, canary_url: e.target.value || null, canary_fingerprint: null } } : p
-                                  )
-                                }
-                              />
+                    {/* SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3:
+                        Single source of truth: classification drives ALL feedback.
+                        Supporting fields (fit_markdown, selector_source, auth_guard) compose
+                        ALONGSIDE the classification message — never in parallel. */}
+                    {previewResult !== null && !previewMutation.isPending && (
+                      <div className="space-y-3">
+                        {/* Primary classification message */}
+                        <PreviewClassificationFeedback
+                          classification={previewResult.classification}
+                          reason={previewResult.classification_reason}
+                          onRetry={() => {
+                            invalidatePreview()
+                            previewMutation.mutate({ url: wcPreviewUrl, content_selector: webcrawlerConfig.content_selector, cookies: parseCookies() })
+                          }}
+                        />
+
+                        {/* Affordance: AI-detected selector badge + "Use this selector" CTA.
+                            Shown for success and selector_required/empty when AI found something. */}
+                        {previewResult.selector_source === 'ai' && previewResult.content_selector && (
+                          <div className="rounded-lg border border-[var(--color-accent)]/30 bg-[var(--color-accent)]/5 p-3 space-y-2">
+                            <div className="flex gap-2 items-center text-xs text-[var(--color-accent)]">
+                              <Sparkles className="h-3.5 w-3.5 shrink-0" />
+                              <span>{m.admin_connectors_webcrawler_ai_selector_detected({ selector: previewResult.content_selector, count: String(previewResult.word_count) })}</span>
                             </div>
-                            <div className="space-y-1">
-                              <Label className="text-xs">Login indicator selector</Label>
-                              <Input
+                            {webcrawlerConfig.content_selector !== previewResult.content_selector && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
                                 className="text-xs h-7"
-                                placeholder=".logged-in-user-menu"
-                                value={previewResult.auth_guard.login_indicator_selector ?? ''}
-                                onChange={(e) =>
-                                  setPreviewResult((p) =>
-                                    p ? { ...p, auth_guard: { ...p.auth_guard!, login_indicator_selector: e.target.value || null } } : p
-                                  )
-                                }
-                              />
-                            </div>
+                                onClick={() => {
+                                  setWebcrawlerConfig((p) => ({ ...p, content_selector: previewResult.content_selector! }))
+                                  setShowAdvancedSelector(true)
+                                }}
+                              >
+                                {m.admin_connectors_webcrawler_ai_selector_use()}
+                              </Button>
+                            )}
                           </div>
                         )}
-                      </div>
-                    )}
-                    {previewResult !== null && !previewMutation.isPending && (previewResult.warnings ?? []).length > 0 && (
-                      <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-                        <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                        <span>{m.admin_connectors_webcrawler_warning_nav_detected()}</span>
-                      </div>
-                    )}
-                    {previewResult !== null && !previewMutation.isPending && previewResult.word_count === 0 && previewResult.selector_source !== 'ai' && (
-                      <div className="space-y-2">
-                        <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-                          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                          <span>{m.admin_connectors_webcrawler_preview_no_content()}</span>
-                        </div>
-                        {!webcrawlerConfig.content_selector && (
+
+                        {/* Affordance: inline "Try AI find selector" CTA for
+                            selector_required / selector_returns_empty when no selector is set
+                            and AI was not the source. */}
+                        {(previewResult.classification === 'selector_required' || previewResult.classification === 'selector_returns_empty') &&
+                          !webcrawlerConfig.content_selector && previewResult.selector_source !== 'ai' && (
                           <button
                             type="button"
-                            className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-accent)] transition-colors"
+                            className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-accent)] transition-colors disabled:opacity-50"
+                            disabled={previewMutation.isPending}
                             onClick={() => {
-                              setPreviewResult(null)
-                              setPreviewError(null)
+                              invalidatePreview()
                               previewMutation.mutate({ url: wcPreviewUrl, try_ai: true, cookies: parseCookies() })
                             }}
                           >
@@ -1188,45 +1142,77 @@ function AddConnectorPage() {
                             {m.admin_connectors_webcrawler_try_ai()}
                           </button>
                         )}
-                      </div>
-                    )}
-                    {previewResult !== null && !previewMutation.isPending && previewResult.selector_source === 'ai' && previewResult.content_selector && (
-                      <div className="rounded-lg border border-[var(--color-accent)]/30 bg-[var(--color-accent)]/5 p-3 space-y-2">
-                        <div className="flex gap-2 items-center text-xs text-[var(--color-accent)]">
-                          <Sparkles className="h-3.5 w-3.5 shrink-0" />
-                          <span>{m.admin_connectors_webcrawler_ai_selector_detected({ selector: previewResult.content_selector, count: String(previewResult.word_count) })}</span>
-                        </div>
-                        {webcrawlerConfig.content_selector !== previewResult.content_selector && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="text-xs h-7"
-                            onClick={() => {
-                              setWebcrawlerConfig((p) => ({ ...p, content_selector: previewResult.content_selector! }))
-                              setShowAdvancedSelector(true)
-                            }}
-                          >
-                            {m.admin_connectors_webcrawler_ai_selector_use()}
-                          </Button>
-                        )}
-                      </div>
-                    )}
-                    {!previewResult && !previewMutation.isPending && (
-                      <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_empty()}</p>
-                    )}
-                    {previewResult !== null && !previewMutation.isPending && previewResult.word_count > 0 && (
-                      <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm font-medium text-[var(--color-foreground)]">{m.admin_connectors_webcrawler_preview_title()}</span>
-                          <span className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_word_count({ count: String(previewResult.word_count) })}</span>
-                        </div>
-                        {previewResult.fit_markdown.trim() ? (
-                          <div className={MARKDOWN_PROSE_CLASSES}>
-                            <ReactMarkdown components={{ a: ({ children }) => <span className="text-[var(--color-accent)]">{children}</span> }}>{previewResult.fit_markdown}</ReactMarkdown>
+
+                        {/* Affordance: extracted markdown body as proof — success only.
+                            Shows what the crawler will actually store. */}
+                        {previewResult.classification === 'success' && previewResult.word_count > 0 && (
+                          <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm font-medium text-[var(--color-foreground)]">{m.admin_connectors_webcrawler_preview_title()}</span>
+                              <span className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_word_count({ count: String(previewResult.word_count) })}</span>
+                            </div>
+                            {previewResult.fit_markdown.trim() ? (
+                              <div className={MARKDOWN_PROSE_CLASSES}>
+                                <ReactMarkdown components={{ a: ({ children }) => <span className="text-[var(--color-accent)]">{children}</span> }}>{previewResult.fit_markdown}</ReactMarkdown>
+                              </div>
+                            ) : (
+                              <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_empty()}</p>
+                            )}
                           </div>
-                        ) : (
-                          <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_empty()}</p>
+                        )}
+
+                        {/* Affordance: SPEC-CRAWL-004 auth guard confirmation block.
+                            Only when canary_url was auto-detected and classification is success. */}
+                        {previewResult.classification === 'success' && previewResult.auth_guard?.canary_url && (
+                          <div className="rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 p-3 space-y-2">
+                            <div className="flex gap-2 items-center text-xs text-[var(--color-success)]">
+                              <Shield className="h-3.5 w-3.5 shrink-0" />
+                              <span>Auth protection enabled</span>
+                            </div>
+                            <p className="text-xs text-[var(--color-muted-foreground)] ml-5.5">
+                              We&apos;ll check this page before every sync to detect expired logins.
+                              {previewResult.auth_guard.login_indicator_selector && (
+                                <> Pages without login indicator will be excluded.</>
+                              )}
+                            </p>
+                            <button
+                              type="button"
+                              className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors ml-5.5"
+                              onClick={() => setShowAdvancedAuthGuard(!showAdvancedAuthGuard)}
+                            >
+                              <Settings className="h-3 w-3" />
+                              Advanced settings
+                            </button>
+                            {showAdvancedAuthGuard && (
+                              <div className="ml-5.5 space-y-2 pt-1">
+                                <div className="space-y-1">
+                                  <Label className="text-xs">Canary page URL</Label>
+                                  <Input
+                                    className="text-xs h-7"
+                                    value={previewResult.auth_guard.canary_url ?? ''}
+                                    onChange={(e) =>
+                                      setPreviewResult((p) =>
+                                        p ? { ...p, auth_guard: { ...p.auth_guard!, canary_url: e.target.value || null, canary_fingerprint: null } } : p
+                                      )
+                                    }
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-xs">Login indicator selector</Label>
+                                  <Input
+                                    className="text-xs h-7"
+                                    placeholder=".logged-in-user-menu"
+                                    value={previewResult.auth_guard.login_indicator_selector ?? ''}
+                                    onChange={(e) =>
+                                      setPreviewResult((p) =>
+                                        p ? { ...p, auth_guard: { ...p.auth_guard!, login_indicator_selector: e.target.value || null } } : p
+                                      )
+                                    }
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         )}
                       </div>
                     )}
@@ -1330,13 +1316,18 @@ export function AuthProbeFeedback({ result }: { result: AuthProbeResult }) {
 
 /**
  * SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3 — render preview classification outcome.
+ * Single source of truth for all classification-driven feedback.
+ * Supporting affordances (markdown body, AI selector, auth-guard) compose alongside
+ * via the parent — this component only renders the primary message.
  */
 export function PreviewClassificationFeedback({
   classification,
   reason,
+  onRetry,
 }: {
   classification: PreviewClassification
   reason: string | null
+  onRetry?: () => void
 }) {
   if (classification === 'success') {
     return (
@@ -1362,13 +1353,27 @@ export function PreviewClassificationFeedback({
     case 'auth_wall_detected':
       message = 'This page requires authentication. Go back to step 4.'
       break
+    case 'unknown':
+      message = reason ?? 'Preview service did not respond. Try again.'
+      break
     default:
       message = reason ?? 'Selector check failed.'
   }
   return (
-    <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-      <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-      <span>{message}</span>
+    <div className="space-y-2">
+      <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+        <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+        <span>{message}</span>
+      </div>
+      {classification === 'unknown' && onRetry && (
+        <button
+          type="button"
+          className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
+          onClick={onRetry}
+        >
+          Retry
+        </button>
+      )}
     </div>
   )
 }
