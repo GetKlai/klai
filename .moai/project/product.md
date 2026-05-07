@@ -32,7 +32,7 @@
 ## Core Products
 
 ### Chat
-AI chat interface powered by LibreChat. Each customer gets an isolated subdomain (e.g., `acme.getklai.com`) with their own data store. Model routing via LiteLLM: simple queries routed to fast models, complex queries to large models. Automatic fallback from Mistral API to Ollama CPU on failure. Web search via SearxNG + Firecrawl for full-page content extraction. Reranking via self-hosted Infinity (BGE-reranker-v2-m3).
+AI chat interface powered by LibreChat. Each customer gets an isolated subdomain (e.g., `acme.getklai.com`) with their own data store. Model routing via LiteLLM: simple queries routed to fast models, complex queries to large models. Automatic fallback from Mistral API to Ollama CPU on failure. Web search via SearxNG + Firecrawl for full-page content extraction. Reranking via self-hosted Infinity (BGE-reranker-v2-m3). **Multilingual chat (NL/EN/DE/FR/PT/ES)** — per-message language auto-detection across all three chat surfaces (LibreChat, embeddable widget, partner API): a German colleague querying a Dutch knowledge base receives a German answer with citations to the Dutch source. Three industry-standard guards (≥5-word substantive threshold, single-foreign-word tolerance, substantive-switch persistence) prevent spurious language switches. Pre-merge eval gate enforces ≥95% per-language correctness.
 
 ### Knowledge
 Organization-scoped knowledge bases with document management. Hybrid retrieval pipeline combining vector search (Qdrant) and knowledge graph (FalkorDB/Graphiti) with Reciprocal Rank Fusion. Document ingestion via knowledge-ingest service with dense + sparse embeddings (BGE-M3 via TEI + custom sparse server). External source connectors (klai-connector): GitHub repos, websites via Crawl4AI. Knowledge-augmented chat responses via LiteLLM retrieval hook. MCP server (klai-knowledge-mcp) for LibreChat tool integration. **Knowledge Gaps dashboard** tracks unanswered questions (zero chunks or low-confidence retrieval) so admins can identify and fill content gaps in their knowledge bases. Per-user KB scope control bar lets users enable/disable KB retrieval, toggle personal KB inclusion, and filter which org knowledge bases are searched — preferences persist via portal API and propagate to the LiteLLM hook within 30 seconds via version-based cache invalidation.
@@ -63,7 +63,7 @@ Each org has a plan that determines which products are available: `free` (none),
 ## Core Features
 
 **Customer-Facing**
-- Private chat with Klai LLM models (isolated per tenant)
+- Private chat with Klai LLM models (isolated per tenant), multilingual answers in NL/EN/DE/FR/PT/ES against the same knowledge base
 - Knowledge bases: upload documents, connect GitHub/websites, ask questions with cited sources; gap dashboard shows admins which questions the KB can't answer
 - Docs: per-tenant documentation sites with markdown editing
 - Focus: deep research with web search and document analysis
