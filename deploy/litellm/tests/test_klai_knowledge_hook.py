@@ -1986,3 +1986,162 @@ class TestKlaiKnowledgeHookMultilingualPhase4:
         # End-of-context terminator switched English too.
         assert "[End knowledge base context]" in sys_content
         assert "[Einde kennisbank-context]" not in sys_content
+
+
+# ─── 2026-05-07 follow-up: NL-bias regression guard ─────────────────────────
+#
+# Companion to commit a0d72cea (drop residual NL bias in path-A
+# answer-format + default templates). Two assertions that lock in the
+# fix so a future refactor of the [ANSWER FORMAT] block or the post-KB
+# reminder cannot silently re-introduce the regression Mark hit on
+# 2026-05-07 (English question to chat-voys with NL knowledge-base
+# chunks → answer started with "Samenvatting" instead of "TL;DR").
+
+
+class TestKlaiKnowledgeHookNLBiasRegression:
+    """Regression guard for the 2026-05-07 NL-bias fix.
+
+    Two failure modes get pinned here:
+
+    1. The format-instruction (``[ANSWER FORMAT]``) used to enumerate
+       NL/DE/FR/PT/ES short-summary labels including "Samenvatting".
+       That alternative list anchored Mistral on the dominant KB
+       language whenever chunks were Dutch, overriding the
+       ``[CRITICAL]`` language-detection preamble at the top of
+       ``GROUNDED_CHAT_SYSTEM_PROMPT``. The fix removed the per-
+       language label list. This test asserts those labels are gone.
+
+    2. The system-prompt now appends a ``[LANGUAGE REMINDER]`` block
+       AFTER the KB chunks so the most-recent instruction reinforces
+       the user-language contract once the model has just read the
+       (often-Dutch) source documents. This test asserts the reminder
+       is present whenever KB context is injected.
+    """
+
+    @pytest.fixture
+    def _kb_chunks(self) -> list[dict]:
+        return [
+            {
+                "text": "Klanten kunnen klimcursussen boeken via de app.",
+                "scope": "org",
+                "metadata": {"title": "Boekingsproces"},
+                "source_url": "https://docs.klai.example/booking",
+                "chunk_id": "c1",
+                "reranker_score": 0.91,
+            }
+        ]
+
+    def _system_msg(self, result: dict) -> str:
+        msgs = [m for m in result["messages"] if m["role"] == "system"]
+        assert len(msgs) == 1, f"expected exactly one system message, got {len(msgs)}"
+        return msgs[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_format_instruction_no_per_language_label_list(
+        self, monkeypatch, _kb_chunks
+    ):
+        """The [ANSWER FORMAT] block must NOT enumerate per-language
+        short-summary labels — that list anchored the model on whatever
+        language the KB content was in.
+        """
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Can you tell me about climbing courses?",
+                }
+            ],
+        }
+        retrieval_resp = _make_resp({"chunks": _kb_chunks, "retrieval_bypassed": False})
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=retrieval_resp)
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        sys_content = self._system_msg(result)
+        # The [ANSWER FORMAT] header is preserved.
+        assert "ANSWER FORMAT — always follow this" in sys_content
+        # But the per-language label list is gone — none of these labels
+        # may appear anywhere in the format instruction. We probe inside
+        # the [ANSWER FORMAT] section to avoid false negatives if any of
+        # these words organically appear elsewhere (e.g. inside a chunk
+        # body).
+        format_section = sys_content.split("[ANSWER FORMAT — always follow this", 1)[1]
+        format_section = format_section.split("[End knowledge base context]", 1)[0]
+        for legacy_label in (
+            "Samenvatting",
+            "Zusammenfassung",
+            "Résumé",
+            "Resumen",
+            "Resumo",
+        ):
+            assert legacy_label not in format_section, (
+                f"format-instruction must not pin a per-language label "
+                f"({legacy_label!r}) — it anchors Mistral on KB-content "
+                "language. See commit a0d72cea."
+            )
+        # Positive assert: the new wording is present.
+        assert (
+            "SAME LANGUAGE as the user's question" in format_section
+            or "NOT the language of the source documents" in format_section
+        )
+
+    @pytest.mark.asyncio
+    async def test_language_reminder_appended_after_kb_chunks(
+        self, monkeypatch, _kb_chunks
+    ):
+        """The [LANGUAGE REMINDER] block must appear AFTER the KB
+        chunks so the most-recent instruction reinforces the language
+        contract when KB content dominates the prompt.
+        """
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "How do I cancel my reservation?"}
+            ],
+        }
+        retrieval_resp = _make_resp({"chunks": _kb_chunks, "retrieval_bypassed": False})
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=retrieval_resp)
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        sys_content = self._system_msg(result)
+        # Reminder is present and explicitly tells the model not to
+        # mirror the source-document language.
+        assert "[LANGUAGE REMINDER]" in sys_content
+        assert "NOT the language of the source documents" in sys_content
+        # Ordering: reminder MUST come after the [End knowledge base
+        # context] marker so it is the last thing the model reads
+        # before generating.
+        end_idx = sys_content.find("[End knowledge base context]")
+        reminder_idx = sys_content.find("[LANGUAGE REMINDER]")
+        assert end_idx != -1, "[End knowledge base context] missing"
+        assert reminder_idx != -1, "[LANGUAGE REMINDER] missing"
+        assert reminder_idx > end_idx, (
+            "[LANGUAGE REMINDER] must appear AFTER [End knowledge base "
+            "context] — last-mentioned wins for Mistral."
+        )
