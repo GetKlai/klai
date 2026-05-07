@@ -1265,9 +1265,7 @@ class AuthProbeResponse(BaseModel):
     auth_guard: dict | None = None
 
 
-@router.post(
-    "/knowledge-bases/{kb_slug}/connectors/auth-probe", response_model=AuthProbeResponse
-)
+@router.post("/knowledge-bases/{kb_slug}/connectors/auth-probe", response_model=AuthProbeResponse)
 async def auth_probe(
     kb_slug: str,
     body: AuthProbeRequest,
