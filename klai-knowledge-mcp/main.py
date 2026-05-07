@@ -885,7 +885,11 @@ class _WWWAuthenticateMiddleware(BaseHTTPMiddleware):
     can auto-discover the OAuth flow without prior knowledge.
     """
 
-    async def dispatch(self, request: StarletteRequest, call_next: RequestResponseEndpoint) -> Response:
+    async def dispatch(
+        self,
+        request: StarletteRequest,
+        call_next: RequestResponseEndpoint,
+    ) -> Response:
         # SPEC-MCP-AUTH-001: short-circuit auth on the /mcp endpoint BEFORE
         # FastMCP gets the request. Without this Claude.ai sees HTTP 200 on
         # the initial discovery POST and never triggers the OAuth flow — the
