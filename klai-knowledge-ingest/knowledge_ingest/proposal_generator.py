@@ -492,6 +492,7 @@ async def generate_bootstrap_proposals_v2(
         document_embeddings,
         min_cluster_size=min_cluster_size,
         pre_reduce=True,
+        cluster_selection_method=settings.taxonomy_bootstrap_cluster_selection_method,
     )
     clusters_found: int = metrics["clusters_found"]
     outlier_count: int = metrics["outlier_count"]

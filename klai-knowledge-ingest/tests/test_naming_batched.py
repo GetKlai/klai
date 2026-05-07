@@ -71,6 +71,7 @@ def _make_mock_settings() -> MagicMock:
     m.taxonomy_classification_model = "klai-fast"
     m.taxonomy_classification_timeout = 30.0
     m.taxonomy_bootstrap_min_cluster_size_floor = 5
+    m.taxonomy_bootstrap_cluster_selection_method = "leaf"
     m.taxonomy_bootstrap_max_clusters = 20
     m.taxonomy_bootstrap_top_n_per_cluster = 8
     return m
@@ -232,6 +233,13 @@ class TestBatchedNaming:
         embeddings = _make_clusterable_embeddings(n_clusters=3, n_per_cluster=20)
         doc_summaries = _make_doc_summaries(len(embeddings))
         mock_settings = _make_mock_settings()
+        # Pin EOM here — the fixture is engineered to produce exactly 3
+        # clusters and the assertion below counts proposals. Leaf-mode (the
+        # production default since SPEC-TAXONOMY-V2-CONSOLIDATION-003) finds
+        # the 3 plus 1 sub-structure cluster on this fixture, breaking the
+        # count-equality. The test is about FALLBACK behaviour, not cluster
+        # count, so EOM is the right pin here.
+        mock_settings.taxonomy_bootstrap_cluster_selection_method = "eom"
 
         batched_call_done = {"done": False}
 

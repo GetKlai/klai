@@ -224,6 +224,7 @@ class TestDescriptionGenerationInV2Bootstrap:
         m.taxonomy_classification_model = "klai-fast"
         m.taxonomy_classification_timeout = 30.0
         m.taxonomy_bootstrap_min_cluster_size_floor = 5
+        m.taxonomy_bootstrap_cluster_selection_method = "leaf"
         m.taxonomy_bootstrap_max_clusters = 20
         m.taxonomy_bootstrap_top_n_per_cluster = 8
         return m
@@ -573,6 +574,7 @@ class TestBatchedNaming:
         mock_settings.taxonomy_classification_model = "klai-fast"
         mock_settings.taxonomy_classification_timeout = 30.0
         mock_settings.taxonomy_bootstrap_min_cluster_size_floor = 5
+        mock_settings.taxonomy_bootstrap_cluster_selection_method = "leaf"
         mock_settings.taxonomy_bootstrap_max_clusters = 20
         mock_settings.taxonomy_bootstrap_top_n_per_cluster = 8
 
@@ -679,6 +681,7 @@ class TestBatchedNaming:
         mock_settings.taxonomy_classification_model = "klai-fast"
         mock_settings.taxonomy_classification_timeout = 30.0
         mock_settings.taxonomy_bootstrap_min_cluster_size_floor = 5
+        mock_settings.taxonomy_bootstrap_cluster_selection_method = "leaf"
         mock_settings.taxonomy_bootstrap_max_clusters = 20
         mock_settings.taxonomy_bootstrap_top_n_per_cluster = 8
 
@@ -828,6 +831,7 @@ class TestClusterPersistenceMeanFieldRename:
         mock_settings.taxonomy_classification_model = "klai-fast"
         mock_settings.taxonomy_classification_timeout = 30.0
         mock_settings.taxonomy_bootstrap_min_cluster_size_floor = 5
+        mock_settings.taxonomy_bootstrap_cluster_selection_method = "leaf"
         mock_settings.taxonomy_bootstrap_max_clusters = 20
         mock_settings.taxonomy_bootstrap_top_n_per_cluster = 8
 
