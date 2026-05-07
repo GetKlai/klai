@@ -1211,7 +1211,9 @@ class CrawlPreviewResponse(BaseModel):
     selector_source: str | None = None
     # SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3 — five-way classification
     # used by the wizard to gate step-5 → step-6 advance.
-    classification: str = "success"
+    # Default is "unknown" (fail-closed): absence of classification must
+    # never be treated as success.
+    classification: str = "unknown"
     classification_reason: str | None = None
 
 
@@ -1240,7 +1242,7 @@ async def crawl_preview(
         warnings=result.get("warnings", []),
         content_selector=result.get("content_selector"),
         selector_source=result.get("selector_source"),
-        classification=result.get("classification", "success"),
+        classification=result.get("classification", "unknown"),
         classification_reason=result.get("classification_reason"),
     )
 
