@@ -1528,9 +1528,14 @@ Inspector window, no Ctrl+C dance.
   silently breaks the launcher. Use `chrome` (system Google Chrome
   install; combined with `--isolated`, gets its own ephemeral profile
   per session and does not collide with the user's regular Chrome).
-- Secondary `playwright-isolated` server in `.mcp.json` runs `--browser
-  chrome --isolated` with NO storage-state. Headed. For one-off CSS or
-  unauthenticated checks where login state would just be noise.
+- No secondary MCP server. The earlier `playwright-isolated` (no
+  storage-state, for unauthenticated CSS work) was dropped on
+  2026-05-07 because the `mcp__playwright-isolated__*` tool prefix
+  was being mistakenly chosen by Claude over `mcp__playwright__*`,
+  giving logged-out browsers when login was expected. For one-off
+  unauthenticated checks: open a fresh tab in the existing Playwright
+  MCP browser with `browser_tabs(action: "new")` — the new tab does
+  share the storage-state, but for CSS-only work that doesn't matter.
 - Login seed/refresh (run when `~/.claude/mcp-storageState.json` is
   missing, or when Google cookies have expired and sessions start
   logged-out):

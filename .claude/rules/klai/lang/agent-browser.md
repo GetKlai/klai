@@ -16,7 +16,7 @@ paths:
 | Smoke test na deploy (intent: "klop service aan, niets stuk?") | **Agent Browser** | AI-navigatie tolereert UI-drift, geen selector-onderhoud |
 | Onboarding/signup regression (intent-stable, UI-volatile) | **Agent Browser** | Idem |
 | Audit-style runs (a11y, copy-consistency, design checks) | **Agent Browser** | Past bij exploratory scoring door evaluator-active |
-| One-off CSS/visual check zonder login | playwright-isolated MCP | Headed, ephemeral profile |
+| One-off CSS/visual check zonder login | Playwright MCP via incognito-tab | Eén MCP-server, ingelogd via storage-state — open een nieuwe tab als je een schone context wilt |
 | Authenticated portal regression met vaste selectors | Playwright MCP | Storage-state via `~/.claude/mcp-storageState.json` |
 
 Default: voor alles met "verify dat X werkt" → Playwright. Voor alles met "explore of er iets stuk is" → Agent Browser.
