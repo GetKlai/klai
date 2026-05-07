@@ -503,6 +503,19 @@ mcp = FastMCP(
         # accepted. The two-line lift here is the entire defense.
         # @MX:SPEC SPEC-MCP-AUTH-001 REQ-A6
         enable_dns_rebinding_protection=True,
+        # Without an explicit allowlist FastMCP rejects every Host (HTTP 421
+        # "Misdirected Request"). Public route comes in via Caddy with
+        # Host: mcp.getklai.com. LibreChat still reaches the same container
+        # via the Docker-internal hostname klai-knowledge-mcp:8080.
+        allowed_hosts=[
+            "mcp.getklai.com",
+            "klai-knowledge-mcp",
+            "klai-knowledge-mcp:8080",
+            "localhost",
+            "localhost:8080",
+            "127.0.0.1",
+            "127.0.0.1:8080",
+        ],
     ),
     instructions=(
         "Je hebt toegang tot de kennisbank van de gebruiker en de organisatie.\n\n"
