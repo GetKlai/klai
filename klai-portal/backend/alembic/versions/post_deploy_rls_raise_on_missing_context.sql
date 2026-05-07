@@ -208,6 +208,12 @@ CREATE POLICY tenant_isolation ON portal_user_products
 -- look up (org, user) by zitadel_user_id BEFORE they know which tenant
 -- to set. Policy stays permissive-on-missing (existing pattern).
 
+-- portal_mcp_tokens (SPEC-MCP-AUTH-001 Cat-D)
+DROP POLICY IF EXISTS tenant_isolation ON portal_mcp_tokens;
+CREATE POLICY tenant_isolation ON portal_mcp_tokens
+    FOR ALL TO portal_api
+    USING (_rls_current_org_id() IS NULL OR org_id = _rls_current_org_id());
+
 -- vexa_meetings — per-cmd policies
 DROP POLICY IF EXISTS tenant_read ON vexa_meetings;
 CREATE POLICY tenant_read ON vexa_meetings
