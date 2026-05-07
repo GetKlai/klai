@@ -218,6 +218,13 @@ services:
       # resolves without a custom Dockerfile. Phase D plan: replace with
       # a proper pip install in a custom litellm image.
       - ./litellm/klai_service_auth.py:/app/klai_service_auth.py:ro
+      # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): vendored single-file
+      # copy of klai-libs/chat-prompts (kept in sync via deploy/litellm/tests/
+      # test_klai_chat_prompts_drift.py). Same vendoring rationale as
+      # klai_service_auth.py — stock upstream image, no pip-install hook.
+      # Phase D plan: replace both vendored files with a proper pip install
+      # in a custom litellm image.
+      - ./litellm/klai_chat_prompts.py:/app/klai_chat_prompts.py:ro
     environment:
       PYTHONPATH: /app
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}

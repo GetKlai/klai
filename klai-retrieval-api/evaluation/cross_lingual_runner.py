@@ -90,38 +90,58 @@ async def _http_synthesize(
     *,
     retrieval_url: str,
     timeout_s: float = 60.0,
+    internal_secret: str | None = None,
 ) -> str:
-    """Call the retrieval-api synthesis endpoint and collect the streamed
-    response into a single string. Used as the default ``SynthFn``.
-    """
-    async with httpx.AsyncClient(timeout=timeout_s) as client:
-        resp = await client.post(
-            f"{retrieval_url}/retrieve",
-            json={"query": query, "org_id": org_id, "scope": "org", "top_k": 10},
-        )
-        resp.raise_for_status()
-        retrieved = resp.json()
+    """Call the retrieval-api `/chat` endpoint and collect the streamed
+    SSE response into a single string. Default ``SynthFn``.
 
-        # Synthesise an answer from the retrieved chunks. We hit the
-        # synthesis endpoint directly so the test path mirrors what
-        # production chat does.
-        synth_resp = await client.post(
-            f"{retrieval_url}/synthesize",
+    SPEC-RAG-MULTILINGUAL-CHAT-001 v1.2 fix: the v1.1 implementation
+    POSTed to a non-existent `/synthesize` endpoint. retrieval-api only
+    registers `/retrieve`, `/chat`, and `/trees`/`/coverage*`. `/chat`
+    is the SSE-streaming retrieve+synthesize one-shot endpoint and is
+    the right target for an end-to-end multilingual eval.
+
+    Note: `/chat` is currently dormant in production (no external
+    callers — see SPEC v1.2 HISTORY). It still works when called
+    directly with a valid `X-Internal-Secret` or JWT, which makes it
+    suitable for the eval-suite. If a future release retires the
+    endpoint, this runner switches to
+    `/partner/v1/chat/completions` on portal-api instead — see the
+    alternative ``_http_synthesize_via_partner`` below.
+    """
+    headers: dict[str, str] = {}
+    if internal_secret:
+        headers["X-Internal-Secret"] = internal_secret
+        headers["X-Caller-Service"] = "cross-lingual-runner"
+
+    body_text: list[str] = []
+    async with httpx.AsyncClient(timeout=timeout_s) as client:
+        async with client.stream(
+            "POST",
+            f"{retrieval_url}/chat",
+            headers=headers,
             json={
                 "query": query,
-                "messages": [{"role": "user", "content": query}],
-                "chunks": retrieved.get("chunks", []),
                 "org_id": org_id,
+                "scope": "org",
+                "top_k": 10,
             },
-        )
-        synth_resp.raise_for_status()
-
-    content_type = synth_resp.headers.get("content-type", "")
-    if content_type.startswith("application/json"):
-        body = synth_resp.json()
-    else:
-        body = {"text": synth_resp.text}
-    return body.get("text") or body.get("answer") or ""
+        ) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                # SSE: "data: <json>"
+                if not line or not line.startswith("data: "):
+                    continue
+                payload = line[len("data: "):].strip()
+                try:
+                    evt = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+                if evt.get("type") == "token":
+                    body_text.append(evt.get("content", ""))
+                elif evt.get("type") == "done":
+                    break
+    return "".join(body_text)
 
 
 async def score_query(
@@ -308,14 +328,32 @@ def _parse_args() -> argparse.Namespace:
         default=4,
         help="Max concurrent synthesis calls",
     )
+    parser.add_argument(
+        "--internal-secret",
+        default=None,
+        help=(
+            "X-Internal-Secret header value for retrieval-api /chat. "
+            "Falls back to env var RETRIEVAL_INTERNAL_SECRET if unset."
+        ),
+    )
     return parser.parse_args()
 
 
 def main() -> int:
+    import os
+
     args = _parse_args()
+    internal_secret = (
+        args.internal_secret or os.environ.get("RETRIEVAL_INTERNAL_SECRET") or None
+    )
 
     async def _http_synth(query: str, org_id: str) -> str:
-        return await _http_synthesize(query, org_id, retrieval_url=args.retrieval_url)
+        return await _http_synthesize(
+            query,
+            org_id,
+            retrieval_url=args.retrieval_url,
+            internal_secret=internal_secret,
+        )
 
     aggregate = asyncio.run(
         run(args.queries, args.output, _http_synth, concurrency=args.concurrency)
