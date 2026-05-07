@@ -31,13 +31,17 @@ from knowledge_ingest.domain_selectors import (
     upsert_domain_selector,
 )
 from knowledge_ingest.fingerprint import compute_content_fingerprint
-from knowledge_ingest.identity import assert_caller_identity
+from knowledge_ingest.identity import (
+    assert_caller_identity,
+    assert_caller_identity_tenant_only,
+)
 from knowledge_ingest.models import CrawlRequest, CrawlResponse, IngestRequest
 from knowledge_ingest.routes.ingest import ingest_document
 from knowledge_ingest.selector_ai import (
     detect_login_indicator_via_llm,
     detect_selector_via_llm,
 )
+from knowledge_ingest.utils.auth_wall_classifier import classify_auth_wall
 from knowledge_ingest.utils.url_validator import validate_url, validate_url_pinned
 
 logger = structlog.get_logger()
@@ -109,6 +113,39 @@ class CrawlPreviewResponse(BaseModel):
     content_selector: str | None = None
     selector_source: str | None = None  # "user" | "ai" | None
     auth_guard: AuthGuardSuggestion | None = None  # SPEC-CRAWL-004
+
+
+class AuthProbeRequest(BaseModel):
+    """SPEC-CONNECTOR-INPUT-VALIDATION-001 / REQ-2.
+
+    Same payload shape as ``CrawlPreviewRequest`` minus the selector
+    fields — the auth probe is run against the seed URL only, no
+    ``content_selector`` and no AI fallback.
+    """
+
+    url: str
+    org_id: str = ""
+    cookies: list[dict] | None = None
+
+
+class AuthProbeResponse(BaseModel):
+    """SPEC-CONNECTOR-INPUT-VALIDATION-001 / REQ-2.
+
+    Five-way classification of the seed-page fetch outcome.
+
+    Possible ``classification`` values:
+
+    - ``auth_ok``
+    - ``auth_failed_no_cookies``
+    - ``auth_failed_still_walled``
+    - ``auth_failed_credentials_invalid``
+    - ``auth_failed_unreachable``
+    """
+
+    classification: str
+    match_reasons: list[str] = []
+    word_count: int
+    auth_guard: AuthGuardSuggestion | None = None
 
 
 # Minimum word count for a crawl result to be considered usable content.
@@ -277,6 +314,116 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
     except Exception as exc:
         logger.warning("crawl_preview_failed", url=body.url, error=str(exc))
         return CrawlPreviewResponse(url=body.url, fit_markdown="", word_count=0)
+
+
+@router.post("/ingest/v1/crawl/auth-probe", response_model=AuthProbeResponse)
+async def auth_probe(body: AuthProbeRequest, request: Request) -> AuthProbeResponse:
+    """SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2 — classify a single seed
+    fetch as ``auth_ok`` or one of four failure flavours.
+
+    Mirrors the SSRF and identity guards on ``/ingest/v1/crawl/preview``:
+
+    - SSRF validation runs BEFORE any DNS lookup downstream
+      (SPEC-SEC-SSRF-001 REQ-1.1 / AC-1).
+    - When ``org_id`` is supplied, ``assert_caller_identity_tenant_only``
+      enforces tenant scoping (per the bug-pattern memory: this is an
+      internal-secret + tenant-only route, no end-user context).
+    """
+    logger.info("auth_probe_started", url=body.url)
+
+    if body.org_id:
+        await assert_caller_identity_tenant_only(request, claimed_org_id=body.org_id)
+
+    try:
+        await validate_url_pinned(body.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        result = await crawl_page(body.url, selector=None, cookies=body.cookies)
+    except Exception as exc:
+        logger.warning("auth_probe_crawl_failed", url=body.url, error=str(exc))
+        return AuthProbeResponse(
+            classification="auth_failed_unreachable",
+            match_reasons=[],
+            word_count=0,
+            auth_guard=None,
+        )
+
+    metadata = result.metadata or {}
+    response_headers = result.response_headers or {}
+    set_cookie_header = response_headers.get("set-cookie") or response_headers.get(
+        "Set-Cookie"
+    )
+    redirect_target_url = metadata.get("redirect_url") or metadata.get("location")
+
+    classification = classify_auth_wall(
+        response_status_code=metadata.get("status_code"),
+        redirect_target_url=redirect_target_url,
+        set_cookie_header=set_cookie_header,
+        word_count=result.word_count,
+        fit_markdown=result.fit_markdown or "",
+        raw_html=result.html or "",
+    )
+
+    label = _label_for_auth_probe(
+        is_walled=classification.is_walled,
+        match_reasons=classification.match_reasons,
+        word_count=result.word_count,
+        crawl_success=result.success,
+        cookies_provided=bool(body.cookies),
+    )
+
+    auth_guard: AuthGuardSuggestion | None = None
+    if label == "auth_ok" and body.cookies:
+        canary_fp = compute_content_fingerprint(result.fit_markdown or "")
+        if canary_fp:
+            auth_guard = AuthGuardSuggestion(
+                canary_url=body.url,
+                canary_fingerprint=canary_fp,
+            )
+            try:
+                dom_summary = await crawl_dom_summary(body.url)
+                if dom_summary:
+                    indicator = await detect_login_indicator_via_llm(dom_summary)
+                    if indicator:
+                        auth_guard.login_indicator_selector = indicator
+                        auth_guard.login_indicator_description = f"Detected: {indicator}"
+            except Exception:
+                logger.debug("auth_probe_indicator_detection_skipped", url=body.url)
+
+    return AuthProbeResponse(
+        classification=label,
+        match_reasons=list(classification.match_reasons),
+        word_count=result.word_count,
+        auth_guard=auth_guard,
+    )
+
+
+def _label_for_auth_probe(
+    *,
+    is_walled: bool,
+    match_reasons: tuple[str, ...],
+    word_count: int,
+    crawl_success: bool,
+    cookies_provided: bool,
+) -> str:
+    """Map classifier output + request context to one of five outcome labels.
+
+    SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2 outcome table.
+    """
+    if "http_unauthenticated" in match_reasons:
+        return "auth_failed_credentials_invalid"
+    if is_walled:
+        return "auth_failed_still_walled" if cookies_provided else "auth_failed_no_cookies"
+    if not crawl_success or word_count == 0:
+        return "auth_failed_unreachable"
+    if word_count < _MIN_WORD_COUNT:
+        # Reachable but thin — the page renders but has no real content.
+        # Treated the same as unreachable for the wizard: the user must
+        # configure cookies or pick a different seed.
+        return "auth_failed_unreachable"
+    return "auth_ok"
 
 
 @router.post("/ingest/v1/crawl", response_model=CrawlResponse)
