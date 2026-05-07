@@ -259,6 +259,7 @@ class TestBootstrapProposalsV2Integration:
         m.taxonomy_classification_model = "klai-fast"
         m.taxonomy_classification_timeout = 30.0
         m.taxonomy_bootstrap_min_cluster_size_floor = 5
+        m.taxonomy_bootstrap_cluster_selection_method = "leaf"
         m.taxonomy_bootstrap_max_clusters = 20
         m.taxonomy_bootstrap_top_n_per_cluster = 8
         return m
@@ -706,6 +707,7 @@ class TestBootstrapLatency:
         m.taxonomy_classification_model = "klai-fast"
         m.taxonomy_classification_timeout = 30.0
         m.taxonomy_bootstrap_min_cluster_size_floor = 5
+        m.taxonomy_bootstrap_cluster_selection_method = "leaf"
         m.taxonomy_bootstrap_max_clusters = 20
         m.taxonomy_bootstrap_top_n_per_cluster = 8
         return m
@@ -877,6 +879,7 @@ class TestDuplicatePreventionRegression:
         mock_settings.taxonomy_classification_model = "klai-fast"
         mock_settings.taxonomy_classification_timeout = 30.0
         mock_settings.taxonomy_bootstrap_min_cluster_size_floor = 5
+        mock_settings.taxonomy_bootstrap_cluster_selection_method = "leaf"
         mock_settings.taxonomy_bootstrap_max_clusters = 20
         mock_settings.taxonomy_bootstrap_top_n_per_cluster = 8
 
@@ -1004,6 +1007,58 @@ class TestAC17AdaptiveClusterCount:
         assert compute_min_cluster_size(1000) == 20  # 1000//50=20, max(3,20)=20
 
 
+class TestClusterSelectionMethod:
+    """SPEC-TAXONOMY-V2-CONSOLIDATION-003: cluster_selection_method default 'eom' → 'leaf'.
+
+    EOM under-fitted at typical KB sizes — Voys/support 154 docs landed on 3 clusters
+    even with min_cluster_size_floor=3 (V2-CONSOLIDATION-002), because EOM trades sub-
+    structure for stability. Leaf returns the leaves of the cluster hierarchy → finer
+    output that targets the IA-norm 5-9 sweet spot.
+    """
+
+    def test_leaf_mode_is_never_coarser_than_eom_on_same_corpus(self):
+        """Shape invariant: leaf returns >= as many clusters as eom on identical input."""
+        from knowledge_ingest.clustering import cluster_documents_hdbscan
+
+        rng = np.random.RandomState(42)
+        n_per_cluster = 10
+        centers = np.zeros((5, 64), dtype=np.float32)
+        for i in range(5):
+            centers[i, i * 10 : (i + 1) * 10] = 1.0
+            centers[i] /= np.linalg.norm(centers[i])
+        members = []
+        for i in range(5):
+            noise = rng.randn(n_per_cluster, 64).astype(np.float32) * 0.05
+            vecs = centers[i] + noise
+            vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+            members.append(vecs)
+        embeddings = np.vstack(members)
+
+        _, eom_metrics = cluster_documents_hdbscan(
+            embeddings, min_cluster_size=3, pre_reduce=False, cluster_selection_method="eom"
+        )
+        _, leaf_metrics = cluster_documents_hdbscan(
+            embeddings, min_cluster_size=3, pre_reduce=False, cluster_selection_method="leaf"
+        )
+        assert leaf_metrics["clusters_found"] >= eom_metrics["clusters_found"]
+
+    def test_default_method_is_leaf(self):
+        """Function-parameter default and production-config default agree on 'leaf'.
+
+        The Voys/support regression we're guarding against is someone bumping the
+        config back to 'eom' without thinking — which would silently re-introduce
+        the under-fitting issue.
+        """
+        import inspect
+
+        from knowledge_ingest.clustering import cluster_documents_hdbscan
+        from knowledge_ingest.config import settings
+
+        sig = inspect.signature(cluster_documents_hdbscan)
+        assert sig.parameters["cluster_selection_method"].default == "leaf"
+        assert settings.taxonomy_bootstrap_cluster_selection_method == "leaf"
+
+
 # ---------------------------------------------------------------------------
 # AC-18: Integration test with mocked LiteLLM
 # ---------------------------------------------------------------------------
@@ -1041,6 +1096,7 @@ class TestAC18IntegrationWithMockedLitellm:
         mock_settings.taxonomy_classification_model = "klai-fast"
         mock_settings.taxonomy_classification_timeout = 30.0
         mock_settings.taxonomy_bootstrap_min_cluster_size_floor = 5
+        mock_settings.taxonomy_bootstrap_cluster_selection_method = "leaf"
         mock_settings.taxonomy_bootstrap_max_clusters = 20
         mock_settings.taxonomy_bootstrap_top_n_per_cluster = 8
 
@@ -1118,6 +1174,7 @@ class TestAC19VoysRegressionNoNewDuplicates:
         mock_settings.taxonomy_classification_model = "klai-fast"
         mock_settings.taxonomy_classification_timeout = 30.0
         mock_settings.taxonomy_bootstrap_min_cluster_size_floor = 5
+        mock_settings.taxonomy_bootstrap_cluster_selection_method = "leaf"
         mock_settings.taxonomy_bootstrap_max_clusters = 20
         mock_settings.taxonomy_bootstrap_top_n_per_cluster = 8
 
