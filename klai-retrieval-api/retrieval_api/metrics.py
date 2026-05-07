@@ -89,3 +89,26 @@ quality_floor_filtered_total = Counter(
     "Chunks removed by the quality-floor filter (SPEC-INGEST-LOGIN-WALL-DETECT-001)",
     ["org_id"],
 )
+
+# SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1 / REQ-8 — confidence band
+# distribution per tenant. Bands: high (max rerank ≥ high_threshold),
+# medium (between thresholds), low (< low_threshold), unknown (reranker
+# disabled, fallback, or empty result). Unknown should be a small fraction
+# of total in healthy operation; spikes indicate reranker instability.
+retrieval_confidence_band_total = Counter(
+    "retrieval_confidence_band_total",
+    "Retrieval responses bucketed by reranker-score confidence band",
+    ["band", "org_id"],
+)
+
+# SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-3 / REQ-8 — link-expansion
+# survival rate. ``hit`` = at least one expanded chunk made the served
+# top-K. ``miss`` = link-expand ran (added ≥ 1 chunk to candidates) but
+# none survived rerank + source-aware-select + quality-boost. Only
+# incremented when link-expand actually contributed candidates; requests
+# with link_expand_count == 0 are not counted.
+retrieval_link_expand_top_k_total = Counter(
+    "retrieval_link_expand_top_k_total",
+    "Link-expand contribution to served top-K (hit/miss per tenant)",
+    ["outcome", "org_id"],
+)
