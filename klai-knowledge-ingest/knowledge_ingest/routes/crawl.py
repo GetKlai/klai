@@ -116,7 +116,11 @@ class CrawlPreviewResponse(BaseModel):
     auth_guard: AuthGuardSuggestion | None = None  # SPEC-CRAWL-004
     # SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3 — five-way classification
     # used by the wizard to gate step-5 → step-6 advance.
-    classification: str = "success"
+    # Default is "unknown" (fail-closed): absence of classification must
+    # never be treated as success.  A concrete value is always written by
+    # _classify_preview_outcome for the happy path; "unknown" surfaces only
+    # when the upstream crawl service errors before classification runs.
+    classification: str = "unknown"
     classification_reason: str | None = None
 
 
@@ -406,8 +410,8 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
             url=body.url,
             fit_markdown="",
             word_count=0,
-            classification="requires_javascript",
-            classification_reason="Crawl failed — see service logs.",
+            classification="unknown",
+            classification_reason="Could not reach crawl service. Try again.",
         )
 
 

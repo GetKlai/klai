@@ -201,4 +201,5 @@ def test_preview_classification_field_always_present(client: TestClient) -> None
         "selector_returns_empty",
         "requires_javascript",
         "auth_wall_detected",
+        "unknown",  # fail-closed default for upstream errors / unclassified paths
     }
