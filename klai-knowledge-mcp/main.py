@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import date
@@ -31,8 +32,16 @@ from klai_identity_assert import (
     McpTokenAsserter,
     VerifyResult,
 )
+from klai_retrieval_telemetry import (
+    classify_gap as _classify_gap,
+)
+from klai_retrieval_telemetry import (
+    fire_gap_event,
+    fire_retrieval_log,
+)
 from log_utils import sanitize_response_body, verify_shared_secret
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 
 from logging_setup import setup_logging
@@ -45,6 +54,11 @@ logger = logging.getLogger(__name__)
 KLAI_DOCS_API_BASE = os.environ["KLAI_DOCS_API_BASE"]  # http://docs-app:3000
 DOCS_INTERNAL_SECRET = os.environ["DOCS_INTERNAL_SECRET"]
 KNOWLEDGE_INGEST_URL = os.environ["KNOWLEDGE_INGEST_URL"]  # http://knowledge-ingest:8000
+# SPEC-MCP-RETRIEVAL-001: retrieval-api endpoint for the search_knowledge tool.
+# Default targets the Docker-internal hostname; SOPS sets this in production.
+KNOWLEDGE_RETRIEVE_URL = os.environ.get(
+    "KNOWLEDGE_RETRIEVE_URL", "http://retrieval-api:8040/retrieve"
+)
 # SPEC-SEC-INTERNAL-001 REQ-9.5: KNOWLEDGE_INGEST_SECRET is now mandatory.
 # Empty / missing causes module-load failure rather than silently omitting
 # the X-Internal-Secret header on outbound calls (the previous "gradual
@@ -114,6 +128,14 @@ _ERR_IDENTITY_REJECTED = (
 _ERR_ASSERTION_MODE = (
     "Error: invalid assertion_mode '{}'. "
     f"Valid values: {', '.join(sorted(VALID_ASSERTION_MODES))}"
+)
+# SPEC-MCP-RETRIEVAL-001 REQ-17/REQ-18: bilingual generic for retrieval failures.
+# Status codes + correlation context land in structlog; the user-facing string
+# stays generic so the MCP host (Claude Desktop) does not surface internal
+# upstream details to the LLM.
+_ERR_KB_UNAVAILABLE = (
+    "Kennisbank tijdelijk niet bereikbaar. Probeer het later opnieuw.\n"
+    "(Knowledge base unavailable. Please try again.)"
 )
 
 
@@ -844,6 +866,145 @@ async def save_to_docs(
         )
 
     return f"✓ Opgeslagen in kennisbank **{kb_name}**: {title} (pad: {page_path})"
+
+
+# -- Tool: search_knowledge ---------------------------------------------------
+# SPEC-MCP-RETRIEVAL-001: lets third-party MCP clients (Claude Desktop,
+# Cursor, ChatGPT custom connectors) read from the same KB the LiteLLM
+# pre-call hook already serves to LibreChat. The tool is a thin wrapper
+# around retrieval-api `/retrieve`:
+#   1. dispatcher resolves identity (LibreChat or OAuth path)
+#   2. clamp top_k to [1,15], 3.0s timeout (same as the LiteLLM hook)
+#   3. POST to retrieval-api with the verified org_id+user_id
+#   4. fire retrieval-log + (conditional) gap-event telemetry, labelled
+#      with identity.client_id when the caller is an OAuth client
+#   5. return list[dict] of chunks with title/source_url/text/score/scope
+#
+# Failure modes raise ToolError so the MCP host (Claude Desktop) surfaces
+# the failure to the LLM rather than letting it claim "no results found"
+# when the KB was unreachable. See spec.md REQ-17/18.
+@mcp.tool(
+    description="""Search the user's Klai knowledge base — personal notes,
+organisation docs, and connected sources (Notion, Google Drive, web crawls).
+
+WHEN TO CALL: questions that may be answered by the user's own documentation,
+decisions, customer data, or product knowledge. Search BEFORE answering from
+general knowledge when the question is org-specific.
+
+PARAMETERS:
+  query  - search query in the user's language. Self-contained: resolve
+           pronouns and references yourself before passing.
+  top_k  - 1-15, default 8. Higher values for broad questions.
+
+RETURNS: list of chunks with title, source_url, text, score, scope.
+  scope="personal" = user's own saved notes.
+  scope="org"      = organisation knowledge.
+  Cite by source_url when present; never invent URLs.
+"""
+)
+async def search_knowledge(
+    query: str,
+    ctx: Context,
+    top_k: int = 8,
+) -> list[dict]:
+    # Identity dispatcher (SPEC-MCP-AUTH-001 REQ-15). Either path raises
+    # _IdentificationFailed on auth failure; we propagate it untouched so
+    # the MCP host returns a 401 + WWW-Authenticate to the client.
+    identity = await _identify_request(ctx)
+
+    # SPEC-MCP-RETRIEVAL-001 REQ-12: clamp silently rather than 400 — external
+    # LLMs frequently overshoot; defensively bounding is friendlier than an
+    # input-validation error that the LLM has to debug.
+    top_k = max(1, min(int(top_k), 15))
+
+    # SPEC-MCP-RETRIEVAL-001 REQ-13: same 3.0s ceiling as the LiteLLM hook.
+    # Configurable via env in a future iteration if cold-start P99 spikes.
+    body: dict = {
+        "query": query,
+        "raw_query": query,
+        "org_id": identity.org_id,
+        "user_id": identity.user_id,
+        "scope": "both",
+        "top_k": top_k,
+        "conversation_history": [],
+    }
+
+    # SPEC-SEC-IDENTITY-ASSERT-001 REQ-4.2: caller-service header is mandatory
+    # on /retrieve. ``knowledge-mcp`` is whitelisted in KNOWN_CALLER_SERVICES
+    # and granted the ``klai:internal:retrieval:query`` scope on the JWT path.
+    #
+    # SPEC-SEC-INTERNAL-001 REQ-9.5: KNOWLEDGE_INGEST_SECRET is enforced
+    # non-empty at module-load — no conditional inclusion allowed (silent-
+    # omit anti-pattern). Always send the header; let upstream auth fail
+    # loudly if the env was misconfigured at deploy time.
+    headers: dict[str, str] = {
+        "X-Caller-Service": "knowledge-mcp",
+        "X-Internal-Secret": KNOWLEDGE_INGEST_SECRET,
+    }
+
+    t0 = time.monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.post(KNOWLEDGE_RETRIEVE_URL, json=body, headers=headers)
+            resp.raise_for_status()
+            result = resp.json()
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "search_knowledge_retrieval_failed: type=HTTPStatusError status=%d client_id=%s",
+            exc.response.status_code,
+            identity.client_id,
+        )
+        raise ToolError(_ERR_KB_UNAVAILABLE) from exc
+    except (httpx.TimeoutException, httpx.RequestError) as exc:
+        logger.error(
+            "search_knowledge_retrieval_failed: type=%s client_id=%s",
+            type(exc).__name__,
+            identity.client_id,
+        )
+        raise ToolError(_ERR_KB_UNAVAILABLE) from exc
+
+    chunks = result.get("chunks", [])
+    retrieval_ms = int((time.monotonic() - t0) * 1000)
+
+    # SPEC-MCP-RETRIEVAL-001 REQ-21 / REQ-23: telemetry is fire-and-forget
+    # (helpers schedule asyncio.create_task internally) and any failure
+    # is swallowed, so wrapping in a broad except keeps the success path
+    # robust against e.g. a transient portal-api 5xx during emit.
+    try:
+        fire_retrieval_log(
+            org_id=identity.org_id,
+            user_id=identity.user_id,
+            chunk_ids=[c.get("chunk_id") for c in chunks if c.get("chunk_id")],
+            reranker_scores=[c.get("reranker_score") or 0.0 for c in chunks],
+            query_resolved=query,
+            caller_client_id=identity.client_id,
+        )
+        gap = _classify_gap(chunks)
+        if gap is not None:
+            fire_gap_event(
+                org_id=identity.org_id,
+                user_id=identity.user_id,
+                query_text=query,
+                gap_type=gap,
+                chunks=chunks,
+                retrieval_ms=retrieval_ms,
+                caller_client_id=identity.client_id,
+            )
+    except Exception as exc:
+        logger.warning("search_knowledge_telemetry_failed: %s", exc)
+
+    return [
+        {
+            "title": c.get("title") or c.get("metadata", {}).get("title", ""),
+            "source_url": c.get("source_url"),
+            "text": (c.get("text") or "").strip(),
+            "score": c.get("reranker_score")
+            if c.get("reranker_score") is not None
+            else c.get("score"),
+            "scope": c.get("scope", "org"),
+        }
+        for c in chunks
+    ]
 
 
 # -- ASGI app -----------------------------------------------------------------

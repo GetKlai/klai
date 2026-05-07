@@ -1,13 +1,17 @@
+# pyright: basic
 """fire_retrieval_log behaviour tests.
 
 SPEC-KB-015 + SPEC-MCP-RETRIEVAL-001 REQ-9.
+
+Pyright basic mode for tests: MagicMock + monkey-patched ``httpx.AsyncClient.post``
+produces unsolvable strict-mode types (mock fixtures, partial unknown args). The
+production code in ``klai_retrieval_telemetry/_emit.py`` stays strict-typed.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -55,7 +59,7 @@ async def test_payload_shape_without_caller_client_id() -> None:
     """LibreChat path: caller_client_id absent from payload."""
     captured: dict = {}
 
-    async def _fake_post(self, url, **kwargs):
+    async def _fake_post(self: object, url: str, **kwargs: object) -> MagicMock:
         captured["url"] = url
         captured["json"] = kwargs.get("json")
         captured["headers"] = kwargs.get("headers")
@@ -114,6 +118,7 @@ async def test_payload_includes_caller_client_id_when_set() -> None:
 @pytest.mark.asyncio
 async def test_post_failure_swallowed() -> None:
     """Network error during POST must NOT propagate to caller."""
+
     async def _failing_post(self, url, **kwargs):
         raise RuntimeError("simulated network error")
 

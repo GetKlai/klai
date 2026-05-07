@@ -340,6 +340,7 @@ dependencies = [
     { name = "httpx" },
     { name = "klai-identity-assert" },
     { name = "klai-log-utils" },
+    { name = "klai-retrieval-telemetry" },
     { name = "mcp", extra = ["cli"] },
     { name = "structlog" },
     { name = "uvicorn", extra = ["standard"] },
@@ -358,6 +359,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "klai-identity-assert", editable = "../klai-libs/identity-assert" },
     { name = "klai-log-utils", editable = "../klai-libs/log-utils" },
+    { name = "klai-retrieval-telemetry", editable = "../klai-libs/retrieval-telemetry" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.9.0" },
     { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
@@ -392,6 +394,34 @@ provides-extras = ["dev"]
 [package.metadata.requires-dev]
 dev = [
     { name = "httpx", specifier = ">=0.28" },
+    { name = "pyright", specifier = ">=1.1.390" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "pytest-asyncio", specifier = ">=0.24" },
+    { name = "ruff", specifier = ">=0.8" },
+]
+
+[[package]]
+name = "klai-retrieval-telemetry"
+version = "0.1.0"
+source = { editable = "../klai-libs/retrieval-telemetry" }
+dependencies = [
+    { name = "httpx" },
+    { name = "structlog" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.390" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
+    { name = "structlog", specifier = ">=25.0" },
+]
+provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
     { name = "pyright", specifier = ">=1.1.390" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-asyncio", specifier = ">=0.24" },

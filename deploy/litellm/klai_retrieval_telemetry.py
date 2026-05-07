@@ -18,7 +18,7 @@ import asyncio
 import logging
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -97,14 +97,19 @@ def classify_gap(
     cfg = config or _default_config()
     if not chunks:
         return "hard"
-    reranker_scores = [
-        c.get("reranker_score") for c in chunks if c.get("reranker_score") is not None
+    # The list-comprehension filter guarantees ``s is not None``, but pyright
+    # cannot narrow the inferred element-type from ``object | None`` to
+    # ``object`` after the predicate. Make it explicit with a typed cast.
+    reranker_scores: list[float] = [
+        float(c["reranker_score"])
+        for c in chunks
+        if c.get("reranker_score") is not None
     ]
     if reranker_scores:
         if all(s < cfg.gap_soft_threshold for s in reranker_scores):
             return "soft"
     else:
-        dense_scores = [c.get("score", 0.0) for c in chunks]
+        dense_scores: list[float] = [float(c.get("score", 0.0)) for c in chunks]
         if all(s < cfg.gap_dense_threshold for s in dense_scores):
             return "soft"
     return None
@@ -137,9 +142,7 @@ def fire_retrieval_log(
     try:
         int(org_id)
     except (ValueError, TypeError):
-        logger.warning(
-            "retrieval_telemetry: non-numeric org_id '%s', skipping retrieval log", org_id
-        )
+        logger.warning("retrieval_telemetry: non-numeric org_id '%s', skipping retrieval log", org_id)
         return
 
     payload: dict[str, Any] = {
@@ -149,7 +152,7 @@ def fire_retrieval_log(
         "reranker_scores": reranker_scores,
         "query_resolved": query_resolved,
         "embedding_model_version": cfg.embedding_model_version,
-        "retrieved_at": datetime.now(timezone.utc).isoformat(),
+        "retrieved_at": datetime.now(UTC).isoformat(),
     }
     if caller_client_id is not None:
         payload["caller_client_id"] = caller_client_id
@@ -162,7 +165,7 @@ def fire_retrieval_log(
                     json=payload,
                     headers={"Authorization": f"Bearer {cfg.portal_internal_secret}"},
                 )
-        except Exception as exc:  # noqa: BLE001 — fire-and-forget, swallow all
+        except Exception as exc:
             logger.warning("retrieval_telemetry: retrieval log POST failed (%s)", exc)
 
     try:
@@ -197,28 +200,14 @@ def fire_gap_event(
     """
     cfg = config or _default_config()
 
-    top_chunk = (
-        max(chunks, key=lambda c: c.get("reranker_score") or c.get("score", 0.0))
-        if chunks
-        else None
-    )
-    top_score = (
-        (top_chunk.get("reranker_score") or top_chunk.get("score"))
-        if top_chunk
-        else None
-    )
-    nearest_kb_slug = (
-        top_chunk.get("metadata", {}).get("kb_slug")
-        if top_chunk and gap_type == "soft"
-        else None
-    )
+    top_chunk = max(chunks, key=lambda c: c.get("reranker_score") or c.get("score", 0.0)) if chunks else None
+    top_score = (top_chunk.get("reranker_score") or top_chunk.get("score")) if top_chunk else None
+    nearest_kb_slug = top_chunk.get("metadata", {}).get("kb_slug") if top_chunk and gap_type == "soft" else None
 
     try:
         org_id_int = int(org_id)
     except (ValueError, TypeError):
-        logger.warning(
-            "retrieval_telemetry: non-numeric org_id '%s', skipping gap event", org_id
-        )
+        logger.warning("retrieval_telemetry: non-numeric org_id '%s', skipping gap event", org_id)
         return
 
     payload: dict[str, Any] = {
@@ -245,7 +234,7 @@ def fire_gap_event(
                     json=payload,
                     headers={"Authorization": f"Bearer {cfg.portal_internal_secret}"},
                 )
-        except Exception as exc:  # noqa: BLE001 — fire-and-forget, swallow all
+        except Exception as exc:
             logger.warning("retrieval_telemetry: gap event POST failed (%s)", exc)
 
     try:

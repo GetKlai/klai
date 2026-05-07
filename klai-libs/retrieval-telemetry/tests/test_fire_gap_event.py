@@ -1,6 +1,10 @@
+# pyright: basic
 """fire_gap_event behaviour tests.
 
 SPEC-KB-014 + SPEC-MCP-RETRIEVAL-001 REQ-9.
+
+Pyright basic mode for tests: MagicMock + monkey-patched ``httpx.AsyncClient.post``
+produces unsolvable strict-mode types. Production code stays strict-typed.
 """
 
 from __future__ import annotations
