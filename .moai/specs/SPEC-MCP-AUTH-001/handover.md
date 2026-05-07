@@ -11,52 +11,41 @@
 |---|---|---|
 | 0  Plan-fase artefacten (spec.md + research.md + plan.md) | ✅ klaar | `ddb7498d` |
 | 1  DB foundation (migration + post_deploy SQL + ORM models + RLS guard) | ✅ klaar | `2e3b56de` |
-| 2  Portal-api OAuth surface | ⚠️ **gedeeltelijk** — DCR + token-verify + me-endpoints + well-known werken; `/oauth/authorize` consent-flow + `/oauth/token` authorization_code grant zijn 501-stubs | `f82d69a7` |
+| 2  Portal-api OAuth surface | ✅ klaar (DCR + token-verify + me-endpoints + well-known + consent-flow + authorization_code grant) | `f82d69a7` + `09c0102d` |
 | 3  Knowledge-mcp dispatcher + RFC 9728 PRM | ✅ klaar | `346a86ee` |
-| 4  Frontend Connected Applications | ❌ **uit-scope deze sessie** — zie "Wat NIET klaar is" hieronder | — |
+| 4  Frontend Connected Applications | ✅ klaar (revoke-only lijst met Paraglide NL+EN) | `09c0102d` |
 | 5  Caddyfile route + transport hardening | ✅ klaar | `743c5c7c` |
-| 6  E2E verificatie | ❌ **niet uitvoerbaar zonder staging deploy** | — |
+| 6  E2E verificatie | ⚠️ niet uitvoerbaar in deze sessie zonder staging-deploy + DNS (operator-actions) | — |
 | Tests | ✅ 25 unit-tests groen (PKCE + dispatcher + allowlist) | `7bdc65fc` |
 
-## Wat NIET klaar is (volgende sessie)
+## Wat NIET klaar is
 
-### A. `/oauth/authorize` consent-flow (Fase 2 remainder)
+### A. ~~`/oauth/authorize` consent-flow~~ — KLAAR ✅ (commit `09c0102d`)
 
-**Status:** route bestaat, returnt HTTP 501 met structured `not_implemented` error.
-
-**Wat ontbreekt:**
-- Consent-page render via Jinja2 template (`app/templates/oauth_consent.html`)
-- BFF session resolve via `Depends(get_optional_session)` → `SessionContext`
-- Login-redirect met `return_to=` query-param wanneer geen geldige sessie
-- POST handler voor approve/deny submit met CSRF-token validation
-- `authorization_code` grant in `/oauth/token` (afhankelijk van het bovenstaande)
-
-**Implementatie-aanwijzingen:** zie de TODO comments in
-[`klai-portal/backend/app/api/mcp_oauth.py`](klai-portal/backend/app/api/mcp_oauth.py)
-en het volledige plaatje in
-[`.moai/specs/SPEC-MCP-AUTH-001/plan.md`](.moai/specs/SPEC-MCP-AUTH-001/plan.md) Fase 2b.
+Volledige consent-flow geïmplementeerd: GET rendert HTML-template,
+POST verifieert CSRF + verwerkt approve/deny + redirect naar
+`redirect_uri?code=&state=`. `authorization_code` grant in `/oauth/token`
+werkt met PKCE-verify. Geen Jinja2 dependency — pure Python str-replace
+met explicit HTML-escape op alle user-controlled values.
 
 **Service-laag is al volledig klaar:** `app/services/mcp_oauth.py` heeft
 `create_auth_request`, `approve_auth_request`, `consume_auth_code`,
 `verify_pkce_s256`, `issue_token_pair`. De endpoint hoeft alleen die
 helpers te orchestreren.
 
-### B. Frontend Connected Applications page (Fase 4)
+### B. ~~Frontend Connected Applications page~~ — KLAAR ✅ (commit `09c0102d`)
 
-**Status:** geen frontend code geschreven. API endpoints (`GET /api/me/mcp-tokens`
-+ `DELETE /api/me/mcp-tokens/{id}`) werken al — een ontwikkelaar kan dat
-direct met `curl` aanspreken voor handmatige test.
+Route `/app/integrations` in `klai-portal/frontend/src/routes/app/integrations.tsx`.
+Lijst van actieve tokens met `client_name`, `application_type`, `created_at`,
+`last_used_at`, `expires_at`. Loskoppelen-knop met inline confirm-step
+(`confirmingId` state) — geen aparte modal nodig. Empty-state toont
+`https://mcp.getklai.com/mcp` als copy-paste-bare URL voor setup.
+Paraglide i18n strings volledig in NL + EN.
 
-**Wat ontbreekt:**
-- Route `/settings/integrations` in `klai-portal/frontend/src/routes/settings/integrations/`
-- Components: `ConnectedAppsList`, `RevokeConfirmDialog`
-- Paraglide i18n strings (NL + EN) inclusief de empty-state:
-  > "Verbind Klai met Claude Desktop, Cursor, of ChatGPT door
-  > `https://mcp.getklai.com/mcp` toe te voegen als custom connector. Je
-  > wordt hierheen teruggeleid om goed te keuren."
-- Settings-nav item toevoegen
-- Playwright E2E test (Voys tenant via Google login storage-state — niet
-  testbaar zonder `/oauth/authorize` af in punt A)
+**Niet gedaan:** Playwright E2E test — niet zinvol zonder staging-deploy
++ working DNS. Mark heeft expliciet gezegd "het kan zijn dat je deze
+feature niet e2e kunt testen op die manier" wegens Voys storage-state
+afhankelijkheden. Volgende sessie of na staging-deploy.
 
 ### C. E2E verificatie (Fase 6)
 
