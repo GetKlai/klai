@@ -46,6 +46,12 @@ interface KBStatsSummary {
   connectors: number
   gaps_7d: number
   usage_30d: number
+  // Adoption signals — populated by the backend but not yet surfaced on
+  // the list page (the per-KB Overview tab shows the trio: queries,
+  // users, active days). Kept in the type to stay in sync with
+  // KBStatsSummary on the backend; surfacing here is a follow-up.
+  unique_users_30d: number
+  active_days_30d: number
 }
 
 interface KBStatsSummaryResponse {
