@@ -178,16 +178,57 @@ async def authorization_server_metadata() -> JSONResponse:
 
 
 class _DCRRequest(BaseModel):
-    """RFC 7591 client metadata. Strict: extra fields rejected."""
+    """RFC 7591 client metadata.
 
-    client_name: str = Field(min_length=1, max_length=255)
+    All fields except client_name and redirect_uris are optional per
+    RFC 7591 § 2. Anthropic's claude.ai DCR call (observed 2026-05-07)
+    omits ``application_type`` and includes a ``scope`` field — both
+    spec-compliant. We accept extra fields (``extra='ignore'``) and
+    infer ``application_type`` from the redirect_uri shape when the
+    client doesn't supply it.
+    """
+
+    client_name: str = Field(default="Unnamed MCP client", max_length=255)
     redirect_uris: list[str] = Field(min_length=1)
-    application_type: str
+    application_type: str | None = None
     grant_types: list[str] | None = None
     response_types: list[str] | None = None
     token_endpoint_auth_method: str | None = None
+    scope: str | None = None  # RFC 7591 § 2 — space-separated requested scopes
 
-    model_config = {"extra": "forbid"}
+    model_config = {"extra": "ignore"}
+
+
+def _infer_application_type(redirect_uris: list[str]) -> str | None:
+    """RFC 7591 § 2 + OIDC application_type inference.
+
+    Returns 'native' if all URIs target localhost/127.0.0.1, 'web' if all
+    target HTTPS hosts, None when the list is mixed (caller should reject).
+    Mirrors the allowlist-shape in mcp_oauth.is_redirect_uri_allowed.
+    """
+    import urllib.parse as _urlparse
+
+    has_native = False
+    has_web = False
+    for uri in redirect_uris:
+        try:
+            parts = _urlparse.urlsplit(uri)
+        except ValueError:
+            return None
+        host = (parts.hostname or "").lower()
+        if parts.scheme == "http" and host in {"localhost", "127.0.0.1"}:
+            has_native = True
+        elif parts.scheme == "https":
+            has_web = True
+        else:
+            return None
+    if has_native and has_web:
+        return None
+    if has_native:
+        return "native"
+    if has_web:
+        return "web"
+    return None
 
 
 def _client_source_ip(request: Request) -> str:
@@ -216,13 +257,27 @@ async def register_client(request: Request) -> JSONResponse:
     if not await svc.check_dcr_rate_limit(redis, source_ip):
         return _oauth_error("rate_limit_exceeded", "DCR rate limit exceeded", 429)
 
+    # RFC 7591 § 2: application_type is OPTIONAL. Infer from redirect_uri
+    # shape when the client doesn't supply it. All localhost → native;
+    # all HTTPS → web; mixed shapes are rejected (security: a client that
+    # mixes both is suspicious).
+    application_type = body.application_type
+    if not application_type:
+        application_type = _infer_application_type(body.redirect_uris)
+        if application_type is None:
+            return _oauth_error(
+                "invalid_redirect_uri",
+                "redirect_uris mix native (localhost) and web (https) — must be one or the other",
+                400,
+            )
+
     async with cross_org_session() as db:
         try:
             registered = await svc.register_client(
                 db,
                 client_name=body.client_name,
                 redirect_uris=body.redirect_uris,
-                application_type=body.application_type,
+                application_type=application_type,
                 source_ip=source_ip,
                 grant_types=body.grant_types,
                 response_types=body.response_types,
