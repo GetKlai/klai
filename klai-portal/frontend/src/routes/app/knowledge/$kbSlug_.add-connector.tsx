@@ -16,6 +16,8 @@ import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { MS_SITE_URL_PATTERN } from '@/lib/ms-docs'
 import { joinSeedUrl } from './$kbSlug/-kb-helpers'
+import type { CookieRow } from './$kbSlug/-kb-types'
+import { CookieRowsInput } from '@/components/knowledge/CookieRowsInput'
 
 // -- Types -------------------------------------------------------------------
 
@@ -64,7 +66,6 @@ interface WebCrawlerConfig {
   path_prefix: string
   max_pages: string
   content_selector: string
-  cookies: string
 }
 
 interface AuthGuardSuggestion {
@@ -155,8 +156,12 @@ function AddConnectorPage() {
     installation_id: '', repo_owner: '', repo_name: '', branch: 'main', path_filter: '',
   })
   const [webcrawlerConfig, setWebcrawlerConfig] = useState<WebCrawlerConfig>({
-    base_url: '', path_prefix: '', max_pages: '200', content_selector: '', cookies: '',
+    base_url: '', path_prefix: '', max_pages: '200', content_selector: '',
   })
+  // Cookies live in their own state as structured {name, value} rows. The
+  // wizard collects them directly in the shape the backend persists and the
+  // cron-sync consumes — no string-to-array parsing layer.
+  const [wcCookieRows, setWcCookieRows] = useState<CookieRow[]>([])
   const [notionConfig, setNotionConfig] = useState<NotionConfig>({
     access_token: '', database_ids: '', max_pages: '500',
   })
@@ -191,19 +196,21 @@ function AddConnectorPage() {
   const [authProbeResult, setAuthProbeResult] = useState<AuthProbeResult | null>(null)
   const [authProbeError, setAuthProbeError] = useState<string | null>(null)
 
-  function parseCookies(): unknown[] | undefined {
-    const raw = webcrawlerConfig.cookies.trim()
-    if (!raw) return undefined
-    // JSON array format: [{"name": "...", "value": "..."}]
-    if (raw.startsWith('[')) {
-      try { const parsed = JSON.parse(raw); return Array.isArray(parsed) ? parsed : undefined } catch { return undefined }
-    }
-    // Raw cookie header format: name1=value1; name2=value2
-    const domain = (() => { try { return new URL(webcrawlerConfig.base_url).hostname } catch { return '' } })()
-    return raw.split(';').map(pair => {
-      const [name, ...rest] = pair.trim().split('=')
-      return { name: name.trim(), value: rest.join('='), domain, path: '/' }
-    }).filter(c => c.name && c.value)
+  function buildCookies(): unknown[] | undefined {
+    // Filter out empty rows (operator clicked "+ Add another cookie" but didn't
+    // fill it in). Domain + path are derived from base_url at submit time so
+    // operators don't have to know about URL hostnames.
+    const filled = wcCookieRows.filter((r) => r.name.trim() && r.value.trim())
+    if (filled.length === 0) return undefined
+    const domain = (() => {
+      try { return new URL(webcrawlerConfig.base_url).hostname } catch { return '' }
+    })()
+    return filled.map((r) => ({
+      name: r.name.trim(),
+      value: r.value.trim(),
+      domain,
+      path: '/',
+    }))
   }
 
   function goBack() {
@@ -226,7 +233,7 @@ function AddConnectorPage() {
         if (webcrawlerConfig.path_prefix) config.path_prefix = webcrawlerConfig.path_prefix
         if (webcrawlerConfig.max_pages && webcrawlerConfig.max_pages !== '200') config.max_pages = Number(webcrawlerConfig.max_pages)
         if (webcrawlerConfig.content_selector) config.content_selector = webcrawlerConfig.content_selector
-        const cookies = parseCookies()
+        const cookies = buildCookies()
         if (cookies) config.cookies = cookies
         // SPEC-CRAWL-004: include auto-detected auth guard values from preview
         const ag = previewResult?.auth_guard
@@ -850,7 +857,7 @@ function AddConnectorPage() {
                           variant={requiresLogin === false ? 'default' : 'outline'}
                           onClick={() => {
                             setRequiresLogin(false)
-                            setWebcrawlerConfig((p) => ({ ...p, cookies: '' }))
+                            setWcCookieRows([])
                             invalidateAuthProbe()
                             invalidatePreview()
                           }}
@@ -898,21 +905,15 @@ function AddConnectorPage() {
                       <p className="text-sm font-medium text-[var(--color-foreground)]">
                         Authentication cookies
                       </p>
-                      <textarea
-                        id="wc-cookies"
-                        className="flex min-h-[80px] w-full rounded-md border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-xs font-mono placeholder:text-[var(--color-muted-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
-                        placeholder={m.admin_connectors_webcrawler_cookies_placeholder()}
-                        value={webcrawlerConfig.cookies}
-                        onChange={(e) => {
-                          setWebcrawlerConfig((p) => ({ ...p, cookies: e.target.value }))
+                      <CookieRowsInput
+                        idPrefix="add-wc-cookie"
+                        value={wcCookieRows}
+                        onChange={(rows) => {
+                          setWcCookieRows(rows)
                           invalidateAuthProbe()
                           invalidatePreview()
                         }}
                       />
-                      <p className="text-xs text-[var(--color-muted-foreground)]">
-                        Open the site in your browser, log in, then copy the Cookie value from your
-                        browser&apos;s developer tools (Network tab &rarr; any request &rarr; Cookie header).
-                      </p>
                       <Button
                         type="button"
                         size="sm"
@@ -923,7 +924,7 @@ function AddConnectorPage() {
                           setAuthProbeError(null)
                           authProbeMutation.mutate({
                             url: joinSeedUrl(webcrawlerConfig.base_url, webcrawlerConfig.path_prefix),
-                            cookies: parseCookies(),
+                            cookies: buildCookies(),
                           })
                         }}
                       >
@@ -1066,7 +1067,7 @@ function AddConnectorPage() {
                         disabled={previewMutation.isPending || !wcPreviewUrl}
                         onClick={() => {
                           invalidatePreview()
-                          previewMutation.mutate({ url: wcPreviewUrl, content_selector: webcrawlerConfig.content_selector, cookies: parseCookies() })
+                          previewMutation.mutate({ url: wcPreviewUrl, content_selector: webcrawlerConfig.content_selector, cookies: buildCookies() })
                         }}
                       >
                         {previewMutation.isPending
@@ -1081,7 +1082,7 @@ function AddConnectorPage() {
                           disabled={previewMutation.isPending || !wcPreviewUrl}
                           onClick={() => {
                             invalidatePreview()
-                            previewMutation.mutate({ url: wcPreviewUrl, try_ai: true, cookies: parseCookies() })
+                            previewMutation.mutate({ url: wcPreviewUrl, try_ai: true, cookies: buildCookies() })
                           }}
                         >
                           <Sparkles className="h-3 w-3" />
@@ -1116,7 +1117,7 @@ function AddConnectorPage() {
                           reason={previewResult.classification_reason}
                           onRetry={() => {
                             invalidatePreview()
-                            previewMutation.mutate({ url: wcPreviewUrl, content_selector: webcrawlerConfig.content_selector, cookies: parseCookies() })
+                            previewMutation.mutate({ url: wcPreviewUrl, content_selector: webcrawlerConfig.content_selector, cookies: buildCookies() })
                           }}
                         />
 
@@ -1156,7 +1157,7 @@ function AddConnectorPage() {
                             disabled={previewMutation.isPending}
                             onClick={() => {
                               invalidatePreview()
-                              previewMutation.mutate({ url: wcPreviewUrl, try_ai: true, cookies: parseCookies() })
+                              previewMutation.mutate({ url: wcPreviewUrl, try_ai: true, cookies: buildCookies() })
                             }}
                           >
                             <Sparkles className="h-3 w-3" />
