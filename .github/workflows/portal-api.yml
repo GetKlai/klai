@@ -155,8 +155,11 @@ jobs:
           CREATE TABLE widgets (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id INTEGER NOT NULL, widget_id VARCHAR(64) NOT NULL);
           CREATE TABLE widget_kb_access (widget_id UUID NOT NULL, kb_id INTEGER NOT NULL, PRIMARY KEY (widget_id, kb_id));
           -- SPEC-MCP-AUTH-001 Cat-D: portal_mcp_tokens (referenced by rls-smoke-test Test 8)
+          -- portal_oauth_clients carries NO RLS by design (org-overstijgend) but still
+          -- needs SELECT/INSERT grants to portal_api for the smoke-test to read it.
           CREATE TABLE portal_oauth_clients (id BIGSERIAL PRIMARY KEY, client_id VARCHAR(64) NOT NULL UNIQUE);
           CREATE TABLE portal_mcp_tokens (id BIGSERIAL PRIMARY KEY, org_id INTEGER NOT NULL, user_id INTEGER NOT NULL, client_id BIGINT NOT NULL);
+          GRANT SELECT, INSERT, UPDATE, DELETE ON portal_oauth_clients TO portal_api;
 
           -- Enable RLS + grant table access to portal_api (forced so klai
           -- superuser also obeys, mirroring production setup).
