@@ -407,6 +407,13 @@ async def knowledge_bases_stats_summary(
     # Each event carries a kb_slugs[] array (a single retrieve call may target
     # multiple KBs); jsonb_array_elements_text fans the array out so a query
     # against KBs A and B counts once for A and once for B.
+    #
+    # NOTE: product_events.properties is declared JSONB in the SQLAlchemy
+    # model but the live column is `json` (schema drift, see ProductEvent).
+    # Cast properties::jsonb everywhere it touches jsonb operators/functions
+    # until that column type is migrated. The WHERE jsonb_typeof filter
+    # also guards against legacy events that lack kb_slugs (which would
+    # otherwise raise on jsonb_array_elements_text).
     usage_result = await db.execute(
         text("""
             SELECT
@@ -416,11 +423,12 @@ async def knowledge_bases_stats_summary(
                 COUNT(DISTINCT date_trunc('day', pe.created_at)) AS active_days
             FROM product_events pe
             CROSS JOIN LATERAL jsonb_array_elements_text(
-                COALESCE(pe.properties->'kb_slugs', '[]'::jsonb)
+                (pe.properties::jsonb)->'kb_slugs'
             ) AS s(kb_slug)
             WHERE pe.org_id = :org_id
               AND pe.event_type = 'knowledge.queried'
               AND pe.created_at >= :cutoff
+              AND jsonb_typeof((pe.properties::jsonb)->'kb_slugs') = 'array'
               AND s.kb_slug = ANY(:slugs)
             GROUP BY s.kb_slug
         """),
@@ -775,6 +783,8 @@ async def get_kb_stats(
     active_days_30d: int | None = None
     try:
         cutoff = datetime.now(tz=dt.UTC) - timedelta(days=30)
+        # NOTE: properties::jsonb cast — see stats-summary helper above for
+        # the schema-drift backstory.
         usage_result = await db.execute(
             text("""
                 SELECT
@@ -785,7 +795,7 @@ async def get_kb_stats(
                 WHERE org_id = :org_id
                   AND event_type = 'knowledge.queried'
                   AND created_at >= :cutoff
-                  AND properties->'kb_slugs' @> to_jsonb(:slug::text)
+                  AND (properties::jsonb)->'kb_slugs' @> to_jsonb(:slug::text)
             """),
             {"org_id": org.id, "cutoff": cutoff, "slug": kb.slug},
         )
