@@ -1452,10 +1452,10 @@ class KlaiKnowledgeHook(CustomLogger):
         source_link_instruction = (
             "[ANSWER FORMAT — always follow this:\n"
             "1. Begin with a short TL;DR (2-3 sentences) of the answer. "
-            "Use the conventional short-summary label in the user's detected "
-            "language (TL;DR, Samenvatting, Zusammenfassung, Résumé, Resumen, "
-            "Resumo) — 'TL;DR' itself is universally understood and fine in "
-            "any language.\n"
+            "Use the standard short-summary label in the SAME LANGUAGE as the "
+            "user's question — NOT the language of the source documents. "
+            "'TL;DR' is universally understood and is a safe default in any "
+            "language.\n"
             "2. Immediately after, a sources list. Use ONLY the literal "
             "source_url value from each chunk.\n"
             "   Format: 📎 [Page title](source_url_from_chunk)\n"
@@ -1516,6 +1516,17 @@ class KlaiKnowledgeHook(CustomLogger):
                     lines.append(f"![afbeelding {i}]({img_url})")
             lines.append("")
         lines.append("[End knowledge base context]")
+        # SPEC-RAG-MULTILINGUAL-CHAT-001: KB content is often in a different
+        # language than the user's question. Re-affirm the language contract
+        # AFTER the KB block so the most-recent instruction wins when Mistral
+        # is anchored on the dominant language of the source documents.
+        lines.append(
+            "[LANGUAGE REMINDER] The knowledge-base chunks above may be in a "
+            "different language than the user's question. Always respond in "
+            "the language of the user's most recent substantive question, "
+            "NOT the language of the source documents. Translate cited "
+            "content into the user's language without translator disclaimers."
+        )
         context_block = "\n".join(lines)
 
         # SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-HOOK-E1: templates → KB → existing.
