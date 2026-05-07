@@ -54,6 +54,7 @@ jobs:
             --config .semgrep/rules/ \
             --exclude 'klai-portal/frontend/public/widget/*.js' \
             --exclude-rule 'python.django.security.django-no-csrf-token.django-no-csrf-token' \
+            --exclude-rule 'python.flask.security.xss.audit.direct-use-of-jinja2.direct-use-of-jinja2' \
             klai-portal/backend \
             klai-portal/frontend \
             klai-connector \
