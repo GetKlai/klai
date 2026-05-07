@@ -22,7 +22,6 @@ all exception text goes only to ``logger.exception`` (REQ-31.2).
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import httpx
@@ -94,17 +93,14 @@ def _build_crawl_payload(
         "crawler_config": {"type": "CrawlerRunConfig", "params": config},
     }
     if cookies:
-        # Same on_page_context_created hook shape as
-        # knowledge_ingest.crawl4ai_client._build_cookie_hooks.
-        cookies_json = json.dumps(cookies)
-        hook_code = (
-            "async def hook(page, context, **kwargs):\n"
-            f"    await context.add_cookies({cookies_json})\n"
-            "    return page\n"
-        )
-        payload["hooks"] = {
-            "code": {"on_page_context_created": hook_code},
-            "timeout": 30,
+        # Native cookie injection via BrowserConfig.cookies — crawl4ai's
+        # recommended path for authenticated crawls (see Identity-Based
+        # Crawling docs). Replaces the on_page_context_created hook pattern
+        # that has known timing issues (Playwright #26786, crawl4ai #322).
+        # Mirrors knowledge_ingest.crawl4ai_client._build_browser_config_with_cookies.
+        payload["browser_config"] = {
+            "type": "BrowserConfig",
+            "params": {"cookies": cookies},
         }
     return payload
 
