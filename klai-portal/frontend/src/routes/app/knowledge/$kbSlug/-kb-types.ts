@@ -26,6 +26,8 @@ export interface ConnectorSummary {
   last_sync_at: string | null
   last_sync_documents_ok: number | null
   allowed_assertion_modes: string[] | null
+  // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-7 — backend predicate; UI badge.
+  needs_reconfiguration?: boolean
 }
 
 export interface KBStats {

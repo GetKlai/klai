@@ -31,13 +31,18 @@ from knowledge_ingest.domain_selectors import (
     upsert_domain_selector,
 )
 from knowledge_ingest.fingerprint import compute_content_fingerprint
-from knowledge_ingest.identity import assert_caller_identity
+from knowledge_ingest.identity import (
+    assert_caller_identity,
+    assert_caller_identity_tenant_only,
+)
 from knowledge_ingest.models import CrawlRequest, CrawlResponse, IngestRequest
 from knowledge_ingest.routes.ingest import ingest_document
 from knowledge_ingest.selector_ai import (
     detect_login_indicator_via_llm,
     detect_selector_via_llm,
 )
+from knowledge_ingest.utils.auth_wall_classifier import classify_auth_wall
+from knowledge_ingest.utils.link_density import LINK_DENSITY_THRESHOLD, link_density
 from knowledge_ingest.utils.url_validator import validate_url, validate_url_pinned
 
 logger = structlog.get_logger()
@@ -109,6 +114,51 @@ class CrawlPreviewResponse(BaseModel):
     content_selector: str | None = None
     selector_source: str | None = None  # "user" | "ai" | None
     auth_guard: AuthGuardSuggestion | None = None  # SPEC-CRAWL-004
+    # SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3 — five-way classification
+    # used by the wizard to gate step-5 → step-6 advance.
+    classification: str = "success"
+    classification_reason: str | None = None
+
+
+# SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3 — distinguish "selector matched
+# nothing" (raw HTML present, content_selector wrong) from "page is JS-only"
+# (raw HTML minimal, no JS execution path). 5KB is the empirical anchor:
+# server-rendered pages with any content exceed 5KB; SPA shells with a single
+# ``<div id="root">`` stay under.
+_RAW_HTML_SPA_THRESHOLD_BYTES = 5000
+
+
+class AuthProbeRequest(BaseModel):
+    """SPEC-CONNECTOR-INPUT-VALIDATION-001 / REQ-2.
+
+    Same payload shape as ``CrawlPreviewRequest`` minus the selector
+    fields — the auth probe is run against the seed URL only, no
+    ``content_selector`` and no AI fallback.
+    """
+
+    url: str
+    org_id: str = ""
+    cookies: list[dict] | None = None
+
+
+class AuthProbeResponse(BaseModel):
+    """SPEC-CONNECTOR-INPUT-VALIDATION-001 / REQ-2.
+
+    Five-way classification of the seed-page fetch outcome.
+
+    Possible ``classification`` values:
+
+    - ``auth_ok``
+    - ``auth_failed_no_cookies``
+    - ``auth_failed_still_walled``
+    - ``auth_failed_credentials_invalid``
+    - ``auth_failed_unreachable``
+    """
+
+    classification: str
+    match_reasons: list[str] = []
+    word_count: int
+    auth_guard: AuthGuardSuggestion | None = None
 
 
 # Minimum word count for a crawl result to be considered usable content.
@@ -127,6 +177,59 @@ async def _run_crawl(
     result = await crawl_page(url, selector, cookies=cookies)
     fit_md = result.fit_markdown or result.raw_markdown
     return fit_md, result.word_count, result.html
+
+
+def _classify_preview_outcome(
+    *,
+    fit_markdown: str,
+    raw_html: str,
+    word_count: int,
+    response_status_code: int | None,
+    redirect_target_url: str | None,
+    set_cookie_header: str | None,
+) -> tuple[str, str | None]:
+    """REQ-3 — return ``(classification, classification_reason)`` for the preview.
+
+    Order of checks matters:
+      1. auth-wall heuristic wins over everything else (we never want to
+         hand a "success" verdict on a 401 page just because it has many
+         words).
+      2. If word_count is sufficient: link-density gate.
+      3. If word_count is thin: distinguish empty-selector vs SPA via raw
+         HTML size.
+    """
+    auth_wall = classify_auth_wall(
+        response_status_code=response_status_code,
+        redirect_target_url=redirect_target_url,
+        set_cookie_header=set_cookie_header,
+        word_count=word_count,
+        fit_markdown=fit_markdown,
+        raw_html=raw_html,
+    )
+    if auth_wall.is_walled:
+        return ("auth_wall_detected", "Page requires authentication.")
+
+    if word_count >= _MIN_WORD_COUNT:
+        density = link_density(fit_markdown)
+        if density > LINK_DENSITY_THRESHOLD:
+            pct = int(density * 100)
+            return (
+                "selector_required",
+                f"{pct}% of the text is links. Configure a Content Selector.",
+            )
+        return ("success", None)
+
+    if raw_html and len(raw_html) > _RAW_HTML_SPA_THRESHOLD_BYTES:
+        return (
+            "selector_returns_empty",
+            "Selector matched no content. Try a different selector or click 'Let AI find'.",
+        )
+
+    return (
+        "requires_javascript",
+        "Page renders via JavaScript. Configure a wait_for condition or "
+        "selector for the post-render DOM.",
+    )
 
 
 @contextlib.asynccontextmanager
@@ -175,10 +278,14 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
                 if stored:
                     effective_selector, selector_source = stored
 
-            # Initial crawl (HTTP, no DB)
-            fit_md, word_count, _ = await _run_crawl(
-                body.url, effective_selector, cookies=body.cookies
-            )
+            # Initial crawl (HTTP, no DB). Capture full CrawlResult so we
+            # can run the REQ-3 classifier with HTTP-level metadata
+            # (status_code, redirect URL, response headers).
+            initial_result = await crawl_page(body.url, effective_selector, cookies=body.cookies)
+            fit_md = initial_result.fit_markdown or initial_result.raw_markdown
+            word_count = initial_result.word_count
+            raw_html = initial_result.html
+            last_result = initial_result
             warnings: list[str] = _detect_nav_contamination(fit_md)
 
             # AI-assisted selector detection — only when explicitly requested via try_ai flag
@@ -194,9 +301,11 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
                     ai_selector = await detect_selector_via_llm(dom_summary)
                     if ai_selector:
                         try:
-                            recrawl_md, recrawl_wc, _ = await _run_crawl(
+                            recrawl_result = await crawl_page(
                                 body.url, ai_selector, cookies=body.cookies
                             )
+                            recrawl_md = recrawl_result.fit_markdown or recrawl_result.raw_markdown
+                            recrawl_wc = recrawl_result.word_count
                             if recrawl_wc >= _MIN_WORD_COUNT:
                                 await upsert_domain_selector(
                                     conn,
@@ -207,6 +316,8 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
                                 )
                                 fit_md = recrawl_md
                                 word_count = recrawl_wc
+                                raw_html = recrawl_result.html
+                                last_result = recrawl_result
                                 warnings = _detect_nav_contamination(fit_md)
                                 effective_selector = ai_selector
                                 selector_source = "ai"
@@ -265,6 +376,19 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
                         url=body.url,
                     )
 
+        # SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3 — classification
+        metadata = last_result.metadata or {}
+        response_headers = last_result.response_headers or {}
+        set_cookie_header = response_headers.get("set-cookie") or response_headers.get("Set-Cookie")
+        classification, classification_reason = _classify_preview_outcome(
+            fit_markdown=fit_md,
+            raw_html=raw_html,
+            word_count=word_count,
+            response_status_code=metadata.get("status_code"),
+            redirect_target_url=metadata.get("redirect_url") or metadata.get("location"),
+            set_cookie_header=set_cookie_header,
+        )
+
         return CrawlPreviewResponse(
             url=body.url,
             fit_markdown=fit_md,
@@ -273,10 +397,126 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
             content_selector=effective_selector,
             selector_source=selector_source,
             auth_guard=auth_guard,
+            classification=classification,
+            classification_reason=classification_reason,
         )
     except Exception as exc:
         logger.warning("crawl_preview_failed", url=body.url, error=str(exc))
-        return CrawlPreviewResponse(url=body.url, fit_markdown="", word_count=0)
+        return CrawlPreviewResponse(
+            url=body.url,
+            fit_markdown="",
+            word_count=0,
+            classification="requires_javascript",
+            classification_reason="Crawl failed — see service logs.",
+        )
+
+
+@router.post("/ingest/v1/crawl/auth-probe", response_model=AuthProbeResponse)
+async def auth_probe(body: AuthProbeRequest, request: Request) -> AuthProbeResponse:
+    """SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2 — classify a single seed
+    fetch as ``auth_ok`` or one of four failure flavours.
+
+    Mirrors the SSRF and identity guards on ``/ingest/v1/crawl/preview``:
+
+    - SSRF validation runs BEFORE any DNS lookup downstream
+      (SPEC-SEC-SSRF-001 REQ-1.1 / AC-1).
+    - When ``org_id`` is supplied, ``assert_caller_identity_tenant_only``
+      enforces tenant scoping (per the bug-pattern memory: this is an
+      internal-secret + tenant-only route, no end-user context).
+    """
+    logger.info("auth_probe_started", url=body.url)
+
+    if body.org_id:
+        await assert_caller_identity_tenant_only(request, claimed_org_id=body.org_id)
+
+    try:
+        await validate_url_pinned(body.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        result = await crawl_page(body.url, selector=None, cookies=body.cookies)
+    except Exception as exc:
+        logger.warning("auth_probe_crawl_failed", url=body.url, error=str(exc))
+        return AuthProbeResponse(
+            classification="auth_failed_unreachable",
+            match_reasons=[],
+            word_count=0,
+            auth_guard=None,
+        )
+
+    metadata = result.metadata or {}
+    response_headers = result.response_headers or {}
+    set_cookie_header = response_headers.get("set-cookie") or response_headers.get("Set-Cookie")
+    redirect_target_url = metadata.get("redirect_url") or metadata.get("location")
+
+    classification = classify_auth_wall(
+        response_status_code=metadata.get("status_code"),
+        redirect_target_url=redirect_target_url,
+        set_cookie_header=set_cookie_header,
+        word_count=result.word_count,
+        fit_markdown=result.fit_markdown or "",
+        raw_html=result.html or "",
+    )
+
+    label = _label_for_auth_probe(
+        is_walled=classification.is_walled,
+        match_reasons=classification.match_reasons,
+        word_count=result.word_count,
+        crawl_success=result.success,
+        cookies_provided=bool(body.cookies),
+    )
+
+    auth_guard: AuthGuardSuggestion | None = None
+    if label == "auth_ok" and body.cookies:
+        canary_fp = compute_content_fingerprint(result.fit_markdown or "")
+        if canary_fp:
+            auth_guard = AuthGuardSuggestion(
+                canary_url=body.url,
+                canary_fingerprint=canary_fp,
+            )
+            try:
+                dom_summary = await crawl_dom_summary(body.url)
+                if dom_summary:
+                    indicator = await detect_login_indicator_via_llm(dom_summary)
+                    if indicator:
+                        auth_guard.login_indicator_selector = indicator
+                        auth_guard.login_indicator_description = f"Detected: {indicator}"
+            except Exception:
+                logger.debug("auth_probe_indicator_detection_skipped", url=body.url)
+
+    return AuthProbeResponse(
+        classification=label,
+        match_reasons=list(classification.match_reasons),
+        word_count=result.word_count,
+        auth_guard=auth_guard,
+    )
+
+
+def _label_for_auth_probe(
+    *,
+    is_walled: bool,
+    match_reasons: tuple[str, ...],
+    word_count: int,
+    crawl_success: bool,
+    cookies_provided: bool,
+) -> str:
+    """Map classifier output + request context to one of five outcome labels.
+
+    SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2 outcome table.
+    """
+    if "http_unauthenticated" in match_reasons:
+        return "auth_failed_credentials_invalid"
+    if is_walled:
+        return "auth_failed_still_walled" if cookies_provided else "auth_failed_no_cookies"
+    if not crawl_success or word_count == 0:
+        return "auth_failed_unreachable"
+    if word_count < _MIN_WORD_COUNT:
+        # Reachable but thin — the page renders but has no real content.
+        # Treated the same as unreachable for the wizard: the user must
+        # configure cookies or pick a different seed.
+        return "auth_failed_unreachable"
+    return "auth_ok"
 
 
 @router.post("/ingest/v1/crawl", response_model=CrawlResponse)

@@ -181,6 +181,44 @@ async def preview_crawl(
         return {"fit_markdown": "", "word_count": 0, "url": url}
 
 
+async def auth_probe(
+    url: str,
+    org_id: str = "",
+    cookies: list[dict] | None = None,
+) -> dict:
+    """SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2 — call knowledge-ingest
+    auth-probe endpoint.
+
+    Returns the five-way classification + match_reasons + auth_guard. Falls
+    back to ``auth_failed_unreachable`` on transport error so the wizard
+    UI always has a stable shape to render.
+    """
+    payload: dict = {"url": url, "org_id": org_id}
+    if cookies:
+        payload["cookies"] = cookies
+    try:
+        async with httpx.AsyncClient(
+            base_url=settings.knowledge_ingest_url,
+            headers={
+                "X-Internal-Secret": settings.knowledge_ingest_secret,
+                "X-Caller-Service": "portal-api",
+                **get_trace_headers(),
+            },
+            timeout=35.0,  # PC-1 budget: REQ-2 p95 < 30s
+        ) as client:
+            resp = await client.post("/ingest/v1/crawl/auth-probe", json=payload)
+            resp.raise_for_status()
+            return resp.json()  # type: ignore[no-any-return]
+    except Exception:
+        logger.warning("auth_probe failed", extra={"url": url}, exc_info=True)
+        return {
+            "classification": "auth_failed_unreachable",
+            "match_reasons": [],
+            "word_count": 0,
+            "auth_guard": None,
+        }
+
+
 async def trigger_taxonomy_bootstrap(org_id: str, kb_slug: str) -> dict:
     """Trigger bootstrap proposal generation for a KB.
 

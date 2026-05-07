@@ -72,6 +72,8 @@ function ConnectorsTab() {
   // which failed so the UI can show a spinner / error message without stale
   // state bleeding to other rows.
   const [reconnectingId, setReconnectingId] = useState<string | null>(null)
+  // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-5 — InvestigateDialog state.
+  const [investigatingConnector, setInvestigatingConnector] = useState<ConnectorSummary | null>(null)
   const [reconnectErrorId, setReconnectErrorId] = useState<string | null>(null)
 
   const { data: kb } = useQuery<KnowledgeBase>({
@@ -287,6 +289,17 @@ function ConnectorsTab() {
                         {c.last_sync_documents_ok.toLocaleString()} {m.connectors_documents_indexed()}
                       </p>
                     )}
+                    {/* SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-5/REQ-7 — actionable error badge. */}
+                    {c.needs_reconfiguration && (
+                      <button
+                        type="button"
+                        onClick={() => setInvestigatingConnector(c)}
+                        className="mt-1.5 inline-flex items-center gap-1 rounded-md border border-[var(--color-destructive)]/30 bg-[var(--color-destructive)]/5 px-2 py-1 text-xs font-medium text-[var(--color-destructive)] hover:bg-[var(--color-destructive)]/10 transition-colors"
+                      >
+                        <AlertTriangle className="h-3 w-3" />
+                        Needs reconfiguration
+                      </button>
+                    )}
                   </td>
                   {isOwner && (
                     <td className="py-4 align-top text-right w-28">
@@ -354,6 +367,56 @@ function ConnectorsTab() {
             >
               {m.admin_connectors_action_delete()}
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-5 — InvestigateDialog. */}
+      <AlertDialog open={investigatingConnector !== null} onOpenChange={(open) => { if (!open) setInvestigatingConnector(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Connector needs reconfiguration</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-left">
+                <p>
+                  This connector&apos;s last sync failed. The site likely now requires
+                  authentication, or the content selector no longer matches.
+                </p>
+                <p className="text-xs text-[var(--color-muted-foreground)]">
+                  Re-run the wizard to verify authentication and selector. The wizard
+                  refuses to save until both checks pass — no more silent broken syncs.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="!justify-start gap-2 flex-wrap">
+            <AlertDialogCancel>Close</AlertDialogCancel>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                if (investigatingConnector) {
+                  window.location.href = `/app/knowledge/${encodeURIComponent(kbSlug)}/edit-connector/${encodeURIComponent(investigatingConnector.id)}?step=auth`
+                }
+                setInvestigatingConnector(null)
+              }}
+            >
+              Edit Authentication
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                if (investigatingConnector) {
+                  window.location.href = `/app/knowledge/${encodeURIComponent(kbSlug)}/edit-connector/${encodeURIComponent(investigatingConnector.id)}?step=selector`
+                }
+                setInvestigatingConnector(null)
+              }}
+            >
+              Edit Selector
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

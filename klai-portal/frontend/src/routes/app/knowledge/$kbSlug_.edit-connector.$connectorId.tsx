@@ -20,12 +20,28 @@ import type { ConnectorSummary, GitHubConfig, WebCrawlerConfig } from './$kbSlug
 type WcTabId = 'details' | 'preview' | 'auth'
 const VALID_WC_TABS = new Set<WcTabId>(['details', 'preview', 'auth'])
 
-type EditSearch = { tab?: WcTabId }
+// SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-1 / REQ-5: step search param
+// supplied by the connectors-list "Investigate" deep-links. Maps to the
+// existing tab system: ``step=auth`` lands on the auth tab, ``step=selector``
+// lands on the preview tab.
+type StepDeepLink = 'auth' | 'selector'
+const VALID_STEPS = new Set<StepDeepLink>(['auth', 'selector'])
+
+function _stepToTab(step: StepDeepLink | undefined): WcTabId | undefined {
+  if (step === 'auth') return 'auth'
+  if (step === 'selector') return 'preview'
+  return undefined
+}
+
+type EditSearch = { tab?: WcTabId; step?: StepDeepLink }
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug_/edit-connector/$connectorId')({
   validateSearch: (search: Record<string, unknown>): EditSearch => ({
     tab: (VALID_WC_TABS as Set<string>).has(search.tab as string)
       ? (search.tab as WcTabId)
+      : undefined,
+    step: (VALID_STEPS as Set<string>).has(search.step as string)
+      ? (search.step as StepDeepLink)
       : undefined,
   }),
   component: EditConnectorPage,
@@ -349,7 +365,10 @@ function EditConnectorPage() {
 
           {/* Web crawler — tabbed layout (widget pattern: URL-driven, border-b underline) */}
           {connector?.connector_type === 'web_crawler' && (() => {
-            const activeTab: WcTabId = search.tab ?? 'details'
+            // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-1 — honour ?step=auth|selector
+            // as a deep-link alias for the existing tab system.
+            const activeTab: WcTabId =
+              search.tab ?? _stepToTab(search.step) ?? 'details'
             const wcTabs: { id: WcTabId; label: string; icon: React.ElementType }[] = [
               { id: 'details', label: 'Details', icon: Info },
               { id: 'preview', label: 'Preview', icon: Eye },
