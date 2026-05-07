@@ -314,7 +314,7 @@ async def verify_access_token(
         cached_raw = await redis.get(cache_key)
     except Exception:
         # Redis unavailable — fail-closed (REQ-9 + AC-8).
-        logger.warning("mcp_token_verify_cache_unavailable")
+        logger.warning("mcp_token_verify_cache_unavailable", exc_info=True)
         return VerifyResult(verified=False, reason="cache_unavailable")
 
     if cached_raw is not None:
@@ -411,7 +411,7 @@ async def _cache_verify_result(redis: Any, cache_key: str, result: VerifyResult)
             ex=_CACHE_TTL_VERIFY_SECONDS,
         )
     except Exception as exc:  # pragma: no cover — defensive
-        logger.warning("mcp_token_verify_cache_set_failed", error=str(exc))
+        logger.warning("mcp_token_verify_cache_set_failed", error=str(exc), exc_info=True)
 
 
 async def invalidate_token_cache(redis: Any, raw_or_hash: str | bytes) -> None:
@@ -431,7 +431,7 @@ async def invalidate_token_cache(redis: Any, raw_or_hash: str | bytes) -> None:
     try:
         await redis.delete(f"{_CACHE_KEY_VERIFY}{hash_hex}")
     except Exception as exc:  # pragma: no cover
-        logger.warning("mcp_token_verify_cache_invalidate_failed", error=str(exc))
+        logger.warning("mcp_token_verify_cache_invalidate_failed", error=str(exc), exc_info=True)
 
 
 # ─── Refresh-token rotation (RFC 6819 + REQ-26) ───────────────────────────
