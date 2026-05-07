@@ -40,7 +40,6 @@ from knowledge_ingest.config import settings  # noqa: E402
 from knowledge_ingest.portal_client import fetch_taxonomy_nodes  # noqa: E402
 from knowledge_ingest.proposal_generator import (  # noqa: E402
     DocumentSummary,
-    generate_bootstrap_proposals,
     generate_bootstrap_proposals_v2,
 )
 from knowledge_ingest.taxonomy_classifier import classify_document  # noqa: E402
@@ -217,16 +216,19 @@ async def taxonomy_bootstrap_proposals(
 ) -> BootstrapResponse:
     """Scan existing Qdrant chunks and generate bootstrap taxonomy proposals.
 
-    SPEC-TAXONOMY-V2-001: when taxonomy_bootstrap_v2_enabled=True (default), uses the
-    new Clio-style density-driven path that:
+    SPEC-TAXONOMY-V2-001: Clio-style density-driven path that:
     - Samples ALL documents (not just first 50)
     - Uses HDBSCAN clustering to determine category count
-    - Names each cluster with a separate focused LLM call
-
-    Falls back to v1 (single-shot LLM) when flag is False.
+    - Names each cluster with a focused LLM call (batched cross-cluster aware,
+      with per-cluster fallback). Naming criteria are shared across the two
+      strategies via ``proposal_generator._NAMING_CRITERIA``.
 
     Use this to bootstrap a KB taxonomy from scratch when no nodes exist yet.
     After accepting proposals in the portal, run /backfill to tag all chunks.
+
+    The V1 single-shot fallback (LLM doing both clustering and naming) was
+    deleted in SPEC-TAXONOMY-V2-CONSOLIDATION-001 — V2 had been the default
+    in production since PR #408 and the fallback path was never re-enabled.
     """
     import numpy as np
 
@@ -246,57 +248,6 @@ async def taxonomy_bootstrap_proposals(
 
     # Fetch existing taxonomy nodes for dedup
     existing_nodes = await fetch_taxonomy_nodes(req.kb_slug, req.org_id)
-
-    if not settings.taxonomy_bootstrap_v2_enabled:
-        # V1 fallback: scroll up to 50 docs, single-shot LLM
-        seen_artifacts: set[str] = set()
-        documents_v1: list[DocumentSummary] = []
-        offset = None
-
-        while len(documents_v1) < 50:
-            points, next_offset = await asyncio.wait_for(
-                qdrant_client.scroll(
-                    collection_name=COLLECTION,
-                    scroll_filter=scroll_filter,
-                    limit=req.batch_size,
-                    offset=offset,
-                    with_payload=True,
-                    with_vectors=False,
-                ),
-                timeout=30.0,
-            )
-            if not points:
-                break
-            for point in points:
-                payload = point.payload or {}
-                artifact_id = payload.get("artifact_id") or str(point.id)
-                if artifact_id in seen_artifacts:
-                    continue
-                seen_artifacts.add(artifact_id)
-                title = payload.get("title") or payload.get("path") or artifact_id
-                preview = payload.get("text", "")[:300]
-                documents_v1.append(DocumentSummary(title=title, content_preview=preview))
-                if len(documents_v1) >= 50:
-                    break
-            if next_offset is None:
-                break
-            offset = next_offset
-
-        if not documents_v1:
-            logger.info("bootstrap_proposals_no_documents", kb_slug=req.kb_slug, org_id=req.org_id)
-            return BootstrapResponse(documents_scanned=0, proposals_submitted=0)
-
-        existing_names = [n.name for n in existing_nodes]
-        proposals_submitted = await generate_bootstrap_proposals(
-            org_id=req.org_id,
-            kb_slug=req.kb_slug,
-            documents=documents_v1,
-            existing_category_names=existing_names,
-        )
-        return BootstrapResponse(
-            documents_scanned=len(documents_v1),
-            proposals_submitted=proposals_submitted,
-        )
 
     # V2 path: scroll ALL docs with vectors, group by artifact_id, average vectors
     seen_artifacts_v2: set[str] = set()
