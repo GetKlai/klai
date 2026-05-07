@@ -647,8 +647,25 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
 #             InternalSecretMiddleware handles network auth (AC-8).
 @router.post("/ingest/v1/document")
 async def ingest_document_route(req: IngestRequest, request: Request) -> dict:
-    """Ingest a document. SPEC-TI-003 AC-6: identity assertion on body org_id."""
-    await assert_caller_identity(request, claimed_org_id=req.org_id, claimed_user_id=req.user_id)
+    """Ingest a document. SPEC-TI-003 AC-6: identity assertion on body org_id.
+
+    Two caller flavours:
+      * User-bound (gitea-webhook path, MCP push): ``req.user_id`` is set,
+        full ``assert_caller_identity`` enforces user binding.
+      * Service-to-service (klai-connector sync — Notion / GitHub / Airtable
+        adapters): ``req.user_id`` is None because no end-user initiated
+        the doc. ``assert_caller_identity_tenant_only`` enforces only the
+        tenant binding. Without this branch the connector path 400s with
+        ``identity_assertion_failed`` because the user-bound asserter
+        cannot verify a None user_id (observed live: Voys Notion sync
+        20/0/20 → 100/0/59 with X-Caller-Service set, until this fix).
+    """
+    if req.user_id:
+        await assert_caller_identity(
+            request, claimed_org_id=req.org_id, claimed_user_id=req.user_id
+        )
+    else:
+        await assert_caller_identity_tenant_only(request, claimed_org_id=req.org_id)
     async with tenant_scoped_connection(req.org_id) as conn:
         return await ingest_document(conn, req)
 
