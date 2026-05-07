@@ -352,10 +352,17 @@
         }
     }
 
-    # portal-api static assets (e.g. OAuth consent page CSS).
-    # Must be routed to portal-api — NOT served from the SPA file_server.
-    # The catch-all `handle` below would otherwise match /static/* and
-    # return /srv/portal/index.html instead of the actual file.
+    # ==========================================================================
+    # POSITIONAL: /static/* MUST come BEFORE the catch-all `handle` block at the
+    # bottom of this vhost. Caddy evaluates `handle` blocks top-to-bottom; the
+    # first match wins. Without this block, /static/oauth/consent.css would be
+    # served by the SPA file_server (which returns /srv/portal/index.html for
+    # any unknown path), and the OAuth consent page would render unstyled.
+    #
+    # If you ever reorder this file, the lint test
+    # `klai-portal/backend/tests/test_caddyfile_static_route_position.py`
+    # asserts that /static/* stays positioned before the catch-all `handle`.
+    # ==========================================================================
     handle /static/* {
         reverse_proxy portal-api:8010 {
             header_up -X-Internal-Secret

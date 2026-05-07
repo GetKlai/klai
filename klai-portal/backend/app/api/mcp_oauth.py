@@ -16,7 +16,6 @@ The connector-OAuth surface (``/api/oauth/google_drive/...``, etc.) lives in
 from __future__ import annotations
 
 import hmac
-import html as _html
 import json
 import logging
 import secrets
@@ -27,6 +26,7 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 
@@ -45,7 +45,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["mcp-oauth"])
 
 _TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
-_CONSENT_TEMPLATE_PATH = _TEMPLATES_DIR / "oauth_consent.html"
+
+# Single Jinja2 Environment per process: templates compile once, autoescape on
+# for HTML/XML extensions so any string interpolated via {{ var }} is
+# automatically HTML-escaped (no per-call ``| e`` discipline needed). The
+# previous str.replace renderer broke silently whenever a contributor edited
+# template whitespace; Jinja matches the AST, not byte-exact strings.
+_jinja_env = Environment(
+    loader=FileSystemLoader(_TEMPLATES_DIR),
+    autoescape=select_autoescape(["html", "htm", "xml"]),
+    trim_blocks=False,
+    lstrip_blocks=False,
+)
 
 
 def _render_consent_page(
@@ -54,80 +65,35 @@ def _render_consent_page(
     csrf_token: str,
     client_name: str,
     redirect_uri: str,
-    application_type: str,
-    scopes: list[str],
+    application_type: str,  # accepted for backwards-compat; not rendered
+    scopes: list[str],  # accepted for backwards-compat; not rendered
     user_email: str,
     user_org_name: str,
     is_newly_registered: bool,
 ) -> HTMLResponse:
-    """Render the consent page with simple Python str-replace.
+    """Render the OAuth consent page via Jinja2.
 
-    No Jinja2 dependency — the template is small and the substitution
-    surface is bounded. Every interpolated value is HTML-escaped at
-    insertion time to prevent XSS via client_name / redirect_uri / etc.
+    ``application_type`` and ``scopes`` are accepted by the signature for
+    backwards compatibility with callers but are intentionally not rendered:
+    the heading + lead sentence already convey everything an end user needs
+    (per Mark's review 2026-05-07: drop technical labels that cargo-cult
+    the OAuth spec but add no signal for non-developer users).
+
+    All variable interpolation is HTML-escaped via Jinja2 autoescape;
+    untrusted ``client_name`` / ``redirect_uri`` / ``user_email`` cannot
+    inject markup.
     """
-    template = _CONSENT_TEMPLATE_PATH.read_text(encoding="utf-8")
-
-    # Render the {% if is_newly_registered %} block — simple two-state
-    # toggle, not a full Jinja replacement. Copy is intentionally short and
-    # peer-tone per .claude/rules/gtm/klai-brand-voice.md (senior-colleague
-    # voice, no theatre, no alarmist phrasing for routine first-time clients).
-    if is_newly_registered:
-        new_badge = '<span class="badge-new" title="Eerste keer dat we deze app zien">Nieuw</span>'
-        warn_callout = (
-            '<div class="warn-callout">'
-            "We zien deze app voor het eerst. Check of je de naam herkent "
-            "en of het terugadres hieronder klopt."
-            "</div>"
-        )
-    else:
-        new_badge = ""
-        warn_callout = ""
-
-    # The optional ``( {{ user_org_name | e }})`` segment.
-    org_segment = f" ({_html.escape(user_org_name)})" if user_org_name else ""
-
-    # ``application_type`` and ``scopes`` are accepted by the signature for
-    # backwards compatibility with callers but are not rendered in the
-    # current consent UI — the heading + lead sentence already convey
-    # everything an end user needs (per Mark's review 2026-05-07: drop
-    # technical labels that cargo-cult the OAuth spec but add no signal
-    # for non-developer users).
-    _ = application_type
-    _ = scopes
-
-    # Strip Jinja-style blocks the template still has and substitute
-    # markers with values. Use unique markers (curly + token) so we don't
-    # double-replace.
-    rendered = (
-        template
-        # Drop literal Jinja blocks — they're already simulated above.
-        .replace(
-            '{% if is_newly_registered %}<span class="badge-new" title="Eerste keer dat we deze app zien">Nieuw</span>{% endif %}',
-            new_badge,
-        ).replace(
-            '{% if is_newly_registered %}\n        <div class="warn-callout">\n            We zien deze app voor het eerst. Check of je de naam herkent en of het terugadres hieronder klopt.\n        </div>\n        {% endif %}',
-            warn_callout,
-        )
+    del application_type, scopes  # silence unused-arg linters
+    template = _jinja_env.get_template("oauth_consent.html")
+    rendered = template.render(
+        request_id=request_id,
+        csrf_token=csrf_token,
+        client_name=client_name,
+        redirect_uri=redirect_uri,
+        user_email=user_email,
+        user_org_name=user_org_name,
+        is_newly_registered=is_newly_registered,
     )
-
-    # Escape user-controlled values then substitute simple {{ var }} markers.
-    safe_vars: dict[str, str] = {
-        "{{ request_id | e }}": _html.escape(request_id),
-        "{{ csrf_token | e }}": _html.escape(csrf_token),
-        "{{ client_name | e }}": _html.escape(client_name),
-        "{{ redirect_uri | e }}": _html.escape(redirect_uri),
-        "{{ user_email | e }}": _html.escape(user_email),
-    }
-    for marker, value in safe_vars.items():
-        rendered = rendered.replace(marker, value)
-
-    # The org segment: replace the conditional inline expression.
-    rendered = rendered.replace(
-        "{% if user_org_name %} ({{ user_org_name | e }}){% endif %}",
-        org_segment,
-    )
-
     return HTMLResponse(rendered, status_code=200)
 
 
