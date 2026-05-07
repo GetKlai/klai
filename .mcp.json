@@ -16,19 +16,19 @@
       "env": {}
     },
     "playwright": {
-      "$comment": "Headed Chromium with shared login state across parallel Claude Code sessions. Uses --isolated + --storage-state (canonical Playwright multi-session auth). Log in once via `npx playwright codegen --save-storage=~/.claude/mcp-storageState.json --browser=chromium <url>`; every session preloads that state. No browser-lock conflicts because each session uses its own ephemeral profile. AI-driven sessions don't mutate login state, so read-only storage-state is sufficient.",
+      "$comment": "Headed Chrome with `--isolated --storage-state ~/.claude/mcp-storageState.json`. Parallel-safe (every session gets its own ephemeral profile) and all sessions start authenticated by preloading the storage-state file. Seed via the MCP tool `browser_storage_state` from inside a running session (NOT external `npx playwright codegen` — that path is flaky on macOS and was the trap in PR #354's first try). See process-rules.md::playwright-mcp-config-cycle for the full failure-mode history.",
       "type": "stdio",
       "command": "node",
       "args": [".claude/scripts/playwright-launcher.mjs"],
       "env": {}
     },
     "playwright-isolated": {
-      "$comment": "Ephemeral headed Chromium for one-off CSS/visual checks where login state is not needed. Window is visible (not headless) so you can see what is happening; profile is in-memory and discarded on close.",
+      "$comment": "Ephemeral headed Chrome for one-off CSS/visual checks where login state is not needed. Window is visible (not headless) so you can see what is happening; profile is in-memory and discarded on close. Tracks @latest — the original 0.0.70 pin caused the months-long codegen-seed failure mode (process-rules.md::playwright-mcp-config-cycle anti-pattern 8). Note: @latest dropped `--browser chromium`; valid values are chrome|firefox|webkit|msedge.",
       "type": "stdio",
       "command": "npx",
       "args": [
-        "@playwright/mcp@0.0.70",
-        "--browser", "chromium",
+        "@playwright/mcp@latest",
+        "--browser", "chrome",
         "--isolated"
       ],
       "env": {}
