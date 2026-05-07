@@ -10,7 +10,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,7 +18,6 @@ from app.api.dependencies import _get_caller_org, bearer, require_capability
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.profiles import Capability
-from app.models.audit import PortalAuditLog
 from app.models.connectors import PortalConnector
 from app.models.groups import PortalGroup
 from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase, PortalUserKBAccess
@@ -133,7 +132,9 @@ class KBStatsSummary(BaseModel):
     items: int  # vector chunks in Qdrant
     connectors: int  # portal_connectors rows for this KB
     gaps_7d: int  # open retrieval gaps pointing at this KB (7 days)
-    usage_30d: int  # kb_query audit events for this KB (30 days)
+    usage_30d: int  # knowledge.queried events for this KB (30 days)
+    unique_users_30d: int  # distinct users that queried this KB (30 days)
+    active_days_30d: int  # distinct days with at least one query (30 days, max 30)
 
 
 class KBStatsSummaryResponse(BaseModel):
@@ -199,6 +200,8 @@ class KBStatsOut(BaseModel):
     connectors: list[ConnectorStatusSummary]
     volume: int | None
     usage_last_30d: int | None
+    unique_users_30d: int | None = None
+    active_days_30d: int | None = None
     org_gap_count_7d: int | None = None
     # Volume breakdown
     source_page_count: int | None = None  # docs pages in PostgreSQL (= docs_count alias)
@@ -400,18 +403,32 @@ async def knowledge_bases_stats_summary(
     )
     gaps_by_slug: dict[str, int] = {slug: count for slug, count in gaps_result.all()}
 
-    # Usage (kb_query audit events) per KB in the last 30 days.
+    # Usage from knowledge.queried product events for the last 30 days.
+    # Each event carries a kb_slugs[] array (a single retrieve call may target
+    # multiple KBs); jsonb_array_elements_text fans the array out so a query
+    # against KBs A and B counts once for A and once for B.
     usage_result = await db.execute(
-        select(PortalAuditLog.resource_id, func.count(PortalAuditLog.id))
-        .where(
-            PortalAuditLog.org_id == org.id,
-            PortalAuditLog.resource_type == "kb_query",
-            PortalAuditLog.resource_id.in_(kb_slugs),
-            PortalAuditLog.created_at >= usage_cutoff,
-        )
-        .group_by(PortalAuditLog.resource_id)
+        text("""
+            SELECT
+                s.kb_slug AS slug,
+                COUNT(*) AS queries,
+                COUNT(DISTINCT pe.user_id) AS users,
+                COUNT(DISTINCT date_trunc('day', pe.created_at)) AS active_days
+            FROM product_events pe
+            CROSS JOIN LATERAL jsonb_array_elements_text(
+                COALESCE(pe.properties->'kb_slugs', '[]'::jsonb)
+            ) AS s(kb_slug)
+            WHERE pe.org_id = :org_id
+              AND pe.event_type = 'knowledge.queried'
+              AND pe.created_at >= :cutoff
+              AND s.kb_slug = ANY(:slugs)
+            GROUP BY s.kb_slug
+        """),
+        {"org_id": org.id, "cutoff": usage_cutoff, "slugs": kb_slugs},
     )
-    usage_by_slug: dict[str, int] = {slug: count for slug, count in usage_result.all()}
+    usage_by_slug: dict[str, tuple[int, int, int]] = {
+        row.slug: (row.queries, row.users, row.active_days) for row in usage_result.all()
+    }
 
     # Qdrant item counts — N parallel calls, one per KB. Each call is
     # a single filtered count query against the shared collection.
@@ -421,15 +438,17 @@ async def knowledge_bases_stats_summary(
     )
     items_by_slug: dict[str, int] = {kb.slug: (count or 0) for kb, count in zip(kbs, item_counts, strict=True)}
 
-    stats: dict[str, KBStatsSummary] = {
-        kb.slug: KBStatsSummary(
+    stats: dict[str, KBStatsSummary] = {}
+    for kb in kbs:
+        queries, users, active_days = usage_by_slug.get(kb.slug, (0, 0, 0))
+        stats[kb.slug] = KBStatsSummary(
             items=items_by_slug.get(kb.slug, 0),
             connectors=connectors_by_slug.get(kb.slug, 0),
             gaps_7d=gaps_by_slug.get(kb.slug, 0),
-            usage_30d=usage_by_slug.get(kb.slug, 0),
+            usage_30d=queries,
+            unique_users_30d=users,
+            active_days_30d=active_days,
         )
-        for kb in kbs
-    }
     return KBStatsSummaryResponse(stats=stats)
 
 
@@ -747,21 +766,33 @@ async def get_kb_stats(
     graph_entity_count: int | None = graph_stats.get("entity_count")
     graph_edge_count: int | None = graph_stats.get("edge_count")
 
-    # Audit log query usage (last 30 days) — placeholder until KB query events are logged
+    # Usage from knowledge.queried product events for the last 30 days.
+    # Three signals together describe adoption: total volume, distinct
+    # users (so one power user does not dominate), and distinct active
+    # days (so one hackathon-spike does not look like daily use).
     usage_last_30d: int | None = None
+    unique_users_30d: int | None = None
+    active_days_30d: int | None = None
     try:
-        from app.models.audit import PortalAuditLog
-
         cutoff = datetime.now(tz=dt.UTC) - timedelta(days=30)
         usage_result = await db.execute(
-            select(func.count()).where(
-                PortalAuditLog.org_id == org.id,
-                PortalAuditLog.resource_type == "kb_query",
-                PortalAuditLog.resource_id == kb_slug,
-                PortalAuditLog.created_at >= cutoff,
-            )
+            text("""
+                SELECT
+                    COUNT(*) AS queries,
+                    COUNT(DISTINCT user_id) AS users,
+                    COUNT(DISTINCT date_trunc('day', created_at)) AS active_days
+                FROM product_events
+                WHERE org_id = :org_id
+                  AND event_type = 'knowledge.queried'
+                  AND created_at >= :cutoff
+                  AND properties->'kb_slugs' @> to_jsonb(:slug::text)
+            """),
+            {"org_id": org.id, "cutoff": cutoff, "slug": kb.slug},
         )
-        usage_last_30d = usage_result.scalar_one()
+        row = usage_result.one()
+        usage_last_30d = row.queries
+        unique_users_30d = row.users
+        active_days_30d = row.active_days
     except Exception:
         logger.debug("Could not fetch KB usage stats for %s", kb_slug)
 
@@ -789,6 +820,8 @@ async def get_kb_stats(
         connectors=connector_summaries,
         volume=volume,
         usage_last_30d=usage_last_30d,
+        unique_users_30d=unique_users_30d,
+        active_days_30d=active_days_30d,
         org_gap_count_7d=org_gap_count_7d,
         source_page_count=source_count,
         vector_chunk_count=volume,

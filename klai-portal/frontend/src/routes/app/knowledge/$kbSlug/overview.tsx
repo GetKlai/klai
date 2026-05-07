@@ -77,7 +77,23 @@ function OverviewTab() {
             <p className="text-xs text-gray-400 tracking-wide mb-1">{m.knowledge_detail_stats_queries()}</p>
             <p className="text-sm font-medium text-[var(--color-foreground)]">
               {stats?.usage_last_30d != null
-                ? m.knowledge_detail_usage({ count: String(stats.usage_last_30d) })
+                ? String(stats.usage_last_30d)
+                : m.knowledge_detail_usage_unknown()}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-400 tracking-wide mb-1">{m.knowledge_detail_stats_users()}</p>
+            <p className="text-sm font-medium text-[var(--color-foreground)]">
+              {stats?.unique_users_30d != null
+                ? String(stats.unique_users_30d)
+                : m.knowledge_detail_usage_unknown()}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-400 tracking-wide mb-1">{m.knowledge_detail_stats_active_days()}</p>
+            <p className="text-sm font-medium text-[var(--color-foreground)]">
+              {stats?.active_days_30d != null
+                ? m.knowledge_detail_active_days_value({ count: String(stats.active_days_30d) })
                 : m.knowledge_detail_usage_unknown()}
             </p>
           </div>

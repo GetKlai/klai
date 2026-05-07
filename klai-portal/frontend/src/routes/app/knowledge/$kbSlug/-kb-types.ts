@@ -36,6 +36,8 @@ export interface KBStats {
   connectors: ConnectorSummary[]
   volume: number | null
   usage_last_30d: number | null
+  unique_users_30d: number | null
+  active_days_30d: number | null
   org_gap_count_7d: number | null
   // Volume breakdown
   source_page_count: number | null
