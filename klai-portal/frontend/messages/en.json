@@ -1281,6 +1281,7 @@
   "knowledge_taxonomy_filter_clear_all": "Clear all filters",
   "knowledge_taxonomy_suggest_categories": "Suggest categories",
   "knowledge_taxonomy_suggest_generating": "Analysing knowledge base...",
+  "knowledge_taxonomy_suggest_loading_hint": "This may take up to a minute for larger knowledge bases.",
   "knowledge_taxonomy_suggest_ready": "{count} category suggestions ready - review and apply below",
   "knowledge_taxonomy_suggest_apply_all": "Apply to knowledge base",
   "knowledge_taxonomy_retag": "Re-tag documents",
