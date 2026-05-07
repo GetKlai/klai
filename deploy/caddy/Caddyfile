@@ -338,6 +338,20 @@
         }
     }
 
+    # SPEC-MCP-AUTH-001: OAuth 2.1 authorization-server endpoints live
+    # at root level (not under /api) per RFC 8414 / RFC 6749 conventions.
+    # Routes: /.well-known/oauth-authorization-server, /oauth/authorize,
+    # /oauth/token, /oauth/register. portal-api handles them.
+    @oauth-mcp path /oauth/authorize /oauth/token /oauth/register /.well-known/oauth-authorization-server
+    handle @oauth-mcp {
+        reverse_proxy portal-api:8010 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-User-ID
+        }
+    }
+
     # SEC-023 / F-038 — Scribe/Docs are no longer publicly routed.
     # Frontend calls /api/scribe/*, /api/docs/* which hit the BFF proxy in
     # portal-api (app/api/proxy.py). That handler pulls the Zitadel
