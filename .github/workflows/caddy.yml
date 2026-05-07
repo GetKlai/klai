@@ -4,7 +4,14 @@ on:
   push:
     branches: [main]
     paths:
-      - 'deploy/caddy/**'
+      # SPEC-INFRA-CADDY-CONFIG-DEPLOY-001 R2 — paths reduced from
+      # `deploy/caddy/**` to image-relevant files only. Caddyfile sync
+      # moved to deploy-compose.yml so config-only edits no longer
+      # trigger a 5-10 min image rebuild. Pre-merge syntax validation
+      # of the Caddyfile is in caddy-validate.yml (R3).
+      - 'deploy/caddy/Dockerfile'
+      - 'deploy/caddy/build.sh'
+      - 'deploy/caddy/.trivyignore.yaml'
       - '.github/workflows/caddy.yml'
   workflow_dispatch:
 
