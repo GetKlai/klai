@@ -242,17 +242,23 @@ async def invite_user(
 
     # SPEC-PORTAL-RBAC-001: products are derived from (role, plan, enabled_addons)
     # at read time; no per-user entitlement rows are written here.
-    await db.commit()
-    logger.info("User invited: email=%s, role=%s, org_id=%d", body.email, body.role, org.id)
-
-    # Create personal KB for the new user. Fail-loud: if this raises, the 500
-    # surfaces in the admin UI. The Zitadel invite + portal_users row are
-    # already committed above, so retrying the invite is safe (idempotent) —
-    # the personal KB helper uses ON CONFLICT DO NOTHING semantics.
+    #
+    # Personal KB is created in the SAME transaction as the portal_users INSERT
+    # so that the tenant-scoped GUC (`app.current_org_id`) is still active when
+    # writing to portal_knowledge_bases (Category-D RLS). Splitting the commit
+    # would clear the GUC and trip the strict RLS policy on the KB INSERT —
+    # exact same shape as the "Post-commit db.refresh on RLS tables" pitfall in
+    # .claude/rules/klai/projects/portal-backend.md. If the KB-creation step
+    # fails, the whole transaction rolls back; the Zitadel-side invite is left
+    # behind (rollback can't undo the external API call) and a retry will hit
+    # Zitadel's 409 path — caller is expected to surface that as a clear error
+    # rather than the previous half-state where portal_users existed without a
+    # personal KB and the admin saw a 500.
     from app.services.default_knowledge_bases import create_default_personal_kb
 
     await create_default_personal_kb(zitadel_user_id, org.id, db)
     await db.commit()
+    logger.info("User invited: email=%s, role=%s, org_id=%d", body.email, body.role, org.id)
 
     return InviteResponse(
         user_id=zitadel_user_id,
