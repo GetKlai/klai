@@ -856,7 +856,7 @@ async def save_to_docs(
 
 from starlette.applications import Starlette  # noqa: E402
 from starlette.middleware import Middleware  # noqa: E402
-from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint  # noqa: E402
 from starlette.requests import Request as StarletteRequest  # noqa: E402
 from starlette.responses import JSONResponse, Response  # noqa: E402
 from starlette.routing import Mount, Route  # noqa: E402
@@ -885,7 +885,7 @@ class _WWWAuthenticateMiddleware(BaseHTTPMiddleware):
     can auto-discover the OAuth flow without prior knowledge.
     """
 
-    async def dispatch(self, request, call_next):  # type: ignore[override]
+    async def dispatch(self, request: StarletteRequest, call_next: RequestResponseEndpoint) -> Response:
         # SPEC-MCP-AUTH-001: short-circuit auth on the /mcp endpoint BEFORE
         # FastMCP gets the request. Without this Claude.ai sees HTTP 200 on
         # the initial discovery POST and never triggers the OAuth flow — the
