@@ -66,8 +66,8 @@ KNOWLEDGE_RETRIEVE_URL = os.environ.get(
 # (portal-api). Using the wrong one yields HTTP 401 invalid_internal_secret.
 # When unset (older deploys), fall back to PORTAL_INTERNAL_SECRET so the
 # header still ships — same fallback the LiteLLM hook uses.
-RETRIEVAL_INTERNAL_SECRET = (
-    os.environ.get("RETRIEVAL_INTERNAL_SECRET") or os.environ.get("PORTAL_INTERNAL_SECRET", "")
+RETRIEVAL_INTERNAL_SECRET = os.environ.get("RETRIEVAL_INTERNAL_SECRET") or os.environ.get(
+    "PORTAL_INTERNAL_SECRET", ""
 )
 # SPEC-SEC-INTERNAL-001 REQ-9.5: KNOWLEDGE_INGEST_SECRET is now mandatory.
 # Empty / missing causes module-load failure rather than silently omitting

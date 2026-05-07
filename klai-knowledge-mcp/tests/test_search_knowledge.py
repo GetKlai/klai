@@ -457,12 +457,14 @@ class TestRetrievalSecretUsedForUpstream:
             captured["headers"] = kwargs.get("headers", {})
             return _make_retrieve_response([])
 
-        with patch(
-            "main._asserter.verify",
-            new_callable=AsyncMock,
-            return_value=allow_verify_result(),
-        ), patch.object(httpx.AsyncClient, "post", new=_capture_post), patch(
-            "main.RETRIEVAL_INTERNAL_SECRET", "retrieval-specific-secret"
+        with (
+            patch(
+                "main._asserter.verify",
+                new_callable=AsyncMock,
+                return_value=allow_verify_result(),
+            ),
+            patch.object(httpx.AsyncClient, "post", new=_capture_post),
+            patch("main.RETRIEVAL_INTERNAL_SECRET", "retrieval-specific-secret"),
         ):
             await search_knowledge(query="q", ctx=ctx)
 
@@ -482,11 +484,14 @@ class TestRetrievalSecretUsedForUpstream:
             captured["headers"] = kwargs.get("headers", {})
             return _make_retrieve_response([])
 
-        with patch(
-            "main._asserter.verify",
-            new_callable=AsyncMock,
-            return_value=allow_verify_result(),
-        ), patch.object(httpx.AsyncClient, "post", new=_capture_post):
+        with (
+            patch(
+                "main._asserter.verify",
+                new_callable=AsyncMock,
+                return_value=allow_verify_result(),
+            ),
+            patch.object(httpx.AsyncClient, "post", new=_capture_post),
+        ):
             await search_knowledge(query="q", ctx=ctx)
 
         assert captured["headers"]["X-Caller-Service"] == "knowledge-mcp"
