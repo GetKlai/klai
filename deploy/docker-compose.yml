@@ -225,6 +225,15 @@ services:
       # Phase D plan: replace both vendored files with a proper pip install
       # in a custom litellm image.
       - ./litellm/klai_chat_prompts.py:/app/klai_chat_prompts.py:ro
+      # SPEC-MCP-RETRIEVAL-001 Phase 1: vendored single-file copy of
+      # klai-libs/retrieval-telemetry (kept in sync via deploy/litellm/tests/
+      # test_klai_retrieval_telemetry_drift.py). klai_knowledge.py imports
+      # `from klai_retrieval_telemetry import ...` at module load — without
+      # this mount the litellm container hits ModuleNotFoundError →
+      # ImportError on `klai_knowledge.klai_knowledge_hook` → restart loop
+      # → all chat traffic 500s with "Connection error". Same vendoring
+      # rationale as klai_service_auth.py / klai_chat_prompts.py.
+      - ./litellm/klai_retrieval_telemetry.py:/app/klai_retrieval_telemetry.py:ro
     environment:
       PYTHONPATH: /app
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
