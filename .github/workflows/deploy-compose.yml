@@ -7,6 +7,9 @@ on:
       - 'deploy/docker-compose.yml'
       - 'deploy/docker-compose.override.yml'
       - 'deploy/caddy/Caddyfile'                  # SPEC-INFRA-CADDY-CONFIG-DEPLOY-001 R1 — sync Caddyfile to bind-mount source
+      - 'deploy/alloy/config.alloy'               # SPEC-INFRA-CONFIG-SYNC-001 R3 — alloy log-pipeline config
+      - 'deploy/searxng/settings.yml'             # SPEC-INFRA-CONFIG-SYNC-001 R3 — searxng search config
+      - 'deploy/vexa/profiles.yaml'               # SPEC-INFRA-CONFIG-SYNC-001 R3 — vexa runtime-api meeting-bot profiles
       - 'deploy/grafana/provisioning/**'          # SPEC-SEC-024 M4.2 — alert rule + dashboard
       - 'deploy/scripts/**'                       # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3 — compose-up wrapper + audit-orphan-snapshot
       - 'scripts/smoke-docker-socket-proxy.sh'    # SPEC-SEC-024 M4.3 — smoke-test
@@ -60,6 +63,9 @@ jobs:
               deploy/docker-compose.yml \
               deploy/docker-compose.override.yml \
               deploy/caddy/Caddyfile \
+              deploy/alloy/config.alloy \
+              deploy/searxng/settings.yml \
+              deploy/vexa/profiles.yaml \
               deploy/grafana/provisioning \
               deploy/scripts \
               deploy/systemd \
@@ -115,63 +121,80 @@ jobs:
               docker compose --project-directory /opt/klai up -d grafana
             fi
 
-            # SPEC-INFRA-CADDY-CONFIG-DEPLOY-001 R1+R4 — sync Caddyfile to
-            # bind-mount source. The compose file mounts ./caddy/Caddyfile
-            # (resolved as /opt/klai/caddy/Caddyfile) into the caddy
-            # container at /etc/caddy/Caddyfile. Without this sync, an
-            # image rebuild + container recreate via caddy.yml leaves the
-            # container reading the OLD Caddyfile from the bind-mount.
+            # SPEC-INFRA-CONFIG-SYNC-001 R1 — bash helper for bind-mount
+            # config sync. Replaces the inline Caddyfile block from
+            # SPEC-INFRA-CADDY-CONFIG-DEPLOY-001 (which is now one of
+            # four call-sites). See infra/deploy.md "Bind-mount config
+            # sync — required pattern" for the canonical reference.
             #
-            # Content-aware: only force-recreate when content changed
-            # (mirrors the grafana provisioning sync above). A bind-mount-
-            # only change does not trigger compose recreate via plain
-            # `up -d`. Caddy has `admin off`, so `caddy reload --config`
-            # is unavailable — container restart (~1s TLS interruption)
-            # is the canonical reload, identical to `_reload_caddy()` in
-            # portal-api provisioning. See plan.md for the full rationale.
-            mkdir -p /opt/klai/caddy
-            RSYNC_CADDY_CHANGES=$(rsync -ac --itemize-changes deploy/caddy/Caddyfile /opt/klai/caddy/Caddyfile | grep -E '^[<>*]' || true)
-            if [ -n "$RSYNC_CADDY_CHANGES" ]; then
-              echo "Caddyfile content changed:"
-              echo "$RSYNC_CADDY_CHANGES"
-              docker compose --project-directory /opt/klai up -d --force-recreate caddy
+            # Args:
+            #   $1 = compose service name (for force-recreate + ps -q)
+            #   $2 = source path in this sparse-checkout
+            #   $3 = destination path on host (will mkdir -p its parent)
+            #
+            # Behaviour:
+            #   - If rsync content diff is non-empty → force-recreate
+            #     the service + run a 5×2s health check loop. Fail the
+            #     workflow if the container does not reach `running`
+            #     within 10s.
+            #   - If rsync content diff is empty → skip (idempotent).
+            #
+            # Caddy has `admin off`, so `caddy reload --config` is not
+            # available — container restart is the canonical reload.
+            # Same applies to alloy/searxng/runtime-api: all four read
+            # their config at startup and need a recreate to pick up
+            # changes.
+            sync_and_recreate() {
+              local svc="$1"
+              local src="$2"
+              local dst="$3"
+              mkdir -p "$(dirname "$dst")"
+              local changes
+              changes=$(rsync -ac --itemize-changes "$src" "$dst" | grep -E '^[<>*]' || true)
+              if [ -z "$changes" ]; then
+                echo "$svc config unchanged; skipping recreate."
+                return 0
+              fi
+              echo "$svc config content changed:"
+              echo "$changes"
+              docker compose --project-directory /opt/klai up -d --force-recreate "$svc"
 
-              # SPEC-INFRA-CADDY-CONFIG-DEPLOY-001 R4 — post-recreate
-              # health check. Fail the workflow if caddy doesn't return
-              # to running within 10s. Operator's recovery is `git revert
-              # + push`, which triggers another sync run that rsyncs the
-              # previous Caddyfile back and force-recreates caddy.
-              #
-              # Uses `docker inspect` with a Go-template (built-in to
-              # docker, no external `jq` needed). `docker compose ps -q`
-              # resolves the container ID stably regardless of compose
-              # naming convention.
-              echo "::group::Caddy post-recreate health check"
-              HEALTHY=0
+              echo "::group::$svc post-recreate health check"
+              local healthy=0
+              local i cid status
               for i in 1 2 3 4 5; do
                 sleep 2
-                CID=$(docker compose --project-directory /opt/klai ps -q caddy 2>/dev/null || true)
-                if [ -z "$CID" ]; then
-                  echo "Caddy container not found (attempt ${i}/5)"
+                cid=$(docker compose --project-directory /opt/klai ps -q "$svc" 2>/dev/null || true)
+                if [ -z "$cid" ]; then
+                  echo "$svc container not found (attempt ${i}/5)"
                   continue
                 fi
-                STATUS=$(docker inspect --format '{{.State.Status}}' "$CID" 2>/dev/null || echo "missing")
-                if [ "$STATUS" = "running" ]; then
-                  echo "Caddy is running (attempt ${i})"
-                  HEALTHY=1
+                status=$(docker inspect --format '{{.State.Status}}' "$cid" 2>/dev/null || echo "missing")
+                if [ "$status" = "running" ]; then
+                  echo "$svc is running (attempt ${i})"
+                  healthy=1
                   break
                 fi
-                echo "Caddy state: $STATUS (attempt ${i}/5)"
+                echo "$svc state: $status (attempt ${i}/5)"
               done
-              if [ "$HEALTHY" -ne 1 ]; then
-                echo "::error::Caddy did not reach running state within 10s after recreate"
-                docker compose --project-directory /opt/klai logs --tail 50 caddy || true
+              if [ "$healthy" -ne 1 ]; then
+                echo "::error::$svc did not reach running state within 10s after recreate"
+                docker compose --project-directory /opt/klai logs --tail 50 "$svc" || true
                 exit 1
               fi
               echo "::endgroup::"
-            else
-              echo "Caddyfile unchanged; skipping caddy recreate."
-            fi
+            }
+
+            # SPEC-INFRA-CONFIG-SYNC-001 R2 — apply helper to all four
+            # single-file relative bind-mounts that lack a dedicated
+            # service-deploy workflow. Note vexa's profiles.yaml is
+            # mounted into the runtime-api compose service, NOT a
+            # service named "vexa" — the asymmetry matters for the
+            # force-recreate target.
+            sync_and_recreate caddy       deploy/caddy/Caddyfile        /opt/klai/caddy/Caddyfile
+            sync_and_recreate alloy       deploy/alloy/config.alloy     /opt/klai/alloy/config.alloy
+            sync_and_recreate searxng     deploy/searxng/settings.yml   /opt/klai/searxng/settings.yml
+            sync_and_recreate runtime-api deploy/vexa/profiles.yaml     /opt/klai/vexa/profiles.yaml
 
             # SPEC-SEC-024 M4.3 — sync smoke-test script. `chmod +x` because
             # git clone on a Linux runner usually preserves the execute bit,

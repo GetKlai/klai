@@ -31,6 +31,115 @@ CI service workflows do NOT copy compose to server — only pull image + restart
 `deploy-compose.yml` auto-syncs when `deploy/docker-compose.yml` changes on main.
 Manual: `scp deploy/docker-compose.yml core-01:/opt/klai/docker-compose.yml`
 
+## Bind-mount config sync — required pattern (HIGH)
+
+> Closes the bind-mount-without-sync-workflow class of bugs that the
+> Caddyfile incident (2026-05-07, SPEC-INFRA-CADDY-CONFIG-DEPLOY-001)
+> exposed. Codified by SPEC-INFRA-CONFIG-SYNC-001.
+
+### The class
+
+When `deploy/docker-compose.yml` declares a relative bind-mount of
+the shape `- ./<svc>/<file>:/etc/...`, the host source resolves to
+`/opt/klai/<svc>/<file>`. Without a workflow that syncs the file
+from the repo to that host path, edits to the repo never reach the
+running container. The bind-mount silently uses whatever was scp'd
+manually long ago — sometimes drifting for months without anyone
+noticing.
+
+The Caddyfile incident was a concrete instance: image rebuilds via
+`caddy.yml` recreated the container correctly, but the bind-mount
+source on `/opt/klai/caddy/Caddyfile` had not been touched since
+the last manual `scp`. A new Caddyfile change merged to main was
+invisible to production for an unknown number of days until someone
+asked "why does this directive not work?".
+
+### The fix
+
+`.github/workflows/deploy-compose.yml` ships a bash helper
+`sync_and_recreate <compose-service> <repo-src> <host-dst>` that:
+
+1. Adds the source path to its `paths:` trigger and sparse-checkout
+2. Rsyncs with `-ac --itemize-changes` (content-checksum, ignores
+   mtime churn from a fresh git clone)
+3. On content change: `docker compose ... up -d --force-recreate
+   <service>` + 5×2s health check loop using `docker inspect
+   --format '{{.State.Status}}'`. Workflow fails on timeout.
+4. On no change: idempotent skip (no recreate, no log noise)
+
+### Required when adding a new bind-mount (3-step checklist)
+
+When you add a new line of the form `- ./<svc>/<file>:/...` to
+`deploy/docker-compose.yml`, you MUST in the same PR:
+
+1. Add `'deploy/<svc>/<file>'` to `deploy-compose.yml`'s `paths:`
+   trigger
+2. Add the same path to the `git sparse-checkout set` invocation in
+   the workflow's script
+3. Add a `sync_and_recreate <compose-service> deploy/<svc>/<file>
+   /opt/klai/<svc>/<file>` call alongside the existing four
+
+If the bind-mount is a directory (not a single file), use a
+directory-rsync block in the style of the existing grafana
+provisioning sync — the helper is single-file only.
+
+### Inventory (as of SPEC-INFRA-CONFIG-SYNC-001)
+
+#### Class A — synced via `sync_and_recreate` helper
+
+- `deploy/caddy/Caddyfile` → compose service `caddy`
+- `deploy/alloy/config.alloy` → compose service `alloy`
+- `deploy/searxng/settings.yml` → compose service `searxng`
+- `deploy/vexa/profiles.yaml` → compose service `runtime-api`
+  (note the asymmetry: NOT a service named "vexa" — the file is
+  consumed by runtime-api)
+
+#### Class A-dir — synced via directory rsync (predates helper)
+
+- `deploy/grafana/provisioning/` → compose service `grafana`
+  (SPEC-OBS-001 Phase C, kept inline because helper is single-file
+  only; refactor only if a second dir bind-mount appears)
+
+#### Class B — own dedicated workflow
+
+- `deploy/litellm/*.{py,yaml}` → `litellm-hook-deploy.yml`
+- `deploy/librechat/...` → `deploy-librechat-config.yml`
+- Tenant Caddyfiles (`caddy/tenants/*.caddyfile`) → portal-api
+  `_write_tenant_caddyfile` runtime (NOT CI — per-tenant, dynamic)
+
+#### Class C — one-shot init, no drift risk
+
+- `deploy/postgres/init.sql` — read once on DB volume init
+- `deploy/firecrawl-nuq-init.sql` — read once on DB volume init
+
+### When you change a Class A file
+
+Just `git push`. The workflow rsyncs + force-recreates. ~30s end-
+to-end. Health check fails the workflow on container-not-running;
+operator's recovery is `git revert + push`.
+
+### When you change a Class A-dir file
+
+Same — directory rsync handles it. ~30s end to end.
+
+### When you change a Class B file
+
+Use the dedicated workflow — see the workflow's own paths-trigger
+and follow that contract.
+
+### When you change a Class C file
+
+Don't bother editing the existing file directly — it only affects
+fresh DB-volume bootstraps. For existing prod, write a migration.
+
+### Adding a new service with a bind-mount config?
+
+Default to Class A. Class B is justified only when the service has
+a non-trivial reload mechanism that recreate cannot replace, or
+when its deploy cadence differs strongly from the rest of compose.
+Class C is rare — only for true one-shot init that cannot be a
+migration.
+
 ## Atomic env writes (CRIT)
 Never `cat >` or `echo >` to a live `.env`. Write-to-temp + validate + `mv`:
 ```bash
