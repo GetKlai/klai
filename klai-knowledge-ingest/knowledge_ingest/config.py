@@ -104,7 +104,18 @@ class Settings(BaseSettings):
     # SPEC-TAXONOMY-V2-CONSOLIDATION-001 along with the V1 fallback path —
     # V2 had been the default since PR #408 and the fallback was never used
     # in production.
-    taxonomy_bootstrap_min_cluster_size_floor: int = 5
+    #
+    # ``min_cluster_size_floor`` lowered 5 → 3 in
+    # SPEC-TAXONOMY-V2-CONSOLIDATION-002. With floor=5 + the adaptive formula
+    # ``max(floor, doc_count // 50)`` HDBSCAN under-fitted at typical KB sizes
+    # (e.g. 154 docs → 3 clusters, 5-9 broken-down by content but EOM merged
+    # them into 3 because no smaller stable cluster could form). The IA
+    # research sweet spot for top-level taxonomy navigation is 5-9 nodes
+    # (Miller's law: above 9 = decision paralysis; below 5 = too coarse).
+    # Floor=3 lets HDBSCAN form the smaller stable clusters that exist in
+    # the data, landing typical bootstrap output back in the 5-9 range
+    # without changing the EOM cluster-selection method.
+    taxonomy_bootstrap_min_cluster_size_floor: int = 3
     taxonomy_bootstrap_max_clusters: int = 20
     taxonomy_bootstrap_top_n_per_cluster: int = 8
 
