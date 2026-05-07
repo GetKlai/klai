@@ -917,6 +917,13 @@ services:
       # identity to upstream services (knowledge-ingest, klai-docs).
       PORTAL_API_URL: http://portal-api:8010
       PORTAL_INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
+      # SPEC-MCP-RETRIEVAL-001: retrieval-api endpoint + secret for the
+      # search_knowledge tool. retrieval-api validates against its own
+      # INTERNAL_SECRET (sourced from RETRIEVAL_API_INTERNAL_SECRET in SOPS) —
+      # different from KNOWLEDGE_INGEST_SECRET and PORTAL_INTERNAL_SECRET.
+      # Without this, every search_knowledge call HTTP 401s upstream.
+      KNOWLEDGE_RETRIEVE_URL: http://retrieval-api:8040/retrieve
+      RETRIEVAL_INTERNAL_SECRET: ${RETRIEVAL_API_INTERNAL_SECRET}
     networks:
       - klai-net
     depends_on:
