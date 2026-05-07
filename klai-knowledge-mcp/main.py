@@ -838,6 +838,13 @@ async def save_to_docs(
         },
     }
 
+    # Idempotency-Key is REQUIRED by docs-app for page creation (REQ-UNW-03).
+    # Updates to an existing page treat it as optional, but sending one is
+    # always safe (REQ-STA-01: same key returns the existing page). A fresh
+    # uuid4 per call keeps "second tool invocation" semantics correct: the
+    # second call creates a NEW page with a NEW path, not a replay.
+    idempotency_key = str(uuid.uuid4())
+
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.put(
@@ -848,6 +855,7 @@ async def save_to_docs(
                     "X-User-ID": verified.user_id,
                     "X-Org-ID": verified.org_id,
                     "Content-Type": "application/json",
+                    "Idempotency-Key": idempotency_key,
                 },
             )
     except httpx.RequestError as exc:
@@ -1030,7 +1038,7 @@ async def search_knowledge(
 
 from starlette.applications import Starlette  # noqa: E402
 from starlette.middleware import Middleware  # noqa: E402
-from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint  # noqa: E402
 from starlette.requests import Request as StarletteRequest  # noqa: E402
 from starlette.responses import JSONResponse, Response  # noqa: E402
 from starlette.routing import Mount, Route  # noqa: E402
@@ -1059,7 +1067,11 @@ class _WWWAuthenticateMiddleware(BaseHTTPMiddleware):
     can auto-discover the OAuth flow without prior knowledge.
     """
 
-    async def dispatch(self, request, call_next):  # type: ignore[override]
+    async def dispatch(
+        self,
+        request: StarletteRequest,
+        call_next: RequestResponseEndpoint,
+    ) -> Response:
         # SPEC-MCP-AUTH-001: short-circuit auth on the /mcp endpoint BEFORE
         # FastMCP gets the request. Without this Claude.ai sees HTTP 200 on
         # the initial discovery POST and never triggers the OAuth flow — the

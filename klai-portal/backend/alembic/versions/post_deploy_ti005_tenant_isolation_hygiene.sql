@@ -167,6 +167,21 @@ CREATE POLICY feedback_events_insert_policy ON portal_feedback_events
         OR org_id = NULLIF(current_setting('app.current_org_id', true), '')::integer
     );
 
+-- portal_feedback_events -- realign "feedback_events_select_policy"
+-- (migration b6c7d8e9f0a1). The original CREATE POLICY used a direct
+-- ``::integer`` cast on ``current_setting('app.current_org_id', false)``
+-- which raises ``invalid input syntax for type integer: ""`` whenever a
+-- caller queries without tenant context (e.g. cross-org admin sweeps).
+-- Match the audit_log / product_events NULLIF pattern so missing context
+-- yields NULL → no rows visible, no error. Same intent as the existing
+-- INSERT policy above.
+DROP POLICY IF EXISTS feedback_events_select_policy ON portal_feedback_events;
+CREATE POLICY feedback_events_select_policy ON portal_feedback_events
+    FOR SELECT TO portal_api
+    USING (
+        org_id = NULLIF(current_setting('app.current_org_id', true), '')::integer
+    );
+
 -- tenant_lifecycle_events -- tighten "tenant_lifecycle_events_insert"
 -- (post_deploy_7e2d3c1a9b8f.sql). The deprovisioning orchestrator writes
 -- within set_tenant(state.org_id) context (deprovisioning_steps.py:750),

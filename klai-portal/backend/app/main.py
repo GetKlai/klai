@@ -1,10 +1,12 @@
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import structlog
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
+from fastapi.staticfiles import StaticFiles
 
 from app.api import me, signup
 from app.api.admin import router as admin_router
@@ -298,6 +300,15 @@ app.include_router(admin_api_keys_router)
 app.include_router(admin_widgets_router)
 app.include_router(partner_router)
 app.include_router(oauth_router)
+
+# Static files for portal-api owned assets (e.g. OAuth consent page CSS).
+# Mounted AFTER all routers so route handlers take priority.
+# Caddy must forward /static/* to portal-api (see deploy/caddy/Caddyfile @oauth-mcp block).
+app.mount(
+    "/static",
+    StaticFiles(directory=Path(__file__).parent / "static"),
+    name="static",
+)
 
 
 @app.get("/health")

@@ -36,6 +36,7 @@ mcp_token_client.py`` for the matching client-side library.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
@@ -182,8 +183,6 @@ def verify_pkce_s256(code_verifier: str, code_challenge: str) -> bool:
     other than S256 — REQ-13.
     """
     digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
-    import base64
-
     expected = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
     return hmac.compare_digest(expected, code_challenge)
 
@@ -244,9 +243,15 @@ class IssuedTokens:
     """Returned from ``issue_token_pair`` and forwarded to the client.
 
     The raw values are returned ONCE; subsequent reads only see hashes.
+    ``org_id`` and ``user_id`` are exposed so callers can emit accurate
+    audit-log entries for the refresh-token grant — without them the
+    audit row falls back to ``org_id=0`` because the refresh code-path
+    never sees the original portal_orgs.id otherwise.
     """
 
     token_id: int
+    org_id: int
+    user_id: int
     access_token: str
     refresh_token: str
     expires_in: int  # seconds until access-token expiry
@@ -290,6 +295,8 @@ async def issue_token_pair(
 
     return IssuedTokens(
         token_id=row.id,
+        org_id=row.org_id,
+        user_id=row.user_id,
         access_token=access_token,
         refresh_token=refresh_token,
         expires_in=int((expires_at - now).total_seconds()),
@@ -421,9 +428,14 @@ async def verify_access_token(
         # portal_users.zitadel_user_id is the canonical identifier downstream
         # services key on (matches IdentityAsserter.verify return shape).
         user_id=user_row.zitadel_user_id,
-        # str(portal_orgs.id) — knowledge-ingest expects the integer-as-string
-        # representation; matches /internal/identity/verify wire shape.
-        org_id=str(token_row.org_id),
+        # Zitadel resourceowner id (BIG number string) — matches the
+        # /internal/identity/verify wire shape exactly. Downstream services
+        # (docs-app requireOrgAccess, knowledge-ingest, retrieval-api) compare
+        # X-Org-ID against portal_orgs.zitadel_org_id; returning the small
+        # portal_orgs.id (str(token_row.org_id)) here causes 403 Forbidden
+        # because docs-app's check `payload.org_id !== org.zitadel_org_id`
+        # rejects "8" when expecting "368884765035593759".
+        org_id=org_row.zitadel_org_id,
         org_slug=org_row.slug,
         scopes=tuple(token_row.scopes or [DEFAULT_SCOPE]),
         resource_uri=token_row.resource_uri,
@@ -494,8 +506,20 @@ async def refresh_access_token(
     if not raw_refresh_token.startswith(REFRESH_TOKEN_PREFIX):
         return RefreshOutcome(failure_reason="invalid_grant")
 
+    # SPEC-MCP-AUTH-001 REQ-26 race-hardening (klai-security-audit
+    # 2026-05-07 finding A4): two concurrent refresh requests with the
+    # same raw_refresh_token previously both saw ``revoked_at IS NULL``,
+    # both minted a new pair, and both marked the old row revoked —
+    # leaving the legitimate client with two valid access+refresh pairs.
+    # ``with_for_update()`` issues ``SELECT … FOR UPDATE`` so the second
+    # request blocks on PostgreSQL row lock until the first commits;
+    # the second's revoked_at-check then trips the grace-window branch
+    # and returns invalid_grant cleanly. Lock scope is a single row;
+    # contention only matters on real replays.
     refresh_hash = _hash_token(raw_refresh_token)
-    result = await db.execute(select(PortalMcpToken).where(PortalMcpToken.refresh_token_hash == refresh_hash).limit(1))
+    result = await db.execute(
+        select(PortalMcpToken).where(PortalMcpToken.refresh_token_hash == refresh_hash).limit(1).with_for_update()
+    )
     row = result.scalar_one_or_none()
     if row is None:
         return RefreshOutcome(failure_reason="invalid_grant")
@@ -827,13 +851,20 @@ async def approve_auth_request(
 
 
 async def consume_auth_code(redis: Any, code: str) -> dict[str, Any] | None:
-    """Atomically GET + DEL an auth code. Returns None on miss or replay."""
-    raw = await redis.get(f"{_CACHE_KEY_AUTH_CODE}{code}")
+    """Atomically GET + DEL an auth code. Returns None on miss or replay.
+
+    SPEC-MCP-AUTH-001 REQ-13 (single-use auth code), klai-security-audit
+    2026-05-07 finding C2: the previous GET-then-DEL pair was non-atomic,
+    so two parallel /oauth/token calls with the same code could both
+    receive the payload (and both DELETE-as-noop). We now use Redis
+    ``GETDEL`` (Redis 6.2+) which atomically returns and removes the
+    key in a single round-trip — replay impossible at the cache layer.
+    """
+    raw = await redis.execute_command("GETDEL", f"{_CACHE_KEY_AUTH_CODE}{code}")
     if raw is None:
         return None
-    # DEL must happen before the caller observes the payload. If DEL fails,
-    # we re-raise — caller treats as invalid_grant.
-    await redis.delete(f"{_CACHE_KEY_AUTH_CODE}{code}")
+    # ``redis-py`` returns bytes by default unless decode_responses=True;
+    # JSON-decoder accepts both str and bytes since 3.6.
     return json.loads(raw)
 
 

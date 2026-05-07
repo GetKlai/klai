@@ -16,7 +16,6 @@ The connector-OAuth surface (``/api/oauth/google_drive/...``, etc.) lives in
 from __future__ import annotations
 
 import hmac
-import html as _html
 import json
 import logging
 import secrets
@@ -27,6 +26,7 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 
@@ -45,7 +45,24 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["mcp-oauth"])
 
 _TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
-_CONSENT_TEMPLATE_PATH = _TEMPLATES_DIR / "oauth_consent.html"
+
+# Single Jinja2 Environment per process: templates compile once, autoescape on
+# for HTML/XML extensions so any string interpolated via {{ var }} is
+# automatically HTML-escaped (no per-call ``| e`` discipline needed). The
+# previous str.replace renderer broke silently whenever a contributor edited
+# template whitespace; Jinja matches the AST, not byte-exact strings.
+#
+# nosemgrep rationale: the ``direct-use-of-jinja2`` rule expects
+# ``flask.render_template()`` which is Flask-specific. We're in FastAPI; the
+# autoescape=select_autoescape(...) on the Environment is the
+# functionally-equivalent XSS guard the rule asks for.
+# nosemgrep: python.flask.security.xss.audit.direct-use-of-jinja2.direct-use-of-jinja2
+_jinja_env = Environment(
+    loader=FileSystemLoader(_TEMPLATES_DIR),
+    autoescape=select_autoescape(["html", "htm", "xml"]),
+    trim_blocks=False,
+    lstrip_blocks=False,
+)
 
 
 def _render_consent_page(
@@ -54,97 +71,35 @@ def _render_consent_page(
     csrf_token: str,
     client_name: str,
     redirect_uri: str,
-    application_type: str,
-    scopes: list[str],
+    application_type: str,  # accepted for backwards-compat; not rendered
+    scopes: list[str],  # accepted for backwards-compat; not rendered
     user_email: str,
     user_org_name: str,
     is_newly_registered: bool,
 ) -> HTMLResponse:
-    """Render the consent page with simple Python str-replace.
+    """Render the OAuth consent page via Jinja2.
 
-    No Jinja2 dependency — the template is small and the substitution
-    surface is bounded. Every interpolated value is HTML-escaped at
-    insertion time to prevent XSS via client_name / redirect_uri / etc.
+    ``application_type`` and ``scopes`` are accepted by the signature for
+    backwards compatibility with callers but are intentionally not rendered:
+    the heading + lead sentence already convey everything an end user needs
+    (per Mark's review 2026-05-07: drop technical labels that cargo-cult
+    the OAuth spec but add no signal for non-developer users).
+
+    All variable interpolation is HTML-escaped via Jinja2 autoescape;
+    untrusted ``client_name`` / ``redirect_uri`` / ``user_email`` cannot
+    inject markup.
     """
-    template = _CONSENT_TEMPLATE_PATH.read_text(encoding="utf-8")
-
-    # Render the {% if is_newly_registered %} block — simple two-state
-    # toggle, not a full Jinja replacement.
-    if is_newly_registered:
-        new_badge = '<span class="badge-new" title="Deze app heeft zich net pas geregistreerd">Net geregistreerd</span>'
-        warn_callout = (
-            '<div class="warn-callout"><strong>Let op:</strong> '
-            "deze app is net geregistreerd. Controleer of de naam en het "
-            "callback-adres hieronder kloppen voordat je toestemming geeft."
-            "</div>"
-        )
-    else:
-        new_badge = ""
-        warn_callout = ""
-
-    # Render the {% if application_type == 'native' %} branch.
-    app_type_label = "Desktop / lokale app" if application_type == "native" else "Web-app"
-
-    # Render the {% for scope in scopes %} loop.
-    scope_items = []
-    for scope in scopes:
-        scope_human = (
-            "Lezen en bewerken van je persoonlijke en organisatie-kennisbank"
-            if scope == "mcp:knowledge"
-            else _html.escape(scope)
-        )
-        scope_items.append(f'<li><span class="scope-icon">✓</span> {scope_human}</li>')
-    scopes_block = "\n".join(scope_items)
-
-    # The optional ``( {{ user_org_name | e }})`` segment.
-    org_segment = f" ({_html.escape(user_org_name)})" if user_org_name else ""
-
-    # Strip Jinja-style blocks the template still has (the static fallback
-    # path) and substitute markers with values. Use unique markers (curly +
-    # token) so we don't double-replace.
-    rendered = (
-        template
-        # Drop literal Jinja blocks — they're already simulated above.
-        .replace(
-            '{% if is_newly_registered %}<span class="badge-new" title="Deze app heeft zich net pas geregistreerd">Net geregistreerd</span>{% endif %}',
-            new_badge,
-        )
-        .replace(
-            '{% if is_newly_registered %}\n        <div class="warn-callout">\n            <strong>Let op:</strong> deze app is net geregistreerd. Controleer of de naam en het callback-adres hieronder kloppen voordat je toestemming geeft.\n        </div>\n        {% endif %}',
-            warn_callout,
-        )
-        .replace(
-            "{% if application_type == 'native' %}Desktop / lokale app{% else %}Web-app{% endif %}",
-            app_type_label,
-        )
-        # The {% for ... %} block — replace from <ul> open to </ul> close
-        # with our pre-rendered scope items wrapped in the same <ul>.
+    del application_type, scopes  # silence unused-arg linters
+    template = _jinja_env.get_template("oauth_consent.html")
+    rendered = template.render(
+        request_id=request_id,
+        csrf_token=csrf_token,
+        client_name=client_name,
+        redirect_uri=redirect_uri,
+        user_email=user_email,
+        user_org_name=user_org_name,
+        is_newly_registered=is_newly_registered,
     )
-    # For the scopes loop: regex-light approach — locate the open/close.
-    start_marker = "{% for scope in scopes %}"
-    end_marker = "{% endfor %}"
-    start_idx = rendered.find(start_marker)
-    end_idx = rendered.find(end_marker, start_idx)
-    if start_idx != -1 and end_idx != -1:
-        rendered = rendered[:start_idx] + scopes_block + rendered[end_idx + len(end_marker) :]
-
-    # Escape user-controlled values then substitute simple {{ var }} markers.
-    safe_vars: dict[str, str] = {
-        "{{ request_id | e }}": _html.escape(request_id),
-        "{{ csrf_token | e }}": _html.escape(csrf_token),
-        "{{ client_name | e }}": _html.escape(client_name),
-        "{{ redirect_uri | e }}": _html.escape(redirect_uri),
-        "{{ user_email | e }}": _html.escape(user_email),
-    }
-    for marker, value in safe_vars.items():
-        rendered = rendered.replace(marker, value)
-
-    # The org segment: replace the conditional inline expression.
-    rendered = rendered.replace(
-        "{% if user_org_name %} ({{ user_org_name | e }}){% endif %}",
-        org_segment,
-    )
-
     return HTMLResponse(rendered, status_code=200)
 
 
@@ -288,6 +243,19 @@ async def register_client(request: Request) -> JSONResponse:
                 return _oauth_error("invalid_redirect_uri", message, 400)
             return _oauth_error("invalid_request", message, 400)
 
+        # Snapshot ORM fields BEFORE exit — finally rolls back which expires
+        # the instance even with expire_on_commit=False (see authorize_post).
+        # Today this works because db.commit() runs first, but the snapshot
+        # makes intent explicit and removes a foot-gun for future edits.
+        snap_client_id = registered.client_id
+        snap_client_name = registered.client_name
+        snap_redirect_uris = list(registered.redirect_uris)
+        snap_grant_types = list(registered.grant_types)
+        snap_response_types = list(registered.response_types)
+        snap_token_endpoint_auth_method = registered.token_endpoint_auth_method
+        snap_application_type = registered.application_type
+        snap_scopes = list(registered.scopes)
+
         await db.commit()
 
     try:
@@ -296,11 +264,11 @@ async def register_client(request: Request) -> JSONResponse:
             actor=f"dcr:{source_ip}",
             action="oauth_client.registered",
             resource_type="oauth_client",
-            resource_id=registered.client_id,
+            resource_id=snap_client_id,
             details={
-                "client_name": registered.client_name,
-                "redirect_uris": registered.redirect_uris,
-                "application_type": registered.application_type,
+                "client_name": snap_client_name,
+                "redirect_uris": snap_redirect_uris,
+                "application_type": snap_application_type,
             },
         )
     except Exception:  # pragma: no cover
@@ -308,14 +276,14 @@ async def register_client(request: Request) -> JSONResponse:
 
     return JSONResponse(
         {
-            "client_id": registered.client_id,
-            "client_name": registered.client_name,
-            "redirect_uris": registered.redirect_uris,
-            "grant_types": registered.grant_types,
-            "response_types": registered.response_types,
-            "token_endpoint_auth_method": registered.token_endpoint_auth_method,
-            "application_type": registered.application_type,
-            "scopes": " ".join(registered.scopes),
+            "client_id": snap_client_id,
+            "client_name": snap_client_name,
+            "redirect_uris": snap_redirect_uris,
+            "grant_types": snap_grant_types,
+            "response_types": snap_response_types,
+            "token_endpoint_auth_method": snap_token_endpoint_auth_method,
+            "application_type": snap_application_type,
+            "scopes": " ".join(snap_scopes),
         },
         status_code=201,
     )
@@ -495,17 +463,23 @@ async def authorize_post(
         return RedirectResponse(f"{pending.redirect_uri}?{urlencode(params)}", status_code=302)
 
     # Resolve portal_users.id + portal_orgs.id for the session's user.
+    # cross_org_session() rolls back on exit (no commit here); reading ORM
+    # attributes after the with-block raises DetachedInstanceError because
+    # rollback expires the instance even with expire_on_commit=False on the
+    # sessionmaker. Extract the int ids inside the block.
     async with cross_org_session() as db:
         user_org = await _resolve_user_org(db, session.zitadel_user_id)
         if user_org is None:
             return _oauth_error("login_required", "session has no portal user", 401)
         user, org = user_org
+        user_id = user.id
+        org_id = org.id
 
     code = await svc.approve_auth_request(
         redis,
         request_id,
-        user_id=user.id,
-        org_id=org.id,
+        user_id=user_id,
+        org_id=org_id,
     )
     if code is None:
         return _oauth_error("invalid_request", "expired", 400)
@@ -565,11 +539,18 @@ async def _exchange_authorization_code(form: Any) -> JSONResponse:
         if client is None:
             return _oauth_error("invalid_grant", "unknown client", 400)
 
+        # Snapshot client fields BEFORE the with-block exits — see Bug A
+        # rationale in authorize_post: rollback in finally expires ORM
+        # instances even with expire_on_commit=False on the sessionmaker.
+        audit_client_id = client.client_id
+        audit_client_name = client.client_name
+        client_db_id = client.id
+
         issued = await svc.issue_token_pair(
             db,
             org_id=payload["org_id"],
             user_id=payload["user_id"],
-            client_db_id=client.id,
+            client_db_id=client_db_id,
             scopes=payload.get("scopes", [svc.DEFAULT_SCOPE]),
             resource_uri=payload["resource"],
         )
@@ -583,8 +564,8 @@ async def _exchange_authorization_code(form: Any) -> JSONResponse:
             resource_type="mcp_token",
             resource_id=str(issued.token_id),
             details={
-                "client_id": client.client_id,
-                "client_name": client.client_name,
+                "client_id": audit_client_id,
+                "client_name": audit_client_name,
                 "scopes": payload.get("scopes", [svc.DEFAULT_SCOPE]),
                 "expires_in": issued.expires_in,
             },
@@ -627,8 +608,11 @@ async def _exchange_refresh_token(form: Any) -> JSONResponse:
 
     issued = outcome.success
     try:
+        # IssuedTokens propagates org_id from the freshly minted row so the
+        # audit row lands under the correct tenant — pre-2026-05-07 this was
+        # hard-coded to 0 because the dataclass did not expose org_id.
         await audit.log_event(
-            org_id=0,
+            org_id=issued.org_id,
             actor=f"mcp_token:{issued.token_id}",
             action="mcp_token.refreshed",
             resource_type="mcp_token",

@@ -2,6 +2,8 @@
 paths:
   - "klai-portal/frontend/**"
   - "klai-website/**"
+  - "klai-portal/backend/app/templates/**"
+  - "klai-portal/backend/app/static/**"
 ---
 
 # Klai Styleguide
