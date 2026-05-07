@@ -361,12 +361,27 @@ async def authorize_get(
     if not code_challenge or len(code_challenge) < 43:
         return _oauth_error("invalid_request", "code_challenge missing/too short", 400)
     # RFC 8707: if client omits resource we bind to the canonical one.
-    # Claude.ai does not always pass `resource=`; rejecting on mismatch
-    # would block the consent flow before it starts.
+    # Match is normalised on trailing slash + path component variants.
+    # The MCP spec (§ Resource Parameter Implementation) explicitly allows
+    # both `https://mcp.example.com` and `https://mcp.example.com/mcp` as
+    # canonical forms — clients pick either. Anthropic's broker normalises
+    # to `https://mcp.example.com/`. Trailing-slash variation is common
+    # interop noise per the spec note.
+    canonical = settings.mcp_oauth_resource_url
     if not resource:
-        resource = settings.mcp_oauth_resource_url
-    elif resource != settings.mcp_oauth_resource_url:
-        return _oauth_error("invalid_target", "resource mismatch", 400)
+        resource = canonical
+    else:
+        # Accept any of: canonical, canonical+trailing-slash, canonical+/mcp
+        accepted = {
+            canonical,
+            canonical.rstrip("/"),
+            canonical.rstrip("/") + "/",
+            canonical.rstrip("/") + "/mcp",
+        }
+        if resource not in accepted and resource.rstrip("/") not in accepted:
+            return _oauth_error("invalid_target", "resource mismatch", 400)
+        # Pin to canonical for downstream audience binding.
+        resource = canonical
 
     requested_scopes = scope.split()
     if not set(requested_scopes).issubset(svc.SUPPORTED_SCOPES):
