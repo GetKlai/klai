@@ -104,6 +104,12 @@ class McpTokenVerifyResult:
     org_slug: str | None = None
     scopes: tuple[str, ...] = ()
     resource_uri: str | None = None
+    # SPEC-MCP-RETRIEVAL-001 REQ-6: OAuth client_id (the DCR-issued
+    # ``portal_oauth_clients.client_id`` string) for telemetry attribution
+    # in downstream consumers (knowledge-mcp's search_knowledge tool).
+    # ``None`` means the portal-side resolution didn't find a matching
+    # client row — defensive default; in practice the FK exists.
+    client_id: str | None = None
     reason: str | None = None
 
     @classmethod
@@ -115,6 +121,7 @@ class McpTokenVerifyResult:
         org_slug: str | None,
         scopes: tuple[str, ...],
         resource_uri: str | None,
+        client_id: str | None = None,
     ) -> McpTokenVerifyResult:
         return cls(
             verified=True,
@@ -123,6 +130,7 @@ class McpTokenVerifyResult:
             org_slug=org_slug,
             scopes=scopes,
             resource_uri=resource_uri,
+            client_id=client_id,
         )
 
     @classmethod
@@ -162,12 +170,18 @@ def _interpret_response(payload: Any) -> McpTokenVerifyResult:
     org_slug = body.get("org_slug")
     scopes = body.get("scopes") or []
     resource_uri = body.get("resource_uri")
+    client_id = body.get("client_id")
 
     if not isinstance(user_id, str) or not isinstance(org_id, str):
         return McpTokenVerifyResult.deny("portal_unreachable")
     if org_slug is not None and not isinstance(org_slug, str):
         return McpTokenVerifyResult.deny("portal_unreachable")
     if not isinstance(scopes, list):
+        return McpTokenVerifyResult.deny("portal_unreachable")
+    # client_id is optional in the wire shape (older portal builds may
+    # omit the key entirely). Reject only if the type is wrong, not if
+    # the value is None.
+    if client_id is not None and not isinstance(client_id, str):
         return McpTokenVerifyResult.deny("portal_unreachable")
 
     return McpTokenVerifyResult.allow(
@@ -176,6 +190,7 @@ def _interpret_response(payload: Any) -> McpTokenVerifyResult:
         org_slug=org_slug,
         scopes=tuple(str(s) for s in scopes),
         resource_uri=resource_uri if isinstance(resource_uri, str) else None,
+        client_id=client_id if isinstance(client_id, str) else None,
     )
 
 

@@ -758,6 +758,10 @@ class RetrievalLogIn(BaseModel):
     query_resolved: str
     embedding_model_version: str
     retrieved_at: datetime
+    # SPEC-MCP-RETRIEVAL-001 REQ-9: optional OAuth client attribution.
+    # ``None`` (the default) = LibreChat traffic; populated = third-party
+    # MCP client (Claude Desktop / Cursor / ChatGPT).
+    caller_client_id: str | None = None
 
 
 @router.post("/v1/retrieval-log", status_code=status.HTTP_201_CREATED)
@@ -791,6 +795,7 @@ async def post_retrieval_log(
             query_resolved=body.query_resolved,
             embedding_model_version=body.embedding_model_version,
             retrieved_at=body.retrieved_at,
+            caller_client_id=body.caller_client_id,
         )
     except HTTPException:
         raise
@@ -919,6 +924,10 @@ class GapEventIn(BaseModel):
     chunks_retrieved: int = 0
     retrieval_ms: int = 0
     taxonomy_node_ids: list[int] | None = None  # SPEC-KB-022 R6: from LiteLLM hook
+    # SPEC-MCP-RETRIEVAL-001 REQ-9: optional OAuth client attribution.
+    # ``None`` (the default) = LibreChat traffic; populated = third-party
+    # MCP client (Claude Desktop / Cursor / ChatGPT).
+    caller_client_id: str | None = None
 
 
 @router.post("/v1/gap-events", status_code=status.HTTP_201_CREATED)
@@ -947,6 +956,7 @@ async def create_gap_event(
         chunks_retrieved=payload.chunks_retrieved,
         retrieval_ms=payload.retrieval_ms,
         taxonomy_node_ids=payload.taxonomy_node_ids,
+        caller_client_id=payload.caller_client_id,
     )
     db.add(gap)
     await db.commit()

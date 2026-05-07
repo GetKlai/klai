@@ -21,6 +21,7 @@ import hashlib
 from app.services.mcp_oauth import (
     ACCESS_TOKEN_PREFIX,
     REFRESH_TOKEN_PREFIX,
+    VerifyResult,
     is_redirect_uri_allowed,
     looks_like_access_token,
     verify_pkce_s256,
@@ -156,3 +157,60 @@ def test_redirect_uri_uppercase_host_normalized() -> None:
     """Hostnames are case-insensitive per RFC 3986."""
     assert is_redirect_uri_allowed("http://LOCALHOST:54321/cb", "native") is True
     assert is_redirect_uri_allowed("https://CHAT.OPENAI.COM/cb", "web") is True
+
+
+# ─── VerifyResult.client_id propagation (SPEC-MCP-RETRIEVAL-001 REQ-5) ────
+
+
+def test_verify_result_to_dict_includes_client_id_on_success() -> None:
+    """VerifyResult success serialisation MUST include the client_id field
+    so knowledge-mcp can label retrieval-log + gap-event telemetry.
+    """
+    r = VerifyResult(
+        verified=True,
+        user_id="zit-user-1",
+        org_id="42",
+        org_slug="acme",
+        scopes=("mcp:knowledge",),
+        resource_uri="https://mcp.getklai.com",
+        client_id="claude-desktop",
+    )
+    d = r.to_dict()
+    assert d["verified"] is True
+    assert d["client_id"] == "claude-desktop"
+
+
+def test_verify_result_to_dict_client_id_none_serialises_as_null() -> None:
+    """Pre-Phase-2 OAuth tokens (issued before this SPEC) won't have a
+    client_id resolution path. The field must serialise as ``null`` so
+    the cache round-trip preserves the None semantic instead of dropping
+    the key.
+    """
+    r = VerifyResult(
+        verified=True,
+        user_id="zit-user-1",
+        org_id="42",
+        org_slug="acme",
+        scopes=("mcp:knowledge",),
+        resource_uri="https://mcp.getklai.com",
+        client_id=None,
+    )
+    d = r.to_dict()
+    assert d["client_id"] is None
+
+
+def test_verify_result_default_client_id_is_none() -> None:
+    """Backwards-compat: callers that don't pass client_id (e.g. older
+    test harnesses) get None by default — same wire shape as a deny."""
+    r = VerifyResult(verified=False, reason="invalid_format")
+    assert r.client_id is None
+
+
+def test_verify_result_deny_to_dict_does_not_carry_client_id() -> None:
+    """Deny path returns only ``{verified: False, reason: ...}``. Adding
+    a client_id key would leak token-row metadata to a caller whose
+    token failed validation."""
+    r = VerifyResult(verified=False, reason="token_revoked")
+    d = r.to_dict()
+    assert d == {"verified": False, "reason": "token_revoked"}
+    assert "client_id" not in d
