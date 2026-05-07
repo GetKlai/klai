@@ -1872,3 +1872,149 @@ async def get_kb_metadata_internal(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="KB not found")
 
     return KbMetadataResponse(slug=kb.slug, description=kb.description)
+
+
+# ============================================================================
+# SPEC-MCP-AUTH-001 REQ-9: /internal/mcp-token/verify
+# ============================================================================
+#
+# Source-of-truth for "is this raw bearer token valid?". Called by
+# klai-knowledge-mcp via the McpTokenAsserter shared library on every tool
+# invocation. Mirrors the /internal/identity/verify pattern for shape +
+# Redis-cached fail-closed semantics.
+
+
+class McpTokenVerifyRequest(BaseModel):
+    """Request body for ``POST /internal/mcp-token/verify``.
+
+    The raw token is forwarded so portal-api can hash + lookup. We never
+    expose the hash on the wire — that would let an attacker who can sniff
+    internal traffic enumerate token-rows by pre-computed hash dictionaries.
+    """
+
+    caller_service: str
+    raw_token: str
+
+
+class McpTokenVerifySuccess(BaseModel):
+    """200 response when the token is valid.
+
+    ``user_id`` and ``org_id`` are strings (zitadel_user_id and
+    str(portal_orgs.id) respectively) to mirror the existing
+    /internal/identity/verify wire shape — knowledge-ingest and klai-docs
+    callers expect strings.
+    """
+
+    verified: Literal[True] = True
+    user_id: str
+    org_id: str
+    org_slug: str | None
+    scopes: list[str]
+    resource_uri: str
+    cache_ttl_seconds: int
+
+
+class McpTokenVerifyDeny(BaseModel):
+    """403/503 response body when the token is denied or unverifiable."""
+
+    verified: Literal[False] = False
+    reason: str
+
+
+@router.post(
+    "/mcp-token/verify",
+    response_model=None,
+)
+async def verify_mcp_token(
+    request: Request,
+    body: McpTokenVerifyRequest,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Verify a klai_mcp_<...> bearer token, return verified identity tuple.
+
+    SPEC-MCP-AUTH-001 REQ-9 + REQ-12 + REQ-15-19. Failure modes:
+
+    - ``HTTP 400 unknown_caller_service`` — body.caller_service not in the
+      known-callers list.
+    - ``HTTP 403 invalid_format`` — token missing the klai_mcp_ prefix.
+    - ``HTTP 403 unknown_token`` — hash not in DB.
+    - ``HTTP 403 token_revoked`` / ``token_expired`` / ``audience_mismatch``
+      / ``user_inactive`` / ``org_deprovisioning``.
+    - ``HTTP 503 cache_unavailable`` — Redis down (auth-class fail-closed).
+    """
+    from app.services.mcp_oauth import verify_access_token
+
+    await _require_internal_token(request)
+
+    if body.caller_service not in {"knowledge-mcp", "scribe-api", "retrieval-api"}:
+        await _audit_internal_call(request, org_id=0)
+        return Response(
+            content=McpTokenVerifyDeny(reason="unknown_caller_service").model_dump_json(),
+            status_code=status.HTTP_400_BAD_REQUEST,
+            media_type="application/json",
+        )
+
+    redis_pool = await get_redis_pool()
+    if redis_pool is None:
+        await _audit_internal_call(request, org_id=0)
+        return Response(
+            content=McpTokenVerifyDeny(reason="cache_unavailable").model_dump_json(),
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            media_type="application/json",
+        )
+
+    # The verify lookup needs cross-org access (we don't yet know which org
+    # owns the token). cross_org_session bypasses RLS via the privileged
+    # role; the verifier then narrows the result via WHERE access_token_hash.
+    from app.core.database import cross_org_session
+
+    async with cross_org_session() as priv_db:
+        result = await verify_access_token(
+            priv_db,
+            redis_pool,
+            raw_token=body.raw_token,
+            expected_resource=settings.mcp_oauth_resource_url,
+        )
+
+    if not result.verified:
+        await _audit_internal_call(request, org_id=0)
+        structlog_logger.warning(
+            "mcp_token_verify_decision",
+            caller_service=body.caller_service,
+            verified=False,
+            reason=result.reason,
+        )
+        # cache_unavailable is the only auth-class failure that should be 503;
+        # everything else is a 403 (token-specific deny).
+        status_code = (
+            status.HTTP_503_SERVICE_UNAVAILABLE if result.reason == "cache_unavailable" else status.HTTP_403_FORBIDDEN
+        )
+        return Response(
+            content=McpTokenVerifyDeny(reason=result.reason or "unknown").model_dump_json(),
+            status_code=status_code,
+            media_type="application/json",
+        )
+
+    # Verified: emit audit + return 200.
+    # result.org_id is str (zitadel-id-style); _audit_internal_call expects int.
+    audit_org_id = int(result.org_id) if result.org_id and result.org_id.isdigit() else 0
+    await _audit_internal_call(request, org_id=audit_org_id)
+    structlog_logger.info(
+        "mcp_token_verify_decision",
+        caller_service=body.caller_service,
+        verified=True,
+        user_id=result.user_id,
+        org_id=result.org_id,
+    )
+    return Response(
+        content=McpTokenVerifySuccess(
+            user_id=result.user_id,  # type: ignore[arg-type]
+            org_id=result.org_id,  # type: ignore[arg-type]
+            org_slug=result.org_slug,
+            scopes=list(result.scopes),
+            resource_uri=result.resource_uri or "",
+            cache_ttl_seconds=result.cache_ttl_seconds,
+        ).model_dump_json(),
+        status_code=status.HTTP_200_OK,
+        media_type="application/json",
+    )
