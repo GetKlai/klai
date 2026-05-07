@@ -319,6 +319,42 @@ cause for this service by replacing both vendored single-files with
 a custom litellm Dockerfile that `pip install`s the deps — once that
 ships, there are no bind-mounts to forget.
 
+## bind-mount-without-sync-workflow (HIGH)
+
+Sibling-class to `docker-compose-restart-vs-recreate`. When a relative
+bind-mount `./<svc>/<file>:/etc/...` is added to
+`deploy/docker-compose.yml`, the host source resolves to
+`/opt/klai/<svc>/<file>` — but **no workflow syncs the file from the
+repo to that path** unless one is explicitly added. Image rebuilds
+recreate the container, but the bind-mount happily reads whatever
+was scp'd manually long ago. Drift can persist for months.
+
+**Reference incidents:**
+- SPEC-INFRA-CADDY-CONFIG-DEPLOY-001 (2026-05-07, `a2a090a5`):
+  `deploy/caddy/Caddyfile` had no sync workflow. Fixed via SPEC.
+- SPEC-INFRA-CONFIG-SYNC-001 (2026-05-07, `c49f0914`): post-Caddy
+  audit found the same gap for `alloy/config.alloy`,
+  `searxng/settings.yml`, and `vexa/profiles.yaml`. The first
+  post-merge run actually detected drift on searxng and runtime-api
+  and recreated both — proving the drift was real, not theoretical.
+
+**Prevention (canonical pattern, codified in `infra/deploy.md`):**
+The 3-step checklist when adding a new relative bind-mount to
+`deploy/docker-compose.yml`:
+
+1. Add `'deploy/<svc>/<file>'` to `deploy-compose.yml`'s `paths:`
+   trigger
+2. Add the same path to the `git sparse-checkout set` invocation
+3. Add a `sync_and_recreate <compose-service> deploy/<svc>/<file>
+   /opt/klai/<svc>/<file>` call in the workflow script
+
+Use the helper for single-file mounts. For directory mounts, use a
+directory-rsync block in the style of grafana provisioning sync.
+
+**See also:** `infra/deploy.md` § "Bind-mount config sync — required
+pattern" for the full Class A/A-dir/B/C inventory of current
+bind-mounts and the helper's behavioural contract.
+
 ## worktree-for-long-running-changes (HIGH)
 When you will make working-tree edits that span more than a single tool call
 — especially test fixes, refactors, or anything that produces an in-flight
