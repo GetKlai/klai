@@ -78,6 +78,13 @@ _CACHE_TTL_AUTH_REQUEST_SECONDS = 600  # 10 min
 _CACHE_TTL_AUTH_CODE_SECONDS = 60
 _CACHE_TTL_LAST_USED_SECONDS = 60  # Rate-limit last_used_at writes to 1/min/token
 
+# Refresh-token rotation grace window. Industry-standard pattern (Auth0, Okta,
+# Better-Auth) to absorb race conditions and stale-state retries without
+# tripping the replay-detection chain-revoke. Replay BEYOND this window is
+# treated as a real signal (token theft) and revokes all tokens for the
+# (client, user) pair.
+_REFRESH_ROTATION_GRACE_SECONDS = 30
+
 
 # ─── Redirect URI allowlist (REQ-20 + A10) ────────────────────────────────
 
@@ -476,15 +483,34 @@ async def refresh_access_token(
     if row is None:
         return RefreshOutcome(failure_reason="invalid_grant")
 
-    # Replay-detection: a revoked-but-rotated token was just presented.
+    now = datetime.now(UTC)
+
+    # Replay-detection with grace window. Race conditions (two near-simultaneous
+    # refresh calls) and stale-state retries on a single client cause the just-
+    # rotated token to be presented again within seconds. Industry pattern
+    # (Auth0, Okta, Better-Auth) is to allow a short overlap window where the
+    # replay is treated as a soft failure (invalid_grant) without revoking the
+    # entire chain. Outside the window, replay is a real signal — revoke
+    # everything for that (client, user) pair.
     if row.revoked_at is not None and row.replaced_by_token_id is not None:
+        # row.revoked_at is timezone-aware (server_default=now()); guard for
+        # naive datetimes that older rows might carry.
+        revoked_at_aware = row.revoked_at if row.revoked_at.tzinfo else row.revoked_at.replace(tzinfo=UTC)
+        seconds_since_rotation = (now - revoked_at_aware).total_seconds()
+        if seconds_since_rotation <= _REFRESH_ROTATION_GRACE_SECONDS:
+            # Soft fail — client still holds the new pair from the original
+            # rotation; this presentation is a stale retry, not theft.
+            logger.info(
+                "mcp_token_refresh_within_grace_window",
+                token_id=row.id,
+                seconds_since_rotation=seconds_since_rotation,
+            )
+            return RefreshOutcome(failure_reason="invalid_grant")
         await _revoke_chain(db, redis, client_db_id=row.client_id, user_id=row.user_id)
         return RefreshOutcome(failure_reason="invalid_grant", revoked_chain=True)
 
     if row.revoked_at is not None:
         return RefreshOutcome(failure_reason="invalid_grant")
-
-    now = datetime.now(UTC)
     if row.refresh_expires_at is None or row.refresh_expires_at < now:
         return RefreshOutcome(failure_reason="invalid_grant")
     if row.resource_uri != expected_resource:
