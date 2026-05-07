@@ -23,7 +23,6 @@ from knowledge_ingest.utils.auth_wall_classifier import (
     classify_auth_wall,
 )
 
-
 # ---------------------------------------------------------------------------
 # HTTP-status sub-rules
 # ---------------------------------------------------------------------------
@@ -359,3 +358,58 @@ def test_classification_dataclass_shape() -> None:
     result = AuthWallClassification(is_walled=True, match_reasons=("http_unauthenticated",))
     assert result.is_walled is True
     assert result.match_reasons == ("http_unauthenticated",)
+
+
+# ---------------------------------------------------------------------------
+# Production regression — repeated auth-wall marker in middle of body
+# ---------------------------------------------------------------------------
+
+
+def test_repeated_login_marker_anywhere_in_body_classified_as_walled() -> None:
+    """REGRESSION (production 2026-05-07): wiki.redcactus.cloud article pages
+    with multiple tabs show "Log in when you want to read this article" once
+    per tab, in the middle of the body — never at the end. The single-marker
+    D-13 tail check missed this and the page was misclassified as ``success``
+    despite visible auth-wall text.
+
+    Fix: a phrase repeating 2+ times in body is never a legitimate article."""
+    body = (
+        "Bubble Desktop Pop-up is een slimme aanvulling op uw werkomgeving. "
+        "Log in when you want to read this article. "  # tab 1 marker
+        "This article is providing information to users of our software. "
+        + "More tab content here with words to push marker out of tail. " * 30
+        + "Compatibiliteit Bubble Desktop Pop-up is compatibel. "
+        "Log in when you want to read this article. "  # tab 2 marker, mid-body
+        "This article is providing information to users of our software. "
+        + "Even more padding so the marker is NOT in the last 200 chars. " * 40
+    )
+    result = classify_auth_wall(
+        response_status_code=200,
+        redirect_target_url=None,
+        set_cookie_header=None,
+        word_count=400,
+        fit_markdown=body,
+        raw_html="<html></html>",
+    )
+    assert result.is_walled is True
+    assert "repeated_login_marker_in_body" in result.match_reasons
+
+
+def test_single_login_reference_does_not_trigger_repeated_rule() -> None:
+    """A long article with a single legitimate "log in to view" reference
+    must NOT trip the repeated-marker rule (one occurrence only)."""
+    body = (
+        "Article body that mentions you should log in to view this once. "
+        + "And lots of legitimate prose with no marker at all. " * 100
+    )
+    result = classify_auth_wall(
+        response_status_code=200,
+        redirect_target_url=None,
+        set_cookie_header=None,
+        word_count=600,
+        fit_markdown=body,
+        raw_html="<html></html>",
+    )
+    # End-of-body match might still fire if marker is near the tail, but the
+    # repeated-marker check MUST NOT fire on a single occurrence.
+    assert "repeated_login_marker_in_body" not in result.match_reasons
