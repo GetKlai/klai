@@ -118,3 +118,31 @@ export const ASSERTION_MODE_OPTIONS: MultiSelectOption[] = [
   { value: 'hypothesis', label: 'Speculation', description: 'Hypotheses, brainstorm' },
   { value: 'unknown',    label: 'Unknown',     description: 'Type not specified' },
 ]
+
+/**
+ * SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-1 — shared cookie parser.
+ * Accepts a raw cookie string (either JSON array or header string format)
+ * and a base URL for domain extraction.
+ * Used by both add-connector and edit-connector wizard flows.
+ */
+export function parseCookieString(raw: string, baseUrl: string): unknown[] | undefined {
+  const trimmed = raw.trim()
+  if (!trimmed) return undefined
+  // JSON array format: [{"name": "...", "value": "..."}]
+  if (trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed)
+      return Array.isArray(parsed) ? parsed : undefined
+    } catch {
+      return undefined
+    }
+  }
+  // Raw cookie header format: name1=value1; name2=value2
+  const domain = (() => {
+    try { return new URL(baseUrl).hostname } catch { return '' }
+  })()
+  return trimmed.split(';').map((pair) => {
+    const [cookieName, ...rest] = pair.trim().split('=')
+    return { name: cookieName.trim(), value: rest.join('='), domain, path: '/' }
+  }).filter((c) => c.name && c.value)
+}
