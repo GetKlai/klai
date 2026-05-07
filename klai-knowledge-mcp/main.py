@@ -930,8 +930,18 @@ _mcp_app = mcp.streamable_http_app()
 # /mcp handler raises "Task group is not initialized".
 app = Starlette(
     routes=[
+        # RFC 9728 § 3.1 + MCP authorization spec: PRM is served at BOTH
+        # the root path AND with the resource path-component appended.
+        # Some clients (Anthropic broker tested 2026-05-07) only probe
+        # the sub-path variant — a 404 there short-circuits the OAuth
+        # discovery chain even if the root variant works.
         Route(
             "/.well-known/oauth-protected-resource",
+            _well_known_protected_resource,
+            methods=["GET"],
+        ),
+        Route(
+            "/.well-known/oauth-protected-resource/mcp",
             _well_known_protected_resource,
             methods=["GET"],
         ),
