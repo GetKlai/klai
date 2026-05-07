@@ -358,6 +358,26 @@ async def crawl_page(
     if cookies:
         payload["hooks"] = _build_cookie_hooks(cookies)
 
+    # DIAG-COOKIE-BUG-2026-05-07 — temporary diagnostic for connector wizard
+    # cookie pass-through audit. Logs cookie NAMES and short value PREFIXES
+    # (8 chars, ~6 bits of entropy) so we can correlate which cookie shape
+    # the frontend sent vs what arrives at crawl4ai. NEVER log full values.
+    # Remove after fix is verified in production.
+    if cookies:
+        cookie_names = [c.get("name", "<missing>") for c in cookies]
+        cookie_value_prefixes = [
+            (c.get("value", "")[:8] + "..." if c.get("value") else "<empty>") for c in cookies
+        ]
+        logger.info(
+            "crawl_page_cookies_attached",
+            url=url,
+            cookie_count=len(cookies),
+            cookie_names=cookie_names,
+            cookie_value_prefixes=cookie_value_prefixes,
+        )
+    else:
+        logger.info("crawl_page_cookies_absent", url=url)
+
     async with httpx.AsyncClient(timeout=90.0) as client:
         try:
             data = await _crawl_sync(client, payload)
