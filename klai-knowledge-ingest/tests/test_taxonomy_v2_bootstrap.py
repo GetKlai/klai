@@ -261,7 +261,6 @@ class TestBootstrapProposalsV2Integration:
         m.litellm_api_key = "key"
         m.taxonomy_classification_model = "klai-fast"
         m.taxonomy_classification_timeout = 30.0
-        m.taxonomy_bootstrap_v2_enabled = True
         m.taxonomy_bootstrap_min_cluster_size_floor = 5
         m.taxonomy_bootstrap_max_clusters = 20
         m.taxonomy_bootstrap_top_n_per_cluster = 8
@@ -710,7 +709,6 @@ class TestBootstrapLatency:
         m.litellm_api_key = "key"
         m.taxonomy_classification_model = "klai-fast"
         m.taxonomy_classification_timeout = 30.0
-        m.taxonomy_bootstrap_v2_enabled = True
         m.taxonomy_bootstrap_min_cluster_size_floor = 5
         m.taxonomy_bootstrap_max_clusters = 20
         m.taxonomy_bootstrap_top_n_per_cluster = 8
@@ -882,7 +880,6 @@ class TestDuplicatePreventionRegression:
         mock_settings.litellm_api_key = "key"
         mock_settings.taxonomy_classification_model = "klai-fast"
         mock_settings.taxonomy_classification_timeout = 30.0
-        mock_settings.taxonomy_bootstrap_v2_enabled = True
         mock_settings.taxonomy_bootstrap_min_cluster_size_floor = 5
         mock_settings.taxonomy_bootstrap_max_clusters = 20
         mock_settings.taxonomy_bootstrap_top_n_per_cluster = 8
@@ -1029,7 +1026,6 @@ class TestAC18IntegrationWithMockedLitellm:
         mock_settings.litellm_api_key = "key"
         mock_settings.taxonomy_classification_model = "klai-fast"
         mock_settings.taxonomy_classification_timeout = 30.0
-        mock_settings.taxonomy_bootstrap_v2_enabled = True
         mock_settings.taxonomy_bootstrap_min_cluster_size_floor = 5
         mock_settings.taxonomy_bootstrap_max_clusters = 20
         mock_settings.taxonomy_bootstrap_top_n_per_cluster = 8
@@ -1107,7 +1103,6 @@ class TestAC19VoysRegressionNoNewDuplicates:
         mock_settings.litellm_api_key = "key"
         mock_settings.taxonomy_classification_model = "klai-fast"
         mock_settings.taxonomy_classification_timeout = 30.0
-        mock_settings.taxonomy_bootstrap_v2_enabled = True
         mock_settings.taxonomy_bootstrap_min_cluster_size_floor = 5
         mock_settings.taxonomy_bootstrap_max_clusters = 20
         mock_settings.taxonomy_bootstrap_top_n_per_cluster = 8
