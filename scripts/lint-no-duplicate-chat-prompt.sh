@@ -56,14 +56,20 @@ cd "$REPO_ROOT"
 #   - the LiteLLM-vendored copy (Phase 4 REQ-10 — sync enforced by
 #     deploy/litellm/tests/test_klai_chat_prompts_drift.py, same pattern
 #     as klai_service_auth.py from SPEC-SEC-SERVICE-AUTH-001 Phase C-1)
-#   - the LiteLLM hook itself (Phase 4 hotfix 2026-05-07 inlined the
-#     constant to bypass the docker-compose-restart-vs-recreate gap;
-#     see klai_knowledge.py for full rationale + Phase D plan to
-#     un-inline)
 #   - the SPEC documentation
 #   - this script
 #   - klai .claude rules + docs
-GROUNDED_ALLOWED='^(klai-libs/chat-prompts/|deploy/litellm/klai_chat_prompts\.py|deploy/litellm/klai_knowledge\.py|deploy/litellm/tests/|\.moai/specs/SPEC-RAG-MULTILINGUAL-CHAT-001/|scripts/lint-no-duplicate-chat-prompt\.sh|\.claude/rules/klai/|docs/architecture/|docs/runbooks/|docs/retros/|docs/audit-|docs/research/kb-chat-system-prompts\.md)'
+#
+# NOT allowed: deploy/litellm/klai_knowledge.py — the hook imports
+# ``GROUNDED_CHAT_SYSTEM_PROMPT`` from the vendored copy, never inlines.
+# The 2026-05-07 inline-hotfix was reverted by the cleanup PR after the
+# deploy workflow was switched from ``docker compose restart litellm`` to
+# ``/opt/klai/scripts/compose-up.sh litellm`` (= ``docker compose up -d
+# --remove-orphans litellm``), which picks up new bind-mounts
+# automatically. Two canonical homes for this anchor: canonical library
+# and vendored copy. Drift between them is enforced by
+# test_klai_chat_prompts_drift.py.
+GROUNDED_ALLOWED='^(klai-libs/chat-prompts/|deploy/litellm/klai_chat_prompts\.py|deploy/litellm/tests/|\.moai/specs/SPEC-RAG-MULTILINGUAL-CHAT-001/|scripts/lint-no-duplicate-chat-prompt\.sh|\.claude/rules/klai/|docs/architecture/|docs/runbooks/|docs/retros/|docs/audit-|docs/research/kb-chat-system-prompts\.md)'
 
 # Allowed paths for the HOOK anchors (set 2):
 #   - the LiteLLM hook itself (canonical home)

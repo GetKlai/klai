@@ -25,5 +25,21 @@ jobs:
       - name: Sync hook files to core-01
         run: rsync -av deploy/litellm/ klai@${{ secrets.CORE01_HOST }}:/opt/klai/litellm/
 
-      - name: Restart LiteLLM
-        run: ssh klai@${{ secrets.CORE01_HOST }} "cd /opt/klai && docker compose restart litellm"
+      # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3 — use the canonical
+      # compose-up wrapper (already used by caddy, klai-connector,
+      # klai-mailer, knowledge-ingest, klai-knowledge-mcp, docs-app).
+      #
+      # Why not `docker compose restart litellm`: `restart` keeps the
+      # existing container env intact — it ignores docker-compose.yml
+      # mount + env-var changes. SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4
+      # added a new bind-mount (klai_chat_prompts.py) that the previous
+      # `restart` deploy silently dropped on the floor — the proxy
+      # crashlooped on ImportError until a follow-up commit inlined the
+      # constant to remove the new-mount dependency.
+      #
+      # `compose-up.sh` does `docker compose up -d --remove-orphans
+      # litellm` which detects compose-file diffs (new mounts, env-vars,
+      # image tags) and recreates only when needed. No-op when nothing
+      # in the service definition changed.
+      - name: Recreate LiteLLM container
+        run: ssh klai@${{ secrets.CORE01_HOST }} "/opt/klai/scripts/compose-up.sh litellm"
