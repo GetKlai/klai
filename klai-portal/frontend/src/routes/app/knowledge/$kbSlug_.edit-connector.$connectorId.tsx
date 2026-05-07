@@ -15,8 +15,9 @@ import { StepIndicator, type StepItem } from '@/components/ui/step-indicator'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { MS_SITE_URL_PATTERN } from '@/lib/ms-docs'
-import { ASSERTION_MODE_OPTIONS, joinSeedUrl, parseCookieString } from './$kbSlug/-kb-helpers'
-import type { ConnectorSummary, GitHubConfig, WebCrawlerConfig } from './$kbSlug/-kb-types'
+import { ASSERTION_MODE_OPTIONS, joinSeedUrl } from './$kbSlug/-kb-helpers'
+import type { ConnectorSummary, CookieRow, GitHubConfig, WebCrawlerConfig } from './$kbSlug/-kb-types'
+import { CookieRowsInput } from '@/components/knowledge/CookieRowsInput'
 import {
   AuthProbeFeedback,
   PreviewClassificationFeedback,
@@ -165,7 +166,9 @@ function EditConnectorPage() {
     search.step === 'auth' ? true : null,
   )
   const [wcPreviewUrl, setWcPreviewUrl] = useState('')
-  const [wcCookies, setWcCookies] = useState('')
+  // Cookies live as structured {name, value} rows — same shape as the
+  // backend persists and the cron-sync consumes. No parser layer.
+  const [wcCookieRows, setWcCookieRows] = useState<CookieRow[]>([])
   const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
   // SPEC D-2: auth probe for the edit wizard
@@ -195,8 +198,18 @@ function EditConnectorPage() {
     }
   }
 
-  function parseCookies(): unknown[] | undefined {
-    return parseCookieString(wcCookies, webcrawlerConfig.base_url)
+  function buildCookies(): unknown[] | undefined {
+    const filled = wcCookieRows.filter((r) => r.name.trim() && r.value.trim())
+    if (filled.length === 0) return undefined
+    const domain = (() => {
+      try { return new URL(webcrawlerConfig.base_url).hostname } catch { return '' }
+    })()
+    return filled.map((r) => ({
+      name: r.name.trim(),
+      value: r.value.trim(),
+      domain,
+      path: '/',
+    }))
   }
 
   useEffect(() => {
@@ -214,9 +227,20 @@ function EditConnectorPage() {
         max_pages: String(cfg.max_pages ?? '200'),
         content_selector: cfg.content_selector ?? '',
       })
-      // Pre-seed cookies as JSON if present; login indicator drives requiresLogin default.
+      // Pre-seed cookie rows from saved config — same shape, no parsing needed.
+      // Existing connectors store cookies as {name, value, domain, path} objects;
+      // the wizard only displays/edits name + value (domain + path are derived
+      // from base_url at submit time).
       if (cfg.cookies && Array.isArray(cfg.cookies) && cfg.cookies.length > 0) {
-        setWcCookies(JSON.stringify(cfg.cookies))
+        setWcCookieRows(
+          cfg.cookies.map((c) => {
+            const obj = c as { name?: unknown; value?: unknown }
+            return {
+              name: typeof obj.name === 'string' ? obj.name : '',
+              value: typeof obj.value === 'string' ? obj.value : '',
+            }
+          }),
+        )
       }
       // SPEC D-1: requiresLogin is pre-set only for ?step=auth deep-link
       // (handled above). Otherwise null so the auth-question step always runs.
@@ -295,7 +319,7 @@ function EditConnectorPage() {
         }
         if (ag?.login_indicator_selector) config.login_indicator_selector = ag.login_indicator_selector
         // Include cookies if entered (for both sync and canary fingerprint computation)
-        const cookies = parseCookies()
+        const cookies = buildCookies()
         if (cookies) config.cookies = cookies
       }
       if (connector.connector_type === 'notion') {
@@ -521,7 +545,7 @@ function EditConnectorPage() {
                         variant={requiresLogin === false ? 'default' : 'outline'}
                         onClick={() => {
                           setRequiresLogin(false)
-                          setWcCookies('')
+                          setWcCookieRows([])
                           invalidateAuthProbe()
                           invalidatePreview()
                         }}
@@ -565,21 +589,15 @@ function EditConnectorPage() {
                     <p className="text-sm font-medium text-[var(--color-foreground)]">
                       Authentication cookies
                     </p>
-                    <textarea
-                      id="edit-wc-cookies"
-                      className="flex min-h-[80px] w-full rounded-md border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-xs font-mono placeholder:text-[var(--color-muted-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
-                      placeholder={m.admin_connectors_webcrawler_cookies_placeholder()}
-                      value={wcCookies}
-                      onChange={(e) => {
-                        setWcCookies(e.target.value)
+                    <CookieRowsInput
+                      idPrefix="edit-wc-cookie"
+                      value={wcCookieRows}
+                      onChange={(rows) => {
+                        setWcCookieRows(rows)
                         invalidateAuthProbe()
                         invalidatePreview()
                       }}
                     />
-                    <p className="text-xs text-[var(--color-muted-foreground)]">
-                      Open the site in your browser, log in, then copy the Cookie value from your
-                      browser&apos;s developer tools (Network tab &rarr; any request &rarr; Cookie header).
-                    </p>
                     <Button
                       type="button"
                       size="sm"
@@ -590,7 +608,7 @@ function EditConnectorPage() {
                         setAuthProbeError(null)
                         authProbeMutation.mutate({
                           url: joinSeedUrl(webcrawlerConfig.base_url, webcrawlerConfig.path_prefix),
-                          cookies: parseCookies(),
+                          cookies: buildCookies(),
                         })
                       }}
                     >
@@ -727,7 +745,7 @@ function EditConnectorPage() {
                         previewMutation.mutate({
                           url: wcPreviewUrl,
                           content_selector: webcrawlerConfig.content_selector,
-                          cookies: parseCookies(),
+                          cookies: buildCookies(),
                         })
                       }}
                     >
@@ -746,7 +764,7 @@ function EditConnectorPage() {
                           previewMutation.mutate({
                             url: wcPreviewUrl,
                             try_ai: true,
-                            cookies: parseCookies(),
+                            cookies: buildCookies(),
                           })
                         }}
                       >
@@ -779,7 +797,7 @@ function EditConnectorPage() {
                           previewMutation.mutate({
                             url: wcPreviewUrl,
                             content_selector: webcrawlerConfig.content_selector,
-                            cookies: parseCookies(),
+                            cookies: buildCookies(),
                           })
                         }}
                       />
@@ -817,7 +835,7 @@ function EditConnectorPage() {
                           disabled={previewMutation.isPending}
                           onClick={() => {
                             invalidatePreview()
-                            previewMutation.mutate({ url: wcPreviewUrl, try_ai: true, cookies: parseCookies() })
+                            previewMutation.mutate({ url: wcPreviewUrl, try_ai: true, cookies: buildCookies() })
                           }}
                         >
                           <Sparkles className="h-3 w-3" />
