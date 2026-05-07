@@ -436,6 +436,63 @@ class TestIdentityFailurePropagation:
                 await main.search_knowledge(query="q", ctx=ctx)
 
 
+# ─── Query length clamp ───────────────────────────────────────────────────
+
+
+class TestQueryLengthClamp:
+    """Defense-in-depth: a runaway 100k-char query gets truncated to 2000
+    rather than slamming retrieval-api with the full payload.
+    """
+
+    @pytest.mark.asyncio
+    async def test_query_under_limit_passes_through_unchanged(self) -> None:
+        from main import search_knowledge
+
+        ctx = _librechat_ctx()
+        captured: dict[str, Any] = {}
+
+        async def _capture_post(self: Any, url: str, **kwargs: Any) -> MagicMock:
+            captured["json"] = kwargs.get("json")
+            return _make_retrieve_response([])
+
+        with (
+            patch(
+                "main._asserter.verify",
+                new_callable=AsyncMock,
+                return_value=allow_verify_result(),
+            ),
+            patch.object(httpx.AsyncClient, "post", new=_capture_post),
+        ):
+            await search_knowledge(query="short query", ctx=ctx)
+
+        assert captured["json"]["query"] == "short query"
+
+    @pytest.mark.asyncio
+    async def test_query_over_2000_chars_is_truncated(self) -> None:
+        from main import search_knowledge
+
+        ctx = _librechat_ctx()
+        captured: dict[str, Any] = {}
+
+        async def _capture_post(self: Any, url: str, **kwargs: Any) -> MagicMock:
+            captured["json"] = kwargs.get("json")
+            return _make_retrieve_response([])
+
+        long_query = "x" * 5000
+        with (
+            patch(
+                "main._asserter.verify",
+                new_callable=AsyncMock,
+                return_value=allow_verify_result(),
+            ),
+            patch.object(httpx.AsyncClient, "post", new=_capture_post),
+        ):
+            await search_knowledge(query=long_query, ctx=ctx)
+
+        assert len(captured["json"]["query"]) == 2000
+        assert len(captured["json"]["raw_query"]) == 2000
+
+
 # ─── Outbound auth header regression guard ────────────────────────────────
 
 

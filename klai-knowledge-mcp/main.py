@@ -924,10 +924,15 @@ organisation docs, and connected sources (Notion, Google Drive, web crawls).
 WHEN TO CALL: questions that may be answered by the user's own documentation,
 decisions, customer data, or product knowledge. Search BEFORE answering from
 general knowledge when the question is org-specific.
+NL trigger: "zoek in mijn kennisbank", "wat staat er in onze docs over",
+"check de kennisbank".
+EN trigger: "search my knowledge base", "what do our docs say about",
+"check the knowledge base".
 
 PARAMETERS:
-  query  - search query in the user's language. Self-contained: resolve
-           pronouns and references yourself before passing.
+  query  - search query in the user's language (any language; bge-m3
+           embeddings are multilingual). Self-contained: resolve pronouns
+           and references yourself before passing. Maximum 2000 characters.
   top_k  - 1-15, default 8. Higher values for broad questions.
 
 RETURNS: list of chunks with title, source_url, text, score, scope.
@@ -950,6 +955,19 @@ async def search_knowledge(
     # LLMs frequently overshoot; defensively bounding is friendlier than an
     # input-validation error that the LLM has to debug.
     top_k = max(1, min(int(top_k), 15))
+
+    # Query-length clamp: defense-in-depth against runaway prompts (a buggy
+    # caller looping on a 100k-char query would otherwise multiply retrieval-
+    # api load). 2000 chars is generous — typical KB queries are 5-50 words.
+    # Truncate silently rather than 400; the calling LLM is the offender,
+    # not the user, and a well-behaved LLM never hits this ceiling.
+    if len(query) > 2000:
+        logger.warning(
+            "search_knowledge_query_truncated: original_len=%d client_id=%s",
+            len(query),
+            identity.client_id,
+        )
+        query = query[:2000]
 
     # SPEC-MCP-RETRIEVAL-001 REQ-13: same 3.0s ceiling as the LiteLLM hook.
     # Configurable via env in a future iteration if cold-start P99 spikes.
