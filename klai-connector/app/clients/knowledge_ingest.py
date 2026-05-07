@@ -125,7 +125,14 @@ class KnowledgeIngestClient:
         """
         # SPEC-SEC-INTERNAL-001 REQ-9.3: header is unconditional. The
         # constructor guard above ensures _internal_secret is non-empty.
-        headers: dict[str, str] = {"x-internal-secret": self._internal_secret}
+        # SPEC-TI-003 AC-6: knowledge-ingest /ingest/v1/document calls
+        # ``assert_caller_identity`` which 400s when X-Caller-Service is
+        # missing. klai-connector identifies itself here so the tenant
+        # binding is enforceable.
+        headers: dict[str, str] = {
+            "x-internal-secret": self._internal_secret,
+            "x-caller-service": "klai-connector",
+        }
 
         payload = _build_payload(
             org_id=org_id,
@@ -178,7 +185,15 @@ class CrawlSyncClient:
         self._client = httpx.AsyncClient(base_url=base_url, timeout=timeout)
 
     def _headers(self) -> dict[str, str]:
-        return {"x-internal-secret": self._internal_secret} if self._internal_secret else {}
+        # SPEC-TI-003 AC-6: identity-asserted endpoints in knowledge-ingest
+        # 400 on missing X-Caller-Service. klai-connector self-identifies on
+        # every outbound POST/GET so the tenant binding can be enforced.
+        if not self._internal_secret:
+            return {}
+        return {
+            "x-internal-secret": self._internal_secret,
+            "x-caller-service": "klai-connector",
+        }
 
     async def crawl_sync(
         self,
