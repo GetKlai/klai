@@ -469,6 +469,7 @@ async def retrieve(
             user_id=verified.user_id,
             properties={
                 "scope": req.scope,
+                "kb_slugs": list(req.kb_slugs) if req.kb_slugs else [],
                 "had_results": len(chunks_out) > 0,
                 "result_count": len(chunks_out),
             },
