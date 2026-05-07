@@ -45,6 +45,24 @@ from litellm.integrations.custom_logger import CustomLogger
 # matching every other klai service deploy.
 from klai_chat_prompts import GROUNDED_CHAT_SYSTEM_PROMPT
 
+# SPEC-MCP-RETRIEVAL-001 Phase 1: telemetry helpers moved out of this file
+# into ``klai-libs/retrieval-telemetry/`` so klai-knowledge-mcp's new
+# ``search_knowledge`` tool can emit identical retrieval-log + gap-event
+# payloads. The vendored single-file copy at
+# ``deploy/litellm/klai_retrieval_telemetry.py`` mirrors the canonical
+# ``klai-libs/retrieval-telemetry/klai_retrieval_telemetry/_emit.py``.
+# Drift is enforced by ``test_klai_retrieval_telemetry_drift.py``.
+#
+# We bind to underscore-prefixed module locals to preserve the existing
+# call sites (``_classify_gap``, ``_fire_gap_event``, ``_fire_retrieval_log``)
+# without a touch-every-call-site refactor. ``caller_client_id`` defaults
+# to ``None`` for all LibreChat-path emits, preserving the wire shape.
+from klai_retrieval_telemetry import (
+    classify_gap as _classify_gap,
+    fire_gap_event as _fire_gap_event,
+    fire_retrieval_log as _fire_retrieval_log,
+)
+
 logger = logging.getLogger(__name__)
 
 KNOWLEDGE_RETRIEVE_URL = os.getenv("KNOWLEDGE_RETRIEVE_URL")
@@ -864,141 +882,14 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
     return result
 
 
-# @MX:NOTE: [AUTO] Gap thresholds (0.4 reranker, 0.35 dense) are configurable via
-# @MX:NOTE: KLAI_GAP_SOFT_THRESHOLD / KLAI_GAP_DENSE_THRESHOLD env vars (SPEC-KB-014)
-def _classify_gap(chunks: list[dict]) -> str | None:
-    """Classify retrieval result. Returns 'hard', 'soft', or None (success)."""
-    if not chunks:
-        return "hard"
-    reranker_scores = [
-        c.get("reranker_score") for c in chunks if c.get("reranker_score") is not None
-    ]
-    if reranker_scores:
-        if all(s < KLAI_GAP_SOFT_THRESHOLD for s in reranker_scores):
-            return "soft"
-    else:
-        dense_scores = [c.get("score", 0.0) for c in chunks]
-        if all(s < KLAI_GAP_DENSE_THRESHOLD for s in dense_scores):
-            return "soft"
-    return None
-
-
-# @MX:WARN: [AUTO] Fire-and-forget via create_task — caller must be inside a running event loop.
-# @MX:REASON: Wraps in try/except RuntimeError to handle test environments without a loop.
-def _fire_gap_event(
-    org_id: str,
-    user_id: str,
-    query_text: str,
-    gap_type: str,
-    chunks: list[dict],
-    retrieval_ms: int,
-    taxonomy_node_ids: list[int] | None = None,
-) -> None:
-    """Schedule an async gap event POST without blocking the pre-call hook."""
-    import asyncio
-
-    top_chunk = (
-        max(chunks, key=lambda c: c.get("reranker_score") or c.get("score", 0.0))
-        if chunks
-        else None
-    )
-    top_score = (
-        (top_chunk.get("reranker_score") or top_chunk.get("score"))
-        if top_chunk
-        else None
-    )
-    nearest_kb_slug = (
-        top_chunk.get("metadata", {}).get("kb_slug")
-        if top_chunk and gap_type == "soft"
-        else None
-    )
-
-    try:
-        org_id_int = int(org_id)
-    except (ValueError, TypeError):
-        logger.warning(
-            "KlaiKnowledgeHook: non-numeric org_id '%s', skipping gap event", org_id
-        )
-        return
-
-    payload = {
-        "org_id": org_id_int,
-        "user_id": user_id,
-        "query_text": query_text,
-        "gap_type": gap_type,
-        "top_score": top_score,
-        "nearest_kb_slug": nearest_kb_slug,
-        "chunks_retrieved": len(chunks),
-        "retrieval_ms": retrieval_ms,
-    }
-    # SPEC-KB-021 R6: include taxonomy filter when it was part of the retrieve request
-    if taxonomy_node_ids:
-        payload["taxonomy_node_ids"] = taxonomy_node_ids
-
-    async def _post():
-        try:
-            async with httpx.AsyncClient(timeout=2.0) as client:
-                await client.post(
-                    f"{PORTAL_API_URL}/internal/v1/gap-events",
-                    json=payload,
-                    headers={"Authorization": f"Bearer {PORTAL_INTERNAL_SECRET}"},
-                )
-        except Exception as exc:
-            logger.warning("KlaiKnowledgeHook: gap event POST failed (%s)", exc)
-
-    try:
-        asyncio.get_running_loop().create_task(_post())
-    except RuntimeError:
-        pass  # No running event loop (test context) — skip silently
-
-
-# @MX:NOTE: [AUTO] Fire-and-forget retrieval log -- mirrors _fire_gap_event pattern. SPEC-KB-015.
-# @MX:WARN: [AUTO] Uses create_task -- caller must be inside running event loop.
-# @MX:REASON: Silently discards on no-loop (test context) and any HTTP error (REQ-KB-015-03).
-def _fire_retrieval_log(
-    org_id: str,
-    user_id: str,
-    chunk_ids: list,
-    reranker_scores: list,
-    query_resolved: str,
-) -> None:
-    """Schedule an async retrieval log POST without blocking the pre-call hook."""
-    import asyncio
-    from datetime import datetime
-
-    try:
-        int(org_id)
-    except (ValueError, TypeError):
-        logger.warning(
-            "KlaiKnowledgeHook: non-numeric org_id '%s', skipping retrieval log", org_id
-        )
-        return
-
-    payload = {
-        "org_id": str(org_id),
-        "user_id": user_id,
-        "chunk_ids": chunk_ids,
-        "reranker_scores": reranker_scores,
-        "query_resolved": query_resolved,
-        "embedding_model_version": EMBEDDING_MODEL_VERSION,
-        "retrieved_at": datetime.utcnow().isoformat(),
-    }
-
-    async def _post():
-        try:
-            async with httpx.AsyncClient(timeout=2.0) as client:
-                await client.post(
-                    PORTAL_RETRIEVAL_LOG_URL,
-                    json=payload,
-                    headers={"Authorization": f"Bearer {PORTAL_INTERNAL_SECRET}"},
-                )
-        except Exception as exc:
-            logger.warning("KlaiKnowledgeHook: retrieval log POST failed (%s)", exc)
-
-    try:
-        asyncio.get_running_loop().create_task(_post())
-    except RuntimeError:
-        pass  # No running event loop (test context)
+# @MX:NOTE: classify_gap, fire_gap_event, fire_retrieval_log moved to
+# klai-libs/retrieval-telemetry/ (SPEC-MCP-RETRIEVAL-001 Phase 1). Imports
+# at the top of this module rebind them to the underscore-prefixed names
+# every call site below already uses, so the move is invisible to callers.
+# The threshold / URL env vars (KLAI_GAP_SOFT_THRESHOLD,
+# KLAI_GAP_DENSE_THRESHOLD, EMBEDDING_MODEL_VERSION,
+# PORTAL_RETRIEVAL_LOG_URL) are read inside the lib's _default_config()
+# helper at call time, so the env-rotation behaviour stays identical.
 
 
 # ---------------------------------------------------------------------------

@@ -29,12 +29,18 @@ async def write_retrieval_log(
     query_resolved: str,
     embedding_model_version: str,
     retrieved_at: datetime,
+    caller_client_id: str | None = None,
 ) -> None:
     """Write a retrieval log entry to Redis sorted set.
 
     Key: rl:{org_id}:{user_id}
     Score: epoch timestamp of retrieved_at
     Member: JSON blob with retrieval context
+
+    SPEC-MCP-RETRIEVAL-001 REQ-9: ``caller_client_id`` is the OAuth client_id
+    that triggered the retrieval (Claude Desktop / Cursor / ChatGPT), or
+    ``None`` for LibreChat traffic. Written into the JSON blob so dashboards
+    can split traffic by caller.
 
     Silently discards on any error (REQ-KB-015-03).
     """
@@ -46,15 +52,18 @@ async def write_retrieval_log(
         key = f"rl:{org_id}:{user_id}"
         epoch = retrieved_at.timestamp()
 
-        entry = json.dumps(
-            {
-                "chunk_ids": chunk_ids,
-                "reranker_scores": reranker_scores,
-                "query_resolved": query_resolved,
-                "embedding_model_version": embedding_model_version,
-                "retrieved_at": epoch,
-            }
-        )
+        entry_dict: dict[str, object] = {
+            "chunk_ids": chunk_ids,
+            "reranker_scores": reranker_scores,
+            "query_resolved": query_resolved,
+            "embedding_model_version": embedding_model_version,
+            "retrieved_at": epoch,
+        }
+        # Only include caller_client_id when set so the wire shape stays
+        # backwards-compatible with pre-SPEC-MCP-RETRIEVAL-001 readers.
+        if caller_client_id is not None:
+            entry_dict["caller_client_id"] = caller_client_id
+        entry = json.dumps(entry_dict)
 
         await pool.zadd(key, {entry: epoch})
         await pool.expire(key, _TTL_SECONDS)
@@ -64,6 +73,7 @@ async def write_retrieval_log(
             org_id=org_id,
             user_id=user_id,
             chunk_count=len(chunk_ids),
+            caller_client_id=caller_client_id,
         )
     except Exception:
         logger.warning("retrieval_log_write_failed", org_id=org_id, exc_info=True)

@@ -209,6 +209,14 @@ class VerifyResult:
     org_slug: str | None = None
     scopes: tuple[str, ...] = ()
     resource_uri: str | None = None
+    # SPEC-MCP-RETRIEVAL-001 REQ-5: OAuth client_id (the DCR-issued
+    # ``portal_oauth_clients.client_id`` string, NOT the FK integer). Lets
+    # downstream services (knowledge-mcp search_knowledge tool) label
+    # telemetry per OAuth-client. ``None`` for paths that don't carry an
+    # OAuth client (the LibreChat path uses /internal/identity/verify
+    # which has its own VerifyResult — this field is only populated by
+    # the mcp-token verify path).
+    client_id: str | None = None
     cache_ttl_seconds: int = _CACHE_TTL_VERIFY_SECONDS
     reason: str | None = None  # populated only when verified=False
 
@@ -221,6 +229,7 @@ class VerifyResult:
                 "org_slug": self.org_slug,
                 "scopes": list(self.scopes),
                 "resource_uri": self.resource_uri,
+                "client_id": self.client_id,
                 "cache_ttl_seconds": self.cache_ttl_seconds,
             }
         return {"verified": False, "reason": self.reason or "unknown"}
@@ -352,6 +361,7 @@ async def verify_access_token(
                     org_slug=cached.get("org_slug"),
                     scopes=tuple(cached.get("scopes", [])),
                     resource_uri=cached.get("resource_uri"),
+                    client_id=cached.get("client_id"),
                 )
             return VerifyResult(verified=False, reason=cached.get("reason", "unknown"))
 
@@ -407,6 +417,12 @@ async def verify_access_token(
         await _cache_verify_result(redis, cache_key, deny)
         return deny
 
+    # SPEC-MCP-RETRIEVAL-001 REQ-5: resolve the DCR-issued client_id string
+    # for telemetry attribution. ``token_row.client_id`` is the FK integer
+    # to portal_oauth_clients.id; we want the public ``client_id`` string.
+    client_row = await db.get(PortalOAuthClient, token_row.client_id)
+    client_id_str: str | None = client_row.client_id if client_row is not None else None
+
     success = VerifyResult(
         verified=True,
         # portal_users.zitadel_user_id is the canonical identifier downstream
@@ -423,6 +439,7 @@ async def verify_access_token(
         org_slug=org_row.slug,
         scopes=tuple(token_row.scopes or [DEFAULT_SCOPE]),
         resource_uri=token_row.resource_uri,
+        client_id=client_id_str,
     )
     await _cache_verify_result(redis, cache_key, success)
     return success
