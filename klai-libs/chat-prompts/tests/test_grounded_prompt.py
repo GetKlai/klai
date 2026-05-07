@@ -164,3 +164,30 @@ def test_general_and_grounded_share_language_preamble_byte_for_byte():
         "preamble. Refactor _LANGUAGE_DETECTION_PREAMBLE if you need to "
         "change it — never edit one of the public constants in isolation."
     )
+
+
+def test_general_prompt_carries_anti_hallucination_block():
+    # Regression for the 2026-05-07 followup: when no KB AND no Web
+    # Search tool is wired in for the chat, the model must refuse to
+    # fabricate company / product / URL facts and must point the user
+    # at Web Search or KB selection. The original GENERAL prompt only
+    # said "answer from general knowledge" — for "what's on company
+    # X's website?" that produced a hallucinated voys.nl + invented
+    # tagline ("volledig groene telefonie"). The follow-up adds an
+    # explicit anti-fabrication block.
+    text = GENERAL_CHAT_SYSTEM_PROMPT
+    assert "Do NOT invent" in text, (
+        "GENERAL prompt missing the explicit anti-fabrication directive."
+    )
+    # Must reference the Web Search escape hatch by name so the model
+    # tells the user where to enable it.
+    assert "Web Search" in text, (
+        "GENERAL prompt must point users at Web Search as the live-lookup "
+        "escape hatch — without this hint the user keeps getting "
+        "hallucinations and doesn't know where to switch the lookup on."
+    )
+    # Must also mention KB selection as the second escape hatch.
+    assert "knowledge base" in text.lower()
+    # Must explicitly forbid fabricating URLs/domains — that was the
+    # exact regression: 'voys.nl' invented out of thin air.
+    assert "URL" in text
