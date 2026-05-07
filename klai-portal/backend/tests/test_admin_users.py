@@ -192,3 +192,94 @@ async def test_invite_user_grants_portal_role_to_zitadel(
             f"REQ-2: invite_user(role={portal_role!r}) granted Zitadel role "
             f"{grant_kwargs['role']!r}; expected {expected_zitadel_role!r}."
         )
+
+
+# @MX:ANCHOR — must remain coupled to invite_user's commit shape.
+# @MX:REASON: regression guard for the 2026-05-07 incident where the personal
+# KB was created AFTER `db.commit()`. The first commit cleared the
+# transaction-scoped `app.current_org_id` GUC, then `create_default_personal_kb`
+# tripped the Category-D RLS policy on `portal_knowledge_bases` with 42501.
+# Symptom: the Zitadel invite + portal_users INSERT succeeded, the email went
+# out, but the admin saw a 500 and the user was left without a personal KB.
+# Same shape as the "Post-commit db.refresh on RLS tables" pitfall in
+# .claude/rules/klai/projects/portal-backend.md, but with a service-call
+# instead of a `db.refresh()`.
+@pytest.mark.asyncio
+async def test_invite_user_creates_personal_kb_before_commit() -> None:
+    """invite_user must create the personal KB inside the same transaction as
+    the portal_users INSERT — i.e. BEFORE any `db.commit()`. Splitting the
+    commit clears the tenant GUC and trips Category-D RLS on
+    portal_knowledge_bases at the next INSERT.
+
+    The test records the order of (commit, create_personal_kb) calls and
+    asserts:
+    1. create_default_personal_kb is awaited at least once
+    2. db.commit happens AFTER create_default_personal_kb (single tx)
+    3. There is exactly ONE commit (not two — two commits = the regressed pattern)
+    """
+    from app.api.admin.users import InviteRequest, invite_user
+
+    org = MagicMock()
+    org.id = 8  # arbitrary
+    org.seats = 100
+    org.plan = "free"
+
+    caller = MagicMock()
+    caller.role = "admin"
+
+    call_order: list[str] = []
+
+    async def _record_commit(*_args, **_kwargs):
+        call_order.append("commit")
+
+    async def _record_create_personal_kb(*_args, **_kwargs):
+        call_order.append("create_personal_kb")
+
+    mock_db = AsyncMock()
+    mock_db.commit = AsyncMock(side_effect=_record_commit)
+    locked_org_result = MagicMock()
+    locked_org_result.scalar_one.return_value = org
+    mock_db.execute.return_value = locked_org_result
+    mock_db.scalar.return_value = 0
+
+    mock_credentials = MagicMock()
+
+    body = InviteRequest(
+        email="alpha@example.com",
+        first_name="A",
+        last_name="L",
+        role="kb_manager",
+        preferred_language="nl",
+    )
+
+    with (
+        patch("app.api.admin.users._get_caller_org", return_value=("admin-1", org, caller)),
+        patch("app.api.admin.users.zitadel") as mock_zitadel,
+        patch(
+            "app.services.default_knowledge_bases.create_default_personal_kb",
+            new=AsyncMock(side_effect=_record_create_personal_kb),
+        ),
+    ):
+        mock_zitadel.invite_user = AsyncMock(return_value={"userId": "new-user-id"})
+        mock_zitadel.grant_user_role = AsyncMock()
+        await invite_user(body=body, credentials=mock_credentials, db=mock_db)
+
+    assert "create_personal_kb" in call_order, (
+        f"invite_user MUST call create_default_personal_kb. Observed call order: {call_order}"
+    )
+
+    commit_indices = [i for i, e in enumerate(call_order) if e == "commit"]
+    kb_indices = [i for i, e in enumerate(call_order) if e == "create_personal_kb"]
+    assert kb_indices and commit_indices, f"missing events; got {call_order}"
+    assert kb_indices[0] < commit_indices[0], (
+        "create_default_personal_kb MUST run BEFORE the commit. The 2026-05-07 "
+        "regression had `db.commit()` between the portal_users INSERT and the "
+        "KB creation, which cleared the tenant-scoped GUC and tripped Cat-D "
+        f"RLS at 42501 on portal_knowledge_bases. Got call order: {call_order}"
+    )
+    assert len(commit_indices) == 1, (
+        "invite_user MUST commit exactly once after the KB is created. Two or "
+        "more commits indicate the personal-KB INSERT is in a separate "
+        "transaction, which loses tenant context. The pre-fix shape committed "
+        f"before AND after the KB call. Got call order: {call_order}"
+    )
