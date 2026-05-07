@@ -95,18 +95,24 @@ function CoverageWidget({
           {m.knowledge_taxonomy_coverage_empty()}
         </p>
         {onSuggest && total >= 10 && (
-          <button
-            type="button"
-            onClick={onSuggest}
-            disabled={isSuggesting}
-            className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium bg-[var(--color-accent)] text-[var(--color-accent-foreground)] hover:opacity-90 transition-opacity disabled:opacity-50"
-          >
-            {isSuggesting
-              ? <Loader2 className="h-3 w-3 animate-spin" />
-              : <Sparkles className="h-3 w-3" />
-            }
-            {m.knowledge_taxonomy_suggest_categories()}
-          </button>
+          <div className="space-y-1.5">
+            <button
+              type="button"
+              onClick={onSuggest}
+              disabled={isSuggesting}
+              className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium bg-[var(--color-accent)] text-[var(--color-accent-foreground)] hover:opacity-90 transition-opacity disabled:opacity-50"
+            >
+              {isSuggesting
+                ? <><Loader2 className="h-3 w-3 animate-spin" />{m.knowledge_taxonomy_suggest_generating()}</>
+                : <><Sparkles className="h-3 w-3" />{m.knowledge_taxonomy_suggest_categories()}</>
+              }
+            </button>
+            {isSuggesting && (
+              <p className="text-xs text-[var(--color-muted-foreground)]">
+                {m.knowledge_taxonomy_suggest_loading_hint()}
+              </p>
+            )}
+          </div>
         )}
       </div>
     )
@@ -698,7 +704,7 @@ function TaxonomyTab() {
               coverage={coverageQuery.data}
               activeNodeId={activeNodeId}
               onNodeClick={toggleNode}
-              onSuggest={canEdit && suggestState === 'idle' ? () => bootstrapMutation.mutate() : undefined}
+              onSuggest={canEdit && (suggestState === 'idle' || suggestState === 'generating') ? () => bootstrapMutation.mutate() : undefined}
               isSuggesting={bootstrapMutation.isPending}
               canEdit={canEdit}
               onRename={(nodeId, newName, description) => renameNodeMutation.mutate({ nodeId, name: newName, description })}
