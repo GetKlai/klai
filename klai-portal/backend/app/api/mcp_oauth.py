@@ -69,64 +69,48 @@ def _render_consent_page(
     template = _CONSENT_TEMPLATE_PATH.read_text(encoding="utf-8")
 
     # Render the {% if is_newly_registered %} block — simple two-state
-    # toggle, not a full Jinja replacement.
+    # toggle, not a full Jinja replacement. Copy is intentionally short and
+    # peer-tone per .claude/rules/gtm/klai-brand-voice.md (senior-colleague
+    # voice, no theatre, no alarmist phrasing for routine first-time clients).
     if is_newly_registered:
-        new_badge = '<span class="badge-new" title="Deze app heeft zich net pas geregistreerd">Net geregistreerd</span>'
+        new_badge = '<span class="badge-new" title="Eerste keer dat we deze app zien">Nieuw</span>'
         warn_callout = (
-            '<div class="warn-callout"><strong>Let op:</strong> '
-            "deze app is net geregistreerd. Controleer of de naam en het "
-            "callback-adres hieronder kloppen voordat je toestemming geeft."
+            '<div class="warn-callout">'
+            "We zien deze app voor het eerst. Check of je de naam herkent "
+            "en of het terugadres hieronder klopt."
             "</div>"
         )
     else:
         new_badge = ""
         warn_callout = ""
 
-    # Render the {% if application_type == 'native' %} branch.
-    app_type_label = "Desktop / lokale app" if application_type == "native" else "Web-app"
-
-    # Render the {% for scope in scopes %} loop.
-    scope_items = []
-    for scope in scopes:
-        scope_human = (
-            "Lezen en bewerken van je persoonlijke en organisatie-kennisbank"
-            if scope == "mcp:knowledge"
-            else _html.escape(scope)
-        )
-        scope_items.append(f'<li><span class="scope-icon">✓</span> {scope_human}</li>')
-    scopes_block = "\n".join(scope_items)
-
     # The optional ``( {{ user_org_name | e }})`` segment.
     org_segment = f" ({_html.escape(user_org_name)})" if user_org_name else ""
 
-    # Strip Jinja-style blocks the template still has (the static fallback
-    # path) and substitute markers with values. Use unique markers (curly +
-    # token) so we don't double-replace.
+    # ``application_type`` and ``scopes`` are accepted by the signature for
+    # backwards compatibility with callers but are not rendered in the
+    # current consent UI — the heading + lead sentence already convey
+    # everything an end user needs (per Mark's review 2026-05-07: drop
+    # technical labels that cargo-cult the OAuth spec but add no signal
+    # for non-developer users).
+    _ = application_type
+    _ = scopes
+
+    # Strip Jinja-style blocks the template still has and substitute
+    # markers with values. Use unique markers (curly + token) so we don't
+    # double-replace.
     rendered = (
         template
         # Drop literal Jinja blocks — they're already simulated above.
         .replace(
-            '{% if is_newly_registered %}<span class="badge-new" title="Deze app heeft zich net pas geregistreerd">Net geregistreerd</span>{% endif %}',
+            '{% if is_newly_registered %}<span class="badge-new" title="Eerste keer dat we deze app zien">Nieuw</span>{% endif %}',
             new_badge,
         )
         .replace(
-            '{% if is_newly_registered %}\n        <div class="warn-callout">\n            <strong>Let op:</strong> deze app is net geregistreerd. Controleer of de naam en het callback-adres hieronder kloppen voordat je toestemming geeft.\n        </div>\n        {% endif %}',
+            '{% if is_newly_registered %}\n        <div class="warn-callout">\n            We zien deze app voor het eerst. Check of je de naam herkent en of het terugadres hieronder klopt.\n        </div>\n        {% endif %}',
             warn_callout,
         )
-        .replace(
-            "{% if application_type == 'native' %}Desktop / lokale app{% else %}Web-app{% endif %}",
-            app_type_label,
-        )
-        # The {% for ... %} block — replace from <ul> open to </ul> close
-        # with our pre-rendered scope items wrapped in the same <ul>.
     )
-    # For the scopes loop: regex-light approach — locate the open/close.
-    start_marker = "{% for scope in scopes %}"
-    end_marker = "{% endfor %}"
-    start_idx = rendered.find(start_marker)
-    end_idx = rendered.find(end_marker, start_idx)
-    if start_idx != -1 and end_idx != -1:
-        rendered = rendered[:start_idx] + scopes_block + rendered[end_idx + len(end_marker) :]
 
     # Escape user-controlled values then substitute simple {{ var }} markers.
     safe_vars: dict[str, str] = {
