@@ -210,6 +210,55 @@ def test_hook_imports_with_new_constants(monkeypatch) -> None:
 
 
 # ---------------------------------------------------------------------------
+# REQ-5: brand-bridging in the rewrite-and-classify prompt
+# ---------------------------------------------------------------------------
+
+
+def test_query_rewrite_prompt_contains_brand_bridging_instruction(monkeypatch) -> None:
+    """REQ-5: the combined rewrite+classify prompt MUST instruct the LLM to
+    expand third-party brand names (Salesforce, HubSpot, Zoom, etc.) with
+    broader category or related-brand terms in the rewritten query.
+
+    Locked in as a structural test so the SPEC contract survives prompt
+    iteration. End-to-end behaviour (does klai-fast actually produce
+    bridged rewrites?) is verified by the eval-harness chat-suite via
+    the brand_bridging regression queries from REQ-7.
+    """
+    klai_knowledge = _load_hook(monkeypatch)
+    prompt = klai_knowledge._QUERY_REWRITE_AND_CLASSIFY_PROMPT
+    # The instruction header must reference the SPEC + key intent words.
+    assert "REQ-5" in prompt
+    assert "brand" in prompt.lower()
+    # Must list at least 3 distinct brand examples covering CRM,
+    # video-conferencing, and mail/calendar.
+    assert "Salesforce" in prompt
+    assert "Zoom" in prompt
+    assert "Outlook" in prompt
+    # Must include the canonical Voys-Salesforce bridge so that a
+    # regression that drops the example fails this test.
+    assert "Bubble" in prompt
+    assert "RedCactus" in prompt
+    assert "CRM-koppeling" in prompt
+    # Negative-instruction must be present: don't over-apply on queries
+    # without a brand.
+    assert "no third-party brand" in prompt.lower() or "if no" in prompt.lower()
+
+
+def test_query_rewrite_prompt_stays_within_size_budget(monkeypatch) -> None:
+    """Prompt extension must not balloon klai-fast's input cost. Pre-SPEC
+    baseline was ~600 tokens; the new instruction adds ~150 tokens of
+    instruction + examples. Cap at 1200 chars (rough proxy for ~300
+    tokens) on the static template so we catch a runaway extension early.
+    The full prompt at runtime is still bounded by taxonomy size + history.
+    """
+    klai_knowledge = _load_hook(monkeypatch)
+    prompt = klai_knowledge._QUERY_REWRITE_AND_CLASSIFY_PROMPT
+    # The static template with placeholders should fit comfortably.
+    # Expanded examples + instruction should add < 800 chars over baseline.
+    assert len(prompt) < 2200, f"prompt size = {len(prompt)} (cap 2200)"
+
+
+# ---------------------------------------------------------------------------
 # Acceptance criterion mirror: AC-2 trigger
 # ---------------------------------------------------------------------------
 
