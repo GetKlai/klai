@@ -189,13 +189,29 @@ def classify_auth_wall(
     ):
         reasons.append("session_cookie_minimal_body")
 
-    # Rule 4 — end-of-body login marker (D-13: tail-only, not anywhere)
+    # Rule 4 — end-of-body login marker (D-13: tail-only, not anywhere).
+    # Single marker at end of body = teaser article. Pinned to tail so a
+    # nav-header "Log in" link doesn't false-positive long articles.
     if fit_markdown:
         tail = fit_markdown[-_END_OF_BODY_WINDOW_CHARS:]
         for pattern in AUTH_WALL_END_OF_BODY_MARKERS:
             if pattern.search(tail):
                 reasons.append("end_of_body_login_marker")
                 break
+
+    # Rule 4b — repeated marker anywhere in body. Real production case
+    # (wiki.redcactus.cloud article pages with multiple tabs, 2026-05-07):
+    # the auth-wall message "Log in when you want to read this article"
+    # appears ONCE PER TAB, in the middle of the body — never at the end.
+    # D-13 alone misses these. But a single phrase repeating 2+ times in
+    # the body is essentially never a false positive (legitimate articles
+    # do not repeat that exact stub clause).
+    if fit_markdown:
+        marker_hits = sum(
+            len(pattern.findall(fit_markdown)) for pattern in AUTH_WALL_END_OF_BODY_MARKERS
+        )
+        if marker_hits >= 2 and "end_of_body_login_marker" not in reasons:
+            reasons.append("repeated_login_marker_in_body")
 
     # Rule 5 — password form on a thin page
     if (

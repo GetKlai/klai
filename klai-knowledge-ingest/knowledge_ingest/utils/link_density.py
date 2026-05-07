@@ -32,12 +32,19 @@ _MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)]+)\)")
 
 
 def link_density(markdown: str) -> float:
-    """Return the ratio of anchor-text characters to total markdown text.
+    """Return the ratio of anchor-text characters to VISIBLE text characters.
 
-    The numerator is the sum of all ``[anchor]`` text lengths. The
-    denominator is the full markdown length (including link syntax) —
-    using the anchor text for the numerator keeps the metric in [0, 1]
-    while still rewarding "this page is mostly link labels".
+    The numerator is the sum of all ``[anchor]`` text lengths.
+    The denominator is the markdown after stripping the URL syntax — i.e.,
+    the text the operator actually reads on the rendered page.
+
+    Why visible-text and not total markdown? A nav menu of short anchors
+    with long URLs (``[Home](/nl/45-bubble-api-van-derden) ...``) inflates
+    ``len(markdown)`` so much that pure-nav pages score below the 40% gate.
+    Real production case (wiki.redcactus.cloud/, 2026-05-07): 281 words of
+    nav text scored ~28% under the old formula and was incorrectly accepted
+    as ``success``. With visible-text denominator it scores ~95% → correctly
+    flagged as ``selector_required``.
 
     Args:
         markdown: ``fit_markdown`` from a crawl result.
@@ -48,10 +55,11 @@ def link_density(markdown: str) -> float:
     if not markdown:
         return 0.0
     link_text_chars = sum(len(m.group(1)) for m in _MD_LINK_RE.finditer(markdown))
-    total_chars = len(markdown)
-    if total_chars == 0:
+    visible = _MD_LINK_RE.sub(lambda m: m.group(1), markdown)
+    visible_chars = len(visible)
+    if visible_chars == 0:
         return 0.0
-    ratio = link_text_chars / total_chars
+    ratio = link_text_chars / visible_chars
     if ratio > 1.0:
         return 1.0
     return ratio
