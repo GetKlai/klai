@@ -877,6 +877,9 @@ class _WWWAuthenticateMiddleware(BaseHTTPMiddleware):
 
 
 _mcp_app = mcp.streamable_http_app()
+# Propagate FastMCP's lifespan (initializes session_manager task group) to
+# the Starlette parent so the inner MCP routes work. Without this the inner
+# /mcp handler raises "Task group is not initialized".
 app = Starlette(
     routes=[
         Route(
@@ -887,6 +890,7 @@ app = Starlette(
         Mount("/", app=_mcp_app),
     ],
     middleware=[Middleware(_WWWAuthenticateMiddleware)],
+    lifespan=_mcp_app.router.lifespan_context,
 )
 
 
