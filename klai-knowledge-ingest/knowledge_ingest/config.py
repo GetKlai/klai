@@ -142,6 +142,16 @@ class Settings(BaseSettings):
     taxonomy_bootstrap_umap_n_neighbors: int = 15
     taxonomy_bootstrap_umap_random_state: int = 42  # for reproducibility
 
+    # SPEC-TAXONOMY-MERGE-DETECT-001 — Clio-style consolidation of base
+    # clusters into IA-friendly parent categories (Miller's Law 5-9 range).
+    # Triggered automatically inside generate_bootstrap_proposals_v2 when
+    # the post-dedup count exceeds ``taxonomy_consolidate_target_max``.
+    # Kill-switch: set ``taxonomy_consolidate_enabled=False`` to fall back
+    # to submitting base clusters directly.
+    taxonomy_consolidate_enabled: bool = True
+    taxonomy_consolidate_target_min: int = 5
+    taxonomy_consolidate_target_max: int = 9
+
     # SPEC-CRAWLER-004 Fase A — Garage S3 for consolidated crawl image pipeline.
     # Feature-flagged via empty endpoint: when ``garage_s3_endpoint`` is blank
     # the crawler skips image upload and writes no ``image_urls`` into Qdrant.
