@@ -164,7 +164,8 @@ spot-check on 10 cross-lingual responses.
 ### AC-OBSERVABILITY — Logs and dashboard
 
 **Given** REQ-08's logging is in place
-**When** a chat completion fires
+**When** a chat completion fires through path B (`partner_chat.py`)
+or path C (retrieval-api `/chat`)
 **Then** a structured log event with `event="chat_synthesis_complete"`,
 `request_id`, `org_id`, `query_language_detected`,
 `response_language_detected`, and `language_correctness` lands in
@@ -172,6 +173,13 @@ VictoriaLogs
 **And** the new Grafana panel shows
 `language_correctness` rate per language over a rolling 7-day window
 **And** rates are ≥ 95% for all six target languages.
+
+Path A scope: per REQ-10.4, the LiteLLM hook emit is explicitly
+deferred to the Phase D Dockerfile follow-up (lingua not bundled in
+the stock litellm container). Path-A coverage of the language-
+correctness gate is provided meanwhile by the pre-merge eval gate
+(`evaluation/cross_lingual_runner.py`) plus manual smoke tests after
+deploys (one DE/FR/PT/ES query each in LibreChat).
 
 Verified by: manual VictoriaLogs query; Grafana panel screenshot
 attached to the sync-phase PR.
@@ -227,3 +235,86 @@ substantive switch) are explicitly described
 assumptions" warning future implementers against re-introducing
 language allow-lists in chat prompts
 **And** the entry references this SPEC.
+
+---
+
+## Phase 4 acceptance (v1.2 — REQ-10, REQ-11)
+
+This section was added in v1.2 after the post-merge audit revealed that
+v1.1 had not touched the primary user-visible chat flow (LibreChat).
+
+### AC-LCH-DE — German query through LibreChat answers in German
+
+**Given** REQ-10 has merged and the LiteLLM container has redeployed
+**When** the test sends *"Wie konfiguriere ich RedCactus mit HubSpot?"*
+into the LibreChat chat at `https://voys.getklai.com/app/chat`
+**Then** the assistant response language is German (`lingua` detection
+on the assembled response → `de`)
+**And** the response contains the canonical TLDR / sources / citations
+structure as documented in `klai_knowledge.py` ANTWOORDFORMAAT block
+**And** citations `[n]` resolve to source URLs from the Voys NL
+knowledge base.
+
+Verified by: Playwright MCP E2E from a logged-in session against
+production. Manual run, logged in this acceptance file's HISTORY.
+
+### AC-LCH-FR / AC-LCH-PT / AC-LCH-ES — Other target languages
+
+Same shape as AC-LCH-DE with the target-language equivalent of the
+RedCactus / HubSpot query. The response language must match the query
+language; the answer body must be coherent and structurally identical
+to the NL baseline; citations must point to the same Voys NL sources.
+
+### AC-LCH-NL-NORM — Dutch query through LibreChat still answers in Dutch
+
+**Given** REQ-10 has merged
+**When** the test sends *"Hoe stel ik RedCactus in met HubSpot?"* in
+LibreChat
+**Then** the response is in Dutch (no regression for the primary
+existing user base)
+**And** the TLDR / sources / citations structure is identical to the
+pre-REQ-10 baseline
+**And** the citations point to the same source URLs the pre-REQ-10
+version cited.
+
+### AC-LCH-EN-NORM — English query through LibreChat answers in English
+
+Same as AC-LCH-NL-NORM with query *"How do I configure RedCactus with
+HubSpot?"* → English response.
+
+### AC-RUNNER-FIXED — Cross-lingual runner is runnable (REQ-11.1)
+
+**Given** REQ-11.1 has merged
+**When** the operator runs
+`python klai-retrieval-api/evaluation/cross_lingual_runner.py
+--retrieval-url <production-or-staging-base-url>`
+**Then** the runner connects to a real endpoint (`/chat` on
+retrieval-api OR `/partner/v1/chat/completions` on portal-api,
+whichever the script defaults to after the v1.2 fix)
+**And** the runner does NOT 404 on the first request
+**And** the runner produces a per-language correctness scorecard.
+
+### AC-LINT-NL-ANCHORS — CI lint covers NL anchors too (REQ-11.2)
+
+**Given** REQ-11.2 has merged
+**When** a future PR adds a verbatim NL anchor (e.g. *"Klai Kennisbank
+— gebruik dit als aanvullende context bij je antwoord"*) to a file
+outside `deploy/litellm/klai_knowledge.py` and outside the
+allowed-paths list of the lint script
+**Then** the CI lint `scripts/lint-no-duplicate-chat-prompt.sh` exits
+non-zero with a message pointing the offender at the canonical hook
+location.
+
+### AC-DOC-CORRECTED — Three-path documentation (REQ-11.3)
+
+**Given** REQ-11.3 has merged
+**When** `docs/architecture/knowledge-ingest-flow.md` is read
+**Then** the synthesis section explicitly enumerates the three chat
+paths (LibreChat hook, portal-api partner_chat, retrieval-api dormant
+`/chat`) and which of them is multilingual via which mechanism
+**And** `docs/runbooks/multilingual-chat-observability.md` clarifies
+that the `chat_synthesis_complete` log event can fire from any of the
+three paths and which `service:` label corresponds to which
+**And** `.claude/rules/klai/projects/knowledge.md` lists all three
+locations in its "chat system prompt — single source of truth" pitfall
+entry, with the warning to never modify only one of them.

@@ -520,7 +520,9 @@ class TestKlaiKnowledgeHookIdentityMapping:
                 (m for m in data["messages"] if m["role"] == "system"), None
             )
             assert system_msg is not None
-            assert "TIJDELIJK NIET BEREIKBAAR" in system_msg["content"]
+            # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): the KB-unavailable
+            # notice is now English (model warns user in their detected language).
+            assert "TEMPORARILY UNAVAILABLE" in system_msg["content"]
 
 
 # ─── kb_slugs_filter tri-state tests (2026-05-05 follow-up) ─────────────────
@@ -703,8 +705,10 @@ class TestKlaiKnowledgeHookFailLoud:
                 (m for m in data["messages"] if m["role"] == "system"), None
             )
             assert system_msg is not None, "fail-loud must inject a system message"
-            assert "Kennisbank" in system_msg["content"]
-            assert "TIJDELIJK NIET BEREIKBAAR" in system_msg["content"]
+            # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): English notice
+            # text; the model translates the warning into the user's language.
+            assert "Knowledge Base" in system_msg["content"]
+            assert "TEMPORARILY UNAVAILABLE" in system_msg["content"]
 
             # Failure marker MUST be in metadata for observability.
             kb_meta = data.get("metadata", {}).get("_klai_kb_meta", {})
@@ -738,7 +742,8 @@ class TestKlaiKnowledgeHookFailLoud:
                 (m for m in data["messages"] if m["role"] == "system"), None
             )
             assert system_msg is not None
-            assert "TIJDELIJK NIET BEREIKBAAR" in system_msg["content"]
+            # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): English notice.
+            assert "TEMPORARILY UNAVAILABLE" in system_msg["content"]
             kb_meta = data.get("metadata", {}).get("_klai_kb_meta", {})
             assert kb_meta.get("retrieval_failure") == "ConnectError"
 
@@ -895,7 +900,16 @@ class TestKlaiKnowledgeHookKB010:
 
     @pytest.mark.asyncio
     async def test_gate_bypass_no_injection(self, monkeypatch):
-        """AC-010-11: retrieval_bypassed=True → no chunks injected, meta recorded."""
+        """AC-010-11: retrieval_bypassed=True → no KB chunks injected, meta recorded.
+
+        SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): the multilingual
+        foundation (GROUNDED_CHAT_SYSTEM_PROMPT) IS still prepended on this
+        path so the model still detects/respects the user's language. The
+        invariant the test now pins is: no Klai-Knowledge-Base context block
+        was injected (no [Klai Knowledge Base — ...] anchor, no
+        [End knowledge base context] terminator), even though a system
+        message exists.
+        """
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
@@ -916,14 +930,26 @@ class TestKlaiKnowledgeHookKB010:
             result = await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
 
         system_msgs = [m for m in result.get("messages", []) if m.get("role") == "system"]
-        assert not system_msgs
+        assert len(system_msgs) == 1, "multilingual foundation must be prepended"
+        sys_content = system_msgs[0]["content"]
+        # GROUNDED_CHAT_SYSTEM_PROMPT signature line — its presence proves the
+        # multilingual contract is in effect on the bypassed path too.
+        assert "Detect the language of the user's most recent SUBSTANTIVE message" in sys_content
+        # No KB context block was injected (the bypassed branch is the whole point).
+        assert "Klai Knowledge Base" not in sys_content
+        assert "[End knowledge base context]" not in sys_content
         # _klai_kb_meta lives under data["metadata"] for downstream hooks
         # (TokenRouter reads it from data.get("metadata", {})).
         assert result["metadata"]["_klai_kb_meta"]["gate_bypassed"] is True
 
     @pytest.mark.asyncio
     async def test_provenance_labels(self, monkeypatch):
-        """AC-010-14: injected chunks have [org] or [persoonlijk] labels."""
+        """AC-010-14: injected chunks have [org] or [personal] labels.
+
+        SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10) renamed
+        ``[persoonlijk]`` -> ``[personal]`` so the chunk-scope label is
+        consistent with the rest of the now-English system prompt.
+        """
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
@@ -949,7 +975,7 @@ class TestKlaiKnowledgeHookKB010:
 
         system_content = result["messages"][0]["content"]
         assert "[org]" in system_content
-        assert "[persoonlijk]" in system_content
+        assert "[personal]" in system_content
 
     @pytest.mark.asyncio
     async def test_kb_meta_logged(self, monkeypatch):
@@ -1587,3 +1613,294 @@ class TestKlaiKnowledgeHookKB013:
 
             mc.post.assert_not_called()
         assert "_klai_kb_meta" not in result
+
+
+# ─── Phase 4 (REQ-10) — multilingual contract on path A (LiteLLM hook) ──────
+
+
+class TestKlaiKnowledgeHookMultilingualPhase4:
+    """Pin the SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 contract for path A.
+
+    REQ-10 (recap): the LiteLLM hook prepends GROUNDED_CHAT_SYSTEM_PROMPT
+    to every LibreChat request and rewrites the four NL prefix blocks
+    (Klai Templates wrapper, KB unavailable notice, KB header narrow/broad,
+    ANSWER FORMAT instructions) into English-prefixed multilingual
+    instructions. The model receives English instructions but answers in
+    the language of the user's most recent substantive message.
+
+    These tests are language-agnostic by construction: they assert on the
+    English anchor strings the hook emits, not on what the model produces.
+    DE/FR/PT/ES end-to-end output language is gated by
+    evaluation/cross_lingual_runner.py (REQ-05), not by this unit-test
+    suite.
+
+    The four queries below cover the four target languages added in v1.0
+    (DE, FR, PT, ES) — they exercise the same code paths as the existing
+    NL queries elsewhere in this file but make REQ-10's "language-of-query
+    is unconstrained" property explicit.
+    """
+
+    @pytest.fixture
+    def _kb_chunks(self) -> list[dict]:
+        return [
+            {
+                "text": "Klanten kunnen klimcursussen boeken via de app.",
+                "scope": "org",
+                "metadata": {"title": "Boekingsproces"},
+                "source_url": "https://docs.klai.example/booking",
+                "chunk_id": "c1",
+                "reranker_score": 0.91,
+            }
+        ]
+
+    def _system_msg(self, result: dict) -> str:
+        msgs = [m for m in result["messages"] if m["role"] == "system"]
+        assert len(msgs) == 1, f"expected exactly one system message, got {len(msgs)}"
+        return msgs[0]["content"]
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            pytest.param("Wie kann ich einen Klettergurt zurückgeben?", id="DE"),
+            pytest.param("Comment puis-je annuler ma réservation?", id="FR"),
+            pytest.param("Como faço para cancelar uma reserva?", id="PT"),
+            pytest.param("¿Cómo puedo cancelar mi reserva?", id="ES"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_multilingual_foundation_prepended_for_target_languages(
+        self, monkeypatch, _kb_chunks, query
+    ):
+        """REQ-10: GROUNDED_CHAT_SYSTEM_PROMPT leads the system prompt
+        regardless of the query language. Same code path as the NL tests
+        above; the only thing varying is the user-message language.
+        """
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": query}],
+        }
+        retrieval_resp = _make_resp({"chunks": _kb_chunks, "retrieval_bypassed": False})
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=retrieval_resp)
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        sys_content = self._system_msg(result)
+        # Foundation: GROUNDED_CHAT_SYSTEM_PROMPT signature line.
+        assert (
+            "Detect the language of the user's most recent SUBSTANTIVE message"
+            in sys_content
+        )
+        # English-prefixed answer-format anchor (REQ-10).
+        assert "ANSWER FORMAT — always follow this" in sys_content
+        # Old NL anchors must not regress (they were canonical pre-Phase 4).
+        assert "ANTWOORDFORMAAT — volg dit ALTIJD" not in sys_content
+        assert "Klai Kennisbank — gebruik dit als aanvullende context" not in sys_content
+
+    @pytest.mark.asyncio
+    async def test_kb_header_broad_uses_english_anchor(
+        self, monkeypatch, _kb_chunks
+    ):
+        """REQ-10: broad-mode (default) header is the English Phase 4 anchor."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "Wie viel kostet ein Kurs?"}],
+        }
+        retrieval_resp = _make_resp({"chunks": _kb_chunks, "retrieval_bypassed": False})
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=retrieval_resp)
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        sys_content = self._system_msg(result)
+        assert "Klai Knowledge Base — use this as supplementary context" in sys_content
+        # The narrow-mode anchor is mutually exclusive in this test (kb_narrow
+        # not set → broad).
+        assert (
+            "Klai Knowledge Base — answer strictly using only the sources below"
+            not in sys_content
+        )
+
+    @pytest.mark.asyncio
+    async def test_kb_header_narrow_uses_english_anchor(
+        self, monkeypatch, _kb_chunks
+    ):
+        """REQ-10: narrow-mode header is the English Phase 4 anchor when
+        ``kb_narrow=True``.
+        """
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={"kb_narrow": True})
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Combien coûte un cours d'escalade?"}
+            ],
+        }
+        retrieval_resp = _make_resp({"chunks": _kb_chunks, "retrieval_bypassed": False})
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=retrieval_resp)
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        sys_content = self._system_msg(result)
+        assert (
+            "Klai Knowledge Base — answer strictly using only the sources below"
+            in sys_content
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_entitlement_path_still_prepends_foundation(self, monkeypatch):
+        """REQ-10: even users without KB entitlement get the multilingual
+        foundation. The hook only declines to inject the KB context block
+        — language-detection still applies so DE/FR/PT/ES users without
+        entitlement also get language-correct answers.
+        """
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=False)
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "¿Cuánto cuesta un curso de escalada?"}
+            ],
+        }
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+            # No entitlement → no retrieval call.
+            mc.post.assert_not_called()
+
+        sys_content = self._system_msg(result)
+        assert (
+            "Detect the language of the user's most recent SUBSTANTIVE message"
+            in sys_content
+        )
+        # No KB context — confirms we didn't go through the chunks branch.
+        assert "Klai Knowledge Base" not in sys_content
+
+    @pytest.mark.asyncio
+    async def test_kb_unavailable_notice_uses_english_anchor(self, monkeypatch):
+        """REQ-10: the KB-unreachable warning anchor is English. The model
+        translates the warning into the user's language at runtime — that
+        translation is not tested here (it's the model's responsibility,
+        gated by evaluation/cross_lingual_runner.py).
+        """
+        import httpx as _httpx
+
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Como faço para cancelar uma reserva?"}
+            ],
+        }
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(side_effect=_httpx.ConnectError("connection refused"))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        sys_content = self._system_msg(data)
+        assert "Klai Knowledge Base — TEMPORARILY UNAVAILABLE" in sys_content
+        # The instruction tells the model to write the warning in the
+        # detected language — we assert the instruction itself, not the
+        # output.
+        assert "language you detected from their" in sys_content
+        # No NL regression.
+        assert "TIJDELIJK NIET BEREIKBAAR" not in sys_content
+
+    @pytest.mark.asyncio
+    async def test_chunk_labels_use_english_personal_marker(self, monkeypatch):
+        """REQ-10: chunk-scope label is ``[personal]`` (was ``[persoonlijk]``)."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        chunks = [
+            {
+                "text": "Org-document text.",
+                "scope": "org",
+                "metadata": {"title": "Org doc"},
+            },
+            {
+                "text": "User personal note.",
+                "scope": "personal",
+                "metadata": {"title": "My note"},
+            },
+        ]
+        retrieval_resp = _make_resp({"chunks": chunks, "retrieval_bypassed": False})
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Wo finde ich meine persönlichen Notizen?"}
+            ],
+        }
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=retrieval_resp)
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        sys_content = self._system_msg(result)
+        assert "[org]" in sys_content
+        assert "[personal]" in sys_content
+        assert "[persoonlijk]" not in sys_content
+        # End-of-context terminator switched English too.
+        assert "[End knowledge base context]" in sys_content
+        assert "[Einde kennisbank-context]" not in sys_content
