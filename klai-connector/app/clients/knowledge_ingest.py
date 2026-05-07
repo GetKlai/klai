@@ -131,7 +131,7 @@ class KnowledgeIngestClient:
         # binding is enforceable.
         headers: dict[str, str] = {
             "x-internal-secret": self._internal_secret,
-            "x-caller-service": "klai-connector",
+            "x-caller-service": "connector",
         }
 
         payload = _build_payload(
@@ -192,7 +192,7 @@ class CrawlSyncClient:
             return {}
         return {
             "x-internal-secret": self._internal_secret,
-            "x-caller-service": "klai-connector",
+            "x-caller-service": "connector",
         }
 
     async def crawl_sync(
