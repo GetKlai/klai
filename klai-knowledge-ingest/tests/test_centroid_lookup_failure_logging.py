@@ -89,11 +89,11 @@ async def test_centroid_lookup_failure_logs_at_warning_with_structured_fields():
             new_callable=AsyncMock,
             return_value="internal",
         ),
-        patch(
-            "knowledge_ingest.routes.ingest.get_pool",
-            new_callable=AsyncMock,
-            return_value=mock_pool,
-        ),
+        # SPEC-TI-003-FOLLOWUP-001 routed pool acquisition through
+        # ``tenant_scoped_connection`` -- ``routes/ingest.py`` no longer
+        # imports ``get_pool`` directly, so patching that path raises
+        # AttributeError. Connection injection is handled by the autouse
+        # ``_mock_db_helpers`` fixture in tests/conftest.py.
         patch(
             "knowledge_ingest.routes.ingest.fetch_taxonomy_nodes",
             new_callable=AsyncMock,
@@ -123,8 +123,15 @@ async def test_centroid_lookup_failure_logs_at_warning_with_structured_fields():
 
         from knowledge_ingest.routes.ingest import ingest_document
 
+        # SPEC-TI-003-FOLLOWUP-001: ingest_document now takes (conn, req).
+        conn = MagicMock()
+        conn.execute = AsyncMock(return_value=None)
+        conn.fetch = AsyncMock(return_value=[])
+        conn.fetchval = AsyncMock(return_value=None)
+        conn.fetchrow = AsyncMock(return_value=None)
+
         with structlog.testing.capture_logs() as captured:
-            result = await ingest_document(req)
+            result = await ingest_document(conn, req)
 
     assert result["status"] == "ok"
 

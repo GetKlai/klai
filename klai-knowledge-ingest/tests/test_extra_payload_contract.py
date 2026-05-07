@@ -116,24 +116,22 @@ REQUIRED_WITH_CONNECTOR: frozenset[str] = frozenset(
 
 
 class _MockProcApp:
-    """Minimal stand-in for the Procrastinate App that captures the
-    ``extra_payload`` passed to ``defer_async``. The mock chain
-    ``app.enrich_document_bulk.configure(...).defer_async(...)`` is what
-    ``ingest_document`` actually invokes.
+    """Minimal stand-in for the Procrastinate App.
 
-    Both ``enrich_document_bulk`` and ``enrich_document_interactive``
-    route to the same ``configured`` mock so ``.defer_async.call_args``
-    is independent of which path the request triggers.
+    SPEC-INGEST-CONTENT-PG-001 (audit finding 1): the enrichment task
+    no longer carries the ``extra_payload`` in its ``defer_async``
+    arguments -- the worker reconstructs everything from PostgreSQL via
+    ``artifact_id`` alone. This mock only needs to track that
+    ``defer_async(artifact_id=...)`` was called; the contract tests
+    read ``extra_payload`` from the ``pg_store.update_artifact_extra``
+    mock, not from the procrastinate task args.
     """
 
     def __init__(self) -> None:
         configured = MagicMock()
         configured.defer_async = AsyncMock(return_value=None)
-        self._configured = configured  # exposed so tests can read call_args
+        self._configured = configured
 
-        # NOTE: ``MagicMock().configure`` is a real Mock helper method
-        # (configure_mock alias). Setting ``.configure.return_value``
-        # works in practice but is fragile; assign explicitly.
         bulk_task = MagicMock()
         bulk_task.configure = MagicMock(return_value=configured)
 
@@ -148,9 +146,10 @@ class _MockProcApp:
         self.ingest_graphiti_episode = graphiti_task
 
     @property
-    def captured_kwargs(self) -> dict | None:
+    def defer_kwargs(self) -> dict | None:
         """Return the kwargs of the last defer_async call, or None if
-        defer_async was never invoked.
+        defer_async was never invoked. Post SPEC-INGEST-CONTENT-PG-001
+        the only expected key is ``artifact_id``.
         """
         if self._configured.defer_async.call_args is None:
             return None
@@ -175,9 +174,16 @@ def _build_request(
     )
 
 
-async def _run_with_mocks(req: IngestRequest, mock_proc_app: _MockProcApp) -> dict:
+async def _run_with_mocks(
+    req: IngestRequest, mock_proc_app: _MockProcApp
+) -> tuple[dict, AsyncMock]:
     """Run ``ingest_document`` with all I/O mocked so the test only
-    exercises the Phase-1 extra_payload assembly + defer_async wiring.
+    exercises the Phase-1 extra_payload assembly.
+
+    Returns ``(result, update_artifact_extra_mock)``. SPEC-INGEST-
+    CONTENT-PG-001 routed the extra_payload from the procrastinate task
+    args to ``pg_store.update_artifact_extra(conn, artifact_id, payload)``,
+    so the mock for that call is what the contract tests inspect.
 
     SPEC-TI-003-FOLLOWUP-001: ingest_document takes conn as first arg.
     """
@@ -205,7 +211,7 @@ async def _run_with_mocks(req: IngestRequest, mock_proc_app: _MockProcApp) -> di
         patch(
             "knowledge_ingest.pg_store.update_artifact_extra",
             new_callable=AsyncMock,
-        ),
+        ) as update_extra_mock,
         patch(
             "knowledge_ingest.embedder.embed",
             new_callable=AsyncMock,
@@ -256,12 +262,35 @@ async def _run_with_mocks(req: IngestRequest, mock_proc_app: _MockProcApp) -> di
 
         from knowledge_ingest.routes.ingest import ingest_document
 
-        return await ingest_document(conn, req)
+        result = await ingest_document(conn, req)
+        return result, update_extra_mock
 
 
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+
+def _captured_extra_payload(update_extra_mock: AsyncMock) -> dict:
+    """Pull the extra_payload dict that ingest_document persisted via
+    ``pg_store.update_artifact_extra(conn, artifact_id, extra_payload)``.
+
+    Post SPEC-INGEST-CONTENT-PG-001 this is the canonical source of
+    truth — the enrichment worker reads it back from PG via artifact_id.
+    """
+    assert update_extra_mock.call_args is not None, (
+        "ingest_document never called pg_store.update_artifact_extra — "
+        "the test is a no-op. SPEC-INGEST-CONTENT-PG-001 routes the "
+        "extra_payload to PG, so this call is mandatory before the "
+        "enrichment task can be enqueued."
+    )
+    args, kwargs = update_extra_mock.call_args
+    # Production signature: update_artifact_extra(conn, artifact_id, payload)
+    if len(args) >= 3:
+        return args[2]
+    if "extra" in kwargs:
+        return kwargs["extra"]
+    raise AssertionError(f"update_artifact_extra called with unexpected shape: {args=} {kwargs=}")
 
 
 @pytest.mark.asyncio
@@ -272,15 +301,19 @@ async def test_upload_path_extra_payload_carries_required_keys():
     req = _build_request(source_type="upload")
     proc_app = _MockProcApp()
 
-    result = await _run_with_mocks(req, proc_app)
+    result, update_extra_mock = await _run_with_mocks(req, proc_app)
 
     assert result["status"] == "ok"
-    assert proc_app.captured_kwargs is not None, (
-        "ingest_document never called defer_async — the test is no-op. "
-        "Check that org_config.is_enrichment_enabled mock returns True."
+
+    # SPEC-INGEST-CONTENT-PG-001: defer_async only carries artifact_id now.
+    assert proc_app.defer_kwargs == {"artifact_id": "artifact-uuid-contract"}, (
+        f"defer_async kwargs drift: expected only artifact_id, got "
+        f"{proc_app.defer_kwargs}. SPEC-INGEST-CONTENT-PG-001 explicitly "
+        f"removed every other field from the task args; reintroducing one "
+        f"reopens the race-window the SPEC closed."
     )
 
-    extra_payload: dict = proc_app.captured_kwargs["extra_payload"]
+    extra_payload = _captured_extra_payload(update_extra_mock)
 
     expected = REQUIRED_BASE_KEYS | REQUIRED_WITH_SOURCE_TYPE
     missing = expected - set(extra_payload.keys())
@@ -305,9 +338,9 @@ async def test_connector_path_extra_payload_carries_connector_keys():
     )
     proc_app = _MockProcApp()
 
-    await _run_with_mocks(req, proc_app)
+    _, update_extra_mock = await _run_with_mocks(req, proc_app)
 
-    extra_payload: dict = proc_app.captured_kwargs["extra_payload"]
+    extra_payload = _captured_extra_payload(update_extra_mock)
 
     expected = REQUIRED_BASE_KEYS | REQUIRED_WITH_SOURCE_TYPE | REQUIRED_WITH_CONNECTOR
     missing = expected - set(extra_payload.keys())
@@ -343,9 +376,9 @@ async def test_extra_payload_visibility_is_authoritative_from_kb_config():
     )
     proc_app = _MockProcApp()
 
-    await _run_with_mocks(req, proc_app)
+    _, update_extra_mock = await _run_with_mocks(req, proc_app)
 
-    extra_payload: dict = proc_app.captured_kwargs["extra_payload"]
+    extra_payload = _captured_extra_payload(update_extra_mock)
     assert extra_payload["visibility"] == "internal", (
         f"visibility must come from kb_config (returned 'internal' in "
         f"this test), not from req.extra. Got "
@@ -371,9 +404,9 @@ async def test_extra_payload_carries_content_label_even_when_empty():
     # Mock generate_content_label to return [] (empty result, not error).
     # We can't override the mock from inside _run_with_mocks; instead we
     # verify the assertion holds with the default (non-empty) mock.
-    await _run_with_mocks(req, proc_app)
+    _, update_extra_mock = await _run_with_mocks(req, proc_app)
 
-    extra_payload: dict = proc_app.captured_kwargs["extra_payload"]
+    extra_payload = _captured_extra_payload(update_extra_mock)
     assert "content_label" in extra_payload, (
         "content_label key was dropped from extra_payload. "
         "This is the exact regression that commit cbdfdda5 fixed."
