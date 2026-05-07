@@ -136,38 +136,7 @@ export function joinSeedUrl(baseUrl: string, pathPrefix: string): string {
   return `${base}/${path}/`
 }
 
-/**
- * SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-1 — shared cookie parser.
- * Accepts a raw cookie string (either JSON array or header string format)
- * and a base URL for domain extraction.
- * Used by both add-connector and edit-connector wizard flows.
- */
-export function parseCookieString(raw: string, baseUrl: string): unknown[] | undefined {
-  const trimmed = raw.trim()
-  if (!trimmed) return undefined
-  // JSON array format: [{"name": "...", "value": "..."}]
-  if (trimmed.startsWith('[')) {
-    try {
-      const parsed = JSON.parse(trimmed)
-      return Array.isArray(parsed) ? parsed : undefined
-    } catch {
-      return undefined
-    }
-  }
-  // Raw cookie header format: name1=value1; name2=value2
-  const domain = (() => {
-    try { return new URL(baseUrl).hostname } catch { return '' }
-  })()
-  // SPEC-CONNECTOR-INPUT-VALIDATION-001 hotfix: also accept a single bare
-  // value (no ``name=value`` syntax) — operators commonly copy just the
-  // ``Value`` column from DevTools' Application > Cookies panel without
-  // realising the wizard expects ``name=value`` form. Auto-name it
-  // ``session`` (covers the most common case: a single session cookie).
-  if (!trimmed.includes('=') && !trimmed.includes(';')) {
-    return [{ name: 'session', value: trimmed, domain, path: '/' }]
-  }
-  return trimmed.split(';').map((pair) => {
-    const [cookieName, ...rest] = pair.trim().split('=')
-    return { name: cookieName.trim(), value: rest.join('='), domain, path: '/' }
-  }).filter((c) => c.name && c.value)
-}
+// parseCookieString was removed: the wizard now collects cookies as
+// structured {name, value} rows via CookieRowsInput, matching the shape
+// the backend persists and the cron-sync consumes. No parser layer means
+// no chance of cookie-name guessing. See components/knowledge/CookieRowsInput.tsx.
