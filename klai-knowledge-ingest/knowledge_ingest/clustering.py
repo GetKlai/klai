@@ -180,10 +180,20 @@ def save_centroids(store: CentroidStore) -> None:
 # ---------------------------------------------------------------------------
 
 
-def compute_min_cluster_size(doc_count: int, floor: int = 5) -> int:
+def compute_min_cluster_size(doc_count: int, floor: int = 3) -> int:
     """Compute adaptive min_cluster_size for HDBSCAN.
 
-    Formula: max(floor, doc_count // 50). Adapts to corpus size per SPEC-TAXONOMY-V2-001.
+    Formula: ``max(floor, doc_count // 50)``. Adapts to corpus size per
+    SPEC-TAXONOMY-V2-001.
+
+    Default ``floor`` lowered 5 → 3 in SPEC-TAXONOMY-V2-CONSOLIDATION-002.
+    With floor=5, HDBSCAN's EOM cluster-selection under-fitted at typical
+    KB sizes — small stable clusters (3-4 docs each) couldn't form, so EOM
+    merged everything into ~3 huge clusters. floor=3 lets those small
+    stable clusters survive, landing typical bootstrap output in the IA
+    sweet spot of 5-9 top-level nodes. Production reads the value from
+    ``settings.taxonomy_bootstrap_min_cluster_size_floor``; the function-
+    parameter default exists only for direct callers (tests, scripts).
     """
     return max(floor, doc_count // 50)
 

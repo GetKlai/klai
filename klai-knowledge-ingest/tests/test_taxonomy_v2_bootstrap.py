@@ -12,8 +12,6 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
@@ -211,7 +209,6 @@ class TestAdaptiveClusterCount:
 
     def test_nine_doc_kb_returns_zero_proposals(self):
         """AC-3 + AC-17: 9-doc KB → 0 proposals, logs bootstrap_skipped_too_small_kb."""
-        import structlog.testing
 
         # We'll call the route-level logic that checks doc_count < 10
         # by directly testing the v2 function with 9 synthetic docs
@@ -562,7 +559,6 @@ class TestBootstrapProposalsV2Integration:
     async def test_ac8_all_duplicates_returns_reason(self, mock_settings):
         """AC-8: all proposed names duplicate existing → response includes reason='all_duplicates'."""
         from knowledge_ingest.proposal_generator import (
-            BootstrapResult,
             generate_bootstrap_proposals_v2,
         )
 
@@ -938,7 +934,6 @@ class TestAC15IngestClassificationUntouched:
         compare git diff, but here we verify the test files exist and the
         function signatures are intact.
         """
-        import importlib
 
         # Import the ingest route to verify it's still importable
         # (would fail if we broke something in it)
@@ -984,10 +979,29 @@ class TestAC17AdaptiveClusterCount:
         """min_cluster_size = max(floor, doc_count // 50)."""
         from knowledge_ingest.clustering import compute_min_cluster_size
 
-        # floor=5 default
+        # Formula behavior — works for any floor passed explicitly.
         assert compute_min_cluster_size(100, floor=5) == 5  # 100//50=2, max(5,2)=5
         assert compute_min_cluster_size(1000, floor=5) == 20  # 1000//50=20, max(5,20)=20
         assert compute_min_cluster_size(250, floor=5) == 5  # 250//50=5, max(5,5)=5
+
+    def test_min_cluster_size_default_floor_lowered_to_3(self):
+        """Default floor was 5 (SPEC-TAXONOMY-V2-001) → 3 (V2-CONSOLIDATION-002).
+
+        With floor=5 + adaptive ``doc_count // 50``, HDBSCAN's EOM cluster-
+        selection under-fitted at typical KB sizes: 154-doc Voys/support
+        bootstrap produced only 3 huge clusters because no smaller stable
+        cluster could form. floor=3 lets the small stable clusters survive,
+        landing typical bootstrap output back in the IA-norm sweet spot of
+        5-9 top-level nodes.
+        """
+        from knowledge_ingest.clustering import compute_min_cluster_size
+
+        # Default floor must be 3 — the regression we're guarding against
+        # is someone bumping it back to 5 without removing this test.
+        assert compute_min_cluster_size(100) == 3  # 100//50=2, max(3,2)=3
+        assert compute_min_cluster_size(154) == 3  # the Voys/support case
+        # Adaptive formula still scales with corpus: 1000 docs → 20.
+        assert compute_min_cluster_size(1000) == 20  # 1000//50=20, max(3,20)=20
 
 
 # ---------------------------------------------------------------------------
