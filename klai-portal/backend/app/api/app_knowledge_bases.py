@@ -1209,6 +1209,10 @@ class CrawlPreviewResponse(BaseModel):
     warnings: list[str] = []
     content_selector: str | None = None
     selector_source: str | None = None
+    # SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3 — five-way classification
+    # used by the wizard to gate step-5 → step-6 advance.
+    classification: str = "success"
+    classification_reason: str | None = None
 
 
 @router.post("/knowledge-bases/{kb_slug}/connectors/crawl-preview", response_model=CrawlPreviewResponse)
@@ -1236,6 +1240,59 @@ async def crawl_preview(
         warnings=result.get("warnings", []),
         content_selector=result.get("content_selector"),
         selector_source=result.get("selector_source"),
+        classification=result.get("classification", "success"),
+        classification_reason=result.get("classification_reason"),
+    )
+
+
+# -- Auth probe (SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2) -------------------
+
+
+class AuthProbeRequest(BaseModel):
+    url: str
+    cookies: list[dict] | None = None
+
+
+class AuthProbeResponse(BaseModel):
+    """Five-way classification of the seed-page fetch outcome.
+
+    See SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2 for full semantics.
+    """
+
+    classification: str
+    match_reasons: list[str] = []
+    word_count: int = 0
+    auth_guard: dict | None = None
+
+
+@router.post(
+    "/knowledge-bases/{kb_slug}/connectors/auth-probe", response_model=AuthProbeResponse
+)
+async def auth_probe(
+    kb_slug: str,
+    body: AuthProbeRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> AuthProbeResponse:
+    """SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2 — wizard step-4 auth probe.
+
+    Validates that supplied cookies actually unlock the seed URL before the
+    wizard allows the user to advance to the selector step. Owner role
+    required (mirrors crawl_preview).
+    """
+    caller_id, org, _ = await _get_caller_org(credentials, db)
+    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    await _require_owner(kb, caller_id, db)
+    result = await knowledge_ingest_client.auth_probe(
+        url=body.url,
+        org_id=str(org.id),
+        cookies=body.cookies,
+    )
+    return AuthProbeResponse(
+        classification=result.get("classification", "auth_failed_unreachable"),
+        match_reasons=result.get("match_reasons", []),
+        word_count=result.get("word_count", 0),
+        auth_guard=result.get("auth_guard"),
     )
 
 
