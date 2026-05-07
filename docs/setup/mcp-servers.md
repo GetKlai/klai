@@ -58,12 +58,6 @@ It is **cross-platform** — all platform-specific settings live in local config
       "args": [".claude/scripts/playwright-launcher.mjs"],
       "env": {}
     },
-    "playwright-isolated": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["@playwright/mcp@0.0.70", "--browser", "chromium", "--isolated"],
-      "env": {}
-    },
     "codeindex": {
       "type": "stdio",
       "command": "codeindex",
@@ -96,8 +90,7 @@ It is **cross-platform** — all platform-specific settings live in local config
 |--------|---------|
 | **serena** | Semantic code navigation (symbol search, references, go-to-definition) and persistent project memories. Uses LSP for Python and TypeScript. |
 | **context7** | Up-to-date library documentation (React, FastAPI, Next.js, etc.). Prefer over web search for API docs. |
-| **playwright** | Browser automation for E2E spot-checks and visual verification. Headed Chromium with shared login state via `--storage-state` — every Claude Code session preloads the same auth, runs in its own ephemeral profile, parallel-safe. |
-| **playwright-isolated** | Headed ephemeral Chromium with NO storage state. For CSS work or unauthenticated checks where preloaded login would just be noise. |
+| **playwright** | Browser automation for E2E spot-checks and visual verification. Headed Chrome with shared login state via `--storage-state` — every Claude Code session preloads the same auth, runs in its own ephemeral profile, parallel-safe. Single MCP server (no separate `-isolated` variant — see Section 3 for why). |
 | **codeindex** | Graph-powered code intelligence — call graphs, impact analysis, semantic search, communities, and enrichment queries (git hotspots, SPEC links, test coverage, PageRank). |
 | **grafana** | Read-only access to Grafana dashboards, Prometheus/VictoriaMetrics queries, and alerts. Cannot query VictoriaLogs — use the `victorialogs` MCP for log queries instead. |
 | **victorialogs** | Production log queries via LogsQL against VictoriaLogs. Requires SSH tunnel (`./scripts/victorialogs-tunnel.sh`) and `VICTORIALOGS_BASIC_AUTH_B64` env var. Preferred over `docker logs` for investigating issues. |
@@ -366,7 +359,7 @@ Refresh when sessions start logged-out (cookie expiry, ~weeks).
 |---|---|
 | Yes — bekende selectors, regression test | `playwright` MCP |
 | No — exploratory, smoke check, a11y/copy audit | Agent Browser CLI |
-| One-off CSS check, no auth needed | `playwright-isolated` MCP |
+| One-off CSS check, no auth needed | `playwright` MCP — open a new tab via `browser_tabs(action: "new")` |
 
 ## 10. Grafana MCP (dashboards and metrics only)
 
