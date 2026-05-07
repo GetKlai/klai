@@ -99,11 +99,14 @@ class Settings(BaseSettings):
     taxonomy_cluster_trigger_count: int = 20
     taxonomy_centroid_max_age_hours: int = 48
 
-    # SPEC-TAXONOMY-V2-001 bootstrap settings
+    # SPEC-TAXONOMY-V2-001 bootstrap settings.
+    # ``taxonomy_bootstrap_v2_enabled`` flag was deleted in
+    # SPEC-TAXONOMY-V2-CONSOLIDATION-001 along with the V1 fallback path —
+    # V2 had been the default since PR #408 and the fallback was never used
+    # in production.
     taxonomy_bootstrap_min_cluster_size_floor: int = 5
     taxonomy_bootstrap_max_clusters: int = 20
     taxonomy_bootstrap_top_n_per_cluster: int = 8
-    taxonomy_bootstrap_v2_enabled: bool = True
 
     # SPEC-TAXONOMY-V2-001-FOLLOWUP-001: UMAP pre-reduction settings (B1)
     taxonomy_bootstrap_umap_n_components: int = 10

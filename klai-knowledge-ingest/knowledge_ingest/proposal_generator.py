@@ -1,11 +1,61 @@
 """
-Proposal generator — suggests new taxonomy categories based on unmatched documents.
+Proposal generator — suggests taxonomy category names from clusters of documents.
 
-Called after a batch ingest when >= 3 documents had taxonomy_node_id = null.
-Uses klai-fast to suggest a category name for the cluster, then submits via portal_client.
-Deduplication: checks existing pending proposals before submitting (24h window enforced by portal).
+Two callers, three LLM-prompt strategies, one shared naming-criteria base.
 
-SPEC-TAXONOMY-V2-001: adds generate_bootstrap_proposals_v2 (Clio-style density-driven bootstrap).
+──────────────────────────────────────────────────────────────────────────────
+Evolution history (read this BEFORE adding a fourth strategy)
+──────────────────────────────────────────────────────────────────────────────
+
+  SPEC-KB-021    : ``maybe_generate_proposal`` — post-ingest, when >= 3 docs
+                   land that don't fit existing taxonomy nodes, suggest one
+                   new category for them. Single LLM call, single name out.
+
+  SPEC-KB-022    : ``generate_bootstrap_proposals`` (V1) — single-shot 50-doc
+                   bootstrap where the LLM did *both* clustering AND naming
+                   in one call. Replaced by V2 below; kept for a feature-flag
+                   window then deleted (SPEC-TAXONOMY-V2-CONSOLIDATION-001).
+
+  SPEC-TAXONOMY-V2-001 : ``generate_bootstrap_proposals_v2`` — Clio-style.
+                   Pre-cluster documents with HDBSCAN, then ask the LLM to
+                   *only* name (not cluster). One LLM call per cluster, in
+                   parallel. New prompt: ``_BOOTSTRAP_V2_SYSTEM_PROMPT``.
+
+  SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B4 : V2 in prod produced 7 near-duplicate
+                   names around "CRM integraties" (HDBSCAN found valid sub-
+                   clusters per CRM product, but per-cluster naming had no
+                   awareness of siblings). Added ``_BATCHED_NAMING_SYSTEM_PROMPT``
+                   — single LLM call sees all clusters, enforces distinct
+                   names. Single-cluster prompt kept as fallback when batched
+                   times out or returns nothing for a cluster_id.
+
+  SPEC-TAXONOMY-V2-CONSOLIDATION-001 : the Unify-bug discovery — the batched
+                   prompt's "differentiate by what's UNIQUE about each
+                   cluster" rule biased the LLM to pick the most salient
+                   brand-noun (e.g. "Unify-telefoons") even when only one of
+                   eight docs in the cluster mentioned that brand. Two parallel
+                   prompts had silently drifted (single said "prefer domain
+                   language", batched said "differentiate by unique"), giving
+                   different output bias depending on which path fired.
+
+                   Fix-forward: extracted ``_NAMING_CRITERIA`` as a shared
+                   base. Each prompt composes the base + its strategy-specific
+                   framing (incremental / single / batched). The Unify-bug fix
+                   ("name common theme, NOT salient minority brand") lands
+                   in the base — applies to all prompts automatically. V1
+                   bootstrap path + feature flag deleted.
+
+──────────────────────────────────────────────────────────────────────────────
+
+Why three prompts (not one): the *strategies* genuinely differ.
+
+- Incremental: adds one node to an existing taxonomy. Must avoid existing names.
+- Single-cluster: names one cluster, no siblings visible. (Batched fallback.)
+- Batched: names N clusters in one call, must produce distinct names.
+
+But the *naming criteria* are identical across strategies — and that's what
+the shared base captures. Sibling-distinctness in batched is enforced *on top*
+of the base, not by overriding the base's "common theme" rule.
 """
 
 from __future__ import annotations
@@ -34,11 +84,37 @@ class DocumentSummary:
     content_preview: str
 
 
+# ---------------------------------------------------------------------------
+# Shared naming criteria — single source of truth for what makes a good name.
+# ---------------------------------------------------------------------------
+# Every cluster-naming prompt below composes this block. Bug-fixes to the
+# rules land HERE and apply everywhere automatically. Do not duplicate or
+# override these rules in a strategy-specific prompt — extend, don't fork.
+
+_NAMING_CRITERIA = (
+    "Apply these rules to every cluster name:\n\n"
+    "- The name MUST describe what is COMMON across ALL documents in the cluster.\n"
+    "  Look for the shared theme, NOT the most prominent or branded item.\n"
+    "- If documents span multiple brands, products, or providers, use a generic\n"
+    '  descriptor (e.g., "Telefoonconfiguratie - diverse providers"), NOT the\n'
+    "  most salient brand appearing in only some docs.\n"
+    "- Use specific terms (brand, product, tool) ONLY when they apply to ALL\n"
+    "  documents in the cluster.\n"
+    "- 2-5 words, in the user's domain language (Dutch if docs are in Dutch).\n"
+)
+
+
+# ---------------------------------------------------------------------------
+# Strategy 1: incremental — name ONE cluster of post-ingest unmatched docs.
+# Used by ``maybe_generate_proposal``. Existing-node names are avoided
+# at the call site (post-LLM dedup), not enforced in the prompt.
+# ---------------------------------------------------------------------------
+
 _PROPOSAL_SYSTEM_PROMPT = (
-    "You are a knowledge taxonomy assistant. "
-    "Given a list of documents that don't fit existing categories, "
-    "suggest a concise category name (2-5 words) that would cover them. "
-    "\n\nReply with ONLY a JSON object, no markdown, no explanation: "
+    "You are a knowledge taxonomy assistant. You are proposing a NEW "
+    "category for documents that don't fit any existing category.\n\n"
+    f"{_NAMING_CRITERIA}"
+    "\nReply with ONLY a JSON object, no markdown, no explanation: "
     '{"category_name": "<string>"}'
 )
 
@@ -124,145 +200,11 @@ async def maybe_generate_proposal(
     )
 
 
-_BOOTSTRAP_SYSTEM_PROMPT = (
-    "You are a knowledge taxonomy assistant. "
-    "Given a list of documents from a knowledge base, identify the 3-8 most logical, "
-    "non-overlapping top-level categories that together cover all documents. "
-    "Each category name should be concise (2-5 words) and distinct. "
-    "If existing categories are listed, do NOT repeat them — only propose NEW categories "
-    "that cover documents not fitting the existing ones. "
-    "Return an empty list if no new categories are needed."
-    "\n\nReply with ONLY a JSON object, no markdown, no explanation: "
-    '{"categories": ["<string>", ...]}'
-)
-
-
-async def generate_bootstrap_proposals(
-    org_id: str,
-    kb_slug: str,
-    documents: list[DocumentSummary],
-    existing_category_names: list[str] | None = None,
-) -> int:
-    """Scan existing documents and generate bootstrap taxonomy proposals.
-
-    Sends up to 50 document summaries to klai-fast, asks it to identify
-    3-8 top-level categories, then submits one proposal per category.
-    Returns number of proposals submitted.
-
-    Skips silently when PORTAL_INTERNAL_TOKEN is not configured.
-    """
-    if not documents:
-        return 0
-    if not settings.portal_internal_token:
-        logger.warning(
-            "bootstrap_proposals_skipped",
-            reason="missing PORTAL_INTERNAL_TOKEN",
-            kb_slug=kb_slug,
-        )
-        return 0
-
-    try:
-        categories = await asyncio.wait_for(
-            _suggest_multiple_categories(documents[:50], existing_category_names or []),
-            timeout=30.0,
-        )
-    except Exception as exc:
-        logger.warning(
-            "bootstrap_proposals_generation_failed",
-            kb_slug=kb_slug,
-            error=str(exc),
-        )
-        return 0
-
-    if not categories:
-        return 0
-
-    # Filter out names that already exist (case-insensitive) as a safety net,
-    # even though the prompt tells the LLM not to propose them.
-    existing_lower = {n.lower() for n in (existing_category_names or [])}
-    categories = [c for c in categories if c.lower() not in existing_lower]
-
-    if not categories:
-        logger.info(
-            "bootstrap_proposals_all_filtered",
-            kb_slug=kb_slug,
-            reason="all proposed categories already exist",
-        )
-        return 0
-
-    # Generate descriptions for each proposed category in parallel
-    sample_titles = [doc.title for doc in documents[:10]]
-    desc_tasks = [
-        generate_node_description(name, None, sample_titles) for name in categories if name
-    ]
-    descriptions = await asyncio.gather(*desc_tasks, return_exceptions=True)
-
-    submitted = 0
-    for i, name in enumerate(categories):
-        desc = descriptions[i] if i < len(descriptions) and isinstance(descriptions[i], str) else ""
-        proposal = TaxonomyProposal(
-            proposal_type="new_node",
-            suggested_name=name,
-            document_count=len(documents),
-            sample_titles=[doc.title for doc in documents[:5]],
-            description=desc,
-        )
-        await submit_taxonomy_proposal(kb_slug=kb_slug, org_id=org_id, proposal=proposal)
-        submitted += 1
-        logger.info(
-            "bootstrap_proposal_submitted",
-            kb_slug=kb_slug,
-            suggested_name=name,
-            description=desc,
-        )
-
-    logger.info(
-        "bootstrap_proposals_complete",
-        kb_slug=kb_slug,
-        document_count=len(documents),
-        proposals_submitted=submitted,
-    )
-    return submitted
-
-
-async def _suggest_multiple_categories(
-    documents: list[DocumentSummary],
-    existing_names: list[str],
-) -> list[str]:
-    """Use klai-fast to suggest multiple category names for a set of documents."""
-    doc_summaries = "\n".join(f"- {doc.title}: {doc.content_preview[:150]}" for doc in documents)
-    user_message = f"Documents in this knowledge base:\n{doc_summaries}"
-    if existing_names:
-        user_message += (
-            f"\n\nExisting categories (do NOT propose these again): {', '.join(existing_names)}"
-        )
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(
-            f"{settings.litellm_url}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {settings.litellm_api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": settings.taxonomy_classification_model,
-                "messages": [
-                    {"role": "system", "content": _BOOTSTRAP_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_message},
-                ],
-                "temperature": 0.3,
-                "max_tokens": 200,
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        content = data["choices"][0]["message"]["content"]
-        content = (content or "").strip()
-        # Strip markdown code fences if present
-        if content.startswith("```"):
-            content = content.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-        parsed = json.loads(content)
-        return [c for c in parsed.get("categories", []) if isinstance(c, str) and c.strip()]
+# V1 ``generate_bootstrap_proposals`` (single-shot LLM clustering+naming) +
+# its prompt + helper were deleted in SPEC-TAXONOMY-V2-CONSOLIDATION-001.
+# V2 (HDBSCAN pre-clustering + per-cluster LLM naming) has been the default
+# (``taxonomy_bootstrap_v2_enabled=True``) since SPEC-TAXONOMY-V2-001 shipped
+# in PR #408. The fallback was never re-enabled in production.
 
 
 @dataclass
@@ -279,17 +221,19 @@ class BootstrapResult:
 
 
 # ---------------------------------------------------------------------------
-# V2 bootstrap system prompt (per cluster)
+# Strategy 2: V2 single-cluster — name ONE pre-clustered (HDBSCAN) group.
+# Used as fallback when batched naming below times out or returns nothing
+# for a cluster_id. Shares ``_NAMING_CRITERIA`` with batched, so the rules
+# the LLM applies don't depend on which path fired.
 # ---------------------------------------------------------------------------
 
 _BOOTSTRAP_V2_SYSTEM_PROMPT_TEMPLATE = (
     "You are a knowledge taxonomy assistant. You are naming a cluster of "
     "documents from a knowledge base."
     "{kb_description_block}"
-    "\n\nGiven example documents that thematically belong together, suggest a "
-    "concise category name (2-5 words) that captures their shared theme. "
-    "Prefer the user's domain language over generic labels."
-    '\n\nReply with ONLY a JSON object: {{"category_name": "<string>"}}'
+    "\n\n"
+    f"{_NAMING_CRITERIA}"
+    '\nReply with ONLY a JSON object: {{"category_name": "<string>"}}'
 )
 
 
@@ -335,18 +279,33 @@ async def _suggest_cluster_name(
         return parsed.get("category_name") or None
 
 
+# ---------------------------------------------------------------------------
+# Strategy 3: V2 batched — name N pre-clustered groups in ONE LLM call.
+# Cross-cluster awareness lets the LLM enforce distinct names when HDBSCAN
+# finds related sub-clusters (B4: prevents "7 variants of CRM integraties").
+#
+# IMPORTANT: the sibling-distinctness rule must NOT override the criteria
+# base's "common theme" rule. The pre-Consolidation prompt said "differentiate
+# by what's UNIQUE about each cluster (specific tool/use-case/audience)" —
+# that biased the LLM toward picking the most salient minority brand as the
+# label (the Unify-bug). The current formulation differentiates by COMMON-
+# WITHIN-each-cluster-more-specifically, preserving distinctness without the
+# salient-brand bias.
+# ---------------------------------------------------------------------------
+
 _BATCHED_NAMING_SYSTEM_PROMPT_TEMPLATE = (
     "You are naming N pre-clustered groups of documents from a knowledge base."
     "{kb_description_block}"
-    "\n\nThe clustering algorithm has already identified these as DISTINCT topics — "
-    "your job is to label each one with a concise, DIFFERENTIATED name.\n\n"
-    "Constraints:\n"
-    "- Each name 2-5 words\n"
-    "- All N names MUST be DISTINCT — no near-duplicates, no overlapping concepts\n"
-    "- Use the user's domain language (Dutch terms if docs are in Dutch)\n"
-    '- If clusters appear thematically related (e.g., multiple sub-types of "X"), '
-    "differentiate by what's UNIQUE about each "
-    "(specific tool, specific use-case, specific audience)\n\n"
+    "\n\nThe clustering algorithm has already identified these as DISTINCT "
+    "topics — your job is to label each one with a concise, DIFFERENTIATED "
+    "name.\n\n"
+    f"{_NAMING_CRITERIA}"
+    "\nAdditional cross-cluster constraint:\n"
+    "- All N names MUST be DISTINCT — no near-duplicates, no overlapping concepts.\n"
+    "- When clusters share an overarching theme but differ in scope, "
+    "differentiate by what is COMMON within each cluster at a more specific "
+    "level (the shared sub-theme of those docs), NOT by picking the most "
+    "unique-looking item per cluster.\n\n"
     "Reply ONLY with JSON, no markdown:\n"
     '{{"names": [{{"cluster_id": <int>, "name": "<string>"}}, ...]}}'
 )

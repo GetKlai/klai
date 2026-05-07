@@ -70,7 +70,6 @@ def _make_mock_settings() -> MagicMock:
     m.litellm_api_key = "key"
     m.taxonomy_classification_model = "klai-fast"
     m.taxonomy_classification_timeout = 30.0
-    m.taxonomy_bootstrap_v2_enabled = True
     m.taxonomy_bootstrap_min_cluster_size_floor = 5
     m.taxonomy_bootstrap_max_clusters = 20
     m.taxonomy_bootstrap_top_n_per_cluster = 8
