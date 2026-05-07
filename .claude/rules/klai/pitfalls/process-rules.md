@@ -1461,15 +1461,20 @@ cookies expire (~3 weeks).
 
 **The canonical answer for this use case:**
 `--isolated --storage-state ~/.claude/mcp-storageState.json`. Seed the
-storage-state file via the **in-session `browser_storage_state` MCP tool**
-(available in `@playwright/mcp >= 0.0.67`) — NOT via `npx playwright
-codegen --save-storage=...`. The codegen path looks correct in Microsoft's
-docs but is flaky on macOS (the file only writes on a specific Inspector-
-side close event; closing the browser the wrong way means no file ever
-appears). PR #354's first attempt used codegen and produced a dead-end
-that cost a full day of debugging on 2026-05-06/07. The MCP-tool seed
-path writes the file directly from the running MCP server — no external
-tooling, no Inspector window, no Ctrl+C dance.
+storage-state file via `browser_run_code_unsafe` with one Playwright
+snippet that calls `page.context().storageState({ path })` — verified
+working on 2026-05-07. Do NOT use `npx playwright codegen
+--save-storage=...`: that path is flaky on macOS (the file only writes
+on a specific Inspector-side close event; closing the browser the
+wrong way means no file appears). PR #354 shipped codegen as the seed
+and lost a week of debugging before the 2026-05-07 retry confirmed
+the failure mode. Note: there is **no** separate `browser_storage_state`
+MCP tool in `@playwright/mcp@latest` — earlier drafts of this entry
+referenced one that does not exist. The functionality lives in the
+generic `browser_run_code_unsafe` tool, which executes Playwright code
+server-side; calling `page.context().storageState({ path: '...' })`
+writes the cookies + localStorage directly. No external tooling, no
+Inspector window, no Ctrl+C dance.
 
 **Anti-patterns — do NOT propose any of these without re-reading this entry:**
 
@@ -1506,8 +1511,9 @@ tooling, no Inspector window, no Ctrl+C dance.
    close event; close the browser the wrong way and the file never
    appears. PR #354 (apr 2026) shipped this as the documented seed step
    and lost a full week of "but it should work" debugging before the
-   2026-05-07 retry confirmed the failure mode. Use the in-session
-   `browser_storage_state` MCP tool instead.
+   2026-05-07 retry confirmed the failure mode. Use `browser_run_code_unsafe`
+   with `page.context().storageState({ path })` instead (see canonical
+   answer above).
 
 **The current working setup (do not change without strong cause):**
 
@@ -1536,9 +1542,18 @@ tooling, no Inspector window, no Ctrl+C dance.
      `https://voys.getklai.com`).
   3. Log in by hand (Google SSO + 2FA), wait until you're on the
      post-login workspace.
-  4. Have the AI call the MCP tool `browser_storage_state` — it writes
-     the current cookies + localStorage to
-     `~/.claude/mcp-storageState.json`.
+  4. Have the AI call `browser_run_code_unsafe` with this snippet (it
+     writes the current cookies + localStorage to disk):
+     ```js
+     async (page) => {
+       await page.context().storageState({
+         path: '/Users/<you>/.claude/mcp-storageState.json'
+       });
+       return { url: page.url(), cookieCount: (await page.context().cookies()).length };
+     }
+     ```
+     The tool returns immediately with the new cookie count. Verify the
+     file mtime/size with `ls -la ~/.claude/mcp-storageState.json`.
   5. Restart Claude Code so the launcher picks the new file up via
      `--storage-state` at startup.
   6. From now on all MCP sessions, including parallel Claude Code
@@ -1548,13 +1563,13 @@ tooling, no Inspector window, no Ctrl+C dance.
 
 | Symptom | Correct response | Wrong response |
 |---|---|---|
-| Sessions start logged-out | Verify `~/.claude/mcp-storageState.json` exists and is recent. Re-seed via the `browser_storage_state` MCP tool (see "Login seed/refresh" above). | Add `--user-data-dir` back (anti-pattern 2); fall back to `playwright codegen --save-storage` (anti-pattern 8). |
+| Sessions start logged-out | Verify `~/.claude/mcp-storageState.json` exists and is recent. If missing/stale, re-seed by running `browser_run_code_unsafe` with `page.context().storageState({ path })` after a fresh login (see "Login seed/refresh" above). | Add `--user-data-dir` back (anti-pattern 2); fall back to `playwright codegen --save-storage` (anti-pattern 8); search for a non-existent `browser_storage_state` tool. |
 | `Browser is already in use` on a second session | Confirm `.mcp.json` uses `--isolated` not `--user-data-dir`. Each session must get its own ephemeral profile. | Add a slot-pool launcher (anti-pattern 6) |
 | AI cannot see what the browser is doing | Confirm no `--headless` flag in the primary server. | Tell the user to "just check the browser themselves" — defeats the point |
 | User says "iedere keer hetzelfde probleem" | Stop. Re-read this entry. Do not propose a config change before identifying which anti-pattern you are about to commit. | Propose another config edit |
-| `browser_storage_state` tool not visible in current session | Tool-schema-cache is from an older `@playwright/mcp` pin. Restart Claude Code so it reloads the schema list from `@latest`. | Try `browser_evaluate` to read cookies (HttpOnly cookies are invisible) or write a homegrown seed script (anti-pattern 6 territory). |
-| `--browser chromium` rejected on launch | `@playwright/mcp >= 0.0.74` dropped `chromium` as a valid value. Use `--browser chrome`. | Pin back to `@0.0.70` (loses `browser_storage_state` tool — anti-pattern 8 territory). |
-| Storage state file is hand-edited / non-standard | Delete it, re-seed via the `browser_storage_state` MCP tool. | Hand-edit JSON in storageState |
+| `browser_run_code_unsafe` tool not visible in current session | Tool-schema-cache is from an older `@playwright/mcp` pin (pre `0.0.74` exposed `browser_run_code` instead). Restart Claude Code so it reloads the schema list from `@latest`. | Try `browser_evaluate` to read cookies (HttpOnly cookies are invisible) or write a homegrown seed script (anti-pattern 6 territory). |
+| `--browser chromium` rejected on launch | `@playwright/mcp >= 0.0.74` dropped `chromium` as a valid value. Use `--browser chrome`. | Pin back to `@0.0.70` (loses `browser_run_code_unsafe` — anti-pattern 8 territory). |
+| Storage state file is hand-edited / non-standard | Delete it, re-seed via `browser_run_code_unsafe` after a fresh login. | Hand-edit JSON in storageState |
 
 If a future @playwright/mcp version introduces auto-write-back of storage
 state on session close, the manual refresh step can be removed. Until
