@@ -393,6 +393,21 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
             set_cookie_header=set_cookie_header,
         )
 
+        # SPEC-CONNECTOR-INPUT-VALIDATION-001 — completion log for production
+        # debugging. Without this, a 200 with classification='unknown' or
+        # 'requires_javascript' is invisible in logs (only the 'started' event
+        # fires today). VictoriaLogs query: ``event:crawl_preview_completed
+        # AND classification:unknown``.
+        logger.info(
+            "crawl_preview_completed",
+            url=body.url,
+            classification=classification,
+            word_count=word_count,
+            status_code=metadata.get("status_code"),
+            selector_source=selector_source,
+            warnings_count=len(warnings),
+        )
+
         return CrawlPreviewResponse(
             url=body.url,
             fit_markdown=fit_md,
@@ -488,6 +503,19 @@ async def auth_probe(body: AuthProbeRequest, request: Request) -> AuthProbeRespo
                         auth_guard.login_indicator_description = f"Detected: {indicator}"
             except Exception:
                 logger.debug("auth_probe_indicator_detection_skipped", url=body.url)
+
+    # SPEC-CONNECTOR-INPUT-VALIDATION-001 — completion log mirrors the one
+    # in preview_crawl above; without it, debugging "why did wizard show
+    # auth_failed_unreachable" requires guessing.
+    logger.info(
+        "auth_probe_completed",
+        url=body.url,
+        classification=label,
+        word_count=result.word_count,
+        status_code=metadata.get("status_code"),
+        match_reasons=list(classification.match_reasons),
+        cookies_provided=bool(body.cookies),
+    )
 
     return AuthProbeResponse(
         classification=label,

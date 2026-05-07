@@ -15,7 +15,7 @@ import { StepIndicator, type StepItem } from '@/components/ui/step-indicator'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { MS_SITE_URL_PATTERN } from '@/lib/ms-docs'
-import { ASSERTION_MODE_OPTIONS, parseCookieString } from './$kbSlug/-kb-helpers'
+import { ASSERTION_MODE_OPTIONS, joinSeedUrl, parseCookieString } from './$kbSlug/-kb-helpers'
 import type { ConnectorSummary, GitHubConfig, WebCrawlerConfig } from './$kbSlug/-kb-types'
 import {
   AuthProbeFeedback,
@@ -589,7 +589,7 @@ function EditConnectorPage() {
                         setAuthProbeResult(null)
                         setAuthProbeError(null)
                         authProbeMutation.mutate({
-                          url: webcrawlerConfig.base_url + (webcrawlerConfig.path_prefix || ''),
+                          url: joinSeedUrl(webcrawlerConfig.base_url, webcrawlerConfig.path_prefix),
                           cookies: parseCookies(),
                         })
                       }}
