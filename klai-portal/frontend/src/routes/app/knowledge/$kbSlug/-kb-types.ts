@@ -149,3 +149,20 @@ export interface WebCrawlerConfig {
   max_pages: string
   content_selector: string
 }
+
+/**
+ * Single authentication cookie input row.
+ *
+ * Connector wizard step 4 collects cookies as structured rows, NOT as a
+ * free-text textarea that the frontend then parses. This mirrors the shape
+ * stored in `connector.config.cookies` and consumed by the ingest cron-sync
+ * (knowledge_ingest/connector_cookies.py → crawl_page) — no parser layer in
+ * between, no chance of cookie-name guessing.
+ *
+ * `domain` and `path` are derived at submit time from the connector's
+ * `base_url`; only `name` and `value` are operator-supplied per row.
+ */
+export interface CookieRow {
+  name: string
+  value: string
+}
