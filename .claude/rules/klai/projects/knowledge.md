@@ -8,45 +8,66 @@ paths:
 ---
 # Knowledge Domain Patterns
 
-## chat system prompt — single source of truth (HIGH)
+## chat system prompt — three locations, never duplicate (HIGH)
 
-The grounded chat system prompt lives in **exactly one place**:
-`klai-libs/chat-prompts/klai_chat_prompts/__init__.py`
-(`GROUNDED_CHAT_SYSTEM_PROMPT`). Both `klai-retrieval-api`'s
-`services/synthesis.py` and `klai-portal/backend/app/services/partner_chat.py`
-import the constant; neither inlines it.
+System-prompt content for chat lives in **three** canonical files,
+never two copies of the same content. Modifying one without considering
+the other two has been the recurring failure mode of
+SPEC-RAG-MULTILINGUAL-CHAT-001.
 
-**Why:** before SPEC-RAG-MULTILINGUAL-CHAT-001, the prompt was
-duplicated in two services with hardcoded `Als de gebruiker Nederlands
-schrijft, antwoord je in het Nederlands` switching. Two copies, no
-enforcement of byte-equality, drift inevitable on the next edit. Plus
-the NL/EN-only switch shut out DE / FR / PT / ES users entirely.
+| Location | What lives here | Used by |
+|---|---|---|
+| `klai-libs/chat-prompts/klai_chat_prompts/__init__.py` (`GROUNDED_CHAT_SYSTEM_PROMPT`) | The shared multilingual base prompt: detect substantive language, three guards, no translator disclaimers, [n] citation rules | imported by paths B (`partner_chat.py`) and C (`synthesis.py`); imported by path A as the foundation in v1.2 |
+| `deploy/litellm/klai_knowledge.py` | The LiteLLM pre-call hook prefix builder: Klai Kennisbank header (narrow + broad), ANTWOORDFORMAAT instructions, Klai Templates wrapper, KB-unavailable notice | path A only — LibreChat user-facing chat traffic |
+| `klai-portal/backend/app/services/partner_chat.py::_build_system_prompt` | Adds the chunks-as-context block to the shared base | path B — Widget + Partner API |
+
+**Why three:** chat traffic in Klai takes three concurrent paths. (A)
+LibreChat → LiteLLM hook → Mistral; (B) portal-api
+`/partner/v1/chat/completions` → LiteLLM (no `user` field, hook skips)
+→ Mistral; (C) retrieval-api `POST /chat` (dormant). The hook fires
+only for path A (it filters on `data["user"]`). v1.0/v1.1 of the SPEC
+landed multilingual on B + C only, leaving A still hardcoded NL —
+that mistake cost a full audit cycle to detect.
 
 **Prevention:**
-- Never inline a copy of the prompt in a new chat surface. Import
-  `from klai_chat_prompts import GROUNDED_CHAT_SYSTEM_PROMPT`.
-- The CI lint `scripts/lint-no-duplicate-chat-prompt.sh` runs in
-  per-service CI and rejects PRs that re-introduce hardcoded copies
-  of the prompt's anchor lines outside `klai-libs/chat-prompts/`.
-- Do NOT re-introduce explicit language allow-lists in the prompt
-  ("if the user writes Dutch", "if the user writes English"). The
-  prompt detects any language the LLM understands and applies three
-  guards (substantive-message threshold, single-foreign-word
-  tolerance, substantive-switch persistence). Adding back a
-  hand-curated language list breaks every non-listed language.
+- Before changing chat behaviour: ask which of the three paths you're
+  touching. If the answer isn't immediately obvious from the file
+  name, you don't yet understand the change — re-read this entry.
+- Never inline a copy of `GROUNDED_CHAT_SYSTEM_PROMPT` content in a
+  new chat surface. Import `from klai_chat_prompts import
+  GROUNDED_CHAT_SYSTEM_PROMPT`.
+- Never duplicate a Klai Kennisbank / ANTWOORDFORMAAT / Klai Templates
+  / KB-unavailable block outside `deploy/litellm/klai_knowledge.py`
+  unless you migrated it into `klai-libs/chat-prompts` and updated
+  every other consumer in the same PR.
+- The CI lint `scripts/lint-no-duplicate-chat-prompt.sh` enforces both
+  rules. It checks two anchor sets — the GROUNDED prompt anchors
+  (canonical: `klai-libs/chat-prompts`) and the LiteLLM-hook NL prefix
+  anchors (canonical: `deploy/litellm/klai_knowledge.py`).
+- Do NOT re-introduce explicit language allow-lists in any of the
+  three locations ("if the user writes Dutch", "if the user writes
+  English"). The base prompt detects any language the LLM
+  understands; the hook prefix and the chunks-context block must
+  remain language-neutral. Hand-curated language lists break every
+  non-listed language.
 - bge-m3 retrieval is already polyglot — never add a query-translation
   layer ahead of retrieval.
 
 **Detection in production:** `event:chat_synthesis_complete` events in
 VictoriaLogs carry `query_language_detected`,
-`response_language_detected`, and `language_correctness`. A drop in
-language-correctness rate for one language is the signal that the
-prompt has drifted.
+`response_language_detected`, and `language_correctness`. The
+`service:` field tells you which path emitted the event (`litellm`
+for path A, `portal-api` for path B, `retrieval-api` for path C). A
+drop in language-correctness rate for one language on one specific
+service is the signal that ONE of the three locations drifted —
+correlate with recent PRs touching that file.
 
-**See:** SPEC-RAG-MULTILINGUAL-CHAT-001,
+**See:** SPEC-RAG-MULTILINGUAL-CHAT-001 (HISTORY v1.2 has the
+post-merge audit that uncovered the three-paths confusion),
+`docs/architecture/knowledge-ingest-flow.md` § Multilingual chat,
 `docs/runbooks/multilingual-chat-observability.md`,
-`klai-retrieval-api/evaluation/cross_lingual_runner.py` (the pre-merge
-eval gate).
+`klai-retrieval-api/evaluation/cross_lingual_runner.py` (cross-lingual
+eval).
 
 ## connector_id must thread through the crawl pipeline (HIGH)
 

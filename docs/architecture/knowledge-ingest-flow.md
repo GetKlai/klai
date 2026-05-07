@@ -986,11 +986,42 @@ that directly answers the query. Sparse search finds keyword matches. The rerank
 a final precision pass. Together they reduce retrieval failures significantly compared to
 dense-only search.
 
-**Multilingual chat (SPEC-RAG-MULTILINGUAL-CHAT-001).** Synthesis is
-language-agnostic from May 2026. The `_synthesize` step (and its
-mirror in `klai-portal/backend/app/services/partner_chat`) loads its
-system prompt from the shared library `klai-libs/chat-prompts`
-(`GROUNDED_CHAT_SYSTEM_PROMPT`). The prompt instructs the LLM to:
+**Multilingual chat (SPEC-RAG-MULTILINGUAL-CHAT-001).** May 2026
+multilingual rollout. There are **three concurrent chat paths** in
+Klai, each with its own system-prompt construction. They are listed
+here in order of user impact:
+
+1. **LibreChat → LiteLLM → Mistral (path A).** The user-facing chat
+   embed at `chat-{tenant}.getklai.com` (rendered inside an iframe at
+   `voys.getklai.com/app/chat` and equivalents). LibreChat sends a
+   completion request to the LiteLLM proxy. LiteLLM's pre-call hook
+   `deploy/litellm/klai_knowledge.py` recognises LibreChat traffic by
+   the presence of `data["user"]` (LibreChat MongoDB ObjectId), calls
+   retrieval-api `/retrieve` for chunks, then prepends a system-prompt
+   prefix to the messages list. v1.2 of the SPEC moved that prefix
+   construction over to the shared `GROUNDED_CHAT_SYSTEM_PROMPT` from
+   `klai-libs/chat-prompts` and rewrote the four NL prefix blocks
+   (Klai Kennisbank header narrow + broad, ANTWOORDFORMAAT
+   instructions, Klai Templates wrapper, KB-unavailable notice) to be
+   multilingual.
+2. **portal-api `/partner/v1/chat/completions` → LiteLLM → Mistral
+   (path B).** Both the embeddable Widget (`klai-widget/`) and external
+   Partner API tokens flow through this endpoint.
+   `klai-portal/backend/app/services/partner_chat.py::chat_completion_*`
+   POSTs to LiteLLM **without** the `user` field, so the
+   `klai_knowledge.py` hook hits its early-exit and the prefix it
+   would have prepended is skipped. The system prompt that reaches
+   Mistral here is the one `partner_chat.py::_build_system_prompt`
+   constructs — which since v1.1 imports
+   `GROUNDED_CHAT_SYSTEM_PROMPT` from `klai-libs/chat-prompts`.
+3. **retrieval-api `POST /chat` (path C, dormant).** Registered FastAPI
+   route with auth + tenant-isolation guards + tests, but no current
+   external callers in the codebase. Reserved for SPEC-KNOW-005's
+   feedback feature. Synthesis there uses the same shared
+   `GROUNDED_CHAT_SYSTEM_PROMPT`. Multilingual when activated, no
+   user-visible effect today.
+
+The shared `GROUNDED_CHAT_SYSTEM_PROMPT` instructs the LLM to:
 
 - detect the language of the user's most recent **substantive** message
   (≥ 5 words; shorter messages inherit the prior language);
@@ -1008,12 +1039,18 @@ of source language.
 A passive `lingua` detector emits `chat_synthesis_complete` log events
 with `query_language_detected`, `response_language_detected`, and
 `language_correctness` (Boolean: did the response language match the
-query language?). The detector never alters synthesis behaviour — it
-exists for VictoriaLogs / Grafana monitoring per
-`docs/runbooks/multilingual-chat-observability.md`. The pre-merge gate
-that prompt changes must clear is `evaluation/cross_lingual_runner.py`,
-which scores ≥ 95% language-correctness per language against the
-cross-lingual test set (`evaluation/test_queries_cross_lingual.json`).
+query language?). The event fires from whichever path emitted it —
+`service: portal-api` for path B, `service: retrieval-api` for path
+C, and `service: litellm` for path A (post-v1.2). The detector never
+alters synthesis behaviour — it exists for VictoriaLogs / Grafana
+monitoring per `docs/runbooks/multilingual-chat-observability.md`.
+
+Cross-lingual eval against the live system runs via
+`klai-retrieval-api/evaluation/cross_lingual_runner.py`. Post-v1.2 the
+runner POSTs to retrieval-api `/chat` (the dormant path C, suitable for
+direct synthesis testing) and emits a per-language correctness
+scorecard. A future iteration may switch the runner default to the
+production-traffic path B or add it as a parallel target.
 
 **Per-tenant model override is explicitly NOT in scope** for V1. All
 tenants use `klai-fast` (Mistral Small) for synthesis. If Phase-2 eval
