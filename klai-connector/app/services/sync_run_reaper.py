@@ -44,8 +44,19 @@ from app.services.portal_client import PortalClient
 logger = get_logger(__name__)
 
 # Tunable knobs. Reasonable defaults for production; tests override.
-_TICK_S: float = 5 * 60.0
-_FINALIZE_AFTER_S: float = 24 * 60 * 60.0
+#
+# _FINALIZE_AFTER_S used to be 24h, intended as a safety net for delegated
+# sync_runs that slip through the SyncRunResolver-on-read path. In practice
+# nobody reads sync_runs unless the portal frontend opens the connectors
+# list, so the 24h delay meant a normal 5-10min crawl stayed RUNNING for a
+# full day after completion. Voys/support Redcactus sync 2026-05-07 sat
+# RUNNING for 1.5h while knowledge-ingest already returned status=completed
+# pages_done=110 — the upstream WAS done, only the reaper grace window was
+# longer than the entire crawl. Lowered to 5 minutes: still a real safety
+# net for runs that finish without a portal-side read, with a delay
+# proportional to a typical crawl duration rather than an entire day.
+_TICK_S: float = 60.0
+_FINALIZE_AFTER_S: float = 5 * 60.0
 _FORCE_FAIL_AFTER_S: float = 7 * 24 * 60 * 60.0
 
 
