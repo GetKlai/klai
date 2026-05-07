@@ -350,19 +350,37 @@ PR, not separate ship moments.
 
 ## Acceptance criteria
 
-See `.moai/specs/SPEC-LITELLM-CUSTOM-IMAGE-001/acceptance.md` (TBD —
-will be drafted alongside implementation).
+See `.moai/specs/SPEC-LITELLM-CUSTOM-IMAGE-001/acceptance.md` for the full
+Given/When/Then breakdown across 5 test areas (image build pipeline,
+vendored cleanup, path-A telemetry, deploy workflow invariant, end-to-end
+production validation). High-level summary:
 
-High-level:
-- AC-IMG-BUILD: image builds + pushes on every Dockerfile/inputs change.
-- AC-SMOKE-IMPORT: `docker run --rm <image> python -c "import …"` exits 0 in CI.
-- AC-VENDORED-GONE: post-merge `find` shows zero `klai_service_auth.py`
-  / `klai_chat_prompts.py` outside the canonical library paths.
-- AC-EMIT-FIRES: production `chat_synthesis_complete` events with
-  `service:litellm` count > 0 within 1h of a smoke-test run.
-- AC-NO-REGRESSION: 6-language Playwright smoke (DE/FR/PT/ES/NL/EN) on
-  Voys tenant — all pass with title in target language + answer in
-  target language + 📎 NL source link.
+- **AC-IMG-BUILD / AC-IMG-PUSH / AC-SMOKE-IMPORT** — image builds + pushes
+  to GHCR on every Dockerfile change; `docker run --rm <image> python -c
+  "import …"` exits 0 in CI (the structural test that today's incident's
+  pytest-only coverage missed).
+- **AC-VENDORED-FILES-GONE / AC-DRIFT-TESTS-GONE / AC-COMPOSE-MOUNTS-GONE
+  / AC-LINT-TIGHTENED / AC-CANONICAL-IMPORT-WORKS** — post-merge `find`
+  shows zero `klai_service_auth.py` / `klai_chat_prompts.py` in
+  `deploy/litellm/`; `klai_chat_prompts` resolves via
+  `/usr/lib/python*/site-packages/`, NOT `/app/`.
+- **AC-EMIT-FIRES-LIBRECHAT / AC-EMIT-FIELD-VALUES-DE /
+  AC-EMIT-FALLBACK-ON-LINGUA-ERROR** — production
+  `chat_synthesis_complete` events with `service:litellm` count > 0 within
+  5s of a chat completion; field values match expected language-detection
+  output; lingua errors don't break chat.
+- **AC-REQ-10.4-UPGRADED / AC-AC-OBSERVABILITY-RESCOPED /
+  AC-RUNBOOK-CAVEAT-REMOVED** — SPEC-RAG-MULTILINGUAL-CHAT-001 REQ-10.4
+  reverted SHOULD → MUST; runbook caveat section removed.
+- **AC-DEPLOY-USES-COMPOSE-UP / AC-CANARY-CHECK-CLEAN** — deploy
+  workflow uses `compose-up.sh`; the canary command from
+  `process-rules.md § docker-compose-restart-vs-recreate` returns zero
+  non-canonical workflows.
+- **AC-NO-REGRESSION-MULTILINGUAL / AC-CONTAINER-HEALTHY-POST-DEPLOY /
+  AC-LANGUAGE-CORRECTNESS-RATE-OBSERVABLE** — 6-language Playwright
+  smoke (DE/FR/PT/ES/NL/EN) on Voys tenant passes; VictoriaLogs shows
+  clean startup; per-language correctness rate queryable in Grafana for
+  all three paths.
 
 ---
 
