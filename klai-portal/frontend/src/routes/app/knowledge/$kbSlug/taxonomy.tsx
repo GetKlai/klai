@@ -383,6 +383,10 @@ function TaxonomyTab() {
   const [newNodeName, setNewNodeName] = useState('')
   const [rejectingProposalId, setRejectingProposalId] = useState<number | null>(null)
   const [rejectReason, setRejectReason] = useState('')
+  // SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 5: edit-before-approve state
+  const [editingProposalId, setEditingProposalId] = useState<number | null>(null)
+  const [editingProposalTitle, setEditingProposalTitle] = useState('')
+  const [editingProposalDescription, setEditingProposalDescription] = useState('')
 
   const nodesQuery = useQuery<{ nodes: TaxonomyNode[] }>({
     queryKey: ['taxonomy-nodes', kbSlug],
@@ -397,11 +401,16 @@ function TaxonomyTab() {
     enabled: auth.isAuthenticated,
   })
 
+  // SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 3: fetch ALL statuses so approved
+  // proposals stay visible after the approve click instead of disappearing.
+  // The unified review-list renders pending/approved/rejected with status
+  // badges. Backend sorts by most-recent activity so a freshly-approved
+  // proposal moves to the top.
   const proposalsQuery = useQuery<{ proposals: TaxonomyProposal[] }>({
     queryKey: ['taxonomy-proposals', kbSlug],
     queryFn: async () => {
       try {
-        return await apiFetch<{ proposals: TaxonomyProposal[] }>(`/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals?status=pending`)
+        return await apiFetch<{ proposals: TaxonomyProposal[] }>(`/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals?status=all`)
       } catch (err) {
         taxonomyLogger.warn('Taxonomy proposals fetch failed', { slug: kbSlug, error: err })
         throw err
@@ -472,13 +481,31 @@ function TaxonomyTab() {
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] }),
   })
 
+  // SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 5: approve accepts optional title +
+  // description overrides (edit-before-approve). Issue 4: approve accepts
+  // ?auto_categorise=false so the batch "Apply to KB" flow can defer
+  // classification to a single backfill at the end.
   const approveMutation = useMutation({
-    mutationFn: async (proposalId: number) => {
-      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals/${proposalId}/approve`, { method: 'POST' })
+    mutationFn: async (vars: {
+      proposalId: number
+      title?: string
+      description?: string
+      autoCategorise?: boolean
+    }) => {
+      const params = new URLSearchParams()
+      if (vars.autoCategorise === false) params.set('auto_categorise', 'false')
+      const qs = params.toString() ? `?${params.toString()}` : ''
+      const body: Record<string, string> = {}
+      if (vars.title !== undefined) body.title = vars.title
+      if (vars.description !== undefined) body.description = vars.description
+      const init: { method: string; body?: string } = { method: 'POST' }
+      if (Object.keys(body).length > 0) init.body = JSON.stringify(body)
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals/${vars.proposalId}/approve${qs}`, init)
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['taxonomy-proposals', kbSlug] })
       void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] })
+      void queryClient.invalidateQueries({ queryKey: ['taxonomy-coverage', kbSlug] })
     },
     onError: (err) => {
       const is409 = err instanceof Error && err.message.includes('409')
@@ -577,17 +604,25 @@ function TaxonomyTab() {
 
   async function handleApplyAll() {
     const pendingProposals = proposals.filter((p) => p.status === 'pending')
-    // Approve all pending proposals sequentially
+    // SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 4: pass auto_categorise=false on each
+    // approve so the backend skips per-approve classification jobs. The single
+    // backfillMutation.mutate() at the bottom does the full re-classification
+    // once. Saves N-1 wasted classification runs (was: N+1, now: 1).
     for (const proposal of pendingProposals) {
       try {
-        await apiFetch(`/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals/${proposal.id}/approve`, { method: 'POST' }, )
+        await apiFetch(
+          `/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals/${proposal.id}/approve?auto_categorise=false`,
+          { method: 'POST' },
+        )
       } catch (err) {
         taxonomyLogger.warn('Failed to approve proposal during apply-all', { proposalId: proposal.id, error: err })
       }
     }
     void queryClient.invalidateQueries({ queryKey: ['taxonomy-proposals', kbSlug] })
     void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] })
-    // Then trigger backfill
+    void queryClient.invalidateQueries({ queryKey: ['taxonomy-coverage', kbSlug] })
+    // Then trigger backfill — this is the single classification pass that
+    // tags all chunks against the now-complete taxonomy.
     backfillMutation.mutate()
   }
 
@@ -748,22 +783,41 @@ function TaxonomyTab() {
       )}
 
       {/* Review queue — shown directly after coverage for visibility */}
+      {/* SPEC-TAXONOMY-REVIEW-FLOW-001 Issues 3+5+6: pending/approved/rejected
+          all visible with status badges; pending rows have edit-before-approve;
+          approved rows persist (don't disappear) so the operator can keep
+          reviewing without page refresh. */}
       {proposals.length > 0 && (
         <div>
           <div className="flex items-center gap-2 mb-3">
             <BarChart2 className="h-4 w-4 text-[var(--color-foreground)]" />
             <h2 className="text-sm font-semibold text-[var(--color-foreground)]">{m.knowledge_taxonomy_proposals_heading()}</h2>
-            <Badge variant="accent">{String(proposals.length)}</Badge>
+            <Badge variant="accent">{String(proposals.filter((p) => p.status === 'pending').length)}</Badge>
           </div>
           <div className="space-y-3">
             {proposals.map((proposal) => {
               const typeInfo = proposalTypeBadge[proposal.proposal_type] ?? { label: () => proposal.proposal_type, variant: 'secondary' as const }
+              const isEditing = editingProposalId === proposal.id
+              const isApproved = proposal.status === 'approved'
+              const isRejected = proposal.status === 'rejected'
+              const isPending = proposal.status === 'pending'
+              // status badge (separate from proposal_type badge): "Nieuw" / "Goedgekeurd" / "Afgewezen"
+              const statusBadge: { label: string; variant: 'accent' | 'success' | 'secondary' | 'destructive' } =
+                isApproved
+                  ? { label: m.knowledge_taxonomy_proposals_status_approved(), variant: 'success' }
+                  : isRejected
+                    ? { label: m.knowledge_taxonomy_proposals_status_rejected(), variant: 'destructive' }
+                    : { label: m.knowledge_taxonomy_proposals_status_pending(), variant: 'accent' }
               return (
-                <Card key={proposal.id}>
+                <Card
+                  key={proposal.id}
+                  className={isRejected ? 'opacity-60' : isApproved ? 'bg-[var(--color-success)]/5' : undefined}
+                >
                   <CardContent className="pt-4 pb-4">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">
+                          <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>
                           <Badge variant={typeInfo.variant}>{typeInfo.label()}</Badge>
                           {proposal.confidence_score != null && (
                             <span className="text-xs text-[var(--color-muted-foreground)]">
@@ -771,17 +825,77 @@ function TaxonomyTab() {
                             </span>
                           )}
                         </div>
-                        <p className="text-sm font-medium text-[var(--color-foreground)]">{proposal.title}</p>
-                        {typeof proposal.payload?.description === 'string' && (
-                          <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
-                            {proposal.payload.description}
-                          </p>
+                        {isEditing ? (
+                          <form
+                            className="space-y-2 mt-2"
+                            onSubmit={(e) => {
+                              e.preventDefault()
+                              approveMutation.mutate({
+                                proposalId: proposal.id,
+                                title: editingProposalTitle.trim() || undefined,
+                                description: editingProposalDescription,
+                              })
+                              setEditingProposalId(null)
+                              setEditingProposalTitle('')
+                              setEditingProposalDescription('')
+                            }}
+                          >
+                            <Input
+                              value={editingProposalTitle}
+                              onChange={(e) => setEditingProposalTitle(e.target.value)}
+                              placeholder={m.knowledge_taxonomy_proposals_edit_title_placeholder()}
+                              className="h-7 text-sm font-medium"
+                              autoFocus
+                            />
+                            <textarea
+                              value={editingProposalDescription}
+                              onChange={(e) => setEditingProposalDescription(e.target.value)}
+                              placeholder={m.knowledge_taxonomy_proposals_edit_description_placeholder()}
+                              rows={2}
+                              className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs text-[var(--color-foreground)] resize-y"
+                            />
+                            <div className="flex items-center gap-2">
+                              <Button
+                                type="submit"
+                                size="sm"
+                                className="h-7 text-xs px-2.5 bg-[var(--color-success)] text-white hover:opacity-90"
+                                disabled={approveMutation.isPending}
+                              >
+                                {m.knowledge_taxonomy_proposals_save_and_approve()}
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 text-xs px-2.5"
+                                onClick={() => {
+                                  setEditingProposalId(null)
+                                  setEditingProposalTitle('')
+                                  setEditingProposalDescription('')
+                                }}
+                              >
+                                {m.knowledge_taxonomy_proposals_cancel()}
+                              </Button>
+                            </div>
+                          </form>
+                        ) : (
+                          <>
+                            <p className="text-sm font-medium text-[var(--color-foreground)]">{proposal.title}</p>
+                            {typeof proposal.payload?.description === 'string' && (
+                              <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+                                {proposal.payload.description}
+                              </p>
+                            )}
+                            <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+                              {new Date(proposal.created_at).toLocaleDateString()}
+                              {proposal.rejection_reason && (
+                                <span className="ml-2">— {proposal.rejection_reason}</span>
+                              )}
+                            </p>
+                          </>
                         )}
-                        <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
-                          {new Date(proposal.created_at).toLocaleDateString()}
-                        </p>
                       </div>
-                      {canEdit && (
+                      {canEdit && isPending && !isEditing && (
                         <div className="flex items-center gap-1.5 shrink-0">
                           {rejectingProposalId === proposal.id ? (
                             <form
@@ -810,10 +924,26 @@ function TaxonomyTab() {
                               <Button
                                 size="sm"
                                 className="h-7 text-xs px-2.5 bg-[var(--color-success)] text-white hover:opacity-90"
-                                onClick={() => approveMutation.mutate(proposal.id)}
+                                onClick={() => approveMutation.mutate({ proposalId: proposal.id })}
                                 disabled={approveMutation.isPending}
                               >
                                 {m.knowledge_taxonomy_proposals_approve()}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs px-2.5"
+                                onClick={() => {
+                                  setEditingProposalId(proposal.id)
+                                  setEditingProposalTitle(proposal.title)
+                                  setEditingProposalDescription(
+                                    typeof proposal.payload?.description === 'string'
+                                      ? proposal.payload.description
+                                      : '',
+                                  )
+                                }}
+                              >
+                                {m.knowledge_taxonomy_proposals_edit()}
                               </Button>
                               <Button
                                 size="sm"
@@ -832,7 +962,8 @@ function TaxonomyTab() {
                 </Card>
               )
             })}
-            {canEdit && suggestState === 'proposals_ready' && (
+            {/* Apply All only shows when there are pending proposals to apply */}
+            {canEdit && suggestState === 'proposals_ready' && proposals.some((p) => p.status === 'pending') && (
               <div className="pt-3">
                 <Button
                   size="sm"

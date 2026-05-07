@@ -245,6 +245,12 @@ class ParentCategory:
     sample_titles: list[str] = field(default_factory=list)
     centroid: list[float] | None = None
     child_cluster_names: list[str] = field(default_factory=list)
+    # SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 1: per-child centroids for
+    # multi-centroid auto-categorise. The aggregate ``centroid`` is too
+    # diffuse for the 0.82 match threshold; storing per-child centroids
+    # lets approve_proposal enqueue N parallel auto-categorise jobs that
+    # all tag the same node_id.
+    child_centroids: list[list[float]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -718,17 +724,24 @@ async def _consolidate_to_parents(
         )
 
     # Aggregate fields per parent: document_count, sample_titles, centroid,
-    # child_cluster_names. These are what the submit-loop turns into a
-    # TaxonomyProposal payload.
+    # child_cluster_names, child_centroids. These are what the submit-loop
+    # turns into a TaxonomyProposal payload.
     for p in parents:
         # document_count = sum of children's doc_count
         p.document_count = sum(len(cluster_map[cid]) for cid in p.child_cluster_ids)
         # sample_titles = round-robin from children, capped at 10
         p.sample_titles = _round_robin_titles(p.child_cluster_ids, cluster_doc_lists)
         # centroid = doc-count-weighted unit-normalised mean of children's centroids
+        # (legacy single-centroid path; kept for backward compatibility but
+        # tagging now uses child_centroids per SPEC-TAXONOMY-REVIEW-FLOW-001)
         p.centroid = _weighted_centroid(p.child_cluster_ids, cluster_map, document_embeddings)
         # child_cluster_names for operator transparency
         p.child_cluster_names = [name_by_cid[cid] for cid in p.child_cluster_ids]
+        # SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 1: per-child centroids for
+        # multi-centroid auto-categorise at approve-time.
+        p.child_centroids = _per_child_centroids(
+            p.child_cluster_ids, cluster_map, document_embeddings
+        )
 
     # Generate user-facing descriptions per parent in parallel — same path
     # as production new_node proposals (generate_node_description on
@@ -778,6 +791,36 @@ def _weighted_centroid(
     if norm == 0:
         return None
     return (centroid / norm).tolist()
+
+
+def _per_child_centroids(
+    child_cluster_ids: list[int],
+    cluster_map: dict[int, list[int]],
+    document_embeddings: np.ndarray,
+) -> list[list[float]]:
+    """Per-child unit-normalised centroids — one per base cluster.
+
+    SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 1: replaces the single aggregate
+    centroid for tagging purposes. Each child cluster's tight centroid is
+    computed as the unit-normalised mean of its OWN documents (not the
+    parent-aggregate). approve_proposal then enqueues N parallel
+    auto-categorise jobs (one per child centroid) to tag the same node_id,
+    so chunks tight against ANY child match the parent.
+
+    Skips children whose centroid is zero-norm (defensive). Returns the
+    list in the same order as child_cluster_ids.
+    """
+    out: list[list[float]] = []
+    for cid in child_cluster_ids:
+        indices = cluster_map.get(cid, [])
+        if not indices:
+            continue
+        centroid = document_embeddings[indices].mean(axis=0)
+        norm = float(np.linalg.norm(centroid))
+        if norm == 0:
+            continue
+        out.append((centroid / norm).tolist())
+    return out
 
 
 async def generate_bootstrap_proposals_v2(
@@ -1065,6 +1108,11 @@ async def generate_bootstrap_proposals_v2(
                 description=p.description,
                 cluster_centroid=p.centroid,
                 child_cluster_names=p.child_cluster_names,
+                # SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 1: per-child centroids
+                # for multi-centroid auto-categorise. Only set when there
+                # is more than one child (single-child parents use the
+                # legacy single-centroid path).
+                child_centroids=(p.child_centroids if len(p.child_cluster_ids) > 1 else None),
             )
             await submit_taxonomy_proposal(kb_slug=kb_slug, org_id=org_id, proposal=proposal)
             submitted += 1

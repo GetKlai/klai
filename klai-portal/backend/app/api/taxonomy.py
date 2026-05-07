@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 from log_utils import verify_shared_secret  # SPEC-SEC-INTERNAL-001 REQ-1.1
 from pydantic import BaseModel
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -82,6 +82,21 @@ class CreateProposalRequest(BaseModel):
     title: str
     payload: dict
     confidence_score: float | None = None
+
+
+class ApproveProposalRequest(BaseModel):
+    """SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 5: edit-before-approve.
+
+    Operator may override the proposal's title and/or description before the
+    node is created. Both fields are optional; when omitted, the proposal's
+    own ``title`` and ``payload['description']`` are used as before.
+
+    Overrides are persisted into the proposal record (so re-fetch reflects
+    the operator's edit) AND used for the new ``PortalTaxonomyNode``.
+    """
+
+    title: str | None = None
+    description: str | None = None
 
 
 class RejectRequest(BaseModel):
@@ -249,6 +264,7 @@ async def create_taxonomy_node(
 
     await db.refresh(node)  # Pre-commit refresh to load server_default columns while tenant context is still set.
     await db.commit()
+    _invalidate_coverage_cache(org.zitadel_org_id, kb_slug)
     return _node_out(node)
 
 
@@ -316,6 +332,9 @@ async def update_taxonomy_node(
         ) from exc
 
     # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
+    # SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 2: invalidate cached coverage so the
+    # next GET reflects the rename / reparent / description change.
+    _invalidate_coverage_cache(org.zitadel_org_id, kb_slug)
     return _node_out(node)
 
 
@@ -362,6 +381,9 @@ async def delete_taxonomy_node(
     # track it server-side.
     await db.delete(node)
     await db.commit()
+    # SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 2: invalidate coverage cache so
+    # the deleted node disappears from the next GET response.
+    _invalidate_coverage_cache(org.zitadel_org_id, kb_slug)
     return {"reassigned_docs": 0}
 
 
@@ -379,14 +401,32 @@ async def list_taxonomy_proposals(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> ProposalsResponse:
-    """List taxonomy proposals for a KB, filterable by status."""
+    """List taxonomy proposals for a KB, filterable by status.
+
+    SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 3: ``proposal_status`` accepts:
+    - ``"pending"`` (default — backward compat, only pending proposals)
+    - ``"all"`` (every proposal regardless of status)
+    - ``"pending,approved,rejected"`` comma-separated list
+
+    Sort order: recently-active first. The unified review-list UI relies
+    on this so a freshly-approved proposal stays visible at the top
+    instead of disappearing into history.
+    """
     _, org, _ = await _get_caller_org(credentials, db)
     kb = await _get_kb_or_404(kb_slug, org.id, db)
 
     query = select(PortalTaxonomyProposal).where(PortalTaxonomyProposal.kb_id == kb.id)
     if proposal_status != "all":
-        query = query.where(PortalTaxonomyProposal.status == proposal_status)
-    query = query.order_by(PortalTaxonomyProposal.created_at.desc())
+        statuses = [s.strip() for s in proposal_status.split(",") if s.strip()]
+        if len(statuses) == 1:
+            query = query.where(PortalTaxonomyProposal.status == statuses[0])
+        else:
+            query = query.where(PortalTaxonomyProposal.status.in_(statuses))
+    # Sort by most-recent activity (reviewed_at if reviewed, else created_at)
+    # so an approved proposal moves to the top of the list rather than being
+    # buried by older pending ones.
+    activity_ts = func.coalesce(PortalTaxonomyProposal.reviewed_at, PortalTaxonomyProposal.created_at)
+    query = query.order_by(activity_ts.desc())
 
     result = await db.execute(query)
     proposals = result.scalars().all()
@@ -635,10 +675,27 @@ async def _execute_rename(
 async def approve_proposal(
     kb_slug: str,
     proposal_id: int,
+    body: ApproveProposalRequest | None = None,
+    auto_categorise: bool = True,
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> ProposalOut:
-    """Approve a pending proposal and execute the corresponding action. Requires contributor role."""
+    """Approve a pending proposal and execute the corresponding action.
+
+    Requires contributor role.
+
+    SPEC-TAXONOMY-REVIEW-FLOW-001:
+    - Issue 5: optional ``body`` lets the operator override title/description
+      before the node is created. Persisted into both the proposal record
+      and the new node so re-fetch is consistent.
+    - Issue 4: optional ``auto_categorise=false`` skips the per-approve
+      classification job. Used by the "Apply to knowledge base" batch flow
+      that runs a single backfill at the end instead of N per-approve jobs.
+    - Issue 1: when payload contains ``child_centroids`` (multi-cluster
+      consolidate parent), enqueues N parallel auto_categorise jobs (one
+      per child centroid) under the same node_id. Restores tagging
+      coverage that the diffuse aggregate centroid otherwise misses.
+    """
     caller_id, org, _ = await _get_caller_org(credentials, db)
     kb = await _get_kb_or_404(kb_slug, org.id, db)
     await _require_role(kb, caller_id, db, "contributor")
@@ -655,15 +712,33 @@ async def approve_proposal(
     if proposal.status != "pending":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Proposal is not pending")
 
+    # Issue 5: apply edit-before-approve overrides BEFORE _execute_proposal_action
+    # so the new node picks up the operator's edits (and the proposal record
+    # itself reflects them on re-fetch).
+    if body is not None:
+        new_payload = dict(proposal.payload or {})
+        if body.title is not None and body.title.strip():
+            new_title = body.title.strip()
+            proposal.title = new_title
+            new_payload["suggested_name"] = new_title
+            new_payload["name"] = new_title  # _execute_proposal_action reads this
+        if body.description is not None:
+            new_payload["description"] = body.description.strip()
+        proposal.payload = new_payload  # JSONB needs reassignment for SQLAlchemy to detect change
+
     _new_node = await _execute_proposal_action(proposal, kb, caller_id, db)
 
     proposal.status = "approved"
     proposal.reviewed_by = caller_id
     proposal.reviewed_at = datetime.now(tz=UTC)
 
-    # Capture data for post-commit auto-categorise (SPEC-KB-024 R4)
+    # Capture centroid data for post-commit auto-categorise.
+    # Issue 1: prefer child_centroids (multi-centroid path); fall back to
+    # the legacy single cluster_centroid for non-consolidated proposals.
+    _child_centroids_for_autocategorise: list[list[float]] | None = None
     _cluster_centroid_for_autocategorise: list | None = None
     if _new_node is not None:
+        _child_centroids_for_autocategorise = proposal.payload.get("child_centroids")
         _cluster_centroid_for_autocategorise = proposal.payload.get("cluster_centroid")
 
     try:
@@ -677,17 +752,33 @@ async def approve_proposal(
 
     # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
 
-    # R4: trigger auto-categorise via Procrastinate job (SPEC-KB-026 R5)
-    if _new_node is not None and _cluster_centroid_for_autocategorise:
-        # No post-commit refresh: expire_on_commit=False keeps _new_node.id in memory after commit.
+    # Issue 2: invalidate coverage cache so the new node appears in the next
+    # GET /coverage call without a 5-minute wait.
+    if _new_node is not None:
+        _invalidate_coverage_cache(org.zitadel_org_id, kb_slug)
+
+    # Issue 1+4: trigger auto-categorise. When auto_categorise=false (batch
+    # flow), skip — the caller will run a single backfill at the end. When
+    # child_centroids set: enqueue one job per child centroid under the same
+    # node_id (multi-centroid path). Otherwise: legacy single-centroid path.
+    if auto_categorise and _new_node is not None:
         from app.services.knowledge_ingest_client import enqueue_auto_categorise
 
-        await enqueue_auto_categorise(
-            org_id=str(org.zitadel_org_id),
-            kb_slug=kb_slug,
-            node_id=_new_node.id,
-            cluster_centroid=_cluster_centroid_for_autocategorise,
-        )
+        if _child_centroids_for_autocategorise:
+            for centroid in _child_centroids_for_autocategorise:
+                await enqueue_auto_categorise(
+                    org_id=str(org.zitadel_org_id),
+                    kb_slug=kb_slug,
+                    node_id=_new_node.id,
+                    cluster_centroid=centroid,
+                )
+        elif _cluster_centroid_for_autocategorise:
+            await enqueue_auto_categorise(
+                org_id=str(org.zitadel_org_id),
+                kb_slug=kb_slug,
+                node_id=_new_node.id,
+                cluster_centroid=_cluster_centroid_for_autocategorise,
+            )
 
     return _proposal_out(proposal)
 
@@ -835,6 +926,23 @@ async def get_backfill_status(
 # 5-minute in-memory cache: key = (org_id_str, kb_slug), value = (monotonic_ts, data_dict)
 _coverage_cache: dict[tuple[str, str], tuple[float, dict]] = {}
 _COVERAGE_CACHE_TTL = 300.0  # 5 minutes
+
+
+def _invalidate_coverage_cache(zitadel_org_id: str, kb_slug: str) -> None:
+    """Drop cached coverage response for a KB so subsequent GETs re-compute.
+
+    SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 2: the 5-minute TTL was the only
+    invalidation, so node-edits / approves were invisible until the cache
+    expired. Every taxonomy mutation that affects coverage payload (node
+    create/update/delete, proposal approve, _execute_premerge) MUST call
+    this after its commit.
+    """
+    _coverage_cache.pop((zitadel_org_id, kb_slug), None)
+    # _top_tags_cache key is (org_id, kb_slug, taxonomy_node_id | None) —
+    # invalidate every node-scoped variant for this KB at once.
+    keys_to_drop = [k for k in _top_tags_cache if k[0] == zitadel_org_id and k[1] == kb_slug]
+    for k in keys_to_drop:
+        _top_tags_cache.pop(k, None)
 
 
 class CoverageNodeOut(BaseModel):
