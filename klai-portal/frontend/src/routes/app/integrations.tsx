@@ -42,7 +42,7 @@ function IntegrationsPage() {
       return tokenId
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['mcp-tokens'] })
+      void queryClient.invalidateQueries({ queryKey: ['mcp-tokens'] })
       setConfirmingId(null)
     },
   })

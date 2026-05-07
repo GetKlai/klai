@@ -329,6 +329,9 @@ async def _identify_via_oauth_token(ctx: Context, raw_token: str) -> _VerifiedId
         request_headers=request_headers,
     )
     if not result.verified:
+        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
+        # ``result.reason`` is an enum-string from a fixed allowlist
+        # (invalid_format, unknown_token, token_revoked, ...). Never a credential.
         logger.warning(
             "knowledge_mcp_oauth_token_rejected: reason=%s",
             result.reason,
