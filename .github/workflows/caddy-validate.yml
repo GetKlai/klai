@@ -1,0 +1,56 @@
+name: Validate Caddyfile
+
+# SPEC-INFRA-CADDY-CONFIG-DEPLOY-001 R3 — pre-merge syntax-gate.
+# Runs `caddy validate` in the same image that serves prod, so the
+# validate sees the same xcaddy plugins (Hetzner DNS, ratelimit). A
+# Caddyfile syntax error here blocks the PR before the post-merge
+# `deploy-compose.yml` workflow can sync the broken config to
+# /opt/klai/caddy/Caddyfile. Without this gate, a typo merged to main
+# would force-recreate caddy with bad config and trigger the post-
+# recreate health check (R4) failure path — recoverable but louder
+# than necessary.
+
+on:
+  pull_request:
+    paths:
+      - 'deploy/caddy/Caddyfile'
+      - 'deploy/caddy/Dockerfile'
+      - 'deploy/caddy/build.sh'
+      - '.github/workflows/caddy-validate.yml'
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  # Opt in early to Node 24 for all JS-based actions (Node 20 EOL Sept 2026)
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate Caddyfile syntax
+        run: |
+          # Dummy env vars match the {$ADMIN_EMAIL} + {$DOMAIN}
+          # placeholders in deploy/caddy/Caddyfile. Empty tenants dir
+          # is mounted to resolve the `import /etc/caddy/tenants/*.caddyfile`
+          # glob to zero matches (Caddy 2 silently OK on no-match).
+          mkdir -p /tmp/empty-tenants
+          docker run --rm \
+            -v "$PWD/deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            -v "/tmp/empty-tenants:/etc/caddy/tenants:ro" \
+            -e ADMIN_EMAIL=ci@example.com \
+            -e DOMAIN=example.com \
+            ghcr.io/getklai/caddy-hetzner:latest \
+            caddy validate --adapter caddyfile --config /etc/caddy/Caddyfile
