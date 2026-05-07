@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex">
+    <title>Klai — Toegang verlenen</title>
+    <style>
+        :root {
+            --bg: #fafaf9;
+            --card-bg: #ffffff;
+            --border: #e7e5e4;
+            --text: #1c1917;
+            --muted: #78716c;
+            --accent: #0f766e;
+            --accent-hover: #115e59;
+            --warn-bg: #fef3c7;
+            --warn-border: #f59e0b;
+            --warn-text: #78350f;
+            --danger: #dc2626;
+            --danger-hover: #b91c1c;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+        }
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.04);
+            max-width: 480px;
+            width: 100%;
+            padding: 32px;
+        }
+        .brand {
+            font-weight: 700;
+            font-size: 14px;
+            letter-spacing: 0.04em;
+            color: var(--muted);
+            text-transform: uppercase;
+            margin-bottom: 24px;
+        }
+        h1 {
+            font-size: 24px;
+            font-weight: 600;
+            line-height: 1.3;
+            margin: 0 0 8px;
+        }
+        .lead {
+            color: var(--muted);
+            font-size: 15px;
+            line-height: 1.5;
+            margin: 0 0 24px;
+        }
+        .client-name {
+            font-weight: 600;
+            color: var(--text);
+        }
+        .badge-new {
+            display: inline-block;
+            background: var(--warn-bg);
+            border: 1px solid var(--warn-border);
+            color: var(--warn-text);
+            font-size: 12px;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 999px;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+        .details {
+            background: #f5f5f4;
+            border-radius: 8px;
+            padding: 16px;
+            margin: 0 0 24px;
+            font-size: 14px;
+        }
+        .detail-row {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 8px;
+        }
+        .detail-row:last-child { margin-bottom: 0; }
+        .detail-label {
+            color: var(--muted);
+            min-width: 110px;
+            flex-shrink: 0;
+        }
+        .detail-value {
+            color: var(--text);
+            word-break: break-all;
+        }
+        code {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 13px;
+            background: #fafaf9;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 1px 6px;
+        }
+        .scopes {
+            list-style: none;
+            padding: 0;
+            margin: 0 0 24px;
+        }
+        .scopes li {
+            padding: 12px 16px;
+            background: #f0fdfa;
+            border: 1px solid #99f6e4;
+            border-radius: 8px;
+            font-size: 14px;
+            color: var(--text);
+            margin-bottom: 8px;
+        }
+        .scopes li:last-child { margin-bottom: 0; }
+        .scope-icon {
+            margin-right: 8px;
+            color: var(--accent);
+        }
+        .as-user {
+            font-size: 13px;
+            color: var(--muted);
+            margin: 0 0 24px;
+            padding-top: 16px;
+            border-top: 1px solid var(--border);
+        }
+        .as-user strong {
+            color: var(--text);
+            font-weight: 500;
+        }
+        .actions {
+            display: flex;
+            gap: 12px;
+            flex-direction: column-reverse;
+        }
+        .btn {
+            font-family: inherit;
+            font-size: 15px;
+            font-weight: 500;
+            padding: 12px 20px;
+            border-radius: 8px;
+            border: 1px solid transparent;
+            cursor: pointer;
+            width: 100%;
+            transition: background-color 0.15s, border-color 0.15s;
+        }
+        .btn-approve {
+            background: var(--accent);
+            color: white;
+        }
+        .btn-approve:hover { background: var(--accent-hover); }
+        .btn-deny {
+            background: white;
+            color: var(--text);
+            border-color: var(--border);
+        }
+        .btn-deny:hover {
+            border-color: var(--danger);
+            color: var(--danger);
+        }
+        .warn-callout {
+            background: var(--warn-bg);
+            border: 1px solid var(--warn-border);
+            border-radius: 8px;
+            padding: 12px 14px;
+            margin: 0 0 24px;
+            font-size: 13px;
+            color: var(--warn-text);
+            line-height: 1.5;
+        }
+        @media (min-width: 480px) {
+            .actions { flex-direction: row; }
+            .btn-deny { width: auto; }
+            .btn-approve { width: auto; flex-grow: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="brand">Klai</div>
+
+        <h1>
+            Toegang verlenen aan {{ client_name | e }}{% if is_newly_registered %}<span class="badge-new" title="Deze app heeft zich net pas geregistreerd">Net geregistreerd</span>{% endif %}
+        </h1>
+        <p class="lead">
+            <span class="client-name">{{ client_name | e }}</span> wil toegang tot je Klai-kennisbank. Goedkeuring betekent dat de app namens jou kan zoeken en bewerken.
+        </p>
+
+        {% if is_newly_registered %}
+        <div class="warn-callout">
+            <strong>Let op:</strong> deze app is net geregistreerd. Controleer of de naam en het callback-adres hieronder kloppen voordat je toestemming geeft.
+        </div>
+        {% endif %}
+
+        <div class="details">
+            <div class="detail-row">
+                <span class="detail-label">App-naam</span>
+                <span class="detail-value">{{ client_name | e }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Type</span>
+                <span class="detail-value">{% if application_type == 'native' %}Desktop / lokale app{% else %}Web-app{% endif %}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Stuurt terug naar</span>
+                <span class="detail-value"><code>{{ redirect_uri | e }}</code></span>
+            </div>
+        </div>
+
+        <p style="font-size: 14px; color: var(--muted); margin: 0 0 12px;">
+            Deze app vraagt om:
+        </p>
+        <ul class="scopes">
+            {% for scope in scopes %}
+            <li>
+                <span class="scope-icon">✓</span>
+                {% if scope == 'mcp:knowledge' %}
+                Lezen en bewerken van je persoonlijke en organisatie-kennisbank
+                {% else %}
+                {{ scope | e }}
+                {% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+
+        <p class="as-user">
+            Je geeft toegang als <strong>{{ user_email | e }}</strong>{% if user_org_name %} ({{ user_org_name | e }}){% endif %}. Je kan toegang altijd intrekken in <a href="/app/integrations" style="color: var(--accent);">Instellingen → Integraties</a>.
+        </p>
+
+        <form method="POST" action="/oauth/authorize">
+            <input type="hidden" name="request_id" value="{{ request_id | e }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token | e }}">
+            <div class="actions">
+                <button type="submit" name="decision" value="deny" class="btn btn-deny">
+                    Annuleren
+                </button>
+                <button type="submit" name="decision" value="approve" class="btn btn-approve">
+                    Toestaan
+                </button>
+            </div>
+        </form>
+    </div>
+</body>
+</html>
