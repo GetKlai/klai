@@ -119,6 +119,24 @@ class Settings(BaseSettings):
     taxonomy_bootstrap_max_clusters: int = 20
     taxonomy_bootstrap_top_n_per_cluster: int = 8
 
+    # SPEC-TAXONOMY-V2-CONSOLIDATION-003 — HDBSCAN cluster-selection method.
+    # Default sklearn HDBSCAN uses ``'eom'`` (excess of mass): finds fewer,
+    # more stable clusters by trading sub-structure for stability. On the
+    # Voys/support 154-doc corpus EOM landed on 3 clusters even after
+    # lowering the min_cluster_size floor 5 → 3 (V2-CONSOLIDATION-002),
+    # because EOM rejects the smaller stable sub-clusters HDBSCAN's tree
+    # actually contains.
+    #
+    # ``'leaf'`` returns the leaves of the cluster hierarchy — finer-grained,
+    # typically 2-4× more clusters than EOM on the same input. Targets the
+    # 5-9 IA sweet spot at typical KB sizes; needs revisiting if the corpus
+    # grows >300 docs (then the leaf count may climb past the comfortable
+    # browsing range and hierarchical taxonomy becomes warranted).
+    #
+    # Configurable via env so we can revert without redeploying if leaf-
+    # mode turns out to over-segment a different corpus shape.
+    taxonomy_bootstrap_cluster_selection_method: str = "leaf"
+
     # SPEC-TAXONOMY-V2-001-FOLLOWUP-001: UMAP pre-reduction settings (B1)
     taxonomy_bootstrap_umap_n_components: int = 10
     taxonomy_bootstrap_umap_n_neighbors: int = 15
