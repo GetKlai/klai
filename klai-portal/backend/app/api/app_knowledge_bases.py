@@ -2,6 +2,7 @@
 
 import asyncio
 import datetime as dt
+import json
 from datetime import datetime, timedelta
 from typing import Literal
 
@@ -785,6 +786,9 @@ async def get_kb_stats(
         cutoff = datetime.now(tz=dt.UTC) - timedelta(days=30)
         # NOTE: properties::jsonb cast — see stats-summary helper above for
         # the schema-drift backstory.
+        # NOTE: must use CAST(:p AS jsonb) NOT :p::jsonb — `::` immediately
+        # after a bind parameter is a SQLAlchemy text() syntax collision.
+        # See klai/projects/portal-backend.md.
         usage_result = await db.execute(
             text("""
                 SELECT
@@ -795,9 +799,15 @@ async def get_kb_stats(
                 WHERE org_id = :org_id
                   AND event_type = 'knowledge.queried'
                   AND created_at >= :cutoff
-                  AND (properties::jsonb)->'kb_slugs' @> to_jsonb(:slug::text)
+                  AND (properties::jsonb)->'kb_slugs' @> CAST(:slug_jsonb AS jsonb)
             """),
-            {"org_id": org.id, "cutoff": cutoff, "slug": kb.slug},
+            {
+                "org_id": org.id,
+                "cutoff": cutoff,
+                # JSON-encode the slug so it becomes a JSONB scalar string,
+                # which @> compares against the array elements.
+                "slug_jsonb": json.dumps(kb.slug),
+            },
         )
         row = usage_result.one()
         usage_last_30d = row.queries
