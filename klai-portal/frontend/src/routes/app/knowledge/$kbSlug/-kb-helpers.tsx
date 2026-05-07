@@ -120,6 +120,23 @@ export const ASSERTION_MODE_OPTIONS: MultiSelectOption[] = [
 ]
 
 /**
+ * SPEC-CONNECTOR-INPUT-VALIDATION-001 hotfix — slash-safe URL build.
+ *
+ * Combines ``base_url`` and ``path_prefix`` without producing the ``//``
+ * artifact that crawl4ai handles inconsistently (`https://x.com/` + `/nl/`
+ * = `https://x.com//nl/`). Trims trailing slash off base, leading slash
+ * off path, then joins with single `/` if path is non-empty.
+ *
+ * Used by both add-connector and edit-connector wizard auth-probe call sites.
+ */
+export function joinSeedUrl(baseUrl: string, pathPrefix: string): string {
+  const base = baseUrl.replace(/\/+$/, '')
+  const path = (pathPrefix || '').replace(/^\/+/, '').replace(/\/+$/, '')
+  if (!path) return base + '/'
+  return `${base}/${path}/`
+}
+
+/**
  * SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-1 — shared cookie parser.
  * Accepts a raw cookie string (either JSON array or header string format)
  * and a base URL for domain extraction.
@@ -141,6 +158,14 @@ export function parseCookieString(raw: string, baseUrl: string): unknown[] | und
   const domain = (() => {
     try { return new URL(baseUrl).hostname } catch { return '' }
   })()
+  // SPEC-CONNECTOR-INPUT-VALIDATION-001 hotfix: also accept a single bare
+  // value (no ``name=value`` syntax) — operators commonly copy just the
+  // ``Value`` column from DevTools' Application > Cookies panel without
+  // realising the wizard expects ``name=value`` form. Auto-name it
+  // ``session`` (covers the most common case: a single session cookie).
+  if (!trimmed.includes('=') && !trimmed.includes(';')) {
+    return [{ name: 'session', value: trimmed, domain, path: '/' }]
+  }
   return trimmed.split(';').map((pair) => {
     const [cookieName, ...rest] = pair.trim().split('=')
     return { name: cookieName.trim(), value: rest.join('='), domain, path: '/' }
