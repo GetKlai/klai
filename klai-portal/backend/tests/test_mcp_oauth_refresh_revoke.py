@@ -337,3 +337,84 @@ async def test_revoke_chain_noop_when_no_active_tokens(fake_redis: Any) -> None:
     await svc._revoke_chain(db, fake_redis, client_db_id=7, user_id=16)
     # Only the SELECT was issued, no UPDATE.
     assert db.execute.await_count == 1
+
+
+# ─── A4: refresh-token lookup uses SELECT FOR UPDATE ─────────────────────
+
+
+@pytest.mark.asyncio
+async def test_refresh_lookup_uses_for_update_lock(fake_redis: Any) -> None:
+    """A4 race-hardening: the SELECT on portal_mcp_tokens MUST be FOR UPDATE.
+
+    Without this lock, two concurrent /oauth/token refresh calls with the
+    same raw_refresh_token both see ``revoked_at IS NULL`` and both mint
+    a new pair. Prevented by row-level locking (klai-security-audit
+    2026-05-07 finding A4).
+
+    Capture the SQLAlchemy statement passed to db.execute and assert it
+    compiles with a ``FOR UPDATE`` clause.
+    """
+    captured: list[Any] = []
+
+    async def _execute_capture(stmt: Any, *_args: Any, **_kwargs: Any) -> MagicMock:
+        captured.append(stmt)
+        result = MagicMock()
+        result.scalar_one_or_none = MagicMock(return_value=None)
+        return result
+
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=_execute_capture)
+
+    await refresh_access_token(
+        db,
+        fake_redis,
+        raw_refresh_token=f"{REFRESH_TOKEN_PREFIX}xyz",
+        expected_resource="https://mcp.getklai.com",
+    )
+
+    assert captured, "refresh_access_token did not issue any SELECT"
+    compiled = str(captured[0].compile()).upper()
+    assert "FOR UPDATE" in compiled, (
+        "refresh-token lookup missing `with_for_update()` — concurrent "
+        "refreshes can both succeed and mint duplicate access+refresh "
+        "pairs (klai-security-audit 2026-05-07 finding A4)."
+    )
+
+
+# ─── C2: consume_auth_code uses atomic GETDEL ────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_consume_auth_code_uses_atomic_getdel() -> None:
+    """C2 race-hardening: GET+DEL pair was non-atomic.
+
+    Two parallel /oauth/token exchanges with the same code both received
+    the payload before either DELETE landed (klai-security-audit
+    2026-05-07 finding C2). The fix uses Redis ``GETDEL`` which atomically
+    returns and removes the key in one round-trip.
+
+    Verify by spying on ``redis.execute_command``.
+    """
+    redis_mock = AsyncMock()
+    redis_mock.execute_command = AsyncMock(
+        return_value=b'{"client_id":"c1","redirect_uri":"r","code_challenge":"x","scopes":["mcp:knowledge"],"state":"","resource":"https://mcp.getklai.com","user_id":1,"org_id":1}'
+    )
+
+    payload = await svc.consume_auth_code(redis_mock, "the-code")
+
+    assert payload is not None
+    redis_mock.execute_command.assert_awaited_once()
+    args = redis_mock.execute_command.await_args.args
+    assert args[0] == "GETDEL", f"Expected GETDEL, got {args[0]!r}"
+    assert args[1].endswith(":the-code"), f"Expected key suffix ':the-code', got {args[1]!r}"
+
+
+@pytest.mark.asyncio
+async def test_consume_auth_code_returns_none_on_miss() -> None:
+    """GETDEL returns nil for non-existent key → None payload."""
+    redis_mock = AsyncMock()
+    redis_mock.execute_command = AsyncMock(return_value=None)
+
+    payload = await svc.consume_auth_code(redis_mock, "no-such-code")
+
+    assert payload is None

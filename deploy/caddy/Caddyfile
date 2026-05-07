@@ -98,6 +98,7 @@
             header_up -X-Internal-Secret
             header_up -X-Caller-Service
             header_up -X-Org-ID
+            header_up -X-Org-Slug
             header_up -X-User-ID
         }
     }
@@ -112,6 +113,7 @@
             header_up -X-Internal-Secret
             header_up -X-Caller-Service
             header_up -X-Org-ID
+            header_up -X-Org-Slug
             header_up -X-User-ID
         }
     }
@@ -124,6 +126,7 @@
                 header_up -X-Internal-Secret
                 header_up -X-Caller-Service
                 header_up -X-Org-ID
+                header_up -X-Org-Slug
                 header_up -X-User-ID
             }
         }
@@ -148,6 +151,7 @@
             header_up -X-Internal-Secret
             header_up -X-Caller-Service
             header_up -X-Org-ID
+            header_up -X-Org-Slug
             header_up -X-User-ID
         }
     }
@@ -167,6 +171,7 @@
             header_up -X-Internal-Secret
             header_up -X-Caller-Service
             header_up -X-Org-ID
+            header_up -X-Org-Slug
             header_up -X-User-ID
         }
     }
@@ -185,6 +190,7 @@
             header_up -X-Internal-Secret
             header_up -X-Caller-Service
             header_up -X-Org-ID
+            header_up -X-Org-Slug
             header_up -X-User-ID
         }
     }
@@ -203,6 +209,7 @@
             header_up -X-Internal-Secret
             header_up -X-Caller-Service
             header_up -X-Org-ID
+            header_up -X-Org-Slug
             header_up -X-User-ID
         }
     }
@@ -223,6 +230,7 @@
             header_up -X-Internal-Secret
             header_up -X-Caller-Service
             header_up -X-Org-ID
+            header_up -X-Org-Slug
             header_up -X-User-ID
         }
     }
@@ -260,6 +268,7 @@
             header_up -X-Internal-Secret
             header_up -X-Caller-Service
             header_up -X-Org-ID
+            header_up -X-Org-Slug
             header_up -X-User-ID
             header_up -X-Org-Slug
         }
@@ -275,6 +284,7 @@
             header_up -X-Internal-Secret
             header_up -X-Caller-Service
             header_up -X-Org-ID
+            header_up -X-Org-Slug
             header_up -X-User-ID
         }
     }
@@ -292,6 +302,7 @@
             header_up -X-Internal-Secret
             header_up -X-Caller-Service
             header_up -X-Org-ID
+            header_up -X-Org-Slug
             header_up -X-User-ID
         }
     }
@@ -313,6 +324,7 @@
                 header_up -X-Internal-Secret
                 header_up -X-Caller-Service
                 header_up -X-Org-ID
+                header_up -X-Org-Slug
                 header_up -X-User-ID
             }
 
@@ -334,6 +346,7 @@
             header_up -X-Internal-Secret
             header_up -X-Caller-Service
             header_up -X-Org-ID
+            header_up -X-Org-Slug
             header_up -X-User-ID
         }
     }
@@ -348,6 +361,7 @@
             header_up -X-Internal-Secret
             header_up -X-Caller-Service
             header_up -X-Org-ID
+            header_up -X-Org-Slug
             header_up -X-User-ID
         }
     }
@@ -368,6 +382,7 @@
             header_up -X-Internal-Secret
             header_up -X-Caller-Service
             header_up -X-Org-ID
+            header_up -X-Org-Slug
             header_up -X-User-ID
         }
     }
@@ -395,6 +410,7 @@
             header_up -X-Internal-Secret
             header_up -X-Caller-Service
             header_up -X-Org-ID
+            header_up -X-Org-Slug
             header_up -X-User-ID
         }
     }
