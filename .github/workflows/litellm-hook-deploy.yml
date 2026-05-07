@@ -37,9 +37,19 @@ jobs:
       # crashlooped on ImportError until a follow-up commit inlined the
       # constant to remove the new-mount dependency.
       #
-      # `compose-up.sh` does `docker compose up -d --remove-orphans
-      # litellm` which detects compose-file diffs (new mounts, env-vars,
-      # image tags) and recreates only when needed. No-op when nothing
-      # in the service definition changed.
+      # Why --force-recreate: stock `docker compose up -d` only recreates
+      # when the compose DEFINITION diffs (volume list, env-vars, image
+      # tag). It does NOT detect bind-mount FILE CONTENT changes. The
+      # litellm container imports klai_knowledge.py / klai_chat_prompts.py
+      # / klai_retrieval_telemetry.py / klai_service_auth.py /
+      # custom_router.py at module load — without --force-recreate, an
+      # rsync of a new Python file is followed by a no-op `up -d` and
+      # Python keeps the cached module from the previous boot. Net
+      # effect: PR merged → CI green → live container still runs the
+      # OLD code until someone manually recreates. Hit twice in a row
+      # on PR #497 (no-KB GENERAL prompt) and PR #501 (telemetry mount
+      # + anti-hallucination); each required a manual
+      # `docker compose up -d --force-recreate litellm` to land. See
+      # pitfall `bind-mount-content-vs-python-module-cache`.
       - name: Recreate LiteLLM container
-        run: ssh klai@${{ secrets.CORE01_HOST }} "/opt/klai/scripts/compose-up.sh litellm"
+        run: ssh klai@${{ secrets.CORE01_HOST }} "/opt/klai/scripts/compose-up.sh --force-recreate litellm"
