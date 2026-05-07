@@ -206,6 +206,21 @@ jobs:
             cd /tmp && rm -rf klai-compose-sync
             echo "docker-compose.yml + grafana provisioning + scripts synced to /opt/klai/"
 
+            # SPEC-MCP-RETRIEVAL-001 follow-up — auto-recreate on env-only changes.
+            #
+            # Without this, an env-var change in docker-compose.yml lands on
+            # disk but never reaches the running container — only discovered
+            # via a 401 in production (PR #493 was exactly this trap).
+            #
+            # ``compose up -d`` (no service argument, no --force-recreate) is
+            # idempotent: Compose recreates only services whose declaration
+            # changed, leaves the rest untouched. Service-specific build-push
+            # workflows use the same compose-up.sh wrapper, so this is safe
+            # against parallel runs — both paths converge on the same yaml.
+            echo "::group::SPEC-MCP-RETRIEVAL-001 follow-up — compose up -d for env-drift recreate"
+            cd /opt/klai && docker compose up -d --remove-orphans 2>&1 | tail -50 || echo "compose up -d returned non-zero; check logs"
+            echo "::endgroup::"
+
             # SPEC-SEC-024 M4.3 — non-blocking post-deploy smoke-test. Prints
             # [OK]/[FAIL] per probe; warns on non-zero exit but does NOT
             # fail the workflow (initial rollout per SPEC). Flip this to
