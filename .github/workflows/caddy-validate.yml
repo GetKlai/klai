@@ -42,15 +42,31 @@ jobs:
 
       - name: Validate Caddyfile syntax
         run: |
-          # Dummy env vars match the {$ADMIN_EMAIL} + {$DOMAIN}
-          # placeholders in deploy/caddy/Caddyfile. Empty tenants dir
-          # is mounted to resolve the `import /etc/caddy/tenants/*.caddyfile`
-          # glob to zero matches (Caddy 2 silently OK on no-match).
+          # Dummy env vars cover all six {$VAR} placeholders in
+          # deploy/caddy/Caddyfile. Use `--env-file` with a quoted
+          # heredoc so the bcrypt-shaped CADDY_DEV_PASSWORD_HASH (which
+          # contains literal `$` chars) is not subject to shell
+          # expansion. Empty tenants dir is mounted to resolve the
+          # `import /etc/caddy/tenants/*.caddyfile` glob to zero
+          # matches (Caddy 2 silently OK on no-match).
+          #
+          # CADDY_DEV_PASSWORD_HASH must be bcrypt-shaped — Caddy's
+          # basic_auth directive parses the hash format at validate
+          # time. The value below is a real bcrypt hash with cost 14
+          # (it never matches any password we care about; this is a
+          # validate-only credential).
           mkdir -p /tmp/empty-tenants
+          cat > /tmp/caddy-validate.env <<'EOF'
+          ADMIN_EMAIL=ci@example.com
+          DOMAIN=example.com
+          HETZNER_AUTH_API_TOKEN=validate-only-dummy-token
+          VICTORIALOGS_INGEST_TOKEN=validate-only-dummy-token
+          CADDY_DEV_USERNAME=ci-validate
+          CADDY_DEV_PASSWORD_HASH=$2a$14$8K1p/a0dqbPzNDIJKMlj3eLvhR0DWNmgKnHr0gZxhkNH88nF.gzqK
+          EOF
           docker run --rm \
+            --env-file /tmp/caddy-validate.env \
             -v "$PWD/deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" \
             -v "/tmp/empty-tenants:/etc/caddy/tenants:ro" \
-            -e ADMIN_EMAIL=ci@example.com \
-            -e DOMAIN=example.com \
             ghcr.io/getklai/caddy-hetzner:latest \
             caddy validate --adapter caddyfile --config /etc/caddy/Caddyfile
