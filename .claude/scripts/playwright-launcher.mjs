@@ -21,20 +21,35 @@
  *     the seed step relied on `npx playwright codegen --save-storage`,
  *     which is flaky on macOS.
  *
- * The seed step (May 2026):
- *   In @playwright/mcp >= 0.0.67 there is an MCP tool
- *   `browser_storage_state` that, when invoked from a running session,
- *   writes the current cookies + localStorage to the storage-state
- *   file. No external codegen, no Inspector window, no Ctrl+C dance.
+ * The seed step (verified 2026-05-07):
+ *   `@playwright/mcp >= 0.0.74` exposes `browser_run_code_unsafe`,
+ *   which executes a Playwright snippet server-side with a `page`
+ *   handle. Calling `page.context().storageState({ path })` from
+ *   inside such a snippet writes the current cookies + localStorage
+ *   to the storage-state file directly. No external codegen, no
+ *   Inspector window, no Ctrl+C dance.
  *
  *   1. With this launcher in place but no storage-state file yet,
  *      open a Playwright MCP session — the browser starts logged out.
  *   2. `browser_navigate` to a login URL, log in by hand.
- *   3. Have the AI call `browser_storage_state` — file is written.
+ *   3. Have the AI call `browser_run_code_unsafe` with this snippet:
+ *        async (page) => {
+ *          await page.context().storageState({
+ *            path: '/Users/<you>/.claude/mcp-storageState.json',
+ *          });
+ *          return { url: page.url(),
+ *                   cookies: (await page.context().cookies()).length };
+ *        }
+ *      The tool returns immediately with the new cookie count.
  *   4. Restart Claude Code (so the launcher picks the file up at
  *      startup via the `--storage-state` flag).
  *   5. Refresh the same way every ~3 weeks when Google's session
  *      cookies expire.
+ *
+ *   NOTE: there is no separate `browser_storage_state` MCP tool. An
+ *   earlier draft of this launcher and its docs claimed there was;
+ *   that was a hallucination. The functionality lives in the generic
+ *   `browser_run_code_unsafe` tool, as shown above.
  *
  * Why CLI flags instead of a JSON config file:
  *   microsoft/playwright-mcp#1446 — `userDataDir` set in a JSON
@@ -70,7 +85,8 @@ if (existsSync(STATE_FILE)) {
     `playwright-launcher: ${STATE_FILE} not found.\n` +
     `Browser starts logged-out. To seed the file from inside a running\n` +
     `MCP session: open a login URL via browser_navigate, log in by hand,\n` +
-    `then have the AI call the browser_storage_state MCP tool. Restart\n` +
+    `then have the AI call browser_run_code_unsafe with a snippet that\n` +
+    `runs page.context().storageState({path: STATE_FILE}). Restart\n` +
     `Claude Code afterwards so the launcher picks up the file.\n`
   );
 }
