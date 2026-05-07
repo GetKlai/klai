@@ -33,6 +33,7 @@ import { Route as AppScribeRouteImport } from './routes/app/scribe'
 import { Route as AppFocusRouteImport } from './routes/app/focus'
 import { Route as AppChatRouteImport } from './routes/app/chat'
 import { Route as AppAccountRouteImport } from './routes/app/account'
+import { Route as AppIntegrationsRouteImport } from './routes/app/integrations'
 import { Route as AdminSettingsRouteImport } from './routes/admin/settings'
 import { Route as AdminJoinRequestsRouteImport } from './routes/admin/join-requests'
 import { Route as AdminDeprovisioningStatusRouteImport } from './routes/admin/deprovisioning-status'
@@ -214,6 +215,11 @@ const AppChatRoute = AppChatRouteImport.update({
 const AppAccountRoute = AppAccountRouteImport.update({
   id: '/account',
   path: '/account',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppIntegrationsRoute = AppIntegrationsRouteImport.update({
+  id: '/integrations',
+  path: '/integrations',
   getParentRoute: () => AppRouteRoute,
 } as any)
 const AdminSettingsRoute = AdminSettingsRouteImport.update({
@@ -565,6 +571,7 @@ export interface FileRoutesByFullPath {
   '/admin/join-requests': typeof AdminJoinRequestsRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
+  '/app/integrations': typeof AppIntegrationsRoute
   '/app/chat': typeof AppChatRoute
   '/app/focus': typeof AppFocusRouteWithChildren
   '/app/scribe': typeof AppScribeRoute
@@ -650,6 +657,7 @@ export interface FileRoutesByTo {
   '/admin/join-requests': typeof AdminJoinRequestsRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
+  '/app/integrations': typeof AppIntegrationsRoute
   '/app/chat': typeof AppChatRoute
   '/app/focus': typeof AppFocusRouteWithChildren
   '/app/scribe': typeof AppScribeRoute
@@ -737,6 +745,7 @@ export interface FileRoutesById {
   '/admin/join-requests': typeof AdminJoinRequestsRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
+  '/app/integrations': typeof AppIntegrationsRoute
   '/app/chat': typeof AppChatRoute
   '/app/focus': typeof AppFocusRouteWithChildren
   '/app/scribe': typeof AppScribeRoute
@@ -827,6 +836,7 @@ export interface FileRouteTypes {
     | '/admin/join-requests'
     | '/admin/settings'
     | '/app/account'
+    | '/app/integrations'
     | '/app/chat'
     | '/app/focus'
     | '/app/scribe'
@@ -912,6 +922,7 @@ export interface FileRouteTypes {
     | '/admin/join-requests'
     | '/admin/settings'
     | '/app/account'
+    | '/app/integrations'
     | '/app/chat'
     | '/app/focus'
     | '/app/scribe'
@@ -998,6 +1009,7 @@ export interface FileRouteTypes {
     | '/admin/join-requests'
     | '/admin/settings'
     | '/app/account'
+    | '/app/integrations'
     | '/app/chat'
     | '/app/focus'
     | '/app/scribe'
@@ -1254,6 +1266,13 @@ declare module '@tanstack/react-router' {
       path: '/account'
       fullPath: '/app/account'
       preLoaderRoute: typeof AppAccountRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/integrations': {
+      id: '/app/integrations'
+      path: '/integrations'
+      fullPath: '/app/integrations'
+      preLoaderRoute: typeof AppIntegrationsRouteImport
       parentRoute: typeof AppRouteRoute
     }
     '/admin/settings': {
@@ -1844,6 +1863,7 @@ const AppKnowledgeKbSlugRouteRouteWithChildren =
 
 interface AppRouteRouteChildren {
   AppAccountRoute: typeof AppAccountRoute
+  AppIntegrationsRoute: typeof AppIntegrationsRoute
   AppChatRoute: typeof AppChatRoute
   AppFocusRoute: typeof AppFocusRouteWithChildren
   AppScribeRoute: typeof AppScribeRoute
@@ -1871,6 +1891,7 @@ interface AppRouteRouteChildren {
 
 const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppAccountRoute: AppAccountRoute,
+  AppIntegrationsRoute: AppIntegrationsRoute,
   AppChatRoute: AppChatRoute,
   AppFocusRoute: AppFocusRouteWithChildren,
   AppScribeRoute: AppScribeRoute,
