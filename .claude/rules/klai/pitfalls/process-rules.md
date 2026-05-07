@@ -1703,3 +1703,73 @@ corruption happened; only the alembic graph needed linearisation.
 Reference: PR #441 → crashloop → hotfix #442 (rebase) + #443 (merge
 migration). Operator timeline: 5 minutes from deploy to crashloop, 13
 minutes from crashloop to recovered deploy.
+
+## docker-cp-not-a-deploy-mechanism (HIGH)
+
+`docker cp` from a developer laptop into a running production container
+is fine for **debugging-iteration speed** — apply a candidate fix,
+restart, observe logs, refine. It is **NOT a deploy mechanism**, and
+treating it as one introduces a class of silent regression that this
+codebase already paid for during the SPEC-MCP-AUTH-001 rollout
+(2026-05-07).
+
+### What goes wrong
+
+A `docker cp` writes to the container's writable layer, not to a Docker
+volume or to the source repo. The container restart re-reads the file
+from that writable layer, so an interactive `docker restart` preserves
+the patch. But `docker compose up`, `docker compose down/up`, image
+rebuild, and most orchestrator-driven container recreates **discard the
+writable layer** and rebuild the container from the image. The patched
+file vanishes.
+
+If you are the developer iterating, you notice immediately and re-apply.
+If the container is recreated by an unrelated path — Coolify health
+check, scheduled image refresh, another deploy that triggers a
+compose-up — the fix evaporates without anyone editing it back. Live
+behavior silently regresses to pre-patch.
+
+### What we observed
+
+During 2026-05-07 OAuth-rollout debugging, three hot-patches disappeared
+between iterations:
+1. `klai-portal/backend/app/middleware/session.py` lost the `/oauth/`
+   CSRF exempt entry that had been `docker cp`'d earlier in the day.
+2. `klai-libs/identity-assert/.../mcp_token_client.py` reverted its
+   Authorization-header fix.
+3. `alembic/versions/post_deploy_9f4e2c8a1b7d.sql` was overwritten back
+   to the direct-cast RLS pattern.
+
+A drift-check (`shasum -a 256 <local> ; ssh core-01 docker exec <ctr>
+sha256sum <path>`) caught all three. Without that check, the OAuth
+flow would have started failing the moment the container next
+recreated — minutes-to-hours after Mark stopped looking.
+
+### Rule
+
+- **Permanent fix**: branch + commit + PR + CI rebuild + image redeploy.
+  No docker cp. The Docker image is the only durable artifact.
+- **Iteration during debugging**: docker cp is fine, BUT every iteration
+  also runs the drift-check before declaring "live confirmed". Without
+  the check, "I tested it on prod" means nothing past the next compose-up.
+- **End of debugging session**: assert worktree-≡-container parity for
+  every file you patched. Any drift = unfinished work. Either finish
+  applying the patch (re-cp + restart) or rebuild the image from the
+  branch.
+
+### Drift-check snippet
+
+```bash
+files=(...)  # your hot-patched paths
+for f in "${files[@]}"; do
+  l=$(shasum -a 256 "$f" | awk '{print $1}')
+  r=$(ssh core-01 "docker exec <container> sha256sum /repo/$f" | awk '{print $1}')
+  [ "$l" = "$r" ] && echo "OK $f" || echo "DRIFT $f"
+done
+```
+
+Run it after every `docker restart` during a debugging session, and
+before signing off. A single DRIFT line is the difference between
+"committed and live" and "live until something restarts the container".
+
+Reference: SPEC-MCP-AUTH-001 ops timeline 2026-05-07.
