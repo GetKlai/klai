@@ -7,6 +7,7 @@ the crawl4ai package (or a local Chromium install) as a dependency.
 
 from __future__ import annotations
 
+import asyncio
 import fnmatch
 import json
 import re
@@ -401,51 +402,57 @@ async def crawl_page(
 async def crawl_site(
     start_url: str,
     selector: str | None = None,
-    max_depth: int = 2,  # kept for caller-signature compat — see docstring
+    max_depth: int = 2,
     max_pages: int = 200,
     include_patterns: list[str] | None = None,
     login_indicator_selector: str | None = None,
     cookies: list[dict[str, Any]] | None = None,
 ) -> tuple[list[CrawlResult], list[FetchOutcome]]:
-    """Crawl a site via sitemap+BFS UNION submitted to crawl4ai's bulk /crawl.
+    """Crawl a site via server-side BFS deep crawl + sitemap orphan supplement.
 
-    @MX:NOTE SPEC-INGEST-RECONCILE-001 Fix 1 — replaces the old BFS-with-
-    post-supplement design that silently dropped sitemap URLs in an
-    unbounded ``asyncio.gather`` loop (Bug A: 41/208 ingested for
-    help.voys.nl). Discovery and fetch are decoupled:
+    Two-phase architecture:
 
-    1. **Seed** — fetch ``start_url`` once via ``_fetch_seed_page`` using the
-       same crawler config as the bulk path (login_indicator + cookies
-       included). The result is the homepage CrawlResult AND the source of
-       the BFS link list. The seed is NOT re-fetched in step 3.
-    2. **Discovery** — union(sitemap_xml_urls, BFS_seeds_from_homepage),
-       canonicalised + deduped + capped, EXCLUDING ``start_url`` (already
-       fetched as the seed). Sitemap takes priority on cap (AC-2).
-       AC-3: missing sitemap → BFS-only fallback, never crawl failure.
-    3. **Bulk fetch** — single ``POST /crawl`` call for all non-seed
-       candidates. crawl4ai's server-side ``MemoryAdaptiveDispatcher``
-       handles concurrency.
-    4. **Outcome capture** — every candidate URL (seed + bulk) produces one
-       entry in ``outcomes`` (AC-4) keyed by ``FetchReasonCode``.
+    1. **Phase 1 — Server-side recursive BFS** (``/crawl/job`` +
+       ``BFSDeepCrawlStrategy``): crawl4ai walks the site link-graph
+       breadth-first up to ``max_depth`` levels and ``max_pages`` total,
+       respecting ``include_patterns`` via ``URLPatternFilter`` (real
+       fnmatch glob, not the substring approximation). crawl4ai's own
+       MemoryAdaptiveDispatcher handles concurrency safely server-side
+       — no client-side ``asyncio.gather`` over a shared connection.
 
-    Candidate ↔ response matching is canonical-URL first, with a positional
-    fallback for redirect cases where crawl4ai's ``response.url`` reflects
-    the redirect TARGET rather than the submitted candidate (e.g.
-    ``/old-page`` → ``/new-page``). The fallback is bounded to candidates
-    whose canonical key is unmatched after the first pass; positional index
-    is trusted because crawl4ai's bulk endpoint preserves submission order.
+    2. **Phase 2 — Sitemap supplement** (chunked ``/crawl``): URLs in
+       ``sitemap.xml`` that the BFS did not visit (orphans, pages not
+       reachable via internal links from the start_url) are submitted via
+       the chunked-bulk-fetch path (≤100 URLs/request — crawl4ai 0.8
+       enforces that cap on the ``urls`` array). Per-chunk transport
+       failure logged but does not abort remaining chunks.
+
+    Phase 1 alone covers wikis/docs (recursive link-following). Phase 2
+    catches orphans (sitemap-only entries the homepage doesn't link to).
+    Together they reach the BOTH "everything in sitemap" AND "everything
+    reachable by following links" — a property neither alone provides.
+
+    Why two phases (and why the OLD pre-RECONCILE pattern was right):
+
+    - help.voys.nl: 208 sitemap entries, BFS-reachable subset is smaller →
+      Phase 1 covers most, Phase 2 fills the orphans.
+    - wiki.redcactus.cloud: no sitemap, ~150-300 internally-linked pages →
+      Phase 1 covers everything, Phase 2 is a no-op.
+
+    SPEC-INGEST-RECONCILE-001 replaced this pattern with "discovery
+    upfront, no recursion" because the old Phase 2 used
+    ``asyncio.gather(*[crawl_page(u)…], return_exceptions=True)`` which
+    silently dropped pages on concurrent-conn errors. THAT was the bug.
+    Phase 1 (server-side BFS) was always correct. The fix is to keep
+    Phase 1 and replace Phase 2's gather with the chunked-bulk-fetch
+    contract (which serialises work through crawl4ai's own dispatcher).
 
     Returns ``(crawl_results, outcomes)``:
-    - ``crawl_results``: same-domain pages with non-empty markdown (the
-      caller's old contract: pages worth ingesting).
-    - ``outcomes``: per-URL records ``{"url", "reason_code", "status_code",
-      "content_length"}`` written to ``crawl_jobs.fetch_outcomes`` JSONB so
-      operators can answer "where did the missing pages go?".
-
-    ``max_depth`` is accepted for caller-signature compatibility but no
-    longer drives discovery (we explicitly enumerate candidates instead of
-    recursing). ``include_patterns``, when set, is applied as a candidate-
-    side substring filter against the union before submission.
+    - ``crawl_results``: same-domain pages with non-empty markdown.
+    - ``outcomes``: per-URL ``{"url", "reason_code", "status_code",
+      "content_length"}`` records written to ``crawl_jobs.fetch_outcomes``
+      JSONB so operators can answer "where did the missing pages go?"
+      without log forensics (RECONCILE's good addition, retained).
     """
     parsed = urlparse(start_url)
     base_domain = parsed.netloc.lower()
@@ -455,110 +462,99 @@ async def crawl_site(
     )
 
     # ------------------------------------------------------------------
-    # Step 1 — Seed: one fetch of start_url with the FULL config (incl.
-    # login_indicator). Re-using ``crawl_page`` here would silently drop
-    # the indicator (it builds its own config without the kwarg) — that
-    # produced a latent bug where auth-walled homepages were treated as
-    # successful "content" and their login-form anchors became BFS seeds.
+    # Phase 1 — Server-side BFS deep crawl via crawl4ai BFSDeepCrawlStrategy.
     # ------------------------------------------------------------------
-    seed_result = await _fetch_seed_page(
+    bfs_results, bfs_error = await _bfs_deep_crawl(
         start_url=start_url,
         crawler_config=crawler_config,
+        max_depth=max_depth,
+        max_pages=max_pages,
+        include_patterns=include_patterns,
         cookies=cookies,
     )
-
-    bfs_seed_urls = _extract_bfs_seeds(seed_result, base_domain=base_domain)
+    # Same-domain guard: crawl4ai may follow external links if filter_chain
+    # doesn't catch them (e.g. unconfigured include_patterns + permissive
+    # discovery). Drop external pages here so caller doesn't ingest them.
+    bfs_results = [r for r in bfs_results if urlparse(r.url).netloc.lower() == base_domain]
 
     # ------------------------------------------------------------------
-    # Step 2 — Discovery union, EXCLUDING start_url (already in results).
-    # Reserve one slot of max_pages for the seed itself.
+    # Phase 2 — Sitemap supplement: pages in sitemap.xml that BFS missed
+    # (orphans not reachable via internal links from start_url).
     # ------------------------------------------------------------------
     sitemap_urls = await _fetch_sitemap_urls(start_url)
+    seen_canonicals: set[str] = {_canonicalise_url(start_url)}
+    seen_canonicals.update(_canonicalise_url(r.url) for r in bfs_results)
 
-    bulk_max = max(0, max_pages - 1)
-    bulk_candidates = _build_candidate_set(
-        start_url=start_url,
-        sitemap_urls=sitemap_urls,
-        bfs_seed_urls=bfs_seed_urls,
-        base_domain=base_domain,
-        max_pages=bulk_max,
-        include_patterns=include_patterns,
-        include_start_url=False,
-    )
+    supplement_candidates: list[str] = []
+    remaining_budget = max_pages - len(bfs_results)
+    for u in sitemap_urls:
+        if remaining_budget <= 0:
+            break
+        canonical = _canonicalise_url(u)
+        if canonical in seen_canonicals:
+            continue
+        if not _url_matches_include_patterns(u, include_patterns):
+            continue
+        if urlparse(u).netloc.lower() != base_domain:
+            continue
+        seen_canonicals.add(canonical)
+        supplement_candidates.append(u)
+        remaining_budget -= 1
 
     logger.info(
         "crawl_site_discovery_complete",
         start_url=start_url,
+        bfs_pages=len(bfs_results),
+        bfs_error=str(bfs_error) if bfs_error else None,
         sitemap_urls=len(sitemap_urls),
-        bfs_seed_urls=len(bfs_seed_urls),
-        bulk_candidates=len(bulk_candidates),
+        supplement_candidates=len(supplement_candidates),
         max_pages=max_pages,
     )
 
-    # ------------------------------------------------------------------
-    # Step 3 — Bulk fetch. crawl4ai's MemoryAdaptiveDispatcher handles
-    # concurrency server-side; we get per-URL ``success`` + ``error_message``
-    # in the response body.
-    #
-    # CHUNKED: crawl4ai 0.8 server enforces ``List should have at most 100
-    # items after validation`` on POST /crawl ``urls``. Submitting all
-    # candidates in a single request returns 422 the moment a site has
-    # more than 100 sitemap entries — observed live on help.voys.nl
-    # (208 sitemap URLs → 1 ingested instead of 207). We submit in
-    # batches of ``_BULK_CHUNK_SIZE`` and concatenate the responses.
-    # Sequential dispatch keeps memory bounded; crawl4ai's own dispatcher
-    # parallelises within a batch.
-    # ------------------------------------------------------------------
-    raw_results: list[dict[str, Any]] = []
-    transport_error: BaseException | None = None
-
-    if bulk_candidates:
-        for chunk_start in range(0, len(bulk_candidates), _BULK_CHUNK_SIZE):
-            chunk_urls = bulk_candidates[chunk_start : chunk_start + _BULK_CHUNK_SIZE]
-            payload: dict[str, Any] = {
-                "urls": chunk_urls,
-                "crawler_config": {"type": "CrawlerRunConfig", "params": crawler_config},
-            }
-            if cookies:
-                payload["hooks"] = _build_cookie_hooks(cookies)
-            try:
-                async with httpx.AsyncClient(timeout=_BULK_CRAWL_TIMEOUT) as client:
-                    data = await _crawl_sync(client, payload)
-                raw_results.extend(_normalise_results_block(data))
-            except Exception as exc:
-                transport_error = exc
-                logger.warning(
-                    "crawl_site_bulk_request_failed",
-                    start_url=start_url,
-                    chunk_index=chunk_start // _BULK_CHUNK_SIZE,
-                    chunk_size=len(chunk_urls),
-                    candidates=len(bulk_candidates),
-                    error=str(exc),
-                )
-                # Continue submitting remaining chunks: a transient failure
-                # on one chunk shouldn't tank the whole crawl. Per-URL
-                # missing-result handling in _combine_bulk_responses surfaces
-                # the affected URLs as transport-error outcomes.
+    supplement_raw_results, supplement_transport_error = await _chunked_bulk_fetch(
+        urls=supplement_candidates,
+        crawler_config=crawler_config,
+        cookies=cookies,
+    )
 
     # ------------------------------------------------------------------
-    # Step 4 — Combine seed + bulk into ``crawl_results`` and ``outcomes``.
+    # Combine BFS results + supplement results into the
+    # (crawl_results, outcomes) contract.
     # ------------------------------------------------------------------
     crawl_results: list[CrawlResult] = []
     outcomes: list[FetchOutcome] = []
 
-    seed_outcome = _build_outcome_from_result(start_url, seed_result)
-    outcomes.append(seed_outcome)
-    if _result_is_ingestable(seed_result, base_domain=base_domain):
-        crawl_results.append(seed_result)
+    # BFS results: each visited page becomes one outcome + one ingestable
+    # result (when same-domain + non-empty markdown).
+    for r in bfs_results:
+        outcomes.append(_build_outcome_from_result(r.url, r))
+        if _result_is_ingestable(r, base_domain=base_domain):
+            crawl_results.append(r)
 
-    bulk_results, bulk_outcomes = _combine_bulk_responses(
-        candidates=bulk_candidates,
-        raw_results=raw_results,
-        transport_error=transport_error,
+    # If the BFS itself failed (network/timeout/5xx) AND we got no results,
+    # surface a transport_error outcome for start_url so operators see the
+    # failure in fetch_outcomes instead of a silent empty BFS.
+    if bfs_error is not None and not bfs_results:
+        outcomes.append(
+            {
+                "url": start_url,
+                "reason_code": FetchReasonCode.UNKNOWN_EXCEPTION.value,
+                "status_code": None,
+                "content_length": 0,
+            }
+        )
+
+    # Supplement results: canonical-URL matched against the chunked-bulk
+    # response, with positional fallback for redirect cases (matches the
+    # RECONCILE contract).
+    supplement_results, supplement_outcomes = _combine_bulk_responses(
+        candidates=supplement_candidates,
+        raw_results=supplement_raw_results,
+        transport_error=supplement_transport_error,
         base_domain=base_domain,
     )
-    crawl_results.extend(bulk_results)
-    outcomes.extend(bulk_outcomes)
+    crawl_results.extend(supplement_results)
+    outcomes.extend(supplement_outcomes)
 
     success_count = sum(1 for o in outcomes if o["reason_code"] == FetchReasonCode.SUCCESS.value)
     logger.info(
@@ -568,6 +564,8 @@ async def crawl_site(
         results=len(crawl_results),
         success_outcomes=success_count,
         non_success_outcomes=len(outcomes) - success_count,
+        bfs_pages=len(bfs_results),
+        supplement_pages=len(supplement_results),
     )
 
     return crawl_results, outcomes
@@ -805,6 +803,199 @@ _BULK_CRAWL_TIMEOUT = 5 * 60.0
 # be raised in lock-step with any future crawl4ai schema relaxation.
 # Discovered live on help.voys.nl (208 sitemap entries → 422 → 1 ingested).
 _BULK_CHUNK_SIZE = 100
+
+# Server-side BFS deep crawl polling budget. /crawl/job is async — submit,
+# get task_id, poll status. Voys-support full-depth crawl (~500 pages
+# across 3 levels) completes well under 30 minutes; the cap is a safety
+# net for stuck workers.
+_DEEP_POLL_INTERVAL = 5.0  # seconds between status polls
+_MAX_DEEP_POLL = 30 * 60  # max total seconds (30 minutes)
+
+
+def _url_matches_include_patterns(u: str, include_patterns: list[str] | None) -> bool:
+    """Filter URL against include_patterns using crawl4ai URLPatternFilter semantics.
+
+    A pattern like ``/nl/*`` is a prefix glob (fnmatch on the URL path), NOT a
+    substring. Plain substring match made ``/nl/*`` literally never match
+    because no URL contains the asterisk — observed live on
+    wiki.redcactus.cloud (29 BFS-discovered URLs, 0 retained as candidates →
+    1 page ingested instead of ~150). Two contracts honoured:
+
+      * Patterns containing ``*`` or ``?`` ⇒ ``fnmatch`` against the URL path
+        (matches the old crawl4ai URLPatternFilter contract)
+      * Plain patterns (no wildcard) ⇒ substring match on the URL —
+        matches the original "simple substring" intent for legacy callers
+    """
+    if not include_patterns:
+        return True
+    path_with_query = urlparse(u).path
+    for p in include_patterns:
+        if "*" in p or "?" in p:
+            if fnmatch.fnmatch(path_with_query, p):
+                return True
+        elif p in u:
+            return True
+    return False
+
+
+async def _bfs_deep_crawl(
+    *,
+    start_url: str,
+    crawler_config: dict[str, Any],
+    max_depth: int,
+    max_pages: int,
+    include_patterns: list[str] | None,
+    cookies: list[dict[str, Any]] | None,
+) -> tuple[list[CrawlResult], BaseException | None]:
+    """Server-side BFS deep crawl via crawl4ai's ``/crawl/job`` endpoint.
+
+    Submits a single crawl job that uses crawl4ai's ``BFSDeepCrawlStrategy``
+    (recursive multi-level link-following) with optional ``URLPatternFilter``
+    (real fnmatch glob, not the substring approximation). crawl4ai's own
+    server-side ``MemoryAdaptiveDispatcher`` handles concurrency safely —
+    no client-side ``asyncio.gather`` over a shared connection.
+
+    Returns ``(results, transport_error)``:
+      * ``results`` — list of ``CrawlResult`` for every URL the BFS visited
+        (including the start_url itself; results may exceed ``max_pages``
+        slightly because crawl4ai counts queued pages, not strictly
+        finished ones).
+      * ``transport_error`` — non-None when the submission/polling itself
+        failed (network error, timeout, 5xx). ``results`` is empty on
+        failure; the caller decides whether to fall back to sitemap-only
+        or surface as an error.
+    """
+    deep_crawl_params: dict[str, Any] = {
+        "max_depth": max_depth,
+        "max_pages": max_pages,
+        "include_external": False,
+    }
+    if include_patterns:
+        # Crawl4AI 0.8.6 only reconstructs nested objects when wrapped in
+        # ``{"type": "<ClassName>", "params": {...}}`` — a bare list stays a
+        # list and BFSDeepCrawlStrategy crashes with
+        # ``AttributeError: 'list' object has no attribute 'apply'`` the
+        # moment it walks past depth 0. Pinned by tests.
+        deep_crawl_params["filter_chain"] = {
+            "type": "FilterChain",
+            "params": {
+                "filters": [
+                    {
+                        "type": "URLPatternFilter",
+                        "params": {"patterns": include_patterns},
+                    },
+                ],
+            },
+        }
+
+    config = dict(crawler_config)
+    config["deep_crawl_strategy"] = {
+        "type": "BFSDeepCrawlStrategy",
+        "params": deep_crawl_params,
+    }
+
+    payload: dict[str, Any] = {
+        "urls": [start_url],
+        "crawler_config": {"type": "CrawlerRunConfig", "params": config},
+    }
+    if cookies:
+        payload["hooks"] = _build_cookie_hooks(cookies)
+
+    try:
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            resp = await client.post(
+                f"{settings.crawl4ai_api_url}/crawl/job",
+                json=payload,
+                headers=_auth_headers(),
+            )
+            resp.raise_for_status()
+            task_id: str = resp.json()["task_id"]
+            logger.info(
+                "crawl_site_bfs_job_submitted",
+                start_url=start_url,
+                task_id=task_id,
+                max_depth=max_depth,
+                max_pages=max_pages,
+            )
+
+            elapsed = 0.0
+            result_data: dict[str, Any] = {}
+            while elapsed < _MAX_DEEP_POLL:
+                await asyncio.sleep(_DEEP_POLL_INTERVAL)
+                elapsed += _DEEP_POLL_INTERVAL
+                resp = await client.get(
+                    f"{settings.crawl4ai_api_url}/crawl/job/{task_id}",
+                    headers=_auth_headers(),
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                status_str = data.get("status", "").lower()
+                if status_str == "completed":
+                    result_data = data.get("result", {}) or {}
+                    break
+                if status_str == "failed":
+                    err_msg = data.get("error", "unknown")
+                    raise RuntimeError(f"BFS deep crawl job {task_id} failed: {err_msg}")
+            else:
+                raise TimeoutError(
+                    f"BFS deep crawl job {task_id} did not complete within {_MAX_DEEP_POLL}s"
+                )
+    except Exception as exc:
+        logger.warning(
+            "crawl_site_bfs_failed",
+            start_url=start_url,
+            error=str(exc),
+        )
+        return [], exc
+
+    raw_results = _normalise_results_block(result_data)
+    crawl_results = [_extract_result(start_url, page) for page in raw_results if page]
+    logger.info(
+        "crawl_site_bfs_complete",
+        start_url=start_url,
+        pages=len(crawl_results),
+    )
+    return crawl_results, None
+
+
+async def _chunked_bulk_fetch(
+    *,
+    urls: list[str],
+    crawler_config: dict[str, Any],
+    cookies: list[dict[str, Any]] | None,
+) -> tuple[list[dict[str, Any]], BaseException | None]:
+    """Submit ``urls`` to crawl4ai's bulk ``/crawl`` endpoint in chunks of 100.
+
+    crawl4ai 0.8 server enforces a 100-URL cap on the ``urls`` array.
+    Submitting more in one request returns 422. We chunk client-side and
+    accumulate raw results; per-chunk transport failure is logged but the
+    remaining chunks still ship — partial coverage beats zero coverage.
+    """
+    raw_results: list[dict[str, Any]] = []
+    transport_error: BaseException | None = None
+    if not urls:
+        return raw_results, None
+    for chunk_start in range(0, len(urls), _BULK_CHUNK_SIZE):
+        chunk_urls = urls[chunk_start : chunk_start + _BULK_CHUNK_SIZE]
+        payload: dict[str, Any] = {
+            "urls": chunk_urls,
+            "crawler_config": {"type": "CrawlerRunConfig", "params": crawler_config},
+        }
+        if cookies:
+            payload["hooks"] = _build_cookie_hooks(cookies)
+        try:
+            async with httpx.AsyncClient(timeout=_BULK_CRAWL_TIMEOUT) as client:
+                data = await _crawl_sync(client, payload)
+            raw_results.extend(_normalise_results_block(data))
+        except Exception as exc:
+            transport_error = exc
+            logger.warning(
+                "crawl_site_bulk_chunk_failed",
+                chunk_index=chunk_start // _BULK_CHUNK_SIZE,
+                chunk_size=len(chunk_urls),
+                error=str(exc),
+            )
+    return raw_results, transport_error
 
 
 def _normalise_results_block(data: dict[str, Any]) -> list[dict[str, Any]]:
