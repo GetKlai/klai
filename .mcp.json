@@ -22,17 +22,6 @@
       "args": [".claude/scripts/playwright-launcher.mjs"],
       "env": {}
     },
-    "playwright-isolated": {
-      "$comment": "Ephemeral headed Chrome for one-off CSS/visual checks where login state is not needed. Window is visible (not headless) so you can see what is happening; profile is in-memory and discarded on close. Tracks @latest — the original 0.0.70 pin caused the months-long codegen-seed failure mode (process-rules.md::playwright-mcp-config-cycle anti-pattern 8). Note: @latest dropped `--browser chromium`; valid values are chrome|firefox|webkit|msedge.",
-      "type": "stdio",
-      "command": "npx",
-      "args": [
-        "@playwright/mcp@latest",
-        "--browser", "chrome",
-        "--isolated"
-      ],
-      "env": {}
-    },
     "codeindex": {
       "$comment": "Graph-powered code intelligence. Install: npm i -g klai-private/tools/codeindex-1.3.56.tgz && codeindex analyze",
       "type": "stdio",
