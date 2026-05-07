@@ -1881,3 +1881,241 @@ class TestConsolidate:
         assert result.clusters_found == result.base_clusters_found
         # Submitted proposals are base clusters (no child_cluster_names set)
         assert all(p.child_cluster_names is None for p in submitted_proposals)
+
+
+# ---------------------------------------------------------------------------
+# SPEC-TAXONOMY-REVIEW-FLOW-001 — Issue 1 child_centroids storage tests.
+# ---------------------------------------------------------------------------
+
+
+class TestChildCentroidsStorage:
+    """Cover AC-27 of SPEC-TAXONOMY-REVIEW-FLOW-001: per-child centroids
+    populated for multi-cluster parents, None / single-element list semantics
+    for single-child parents."""
+
+    @pytest.fixture
+    def base_proposals(self):
+        return [(i, f"Cluster {i}") for i in range(12)]
+
+    @pytest.fixture
+    def cluster_doc_lists(self, base_proposals):
+        from knowledge_ingest.proposal_generator import DocumentSummary
+
+        return {
+            cid: [
+                DocumentSummary(
+                    title=f"Doc {cid}.{j}", content_preview=f"Content cluster {cid} doc {j}" * 5
+                )
+                for j in range(5)
+            ]
+            for cid, _name in base_proposals
+        }
+
+    @pytest.fixture
+    def cluster_map(self, base_proposals):
+        return {cid: list(range(cid * 5, (cid + 1) * 5)) for cid, _ in base_proposals}
+
+    @pytest.fixture
+    def document_embeddings(self, base_proposals):
+        rng = np.random.RandomState(42)
+        embs = rng.randn(60, DIM).astype(np.float32)
+        embs = embs / np.linalg.norm(embs, axis=1, keepdims=True)
+        return embs
+
+    @pytest.fixture
+    def mock_consolidate_settings(self):
+        m = MagicMock()
+        m.portal_internal_token = "test-token"
+        m.litellm_url = "http://litellm:4000"
+        m.litellm_api_key = "key"
+        m.taxonomy_classification_model = "klai-fast"
+        m.taxonomy_classification_timeout = 30.0
+        m.taxonomy_bootstrap_min_cluster_size_floor = 3
+        m.taxonomy_bootstrap_cluster_selection_method = "leaf"
+        m.taxonomy_bootstrap_max_clusters = 20
+        m.taxonomy_bootstrap_top_n_per_cluster = 8
+        m.taxonomy_consolidate_enabled = True
+        m.taxonomy_consolidate_target_min = 5
+        m.taxonomy_consolidate_target_max = 9
+        return m
+
+    def _mock_llm_response(self, parents_payload):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        resp.json = MagicMock(
+            return_value={
+                "choices": [{"message": {"content": json.dumps({"parents": parents_payload})}}]
+            }
+        )
+        return resp
+
+    @pytest.mark.asyncio
+    async def test_ac27_multi_child_parent_has_per_child_centroids(
+        self,
+        base_proposals,
+        cluster_doc_lists,
+        cluster_map,
+        document_embeddings,
+        mock_consolidate_settings,
+    ):
+        """AC-27: a parent with multiple children gets a list of N child-centroids
+        (one per child), each unit-normalised."""
+        from knowledge_ingest.proposal_generator import _consolidate_to_parents
+
+        # Group 4 + 4 + 4 — three multi-child parents
+        parents_payload = [
+            {"name": "Group A", "rationale": "first four", "child_cluster_ids": [0, 1, 2, 3]},
+            {"name": "Group B", "rationale": "next four", "child_cluster_ids": [4, 5, 6, 7]},
+            {"name": "Group C", "rationale": "last four", "child_cluster_ids": [8, 9, 10, 11]},
+        ]
+
+        async def fake_desc(name, parent, titles):
+            return f"Desc for {name}"
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.post = AsyncMock(return_value=self._mock_llm_response(parents_payload))
+
+        with (
+            patch("knowledge_ingest.proposal_generator.settings", mock_consolidate_settings),
+            patch(
+                "knowledge_ingest.proposal_generator.httpx.AsyncClient", return_value=mock_client
+            ),
+            patch(
+                "knowledge_ingest.proposal_generator.generate_node_description",
+                side_effect=fake_desc,
+            ),
+        ):
+            parents = await _consolidate_to_parents(
+                base_proposals=base_proposals,
+                cluster_doc_lists=cluster_doc_lists,
+                cluster_map=cluster_map,
+                document_embeddings=document_embeddings,
+                kb_description="",
+                target_min=5,
+                target_max=9,
+            )
+
+        assert len(parents) == 3
+        for p in parents:
+            assert len(p.child_centroids) == 4, (
+                f"expected 4 centroids, got {len(p.child_centroids)}"
+            )
+            for centroid in p.child_centroids:
+                norm = float(np.linalg.norm(np.array(centroid)))
+                assert abs(norm - 1.0) < 1e-5, f"centroid not unit-norm: norm={norm}"
+
+    @pytest.mark.asyncio
+    async def test_ac27_submit_loop_passes_child_centroids_for_multi_child(
+        self, mock_consolidate_settings
+    ):
+        """AC-27: the submit-loop in generate_bootstrap_proposals_v2 passes
+        child_centroids to TaxonomyProposal for multi-child parents AND sets
+        it to None for single-child parents (legacy single-centroid path)."""
+        from unittest.mock import patch as _patch
+
+        from knowledge_ingest.proposal_generator import (
+            DocumentSummary,
+            ParentCategory,
+            generate_bootstrap_proposals_v2,
+        )
+
+        # Synthetic embeddings — 12 well-separated mini-clusters
+        rng = np.random.RandomState(7)
+        embs_list = []
+        for cluster_idx in range(12):
+            cluster_center = np.zeros(DIM)
+            cluster_center[cluster_idx * 8] = 1.0
+            for _ in range(5):
+                vec = cluster_center + rng.randn(DIM).astype(np.float32) * 0.02
+                vec = vec / np.linalg.norm(vec)
+                embs_list.append(vec)
+        embeddings = np.array(embs_list, dtype=np.float32)
+        doc_summaries = [
+            DocumentSummary(title=f"doc {i}", content_preview=f"content {i}" * 5) for i in range(60)
+        ]
+
+        async def fake_naming(cluster_doc_lists, kb_description):
+            return {cid: f"Cluster {cid}" for cid in cluster_doc_lists}
+
+        # Force consolidate to return: 1 multi-child parent (4 children) + 1 single-child
+        async def fake_consolidate(**kwargs):
+            return [
+                ParentCategory(
+                    name="MultiParent",
+                    rationale="four kids",
+                    child_cluster_ids=[0, 1, 2, 3],
+                    description="multi parent",
+                    document_count=20,
+                    sample_titles=["t"],
+                    centroid=[0.5, 0.5] + [0.0] * (DIM - 2),
+                    child_cluster_names=["c0", "c1", "c2", "c3"],
+                    child_centroids=[
+                        [1.0] + [0.0] * (DIM - 1),
+                        [0.0, 1.0] + [0.0] * (DIM - 2),
+                        [0.0, 0.0, 1.0] + [0.0] * (DIM - 3),
+                        [0.0, 0.0, 0.0, 1.0] + [0.0] * (DIM - 4),
+                    ],
+                ),
+                ParentCategory(
+                    name="SoloParent",
+                    rationale="alone",
+                    child_cluster_ids=[4],
+                    description="solo parent",
+                    document_count=5,
+                    sample_titles=["t"],
+                    centroid=[0.0, 0.0, 0.0, 0.0, 1.0] + [0.0] * (DIM - 5),
+                    child_cluster_names=["c4"],
+                    child_centroids=[[0.0, 0.0, 0.0, 0.0, 1.0] + [0.0] * (DIM - 5)],
+                ),
+            ]
+
+        async def fake_desc(name, parent, titles):
+            return f"d for {name}"
+
+        submitted_proposals = []
+
+        async def fake_submit(kb_slug, org_id, proposal):
+            submitted_proposals.append(proposal)
+
+        with (
+            _patch("knowledge_ingest.proposal_generator.settings", mock_consolidate_settings),
+            _patch(
+                "knowledge_ingest.proposal_generator._consolidate_to_parents",
+                side_effect=fake_consolidate,
+            ),
+            _patch(
+                "knowledge_ingest.proposal_generator._suggest_cluster_names_batched",
+                side_effect=fake_naming,
+            ),
+            _patch(
+                "knowledge_ingest.proposal_generator.generate_node_description",
+                side_effect=fake_desc,
+            ),
+            _patch(
+                "knowledge_ingest.proposal_generator.submit_taxonomy_proposal",
+                side_effect=fake_submit,
+            ),
+        ):
+            await generate_bootstrap_proposals_v2(
+                org_id="o",
+                kb_slug="k",
+                document_summaries=doc_summaries,
+                document_embeddings=embeddings,
+                existing_nodes=[],
+                kb_description="",
+            )
+
+        assert len(submitted_proposals) == 2
+        # Multi-child parent has child_centroids set (length 4)
+        multi = next(p for p in submitted_proposals if p.suggested_name == "MultiParent")
+        assert multi.child_centroids is not None
+        assert len(multi.child_centroids) == 4
+        # Solo parent has child_centroids=None (legacy single-centroid path)
+        solo = next(p for p in submitted_proposals if p.suggested_name == "SoloParent")
+        assert solo.child_centroids is None, (
+            "single-child parent should not pass child_centroids "
+            "(legacy single-centroid path is used)"
+        )

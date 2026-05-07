@@ -166,6 +166,30 @@ class TestCoverageCache:
         _coverage_cache[("org-1", "kb-2")] = (time.monotonic(), {"b": 2})
         assert _coverage_cache[("org-1", "kb-1")][1] != _coverage_cache[("org-1", "kb-2")][1]
 
+    def test_invalidate_helper_drops_only_target_kb(self) -> None:
+        """SPEC-TAXONOMY-REVIEW-FLOW-001 AC-6: invalidate helper drops the
+        target (org, kb) entry but leaves others intact."""
+        from app.api.taxonomy import _invalidate_coverage_cache
+
+        _coverage_cache[("org-1", "kb-1")] = (time.monotonic(), {"a": 1})
+        _coverage_cache[("org-1", "kb-2")] = (time.monotonic(), {"b": 2})
+        _coverage_cache[("org-2", "kb-1")] = (time.monotonic(), {"c": 3})
+
+        _invalidate_coverage_cache("org-1", "kb-1")
+
+        assert ("org-1", "kb-1") not in _coverage_cache
+        assert ("org-1", "kb-2") in _coverage_cache  # different kb, untouched
+        assert ("org-2", "kb-1") in _coverage_cache  # different org, untouched
+
+    def test_invalidate_helper_idempotent_on_missing_key(self) -> None:
+        """Invalidating a non-existent key is a no-op (no KeyError)."""
+        from app.api.taxonomy import _invalidate_coverage_cache
+
+        _coverage_cache.clear()
+        # Should not raise even though no entry exists
+        _invalidate_coverage_cache("org-x", "kb-y")
+        assert ("org-x", "kb-y") not in _coverage_cache
+
 
 def _make_node(chunk_count: int, gap_count: int) -> CoverageNodeOut:
     """Helper to build a CoverageNodeOut with computed health."""
