@@ -1,5 +1,130 @@
 # Changelog
 
+## [Unreleased] — 2026-05-07 — SPEC-RAG-MULTILINGUAL-CHAT-001: Language-agnostic chat answer layer
+
+Klai chat now auto-detects the language of the user's most recent substantive
+message and responds in that language across all three production chat paths
+(LibreChat → LiteLLM hook → Mistral, portal-api `/partner/v1/chat/completions`,
+retrieval-api `/chat`). Six target languages: NL, EN, DE, FR, PT, ES. Cross-
+lingual retrieval was already working via bge-m3 (multilingual embedding —
+75.5% Recall@100 on MKQA); the bottleneck was the synthesis layer, which
+hardcoded a NL/EN switch. Three industry-standard guards prevent spurious
+language switches: minimum-message-length (≥5 words substantive), single-
+foreign-word tolerance ("merci!" doesn't flip the conversation), and
+substantive-switch persistence (a full sentence in another language flips and
+stays flipped). Verified live on Voys-tenant LibreChat with all 6 target
+languages.
+
+### Added
+
+- **`klai-libs/chat-prompts`** — new shared library exporting
+  `GROUNDED_CHAT_SYSTEM_PROMPT`. Single source of truth for the multilingual
+  prompt foundation. Imported by `klai-portal/backend/app/services/partner_chat.py`
+  (path B), `klai-retrieval-api/retrieval_api/services/synthesis.py` (path C),
+  and `deploy/litellm/klai_knowledge.py` (path A — via vendored single-file
+  copy with drift test).
+- **Cross-lingual eval-suite** —
+  `klai-retrieval-api/evaluation/cross_lingual_runner.py` runs each test query
+  against the synthesis service and computes `language_correctness` per
+  language. Pre-merge gate floor: ≥95% per language for all six targets.
+- **`chat_synthesis_complete` log event** — emitted by paths B + C with
+  `query_language_detected`, `response_language_detected`,
+  `language_correctness`, `response_length_chars`, `org_id`, `request_id`.
+  Path A emit deferred to SPEC-LITELLM-CUSTOM-IMAGE-001 (lingua not in stock
+  litellm image; documented in
+  `docs/runbooks/multilingual-chat-observability.md`).
+- **Lint script** `scripts/lint-no-duplicate-chat-prompt.sh` — CI gate that
+  rejects any PR re-introducing prompt anchors outside their canonical
+  location. Catches both grounded-prompt anchors (canonical in chat-prompts
+  lib) and LiteLLM-hook prefix anchors (canonical in `klai_knowledge.py`).
+- **English chat-prompt anchors in LiteLLM hook** — Phase 4 rewrote the
+  four NL prefix blocks in `deploy/litellm/klai_knowledge.py` (Klai
+  Templates wrapper, KB-unavailable notice, KB header narrow + broad,
+  ANSWER FORMAT) to English-prefixed multilingual instructions. Model
+  receives English instructions but answers in the user's detected language.
+- **Multilingual coverage tests** — 9 new tests in
+  `deploy/litellm/tests/test_klai_knowledge_hook.py` cover DE/FR/PT/ES
+  query → multilingual-foundation prepended invariant.
+- **Documentation** —
+  `docs/architecture/knowledge-ingest-flow.md` (three-paths description),
+  `docs/runbooks/multilingual-chat-observability.md` (operator runbook for
+  `language_correctness` telemetry),
+  `.claude/rules/klai/projects/knowledge.md` ("chat system prompt — three
+  locations, never duplicate" pitfall),
+  `docs/retros/2026-05-07-litellm-restart-vs-recreate.md` (incident retro),
+  `.claude/rules/klai/pitfalls/process-rules.md`
+  (`docker-compose-restart-vs-recreate` CRIT entry),
+  `.moai/specs/SPEC-LITELLM-CUSTOM-IMAGE-001/` (follow-up SPEC for custom
+  litellm Dockerfile + path-A telemetry + vendored-files removal).
+
+### Changed
+
+- **Synthesis system prompt** —
+  `klai-retrieval-api/retrieval_api/services/synthesis.py` and
+  `klai-portal/backend/app/services/partner_chat.py` now import
+  `GROUNDED_CHAT_SYSTEM_PROMPT` from `klai-libs/chat-prompts` instead of
+  inlining a NL/EN switch. v1.1 introduced this for paths B + C; v1.2
+  Phase 4 extended it to path A.
+- **`deploy/litellm/klai_knowledge.py`** — imports the multilingual
+  foundation via vendored single-file copy at
+  `deploy/litellm/klai_chat_prompts.py` (drift-tested against canonical
+  `klai-libs/chat-prompts`). New helper `_compose_libre_chat_prefix(*blocks)`
+  guarantees the foundation leads every LibreChat-only system message
+  across all 8 hook code paths (no entitlement, KB disabled, opt-out,
+  identity-resolve-failed, retrieval-bypassed, no chunks, KB-unavailable,
+  success).
+- **`.github/workflows/litellm-hook-deploy.yml`** — switched from
+  `docker compose restart litellm` to
+  `/opt/klai/scripts/compose-up.sh litellm` (canonical wrapper from
+  SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3). Fixes a deploy bug discovered
+  during the Phase 4 ship: `restart` silently ignores new bind-mounts and
+  env-vars, only `up -d --remove-orphans` picks them up.
+- **Chunk-scope labels in LiteLLM hook system prompt** — `[persoonlijk]` →
+  `[personal]`, `### [Bron]` → `### [Source]`, `### Kennisbank` →
+  `### Knowledge Base`, `[Einde kennisbank-context]` →
+  `[End knowledge base context]`. English labels for consistency with the
+  English-prefixed instructions; never echoed verbatim by the model so
+  user-facing language is unaffected.
+
+### Configuration
+
+No new environment variables. Existing `KNOWLEDGE_RETRIEVE_URL`,
+`PORTAL_INTERNAL_SECRET`, `RETRIEVAL_INTERNAL_SECRET`, etc. unchanged.
+
+`docker-compose.yml` adds one new bind-mount for the litellm service:
+```
+- ./litellm/klai_chat_prompts.py:/app/klai_chat_prompts.py:ro
+```
+
+### Migration
+
+No database migration required. New mount + new lib become active on next
+LiteLLM container recreate (handled automatically by
+`compose-up.sh litellm` in the deploy workflow).
+
+### Verification
+
+Production smoke test (Voys-tenant LibreChat, 2026-05-07): six languages
+verified — DE / FR / PT / ES (target multilingual) all return
+target-language answers with citations to the NL Notion knowledge base;
+NL / EN regression checks unchanged. Container health verified via
+VictoriaLogs (`Application startup complete`, `/health/liveliness 200`,
+zero `ImportError`).
+
+### Follow-ups
+
+- **SPEC-LITELLM-CUSTOM-IMAGE-001** (drafted, not implemented) — replace
+  the two vendored single-files (`klai_service_auth.py`,
+  `klai_chat_prompts.py`) with a custom litellm Dockerfile that
+  `pip install`s the canonical libraries + `lingua-language-detector`.
+  Closes the path-A `chat_synthesis_complete` emit gap and eliminates
+  the vendored single-file pattern entirely.
+- **SPEC-SEC-SERVICE-AUTH-001 REQ-5** — remove the legacy
+  `X-Internal-Secret` auth fallback path. Unblocked by the planned custom
+  litellm image.
+
+---
+
 ## [Unreleased] — 2026-05-06 — SPEC-INGEST-RECONCILE-001: Coverage-complete + observable connector ingestion
 
 Two empirical silent-drop bugs (Voys Help NL: 41/208 sitemap pages ingested;
