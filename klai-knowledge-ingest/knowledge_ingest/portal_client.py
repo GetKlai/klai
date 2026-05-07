@@ -37,6 +37,20 @@ class TaxonomyProposal:
     sample_titles: list[str]
     description: str = ""
     cluster_centroid: list[float] | None = None
+    # SPEC-TAXONOMY-MERGE-DETECT-001: when a parent-proposal results from
+    # consolidating multiple base clusters, list the original base cluster
+    # names here for operator transparency. None for non-consolidated
+    # (single-cluster) proposals.
+    child_cluster_names: list[str] | None = None
+    # SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 1: per-child centroids for
+    # multi-cluster parent proposals. The aggregate cluster_centroid
+    # (doc-count-weighted mean) is too diffuse for the 0.82 auto-categorise
+    # threshold — chunks tight against ANY child cluster fail the parent
+    # match. Storing each child's tight centroid lets approve_proposal
+    # enqueue N parallel auto-categorise jobs (one per child centroid)
+    # under the same node_id, restoring full coverage. None for non-
+    # consolidated proposals (legacy single-centroid path).
+    child_centroids: list[list[float]] | None = None
 
 
 async def fetch_taxonomy_nodes(kb_slug: str, org_id: str) -> list[TaxonomyNode]:
@@ -129,6 +143,8 @@ async def submit_taxonomy_proposal(
                         "sample_titles": proposal.sample_titles[:5],
                         "description": proposal.description,
                         "cluster_centroid": proposal.cluster_centroid,
+                        "child_cluster_names": proposal.child_cluster_names,
+                        "child_centroids": proposal.child_centroids,
                     },
                 },
             )

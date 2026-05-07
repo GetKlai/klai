@@ -77,6 +77,11 @@ class BootstrapResponse(BaseModel):
     documents_scanned: int
     proposals_submitted: int
     clusters_found: int | None = None
+    # SPEC-TAXONOMY-MERGE-DETECT-001: when consolidate ran, clusters_found
+    # equals the post-consolidate parent count and base_clusters_found
+    # equals the pre-consolidate base count. When consolidate was skipped
+    # or fell back, base_clusters_found equals clusters_found.
+    base_clusters_found: int | None = None
     reason: str | None = None
 
 
@@ -323,6 +328,7 @@ async def taxonomy_bootstrap_proposals(
         documents_scanned=result.documents_scanned,
         proposals_submitted=result.proposals_submitted,
         clusters_found=result.clusters_found,
+        base_clusters_found=result.base_clusters_found,
         reason=result.reason,
     )
 
