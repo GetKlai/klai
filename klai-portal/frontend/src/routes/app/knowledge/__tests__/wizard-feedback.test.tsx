@@ -136,4 +136,27 @@ describe('PreviewClassificationFeedback', () => {
     )
     expect(screen.getByText(/go back to step 4/i)).toBeTruthy()
   })
+
+  it('PreviewClassificationFeedback renders unknown classification with reason text', () => {
+    render(
+      <PreviewClassificationFeedback
+        classification="unknown"
+        reason="Preview service did not respond. Try again."
+      />,
+    )
+    expect(screen.getByText(/preview service did not respond/i)).toBeTruthy()
+  })
+
+  it('PreviewClassificationFeedback renders unknown classification offers retry context', () => {
+    const handleRetry = () => undefined
+    render(
+      <PreviewClassificationFeedback
+        classification="unknown"
+        reason={null}
+        onRetry={handleRetry}
+      />,
+    )
+    // Retry button should appear when onRetry is provided
+    expect(screen.getByText(/retry/i)).toBeTruthy()
+  })
 })
