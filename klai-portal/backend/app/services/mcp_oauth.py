@@ -489,8 +489,20 @@ async def refresh_access_token(
     if not raw_refresh_token.startswith(REFRESH_TOKEN_PREFIX):
         return RefreshOutcome(failure_reason="invalid_grant")
 
+    # SPEC-MCP-AUTH-001 REQ-26 race-hardening (klai-security-audit
+    # 2026-05-07 finding A4): two concurrent refresh requests with the
+    # same raw_refresh_token previously both saw ``revoked_at IS NULL``,
+    # both minted a new pair, and both marked the old row revoked —
+    # leaving the legitimate client with two valid access+refresh pairs.
+    # ``with_for_update()`` issues ``SELECT … FOR UPDATE`` so the second
+    # request blocks on PostgreSQL row lock until the first commits;
+    # the second's revoked_at-check then trips the grace-window branch
+    # and returns invalid_grant cleanly. Lock scope is a single row;
+    # contention only matters on real replays.
     refresh_hash = _hash_token(raw_refresh_token)
-    result = await db.execute(select(PortalMcpToken).where(PortalMcpToken.refresh_token_hash == refresh_hash).limit(1))
+    result = await db.execute(
+        select(PortalMcpToken).where(PortalMcpToken.refresh_token_hash == refresh_hash).limit(1).with_for_update()
+    )
     row = result.scalar_one_or_none()
     if row is None:
         return RefreshOutcome(failure_reason="invalid_grant")
@@ -822,13 +834,20 @@ async def approve_auth_request(
 
 
 async def consume_auth_code(redis: Any, code: str) -> dict[str, Any] | None:
-    """Atomically GET + DEL an auth code. Returns None on miss or replay."""
-    raw = await redis.get(f"{_CACHE_KEY_AUTH_CODE}{code}")
+    """Atomically GET + DEL an auth code. Returns None on miss or replay.
+
+    SPEC-MCP-AUTH-001 REQ-13 (single-use auth code), klai-security-audit
+    2026-05-07 finding C2: the previous GET-then-DEL pair was non-atomic,
+    so two parallel /oauth/token calls with the same code could both
+    receive the payload (and both DELETE-as-noop). We now use Redis
+    ``GETDEL`` (Redis 6.2+) which atomically returns and removes the
+    key in a single round-trip — replay impossible at the cache layer.
+    """
+    raw = await redis.execute_command("GETDEL", f"{_CACHE_KEY_AUTH_CODE}{code}")
     if raw is None:
         return None
-    # DEL must happen before the caller observes the payload. If DEL fails,
-    # we re-raise — caller treats as invalid_grant.
-    await redis.delete(f"{_CACHE_KEY_AUTH_CODE}{code}")
+    # ``redis-py`` returns bytes by default unless decode_responses=True;
+    # JSON-decoder accepts both str and bytes since 3.6.
     return json.loads(raw)
 
 
