@@ -666,6 +666,30 @@ async def ingest_document_route(req: IngestRequest, request: Request) -> dict:
         )
     else:
         await assert_caller_identity_tenant_only(request, claimed_org_id=req.org_id)
+
+    # Personal-KB owner-binding (klai-security-audit 2026-05-07 finding B2).
+    # Personal-KB slugs follow ``personal-{zitadel_user_id}``. Identity
+    # assertion only proves user X is a real member of org O — it does NOT
+    # prove user X owns kb_slug=personal-Y. Without this guard, user A
+    # could call the endpoint with body {user_id: A, kb_slug: "personal-B"}
+    # and silently corrupt user B's personal-KB namespace (Postgres RLS
+    # filters on org_id only; the Qdrant retrieve-time user_id filter is
+    # the only existing defence and is one layer deep — see B2 audit).
+    if req.kb_slug.startswith("personal-"):
+        expected_slug = f"personal-{req.user_id}" if req.user_id else None
+        if expected_slug is None or req.kb_slug != expected_slug:
+            logger.warning(
+                "personal_kb_owner_mismatch",
+                claimed_user_id=req.user_id,
+                requested_kb_slug=req.kb_slug,
+                org_id=req.org_id,
+                source_connector_id=req.source_connector_id,
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="personal_kb_owner_mismatch",
+            )
+
     async with tenant_scoped_connection(req.org_id) as conn:
         return await ingest_document(conn, req)
 
