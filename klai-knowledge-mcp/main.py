@@ -489,6 +489,22 @@ def _slugify(text: str) -> str:
 
 
 # -- MCP server ---------------------------------------------------------------
+# klai-security-audit 2026-05-07 finding B3 (CANNOT-VERIFY → reviewed
+# 2026-05-07): FastMCP's Streamable HTTP transport binds session state to
+# the server-generated ``Mcp-Session-Id`` (uuid4, 128-bit). Per-session
+# state is transport-only (request streams, SSE writers); identity is
+# re-derived from the ``Authorization`` header on every tool call (see
+# ``_identify_request`` invocations in each tool body) and the
+# ``_WWWAuthenticateMiddleware`` runs BEFORE FastMCP touches the request.
+# Net: a hijacked session-id cannot read another user's data today.
+#
+# Latent caveat: the GET-SSE notification stream binds to session-id only.
+# If anyone in the future wires up server-pushed notifications via that
+# stream that carry identity-scoped payloads (org_id-specific events,
+# per-user alerts, etc.), the emitter MUST re-derive identity from the
+# live ``Authorization`` header on every emit — NOT from cached session
+# state. Without that discipline the GEEL caveat in finding B3 turns
+# into a real cross-token leak.
 mcp = FastMCP(
     "klai-knowledge",
     transport_security=TransportSecuritySettings(
