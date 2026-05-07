@@ -31,9 +31,9 @@ from urllib.parse import urlparse
 
 __all__ = [
     "AUTH_WALL_END_OF_BODY_MARKERS",
-    "AuthWallClassification",
     "LOGIN_PATH_REGEX",
     "SESSION_COOKIE_REGEX",
+    "AuthWallClassification",
     "classify_auth_wall",
 ]
 
@@ -90,9 +90,7 @@ _END_OF_BODY_WINDOW_CHARS = 200
 
 # Password-form HTML signature. Lower-cased substring search is fine — we
 # only care about the presence of a password input on a near-empty page.
-_PASSWORD_INPUT_PATTERN = re.compile(
-    r'<input[^>]*type\s*=\s*["\']?password["\']?', re.IGNORECASE
-)
+_PASSWORD_INPUT_PATTERN = re.compile(r'<input[^>]*type\s*=\s*["\']?password["\']?', re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
