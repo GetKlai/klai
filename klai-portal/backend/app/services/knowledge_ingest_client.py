@@ -178,7 +178,13 @@ async def preview_crawl(
             return resp.json()  # type: ignore[no-any-return]
     except Exception:
         logger.warning("preview_crawl failed", extra={"url": url}, exc_info=True)
-        return {"fit_markdown": "", "word_count": 0, "url": url}
+        return {
+            "fit_markdown": "",
+            "word_count": 0,
+            "url": url,
+            "classification": "unknown",
+            "classification_reason": "Preview service did not respond. Try again.",
+        }
 
 
 async def auth_probe(

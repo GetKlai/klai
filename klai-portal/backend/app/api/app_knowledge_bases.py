@@ -1211,7 +1211,9 @@ class CrawlPreviewResponse(BaseModel):
     selector_source: str | None = None
     # SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3 — five-way classification
     # used by the wizard to gate step-5 → step-6 advance.
-    classification: str = "success"
+    # Default is "unknown" (fail-closed): absence of classification must
+    # never be treated as success.
+    classification: str = "unknown"
     classification_reason: str | None = None
 
 
@@ -1226,10 +1228,17 @@ async def crawl_preview(
     caller_id, org, _ = await _get_caller_org(credentials, db)
     kb = await _get_kb_or_404(kb_slug, org.id, db)
     await _require_owner(kb, caller_id, db)
+    # SPEC-CONNECTOR-INPUT-VALIDATION-001 hotfix: knowledge-ingest
+    # identity verifier expects the Zitadel resourceowner ID (the
+    # 18-digit numeric string, e.g. "368884765035593759"), NOT the
+    # portal_orgs int PK. The deprovisioning audit on 2026-05-05 flagged
+    # this same bug pattern across other internal call paths; this
+    # pass-through inherited the bug because it was modeled on the older
+    # broken callsite. The auth-probe pass-through below has the same fix.
     result = await knowledge_ingest_client.preview_crawl(
         url=body.url,
         content_selector=body.content_selector,
-        org_id=str(org.id),
+        org_id=org.zitadel_org_id,
         try_ai=body.try_ai,
         cookies=body.cookies,
     )
@@ -1240,7 +1249,7 @@ async def crawl_preview(
         warnings=result.get("warnings", []),
         content_selector=result.get("content_selector"),
         selector_source=result.get("selector_source"),
-        classification=result.get("classification", "success"),
+        classification=result.get("classification", "unknown"),
         classification_reason=result.get("classification_reason"),
     )
 
@@ -1281,9 +1290,10 @@ async def auth_probe(
     caller_id, org, _ = await _get_caller_org(credentials, db)
     kb = await _get_kb_or_404(kb_slug, org.id, db)
     await _require_owner(kb, caller_id, db)
+    # See crawl_preview above for the org_id rationale (Zitadel ID, not int PK).
     result = await knowledge_ingest_client.auth_probe(
         url=body.url,
-        org_id=str(org.id),
+        org_id=org.zitadel_org_id,
         cookies=body.cookies,
     )
     return AuthProbeResponse(

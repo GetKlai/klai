@@ -32,7 +32,6 @@ from knowledge_ingest.domain_selectors import (
 )
 from knowledge_ingest.fingerprint import compute_content_fingerprint
 from knowledge_ingest.identity import (
-    assert_caller_identity,
     assert_caller_identity_tenant_only,
 )
 from knowledge_ingest.models import CrawlRequest, CrawlResponse, IngestRequest
@@ -116,7 +115,11 @@ class CrawlPreviewResponse(BaseModel):
     auth_guard: AuthGuardSuggestion | None = None  # SPEC-CRAWL-004
     # SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3 — five-way classification
     # used by the wizard to gate step-5 → step-6 advance.
-    classification: str = "success"
+    # Default is "unknown" (fail-closed): absence of classification must
+    # never be treated as success.  A concrete value is always written by
+    # _classify_preview_outcome for the happy path; "unknown" surfaces only
+    # when the upstream crawl service errors before classification runs.
+    classification: str = "unknown"
     classification_reason: str | None = None
 
 
@@ -251,11 +254,22 @@ async def _maybe_tenant_conn(org_id: str):
 async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPreviewResponse:
     """Fetch a URL with PruningContentFilter and return the filtered markdown preview.
     SPEC-TI-003 AC-6: identity assertion when org_id is provided.
+
+    SPEC-CONNECTOR-INPUT-VALIDATION-001 hotfix: this is a service-to-service
+    pass-through (called by portal-api with X-Internal-Secret + X-Caller-Service:
+    portal-api). There is NO end-user in the request context, so we MUST use
+    the tenant-only identity flavour. Calling the user-bound
+    ``assert_caller_identity`` here raises TypeError at runtime because the
+    required ``claimed_user_id`` arg has no source. The OLD wizard never hit
+    this path because it sent an empty ``body.org_id``; the NEW wizard always
+    sends one.
+
+    Same fix pattern as PR #448 applied to ``enqueue_connector_purge_route``.
     """
     logger.info("crawl_preview_started", url=body.url)
-    # SPEC-TI-003 AC-6: assert identity when caller provides org_id
+    # SPEC-TI-003 AC-6: assert tenant identity when caller provides org_id
     if body.org_id:
-        await assert_caller_identity(request, claimed_org_id=body.org_id)
+        await assert_caller_identity_tenant_only(request, claimed_org_id=body.org_id)
     # SPEC-SEC-SSRF-001 / REQ-1.1 / AC-1 / AC-6: SSRF validation MUST
     # run before any DNS lookup triggered by downstream crawl4ai /
     # get_domain_selector / crawl_dom_summary logic. It runs outside
@@ -389,6 +403,21 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
             set_cookie_header=set_cookie_header,
         )
 
+        # SPEC-CONNECTOR-INPUT-VALIDATION-001 — completion log for production
+        # debugging. Without this, a 200 with classification='unknown' or
+        # 'requires_javascript' is invisible in logs (only the 'started' event
+        # fires today). VictoriaLogs query: ``event:crawl_preview_completed
+        # AND classification:unknown``.
+        logger.info(
+            "crawl_preview_completed",
+            url=body.url,
+            classification=classification,
+            word_count=word_count,
+            status_code=metadata.get("status_code"),
+            selector_source=selector_source,
+            warnings_count=len(warnings),
+        )
+
         return CrawlPreviewResponse(
             url=body.url,
             fit_markdown=fit_md,
@@ -406,8 +435,8 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
             url=body.url,
             fit_markdown="",
             word_count=0,
-            classification="requires_javascript",
-            classification_reason="Crawl failed — see service logs.",
+            classification="unknown",
+            classification_reason="Could not reach crawl service. Try again.",
         )
 
 
@@ -485,6 +514,19 @@ async def auth_probe(body: AuthProbeRequest, request: Request) -> AuthProbeRespo
             except Exception:
                 logger.debug("auth_probe_indicator_detection_skipped", url=body.url)
 
+    # SPEC-CONNECTOR-INPUT-VALIDATION-001 — completion log mirrors the one
+    # in preview_crawl above; without it, debugging "why did wizard show
+    # auth_failed_unreachable" requires guessing.
+    logger.info(
+        "auth_probe_completed",
+        url=body.url,
+        classification=label,
+        word_count=result.word_count,
+        status_code=metadata.get("status_code"),
+        match_reasons=list(classification.match_reasons),
+        cookies_provided=bool(body.cookies),
+    )
+
     return AuthProbeResponse(
         classification=label,
         match_reasons=list(classification.match_reasons),
@@ -528,8 +570,12 @@ async def crawl_url(request: CrawlRequest, http_request: Request) -> CrawlRespon
     consistent across all crawl paths.
     SPEC-TI-003 AC-6: identity assertion on body org_id.
     """
+    # SPEC-CONNECTOR-INPUT-VALIDATION-001 hotfix: same fix-pattern as
+    # preview_crawl above — service-to-service pass-through has no end-user,
+    # use tenant-only flavour. PR #448 first-aid for purge routes; same
+    # bug-shape exists here.
     if request.org_id:
-        await assert_caller_identity(http_request, claimed_org_id=request.org_id)
+        await assert_caller_identity_tenant_only(http_request, claimed_org_id=request.org_id)
     try:
         await validate_url(request.url)
     except ValueError as exc:

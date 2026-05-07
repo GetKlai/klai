@@ -35,6 +35,9 @@ jobs:
         run: npm ci
         working-directory: klai-portal/frontend
 
+      - name: Locale mojibake check
+        run: python3 scripts/fix-mojibake-locales.py --check
+
       - name: Dependency vulnerability scan (npm audit)
         run: npm audit --audit-level=high
         working-directory: klai-portal/frontend
