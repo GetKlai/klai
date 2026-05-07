@@ -154,7 +154,7 @@ export function ChatConfigBar() {
             className="flex items-center gap-1.5 text-[14px] font-semibold text-gray-700 hover:text-gray-900 transition-colors truncate"
           >
             <span className="truncate">
-              {activeNames.length > 0 ? activeNames.join(', ') : 'Geen kennis geselecteerd'}
+              {activeNames.length > 0 ? activeNames.join(', ') : m.chatbar_collections_general_ai()}
             </span>
             <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-40" />
           </button>

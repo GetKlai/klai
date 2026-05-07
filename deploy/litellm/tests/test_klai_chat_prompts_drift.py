@@ -63,11 +63,30 @@ def test_vendored_grounded_prompt_matches_canonical() -> None:
     )
 
 
-def test_vendored_module_exports_only_grounded_prompt() -> None:
-    """``__all__`` must list exactly ``GROUNDED_CHAT_SYSTEM_PROMPT``. If the
-    canonical library starts exporting a second constant (e.g. a separate
-    LITELLM_HOOK_NL_PREFIX), this test fails so we remember to vendor it
-    too. Equivalent to the public-API drift test in service-auth."""
+def test_vendored_general_prompt_matches_canonical() -> None:
+    """The ``GENERAL_CHAT_SYSTEM_PROMPT`` constant string MUST be
+    byte-identical between vendored and canonical copies. Same rationale
+    as :func:`test_vendored_grounded_prompt_matches_canonical`: the
+    LiteLLM hook (path A) imports from the vendored copy, while paths
+    B + C never reach GENERAL because they always carry KB scope. A
+    drift here is silent and only surfaces via wrong model behaviour
+    in the no-KB branch.
+    """
+    vendored = _load("_drift_vendored_general", _VENDORED_PATH)
+    canonical = _load("_drift_canonical_general", _CANONICAL_PATH)
+
+    assert vendored.GENERAL_CHAT_SYSTEM_PROMPT == canonical.GENERAL_CHAT_SYSTEM_PROMPT, (
+        "GENERAL_CHAT_SYSTEM_PROMPT drift between vendored and canonical.\n"
+        "  Update deploy/litellm/klai_chat_prompts.py to match "
+        "klai-libs/chat-prompts/klai_chat_prompts/__init__.py."
+    )
+
+
+def test_vendored_module_all_matches_canonical() -> None:
+    """``__all__`` must match the canonical library's ``__all__`` exactly.
+    If the canonical library adds, removes, or renames an exported
+    constant, this test fails so we remember to vendor the change too.
+    Equivalent to the public-API drift test in service-auth."""
     vendored = _load("_drift_vendored_all", _VENDORED_PATH)
     canonical = _load("_drift_canonical_all", _CANONICAL_PATH)
 
