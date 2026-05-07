@@ -352,6 +352,19 @@
         }
     }
 
+    # portal-api static assets (e.g. OAuth consent page CSS).
+    # Must be routed to portal-api — NOT served from the SPA file_server.
+    # The catch-all `handle` below would otherwise match /static/* and
+    # return /srv/portal/index.html instead of the actual file.
+    handle /static/* {
+        reverse_proxy portal-api:8010 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-User-ID
+        }
+    }
+
     # SEC-023 / F-038 — Scribe/Docs are no longer publicly routed.
     # Frontend calls /api/scribe/*, /api/docs/* which hit the BFF proxy in
     # portal-api (app/api/proxy.py). That handler pulls the Zitadel

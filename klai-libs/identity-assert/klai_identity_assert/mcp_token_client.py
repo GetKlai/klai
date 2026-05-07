@@ -22,6 +22,8 @@ Contract:
 from __future__ import annotations
 
 import hashlib
+import time
+from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, cast
@@ -29,12 +31,57 @@ from typing import Any, cast
 import httpx
 import structlog
 
-from klai_identity_assert.cache import IdentityCache
-
 _logger = structlog.get_logger("klai_identity_assert.mcp_token_client")
 
 _DEFAULT_TIMEOUT_SECONDS = 2.0
 _DEFAULT_CACHE_TTL_SECONDS = 60.0
+
+
+class _McpTokenCache:
+    """Bounded TTL cache keyed by SHA-256 of the raw access token.
+
+    Distinct from :class:`klai_identity_assert.cache.IdentityCache`:
+    - IdentityCache keys on (caller_service, claimed_user_id, claimed_org_id,
+      bearer_jwt_fp) — JWT-shaped LibreChat path.
+    - This cache keys on a single hex string (sha256 of the raw mcp token) —
+      OAuth-shaped MCP path. The earlier reuse of IdentityCache passed the
+      hex digest as a positional argument, which raised
+      ``IdentityCache.get() takes 1 positional argument but 2 were given``
+      because IdentityCache.get is keyword-only.
+
+    Stores ``McpTokenVerifyResult`` with a per-entry expiry. LRU eviction
+    when ``max_entries`` is exceeded.
+    """
+
+    __slots__ = ("_store", "_ttl_seconds", "_max_entries")
+
+    def __init__(self, *, ttl_seconds: float, max_entries: int) -> None:
+        if ttl_seconds <= 0:
+            raise ValueError("ttl_seconds must be positive")
+        if max_entries <= 0:
+            raise ValueError("max_entries must be positive")
+        self._ttl_seconds = ttl_seconds
+        self._max_entries = max_entries
+        self._store: OrderedDict[str, tuple[float, McpTokenVerifyResult]] = OrderedDict()
+
+    def get(self, key: str) -> McpTokenVerifyResult | None:
+        entry = self._store.get(key)
+        if entry is None:
+            return None
+        expires_at, value = entry
+        if expires_at <= time.monotonic():
+            self._store.pop(key, None)
+            return None
+        # Touch LRU.
+        self._store.move_to_end(key)
+        return value
+
+    def set(self, key: str, value: McpTokenVerifyResult) -> None:
+        expires_at = time.monotonic() + self._ttl_seconds
+        self._store[key] = (expires_at, value)
+        self._store.move_to_end(key)
+        while len(self._store) > self._max_entries:
+            self._store.popitem(last=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,7 +208,7 @@ class McpTokenAsserter:
         self._caller_service = caller_service
         self._timeout_seconds = timeout_seconds
         self._client: httpx.AsyncClient | None = None
-        self._cache = IdentityCache(
+        self._cache = _McpTokenCache(
             ttl_seconds=cache_ttl_seconds,
             max_entries=cache_max_size,
         )
@@ -179,12 +226,15 @@ class McpTokenAsserter:
         cache_key = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
         cached = self._cache.get(cache_key)
         if cached is not None:
-            # IdentityCache stores VerifyResult; for mcp-tokens we use a
-            # parallel storage shape. Re-build the McpTokenVerifyResult.
-            return cached  # type: ignore[return-value]
+            return cached
 
+        # portal-api's /internal/* endpoints carry the shared INTERNAL_SECRET
+        # via ``Authorization: Bearer ...`` (see _require_internal_token in
+        # klai-portal/backend/app/api/internal.py — same contract as
+        # IdentityAsserter). The X-Internal-Secret convention is for callees
+        # OF portal-api (knowledge-ingest, retrieval-api), not callers TO it.
         outbound_headers: dict[str, str] = {
-            "X-Internal-Secret": self._internal_secret,
+            "Authorization": f"Bearer {self._internal_secret}",
             "Content-Type": "application/json",
         }
         if request_headers:
@@ -237,7 +287,7 @@ class McpTokenAsserter:
 
         # Cache only successful verifications (REQ-7.2 mirror).
         if result.verified:
-            self._cache.set(cache_key, result)  # type: ignore[arg-type]
+            self._cache.set(cache_key, result)
         return result
 
     async def _get_client(self) -> httpx.AsyncClient:
