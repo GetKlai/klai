@@ -878,6 +878,41 @@ class _WWWAuthenticateMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request, call_next):  # type: ignore[override]
+        # SPEC-MCP-AUTH-001: short-circuit auth on the /mcp endpoint BEFORE
+        # FastMCP gets the request. Without this Claude.ai sees HTTP 200 on
+        # the initial discovery POST and never triggers the OAuth flow — the
+        # auth check inside the tool bodies fires too late (after Claude has
+        # already cached "this server doesn't need auth").
+        path = request.url.path
+        if path.startswith("/mcp") or path == "/sse":
+            authorization = request.headers.get("authorization", "")
+            internal_secret = request.headers.get(_INTERNAL_SECRET_HEADER.lower(), "")
+            has_oauth = authorization.lower().startswith(
+                "bearer klai_mcp_"
+            ) and not authorization.lower().startswith("bearer klai_mcp_rt_")
+            has_internal = bool(internal_secret)
+            if not has_oauth and not has_internal:
+                from starlette.responses import JSONResponse as _JSON
+
+                prm_url = f"{MCP_OAUTH_RESOURCE_URL}/.well-known/oauth-protected-resource"
+                return _JSON(
+                    {
+                        "error": "unauthorized",
+                        "error_description": (
+                            "MCP requests require Authorization: Bearer klai_mcp_<token>. "
+                            "Use OAuth flow at " + MCP_OAUTH_ISSUER_BASE_URL + "/oauth/authorize."
+                        ),
+                    },
+                    status_code=401,
+                    headers={
+                        "WWW-Authenticate": (
+                            f'Bearer realm="klai-mcp", '
+                            f'resource_metadata="{prm_url}", '
+                            f'scope="mcp:knowledge"'
+                        ),
+                    },
+                )
+
         response: Response = await call_next(request)
         if response.status_code == 401 and "www-authenticate" not in {
             k.lower() for k in response.headers
