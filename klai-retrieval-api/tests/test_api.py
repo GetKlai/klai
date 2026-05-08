@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 
 class TestRetrieveEndpoint:
     def test_retrieve_scope_personal_without_user_id(self, client):
@@ -119,6 +121,10 @@ class TestRetrieveEndpoint:
             mock_settings.source_quota_enabled = True
             mock_settings.source_quota_max_per_source = 2
             mock_settings.router_enabled = False
+            # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-07: pre-existing mock gap
+            # — fixture didn't set this, so quality_floor compared a real
+            # float to a MagicMock and crashed. Locked in by the cleanup PR.
+            mock_settings.retrieval_quality_floor = 0.05
             # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1 / REQ-3
             mock_settings.confidence_band_high_threshold = 0.60
             mock_settings.confidence_band_low_threshold = 0.30
@@ -134,6 +140,230 @@ class TestRetrieveEndpoint:
         assert data["chunks"][0]["reranker_score"] == 0.95
         assert data["metadata"]["candidates_retrieved"] == 1
         assert data["metadata"]["retrieval_ms"] > 0
+        # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1: confidence_band must
+        # be present on every retrieval-path response. reranker_score=0.95
+        # ≥ high_threshold=0.60 → 'high'.
+        assert data["confidence_band"] == "high", (
+            f"reranker_score=0.95 should map to 'high', got {data.get('confidence_band')!r}"
+        )
+
+
+class TestConfidenceBandEndToEnd:
+    """SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1: confidence_band emit
+    through the full /retrieve pipeline (helper tests in
+    test_confidence_band.py cover the pure function in isolation).
+
+    These tests verify the band lands correctly on the response after
+    rerank → quality-floor → source-aware-select → quality-boost — i.e.
+    that the wiring in retrieve.py picks up the right ``serving`` list.
+    """
+
+    @pytest.mark.parametrize(
+        ("rerank_score", "expected_band"),
+        [
+            (0.95, "high"),  # well above 0.60
+            (0.45, "medium"),  # between thresholds
+            (0.18, "low"),  # the 2026-05-07 Voys-Salesforce incident score
+        ],
+    )
+    def test_band_lands_on_response(
+        self, client, sample_retrieve_request, rerank_score, expected_band
+    ):
+        """End-to-end: synthetic /retrieve with controlled reranker_score
+        produces the expected confidence_band on the response.
+
+        Locks in the wiring contract: future refactors of retrieve.py
+        that move the band-emit point or change the input list to
+        ``_compute_confidence_band`` are caught here.
+        """
+        chunk_payload = {
+            "chunk_id": "c1",
+            "text": "Some text",
+            "score": 0.9,
+            "artifact_id": "a1",
+            "content_type": "policy",
+            "context_prefix": "Doc: ",
+            "scope": "org",
+            "valid_at": None,
+            "invalid_at": None,
+            "ingested_at": None,
+            "assertion_mode": None,
+        }
+        with (
+            patch(
+                "retrieval_api.api.retrieve.coreference.resolve",
+                new_callable=AsyncMock,
+                return_value=sample_retrieve_request["query"],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_single",
+                new_callable=AsyncMock,
+                return_value=[0.1] * 1024,
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_sparse",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "retrieval_api.api.retrieve.gate.should_bypass",
+                new_callable=AsyncMock,
+                return_value=(False, 0.05),
+            ),
+            patch(
+                "retrieval_api.api.retrieve.search.hybrid_search",
+                new_callable=AsyncMock,
+                return_value=[chunk_payload],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.reranker.rerank",
+                new_callable=AsyncMock,
+                return_value=[{**chunk_payload, "reranker_score": rerank_score}],
+            ),
+            patch("retrieval_api.api.retrieve.settings") as mock_settings,
+        ):
+            mock_settings.reranker_enabled = True
+            mock_settings.retrieval_candidates = 60
+            mock_settings.reranker_candidates = 20
+            mock_settings.graphiti_enabled = False
+            mock_settings.link_expand_enabled = True
+            mock_settings.link_expand_seed_k = 10
+            mock_settings.link_expand_max_urls = 30
+            mock_settings.link_expand_candidates = 20
+            mock_settings.link_authority_boost = 0.05
+            mock_settings.source_quota_enabled = True
+            mock_settings.source_quota_max_per_source = 2
+            mock_settings.router_enabled = False
+            mock_settings.retrieval_quality_floor = 0.05
+            mock_settings.confidence_band_high_threshold = 0.60
+            mock_settings.confidence_band_low_threshold = 0.30
+            mock_settings.link_expand_score_boost = 1.00
+            resp = client.post("/retrieve", json=sample_retrieve_request)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["confidence_band"] == expected_band, (
+            f"rerank={rerank_score} expected {expected_band}, got {data.get('confidence_band')!r}"
+        )
+
+    def test_band_unknown_when_reranker_disabled(self, client, sample_retrieve_request):
+        """When reranker is disabled the served list still has chunks, but
+        none of them have a meaningful reranker_score — band must be
+        ``unknown`` so the litellm-hook falls through to the safety
+        injection rather than trusting raw qdrant scores.
+        """
+        chunk_payload = {
+            "chunk_id": "c1",
+            "text": "Some text",
+            "score": 0.9,
+            "artifact_id": "a1",
+            "content_type": "policy",
+            "context_prefix": "Doc: ",
+            "scope": "org",
+            "valid_at": None,
+            "invalid_at": None,
+            "ingested_at": None,
+            "assertion_mode": None,
+        }
+        with (
+            patch(
+                "retrieval_api.api.retrieve.coreference.resolve",
+                new_callable=AsyncMock,
+                return_value=sample_retrieve_request["query"],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_single",
+                new_callable=AsyncMock,
+                return_value=[0.1] * 1024,
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_sparse",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "retrieval_api.api.retrieve.gate.should_bypass",
+                new_callable=AsyncMock,
+                return_value=(False, 0.05),
+            ),
+            patch(
+                "retrieval_api.api.retrieve.search.hybrid_search",
+                new_callable=AsyncMock,
+                return_value=[chunk_payload],
+            ),
+            patch("retrieval_api.api.retrieve.settings") as mock_settings,
+        ):
+            mock_settings.reranker_enabled = False  # the difference
+            mock_settings.retrieval_candidates = 60
+            mock_settings.reranker_candidates = 20
+            mock_settings.graphiti_enabled = False
+            mock_settings.link_expand_enabled = True
+            mock_settings.link_expand_seed_k = 10
+            mock_settings.link_expand_max_urls = 30
+            mock_settings.link_expand_candidates = 20
+            mock_settings.link_authority_boost = 0.05
+            mock_settings.source_quota_enabled = True
+            mock_settings.source_quota_max_per_source = 2
+            mock_settings.router_enabled = False
+            mock_settings.retrieval_quality_floor = 0.05
+            mock_settings.confidence_band_high_threshold = 0.60
+            mock_settings.confidence_band_low_threshold = 0.30
+            mock_settings.link_expand_score_boost = 1.00
+            resp = client.post("/retrieve", json=sample_retrieve_request)
+
+        assert resp.status_code == 200
+        assert resp.json()["confidence_band"] == "unknown"
+
+    def test_band_none_on_bypass(self, client, sample_retrieve_request):
+        """Gate-bypassed retrieval (smalltalk / out-of-scope query) does
+        not run rerank, so band is ``None`` (not ``unknown``). The hook
+        treats None as "no signal — leave injection untouched".
+        """
+        with (
+            patch(
+                "retrieval_api.api.retrieve.coreference.resolve",
+                new_callable=AsyncMock,
+                return_value=sample_retrieve_request["query"],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_single",
+                new_callable=AsyncMock,
+                return_value=[0.1] * 1024,
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_sparse",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "retrieval_api.api.retrieve.gate.should_bypass",
+                new_callable=AsyncMock,
+                return_value=(True, 0.5),  # gate bypasses retrieval
+            ),
+            patch("retrieval_api.api.retrieve.settings") as mock_settings,
+        ):
+            mock_settings.reranker_enabled = True
+            mock_settings.retrieval_candidates = 60
+            mock_settings.reranker_candidates = 20
+            mock_settings.graphiti_enabled = False
+            mock_settings.link_expand_enabled = True
+            mock_settings.link_expand_seed_k = 10
+            mock_settings.link_expand_max_urls = 30
+            mock_settings.link_expand_candidates = 20
+            mock_settings.link_authority_boost = 0.05
+            mock_settings.source_quota_enabled = True
+            mock_settings.source_quota_max_per_source = 2
+            mock_settings.router_enabled = False
+            mock_settings.retrieval_quality_floor = 0.05
+            mock_settings.confidence_band_high_threshold = 0.60
+            mock_settings.confidence_band_low_threshold = 0.30
+            mock_settings.link_expand_score_boost = 1.00
+            resp = client.post("/retrieve", json=sample_retrieve_request)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["retrieval_bypassed"] is True
+        assert data["confidence_band"] is None
 
 
 class TestGraphMetadata:
@@ -184,6 +414,10 @@ class TestGraphMetadata:
             mock_settings.source_quota_enabled = True
             mock_settings.source_quota_max_per_source = 2
             mock_settings.router_enabled = False
+            # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-07: pre-existing mock gap
+            # — fixture didn't set this, so quality_floor compared a real
+            # float to a MagicMock and crashed. Locked in by the cleanup PR.
+            mock_settings.retrieval_quality_floor = 0.05
             # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1 / REQ-3
             mock_settings.confidence_band_high_threshold = 0.60
             mock_settings.confidence_band_low_threshold = 0.30
@@ -298,6 +532,10 @@ class TestLinkExpandInstrumentation:
             mock_settings.source_quota_enabled = True
             mock_settings.source_quota_max_per_source = 2
             mock_settings.router_enabled = False
+            # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-07: pre-existing mock gap
+            # — fixture didn't set this, so quality_floor compared a real
+            # float to a MagicMock and crashed. Locked in by the cleanup PR.
+            mock_settings.retrieval_quality_floor = 0.05
             # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1 / REQ-3
             mock_settings.confidence_band_high_threshold = 0.60
             mock_settings.confidence_band_low_threshold = 0.30
@@ -365,6 +603,10 @@ class TestLinkExpandInstrumentation:
             mock_settings.source_quota_enabled = True
             mock_settings.source_quota_max_per_source = 2
             mock_settings.router_enabled = False
+            # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-07: pre-existing mock gap
+            # — fixture didn't set this, so quality_floor compared a real
+            # float to a MagicMock and crashed. Locked in by the cleanup PR.
+            mock_settings.retrieval_quality_floor = 0.05
             # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1 / REQ-3
             mock_settings.confidence_band_high_threshold = 0.60
             mock_settings.confidence_band_low_threshold = 0.30
