@@ -30,10 +30,10 @@ import { Route as Setup2faRouteImport } from './routes/setup/2fa'
 import { Route as PasswordSetRouteImport } from './routes/password/set'
 import { Route as PasswordForgotRouteImport } from './routes/password/forgot'
 import { Route as AppScribeRouteImport } from './routes/app/scribe'
+import { Route as AppIntegrationsRouteImport } from './routes/app/integrations'
 import { Route as AppFocusRouteImport } from './routes/app/focus'
 import { Route as AppChatRouteImport } from './routes/app/chat'
 import { Route as AppAccountRouteImport } from './routes/app/account'
-import { Route as AppIntegrationsRouteImport } from './routes/app/integrations'
 import { Route as AdminSettingsRouteImport } from './routes/admin/settings'
 import { Route as AdminJoinRequestsRouteImport } from './routes/admin/join-requests'
 import { Route as AdminDeprovisioningStatusRouteImport } from './routes/admin/deprovisioning-status'
@@ -87,6 +87,7 @@ import { Route as AppKnowledgeKbSlugOverviewRouteImport } from './routes/app/kno
 import { Route as AppKnowledgeKbSlugMembersRouteImport } from './routes/app/knowledge/$kbSlug/members'
 import { Route as AppKnowledgeKbSlugItemsRouteImport } from './routes/app/knowledge/$kbSlug/items'
 import { Route as AppKnowledgeKbSlugConnectorsRouteImport } from './routes/app/knowledge/$kbSlug/connectors'
+import { Route as AppKnowledgeKbSlugBronnenRouteImport } from './routes/app/knowledge/$kbSlug/bronnen'
 import { Route as AppKnowledgeKbSlugAdvancedRouteImport } from './routes/app/knowledge/$kbSlug/advanced'
 import { Route as AppDocsKbSlugEditRouteImport } from './routes/app/docs/$kbSlug_.edit'
 import { Route as AppDocsKbSlugPageIdRouteImport } from './routes/app/docs/$kbSlug/$pageId'
@@ -202,6 +203,11 @@ const AppScribeRoute = AppScribeRouteImport.update({
   path: '/scribe',
   getParentRoute: () => AppRouteRoute,
 } as any)
+const AppIntegrationsRoute = AppIntegrationsRouteImport.update({
+  id: '/integrations',
+  path: '/integrations',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 const AppFocusRoute = AppFocusRouteImport.update({
   id: '/focus',
   path: '/focus',
@@ -215,11 +221,6 @@ const AppChatRoute = AppChatRouteImport.update({
 const AppAccountRoute = AppAccountRouteImport.update({
   id: '/account',
   path: '/account',
-  getParentRoute: () => AppRouteRoute,
-} as any)
-const AppIntegrationsRoute = AppIntegrationsRouteImport.update({
-  id: '/integrations',
-  path: '/integrations',
   getParentRoute: () => AppRouteRoute,
 } as any)
 const AdminSettingsRoute = AdminSettingsRouteImport.update({
@@ -497,6 +498,12 @@ const AppKnowledgeKbSlugConnectorsRoute =
     path: '/connectors',
     getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
   } as any)
+const AppKnowledgeKbSlugBronnenRoute =
+  AppKnowledgeKbSlugBronnenRouteImport.update({
+    id: '/bronnen',
+    path: '/bronnen',
+    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
+  } as any)
 const AppKnowledgeKbSlugAdvancedRoute =
   AppKnowledgeKbSlugAdvancedRouteImport.update({
     id: '/advanced',
@@ -571,9 +578,9 @@ export interface FileRoutesByFullPath {
   '/admin/join-requests': typeof AdminJoinRequestsRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
-  '/app/integrations': typeof AppIntegrationsRoute
   '/app/chat': typeof AppChatRoute
   '/app/focus': typeof AppFocusRouteWithChildren
+  '/app/integrations': typeof AppIntegrationsRoute
   '/app/scribe': typeof AppScribeRoute
   '/password/forgot': typeof PasswordForgotRoute
   '/password/set': typeof PasswordSetRoute
@@ -623,6 +630,7 @@ export interface FileRoutesByFullPath {
   '/app/docs/$kbSlug/$pageId': typeof AppDocsKbSlugPageIdRoute
   '/app/docs/$kbSlug/edit': typeof AppDocsKbSlugEditRoute
   '/app/knowledge/$kbSlug/advanced': typeof AppKnowledgeKbSlugAdvancedRoute
+  '/app/knowledge/$kbSlug/bronnen': typeof AppKnowledgeKbSlugBronnenRoute
   '/app/knowledge/$kbSlug/connectors': typeof AppKnowledgeKbSlugConnectorsRoute
   '/app/knowledge/$kbSlug/items': typeof AppKnowledgeKbSlugItemsRoute
   '/app/knowledge/$kbSlug/members': typeof AppKnowledgeKbSlugMembersRoute
@@ -657,9 +665,9 @@ export interface FileRoutesByTo {
   '/admin/join-requests': typeof AdminJoinRequestsRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
-  '/app/integrations': typeof AppIntegrationsRoute
   '/app/chat': typeof AppChatRoute
   '/app/focus': typeof AppFocusRouteWithChildren
+  '/app/integrations': typeof AppIntegrationsRoute
   '/app/scribe': typeof AppScribeRoute
   '/password/forgot': typeof PasswordForgotRoute
   '/password/set': typeof PasswordSetRoute
@@ -707,6 +715,7 @@ export interface FileRoutesByTo {
   '/app/docs/$kbSlug/$pageId': typeof AppDocsKbSlugPageIdRoute
   '/app/docs/$kbSlug/edit': typeof AppDocsKbSlugEditRoute
   '/app/knowledge/$kbSlug/advanced': typeof AppKnowledgeKbSlugAdvancedRoute
+  '/app/knowledge/$kbSlug/bronnen': typeof AppKnowledgeKbSlugBronnenRoute
   '/app/knowledge/$kbSlug/connectors': typeof AppKnowledgeKbSlugConnectorsRoute
   '/app/knowledge/$kbSlug/items': typeof AppKnowledgeKbSlugItemsRoute
   '/app/knowledge/$kbSlug/members': typeof AppKnowledgeKbSlugMembersRoute
@@ -745,9 +754,9 @@ export interface FileRoutesById {
   '/admin/join-requests': typeof AdminJoinRequestsRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
-  '/app/integrations': typeof AppIntegrationsRoute
   '/app/chat': typeof AppChatRoute
   '/app/focus': typeof AppFocusRouteWithChildren
+  '/app/integrations': typeof AppIntegrationsRoute
   '/app/scribe': typeof AppScribeRoute
   '/password/forgot': typeof PasswordForgotRoute
   '/password/set': typeof PasswordSetRoute
@@ -797,6 +806,7 @@ export interface FileRoutesById {
   '/app/docs/$kbSlug/$pageId': typeof AppDocsKbSlugPageIdRoute
   '/app/docs/$kbSlug_/edit': typeof AppDocsKbSlugEditRoute
   '/app/knowledge/$kbSlug/advanced': typeof AppKnowledgeKbSlugAdvancedRoute
+  '/app/knowledge/$kbSlug/bronnen': typeof AppKnowledgeKbSlugBronnenRoute
   '/app/knowledge/$kbSlug/connectors': typeof AppKnowledgeKbSlugConnectorsRoute
   '/app/knowledge/$kbSlug/items': typeof AppKnowledgeKbSlugItemsRoute
   '/app/knowledge/$kbSlug/members': typeof AppKnowledgeKbSlugMembersRoute
@@ -836,9 +846,9 @@ export interface FileRouteTypes {
     | '/admin/join-requests'
     | '/admin/settings'
     | '/app/account'
-    | '/app/integrations'
     | '/app/chat'
     | '/app/focus'
+    | '/app/integrations'
     | '/app/scribe'
     | '/password/forgot'
     | '/password/set'
@@ -888,6 +898,7 @@ export interface FileRouteTypes {
     | '/app/docs/$kbSlug/$pageId'
     | '/app/docs/$kbSlug/edit'
     | '/app/knowledge/$kbSlug/advanced'
+    | '/app/knowledge/$kbSlug/bronnen'
     | '/app/knowledge/$kbSlug/connectors'
     | '/app/knowledge/$kbSlug/items'
     | '/app/knowledge/$kbSlug/members'
@@ -922,9 +933,9 @@ export interface FileRouteTypes {
     | '/admin/join-requests'
     | '/admin/settings'
     | '/app/account'
-    | '/app/integrations'
     | '/app/chat'
     | '/app/focus'
+    | '/app/integrations'
     | '/app/scribe'
     | '/password/forgot'
     | '/password/set'
@@ -972,6 +983,7 @@ export interface FileRouteTypes {
     | '/app/docs/$kbSlug/$pageId'
     | '/app/docs/$kbSlug/edit'
     | '/app/knowledge/$kbSlug/advanced'
+    | '/app/knowledge/$kbSlug/bronnen'
     | '/app/knowledge/$kbSlug/connectors'
     | '/app/knowledge/$kbSlug/items'
     | '/app/knowledge/$kbSlug/members'
@@ -1009,9 +1021,9 @@ export interface FileRouteTypes {
     | '/admin/join-requests'
     | '/admin/settings'
     | '/app/account'
-    | '/app/integrations'
     | '/app/chat'
     | '/app/focus'
+    | '/app/integrations'
     | '/app/scribe'
     | '/password/forgot'
     | '/password/set'
@@ -1061,6 +1073,7 @@ export interface FileRouteTypes {
     | '/app/docs/$kbSlug/$pageId'
     | '/app/docs/$kbSlug_/edit'
     | '/app/knowledge/$kbSlug/advanced'
+    | '/app/knowledge/$kbSlug/bronnen'
     | '/app/knowledge/$kbSlug/connectors'
     | '/app/knowledge/$kbSlug/items'
     | '/app/knowledge/$kbSlug/members'
@@ -1247,6 +1260,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppScribeRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/app/integrations': {
+      id: '/app/integrations'
+      path: '/integrations'
+      fullPath: '/app/integrations'
+      preLoaderRoute: typeof AppIntegrationsRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/app/focus': {
       id: '/app/focus'
       path: '/focus'
@@ -1266,13 +1286,6 @@ declare module '@tanstack/react-router' {
       path: '/account'
       fullPath: '/app/account'
       preLoaderRoute: typeof AppAccountRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
-    '/app/integrations': {
-      id: '/app/integrations'
-      path: '/integrations'
-      fullPath: '/app/integrations'
-      preLoaderRoute: typeof AppIntegrationsRouteImport
       parentRoute: typeof AppRouteRoute
     }
     '/admin/settings': {
@@ -1646,6 +1659,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppKnowledgeKbSlugConnectorsRouteImport
       parentRoute: typeof AppKnowledgeKbSlugRouteRoute
     }
+    '/app/knowledge/$kbSlug/bronnen': {
+      id: '/app/knowledge/$kbSlug/bronnen'
+      path: '/bronnen'
+      fullPath: '/app/knowledge/$kbSlug/bronnen'
+      preLoaderRoute: typeof AppKnowledgeKbSlugBronnenRouteImport
+      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
+    }
     '/app/knowledge/$kbSlug/advanced': {
       id: '/app/knowledge/$kbSlug/advanced'
       path: '/advanced'
@@ -1835,6 +1855,7 @@ const AppDocsKbSlugRouteRouteWithChildren =
 
 interface AppKnowledgeKbSlugRouteRouteChildren {
   AppKnowledgeKbSlugAdvancedRoute: typeof AppKnowledgeKbSlugAdvancedRoute
+  AppKnowledgeKbSlugBronnenRoute: typeof AppKnowledgeKbSlugBronnenRoute
   AppKnowledgeKbSlugConnectorsRoute: typeof AppKnowledgeKbSlugConnectorsRoute
   AppKnowledgeKbSlugItemsRoute: typeof AppKnowledgeKbSlugItemsRoute
   AppKnowledgeKbSlugMembersRoute: typeof AppKnowledgeKbSlugMembersRoute
@@ -1847,6 +1868,7 @@ interface AppKnowledgeKbSlugRouteRouteChildren {
 const AppKnowledgeKbSlugRouteRouteChildren: AppKnowledgeKbSlugRouteRouteChildren =
   {
     AppKnowledgeKbSlugAdvancedRoute: AppKnowledgeKbSlugAdvancedRoute,
+    AppKnowledgeKbSlugBronnenRoute: AppKnowledgeKbSlugBronnenRoute,
     AppKnowledgeKbSlugConnectorsRoute: AppKnowledgeKbSlugConnectorsRoute,
     AppKnowledgeKbSlugItemsRoute: AppKnowledgeKbSlugItemsRoute,
     AppKnowledgeKbSlugMembersRoute: AppKnowledgeKbSlugMembersRoute,
@@ -1863,9 +1885,9 @@ const AppKnowledgeKbSlugRouteRouteWithChildren =
 
 interface AppRouteRouteChildren {
   AppAccountRoute: typeof AppAccountRoute
-  AppIntegrationsRoute: typeof AppIntegrationsRoute
   AppChatRoute: typeof AppChatRoute
   AppFocusRoute: typeof AppFocusRouteWithChildren
+  AppIntegrationsRoute: typeof AppIntegrationsRoute
   AppScribeRoute: typeof AppScribeRoute
   AppIndexRoute: typeof AppIndexRoute
   AppDocsKbSlugRouteRoute: typeof AppDocsKbSlugRouteRouteWithChildren
@@ -1891,9 +1913,9 @@ interface AppRouteRouteChildren {
 
 const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppAccountRoute: AppAccountRoute,
-  AppIntegrationsRoute: AppIntegrationsRoute,
   AppChatRoute: AppChatRoute,
   AppFocusRoute: AppFocusRouteWithChildren,
+  AppIntegrationsRoute: AppIntegrationsRoute,
   AppScribeRoute: AppScribeRoute,
   AppIndexRoute: AppIndexRoute,
   AppDocsKbSlugRouteRoute: AppDocsKbSlugRouteRouteWithChildren,
