@@ -10,6 +10,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
+import { DeleteKbModal } from '@/components/ui/delete-kb-modal'
 import * as m from '@/paraglide/messages'
 import { RoleGuard } from '@/components/layout/RoleGuard'
 import { apiFetch } from '@/lib/apiFetch'
@@ -18,7 +19,7 @@ import { toast } from 'sonner'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import type {
   KnowledgeBase, MembersResponse, TaxonomyNode, TaxonomyProposal,
-  TaxonomyCoverage, TopTagsResponse,
+  TaxonomyCoverage, TopTagsResponse, KBStats,
 } from './-kb-types'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/taxonomy')({
@@ -410,8 +411,19 @@ function TaxonomyTab() {
 
   const myUserId = auth.user?.profile?.sub
   const isCreator = !!(myUserId && kb?.created_by === myUserId)
+  const isOwnerRole = !!(myUserId && members?.users.some((u) => u.user_id === myUserId && u.role === 'owner'))
   const isContributor = isCreator || !!(myUserId && members?.users.some((u) => u.user_id === myUserId && (u.role === 'owner' || u.role === 'contributor')))
   const isAdmin = user?.isAdmin === true
+  const isOwner = isCreator || isOwnerRole || isAdmin
+
+  // KB stats — only used by the danger-zone DeleteKbModal at the bottom.
+  const { data: stats } = useQuery<KBStats>({
+    queryKey: ['kb-stats', kbSlug],
+    queryFn: async () => apiFetch<KBStats>(`/api/app/knowledge-bases/${kbSlug}/stats`),
+    enabled: auth.isAuthenticated && !!kb,
+  })
+
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false)
 
   const [showAddRoot, setShowAddRoot] = useState(false)
   const [addParentId, setAddParentId] = useState<number | null>(null)
@@ -1078,6 +1090,37 @@ function TaxonomyTab() {
       )}
 
       {/* Review queue removed — moved to after Coverage */}
+
+      {/* Danger zone — owner / admin only */}
+      {isOwner && kb && (
+        <div className="space-y-2 pt-6 border-t border-gray-200">
+          <h2 className="text-sm font-semibold text-[var(--color-destructive)]">
+            {m.knowledge_settings_danger_heading()}
+          </h2>
+          <p className="text-sm text-[var(--color-muted-foreground)]">
+            {m.knowledge_settings_danger_description()}
+          </p>
+          <div className="pt-2">
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setDeleteModalOpen(true)}
+            >
+              {m.knowledge_settings_delete_button()}
+            </Button>
+          </div>
+          <DeleteKbModal
+            open={deleteModalOpen}
+            onOpenChange={setDeleteModalOpen}
+            kbSlug={kb.slug}
+            kbName={kb.name}
+            itemCount={stats?.docs_count ?? null}
+            connectorCount={stats?.connector_count ?? 0}
+            hasGitea={!!kb.gitea_repo_slug}
+            hasDocs={kb.docs_enabled}
+          />
+        </div>
+      )}
     </div>
   )
 }

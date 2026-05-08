@@ -9,7 +9,7 @@
  *   - For direct uploads: parent_chunks with text preview
  */
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import {
   ChevronRight,
@@ -19,14 +19,17 @@ import {
   Image,
   Loader2,
   Plus,
+  RefreshCw,
   Type,
   Zap,
 } from 'lucide-react'
 import { SiAirtable, SiConfluence, SiGithub, SiGoogledrive, SiNotion } from '@icons-pack/react-simple-icons'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Tooltip } from '@/components/ui/tooltip'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
+import { queryLogger } from '@/lib/logger'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/bronnen')({
   component: BronnenTab,
@@ -76,37 +79,43 @@ interface ContentResponse {
 }
 
 // -- Status mapping ---------------------------------------------------------
+//
+// User mental model: a bron is gesynchroniseerd, pending (mid-sync), or
+// niet gesynchroniseerd (failed / never started). Three states only.
 
-type Status = 'klaar' | 'bezig' | 'probleem' | 'leeg'
+type Status = 'synced' | 'pending' | 'not_synced'
 
 function mapStatus(bron: Bron): Status {
   if (bron.kind === 'upload') {
-    // An upload that's listed in /sources has been ingested — it's klaar.
-    // chunks_count from parent_chunks is unreliable (often 0 even for
-    // fully-indexed KBs), so we don't use it as a "bezig" signal here.
-    return 'klaar'
+    // Uploads are one-shot: if it's in /sources, ingestion finished.
+    return 'synced'
   }
-  // connector — last_sync_status is the source of truth
+  // Connector — last_sync_status is the source of truth.
   const s = (bron.status ?? '').toLowerCase()
-  if (s.includes('error') || s.includes('failed') || s === 'auth_error' || s === 'orphan') return 'probleem'
-  if (s === 'running' || s === 'pending' || s === 'syncing') return 'bezig'
-  if (bron.items_count > 0 || bron.chunks_count > 0) return 'klaar'
-  return 'leeg'
+  if (s === 'running' || s === 'pending' || s === 'syncing') return 'pending'
+  if (s.includes('error') || s.includes('failed') || s === 'auth_error' || s === 'orphan') {
+    return 'not_synced'
+  }
+  if (s === 'success' || s === 'completed' || s === 'ok') return 'synced'
+  // Has data but unknown explicit status — assume synced.
+  if (bron.items_count > 0 || bron.chunks_count > 0) return 'synced'
+  return 'not_synced'
 }
 
 function StatusBadge({ status }: { status: Status }) {
   const labelMap = {
-    klaar: m.kb_status_klaar(),
-    bezig: m.kb_status_bezig(),
-    probleem: m.kb_status_probleem(),
-    leeg: m.kb_status_leeg(),
+    synced: 'Gesynchroniseerd',
+    pending: 'Bezig',
+    not_synced: 'Niet gesynchroniseerd',
   } as const
-  // Only Probleem stands out. Klaar / Bezig / Leeg are subtle.
+  // Synced = success (subtle green). Pending = secondary (neutral).
+  // Not synced = destructive only when explicitly failed; otherwise secondary
+  // so a never-synced upload doesn't shout. We surface 'not_synced' as
+  // a subtle warning treatment to match the "yet to happen" feeling.
   const variantMap = {
-    klaar: 'success' as const,
-    bezig: 'secondary' as const,
-    probleem: 'destructive' as const,
-    leeg: 'secondary' as const,
+    synced: 'success' as const,
+    pending: 'secondary' as const,
+    not_synced: 'warning' as const,
   }
   return <Badge variant={variantMap[status]}>{labelMap[status]}</Badge>
 }
@@ -234,33 +243,77 @@ function BronRow({
   onToggle: () => void
   kbSlug: string
 }) {
+  const queryClient = useQueryClient()
   const status = mapStatus(bron)
-  const meta = `${bron.type_label} · ${bron.chunks_count} chunks${
-    bron.kind === 'connector' && bron.items_count > 0 ? ` · ${bron.items_count} items` : ''
-  }`
+
+  const syncMutation = useMutation({
+    mutationFn: async () =>
+      apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/${bron.id}/sync`, { method: 'POST' }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['kb-bronnen', kbSlug] })
+      void queryClient.invalidateQueries({ queryKey: ['app-knowledge-bases-stats-summary'] })
+    },
+    onError: (err) => queryLogger.error('Bron sync failed', { kbSlug, bronId: bron.id, err }),
+  })
+
+  const isSyncing = syncMutation.isPending || status === 'pending'
+
+  // Meta line: type label, optional item count for connectors. Drop the
+  // chunk count — the parent_chunks number is unreliable per-row.
+  const metaParts: string[] = [bron.type_label]
+  if (bron.kind === 'connector' && bron.items_count > 0) {
+    metaParts.push(`${bron.items_count} items`)
+  }
+  const meta = metaParts.join(' · ')
 
   return (
     <div>
-      <button
-        type="button"
-        onClick={onToggle}
-        className="w-full flex items-center gap-3 px-2 py-3.5 hover:bg-gray-50 transition-colors text-left"
-        aria-expanded={expanded}
-      >
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-50 text-gray-400">
-          <BronIcon bron={bron} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline gap-2 flex-wrap">
-            <span className="text-[15px] font-display text-gray-900 truncate">{bron.name}</span>
-            <span className="text-xs text-gray-400">{meta}</span>
+      <div className="group flex items-center gap-2 pr-2 hover:bg-gray-50 transition-colors">
+        <button
+          type="button"
+          onClick={onToggle}
+          className="flex flex-1 min-w-0 items-center gap-3 px-2 py-3.5 text-left"
+          aria-expanded={expanded}
+        >
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-50 text-gray-400">
+            <BronIcon bron={bron} />
           </div>
-        </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-baseline gap-2 flex-wrap">
+              <span className="text-[15px] font-display text-gray-900 truncate">{bron.name}</span>
+              <span className="text-xs text-gray-400">{meta}</span>
+            </div>
+          </div>
+        </button>
         <StatusBadge status={status} />
-        <ChevronRight
-          className={`h-4 w-4 text-gray-300 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
-        />
-      </button>
+        {bron.kind === 'connector' && (
+          <Tooltip label="Synchroniseer bron">
+            <button
+              type="button"
+              onClick={() => syncMutation.mutate()}
+              disabled={isSyncing}
+              aria-label="Synchroniseer bron"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isSyncing ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+            </button>
+          </Tooltip>
+        )}
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-label={expanded ? 'Inhoud verbergen' : 'Inhoud tonen'}
+          className="inline-flex h-8 w-8 items-center justify-center text-gray-300 hover:text-gray-500 transition-colors"
+        >
+          <ChevronRight
+            className={`h-4 w-4 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
+          />
+        </button>
+      </div>
       {expanded && <BronContent kbSlug={kbSlug} bron={bron} />}
     </div>
   )
@@ -270,15 +323,43 @@ function BronRow({
 
 function BronnenTab() {
   const { kbSlug } = Route.useParams()
+  const queryClient = useQueryClient()
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
   const { data, isLoading, isError } = useQuery<BronnenResponse>({
     queryKey: ['kb-bronnen', kbSlug],
     queryFn: () => apiFetch<BronnenResponse>(`/api/app/knowledge-bases/${kbSlug}/sources`),
     retry: false,
+    // Poll while any connector is syncing so the badge updates without refresh.
+    refetchInterval: (query) => {
+      const list = query.state.data?.bronnen ?? []
+      const anyPending = list.some((b) => mapStatus(b) === 'pending')
+      return anyPending ? 4000 : false
+    },
   })
 
   const bronnen = data?.bronnen ?? []
+  const connectorBronnen = bronnen.filter((b) => b.kind === 'connector')
+
+  // Sync-alles: fan out one POST per connector. We don't wait for completion;
+  // each row will pick up the running status on the next poll.
+  const syncAllMutation = useMutation({
+    mutationFn: async () => {
+      const results = await Promise.allSettled(
+        connectorBronnen.map((b) =>
+          apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/${b.id}/sync`, {
+            method: 'POST',
+          }),
+        ),
+      )
+      return results
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['kb-bronnen', kbSlug] })
+      void queryClient.invalidateQueries({ queryKey: ['app-knowledge-bases-stats-summary'] })
+    },
+    onError: (err) => queryLogger.error('Sync-all failed', { kbSlug, err }),
+  })
 
   return (
     <div>
@@ -289,12 +370,29 @@ function BronnenTab() {
             ? m.kb_count_bron_singular()
             : m.kb_count_bronnen({ count: String(bronnen.length) })}
         </p>
-        <Link to="/app/knowledge/$kbSlug/add-source" params={{ kbSlug }}>
-          <Button variant="default" size="sm">
-            <Plus className="h-4 w-4" />
-            Bron toevoegen
-          </Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          {connectorBronnen.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => syncAllMutation.mutate()}
+              disabled={syncAllMutation.isPending}
+            >
+              {syncAllMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              Synchroniseer alles
+            </Button>
+          )}
+          <Link to="/app/knowledge/$kbSlug/add-source" params={{ kbSlug }}>
+            <Button variant="default" size="sm">
+              <Plus className="h-4 w-4" />
+              Bron toevoegen
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {/* List */}
