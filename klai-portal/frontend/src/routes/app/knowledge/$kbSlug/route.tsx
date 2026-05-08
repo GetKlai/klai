@@ -1,24 +1,28 @@
 /**
- * SPEC-PORTAL-KENNIS-001 — KB detail shell (refactored).
+ * SPEC-PORTAL-KENNIS-001 Phase D — KB detail shell with 3 tabs.
  *
- * Senior UI pass:
- *   - Breadcrumb (Kennis › Naam) instead of a generic "Terug" link
- *   - Title block carries meta directly (N bronnen)
- *   - Primary action "+ Bron toevoegen" sits in the header always visible
- *   - Tab bar simplified: label only, underline indicator
- *   - Geavanceerd hidden when the user lacks the kb_manager role
+ * Tabs: Bronnen (default) / Instellingen / Geavanceerd.
+ *
+ * Active-tab detection works on URL groups so legacy paths still
+ * highlight the right tab while their old content renders:
+ *   Bronnen      ← /bronnen, /overview, /items, /connectors
+ *   Instellingen ← /settings, /members
+ *   Geavanceerd  ← /advanced, /taxonomy
+ *
+ * Phase F + F-bis will replace /settings + /advanced with merged
+ * /instellingen + /geavanceerd pages. For v1 the tabs link to the
+ * existing pages so the shell ships on its own.
  */
-import { createFileRoute, Link, Outlet, redirect, useLocation } from '@tanstack/react-router'
+import { createFileRoute, Link, Outlet, redirect } from '@tanstack/react-router'
+import { useLocation } from '@tanstack/react-router'
 import { useAuth } from '@/lib/auth'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronRight, Plus } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { ArrowLeft, BookOpen, Settings, SlidersHorizontal } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
-import { meetsMinRole } from '@/lib/profiles'
 import type { KBTab, KnowledgeBase, KBStats, MembersResponse } from './-kb-types'
 
 const VALID_TABS = new Set<KBTab>([
@@ -72,22 +76,25 @@ export const Route = createFileRoute('/app/knowledge/$kbSlug')({
 
 type TabId = 'bronnen' | 'instellingen' | 'geavanceerd'
 
-const TAB_DEFS: { id: TabId; to: string; label: string; matches: string[] }[] = [
+const TAB_DEFS: { id: TabId; to: string; icon: React.ElementType; label: string; matches: string[] }[] = [
   {
     id: 'bronnen',
     to: '/app/knowledge/$kbSlug/bronnen',
+    icon: BookOpen,
     label: 'Bronnen',
     matches: ['/bronnen', '/overview', '/items', '/connectors'],
   },
   {
     id: 'instellingen',
     to: '/app/knowledge/$kbSlug/settings',
+    icon: Settings,
     label: 'Instellingen',
     matches: ['/settings', '/members', '/instellingen'],
   },
   {
     id: 'geavanceerd',
     to: '/app/knowledge/$kbSlug/advanced',
+    icon: SlidersHorizontal,
     label: 'Geavanceerd',
     matches: ['/advanced', '/taxonomy', '/geavanceerd'],
   },
@@ -100,10 +107,6 @@ function activeTabId(pathname: string): TabId {
     }
   }
   return 'bronnen'
-}
-
-interface KBStatsSummaryResponse {
-  stats: Record<string, { bronnen?: number; chunks?: number }>
 }
 
 // -- Layout -----------------------------------------------------------------
@@ -135,17 +138,7 @@ function KbLayout() {
     enabled: auth.isAuthenticated && !!kb,
   })
 
-  // Bron count for the header meta line. Reuses the cached stats-summary
-  // query that the KB list page already populated; falls back gracefully
-  // when navigated to directly.
-  const { data: statsData } = useQuery<KBStatsSummaryResponse>({
-    queryKey: ['app-knowledge-bases-stats-summary'],
-    queryFn: () => apiFetch<KBStatsSummaryResponse>('/api/app/knowledge-bases/stats-summary'),
-    enabled: auth.isAuthenticated,
-  })
-  const kbStats = kb ? statsData?.stats[kb.slug] : undefined
-  const bronnenCount = kbStats?.bronnen ?? 0
-
+  // Members are needed for owner detection (controls Geavanceerd tab visibility).
   const { data: members } = useQuery<MembersResponse>({
     queryKey: ['kb-members', kbSlug],
     queryFn: async () => apiFetch<MembersResponse>(`/api/app/knowledge-bases/${kbSlug}/members`),
@@ -156,20 +149,13 @@ function KbLayout() {
   const isCreator = !!(myUserId && kb?.created_by === myUserId)
   const isOwnerRole = !!(myUserId && members?.users.some((u) => u.user_id === myUserId && u.role === 'owner'))
   const isAdmin = currentUser?.isAdmin === true
-  const _isOwner = isCreator || isOwnerRole || isAdmin // reserved for per-tab gating
-  void _isOwner
-  // Geavanceerd contains taxonomy + advanced settings — both gated behind
-  // org-level kb_manager. Hide the tab when the user can't use it (e.g.
-  // for own personal KBs).
-  const canSeeGeavanceerd = isAdmin || meetsMinRole(currentUser?.effective_role, 'kb_manager')
+  const isOwner = isCreator || isOwnerRole || isAdmin
 
   if (isLoading) {
     return (
-      <div className="mx-auto max-w-3xl px-6 pt-6 pb-10">
-        <div className="h-4 w-32 rounded bg-gray-50 animate-pulse mb-2" />
-        <div className="pt-4">
-          <div className="h-7 w-64 rounded bg-gray-50 animate-pulse" />
-          <div className="h-4 w-48 rounded bg-gray-50 animate-pulse mt-3" />
+      <div className="mx-auto max-w-3xl px-6 pb-10">
+        <div className="flex h-[66px] items-center">
+          <div className="h-6 w-48 rounded bg-gray-50 animate-pulse" />
         </div>
       </div>
     )
@@ -177,74 +163,53 @@ function KbLayout() {
 
   if (isError || !kb) {
     return (
-      <div className="mx-auto max-w-3xl px-6 pt-14 pb-10 text-gray-400">
+      <div className="mx-auto max-w-3xl px-6 pb-10 pt-10 text-gray-400">
         {m.knowledge_detail_not_found()}
       </div>
     )
   }
 
-  const visibleTabs = TAB_DEFS.filter((tab) => {
-    if (tab.id === 'geavanceerd') return canSeeGeavanceerd
-    return true
-  })
+  const visibleTabs = TAB_DEFS.filter((tab) => tab.id !== 'geavanceerd' || isOwner)
   const activeId = activeTabId(location.pathname)
 
-  const bronnenLabel = bronnenCount === 0
-    ? 'Nog geen bronnen'
-    : bronnenCount === 1
-      ? '1 bron'
-      : `${bronnenCount} bronnen`
-
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-6 pb-10">
-      {/* Breadcrumb — primary navigation context */}
-      <nav className="flex items-center gap-1 text-sm text-gray-400 mb-2">
-        <Link to="/app/knowledge" className="hover:text-gray-900 transition-colors">
-          Kennis
-        </Link>
-        <ChevronRight className="h-3.5 w-3.5" />
-        <span className="text-gray-600 truncate">{kb.name}</span>
-      </nav>
-
-      {/* Title row + primary action */}
-      <div className="pt-4 flex items-start justify-between gap-4 mb-1">
-        <div className="min-w-0 flex-1">
-          <h1 className="text-[26px] font-display-bold text-gray-900 leading-none truncate">
-            {kb.name}
-          </h1>
-        </div>
-        <Link to="/app/knowledge/$kbSlug/add-source" params={{ kbSlug }} className="shrink-0">
-          <Button variant="default">
-            <Plus className="h-4 w-4" />
-            Bron toevoegen
-          </Button>
+    <div className="mx-auto max-w-3xl px-6 pb-10">
+      {/* Header — h-[66px] strip aligns with sidebar logo */}
+      <div className="flex h-[66px] items-center justify-between gap-4">
+        <Link
+          to="/app/knowledge"
+          className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-900 transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Terug
         </Link>
       </div>
 
-      {/* Meta + description */}
-      <div className="text-sm text-gray-400 mb-6 space-y-1">
-        <p>
-          {bronnenLabel}
-          {kb.description && <> · {kb.description}</>}
-        </p>
+      {/* KB title block */}
+      <div className="mb-6">
+        <h1 className="text-[26px] font-display-bold text-gray-900 leading-none">{kb.name}</h1>
+        {kb.description && (
+          <p className="text-sm text-gray-400 mt-2">{kb.description}</p>
+        )}
       </div>
 
-      {/* Tab bar — labels only, underline indicator */}
+      {/* Tab bar */}
       <div className="border-b border-gray-200 mb-6">
         <nav className="-mb-px flex gap-6">
-          {visibleTabs.map(({ id, to, label }) => {
+          {visibleTabs.map(({ id, to, icon: Icon, label }) => {
             const isActive = activeId === id
             return (
               <Link
                 key={id}
                 to={to}
                 params={{ kbSlug }}
-                className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
+                className={`flex items-center gap-1.5 pb-3 text-sm font-medium border-b-2 transition-colors ${
                   isActive
                     ? 'border-gray-900 text-gray-900'
-                    : 'border-transparent text-gray-400 hover:text-gray-700'
+                    : 'border-transparent text-gray-400 hover:text-gray-900'
                 }`}
               >
+                <Icon className="h-4 w-4" />
                 {label}
               </Link>
             )
