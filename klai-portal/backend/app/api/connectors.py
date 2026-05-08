@@ -11,13 +11,12 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_effective_capabilities, require_capability
+from app.api.dependencies import _load_org_or_500, get_effective_capabilities, require_capability
 from app.core.database import get_db
 from app.core.permissions import UserPermissions, get_caller
 from app.core.profiles import Capability, check_connector_allowed
 from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
-from app.models.portal import PortalOrg
 from app.services import knowledge_ingest_client
 from app.services.access import get_user_role_for_kb
 from app.services.connector_credentials import SENSITIVE_FIELDS, credential_store
@@ -397,14 +396,6 @@ def _connector_out(c: PortalConnector) -> ConnectorOut:
         allowed_assertion_modes=c.allowed_assertion_modes,
         needs_reconfiguration=_compute_needs_reconfiguration(c),
     )
-
-
-async def _load_org_or_500(db: AsyncSession, org_id: int) -> PortalOrg:
-    result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id))
-    org = result.scalar_one_or_none()
-    if not org:
-        raise HTTPException(status_code=500, detail="Organisation not found")
-    return org
 
 
 # -- Endpoints ----------------------------------------------------------------
