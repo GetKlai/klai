@@ -36,6 +36,22 @@ class Capability(StrEnum):
     KB_GAPS = "kb.gaps"
 
 
+class ProfileRole(StrEnum):
+    """Typed role enum for the five-rung profile ladder.
+
+    SPEC-PORTAL-RBAC-REFACTOR-001 REQ-3. StrEnum so pyright catches typos at
+    call sites while values still equal their string forms — existing code
+    that compares ``caller_user.role == "admin"`` keeps working unchanged.
+    Phase 2+ migrates call-sites to use ``ProfileRole.ADMIN`` directly.
+    """
+
+    PERSONAL = "personal"
+    COMPANY = "company"
+    KB_MANAGER = "kb_manager"
+    GROUP_MANAGER = "group_manager"
+    ADMIN = "admin"
+
+
 PROFILE_LADDER: list[str] = [
     "personal",
     "company",

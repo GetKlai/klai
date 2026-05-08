@@ -17,9 +17,9 @@ and the user's profile is high enough, they get it. Period.
 from app.core.profiles import PROFILE_RANK
 
 # @MX:ANCHOR fan_in=2+ -- single source of truth for plan-included products.
-# Replaces app.core.plans.PLAN_PRODUCTS as the canonical mapping. The legacy
-# constant remains in app.core.plans for change_plan / list endpoints that
-# still use it directly; this version uses frozenset for set ops.
+# SPEC-PORTAL-RBAC-REFACTOR-001 Phase 1 (REQ-2): the legacy app.core.plans
+# module was removed; PLAN_FEATURES is now the canonical mapping for both
+# derive_user_products() and admin/settings.py::change_plan validation.
 PLAN_FEATURES: dict[str, frozenset[str]] = {
     "free": frozenset(),
     "core": frozenset({"chat", "knowledge"}),
@@ -27,9 +27,7 @@ PLAN_FEATURES: dict[str, frozenset[str]] = {
     "complete": frozenset({"chat", "knowledge"}),
 }
 
-# @MX:ANCHOR fan_in=2+ -- canonical add-on registry. ADDON_FEATURES in
-# app.core.plans was a frozenset of strings; this is the same set, kept here
-# for locality with FEATURE_MIN_PROFILE.
+# @MX:ANCHOR fan_in=2+ -- canonical add-on registry.
 ADDON_FEATURES: frozenset[str] = frozenset({"scribe", "docs"})
 
 # Minimum profile rung required for each feature. A user's profile rank must

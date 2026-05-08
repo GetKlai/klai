@@ -30,7 +30,7 @@ import sys
 from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
-from app.core.plans import get_plan_products
+from app.core.features import PLAN_FEATURES
 from app.logging_setup import setup_logging
 from app.models.groups import PortalGroup, PortalGroupProduct
 from app.models.portal import PortalOrg
@@ -52,7 +52,7 @@ async def run() -> None:
         logger.info("Found %d orgs", len(orgs))
 
         for org in orgs:
-            plan_products = get_plan_products(org.plan)
+            plan_products = sorted(PLAN_FEATURES.get(org.plan, frozenset()))
             if not plan_products:
                 logger.info("Org %s (plan=%s): no products, skipping", org.slug, org.plan)
                 continue
