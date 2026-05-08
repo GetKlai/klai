@@ -177,22 +177,17 @@ async def resolve_user_permissions(zitadel_user_id: str, db: AsyncSession) -> Us
 # ---------------------------------------------------------------------------
 
 
-# @MX:ANCHOR fan_in=8+ — primary FastAPI dependency for portal endpoints.
-# Phase 2 sweeps `_get_caller_org` callers to this; treat as stable.
-async def get_caller(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
-    db: AsyncSession = Depends(get_db),
+async def _resolve_caller_with_options(
+    credentials: HTTPAuthorizationCredentials,
+    db: AsyncSession,
+    *,
+    allow_during_deprovisioning: bool,
 ) -> UserPermissions:
-    """Validate the bearer token and return a frozen ``UserPermissions``.
+    """Shared body for ``get_caller`` and ``get_caller_during_deprovisioning``.
 
-    Mirrors the existing ``admin/__init__::_get_caller_org`` semantics:
-    - 401 if the token is invalid
-    - 401 if the token has no `sub` claim
-    - 404 if the zitadel user has no portal row
-    - 403 (``error=tenant_deleting``) if the org is in deprovisioning state
-    - sets the RLS tenant GUC for this connection
-    - sets ``app.is_platform_admin`` GUC for callers in the platform org
-    - binds ``org_id`` + ``user_id`` into structlog contextvars
+    Both gates do the exact same token-validation + RLS tenant binding +
+    structlog binding; they differ only in whether the
+    SPEC-INFRA-TENANT-DELETE-001 R1 ``tenant_deleting`` 403 is enforced.
     """
     try:
         info = await zitadel.get_userinfo(credentials.credentials)
@@ -208,10 +203,7 @@ async def get_caller(
     if perms is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organisation not found")
 
-    # SPEC-INFRA-TENANT-DELETE-001 R1: block all admin actions while the org is
-    # being deleted. ``provisioning_status`` was carried out of the resolver's
-    # single query — no extra roundtrip.
-    if perms.provisioning_status == "deprovisioning":
+    if not allow_during_deprovisioning and perms.provisioning_status == "deprovisioning":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
@@ -230,6 +222,41 @@ async def get_caller(
 
     structlog.contextvars.bind_contextvars(org_id=str(perms.org_id), user_id=zitadel_user_id)
     return perms
+
+
+# @MX:ANCHOR fan_in=8+ — primary FastAPI dependency for portal endpoints.
+# Phase 2 sweeps `_get_caller_org` callers to this; treat as stable.
+async def get_caller(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> UserPermissions:
+    """Validate the bearer token and return a frozen ``UserPermissions``.
+
+    Mirrors the existing ``admin/__init__::_get_caller_org`` semantics:
+    - 401 if the token is invalid
+    - 401 if the token has no `sub` claim
+    - 404 if the zitadel user has no portal row
+    - 403 (``error=tenant_deleting``) if the org is in deprovisioning state
+    - sets the RLS tenant GUC for this connection
+    - sets ``app.is_platform_admin`` GUC for callers in the platform org
+    - binds ``org_id`` + ``user_id`` into structlog contextvars
+    """
+    return await _resolve_caller_with_options(credentials, db, allow_during_deprovisioning=False)
+
+
+async def get_caller_during_deprovisioning(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> UserPermissions:
+    """Variant of ``get_caller`` that does NOT block on deprovisioning state.
+
+    SPEC-INFRA-TENANT-DELETE-001 R1 narrow exception: the
+    ``GET /api/admin/orgs/{slug}/deprovision-status`` endpoint must keep
+    surfacing progress while the tenant is being deleted, otherwise admins
+    can't observe the orchestrator finishing. All other admin actions
+    still hit the 403 via ``get_caller``. Use sparingly.
+    """
+    return await _resolve_caller_with_options(credentials, db, allow_during_deprovisioning=True)
 
 
 def get_caller_at_least(min_role: ProfileRole):
