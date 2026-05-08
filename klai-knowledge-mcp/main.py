@@ -979,6 +979,16 @@ async def search_knowledge(
         "scope": "both",
         "top_k": top_k,
         "conversation_history": [],
+        # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-4: third-party MCP traffic
+        # (Claude Desktop / Cursor / ChatGPT) is privacy-by-default — we
+        # always send 'shadow' so raw query content never persists in
+        # operational stores, regardless of the tenant's litellm-hook
+        # level. Operators who need full-mode debug visibility for an MCP
+        # caller can flip the same kb_feature toggle for their LibreChat
+        # users; the MCP path stays private. Future enhancement: fetch
+        # the per-tenant level via a small portal-api lookup if business
+        # need arises.
+        "telemetry_level": "shadow",
     }
 
     # SPEC-SEC-IDENTITY-ASSERT-001 REQ-4.2: caller-service header is mandatory
