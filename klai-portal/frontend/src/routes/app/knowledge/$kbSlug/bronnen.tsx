@@ -81,14 +81,17 @@ type Status = 'klaar' | 'bezig' | 'probleem' | 'leeg'
 
 function mapStatus(bron: Bron): Status {
   if (bron.kind === 'upload') {
-    return bron.chunks_count > 0 ? 'klaar' : 'bezig'
+    // An upload that's listed in /sources has been ingested — it's klaar.
+    // chunks_count from parent_chunks is unreliable (often 0 even for
+    // fully-indexed KBs), so we don't use it as a "bezig" signal here.
+    return 'klaar'
   }
-  // connector
+  // connector — last_sync_status is the source of truth
   const s = (bron.status ?? '').toLowerCase()
   if (s.includes('error') || s.includes('failed') || s === 'auth_error' || s === 'orphan') return 'probleem'
   if (s === 'running' || s === 'pending' || s === 'syncing') return 'bezig'
-  if (bron.chunks_count > 0) return 'klaar'
-  return bron.items_count > 0 ? 'klaar' : 'leeg'
+  if (bron.items_count > 0 || bron.chunks_count > 0) return 'klaar'
+  return 'leeg'
 }
 
 function StatusBadge({ status }: { status: Status }) {
@@ -98,9 +101,10 @@ function StatusBadge({ status }: { status: Status }) {
     probleem: m.kb_status_probleem(),
     leeg: m.kb_status_leeg(),
   } as const
+  // Only Probleem stands out. Klaar / Bezig / Leeg are subtle.
   const variantMap = {
     klaar: 'success' as const,
-    bezig: 'warning' as const,
+    bezig: 'secondary' as const,
     probleem: 'destructive' as const,
     leeg: 'secondary' as const,
   }

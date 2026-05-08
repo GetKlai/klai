@@ -531,10 +531,15 @@ async def list_upload_chunks(
         return None
 
 
-async def get_chunks_summary(org_id: str, kb_slugs: list[str]) -> dict[str, int]:
-    """Bulk chunk count per KB. Returns ``{}`` on failure (caller treats as 'unknown')."""
+async def get_chunks_summary(org_id: str, kb_slugs: list[str]) -> tuple[dict[str, int], dict[str, int]]:
+    """Bulk chunk + bronnen counts per KB.
+
+    Returns ``(chunks_by_kb, bronnen_by_kb)``. Each map is keyed by KB
+    slug; missing keys mean "no data". Returns two empty dicts on failure
+    (caller treats as 'unknown' and shows zero).
+    """
     if not kb_slugs:
-        return {}
+        return {}, {}
     try:
         async with httpx.AsyncClient(
             base_url=settings.knowledge_ingest_url,
@@ -552,8 +557,9 @@ async def get_chunks_summary(org_id: str, kb_slugs: list[str]) -> dict[str, int]
             )
             resp.raise_for_status()
             data: dict = resp.json()
-            counts = data.get("chunks_by_kb") or {}
-            return {str(k): int(v) for k, v in counts.items()}
+            chunks = {str(k): int(v) for k, v in (data.get("chunks_by_kb") or {}).items()}
+            bronnen = {str(k): int(v) for k, v in (data.get("bronnen_by_kb") or {}).items()}
+            return chunks, bronnen
     except Exception:
         logger.warning(
             "Could not fetch chunks-summary from knowledge-ingest (org=%s slugs=%d)",
@@ -561,4 +567,4 @@ async def get_chunks_summary(org_id: str, kb_slugs: list[str]) -> dict[str, int]
             len(kb_slugs),
             exc_info=True,
         )
-        return {}
+        return {}, {}

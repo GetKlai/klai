@@ -13,6 +13,7 @@ SQL fragments + bound parameters. They do not exercise a live database — that
 is covered by the integration tests of the existing personal/items pathway,
 which uses the same query primitives.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -20,7 +21,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from knowledge_ingest import pg_store
-
 
 # -- count_chunks_per_kb ----------------------------------------------------
 
@@ -56,6 +56,46 @@ async def test_count_chunks_per_kb_returns_dict_keyed_by_slug() -> None:
     assert "knowledge.artifacts" in sql
     assert "GROUP BY a.kb_slug" in sql
     # Tenant + active filters
+    assert "org_id = $1" in sql
+    assert "kb_slug = ANY($2::text[])" in sql
+    assert "belief_time_end = $3" in sql
+
+
+# -- count_sources_per_kb ---------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_count_sources_per_kb_empty_input_short_circuits() -> None:
+    conn = MagicMock()
+    conn.fetch = AsyncMock(return_value=[])
+
+    result = await pg_store.count_sources_per_kb(conn, "org-1", [])
+
+    assert result == {}
+    conn.fetch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_count_sources_per_kb_returns_dict_keyed_by_slug() -> None:
+    conn = MagicMock()
+    conn.fetch = AsyncMock(
+        return_value=[
+            {"kb_slug": "kb-a", "bronnen_count": 4},
+            {"kb_slug": "kb-b", "bronnen_count": 0},
+        ]
+    )
+
+    result = await pg_store.count_sources_per_kb(conn, "org-1", ["kb-a", "kb-b"])
+
+    assert result == {"kb-a": 4, "kb-b": 0}
+    conn.fetch.assert_awaited_once()
+    sql = conn.fetch.await_args.args[0]
+    # COALESCE collapses connector-grouped artifacts to one bron-key per
+    # connector_id, while uploads (NULL connector_id) fall back to a.id.
+    assert "COALESCE" in sql
+    assert "source_connector_id" in sql
+    assert "knowledge.artifacts" in sql
+    assert "GROUP BY a.kb_slug" in sql
     assert "org_id = $1" in sql
     assert "kb_slug = ANY($2::text[])" in sql
     assert "belief_time_end = $3" in sql

@@ -1070,6 +1070,43 @@ async def count_chunks_per_kb(
     return {row["kb_slug"]: int(row["chunk_count"] or 0) for row in rows}
 
 
+async def count_sources_per_kb(
+    conn: asyncpg.Connection, org_id: str, kb_slugs: list[str]
+) -> dict[str, int]:
+    """Return ``{kb_slug: bronnen_count}`` for active artifacts.
+
+    A "bron" is what the user sees in the KB detail Bronnen tab:
+      - one row per distinct ``source_connector_id`` (connector groups
+        all its artifacts into a single bron), AND
+      - one row per artifact without ``source_connector_id`` (direct
+        upload — file, URL, paste).
+
+    The COALESCE expression collapses connector-grouped artifacts to a
+    single bron-key while keeping each upload artifact as its own key.
+    Used by the portal stats-summary endpoint.
+    """
+    if not kb_slugs:
+        return {}
+    rows = await conn.fetch(
+        """
+        SELECT a.kb_slug AS kb_slug,
+               COUNT(DISTINCT COALESCE(
+                   a.extra::jsonb->>'source_connector_id',
+                   a.id::text
+               )) AS bronnen_count
+        FROM knowledge.artifacts a
+        WHERE a.org_id = $1
+          AND a.kb_slug = ANY($2::text[])
+          AND a.belief_time_end = $3
+        GROUP BY a.kb_slug
+        """,
+        org_id,
+        kb_slugs,
+        _SENTINEL,
+    )
+    return {row["kb_slug"]: int(row["bronnen_count"] or 0) for row in rows}
+
+
 async def list_kb_sources(
     conn: asyncpg.Connection, org_id: str, kb_slug: str
 ) -> dict[str, list[dict]]:
