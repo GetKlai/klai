@@ -15,19 +15,35 @@ from typing import Any
 import httpx
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _get_caller_org, _require_admin, bearer
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.permissions import UserPermissions, get_caller_at_least
+from app.core.profiles import ProfileRole
+from app.models.portal import PortalOrg
 from app.services.secrets import decrypt_mcp_secret, encrypt_mcp_secret, is_secret_var
 from app.utils.response_sanitizer import sanitize_response_body  # SPEC-SEC-INTERNAL-001 REQ-4
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["mcp-servers"])
+
+
+async def _load_org_or_500(db: AsyncSession, org_id: int) -> PortalOrg:
+    """Fetch the caller's PortalOrg row.
+
+    UserPermissions only carries org_id/org_slug/plan.
+    MCP server endpoints need org.mcp_servers and org.slug — re-fetch via this helper.
+    """
+    org = await db.get(PortalOrg, org_id)
+    if org is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Organisation row vanished",
+        )
+    return org
 
 
 async def _load_catalog() -> dict[str, Any]:
@@ -91,7 +107,7 @@ class McpTestResponse(BaseModel):
 
 @router.get("/mcp-servers", response_model=McpServersResponse)
 async def list_mcp_servers(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> McpServersResponse:
     """List all catalog MCP servers with per-tenant enable/configure state.
@@ -100,9 +116,7 @@ async def list_mcp_servers(
     (enabled flag, which env vars are already configured). Secret values are
     never returned — only the var names.
     """
-    _zitadel_user_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
+    org = await _load_org_or_500(db, perms.org_id)
     catalog_servers = await _load_catalog()
     tenant_config: dict[str, Any] = org.mcp_servers or {}
 
@@ -138,7 +152,7 @@ async def list_mcp_servers(
 async def update_mcp_server(
     server_id: str,
     body: McpServerUpdateRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> McpServerUpdateResponse:
     """Enable/disable a MCP server and store its env var configuration.
@@ -146,9 +160,7 @@ async def update_mcp_server(
     Secret vars (KEY/SECRET/TOKEN in name) are encrypted with AES-256-GCM
     before being stored. Triggers an async Redis flush + container restart.
     """
-    _zitadel_user_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
+    org = await _load_org_or_500(db, perms.org_id)
     catalog_servers = await _load_catalog()
     if server_id not in catalog_servers:
         raise HTTPException(
@@ -235,7 +247,7 @@ async def update_mcp_server(
 @router.post("/mcp-servers/{server_id}/test", response_model=McpTestResponse)
 async def test_mcp_server(
     server_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> McpTestResponse:
     """Test connectivity to a configured MCP server.
@@ -243,9 +255,7 @@ async def test_mcp_server(
     Sends a JSON-RPC 'initialize' request to the MCP server's URL with the
     configured Authorization header. Returns available tools on success.
     """
-    _zitadel_user_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
+    org = await _load_org_or_500(db, perms.org_id)
     catalog_servers = await _load_catalog()
     if server_id not in catalog_servers:
         raise HTTPException(
