@@ -519,6 +519,59 @@ async def _resolve_org_slug(
     return result.scalar_one_or_none()
 
 
+async def verify_bff_session_identity(
+    *,
+    db: AsyncSession,
+    zitadel_user_id: str,
+    portal_org_id: int,
+) -> VerifyDecision:
+    """Membership-authoritative verification for portal-api BFF proxy calls.
+
+    Used by :mod:`app.api.proxy` when forwarding `/api/scribe/*` and
+    `/api/docs/*` to upstream services. The BFF session was already
+    authenticated at cookie-decode time (the access_token was JWT-validated
+    at session creation/refresh). This function adds defence-in-depth by
+    re-checking that the user STILL has an active membership in the
+    portal_org_id stored in the session, AND resolves the canonical
+    (zitadel_org_id, org_slug) pair needed for the downstream
+    ``X-Klai-Verified-*`` headers.
+
+    Single SELECT joining portal_users and portal_orgs on the portal-side
+    primary key (``portal_orgs.id``) — different from
+    :func:`_resolve_active_membership_org_slug` which joins on
+    ``zitadel_org_id`` for the public-API path.
+
+    Returns the same :class:`VerifyDecision` shape as
+    :func:`verify_identity_claim` so the proxy can use a uniform
+    allow/deny pattern. ``evidence='jwt'`` because the session's
+    access_token was JWT-validated at session creation; the membership
+    re-check here is an authorisation defence, not an authentication one.
+    """
+
+    stmt = (
+        select(PortalOrg.zitadel_org_id, PortalOrg.slug)
+        .join(PortalUser, PortalUser.org_id == PortalOrg.id)
+        .where(
+            PortalUser.zitadel_user_id == zitadel_user_id,
+            PortalOrg.id == portal_org_id,
+            PortalUser.status == "active",
+            PortalOrg.deleted_at.is_(None),
+        )
+        .limit(1)
+    )
+    result = await db.execute(stmt)
+    row = result.one_or_none()
+    if row is None:
+        return VerifyDecision.deny("no_membership")
+    zitadel_org_id, org_slug = row
+    return VerifyDecision.allow(
+        user_id=zitadel_user_id,
+        org_id=zitadel_org_id,
+        org_slug=org_slug,
+        evidence="jwt",
+    )
+
+
 async def verify_tenant_claim(
     *,
     db: AsyncSession,
