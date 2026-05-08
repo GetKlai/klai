@@ -13,6 +13,7 @@ from knowledge_ingest.routes import (
     crawl_sync,
     ingest,
     internal,
+    kb_sources,
     knowledge,
     personal,
     stats,
@@ -79,6 +80,7 @@ app.include_router(knowledge.router)
 app.include_router(stats.router)
 app.include_router(taxonomy.router)
 app.include_router(internal.router)
+app.include_router(kb_sources.router)
 
 
 @app.get("/health")
