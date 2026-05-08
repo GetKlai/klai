@@ -24,6 +24,11 @@ class RetrieveRequest(BaseModel):
     taxonomy_node_ids: list[int] | None = Field(None, max_length=50)
     # SPEC-SEC-010 REQ-2.3 (tags parity): tags list length bounded to 20 entries.
     tags: list[str] | None = Field(None, max_length=20)
+    # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-3: per-tenant telemetry mode threaded
+    # from litellm-hook / knowledge-mcp. Default 'shadow' so older clients
+    # without the field continue to work in the privacy-friendly mode (REQ-4
+    # fail-open). Validation: gates content emission in REQ-5/6/7/8/9.
+    telemetry_level: Literal["off", "shadow", "full"] = "shadow"
 
     @field_validator("conversation_history")
     @classmethod

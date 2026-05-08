@@ -19,6 +19,7 @@ from retrieval_api.metrics import (
     retrieval_link_expand_top_k_total,
     retrieval_requests_total,
     step_latency_seconds,
+    telemetry_level_decisions_total,
 )
 from retrieval_api.middleware.auth import AuthContext, require_scope, verify_body_identity
 from retrieval_api.models import (
@@ -33,8 +34,10 @@ from retrieval_api.quality_floor import filter_quality_floor
 from retrieval_api.services import coreference, evidence_tier, gate, graph_search, reranker, search
 from retrieval_api.services.diversity import source_aware_select
 from retrieval_api.services.events import emit_event
+from retrieval_api.services.features import extract_features
 from retrieval_api.services.router import fetch_source_catalog, route_to_sources
 from retrieval_api.services.tei import embed_single, embed_sparse
+from retrieval_api.services.telemetry import write_shadow
 from retrieval_api.util.payload import payload_list
 
 logger = structlog.get_logger(__name__)
@@ -532,15 +535,59 @@ async def retrieve(
         retrieval_link_expand_top_k_total.labels(outcome=outcome, org_id=req.org_id).inc()
 
     decision_record["total_ms"] = round(retrieval_ms, 1)
+
+    # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-5: gate raw-query content on
+    # decision_record. In off + shadow mode, strip the coreference
+    # rewrite text before serialization. The defense-in-depth structlog
+    # processor (REQ-13) catches the same fields if they slip through
+    # via a future code path that bypasses this check, but doing it
+    # here keeps the metric-level gating accurate.
+    if req.telemetry_level != "full" and "coreference_rewrite" in decision_record:
+        decision_record.pop("coreference_rewrite", None)
+        telemetry_level_decisions_total.labels(
+            level=req.telemetry_level, decision="metadata_only"
+        ).inc()
+    elif req.telemetry_level == "full":
+        telemetry_level_decisions_total.labels(level="full", decision="content_emitted").inc()
+
     try:
         logger.info(
             "retrieval_decision_record",
             org_id=req.org_id,
             scope=req.scope,
+            telemetry_level=req.telemetry_level,
             **decision_record,
         )
     except Exception:
         logger.exception("decision_record_emit_failed")
+
+    # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-7: shadow-store INSERT for shadow
+    # + full modes. Fire-and-forget — failures are counted in
+    # telemetry_shadow_drop_total, not propagated. ``request_id`` is
+    # bound by RequestContextMiddleware (logging_setup.py); read back
+    # from structlog contextvars so we don't have to plumb it through
+    # the entire pipeline.
+    if req.telemetry_level in ("shadow", "full"):
+        ctx_request_id = structlog.contextvars.get_contextvars().get("request_id")
+        if ctx_request_id:
+            chunk_ids_for_shadow = [c.chunk_id for c in chunks_out]
+            reranker_scores = [c.reranker_score for c in chunks_out if c.reranker_score is not None]
+            reranker_top1 = max(reranker_scores) if reranker_scores else None
+            features_dict = extract_features(req.query)
+            write_shadow(
+                request_id=ctx_request_id,
+                org_id=req.org_id,
+                embedding=list(query_vector) if query_vector is not None else None,
+                features=features_dict,
+                band=confidence_band,
+                chunk_ids=chunk_ids_for_shadow,
+                reranker_top1=reranker_top1,
+            )
+            telemetry_level_decisions_total.labels(
+                level=req.telemetry_level, decision="shadow_inserted"
+            ).inc()
+        if req.telemetry_level == "full":
+            telemetry_level_decisions_total.labels(level="full", decision="full_logged").inc()
 
     logger.info(
         "retrieve",
