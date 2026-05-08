@@ -542,13 +542,23 @@ async def retrieve(
     # processor (REQ-13) catches the same fields if they slip through
     # via a future code path that bypasses this check, but doing it
     # here keeps the metric-level gating accurate.
+    #
+    # REQ-10: retention_class is a structured label so Alloy can route
+    # 'content' events to a 7d-retention stream and 'metadata' events
+    # to the existing 30d stream (operator-side VictoriaLogs config —
+    # follow-up runbook in Unit 8).
     if req.telemetry_level != "full" and "coreference_rewrite" in decision_record:
         decision_record.pop("coreference_rewrite", None)
+        decision_record["retention_class"] = "metadata"
         telemetry_level_decisions_total.labels(
             level=req.telemetry_level, decision="metadata_only"
         ).inc()
     elif req.telemetry_level == "full":
+        decision_record["retention_class"] = "content"
         telemetry_level_decisions_total.labels(level="full", decision="content_emitted").inc()
+    else:
+        # off mode without coreference_rewrite already in the record.
+        decision_record["retention_class"] = "metadata"
 
     try:
         logger.info(
