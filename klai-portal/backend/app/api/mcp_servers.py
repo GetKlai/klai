@@ -21,7 +21,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import _load_org_or_500
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.permissions import UserPermissions, get_caller_at_least
+from app.core.permissions import (
+    UserPermissions,
+    assert_platform_unlocked,
+    get_caller_at_least,
+)
 from app.core.profiles import ProfileRole
 from app.services.secrets import decrypt_mcp_secret, encrypt_mcp_secret, is_secret_var
 from app.utils.response_sanitizer import sanitize_response_body  # SPEC-SEC-INTERNAL-001 REQ-4
@@ -161,6 +165,13 @@ async def update_mcp_server(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"MCP server '{server_id}' is managed and cannot be modified",
         )
+
+    # Non-managed MCP selection is platform-locked.
+    # SPEC-PORTAL-RBAC-REFACTOR-001 Phase 5C: only enabling non-managed catalog entries
+    # requires "custom_mcps" to be in platform_unlocked_features. Managed entries (always-on,
+    # Klai-curated) are exempt — tenants can never enable them anyway (blocked above).
+    if body.enabled:
+        assert_platform_unlocked(org, "custom_mcps")
 
     required_vars = catalog_entry.get("required_env_vars", [])
 

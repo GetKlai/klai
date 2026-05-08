@@ -37,7 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = structlog.get_logger()
 
-_VALID_EVENT_TYPES = frozenset({"provisioned", "deprovisioned", "failed_deprovisioning"})
+_VALID_EVENT_TYPES = frozenset({"provisioned", "deprovisioned", "failed_deprovisioning", "platform_features_updated"})
 _VALID_ACTOR_TYPES = frozenset({"owner", "platform_admin", "system"})
 
 

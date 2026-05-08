@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db, set_tenant, tenant_scoped_session
+from app.core.permissions import assert_platform_unlocked
 from app.models.partner_api_keys import PartnerAPIKey, PartnerApiKeyKbAccess
 from app.models.portal import PortalOrg
 from app.models.widgets import Widget, WidgetKbAccess
@@ -242,6 +243,10 @@ async def get_partner_key(
     if org is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
     await set_tenant(db, org.id)
+
+    # Step 6b: Platform-feature gate — partner_api must be unlocked for this org.
+    # SPEC-PORTAL-RBAC-REFACTOR-001 Phase 5C.
+    assert_platform_unlocked(org, "partner_api")
 
     # Step 7: Check rate limit
     redis_pool = await get_redis_pool()

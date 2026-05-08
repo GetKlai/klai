@@ -368,10 +368,33 @@ def require_platform_unlocked(feature: str):
     return _dep
 
 
+def assert_platform_unlocked(org: PortalOrg, feature: str) -> None:
+    """Imperative check: raise 403 if ``feature`` is not in org's platform_unlocked_features.
+
+    Use this in dependencies that do not go through ``UserPermissions`` (e.g.
+    ``get_partner_key`` in ``partner_dependencies.py`` which resolves its own org
+    without invoking the OIDC-based ``get_caller`` chain).
+
+    Args:
+        org: The resolved PortalOrg ORM instance.
+        feature: Feature identifier string (e.g. ``"partner_api"``).
+
+    Raises:
+        HTTPException: 403 with ``error_code=feature_not_unlocked`` if not unlocked.
+    """
+    unlocked = frozenset(getattr(org, "platform_unlocked_features", None) or [])
+    if feature not in unlocked:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error_code": "feature_not_unlocked", "feature": feature},
+        )
+
+
 __all__ = [
     "PROFILE_RANK",
     "ProfileRole",
     "UserPermissions",
+    "assert_platform_unlocked",
     "get_caller",
     "get_caller_at_least",
     "require_capability",

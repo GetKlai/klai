@@ -87,6 +87,16 @@ class PortalOrg(Base):
         default=list,
         server_default="{}",
     )
+    # @MX:NOTE: SPEC-PORTAL-RBAC-REFACTOR-001 Phase 5A — platform-admin-managed feature gates.
+    # Stores which platform-locked features (partner_api, widgets, custom_mcps) Klai staff
+    # has explicitly unlocked for this org. NOT editable by tenant admins.
+    # Empty by default for all tenants; set via /api/admin/orgs/{slug}/platform-unlocks.
+    platform_unlocked_features: Mapped[list[str]] = mapped_column(
+        ARRAY(Text()),
+        nullable=False,
+        default=list,
+        server_default="{}",
+    )
     # @MX:NOTE: SPEC-PRIVACY-QUERY-SHADOW-001 REQ-1 — per-tenant telemetry mode.
     # 'shadow' (default): embedding + symbolic features only, no raw query persisted.
     # 'off': zero telemetry. 'full': raw query persisted with 7d TTL (audit-trailed).
