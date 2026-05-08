@@ -4,16 +4,15 @@ import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.features import ADDON_FEATURES, PLAN_FEATURES
+from app.core.permissions import ProfileRole, UserPermissions, get_caller_at_least
+from app.models.portal import PortalOrg
 from app.services.audit import log_event
 from app.services.events import emit_event
-
-from . import _get_caller_org, _require_admin, bearer
 
 logger = logging.getLogger(__name__)
 
@@ -62,13 +61,30 @@ class PlanChangeRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+async def _load_org_or_500(db: AsyncSession, org_id: int) -> PortalOrg:
+    """Fetch the caller's PortalOrg ORM row.
+
+    UserPermissions only carries `org_id`/`org_slug`/`plan`/`enabled_addons`/
+    `platform_unlocked_features`. Endpoints that need other PortalOrg fields
+    (name, default_language, mfa_policy, primary_domain, telemetry_level,
+    auto_accept_same_domain) re-fetch the row through this helper. The
+    tenant GUC is already set by `get_caller`, so RLS on portal_orgs is fine.
+    """
+    org = await db.get(PortalOrg, org_id)
+    if org is None:
+        # get_caller resolved the org just before this; a missing row means
+        # something deleted it mid-request. Treat as 500 — the resolver and
+        # this endpoint disagree on reality.
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Organisation row vanished")
+    return org
+
+
 @router.get("/settings", response_model=OrgSettingsOut)
 async def get_org_settings(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> OrgSettingsOut:
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
+    org = await _load_org_or_500(db, perms.org_id)
     return OrgSettingsOut(
         name=org.name,
         default_language=org.default_language,
@@ -82,11 +98,10 @@ async def get_org_settings(
 @router.patch("/settings", response_model=OrgSettingsOut)
 async def update_org_settings(
     body: OrgSettingsUpdate,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> OrgSettingsOut:
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
+    org = await _load_org_or_500(db, perms.org_id)
     if body.default_language is not None:
         org.default_language = body.default_language
     if body.mfa_policy is not None:
@@ -95,7 +110,7 @@ async def update_org_settings(
     if body.auto_accept_same_domain is not None:
         org.auto_accept_same_domain = body.auto_accept_same_domain
     await db.commit()
-    logger.info("Org settings updated: org_id=%d", org.id)
+    logger.info("Org settings updated: org_id=%d", perms.org_id)
     return OrgSettingsOut(
         name=org.name,
         default_language=org.default_language,
@@ -109,7 +124,7 @@ async def update_org_settings(
 @router.patch("/plan", response_model=MessageResponse)
 async def change_plan(
     body: PlanChangeRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     """Upgrade or downgrade org plan.
@@ -119,14 +134,12 @@ async def change_plan(
     feature set on the next request. No per-user/group product cleanup
     needed -- those tables are no longer the source of truth.
     """
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
     new_plan = body.plan
 
     if new_plan not in PLAN_FEATURES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown plan: {new_plan}")
 
+    org = await _load_org_or_500(db, perms.org_id)
     org.plan = new_plan
     await db.commit()
     return MessageResponse(message=f"Plan bijgewerkt naar {new_plan}.")
@@ -147,19 +160,17 @@ class AddonsUpdate(BaseModel):
 
 @router.get("/settings/addons", response_model=AddonsOut)
 async def get_addons(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> AddonsOut:
     """Return the tenant's currently enabled add-ons."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-    return AddonsOut(enabled_addons=list(org.enabled_addons or []))
+    return AddonsOut(enabled_addons=list(perms.enabled_addons))
 
 
 @router.patch("/settings/addons", response_model=AddonsOut)
 async def update_addons(
     body: AddonsUpdate,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> AddonsOut:
     """Enable or disable tenant-level add-ons.
@@ -171,9 +182,6 @@ async def update_addons(
     # entitlement tables to keep in sync. Disabling an add-on simply
     # stops surfacing it to the derivation function on the next request.
     """
-    admin_user_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
     unknown = [p for p in body.enabled_addons if p not in ADDON_FEATURES]
     if unknown:
         raise HTTPException(
@@ -181,6 +189,7 @@ async def update_addons(
             detail=f"Unknown add-on product(s): {unknown}. Valid: {sorted(ADDON_FEATURES)}",
         )
 
+    org = await _load_org_or_500(db, perms.org_id)
     before = list(org.enabled_addons or [])
     after = list(body.enabled_addons)
 
@@ -190,19 +199,19 @@ async def update_addons(
     removed = sorted(set(before) - set(after))
 
     await log_event(
-        org_id=org.id,
-        actor=admin_user_id,
+        org_id=perms.org_id,
+        actor=perms.user_id,
         action="addons.updated",
         resource_type="org",
-        resource_id=str(org.id),
+        resource_id=str(perms.org_id),
         details={"before": before, "after": after, "added": added, "removed": removed},
     )
     await db.commit()
 
     emit_event(
         "tenant.addons_updated",
-        org_id=org.id,
-        user_id=admin_user_id,
+        org_id=perms.org_id,
+        user_id=perms.user_id,
         properties={"enabled_addons": after, "added": added, "removed": removed},
     )
 

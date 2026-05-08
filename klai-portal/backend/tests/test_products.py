@@ -10,12 +10,13 @@ the 410 contract). This file keeps:
   * change_plan: simple plan update, no product-row cleanup
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
 
 from app.core.features import PLAN_FEATURES
+from tests.conftest import make_perms
 
 # ---------------------------------------------------------------------------
 # PLAN_FEATURES mapping (canonical post-SPEC-PORTAL-RBAC-REFACTOR-001 Phase 1)
@@ -59,50 +60,36 @@ class TestPlanProducts:
 
 
 class TestListAvailableProducts:
-    def _mocks(self, role: str = "admin", plan: str = "core", enabled_addons: list[str] | None = None):
-        org = MagicMock()
-        org.plan = plan
-        org.enabled_addons = enabled_addons or []
-        caller = MagicMock()
-        caller.role = role
-        return org, caller
+    """Endpoint returns derived products from the caller's UserPermissions.
+
+    Phase 2a: ``list_available_products`` reads `perms.effective_products`
+    directly (same value the resolver would derive from role+plan+addons).
+    The non-admin 403 branch is now in `Depends(get_caller_at_least(ADMIN))`
+    and pinned in `tests/test_permissions.py`.
+    """
 
     @pytest.mark.asyncio
     async def test_returns_plan_features_for_core(self) -> None:
         from app.api.admin.products import list_available_products
 
-        org, caller = self._mocks(role="admin", plan="core", enabled_addons=[])
-        with patch("app.api.admin.products._get_caller_org", return_value=("admin-1", org, caller)):
-            result = await list_available_products(credentials=MagicMock(), db=AsyncMock())
+        perms = make_perms(role="admin", plan="core", enabled_addons=[])
+        result = await list_available_products(perms=perms, db=AsyncMock())
         assert sorted(result.products) == ["chat", "knowledge"]
 
     @pytest.mark.asyncio
     async def test_returns_plan_plus_enabled_addons_for_admin(self) -> None:
         from app.api.admin.products import list_available_products
 
-        org, caller = self._mocks(role="admin", plan="core", enabled_addons=["scribe", "docs"])
-        with patch("app.api.admin.products._get_caller_org", return_value=("admin-1", org, caller)):
-            result = await list_available_products(credentials=MagicMock(), db=AsyncMock())
+        perms = make_perms(role="admin", plan="core", enabled_addons=["scribe", "docs"])
+        result = await list_available_products(perms=perms, db=AsyncMock())
         assert set(result.products) == {"chat", "knowledge", "scribe", "docs"}
-
-    @pytest.mark.asyncio
-    async def test_non_admin_caller_rejected(self) -> None:
-        """Endpoint is admin-only -- non-admin calls return 403."""
-        from app.api.admin.products import list_available_products
-
-        org, caller = self._mocks(role="personal", plan="core", enabled_addons=["scribe"])
-        with patch("app.api.admin.products._get_caller_org", return_value=("admin-1", org, caller)):
-            with pytest.raises(HTTPException) as exc_info:
-                await list_available_products(credentials=MagicMock(), db=AsyncMock())
-        assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
     async def test_free_plan_returns_empty_when_no_addons(self) -> None:
         from app.api.admin.products import list_available_products
 
-        org, caller = self._mocks(role="admin", plan="free", enabled_addons=[])
-        with patch("app.api.admin.products._get_caller_org", return_value=("admin-1", org, caller)):
-            result = await list_available_products(credentials=MagicMock(), db=AsyncMock())
+        perms = make_perms(role="admin", plan="free", enabled_addons=[])
+        result = await list_available_products(perms=perms, db=AsyncMock())
         assert result.products == []
 
 
@@ -157,15 +144,13 @@ class TestPlanChange:
 
         org = MagicMock()
         org.plan = "core"
-        caller = MagicMock()
-        caller.role = "admin"
 
         mock_db = AsyncMock()
+        mock_db.get = AsyncMock(return_value=org)
         body = MagicMock()
         body.plan = "professional"
 
-        with patch("app.api.admin.settings._get_caller_org", return_value=("admin-1", org, caller)):
-            await change_plan(body=body, credentials=MagicMock(), db=mock_db)
+        await change_plan(body=body, perms=make_perms(role="admin"), db=mock_db)
 
         assert org.plan == "professional"
         # No product-row cleanup queries -- products derive from (role, plan, enabled_addons).
@@ -176,14 +161,9 @@ class TestPlanChange:
     async def test_change_to_unknown_plan_returns_400(self) -> None:
         from app.api.admin.settings import change_plan
 
-        org = MagicMock()
-        org.plan = "core"
-        caller = MagicMock()
-        caller.role = "admin"
         body = MagicMock()
         body.plan = "enterprise_xl"
 
-        with patch("app.api.admin.settings._get_caller_org", return_value=("admin-1", org, caller)):
-            with pytest.raises(HTTPException) as exc_info:
-                await change_plan(body=body, credentials=MagicMock(), db=AsyncMock())
+        with pytest.raises(HTTPException) as exc_info:
+            await change_plan(body=body, perms=make_perms(role="admin"), db=AsyncMock())
         assert exc_info.value.status_code == 400
