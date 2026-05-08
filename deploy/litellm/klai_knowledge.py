@@ -1549,7 +1549,18 @@ class KlaiKnowledgeHook(CustomLogger):
         # escape hatch — toggle off without redeploying retrieval-api).
         if low_confidence_inject and not _LOW_CONFIDENCE_INJECTION_DISABLED:
             lines.append(_LOW_CONFIDENCE_INJECTION_TEXT)
-            logger.info(
+            # NOTE: warning-level (not info) is deliberate. The litellm
+            # container's root logger filters info-level emits from
+            # non-uvicorn modules (verified 2026-05-08 via VictoriaLogs:
+            # zero info-level klai_knowledge events visible despite
+            # the code path being reached). Other warning-level events
+            # in this module (`KlaiKnowledgeHook: jwt rejected ...`,
+            # `query_rewrite_and_classify_failed`) DO surface, so the
+            # injection event uses the same level for parity with
+            # observable hook events. Lets operators query
+            # `service:litellm AND _msg:"low_confidence_injection_applied"`
+            # for incident triage on a per-request_id basis.
+            logger.warning(
                 "low_confidence_injection_applied org_id=%s confidence_band=%s chunks_injected=%d",
                 org_id,
                 confidence_band,
