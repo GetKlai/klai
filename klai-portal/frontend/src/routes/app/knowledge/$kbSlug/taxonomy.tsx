@@ -29,6 +29,14 @@ export const Route = createFileRoute('/app/knowledge/$kbSlug/taxonomy')({
   ),
 })
 
+// SPEC-TAXONOMY-REVIEW-FLOW-001 follow-up: cap on healthy taxonomy size.
+// Mirrors the backend's ``taxonomy_consolidate_target_max`` (default 9).
+// When the KB already has this many root taxonomy nodes, hide the
+// "Suggest categories" affordance — Miller's Law makes more categories
+// counter-productive (see SPEC-TAXONOMY-MERGE-DETECT-001 motivation).
+// If the backend value drifts, revisit this constant.
+const MAX_HEALTHY_NODE_COUNT = 9
+
 // -- Coverage widget ----------------------------------------------------------
 
 function CoverageWidget({
@@ -271,6 +279,14 @@ function CoverageWidget({
                   <Loader2 className="h-3 w-3 animate-spin" />
                   <span>{m.knowledge_taxonomy_categorising_status()}</span>
                 </div>
+              ) : coverage.nodes.length >= MAX_HEALTHY_NODE_COUNT ? (
+                // SPEC-TAXONOMY-REVIEW-FLOW-001 follow-up: with the IA target
+                // already met (Miller's Law 5-9), suggesting more categories
+                // makes the taxonomy worse, not better. Hide the Suggest
+                // button and explain why so operators don't pile on duplicates.
+                <span className="text-xs text-[var(--color-muted-foreground)] italic">
+                  {m.knowledge_taxonomy_enough_categories_hint()}
+                </span>
               ) : (
                 onSuggest && coverage.untagged_count >= 10 && total > 0 && Math.round((coverage.untagged_count / total) * 100) > 5 && (
                   <button
