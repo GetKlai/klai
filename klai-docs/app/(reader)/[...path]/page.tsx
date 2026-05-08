@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { db } from "@/lib/db";
-import { buildNavTree } from "@/lib/gitea";
+import { buildNavTree, type NavNode } from "@/lib/gitea";
 import * as gitea from "@/lib/gitea";
 import { parsePage, parseSidebar } from "@/lib/markdown";
 import type { SidebarEntry } from "@/lib/markdown";
@@ -18,6 +18,15 @@ function collectSlugs(entries: SidebarEntry[]): string[] {
     if (e.children?.length) result.push(...collectSlugs(e.children));
   }
   return result;
+}
+
+function findFirstPageSlug(nodes: NavNode[]): string | null {
+  for (const node of nodes) {
+    if (node.type === "file") return node.slug;
+    const childSlug = node.children?.length ? findFirstPageSlug(node.children) : null;
+    if (childSlug) return childSlug;
+  }
+  return null;
 }
 
 /**
@@ -117,6 +126,11 @@ export default async function ReaderPage({
     articleSegments.length > 0
       ? `${articleSegments.join("/")}.md`
       : null;
+
+  if (!articlePath) {
+    const firstSlug = findFirstPageSlug(navTree);
+    if (firstSlug) redirect(`/${kbSlug}/${firstSlug}`);
+  }
 
   let content = "";
   let title = kb.name;
