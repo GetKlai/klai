@@ -190,10 +190,13 @@ function KnowledgePage() {
     : allKbs
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-10 space-y-8">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-4">
-        <h1 className="text-[26px] font-display-bold text-gray-900">{m.kb_list_title()}</h1>
+    <div className="mx-auto max-w-3xl px-6 pb-10">
+      {/* Header — h-[66px] matches the sidebar logo strip for vertical
+          alignment: title and logo share the same baseline grid. */}
+      <div className="flex h-[66px] items-center justify-between gap-4">
+        <h1 className="text-[26px] font-display-bold text-gray-900 leading-none">
+          {m.kb_list_title()}
+        </h1>
         <Link to="/app/knowledge/new">
           <Button variant="default">
             <Plus className="h-4 w-4" />
@@ -203,7 +206,7 @@ function KnowledgePage() {
       </div>
 
       {/* Search */}
-      <div className="relative">
+      <div className="relative mt-6">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
         <Input
           type="text"
@@ -215,15 +218,16 @@ function KnowledgePage() {
       </div>
 
       {/* List */}
-      {kbsLoading ? (
-        <div className="border-t border-b border-gray-200 divide-y divide-gray-200">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="h-[60px] bg-gray-50 animate-pulse" />
-          ))}
-        </div>
-      ) : kbsError ? (
-        <QueryErrorState error={kbsError} onRetry={refetchKbs} />
-      ) : filteredKbs.length === 0 ? (
+      <div className="mt-6">
+        {kbsLoading ? (
+          <div className="border-t border-b border-gray-200 divide-y divide-gray-200">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-[60px] bg-gray-50 animate-pulse" />
+            ))}
+          </div>
+        ) : kbsError ? (
+          <QueryErrorState error={kbsError} onRetry={refetchKbs} />
+        ) : filteredKbs.length === 0 ? (
         <div className="rounded-lg border border-dashed border-gray-200 py-10 text-center">
           {search.trim() ? (
             <p className="text-sm text-gray-400">{m.kb_list_empty_search({ q: search.trim() })}</p>
@@ -251,6 +255,7 @@ function KnowledgePage() {
           ))}
         </div>
       )}
+      </div>
     </div>
   )
 }
