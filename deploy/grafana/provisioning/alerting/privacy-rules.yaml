@@ -42,7 +42,7 @@ groups:
             datasourceUid: portal-postgres
             queryType: ''
             relativeTimeRange:
-              from: 0
+              from: 600
               to: 0
             model:
               refId: query
@@ -65,7 +65,7 @@ groups:
           - refId: reduce
             datasourceUid: __expr__
             relativeTimeRange:
-              from: 0
+              from: 600
               to: 0
             model:
               refId: reduce
@@ -75,7 +75,7 @@ groups:
           - refId: threshold
             datasourceUid: __expr__
             relativeTimeRange:
-              from: 0
+              from: 600
               to: 0
             model:
               refId: threshold
