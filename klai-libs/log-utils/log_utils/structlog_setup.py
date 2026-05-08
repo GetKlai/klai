@@ -84,6 +84,83 @@ _HealthCheckAccessFilter = HealthCheckAccessFilter
 
 
 # ---------------------------------------------------------------------------
+# SPEC-PRIVACY-QUERY-SHADOW-001 REQ-13 — anti-leakage processor
+# ---------------------------------------------------------------------------
+
+# Event names that may carry raw query content. The processor only acts on
+# events whose 'event' key matches one of these prefixes — keeps the cost
+# negligible for unrelated log lines.
+_QUERY_EVENT_PREFIXES: tuple[str, ...] = (
+    "retrieval_decision_record",
+    "query_rewrite",
+)
+
+# Field names that carry raw user-supplied query text in any event. When
+# the active telemetry_level is not 'full', these fields are stripped from
+# the event-dict before serialization. The processor catches both the
+# canonical field names AND nested coreference_rewrite.* sub-keys.
+_QUERY_LEAKING_FIELDS: tuple[str, ...] = (
+    "raw_query",
+    "rewritten_query",
+    "query",
+    "query_text",
+    "query_resolved",
+)
+
+
+def _strip_query_fields_processor(logger_obj: Any, method_name: str, event_dict: dict) -> dict:
+    """Defense-in-depth structlog processor that strips raw query content.
+
+    SPEC-PRIVACY-QUERY-SHADOW-001 REQ-13: redundant safety net on top of
+    the explicit gating in retrieve.py + klai_knowledge.py. If a future
+    code path emits a query-shaped field on a query-related event while
+    ``telemetry_level != 'full'`` is in scope, this processor removes it
+    before the JSON renderer serializes the event.
+
+    Reads ``telemetry_level`` from structlog contextvars. The contextvar
+    is set per-request by the LiteLLM hook + retrieval-api + portal-api
+    based on the org's configured level. When the contextvar is absent
+    (no per-request scope yet), the processor defaults to the privacy-
+    friendly side and strips the fields.
+
+    Args:
+        logger_obj: structlog logger (unused; required by processor sig)
+        method_name: log method name (unused)
+        event_dict: the event kwargs that will be rendered
+
+    Returns:
+        The (possibly modified) event dict.
+    """
+    telemetry_level = event_dict.get("telemetry_level")
+    if not telemetry_level:
+        # contextvar fallback — structlog's merge_contextvars runs earlier
+        # in the chain so any bound `telemetry_level` is already in the
+        # event_dict. If still absent, default to strip (privacy-side).
+        telemetry_level = "shadow"
+
+    if telemetry_level == "full":
+        return event_dict
+
+    event_name = event_dict.get("event") or ""
+    if not isinstance(event_name, str):
+        return event_dict
+    if not event_name.startswith(_QUERY_EVENT_PREFIXES):
+        return event_dict
+
+    # Strip top-level query-leaking fields.
+    for field in _QUERY_LEAKING_FIELDS:
+        if field in event_dict:
+            event_dict.pop(field, None)
+
+    # Strip the nested coreference_rewrite block entirely (its only
+    # sub-fields ['original', 'resolved'] are both raw query content).
+    if "coreference_rewrite" in event_dict:
+        event_dict.pop("coreference_rewrite", None)
+
+    return event_dict
+
+
+# ---------------------------------------------------------------------------
 # setup_logging
 # ---------------------------------------------------------------------------
 
@@ -132,6 +209,11 @@ def setup_logging(
 
     shared_processors: list[structlog.types.Processor] = [
         structlog.contextvars.merge_contextvars,
+        # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-13: anti-leakage processor sits
+        # AFTER merge_contextvars (so it can read telemetry_level from the
+        # bound context) and BEFORE add_log_level / TimeStamper / renderer
+        # (so the strip happens before the event is finalized).
+        _strip_query_fields_processor,
         *(extra_processors or []),
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,
