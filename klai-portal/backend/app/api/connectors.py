@@ -330,9 +330,18 @@ async def _get_kb_with_owner_check(
     caller_id: str,
     org_id: int,
     db: AsyncSession,
+    *,
+    is_platform_admin: bool = False,
 ) -> PortalKnowledgeBase:
-    """Look up KB by slug + org_id and verify caller has owner role."""
+    """Look up KB by slug + org_id and verify caller has owner role.
+
+    Platform admins bypass the owner check — they can manage any KB in
+    their tenant. This matches the frontend's ``isAdmin`` gate so the UI
+    surfaces the same affordances the backend will accept.
+    """
     kb = await _get_kb_for_org(kb_slug, org_id, db)
+    if is_platform_admin:
+        return kb
     role = await get_user_role_for_kb(kb.id, caller_id, db, kb_created_by=kb.created_by)
     if role != "owner":
         raise HTTPException(
@@ -436,7 +445,9 @@ async def create_connector(
     # Resolve KB once — REQ-7 needs ``owner_type`` BEFORE other validation so
     # a personal caller gets the explicit ``org_kb_write_requires_company``
     # error_code instead of a downstream message.
-    kb = await _get_kb_with_owner_check(kb_slug, perms.user_id, perms.org_id, db)
+    kb = await _get_kb_with_owner_check(
+        kb_slug, perms.user_id, perms.org_id, db, is_platform_admin=perms.is_platform_admin
+    )
 
     # REQ-7: personal effective_role MUST NOT create connectors on org-owned KBs.
     if kb.owner_type == "org" and perms.effective_role == ProfileRole.PERSONAL:
@@ -518,7 +529,9 @@ async def update_connector(
     REQ-02: rows in ``state='deleting'`` are not editable (return 404 to
     avoid leaking lifecycle state).
     """
-    kb = await _get_kb_with_owner_check(kb_slug, perms.user_id, perms.org_id, db)
+    kb = await _get_kb_with_owner_check(
+        kb_slug, perms.user_id, perms.org_id, db, is_platform_admin=perms.is_platform_admin
+    )
     result = await db.execute(
         select(PortalConnector).where(
             PortalConnector.id == connector_id,
@@ -605,7 +618,9 @@ async def delete_connector(
     we revert the state back to ``'active'`` so the user can retry. The
     procrastinate-task itself has its own retry budget once enqueued.
     """
-    kb = await _get_kb_with_owner_check(kb_slug, perms.user_id, perms.org_id, db)
+    kb = await _get_kb_with_owner_check(
+        kb_slug, perms.user_id, perms.org_id, db, is_platform_admin=perms.is_platform_admin
+    )
     # REQ-02: only ``state='active'`` rows are addressable by user routes.
     result = await db.execute(
         select(PortalConnector).where(
@@ -674,7 +689,9 @@ async def trigger_sync(
     SyncRun immediately; sync runs in the background.
     """
     org = await _load_org_or_500(db, perms.org_id)
-    kb = await _get_kb_with_owner_check(kb_slug, perms.user_id, perms.org_id, db)
+    kb = await _get_kb_with_owner_check(
+        kb_slug, perms.user_id, perms.org_id, db, is_platform_admin=perms.is_platform_admin
+    )
     # REQ-02.3: rows in 'deleting' state are owned by the purge worker.
     # Trigger-sync would race the cleanup; reject with 404 (do not leak
     # the lifecycle state via 409 — see "never leak existence" in
