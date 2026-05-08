@@ -52,7 +52,10 @@ async def _purge_once() -> dict[str, int]:
                 text("DELETE FROM telemetry.query_shadow WHERE created_at < :cutoff"),
                 {"cutoff": cutoff},
             )
-            counts["query_shadow"] = (result.rowcount or 0) if hasattr(result, "rowcount") else 0  # type: ignore[attr-defined]
+            # SQLAlchemy's stub does not expose ``rowcount`` on ``Result``,
+            # but every DELETE/UPDATE result carries it at runtime — see
+            # https://docs.sqlalchemy.org/en/20/core/connections.html#sqlalchemy.engine.CursorResult.rowcount
+            counts["query_shadow"] = result.rowcount or 0  # type: ignore[attr-defined]
         except Exception:
             logger.warning("telemetry_purge_query_shadow_failed", exc_info=True)
 
@@ -71,7 +74,7 @@ async def _purge_once() -> dict[str, int]:
                 ),
                 {"cutoff": cutoff},
             )
-            counts["retrieval_gaps"] = (result.rowcount or 0) if hasattr(result, "rowcount") else 0  # type: ignore[attr-defined]
+            counts["retrieval_gaps"] = result.rowcount or 0  # type: ignore[attr-defined]
         except Exception:
             logger.warning("telemetry_purge_retrieval_gaps_failed", exc_info=True)
 
