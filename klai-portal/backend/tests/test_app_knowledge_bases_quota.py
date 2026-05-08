@@ -9,7 +9,7 @@ Covers:
 - Org KB create succeeds for complete plan
 
 These are integration tests against the FastAPI route handler, using mocked DB
-and mocked _get_caller_org. They test that the quota hooks are wired correctly
+and mocked _load_org_or_500. They test that the quota hooks are wired correctly
 in create_app_knowledge_base.
 """
 
@@ -17,6 +17,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+
+from tests.conftest import make_perms
 
 
 def _make_db_mock() -> AsyncMock:
@@ -34,12 +36,6 @@ def _make_org(plan: str = "core") -> MagicMock:
     return org
 
 
-def _make_caller() -> MagicMock:
-    caller = MagicMock()
-    caller.role = "kb_manager"
-    return caller
-
-
 class TestCreateKBPersonalQuota:
     """create_app_knowledge_base enforces personal KB quota for owner_type='user'."""
 
@@ -49,9 +45,7 @@ class TestCreateKBPersonalQuota:
         from app.api.app_knowledge_bases import create_app_knowledge_base
 
         mock_db = _make_db_mock()
-        mock_credentials = MagicMock()
         org = _make_org("core")
-        caller = _make_caller()
 
         # KB count query: at limit
         mock_count_result = MagicMock()
@@ -68,16 +62,11 @@ class TestCreateKBPersonalQuota:
         body.default_org_role = "viewer"
         body.initial_members = None
 
-        with (
-            patch(
-                "app.api.app_knowledge_bases._get_caller_org",
-                return_value=("user-core", org, caller),
-            ),
-        ):
+        with patch("app.api.app_knowledge_bases._load_org_or_500", return_value=org):
             with pytest.raises(HTTPException) as exc_info:
                 await create_app_knowledge_base(
                     body=body,
-                    credentials=mock_credentials,
+                    perms=make_perms(user_id="user-core", plan="core", role="kb_manager"),
                     db=mock_db,
                 )
 
@@ -90,9 +79,7 @@ class TestCreateKBPersonalQuota:
         from app.api.app_knowledge_bases import create_app_knowledge_base
 
         mock_db = _make_db_mock()
-        mock_credentials = MagicMock()
         org = _make_org("core")
-        caller = _make_caller()
 
         mock_count_result = MagicMock()
         mock_count_result.scalar_one.return_value = 8  # above limit
@@ -108,14 +95,11 @@ class TestCreateKBPersonalQuota:
         body.default_org_role = "viewer"
         body.initial_members = None
 
-        with patch(
-            "app.api.app_knowledge_bases._get_caller_org",
-            return_value=("user-core", org, caller),
-        ):
+        with patch("app.api.app_knowledge_bases._load_org_or_500", return_value=org):
             with pytest.raises(HTTPException) as exc_info:
                 await create_app_knowledge_base(
                     body=body,
-                    credentials=mock_credentials,
+                    perms=make_perms(user_id="user-core", plan="core", role="kb_manager"),
                     db=mock_db,
                 )
 
@@ -132,9 +116,7 @@ class TestCreateKBOrgQuota:
         from app.api.app_knowledge_bases import create_app_knowledge_base
 
         mock_db = _make_db_mock()
-        mock_credentials = MagicMock()
         org = _make_org("core")
-        caller = _make_caller()
 
         body = MagicMock()
         body.owner_type = "org"
@@ -146,14 +128,11 @@ class TestCreateKBOrgQuota:
         body.default_org_role = "viewer"
         body.initial_members = None
 
-        with patch(
-            "app.api.app_knowledge_bases._get_caller_org",
-            return_value=("user-core", org, caller),
-        ):
+        with patch("app.api.app_knowledge_bases._load_org_or_500", return_value=org):
             with pytest.raises(HTTPException) as exc_info:
                 await create_app_knowledge_base(
                     body=body,
-                    credentials=mock_credentials,
+                    perms=make_perms(user_id="user-core", plan="core", role="kb_manager"),
                     db=mock_db,
                 )
 
@@ -165,9 +144,7 @@ class TestCreateKBOrgQuota:
         from app.api.app_knowledge_bases import create_app_knowledge_base
 
         mock_db = _make_db_mock()
-        mock_credentials = MagicMock()
         org = _make_org("professional")
-        caller = _make_caller()
 
         body = MagicMock()
         body.owner_type = "org"
@@ -179,14 +156,11 @@ class TestCreateKBOrgQuota:
         body.default_org_role = "viewer"
         body.initial_members = None
 
-        with patch(
-            "app.api.app_knowledge_bases._get_caller_org",
-            return_value=("user-pro", org, caller),
-        ):
+        with patch("app.api.app_knowledge_bases._load_org_or_500", return_value=org):
             with pytest.raises(HTTPException) as exc_info:
                 await create_app_knowledge_base(
                     body=body,
-                    credentials=mock_credentials,
+                    perms=make_perms(user_id="user-pro", plan="professional", role="kb_manager"),
                     db=mock_db,
                 )
 
@@ -199,9 +173,7 @@ class TestCreateKBOrgQuota:
         from app.api.app_knowledge_bases import create_app_knowledge_base
 
         mock_db = _make_db_mock()
-        mock_credentials = MagicMock()
         org = _make_org("complete")
-        caller = _make_caller()
 
         mock_kb = MagicMock()
         mock_kb.id = 1
@@ -228,10 +200,7 @@ class TestCreateKBOrgQuota:
         body.initial_members = None
 
         with (
-            patch(
-                "app.api.app_knowledge_bases._get_caller_org",
-                return_value=("user-complete", org, caller),
-            ),
+            patch("app.api.app_knowledge_bases._load_org_or_500", return_value=org),
             patch(
                 "app.api.app_knowledge_bases.docs_client.provision_and_store",
                 return_value=None,
@@ -252,7 +221,7 @@ class TestCreateKBOrgQuota:
             try:
                 await create_app_knowledge_base(
                     body=body,
-                    credentials=mock_credentials,
+                    perms=make_perms(user_id="user-complete", plan="complete", role="kb_manager"),
                     db=mock_db,
                 )
             except HTTPException as exc:
