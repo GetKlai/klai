@@ -95,6 +95,21 @@ KLAI_OAUTH_TOKEN_URL = os.getenv("KLAI_OAUTH_TOKEN_URL", "")
 KLAI_LITELLM_CLIENT_ID = os.getenv("KLAI_LITELLM_CLIENT_ID", "")
 KLAI_LITELLM_CLIENT_SECRET = os.getenv("KLAI_LITELLM_CLIENT_SECRET", "")
 
+
+def _sanitize_upstream_body(body: str, *, max_len: int = 200) -> str:
+    """Redact local service secrets before logging an upstream error body."""
+    if not body:
+        return ""
+    safe = body
+    secret_values = (
+        PORTAL_INTERNAL_SECRET,
+        RETRIEVAL_INTERNAL_SECRET,
+        KLAI_LITELLM_CLIENT_SECRET,
+    )
+    for secret in sorted({s for s in secret_values if len(s) >= 8}, key=len, reverse=True):
+        safe = safe.replace(secret, "<redacted>")
+    return safe[:max_len]
+
 # Lazy-built ZitadelTokenClient instance. None when env vars are missing —
 # the retrieve call site handles that by falling back to the legacy
 # X-Internal-Secret path (Phase C-1 REQ-5 safe rollout).
@@ -1353,11 +1368,10 @@ class KlaiKnowledgeHook(CustomLogger):
             # caller-service-header regression in production for 7 days.
             # @MX:REASON: SPEC-SEC-IDENTITY-ASSERT-001 Phase D + the
             # `retrieve-caller-service-header-mismatch` pitfall.
-            body_snippet = ""
-            try:
-                body_snippet = exc.response.text[:200]
-            except Exception:
-                pass
+            body_snippet = _sanitize_upstream_body(
+                getattr(exc.response, "text", ""),
+                max_len=200,
+            )
             logger.error(
                 "KlaiKnowledgeHook: retrieval HTTP %d — body=%r — failing loud",
                 exc.response.status_code,

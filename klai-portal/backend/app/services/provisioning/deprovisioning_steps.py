@@ -32,6 +32,7 @@ from app.services.provisioning.infrastructure import (
     _sync_drop_mongodb_tenant_user,
     _sync_remove_container,
 )
+from app.utils.response_sanitizer import sanitize_response_body
 
 if TYPE_CHECKING:
     from app.services.provisioning.deprovisioning_orchestrator import _DeprovisionState
@@ -416,7 +417,7 @@ async def _wipe_knowledge_postgres(state: _DeprovisionState) -> None:
                 zitadel_org_id=state.zitadel_org_id,
                 slug=state.slug,
                 status=resp.status_code,
-                body=resp.text[:500],
+                body=sanitize_response_body(resp, max_len=500),
             )
         resp.raise_for_status()
         data = resp.json()
@@ -491,7 +492,7 @@ async def _wipe_klai_connector_state(state: _DeprovisionState) -> None:
                 zitadel_org_id=state.zitadel_org_id,
                 slug=state.slug,
                 status=resp.status_code,
-                body=resp.text[:500],
+                body=sanitize_response_body(resp, max_len=500),
             )
         resp.raise_for_status()
         data = resp.json()
