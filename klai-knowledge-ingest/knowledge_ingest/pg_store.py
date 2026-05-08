@@ -1030,3 +1030,228 @@ async def delete_parent_chunks_for_artifact(conn: asyncpg.Connection, artifact_i
         return int(result.split()[-1])
     except Exception:
         return 0
+
+
+# ---------------------------------------------------------------------------
+# SPEC-PORTAL-KENNIS-001 — Bronnen aggregation queries
+# ---------------------------------------------------------------------------
+# These helpers power the "alles is een bron" UI: one row per connector
+# (aggregating its artifacts + chunks) and one row per direct upload
+# (artifact without source_connector_id).
+#
+# All queries scope on (org_id, kb_slug) and only read active rows
+# (belief_time_end = _SENTINEL). Callers must use ``tenant_scoped_connection``.
+
+
+async def count_chunks_per_kb(
+    conn: asyncpg.Connection, org_id: str, kb_slugs: list[str]
+) -> dict[str, int]:
+    """Return ``{kb_slug: chunk_count}`` for active artifacts across the slugs.
+
+    Used by the portal stats-summary endpoint to show "M chunks" per KB
+    without joining at the application layer. Empty input → empty dict.
+    """
+    if not kb_slugs:
+        return {}
+    rows = await conn.fetch(
+        """
+        SELECT a.kb_slug AS kb_slug, COUNT(pc.id) AS chunk_count
+        FROM knowledge.artifacts a
+        LEFT JOIN knowledge.parent_chunks pc ON pc.artifact_id = a.id
+        WHERE a.org_id = $1
+          AND a.kb_slug = ANY($2::text[])
+          AND a.belief_time_end = $3
+        GROUP BY a.kb_slug
+        """,
+        org_id,
+        kb_slugs,
+        _SENTINEL,
+    )
+    return {row["kb_slug"]: int(row["chunk_count"] or 0) for row in rows}
+
+
+async def list_kb_sources(
+    conn: asyncpg.Connection, org_id: str, kb_slug: str
+) -> dict[str, list[dict]]:
+    """List all bronnen for a KB, grouped by kind.
+
+    Returns ``{"connectors": [...], "uploads": [...]}`` where:
+      - connectors: one row per distinct ``source_connector_id`` found in
+        artifacts.extra, with aggregate item_count + chunks_count
+      - uploads: one row per artifact whose ``source_connector_id`` is null
+        (direct file/url/text/image uploads), with chunks_count
+
+    The portal-api caller enriches the connectors list with display name,
+    sync status, and last_sync_at from the portal-side ``connectors`` table.
+    Knowledge-ingest does NOT know connector display metadata.
+    """
+    # Connectors: one row per source_connector_id, with aggregate counts
+    connector_rows = await conn.fetch(
+        """
+        SELECT
+            a.extra::jsonb->>'source_connector_id' AS connector_id,
+            COUNT(DISTINCT a.id) AS items_count,
+            COUNT(pc.id) AS chunks_count
+        FROM knowledge.artifacts a
+        LEFT JOIN knowledge.parent_chunks pc ON pc.artifact_id = a.id
+        WHERE a.org_id = $1
+          AND a.kb_slug = $2
+          AND a.belief_time_end = $3
+          AND a.extra::jsonb->>'source_connector_id' IS NOT NULL
+        GROUP BY a.extra::jsonb->>'source_connector_id'
+        """,
+        org_id,
+        kb_slug,
+        _SENTINEL,
+    )
+    connectors = [
+        {
+            "connector_id": row["connector_id"],
+            "items_count": int(row["items_count"] or 0),
+            "chunks_count": int(row["chunks_count"] or 0),
+        }
+        for row in connector_rows
+    ]
+
+    # Direct uploads: one row per artifact without source_connector_id
+    upload_rows = await conn.fetch(
+        """
+        SELECT
+            a.id::text AS id,
+            a.path AS path,
+            a.content_type AS content_type,
+            a.created_at AS created_at,
+            COUNT(pc.id) AS chunks_count
+        FROM knowledge.artifacts a
+        LEFT JOIN knowledge.parent_chunks pc ON pc.artifact_id = a.id
+        WHERE a.org_id = $1
+          AND a.kb_slug = $2
+          AND a.belief_time_end = $3
+          AND (a.extra IS NULL OR a.extra::jsonb->>'source_connector_id' IS NULL)
+        GROUP BY a.id, a.path, a.content_type, a.created_at
+        ORDER BY a.created_at DESC
+        """,
+        org_id,
+        kb_slug,
+        _SENTINEL,
+    )
+    uploads = [
+        {
+            "id": row["id"],
+            "path": row["path"],
+            "content_type": row["content_type"],
+            "created_at": int(row["created_at"]),
+            "chunks_count": int(row["chunks_count"] or 0),
+        }
+        for row in upload_rows
+    ]
+
+    return {"connectors": connectors, "uploads": uploads}
+
+
+async def list_artifacts_for_connector(
+    conn: asyncpg.Connection,
+    org_id: str,
+    kb_slug: str,
+    connector_id: str,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[dict], int]:
+    """List active artifacts under a connector with chunk counts. Returns ``(rows, total)``."""
+    rows = await conn.fetch(
+        """
+        SELECT
+            a.id::text AS id,
+            a.path AS path,
+            a.content_type AS content_type,
+            a.created_at AS created_at,
+            COUNT(pc.id) AS chunks_count
+        FROM knowledge.artifacts a
+        LEFT JOIN knowledge.parent_chunks pc ON pc.artifact_id = a.id
+        WHERE a.org_id = $1
+          AND a.kb_slug = $2
+          AND a.belief_time_end = $3
+          AND a.extra::jsonb->>'source_connector_id' = $4
+        GROUP BY a.id, a.path, a.content_type, a.created_at
+        ORDER BY a.created_at DESC
+        LIMIT $5 OFFSET $6
+        """,
+        org_id,
+        kb_slug,
+        _SENTINEL,
+        connector_id,
+        limit,
+        offset,
+    )
+    total = await conn.fetchval(
+        """
+        SELECT COUNT(*)
+        FROM knowledge.artifacts
+        WHERE org_id = $1
+          AND kb_slug = $2
+          AND belief_time_end = $3
+          AND extra::jsonb->>'source_connector_id' = $4
+        """,
+        org_id,
+        kb_slug,
+        _SENTINEL,
+        connector_id,
+    )
+    items = [
+        {
+            "id": row["id"],
+            "path": row["path"],
+            "content_type": row["content_type"],
+            "created_at": int(row["created_at"]),
+            "chunks_count": int(row["chunks_count"] or 0),
+        }
+        for row in rows
+    ]
+    return items, int(total or 0)
+
+
+async def list_chunks_for_artifact(
+    conn: asyncpg.Connection,
+    org_id: str,
+    artifact_id: str,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[dict], int]:
+    """List parent_chunks for an artifact (drill-down on direct uploads).
+
+    The org_id check is done via ``parent_chunks.org_id`` directly — RLS
+    pinning via ``tenant_scoped_connection`` is the primary guard but this
+    keeps the query explicit. Returns ``(rows, total)``.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT id, "position", text, token_count
+        FROM knowledge.parent_chunks
+        WHERE artifact_id = $1 AND org_id = $2
+        ORDER BY "position" ASC
+        LIMIT $3 OFFSET $4
+        """,
+        artifact_id,
+        org_id,
+        limit,
+        offset,
+    )
+    total = await conn.fetchval(
+        """
+        SELECT COUNT(*)
+        FROM knowledge.parent_chunks
+        WHERE artifact_id = $1 AND org_id = $2
+        """,
+        artifact_id,
+        org_id,
+    )
+    chunks = [
+        {
+            "id": int(row["id"]),
+            "position": int(row["position"]),
+            "text": row["text"],
+            "token_count": int(row["token_count"]),
+        }
+        for row in rows
+    ]
+    return chunks, int(total or 0)
