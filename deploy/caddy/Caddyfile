@@ -387,12 +387,29 @@
         }
     }
 
-    # SEC-023 / F-038 — Scribe/Docs are no longer publicly routed.
-    # Frontend calls /api/scribe/*, /api/docs/* which hit the BFF proxy in
-    # portal-api (app/api/proxy.py). That handler pulls the Zitadel
-    # access_token from the BFF session and forwards to the internal service
-    # with Authorization: Bearer injected. The services listen only on the
-    # klai-net Docker network now — no Caddy exposure.
+    # Public Klai Docs reader. The editor/API remains behind portal-api's BFF
+    # at /api/docs/*; do not expose docs-app's /docs/api/* directly.
+    @docs-api path /docs/api/*
+    handle @docs-api {
+        respond 404
+    }
+
+    @docs-reader path /docs /docs/*
+    handle @docs-reader {
+        reverse_proxy docs-app:3010 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-Org-Slug
+            header_up -X-User-ID
+        }
+    }
+
+    # SEC-023 / F-038 — Scribe remains non-publicly routed.
+    # Frontend calls /api/scribe/* and authenticated docs editor calls use
+    # /api/docs/*, which hit the BFF proxy in portal-api (app/api/proxy.py).
+    # That handler pulls the Zitadel access_token from the BFF session and
+    # forwards to the internal service with Authorization: Bearer injected.
 
     # Vexa meeting bot gateway (SEC-013 F-030 — fix dead route from VEXA-003 migration)
     # Route maps /bots/<path> → api-gateway:8000/<path>. The old `vexa-bot-manager`
