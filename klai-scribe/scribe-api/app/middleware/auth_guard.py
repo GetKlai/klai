@@ -3,7 +3,7 @@ SPEC-SEC-004: Defense-in-depth auth guard middleware for scribe-api.
 
 Every request (except explicitly exempt paths) MUST carry an Authorization
 Bearer header. Actual token validation still happens per-route via
-`Depends(get_current_user_id)` — this middleware is a safety net that
+`Depends(get_authenticated_caller)` — this middleware is a safety net that
 rejects requests with a missing header *before* the route handler runs.
 """
 
@@ -30,7 +30,7 @@ _EXEMPT_PREFIXES: tuple[str, ...] = (
 class AuthGuardMiddleware(BaseHTTPMiddleware):
     """Reject any request without an Authorization header early.
 
-    Token validity is verified downstream by `get_current_user_id`. This
+    Token validity is verified downstream by `get_authenticated_caller`. This
     guard only checks for *presence* of the header.
     """
 

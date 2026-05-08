@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import ClassVar
 
 from sqlalchemy import JSON, NUMERIC, TEXT, TIMESTAMP, VARCHAR, Column
 from sqlalchemy.orm import DeclarativeBase
@@ -10,10 +11,11 @@ class Base(DeclarativeBase):
 
 class Transcription(Base):
     __tablename__ = "transcriptions"
-    __table_args__ = {"schema": "scribe"}
+    __table_args__: ClassVar[dict[str, str]] = {"schema": "scribe"}
 
     id = Column(VARCHAR(64), primary_key=True)
     user_id = Column(VARCHAR(128), nullable=False, index=True)
+    org_id = Column(VARCHAR(128), nullable=False, index=True)
     name = Column(VARCHAR(255), nullable=True)
     status = Column(VARCHAR(16), nullable=False, default="transcribed")
     audio_path = Column(VARCHAR(512), nullable=True)

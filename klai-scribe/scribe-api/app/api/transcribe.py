@@ -13,7 +13,7 @@ Transcription API endpoints:
 import asyncio
 import logging
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 
 import httpx
@@ -22,12 +22,11 @@ from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import CallerIdentity, get_authenticated_caller, get_current_user_id
+from app.core.auth import CallerIdentity, get_authenticated_caller
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.transcription import Transcription
 from app.services import summarizer
-from app.services.audio import normalize_audio
 from app.services.audio_storage import (
     delete_audio,
     finalize_success,
@@ -39,6 +38,14 @@ from app.services.providers import get_provider
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["transcription"])
+_UPLOAD_FILE = File(...)
+_LANGUAGE_FORM = Form(default=None)
+_CALLER = Depends(get_authenticated_caller)
+_DB = Depends(get_db)
+_RETRY_LANGUAGE = Query(default=None)
+_LIST_LIMIT = Query(default=20, ge=1, le=100)
+_LIST_OFFSET = Query(default=0, ge=0)
+_FORCE_SUMMARY = Query(default=False)
 
 
 # -- Response models -----------------------------------------------------------
@@ -95,6 +102,13 @@ class SummarizeResponse(BaseModel):
 # app.services.audio_storage — see that module for the retention policy.
 
 
+def normalize_audio(raw: bytes, filename: str) -> bytes:
+    """Lazy wrapper so importing API schemas does not require libmagic."""
+    from app.services.audio import normalize_audio as _normalize_audio
+
+    return _normalize_audio(raw, filename)
+
+
 def _title_from_text(text: str | None, max_words: int = 8) -> str | None:
     """Generate a short title from the first words of a transcription."""
     if not text:
@@ -114,9 +128,30 @@ def _to_response(record: Transcription) -> TranscriptionResponse:
         text=record.text,
         language=record.language,
         duration_seconds=float(record.duration_seconds) if record.duration_seconds else None,
-        inference_time_seconds=float(record.inference_time_seconds) if record.inference_time_seconds else None,
+        inference_time_seconds=(
+            float(record.inference_time_seconds)
+            if record.inference_time_seconds
+            else None
+        ),
         summary_json=record.summary_json,
         created_at=record.created_at,
+    )
+
+
+def _owned_transcription_filters(txn_id: str, caller: CallerIdentity):
+    """Return the ownership + tenant predicates for a single transcription."""
+    return (
+        Transcription.id == txn_id,
+        Transcription.user_id == caller.user_id,
+        Transcription.org_id == caller.org_id,
+    )
+
+
+def _caller_transcription_filters(caller: CallerIdentity):
+    """Return the tenant-scoped collection predicates for a caller."""
+    return (
+        Transcription.user_id == caller.user_id,
+        Transcription.org_id == caller.org_id,
     )
 
 
@@ -124,10 +159,10 @@ def _to_response(record: Transcription) -> TranscriptionResponse:
 
 @router.post("/transcribe", response_model=TranscriptionResponse, status_code=201)
 async def transcribe(
-    file: UploadFile = File(...),
-    language: str | None = Form(default=None),
-    user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
+    file: UploadFile = _UPLOAD_FILE,
+    language: str | None = _LANGUAGE_FORM,
+    caller: CallerIdentity = _CALLER,
+    db: AsyncSession = _DB,
 ) -> TranscriptionResponse:
     """Upload audio, persist to disk, attempt transcription.
 
@@ -150,11 +185,11 @@ async def transcribe(
     # Generate ID and save audio to disk FIRST.
     # SPEC-SEC-HYGIENE-001 REQ-33.1: `_safe_audio_path` raises ValueError on
     # malformed user_id / txn_id. With HY-34 in place upstream this is purely
-    # defense-in-depth (auth.get_current_user_id already rejects malformed
+    # defense-in-depth (auth.get_authenticated_caller already rejects malformed
     # sub), but the SPEC asks the caller to map ValueError → 400.
     txn_id = "txn_" + uuid.uuid4().hex
     try:
-        audio_path = await loop.run_in_executor(None, save_audio, user_id, txn_id, wav_bytes)
+        audio_path = await loop.run_in_executor(None, save_audio, caller.user_id, txn_id, wav_bytes)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -164,11 +199,12 @@ async def transcribe(
     # Create DB record with status=processing
     record = Transcription(
         id=txn_id,
-        user_id=user_id,
+        user_id=caller.user_id,
+        org_id=caller.org_id,
         name=filename if filename != "upload" else None,
         status="processing",
         audio_path=audio_path,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(UTC),
     )
     db.add(record)
     await db.commit()
@@ -212,20 +248,20 @@ async def transcribe(
 @router.post("/transcriptions/{txn_id}/retry", response_model=TranscriptionResponse)
 async def retry_transcription(
     txn_id: str,
-    language: str | None = Query(default=None),
-    user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
+    language: str | None = _RETRY_LANGUAGE,
+    caller: CallerIdentity = _CALLER,
+    db: AsyncSession = _DB,
 ) -> TranscriptionResponse:
     """Retry transcription for a failed record using the preserved audio file."""
     result = await db.execute(
-        select(Transcription).where(
-            Transcription.id == txn_id,
-            Transcription.user_id == user_id,
-        )
+        select(Transcription).where(*_owned_transcription_filters(txn_id, caller))
     )
     record = result.scalar_one_or_none()
     if record is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transcript niet gevonden")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Transcript niet gevonden",
+        )
 
     if record.status not in ("failed", "processing"):
         raise HTTPException(
@@ -273,19 +309,19 @@ async def retry_transcription(
 
 @router.get("/transcriptions", response_model=TranscriptionListResponse)
 async def list_transcriptions(
-    limit: int = Query(default=20, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
-    user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
+    limit: int = _LIST_LIMIT,
+    offset: int = _LIST_OFFSET,
+    caller: CallerIdentity = _CALLER,
+    db: AsyncSession = _DB,
 ) -> TranscriptionListResponse:
     total_result = await db.execute(
-        select(func.count()).select_from(Transcription).where(Transcription.user_id == user_id)
+        select(func.count()).select_from(Transcription).where(*_caller_transcription_filters(caller))
     )
     total = total_result.scalar_one()
 
     rows = await db.execute(
         select(Transcription)
-        .where(Transcription.user_id == user_id)
+        .where(*_caller_transcription_filters(caller))
         .order_by(Transcription.created_at.desc())
         .limit(limit)
         .offset(offset)
@@ -315,18 +351,18 @@ async def list_transcriptions(
 @router.get("/transcriptions/{txn_id}", response_model=TranscriptionResponse)
 async def get_transcription(
     txn_id: str,
-    user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
+    caller: CallerIdentity = _CALLER,
+    db: AsyncSession = _DB,
 ) -> TranscriptionResponse:
     result = await db.execute(
-        select(Transcription).where(
-            Transcription.id == txn_id,
-            Transcription.user_id == user_id,
-        )
+        select(Transcription).where(*_owned_transcription_filters(txn_id, caller))
     )
     record = result.scalar_one_or_none()
     if record is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transcript niet gevonden")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Transcript niet gevonden",
+        )
 
     return _to_response(record)
 
@@ -337,19 +373,19 @@ async def get_transcription(
 async def patch_transcription(
     txn_id: str,
     body: TranscriptionPatch,
-    user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
+    caller: CallerIdentity = _CALLER,
+    db: AsyncSession = _DB,
 ) -> TranscriptionResponse:
     """Update the name of a transcription."""
     result = await db.execute(
-        select(Transcription).where(
-            Transcription.id == txn_id,
-            Transcription.user_id == user_id,
-        )
+        select(Transcription).where(*_owned_transcription_filters(txn_id, caller))
     )
     record = result.scalar_one_or_none()
     if record is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transcript niet gevonden")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Transcript niet gevonden",
+        )
 
     record.name = body.name
     await db.commit()
@@ -363,27 +399,24 @@ async def patch_transcription(
 @router.delete("/transcriptions/{txn_id}", status_code=204)
 async def delete_transcription(
     txn_id: str,
-    user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
+    caller: CallerIdentity = _CALLER,
+    db: AsyncSession = _DB,
 ) -> None:
     result = await db.execute(
-        select(Transcription).where(
-            Transcription.id == txn_id,
-            Transcription.user_id == user_id,
-        )
+        select(Transcription).where(*_owned_transcription_filters(txn_id, caller))
     )
     record = result.scalar_one_or_none()
     if record is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transcript niet gevonden")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Transcript niet gevonden",
+        )
 
     # Clean up audio file (legacy records that still have audio at time of delete)
     delete_audio(record.audio_path)
 
     await db.execute(
-        delete(Transcription).where(
-            Transcription.id == txn_id,
-            Transcription.user_id == user_id,
-        )
+        delete(Transcription).where(*_owned_transcription_filters(txn_id, caller))
     )
     await db.commit()
 
@@ -394,20 +427,20 @@ async def delete_transcription(
 async def summarize_transcription(
     txn_id: str,
     body: SummarizeRequest,
-    force: bool = Query(default=False),
-    user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
+    force: bool = _FORCE_SUMMARY,
+    caller: CallerIdentity = _CALLER,
+    db: AsyncSession = _DB,
 ) -> SummarizeResponse:
     """Generate an AI summary for a transcription."""
     result = await db.execute(
-        select(Transcription).where(
-            Transcription.id == txn_id,
-            Transcription.user_id == user_id,
-        )
+        select(Transcription).where(*_owned_transcription_filters(txn_id, caller))
     )
     record = result.scalar_one_or_none()
     if record is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transcript niet gevonden")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Transcript niet gevonden",
+        )
 
     if not record.text or not record.text.strip():
         raise HTTPException(
@@ -445,10 +478,9 @@ class IngestToKBRequest(BaseModel):
     """Body schema for transcription-to-KB ingest.
 
     SPEC-SEC-IDENTITY-ASSERT-001 REQ-3.1: ``org_id`` was removed. The
-    target tenant is derived from the authenticated user's JWT
-    ``resourceowner`` claim (see ``get_authenticated_caller``) — a body
-    field would let any caller with a valid JWT push into any org's KB
-    (the S1 finding in spec.md).
+    target tenant is derived from portal-verified caller identity (see
+    ``get_authenticated_caller``) — a body field would let any caller with a
+    valid JWT push into any org's KB (the S1 finding in spec.md).
     """
 
     kb_slug: str
@@ -463,22 +495,19 @@ class IngestToKBResponse(BaseModel):
 async def ingest_transcription_to_kb(
     txn_id: str,
     body: IngestToKBRequest,
-    caller: CallerIdentity = Depends(get_authenticated_caller),
-    db: AsyncSession = Depends(get_db),
+    caller: CallerIdentity = _CALLER,
+    db: AsyncSession = _DB,
 ) -> IngestToKBResponse:
     """Add a transcription to the authenticated user's primary-org KB.
 
-    Tenant identity (``org_id``) is sourced from the JWT's resourceowner
-    claim — never from the request body. Transcription ownership is still
-    enforced by ``Transcription.user_id == caller.user_id``.
+    Tenant identity is sourced from portal-verified caller identity — never
+    from the request body. Transcription ownership is enforced by both
+    ``Transcription.user_id`` and ``Transcription.org_id``.
     """
     from app.services.knowledge_adapter import ingest_scribe_transcript
 
     result = await db.execute(
-        select(Transcription).where(
-            Transcription.id == txn_id,
-            Transcription.user_id == caller.user_id,
-        )
+        select(Transcription).where(*_owned_transcription_filters(txn_id, caller))
     )
     record = result.scalar_one_or_none()
     if record is None:
