@@ -25,6 +25,24 @@ BillingCycle = Literal["monthly", "yearly"]
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 
 
+async def _load_org_or_500(db: AsyncSession, org_id: int) -> PortalOrg:
+    """Fetch the caller's PortalOrg row.
+
+    UserPermissions only carries `org_id` / `org_slug` / `plan` / `enabled_addons` /
+    `platform_unlocked_features`. Billing endpoints need other PortalOrg fields
+    (moneybird_*, billing_*, name) and re-fetch the row through this helper.
+    The tenant GUC is already set by `get_caller`, so RLS on portal_orgs is fine.
+    Mirrors `app/api/admin/settings.py::_load_org_or_500`.
+    """
+    org = await db.get(PortalOrg, org_id)
+    if org is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Organisation row vanished",
+        )
+    return org
+
+
 async def get_moneybird() -> AsyncIterator[MoneybirdService]:
     svc = MoneybirdService(settings)
     try:
@@ -58,7 +76,7 @@ async def create_mandate(
     db: AsyncSession = Depends(get_db),
     moneybird: MoneybirdService = Depends(get_moneybird),
 ) -> dict:
-    org = await db.get(PortalOrg, perms.org_id)
+    org = await _load_org_or_500(db, perms.org_id)
 
     if settings.mock_billing:
         if not org.moneybird_contact_id:
@@ -146,7 +164,7 @@ async def mock_complete(
     if not settings.mock_billing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     # Require authentication — prevent unauthenticated org activation
-    org = await db.get(PortalOrg, perms.org_id)
+    org = await _load_org_or_500(db, perms.org_id)
     if perms.org_id != org_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
     org.billing_status = "active"
@@ -160,7 +178,7 @@ async def billing_status(
     perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    org = await db.get(PortalOrg, perms.org_id)
+    org = await _load_org_or_500(db, perms.org_id)
     return {
         "billing_status": org.billing_status,
         "plan": org.plan,
@@ -176,7 +194,7 @@ async def invoice_portal(
     db: AsyncSession = Depends(get_db),
     moneybird: MoneybirdService = Depends(get_moneybird),
 ) -> dict:
-    org = await db.get(PortalOrg, perms.org_id)
+    org = await _load_org_or_500(db, perms.org_id)
 
     if not org.moneybird_contact_id:
         raise HTTPException(
@@ -202,7 +220,7 @@ async def cancel_subscription(
     db: AsyncSession = Depends(get_db),
     moneybird: MoneybirdService = Depends(get_moneybird),
 ) -> dict:
-    org = await db.get(PortalOrg, perms.org_id)
+    org = await _load_org_or_500(db, perms.org_id)
 
     if not org.moneybird_subscription_id:
         raise HTTPException(
