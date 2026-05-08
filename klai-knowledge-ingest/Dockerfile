@@ -34,6 +34,9 @@ COPY --chown=app:app klai-knowledge-ingest/knowledge_ingest knowledge_ingest
 # SPEC-INGEST-ALEMBIC-001: alembic migration definitions
 COPY --chown=app:app klai-knowledge-ingest/alembic alembic
 COPY --chown=app:app klai-knowledge-ingest/alembic.ini alembic.ini
+# Operator scripts (e.g. backfill_entity_names.py) — runnable inside the
+# container via `docker exec ... python scripts/<file>` for one-shot ops.
+COPY --chown=app:app klai-knowledge-ingest/scripts scripts
 # SPEC-INGEST-ALEMBIC-001: entrypoint runs alembic upgrade head before uvicorn
 COPY --chown=app:app klai-knowledge-ingest/entrypoint.sh entrypoint.sh
 RUN chmod +x /repo/klai-knowledge-ingest/entrypoint.sh
