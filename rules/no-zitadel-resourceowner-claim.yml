@@ -1,0 +1,52 @@
+# SPEC-SEC-IDENTITY-ASSERT-002 REQ-5.2 — block reintroduction of the
+# urn:zitadel:iam:user:resourceowner:id JWT claim in production code.
+#
+# Why: per .claude/rules/klai/platform/zitadel.md:99-100 the claim is not
+# always present in Klai access tokens (the BFF never requests the scope
+# that emits it). Any auth/authz path that reads it inherits a latent
+# bug: it works for users whose IdP happens to emit the claim and
+# silently fails for everyone else. The authoritative org-resolution
+# pattern is sub → portal_users → portal_orgs.
+#
+# This rule pattern-matches the literal claim string. Comments and
+# documentation that *reference* the claim by name (to explain why we
+# don't use it) live in test files, the SPEC document, and the
+# zitadel.md rule — all on the allow-list below.
+
+id: no-zitadel-resourceowner-claim
+language: python
+severity: error
+message: |
+  urn:zitadel:iam:user:resourceowner:id is unreliable (the BFF never
+  requests the scope that emits it). Per SPEC-SEC-IDENTITY-ASSERT-002
+  resolve org via portal_users + portal_orgs join keyed on
+  zitadel_user_id (the OIDC sub). See
+  .claude/rules/klai/platform/zitadel.md:99-100 for the canonical pattern.
+
+rule:
+  pattern: '"urn:zitadel:iam:user:resourceowner:id"'
+
+# Apply to services that have been refactored under SPEC-002 to no
+# longer trust the claim. Two services still consume it (legacy direct
+# JWT paths) and are scoped OUT of this rule until a follow-up SPEC
+# refactors them onto the membership-authoritative pattern:
+#
+#   klai-retrieval-api  retrieval_api/middleware/auth.py
+#   klai-connector      app/middleware/auth.py
+#
+# Adding either to `files:` below requires first replacing those
+# call sites with a portal_users-based org resolution (analogous to
+# what SPEC-002 REQ-3 did for scribe and SPEC-002 REQ-5 did for
+# klai-portal/backend/app/api/me.py).
+files:
+  - klai-portal/backend/app/**/*.py
+  - klai-scribe/scribe-api/app/**/*.py
+  - klai-knowledge-mcp/**/*.py
+  - klai-libs/identity-assert/klai_identity_assert/**/*.py
+  - klai-mailer/app/**/*.py
+
+# Test fixtures + regression guards may name the claim string to verify
+# that production code IGNORES it. Keep this list narrow.
+ignores:
+  - "**/tests/**"
+  - "**/test_*.py"

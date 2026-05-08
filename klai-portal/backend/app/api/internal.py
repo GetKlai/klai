@@ -1444,6 +1444,39 @@ def _hash_zitadel_id(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
 
 
+# SPEC-SEC-IDENTITY-ASSERT-002 REQ-6.1: evidence_path is a structlog field
+# that exposes the FULL resolution path used to verify the identity. It
+# is derived from VerifyDecision.evidence so a future split (e.g. a
+# non-membership JWT path) is visible in logs without re-deriving the
+# query plan. Values:
+#
+#   "jwt+membership"   JWT signature + sub-equality + portal_users membership
+#                      (the SPEC-002 default for JWT-bound calls)
+#   "membership"       bearer_jwt=None path; portal_users membership only
+#   "partner_key"      partner:<key_id> claim verified against partner_api_keys
+#   "tenant_only"      service-to-service tenant claim (no end-user)
+_EVIDENCE_PATH_BY_EVIDENCE: dict[str, str] = {
+    "jwt": "jwt+membership",
+    "membership": "membership",
+    "partner_key": "partner_key",
+    "tenant_only": "tenant_only",
+}
+
+
+def _evidence_path(evidence: str | None) -> str:
+    """Map ``VerifyDecision.evidence`` to the public ``evidence_path`` log field.
+
+    Returns ``"unknown"`` if the evidence string is not recognised. That
+    case is impossible per the dataclass contract but the helper keeps
+    the log line populated under a future evidence-type addition that
+    forgets to update this mapping.
+    """
+
+    if evidence is None:
+        return "unknown"
+    return _EVIDENCE_PATH_BY_EVIDENCE.get(evidence, "unknown")
+
+
 _identity_jwks_client: PyJWKClient | None = None
 
 
@@ -1612,6 +1645,7 @@ async def verify_identity(
             claimed_org_id=body.claimed_org_id,
             verified=True,
             evidence=cached.evidence,
+            evidence_path=_evidence_path(cached.evidence),
             cache_hit=True,
         )
         return Response(
@@ -1700,6 +1734,7 @@ async def verify_identity(
         claimed_org_id=body.claimed_org_id,
         verified=True,
         evidence=decision.evidence,
+        evidence_path=_evidence_path(decision.evidence),
         cache_hit=False,
     )
     return Response(

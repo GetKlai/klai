@@ -1925,3 +1925,60 @@ before signing off. A single DRIFT line is the difference between
 "committed and live" and "live until something restarts the container".
 
 Reference: SPEC-MCP-AUTH-001 ops timeline 2026-05-07.
+
+## claim-emission-vs-claim-consumption (HIGH)
+When you design an auth/authz check around a JWT claim, the design is
+not validated until two facts are true: (a) the IdP is configured to
+emit that claim under the scope your code requests, AND (b) a real
+production-traffic test has hit the path and returned a verified=true
+result. Tests with mocked claim payloads pass independently; they do
+not establish either fact.
+
+**Reference incident:** SPEC-SEC-IDENTITY-ASSERT-001 REQ-1.3 enforced
+``jwt.resourceowner == claimed_org_id`` on every JWT-bound
+/internal/identity/verify call. Klai's BFF requests scope
+``openid profile email offline_access``, which per
+https://zitadel.com/docs/apis/openidoauth/scopes does NOT trigger
+emission of ``urn:zitadel:iam:user:resourceowner:id``. The SPEC's
+unit tests built JWTs with the claim baked in, so they passed. In
+production the claim was never present, every JWT-bound call denied
+as ``invalid_jwt``, and the regression went unnoticed for 5 weeks
+until Mark Vletter became the first user to actually use
+``/app/transcribe`` (2026-05-08). Discovered via VictoriaLogs query
+``service:scribe-api AND event:identity_assert_call AND verified:true``
+returning **zero hits in 5+ weeks**.
+
+The fix that landed (SPEC-SEC-IDENTITY-ASSERT-002) made portal_users
+membership the authoritative source and retired the resourceowner
+check entirely.
+
+**Prevention (mechanical):**
+
+1. **Before designing an auth check around a JWT claim:**
+   - Confirm the OIDC scope set you request actually emits the claim.
+     For Zitadel: list the scope in the project's authorize URL and
+     verify against the docs at
+     https://zitadel.com/docs/apis/openidoauth/claims that the claim is
+     in the access token (not only the userinfo response).
+   - Decode a real production access token (not a fixture) and grep
+     the claim. If absent, the design is already wrong.
+
+2. **Add a Grafana alert that catches "verified=true count = 0" for
+   every auth-class endpoint.** A regression that produces 100% denies
+   is invisible without this alert. Pattern:
+   ``service:<svc> AND event:<verify-event> AND verified:true``
+   over 30-minute window during business hours. Threshold > 0.
+
+3. **Apply Klai's own rule.**
+   ``.claude/rules/klai/platform/zitadel.md`` already documents that
+   ``urn:zitadel:iam:user:resourceowner:id`` is not always present
+   (lines 99-100). Any new auth design that contradicts an existing
+   rule MUST justify the deviation in the SPEC.
+
+4. **CI guard against reintroduction.**
+   ``rules/no-zitadel-resourceowner-claim.yml`` (ast-grep) blocks new
+   reads of the claim in refactored services. Extend the rule's
+   ``files:`` glob whenever a new service drops legacy JWT-direct
+   identity paths.
+
+Reference: SPEC-SEC-IDENTITY-ASSERT-002 + ops timeline 2026-05-08.
