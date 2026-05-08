@@ -7,16 +7,16 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.security import HTTPAuthorizationCredentials
 from log_utils import verify_shared_secret  # SPEC-SEC-INTERNAL-001 REQ-1.1
 from pydantic import BaseModel
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _get_caller_org, _require_admin, bearer, require_capability
+from app.api.dependencies import require_capability
 from app.core.config import settings
 from app.core.database import get_db, set_tenant
+from app.core.permissions import ProfileRole, UserPermissions, get_caller, get_caller_at_least
 from app.core.profiles import Capability
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg
@@ -156,6 +156,24 @@ async def _get_kb_or_404(kb_slug: str, org_id: int, db: AsyncSession) -> PortalK
     return kb
 
 
+async def _load_org_or_500(db: AsyncSession, org_id: int) -> PortalOrg:
+    """Fetch the caller's PortalOrg row.
+
+    Required when an endpoint needs ``org.zitadel_org_id`` (e.g. for
+    ``_invalidate_coverage_cache``). ``UserPermissions`` only carries
+    ``org_id`` (int); fetching the full row avoids the silent
+    ``str(org_id)`` fallback that would leak portal_orgs.id as a
+    Zitadel org ID — same bug class as SPEC-MCP-AUTH-001.
+    """
+    org = await db.get(PortalOrg, org_id)
+    if org is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Organisation row vanished",
+        )
+    return org
+
+
 async def _require_role(
     kb: PortalKnowledgeBase,
     caller_id: str,
@@ -201,12 +219,11 @@ async def _check_circular_reference(
 )
 async def list_taxonomy_nodes(
     kb_slug: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> TaxonomyNodesResponse:
     """List all taxonomy nodes for a KB (flat list, frontend builds tree)."""
-    _, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
 
     result = await db.execute(
         select(PortalTaxonomyNode)
@@ -226,13 +243,13 @@ async def list_taxonomy_nodes(
 async def create_taxonomy_node(
     kb_slug: str,
     body: CreateNodeRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> TaxonomyNodeOut:
     """Create a taxonomy node. Requires contributor role."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_role(kb, caller_id, db, "contributor")
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_role(kb, perms.user_id, db, "contributor")
+    org = await _load_org_or_500(db, perms.org_id)
 
     # Validate parent exists if specified
     if body.parent_id is not None:
@@ -250,7 +267,7 @@ async def create_taxonomy_node(
         parent_id=body.parent_id,
         name=body.name.strip(),
         slug=_slugify(body.name),
-        created_by=caller_id,
+        created_by=perms.user_id,
     )
     db.add(node)
     try:
@@ -277,13 +294,13 @@ async def update_taxonomy_node(
     kb_slug: str,
     node_id: int,
     body: UpdateNodeRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> TaxonomyNodeOut:
     """Rename or reparent a taxonomy node. Requires contributor role."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_role(kb, caller_id, db, "contributor")
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_role(kb, perms.user_id, db, "contributor")
+    org = await _load_org_or_500(db, perms.org_id)
 
     result = await db.execute(
         select(PortalTaxonomyNode).where(
@@ -346,13 +363,13 @@ async def update_taxonomy_node(
 async def delete_taxonomy_node(
     kb_slug: str,
     node_id: int,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Delete a taxonomy node. Reassigns children and docs to parent. Requires owner role."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_role(kb, caller_id, db, "owner")
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_role(kb, perms.user_id, db, "owner")
+    org = await _load_org_or_500(db, perms.org_id)
 
     result = await db.execute(
         select(PortalTaxonomyNode).where(
@@ -398,7 +415,7 @@ async def delete_taxonomy_node(
 async def list_taxonomy_proposals(
     kb_slug: str,
     proposal_status: str = "pending",
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> ProposalsResponse:
     """List taxonomy proposals for a KB, filterable by status.
@@ -412,8 +429,7 @@ async def list_taxonomy_proposals(
     on this so a freshly-approved proposal stays visible at the top
     instead of disappearing into history.
     """
-    _, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
 
     query = select(PortalTaxonomyProposal).where(PortalTaxonomyProposal.kb_id == kb.id)
     if proposal_status != "all":
@@ -677,7 +693,7 @@ async def approve_proposal(
     proposal_id: int,
     body: ApproveProposalRequest | None = None,
     auto_categorise: bool = True,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> ProposalOut:
     """Approve a pending proposal and execute the corresponding action.
@@ -696,9 +712,9 @@ async def approve_proposal(
       per child centroid) under the same node_id. Restores tagging
       coverage that the diffuse aggregate centroid otherwise misses.
     """
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_role(kb, caller_id, db, "contributor")
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_role(kb, perms.user_id, db, "contributor")
+    org = await _load_org_or_500(db, perms.org_id)
 
     result = await db.execute(
         select(PortalTaxonomyProposal).where(
@@ -726,10 +742,10 @@ async def approve_proposal(
             new_payload["description"] = body.description.strip()
         proposal.payload = new_payload  # JSONB needs reassignment for SQLAlchemy to detect change
 
-    _new_node = await _execute_proposal_action(proposal, kb, caller_id, db)
+    _new_node = await _execute_proposal_action(proposal, kb, perms.user_id, db)
 
     proposal.status = "approved"
-    proposal.reviewed_by = caller_id
+    proposal.reviewed_by = perms.user_id
     proposal.reviewed_at = datetime.now(tz=UTC)
 
     # Capture centroid data for post-commit auto-categorise.
@@ -791,13 +807,12 @@ async def reject_proposal(
     kb_slug: str,
     proposal_id: int,
     body: RejectRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> ProposalOut:
     """Reject a pending proposal. Requires contributor role."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_role(kb, caller_id, db, "contributor")
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_role(kb, perms.user_id, db, "contributor")
 
     result = await db.execute(
         select(PortalTaxonomyProposal).where(
@@ -812,7 +827,7 @@ async def reject_proposal(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Proposal is not pending")
 
     proposal.status = "rejected"
-    proposal.reviewed_by = caller_id
+    proposal.reviewed_by = perms.user_id
     proposal.reviewed_at = datetime.now(tz=UTC)
     proposal.rejection_reason = body.reason
 
@@ -827,7 +842,7 @@ async def reject_proposal(
 @router.post("/{kb_slug}/taxonomy/bootstrap")
 async def trigger_bootstrap(
     kb_slug: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Trigger taxonomy bootstrap proposal generation. Requires contributor role.
@@ -835,15 +850,14 @@ async def trigger_bootstrap(
     Calls knowledge-ingest to scan existing chunks and propose categories.
     Proposals appear in the review queue once generated.
     """
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_role(kb, caller_id, db, "contributor")
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_role(kb, perms.user_id, db, "contributor")
+    org = await _load_org_or_500(db, perms.org_id)
 
-    # _get_caller_org already returned a fully-loaded PortalOrg; using
-    # ``org.zitadel_org_id`` avoids both the redundant SELECT and the
-    # silent ``str(org.id)`` fallback that would leak portal_orgs.id (small
-    # int) as zitadel_org_id (BIG string) downstream — same bug class as
-    # SPEC-MCP-AUTH-001's verify_access_token wire-shape fix (2026-05-07).
+    # _load_org_or_500 fetches the full PortalOrg row so we can use
+    # ``org.zitadel_org_id`` and avoid the silent ``str(org.id)`` fallback
+    # that would leak portal_orgs.id (small int) as zitadel_org_id (BIG string)
+    # downstream — same bug class as SPEC-MCP-AUTH-001 (2026-05-07).
     zitadel_org_id = org.zitadel_org_id
 
     from app.services.knowledge_ingest_client import trigger_taxonomy_bootstrap
@@ -866,7 +880,7 @@ async def trigger_bootstrap(
 @router.post("/{kb_slug}/taxonomy/backfill-trigger")
 async def trigger_backfill(
     kb_slug: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Trigger taxonomy backfill to tag all existing chunks. Requires contributor role.
@@ -874,11 +888,12 @@ async def trigger_backfill(
     Enqueues a background job in knowledge-ingest that classifies and tags
     all existing chunks with the approved taxonomy nodes.
     """
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_role(kb, caller_id, db, "contributor")
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_role(kb, perms.user_id, db, "contributor")
 
-    # See trigger_bootstrap above for the rationale on the wire-shape fix.
+    # zitadel_org_id is needed for the downstream ingest call; UserPermissions
+    # only carries the integer org_id, so we load the PortalOrg row here.
+    org = await _load_org_or_500(db, perms.org_id)
     zitadel_org_id = org.zitadel_org_id
 
     from app.services.knowledge_ingest_client import trigger_taxonomy_backfill
@@ -902,13 +917,12 @@ async def trigger_backfill(
 async def get_backfill_status(
     kb_slug: str,
     job_id: int,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Proxy backfill job status from knowledge-ingest. Requires contributor role."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_role(kb, caller_id, db, "contributor")
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_role(kb, perms.user_id, db, "contributor")
 
     from app.services.knowledge_ingest_client import get_taxonomy_backfill_status
 
@@ -1036,7 +1050,7 @@ def _make_coverage_response(
 @router.get("/{kb_slug}/taxonomy/coverage", response_model=CoverageResponse)
 async def taxonomy_coverage(
     kb_slug: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> CoverageResponse:
     """Coverage dashboard: per-node chunk counts, gap counts, health status.
@@ -1044,11 +1058,11 @@ async def taxonomy_coverage(
     Combines data from knowledge-ingest (Qdrant chunk counts) with portal DB
     (gap counts per taxonomy node). Results cached for 5 minutes.
     """
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
 
-    # See trigger_bootstrap above for the rationale on the wire-shape fix.
+    # zitadel_org_id is needed for the downstream ingest call and cache key;
+    # UserPermissions only carries the integer org_id, so we load the PortalOrg row.
+    org = await _load_org_or_500(db, perms.org_id)
     zitadel_org_id = org.zitadel_org_id
 
     # Check cache
@@ -1074,7 +1088,7 @@ async def taxonomy_coverage(
     cutoff = datetime.now(tz=UTC) - timedelta(days=30)
     gaps_result = await db.execute(
         select(PortalRetrievalGap).where(
-            PortalRetrievalGap.org_id == org.id,
+            PortalRetrievalGap.org_id == perms.org_id,
             PortalRetrievalGap.occurred_at >= cutoff,
             PortalRetrievalGap.resolved_at.is_(None),
             PortalRetrievalGap.taxonomy_node_ids.isnot(None),
@@ -1142,7 +1156,7 @@ async def taxonomy_top_tags(
     kb_slug: str,
     limit: int = 20,
     taxonomy_node_id: int | None = None,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> TopTagsResponse:
     """Top tags by frequency across KB chunks. Cached for 5 minutes.
@@ -1150,10 +1164,11 @@ async def taxonomy_top_tags(
     Optionally filter by taxonomy_node_id to get tags within a category.
     Accessible to all KB members (viewer+).
     """
-    _, org, _ = await _get_caller_org(credentials, db)
-    await _get_kb_or_404(kb_slug, org.id, db)
+    await _get_kb_or_404(kb_slug, perms.org_id, db)
 
-    # See trigger_bootstrap above for the rationale on the wire-shape fix.
+    # zitadel_org_id is needed for the downstream ingest call and cache key;
+    # UserPermissions only carries the integer org_id, so we load the PortalOrg row.
+    org = await _load_org_or_500(db, perms.org_id)
     zitadel_org_id = org.zitadel_org_id
 
     cache_key = (zitadel_org_id, kb_slug, taxonomy_node_id)
