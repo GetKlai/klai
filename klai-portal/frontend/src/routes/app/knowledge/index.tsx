@@ -122,9 +122,7 @@ function KbRow({
 
   return (
     <Link
-      // Phase D will replace /overview with /bronnen as the default tab.
-      // Keeping /overview here means Phase C ships on its own.
-      to="/app/knowledge/$kbSlug/overview"
+      to="/app/knowledge/$kbSlug/bronnen"
       params={{ kbSlug: kb.slug }}
       className="group flex items-center gap-3 px-2 py-3.5 hover:bg-gray-50 transition-colors"
     >
