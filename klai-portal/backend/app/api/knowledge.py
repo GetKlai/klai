@@ -64,9 +64,13 @@ async def get_knowledge_stats(
     org = await _load_org_or_500(db, perms.org_id)
     zitadel_org_id = org.zitadel_org_id
 
-    # Resolve accessible kb_slugs (personal + org + group:{id} for each membership)
+    # Resolve accessible kb_slugs (personal + org + group:{id} for each membership).
+    # REQ-6: pass effective_role so personal-role callers do not see "org" or
+    # default_org_role KBs in the slug list.
     user_id = perms.user_id
-    accessible_slugs = await get_accessible_kb_slugs(user_id, db) if user_id else ["org"]
+    accessible_slugs = (
+        await get_accessible_kb_slugs(user_id, db, user_role=perms.effective_role.value) if user_id else ["org"]
+    )
     group_slugs = [s for s in accessible_slugs if s.startswith("group:")]
 
     org_filter = {

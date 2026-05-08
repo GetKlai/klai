@@ -1560,7 +1560,9 @@ async def list_kbs_with_access(
     )
     all_kbs = result.scalars().all()
 
-    accessible_slugs = set(await get_accessible_kb_slugs(perms.user_id, db))
+    # REQ-6: pass effective_role so personal-role callers do not see org slug
+    # / default_org_role KBs in the access list.
+    accessible_slugs = set(await get_accessible_kb_slugs(perms.user_id, db, user_role=perms.effective_role.value))
 
     return [
         KBWithAccessOut(

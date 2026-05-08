@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import _load_org_or_500, get_effective_capabilities, require_capability
 from app.core.database import get_db
 from app.core.permissions import UserPermissions, get_caller
-from app.core.profiles import Capability, check_connector_allowed
+from app.core.profiles import Capability, ProfileRole, check_connector_allowed
 from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.services import knowledge_ingest_client
@@ -433,6 +433,18 @@ async def create_connector(
     db: AsyncSession = Depends(get_db),
 ) -> ConnectorOut:
     """Create a connector for a KB. Requires contributor access."""
+    # Resolve KB once — REQ-7 needs ``owner_type`` BEFORE other validation so
+    # a personal caller gets the explicit ``org_kb_write_requires_company``
+    # error_code instead of a downstream message.
+    kb = await _get_kb_with_owner_check(kb_slug, perms.user_id, perms.org_id, db)
+
+    # REQ-7: personal effective_role MUST NOT create connectors on org-owned KBs.
+    if kb.owner_type == "org" and perms.effective_role == ProfileRole.PERSONAL:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error_code": "org_kb_write_requires_company"},
+        )
+
     # REQ-3: personal/company roles may only use url/upload connector types
     check_connector_allowed(perms, body.connector_type)
     # G1: Plan-ceiling on external connectors. The role-level check above already
@@ -448,7 +460,6 @@ async def create_connector(
                     "plan": perms.plan,
                 },
             )
-    kb = await _get_kb_with_owner_check(kb_slug, perms.user_id, perms.org_id, db)
     resolved_content_type = body.content_type or CONTENT_TYPE_DEFAULTS.get(body.connector_type, "unknown")
     if body.allowed_assertion_modes is not None:
         invalid = set(body.allowed_assertion_modes) - VALID_ASSERTION_MODES

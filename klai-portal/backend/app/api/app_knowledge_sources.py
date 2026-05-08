@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import _load_org_or_500
 from app.core.database import get_db
 from app.core.permissions import UserPermissions, get_caller
+from app.core.profiles import ProfileRole
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.services import knowledge_ingest_client
 from app.services.access import get_user_role_for_kb
@@ -94,6 +95,16 @@ async def _get_writable_kb_or_raise(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Knowledge base not found",
+        )
+
+    # REQ-7: personal effective_role MUST NOT write to org-owned KBs.
+    # The check fires before role lookup because effective_role already
+    # encodes the plan-vs-profile decision; "personal" cannot earn write
+    # access via group/user grants on an org-owned KB.
+    if kb.owner_type == "org" and perms.effective_role == ProfileRole.PERSONAL:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error_code": "org_kb_write_requires_company"},
         )
 
     role = await get_user_role_for_kb(
