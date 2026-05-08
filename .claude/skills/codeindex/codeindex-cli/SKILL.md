@@ -15,7 +15,7 @@ All commands work via `npx` — no global install required.
 npx codeindex analyze
 ```
 
-Run from the project root. This parses all source files, builds the knowledge graph, writes it to `.codeindex/`, and generates CLAUDE.md / AGENTS.md context files.
+Run from the project root. This parses all source files, builds the knowledge graph, writes it to `~/.codeindex/<ProjectName>/` (global cache — NEVER inside the working copy), and generates CLAUDE.md / AGENTS.md context files in the project root.
 
 | Flag           | Effect                                                           |
 | -------------- | ---------------------------------------------------------------- |
@@ -38,7 +38,9 @@ Shows whether the current repo has a CodeIndex index, when it was last updated, 
 npx codeindex clean
 ```
 
-Deletes the `.codeindex/` directory and unregisters the repo from the global registry. Use before re-indexing if the index is corrupt or after removing CodeIndex from a project.
+Deletes the repo's entry under `~/.codeindex/<ProjectName>/` and unregisters it from the global registry. Use before re-indexing if the index is corrupt or after removing CodeIndex from a project. Never deletes anything inside the working copy.
+
+> If you find a stray `.codeindex/` directory inside a project root it is leftover from an older CodeIndex version. Safe to delete — the current version never writes there.
 
 | Flag      | Effect                                            |
 | --------- | ------------------------------------------------- |
