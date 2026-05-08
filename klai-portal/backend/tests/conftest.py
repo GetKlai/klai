@@ -135,3 +135,78 @@ _auth_module._tenant_slug_cache = {
     "portal",  # test_idp_callback_provision uses portal.getklai.com as the IDP-finalised callback host
 }
 _auth_module._tenant_slug_cache_expiry = math.inf
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 test factories — SPEC-PORTAL-RBAC-REFACTOR-001 REQ-1F
+#
+# Replaces the temporary helpers in tests/role_matrix_helpers.py for any new
+# Phase 2+ test that wants a typed PortalUser / PortalOrg mock. The legacy
+# helpers continue to work alongside these until Phase 2 migrates the
+# 132 characterization tests.
+# ---------------------------------------------------------------------------
+
+
+def make_user(
+    *,
+    role: object = "admin",
+    zitadel_user_id: str = "uid-test",
+    org_id: int = 101,
+    user_pk: int = 9001,
+    email: str | None = None,
+):
+    """Synthetic PortalUser mock with the chosen role.
+
+    Accepts either ``ProfileRole.X`` (preferred for new tests) or the bare
+    string form (for tests that have not migrated yet). Both resolve via
+    ``str(role)`` to the underlying enum value.
+    """
+    from unittest.mock import MagicMock
+
+    from app.models.portal import PortalUser
+
+    role_str = role if isinstance(role, str) else str(role)
+    user = MagicMock(spec=PortalUser)
+    user.role = role_str
+    user.zitadel_user_id = zitadel_user_id
+    user.org_id = org_id
+    user.id = user_pk
+    user.email = email or f"{role_str}@example.com"
+    user.first_name = role_str.capitalize()
+    user.last_name = "Tester"
+    user.status = "active"
+    user.preferred_language = "nl"
+    return user
+
+
+def make_org(
+    *,
+    org_id: int = 101,
+    slug: str = "voys",
+    plan: str = "complete",
+    enabled_addons: list[str] | None = None,
+    platform_unlocked_features: list[str] | None = None,
+    provisioning_status: str = "active",
+    name: str | None = None,
+):
+    """Synthetic PortalOrg mock with sensible defaults for permissions tests."""
+    from unittest.mock import MagicMock
+
+    from app.models.portal import PortalOrg
+
+    org = MagicMock(spec=PortalOrg)
+    org.id = org_id
+    org.slug = slug
+    org.plan = plan
+    org.zitadel_org_id = f"zitadel-org-{org_id}"
+    org.enabled_addons = enabled_addons or []
+    org.platform_unlocked_features = platform_unlocked_features or []
+    org.provisioning_status = provisioning_status
+    org.name = name or slug.capitalize()
+    org.moneybird_subscription_id = "ms-test-123"
+    org.moneybird_contact_id = "mc-test-123"
+    org.billing_cycle = "monthly"
+    org.seats = 5
+    org.billing_status = "active"
+    org.mcp_servers = []
+    return org

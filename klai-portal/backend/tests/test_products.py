@@ -4,7 +4,7 @@ After SPEC-PORTAL-RBAC-001 v0.2.0 the per-user / per-group assignment surface
 is removed (those endpoints return 410 Gone -- see test_products_gone.py for
 the 410 contract). This file keeps:
 
-  * PLAN_PRODUCTS / get_plan_products tests (still used by app.core.plans)
+  * PLAN_FEATURES tests (canonical mapping in app.core.features)
   * list_available_products: returns derive_user_products(caller, plan, addons)
   * get_user_effective_products: returns sourced view (plan/addon)
   * change_plan: simple plan update, no product-row cleanup
@@ -15,37 +15,39 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from app.core.plans import PLAN_PRODUCTS, get_plan_products
+from app.core.features import PLAN_FEATURES
 
 # ---------------------------------------------------------------------------
-# PLAN_PRODUCTS mapping
+# PLAN_FEATURES mapping (canonical post-SPEC-PORTAL-RBAC-REFACTOR-001 Phase 1)
 # ---------------------------------------------------------------------------
 
 
 class TestPlanProducts:
     def test_free_plan_has_no_products(self) -> None:
-        assert get_plan_products("free") == []
+        assert PLAN_FEATURES["free"] == frozenset()
 
     def test_core_plan_has_chat_and_knowledge(self) -> None:
-        assert get_plan_products("core") == ["chat", "knowledge"]
+        assert PLAN_FEATURES["core"] == frozenset({"chat", "knowledge"})
 
     def test_professional_plan_has_chat_and_knowledge(self) -> None:
-        assert get_plan_products("professional") == ["chat", "knowledge"]
+        assert PLAN_FEATURES["professional"] == frozenset({"chat", "knowledge"})
 
     def test_complete_plan_has_chat_and_knowledge(self) -> None:
-        assert get_plan_products("complete") == ["chat", "knowledge"]
+        assert PLAN_FEATURES["complete"] == frozenset({"chat", "knowledge"})
 
-    def test_unknown_plan_returns_empty_list(self) -> None:
-        assert get_plan_products("nonexistent") == []
+    def test_unknown_plan_falls_back_to_empty(self) -> None:
+        # PLAN_FEATURES.get(...) is the public-safe accessor; unknown plans
+        # collapse to an empty set the same way the old get_plan_products did.
+        assert PLAN_FEATURES.get("nonexistent", frozenset()) == frozenset()
 
-    def test_plan_products_dict_has_four_entries(self) -> None:
-        assert len(PLAN_PRODUCTS) == 4
+    def test_plan_features_dict_has_four_entries(self) -> None:
+        assert len(PLAN_FEATURES) == 4
 
     def test_plan_hierarchy_is_superset(self) -> None:
-        free = set(get_plan_products("free"))
-        core = set(get_plan_products("core"))
-        professional = set(get_plan_products("professional"))
-        complete = set(get_plan_products("complete"))
+        free = PLAN_FEATURES["free"]
+        core = PLAN_FEATURES["core"]
+        professional = PLAN_FEATURES["professional"]
+        complete = PLAN_FEATURES["complete"]
         assert free.issubset(core)
         assert core.issubset(professional)
         assert professional == complete  # both chat + knowledge
