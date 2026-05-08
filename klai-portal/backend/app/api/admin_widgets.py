@@ -21,7 +21,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.permissions import ProfileRole, UserPermissions, get_caller_at_least
+from app.core.permissions import ProfileRole, UserPermissions, get_caller_at_least, require_platform_unlocked
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.widgets import Widget, WidgetKbAccess, generate_widget_id
 from app.services.events import emit_event
@@ -151,6 +151,7 @@ async def _count_kb_access(widget_id: str, db: AsyncSession) -> int:
 async def create_widget(
     body: CreateWidgetRequest,
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    _platform: UserPermissions = Depends(require_platform_unlocked("widgets")),
     db: AsyncSession = Depends(get_db),
 ) -> WidgetDetailResponse:
     """Create a new chat widget."""
@@ -210,6 +211,7 @@ async def create_widget(
 @router.get("")
 async def list_widgets(
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    _platform: UserPermissions = Depends(require_platform_unlocked("widgets")),
     db: AsyncSession = Depends(get_db),
 ) -> list[WidgetResponse]:
     """List all widgets for the caller's org."""
@@ -241,6 +243,7 @@ async def list_widgets(
 async def get_widget_detail(
     widget_id: str,
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    _platform: UserPermissions = Depends(require_platform_unlocked("widgets")),
     db: AsyncSession = Depends(get_db),
 ) -> WidgetDetailResponse:
     """Get full detail for a single widget."""
@@ -274,6 +277,7 @@ async def update_widget(
     widget_id: str,
     body: UpdateWidgetRequest,
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    _platform: UserPermissions = Depends(require_platform_unlocked("widgets")),
     db: AsyncSession = Depends(get_db),
 ) -> WidgetResponse:
     """Partial update of a widget."""
@@ -317,6 +321,7 @@ async def update_widget(
 async def delete_widget(
     widget_id: str,
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    _platform: UserPermissions = Depends(require_platform_unlocked("widgets")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Permanently delete a widget and its KB access entries."""
