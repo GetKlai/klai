@@ -19,14 +19,7 @@ from pathlib import Path
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-ALERT_PATH = (
-    REPO_ROOT
-    / "deploy"
-    / "grafana"
-    / "provisioning"
-    / "alerting"
-    / "identity-assert-003-rules.yaml"
-)
+ALERT_PATH = REPO_ROOT / "deploy" / "grafana" / "provisioning" / "alerting" / "identity-assert-003-rules.yaml"
 
 
 def test_alert_yaml_syntactically_valid() -> None:
@@ -39,9 +32,7 @@ def test_alert_yaml_syntactically_valid() -> None:
 def test_all_uids_under_40_chars() -> None:
     parsed = yaml.safe_load(ALERT_PATH.read_text(encoding="utf-8"))
     for rule in parsed["groups"][0]["rules"]:
-        assert len(rule["uid"]) <= 40, (
-            f"UID {rule['uid']!r} exceeds 40-char Grafana limit ({len(rule['uid'])} chars)"
-        )
+        assert len(rule["uid"]) <= 40, f"UID {rule['uid']!r} exceeds 40-char Grafana limit ({len(rule['uid'])} chars)"
 
 
 def test_all_uids_use_klai_prefix_convention() -> None:
