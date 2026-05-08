@@ -74,3 +74,49 @@ def test_static_route_precedes_catchall() -> None:
         "/static/* requests and the OAuth consent page CSS will silently "
         "fail. Move /static/* back above the catch-all."
     )
+
+
+def test_public_docs_reader_route_precedes_catchall_and_api_block() -> None:
+    """Public `/docs/*` reader must not be swallowed by the portal SPA."""
+    if not _CADDYFILE.exists():
+        pytest.skip(f"Caddyfile not found at {_CADDYFILE}")
+
+    text = _CADDYFILE.read_text(encoding="utf-8")
+    lines = text.splitlines()
+
+    docs_api_matcher_line: int | None = None
+    docs_api_handle_line: int | None = None
+    docs_reader_matcher_line: int | None = None
+    docs_reader_handle_line: int | None = None
+    catchall_line: int | None = None
+
+    docs_api_matcher_re = re.compile(r"^\s*@docs-api\s+path\s+/docs/api/\*")
+    docs_api_handle_re = re.compile(r"^\s*handle\s+@docs-api\s*\{")
+    docs_reader_matcher_re = re.compile(r"^\s*@docs-reader\s+path\s+/docs\s+/docs/\*")
+    docs_reader_handle_re = re.compile(r"^\s*handle\s+@docs-reader\s*\{")
+    catchall_re = re.compile(r"^\s*handle\s*\{")
+
+    for i, line in enumerate(lines, start=1):
+        if docs_api_matcher_line is None and docs_api_matcher_re.match(line):
+            docs_api_matcher_line = i
+        if docs_api_handle_line is None and docs_api_handle_re.match(line):
+            docs_api_handle_line = i
+        if docs_reader_matcher_line is None and docs_reader_matcher_re.match(line):
+            docs_reader_matcher_line = i
+        if docs_reader_handle_line is None and docs_reader_handle_re.match(line):
+            docs_reader_handle_line = i
+        if catchall_line is None and catchall_re.match(line):
+            catchall_line = i
+
+    assert docs_api_matcher_line is not None, "Caddyfile must define @docs-api for /docs/api/*."
+    assert docs_api_handle_line is not None, "Caddyfile must block public /docs/api/* before /docs/*."
+    assert docs_reader_matcher_line is not None, "Caddyfile must define @docs-reader for /docs and /docs/*."
+    assert docs_reader_handle_line is not None, "Caddyfile must route public /docs/* to docs-app."
+    assert catchall_line is not None, "Caddyfile must keep an explicit portal SPA catch-all."
+    assert docs_api_handle_line < docs_reader_handle_line, (
+        "Caddyfile order regression: public /docs/api/* must be blocked before the broader /docs/* reader route."
+    )
+    assert docs_reader_handle_line < catchall_line, (
+        "Caddyfile order regression: /docs/* reader route must come before "
+        "the portal SPA catch-all, otherwise public docs URLs hit the login wall."
+    )
