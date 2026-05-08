@@ -9,11 +9,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.dependencies import _load_org_or_500
 from app.core.database import get_db
 from app.core.permissions import ProfileRole, UserPermissions, get_caller_at_least
 from app.models.groups import PortalGroup
 from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase
-from app.models.portal import PortalOrg
 from app.services import docs_client, knowledge_ingest_client
 
 logger = logging.getLogger(__name__)
@@ -33,15 +33,6 @@ async def _get_kb_or_404(kb_id: int, org_id: int, db: AsyncSession) -> PortalKno
     if not kb:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base not found")
     return kb
-
-
-async def _load_org_or_500(db: AsyncSession, org_id: int) -> PortalOrg:
-    """Load PortalOrg for endpoints that need zitadel_org_id (not on UserPermissions)."""
-    result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id))
-    org = result.scalar_one_or_none()
-    if org is None:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Organisation not found")
-    return org
 
 
 # -- Pydantic schemas --------------------------------------------------------

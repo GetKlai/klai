@@ -13,7 +13,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import require_capability
+from app.api.dependencies import _load_org_or_500, require_capability
 from app.core.config import settings
 from app.core.database import get_db, set_tenant
 from app.core.permissions import ProfileRole, UserPermissions, get_caller, get_caller_at_least
@@ -154,24 +154,6 @@ async def _get_kb_or_404(kb_slug: str, org_id: int, db: AsyncSession) -> PortalK
     if not kb:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base not found")
     return kb
-
-
-async def _load_org_or_500(db: AsyncSession, org_id: int) -> PortalOrg:
-    """Fetch the caller's PortalOrg row.
-
-    Required when an endpoint needs ``org.zitadel_org_id`` (e.g. for
-    ``_invalidate_coverage_cache``). ``UserPermissions`` only carries
-    ``org_id`` (int); fetching the full row avoids the silent
-    ``str(org_id)`` fallback that would leak portal_orgs.id as a
-    Zitadel org ID — same bug class as SPEC-MCP-AUTH-001.
-    """
-    org = await db.get(PortalOrg, org_id)
-    if org is None:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Organisation row vanished",
-        )
-    return org
 
 
 async def _require_role(

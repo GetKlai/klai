@@ -18,32 +18,17 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.dependencies import _load_org_or_500
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.permissions import UserPermissions, get_caller_at_least
 from app.core.profiles import ProfileRole
-from app.models.portal import PortalOrg
 from app.services.secrets import decrypt_mcp_secret, encrypt_mcp_secret, is_secret_var
 from app.utils.response_sanitizer import sanitize_response_body  # SPEC-SEC-INTERNAL-001 REQ-4
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["mcp-servers"])
-
-
-async def _load_org_or_500(db: AsyncSession, org_id: int) -> PortalOrg:
-    """Fetch the caller's PortalOrg row.
-
-    UserPermissions only carries org_id/org_slug/plan.
-    MCP server endpoints need org.mcp_servers and org.slug — re-fetch via this helper.
-    """
-    org = await db.get(PortalOrg, org_id)
-    if org is None:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Organisation row vanished",
-        )
-    return org
 
 
 async def _load_catalog() -> dict[str, Any]:

@@ -9,16 +9,14 @@ import asyncio
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import require_product
+from app.api.dependencies import _load_org_or_500, require_product
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.permissions import UserPermissions, get_caller
-from app.models.portal import PortalOrg
 from app.services.access import get_accessible_kb_slugs
 
 logger = structlog.get_logger()
@@ -56,18 +54,6 @@ async def _qdrant_count(filters: dict) -> int:
     except Exception:
         logger.exception("Could not reach Qdrant for knowledge count")
         return 0
-
-
-async def _load_org_or_500(db: AsyncSession, org_id: int) -> PortalOrg:
-    """Load PortalOrg by internal int id; raise 500 on missing (should never happen post-auth)."""
-    result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id))
-    org = result.scalar_one_or_none()
-    if org is None:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Organisation record not found after authentication",
-        )
-    return org
 
 
 @router.get("/stats", response_model=KnowledgeStats, dependencies=[Depends(require_product("knowledge"))])

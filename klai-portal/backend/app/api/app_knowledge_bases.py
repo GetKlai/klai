@@ -14,7 +14,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import require_capability
+from app.api.dependencies import _load_org_or_500, require_capability
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.permissions import UserPermissions, get_caller
@@ -22,7 +22,7 @@ from app.core.profiles import Capability
 from app.models.connectors import PortalConnector
 from app.models.groups import PortalGroup
 from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase, PortalUserKBAccess
-from app.models.portal import PortalOrg, PortalUser
+from app.models.portal import PortalUser
 from app.models.retrieval_gaps import PortalRetrievalGap
 from app.services import docs_client, knowledge_ingest_client
 from app.services.access import get_user_role_for_kb
@@ -86,17 +86,6 @@ async def _qdrant_count_for_kb(zitadel_org_id: str, kb_slug: str) -> int | None:
             exc_info=True,
         )
         return None
-
-
-async def _load_org_or_500(db: AsyncSession, org_id: int) -> PortalOrg:
-    result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id))
-    org = result.scalar_one_or_none()
-    if org is None:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Organisation not found",
-        )
-    return org
 
 
 router = APIRouter(prefix="/api/app", tags=["app-knowledge-bases"])
