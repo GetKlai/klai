@@ -322,8 +322,8 @@
                         "type": "prometheus",
                         "uid": "victoriametrics"
                     },
-                    "expr": "sum by (reason) (rate(litellm_low_confidence_injection_total{org_id=\"$org_id\"}[$__rate_interval]))",
-                    "legendFormat": "{{reason}}",
+                    "expr": "sum(rate(retrieval_confidence_band_total{band=~\"low|unknown\",org_id=\"$org_id\"}[$__rate_interval])) / sum(rate(retrieval_confidence_band_total{org_id=\"$org_id\"}[$__rate_interval]))",
+                    "legendFormat": "low+unknown share",
                     "refId": "C"
                 }
             ]
