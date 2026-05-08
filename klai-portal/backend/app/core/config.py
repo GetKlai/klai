@@ -176,6 +176,16 @@ class Settings(BaseSettings):
     knowledge_ingest_url: str = "http://knowledge-ingest:8000"
     knowledge_ingest_secret: str = ""  # PORTAL_API_KNOWLEDGE_INGEST_SECRET
 
+    # klai-knowledge-mcp (internal). Used for the
+    # SPEC-PORTAL-RBAC-REFACTOR-001 REQ-18 role-change notification — when an
+    # admin changes a user's role, portal-api POSTs to
+    # ``{knowledge_mcp_url}/internal/notify-role-change`` so the MCP server
+    # can fan out ``notifications/tools/list_changed`` to that user's active
+    # MCP sessions. Empty = feature disabled (notification is fire-and-forget,
+    # so an empty URL silently no-ops the role-change refresh; the next
+    # tools/list poll picks up the change anyway).
+    knowledge_mcp_url: str = "http://klai-knowledge-mcp:8080"
+
     # crawl4ai HTTP service — used by the URL source extractor (SPEC-KB-SOURCES-001).
     # Same endpoint that klai-knowledge-ingest and klai-connector already target.
     crawl4ai_api_url: str = "http://crawl4ai:11235"
