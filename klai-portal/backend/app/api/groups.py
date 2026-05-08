@@ -11,19 +11,14 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import (
-    _get_caller_org,
-    _require_admin,
-    bearer,
-)
 from app.core.database import get_db
-from app.core.profiles import _require_at_least
+from app.core.permissions import UserPermissions, get_caller_at_least
+from app.core.profiles import ProfileRole
 from app.models.groups import PortalGroup, PortalGroupMembership
 from app.models.portal import PortalUser
 from app.services.audit import log_event
@@ -114,7 +109,7 @@ class MessageResponse(BaseModel):
 
 @router.get("/groups", response_model=GroupsResponse)
 async def list_groups(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> GroupsResponse:
     """List all (non-system) groups in the caller's org. Admin only.
@@ -122,12 +117,9 @@ async def list_groups(
     The system_key IS NULL filter is a defence-in-depth net: after the
     SPEC-PORTAL-RBAC-001 migration there are no system groups in any tenant.
     """
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
     result = await db.execute(
         select(PortalGroup)
-        .where(PortalGroup.org_id == org.id, PortalGroup.system_key.is_(None))
+        .where(PortalGroup.org_id == perms.org_id, PortalGroup.system_key.is_(None))
         .order_by(PortalGroup.name)
     )
     groups = list(result.scalars().all())
@@ -150,18 +142,15 @@ async def list_groups(
 @router.post("/groups", response_model=GroupOut, status_code=status.HTTP_201_CREATED)
 async def create_group(
     body: GroupCreateRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.GROUP_MANAGER)),
     db: AsyncSession = Depends(get_db),
 ) -> GroupOut:
     """Create a new group in the caller's org. group_manager+ may create."""
-    caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_at_least("group_manager")(caller_user=caller_user)
-
     group = PortalGroup(
-        org_id=org.id,
+        org_id=perms.org_id,
         name=body.name,
         description=body.description,
-        created_by=caller_user_id,
+        created_by=perms.user_id,
     )
     db.add(group)
     try:
@@ -190,17 +179,14 @@ async def create_group(
 async def update_group(
     group_id: int,
     body: GroupUpdateRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.GROUP_MANAGER)),
     db: AsyncSession = Depends(get_db),
 ) -> GroupOut:
     """Update a group's name or description."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
     result = await db.execute(
         select(PortalGroup).where(
             PortalGroup.id == group_id,
-            PortalGroup.org_id == org.id,
+            PortalGroup.org_id == perms.org_id,
         )
     )
     group = result.scalar_one_or_none()
@@ -240,17 +226,14 @@ async def update_group(
 @router.delete("/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_group(
     group_id: int,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.GROUP_MANAGER)),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Delete a group (CASCADE removes memberships)."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
     result = await db.execute(
         select(PortalGroup).where(
             PortalGroup.id == group_id,
-            PortalGroup.org_id == org.id,
+            PortalGroup.org_id == perms.org_id,
         )
     )
     group = result.scalar_one_or_none()
@@ -275,18 +258,15 @@ async def delete_group(
 @router.get("/groups/{group_id}/members", response_model=MembersResponse)
 async def list_members(
     group_id: int,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.GROUP_MANAGER)),
     db: AsyncSession = Depends(get_db),
 ) -> MembersResponse:
     """List members of a group. group_manager+ may view."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_at_least("group_manager")(caller_user=caller_user)
-
     # Verify group belongs to caller's org
     group_result = await db.execute(
         select(PortalGroup).where(
             PortalGroup.id == group_id,
-            PortalGroup.org_id == org.id,
+            PortalGroup.org_id == perms.org_id,
         )
     )
     if not group_result.scalar_one_or_none():
@@ -314,18 +294,15 @@ async def list_members(
 async def add_member(
     group_id: int,
     body: MemberAddRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.GROUP_MANAGER)),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     """Add a member to a group. group_manager+ may add. Cross-org validation (R5)."""
-    caller_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_at_least("group_manager")(caller_user=caller_user)
-
     # Verify group belongs to caller's org
     group_result = await db.execute(
         select(PortalGroup).where(
             PortalGroup.id == group_id,
-            PortalGroup.org_id == org.id,
+            PortalGroup.org_id == perms.org_id,
         )
     )
     group = group_result.scalar_one_or_none()
@@ -360,7 +337,7 @@ async def add_member(
 
     await log_event(
         org_id=group.org_id,
-        actor=caller_id,
+        actor=perms.user_id,
         action="group.member_added",
         resource_type="group",
         resource_id=str(group_id),
@@ -374,18 +351,15 @@ async def add_member(
 async def remove_member(
     group_id: int,
     user_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.GROUP_MANAGER)),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Remove a member from a group. group_manager+ may remove."""
-    caller_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_at_least("group_manager")(caller_user=caller_user)
-
     # Verify group belongs to caller's org
     group_result = await db.execute(
         select(PortalGroup).where(
             PortalGroup.id == group_id,
-            PortalGroup.org_id == org.id,
+            PortalGroup.org_id == perms.org_id,
         )
     )
     if not group_result.scalar_one_or_none():
@@ -403,8 +377,8 @@ async def remove_member(
 
     await db.delete(membership)
     await log_event(
-        org_id=org.id,
-        actor=caller_id,
+        org_id=perms.org_id,
+        actor=perms.user_id,
         action="group.member_removed",
         resource_type="group",
         resource_id=str(group_id),
@@ -418,18 +392,15 @@ async def toggle_group_admin(
     group_id: int,
     user_id: str,
     body: GroupAdminToggleRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.GROUP_MANAGER)),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    """Toggle is_group_admin for a member. Admin only."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
+    """Toggle is_group_admin for a member. group_manager+ only."""
     # Verify group belongs to caller's org
     group_result = await db.execute(
         select(PortalGroup).where(
             PortalGroup.id == group_id,
-            PortalGroup.org_id == org.id,
+            PortalGroup.org_id == perms.org_id,
         )
     )
     if not group_result.scalar_one_or_none():
@@ -480,15 +451,12 @@ async def revoke_group_product_gone(group_id: int, product: str) -> dict:
 @router.get("/users/{user_id}/groups", response_model=UserGroupsResponse)
 async def get_user_groups(
     user_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> UserGroupsResponse:
     """List (non-system) groups a user belongs to. Org admin only."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
     user_result = await db.execute(
-        select(PortalUser).where(PortalUser.zitadel_user_id == user_id, PortalUser.org_id == org.id)
+        select(PortalUser).where(PortalUser.zitadel_user_id == user_id, PortalUser.org_id == perms.org_id)
     )
     if not user_result.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -505,7 +473,7 @@ async def get_user_groups(
         select(PortalGroup)
         .where(
             PortalGroup.id.in_(group_ids),
-            PortalGroup.org_id == org.id,
+            PortalGroup.org_id == perms.org_id,
             PortalGroup.system_key.is_(None),
         )
         .order_by(PortalGroup.name)
@@ -526,16 +494,13 @@ class UserMembershipsResponse(BaseModel):
 
 @router.get("/group-memberships", response_model=UserMembershipsResponse)
 async def get_all_memberships(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> UserMembershipsResponse:
     """Return all (non-system) user-group memberships for the org, keyed by zitadel_user_id."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
     # Fetch non-system groups in the org
     groups_result = await db.execute(
-        select(PortalGroup).where(PortalGroup.org_id == org.id, PortalGroup.system_key.is_(None))
+        select(PortalGroup).where(PortalGroup.org_id == perms.org_id, PortalGroup.system_key.is_(None))
     )
     groups = groups_result.scalars().all()
 
