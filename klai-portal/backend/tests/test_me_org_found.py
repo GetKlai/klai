@@ -22,6 +22,9 @@ def _mock_org() -> MagicMock:
     org = MagicMock()
     org.id = 42
     org.slug = "acme"
+    # SPEC-SEC-IDENTITY-ASSERT-002 REQ-5: /api/me now sources org_id
+    # from portal_orgs.zitadel_org_id (DB) instead of the JWT claim.
+    org.zitadel_org_id = "zitadel-org-acme"
     org.provisioning_status = "ready"
     org.mfa_policy = "optional"
     org.moneybird_contact_id = "mb-1"

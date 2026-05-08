@@ -1505,6 +1505,9 @@ async def verify_identity(
         UserBoundEvidence,
         verify_identity_claim,
     )
+    from app.services.identity_verifier import (
+        evidence_path as _evidence_path,
+    )
     from app.services.identity_verify_cache import (
         CacheUnavailable,
         cache_verified_decision,
@@ -1612,6 +1615,7 @@ async def verify_identity(
             claimed_org_id=body.claimed_org_id,
             verified=True,
             evidence=cached.evidence,
+            evidence_path=_evidence_path(cached.evidence),
             cache_hit=True,
         )
         return Response(
@@ -1700,6 +1704,7 @@ async def verify_identity(
         claimed_org_id=body.claimed_org_id,
         verified=True,
         evidence=decision.evidence,
+        evidence_path=_evidence_path(decision.evidence),
         cache_hit=False,
     )
     return Response(

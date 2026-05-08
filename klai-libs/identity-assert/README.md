@@ -25,9 +25,12 @@ Call `IdentityAsserter.verify` immediately before any operation that:
    not directly from a Zitadel JWT validated in this service's own
    middleware).
 
-If your handler authenticates via Zitadel JWT directly and uses the
-JWT's `sub` / `resourceowner` claims, you do **not** need this library —
-your auth middleware already verified the identity.
+If your handler authenticates via Zitadel JWT directly and trusts the
+JWT's `sub` claim, you do **not** need this library — your auth
+middleware already verified the identity. (Note: per the Klai rule
+`.claude/rules/klai/platform/zitadel.md:99-100` and
+SPEC-SEC-IDENTITY-ASSERT-002, the JWT's `resourceowner` claim is not a
+reliable source of org context. Resolve org via `portal_users` instead.)
 
 ## Quickstart
 
@@ -94,7 +97,7 @@ Stable codes returned in `VerifyResult.reason` on deny:
 |---|---|---|
 | `unknown_caller_service` | portal | `caller_service` not in allowlist |
 | `invalid_jwt` | portal | JWT signature/audience/exp failure |
-| `jwt_identity_mismatch` | portal | JWT sub or resourceowner ≠ claimed tuple |
+| `jwt_identity_mismatch` | portal | JWT `sub` ≠ `claimed_user_id`. SPEC-SEC-IDENTITY-ASSERT-002 retired the `resourceowner` equality check; org-mismatch surfaces as `no_membership` instead. |
 | `no_membership` | portal | Claimed user has no active membership in claimed org |
 | `cache_unavailable` | portal | Redis-backed verifier cache unreachable (HTTP 503) |
 | `portal_unreachable` | library | Network error / 5xx / malformed body / unrecognised reason |
@@ -137,20 +140,28 @@ async def ingest_to_kb(body: IngestToKBRequest, user_id: str = Depends(jwt_user)
     await ingest_scribe_transcript(org_id=body.org_id, user_id=user_id)
 ```
 
-### After — verified identity
+### After — verified identity (legacy direct-call pattern)
+
+> Note (SPEC-SEC-IDENTITY-ASSERT-002): scribe-api no longer uses this
+> library at all. It accepts only portal-injected ``X-Klai-Verified-*``
+> headers gated by ``X-Internal-Secret``. The example below remains
+> accurate for knowledge-mcp and retrieval-api, which continue to call
+> portal directly via this client.
 
 ```python
-# klai-scribe — org_id resolved from JWT's resourceowner, then verified
+# Direct-call pattern (knowledge-mcp / retrieval-api)
 async def ingest_to_kb(
     request: Request,
     body: IngestToKBRequest,
     user_id: str = Depends(jwt_user),
     bearer_jwt: str = Depends(bearer_token_str),
 ):
-    org_id = jwt_payload.resourceowner  # canonical org from JWT
+    # claimed_org_id can come from any caller-supplied source — portal
+    # validates it against portal_users membership for the JWT's `sub`.
+    org_id = body.target_org_id or extract_org_from_request(request)
 
     result = await asserter.verify(
-        caller_service="scribe",
+        caller_service="knowledge-mcp",
         claimed_user_id=user_id,
         claimed_org_id=org_id,
         bearer_jwt=bearer_jwt,
