@@ -37,6 +37,7 @@ function CoverageWidget({
   onNodeClick,
   onSuggest,
   isSuggesting,
+  isBackfilling,
   canEdit,
   onRename,
   onDelete,
@@ -46,6 +47,10 @@ function CoverageWidget({
   onNodeClick: (nodeId: number) => void
   onSuggest?: () => void
   isSuggesting?: boolean
+  // SPEC-TAXONOMY-REVIEW-FLOW-001 follow-up: when backfill is running we hide
+  // the "Suggest categories" button and show an inline status indicator
+  // so the user knows documents are being auto-categorised and tagged.
+  isBackfilling?: boolean
   canEdit?: boolean
   onRename?: (nodeId: number, newName: string, description?: string) => void
   onDelete?: (nodeId: number) => void
@@ -94,25 +99,32 @@ function CoverageWidget({
         <p className="text-sm text-[var(--color-muted-foreground)]">
           {m.knowledge_taxonomy_coverage_empty()}
         </p>
-        {onSuggest && total >= 10 && (
-          <div className="space-y-1.5">
-            <button
-              type="button"
-              onClick={onSuggest}
-              disabled={isSuggesting}
-              className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium bg-[var(--color-accent)] text-[var(--color-accent-foreground)] hover:opacity-90 transition-opacity disabled:opacity-50"
-            >
-              {isSuggesting
-                ? <><Loader2 className="h-3 w-3 animate-spin" />{m.knowledge_taxonomy_suggest_generating()}</>
-                : <><Sparkles className="h-3 w-3" />{m.knowledge_taxonomy_suggest_categories()}</>
-              }
-            </button>
-            {isSuggesting && (
-              <p className="text-xs text-[var(--color-muted-foreground)]">
-                {m.knowledge_taxonomy_suggest_loading_hint()}
-              </p>
-            )}
+        {isBackfilling ? (
+          <div className="inline-flex items-center gap-1.5 text-xs text-[var(--color-muted-foreground)]">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            <span>{m.knowledge_taxonomy_categorising_status()}</span>
           </div>
+        ) : (
+          onSuggest && total >= 10 && (
+            <div className="space-y-1.5">
+              <button
+                type="button"
+                onClick={onSuggest}
+                disabled={isSuggesting}
+                className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium bg-[var(--color-accent)] text-[var(--color-accent-foreground)] hover:opacity-90 transition-opacity disabled:opacity-50"
+              >
+                {isSuggesting
+                  ? <><Loader2 className="h-3 w-3 animate-spin" />{m.knowledge_taxonomy_suggest_generating()}</>
+                  : <><Sparkles className="h-3 w-3" />{m.knowledge_taxonomy_suggest_categories()}</>
+                }
+              </button>
+              {isSuggesting && (
+                <p className="text-xs text-[var(--color-muted-foreground)]">
+                  {m.knowledge_taxonomy_suggest_loading_hint()}
+                </p>
+              )}
+            </div>
+          )
         )}
       </div>
     )
@@ -254,19 +266,26 @@ function CoverageWidget({
               <span className="text-xs text-[var(--color-muted-foreground)] tabular-nums">
                 {total > 0 ? Math.round((coverage.untagged_count / total) * 100) : 0}%
               </span>
-              {onSuggest && coverage.untagged_count >= 10 && total > 0 && Math.round((coverage.untagged_count / total) * 100) > 5 && (
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); onSuggest() }}
-                  disabled={isSuggesting}
-                  className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-medium bg-[var(--color-accent)] text-[var(--color-accent-foreground)] hover:opacity-90 transition-opacity disabled:opacity-50"
-                >
-                  {isSuggesting
-                    ? <Loader2 className="h-3 w-3 animate-spin" />
-                    : <Sparkles className="h-3 w-3" />
-                  }
-                  {m.knowledge_taxonomy_suggest_categories()}
-                </button>
+              {isBackfilling ? (
+                <div className="inline-flex items-center gap-1 text-xs text-[var(--color-muted-foreground)]">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  <span>{m.knowledge_taxonomy_categorising_status()}</span>
+                </div>
+              ) : (
+                onSuggest && coverage.untagged_count >= 10 && total > 0 && Math.round((coverage.untagged_count / total) * 100) > 5 && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); onSuggest() }}
+                    disabled={isSuggesting}
+                    className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-medium bg-[var(--color-accent)] text-[var(--color-accent-foreground)] hover:opacity-90 transition-opacity disabled:opacity-50"
+                  >
+                    {isSuggesting
+                      ? <Loader2 className="h-3 w-3 animate-spin" />
+                      : <Sparkles className="h-3 w-3" />
+                    }
+                    {m.knowledge_taxonomy_suggest_categories()}
+                  </button>
+                )
               )}
             </div>
           </div>
@@ -741,6 +760,7 @@ function TaxonomyTab() {
               onNodeClick={toggleNode}
               onSuggest={canEdit && (suggestState === 'idle' || suggestState === 'generating') ? () => bootstrapMutation.mutate() : undefined}
               isSuggesting={bootstrapMutation.isPending}
+              isBackfilling={backfillMutation.isPending || applyAllMutation.isPending}
               canEdit={canEdit}
               onRename={(nodeId, newName, description) => renameNodeMutation.mutate({ nodeId, name: newName, description })}
               onDelete={(nodeId) => deleteNodeMutation.mutate(nodeId)}
