@@ -87,9 +87,11 @@ function StatusBadge({ status }: { status: Status }) {
     probleem: m.kb_status_probleem(),
     leeg: m.kb_status_leeg(),
   } as const
+  // Subtle treatment: only Probleem stands out. Klaar / Bezig / Leeg are
+  // all "no problem yet" tiers and shouldn't shout.
   const variantMap = {
     klaar: 'success' as const,
-    bezig: 'warning' as const,
+    bezig: 'secondary' as const,
     probleem: 'destructive' as const,
     leeg: 'secondary' as const,
   }
@@ -192,7 +194,7 @@ function KnowledgePage() {
       {/* Header — h-[66px] matches the sidebar logo strip for vertical
           alignment: title and logo share the same baseline grid. */}
       <div className="flex h-[66px] items-center justify-between gap-4">
-        <h1 className="text-[26px] font-display-bold text-gray-900 leading-none">
+        <h1 className="page-title text-[26px] font-display-bold text-gray-900 leading-none">
           {m.kb_list_title()}
         </h1>
         <Link to="/app/knowledge/new">

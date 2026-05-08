@@ -174,24 +174,23 @@ function KbLayout() {
 
   return (
     <div className="mx-auto max-w-3xl px-6 pb-10">
-      {/* Header — h-[66px] strip aligns with sidebar logo */}
+      {/* Title strip — h-[66px] aligns the KB name with the sidebar logo */}
       <div className="flex h-[66px] items-center justify-between gap-4">
+        <h1 className="page-title text-[26px] font-display-bold text-gray-900 leading-none truncate">
+          {kb.name}
+        </h1>
         <Link
           to="/app/knowledge"
-          className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-900 transition-colors"
+          className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-900 transition-colors shrink-0"
         >
           <ArrowLeft className="h-4 w-4" />
           Terug
         </Link>
       </div>
 
-      {/* KB title block */}
-      <div className="mb-6">
-        <h1 className="text-[26px] font-display-bold text-gray-900 leading-none">{kb.name}</h1>
-        {kb.description && (
-          <p className="text-sm text-gray-400 mt-2">{kb.description}</p>
-        )}
-      </div>
+      {kb.description && (
+        <p className="text-sm text-gray-400 mb-6">{kb.description}</p>
+      )}
 
       {/* Tab bar */}
       <div className="border-b border-gray-200 mb-6">
