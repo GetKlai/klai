@@ -996,9 +996,7 @@ async def list_kb_bronnen(
         kb = await _get_kb_or_404(kb_slug, org.id, db)
 
     # Portal-side connectors (display name + sync status)
-    conn_result = await db.execute(
-        select(PortalConnector).where(PortalConnector.kb_id == kb.id)
-    )
+    conn_result = await db.execute(select(PortalConnector).where(PortalConnector.kb_id == kb.id))
     portal_connectors = list(conn_result.scalars().all())
     connector_by_id: dict[str, PortalConnector] = {str(c.id): c for c in portal_connectors}
 
@@ -1070,11 +1068,7 @@ async def list_kb_bronnen(
     # 3) Direct uploads — one row per artifact without source_connector_id.
     for upload in aggregates.get("uploads", []):
         created_at_unix = upload.get("created_at")
-        created_at_dt = (
-            datetime.fromtimestamp(int(created_at_unix), tz=dt.UTC)
-            if created_at_unix is not None
-            else None
-        )
+        created_at_dt = datetime.fromtimestamp(int(created_at_unix), tz=dt.UTC) if created_at_unix is not None else None
         bronnen.append(
             BronOut(
                 kind="upload",
@@ -1166,9 +1160,7 @@ async def get_bron_content(
     # kb_slug pinning in knowledge-ingest's tenant_scoped_connection is the
     # tenant guard. The KB-level _get_kb_or_404 above already proved the
     # caller has access to this KB.
-    data = await knowledge_ingest_client.list_upload_chunks(
-        org.zitadel_org_id, source_id, limit=limit, offset=offset
-    )
+    data = await knowledge_ingest_client.list_upload_chunks(org.zitadel_org_id, source_id, limit=limit, offset=offset)
     if data is None:
         return BronContentResponse(kind=kind, chunks=[], total=0, limit=limit, offset=offset)
     chunks = [

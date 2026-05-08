@@ -8,6 +8,7 @@ Pin the wiring of:
 
 The label helpers are pure functions — covered with table-style tests.
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -71,9 +72,7 @@ def _make_kb(slug: str = "kb-a") -> MagicMock:
     return kb
 
 
-def _make_connector(
-    cid: str, ctype: str = "notion", name: str | None = "My Notion", status: str = "ok"
-) -> MagicMock:
+def _make_connector(cid: str, ctype: str = "notion", name: str | None = "My Notion", status: str = "ok") -> MagicMock:
     c = MagicMock()
     c.id = cid
     c.kb_id = 42
