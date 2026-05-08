@@ -12,42 +12,39 @@ Covers:
 
 import pytest
 
-from app.core.plans import PLAN_PRODUCTS, get_plan_products
+from app.core.features import PLAN_FEATURES
 
 
 class TestPlanProductsKnowledgeAdded:
     """AC-1: All active plans include 'knowledge'."""
 
     def test_core_plan_includes_knowledge(self) -> None:
-        assert "knowledge" in get_plan_products("core")
+        assert "knowledge" in PLAN_FEATURES["core"]
 
     def test_professional_plan_includes_knowledge(self) -> None:
-        assert "knowledge" in get_plan_products("professional")
+        assert "knowledge" in PLAN_FEATURES["professional"]
 
     def test_complete_plan_includes_knowledge(self) -> None:
-        assert "knowledge" in get_plan_products("complete")
+        assert "knowledge" in PLAN_FEATURES["complete"]
 
     def test_core_plan_products_are_chat_and_knowledge(self) -> None:
         """Core plan: chat + knowledge (no scribe)."""
-        products = set(get_plan_products("core"))
-        assert products == {"chat", "knowledge"}
+        assert PLAN_FEATURES["core"] == frozenset({"chat", "knowledge"})
 
     def test_professional_plan_products_are_chat_and_knowledge(self) -> None:
         """SPEC-PORTAL-PROFILES-001 P2.2: professional no longer includes scribe (add-on)."""
-        products = set(get_plan_products("professional"))
-        assert products == {"chat", "knowledge"}
+        assert PLAN_FEATURES["professional"] == frozenset({"chat", "knowledge"})
 
     def test_complete_plan_products_are_chat_and_knowledge(self) -> None:
         """SPEC-PORTAL-PROFILES-001 P2.2: complete no longer includes scribe (add-on)."""
-        products = set(get_plan_products("complete"))
-        assert products == {"chat", "knowledge"}
+        assert PLAN_FEATURES["complete"] == frozenset({"chat", "knowledge"})
 
     def test_free_plan_still_has_no_products(self) -> None:
-        assert get_plan_products("free") == []
+        assert PLAN_FEATURES["free"] == frozenset()
 
     def test_all_non_free_plans_have_knowledge(self) -> None:
         for plan in ("core", "professional", "complete"):
-            assert "knowledge" in PLAN_PRODUCTS[plan], f"Plan '{plan}' missing knowledge"
+            assert "knowledge" in PLAN_FEATURES[plan], f"Plan '{plan}' missing knowledge"
 
 
 class TestSystemGroupsRemoved:
@@ -135,13 +132,11 @@ class TestPlanLimitsTable:
 
         assert "complete" in PLAN_LIMITS
 
-    def test_every_plan_products_key_has_limits_entry(self) -> None:
-        """Every plan in PLAN_PRODUCTS must have a matching PLAN_LIMITS entry."""
+    def test_every_plan_features_key_has_limits_entry(self) -> None:
+        """Every plan in PLAN_FEATURES must have a matching PLAN_LIMITS entry."""
         from app.core.plan_limits import PLAN_LIMITS
 
-        for plan in PLAN_PRODUCTS:
-            if plan == "free":
-                continue  # free plan has no KBLimits entry (optional)
+        for plan in PLAN_FEATURES:
             assert plan in PLAN_LIMITS, f"PLAN_LIMITS missing entry for plan '{plan}'"
 
     def test_core_limits_max_personal_kbs_is_5(self) -> None:

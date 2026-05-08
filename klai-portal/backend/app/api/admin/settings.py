@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.plans import ADDON_PRODUCTS, PLAN_PRODUCTS
+from app.core.features import ADDON_FEATURES, PLAN_FEATURES
 from app.services.audit import log_event
 from app.services.events import emit_event
 
@@ -117,7 +117,7 @@ async def change_plan(
 
     new_plan = body.plan
 
-    if new_plan not in PLAN_PRODUCTS:
+    if new_plan not in PLAN_FEATURES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown plan: {new_plan}")
 
     org.plan = new_plan
@@ -158,19 +158,20 @@ async def update_addons(
     """Enable or disable tenant-level add-ons.
 
     # @MX:NOTE: SPEC-PORTAL-PROFILES-001 Phase 2 P2.4 — only values in
-    # ADDON_PRODUCTS are accepted. Unknown values raise 400. Disabling an
-    # add-on does NOT remove user/group entitlements — they become dormant
-    # and re-activate when the toggle is turned back on. This is intentional:
-    # preserves manual entitlement work done by the admin.
+    # ADDON_FEATURES are accepted. Unknown values raise 400. Per
+    # SPEC-PORTAL-RBAC-001 v0.2.0, products are derived purely from
+    # (role, plan, enabled_addons); there are no per-user / per-group
+    # entitlement tables to keep in sync. Disabling an add-on simply
+    # stops surfacing it to the derivation function on the next request.
     """
     admin_user_id, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
 
-    unknown = [p for p in body.enabled_addons if p not in ADDON_PRODUCTS]
+    unknown = [p for p in body.enabled_addons if p not in ADDON_FEATURES]
     if unknown:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unknown add-on product(s): {unknown}. Valid: {sorted(ADDON_PRODUCTS)}",
+            detail=f"Unknown add-on product(s): {unknown}. Valid: {sorted(ADDON_FEATURES)}",
         )
 
     before = list(org.enabled_addons or [])

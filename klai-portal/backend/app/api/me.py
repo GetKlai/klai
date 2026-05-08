@@ -16,18 +16,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.bearer import bearer
-from app.api.dependencies import get_effective_capabilities
 from app.core.config import settings
 from app.core.database import get_db, set_tenant
-from app.core.profiles import PROFILE_CAPABILITIES as _pc
-from app.core.profiles import effective_role as _profile_effective_role
+from app.core.permissions import resolve_user_permissions
 from app.models.audit import PortalAuditLog
 from app.models.events import ProductEvent
 from app.models.groups import PortalGroup, PortalGroupMembership
 from app.models.knowledge_bases import PortalKnowledgeBase, PortalUserKBAccess
 from app.models.meetings import VexaMeeting
 from app.models.portal import PortalOrg, PortalUser
-from app.services.entitlements import get_effective_products
 from app.services.zitadel import zitadel
 
 logger = logging.getLogger(__name__)
@@ -90,16 +87,34 @@ async def me(
 
     zitadel_user_id = info.get("sub", "")
 
-    # Resolve org + user preferences from portal_users -> portal_orgs
+    # SPEC-PORTAL-RBAC-REFACTOR-001 Phase 1 (REQ-10/1G):
+    # /api/me used to issue THREE separate queries (resolver row,
+    # get_effective_products, get_effective_capabilities) and surface
+    # two inconsistent capability fields. UserPermissions consolidates
+    # everything into one DB query and one source of truth. The
+    # `capabilities` and `effective_capabilities` fields now both read
+    # from the same `perms.effective_capabilities` (alias-fase per
+    # REQ-10) so admin-on-core surfaces the full complete-tier set in
+    # both fields instead of the zero-length one previously returned by
+    # the regel-163 ``PROFILE_CAPABILITIES.get(role, frozenset())`` path.
     workspace_url: str | None = None
     provisioning_status: str = "pending"
     mfa_policy: str = "optional"
     preferred_language: Literal["nl", "en"] = "nl"
-    portal_role: str = "member"
+    portal_role: str = "personal"  # SPEC REQ-11: default flipped from "member"
     _eff_role: str = "personal"
-    _profile_caps_set: set[str] = set()
+    _capabilities: list[str] = []
+    _products: list[str] = []
     org_found: bool = False
-    if zitadel_user_id:
+    perms = await resolve_user_permissions(zitadel_user_id, db) if zitadel_user_id else None
+    if perms is not None:
+        org_found = True
+        await set_tenant(db, perms.org_id)
+        provisioning_status = perms.provisioning_status
+
+        # Re-fetch portal_user/org for the display-name cache + mfa_policy.
+        # Cheaper than carrying every column on UserPermissions; the
+        # RLS-permissive lookup is fine after set_tenant.
         result = await db.execute(
             select(PortalOrg, PortalUser)
             .join(PortalUser, PortalUser.org_id == PortalOrg.id)
@@ -108,30 +123,22 @@ async def me(
         row = result.one_or_none()
         if row:
             org, portal_user = row
-            org_found = True
-            # SPEC-TI-005 follow-up: now that we have resolved the tenant,
-            # bind the connection's RLS context BEFORE issuing any further
-            # query or commit. The portal_users WITH CHECK is strict (Cat-A
-            # AUTH-SEED reads are permissive but writes require an explicit
-            # GUC). Without this set_tenant, the `db.commit()` below for the
-            # display_name/email refresh fails with 42501. The SELECT above
-            # is allowed because portal_users USING has the unset-GUC branch.
-            await set_tenant(db, org.id)
-            provisioning_status = org.provisioning_status
             mfa_policy = org.mfa_policy
             preferred_language = portal_user.preferred_language
-            portal_role = portal_user.role
-            _eff_role = _profile_effective_role(portal_user)
-            _profile_caps_set = set(_pc.get(_eff_role, frozenset()))
             if org.slug:
                 workspace_url = f"https://{org.slug}.{settings.domain}"
-            # Cache display info from OIDC token so members endpoints can resolve names
+            # Cache display info from OIDC token for members endpoints
             new_display_name = info.get("name", info.get("preferred_username")) or None
             new_email = info.get("email") or None
             if portal_user.display_name != new_display_name or portal_user.email != new_email:
                 portal_user.display_name = new_display_name
                 portal_user.email = new_email
                 await db.commit()
+
+        portal_role = perms.role.value
+        _eff_role = perms.effective_role.value
+        _capabilities = sorted(c.value for c in perms.effective_capabilities)
+        _products = sorted(perms.effective_products)
 
     # Check whether the user has any MFA method enrolled
     mfa_enrolled = False
@@ -140,11 +147,6 @@ async def me(
             mfa_enrolled = await zitadel.has_any_mfa(zitadel_user_id)
         except Exception as exc:
             logger.warning("MFA check failed for user %s, skipping: %s", zitadel_user_id, exc, exc_info=True)
-
-    # get_effective_products self-heals its own RLS tenant context — no
-    # set_tenant needed at this call site.
-    products = await get_effective_products(zitadel_user_id, db) if zitadel_user_id else []
-    capabilities = await get_effective_capabilities(zitadel_user_id, db) if zitadel_user_id else set()
 
     return MeResponse(
         user_id=zitadel_user_id,
@@ -158,10 +160,13 @@ async def me(
         mfa_policy=mfa_policy,
         preferred_language=preferred_language,
         portal_role=portal_role,
-        products=products,
-        capabilities=sorted(capabilities),
+        products=_products,
+        # REQ-10: capabilities and effective_capabilities are aliases of the
+        # same source. Phase 2 deprecates `capabilities` in favour of
+        # `effective_capabilities`; for now both must hold identical content.
+        capabilities=_capabilities,
         effective_role=_eff_role,
-        effective_capabilities=sorted(_profile_caps_set),
+        effective_capabilities=_capabilities,
         org_found=org_found,
     )
 

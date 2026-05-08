@@ -40,6 +40,15 @@ class KBLimits:
 
 
 PLAN_LIMITS: dict[str, KBLimits] = {
+    "free": KBLimits(
+        # Free tier has no paid features — explicit entry so
+        # `get_plan_limits("free")` does not silently fall back to core's caps.
+        # SPEC-PORTAL-RBAC-REFACTOR-001 AC-8: personal on `free` -> [] caps.
+        max_personal_kbs_per_user=5,
+        max_items_per_kb=20,
+        can_create_org_kbs=False,
+        capabilities=frozenset(),
+    ),
     "core": KBLimits(
         max_personal_kbs_per_user=5,
         max_items_per_kb=20,
