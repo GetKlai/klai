@@ -470,15 +470,32 @@ async def test_require_capability_403_when_missing() -> None:
 
 
 @pytest.mark.asyncio
-async def test_require_platform_admin_passes_for_platform_org() -> None:
-    perms = _perms_with(is_platform_admin=True)
+async def test_require_platform_admin_passes_for_admin_in_platform_org() -> None:
+    perms = _perms_with(role=ProfileRole.ADMIN, is_platform_admin=True)
     dep = require_platform_admin()
     assert await dep(perms=perms) is perms
 
 
 @pytest.mark.asyncio
 async def test_require_platform_admin_403_for_tenant_org() -> None:
-    perms = _perms_with(is_platform_admin=False)
+    perms = _perms_with(role=ProfileRole.ADMIN, is_platform_admin=False)
+    dep = require_platform_admin()
+    with pytest.raises(HTTPException) as exc:
+        await dep(perms=perms)
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+
+
+@pytest.mark.parametrize(
+    "role",
+    [ProfileRole.PERSONAL, ProfileRole.COMPANY, ProfileRole.KB_MANAGER, ProfileRole.GROUP_MANAGER],
+)
+@pytest.mark.asyncio
+async def test_require_platform_admin_403_for_non_admin_in_platform_org(role: ProfileRole) -> None:
+    """Phase 1 follow-up: the imperative pattern that this gate replaces is
+    `_require_admin(caller_user) + _require_platform_admin(caller_org)`.
+    Both must hold. A `company`-rol user IN the platform org must NOT pass
+    this gate — that would be permissiver dan vandaag."""
+    perms = _perms_with(role=role, is_platform_admin=True)
     dep = require_platform_admin()
     with pytest.raises(HTTPException) as exc:
         await dep(perms=perms)

@@ -1,6 +1,8 @@
 """
 R6 tests -- admin handover: promote-admin, demote-admin, DELETE /api/admin/users/me
 (SPEC-AUTH-009 R6 + C6.1/C6.2/C6.3/C6.7).
+
+SPEC-PORTAL-RBAC-REFACTOR-001 Phase 2a: endpoints take ``perms: UserPermissions``.
 """
 
 from __future__ import annotations
@@ -10,8 +12,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
+from tests.conftest import make_perms
 
-def _make_user(uid: str = "u1", role: str = "member") -> MagicMock:
+
+def _make_user(uid: str = "u1", role: str = "company") -> MagicMock:
     u = MagicMock()
     u.zitadel_user_id = uid
     u.org_id = 1
@@ -20,28 +24,14 @@ def _make_user(uid: str = "u1", role: str = "member") -> MagicMock:
     return u
 
 
-def _make_org(org_id: int = 1) -> MagicMock:
-    org = MagicMock()
-    org.id = org_id
-    org.name = "Acme"
-    org.seats = 10
-    return org
-
-
-def _make_db(
-    caller: MagicMock,
-    org: MagicMock,
-    target: MagicMock | None = None,
-    admin_count: int = 2,
-) -> AsyncMock:
-    """Return an AsyncMock DB where:
-    - _get_caller_org returns (caller.zitadel_user_id, org, caller)
+def _make_db(target: MagicMock | None = None, admin_count: int = 2) -> AsyncMock:
+    """Return an AsyncMock DB:
     - every execute() returns a result whose scalar_one_or_none() == target
       (the demote-admin handler issues an extra SELECT ... FOR UPDATE on
       portal_orgs to serialise concurrent role changes; that lock query
       consumes a result the handler does not read, so always returning
-      `target` is safe — only the target-lookup call inspects the result)
-    - scalar() for admin count returns admin_count
+      `target` is safe — only the target-lookup call inspects the result).
+    - scalar() for admin count returns admin_count.
     """
     db = AsyncMock()
     db.add = MagicMock()
@@ -49,6 +39,7 @@ def _make_db(
     async def _execute(stmt, *args, **kwargs):
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = target
+        mock_result.scalar_one.return_value = target
         return mock_result
 
     async def _scalar(stmt, *args, **kwargs):
@@ -65,19 +56,14 @@ class TestPromoteAdmin:
         """C6.1: POST promote-admin sets target.role = 'admin'."""
         from app.api.admin.users import promote_admin
 
-        caller = _make_user("admin1", role="admin")
-        target = _make_user("u2", role="member")
-        org = _make_org()
-
-        db = _make_db(caller, org, target=target)
-        with patch("app.api.admin.users._get_caller_org", AsyncMock(return_value=("admin1", org, caller))):
-            with patch("app.api.admin.users.emit_event", MagicMock()):
-                creds = MagicMock()
-                result = await promote_admin(
-                    zitadel_user_id=target.zitadel_user_id,
-                    credentials=creds,
-                    db=db,
-                )
+        target = _make_user("u2", role="company")
+        db = _make_db(target=target)
+        with patch("app.api.admin.users.emit_event", MagicMock()):
+            result = await promote_admin(
+                zitadel_user_id=target.zitadel_user_id,
+                perms=make_perms(role="admin", user_id="admin1"),
+                db=db,
+            )
 
         assert target.role == "admin"
         assert "promoted" in result.message.lower() or result.message
@@ -87,40 +73,30 @@ class TestPromoteAdmin:
         """C6.1: Promoting a user not in the org raises 404."""
         from app.api.admin.users import promote_admin
 
-        caller = _make_user("admin1", role="admin")
-        org = _make_org()
-
-        db = _make_db(caller, org, target=None)  # no target found
-        with patch("app.api.admin.users._get_caller_org", AsyncMock(return_value=("admin1", org, caller))):
-            creds = MagicMock()
-            with pytest.raises(HTTPException) as exc_info:
-                await promote_admin(
-                    zitadel_user_id="ghost",
-                    credentials=creds,
-                    db=db,
-                )
+        db = _make_db(target=None)
+        with pytest.raises(HTTPException) as exc_info:
+            await promote_admin(
+                zitadel_user_id="ghost",
+                perms=make_perms(role="admin"),
+                db=db,
+            )
         assert exc_info.value.status_code == 404
 
 
 class TestDemoteAdmin:
     @pytest.mark.asyncio
-    async def test_demote_sets_role_member(self) -> None:
-        """C6.2: POST demote-admin sets target.role = 'member'."""
+    async def test_demote_sets_role_company(self) -> None:
+        """C6.2: POST demote-admin sets target.role = 'company'."""
         from app.api.admin.users import demote_admin
 
-        caller = _make_user("admin1", role="admin")
         target = _make_user("admin2", role="admin")
-        org = _make_org()
-
-        db = _make_db(caller, org, target=target, admin_count=2)
-        with patch("app.api.admin.users._get_caller_org", AsyncMock(return_value=("admin1", org, caller))):
-            with patch("app.api.admin.users.emit_event", MagicMock()):
-                creds = MagicMock()
-                result = await demote_admin(
-                    zitadel_user_id=target.zitadel_user_id,
-                    credentials=creds,
-                    db=db,
-                )
+        db = _make_db(target=target, admin_count=2)
+        with patch("app.api.admin.users.emit_event", MagicMock()):
+            result = await demote_admin(
+                zitadel_user_id=target.zitadel_user_id,
+                perms=make_perms(role="admin", user_id="admin1"),
+                db=db,
+            )
 
         # Post profile-ladder migration: demoted admin lands on "company"
         # rung (formerly "member"). See SPEC-PORTAL-PROFILES-001.
@@ -132,19 +108,14 @@ class TestDemoteAdmin:
         """C6.2: Demoting last admin raises HTTP 409 Conflict."""
         from app.api.admin.users import demote_admin
 
-        caller = _make_user("admin1", role="admin")
-        target = _make_user("admin1", role="admin")  # same person, only admin
-        org = _make_org()
-
-        db = _make_db(caller, org, target=target, admin_count=1)
-        with patch("app.api.admin.users._get_caller_org", AsyncMock(return_value=("admin1", org, caller))):
-            creds = MagicMock()
-            with pytest.raises(HTTPException) as exc_info:
-                await demote_admin(
-                    zitadel_user_id=target.zitadel_user_id,
-                    credentials=creds,
-                    db=db,
-                )
+        target = _make_user("admin1", role="admin")  # only admin
+        db = _make_db(target=target, admin_count=1)
+        with pytest.raises(HTTPException) as exc_info:
+            await demote_admin(
+                zitadel_user_id=target.zitadel_user_id,
+                perms=make_perms(role="admin", user_id="admin1"),
+                db=db,
+            )
         assert exc_info.value.status_code == 409
 
     @pytest.mark.asyncio
@@ -152,19 +123,14 @@ class TestDemoteAdmin:
         """C6.2: Target must be admin; demoting a member raises HTTP 400."""
         from app.api.admin.users import demote_admin
 
-        caller = _make_user("admin1", role="admin")
-        target = _make_user("u2", role="member")
-        org = _make_org()
-
-        db = _make_db(caller, org, target=target, admin_count=2)
-        with patch("app.api.admin.users._get_caller_org", AsyncMock(return_value=("admin1", org, caller))):
-            creds = MagicMock()
-            with pytest.raises(HTTPException) as exc_info:
-                await demote_admin(
-                    zitadel_user_id=target.zitadel_user_id,
-                    credentials=creds,
-                    db=db,
-                )
+        target = _make_user("u2", role="company")
+        db = _make_db(target=target, admin_count=2)
+        with pytest.raises(HTTPException) as exc_info:
+            await demote_admin(
+                zitadel_user_id=target.zitadel_user_id,
+                perms=make_perms(role="admin", user_id="admin1"),
+                db=db,
+            )
         assert exc_info.value.status_code == 400
 
 
@@ -174,17 +140,25 @@ class TestLeaveWorkspace:
         """C6.3: A non-admin member can leave without restriction."""
         from app.api.admin.users import leave_workspace
 
-        caller = _make_user("u1", role="member")
-        org = _make_org()
-
+        caller = _make_user("u1", role="company")
         db = AsyncMock()
         db.add = MagicMock()
         db.delete = AsyncMock()
 
-        with patch("app.api.admin.users._get_caller_org", AsyncMock(return_value=("u1", org, caller))):
-            with patch("app.api.admin.users.emit_event", MagicMock()):
-                creds = MagicMock()
-                result = await leave_workspace(credentials=creds, db=db)
+        # leave_workspace re-fetches the caller's PortalUser ORM row for
+        # `db.delete`. Mock the SELECT result to return the caller mock.
+        async def _execute(stmt, *args, **kwargs):
+            mock_result = MagicMock()
+            mock_result.scalar_one.return_value = caller
+            return mock_result
+
+        db.execute = _execute
+
+        with patch("app.api.admin.users.emit_event", MagicMock()):
+            result = await leave_workspace(
+                perms=make_perms(role="company", user_id="u1"),
+                db=db,
+            )
 
         db.delete.assert_awaited_once_with(caller)
         assert result.message
@@ -194,21 +168,23 @@ class TestLeaveWorkspace:
         """C6.3 + C6.7: Last admin leaving raises 409."""
         from app.api.admin.users import leave_workspace
 
-        caller = _make_user("admin1", role="admin")
-        org = _make_org()
-
         db = AsyncMock()
         db.add = MagicMock()
         db.delete = AsyncMock()
 
+        async def _execute(stmt, *args, **kwargs):
+            return MagicMock()
+
         async def _scalar(stmt, *args, **kwargs):
             return 1  # only one admin
 
+        db.execute = _execute
         db.scalar = _scalar
 
-        with patch("app.api.admin.users._get_caller_org", AsyncMock(return_value=("admin1", org, caller))):
-            creds = MagicMock()
-            with pytest.raises(HTTPException) as exc_info:
-                await leave_workspace(credentials=creds, db=db)
+        with pytest.raises(HTTPException) as exc_info:
+            await leave_workspace(
+                perms=make_perms(role="admin", user_id="admin1"),
+                db=db,
+            )
 
         assert exc_info.value.status_code == 409

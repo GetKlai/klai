@@ -7,20 +7,23 @@ from typing import Final, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.permissions import (
+    ProfileRole,
+    UserPermissions,
+    get_caller,
+    get_caller_at_least,
+)
 from app.models.groups import PortalGroup, PortalGroupMembership
 from app.models.portal import PortalOrg, PortalUser
 from app.services.audit import log_event
 from app.services.github import remove_github_org_member
 from app.services.zitadel import zitadel
-
-from . import _get_caller_org, _require_admin, bearer
 
 logger = logging.getLogger(__name__)
 # Structured-event logger for VictoriaLogs queryability — follows the
@@ -111,14 +114,13 @@ class MessageResponse(BaseModel):
 
 @router.get("/users", response_model=UsersResponse)
 async def list_users(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> UsersResponse:
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
     # Get portal membership records (mapping + created_at + role)
-    result = await db.execute(select(PortalUser).where(PortalUser.org_id == org.id).order_by(PortalUser.created_at))
+    result = await db.execute(
+        select(PortalUser).where(PortalUser.org_id == perms.org_id).order_by(PortalUser.created_at)
+    )
     portal_users = {u.zitadel_user_id: u for u in result.scalars().all()}
 
     if not portal_users:
@@ -155,14 +157,11 @@ async def list_users(
 @router.post("/users/invite", response_model=InviteResponse, status_code=status.HTTP_201_CREATED)
 async def invite_user(
     body: InviteRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> InviteResponse:
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
     # Seat enforcement: lock the org row to prevent concurrent invites
-    locked_result = await db.execute(select(PortalOrg).where(PortalOrg.id == org.id).with_for_update())
+    locked_result = await db.execute(select(PortalOrg).where(PortalOrg.id == perms.org_id).with_for_update())
     org = locked_result.scalar_one()
 
     # TODO: filter by status == 'active' once AUTH-001 adds status column
@@ -270,16 +269,13 @@ async def invite_user(
 async def update_user(
     zitadel_user_id: str,
     body: UserUpdateRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
     result = await db.execute(
         select(PortalUser).where(
             PortalUser.zitadel_user_id == zitadel_user_id,
-            PortalUser.org_id == org.id,
+            PortalUser.org_id == perms.org_id,
         )
     )
     user = result.scalar_one_or_none()
@@ -310,7 +306,7 @@ async def update_user(
 async def update_user_role(
     zitadel_user_id: str,
     body: RoleUpdateRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     """SPEC-PORTAL-ADMIN-UI-001 REQ-2: unified change-profile endpoint.
@@ -319,19 +315,16 @@ async def update_user_role(
     the new admin UI cannot lock a tenant out of its own workspace. Mirrors
     the invariant that POST /demote-admin already enforces.
     """
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
     # @MX:ANCHOR SPEC-PORTAL-ADMIN-UI-001 REQ-2 — min-1-admin invariant.
     # @MX:REASON Without serialised role changes two concurrent admin->X
     # patches that both see admin_count=2 can each succeed and leave the
     # workspace with zero admins.
-    await _lock_org_for_role_change(db, org.id)
+    await _lock_org_for_role_change(db, perms.org_id)
 
     result = await db.execute(
         select(PortalUser).where(
             PortalUser.zitadel_user_id == zitadel_user_id,
-            PortalUser.org_id == org.id,
+            PortalUser.org_id == perms.org_id,
         )
     )
     user = result.scalar_one_or_none()
@@ -344,7 +337,7 @@ async def update_user_role(
             select(func.count())
             .select_from(PortalUser)
             .where(
-                PortalUser.org_id == org.id,
+                PortalUser.org_id == perms.org_id,
                 PortalUser.role == "admin",
             )
         )
@@ -356,7 +349,7 @@ async def update_user_role(
 
     user.role = body.role
     await db.commit()
-    logger.info("Role changed: user_id=%s, new_role=%s, org_id=%d", zitadel_user_id, body.role, org.id)
+    logger.info("Role changed: user_id=%s, new_role=%s, org_id=%d", zitadel_user_id, body.role, perms.org_id)
 
     return MessageResponse(message="Rol bijgewerkt.")
 
@@ -364,16 +357,13 @@ async def update_user_role(
 @router.post("/users/{zitadel_user_id}/resend-invite", response_model=MessageResponse)
 async def resend_invite(
     zitadel_user_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
     result = await db.execute(
         select(PortalUser).where(
             PortalUser.zitadel_user_id == zitadel_user_id,
-            PortalUser.org_id == org.id,
+            PortalUser.org_id == perms.org_id,
         )
     )
     if not result.scalar_one_or_none():
@@ -396,17 +386,14 @@ async def resend_invite(
 @router.delete("/users/{zitadel_user_id}", response_model=MessageResponse)
 async def remove_user(
     zitadel_user_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
     # Verify user belongs to this org before deleting
     result = await db.execute(
         select(PortalUser).where(
             PortalUser.zitadel_user_id == zitadel_user_id,
-            PortalUser.org_id == org.id,
+            PortalUser.org_id == perms.org_id,
         )
     )
     user = result.scalar_one_or_none()
@@ -431,17 +418,14 @@ async def remove_user(
 @router.post("/users/{zitadel_user_id}/suspend", response_model=MessageResponse)
 async def suspend_user(
     zitadel_user_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     """Suspend an active user. Preserves group memberships and products."""
-    caller_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
     result = await db.execute(
         select(PortalUser).where(
             PortalUser.zitadel_user_id == zitadel_user_id,
-            PortalUser.org_id == org.id,
+            PortalUser.org_id == perms.org_id,
         )
     )
     user = result.scalar_one_or_none()
@@ -455,8 +439,8 @@ async def suspend_user(
 
     user.status = "suspended"
     await log_event(
-        org_id=org.id,
-        actor=caller_id,
+        org_id=perms.org_id,
+        actor=perms.user_id,
         action="user.suspended",
         resource_type="user",
         resource_id=zitadel_user_id,
@@ -468,17 +452,14 @@ async def suspend_user(
 @router.post("/users/{zitadel_user_id}/reactivate", response_model=MessageResponse)
 async def reactivate_user(
     zitadel_user_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     """Reactivate a suspended user."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
     result = await db.execute(
         select(PortalUser).where(
             PortalUser.zitadel_user_id == zitadel_user_id,
-            PortalUser.org_id == org.id,
+            PortalUser.org_id == perms.org_id,
         )
     )
     user = result.scalar_one_or_none()
@@ -498,17 +479,14 @@ async def reactivate_user(
 @router.post("/users/{zitadel_user_id}/offboard", response_model=MessageResponse)
 async def offboard_user(
     zitadel_user_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     """Offboard a user: remove memberships + products, deactivate in Zitadel, set status."""
-    caller_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
     result = await db.execute(
         select(PortalUser).where(
             PortalUser.zitadel_user_id == zitadel_user_id,
-            PortalUser.org_id == org.id,
+            PortalUser.org_id == perms.org_id,
         )
     )
     user = result.scalar_one_or_none()
@@ -528,7 +506,7 @@ async def offboard_user(
     membership_delete_result = await db.execute(
         delete(PortalGroupMembership).where(
             PortalGroupMembership.zitadel_user_id == zitadel_user_id,
-            PortalGroupMembership.group_id.in_(select(PortalGroup.id).where(PortalGroup.org_id == org.id)),
+            PortalGroupMembership.group_id.in_(select(PortalGroup.id).where(PortalGroup.org_id == perms.org_id)),
         )
     )
     # AsyncSession.execute() is typed as Result[Any]; the rowcount attribute
@@ -543,13 +521,13 @@ async def offboard_user(
     # `memberships_removed_count:<n>` in LogsQL) — not under an `extra` blob.
     _slog.info(
         "user_offboarded",
-        org_id=org.id,
+        org_id=perms.org_id,
         zitadel_user_id=zitadel_user_id,
         memberships_removed_count=memberships_removed_count,
     )
     await log_event(
-        org_id=org.id,
-        actor=caller_id,
+        org_id=perms.org_id,
+        actor=perms.user_id,
         action="user.offboarded",
         resource_type="user",
         resource_id=zitadel_user_id,
@@ -573,17 +551,14 @@ from app.services.events import emit_event  # noqa: E402 -- late import to avoid
 @router.post("/users/{zitadel_user_id}/promote-admin", response_model=MessageResponse)
 async def promote_admin(
     zitadel_user_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     """C6.1: Promote an active member to admin. No max-admin limit."""
-    caller_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
     result = await db.execute(
         select(PortalUser).where(
             PortalUser.zitadel_user_id == zitadel_user_id,
-            PortalUser.org_id == org.id,
+            PortalUser.org_id == perms.org_id,
         )
     )
     target = result.scalar_one_or_none()
@@ -594,11 +569,11 @@ async def promote_admin(
     await db.commit()
     logger.info(
         "promote_admin: actor=%s promoted user=%s in org=%d",
-        caller_id,
+        perms.user_id,
         zitadel_user_id,
-        org.id,
+        perms.org_id,
     )
-    emit_event("user.role_promoted", org_id=org.id, user_id=zitadel_user_id)
+    emit_event("user.role_promoted", org_id=perms.org_id, user_id=zitadel_user_id)
     return MessageResponse(message=f"User {zitadel_user_id} promoted to admin.")
 
 
@@ -619,20 +594,17 @@ async def _lock_org_for_role_change(db: AsyncSession, org_id: int) -> None:
 @router.post("/users/{zitadel_user_id}/demote-admin", response_model=MessageResponse)
 async def demote_admin(
     zitadel_user_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     """C6.2: Demote an admin to member. Refuses if this would leave zero admins."""
-    caller_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
     # Serialise concurrent role changes for this org (see _lock_org_for_role_change).
-    await _lock_org_for_role_change(db, org.id)
+    await _lock_org_for_role_change(db, perms.org_id)
 
     result = await db.execute(
         select(PortalUser).where(
             PortalUser.zitadel_user_id == zitadel_user_id,
-            PortalUser.org_id == org.id,
+            PortalUser.org_id == perms.org_id,
         )
     )
     target = result.scalar_one_or_none()
@@ -649,7 +621,7 @@ async def demote_admin(
         select(func.count())
         .select_from(PortalUser)
         .where(
-            PortalUser.org_id == org.id,
+            PortalUser.org_id == perms.org_id,
             PortalUser.role == "admin",
         )
     )
@@ -666,33 +638,31 @@ async def demote_admin(
     await db.commit()
     logger.info(
         "demote_admin: actor=%s demoted user=%s in org=%d",
-        caller_id,
+        perms.user_id,
         zitadel_user_id,
-        org.id,
+        perms.org_id,
     )
-    emit_event("user.role_demoted", org_id=org.id, user_id=zitadel_user_id)
+    emit_event("user.role_demoted", org_id=perms.org_id, user_id=zitadel_user_id)
     return MessageResponse(message=f"User {zitadel_user_id} demoted to company.")
 
 
 @router.delete("/users/me", response_model=MessageResponse)
 async def leave_workspace(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     """C6.3: Leave the workspace (self-removal). Refuses if caller is last admin.
     C6.7: Refuses if this would leave the workspace with zero users (last-member case).
     """
-    caller_id, org, caller_user = await _get_caller_org(credentials, db)
-
-    if caller_user.role == "admin":
+    if perms.role == ProfileRole.ADMIN:
         # Serialise concurrent role changes for this org (see _lock_org_for_role_change).
-        await _lock_org_for_role_change(db, org.id)
+        await _lock_org_for_role_change(db, perms.org_id)
 
         admin_count = await db.scalar(
             select(func.count())
             .select_from(PortalUser)
             .where(
-                PortalUser.org_id == org.id,
+                PortalUser.org_id == perms.org_id,
                 PortalUser.role == "admin",
             )
         )
@@ -702,8 +672,17 @@ async def leave_workspace(
                 detail="Promote another admin or delete the workspace before leaving.",
             )
 
+    # Re-fetch the caller's PortalUser ORM-object for db.delete. UserPermissions
+    # is a snapshot, not the ORM row.
+    caller_row_result = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == perms.user_id,
+            PortalUser.org_id == perms.org_id,
+        )
+    )
+    caller_user = caller_row_result.scalar_one()
     await db.delete(caller_user)
     await db.commit()
-    logger.info("leave_workspace: user=%s left org=%d", caller_id, org.id)
-    emit_event("user.left_workspace", org_id=org.id, user_id=caller_id)
+    logger.info("leave_workspace: user=%s left org=%d", perms.user_id, perms.org_id)
+    emit_event("user.left_workspace", org_id=perms.org_id, user_id=perms.user_id)
     return MessageResponse(message="You have left the workspace.")

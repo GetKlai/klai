@@ -44,7 +44,13 @@ TENANT_ESTABLISHING_CALLS: frozenset[str] = frozenset(
         "set_tenant",
         "tenant_scoped_session",
         "cross_org_session",
-        "_get_caller_org",  # FastAPI dependency that calls set_tenant internally
+        "_get_caller_org",  # legacy imperative helper — calls set_tenant internally
+        "get_caller",  # SPEC-PORTAL-RBAC-REFACTOR-001 declarative dependency
+        "get_caller_at_least",  # role-bounded variant; resolves through get_caller
+        "require_platform_admin",  # platform-admin gate; resolves through get_caller
+        "require_product",  # product gate; resolves through get_caller
+        "require_capability",  # capability gate; resolves through get_caller
+        "require_platform_unlocked",  # phase 5 platform-feature gate
         "get_partner_key",  # same, for partner auth
         "get_partner_auth_context",  # widget session token path
     }

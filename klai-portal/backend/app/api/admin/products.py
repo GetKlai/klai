@@ -10,17 +10,15 @@ them for the assignable-products list and the per-user effective view.
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.features import derive_user_products
+from app.core.permissions import ProfileRole, UserPermissions, get_caller_at_least
 from app.models.portal import PortalUser
 from app.services.entitlements import get_effective_products
-
-from . import _get_caller_org, _require_admin, bearer
 
 router = APIRouter()
 
@@ -56,41 +54,57 @@ class EffectiveProductsResponse(BaseModel):
 
 @router.get("/products", response_model=ProductsResponse)
 async def list_available_products(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> ProductsResponse:
-    """Return products available to the caller given (profile, org plan, enabled add-ons)."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-    products = derive_user_products(
-        role=caller_user.role,
-        plan=org.plan,
-        enabled_addons=list(org.enabled_addons or []),
-    )
-    return ProductsResponse(products=sorted(products))
+    """Return products available to the caller given (profile, org plan, enabled add-ons).
+
+    UserPermissions already carries `effective_products` derived from the
+    same (role, plan, enabled_addons) input — return that instead of
+    re-deriving. Equivalent to calling `derive_user_products` from this
+    handler in earlier code, just sourced one layer up.
+    """
+    return ProductsResponse(products=sorted(perms.effective_products))
 
 
 @router.get("/users/{zitadel_user_id}/effective-products", response_model=EffectiveProductsResponse)
 async def get_user_effective_products(
     zitadel_user_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> EffectiveProductsResponse:
     """Return effective products for a user with source attribution (plan or addon)."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
     target = await db.scalar(
         select(PortalUser).where(
             PortalUser.zitadel_user_id == zitadel_user_id,
-            PortalUser.org_id == org.id,
+            PortalUser.org_id == perms.org_id,
         )
     )
     if not target:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    effective = await get_effective_products(zitadel_user_id, db)
-    enabled_addons = set(org.enabled_addons or [])
+    # Derive products specifically for the TARGET user with the caller's
+    # tenant config — same shape `get_effective_products` would return,
+    # but routed through `derive_user_products` so we can also classify
+    # each product as plan- vs addon-sourced for the response.
+    effective = sorted(
+        derive_user_products(
+            role=target.role,
+            plan=perms.plan,
+            enabled_addons=list(perms.enabled_addons),
+        )
+    )
+    enabled_addons = set(perms.enabled_addons)
+    # Keep the canonical resolver as a sanity sentinel so any future drift
+    # between derive_user_products and get_effective_products surfaces here
+    # rather than at the user-visible response.
+    canonical = await get_effective_products(zitadel_user_id, db)
+    if set(canonical) != set(effective):
+        # Resolver disagreement is a developer-facing bug, not user input.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="effective products derivation mismatch",
+        )
     return EffectiveProductsResponse(
         products=[
             EffectiveProductOut(

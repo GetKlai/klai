@@ -290,12 +290,16 @@ def require_capability(capability: Capability):
 
 
 def require_platform_admin():
-    """Factory: dependency that requires the caller to be in the platform org
-    (``settings.platform_org_slug``).
+    """Factory: dependency that requires the caller to be an ADMIN in the
+    platform org (``settings.platform_org_slug``).
 
-    Equivalent of ``admin/__init__::_require_platform_admin(caller_org)`` for
-    declarative use. Sub-domain endpoints (retry-provisioning, deprovision,
-    platform-locked feature toggles) call this.
+    Equivalent of the imperative pair ``_require_admin(caller_user) +
+    _require_platform_admin(caller_org)`` that every callsite uses today
+    (`retry_provisioning`, `deprovision_org`, future Phase 5 platform-unlock
+    endpoints). Both checks must pass: a non-admin user inside the platform
+    org gets 403 just like an admin in a regular tenant — the SPEC's intent
+    is "Klai staff acting administratively", not "anyone in the Klai
+    workspace".
     """
 
     async def _dep(perms: UserPermissions = Depends(get_caller)) -> UserPermissions:
@@ -303,6 +307,11 @@ def require_platform_admin():
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied: platform admin org required",
+            )
+        if perms.effective_role != ProfileRole.ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: admin role required for platform actions",
             )
         return perms
 

@@ -210,3 +210,57 @@ def make_org(
     org.billing_status = "active"
     org.mcp_servers = []
     return org
+
+
+def make_perms(
+    *,
+    role: object = "admin",
+    user_id: str = "uid-test",
+    org_id: int = 101,
+    org_slug: str = "voys",
+    plan: str = "complete",
+    enabled_addons: list[str] | None = None,
+    platform_unlocked_features: list[str] | None = None,
+    is_platform_admin: bool = False,
+    provisioning_status: str = "active",
+):
+    """Synthetic UserPermissions for endpoints that take ``perms=`` directly.
+
+    Replaces the legacy ``patch("..._get_caller_org", return_value=(uid, org,
+    user))`` test pattern. Produces a frozen ``UserPermissions`` with derived
+    capabilities + products consistent with the other inputs.
+    """
+    from app.core.features import derive_user_products
+    from app.core.permissions import UserPermissions
+    from app.core.plan_limits import get_plan_limits
+    from app.core.profiles import PROFILE_CAPABILITIES, Capability, ProfileRole
+
+    role_enum = role if isinstance(role, ProfileRole) else ProfileRole(str(role))
+    addons = frozenset(enabled_addons or [])
+    plat_features = frozenset(platform_unlocked_features or [])
+
+    if role_enum == ProfileRole.ADMIN:
+        complete_caps = get_plan_limits("complete").capabilities
+        eff_caps = frozenset(Capability(c) for c in complete_caps)
+    else:
+        role_caps = PROFILE_CAPABILITIES.get(role_enum.value, frozenset())
+        plan_caps = get_plan_limits(plan).capabilities
+        eff_caps = frozenset(Capability(c) for c in (set(role_caps) & set(plan_caps)))
+
+    eff_products = frozenset(derive_user_products(role_enum.value, plan, list(addons)))
+
+    return UserPermissions(
+        user_id=user_id,
+        org_id=org_id,
+        org_slug=org_slug,
+        role=role_enum,
+        plan=plan,
+        enabled_addons=addons,
+        platform_unlocked_features=plat_features,
+        effective_role=role_enum,
+        effective_capabilities=eff_caps,
+        effective_products=eff_products,
+        effective_kb_limits=get_plan_limits(plan),
+        is_platform_admin=is_platform_admin,
+        provisioning_status=provisioning_status,
+    )
