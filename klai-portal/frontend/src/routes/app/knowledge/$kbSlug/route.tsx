@@ -40,9 +40,9 @@ const TAB_PATH_MAP: Record<string, string> = {
   items: '/app/knowledge/$kbSlug/bronnen',
   connectors: '/app/knowledge/$kbSlug/bronnen',
   members: '/app/knowledge/$kbSlug/settings',
-  taxonomy: '/app/knowledge/$kbSlug/advanced',
+  taxonomy: '/app/knowledge/$kbSlug/taxonomy',
   settings: '/app/knowledge/$kbSlug/settings',
-  advanced: '/app/knowledge/$kbSlug/advanced',
+  advanced: '/app/knowledge/$kbSlug/taxonomy',
 }
 
 type KBSearch = {
@@ -93,7 +93,7 @@ const TAB_DEFS: { id: TabId; to: string; icon: React.ElementType; label: string;
   },
   {
     id: 'geavanceerd',
-    to: '/app/knowledge/$kbSlug/advanced',
+    to: '/app/knowledge/$kbSlug/taxonomy',
     icon: SlidersHorizontal,
     label: 'Geavanceerd',
     matches: ['/advanced', '/taxonomy', '/geavanceerd'],

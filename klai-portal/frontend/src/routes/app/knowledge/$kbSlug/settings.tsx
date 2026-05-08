@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
 import type { KnowledgeBase, MembersResponse } from './-kb-types'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/settings')({
@@ -34,9 +35,12 @@ function SettingsTab() {
     enabled: auth.isAuthenticated && !!kb,
   })
 
+  const { user: currentUser } = useCurrentUser()
   const myUserId = auth.user?.profile?.sub
   const isCreator = !!(myUserId && kb?.created_by === myUserId)
-  const isOwner = isCreator || !!(myUserId && members?.users.some((u) => u.user_id === myUserId && u.role === 'owner'))
+  const isOwnerRole = !!(myUserId && members?.users.some((u) => u.user_id === myUserId && u.role === 'owner'))
+  const isAdmin = currentUser?.isAdmin === true
+  const isOwner = isCreator || isOwnerRole || isAdmin
 
   // Sync form state when KB data loads
   useEffect(() => {
@@ -60,10 +64,10 @@ function SettingsTab() {
     },
   })
 
-  if (!kb || !isOwner) return null
+  if (!kb) return null
 
   const hasChanges = name !== kb.name || description !== (kb.description ?? '')
-  const canSave = hasChanges && name.trim().length > 0
+  const canSave = isOwner && hasChanges && name.trim().length > 0
 
   return (
     <div className="space-y-6">
@@ -90,6 +94,7 @@ function SettingsTab() {
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
+              disabled={!isOwner}
               required
             />
           </div>
@@ -100,6 +105,7 @@ function SettingsTab() {
               id="kb-description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
+              disabled={!isOwner}
               rows={3}
               className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm text-[var(--color-foreground)] outline-none transition-colors placeholder:text-[var(--color-muted-foreground)] focus:ring-2 focus:ring-[var(--color-ring)] disabled:cursor-not-allowed disabled:opacity-50 resize-none"
             />
@@ -125,19 +131,43 @@ function SettingsTab() {
             </p>
           )}
 
-          <div className="flex items-center gap-3 pt-2">
-            <Button type="submit" size="sm" disabled={!canSave || updateMutation.isPending}>
-              {updateMutation.isPending ? m.knowledge_settings_saving() : m.knowledge_settings_save()}
-            </Button>
-            {showSaved && (
-              <span className="flex items-center gap-1 text-sm text-[var(--color-success)]">
-                <Check className="h-4 w-4" />
-                {m.knowledge_settings_saved()}
-              </span>
-            )}
-          </div>
+          {isOwner && (
+            <div className="flex items-center gap-3 pt-2">
+              <Button type="submit" size="sm" disabled={!canSave || updateMutation.isPending}>
+                {updateMutation.isPending ? m.knowledge_settings_saving() : m.knowledge_settings_save()}
+              </Button>
+              {showSaved && (
+                <span className="flex items-center gap-1 text-sm text-[var(--color-success)]">
+                  <Check className="h-4 w-4" />
+                  {m.knowledge_settings_saved()}
+                </span>
+              )}
+            </div>
+          )}
+          {!isOwner && (
+            <p className="text-xs text-gray-400 pt-2">
+              Alleen de eigenaar of een admin kan deze velden wijzigen.
+            </p>
+          )}
         </form>
       </div>
+
+      {/* Members */}
+      {members && members.users.length > 0 && (
+        <div className="space-y-2">
+          <h2 className="text-sm font-semibold text-gray-900">Leden</h2>
+          <div className="border-t border-b border-gray-200 divide-y divide-gray-200">
+            {members.users.map((u) => (
+              <div key={u.user_id} className="flex items-center justify-between gap-3 py-2.5 px-2">
+                <span className="text-sm text-gray-900 truncate">
+                  {u.email || u.user_id}
+                </span>
+                <span className="text-xs text-gray-400 capitalize shrink-0">{u.role}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
