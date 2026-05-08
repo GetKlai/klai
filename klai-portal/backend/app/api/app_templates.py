@@ -23,14 +23,14 @@ from __future__ import annotations
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _get_caller_org, bearer
 from app.core.database import get_db
+from app.core.permissions import ProfileRole, UserPermissions, get_caller
+from app.models.portal import PortalUser
 from app.models.templates import PortalTemplate
 from app.services.default_templates import ensure_default_templates
 from app.services.litellm_cache import invalidate_templates
@@ -132,8 +132,21 @@ async def _get_template_or_404(slug: str, org_id: int, db: AsyncSession) -> Port
     return template
 
 
-def _librechat_user_id_or_none(user) -> str | None:
+async def _load_portal_user_or_none(db: AsyncSession, user_id: str, org_id: int) -> PortalUser | None:
+    """Load PortalUser by zitadel_user_id + org_id, or None if not found."""
+    result = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == user_id,
+            PortalUser.org_id == org_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+def _librechat_user_id_or_none(user: PortalUser | None) -> str | None:
     """PortalUser.librechat_user_id may be None until the user's first chat call."""
+    if user is None:
+        return None
     return getattr(user, "librechat_user_id", None)
 
 
@@ -142,7 +155,7 @@ def _librechat_user_id_or_none(user) -> str | None:
 
 @router.get("", response_model=list[TemplateOut])
 async def list_templates(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> list[TemplateOut]:
     """List templates visible to the caller: all org + own personal.
@@ -151,25 +164,23 @@ async def list_templates(
     Lazy-seeds the 4 defaults if the org has zero templates
     (REQ-TEMPLATES-CRUD-E7).
     """
-    zitadel_user_id, org, caller = await _get_caller_org(credentials, db)
-
     # Lazy-seed fallback for orgs provisioned before this feature landed
     # or whose provisioning step raised. Idempotent via row-count check.
-    seeded = await ensure_default_templates(org.id, "system", db)
+    seeded = await ensure_default_templates(perms.org_id, "system", db)
     if seeded:
         await db.commit()
 
-    is_admin = caller.role == "admin"
+    is_admin = perms.role == ProfileRole.ADMIN
 
     if is_admin:
         # Admins see everything in their org.
-        stmt = select(PortalTemplate).where(PortalTemplate.org_id == org.id)
+        stmt = select(PortalTemplate).where(PortalTemplate.org_id == perms.org_id)
     else:
         stmt = select(PortalTemplate).where(
-            PortalTemplate.org_id == org.id,
+            PortalTemplate.org_id == perms.org_id,
             or_(
                 PortalTemplate.scope == "org",
-                PortalTemplate.created_by == zitadel_user_id,
+                PortalTemplate.created_by == perms.user_id,
             ),
         )
 
@@ -180,15 +191,14 @@ async def list_templates(
 @router.post("", response_model=TemplateOut, status_code=status.HTTP_201_CREATED)
 async def create_template(
     body: TemplateCreate,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> TemplateOut:
     """Create a new prompt template."""
-    zitadel_user_id, org, caller = await _get_caller_org(credentials, db)
-    await _enforce_rate_limit(org.id)
+    await _enforce_rate_limit(perms.org_id)
 
     # REQ-TEMPLATES-CRUD-E1: admin-gate on scope="org".
-    if body.scope == "org" and caller.role != "admin":
+    if body.scope == "org" and perms.role != ProfileRole.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Alleen beheerders mogen organisatie-templates aanmaken",
@@ -202,13 +212,13 @@ async def create_template(
         )
 
     template = PortalTemplate(
-        org_id=org.id,
+        org_id=perms.org_id,
         name=body.name,
         slug=slug,
         description=body.description,
         prompt_text=body.prompt_text,
         scope=body.scope,
-        created_by=zitadel_user_id,
+        created_by=perms.user_id,
     )
     # CREATE pattern (see .claude/rules/klai/projects/portal-security.md —
     # "Post-commit db.refresh on RLS tables"): flush + refresh BEFORE commit
@@ -232,17 +242,18 @@ async def create_template(
         template_id=template.id,
         slug=slug,
         scope=template.scope,
-        org_id=org.id,
+        org_id=perms.org_id,
     )
 
     # Cache invalidation.
     if template.scope == "org":
-        await invalidate_templates(org.id)
+        await invalidate_templates(perms.org_id)
     else:
         # Personal: only the creator's cache needs dropping.
-        lc_uid = _librechat_user_id_or_none(caller)
+        portal_user = await _load_portal_user_or_none(db, perms.user_id, perms.org_id)
+        lc_uid = _librechat_user_id_or_none(portal_user)
         if lc_uid:
-            await invalidate_templates(org.id, lc_uid)
+            await invalidate_templates(perms.org_id, lc_uid)
 
     return _template_out(template)
 
@@ -250,14 +261,13 @@ async def create_template(
 @router.get("/{slug}", response_model=TemplateOut)
 async def get_template(
     slug: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> TemplateOut:
-    zitadel_user_id, org, caller = await _get_caller_org(credentials, db)
-    template = await _get_template_or_404(slug, org.id, db)
+    template = await _get_template_or_404(slug, perms.org_id, db)
 
     # Personal templates are only visible to the creator + admins.
-    if template.scope == "personal" and template.created_by != zitadel_user_id and caller.role != "admin":
+    if template.scope == "personal" and template.created_by != perms.user_id and perms.role != ProfileRole.ADMIN:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template niet gevonden")
 
     return _template_out(template)
@@ -267,22 +277,21 @@ async def get_template(
 async def update_template(
     slug: str,
     body: TemplatePatch,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> TemplateOut:
     """Update a template. Only the creator or an org-admin may update."""
-    zitadel_user_id, org, caller = await _get_caller_org(credentials, db)
-    await _enforce_rate_limit(org.id)
-    template = await _get_template_or_404(slug, org.id, db)
+    await _enforce_rate_limit(perms.org_id)
+    template = await _get_template_or_404(slug, perms.org_id, db)
 
-    if template.created_by != zitadel_user_id and caller.role != "admin":
+    if template.created_by != perms.user_id and perms.role != ProfileRole.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Alleen de maker of een beheerder mag deze template aanpassen",
         )
 
     # Admin-gate still applies when promoting a personal template to org-scope.
-    if body.scope == "org" and caller.role != "admin":
+    if body.scope == "org" and perms.role != ProfileRole.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Alleen beheerders mogen organisatie-templates aanmaken",
@@ -339,16 +348,17 @@ async def update_template(
         template_id=template.id,
         slug=template.slug,
         scope=template.scope,
-        org_id=org.id,
+        org_id=perms.org_id,
     )
 
     # Any scope change, or an org-scope write, affects the whole org.
     if template.scope == "org" or previous_scope == "org":
-        await invalidate_templates(org.id)
+        await invalidate_templates(perms.org_id)
     else:
-        lc_uid = _librechat_user_id_or_none(caller)
+        portal_user = await _load_portal_user_or_none(db, perms.user_id, perms.org_id)
+        lc_uid = _librechat_user_id_or_none(portal_user)
         if lc_uid:
-            await invalidate_templates(org.id, lc_uid)
+            await invalidate_templates(perms.org_id, lc_uid)
 
     return _template_out(template)
 
@@ -356,14 +366,13 @@ async def update_template(
 @router.delete("/{slug}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_template(
     slug: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    zitadel_user_id, org, caller = await _get_caller_org(credentials, db)
-    await _enforce_rate_limit(org.id)
-    template = await _get_template_or_404(slug, org.id, db)
+    await _enforce_rate_limit(perms.org_id)
+    template = await _get_template_or_404(slug, perms.org_id, db)
 
-    if template.created_by != zitadel_user_id and caller.role != "admin":
+    if template.created_by != perms.user_id and perms.role != ProfileRole.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Alleen de maker of een beheerder mag deze template verwijderen",
@@ -379,12 +388,13 @@ async def delete_template(
         template_id=template_id,
         slug=slug,
         scope=scope,
-        org_id=org.id,
+        org_id=perms.org_id,
     )
 
     if scope == "org":
-        await invalidate_templates(org.id)
+        await invalidate_templates(perms.org_id)
     else:
-        lc_uid = _librechat_user_id_or_none(caller)
+        portal_user = await _load_portal_user_or_none(db, perms.user_id, perms.org_id)
+        lc_uid = _librechat_user_id_or_none(portal_user)
         if lc_uid:
-            await invalidate_templates(org.id, lc_uid)
+            await invalidate_templates(perms.org_id, lc_uid)

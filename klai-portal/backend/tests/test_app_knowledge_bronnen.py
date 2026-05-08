@@ -17,6 +17,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
+from tests.conftest import make_perms
+
+
+def _make_perms() -> object:
+    """Synthetic UserPermissions matching the historic
+    ``_get_caller_org`` tuple ``("user-1", org_id=1)``.
+    """
+    return make_perms(role="admin", user_id="user-1", org_id=1)
+
+
 # -- Label helpers ----------------------------------------------------------
 
 
@@ -117,8 +127,8 @@ async def test_list_kb_bronnen_merges_connectors_and_uploads() -> None:
 
     with (
         patch(
-            "app.api.app_knowledge_bases._get_caller_org",
-            return_value=("user-1", org, MagicMock()),
+            "app.api.app_knowledge_bases._load_org_or_500",
+            new=AsyncMock(return_value=org),
         ),
         patch(
             "app.api.app_knowledge_bases._get_kb_or_404",
@@ -131,7 +141,7 @@ async def test_list_kb_bronnen_merges_connectors_and_uploads() -> None:
     ):
         result = await list_kb_bronnen(
             kb_slug="kb-a",
-            credentials=MagicMock(),
+            perms=_make_perms(),
             db=db,
         )
 
@@ -181,8 +191,8 @@ async def test_list_kb_bronnen_handles_orphan_connector_id() -> None:
 
     with (
         patch(
-            "app.api.app_knowledge_bases._get_caller_org",
-            return_value=("user-1", org, MagicMock()),
+            "app.api.app_knowledge_bases._load_org_or_500",
+            new=AsyncMock(return_value=org),
         ),
         patch(
             "app.api.app_knowledge_bases._get_kb_or_404",
@@ -195,7 +205,7 @@ async def test_list_kb_bronnen_handles_orphan_connector_id() -> None:
     ):
         result = await list_kb_bronnen(
             kb_slug="kb-a",
-            credentials=MagicMock(),
+            perms=_make_perms(),
             db=db,
         )
 
@@ -222,8 +232,8 @@ async def test_list_kb_bronnen_falls_back_to_empty_on_ingest_failure() -> None:
 
     with (
         patch(
-            "app.api.app_knowledge_bases._get_caller_org",
-            return_value=("user-1", org, MagicMock()),
+            "app.api.app_knowledge_bases._load_org_or_500",
+            new=AsyncMock(return_value=org),
         ),
         patch(
             "app.api.app_knowledge_bases._get_kb_or_404",
@@ -236,7 +246,7 @@ async def test_list_kb_bronnen_falls_back_to_empty_on_ingest_failure() -> None:
     ):
         result = await list_kb_bronnen(
             kb_slug="kb-a",
-            credentials=MagicMock(),
+            perms=_make_perms(),
             db=db,
         )
 
@@ -261,7 +271,7 @@ async def test_get_bron_content_rejects_invalid_kind() -> None:
             kind="banana",
             limit=50,
             offset=0,
-            credentials=MagicMock(),
+            perms=_make_perms(),
             db=AsyncMock(),
         )
     assert exc.value.status_code == 400
@@ -279,7 +289,7 @@ async def test_get_bron_content_rejects_limit_out_of_range() -> None:
             kind="upload",
             limit=500,
             offset=0,
-            credentials=MagicMock(),
+            perms=_make_perms(),
             db=AsyncMock(),
         )
     assert exc.value.status_code == 400
@@ -315,8 +325,8 @@ async def test_get_bron_content_connector_returns_items() -> None:
 
     with (
         patch(
-            "app.api.app_knowledge_bases._get_caller_org",
-            return_value=("user-1", org, MagicMock()),
+            "app.api.app_knowledge_bases._load_org_or_500",
+            new=AsyncMock(return_value=org),
         ),
         patch(
             "app.api.app_knowledge_bases._get_kb_or_404",
@@ -333,7 +343,7 @@ async def test_get_bron_content_connector_returns_items() -> None:
             kind="connector",
             limit=50,
             offset=0,
-            credentials=MagicMock(),
+            perms=_make_perms(),
             db=db,
         )
 
@@ -360,8 +370,8 @@ async def test_get_bron_content_connector_404_when_not_in_kb() -> None:
 
     with (
         patch(
-            "app.api.app_knowledge_bases._get_caller_org",
-            return_value=("user-1", org, MagicMock()),
+            "app.api.app_knowledge_bases._load_org_or_500",
+            new=AsyncMock(return_value=org),
         ),
         patch(
             "app.api.app_knowledge_bases._get_kb_or_404",
@@ -375,7 +385,7 @@ async def test_get_bron_content_connector_404_when_not_in_kb() -> None:
             kind="connector",
             limit=50,
             offset=0,
-            credentials=MagicMock(),
+            perms=_make_perms(),
             db=db,
         )
     assert exc.value.status_code == 404
@@ -402,8 +412,8 @@ async def test_get_bron_content_upload_returns_chunks() -> None:
 
     with (
         patch(
-            "app.api.app_knowledge_bases._get_caller_org",
-            return_value=("user-1", org, MagicMock()),
+            "app.api.app_knowledge_bases._load_org_or_500",
+            new=AsyncMock(return_value=org),
         ),
         patch(
             "app.api.app_knowledge_bases._get_kb_or_404",
@@ -420,7 +430,7 @@ async def test_get_bron_content_upload_returns_chunks() -> None:
             kind="upload",
             limit=50,
             offset=0,
-            credentials=MagicMock(),
+            perms=_make_perms(),
             db=db,
         )
 

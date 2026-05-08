@@ -9,20 +9,20 @@ from typing import Literal
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _get_caller_org, bearer, require_capability
+from app.api.dependencies import require_capability
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.permissions import UserPermissions, get_caller
 from app.core.profiles import Capability
 from app.models.connectors import PortalConnector
 from app.models.groups import PortalGroup
 from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase, PortalUserKBAccess
-from app.models.portal import PortalUser
+from app.models.portal import PortalOrg, PortalUser
 from app.models.retrieval_gaps import PortalRetrievalGap
 from app.services import docs_client, knowledge_ingest_client
 from app.services.access import get_user_role_for_kb
@@ -86,6 +86,17 @@ async def _qdrant_count_for_kb(zitadel_org_id: str, kb_slug: str) -> int | None:
             exc_info=True,
         )
         return None
+
+
+async def _load_org_or_500(db: AsyncSession, org_id: int) -> PortalOrg:
+    result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id))
+    org = result.scalar_one_or_none()
+    if org is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Organisation not found",
+        )
+    return org
 
 
 router = APIRouter(prefix="/api/app", tags=["app-knowledge-bases"])
@@ -327,18 +338,17 @@ def _validate_role(role: str) -> None:
 async def list_app_knowledge_bases(
     docs_only: bool = False,
     owner_type: str | None = None,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> AppKBsResponse:
     """Return KBs visible to the caller: all org-owned KBs + caller's own personal KBs.
 
     Other users' personal KBs are never returned.
     """
-    caller_id, org, _ = await _get_caller_org(credentials, db)
     query = select(PortalKnowledgeBase).where(
-        PortalKnowledgeBase.org_id == org.id,
+        PortalKnowledgeBase.org_id == perms.org_id,
         # Org-owned KBs are visible to everyone; personal KBs only to their owner
-        (PortalKnowledgeBase.owner_type == "org") | (PortalKnowledgeBase.owner_user_id == caller_id),
+        (PortalKnowledgeBase.owner_type == "org") | (PortalKnowledgeBase.owner_user_id == perms.user_id),
     )
     if docs_only:
         query = query.where(
@@ -354,7 +364,7 @@ async def list_app_knowledge_bases(
 
 @router.get("/knowledge-bases/stats-summary", response_model=KBStatsSummaryResponse)
 async def knowledge_bases_stats_summary(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> KBStatsSummaryResponse:
     """Return cheap aggregate stats per KB for the caller's org.
@@ -366,13 +376,13 @@ async def knowledge_bases_stats_summary(
     Scope: all org-owned KBs plus the caller's own personal KBs — the
     same set the app-facing list endpoint returns by default.
     """
-    zitadel_user_id, org, _ = await _get_caller_org(credentials, db)
+    org = await _load_org_or_500(db, perms.org_id)
 
     # Fetch all KBs visible to this caller (org-owned + caller's personal KBs).
     kbs_result = await db.execute(
         select(PortalKnowledgeBase).where(
-            PortalKnowledgeBase.org_id == org.id,
-            (PortalKnowledgeBase.owner_type == "org") | (PortalKnowledgeBase.owner_user_id == zitadel_user_id),
+            PortalKnowledgeBase.org_id == perms.org_id,
+            (PortalKnowledgeBase.owner_type == "org") | (PortalKnowledgeBase.owner_user_id == perms.user_id),
         )
     )
     kbs = kbs_result.scalars().all()
@@ -480,7 +490,7 @@ async def knowledge_bases_stats_summary(
 @router.get("/knowledge-bases/{kb_slug}", response_model=AppKBOut)
 async def get_app_knowledge_base(
     kb_slug: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> AppKBOut:
     """Return a single KB by slug for the caller's org.
@@ -490,24 +500,23 @@ async def get_app_knowledge_base(
     - 'org' resolves to the org-wide KB
     Both are created as fallback if provisioning missed them.
     """
-    caller_id, org, _ = await _get_caller_org(credentials, db)
     if kb_slug == "personal":
-        kb = await _resolve_personal_kb(caller_id, org.id, db)
+        kb = await _resolve_personal_kb(perms.user_id, perms.org_id, db)
     elif kb_slug == "org":
-        kb = await _resolve_org_kb(caller_id, org.id, db)
+        kb = await _resolve_org_kb(perms.user_id, perms.org_id, db)
     else:
-        kb = await _get_kb_or_404(kb_slug, org.id, db)
+        kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
     return _kb_out(kb)
 
 
 @router.post("/knowledge-bases", response_model=AppKBOut, status_code=status.HTTP_201_CREATED)
 async def create_app_knowledge_base(
     body: AppKBCreateRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> AppKBOut:
     """Create a new KB. The creator is automatically given the owner role."""
-    caller_id, org, caller_user = await _get_caller_org(credentials, db)
+    org = await _load_org_or_500(db, perms.org_id)
 
     if body.owner_type not in ("org", "user"):
         raise HTTPException(
@@ -524,18 +533,18 @@ async def create_app_knowledge_base(
     # Quota enforcement — SPEC-PORTAL-UNIFY-KB-001 Phase A (R-E1, R-E3, R-X3).
     # _resolve_personal_kb auto-provisioning is explicitly exempt (D8).
     if body.owner_type == "user":
-        await assert_can_create_personal_kb(user_id=caller_id, org=org, db=db, role=caller_user.role)
+        await assert_can_create_personal_kb(user_id=perms.user_id, org=org, db=db, role=perms.role)
     elif body.owner_type == "org":
-        await assert_can_create_org_kb(org=org, db=db, role=caller_user.role)
+        await assert_can_create_org_kb(org=org, db=db, role=perms.role)
 
-    owner_user_id = caller_id if body.owner_type == "user" else None
+    owner_user_id = perms.user_id if body.owner_type == "user" else None
 
     kb = PortalKnowledgeBase(
         org_id=org.id,
         name=body.name,
         slug=body.slug,
         description=body.description,
-        created_by=caller_id,
+        created_by=perms.user_id,
         visibility=body.visibility,
         docs_enabled=body.docs_enabled,
         owner_type=body.owner_type,
@@ -556,10 +565,10 @@ async def create_app_knowledge_base(
     db.add(
         PortalUserKBAccess(
             kb_id=kb.id,
-            user_id=caller_id,
+            user_id=perms.user_id,
             org_id=org.id,
             role="owner",
-            granted_by=caller_id,
+            granted_by=perms.user_id,
         )
     )
 
@@ -574,7 +583,7 @@ async def create_app_knowledge_base(
                         user_id=member.id,
                         org_id=org.id,
                         role=member.role,
-                        granted_by=caller_id,
+                        granted_by=perms.user_id,
                     )
                 )
             elif member.type == "group":
@@ -583,7 +592,7 @@ async def create_app_knowledge_base(
                         group_id=int(member.id),
                         kb_id=kb.id,
                         role=member.role,
-                        granted_by=caller_id,
+                        granted_by=perms.user_id,
                     )
                 )
 
@@ -601,7 +610,7 @@ async def create_app_knowledge_base(
 @router.delete("/knowledge-bases/{kb_slug}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_app_knowledge_base(
     kb_slug: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Delete a KB and all associated data. Requires owner access.
@@ -613,9 +622,9 @@ async def delete_app_knowledge_base(
 
     Both step 1 and 2 raise on failure, aborting before the portal record is deleted.
     """
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_owner(kb, caller_id, db)
+    org = await _load_org_or_500(db, perms.org_id)
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_owner(kb, perms.user_id, db)
 
     # Step 1: Clean up docs-app (Qdrant vectors managed by docs, Gitea webhook/repo, docs DB row).
     if kb.gitea_repo_slug or kb.docs_enabled:
@@ -642,13 +651,12 @@ class UpdateDefaultOrgRoleRequest(BaseModel):
 async def update_default_org_role(
     kb_slug: str,
     body: UpdateDefaultOrgRoleRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> AppKBOut:
     """Update the default org role for a KB. Requires owner access."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_owner(kb, caller_id, db)
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_owner(kb, perms.user_id, db)
 
     if body.default_org_role is not None and body.default_org_role not in ("viewer", "contributor"):
         raise HTTPException(
@@ -676,13 +684,13 @@ class AppKBUpdateRequest(BaseModel):
 async def update_knowledge_base(
     kb_slug: str,
     body: AppKBUpdateRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> AppKBOut:
     """Update KB properties. Requires owner access."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_owner(kb, caller_id, db)
+    org = await _load_org_or_500(db, perms.org_id)
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_owner(kb, perms.user_id, db)
 
     if body.name is not None:
         kb.name = body.name
@@ -746,17 +754,17 @@ async def update_knowledge_base(
 @router.get("/knowledge-bases/{kb_slug}/stats", response_model=KBStatsOut)
 async def get_kb_stats(
     kb_slug: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> KBStatsOut:
     """Return dashboard stats for a KB: connectors, docs count, volume, usage."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
+    org = await _load_org_or_500(db, perms.org_id)
     if kb_slug == "personal":
-        kb = await _resolve_personal_kb(caller_id, org.id, db)
+        kb = await _resolve_personal_kb(perms.user_id, perms.org_id, db)
     elif kb_slug == "org":
-        kb = await _resolve_org_kb(caller_id, org.id, db)
+        kb = await _resolve_org_kb(perms.user_id, perms.org_id, db)
     else:
-        kb = await _get_kb_or_404(kb_slug, org.id, db)
+        kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
 
     # Connectors from portal DB
     conn_result = await db.execute(select(PortalConnector).where(PortalConnector.kb_id == kb.id))
@@ -974,7 +982,7 @@ def _upload_type_label(content_type: str) -> str:
 )
 async def list_kb_bronnen(
     kb_slug: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> BronnenResponse:
     """Unified bronnen list for a KB.
@@ -987,13 +995,14 @@ async def list_kb_bronnen(
     Connectors with zero items still appear (a newly-created connector before
     its first sync) so users can see what they configured.
     """
-    caller_id, org, _ = await _get_caller_org(credentials, db)
     if kb_slug == "personal":
-        kb = await _resolve_personal_kb(caller_id, org.id, db)
+        kb = await _resolve_personal_kb(perms.user_id, perms.org_id, db)
     elif kb_slug == "org":
-        kb = await _resolve_org_kb(caller_id, org.id, db)
+        kb = await _resolve_org_kb(perms.user_id, perms.org_id, db)
     else:
-        kb = await _get_kb_or_404(kb_slug, org.id, db)
+        kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+
+    org = await _load_org_or_500(db, perms.org_id)
 
     # Portal-side connectors (display name + sync status)
     conn_result = await db.execute(select(PortalConnector).where(PortalConnector.kb_id == kb.id))
@@ -1096,7 +1105,7 @@ async def get_bron_content(
     kind: str,
     limit: int = 50,
     offset: int = 0,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> BronContentResponse:
     """Drill-down: items under a connector, or chunks under a direct upload.
@@ -1113,13 +1122,14 @@ async def get_bron_content(
     if offset < 0:
         raise HTTPException(status_code=400, detail="offset must be >= 0")
 
-    caller_id, org, _ = await _get_caller_org(credentials, db)
     if kb_slug == "personal":
-        kb = await _resolve_personal_kb(caller_id, org.id, db)
+        kb = await _resolve_personal_kb(perms.user_id, perms.org_id, db)
     elif kb_slug == "org":
-        kb = await _resolve_org_kb(caller_id, org.id, db)
+        kb = await _resolve_org_kb(perms.user_id, perms.org_id, db)
     else:
-        kb = await _get_kb_or_404(kb_slug, org.id, db)
+        kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+
+    org = await _load_org_or_500(db, perms.org_id)
 
     if kind == "connector":
         # Validate the connector belongs to this org+KB before proxying.
@@ -1127,7 +1137,7 @@ async def get_bron_content(
             select(PortalConnector).where(
                 PortalConnector.id == source_id,
                 PortalConnector.kb_id == kb.id,
-                PortalConnector.org_id == org.id,
+                PortalConnector.org_id == perms.org_id,
             )
         )
         if conn_result.scalar_one_or_none() is None:
@@ -1191,12 +1201,11 @@ async def get_bron_content(
 )
 async def list_members(
     kb_slug: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> MembersResponse:
     """List all members of a KB (user + group access). Readable by any org member."""
-    _, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
 
     user_result = await db.execute(
         select(PortalUserKBAccess, PortalUser.display_name, PortalUser.email)
@@ -1249,13 +1258,12 @@ async def list_members(
 async def invite_user(
     kb_slug: str,
     body: InviteUserRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> UserMemberOut:
     """Invite a user to a KB with the given role. Requires owner access."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_owner(kb, caller_id, db)
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_owner(kb, perms.user_id, db)
     _validate_role(body.role)
 
     if kb.owner_type == "user":
@@ -1281,9 +1289,9 @@ async def invite_user(
     access = PortalUserKBAccess(
         kb_id=kb.id,
         user_id=resolved_user_id,
-        org_id=org.id,
+        org_id=perms.org_id,
         role=body.role,
-        granted_by=caller_id,
+        granted_by=perms.user_id,
     )
     db.add(access)
     try:
@@ -1319,13 +1327,12 @@ async def update_user_role(
     kb_slug: str,
     access_id: int,
     body: UpdateRoleRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> UserMemberOut:
     """Change a user's role on a KB. Requires owner access."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_owner(kb, caller_id, db)
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_owner(kb, perms.user_id, db)
     _validate_role(body.role)
 
     result = await db.execute(
@@ -1366,13 +1373,12 @@ async def update_user_role(
 async def remove_user(
     kb_slug: str,
     access_id: int,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Remove a user from a KB. Requires owner access."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_owner(kb, caller_id, db)
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_owner(kb, perms.user_id, db)
 
     result = await db.execute(
         select(PortalUserKBAccess).where(
@@ -1400,13 +1406,12 @@ async def remove_user(
 async def invite_group(
     kb_slug: str,
     body: InviteGroupRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> GroupMemberOut:
     """Invite a group to a KB with the given role. Requires owner access."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_owner(kb, caller_id, db)
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_owner(kb, perms.user_id, db)
     _validate_role(body.role)
 
     if kb.owner_type == "user":
@@ -1416,13 +1421,13 @@ async def invite_group(
         )
 
     # Verify group exists in org and is not a system group
-    group = await _get_non_system_group_or_404(body.group_id, org.id, db)
+    group = await _get_non_system_group_or_404(body.group_id, perms.org_id, db)
 
     access = PortalGroupKBAccess(
         group_id=body.group_id,
         kb_id=kb.id,
         role=body.role,
-        granted_by=caller_id,
+        granted_by=perms.user_id,
     )
     db.add(access)
     try:
@@ -1457,13 +1462,12 @@ async def update_group_role(
     kb_slug: str,
     access_id: int,
     body: UpdateRoleRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> GroupMemberOut:
     """Change a group's role on a KB. Requires owner access."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_owner(kb, caller_id, db)
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_owner(kb, perms.user_id, db)
     _validate_role(body.role)
 
     result = await db.execute(
@@ -1502,13 +1506,12 @@ async def update_group_role(
 async def remove_group(
     kb_slug: str,
     access_id: int,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Remove a group from a KB. Requires owner access."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_owner(kb, caller_id, db)
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_owner(kb, perms.user_id, db)
 
     result = await db.execute(
         select(PortalGroupKBAccess).where(
@@ -1538,7 +1541,7 @@ class KBWithAccessOut(BaseModel):
 
 @router.get("/knowledge-bases-with-access", response_model=list[KBWithAccessOut])
 async def list_kbs_with_access(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> list[KBWithAccessOut]:
     """Return all docs-enabled KBs for the org, with is_accessible flag per KB.
@@ -1547,13 +1550,11 @@ async def list_kbs_with_access(
     """
     from app.services.access import get_accessible_kb_slugs
 
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-
     # All docs-enabled KBs (org-owned only; personal KBs stay private)
     result = await db.execute(
         select(PortalKnowledgeBase)
         .where(
-            PortalKnowledgeBase.org_id == org.id,
+            PortalKnowledgeBase.org_id == perms.org_id,
             PortalKnowledgeBase.docs_enabled == True,  # noqa: E712
             PortalKnowledgeBase.owner_type == "org",
         )
@@ -1561,7 +1562,7 @@ async def list_kbs_with_access(
     )
     all_kbs = result.scalars().all()
 
-    accessible_slugs = set(await get_accessible_kb_slugs(caller_id, db))
+    accessible_slugs = set(await get_accessible_kb_slugs(perms.user_id, db))
 
     return [
         KBWithAccessOut(
@@ -1605,13 +1606,12 @@ class CrawlPreviewResponse(BaseModel):
 async def crawl_preview(
     kb_slug: str,
     body: CrawlPreviewRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> CrawlPreviewResponse:
     """Preview KB content for a URL using PruningContentFilter. Requires owner role."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_owner(kb, caller_id, db)
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_owner(kb, perms.user_id, db)
     # SPEC-CONNECTOR-INPUT-VALIDATION-001 hotfix: knowledge-ingest
     # identity verifier expects the Zitadel resourceowner ID (the
     # 18-digit numeric string, e.g. "368884765035593759"), NOT the
@@ -1619,6 +1619,7 @@ async def crawl_preview(
     # this same bug pattern across other internal call paths; this
     # pass-through inherited the bug because it was modeled on the older
     # broken callsite. The auth-probe pass-through below has the same fix.
+    org = await _load_org_or_500(db, perms.org_id)
     result = await knowledge_ingest_client.preview_crawl(
         url=body.url,
         content_selector=body.content_selector,
@@ -1662,7 +1663,7 @@ class AuthProbeResponse(BaseModel):
 async def auth_probe(
     kb_slug: str,
     body: AuthProbeRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> AuthProbeResponse:
     """SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2 — wizard step-4 auth probe.
@@ -1671,10 +1672,10 @@ async def auth_probe(
     wizard allows the user to advance to the selector step. Owner role
     required (mirrors crawl_preview).
     """
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_owner(kb, caller_id, db)
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_owner(kb, perms.user_id, db)
     # See crawl_preview above for the org_id rationale (Zitadel ID, not int PK).
+    org = await _load_org_or_500(db, perms.org_id)
     result = await knowledge_ingest_client.auth_probe(
         url=body.url,
         org_id=org.zitadel_org_id,
@@ -1714,14 +1715,13 @@ class AppUsersResponse(BaseModel):
 
 @router.get("/groups", response_model=AppGroupsResponse)
 async def list_groups_for_picker(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> AppGroupsResponse:
     """Lightweight group list for the member picker. Any org member can access."""
-    _, org, _ = await _get_caller_org(credentials, db)
     result = await db.execute(
         select(PortalGroup.id, PortalGroup.name)
-        .where(PortalGroup.org_id == org.id)
+        .where(PortalGroup.org_id == perms.org_id)
         .where(PortalGroup.is_system == False)  # noqa: E712
         .order_by(PortalGroup.name)
     )
@@ -1730,13 +1730,13 @@ async def list_groups_for_picker(
 
 @router.get("/users", response_model=AppUsersResponse)
 async def list_users_for_picker(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> AppUsersResponse:
     """Lightweight user list for the member picker. Any org member can access."""
-    _, org, _ = await _get_caller_org(credentials, db)
-
-    result = await db.execute(select(PortalUser).where(PortalUser.org_id == org.id).order_by(PortalUser.created_at))
+    result = await db.execute(
+        select(PortalUser).where(PortalUser.org_id == perms.org_id).order_by(PortalUser.created_at)
+    )
     portal_users = {u.zitadel_user_id: u for u in result.scalars().all()}
 
     if not portal_users:
