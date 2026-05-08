@@ -29,13 +29,12 @@ from urllib.parse import urlparse
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _get_caller_org, bearer
 from app.core.database import get_db
+from app.core.permissions import UserPermissions, get_caller
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg
 from app.services import knowledge_ingest_client
@@ -78,17 +77,23 @@ class SourceIngestedResponse(BaseModel):
 # --- Helpers ---------------------------------------------------------------
 
 
+async def _load_org_or_500(db: AsyncSession, org_id: int) -> PortalOrg:
+    result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id))
+    org = result.scalar_one_or_none()
+    if org is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Organisation not found")
+    return org
+
+
 async def _get_writable_kb_or_raise(
     kb_slug: str,
-    caller_id: str,
-    org: PortalOrg,
+    perms: UserPermissions,
     db: AsyncSession,
-    profile_role: str = "company",
 ) -> PortalKnowledgeBase:
     """Resolve the KB, assert caller has contributor+ role, and quota is OK."""
     result = await db.execute(
         select(PortalKnowledgeBase).where(
-            PortalKnowledgeBase.org_id == org.id,
+            PortalKnowledgeBase.org_id == perms.org_id,
             PortalKnowledgeBase.slug == kb_slug,
         )
     )
@@ -101,7 +106,7 @@ async def _get_writable_kb_or_raise(
 
     role = await get_user_role_for_kb(
         kb_id=kb.id,
-        user_id=caller_id,
+        user_id=perms.user_id,
         db=db,
         default_org_role=kb.default_org_role,
         kb_org_id=kb.org_id,
@@ -113,14 +118,15 @@ async def _get_writable_kb_or_raise(
             detail="Write access to this knowledge base is required",
         )
 
+    org = await _load_org_or_500(db, perms.org_id)
     # Raises HTTP 403 with error_code=kb_quota_items_exceeded when at limit.
-    await assert_can_add_item_to_kb(kb, org, role=profile_role)
+    await assert_can_add_item_to_kb(kb, org, role=perms.role.value)
     return kb
 
 
 async def _forward_ingest(
     *,
-    org: PortalOrg,
+    zitadel_org_id: str,
     kb: PortalKnowledgeBase,
     title: str,
     content: str,
@@ -131,7 +137,7 @@ async def _forward_ingest(
 ) -> str:
     """Build the IngestRequest payload and post it to knowledge-ingest."""
     payload: dict = {
-        "org_id": org.zitadel_org_id,
+        "org_id": zitadel_org_id,
         "kb_slug": kb.slug,
         "path": source_ref,  # unique per logical source; stable across re-submits
         "content": content,
@@ -185,13 +191,13 @@ def _hostname(raw: str) -> str:
 async def add_url_source(
     kb_slug: str,
     body: UrlSourceRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> SourceIngestedResponse:
     """Fetch a web page via crawl4ai and ingest its markdown."""
     start = time.monotonic()
-    caller_id, org, caller_user = await _get_caller_org(credentials, db)
-    kb = await _get_writable_kb_or_raise(kb_slug, caller_id, org, db, profile_role=caller_user.role)
+    kb = await _get_writable_kb_or_raise(kb_slug, perms, db)
+    org = await _load_org_or_500(db, perms.org_id)
 
     try:
         title, content, source_ref = await extract_url(body.url)
@@ -206,7 +212,7 @@ async def add_url_source(
         ) from exc
 
     artifact_id = await _forward_ingest(
-        org=org,
+        zitadel_org_id=org.zitadel_org_id,
         kb=kb,
         title=title,
         content=content,
@@ -233,7 +239,7 @@ async def add_url_source(
 async def add_youtube_source(
     kb_slug: str,
     request: Request,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """SPEC-KB-YOUTUBE-REMOVE-001: removed route, returns HTTP 410 Gone.
@@ -249,13 +255,12 @@ async def add_youtube_source(
     No upstream call, no extractor import, no quota burn.
     """
 
-    caller_id, org, _ = await _get_caller_org(credentials, db)
     user_agent = request.headers.get("user-agent", "")
     logger.warning(
         "youtube_ingest_called_after_removal",
-        org_id=org.zitadel_org_id,
+        org_id=perms.org_id,
         kb_slug=kb_slug,
-        caller_id=caller_id,
+        caller_id=perms.user_id,
         user_agent=user_agent[:200],  # truncate to keep log entries small
     )
     raise HTTPException(
@@ -272,13 +277,13 @@ async def add_youtube_source(
 async def add_text_source(
     kb_slug: str,
     body: TextSourceRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> SourceIngestedResponse:
     """Accept a plain-text paste and ingest it directly (no external fetch)."""
     start = time.monotonic()
-    caller_id, org, caller_user = await _get_caller_org(credentials, db)
-    kb = await _get_writable_kb_or_raise(kb_slug, caller_id, org, db, profile_role=caller_user.role)
+    kb = await _get_writable_kb_or_raise(kb_slug, perms, db)
+    org = await _load_org_or_500(db, perms.org_id)
 
     try:
         title, content, source_ref = extract_text(body.title, body.content)
@@ -286,7 +291,7 @@ async def add_text_source(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     artifact_id = await _forward_ingest(
-        org=org,
+        zitadel_org_id=org.zitadel_org_id,
         kb=kb,
         title=title,
         content=content,
