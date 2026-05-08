@@ -603,20 +603,25 @@ async def set_entity_graph_data(
 
     # Chunk-level write: per-chunk substring filter against chunk text.
     chunks_with_names = 0
+    chunks_total = 0
     if entity_names:
-        chunks_with_names = await _set_per_chunk_entity_names(
+        chunks_with_names, chunks_total = await _set_per_chunk_entity_names(
             client=client,
             artifact_id=artifact_id,
             org_id=org_id,
             doc_entity_names=entity_names,
         )
 
+    # chunks_total + chunks_with_names lets Grafana compute the per-tenant
+    # coverage rate from VictoriaLogs: stats by(org_id) sum(chunks_with_names)
+    # / sum(chunks_total) over event:entity_graph_data_set.
     logger.info(
         "entity_graph_data_set",
         artifact_id=artifact_id,
         org_id=org_id,
         entity_count=len(entity_uuids),
         entity_name_count=len(entity_names) if entity_names else 0,
+        chunks_total=chunks_total,
         chunks_with_names=chunks_with_names,
         pagerank_max=round(pagerank_max, 6),
     )
@@ -630,9 +635,10 @@ async def _set_per_chunk_entity_names(
     artifact_id: str,
     org_id: str,
     doc_entity_names: list[str],
-) -> int:
+) -> tuple[int, int]:
     """Scroll all chunks of an artifact and write the per-chunk entity_names
-    subset. Returns the number of chunks that received a non-empty list.
+    subset. Returns (chunks_with_names, chunks_total) — the coverage ratio
+    consumer can compute the per-artifact filter-acceptance rate.
     """
     artifact_filter = Filter(
         must=[
@@ -643,6 +649,7 @@ async def _set_per_chunk_entity_names(
 
     offset = None
     chunks_with_names = 0
+    chunks_total = 0
     while True:
         try:
             points, next_offset = await client.scroll(
@@ -659,12 +666,13 @@ async def _set_per_chunk_entity_names(
                 artifact_id=artifact_id,
                 org_id=org_id,
             )
-            return chunks_with_names
+            return chunks_with_names, chunks_total
 
         if not points:
             break
 
         for point in points:
+            chunks_total += 1
             chunk_text = (point.payload or {}).get("text", "")
             if not isinstance(chunk_text, str):
                 continue
@@ -691,7 +699,7 @@ async def _set_per_chunk_entity_names(
             break
         offset = next_offset
 
-    return chunks_with_names
+    return chunks_with_names, chunks_total
 
 
 _LINK_COUNT_CONCURRENCY = 20  # max parallel set_payload calls per bulk crawl
