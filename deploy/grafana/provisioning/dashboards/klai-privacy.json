@@ -1,0 +1,94 @@
+{
+  "annotations": { "list": [] },
+  "description": "Klai privacy posture: telemetry-mode distribution, gating decisions, shadow-store health (SPEC-PRIVACY-QUERY-SHADOW-001).",
+  "editable": false,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Telemetry mode distribution (per-tenant)",
+      "type": "piechart",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "pieType": "pie",
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT telemetry_level::text AS metric, COUNT(*) AS value FROM portal_orgs WHERE deleted_at IS NULL GROUP BY 1 ORDER BY 1",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Gating decisions over time (retrieve calls per tenant level)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "expr": "sum(rate(telemetry_level_decisions_total[5m])) by (level, decision)",
+          "legendFormat": "{{level}} / {{decision}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Shadow-store INSERT drops (failures per reason)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 9 },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "expr": "sum(rate(telemetry_shadow_drop_total[5m])) by (reason)",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Tenants currently in 'full' mode (potential audit-tail risk)",
+      "type": "table",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 9 },
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT slug, name, telemetry_level, (SELECT MAX(created_at) FROM portal_audit_log WHERE org_id = portal_orgs.id AND action = 'telemetry_level_changed') AS last_changed_at FROM portal_orgs WHERE telemetry_level = 'full' AND deleted_at IS NULL ORDER BY 2",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["privacy", "telemetry", "klai"],
+  "templating": { "list": [] },
+  "time": { "from": "now-24h", "to": "now" },
+  "timezone": "Europe/Amsterdam",
+  "title": "Privacy — Telemetry mode distribution",
+  "uid": "klai-privacy",
+  "version": 1
+}
