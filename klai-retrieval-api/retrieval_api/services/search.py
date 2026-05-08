@@ -89,10 +89,12 @@ def _scope_filter(request: RetrieveRequest) -> list[FieldCondition | Filter]:
         visibility_should: list[Filter] = [not_private]
         if request.user_id:
             visibility_should.append(
-                Filter(must=[
-                    FieldCondition(key="visibility", match=MatchValue(value="private")),
-                    FieldCondition(key="user_id", match=MatchValue(value=request.user_id)),
-                ])
+                Filter(
+                    must=[
+                        FieldCondition(key="visibility", match=MatchValue(value="private")),
+                        FieldCondition(key="user_id", match=MatchValue(value=request.user_id)),
+                    ]
+                )
             )
         conditions.append(Filter(should=visibility_should))
     if request.kb_slugs:
@@ -100,14 +102,16 @@ def _scope_filter(request: RetrieveRequest) -> list[FieldCondition | Filter]:
             # kb_slugs is an org-only filter. When scope=both, personal chunks must not be
             # excluded by the slug filter — a chunk passes if it matches a slug OR belongs
             # to the requesting user (personal ownership bypass).
-            conditions.append(Filter(should=[
-                FieldCondition(key="kb_slug", match=MatchAny(any=request.kb_slugs)),
-                FieldCondition(key="user_id", match=MatchValue(value=request.user_id)),
-            ]))
-        else:
             conditions.append(
-                FieldCondition(key="kb_slug", match=MatchAny(any=request.kb_slugs))
+                Filter(
+                    should=[
+                        FieldCondition(key="kb_slug", match=MatchAny(any=request.kb_slugs)),
+                        FieldCondition(key="user_id", match=MatchValue(value=request.user_id)),
+                    ]
+                )
             )
+        else:
+            conditions.append(FieldCondition(key="kb_slug", match=MatchAny(any=request.kb_slugs)))
     return conditions
 
 
@@ -210,6 +214,7 @@ async def _search_knowledge(
             "ingested_at": r.payload.get("ingested_at"),
             "assertion_mode": r.payload.get("assertion_mode"),
             "entity_pagerank_max": r.payload.get("entity_pagerank_max"),
+            "entity_names": payload_list(r.payload, "entity_names"),
             "source_url": r.payload.get("source_url"),
             "source_ref": r.payload.get("source_ref"),
             "source_connector_id": r.payload.get("source_connector_id"),
@@ -282,6 +287,7 @@ async def fetch_chunks_by_urls(
             "ingested_at": r.payload.get("ingested_at"),
             "assertion_mode": r.payload.get("assertion_mode"),
             "entity_pagerank_max": r.payload.get("entity_pagerank_max"),
+            "entity_names": payload_list(r.payload, "entity_names"),
             "source_url": r.payload.get("source_url"),
             "source_ref": r.payload.get("source_ref"),
             "source_connector_id": r.payload.get("source_connector_id"),

@@ -584,11 +584,20 @@ async def ingest_episode(
                             error=str(wt_exc),
                         )
 
-                # Store entity UUIDs + PageRank scores in Qdrant for retrieval boosting
+                # Store entity UUIDs + names + PageRank scores in Qdrant.
+                # entity_uuids + entity_pagerank_max → document-level (all chunks).
+                # entity_names → chunk-level: each chunk only gets names that
+                # literally appear in its own text (per-chunk substring filter
+                # in qdrant_store).
                 entity_uuids_list = [
                     str(getattr(n, "uuid", "")) for n in nodes if getattr(n, "uuid", None)
                 ]
-                if entity_uuids_list:
+                entity_names_list = [
+                    str(getattr(n, "name", "")).strip()
+                    for n in nodes
+                    if getattr(n, "name", None) and str(getattr(n, "name", "")).strip()
+                ]
+                if entity_uuids_list or entity_names_list:
                     try:
                         pagerank_scores = await compute_entity_pagerank(org_id)
                         await qdrant_store.set_entity_graph_data(
@@ -596,12 +605,12 @@ async def ingest_episode(
                             org_id=org_id,
                             entity_uuids=entity_uuids_list,
                             pagerank_scores=pagerank_scores,
+                            entity_names=entity_names_list,
                         )
-                    except Exception as eg_exc:
-                        logger.warning(
+                    except Exception:
+                        logger.exception(
                             "entity_graph_data_failed",
                             artifact_id=artifact_id,
-                            error=str(eg_exc),
                         )
 
                 break

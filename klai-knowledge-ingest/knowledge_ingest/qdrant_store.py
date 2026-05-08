@@ -86,6 +86,7 @@ async def ensure_collection() -> None:
         "content_type",
         "user_id",
         "entity_uuids",
+        "entity_names",
         "taxonomy_node_id",
         "source_connector_id",
         "taxonomy_node_ids",
@@ -516,45 +517,181 @@ async def search(
     ]
 
 
+# Minimum entity-name length for chunk-level substring matching. Two-character
+# names produce false positives ("AI" inside "fail", "stair") that pollute BM25.
+# Three is the smallest safe threshold for brand/product names while still
+# catching common short ones (CRM, ERP, SSO).
+_ENTITY_NAME_MIN_LEN = 3
+
+
+def filter_entity_names_for_chunk(
+    chunk_text: str,
+    doc_entity_names: list[str],
+) -> list[str]:
+    """Return the subset of doc_entity_names that literally appear in chunk_text.
+
+    Case-insensitive substring match. Names shorter than _ENTITY_NAME_MIN_LEN
+    are skipped to suppress false-positive matches inside unrelated words.
+    Duplicate names (e.g. Graphiti emitted both "Voys" and "voys") collapse to
+    a single canonical form (lowercased preferred when both casings appear).
+
+    Pure function — kept top-level for testability.
+    """
+    if not doc_entity_names or not chunk_text:
+        return []
+    chunk_lower = chunk_text.lower()
+    seen: set[str] = set()
+    result: list[str] = []
+    for name in doc_entity_names:
+        if not name or not isinstance(name, str):
+            continue
+        cleaned = name.strip()
+        if len(cleaned) < _ENTITY_NAME_MIN_LEN:
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        if key in chunk_lower:
+            seen.add(key)
+            result.append(cleaned)
+    return result
+
+
 async def set_entity_graph_data(
     artifact_id: str,
     org_id: str,
     entity_uuids: list[str],
     pagerank_scores: dict[str, float],
+    entity_names: list[str] | None = None,
 ) -> None:
-    """Set entity UUIDs and max PageRank score on all chunks of an artifact.
+    """Set entity UUIDs, entity names, and max PageRank score on chunks of an artifact.
 
-    Called after Graphiti episode ingestion completes. All chunks of the same
-    artifact get the same entity list (extracted at document level).
-    entity_pagerank_max is the highest PageRank score among this artifact's entities.
+    Called after Graphiti episode ingestion completes.
+
+    entity_uuids + entity_pagerank_max are document-level (set on all chunks of
+    the artifact via a single artifact_id-scoped set_payload).
+
+    entity_names is filtered per-chunk: each chunk only carries the subset of
+    document-level names that literally appear in its own text. This keeps
+    BM25/sparse from being polluted by entity names that belong to a different
+    section of the same long document. When entity_names is None or empty, only
+    the document-level fields are written (back-compat with callers that don't
+    yet provide names).
     """
-    if not entity_uuids:
+    if not entity_uuids and not entity_names:
         return
 
     client = get_client()
-    scores = [pagerank_scores.get(uid, 0.0) for uid in entity_uuids]
+    scores = [pagerank_scores.get(uid, 0.0) for uid in entity_uuids] if entity_uuids else []
     pagerank_max = max(scores) if scores else 0.0
 
-    await client.set_payload(
-        COLLECTION,
-        payload={
-            "entity_uuids": entity_uuids,
-            "entity_pagerank_max": pagerank_max,
-        },
-        points=Filter(
-            must=[
-                FieldCondition(key="artifact_id", match=MatchValue(value=artifact_id)),
-                FieldCondition(key="org_id", match=MatchValue(value=org_id)),
-            ]
-        ),
-    )
+    # Document-level write: same payload across every chunk of the artifact.
+    if entity_uuids:
+        await client.set_payload(
+            COLLECTION,
+            payload={
+                "entity_uuids": entity_uuids,
+                "entity_pagerank_max": pagerank_max,
+            },
+            points=Filter(
+                must=[
+                    FieldCondition(key="artifact_id", match=MatchValue(value=artifact_id)),
+                    FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+                ]
+            ),
+        )
+
+    # Chunk-level write: per-chunk substring filter against chunk text.
+    chunks_with_names = 0
+    if entity_names:
+        chunks_with_names = await _set_per_chunk_entity_names(
+            client=client,
+            artifact_id=artifact_id,
+            org_id=org_id,
+            doc_entity_names=entity_names,
+        )
+
     logger.info(
         "entity_graph_data_set",
         artifact_id=artifact_id,
         org_id=org_id,
         entity_count=len(entity_uuids),
+        entity_name_count=len(entity_names) if entity_names else 0,
+        chunks_with_names=chunks_with_names,
         pagerank_max=round(pagerank_max, 6),
     )
+
+
+_ENTITY_NAMES_CHUNK_BATCH = 100
+
+
+async def _set_per_chunk_entity_names(
+    client: AsyncQdrantClient,
+    artifact_id: str,
+    org_id: str,
+    doc_entity_names: list[str],
+) -> int:
+    """Scroll all chunks of an artifact and write the per-chunk entity_names
+    subset. Returns the number of chunks that received a non-empty list.
+    """
+    artifact_filter = Filter(
+        must=[
+            FieldCondition(key="artifact_id", match=MatchValue(value=artifact_id)),
+            FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+        ]
+    )
+
+    offset = None
+    chunks_with_names = 0
+    while True:
+        try:
+            points, next_offset = await client.scroll(
+                collection_name=COLLECTION,
+                scroll_filter=artifact_filter,
+                limit=_ENTITY_NAMES_CHUNK_BATCH,
+                offset=offset,
+                with_payload=["text"],
+                with_vectors=False,
+            )
+        except Exception:
+            logger.exception(
+                "entity_names_scroll_failed",
+                artifact_id=artifact_id,
+                org_id=org_id,
+            )
+            return chunks_with_names
+
+        if not points:
+            break
+
+        for point in points:
+            chunk_text = (point.payload or {}).get("text", "")
+            if not isinstance(chunk_text, str):
+                continue
+            names = filter_entity_names_for_chunk(chunk_text, doc_entity_names)
+            if not names:
+                # Qdrant strips empty-list keys on upsert; absent == empty.
+                continue
+            try:
+                await client.set_payload(
+                    COLLECTION,
+                    payload={"entity_names": names},
+                    points=[point.id],
+                )
+                chunks_with_names += 1
+            except Exception:
+                logger.exception(
+                    "entity_names_set_payload_failed",
+                    artifact_id=artifact_id,
+                    org_id=org_id,
+                    chunk_id=str(point.id),
+                )
+
+        if next_offset is None:
+            break
+        offset = next_offset
+
+    return chunks_with_names
 
 
 _LINK_COUNT_CONCURRENCY = 20  # max parallel set_payload calls per bulk crawl
