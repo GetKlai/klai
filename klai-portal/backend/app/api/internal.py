@@ -40,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_effective_capabilities
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, get_db, set_tenant
+from app.core.permissions import resolve_user_permissions
 from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg, PortalUser
@@ -398,6 +399,85 @@ async def get_user_products(
     capabilities = await get_effective_capabilities(zitadel_user_id, db)
     await _audit_internal_call(request, org_id=org_id or 0)
     return UserProductsResponse(products=products, capabilities=sorted(capabilities))
+
+
+# SPEC-PORTAL-RBAC-REFACTOR-001 REQ-19: serialised UserPermissions endpoint.
+# Used by klai-knowledge-mcp (and future MCP-style services) as a fallback
+# when the OAuth-token verify path doesn't yield a fresh effective_role —
+# e.g. immediately after a role change while the caller still holds an
+# old-claim JWT. Auth is the same X-Internal-Secret pattern as every other
+# endpoint in this file.
+
+
+class UserPermissionsResponse(BaseModel):
+    """Serialised ``UserPermissions`` for cross-service consumers.
+
+    Mirrors the dataclass fields 1:1 with primitive-only types so the
+    receiver does not need access to the SQLAlchemy/Pydantic ORM models.
+    Frozensets are serialised as sorted lists for deterministic output.
+    """
+
+    user_id: str
+    org_id: int
+    org_slug: str
+    role: str
+    plan: str
+    enabled_addons: list[str]
+    platform_unlocked_features: list[str]
+    effective_role: str
+    effective_capabilities: list[str]
+    effective_products: list[str]
+    is_platform_admin: bool
+    provisioning_status: str
+
+
+@router.get(
+    "/users/{zitadel_user_id}/permissions",
+    response_model=UserPermissionsResponse,
+)
+async def get_user_permissions(
+    zitadel_user_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> UserPermissionsResponse:
+    """Return the full ``UserPermissions`` snapshot for a Zitadel user.
+
+    SPEC-PORTAL-RBAC-REFACTOR-001 REQ-19: fallback for MCP-server when its
+    JWT-claim is missing or stale (e.g. post-role-rotation). Returns the
+    same data ``get_caller`` builds for in-process FastAPI requests, so
+    the MCP server can apply identical role / capability gates without
+    needing access to portal_users / portal_orgs directly.
+
+    404 when the user has no portal_users row — fail-closed so a typo in
+    the URL or a deleted user surfaces as "no permissions" not "empty
+    set" (the latter would silently treat the caller as personal-tier
+    on a deny-by-default policy and be hard to debug).
+    """
+    await _require_internal_token(request)
+
+    perms = await resolve_user_permissions(zitadel_user_id, db)
+    if perms is None:
+        await _audit_internal_call(request, org_id=0)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error_code": "user_not_found", "user_id": zitadel_user_id},
+        )
+
+    await _audit_internal_call(request, org_id=perms.org_id)
+    return UserPermissionsResponse(
+        user_id=perms.user_id,
+        org_id=perms.org_id,
+        org_slug=perms.org_slug,
+        role=perms.role.value,
+        plan=perms.plan,
+        enabled_addons=sorted(perms.enabled_addons),
+        platform_unlocked_features=sorted(perms.platform_unlocked_features),
+        effective_role=perms.effective_role.value,
+        effective_capabilities=sorted(c.value for c in perms.effective_capabilities),
+        effective_products=sorted(perms.effective_products),
+        is_platform_admin=perms.is_platform_admin,
+        provisioning_status=perms.provisioning_status,
+    )
 
 
 class ConnectorConfigResponse(BaseModel):

@@ -17,11 +17,13 @@ Identity:  X-User-ID, X-Org-ID, X-Org-Slug, Authorization: Bearer <user_jwt>
 
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 import re
 import time
 import uuid
+import weakref
 from dataclasses import dataclass
 from datetime import date
 from typing import Literal, get_args
@@ -301,6 +303,31 @@ def _role_at_least(actual: str, minimum: str) -> bool:
     return _ROLE_ORDER.get(actual, -1) >= _ROLE_ORDER.get(minimum, 0)
 
 
+# SPEC-PORTAL-RBAC-REFACTOR-001 REQ-18: per-user active-session registry
+# used by ``/internal/notify-role-change`` to emit
+# ``notifications/tools/list_changed`` to every active session for a user
+# whose role just changed in portal-api. WeakSet so sessions that close
+# (Streamable HTTP disconnect, GC) drop out automatically — no explicit
+# unregister hook needed.
+#
+# Concurrency: registration happens inside an async tool/identification
+# call (single-threaded asyncio in FastMCP). The notify endpoint also
+# runs on the same event loop. No locking needed.
+_active_user_sessions: dict[str, weakref.WeakSet] = {}
+
+
+def _register_session_for_user(user_id: str, session: object) -> None:
+    """Track *session* under *user_id* so role-change notifications can
+    reach it later. Idempotent — re-registering the same session is a
+    no-op (WeakSet is set-semantic).
+    """
+    bucket = _active_user_sessions.get(user_id)
+    if bucket is None:
+        bucket = weakref.WeakSet()
+        _active_user_sessions[user_id] = bucket
+    bucket.add(session)
+
+
 async def _verify_identity(ctx: Context, claimed: _ClaimedIdentity) -> VerifyResult:
     """Call portal-api /internal/identity/verify for the claimed tuple.
 
@@ -403,6 +430,18 @@ async def _identify_via_oauth_token(ctx: Context, raw_token: str) -> _VerifiedId
     assert result.user_id is not None
     assert result.org_id is not None
     assert result.org_slug is not None
+
+    # SPEC-PORTAL-RBAC-REFACTOR-001 REQ-18: register the active session for
+    # this user so a later role-change notification from portal-api can
+    # reach it via ``/internal/notify-role-change``. Best-effort — if the
+    # session attribute is missing for any reason, skip registration; the
+    # client will pick up the role-change on the next reconnect / list.
+    try:
+        session = ctx.request_context.session  # type: ignore[union-attr]
+        _register_session_for_user(result.user_id, session)
+    except Exception:
+        logger.debug("knowledge_mcp_session_register_skipped", exc_info=True)
+
     return _VerifiedIdentity(
         user_id=result.user_id,
         org_id=result.org_id,
@@ -1169,6 +1208,93 @@ async def _well_known_protected_resource(request: StarletteRequest) -> JSONRespo
     return JSONResponse(metadata, headers={"Cache-Control": "public, max-age=300"})
 
 
+# SPEC-PORTAL-RBAC-REFACTOR-001 REQ-18 endpoint: portal-api notifies us
+# whenever a user's role changes so we can emit
+# ``notifications/tools/list_changed`` to every active session for that
+# user. LibreChat-MCP-bridge (Klai-controlled) honours the notification
+# and reloads the tool-list without reconnect; third-party clients
+# (Claude Desktop / ChatGPT desktop) handle the notification per MCP
+# spec — some auto-refresh, others require user action. That is per-spec
+# and out-of-Klai-scope.
+
+
+async def _notify_role_change(request: StarletteRequest) -> JSONResponse:
+    """Internal endpoint: fan out ``notifications/tools/list_changed`` to
+    every active MCP session for the given user.
+
+    Authentication: ``X-Internal-Secret`` matched against
+    ``PORTAL_INTERNAL_SECRET`` via ``hmac.compare_digest`` (constant-time).
+    Body: ``{"user_id": "<zitadel_sub>"}``.
+
+    The endpoint is best-effort — emit failures (closed session, write
+    error) are logged but do not fail the response. Rationale: the only
+    consequence of a missed notification is that the client's tool-list
+    is briefly stale until the next reconnect/poll. Worst case = current
+    behaviour without REQ-18.
+    """
+    secret = request.headers.get(_INTERNAL_SECRET_HEADER.lower(), "")
+    if not secret or not hmac.compare_digest(secret, PORTAL_INTERNAL_SECRET):
+        return JSONResponse(
+            {"error": "invalid_internal_secret"},
+            status_code=401,
+        )
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "malformed_body"}, status_code=400)
+
+    user_id = body.get("user_id") if isinstance(body, dict) else None
+    if not isinstance(user_id, str) or not user_id:
+        return JSONResponse(
+            {"error": "missing_user_id"},
+            status_code=422,
+        )
+
+    sessions = list(_active_user_sessions.get(user_id, []))
+    if not sessions:
+        # Not an error — the user may simply have no active MCP session.
+        # Returning 200 with notified=0 lets portal-api treat fan-out as
+        # idempotent / fire-and-forget without distinguishing absence
+        # from failure.
+        logger.info(
+            "knowledge_mcp_role_change_no_active_sessions",
+            extra={"user_id_hash": _hash_user_id(user_id)},
+        )
+        return JSONResponse({"notified": 0})
+
+    # Emit serially per session — the SDK call is fast (writes one frame
+    # to the SSE stream) and we want individual failures isolated.
+    notified = 0
+    for session in sessions:
+        try:
+            await session.send_tool_list_changed()
+            notified += 1
+        except Exception:
+            logger.warning(
+                "knowledge_mcp_role_change_emit_failed",
+                exc_info=True,
+                extra={"user_id_hash": _hash_user_id(user_id)},
+            )
+
+    logger.info(
+        "knowledge_mcp_role_change_notified",
+        extra={
+            "user_id_hash": _hash_user_id(user_id),
+            "notified": notified,
+            "total_sessions": len(sessions),
+        },
+    )
+    return JSONResponse({"notified": notified})
+
+
+def _hash_user_id(user_id: str) -> str:
+    """Same hash format ``klai_identity_assert`` uses for log-safe ids."""
+    import hashlib
+
+    return hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:16]
+
+
 class _WWWAuthenticateMiddleware(BaseHTTPMiddleware):
     """Add WWW-Authenticate to every 401 response (REQ-10).
 
@@ -1247,6 +1373,17 @@ app = Starlette(
             "/.well-known/oauth-protected-resource/mcp",
             _well_known_protected_resource,
             methods=["GET"],
+        ),
+        # SPEC-PORTAL-RBAC-REFACTOR-001 REQ-18: internal endpoint portal-api
+        # calls after a role change so we can fan out
+        # ``notifications/tools/list_changed`` to that user's active MCP
+        # sessions. Mounted before the catch-all ``/`` so the auth path
+        # (X-Internal-Secret) is independent of the OAuth flow used by
+        # ``/mcp`` / ``/sse``.
+        Route(
+            "/internal/notify-role-change",
+            _notify_role_change,
+            methods=["POST"],
         ),
         Mount("/", app=_mcp_app),
     ],
