@@ -24,23 +24,34 @@ def _make_user(uid: str = "u1", role: str = "company") -> MagicMock:
     return u
 
 
-def _make_db(target: MagicMock | None = None, admin_count: int = 2) -> AsyncMock:
-    """Return an AsyncMock DB:
-    - every execute() returns a result whose scalar_one_or_none() == target
-      (the demote-admin handler issues an extra SELECT ... FOR UPDATE on
-      portal_orgs to serialise concurrent role changes; that lock query
-      consumes a result the handler does not read, so always returning
-      `target` is safe — only the target-lookup call inspects the result).
-    - scalar() for admin count returns admin_count.
+def _make_db(target: MagicMock | None = None, admin_count: int = 2, plan: str = "complete") -> AsyncMock:
+    """Return an AsyncMock DB shaped for ``promote_admin`` / ``demote_admin``:
+
+    - First ``execute()`` is the locked-org SELECT...FOR UPDATE (added by
+      Phase 3 fix #2 so plan-ceiling reads the locked plan, not the
+      ``perms.plan`` request-start snapshot). Returns a synthetic
+      PortalOrg whose ``plan`` is configurable (defaults to ``complete``).
+    - Subsequent ``execute()`` calls are the target-user lookup; their
+      result's ``scalar_one_or_none()`` returns ``target``.
+    - ``scalar()`` returns ``admin_count`` (admin-count COUNT query).
     """
     db = AsyncMock()
     db.add = MagicMock()
 
+    locked_org = MagicMock()
+    locked_org.plan = plan
+
+    locked_result = MagicMock()
+    locked_result.scalar_one.return_value = locked_org
+
+    user_result = MagicMock()
+    user_result.scalar_one_or_none.return_value = target
+
+    call_count = {"n": 0}
+
     async def _execute(stmt, *args, **kwargs):
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = target
-        mock_result.scalar_one.return_value = target
-        return mock_result
+        call_count["n"] += 1
+        return locked_result if call_count["n"] == 1 else user_result
 
     async def _scalar(stmt, *args, **kwargs):
         return admin_count
