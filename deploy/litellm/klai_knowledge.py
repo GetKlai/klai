@@ -85,7 +85,9 @@ PORTAL_INTERNAL_SECRET = os.getenv("PORTAL_INTERNAL_SECRET", "")
 # When unset (e.g. older deploys), falls back to PORTAL_INTERNAL_SECRET so the
 # hook keeps shipping headers, but in production both secrets must be set or
 # the legacy auth path on /retrieve 401s with `invalid_internal_secret`.
-RETRIEVAL_INTERNAL_SECRET = os.getenv("RETRIEVAL_INTERNAL_SECRET", "") or PORTAL_INTERNAL_SECRET
+RETRIEVAL_INTERNAL_SECRET = (
+    os.getenv("RETRIEVAL_INTERNAL_SECRET", "") or PORTAL_INTERNAL_SECRET
+)
 
 # SPEC-SEC-SERVICE-AUTH-001 Phase C-1: Zitadel client_credentials JWT auth
 # replaces the shared X-Internal-Secret. The token client is constructed lazily
@@ -119,7 +121,9 @@ def _get_token_client() -> object | None:
         return None
 
     _token_client_init_attempted = True
-    if not (KLAI_OAUTH_TOKEN_URL and KLAI_LITELLM_CLIENT_ID and KLAI_LITELLM_CLIENT_SECRET):
+    if not (
+        KLAI_OAUTH_TOKEN_URL and KLAI_LITELLM_CLIENT_ID and KLAI_LITELLM_CLIENT_SECRET
+    ):
         logger.info(
             "KlaiKnowledgeHook: jwt auth env vars missing — using legacy "
             "X-Internal-Secret path (SPEC-SEC-SERVICE-AUTH-001 Phase C-1 fallback)"
@@ -207,7 +211,9 @@ def _retrieve_legacy_headers() -> dict[str, str]:
     }
 
 
-async def _retrieve_with_dual_auth(http: httpx.AsyncClient, body: dict[str, Any]) -> httpx.Response:
+async def _retrieve_with_dual_auth(
+    http: httpx.AsyncClient, body: dict[str, Any]
+) -> httpx.Response:
     """POST to ``/retrieve`` preferring JWT, falling back to X-Internal-Secret.
 
     Phase C-1 dual-auth (REQ-5 safe rollout):
@@ -311,7 +317,9 @@ def _last_user_message(messages: list[dict]) -> str | None:
                 return content
             if isinstance(content, list):
                 # Multi-modal message — extract text parts
-                return " ".join(p.get("text", "") for p in content if p.get("type") == "text")
+                return " ".join(
+                    p.get("text", "") for p in content if p.get("type") == "text"
+                )
     return None
 
 
@@ -356,7 +364,9 @@ _RETRIEVAL_BASE_URL = (KNOWLEDGE_RETRIEVE_URL or "").rsplit("/retrieve", 1)[0]
 TAXONOMY_ENABLED = os.getenv("TAXONOMY_ENABLED", "true").lower() == "true"
 # Coverage threshold: if < this fraction of KB chunks are tagged, skip filter.
 # Default 0.30 — only skip when KB is mostly untagged (REQ-2 coverage-stats fallback).
-KLAI_TAXONOMY_COVERAGE_THRESHOLD = float(os.getenv("KLAI_TAXONOMY_COVERAGE_THRESHOLD", "0.30"))
+KLAI_TAXONOMY_COVERAGE_THRESHOLD = float(
+    os.getenv("KLAI_TAXONOMY_COVERAGE_THRESHOLD", "0.30")
+)
 # Timeout for each taxonomy HTTP call (tree fetch + coverage fetch).
 TAXONOMY_FETCH_TIMEOUT = float(os.getenv("TAXONOMY_FETCH_TIMEOUT", "0.8"))
 
@@ -533,7 +543,9 @@ def _format_taxonomy_for_prompt(
     if isinstance(trees, list):
         if not trees:
             return "(none)"
-        lines = [f"- id={node['id']}: {node['name']}" for node in trees[:max_nodes_per_kb]]
+        lines = [
+            f"- id={node['id']}: {node['name']}" for node in trees[:max_nodes_per_kb]
+        ]
         if len(trees) > max_nodes_per_kb:
             lines.append(f"... ({len(trees) - max_nodes_per_kb} more nodes omitted)")
         return "\n".join(lines)
@@ -697,7 +709,9 @@ async def _fetch_taxonomy_coverage(
     coverage = {slug: float(data.get(slug, 0.0)) for slug in kb_slugs}
     if cache is not None:
         try:
-            await cache.async_set_cache(cache_key, coverage, ttl=_TAXONOMY_COVERAGE_TTL_S)
+            await cache.async_set_cache(
+                cache_key, coverage, ttl=_TAXONOMY_COVERAGE_TTL_S
+            )
         except Exception:
             pass
     return coverage
@@ -751,7 +765,9 @@ async def _rewrite_and_classify(
 
     # Fall back to plain text prompt when no taxonomy is available
     if not flat_tree:
-        rewritten, rewrite_meta = await _rewrite_query(raw_query, history, _transport=_transport)
+        rewritten, rewrite_meta = await _rewrite_query(
+            raw_query, history, _transport=_transport
+        )
         return rewritten, [], rewrite_meta
 
     # Build combined prompt
@@ -836,7 +852,9 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
     Backward compatible: handles old {"enabled": bool} portal responses gracefully.
     """
     if not PORTAL_INTERNAL_SECRET:
-        logger.warning("KlaiKnowledgeHook: PORTAL_INTERNAL_SECRET not set — fail-closed")
+        logger.warning(
+            "KlaiKnowledgeHook: PORTAL_INTERNAL_SECRET not set — fail-closed"
+        )
         return {
             "enabled": False,
             "kb_retrieval_enabled": True,
@@ -845,6 +863,8 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
             "kb_narrow": False,
             "version": 0,
             "zitadel_user_id": None,
+            # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-4: fail-open to 'shadow', never 'off'.
+            "telemetry_level": "shadow",
         }
 
     # Step 1: check version pointer (short-lived — invalidated by preference changes)
@@ -868,7 +888,9 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
             resp.raise_for_status()
             data = resp.json()
     except Exception as exc:
-        logger.warning("KlaiKnowledgeHook: portal feature fetch failed (%s) — fail-closed", exc)
+        logger.warning(
+            "KlaiKnowledgeHook: portal feature fetch failed (%s) — fail-closed", exc
+        )
         return {
             "enabled": False,
             "kb_retrieval_enabled": True,
@@ -877,6 +899,9 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
             "kb_narrow": False,
             "version": 0,
             "zitadel_user_id": None,
+            # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-4: fail-open to 'shadow', never 'off'.
+            # Silent telemetry is the wrong default during outages.
+            "telemetry_level": "shadow",
         }
 
     version = data.get("kb_pref_version", 0)
@@ -893,11 +918,17 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
         # personal-KB qdrant filter, and the verify-cache key all match on
         # zitadel_user_id — using the LibreChat ObjectId would 403 every call.
         "zitadel_user_id": data.get("zitadel_user_id"),
+        # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-2: per-tenant telemetry mode.
+        # Older portal-api builds without the field land in the default
+        # 'shadow' (REQ-4 fail-open) so a mid-deploy state is privacy-safe.
+        "telemetry_level": data.get("telemetry_level", "shadow"),
     }
 
     # Store version pointer (30s) and feature data (300s) separately
     await cache.async_set_cache(version_key, str(version), ttl=30)
-    await cache.async_set_cache(f"kb_feature:{org_id}:{user_id}:{version}", result, ttl=300)
+    await cache.async_set_cache(
+        f"kb_feature:{org_id}:{user_id}:{version}", result, ttl=300
+    )
     return result
 
 
@@ -1002,7 +1033,9 @@ def _prepend_system_prefix(messages: list[dict], prefix: str) -> None:
     """
     if not prefix:
         return
-    sys_idx = next((i for i, m in enumerate(messages) if m.get("role") == "system"), None)
+    sys_idx = next(
+        (i for i, m in enumerate(messages) if m.get("role") == "system"), None
+    )
     if sys_idx is not None:
         existing = messages[sys_idx].get("content", "")
         messages[sys_idx] = {
@@ -1027,7 +1060,9 @@ def _build_template_instructions_block(instructions: list[dict]) -> str:
     # detected by GROUNDED_CHAT_SYSTEM_PROMPT (prepended above this block at
     # the call site). Template `name` and `text` themselves are tenant-defined
     # — they may already be in any language; we don't translate them.
-    parts: list[str] = ["[Klai Templates — apply the following instructions to your answer]"]
+    parts: list[str] = [
+        "[Klai Templates — apply the following instructions to your answer]"
+    ]
     for inst in instructions:
         name = inst.get("name") or "template"
         text = (inst.get("text") or "").strip()
@@ -1124,14 +1159,18 @@ class KlaiKnowledgeHook(CustomLogger):
         if not feature["enabled"]:
             # No KB entitlement. Templates still apply. Multilingual foundation
             # still applies — REQ-10: every LibreChat path is multilingual.
-            _prepend_system_prefix(messages, _compose_libre_chat_prefix(templates_block))
+            _prepend_system_prefix(
+                messages, _compose_libre_chat_prefix(templates_block)
+            )
             data["messages"] = messages
             return data
 
         if not feature["kb_retrieval_enabled"]:
             # User disabled KB retrieval. Templates still apply. Multilingual
             # foundation still applies — REQ-10.
-            _prepend_system_prefix(messages, _compose_libre_chat_prefix(templates_block))
+            _prepend_system_prefix(
+                messages, _compose_libre_chat_prefix(templates_block)
+            )
             data["messages"] = messages
             return data
 
@@ -1202,7 +1241,9 @@ class KlaiKnowledgeHook(CustomLogger):
         # Multilingual foundation still applies — REQ-10 (the language
         # contract is shared between GROUNDED and GENERAL prompts).
         if not kb_personal and kb_slugs == []:
-            _prepend_system_prefix(messages, _compose_general_chat_prefix(templates_block))
+            _prepend_system_prefix(
+                messages, _compose_general_chat_prefix(templates_block)
+            )
             data["messages"] = messages
             return data
 
@@ -1229,7 +1270,9 @@ class KlaiKnowledgeHook(CustomLogger):
         #     full set client-side, so taxonomy is skipped (no_kbs_in_scope).
         #     Fail-open: retrieval-api still applies its org/scope filters.
         #   * personal-only scope ("personal") → no org KBs → skip taxonomy.
-        kbs_in_scope: list[str] = list(kb_slugs_for_request) if kb_slugs_for_request else []
+        kbs_in_scope: list[str] = (
+            list(kb_slugs_for_request) if kb_slugs_for_request else []
+        )
         taxonomy_trees: dict[str, list[dict]] = {}
         taxonomy_coverage_map: dict[str, float] = {}
         if kbs_in_scope and TAXONOMY_ENABLED and scope in ("org", "both"):
@@ -1261,18 +1304,34 @@ class KlaiKnowledgeHook(CustomLogger):
             classified_node_ids,
             rewrite_meta,
         ) = await _rewrite_and_classify(query, conversation_history, trees_for_classify)
+        # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-6: gate raw query content out of
+        # the query_rewrite log line in 'off' / 'shadow' mode. Operators keep
+        # full-shape diagnostics (timing, was_changed, skip reason) but never
+        # see literal customer text.
+        telemetry_level = feature.get("telemetry_level", "shadow")
         try:
-            logger.info(
-                "query_rewrite org_id=%s user_id=%s raw_query=%r rewritten_query=%r "
-                "rewrite_ms=%d was_changed=%s skipped=%s",
-                org_id,
-                user_id,
-                query,
-                rewritten_query,
-                rewrite_meta.get("rewrite_ms", 0),
-                rewrite_meta.get("was_changed", False),
-                rewrite_meta.get("skipped", ""),
-            )
+            if telemetry_level == "full":
+                logger.info(
+                    "query_rewrite org_id=%s user_id=%s raw_query=%r rewritten_query=%r "
+                    "rewrite_ms=%d was_changed=%s skipped=%s",
+                    org_id,
+                    user_id,
+                    query,
+                    rewritten_query,
+                    rewrite_meta.get("rewrite_ms", 0),
+                    rewrite_meta.get("was_changed", False),
+                    rewrite_meta.get("skipped", ""),
+                )
+            else:
+                logger.info(
+                    "query_rewrite_metadata org_id=%s user_id=%s "
+                    "rewrite_ms=%d was_changed=%s skipped=%s",
+                    org_id,
+                    user_id,
+                    rewrite_meta.get("rewrite_ms", 0),
+                    rewrite_meta.get("was_changed", False),
+                    rewrite_meta.get("skipped", ""),
+                )
         except Exception:
             # Logging itself must never abort the hook (REQ-2 fail-open).
             pass
@@ -1298,7 +1357,8 @@ class KlaiKnowledgeHook(CustomLogger):
         if TAXONOMY_ENABLED and kbs_in_scope:
             try:
                 coverage_repr = ",".join(
-                    f"{slug}={taxonomy_coverage_map.get(slug, 0.0):.2f}" for slug in kbs_in_scope
+                    f"{slug}={taxonomy_coverage_map.get(slug, 0.0):.2f}"
+                    for slug in kbs_in_scope
                 )
                 logger.info(
                     "taxonomy_classify org_id=%s kb_slugs=%s coverage=%s "
@@ -1326,6 +1386,11 @@ class KlaiKnowledgeHook(CustomLogger):
             "scope": scope,
             "top_k": RETRIEVE_TOP_K,
             "conversation_history": conversation_history,
+            # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-4: forward the per-tenant
+            # telemetry mode so retrieval-api can gate its content emission
+            # + shadow-store INSERT accordingly. Default 'shadow' on cache
+            # miss + portal outage (fail-open per REQ-4).
+            "telemetry_level": telemetry_level,
         }
         if kb_slugs_for_request:
             retrieve_body["kb_slugs"] = kb_slugs_for_request
@@ -1401,7 +1466,9 @@ class KlaiKnowledgeHook(CustomLogger):
         # If the retrieval-gate determined no KB context is needed, skip injection.
         # Multilingual foundation still applies — REQ-10.
         if result.get("retrieval_bypassed"):
-            _prepend_system_prefix(messages, _compose_libre_chat_prefix(templates_block))
+            _prepend_system_prefix(
+                messages, _compose_libre_chat_prefix(templates_block)
+            )
             data["messages"] = messages
             data.setdefault("metadata", {})["_klai_kb_meta"] = {
                 "org_id": org_id,
@@ -1440,7 +1507,9 @@ class KlaiKnowledgeHook(CustomLogger):
         if not chunks:
             # Zero chunks but templates may still apply. Multilingual
             # foundation still applies — REQ-10.
-            _prepend_system_prefix(messages, _compose_libre_chat_prefix(templates_block))
+            _prepend_system_prefix(
+                messages, _compose_libre_chat_prefix(templates_block)
+            )
             data["messages"] = messages
             return data
 
@@ -1525,7 +1594,8 @@ class KlaiKnowledgeHook(CustomLogger):
             image_urls = chunk.get("image_urls") or []
             if image_urls:
                 absolute_urls = [
-                    f"{KB_IMAGES_BASE_URL}{u}" if u.startswith("/") else u for u in image_urls
+                    f"{KB_IMAGES_BASE_URL}{u}" if u.startswith("/") else u
+                    for u in image_urls
                 ]
                 for i, img_url in enumerate(absolute_urls, 1):
                     lines.append(f"![afbeelding {i}]({img_url})")

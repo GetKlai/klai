@@ -39,6 +39,11 @@ class OrgSettingsOut(BaseModel):
     # @MX:NOTE SPEC-AUTH-009 R5 -- exposed so the frontend toggle label can show
     # "Automatically accept users with @{primary_domain}". None when not set.
     primary_domain: str | None = None
+    # @MX:NOTE SPEC-PRIVACY-QUERY-SHADOW-001 REQ-15 — current telemetry mode,
+    # surfaced read-only on this GET so the admin settings UI can render the
+    # current state without a second roundtrip. Mutated via the dedicated
+    # tenant-self-service endpoint POST /api/orgs/me/telemetry-level.
+    telemetry_level: Literal["off", "shadow", "full"] = "shadow"
 
 
 class OrgSettingsUpdate(BaseModel):
@@ -70,6 +75,7 @@ async def get_org_settings(
         mfa_policy=org.mfa_policy,
         auto_accept_same_domain=bool(org.auto_accept_same_domain),
         primary_domain=org.primary_domain or None,
+        telemetry_level=org.telemetry_level,
     )
 
 
@@ -96,6 +102,7 @@ async def update_org_settings(
         mfa_policy=org.mfa_policy,
         auto_accept_same_domain=bool(org.auto_accept_same_domain),
         primary_domain=org.primary_domain or None,
+        telemetry_level=org.telemetry_level,
     )
 
 

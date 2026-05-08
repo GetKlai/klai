@@ -87,6 +87,23 @@ class PortalOrg(Base):
         default=list,
         server_default="{}",
     )
+    # @MX:NOTE: SPEC-PRIVACY-QUERY-SHADOW-001 REQ-1 — per-tenant telemetry mode.
+    # 'shadow' (default): embedding + symbolic features only, no raw query persisted.
+    # 'off': zero telemetry. 'full': raw query persisted with 7d TTL (audit-trailed).
+    # The underlying ENUM (telemetry_level_t) is created by alembic migration
+    # g5h6i7j8k9l0; create_type=False so SQLAlchemy doesn't try to recreate it.
+    telemetry_level: Mapped[Literal["off", "shadow", "full"]] = mapped_column(
+        sa.Enum(
+            "off",
+            "shadow",
+            "full",
+            name="telemetry_level_t",
+            create_type=False,
+        ),
+        nullable=False,
+        default="shadow",
+        server_default="shadow",
+    )
 
     users: Mapped[list["PortalUser"]] = relationship(back_populates="org")
 
