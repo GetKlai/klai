@@ -158,10 +158,11 @@ async def approve_join_request(
         org_id = perms.org_id
 
     # Create portal_users row
+    # SPEC-PORTAL-RBAC-REFACTOR-001 REQ-11: new users join as "personal" (not "member")
     new_user = PortalUser(
         zitadel_user_id=jr.zitadel_user_id,
         org_id=org_id,
-        role="member",
+        role="personal",
         status="active",
         display_name=jr.display_name,
         email=jr.email,
