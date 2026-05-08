@@ -104,18 +104,16 @@ function mapStatus(bron: Bron): Status {
 
 function StatusBadge({ status }: { status: Status }) {
   const labelMap = {
-    synced: 'Gesynchroniseerd',
-    pending: 'Bezig',
-    not_synced: 'Niet gesynchroniseerd',
+    synced: m.kb_status_klaar(),
+    pending: m.kb_status_bezig(),
+    not_synced: m.kb_status_leeg(),
   } as const
   // Synced = success (subtle green). Pending = secondary (neutral).
-  // Not synced = destructive only when explicitly failed; otherwise secondary
-  // so a never-synced upload doesn't shout. We surface 'not_synced' as
-  // a subtle warning treatment to match the "yet to happen" feeling.
+  // Not_synced = subtle secondary: it's "not yet" not "failed".
   const variantMap = {
     synced: 'success' as const,
     pending: 'secondary' as const,
-    not_synced: 'warning' as const,
+    not_synced: 'secondary' as const,
   }
   return <Badge variant={variantMap[status]}>{labelMap[status]}</Badge>
 }
