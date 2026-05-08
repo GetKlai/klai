@@ -112,3 +112,32 @@ retrieval_link_expand_top_k_total = Counter(
     "Link-expand contribution to served top-K (hit/miss per tenant)",
     ["outcome", "org_id"],
 )
+
+# SPEC-PRIVACY-QUERY-SHADOW-001 REQ-14 — privacy-layer observability.
+# Counts every gating decision so operators can verify the telemetry
+# layer is behaving correctly across the four decision-types:
+#   metadata_only   — content fields stripped from decision_record
+#   content_emitted — full decision_record (full mode)
+#   shadow_inserted — row written to telemetry.query_shadow
+#   full_logged     — raw query persisted in logs / DB
+telemetry_level_decisions_total = Counter(
+    "telemetry_level_decisions_total",
+    "Privacy-layer gating decisions per tenant level",
+    ["level", "decision"],
+)
+
+# Tracks shadow-store INSERT failures. ``reason`` distinguishes
+# fail-modes (no_pool, db_error, timeout, etc.) for triage.
+telemetry_shadow_drop_total = Counter(
+    "telemetry_shadow_drop_total",
+    "Shadow-store INSERT failures, bucketed by reason",
+    ["reason"],
+)
+
+# Number of rows redacted by the one-time legacy cleanup migration
+# (REQ-12). Incremented at module load by a probe query so dashboards
+# can show "this many legacy rows were closed out on first deploy".
+telemetry_legacy_redaction_total = Counter(
+    "telemetry_legacy_redaction_total",
+    "Legacy rows redacted by the one-time privacy cleanup migration",
+)

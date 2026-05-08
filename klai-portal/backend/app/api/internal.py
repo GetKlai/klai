@@ -608,6 +608,12 @@ class KnowledgeFeatureResponse(BaseModel):
     # qdrant chunks (klai-portal/backend/app/api/knowledge.py:172-204), so
     # the personal-scope filter also works.
     zitadel_user_id: str | None = None
+    # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-2: per-tenant telemetry mode threaded
+    # through to the LiteLLM hook + knowledge-mcp. Default 'shadow' for
+    # backwards compatibility — when the field is absent in cached responses
+    # from older portal-api builds, downstream callers fail-open to 'shadow'
+    # per REQ-4.
+    telemetry_level: Literal["off", "shadow", "full"] = "shadow"
 
 
 @router.get("/v1/users/{librechat_user_id}/feature/knowledge", response_model=KnowledgeFeatureResponse)
@@ -631,8 +637,14 @@ async def get_knowledge_feature(
 
     # Set tenant context early using the org_id query param (Zitadel org ID).
     # This is needed so subsequent queries on RLS-protected tables work correctly.
-    org_lookup = await db.execute(select(PortalOrg.id).where(PortalOrg.zitadel_org_id == org_id))
-    portal_org_id = org_lookup.scalar_one_or_none()
+    # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-2: also fetch telemetry_level so every
+    # disabled-path return surfaces the org's level (not the default).
+    org_lookup = await db.execute(
+        select(PortalOrg.id, PortalOrg.telemetry_level).where(PortalOrg.zitadel_org_id == org_id)
+    )
+    org_row = org_lookup.one_or_none()
+    portal_org_id = org_row[0] if org_row else None
+    org_telemetry_level: Literal["off", "shadow", "full"] = org_row[1] if org_row else "shadow"
     if portal_org_id is not None:
         await set_tenant(db, portal_org_id)
 
@@ -647,7 +659,7 @@ async def get_knowledge_feature(
         if not settings.librechat_mongo_root_uri:
             logger.warning("KB authz: LIBRECHAT_MONGO_ROOT_URI not set — fail-closed for user %s", librechat_user_id)
             await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False)
+            return KnowledgeFeatureResponse(enabled=False, telemetry_level=org_telemetry_level)
 
         # Look up the org to get its LibreChat container name (= MongoDB database name)
         org_result = await db.execute(select(PortalOrg).where(PortalOrg.zitadel_org_id == org_id))
@@ -655,14 +667,14 @@ async def get_knowledge_feature(
         if org is None or not org.librechat_container:
             logger.warning("KB authz: org %s has no librechat_container — fail-closed", org_id)
             await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False)
+            return KnowledgeFeatureResponse(enabled=False, telemetry_level=org_telemetry_level)
 
         try:
             oid = ObjectId(librechat_user_id)
         except InvalidId:
             logger.warning("KB authz: invalid ObjectId %s — fail-closed", librechat_user_id)
             await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False)
+            return KnowledgeFeatureResponse(enabled=False, telemetry_level=org_telemetry_level)
 
         mongo_client: AsyncIOMotorClient | None = None
         try:
@@ -676,7 +688,7 @@ async def get_knowledge_feature(
                 exc_info=True,
             )
             await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False)
+            return KnowledgeFeatureResponse(enabled=False, telemetry_level=org_telemetry_level)
         finally:
             if mongo_client is not None:
                 mongo_client.close()
@@ -684,13 +696,13 @@ async def get_knowledge_feature(
         if mongo_user is None:
             logger.warning("KB authz: no LibreChat user found for ObjectId %s — fail-closed", librechat_user_id)
             await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False)
+            return KnowledgeFeatureResponse(enabled=False, telemetry_level=org_telemetry_level)
 
         zitadel_user_id = mongo_user.get("openidId") or mongo_user.get("openid_id") or mongo_user.get("sub")
         if not zitadel_user_id:
             logger.warning("KB authz: LibreChat user %s has no openidId/sub — fail-closed", librechat_user_id)
             await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False)
+            return KnowledgeFeatureResponse(enabled=False, telemetry_level=org_telemetry_level)
 
         # Resolve portal user and cache the mapping
         portal_result = await db.execute(select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id))
@@ -698,7 +710,7 @@ async def get_knowledge_feature(
         if user is None:
             logger.warning("KB authz: no portal user for zitadel_user_id %s — fail-closed", zitadel_user_id)
             await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False)
+            return KnowledgeFeatureResponse(enabled=False, telemetry_level=org_telemetry_level)
 
         user.librechat_user_id = librechat_user_id
         await db.commit()
@@ -719,7 +731,76 @@ async def get_knowledge_feature(
         kb_narrow=user.kb_narrow,
         kb_pref_version=user.kb_pref_version,
         zitadel_user_id=user.zitadel_user_id,
+        telemetry_level=org_telemetry_level,
     )
+
+
+# SPEC-PRIVACY-QUERY-SHADOW-001 REQ-11: internal-admin telemetry-level toggle.
+class TelemetryLevelChange(BaseModel):
+    level: Literal["off", "shadow", "full"]
+    reason: str
+
+
+class TelemetryLevelOut(BaseModel):
+    org_id: int
+    old_level: Literal["off", "shadow", "full"]
+    new_level: Literal["off", "shadow", "full"]
+
+
+@router.post(
+    "/admin/orgs/{org_id}/telemetry-level",
+    response_model=TelemetryLevelOut,
+)
+async def admin_set_telemetry_level(
+    org_id: int,
+    body: TelemetryLevelChange,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> TelemetryLevelOut:
+    """Operator-only endpoint to flip a tenant's telemetry mode (REQ-11).
+
+    Auth: same X-Internal-Secret pattern as the rest of /internal/* — the
+    caller is presumed to be a klai-operator. The audit row records
+    ``operator_kind='operator'`` so it is distinguishable from the
+    tenant-self-service path (REQ-15) in the audit-log UI.
+    """
+    await _require_internal_token(request)
+
+    if not body.reason or not body.reason.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="reason must be non-empty",
+        )
+    if len(body.reason) > 500:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="reason exceeds 500-char limit",
+        )
+
+    from app.services.telemetry_level import set_telemetry_level
+
+    # Internal admin path: operator identity is implicit in the
+    # X-Internal-Secret bearer (no per-user JWT). We record a stable
+    # synthetic actor so the audit-log row is non-empty; klai-operators
+    # can correlate via the request_id in observability logs.
+    operator_user_id = "internal-admin"
+
+    try:
+        old_level, new_level = await set_telemetry_level(
+            db,
+            org_id=org_id,
+            new_level=body.level,
+            operator_kind="operator",
+            operator_user_id=operator_user_id,
+            reason=body.reason,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    await _audit_internal_call(request, org_id=org_id)
+    return TelemetryLevelOut(org_id=org_id, old_level=old_level, new_level=new_level)
 
 
 class PageSavedNotification(BaseModel):
@@ -774,6 +855,15 @@ async def post_retrieval_log(
 
     Resolves zitadel org_id string to portal int org_id, then writes to Redis.
     Silent discard on any error (REQ-KB-015-03).
+
+    SPEC-PRIVACY-QUERY-SHADOW-001 REQ-9 (reinterpreted): the retrieval-log
+    is Redis-backed (1h TTL JSON blob), NOT a Postgres table. The
+    spec.md REQ-9 referenced ``knowledge.retrieval_logs.query_resolved``
+    which does not exist on prod. The privacy contract here gates the
+    raw ``query_resolved`` field within the Redis blob:
+      - off    → skip the Redis write entirely
+      - shadow → write blob with ``query_resolved=""`` (empty placeholder)
+      - full   → write blob with literal query_resolved (existing behaviour)
     """
     await _require_internal_token(request)
 
@@ -785,6 +875,17 @@ async def post_retrieval_log(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Org not found")
         audit_org_id = org.id
 
+        # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-9: gate the Redis write on
+        # the canonical telemetry_level (never trust the upstream-supplied
+        # value for a privacy decision).
+        if org.telemetry_level == "off":
+            await _audit_internal_call(request, org_id=audit_org_id)
+            return {"ok": True, "skipped": "telemetry_off"}
+
+        # 'shadow' redacts the raw query content; chunk_ids /
+        # reranker_scores / model version still flow (they're aggregates).
+        effective_query_resolved = body.query_resolved if org.telemetry_level == "full" else ""
+
         from app.services.retrieval_log import write_retrieval_log
 
         await write_retrieval_log(
@@ -792,7 +893,7 @@ async def post_retrieval_log(
             user_id=body.user_id,
             chunk_ids=body.chunk_ids,
             reranker_scores=body.reranker_scores,
-            query_resolved=body.query_resolved,
+            query_resolved=effective_query_resolved,
             embedding_model_version=body.embedding_model_version,
             retrieved_at=body.retrieved_at,
             caller_client_id=body.caller_client_id,
@@ -936,7 +1037,16 @@ async def create_gap_event(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Record a knowledge gap event from the LiteLLM hook."""
+    """Record a knowledge gap event from the LiteLLM hook.
+
+    SPEC-PRIVACY-QUERY-SHADOW-001 REQ-8: gating by per-tenant
+    telemetry_level — never trust the upstream-supplied value, always
+    re-fetch the canonical level from portal_orgs.
+
+    - off    → 200 OK, no row inserted
+    - shadow → INSERT with query_text='[REDACTED:shadow]'
+    - full   → INSERT with literal query_text (existing behavior)
+    """
     await _require_internal_token(request)
     from app.models.retrieval_gaps import PortalRetrievalGap
 
@@ -946,10 +1056,22 @@ async def create_gap_event(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Org not found")
     await set_tenant(db, org.id)
 
+    # REQ-8: 'off' → skip the INSERT entirely. Tenant accepts the
+    # support-side trade-off; we still respond 200 to keep the
+    # idempotent contract for fire-and-forget callers.
+    if org.telemetry_level == "off":
+        await _audit_internal_call(request, org_id=org.id)
+        return {"ok": True, "skipped": "telemetry_off"}
+
+    # REQ-8: 'shadow' → REDACT the literal query text. The matching
+    # telemetry.query_shadow row (written by retrieval-api in Unit 3)
+    # carries the embedding + features for support-team triage.
+    effective_query_text = payload.query_text if org.telemetry_level == "full" else "[REDACTED:shadow]"
+
     gap = PortalRetrievalGap(
         org_id=org.id,
         user_id=payload.user_id,
-        query_text=payload.query_text,
+        query_text=effective_query_text,
         gap_type=payload.gap_type,
         top_score=payload.top_score,
         nearest_kb_slug=payload.nearest_kb_slug,

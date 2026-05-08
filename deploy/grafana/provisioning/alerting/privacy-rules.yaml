@@ -1,0 +1,195 @@
+# Privacy-layer health alerts (SPEC-PRIVACY-QUERY-SHADOW-001 REQ-14).
+#
+# Routed via spec=SPEC-PRIVACY-QUERY-SHADOW-001 -> klai-ops-alerts-email.
+#
+#   R1  privacy_tenant_stuck_in_full   WARN  any tenant has been in 'full'
+#                                            telemetry mode for >14 days
+#   R2  privacy_shadow_drop_burst      WARN  shadow-store drop rate > 1/s
+#                                            sustained for 5m (cron job
+#                                            broken or DB pool exhausted)
+#
+# Why these alerts:
+#   - 'full' mode is opt-in for active debug. Operators should reset
+#     within days, not weeks. A 14d window catches the "forgot to flip
+#     back" case while still tolerating multi-day investigations.
+#   - Shadow-store INSERT failures degrade observability silently. A
+#     persistent drop-rate > 1/s indicates the writer or the DB pool is
+#     misconfigured; raw-traffic-rate is in the 100s/s range so 1/s is
+#     a clear signal of a fault rather than transient noise.
+#
+# Pitfall avoidance:
+#   - Both UIDs stay well under the 40-char Grafana limit (see
+#     `pitfalls/process-rules.md#grafana-uid-40-char-limit`).
+#   - R1 uses Postgres (portal-audit-log) because it's the source of
+#     truth for level changes. R2 uses Prometheus because that's where
+#     the drop counter lives.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: privacy-telemetry
+    folder: Klai
+    interval: 5m
+    rules:
+
+      # ── R1: privacy_tenant_stuck_in_full ───────────────────────────────
+      - uid: spec-priv-001-tenant-stuck-full
+        title: privacy_tenant_stuck_in_full
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: portal-postgres
+            queryType: ''
+            relativeTimeRange:
+              from: 0
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: postgres
+                uid: portal-postgres
+              format: table
+              rawSql: |
+                SELECT count(*) AS value
+                  FROM portal_orgs
+                 WHERE telemetry_level = 'full'
+                   AND deleted_at IS NULL
+                   AND id IN (
+                     SELECT org_id
+                       FROM portal_audit_log
+                      WHERE action = 'telemetry_level_changed'
+                        AND (details->>'new_level') = 'full'
+                        AND created_at < now() - interval '14 days'
+                   )
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 0
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 0
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 0s
+        keepFiringFor: 1d
+        isPaused: false
+        labels:
+          severity: warning
+          spec: SPEC-PRIVACY-QUERY-SHADOW-001
+          domain: privacy
+        annotations:
+          summary: 'Tenant in full telemetry mode for >14 days'
+          runbook_url: 'docs/runbooks/telemetry-mode-toggle.md'
+          description: |
+            One or more tenants have been in 'full' telemetry mode for
+            longer than 14 days. Full mode persists raw query text in
+            operational stores for 7 days per row; an indefinitely-on
+            full mode means a rolling 7-day window of raw queries is
+            always available to operators.
+
+            Triage:
+              1. List the affected tenants:
+                   SELECT slug, name FROM portal_orgs
+                    WHERE telemetry_level = 'full' AND deleted_at IS NULL;
+              2. Check the audit-log for the original "switched to full"
+                 reason:
+                   SELECT details FROM portal_audit_log
+                    WHERE action = 'telemetry_level_changed'
+                      AND org_id = <id>
+                    ORDER BY created_at DESC LIMIT 5;
+              3. Confirm with the operator (or tenant-admin via the
+                 audit row's operator_kind) whether the debug session is
+                 still active. If not, flip back via:
+                   curl -X POST .../internal/admin/orgs/<id>/telemetry-level
+                     -d '{"level":"shadow","reason":"closing stale debug session"}'
+
+      # ── R2: privacy_shadow_drop_burst ──────────────────────────────────
+      - uid: spec-priv-001-shadow-drop-burst
+        title: privacy_shadow_drop_burst
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victoriametrics
+            queryType: ''
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: prometheus
+                uid: victoriametrics
+              expr: 'sum(rate(telemetry_shadow_drop_total[5m]))'
+              instant: true
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [1], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        keepFiringFor: 15m
+        isPaused: false
+        labels:
+          severity: warning
+          spec: SPEC-PRIVACY-QUERY-SHADOW-001
+          domain: privacy
+        annotations:
+          summary: 'Shadow-store INSERT drop-rate > 1/s for 5m'
+          runbook_url: 'docs/runbooks/telemetry-mode-toggle.md'
+          description: |
+            ``telemetry_shadow_drop_total`` is incrementing at >1/s
+            sustained over 5m. The shadow-store INSERT path is
+            fire-and-forget so users are unaffected, but observability
+            is degraded — embedding-cluster analysis + per-tenant
+            gap-distribution dashboards will under-count.
+
+            Triage:
+              1. Group drops by reason:
+                   sum(rate(telemetry_shadow_drop_total[15m])) by (reason)
+                 Common values:
+                   * no_pool      → init_pool() failed at startup
+                   * db_error     → asyncpg errors; check Postgres health
+                   * no_loop      → asyncio loop missing (test-only path)
+              2. Check retrieval-api logs:
+                   service:retrieval-api AND message:"telemetry_shadow_insert_failed"
+              3. If db_error: verify the post-deploy SQL ran (telemetry
+                 schema + table + GRANTs); see runbook.

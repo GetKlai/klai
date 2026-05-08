@@ -18,6 +18,10 @@ def _make_org(auto_accept: bool = False) -> MagicMock:
     org.mfa_policy = "optional"
     org.auto_accept_same_domain = auto_accept
     org.primary_domain = None
+    # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-15: OrgSettingsOut now also
+    # carries telemetry_level. Pin to the privacy-friendly default for
+    # tests that don't explicitly exercise this field.
+    org.telemetry_level = "shadow"
     return org
 
 

@@ -20,6 +20,7 @@ from .structlog_setup import (
     DEFAULT_THIRD_PARTY_LEVELS,
     HealthCheckAccessFilter,
     RequestContextMiddleware,
+    _strip_query_fields_processor,
     setup_logging,
 )
 
@@ -28,6 +29,7 @@ __all__ = [
     "DEFAULT_THIRD_PARTY_LEVELS",
     "HealthCheckAccessFilter",
     "RequestContextMiddleware",
+    "_strip_query_fields_processor",
     "extract_secret_values",
     "sanitize_from_settings",
     "sanitize_response_body",

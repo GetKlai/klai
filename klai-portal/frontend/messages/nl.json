@@ -1656,5 +1656,17 @@
   "integrations_revoke": "Loskoppelen",
   "integrations_confirm_revoke": "Ja, loskoppelen",
   "integrations_revoking": "Bezig...",
-  "integrations_cancel": "Annuleren"
+  "integrations_cancel": "Annuleren",
+  "admin_settings_telemetry_title": "Privacy & telemetrie",
+  "admin_settings_telemetry_description": "Bepaal welke gegevens Klai opslaat over de queries die uw gebruikers stellen. De standaard ('Schaduw') is de privacy-vriendelijke optie en is aanbevolen voor alle tenants behalve bij actief debugwerk.",
+  "admin_settings_telemetry_label": "Telemetrie-niveau",
+  "admin_settings_telemetry_current": "Huidige instelling: {level}",
+  "admin_settings_telemetry_off_name": "Uit",
+  "admin_settings_telemetry_off_hint": "Klai slaat helemaal niets op over de queries die uw gebruikers stellen. We kunnen geen kwaliteitsbewaking doen en bij incidenten geen ondersteuning verlenen. Alleen aanbevolen als u strikte data-minimalisatie nodig heeft. Vinkjes/duimen omhoog blijven werken — die zitten op andere data.",
+  "admin_settings_telemetry_shadow_name": "Schaduw (standaard)",
+  "admin_settings_telemetry_shadow_hint": "Klai slaat een geanonimiseerde vingerafdruk op (numerieke vector + lengte/taal-statistieken) van elke vraag, voor 7 dagen. Letterlijke tekst wordt nooit bewaard. Genoeg om kwaliteit te bewaken en terugkerende problemen te detecteren; niet genoeg om te zien wat één gebruiker exact vroeg. Dit is de standaardinstelling.",
+  "admin_settings_telemetry_full_name": "Volledig",
+  "admin_settings_telemetry_full_hint": "Klai slaat letterlijke vragen op in operationele logs voor 7 dagen. Alleen aanzetten als u of Klai actief een specifiek probleem onderzoekt. Vergeet niet terug te zetten naar Schaduw — er komt na 14 dagen een herinnering.",
+  "admin_settings_telemetry_disabled_for_non_admin": "Alleen organisatie-beheerders kunnen deze instelling wijzigen.",
+  "admin_settings_telemetry_privacy_link": "Lees meer over de privacy-modi in ons privacybeleid"
 }
