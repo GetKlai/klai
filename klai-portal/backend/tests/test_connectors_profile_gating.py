@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
+from tests.conftest import make_perms
+
 _stub_mod = ModuleType("connector_credentials")
 _stub_mod.SENSITIVE_FIELDS = {}  # type: ignore[attr-defined]
 _stub_mod.ConnectorCredentialStore = MagicMock  # type: ignore[attr-defined]
@@ -71,8 +73,6 @@ class TestCreateConnectorProfilePlanMatrix:
         """kb_manager on complete plan may create external (notion) connectors."""
         from app.api.connectors import ConnectorCreateRequest, create_connector
 
-        org = _make_org("complete")
-        user = _make_user("kb_manager")
         kb = _make_kb()
         out = _make_out("notion")
 
@@ -84,7 +84,6 @@ class TestCreateConnectorProfilePlanMatrix:
         )
 
         with (
-            patch("app.api.connectors._get_caller_org", return_value=("user-kb_manager", org, user)),
             patch("app.api.connectors._get_kb_with_owner_check", new_callable=AsyncMock, return_value=kb),
             patch(
                 "app.api.connectors.get_effective_capabilities",
@@ -100,7 +99,7 @@ class TestCreateConnectorProfilePlanMatrix:
             result = await create_connector(
                 kb_slug="my-kb",
                 body=body,
-                credentials=MagicMock(),
+                perms=make_perms(role="kb_manager", plan="complete", org_id=1),
                 db=db,
             )
 
@@ -111,8 +110,6 @@ class TestCreateConnectorProfilePlanMatrix:
         """kb_manager on core plan may NOT create external (notion) connectors -> 403."""
         from app.api.connectors import ConnectorCreateRequest, create_connector
 
-        org = _make_org("core")
-        user = _make_user("kb_manager")
         kb = _make_kb()
 
         db = AsyncMock()
@@ -125,7 +122,6 @@ class TestCreateConnectorProfilePlanMatrix:
         caps_mock = AsyncMock(return_value={"kb.connectors"})
 
         with (
-            patch("app.api.connectors._get_caller_org", return_value=("user-kb_manager", org, user)),
             patch("app.api.connectors._get_kb_with_owner_check", new_callable=AsyncMock, return_value=kb),
             patch("app.api.connectors.get_effective_capabilities", caps_mock),
         ):
@@ -133,7 +129,7 @@ class TestCreateConnectorProfilePlanMatrix:
                 await create_connector(
                     kb_slug="my-kb",
                     body=body,
-                    credentials=MagicMock(),
+                    perms=make_perms(role="kb_manager", plan="core", org_id=1),
                     db=db,
                 )
 
@@ -146,8 +142,6 @@ class TestCreateConnectorProfilePlanMatrix:
         """personal role may NOT create external connectors on complete plan -> 403 (role gate)."""
         from app.api.connectors import ConnectorCreateRequest, create_connector
 
-        org = _make_org("complete")
-        user = _make_user("personal")
         kb = _make_kb()
 
         db = AsyncMock()
@@ -160,7 +154,6 @@ class TestCreateConnectorProfilePlanMatrix:
         caps_mock = AsyncMock(return_value={"kb.connectors", "kb.connectors.external"})
 
         with (
-            patch("app.api.connectors._get_caller_org", return_value=("user-personal", org, user)),
             patch("app.api.connectors._get_kb_with_owner_check", new_callable=AsyncMock, return_value=kb),
             patch("app.api.connectors.get_effective_capabilities", caps_mock),
         ):
@@ -168,7 +161,7 @@ class TestCreateConnectorProfilePlanMatrix:
                 await create_connector(
                     kb_slug="my-kb",
                     body=body,
-                    credentials=MagicMock(),
+                    perms=make_perms(role="personal", plan="complete", org_id=1),
                     db=db,
                 )
 
@@ -182,8 +175,6 @@ class TestCreateConnectorProfilePlanMatrix:
         """personal role on complete plan may create url (basic) connectors -> 200."""
         from app.api.connectors import create_connector
 
-        org = _make_org("complete")
-        user = _make_user("personal")
         kb = _make_kb()
         out = _make_out("url")
 
@@ -193,7 +184,6 @@ class TestCreateConnectorProfilePlanMatrix:
         caps_mock = AsyncMock(return_value={"kb.connectors", "kb.connectors.external"})
 
         with (
-            patch("app.api.connectors._get_caller_org", return_value=("user-personal", org, user)),
             patch("app.api.connectors._get_kb_with_owner_check", new_callable=AsyncMock, return_value=kb),
             patch("app.api.connectors.get_effective_capabilities", caps_mock),
             patch("app.api.connectors._validate_connector_config", new_callable=AsyncMock, return_value=None),
@@ -205,7 +195,7 @@ class TestCreateConnectorProfilePlanMatrix:
             result = await create_connector(
                 kb_slug="my-kb",
                 body=body,
-                credentials=MagicMock(),
+                perms=make_perms(role="personal", plan="complete", org_id=1),
                 db=db,
             )
 
@@ -218,8 +208,6 @@ class TestCreateConnectorProfilePlanMatrix:
         """kb_manager on core plan may create url (basic) connectors -> 200."""
         from app.api.connectors import create_connector
 
-        org = _make_org("core")
-        user = _make_user("kb_manager")
         kb = _make_kb()
         out = _make_out("url")
 
@@ -229,7 +217,6 @@ class TestCreateConnectorProfilePlanMatrix:
         caps_mock = AsyncMock(return_value={"kb.connectors"})
 
         with (
-            patch("app.api.connectors._get_caller_org", return_value=("user-kb_manager", org, user)),
             patch("app.api.connectors._get_kb_with_owner_check", new_callable=AsyncMock, return_value=kb),
             patch("app.api.connectors.get_effective_capabilities", caps_mock),
             patch("app.api.connectors._validate_connector_config", new_callable=AsyncMock, return_value=None),
@@ -241,7 +228,7 @@ class TestCreateConnectorProfilePlanMatrix:
             result = await create_connector(
                 kb_slug="my-kb",
                 body=body,
-                credentials=MagicMock(),
+                perms=make_perms(role="kb_manager", plan="core", org_id=1),
                 db=db,
             )
 

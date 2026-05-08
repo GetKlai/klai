@@ -1,21 +1,18 @@
 """App-level gap dashboard API (admin-only)."""
 
-import logging
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
-from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _get_caller_org, _require_admin, bearer, require_capability
+from app.api.dependencies import require_capability
 from app.core.database import get_db
-from app.core.profiles import Capability
+from app.core.permissions import UserPermissions, get_caller_at_least
+from app.core.profiles import Capability, ProfileRole
 from app.models.retrieval_gaps import PortalRetrievalGap
 from app.models.taxonomy import PortalTaxonomyNode
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/app",
@@ -65,15 +62,13 @@ async def list_gaps(
     taxonomy_node_id: int | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     include_resolved: bool = Query(default=False),
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> GapsResponse:
     """List gap events for the caller's org, grouped by query text.
 
     Optional taxonomy_node_id filter: only return gaps classified to that node.
     """
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
     cutoff = datetime.now(tz=UTC) - timedelta(days=days)
 
     stmt = (
@@ -87,7 +82,7 @@ async def list_gaps(
             func.max(PortalRetrievalGap.resolved_at).label("resolved_at"),
         )
         .where(
-            PortalRetrievalGap.org_id == org.id,
+            PortalRetrievalGap.org_id == perms.org_id,
             PortalRetrievalGap.occurred_at >= cutoff,
         )
         .group_by(PortalRetrievalGap.query_text, PortalRetrievalGap.gap_type)
@@ -121,12 +116,10 @@ async def list_gaps(
 
 @router.get("/gaps/summary", response_model=GapSummaryResponse)
 async def get_gap_summary(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> GapSummaryResponse:
     """Return gap summary stats for the caller's org (last 7 days)."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
     cutoff = datetime.now(tz=UTC) - timedelta(days=7)
 
     count_result = await db.execute(
@@ -135,7 +128,7 @@ async def get_gap_summary(
             func.count().label("cnt"),
         )
         .where(
-            PortalRetrievalGap.org_id == org.id,
+            PortalRetrievalGap.org_id == perms.org_id,
             PortalRetrievalGap.occurred_at >= cutoff,
             PortalRetrievalGap.resolved_at.is_(None),  # only open gaps
         )
@@ -153,7 +146,7 @@ async def get_gap_summary(
 @router.get("/gaps/by-taxonomy", response_model=GapsByTaxonomyResponse)
 async def get_gaps_by_taxonomy(
     days: int = Query(default=30, ge=1, le=90),
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> GapsByTaxonomyResponse:
     """Aggregate open gaps per taxonomy node.
@@ -162,14 +155,12 @@ async def get_gaps_by_taxonomy(
     Priority: >= 2.0/day = high, >= 0.5/day = medium, < 0.5/day = low.
     Sorted by open_gaps descending.
     """
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
     cutoff = datetime.now(tz=UTC) - timedelta(days=days)
 
     # Get all open gaps with taxonomy_node_ids in the time window
     gaps_result = await db.execute(
         select(PortalRetrievalGap).where(
-            PortalRetrievalGap.org_id == org.id,
+            PortalRetrievalGap.org_id == perms.org_id,
             PortalRetrievalGap.occurred_at >= cutoff,
             PortalRetrievalGap.resolved_at.is_(None),
             PortalRetrievalGap.taxonomy_node_ids.isnot(None),
