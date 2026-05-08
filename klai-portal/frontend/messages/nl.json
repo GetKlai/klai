@@ -1254,6 +1254,7 @@
   "knowledge_taxonomy_proposals_reject_reason_label": "Reden",
   "knowledge_taxonomy_proposals_reject_reason_placeholder": "Waarom wordt dit voorstel afgewezen?",
   "knowledge_taxonomy_categorising_status": "Bezig met automatisch categoriseren en taggen van documenten…",
+  "knowledge_taxonomy_enough_categories_hint": "Genoeg categorieën — meer toevoegen vermindert de overzichtelijkheid",
   "knowledge_taxonomy_proposals_status_pending": "In afwachting",
   "knowledge_taxonomy_proposals_status_approved": "Goedgekeurd",
   "knowledge_taxonomy_proposals_status_rejected": "Afgewezen",

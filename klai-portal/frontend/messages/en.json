@@ -1254,6 +1254,7 @@
   "knowledge_taxonomy_proposals_reject_reason_label": "Reason",
   "knowledge_taxonomy_proposals_reject_reason_placeholder": "Why is this proposal being rejected?",
   "knowledge_taxonomy_categorising_status": "Auto-categorising and tagging documents…",
+  "knowledge_taxonomy_enough_categories_hint": "Enough categories — adding more reduces clarity",
   "knowledge_taxonomy_proposals_status_pending": "Pending",
   "knowledge_taxonomy_proposals_status_approved": "Approved",
   "knowledge_taxonomy_proposals_status_rejected": "Rejected",
