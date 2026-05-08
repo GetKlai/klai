@@ -982,7 +982,7 @@ def _upload_type_label(content_type: str) -> str:
 )
 async def list_kb_bronnen(
     kb_slug: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> BronnenResponse:
     """Unified bronnen list for a KB.
@@ -995,13 +995,14 @@ async def list_kb_bronnen(
     Connectors with zero items still appear (a newly-created connector before
     its first sync) so users can see what they configured.
     """
-    caller_id, org, _ = await _get_caller_org(credentials, db)
     if kb_slug == "personal":
-        kb = await _resolve_personal_kb(caller_id, org.id, db)
+        kb = await _resolve_personal_kb(perms.user_id, perms.org_id, db)
     elif kb_slug == "org":
-        kb = await _resolve_org_kb(caller_id, org.id, db)
+        kb = await _resolve_org_kb(perms.user_id, perms.org_id, db)
     else:
-        kb = await _get_kb_or_404(kb_slug, org.id, db)
+        kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+
+    org = await _load_org_or_500(db, perms.org_id)
 
     # Portal-side connectors (display name + sync status)
     conn_result = await db.execute(select(PortalConnector).where(PortalConnector.kb_id == kb.id))
@@ -1104,7 +1105,7 @@ async def get_bron_content(
     kind: str,
     limit: int = 50,
     offset: int = 0,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> BronContentResponse:
     """Drill-down: items under a connector, or chunks under a direct upload.
@@ -1121,13 +1122,14 @@ async def get_bron_content(
     if offset < 0:
         raise HTTPException(status_code=400, detail="offset must be >= 0")
 
-    caller_id, org, _ = await _get_caller_org(credentials, db)
     if kb_slug == "personal":
-        kb = await _resolve_personal_kb(caller_id, org.id, db)
+        kb = await _resolve_personal_kb(perms.user_id, perms.org_id, db)
     elif kb_slug == "org":
-        kb = await _resolve_org_kb(caller_id, org.id, db)
+        kb = await _resolve_org_kb(perms.user_id, perms.org_id, db)
     else:
-        kb = await _get_kb_or_404(kb_slug, org.id, db)
+        kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+
+    org = await _load_org_or_500(db, perms.org_id)
 
     if kind == "connector":
         # Validate the connector belongs to this org+KB before proxying.
@@ -1135,7 +1137,7 @@ async def get_bron_content(
             select(PortalConnector).where(
                 PortalConnector.id == source_id,
                 PortalConnector.kb_id == kb.id,
-                PortalConnector.org_id == org.id,
+                PortalConnector.org_id == perms.org_id,
             )
         )
         if conn_result.scalar_one_or_none() is None:
