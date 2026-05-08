@@ -48,7 +48,10 @@ from logging_setup import setup_logging
 
 setup_logging()
 
+import structlog as _structlog  # noqa: E402 — must follow setup_logging()
+
 logger = logging.getLogger(__name__)
+_slog = _structlog.get_logger()
 
 # -- Config -------------------------------------------------------------------
 KLAI_DOCS_API_BASE = os.environ["KLAI_DOCS_API_BASE"]  # http://docs-app:3000
@@ -272,6 +275,30 @@ class _VerifiedIdentity:
     org_id: str
     org_slug: str
     client_id: str | None = None
+    # SPEC-PORTAL-RBAC-REFACTOR-001 4C: role propagated from JWT / portal verify.
+    # Defaults to "unknown" so callers without effective_role stay backward-compatible.
+    effective_role: str = "unknown"
+
+
+# SPEC-PORTAL-RBAC-REFACTOR-001 4C: role ordering for minimum-role gates.
+_ROLE_ORDER: dict[str, int] = {
+    "personal": 0,
+    "company": 1,
+    "kb_manager": 2,
+    "group_manager": 3,
+    "admin": 4,
+}
+
+# Tools that require at minimum a specific role.
+_TOOL_MIN_ROLE: dict[str, str] = {
+    "save_org_knowledge": "company",
+    "save_to_docs": "company",
+}
+
+
+def _role_at_least(actual: str, minimum: str) -> bool:
+    """Return True when *actual* is ranked at or above *minimum*."""
+    return _ROLE_ORDER.get(actual, -1) >= _ROLE_ORDER.get(minimum, 0)
 
 
 async def _verify_identity(ctx: Context, claimed: _ClaimedIdentity) -> VerifyResult:
@@ -385,6 +412,9 @@ async def _identify_via_oauth_token(ctx: Context, raw_token: str) -> _VerifiedId
         # (older portal builds may not include the field) — the tool that
         # consumes it must treat None as "no caller attribution".
         client_id=result.client_id,
+        # SPEC-PORTAL-RBAC-REFACTOR-001 4C: effective_role from portal verify.
+        # Falls back to "unknown" when the field is absent (older portal builds).
+        effective_role=getattr(result, "effective_role", None) or "unknown",
     )
 
 
@@ -408,6 +438,10 @@ async def _identify_via_internal_secret(ctx: Context) -> _VerifiedIdentity:
         user_id=verified.user_id,
         org_id=verified.org_id,
         org_slug=verified.org_slug,
+        # SPEC-PORTAL-RBAC-REFACTOR-001 4C: LibreChat (internal-secret path)
+        # is an org-level caller; default to "company" until the JWT claim
+        # (Phase 4A) is deployed and LibreChat signs effective_role.
+        effective_role="company",
     )
 
 
@@ -711,6 +745,20 @@ async def save_org_knowledge(
     elif assertion_mode not in VALID_ASSERTION_MODES:
         return _ERR_ASSERTION_MODE.format(assertion_mode)
 
+    # SPEC-PORTAL-RBAC-REFACTOR-001 4E: org KB requires at least "company" role.
+    if not _role_at_least(verified.effective_role, _TOOL_MIN_ROLE["save_org_knowledge"]):
+        _slog.warning(
+            "knowledge_mcp_role_gate_denied",
+            tool="save_org_knowledge",
+            effective_role=verified.effective_role,
+            required_role=_TOOL_MIN_ROLE["save_org_knowledge"],
+            user_id=verified.user_id,
+        )
+        return (
+            "Error: Je account heeft niet de benodigde rol om naar de "
+            "organisatie-kennisbank op te slaan. Vraag een beheerder om je rol te upgraden."
+        )
+
     assert verified.org_id is not None
     ok = await _save_to_ingest(
         org_id=verified.org_id,
@@ -759,6 +807,20 @@ async def save_to_docs(
         return f"Error: {exc}"
     except _IdentificationFailed as exc:
         return str(exc)
+
+    # SPEC-PORTAL-RBAC-REFACTOR-001 4E: docs KB requires at least "company" role.
+    if not _role_at_least(verified.effective_role, _TOOL_MIN_ROLE["save_to_docs"]):
+        _slog.warning(
+            "knowledge_mcp_role_gate_denied",
+            tool="save_to_docs",
+            effective_role=verified.effective_role,
+            required_role=_TOOL_MIN_ROLE["save_to_docs"],
+            user_id=verified.user_id,
+        )
+        return (
+            "Error: Je account heeft niet de benodigde rol om naar de "
+            "documentatie-kennisbank op te slaan. Vraag een beheerder om je rol te upgraden."
+        )
 
     # V009: reject path traversal in caller-supplied KB coordinates
     if kb_name is not None and not _KB_NAME_PATTERN.match(kb_name):
@@ -989,6 +1051,9 @@ async def search_knowledge(
         # debug; full mode is reserved for the LibreChat path operators
         # actively investigate).
         "telemetry_level": "shadow",
+        # SPEC-PORTAL-RBAC-REFACTOR-001 4D: propagate effective_role so
+        # retrieval-api can apply slug-level filtering downstream.
+        "effective_role": identity.effective_role,
     }
 
     # SPEC-SEC-IDENTITY-ASSERT-001 REQ-4.2: caller-service header is mandatory
