@@ -12,7 +12,7 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useAuth } from '@/lib/auth'
 import { useQuery } from '@tanstack/react-query'
-import { Building2, FolderOpen, Plus, Search, User } from 'lucide-react'
+import { Building2, ChevronRight, FolderOpen, Plus, Search, User } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -104,7 +104,15 @@ function KbIcon({ ownerType }: { ownerType: string }) {
   return <FolderOpen className="h-4 w-4" />
 }
 
-function KbRow({ kb, stats }: { kb: KnowledgeBase; stats: KBStatsSummary | undefined }) {
+function KbRow({
+  kb,
+  stats,
+  isMine,
+}: {
+  kb: KnowledgeBase
+  stats: KBStatsSummary | undefined
+  isMine: boolean
+}) {
   const bronnen = stats?.bronnen ?? 0
   const chunks = stats?.chunks ?? 0
   const status = deriveStatus(stats)
@@ -115,22 +123,32 @@ function KbRow({ kb, stats }: { kb: KnowledgeBase; stats: KBStatsSummary | undef
   return (
     <Link
       // Phase D will replace /overview with /bronnen as the default tab.
-      // Keeping /overview here means Phase C ships green without depending
-      // on Phase D — the link still works against main's existing routes.
+      // Keeping /overview here means Phase C ships on its own.
       to="/app/knowledge/$kbSlug/overview"
       params={{ kbSlug: kb.slug }}
-      className="group flex items-center gap-4 rounded-lg border border-gray-200 px-4 py-4 hover:bg-gray-50 transition-colors"
+      className="group flex items-center gap-3 px-2 py-3.5 hover:bg-gray-50 transition-colors"
     >
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gray-50 text-gray-400">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-50 text-gray-400">
         <KbIcon ownerType={kb.owner_type} />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-[15px] font-display text-gray-900 group-hover:underline truncate">{kb.name}</p>
-        <p className="text-xs text-gray-400 mt-0.5 truncate">
-          {bronnenLabel} · {chunksLabel}
-        </p>
+        <div className="flex items-baseline gap-2 flex-wrap">
+          <span className="text-[15px] font-display text-gray-900 group-hover:underline truncate">{kb.name}</span>
+          {isMine && (
+            <Badge variant="secondary" className="text-[10px] py-0 px-1.5">
+              Mijn
+            </Badge>
+          )}
+          <span className="text-xs text-gray-400">
+            {bronnenLabel} · {chunksLabel}
+          </span>
+        </div>
+        {kb.description && (
+          <p className="text-xs text-gray-400 mt-0.5 truncate">{kb.description}</p>
+        )}
       </div>
       <StatusBadge status={status} />
+      <ChevronRight className="h-4 w-4 text-gray-300 shrink-0" />
     </Link>
   )
 }
@@ -139,6 +157,7 @@ function KbRow({ kb, stats }: { kb: KnowledgeBase; stats: KBStatsSummary | undef
 
 function KnowledgePage() {
   const auth = useAuth()
+  const myUserId = auth.user?.profile?.sub
   const [search, setSearch] = useState('')
 
   const {
@@ -197,9 +216,9 @@ function KnowledgePage() {
 
       {/* List */}
       {kbsLoading ? (
-        <div className="space-y-2">
+        <div className="border-t border-b border-gray-200 divide-y divide-gray-200">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="h-[72px] rounded-lg bg-gray-50 animate-pulse" />
+            <div key={i} className="h-[60px] bg-gray-50 animate-pulse" />
           ))}
         </div>
       ) : kbsError ? (
@@ -221,9 +240,14 @@ function KnowledgePage() {
           )}
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="border-t border-b border-gray-200 divide-y divide-gray-200">
           {filteredKbs.map((kb) => (
-            <KbRow key={kb.slug} kb={kb} stats={statsBySlug[kb.slug]} />
+            <KbRow
+              key={kb.slug}
+              kb={kb}
+              stats={statsBySlug[kb.slug]}
+              isMine={kb.owner_type === 'user' && !!myUserId && kb.slug === `personal-${myUserId}`}
+            />
           ))}
         </div>
       )}
