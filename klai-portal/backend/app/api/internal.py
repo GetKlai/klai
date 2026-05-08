@@ -855,6 +855,15 @@ async def post_retrieval_log(
 
     Resolves zitadel org_id string to portal int org_id, then writes to Redis.
     Silent discard on any error (REQ-KB-015-03).
+
+    SPEC-PRIVACY-QUERY-SHADOW-001 REQ-9 (reinterpreted): the retrieval-log
+    is Redis-backed (1h TTL JSON blob), NOT a Postgres table. The
+    spec.md REQ-9 referenced ``knowledge.retrieval_logs.query_resolved``
+    which does not exist on prod. The privacy contract here gates the
+    raw ``query_resolved`` field within the Redis blob:
+      - off    → skip the Redis write entirely
+      - shadow → write blob with ``query_resolved=""`` (empty placeholder)
+      - full   → write blob with literal query_resolved (existing behaviour)
     """
     await _require_internal_token(request)
 
@@ -866,6 +875,17 @@ async def post_retrieval_log(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Org not found")
         audit_org_id = org.id
 
+        # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-9: gate the Redis write on
+        # the canonical telemetry_level (never trust the upstream-supplied
+        # value for a privacy decision).
+        if org.telemetry_level == "off":
+            await _audit_internal_call(request, org_id=audit_org_id)
+            return {"ok": True, "skipped": "telemetry_off"}
+
+        # 'shadow' redacts the raw query content; chunk_ids /
+        # reranker_scores / model version still flow (they're aggregates).
+        effective_query_resolved = body.query_resolved if org.telemetry_level == "full" else ""
+
         from app.services.retrieval_log import write_retrieval_log
 
         await write_retrieval_log(
@@ -873,7 +893,7 @@ async def post_retrieval_log(
             user_id=body.user_id,
             chunk_ids=body.chunk_ids,
             reranker_scores=body.reranker_scores,
-            query_resolved=body.query_resolved,
+            query_resolved=effective_query_resolved,
             embedding_model_version=body.embedding_model_version,
             retrieved_at=body.retrieved_at,
             caller_client_id=body.caller_client_id,
@@ -1017,7 +1037,16 @@ async def create_gap_event(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Record a knowledge gap event from the LiteLLM hook."""
+    """Record a knowledge gap event from the LiteLLM hook.
+
+    SPEC-PRIVACY-QUERY-SHADOW-001 REQ-8: gating by per-tenant
+    telemetry_level — never trust the upstream-supplied value, always
+    re-fetch the canonical level from portal_orgs.
+
+    - off    → 200 OK, no row inserted
+    - shadow → INSERT with query_text='[REDACTED:shadow]'
+    - full   → INSERT with literal query_text (existing behavior)
+    """
     await _require_internal_token(request)
     from app.models.retrieval_gaps import PortalRetrievalGap
 
@@ -1027,10 +1056,22 @@ async def create_gap_event(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Org not found")
     await set_tenant(db, org.id)
 
+    # REQ-8: 'off' → skip the INSERT entirely. Tenant accepts the
+    # support-side trade-off; we still respond 200 to keep the
+    # idempotent contract for fire-and-forget callers.
+    if org.telemetry_level == "off":
+        await _audit_internal_call(request, org_id=org.id)
+        return {"ok": True, "skipped": "telemetry_off"}
+
+    # REQ-8: 'shadow' → REDACT the literal query text. The matching
+    # telemetry.query_shadow row (written by retrieval-api in Unit 3)
+    # carries the embedding + features for support-team triage.
+    effective_query_text = payload.query_text if org.telemetry_level == "full" else "[REDACTED:shadow]"
+
     gap = PortalRetrievalGap(
         org_id=org.id,
         user_id=payload.user_id,
-        query_text=payload.query_text,
+        query_text=effective_query_text,
         gap_type=payload.gap_type,
         top_score=payload.top_score,
         nearest_kb_slug=payload.nearest_kb_slug,
