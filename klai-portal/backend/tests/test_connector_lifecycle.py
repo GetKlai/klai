@@ -18,6 +18,7 @@ import pytest
 
 from app.api.connectors import delete_connector
 from app.api.internal_connectors import finalize_connector_delete
+from tests.conftest import make_perms
 
 
 class _FakeConnector:
@@ -84,12 +85,12 @@ async def test_delete_connector_flips_state_and_enqueues(monkeypatch: pytest.Mon
     org = _FakeOrg()
     kb = _FakeKB(id=42, slug="support")
     monkeypatch.setattr(
-        "app.api.connectors._get_caller_org",
-        AsyncMock(return_value=("user-id", org, None)),
-    )
-    monkeypatch.setattr(
         "app.api.connectors._get_kb_with_owner_check",
         AsyncMock(return_value=kb),
+    )
+    monkeypatch.setattr(
+        "app.api.connectors._load_org_or_500",
+        AsyncMock(return_value=org),
     )
     enqueue_mock = AsyncMock(return_value=None)
     monkeypatch.setattr(
@@ -100,7 +101,7 @@ async def test_delete_connector_flips_state_and_enqueues(monkeypatch: pytest.Mon
     result = await delete_connector(
         kb_slug="support",
         connector_id="conn-uuid",
-        credentials=AsyncMock(),  # bearer
+        perms=make_perms(role="kb_manager", org_id=8),
         db=db,  # type: ignore[arg-type]
     )
 
@@ -133,12 +134,12 @@ async def test_delete_connector_rolls_back_on_enqueue_failure(
     org = _FakeOrg()
     kb = _FakeKB(id=42, slug="support")
     monkeypatch.setattr(
-        "app.api.connectors._get_caller_org",
-        AsyncMock(return_value=("user-id", org, None)),
-    )
-    monkeypatch.setattr(
         "app.api.connectors._get_kb_with_owner_check",
         AsyncMock(return_value=kb),
+    )
+    monkeypatch.setattr(
+        "app.api.connectors._load_org_or_500",
+        AsyncMock(return_value=org),
     )
     monkeypatch.setattr(
         "app.api.connectors.knowledge_ingest_client.enqueue_connector_purge",
@@ -149,7 +150,7 @@ async def test_delete_connector_rolls_back_on_enqueue_failure(
         await delete_connector(
             kb_slug="support",
             connector_id="conn-uuid",
-            credentials=AsyncMock(),
+            perms=make_perms(role="kb_manager", org_id=8),
             db=db,  # type: ignore[arg-type]
         )
 
@@ -170,12 +171,7 @@ async def test_delete_connector_404_when_already_deleting(
 
     db = _FakeDB(fetch_value=None)  # filter (state='active') yields no row
 
-    org = _FakeOrg()
     kb = _FakeKB(id=42, slug="support")
-    monkeypatch.setattr(
-        "app.api.connectors._get_caller_org",
-        AsyncMock(return_value=("user-id", org, None)),
-    )
     monkeypatch.setattr(
         "app.api.connectors._get_kb_with_owner_check",
         AsyncMock(return_value=kb),
@@ -185,7 +181,7 @@ async def test_delete_connector_404_when_already_deleting(
         await delete_connector(
             kb_slug="support",
             connector_id="conn-uuid",
-            credentials=AsyncMock(),
+            perms=make_perms(role="kb_manager", org_id=8),
             db=db,  # type: ignore[arg-type]
         )
 
