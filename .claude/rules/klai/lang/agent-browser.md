@@ -21,6 +21,26 @@ paths:
 
 Default: voor alles met "verify dat X werkt" → Playwright. Voor alles met "explore of er iets stuk is" → Agent Browser.
 
+## Headless is default — `--headed` alleen bij human-in-the-loop
+
+Agent Browser draait headless tenzij je `--headed` (of `AGENT_BROWSER_HEADED=1`)
+meegeeft. Headless is voor AI-runs juist gewenst: lichter, geen dock-icoon,
+geen focus-stealing, en de AI ziet het DOM via `snapshot` — niet via pixels.
+
+Gebruik `--headed` ALLEEN als de mens iets in het venster moet doen:
+
+| Situatie | Headed nodig? |
+|---|---|
+| Smoke test, audit, snapshot-driven flow door AI | **Nee** — headless |
+| Authenticated session draaien met `--state` | **Nee** — cookies werken headless prima |
+| Eenmalige login om `state save` te doen | **Ja** — mens moet typen in venster |
+| Captcha / 2FA-prompt die je niet kunt scripten | **Ja** |
+| Live debugging waarbij je over de schouder van de AI mee wilt kijken | **Ja** |
+
+Anti-pattern: `--headed` als default in scripts/agents zetten. Dat opent een
+Chrome-venster bij élke AI-actie en steelt focus midden in een werksessie van
+de mens. Reserveer headed voor expliciet menselijk handelen.
+
 ## Parallel sessions [HARD]
 
 Elke Claude sessie MOET een unieke `--session` naam gebruiken. Anders leakt cookies/localStorage tussen sessies (issue [#1068](https://github.com/vercel-labs/agent-browser/issues/1068)).
@@ -61,23 +81,29 @@ Agent Browser kan **niet** de Playwright `~/.claude/mcp-storageState.json` direc
 **One-time setup** (eenmalig, of refresh wanneer sessie verloopt):
 
 ```bash
-# 1. Open portal headed (zonder --session-name = ephemeral, dan via state save)
-agent-browser open https://app.getklai.com
-# 2. Log in handmatig in geopende browser
-# 3. Save state
+# 1. Open portal HEADED — mens moet inloggen, dus venster moet zichtbaar zijn
+agent-browser --headed open https://app.getklai.com
+# 2. Log in handmatig in geopende browser (Google SSO + 2FA)
+# 3. Save state (gebruikt huidige sessie, --headed flag niet nodig)
 agent-browser state save ~/.claude/agent-browser-state.json
 chmod 600 ~/.claude/agent-browser-state.json
 agent-browser close
 ```
 
-**Daily use** in scripts/agents:
+**Daily use** in scripts/agents (headless, geen `--headed`):
 
 ```bash
 SESSION="klai-portal-${CLAUDE_SESSION_ID:-$(date +%s)}"
 agent-browser --session "$SESSION" \
               --state ~/.claude/agent-browser-state.json \
-              open https://app.getklai.com/dashboard
+              open https://voys.getklai.com   # workspace-URL, niet app.getklai.com
 ```
+
+**Belangrijk: navigeer naar de workspace-URL (`<slug>.getklai.com`), niet naar
+`app.getklai.com`.** Een ingelogde request op `app.getklai.com` retourneert een
+`/api/me`-style JSON-payload (handig voor introspect, nutteloos voor SPA-flows).
+De SPA leeft op de tenant-subdomein. Workspace-URL staat in dezelfde JSON onder
+`workspace_url`.
 
 Refresh storage-state om de paar weken (zelfde cadans als Playwright). Als sessies "logged-out" starten: state file is verlopen → opnieuw `state save`.
 
@@ -136,6 +162,8 @@ agent-browser --session "$SESSION" eval "
 - **agent-browser-session-shell-expansion** — `$$` of `$RANDOM` per command-aanroep = nieuwe sessie elke keer. Gebruik een env var die je vóór de chain set.
 - **agent-browser-storage-state-mismatch** — Niet de Playwright `~/.claude/mcp-storageState.json` proberen te laden. Eigen file `~/.claude/agent-browser-state.json` aanmaken via `state save`.
 - **agent-browser-stale-refs** — `@e1`, `@e2` zijn **fresh per snapshot**. Re-snapshot na elke navigation/click die de DOM wijzigt.
+- **agent-browser-headed-as-default** — `--headed` toevoegen aan elk script omdat "de mens dan kan meekijken" steelt focus en is voor AI-runs onnodig. Headless is correct default; `--headed` alleen voor login + interactieve debug.
+- **agent-browser-app-getklai-returns-json** — Een ingelogde sessie die `https://app.getklai.com` opent landt op een JSON-payload, niet de SPA. Voor authenticated flows: gebruik `<workspace>.getklai.com` (uit `/api/me` `workspace_url`).
 
 ## See also
 
