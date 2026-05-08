@@ -347,7 +347,10 @@ class TestJwtPathStillRejectsBodyMismatch:
             resp = app_client.post(
                 "/retrieve",
                 json={"query": "q", "org_id": "org_y", "user_id": "user_a"},
-                headers={"Authorization": "Bearer valid"},
+                # SPEC-SEC-IDENTITY-ASSERT-003: claimed_org_id sourced from
+                # X-Org-Id; body org_id mismatch fires the defence-in-depth
+                # check.
+                headers={"Authorization": "Bearer valid", "X-Org-Id": "org_x"},
             )
         assert resp.status_code == 403
         assert resp.json()["detail"] == {"error": "org_mismatch"}

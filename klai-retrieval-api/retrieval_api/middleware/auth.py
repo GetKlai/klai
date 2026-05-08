@@ -58,7 +58,12 @@ logger = structlog.get_logger(__name__)
 # matches every other Klai service.
 _UNAUTH_PATHS: frozenset[str] = frozenset({"/health", "/metrics"})
 
-_ZITADEL_RESOURCEOWNER_CLAIM = "urn:zitadel:iam:user:resourceowner:id"
+# SPEC-SEC-IDENTITY-ASSERT-003 REQ-1.2: the
+# `urn:zitadel:iam:user:resourceowner:id` claim is no longer consulted.
+# Klai BFF never requests the scope that emits it (see SPEC-002 §1).
+# Authoritative org-resolution flows through portal /internal/identity/verify
+# which membership-checks the Zitadel sub against portal_users. CI rule
+# `rules/no-zitadel-resourceowner-claim.yml` blocks reintroduction.
 _ZITADEL_ROLES_CLAIM = "urn:zitadel:iam:org:project:roles"
 
 # JWKS in-memory cache (REQ-NFR performance). Mirrors research-api pattern;
@@ -70,22 +75,27 @@ _jwks_cache: dict[str, Any] | None = None
 class AuthContext:
     """Represents the authenticated principal for the current request.
 
-    method    -- "internal" or "jwt" (service principal vs. user principal).
-    sub       -- JWT ``sub`` claim (user id) when method == "jwt", else None.
-    resourceowner -- JWT Zitadel ``resourceowner`` claim (org id) when method == "jwt".
-    role      -- Highest-privilege role name from the JWT (e.g. "admin"), or None /
-                 "service" for internal callers. Used by REQ-3 admin bypass.
-    scopes    -- SPEC-SEC-SERVICE-AUTH-001 REQ-3: parsed OAuth 2.0 ``scope`` claim
-                 (space-separated string in the JWT) split into a frozenset of
-                 individual scopes. Empty for internal-secret callers (legacy
-                 path); they get a Phase B/C migration bypass via ``require_scope``.
+    method        -- "internal" or "jwt" (service principal vs. user principal).
+    sub           -- JWT ``sub`` claim (user id) when method == "jwt", else None.
+    role          -- Highest-privilege role name from the JWT (e.g. "admin"), or
+                     None / "service" for internal callers. Used by REQ-3 admin
+                     bypass.
+    scopes        -- SPEC-SEC-SERVICE-AUTH-001 REQ-3: parsed OAuth 2.0 ``scope``
+                     claim (space-separated string in the JWT) split into a
+                     frozenset of individual scopes. Empty for internal-secret
+                     callers (legacy path); they get a Phase B/C migration
+                     bypass via ``require_scope``.
+    bearer_token  -- The raw JWT string when method == "jwt", else None.
+                     Carried so :func:`verify_body_identity` can forward it to
+                     portal `/internal/identity/verify` for membership-side
+                     org resolution (SPEC-SEC-IDENTITY-ASSERT-003 REQ-1.3).
     """
 
     method: str
     sub: str | None
-    resourceowner: str | None
     role: str | None
     scopes: frozenset[str] = field(default_factory=frozenset)
+    bearer_token: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,9 +109,12 @@ class VerifiedCaller:
     body — so a tampered body cannot poison product_events even if the
     middleware-level guard is ever weakened.
 
-    For JWT callers the values come from ``auth.sub`` / ``auth.resourceowner``
-    (already cryptographically verified). For internal-secret callers they
-    come from a portal-api ``/internal/identity/verify`` round-trip.
+    Both JWT and internal-secret callers now go through portal-api
+    ``/internal/identity/verify`` for org-resolution
+    (SPEC-SEC-IDENTITY-ASSERT-003 REQ-1.3): the JWT path passes
+    ``bearer_jwt`` so portal can validate the signature, and the
+    canonical org_id flows back through ``VerifiedCaller`` rather than
+    being lifted from a JWT-side claim.
     """
 
     user_id: str
@@ -336,7 +349,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
             if error is not None:
                 return _unauthorized(error)
             sub = payload.get("sub")
-            resourceowner = payload.get(_ZITADEL_RESOURCEOWNER_CLAIM)
             if not sub:
                 return _unauthorized("invalid_jwt_signature")
             # SPEC-SEC-SERVICE-AUTH-001 REQ-3: parse OAuth 2.0 scope claim
@@ -344,12 +356,18 @@ class AuthMiddleware(BaseHTTPMiddleware):
             # Missing claim → empty set → endpoints with require_scope reject.
             scopes_claim = payload.get("scope") or ""
             scopes = frozenset(s for s in str(scopes_claim).split() if s)
+            # SPEC-SEC-IDENTITY-ASSERT-003 REQ-1.1: do NOT lift
+            # `urn:zitadel:iam:user:resourceowner:id` from the JWT — the
+            # claim is unreliable per Klai's zitadel.md rule. Org-resolution
+            # is delegated to portal /internal/identity/verify in
+            # verify_body_identity (REQ-1.3). The bearer_token is carried
+            # on AuthContext so the verify call can pass it along.
             auth = AuthContext(
                 method="jwt",
                 sub=str(sub),
-                resourceowner=str(resourceowner) if resourceowner is not None else None,
                 role=_extract_role(payload),
                 scopes=scopes,
+                bearer_token=bearer_token,
             )
         elif internal_header is not None:
             if not _constant_time_secret_match(internal_header, settings.internal_secret):
@@ -357,9 +375,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
             auth = AuthContext(
                 method="internal",
                 sub=None,
-                resourceowner=None,
                 role="service",
                 scopes=frozenset(),
+                bearer_token=None,
             )
         else:
             return _unauthorized("missing_credentials")
@@ -475,20 +493,6 @@ async def verify_body_identity(
                 )
             return
 
-        if auth.resourceowner is not None and str(body_org_id) != str(auth.resourceowner):
-            cross_org_rejected_total.inc()
-            logger.warning(
-                "cross_org_rejected",
-                reason="org_mismatch",
-                auth_method=auth.method,
-                jwt_sub_hash=_hash_sub(auth.sub or ""),
-                path=request.url.path,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={"error": "org_mismatch"},
-            )
-
         if body_user_id is not None and auth.sub is not None and str(body_user_id) != str(auth.sub):
             cross_user_rejected_total.inc()
             logger.warning(
@@ -503,12 +507,61 @@ async def verify_body_identity(
                 detail={"error": "user_mismatch"},
             )
 
-        # JWT path verified the (sub, resourceowner) tuple cryptographically;
-        # body matched. Pin auth values as the verified identity.
-        if auth.sub is not None and auth.resourceowner is not None:
-            request.state.verified_caller = VerifiedCaller(
-                user_id=auth.sub, org_id=auth.resourceowner
+        # SPEC-SEC-IDENTITY-ASSERT-003 REQ-1.3: resolve and verify the
+        # JWT-bound caller's org via portal /internal/identity/verify.
+        # claimed_org_id comes from the inbound X-Org-Id header (set by
+        # LibreChat hook / knowledge-mcp proxy / docs-app); portal-side
+        # membership lookup is authoritative.
+        header_org_id = request.headers.get("x-org-id", "").strip()
+        if not header_org_id:
+            # REQ-1.4: loud config error rather than silent fail-open.
+            logger.warning("missing_org_id", path=request.url.path)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "missing_org_id"},
             )
+
+        if auth.sub is None or auth.bearer_token is None:
+            # Programming bug: dispatch always populates these for JWT path.
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={"error": "internal_auth_state"},
+            )
+
+        asserter = _get_asserter()
+        result = await asserter.verify(
+            caller_service="retrieval-api",
+            claimed_user_id=auth.sub,
+            claimed_org_id=header_org_id,
+            bearer_jwt=auth.bearer_token,
+            request_headers=dict(request.headers),
+        )
+        if not result.verified:
+            raise _identity_assertion_failed(result.reason or "unknown")
+
+        # REQ-1.5 defence-in-depth: the body's org_id MUST match the
+        # portal-verified org. A mismatch means the body was forged
+        # against a JWT for a different tenant.
+        if str(body_org_id) != str(result.org_id):
+            cross_org_rejected_total.inc()
+            logger.warning(
+                "cross_org_rejected",
+                reason="org_mismatch",
+                auth_method=auth.method,
+                jwt_sub_hash=_hash_sub(auth.sub),
+                path=request.url.path,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": "org_mismatch"},
+            )
+
+        # Pin the portal-verified identity. Downstream emit_event /
+        # audit logs source from request.state.verified_caller.
+        request.state.verified_caller = VerifiedCaller(
+            user_id=str(result.user_id) if result.user_id else auth.sub,
+            org_id=str(result.org_id) if result.org_id else header_org_id,
+        )
         return
 
     # auth.method == "internal" — REQ-4.2 portal-side verification.
