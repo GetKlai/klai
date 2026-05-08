@@ -31,7 +31,7 @@ from app.api.session_deps import get_session
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.session import SessionContext
-from app.services.identity_verifier import verify_bff_session_identity
+from app.services.identity_verifier import evidence_path, verify_bff_session_identity
 
 logger = structlog.get_logger()
 
@@ -332,6 +332,9 @@ async def _proxy(
             detail="Upstream timeout",
         ) from exc
 
+    # SPEC-SEC-IDENTITY-ASSERT-002 REQ-6.1: surface the same evidence_path
+    # field as identity_verify_decision so a single VictoriaLogs query can
+    # group both log events on the resolution-path dimension.
     logger.info(
         "bff_proxy_verified",
         service=service,
@@ -339,6 +342,7 @@ async def _proxy(
         path=path,
         verified=True,
         evidence=decision.evidence,
+        evidence_path=evidence_path(decision.evidence),
         verify_latency_ms=verify_latency_ms,
     )
     logger.info(

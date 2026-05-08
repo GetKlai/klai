@@ -519,6 +519,39 @@ async def _resolve_org_slug(
     return result.scalar_one_or_none()
 
 
+# SPEC-SEC-IDENTITY-ASSERT-002 REQ-6.1: evidence_path is a structlog field
+# that exposes the FULL resolution path used to verify the identity. It
+# is derived from VerifyDecision.evidence so a future split (e.g. a
+# non-membership JWT path) is visible in logs without re-deriving the
+# query plan. Values:
+#
+#   "jwt+membership"   JWT signature + sub-equality + portal_users membership
+#                      (the SPEC-002 default for JWT-bound calls)
+#   "membership"       bearer_jwt=None path; portal_users membership only
+#   "partner_key"      partner:<key_id> claim verified against partner_api_keys
+#   "tenant_only"      service-to-service tenant claim (no end-user)
+_EVIDENCE_PATH_BY_EVIDENCE: dict[str, str] = {
+    "jwt": "jwt+membership",
+    "membership": "membership",
+    "partner_key": "partner_key",
+    "tenant_only": "tenant_only",
+}
+
+
+def evidence_path(evidence: str | None) -> str:
+    """Map ``VerifyDecision.evidence`` to the public ``evidence_path`` log field.
+
+    Returns ``"unknown"`` if the evidence string is not recognised. That
+    case is impossible per the dataclass contract but the helper keeps
+    the log line populated under a future evidence-type addition that
+    forgets to update this mapping.
+    """
+
+    if evidence is None:
+        return "unknown"
+    return _EVIDENCE_PATH_BY_EVIDENCE.get(evidence, "unknown")
+
+
 async def verify_bff_session_identity(
     *,
     db: AsyncSession,
