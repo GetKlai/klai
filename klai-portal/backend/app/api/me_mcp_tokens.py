@@ -17,15 +17,14 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.bearer import bearer
-from app.api.dependencies import _get_caller_org
 from app.core.database import get_db
+from app.core.permissions import UserPermissions, get_caller
 from app.models.mcp_oauth import PortalOAuthClient
+from app.models.portal import PortalUser
 from app.services import audit
 from app.services import mcp_oauth as svc
 from app.services.redis_client import get_redis_pool
@@ -55,13 +54,18 @@ class _ConnectedAppResponse(BaseModel):
 
 @router.get("", response_model=list[_ConnectedAppResponse])
 async def list_my_tokens(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> list[_ConnectedAppResponse]:
     """Return the caller's tokens, newest first."""
-    _, org, user = await _get_caller_org(credentials, db)
+    user_result = await db.execute(
+        select(PortalUser).where(PortalUser.zitadel_user_id == perms.user_id, PortalUser.org_id == perms.org_id)
+    )
+    user = user_result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user_not_found")
 
-    rows = await svc.list_user_tokens(db, org_id=org.id, user_id=user.id)
+    rows = await svc.list_user_tokens(db, org_id=perms.org_id, user_id=user.id)
     if not rows:
         return []
 
@@ -95,11 +99,16 @@ async def list_my_tokens(
 @router.delete("/{token_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_my_token(
     token_id: int,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Revoke a token. Idempotent — already-revoked returns 204."""
-    _, org, user = await _get_caller_org(credentials, db)
+    user_result = await db.execute(
+        select(PortalUser).where(PortalUser.zitadel_user_id == perms.user_id, PortalUser.org_id == perms.org_id)
+    )
+    user = user_result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user_not_found")
 
     redis = await get_redis_pool()
     if redis is None:
@@ -115,15 +124,15 @@ async def revoke_my_token(
 
         redis = _NullRedis()
 
-    ok = await svc.revoke_token(db, redis, token_id=token_id, org_id=org.id, user_id=user.id)
+    ok = await svc.revoke_token(db, redis, token_id=token_id, org_id=perms.org_id, user_id=user.id)
     if not ok:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="token_not_found")
     await db.commit()
 
     try:
         await audit.log_event(
-            org_id=org.id,
-            actor=user.zitadel_user_id,
+            org_id=perms.org_id,
+            actor=perms.user_id,
             action="mcp_token.revoked",
             resource_type="mcp_token",
             resource_id=str(token_id),
