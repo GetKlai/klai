@@ -3,12 +3,20 @@
 After RBAC-001, the add-on toggles are the *only* state needed -- no
 group-membership / per-user-product side-effects on update_addons. These
 tests cover the get + patch endpoints.
+
+SPEC-PORTAL-RBAC-REFACTOR-001 Phase 2a: endpoints now take
+``perms: UserPermissions`` directly (no more ``_get_caller_org`` patch).
+The rol-gate (admin-only) is enforced declaratively by
+``Depends(get_caller_at_least(ProfileRole.ADMIN))`` — that branch is
+covered in `test_permissions.py::test_get_caller_at_least_role_matrix`.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+
+from tests.conftest import make_perms
 
 
 def _mock_org(enabled_addons: list[str] | None = None, plan: str = "core") -> MagicMock:
@@ -19,31 +27,21 @@ def _mock_org(enabled_addons: list[str] | None = None, plan: str = "core") -> Ma
     return org
 
 
-def _mock_caller(role: str = "admin") -> MagicMock:
-    caller = MagicMock()
-    caller.role = role
-    return caller
-
-
 class TestGetAddons:
     @pytest.mark.asyncio
     async def test_returns_current_state(self) -> None:
         from app.api.admin.settings import get_addons
 
-        org = _mock_org(enabled_addons=["scribe"])
-        caller = _mock_caller()
-        with patch("app.api.admin.settings._get_caller_org", return_value=("admin-1", org, caller)):
-            result = await get_addons(credentials=MagicMock(), db=AsyncMock())
+        perms = make_perms(role="admin", org_id=42, enabled_addons=["scribe"])
+        result = await get_addons(perms=perms, db=AsyncMock())
         assert result.enabled_addons == ["scribe"]
 
     @pytest.mark.asyncio
     async def test_returns_empty_list_by_default(self) -> None:
         from app.api.admin.settings import get_addons
 
-        org = _mock_org(enabled_addons=[])
-        caller = _mock_caller()
-        with patch("app.api.admin.settings._get_caller_org", return_value=("admin-1", org, caller)):
-            result = await get_addons(credentials=MagicMock(), db=AsyncMock())
+        perms = make_perms(role="admin", org_id=42, enabled_addons=[])
+        result = await get_addons(perms=perms, db=AsyncMock())
         assert result.enabled_addons == []
 
 
@@ -53,15 +51,15 @@ class TestUpdateAddons:
         from app.api.admin.settings import AddonsUpdate, update_addons
 
         org = _mock_org(enabled_addons=[])
-        caller = _mock_caller()
+        perms = make_perms(role="admin", org_id=42, enabled_addons=[])
         mock_db = AsyncMock()
+        mock_db.get = AsyncMock(return_value=org)
         body = AddonsUpdate(enabled_addons=["scribe"])
         with (
-            patch("app.api.admin.settings._get_caller_org", return_value=("admin-1", org, caller)),
             patch("app.api.admin.settings.log_event", new=AsyncMock()),
             patch("app.api.admin.settings.emit_event") as mock_emit,
         ):
-            result = await update_addons(body=body, credentials=MagicMock(), db=mock_db)
+            result = await update_addons(body=body, perms=perms, db=mock_db)
         assert result.enabled_addons == ["scribe"]
         assert org.enabled_addons == ["scribe"]
         mock_db.commit.assert_called_once()
@@ -71,12 +69,10 @@ class TestUpdateAddons:
     async def test_patch_unknown_addon_returns_400(self) -> None:
         from app.api.admin.settings import AddonsUpdate, update_addons
 
-        org = _mock_org()
-        caller = _mock_caller()
+        perms = make_perms(role="admin", org_id=42)
         body = AddonsUpdate(enabled_addons=["hacker_product"])
-        with patch("app.api.admin.settings._get_caller_org", return_value=("admin-1", org, caller)):
-            with pytest.raises(HTTPException) as exc_info:
-                await update_addons(body=body, credentials=MagicMock(), db=AsyncMock())
+        with pytest.raises(HTTPException) as exc_info:
+            await update_addons(body=body, perms=perms, db=AsyncMock())
         assert exc_info.value.status_code == 400
         assert "hacker_product" in str(exc_info.value.detail)
 
@@ -85,14 +81,15 @@ class TestUpdateAddons:
         from app.api.admin.settings import AddonsUpdate, update_addons
 
         org = _mock_org()
-        caller = _mock_caller()
+        perms = make_perms(role="admin", org_id=42)
+        mock_db = AsyncMock()
+        mock_db.get = AsyncMock(return_value=org)
         body = AddonsUpdate(enabled_addons=["scribe", "docs"])
         with (
-            patch("app.api.admin.settings._get_caller_org", return_value=("admin-1", org, caller)),
             patch("app.api.admin.settings.log_event", new=AsyncMock()),
             patch("app.api.admin.settings.emit_event"),
         ):
-            result = await update_addons(body=body, credentials=MagicMock(), db=AsyncMock())
+            result = await update_addons(body=body, perms=perms, db=mock_db)
         assert set(result.enabled_addons) == {"scribe", "docs"}
 
     @pytest.mark.asyncio
@@ -100,24 +97,22 @@ class TestUpdateAddons:
         from app.api.admin.settings import AddonsUpdate, update_addons
 
         org = _mock_org(enabled_addons=["scribe"])
-        caller = _mock_caller()
+        perms = make_perms(role="admin", org_id=42, enabled_addons=["scribe"])
+        mock_db = AsyncMock()
+        mock_db.get = AsyncMock(return_value=org)
         body = AddonsUpdate(enabled_addons=[])
         with (
-            patch("app.api.admin.settings._get_caller_org", return_value=("admin-1", org, caller)),
             patch("app.api.admin.settings.log_event", new=AsyncMock()),
             patch("app.api.admin.settings.emit_event"),
         ):
-            result = await update_addons(body=body, credentials=MagicMock(), db=AsyncMock())
+            result = await update_addons(body=body, perms=perms, db=mock_db)
         assert result.enabled_addons == []
 
-    @pytest.mark.asyncio
-    async def test_non_admin_rejected(self) -> None:
-        from app.api.admin.settings import AddonsUpdate, update_addons
-
-        org = _mock_org()
-        caller = _mock_caller(role="company")
-        body = AddonsUpdate(enabled_addons=["scribe"])
-        with patch("app.api.admin.settings._get_caller_org", return_value=("user-1", org, caller)):
-            with pytest.raises(HTTPException) as exc_info:
-                await update_addons(body=body, credentials=MagicMock(), db=AsyncMock())
-        assert exc_info.value.status_code == 403
+    # NOTE: `test_non_admin_rejected` was removed in SPEC-PORTAL-RBAC-REFACTOR-001
+    # Phase 2a. The role gate is now enforced via
+    # `Depends(get_caller_at_least(ProfileRole.ADMIN))` and pinned in
+    # `tests/test_permissions.py::test_get_caller_at_least_role_matrix`
+    # for every (caller_role, required_role) pair. Keeping a copy here
+    # would test the FastAPI dependency-injection wiring, not endpoint
+    # behaviour — that lives in the FastAPI/Starlette test layer
+    # (`tests/test_app_chat.py` style), not unit tests.

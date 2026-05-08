@@ -1,13 +1,19 @@
 """
 R5 tests -- PATCH /api/admin/settings auto_accept_same_domain toggle
 (SPEC-AUTH-009 R5 + C5.1/C5.2).
+
+SPEC-PORTAL-RBAC-REFACTOR-001 Phase 2a: settings endpoints take
+``perms: UserPermissions`` directly. The PortalOrg row is loaded via
+``db.get(PortalOrg, perms.org_id)`` inside the endpoint.
 """
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+from tests.conftest import make_perms
 
 
 def _make_org(auto_accept: bool = False) -> MagicMock:
@@ -23,12 +29,6 @@ def _make_org(auto_accept: bool = False) -> MagicMock:
     # tests that don't explicitly exercise this field.
     org.telemetry_level = "shadow"
     return org
-
-
-def _make_admin_user() -> MagicMock:
-    u = MagicMock()
-    u.role = "admin"
-    return u
 
 
 class TestAutoAcceptToggleInSettings:
@@ -66,16 +66,15 @@ class TestPatchSettingsAutoAccept:
         from app.api.admin.settings import OrgSettingsUpdate, update_org_settings
 
         org = _make_org(auto_accept=False)
-        caller = _make_admin_user()
+        perms = make_perms(role="admin", org_id=1)
+        db = AsyncMock()
+        db.get = AsyncMock(return_value=org)
 
-        with patch("app.api.admin.settings._get_caller_org", AsyncMock(return_value=(None, org, caller))):
-            creds = MagicMock()
-            db = AsyncMock()
-            result = await update_org_settings(
-                body=OrgSettingsUpdate(auto_accept_same_domain=True),
-                credentials=creds,
-                db=db,
-            )
+        result = await update_org_settings(
+            body=OrgSettingsUpdate(auto_accept_same_domain=True),
+            perms=perms,
+            db=db,
+        )
 
         assert org.auto_accept_same_domain is True
         assert result.auto_accept_same_domain is True
@@ -86,16 +85,15 @@ class TestPatchSettingsAutoAccept:
         from app.api.admin.settings import OrgSettingsUpdate, update_org_settings
 
         org = _make_org(auto_accept=True)
-        caller = _make_admin_user()
+        perms = make_perms(role="admin", org_id=1)
+        db = AsyncMock()
+        db.get = AsyncMock(return_value=org)
 
-        with patch("app.api.admin.settings._get_caller_org", AsyncMock(return_value=(None, org, caller))):
-            creds = MagicMock()
-            db = AsyncMock()
-            result = await update_org_settings(
-                body=OrgSettingsUpdate(auto_accept_same_domain=False),
-                credentials=creds,
-                db=db,
-            )
+        result = await update_org_settings(
+            body=OrgSettingsUpdate(auto_accept_same_domain=False),
+            perms=perms,
+            db=db,
+        )
 
         assert org.auto_accept_same_domain is False
         assert result.auto_accept_same_domain is False
@@ -106,16 +104,15 @@ class TestPatchSettingsAutoAccept:
         from app.api.admin.settings import OrgSettingsUpdate, update_org_settings
 
         org = _make_org(auto_accept=True)
-        caller = _make_admin_user()
+        perms = make_perms(role="admin", org_id=1)
+        db = AsyncMock()
+        db.get = AsyncMock(return_value=org)
 
-        with patch("app.api.admin.settings._get_caller_org", AsyncMock(return_value=(None, org, caller))):
-            creds = MagicMock()
-            db = AsyncMock()
-            result = await update_org_settings(
-                body=OrgSettingsUpdate(default_language="en"),
-                credentials=creds,
-                db=db,
-            )
+        result = await update_org_settings(
+            body=OrgSettingsUpdate(default_language="en"),
+            perms=perms,
+            db=db,
+        )
 
         assert org.auto_accept_same_domain is True
         assert result.auto_accept_same_domain is True
@@ -126,11 +123,10 @@ class TestPatchSettingsAutoAccept:
         from app.api.admin.settings import get_org_settings
 
         org = _make_org(auto_accept=True)
-        caller = _make_admin_user()
+        perms = make_perms(role="admin", org_id=1)
+        db = AsyncMock()
+        db.get = AsyncMock(return_value=org)
 
-        with patch("app.api.admin.settings._get_caller_org", AsyncMock(return_value=(None, org, caller))):
-            creds = MagicMock()
-            db = AsyncMock()
-            result = await get_org_settings(credentials=creds, db=db)
+        result = await get_org_settings(perms=perms, db=db)
 
         assert result.auto_accept_same_domain is True

@@ -29,6 +29,9 @@ def _compile(stmt: ClauseElement) -> str:
 # @MX:ANCHOR REQ-5.1 — must remain coupled to offboard_user's delete shape.
 # @MX:REASON: regression guard for finding #5 (cross-tenant IDOR via
 # PortalGroupMembership delete keyed only on zitadel_user_id).
+from tests.conftest import make_perms  # noqa: E402
+
+
 @pytest.mark.asyncio
 async def test_offboard_user_does_not_wipe_other_org_memberships() -> None:
     """REQ-1 / REQ-5.1: offboard for org A must scope membership delete to org A.
@@ -47,12 +50,6 @@ async def test_offboard_user_does_not_wipe_other_org_memberships() -> None:
     """
     from app.api.admin.users import offboard_user
 
-    org = MagicMock()
-    org.id = 101  # caller is admin of org A
-
-    caller = MagicMock()
-    caller.role = "admin"
-
     target_user = MagicMock()
     target_user.status = "active"
     target_user.org_id = 101
@@ -64,16 +61,15 @@ async def test_offboard_user_does_not_wipe_other_org_memberships() -> None:
     select_user_result.scalar_one_or_none.return_value = target_user
     mock_db.execute.return_value = select_user_result
 
-    mock_credentials = MagicMock()
+    perms = make_perms(role="admin", user_id="admin-1", org_id=101)
 
     with (
-        patch("app.api.admin.users._get_caller_org", return_value=("admin-1", org, caller)),
         patch("app.api.admin.users.zitadel") as mock_zitadel,
         patch("app.api.admin.users.log_event", new=AsyncMock()),
         patch("app.api.admin.users.remove_github_org_member", new=AsyncMock()),
     ):
         mock_zitadel.deactivate_user = AsyncMock()
-        await offboard_user(zitadel_user_id="user-U", credentials=mock_credentials, db=mock_db)
+        await offboard_user(zitadel_user_id="user-U", perms=perms, db=mock_db)
 
     # Locate the DELETE on portal_group_memberships among all executed statements.
     membership_delete = None
@@ -144,16 +140,11 @@ async def test_invite_user_grants_portal_role_to_zitadel(
     org.seats = 100  # plenty of headroom; do not trip seat limit
     org.plan = "free"
 
-    caller = MagicMock()
-    caller.role = "admin"
-
     mock_db = AsyncMock()
     locked_org_result = MagicMock()
     locked_org_result.scalar_one.return_value = org
     mock_db.execute.return_value = locked_org_result
     mock_db.scalar.return_value = 0  # active_count under seat limit
-
-    mock_credentials = MagicMock()
 
     body = InviteRequest(
         email=f"{portal_role}@example.com",
@@ -163,8 +154,9 @@ async def test_invite_user_grants_portal_role_to_zitadel(
         preferred_language="nl",
     )
 
+    perms = make_perms(role="admin", user_id="admin-1", org_id=101, plan="free")
+
     with (
-        patch("app.api.admin.users._get_caller_org", return_value=("admin-1", org, caller)),
         patch("app.api.admin.users.zitadel") as mock_zitadel,
         patch(
             "app.services.default_knowledge_bases.create_default_personal_kb",
@@ -173,7 +165,7 @@ async def test_invite_user_grants_portal_role_to_zitadel(
     ):
         mock_zitadel.invite_user = AsyncMock(return_value={"userId": f"new-user-{portal_role}"})
         mock_zitadel.grant_user_role = AsyncMock()
-        await invite_user(body=body, credentials=mock_credentials, db=mock_db)
+        await invite_user(body=body, perms=perms, db=mock_db)
 
     if expected_zitadel_role is None:
         # v0.5.0 invariant for non-admins: no Zitadel grant call at all.
@@ -224,9 +216,6 @@ async def test_invite_user_creates_personal_kb_before_commit() -> None:
     org.seats = 100
     org.plan = "free"
 
-    caller = MagicMock()
-    caller.role = "admin"
-
     call_order: list[str] = []
 
     async def _record_commit(*_args, **_kwargs):
@@ -242,8 +231,6 @@ async def test_invite_user_creates_personal_kb_before_commit() -> None:
     mock_db.execute.return_value = locked_org_result
     mock_db.scalar.return_value = 0
 
-    mock_credentials = MagicMock()
-
     body = InviteRequest(
         email="alpha@example.com",
         first_name="A",
@@ -252,8 +239,9 @@ async def test_invite_user_creates_personal_kb_before_commit() -> None:
         preferred_language="nl",
     )
 
+    perms = make_perms(role="admin", user_id="admin-1", org_id=8, plan="free")
+
     with (
-        patch("app.api.admin.users._get_caller_org", return_value=("admin-1", org, caller)),
         patch("app.api.admin.users.zitadel") as mock_zitadel,
         patch(
             "app.services.default_knowledge_bases.create_default_personal_kb",
@@ -262,7 +250,7 @@ async def test_invite_user_creates_personal_kb_before_commit() -> None:
     ):
         mock_zitadel.invite_user = AsyncMock(return_value={"userId": "new-user-id"})
         mock_zitadel.grant_user_role = AsyncMock()
-        await invite_user(body=body, credentials=mock_credentials, db=mock_db)
+        await invite_user(body=body, perms=perms, db=mock_db)
 
     assert "create_personal_kb" in call_order, (
         f"invite_user MUST call create_default_personal_kb. Observed call order: {call_order}"

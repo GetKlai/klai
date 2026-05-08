@@ -26,12 +26,11 @@ from __future__ import annotations
 
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.admin import _get_caller_org, _require_admin, _require_platform_admin, bearer
 from app.core.database import get_db
+from app.core.permissions import UserPermissions, require_platform_admin
 from app.models.portal import PortalOrg
 from app.services.audit import log_event
 from app.services.provisioning.orchestrator import provision_tenant
@@ -48,7 +47,7 @@ router = APIRouter()
 async def retry_provisioning(
     slug: str,
     background_tasks: BackgroundTasks,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(require_platform_admin()),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     """Retry provisioning for an org in `failed_rollback_complete` state.
@@ -58,15 +57,14 @@ async def retry_provisioning(
         - `manual_cleanup_required` (failed_rollback_pending)
         - `not_in_retryable_state` (any other non-failed state)
         - `slug_in_use_by_new_org` (another active row claimed this slug)
-    Returns 403 if caller is not an admin.
+    Returns 403 if caller is not a platform-admin.
     Returns 404 if no failed row with this slug exists.
+
+    audit-tenant-isolation-2026-05-05 finding C-2: this endpoint operates on
+    an arbitrary tenant `slug` (the failed-row may belong to ANY tenant, not
+    just the caller's). The `require_platform_admin()` dependency enforces
+    the cross-tenant gate (admin role + platform-admin org).
     """
-    _, _caller_org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-    # audit-tenant-isolation-2026-05-05 finding C-2: this endpoint operates on
-    # an arbitrary tenant `slug` (the failed-row may belong to ANY tenant, not
-    # just the caller's). Gate cross-tenant actions on platform-admin org.
-    _require_platform_admin(_caller_org)
 
     # Find the failed row for this slug. Because the partial unique index only
     # enforces uniqueness over active rows, there MAY be multiple rows sharing
@@ -164,8 +162,8 @@ async def retry_provisioning(
         "provisioning_retry_queued",
         org_id=failed_org.id,
         slug=slug,
-        admin_user=caller_user.zitadel_user_id,
-        platform_admin_org_id=_caller_org.id,
+        admin_user=perms.user_id,
+        platform_admin_org_id=perms.org_id,
     )
 
     # Audit-trail (audit-tenant-isolation-2026-05-05 C-2): platform-admin
@@ -174,14 +172,14 @@ async def retry_provisioning(
     # path raises later.
     await log_event(
         org_id=failed_org.id,
-        actor=caller_user.zitadel_user_id,
+        actor=perms.user_id,
         action="retry_provisioning",
         resource_type="portal_org",
         resource_id=str(failed_org.id),
         details={
             "slug": slug,
-            "platform_admin_org_id": _caller_org.id,
-            "platform_admin_org_slug": _caller_org.slug,
+            "platform_admin_org_id": perms.org_id,
+            "platform_admin_org_slug": perms.org_slug,
         },
     )
 

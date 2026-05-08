@@ -63,6 +63,13 @@ _TENANT_MARKERS: tuple[str, ...] = (
     "require_partner_context(",
     "require_admin_api_key(",
     "get_effective_products(",  # self-heals tenant internally
+    # SPEC-PORTAL-RBAC-REFACTOR-001 Phase 1+: declarative dependencies that
+    # resolve through `get_caller`, which calls `set_tenant` for the caller's
+    # org. Any module that imports/uses these has tenant context established.
+    "get_caller_at_least(",
+    "require_platform_admin(",
+    "require_platform_unlocked(",
+    "Depends(get_caller)",  # bare get_caller (no min-role)
 )
 
 # Modules that legitimately query RLS models without a direct tenant marker
