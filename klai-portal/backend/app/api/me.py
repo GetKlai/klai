@@ -106,6 +106,12 @@ async def me(
     _capabilities: list[str] = []
     _products: list[str] = []
     org_found: bool = False
+    # SPEC-SEC-IDENTITY-ASSERT-002 REQ-5: org_id is sourced from
+    # portal_users + portal_orgs membership, NOT the JWT
+    # urn:zitadel:iam:user:resourceowner:id claim (Klai BFF never requests
+    # the scope that would emit it; resolution-via-membership is
+    # deterministic and aligned with zitadel.md:99-100).
+    resolved_zitadel_org_id: str | None = None
     perms = await resolve_user_permissions(zitadel_user_id, db) if zitadel_user_id else None
     if perms is not None:
         org_found = True
@@ -123,6 +129,7 @@ async def me(
         row = result.one_or_none()
         if row:
             org, portal_user = row
+            resolved_zitadel_org_id = org.zitadel_org_id
             mfa_policy = org.mfa_policy
             preferred_language = portal_user.preferred_language
             if org.slug:
@@ -152,7 +159,7 @@ async def me(
         user_id=zitadel_user_id,
         email=info.get("email", ""),
         name=info.get("name", info.get("preferred_username", "")),
-        org_id=info.get("urn:zitadel:iam:user:resourceowner:id"),
+        org_id=resolved_zitadel_org_id,
         roles=_extract_roles(info),
         workspace_url=workspace_url,
         provisioning_status=provisioning_status,

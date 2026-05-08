@@ -1,21 +1,28 @@
 """Identity verification service for portal-api /internal/identity/verify.
 
-SPEC-SEC-IDENTITY-ASSERT-001 REQ-1: this is the source-of-truth implementation
-of "is the claimed (user, org) tuple real". Every Klai service-to-service call
-that carries an identity claim eventually reaches this function (via the
-endpoint in :mod:`app.api.internal`).
+SPEC-SEC-IDENTITY-ASSERT-001 REQ-1 introduced this endpoint;
+SPEC-SEC-IDENTITY-ASSERT-002 REQ-1 retired the JWT-resourceowner equality
+check. Every Klai service-to-service call that carries an identity claim
+eventually reaches this function (via the endpoint in
+:mod:`app.api.internal`).
 
 Design responsibilities, in order:
 
-1. **JWT path** (REQ-1.3) — when the caller forwarded the end-user JWT, decode
-   and verify its signature against Zitadel JWKS, then assert
-   ``jwt.sub == claimed_user_id`` AND ``jwt.resourceowner == claimed_org_id``.
-   On mismatch return ``jwt_identity_mismatch``. On invalid signature/exp/aud
+1. **JWT path** — when the caller forwarded the end-user JWT, decode and
+   verify its signature against Zitadel JWKS, then assert
+   ``jwt.sub == claimed_user_id``. On invalid signature/exp/sub-type
    return ``invalid_jwt`` — never fall through to the membership path.
-2. **Membership path** (REQ-1.4) — when ``bearer_jwt`` is None, look up the
-   user's active membership in ``portal_users`` keyed on
-   ``(zitadel_user_id, zitadel_org_id, status='active')``. On match return
-   ``evidence='membership'``; on miss return ``no_membership``.
+   On sub mismatch return ``jwt_identity_mismatch``. The JWT's
+   ``urn:zitadel:iam:user:resourceowner:id`` claim is intentionally
+   ignored (SPEC-002 REQ-1.2): authoritative org resolution flows
+   through portal_users membership, not the IdP-side claim.
+2. **Membership path** — for both JWT-bound (after sub check) and
+   JWT-less calls, look up the user's active membership in
+   ``portal_users`` keyed on
+   ``(zitadel_user_id, zitadel_org_id, status='active')``. On match
+   return ``evidence='jwt'`` (JWT proof of authenticity) or
+   ``evidence='membership'`` (no JWT presented). On miss return
+   ``no_membership``.
 3. **caller_service allowlist** (REQ-1.2) — anything not in the recognised
    list returns ``unknown_caller_service`` BEFORE any DB or JWT work.
 
@@ -72,11 +79,14 @@ KNOWN_CALLER_SERVICES: frozenset[str] = frozenset(
 # JWT validation
 # ---------------------------------------------------------------------------
 
-# Stable Zitadel claim name for the user's primary org. Matches the constant
-# at ``klai-retrieval-api/retrieval_api/middleware/auth.py``. Defining it here
-# instead of importing keeps portal-api standalone — retrieval-api is not on
-# our import path.
-_ZITADEL_RESOURCEOWNER_CLAIM = "urn:zitadel:iam:user:resourceowner:id"
+# SPEC-SEC-IDENTITY-ASSERT-002 REQ-1.2: the
+# `urn:zitadel:iam:user:resourceowner:id` claim is no longer consulted.
+# Klai's BFF never requests the scope that would emit it, and the rule at
+# `.claude/rules/klai/platform/zitadel.md:99-100` already documents the
+# claim as unreliable. Authoritative org-resolution flows through
+# portal_users membership. The constant was deliberately deleted to
+# prevent re-introduction; CI ast-grep rule
+# `rules/no-zitadel-resourceowner-claim.yml` (REQ-5) blocks new uses.
 
 
 # ---------------------------------------------------------------------------
@@ -264,27 +274,35 @@ async def verify_identity_claim(
             return VerifyDecision.deny("invalid_jwt")
 
         jwt_sub = claims.get("sub")
-        jwt_resourceowner = claims.get(_ZITADEL_RESOURCEOWNER_CLAIM)
-        if not isinstance(jwt_sub, str) or not isinstance(jwt_resourceowner, str):
-            # Claims are present but not strings — treat as malformed JWT.
+        if not isinstance(jwt_sub, str):
+            # Malformed JWT — sub absent or wrong type.
             return VerifyDecision.deny("invalid_jwt")
 
-        if jwt_sub != claimed_user_id or jwt_resourceowner != claimed_org_id:
+        if jwt_sub != claimed_user_id:
+            # SPEC-SEC-IDENTITY-ASSERT-002 REQ-1.1: sub-equality is the
+            # actual cross-user defence — keep it strict. Mismatched sub
+            # means the caller forwarded somebody else's JWT while
+            # claiming a different user identity.
             logger.info(
-                "identity_verify_jwt_mismatch",
-                extra={
-                    "caller_service": caller_service,
-                    "claim_sub_matches": jwt_sub == claimed_user_id,
-                    "claim_org_matches": jwt_resourceowner == claimed_org_id,
-                },
+                "identity_verify_jwt_sub_mismatch",
+                extra={"caller_service": caller_service},
             )
             return VerifyDecision.deny("jwt_identity_mismatch")
 
-        # JWT is valid + claims match. Resolve canonical org_slug. A valid
-        # Zitadel JWT should always correspond to an existing portal_orgs
-        # row; absence indicates portal-Zitadel sync drift and is treated
-        # as no_membership (fail closed until the platform is reconciled).
-        org_slug = await _resolve_org_slug(db=db, zitadel_org_id=claimed_org_id)
+        # SPEC-SEC-IDENTITY-ASSERT-002 REQ-1.2 + REQ-1.3: the JWT's
+        # `urn:zitadel:iam:user:resourceowner:id` claim is intentionally
+        # NOT consulted. Klai's data-model allows users to be active members
+        # of multiple orgs (portal_users has-many rows per zitadel_user_id);
+        # the resourceowner claim refers to the user's PRIMARY Zitadel org
+        # which can be unrelated to the org they're acting on. Authoritative
+        # org-resolution flows through portal_users membership (the same
+        # path the bearer_jwt=None branch uses below). One DB query
+        # combines the membership signal and the canonical slug.
+        org_slug = await _resolve_active_membership_org_slug(
+            db=db,
+            zitadel_user_id=claimed_user_id,
+            zitadel_org_id=claimed_org_id,
+        )
         if org_slug is None:
             return VerifyDecision.deny("no_membership")
         if claimed_org_slug is not None and claimed_org_slug != org_slug:
@@ -499,6 +517,92 @@ async def _resolve_org_slug(
     )
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
+
+
+# SPEC-SEC-IDENTITY-ASSERT-002 REQ-6.1: evidence_path is a structlog field
+# that exposes the FULL resolution path used to verify the identity. It
+# is derived from VerifyDecision.evidence so a future split (e.g. a
+# non-membership JWT path) is visible in logs without re-deriving the
+# query plan. Values:
+#
+#   "jwt+membership"   JWT signature + sub-equality + portal_users membership
+#                      (the SPEC-002 default for JWT-bound calls)
+#   "membership"       bearer_jwt=None path; portal_users membership only
+#   "partner_key"      partner:<key_id> claim verified against partner_api_keys
+#   "tenant_only"      service-to-service tenant claim (no end-user)
+_EVIDENCE_PATH_BY_EVIDENCE: dict[str, str] = {
+    "jwt": "jwt+membership",
+    "membership": "membership",
+    "partner_key": "partner_key",
+    "tenant_only": "tenant_only",
+}
+
+
+def evidence_path(evidence: str | None) -> str:
+    """Map ``VerifyDecision.evidence`` to the public ``evidence_path`` log field.
+
+    Returns ``"unknown"`` if the evidence string is not recognised. That
+    case is impossible per the dataclass contract but the helper keeps
+    the log line populated under a future evidence-type addition that
+    forgets to update this mapping.
+    """
+
+    if evidence is None:
+        return "unknown"
+    return _EVIDENCE_PATH_BY_EVIDENCE.get(evidence, "unknown")
+
+
+async def verify_bff_session_identity(
+    *,
+    db: AsyncSession,
+    zitadel_user_id: str,
+    portal_org_id: int,
+) -> VerifyDecision:
+    """Membership-authoritative verification for portal-api BFF proxy calls.
+
+    Used by :mod:`app.api.proxy` when forwarding `/api/scribe/*` and
+    `/api/docs/*` to upstream services. The BFF session was already
+    authenticated at cookie-decode time (the access_token was JWT-validated
+    at session creation/refresh). This function adds defence-in-depth by
+    re-checking that the user STILL has an active membership in the
+    portal_org_id stored in the session, AND resolves the canonical
+    (zitadel_org_id, org_slug) pair needed for the downstream
+    ``X-Klai-Verified-*`` headers.
+
+    Single SELECT joining portal_users and portal_orgs on the portal-side
+    primary key (``portal_orgs.id``) — different from
+    :func:`_resolve_active_membership_org_slug` which joins on
+    ``zitadel_org_id`` for the public-API path.
+
+    Returns the same :class:`VerifyDecision` shape as
+    :func:`verify_identity_claim` so the proxy can use a uniform
+    allow/deny pattern. ``evidence='jwt'`` because the session's
+    access_token was JWT-validated at session creation; the membership
+    re-check here is an authorisation defence, not an authentication one.
+    """
+
+    stmt = (
+        select(PortalOrg.zitadel_org_id, PortalOrg.slug)
+        .join(PortalUser, PortalUser.org_id == PortalOrg.id)
+        .where(
+            PortalUser.zitadel_user_id == zitadel_user_id,
+            PortalOrg.id == portal_org_id,
+            PortalUser.status == "active",
+            PortalOrg.deleted_at.is_(None),
+        )
+        .limit(1)
+    )
+    result = await db.execute(stmt)
+    row = result.one_or_none()
+    if row is None:
+        return VerifyDecision.deny("no_membership")
+    zitadel_org_id, org_slug = row
+    return VerifyDecision.allow(
+        user_id=zitadel_user_id,
+        org_id=zitadel_org_id,
+        org_slug=org_slug,
+        evidence="jwt",
+    )
 
 
 async def verify_tenant_claim(

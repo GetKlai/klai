@@ -27,6 +27,16 @@ def _session() -> SimpleNamespace:
     return SimpleNamespace(access_token="real-portal-bearer-token-99999")
 
 
+# SPEC-SEC-IDENTITY-ASSERT-002 REQ-2.3: BFF verified-identity values used by
+# every _build_upstream_headers test. The BFF supplies these from a verified
+# decision; the test fixtures use stable placeholders.
+_VERIFIED_KW = {
+    "verified_user_id": "u-zitadel-1",
+    "verified_org_id": "o-zitadel-1",
+    "verified_org_slug": "voys",
+}
+
+
 def test_explicit_x_internal_secret_is_stripped():
     """AC-3.1: ``X-Internal-Secret`` from the client never reaches the upstream."""
     from app.api.proxy import _build_upstream_headers
@@ -40,33 +50,44 @@ def test_explicit_x_internal_secret_is_stripped():
         ),
         _session(),
         service="scribe",
+        **_VERIFIED_KW,
     )
-    assert "x-internal-secret" not in {k.lower() for k in headers}
-    assert "X-Internal-Secret" not in headers
+    # SPEC-SEC-IDENTITY-ASSERT-002 REQ-2.3: portal-api strips the inbound
+    # value AND re-injects its own. The attacker's value never wins, even
+    # though the header name is now present.
+    assert headers["X-Internal-Secret"] != "attacker-guess"
+    assert "attacker-guess" not in headers.values()
     assert headers.get("Accept") == "application/json"
 
 
 def test_all_explicit_blocklist_names_are_stripped():
-    """AC-3.1: each name in the explicit deny-list never reaches upstream."""
+    """AC-3.1: each name in the explicit deny-list never reaches upstream
+    with its CLIENT-supplied value. ``X-Internal-Secret`` is re-injected
+    by portal-api with its own value (REQ-2.3); the other three sibling
+    names are stripped without re-injection.
+    """
     from app.api.proxy import _build_upstream_headers
 
-    blocklist = [
-        "X-Internal-Secret",
+    only_stripped = [
         "X-Klai-Internal-Secret",
         "X-Retrieval-Api-Internal-Secret",
         "X-Scribe-Api-Internal-Secret",
     ]
-    inbound = {name: "attacker-attempt" for name in blocklist}
+    inbound = {name: "attacker-attempt" for name in [*only_stripped, "X-Internal-Secret"]}
     inbound["X-Request-ID"] = "abc-123-good"
 
     headers = _build_upstream_headers(
         _request_with_headers(inbound),
         _session(),
         service="scribe",
+        **_VERIFIED_KW,
     )
     lowered = {k.lower() for k in headers}
-    for name in blocklist:
+    for name in only_stripped:
         assert name.lower() not in lowered, f"{name} survived the strip"
+    # X-Internal-Secret IS present but with portal's value, never the attacker's.
+    assert headers["X-Internal-Secret"] != "attacker-attempt"
+    assert "attacker-attempt" not in headers.values()
     assert headers.get("X-Request-ID") == "abc-123-good"
 
 
@@ -85,6 +106,7 @@ def test_regex_catch_all_blocks_forward_compatible_names():
         _request_with_headers(inbound),
         _session(),
         service="docs",
+        **_VERIFIED_KW,
     )
     lowered = {k.lower() for k in headers}
     for blocked in ("x-klai-internal-foo", "x-klai-internal-bar", "internal-auth-whatever", "internal-token-future"):
@@ -113,6 +135,7 @@ def test_legitimate_headers_pass_through_unchanged():
         _request_with_headers(legitimate),
         _session(),
         service="scribe",
+        **_VERIFIED_KW,
     )
     for name, value in legitimate.items():
         assert headers.get(name) == value, f"{name} did not pass through"
@@ -132,6 +155,7 @@ def test_blocked_injection_emits_structlog_entry_without_value():
             ),
             _session(),
             service="scribe",
+            **_VERIFIED_KW,
         )
 
     matches = [e for e in logs if e.get("event") == "proxy_header_injection_blocked"]
@@ -157,6 +181,7 @@ def test_authorization_is_portal_injected_not_inbound():
         ),
         _session(),
         service="scribe",
+        **_VERIFIED_KW,
     )
     # The hop-by-hop strip removes the inbound Authorization; portal injects its own.
     assert headers.get("Authorization") == "Bearer real-portal-bearer-token-99999"
