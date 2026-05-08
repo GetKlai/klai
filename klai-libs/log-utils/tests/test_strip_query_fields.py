@@ -139,3 +139,48 @@ def test_does_not_explode_on_non_string_event() -> None:
     )
     # Non-string event → processor is a no-op (defensive).
     assert out["raw_query"] == "untouched because event isn't a string"
+
+
+def test_contextvar_binding_propagates_into_event_dict() -> None:
+    """Integration: ``telemetry_level`` bound via structlog.contextvars
+    must reach the processor's view of the event dict (via the
+    ``merge_contextvars`` processor that runs upstream in setup_logging).
+
+    Caller (retrieval-api/api/retrieve.py) does
+    ``structlog.contextvars.bind_contextvars(telemetry_level=req.telemetry_level)``
+    once per request. From that moment, every subsequent log line in
+    the same async-task carries the level — even ones that don't pass
+    it as a kwarg. This test pins that contract because REQ-13's safety
+    net depends on it.
+    """
+    import structlog
+
+    structlog.contextvars.clear_contextvars()
+    try:
+        # Simulate retrieve.py binding the level once per request.
+        structlog.contextvars.bind_contextvars(telemetry_level="full")
+
+        # Simulate structlog's merge_contextvars processor running
+        # upstream of ours: it merges contextvars into the event_dict.
+        merged: dict = dict(structlog.contextvars.get_contextvars())
+        merged["event"] = "retrieval_decision_record"
+        merged["coreference_rewrite"] = {"original": "S3CR3T", "resolved": "..."}
+
+        out = _run(merged)
+        assert out["coreference_rewrite"]["original"] == "S3CR3T", (
+            "contextvar telemetry_level=full should preserve the field"
+        )
+
+        # Flip to shadow and re-merge — same event must now be stripped.
+        structlog.contextvars.bind_contextvars(telemetry_level="shadow")
+        merged2: dict = dict(structlog.contextvars.get_contextvars())
+        merged2["event"] = "retrieval_decision_record"
+        merged2["coreference_rewrite"] = {"original": "S3CR3T", "resolved": "..."}
+
+        out2 = _run(merged2)
+        assert "coreference_rewrite" not in out2, (
+            "contextvar telemetry_level=shadow must strip the field even when "
+            "the caller did not explicitly pass telemetry_level as a kwarg"
+        )
+    finally:
+        structlog.contextvars.clear_contextvars()
