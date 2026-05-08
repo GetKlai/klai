@@ -74,6 +74,20 @@ _REFRESH_FRACTION: float = 0.8
 _MIN_TTL_SECONDS: int = 60
 
 
+def _sanitize_body_excerpt(
+    body: str,
+    secret_values: tuple[str, ...],
+    *,
+    max_len: int = 500,
+) -> str:
+    if not body:
+        return ""
+    safe = body
+    for secret in sorted({s for s in secret_values if len(s) >= 8}, key=len, reverse=True):
+        safe = safe.replace(secret, "<redacted>")
+    return safe[:max_len]
+
+
 # --- canonical scope constants (subset needed by LiteLLM hook) -------------
 # Mirrors klai-libs/service-auth/klai_service_auth/scopes.py. Only the scopes
 # this caller (svc-litellm) might request are vendored — adding more is fine
@@ -169,7 +183,11 @@ class ZitadelTokenClient:
             raise ServiceAuthError(f"token mint network error: {exc}") from exc
 
         if resp.status_code != 200:
-            body_excerpt = resp.text[:500] if resp.text else ""
+            body_excerpt = _sanitize_body_excerpt(
+                resp.text,
+                (self._client_secret,),
+                max_len=500,
+            )
             # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.warning(
                 "service_auth_token_mint_failed client_id=%s status_code=%d "

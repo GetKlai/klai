@@ -85,6 +85,21 @@ def test_vendored_constants_match():
     )
 
 
+def test_vendored_body_excerpt_sanitizer_matches_canonical():
+    """The vendored copy must redact client secrets from IdP error bodies."""
+    vendored = _load("_drift_vendored_sanitize", _VENDORED_PATH)
+    canonical = _load("_drift_canonical_sanitize", _CANONICAL_DIR / "client.py")
+
+    body = "invalid client_secret=super-secret-client-value"
+    secrets = ("super-secret-client-value",)
+
+    assert vendored._sanitize_body_excerpt(body, secrets) == canonical._sanitize_body_excerpt(
+        body,
+        secrets,
+    )
+    assert "super-secret-client-value" not in vendored._sanitize_body_excerpt(body, secrets)
+
+
 def test_vendored_scope_constant_matches_library():
     """The retrieval-query scope constant must match across vendored copy
     and canonical scopes module — receivers compare to a single string."""

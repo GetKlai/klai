@@ -66,6 +66,21 @@ _REFRESH_FRACTION: float = 0.8
 _MIN_TTL_SECONDS: int = 60
 
 
+def _sanitize_body_excerpt(
+    body: str,
+    secret_values: tuple[str, ...],
+    *,
+    max_len: int = 500,
+) -> str:
+    """Redact known local secrets from an IdP error body before logging."""
+    if not body:
+        return ""
+    safe = body
+    for secret in sorted({s for s in secret_values if len(s) >= 8}, key=len, reverse=True):
+        safe = safe.replace(secret, "<redacted>")
+    return safe[:max_len]
+
+
 class ZitadelTokenClient:
     """Async OAuth 2.0 Client Credentials token client.
 
@@ -194,7 +209,11 @@ class ZitadelTokenClient:
 
         if resp.status_code != 200:
             # Trim the body so we don't log a megabyte of HTML on a misrouted call.
-            body_excerpt = resp.text[:500] if resp.text else ""
+            body_excerpt = _sanitize_body_excerpt(
+                resp.text,
+                (self._client_secret,),
+                max_len=500,
+            )
             logger.warning(
                 "service_auth_token_mint_failed",
                 client_id=self._client_id,
