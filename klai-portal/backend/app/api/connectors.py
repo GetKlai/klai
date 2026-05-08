@@ -7,16 +7,17 @@ from typing import Literal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _get_caller_org, bearer, get_effective_capabilities, require_capability
+from app.api.dependencies import get_effective_capabilities, require_capability
 from app.core.database import get_db
+from app.core.permissions import UserPermissions, get_caller
 from app.core.profiles import Capability, check_connector_allowed
 from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
+from app.models.portal import PortalOrg
 from app.services import knowledge_ingest_client
 from app.services.access import get_user_role_for_kb
 from app.services.connector_credentials import SENSITIVE_FIELDS, credential_store
@@ -398,13 +399,21 @@ def _connector_out(c: PortalConnector) -> ConnectorOut:
     )
 
 
+async def _load_org_or_500(db: AsyncSession, org_id: int) -> PortalOrg:
+    result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id))
+    org = result.scalar_one_or_none()
+    if not org:
+        raise HTTPException(status_code=500, detail="Organisation not found")
+    return org
+
+
 # -- Endpoints ----------------------------------------------------------------
 
 
 @router.get("/", response_model=list[ConnectorOut])
 async def list_connectors(
     kb_slug: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> list[ConnectorOut]:
     """List connectors for a KB. Any org member with access to the KB can view.
@@ -415,8 +424,7 @@ async def list_connectors(
     rare admin force-purge recovery flow (REQ-11), which uses a separate
     endpoint family.
     """
-    _, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_for_org(kb_slug, org.id, db)
+    kb = await _get_kb_for_org(kb_slug, perms.org_id, db)
     result = await db.execute(
         select(PortalConnector).where(
             PortalConnector.kb_id == kb.id,
@@ -430,27 +438,26 @@ async def list_connectors(
 async def create_connector(
     kb_slug: str,
     body: ConnectorCreateRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> ConnectorOut:
     """Create a connector for a KB. Requires contributor access."""
-    caller_id, org, caller_user = await _get_caller_org(credentials, db)
     # REQ-3: personal/company roles may only use url/upload connector types
-    check_connector_allowed(caller_user, body.connector_type)
+    check_connector_allowed(perms, body.connector_type)
     # G1: Plan-ceiling on external connectors. The role-level check above already
     # blocks personal/company. For roles that pass (kb_manager+), ensure the org
     # plan also permits external connectors.
     if body.connector_type not in {"url", "upload"}:
-        caps = await get_effective_capabilities(caller_id, db)
+        caps = await get_effective_capabilities(perms.user_id, db)
         if "kb.connectors.external" not in caps:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={
                     "error_code": "external_connectors_require_complete_plan",
-                    "plan": org.plan,
+                    "plan": perms.plan,
                 },
             )
-    kb = await _get_kb_with_owner_check(kb_slug, caller_id, org.id, db)
+    kb = await _get_kb_with_owner_check(kb_slug, perms.user_id, perms.org_id, db)
     resolved_content_type = body.content_type or CONTENT_TYPE_DEFAULTS.get(body.connector_type, "unknown")
     if body.allowed_assertion_modes is not None:
         invalid = set(body.allowed_assertion_modes) - VALID_ASSERTION_MODES
@@ -473,14 +480,14 @@ async def create_connector(
     encrypted_blob = None
     if credential_store is not None:
         encrypted_blob, config_to_store = await credential_store.encrypt_credentials(
-            org_id=org.id,
+            org_id=perms.org_id,
             connector_type=body.connector_type,
             config=config_for_save,
             db=db,
         )
     connector = PortalConnector(
         kb_id=kb.id,
-        org_id=org.id,
+        org_id=perms.org_id,
         name=body.name,
         connector_type=body.connector_type,
         config=config_to_store,
@@ -488,7 +495,7 @@ async def create_connector(
         content_type=resolved_content_type,
         allowed_assertion_modes=body.allowed_assertion_modes,
         encrypted_credentials=encrypted_blob,
-        created_by=caller_id,
+        created_by=perms.user_id,
     )
     db.add(connector)
     await db.commit()
@@ -501,7 +508,7 @@ async def update_connector(
     kb_slug: str,
     connector_id: str,
     body: ConnectorUpdateRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> ConnectorOut:
     """Update a connector. Requires contributor access.
@@ -509,8 +516,7 @@ async def update_connector(
     REQ-02: rows in ``state='deleting'`` are not editable (return 404 to
     avoid leaking lifecycle state).
     """
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_with_owner_check(kb_slug, caller_id, org.id, db)
+    kb = await _get_kb_with_owner_check(kb_slug, perms.user_id, perms.org_id, db)
     result = await db.execute(
         select(PortalConnector).where(
             PortalConnector.id == connector_id,
@@ -535,7 +541,7 @@ async def update_connector(
         config_for_save = await _auto_fill_canary_fingerprint(validated_config)
         if credential_store is not None:
             encrypted_blob, stripped_config = await credential_store.encrypt_credentials(
-                org_id=org.id,
+                org_id=perms.org_id,
                 connector_type=connector.connector_type,
                 config=config_for_save,
                 db=db,
@@ -568,7 +574,7 @@ async def update_connector(
 async def delete_connector(
     kb_slug: str,
     connector_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Schedule a connector for asynchronous purge. Returns 204 immediately.
@@ -597,8 +603,7 @@ async def delete_connector(
     we revert the state back to ``'active'`` so the user can retry. The
     procrastinate-task itself has its own retry budget once enqueued.
     """
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_with_owner_check(kb_slug, caller_id, org.id, db)
+    kb = await _get_kb_with_owner_check(kb_slug, perms.user_id, perms.org_id, db)
     # REQ-02: only ``state='active'`` rows are addressable by user routes.
     result = await db.execute(
         select(PortalConnector).where(
@@ -619,6 +624,11 @@ async def delete_connector(
     # observes ``state='deleting'`` and short-circuits to 404.
     connector.state = "deleting"
     await db.commit()
+
+    # Org load defers until we actually need ``zitadel_org_id`` for the
+    # downstream HTTP call — keeps the 404 path cheap and avoids a 500
+    # when the connector lookup short-circuits.
+    org = await _load_org_or_500(db, perms.org_id)
 
     # REQ-03.1.3: enqueue async purge. On failure: revert state.
     try:
@@ -653,7 +663,7 @@ async def delete_connector(
 async def trigger_sync(
     kb_slug: str,
     connector_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> SyncRunData:
     """Trigger an on-demand sync for a connector. Requires owner access.
@@ -661,8 +671,8 @@ async def trigger_sync(
     Delegates to klai-connector execution service. Returns 202 with the new
     SyncRun immediately; sync runs in the background.
     """
-    caller_id, org, caller_user = await _get_caller_org(credentials, db)
-    kb = await _get_kb_with_owner_check(kb_slug, caller_id, org.id, db)
+    org = await _load_org_or_500(db, perms.org_id)
+    kb = await _get_kb_with_owner_check(kb_slug, perms.user_id, perms.org_id, db)
     # REQ-02.3: rows in 'deleting' state are owned by the purge worker.
     # Trigger-sync would race the cleanup; reject with 404 (do not leak
     # the lifecycle state via 409 — see "never leak existence" in
@@ -683,7 +693,7 @@ async def trigger_sync(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Sync already running")
 
     # R-E2: enforce per-KB item quota before triggering ingest.
-    await assert_can_add_item_to_kb(kb=kb, org=org, role=caller_user.role)
+    await assert_can_add_item_to_kb(kb=kb, org=org, role=perms.role)
 
     try:
         # SPEC-SEC-TENANT-001 REQ-8.2: pass the authenticated session's
@@ -708,8 +718,8 @@ async def trigger_sync(
     await db.commit()
     emit_event(
         "knowledge.uploaded",
-        org_id=org.id,
-        user_id=caller_id,
+        org_id=perms.org_id,
+        user_id=perms.user_id,
         properties={"scope": "org", "file_type": connector.connector_type},
     )
     return sync_run
@@ -720,15 +730,15 @@ async def list_sync_runs(
     kb_slug: str,
     connector_id: str,
     limit: int = 20,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> list[SyncRunData]:
     """List sync history for a connector (most recent first).
 
     Proxies to klai-connector execution service.
     """
-    _, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_for_org(kb_slug, org.id, db)
+    org = await _load_org_or_500(db, perms.org_id)
+    kb = await _get_kb_for_org(kb_slug, perms.org_id, db)
     exists = await db.execute(
         select(PortalConnector.id).where(
             PortalConnector.id == connector_id,

@@ -17,6 +17,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
+from tests.conftest import make_perms
+
 # ---------------------------------------------------------------------------
 # Stub connector_credentials before the connectors module is imported.
 # ---------------------------------------------------------------------------
@@ -84,12 +86,12 @@ class TestTriggerSyncItemQuota:
         kb = _make_kb(owner_type="user", slug="my-kb")
         connector = _make_connector()
         db = _make_db(kb, connector)
-        mock_credentials = MagicMock()
 
         with (
             patch(
-                "app.api.connectors._get_caller_org",
-                return_value=("user-core", org, MagicMock()),
+                "app.api.connectors._load_org_or_500",
+                new_callable=AsyncMock,
+                return_value=org,
             ),
             patch(
                 "app.api.connectors._get_kb_with_owner_check",
@@ -106,7 +108,7 @@ class TestTriggerSyncItemQuota:
                 await trigger_sync(
                     kb_slug="my-kb",
                     connector_id="conn-1",
-                    credentials=mock_credentials,
+                    perms=make_perms(role="company", plan="core", org_id=1),
                     db=db,
                 )
 
@@ -122,14 +124,14 @@ class TestTriggerSyncItemQuota:
         kb = _make_kb(owner_type="user", slug="my-kb")
         connector = _make_connector()
         db = _make_db(kb, connector)
-        mock_credentials = MagicMock()
 
         fake_sync_run = MagicMock()
 
         with (
             patch(
-                "app.api.connectors._get_caller_org",
-                return_value=("user-core", org, MagicMock()),
+                "app.api.connectors._load_org_or_500",
+                new_callable=AsyncMock,
+                return_value=org,
             ),
             patch(
                 "app.api.connectors._get_kb_with_owner_check",
@@ -151,7 +153,7 @@ class TestTriggerSyncItemQuota:
             result = await trigger_sync(
                 kb_slug="my-kb",
                 connector_id="conn-1",
-                credentials=mock_credentials,
+                perms=make_perms(role="company", plan="core", org_id=1),
                 db=db,
             )
 
@@ -166,14 +168,14 @@ class TestTriggerSyncItemQuota:
         kb = _make_kb(owner_type="user", slug="my-kb")
         connector = _make_connector()
         db = _make_db(kb, connector)
-        mock_credentials = MagicMock()
 
         fake_sync_run = MagicMock()
 
         with (
             patch(
-                "app.api.connectors._get_caller_org",
-                return_value=("user-complete", org, MagicMock(role="kb_manager")),
+                "app.api.connectors._load_org_or_500",
+                new_callable=AsyncMock,
+                return_value=org,
             ),
             patch(
                 "app.api.connectors._get_kb_with_owner_check",
@@ -195,7 +197,7 @@ class TestTriggerSyncItemQuota:
             result = await trigger_sync(
                 kb_slug="my-kb",
                 connector_id="conn-1",
-                credentials=mock_credentials,
+                perms=make_perms(role="kb_manager", plan="complete", org_id=1),
                 db=db,
             )
 
