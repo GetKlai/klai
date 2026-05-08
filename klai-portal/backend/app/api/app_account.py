@@ -13,21 +13,42 @@ import logging
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _get_caller_org, bearer
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.permissions import UserPermissions, get_caller
 from app.models.knowledge_bases import PortalKnowledgeBase
+from app.models.portal import PortalUser
 from app.models.templates import PortalTemplate
 from app.services.litellm_cache import invalidate_templates
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/app/account", tags=["app-account"])
+
+
+async def _load_caller_user(perms: UserPermissions, db: AsyncSession) -> PortalUser:
+    """Load the caller's PortalUser row for read+mutate paths.
+
+    ``perms`` is built from this same row by ``get_caller``, so a miss is a
+    server-side invariant violation -> 500.
+    """
+    result = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == perms.user_id,
+            PortalUser.org_id == perms.org_id,
+        )
+    )
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Caller user not found",
+        )
+    return user
 
 
 async def _invalidate_litellm_kb_cache(org_id: int, librechat_user_id: str) -> None:
@@ -117,11 +138,11 @@ async def _validate_and_normalize_template_ids(
 
 @router.get("/kb-preference", response_model=KBPreferenceOut)
 async def get_kb_preference(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> KBPreferenceOut:
     """Return the caller's current KB scope preference."""
-    _, _, user = await _get_caller_org(credentials, db)
+    user = await _load_caller_user(perms, db)
     return KBPreferenceOut(
         kb_retrieval_enabled=user.kb_retrieval_enabled,
         kb_personal_enabled=user.kb_personal_enabled,
@@ -135,7 +156,7 @@ async def get_kb_preference(
 @router.patch("/kb-preference", response_model=KBPreferenceOut)
 async def patch_kb_preference(
     body: KBPreferencePatch,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> KBPreferenceOut:
     """Update the caller's KB scope preference.
@@ -144,7 +165,7 @@ async def patch_kb_preference(
     Empty list is normalized to null (null means all org KBs).
     Increments kb_pref_version on every successful save.
     """
-    _, org, user = await _get_caller_org(credentials, db)
+    user = await _load_caller_user(perms, db)
 
     if body.kb_retrieval_enabled is not None:
         user.kb_retrieval_enabled = body.kb_retrieval_enabled
@@ -174,7 +195,7 @@ async def patch_kb_preference(
             # Validate all slugs belong to the caller's org (REQ-N3)
             result = await db.execute(
                 select(PortalKnowledgeBase.slug).where(
-                    PortalKnowledgeBase.org_id == org.id,
+                    PortalKnowledgeBase.org_id == perms.org_id,
                     PortalKnowledgeBase.slug.in_(slugs),
                 )
             )
@@ -193,16 +214,16 @@ async def patch_kb_preference(
     if "active_template_ids" in body.model_fields_set:
         active_templates_changed = True
         user.active_template_ids = await _validate_and_normalize_template_ids(
-            body.active_template_ids, org_id=org.id, db=db
+            body.active_template_ids, org_id=perms.org_id, db=db
         )
 
     user.kb_pref_version += 1
     await db.commit()
 
     if user.librechat_user_id:
-        asyncio.get_running_loop().create_task(_invalidate_litellm_kb_cache(org.id, user.librechat_user_id))
+        asyncio.get_running_loop().create_task(_invalidate_litellm_kb_cache(perms.org_id, user.librechat_user_id))
         if active_templates_changed:
-            asyncio.get_running_loop().create_task(invalidate_templates(org.id, user.librechat_user_id))
+            asyncio.get_running_loop().create_task(invalidate_templates(perms.org_id, user.librechat_user_id))
 
     return KBPreferenceOut(
         kb_retrieval_enabled=user.kb_retrieval_enabled,

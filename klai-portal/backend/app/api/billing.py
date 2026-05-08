@@ -8,11 +8,10 @@ from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import bearer
+from app.api.dependencies import _load_org_or_500, bearer
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.permissions import ProfileRole, UserPermissions, get_caller, get_caller_at_least
-from app.models.portal import PortalOrg
 from app.services.events import emit_event
 from app.services.moneybird import MoneybirdService
 from app.services.zitadel import zitadel
@@ -23,24 +22,6 @@ Plan = Literal["core", "professional", "complete", "free"]
 BillingCycle = Literal["monthly", "yearly"]
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
-
-
-async def _load_org_or_500(db: AsyncSession, org_id: int) -> PortalOrg:
-    """Fetch the caller's PortalOrg row.
-
-    UserPermissions only carries `org_id` / `org_slug` / `plan` / `enabled_addons` /
-    `platform_unlocked_features`. Billing endpoints need other PortalOrg fields
-    (moneybird_*, billing_*, name) and re-fetch the row through this helper.
-    The tenant GUC is already set by `get_caller`, so RLS on portal_orgs is fine.
-    Mirrors `app/api/admin/settings.py::_load_org_or_500`.
-    """
-    org = await db.get(PortalOrg, org_id)
-    if org is None:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Organisation row vanished",
-        )
-    return org
 
 
 async def get_moneybird() -> AsyncIterator[MoneybirdService]:

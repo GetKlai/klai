@@ -15,12 +15,12 @@ import logging
 
 import httpx
 from fastapi import APIRouter, Depends
-from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _get_caller_org, bearer
+from app.api.dependencies import _load_org_or_500
 from app.core.database import get_db
+from app.core.permissions import UserPermissions, get_caller
 from app.services.events import emit_event
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ class ChatHealthOut(BaseModel):
 
 @router.get("/chat-health", response_model=ChatHealthOut)
 async def get_chat_health(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> ChatHealthOut:
     """Probe the tenant's LibreChat instance for pre-flight availability.
@@ -57,7 +57,7 @@ async def get_chat_health(
     Returns healthy=false with a machine-readable reason so the frontend
     can show specific feedback (not provisioned / container down / not ready).
     """
-    _, org, _ = await _get_caller_org(credentials, db)
+    org = await _load_org_or_500(db, perms.org_id)
 
     if not org.librechat_container:
         return ChatHealthOut(healthy=False, reason="not_provisioned")

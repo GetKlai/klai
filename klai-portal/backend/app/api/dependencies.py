@@ -1,14 +1,12 @@
 """Shared FastAPI dependencies."""
 
-import structlog
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_user_id
 from app.api.bearer import bearer as bearer  # re-export for routes that import from here
-from app.core.database import get_db, set_tenant
+from app.core.database import get_db
 from app.core.plan_limits import PLAN_LIMITS, get_plan_limits
 from app.core.profiles import (
     PROFILE_CAPABILITIES,
@@ -16,7 +14,6 @@ from app.core.profiles import (
 )
 from app.models.portal import PortalOrg, PortalUser
 from app.services.entitlements import get_effective_products
-from app.services.zitadel import zitadel
 
 
 def require_product(product: str):
@@ -43,41 +40,27 @@ def require_product(product: str):
     return dependency
 
 
-# @MX:ANCHOR fan_in=8
-async def _get_caller_org(
-    credentials: HTTPAuthorizationCredentials,
-    db: AsyncSession,
-) -> tuple[str, PortalOrg, PortalUser]:
-    """Validate token, return (zitadel_user_id, PortalOrg, caller PortalUser)."""
-    try:
-        info = await zitadel.get_userinfo(credentials.credentials)
-    except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
+async def _load_org_or_500(db: AsyncSession, org_id: int) -> PortalOrg:
+    """Load the full ``PortalOrg`` row for an org_id from ``perms.org_id``.
 
-    zitadel_user_id = info.get("sub")
-    if not zitadel_user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No user found in token")
+    Endpoints that take ``perms: UserPermissions = Depends(get_caller)`` only
+    receive the org_id, but a handful need the full ORM row for fields not
+    on ``UserPermissions`` (``zitadel_org_id``, ``moneybird_*``,
+    ``librechat_container``, etc.). This helper centralises the load-and-
+    raise-500-if-missing pattern so per-file copies stay in sync.
 
-    result = await db.execute(
-        select(PortalOrg, PortalUser)
-        .join(PortalUser, PortalUser.org_id == PortalOrg.id)
-        .where(PortalUser.zitadel_user_id == zitadel_user_id)
-    )
-    row = result.one_or_none()
-    if not row:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organisation not found")
-
-    org, caller_user = row
-    await set_tenant(db, org.id)
-    structlog.contextvars.bind_contextvars(org_id=str(org.id), user_id=zitadel_user_id)
-    return zitadel_user_id, org, caller_user
-
-
-# @MX:ANCHOR fan_in=8
-def _require_admin(caller_user: PortalUser) -> None:
-    """Raise 403 if the caller is not an admin."""
-    if caller_user.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: admin role required")
+    The 500 is intentional: ``perms`` was just resolved by ``get_caller``,
+    which already implies the org row exists. A miss here means the row
+    disappeared mid-request, which is a server-side invariant violation,
+    not a client-side 404.
+    """
+    org = await db.get(PortalOrg, org_id)
+    if org is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Organisation not found",
+        )
+    return org
 
 
 def require_capability(capability: Capability):

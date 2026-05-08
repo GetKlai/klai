@@ -3,7 +3,7 @@
 Two thin routes under ``/api/app/knowledge-bases/{kb_slug}/sources/{type}``
 that each:
 
-1. Authenticate the caller via ``_get_caller_org`` (Zitadel bearer).
+1. Authenticate the caller via ``Depends(get_caller)`` (Zitadel bearer).
 2. Resolve the KB in the caller's org (RLS-scoped) and assert write access.
 3. Enforce the per-KB item quota via ``assert_can_add_item_to_kb``.
 4. Run the matching extractor (URL → crawl4ai, Text → normalise).
@@ -33,10 +33,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.dependencies import _load_org_or_500
 from app.core.database import get_db
 from app.core.permissions import UserPermissions, get_caller
 from app.models.knowledge_bases import PortalKnowledgeBase
-from app.models.portal import PortalOrg
 from app.services import knowledge_ingest_client
 from app.services.access import get_user_role_for_kb
 from app.services.kb_quota import assert_can_add_item_to_kb
@@ -75,14 +75,6 @@ class SourceIngestedResponse(BaseModel):
 
 
 # --- Helpers ---------------------------------------------------------------
-
-
-async def _load_org_or_500(db: AsyncSession, org_id: int) -> PortalOrg:
-    result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id))
-    org = result.scalar_one_or_none()
-    if org is None:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Organisation not found")
-    return org
 
 
 async def _get_writable_kb_or_raise(
