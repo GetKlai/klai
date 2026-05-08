@@ -18,12 +18,17 @@ from __future__ import annotations
 
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.admin import _get_caller_org, _require_admin, _require_platform_admin, bearer
 from app.core.database import get_db
+from app.core.permissions import (
+    ProfileRole,
+    UserPermissions,
+    get_caller_at_least,
+    get_caller_during_deprovisioning,
+    require_platform_admin,
+)
 from app.models.portal import PortalOrg
 from app.services.provisioning.deprovisioning_orchestrator import deprovision_tenant
 
@@ -134,7 +139,7 @@ def _guard_entry_state(org: PortalOrg) -> None:
     status_code=status.HTTP_200_OK,
 )
 async def get_own_org(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_during_deprovisioning),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     """Owner-readable metadata for the caller's current organisation.
@@ -149,20 +154,24 @@ async def get_own_org(
     the GET counterpart. SPEC-INFRA-TENANT-DELETE-001 R10.
 
     # @MX:NOTE: SPEC-INFRA-TENANT-DELETE-001 R10. Read-only sibling of the
-    # DELETE /org/me endpoint. Same auth pattern. No state-machine guard:
-    # if the org is already in a deprovisioning state the modal still
-    # needs slug+name to render the polling UI.
+    # DELETE /org/me endpoint. Uses ``get_caller_during_deprovisioning`` so
+    # the danger-zone modal stays renderable while the org is being deleted.
+    # Inline admin-role check below — `get_caller_during_deprovisioning`
+    # accepts any role; only admins should see this metadata.
     """
-    _, caller_org, caller_user = await _get_caller_org(
-        credentials,
-        db,
-        allow_during_deprovisioning=True,
-    )
-    _require_admin(caller_user)
+    if perms.effective_role != ProfileRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: admin role required",
+        )
 
+    # Re-fetch the PortalOrg row for `name` — UserPermissions does not carry it.
+    org = await db.get(PortalOrg, perms.org_id)
+    if org is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organisation not found")
     return {
-        "slug": caller_org.slug,
-        "name": caller_org.name,
+        "slug": org.slug,
+        "name": org.name,
     }
 
 
@@ -177,7 +186,7 @@ async def get_own_org(
 )
 async def deprovision_own_org(
     background_tasks: BackgroundTasks,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     """Owner-initiated tenant deletion.
@@ -187,11 +196,8 @@ async def deprovision_own_org(
 
     # @MX:NOTE: SPEC-INFRA-TENANT-DELETE-001 R1. deprovisioner_type='owner'.
     """
-    zitadel_user_id, caller_org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
     # Lock the row and verify state before transitioning.
-    locked_org = await _lock_org_for_deprovision(caller_org.id, db)
+    locked_org = await _lock_org_for_deprovision(perms.org_id, db)
     _guard_entry_state(locked_org)
 
     # Transition to 'deprovisioning' so auth-flow returns 403 for all subsequent requests.
@@ -205,13 +211,13 @@ async def deprovision_own_org(
         org_id=org_id,
         slug=org_slug,
         deprovisioner_type="owner",
-        actor=zitadel_user_id,
+        actor=perms.user_id,
     )
 
     background_tasks.add_task(
         deprovision_tenant,
         org_id,
-        zitadel_user_id,
+        perms.user_id,
         "owner",
     )
 
@@ -230,7 +236,7 @@ async def deprovision_own_org(
 async def deprovision_org_by_slug(
     slug: str,
     background_tasks: BackgroundTasks,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(require_platform_admin()),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     """Platform-admin tenant deletion by slug.
@@ -241,10 +247,6 @@ async def deprovision_org_by_slug(
 
     # @MX:NOTE: SPEC-INFRA-TENANT-DELETE-001 R1. deprovisioner_type='platform_admin'.
     """
-    zitadel_user_id, caller_org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-    _require_platform_admin(caller_org)
-
     target_org = await _find_org_by_slug(slug, db)
     if target_org is None:
         raise HTTPException(
@@ -266,13 +268,13 @@ async def deprovision_org_by_slug(
         org_id=org_id,
         slug=org_slug,
         deprovisioner_type="platform_admin",
-        actor=zitadel_user_id,
+        actor=perms.user_id,
     )
 
     background_tasks.add_task(
         deprovision_tenant,
         org_id,
-        zitadel_user_id,
+        perms.user_id,
         "platform_admin",
     )
 
@@ -291,7 +293,7 @@ async def deprovision_org_by_slug(
 async def retry_deprovisioning(
     slug: str,
     background_tasks: BackgroundTasks,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(require_platform_admin()),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     """Retry deprovisioning from failed_deprovisioning state.
@@ -304,10 +306,6 @@ async def retry_deprovisioning(
     #   re-queueing so admin knows the retry is fresh. Step idempotency ensures
     #   already-deleted resources are skipped harmlessly.
     """
-    zitadel_user_id, caller_org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-    _require_platform_admin(caller_org)
-
     target_org = await _find_org_by_slug(slug, db)
     if target_org is None:
         raise HTTPException(
@@ -339,13 +337,13 @@ async def retry_deprovisioning(
         "deprovision_retry_queued",
         org_id=org_id,
         slug=slug,
-        actor=zitadel_user_id,
+        actor=perms.user_id,
     )
 
     background_tasks.add_task(
         deprovision_tenant,
         org_id,
-        zitadel_user_id,
+        perms.user_id,
         "platform_admin",
     )
 
@@ -362,38 +360,39 @@ async def retry_deprovisioning(
     status_code=status.HTTP_200_OK,
 )
 async def get_deprovision_status(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_during_deprovisioning),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Owner polling endpoint for deprovisioning progress.
 
-    Uses allow_during_deprovisioning=True so the 403 guard in _get_caller_org
-    does not fire while the org is being deleted. Returns:
+    Uses ``get_caller_during_deprovisioning`` so the 403 ``tenant_deleting``
+    guard does not fire while the org is being deleted. Returns:
     - 200 + {"status": "deprovisioning"} while in progress.
     - 200 + {"status": "failed_deprovisioning", "last_failure": {...}} on failure.
     - 200 + {"status": <other>} for orgs not currently being deprovisioned.
     - 404 if the org row is gone (successful deprovisioning).
 
-    # @MX:NOTE: SPEC-INFRA-TENANT-DELETE-001 R10. allow_during_deprovisioning=True
+    # @MX:NOTE: SPEC-INFRA-TENANT-DELETE-001 R10. ``get_caller_during_deprovisioning``
     #   is the ONE exception to the standard 403 deprovisioning guard. Do not add
-    #   other endpoints with this flag without SPEC justification.
+    #   other endpoints with this dep without SPEC justification.
     """
-    try:
-        _, org, caller_user = await _get_caller_org(credentials, db, allow_during_deprovisioning=True)
-    except HTTPException as exc:
-        if exc.status_code == status.HTTP_404_NOT_FOUND:
-            # Org row is gone — successful deprovisioning completed.
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Organisation has been deleted",
-            ) from exc
-        raise
-
     # SEC: only org-owner (admin role) may poll deprovisioning status. Without
     # this guard, members/group-admins could see step names + (previously) full
     # error strings during a failed deprovision — info disclosure of internal
     # infrastructure (container hostnames, step orchestration internals).
-    _require_admin(caller_user)
+    if perms.effective_role != ProfileRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: admin role required",
+        )
+
+    org = await db.get(PortalOrg, perms.org_id)
+    if org is None:
+        # Org row is gone — successful deprovisioning completed.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Organisation has been deleted",
+        )
 
     payload: dict = {"status": org.provisioning_status}
     if org.provisioning_status == "failed_deprovisioning" and org.last_failure:
