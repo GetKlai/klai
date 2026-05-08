@@ -7,10 +7,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.dependencies import _load_org_or_500
 from app.core.database import get_db
 from app.core.features import ADDON_FEATURES, PLAN_FEATURES
 from app.core.permissions import ProfileRole, UserPermissions, get_caller_at_least
-from app.models.portal import PortalOrg
 from app.services.audit import log_event
 from app.services.events import emit_event
 
@@ -59,24 +59,6 @@ class PlanChangeRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
-
-
-async def _load_org_or_500(db: AsyncSession, org_id: int) -> PortalOrg:
-    """Fetch the caller's PortalOrg ORM row.
-
-    UserPermissions only carries `org_id`/`org_slug`/`plan`/`enabled_addons`/
-    `platform_unlocked_features`. Endpoints that need other PortalOrg fields
-    (name, default_language, mfa_policy, primary_domain, telemetry_level,
-    auto_accept_same_domain) re-fetch the row through this helper. The
-    tenant GUC is already set by `get_caller`, so RLS on portal_orgs is fine.
-    """
-    org = await db.get(PortalOrg, org_id)
-    if org is None:
-        # get_caller resolved the org just before this; a missing row means
-        # something deleted it mid-request. Treat as 500 — the resolver and
-        # this endpoint disagree on reality.
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Organisation row vanished")
-    return org
 
 
 @router.get("/settings", response_model=OrgSettingsOut)

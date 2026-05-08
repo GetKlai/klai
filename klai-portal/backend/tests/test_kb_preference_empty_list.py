@@ -20,6 +20,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tests.conftest import make_perms
+
 
 class _FakeUser:
     def __init__(self) -> None:
@@ -57,7 +59,6 @@ async def test_empty_kb_slugs_filter_round_trips_as_empty_list(monkeypatch):
 
     fake_user = _FakeUser()
     fake_user.kb_slugs_filter = ["existing-kb"]  # non-empty before
-    fake_org = _FakeOrg()
 
     db = AsyncMock()
     db.commit = AsyncMock()
@@ -66,8 +67,8 @@ async def test_empty_kb_slugs_filter_round_trips_as_empty_list(monkeypatch):
     db.execute = AsyncMock(return_value=_empty_query_result())
 
     monkeypatch.setattr(
-        "app.api.app_account._get_caller_org",
-        AsyncMock(return_value=(MagicMock(), fake_org, fake_user)),
+        "app.api.app_account._load_caller_user",
+        AsyncMock(return_value=fake_user),
     )
     # Skip the fire-and-forget Redis cache invalidation in tests.
     monkeypatch.setattr(
@@ -80,7 +81,7 @@ async def test_empty_kb_slugs_filter_round_trips_as_empty_list(monkeypatch):
     )
 
     body = KBPreferencePatch(kb_slugs_filter=[])
-    result = await patch_kb_preference(body=body, credentials=MagicMock(), db=db)
+    result = await patch_kb_preference(body=body, perms=make_perms(role="admin", user_id="sub", org_id=42), db=db)
 
     # The stored value MUST be `[]`, not `None`. This is the core contract.
     assert fake_user.kb_slugs_filter == [], (
@@ -101,15 +102,14 @@ async def test_null_kb_slugs_filter_remains_null(monkeypatch):
 
     fake_user = _FakeUser()
     fake_user.kb_slugs_filter = ["a", "b"]  # non-null before
-    fake_org = _FakeOrg()
 
     db = AsyncMock()
     db.commit = AsyncMock()
     db.execute = AsyncMock(return_value=_empty_query_result())
 
     monkeypatch.setattr(
-        "app.api.app_account._get_caller_org",
-        AsyncMock(return_value=(MagicMock(), fake_org, fake_user)),
+        "app.api.app_account._load_caller_user",
+        AsyncMock(return_value=fake_user),
     )
     monkeypatch.setattr(
         "app.api.app_account._invalidate_litellm_kb_cache",
@@ -124,7 +124,7 @@ async def test_null_kb_slugs_filter_remains_null(monkeypatch):
     # Force "kb_slugs_filter" into model_fields_set so the endpoint sees the
     # explicit None (not "field omitted"). Pydantic v2: pass through model_dump.
     body = KBPreferencePatch.model_validate({"kb_slugs_filter": None})
-    result = await patch_kb_preference(body=body, credentials=MagicMock(), db=db)
+    result = await patch_kb_preference(body=body, perms=make_perms(role="admin", user_id="sub", org_id=42), db=db)
 
     assert fake_user.kb_slugs_filter is None
     assert result.kb_slugs_filter is None
