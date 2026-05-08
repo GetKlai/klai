@@ -67,3 +67,30 @@ GRANT SELECT, INSERT, DELETE ON telemetry.query_shadow TO portal_api;
 -- read path is operator-only (no tenant-facing query). Future RLS can
 -- layer on top if/when a tenant-facing surface ships. Documented in
 -- SPEC § 3.2 Out-of-scope.
+
+-- ─── REQ-12: one-time legacy cleanup of pre-existing query content ────────
+--
+-- These DML statements live here (not in the alembic migration) because
+-- portal_retrieval_gaps is RLS-protected (Category-D, strict). Alembic
+-- runs as the portal_api role without app.current_org_id set, which
+-- raises 42501 against the strict policy. The klai superuser bypasses
+-- RLS so this script can do the cleanup safely.
+--
+-- Idempotent: the WHERE clauses exclude already-redacted rows, so
+-- re-runs on subsequent deploys are no-ops. Pre-flight verified
+-- portal_retrieval_gaps is empty on prod (2026-05-08), so first-run
+-- blast radius = 0.
+
+UPDATE public.portal_retrieval_gaps
+   SET query_text = '[REDACTED:legacy]'
+ WHERE query_text NOT LIKE '[REDACTED:%'
+   AND occurred_at < now() - interval '7 days';
+
+DELETE FROM public.portal_retrieval_gaps
+ WHERE occurred_at < now() - interval '30 days';
+
+-- knowledge.retrieval_logs cleanup intentionally omitted: the table
+-- does not exist on prod (verified 2026-05-08). The retrieval-log
+-- lives in Redis with a 1h TTL (klai-portal/backend/app/services/
+-- retrieval_log.py) — the SPEC's REQ-9 was reinterpreted to gate the
+-- Redis blob's query_resolved field at write time (Unit 6) instead.

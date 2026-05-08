@@ -1,32 +1,32 @@
-"""SPEC-PRIVACY-QUERY-SHADOW-001: portal_orgs.telemetry_level + legacy gap cleanup
+"""SPEC-PRIVACY-QUERY-SHADOW-001: portal_orgs.telemetry_level
 
 Revision ID: g5h6i7j8k9l0
 Revises: f6d914f040da
 Create Date: 2026-05-08
 
-Adds the per-tenant telemetry-level column and runs the one-time hard
-cleanup of pre-existing raw query text in portal_retrieval_gaps. The
-companion post_deploy SQL (post_deploy_g5h6i7j8k9l0.sql) creates the
-`telemetry` schema and `telemetry.query_shadow` table — those statements
-require the `klai` superuser because portal_api cannot CREATE SCHEMA.
+Adds the per-tenant telemetry-level enum + column on portal_orgs.
 
-Three statements run via standard alembic (portal_api role owns
-portal_orgs and portal_retrieval_gaps):
+The legacy data cleanup (REQ-12) and the telemetry schema/table (REQ-7)
+both live in the companion post_deploy_g5h6i7j8k9l0.sql because:
+
+- ``portal_retrieval_gaps`` is RLS-protected (Category-D, strict). UPDATE
+  / DELETE statements from alembic (which runs as the ``portal_api`` role
+  without ``app.current_org_id`` set) trip the strict policy and raise
+  ``InsufficientPrivilegeError`` (42501). The post-deploy SQL runs as
+  the ``klai`` superuser which bypasses RLS.
+- The ``telemetry`` schema and ``CREATE EXTENSION vector`` need
+  superuser privileges that ``portal_api`` does not have.
+
+Two statements run via standard alembic (portal_api owns the type catalog
++ portal_orgs):
 
 1. CREATE TYPE telemetry_level_t (idempotent via DO-block)
 2. ALTER TABLE portal_orgs ADD COLUMN telemetry_level (default 'shadow')
-3. One-time cleanup on portal_retrieval_gaps:
-   - UPDATE rows older than 7d to '[REDACTED:legacy]' (privacy debt closure)
-   - DELETE rows older than 30d (existing legacy purge)
-
-The cleanup is idempotent — re-runs are no-ops because the WHERE clause
-matches only non-redacted rows. After this migration ships, the daily
-TTL job (Unit 7) maintains the invariant.
 
 Pre-flight verified 2026-05-08: portal_retrieval_gaps row count is 0 on
 prod, so the cleanup blast radius is zero. The migration is safe to run.
 
-REQ-1, REQ-12.
+REQ-1.
 """
 
 from __future__ import annotations
@@ -62,29 +62,10 @@ def upgrade() -> None:
         """
     )
 
-    # 3. One-time legacy cleanup (REQ-12). Idempotent — the WHERE clause
-    #    excludes already-redacted rows, so re-runs touch nothing.
-    op.execute(
-        """
-        UPDATE public.portal_retrieval_gaps
-           SET query_text = '[REDACTED:legacy]'
-         WHERE query_text NOT LIKE '[REDACTED:%'
-           AND occurred_at < now() - interval '7 days';
-        """
-    )
-    op.execute(
-        """
-        DELETE FROM public.portal_retrieval_gaps
-         WHERE occurred_at < now() - interval '30 days';
-        """
-    )
-
 
 def downgrade() -> None:
-    # The cleanup UPDATE/DELETE cannot be reversed (data is gone). Only the
-    # column + type drops are downgradable. Documented in the SPEC's
-    # Rollback section: a privacy-regression rollback flips the per-tenant
-    # column back to 'full' on affected tenants instead of dropping the
-    # column.
+    # Documented in the SPEC's Rollback section: a privacy-regression
+    # rollback flips the per-tenant column back to 'full' on affected
+    # tenants instead of dropping the column.
     op.execute("ALTER TABLE public.portal_orgs DROP COLUMN IF EXISTS telemetry_level;")
     op.execute("DROP TYPE IF EXISTS telemetry_level_t;")
