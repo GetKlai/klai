@@ -594,7 +594,7 @@
   "kb_count_bronnen": "{count} bronnen",
   "kb_count_chunk_singular": "1 chunk",
   "kb_count_chunks": "{count} chunks",
-  "kb_status_klaar": "Synct",
+  "kb_status_klaar": "Gesynct",
   "kb_status_bezig": "Bezig",
   "kb_status_probleem": "Probleem",
   "kb_status_leeg": "Niet gesynct",
