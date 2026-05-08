@@ -18,7 +18,7 @@ from typing import Literal
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,6 +51,8 @@ _FORCE_SUMMARY = Query(default=False)
 # -- Response models -----------------------------------------------------------
 
 class TranscriptionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     name: str | None = None
     status: str = "transcribed"
@@ -61,11 +63,10 @@ class TranscriptionResponse(BaseModel):
     summary_json: dict | None = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
-
 
 class TranscriptionListItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     name: str | None = None
     status: str = "transcribed"
@@ -74,9 +75,6 @@ class TranscriptionListItem(BaseModel):
     duration_seconds: float | None = None
     created_at: datetime
     has_summary: bool = False
-
-    class Config:
-        from_attributes = True
 
 
 class TranscriptionListResponse(BaseModel):
