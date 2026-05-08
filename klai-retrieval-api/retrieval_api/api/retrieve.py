@@ -7,6 +7,7 @@ import copy
 import math
 import os
 import time
+import uuid
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -38,6 +39,7 @@ from retrieval_api.services.features import extract_features
 from retrieval_api.services.router import fetch_source_catalog, route_to_sources
 from retrieval_api.services.tei import embed_single, embed_sparse
 from retrieval_api.services.telemetry import write_shadow
+from retrieval_api.services.tenant_telemetry import get_canonical_level, resolve_effective_level
 from retrieval_api.util.payload import payload_list
 
 logger = structlog.get_logger(__name__)
@@ -164,6 +166,24 @@ async def retrieve(
     # On allow this also pins request.state.verified_caller, which is what
     # emit_event below sources for product_events integrity (REQ-6).
     await verify_body_identity(request, req.org_id, req.user_id)
+
+    # SPEC-PRIVACY-QUERY-SHADOW-001 — canonical-level enforcement.
+    # The body's ``telemetry_level`` is treated as a *requested upper
+    # bound*; the effective level is ``min(client_requested, canonical)``
+    # where canonical is portal_orgs.telemetry_level (5-minute cached
+    # lookup). This closes the gap where a buggy / malicious caller
+    # could send 'full' while the tenant has flipped to 'off', AND
+    # makes the knowledge-mcp's hardcoded 'shadow' correct under all
+    # tenant configurations (a tenant on 'off' will never see shadow
+    # rows from MCP traffic).
+    canonical_level = await get_canonical_level(req.org_id)
+    effective_level = resolve_effective_level(req.telemetry_level, canonical_level)
+
+    # REQ-13: bind effective_level on the structlog contextvar so the
+    # shared anti-leakage processor (in klai-libs/log-utils) sees the
+    # right value on EVERY log line in this request — not only the
+    # explicit ``decision_record`` event that passes it as a kwarg.
+    structlog.contextvars.bind_contextvars(telemetry_level=effective_level)
 
     t0 = time.perf_counter()
     # @MX:NOTE: [AUTO] Shadow log for parameter tuning (SPEC-KB-021 Change 4).
@@ -548,13 +568,13 @@ async def retrieve(
     # 'content' events to a 7d-retention stream and 'metadata' events
     # to the existing 30d stream (operator-side VictoriaLogs config —
     # follow-up runbook in Unit 8).
-    if req.telemetry_level != "full" and "coreference_rewrite" in decision_record:
+    if effective_level != "full" and "coreference_rewrite" in decision_record:
         decision_record.pop("coreference_rewrite", None)
         decision_record["retention_class"] = "metadata"
         telemetry_level_decisions_total.labels(
-            level=req.telemetry_level, decision="metadata_only"
+            level=effective_level, decision="metadata_only"
         ).inc()
-    elif req.telemetry_level == "full":
+    elif effective_level == "full":
         decision_record["retention_class"] = "content"
         telemetry_level_decisions_total.labels(level="full", decision="content_emitted").inc()
     else:
@@ -566,7 +586,7 @@ async def retrieve(
             "retrieval_decision_record",
             org_id=req.org_id,
             scope=req.scope,
-            telemetry_level=req.telemetry_level,
+            telemetry_level=effective_level,
             **decision_record,
         )
     except Exception:
@@ -577,27 +597,32 @@ async def retrieve(
     # telemetry_shadow_drop_total, not propagated. ``request_id`` is
     # bound by RequestContextMiddleware (logging_setup.py); read back
     # from structlog contextvars so we don't have to plumb it through
-    # the entire pipeline.
-    if req.telemetry_level in ("shadow", "full"):
-        ctx_request_id = structlog.contextvars.get_contextvars().get("request_id")
-        if ctx_request_id:
-            chunk_ids_for_shadow = [c.chunk_id for c in chunks_out]
-            reranker_scores = [c.reranker_score for c in chunks_out if c.reranker_score is not None]
-            reranker_top1 = max(reranker_scores) if reranker_scores else None
-            features_dict = extract_features(req.query)
-            write_shadow(
-                request_id=ctx_request_id,
-                org_id=req.org_id,
-                embedding=list(query_vector) if query_vector is not None else None,
-                features=features_dict,
-                band=confidence_band,
-                chunk_ids=chunk_ids_for_shadow,
-                reranker_top1=reranker_top1,
-            )
-            telemetry_level_decisions_total.labels(
-                level=req.telemetry_level, decision="shadow_inserted"
-            ).inc()
-        if req.telemetry_level == "full":
+    # the entire pipeline. If the contextvar is missing (e.g. middleware
+    # didn't run, or upstream dropped a malformed X-Request-ID), generate
+    # a server-side UUID4 so every retrieve call still produces a row —
+    # missing rows would silently degrade observability and bias the
+    # dashboards' decision counters.
+    if effective_level in ("shadow", "full"):
+        request_id_for_shadow = structlog.contextvars.get_contextvars().get("request_id") or str(
+            uuid.uuid4()
+        )
+        chunk_ids_for_shadow = [c.chunk_id for c in chunks_out]
+        reranker_scores = [c.reranker_score for c in chunks_out if c.reranker_score is not None]
+        reranker_top1 = max(reranker_scores) if reranker_scores else None
+        features_dict = extract_features(req.query)
+        write_shadow(
+            request_id=request_id_for_shadow,
+            org_id=req.org_id,
+            embedding=list(query_vector) if query_vector is not None else None,
+            features=features_dict,
+            band=confidence_band,
+            chunk_ids=chunk_ids_for_shadow,
+            reranker_top1=reranker_top1,
+        )
+        telemetry_level_decisions_total.labels(
+            level=effective_level, decision="shadow_inserted"
+        ).inc()
+        if effective_level == "full":
             telemetry_level_decisions_total.labels(level="full", decision="full_logged").inc()
 
     logger.info(

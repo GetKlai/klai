@@ -37,11 +37,17 @@ def _format_vector(values: list[float] | None) -> str | None:
     pgvector accepts either binary or text input; we use text so the
     asyncpg driver doesn't need a custom codec. Returns None for
     a missing embedding (still allowed by the schema's nullable column).
+
+    Precision: ``.9g`` preserves the full float32 mantissa (~7-8
+    significant digits with safety margin) so BGE-M3 embeddings round-
+    trip through text serialization without measurable cosine-similarity
+    drift. ``.7g`` was on the edge and could degrade nearest-neighbour
+    accuracy in cluster queries.
     """
     if values is None:
         return None
     # Use repr-friendly fast path; pgvector parses scientific notation.
-    return "[" + ",".join(format(v, ".7g") for v in values) + "]"
+    return "[" + ",".join(format(v, ".9g") for v in values) + "]"
 
 
 async def _do_insert(
