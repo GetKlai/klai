@@ -97,5 +97,9 @@ def test_format_vector_handles_none_and_list() -> None:
 
     assert _format_vector(None) is None
     assert _format_vector([0.1, 0.2]) == "[0.1,0.2]"
-    # Verify the format string strips trailing zeros (more compact wire size).
+    # ``.9g`` strips trailing zeros for compact wire size.
     assert _format_vector([1.0, 2.5e-3]) == "[1,0.0025]"
+    # ``.9g`` preserves the full float32 mantissa: a 7-significant-digit
+    # value round-trips byte-for-byte. ``.7g`` (the previous setting)
+    # would have truncated to "0.123456" and dropped the trailing 8.
+    assert _format_vector([0.12345678]) == "[0.12345678]"
