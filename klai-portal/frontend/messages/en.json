@@ -1656,5 +1656,17 @@
   "integrations_revoke": "Disconnect",
   "integrations_confirm_revoke": "Yes, disconnect",
   "integrations_revoking": "Working...",
-  "integrations_cancel": "Cancel"
+  "integrations_cancel": "Cancel",
+  "admin_settings_telemetry_title": "Privacy & telemetry",
+  "admin_settings_telemetry_description": "Choose what Klai records about the queries your users submit. The default ('Shadow') is the privacy-friendly option and is recommended for every tenant except during active debugging.",
+  "admin_settings_telemetry_label": "Telemetry level",
+  "admin_settings_telemetry_current": "Current setting: {level}",
+  "admin_settings_telemetry_off_name": "Off",
+  "admin_settings_telemetry_off_hint": "Klai stores nothing at all about your users' queries. We cannot do quality monitoring and cannot help during incidents. Recommended only when you need strict data minimisation. Thumbs-up / thumbs-down feedback keeps working — that lives on different data.",
+  "admin_settings_telemetry_shadow_name": "Shadow (default)",
+  "admin_settings_telemetry_shadow_hint": "Klai stores an anonymised fingerprint (numerical vector + length/language statistics) of each query, for 7 days. Literal text is never retained. Enough for quality monitoring and recurring-issue detection; not enough to see what any one user asked. This is the default setting.",
+  "admin_settings_telemetry_full_name": "Full",
+  "admin_settings_telemetry_full_hint": "Klai stores the literal user queries in operational logs for 7 days. Only enable when you or Klai are actively investigating a specific issue. Don't forget to switch back to Shadow — after 14 days there will be a reminder.",
+  "admin_settings_telemetry_disabled_for_non_admin": "Only organisation admins can change this setting.",
+  "admin_settings_telemetry_privacy_link": "Read more about the privacy modes in our privacy policy"
 }

@@ -15,12 +15,15 @@ export const Route = createFileRoute('/admin/settings')({
   component: AdminSettingsPage,
 })
 
+type TelemetryLevel = 'off' | 'shadow' | 'full'
+
 type OrgSettings = {
   name: string
   default_language: 'nl' | 'en'
   mfa_policy: 'optional' | 'recommended' | 'required'
   auto_accept_same_domain: boolean
   primary_domain: string | null
+  telemetry_level: TelemetryLevel
 }
 
 function AdminSettingsPage() {
@@ -70,6 +73,37 @@ function AdminSettingsPage() {
       setSelectedMfa(settings.mfa_policy ?? 'optional')
     }
   }, [settings])
+
+  // SPEC-PRIVACY-QUERY-SHADOW-001 REQ-15: tenant self-service telemetry-level.
+  // Posts to a dedicated tenant-scoped endpoint (different surface from the
+  // operator-side /internal/admin/orgs/{org}/telemetry-level). The backend
+  // shares the service-layer between both endpoints.
+  const [selectedTelemetry, setSelectedTelemetry] = useState<TelemetryLevel>('shadow')
+  const [savedTelemetry, setSavedTelemetry] = useState(false)
+
+  useEffect(() => {
+    if (settings?.telemetry_level) {
+      setSelectedTelemetry(settings.telemetry_level)
+    }
+  }, [settings?.telemetry_level])
+
+  const telemetryMutation = useMutation({
+    mutationFn: async (level: TelemetryLevel) =>
+      apiFetch<{ telemetry_level: TelemetryLevel }>(`/api/orgs/me/telemetry-level`, {
+        method: 'POST',
+        body: JSON.stringify({ level }),
+      }),
+    onSuccess: (data) => {
+      adminLogger.info('Telemetry level changed', { telemetry_level: data.telemetry_level })
+      // Mirror the saved state into the existing /api/admin/settings cache
+      // so the read-only "Current setting" line updates without a refetch.
+      queryClient.setQueryData(['admin-settings'], (prev: OrgSettings | undefined) =>
+        prev ? { ...prev, telemetry_level: data.telemetry_level } : prev,
+      )
+      setSavedTelemetry(true)
+      setTimeout(() => setSavedTelemetry(false), 2500)
+    },
+  })
 
   // SPEC-PORTAL-PROFILES-001 P3.6: Add-on toggles.
   // UX pattern: ticking a checkbox stages the change; user clicks Save to commit.
@@ -290,6 +324,77 @@ function AdminSettingsPage() {
           <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_settings_placeholder()}</p>
         </CardContent>
       </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>{m.admin_settings_telemetry_title()}</CardTitle>
+          <CardDescription>
+            {m.admin_settings_telemetry_description()}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {isLoading ? (
+            <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_users_loading()}</p>
+          ) : error ? (
+            <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_fetch()}</p>
+          ) : (
+            <>
+              <p className="text-sm text-[var(--color-muted-foreground)]">
+                {m.admin_settings_telemetry_current({
+                  level:
+                    settings?.telemetry_level === 'off'
+                      ? m.admin_settings_telemetry_off_name()
+                      : settings?.telemetry_level === 'full'
+                        ? m.admin_settings_telemetry_full_name()
+                        : m.admin_settings_telemetry_shadow_name(),
+                })}
+              </p>
+              <div className="space-y-1.5">
+                <Label htmlFor="settings-telemetry-level">
+                  {m.admin_settings_telemetry_label()}
+                </Label>
+                <Select
+                  id="settings-telemetry-level"
+                  value={selectedTelemetry}
+                  onChange={(e) => setSelectedTelemetry(e.target.value as TelemetryLevel)}
+                  className="max-w-xs"
+                >
+                  <option value="off">{m.admin_settings_telemetry_off_name()}</option>
+                  <option value="shadow">{m.admin_settings_telemetry_shadow_name()}</option>
+                  <option value="full">{m.admin_settings_telemetry_full_name()}</option>
+                </Select>
+                <p className="text-xs text-[var(--color-muted-foreground)]">
+                  {selectedTelemetry === 'off' && m.admin_settings_telemetry_off_hint()}
+                  {selectedTelemetry === 'shadow' && m.admin_settings_telemetry_shadow_hint()}
+                  {selectedTelemetry === 'full' && m.admin_settings_telemetry_full_hint()}
+                </p>
+              </div>
+              {telemetryMutation.error && (
+                <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_save()}</p>
+              )}
+              <Button
+                onClick={() => telemetryMutation.mutate(selectedTelemetry)}
+                disabled={
+                  telemetryMutation.isPending ||
+                  savedTelemetry ||
+                  selectedTelemetry === settings?.telemetry_level
+                }
+              >
+                {savedTelemetry
+                  ? m.admin_settings_saved()
+                  : telemetryMutation.isPending
+                    ? m.admin_settings_saving()
+                    : m.admin_settings_save()}
+              </Button>
+              <p className="text-xs text-[var(--color-muted-foreground)]">
+                <a href="/privacy" className="underline">
+                  {m.admin_settings_telemetry_privacy_link()}
+                </a>
+              </p>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
           <CardTitle>{m.admin_settings_addons_title()}</CardTitle>
