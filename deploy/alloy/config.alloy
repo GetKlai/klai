@@ -57,6 +57,24 @@ loki.process "extract_level" {
     values = { level = "" }
   }
 
+  // SPEC-PRIVACY-QUERY-SHADOW-001 REQ-10: extract retention_class so
+  // VictoriaLogs can route metadata-only events (default 30d retention)
+  // and content events (raw query text under 'full' mode, 7d retention)
+  // to different streams. The application emits "metadata" or "content"
+  // on retrieval_decision_record + query_rewrite events. Other events
+  // are unaffected — the label simply isn't set, so they fall through
+  // to the default retention class.
+  //
+  // Operator runbook (deploy/victorialogs/retention.md, Unit 8) wires
+  // the per-stream retention on the VL side via -retention.streamConfig
+  // once this label is live in production logs.
+  stage.json {
+    expressions = { retention_class = "retention_class" }
+  }
+  stage.labels {
+    values = { retention_class = "" }
+  }
+
   forward_to = [loki.write.victorialogs.receiver]
 }
 

@@ -48,6 +48,7 @@ from app.middleware.tenant_host import KlaiTenantHostMiddleware
 from app.services.bot_poller import poll_loop
 from app.services.events import _pending as _event_tasks
 from app.services.recording_cleanup import recording_cleanup_loop
+from app.services.telemetry_purge import telemetry_purge_loop
 from app.services.vexa import vexa
 from app.services.zitadel import zitadel
 
@@ -182,6 +183,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     cleanup_task = asyncio.create_task(recording_cleanup_loop())
     logger.info("Recording cleanup loop started")
 
+    # SPEC-PRIVACY-QUERY-SHADOW-001 Unit 7: 7-day TTL purge for
+    # telemetry.query_shadow + portal_retrieval_gaps.
+    telemetry_purge_task = asyncio.create_task(telemetry_purge_loop())
+    logger.info("Telemetry purge loop started")
+
     imap_task: asyncio.Task[None] | None = None
     if settings.imap_host and settings.imap_username:
         from app.services.imap_listener import start_imap_listener
@@ -195,6 +201,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     poller_task.cancel()
     cleanup_task.cancel()
+    telemetry_purge_task.cancel()
     if imap_task is not None:
         imap_task.cancel()
     if _event_tasks:
