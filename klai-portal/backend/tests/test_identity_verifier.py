@@ -5,12 +5,18 @@ in test_internal_identity_verify.py. JWT validation is mocked via a fake
 ``JwksResolver``; DB is mocked via ``AsyncMock`` on the ``execute`` method.
 
 SPEC-SEC-IDENTITY-ASSERT-001 REQ-1 acceptance criteria coverage:
-- AC-5a: verified JWT + matching claims → allow with evidence='jwt'
+- AC-5a: verified JWT + matching sub + active membership → allow with evidence='jwt'
 - AC-5b: JWT sub != claimed_user_id → deny with reason='jwt_identity_mismatch'
 - AC-5c: bearer_jwt=None + active membership → allow with evidence='membership'
 - AC-5d: bearer_jwt=None + no membership → deny with reason='no_membership'
 - REQ-1.2: unknown caller_service → deny with reason='unknown_caller_service'
 - REQ-1.8: invalid JWT signature → deny with reason='invalid_jwt' (no fallthrough)
+
+SPEC-SEC-IDENTITY-ASSERT-002 (membership-authoritative identity):
+- A1: JWT lacks resourceowner claim + matching sub + active membership → allow
+- A6: JWT carries an UNMATCHING resourceowner value + matching sub + membership → allow (claim ignored)
+- A9: Multi-org user — same JWT can authorise on either of two orgs they belong to
+- A2: JWT valid sub + claimed_org_id without active membership → deny no_membership
 
 REQ-2.6 (Phase B):
 - claimed_org_slug provided + matches canonical → allow includes canonical org_slug
@@ -184,31 +190,6 @@ class TestJwtPath:
         assert decision.reason == "jwt_identity_mismatch"
         assert decision.evidence is None
 
-    async def test_deny_when_jwt_resourceowner_does_not_match_claimed_org(
-        self, mock_db: AsyncMock, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(
-            "app.services.identity_verifier.jwt.decode",
-            lambda *_args, **_kwargs: {
-                "sub": "u-1",
-                "iss": "https://zitadel.example.com",
-                "exp": 9999999999,
-                "urn:zitadel:iam:user:resourceowner:id": "o-1",
-            },
-        )
-
-        decision = await verify_identity_claim(
-            db=mock_db,
-            jwks_resolver=_FakeJwksResolver(),
-            caller_service="scribe",
-            claimed_user_id="u-1",
-            claimed_org_id="o-2",  # cross-org claim
-            bearer_jwt="any.jwt.value",
-        )
-
-        assert decision.verified is False
-        assert decision.reason == "jwt_identity_mismatch"
-
     async def test_deny_with_invalid_jwt_does_not_fall_back_to_membership(
         self, mock_db: AsyncMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -234,17 +215,16 @@ class TestJwtPath:
         assert decision.reason == "invalid_jwt"
         mock_db.execute.assert_not_called()
 
-    async def test_deny_when_jwt_claims_have_wrong_types(
-        self, mock_db: AsyncMock, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # Defensive: malformed JWT with sub/resourceowner not strings.
+    async def test_deny_when_jwt_sub_has_wrong_type(self, mock_db: AsyncMock, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Defensive: malformed JWT with sub not a string.
+        # SPEC-SEC-IDENTITY-ASSERT-002 REQ-1.2: resourceowner is no longer
+        # type-checked or read; only sub matters for invalid_jwt.
         monkeypatch.setattr(
             "app.services.identity_verifier.jwt.decode",
             lambda *_args, **_kwargs: {
                 "sub": 12345,  # int, not str
                 "iss": "https://zitadel.example.com",
                 "exp": 9999999999,
-                "urn:zitadel:iam:user:resourceowner:id": ["o-1"],  # list, not str
             },
         )
 
@@ -259,6 +239,159 @@ class TestJwtPath:
 
         assert decision.verified is False
         assert decision.reason == "invalid_jwt"
+        # No DB call should have happened — invalid JWT short-circuits.
+        mock_db.execute.assert_not_called()
+
+    async def test_allow_when_jwt_lacks_resourceowner_claim(
+        self, mock_db: AsyncMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # SPEC-SEC-IDENTITY-ASSERT-002 A1: a JWT that does NOT carry the
+        # urn:zitadel:iam:user:resourceowner:id claim (the actual production
+        # state for Klai's BFF — scope set never requested it) MUST still
+        # allow when sub matches and membership exists.
+        monkeypatch.setattr(
+            "app.services.identity_verifier.jwt.decode",
+            lambda *_args, **_kwargs: {
+                "sub": "u-1",
+                "iss": "https://zitadel.example.com",
+                "exp": 9999999999,
+                # NO urn:zitadel:iam:user:resourceowner:id key.
+            },
+        )
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none = MagicMock(return_value="acme")
+        mock_db.execute.return_value = mock_result
+
+        decision = await verify_identity_claim(
+            db=mock_db,
+            jwks_resolver=_FakeJwksResolver(),
+            caller_service="scribe",
+            claimed_user_id="u-1",
+            claimed_org_id="o-1",
+            bearer_jwt="any.jwt.value",
+        )
+
+        assert decision.verified is True
+        assert decision.evidence == "jwt"
+        assert decision.user_id == "u-1"
+        assert decision.org_id == "o-1"
+        assert decision.org_slug == "acme"
+
+    async def test_jwt_resourceowner_value_is_ignored_when_present(
+        self, mock_db: AsyncMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # SPEC-SEC-IDENTITY-ASSERT-002 A6: even when a JWT happens to carry
+        # the resourceowner claim with a value DIFFERENT from claimed_org_id,
+        # the verifier must IGNORE it. Authoritative org-resolution is
+        # portal_users membership, never the JWT-side claim.
+        monkeypatch.setattr(
+            "app.services.identity_verifier.jwt.decode",
+            lambda *_args, **_kwargs: {
+                "sub": "u-1",
+                "iss": "https://zitadel.example.com",
+                "exp": 9999999999,
+                # Claim present but with a value that does NOT match claimed_org_id.
+                # Under v1 SPEC this would have triggered jwt_identity_mismatch.
+                # Under v2 SPEC the claim is ignored entirely.
+                "urn:zitadel:iam:user:resourceowner:id": "some-other-org",
+            },
+        )
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none = MagicMock(return_value="acme")
+        mock_db.execute.return_value = mock_result
+
+        decision = await verify_identity_claim(
+            db=mock_db,
+            jwks_resolver=_FakeJwksResolver(),
+            caller_service="scribe",
+            claimed_user_id="u-1",
+            claimed_org_id="o-1",  # NOT equal to JWT's resourceowner
+            bearer_jwt="any.jwt.value",
+        )
+
+        assert decision.verified is True
+        assert decision.evidence == "jwt"
+        assert decision.org_slug == "acme"
+
+    async def test_multi_org_user_can_authorise_on_either_membership(
+        self, mock_db: AsyncMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # SPEC-SEC-IDENTITY-ASSERT-002 A9: a user with active memberships in
+        # multiple orgs (data-model already supports this via portal_users
+        # row-per-org) MUST be authorisable on each of those orgs with the
+        # same JWT. The v1 SPEC's resourceowner equality blocked this for
+        # non-primary orgs.
+        monkeypatch.setattr(
+            "app.services.identity_verifier.jwt.decode",
+            lambda *_args, **_kwargs: {
+                "sub": "u-1",
+                "iss": "https://zitadel.example.com",
+                "exp": 9999999999,
+            },
+        )
+        # First call: claim org-A → membership returns "voys"
+        # Second call: claim org-B → membership returns "acme"
+        mock_result_voys = MagicMock()
+        mock_result_voys.scalar_one_or_none = MagicMock(return_value="voys")
+        mock_result_acme = MagicMock()
+        mock_result_acme.scalar_one_or_none = MagicMock(return_value="acme")
+        mock_db.execute.side_effect = [mock_result_voys, mock_result_acme]
+
+        first = await verify_identity_claim(
+            db=mock_db,
+            jwks_resolver=_FakeJwksResolver(),
+            caller_service="scribe",
+            claimed_user_id="u-1",
+            claimed_org_id="org-A",
+            bearer_jwt="any.jwt.value",
+        )
+        second = await verify_identity_claim(
+            db=mock_db,
+            jwks_resolver=_FakeJwksResolver(),
+            caller_service="scribe",
+            claimed_user_id="u-1",
+            claimed_org_id="org-B",
+            bearer_jwt="any.jwt.value",
+        )
+
+        assert first.verified is True
+        assert first.org_id == "org-A"
+        assert first.org_slug == "voys"
+        assert second.verified is True
+        assert second.org_id == "org-B"
+        assert second.org_slug == "acme"
+
+    async def test_deny_when_jwt_valid_but_no_active_membership(
+        self, mock_db: AsyncMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # SPEC-SEC-IDENTITY-ASSERT-002 A2: JWT signature valid, sub matches,
+        # but the user has NO active portal_users row for the claimed org →
+        # deny with reason='no_membership'. (Replaces the v1 SPEC's
+        # 'jwt_identity_mismatch' for cross-org JWTs — same outcome class,
+        # but the membership lookup is now the authority.)
+        monkeypatch.setattr(
+            "app.services.identity_verifier.jwt.decode",
+            lambda *_args, **_kwargs: {
+                "sub": "u-1",
+                "iss": "https://zitadel.example.com",
+                "exp": 9999999999,
+            },
+        )
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none = MagicMock(return_value=None)
+        mock_db.execute.return_value = mock_result
+
+        decision = await verify_identity_claim(
+            db=mock_db,
+            jwks_resolver=_FakeJwksResolver(),
+            caller_service="scribe",
+            claimed_user_id="u-1",
+            claimed_org_id="o-2",  # user has no membership here
+            bearer_jwt="any.jwt.value",
+        )
+
+        assert decision.verified is False
+        assert decision.reason == "no_membership"
 
 
 class TestMembershipPath:
