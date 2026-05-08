@@ -324,14 +324,18 @@ async def update_user_role(
     # @MX:ANCHOR SPEC-PORTAL-ADMIN-UI-001 REQ-2 — min-1-admin invariant.
     # @MX:REASON Without serialised role changes two concurrent admin->X
     # patches that both see admin_count=2 can each succeed and leave the
-    # workspace with zero admins.
-    await _lock_org_for_role_change(db, perms.org_id)
+    # workspace with zero admins. We need both the lock AND the org's
+    # current plan; ``_lock_org_for_role_change`` only locks by id, so
+    # we replicate the FOR UPDATE query here to read ``plan`` from the
+    # locked row.
+    locked_org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == perms.org_id).with_for_update())
+    locked_org = locked_org_result.scalar_one()
 
-    # REQ-12 / REQ-13: plan ceiling on assignable role. ``perms.plan`` is
-    # the plan resolved by ``get_caller_at_least`` for this transaction;
-    # the row was locked by ``_lock_org_for_role_change`` so a concurrent
-    # plan downgrade cannot race the role assignment.
-    assert_role_allowed_for_plan(body.role, perms.plan)
+    # REQ-12 / REQ-13: plan ceiling on assignable role. Read ``plan`` from
+    # the locked row, NOT ``perms.plan`` — the latter is a snapshot from
+    # request start and a concurrent platform-admin plan downgrade between
+    # request start and now would let an out-of-range role through.
+    assert_role_allowed_for_plan(body.role, locked_org.plan)
 
     result = await db.execute(
         select(PortalUser).where(
@@ -567,11 +571,17 @@ async def promote_admin(
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     """C6.1: Promote an active member to admin. No max-admin limit."""
-    # REQ-12: plan ceiling. ``admin`` is in every plan's allow-set so this is
-    # a defensive guard — but keeping it makes the policy auditable in one
-    # place: any plan that ever drops "admin" from its allow-set will reject
-    # promotion immediately instead of silently succeeding.
-    assert_role_allowed_for_plan("admin", perms.plan)
+    # Lock the org row first so the plan we validate against can't change
+    # mid-request. ``perms.plan`` is a snapshot from request start; reading
+    # from the locked row mirrors invite_user / update_user_role.
+    locked_org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == perms.org_id).with_for_update())
+    locked_org = locked_org_result.scalar_one()
+
+    # REQ-12: plan ceiling. ``admin`` is in every plan's allow-set so this
+    # is a defensive guard — but keeping it makes the policy auditable in
+    # one place: any plan that ever drops "admin" from its allow-set will
+    # reject promotion immediately instead of silently succeeding.
+    assert_role_allowed_for_plan("admin", locked_org.plan)
 
     result = await db.execute(
         select(PortalUser).where(

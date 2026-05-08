@@ -320,23 +320,69 @@ class TestPlanCeilingOnRoleAssignment:
 
     @pytest.mark.asyncio
     async def test_update_user_role_rejects_company_on_free(self):
+        """REQ-12: free plan does not allow ``company`` — even if ``perms.plan``
+        from the request-start snapshot says otherwise (the locked org row
+        is the authoritative source of truth)."""
         from app.api.admin.users import RoleUpdateRequest, update_user_role
 
+        # Locked org row from the FOR UPDATE select reports plan='free'.
+        locked_org = MagicMock()
+        locked_org.plan = "free"
         mock_db = AsyncMock()
-        body = RoleUpdateRequest(role="company")
-        perms = make_perms(role="admin", user_id="admin-1", org_id=42, plan="free")
+        locked_result = MagicMock()
+        locked_result.scalar_one.return_value = locked_org
+        mock_db.execute.return_value = locked_result
 
-        with patch(
-            "app.api.admin.users._lock_org_for_role_change",
-            new=AsyncMock(),
-        ):
-            with pytest.raises(HTTPException) as exc:
-                await update_user_role(zitadel_user_id="zit-2", body=body, perms=perms, db=mock_db)
+        body = RoleUpdateRequest(role="company")
+        # perms.plan deliberately MISMATCHES locked_org.plan to prove the
+        # endpoint reads the locked row, not the snapshot.
+        perms = make_perms(role="admin", user_id="admin-1", org_id=42, plan="complete")
+
+        with pytest.raises(HTTPException) as exc:
+            await update_user_role(zitadel_user_id="zit-2", body=body, perms=perms, db=mock_db)
 
         assert exc.value.status_code == 403
         assert exc.value.detail["error_code"] == "role_not_allowed_for_plan"
         assert exc.value.detail["role"] == "company"
+        # CRITICAL: must be 'free' (locked row), not 'complete' (perms snapshot).
         assert exc.value.detail["plan"] == "free"
+
+    @pytest.mark.asyncio
+    async def test_update_user_role_uses_locked_plan_not_perms_snapshot(self):
+        """Regression guard: ``update_user_role`` MUST read ``plan`` from the
+        FOR UPDATE-locked org row, not from ``perms.plan`` (which is a
+        snapshot from request start that a concurrent platform-admin
+        downgrade could have invalidated).
+
+        Reverse case of the test above: locked plan permits the role even
+        though ``perms.plan`` (snapshot) would forbid it. Endpoint must
+        accept — proving it ignores the snapshot."""
+        from app.api.admin.users import RoleUpdateRequest, update_user_role
+
+        # Locked plan = complete (allows kb_manager).
+        locked_org = MagicMock()
+        locked_org.plan = "complete"
+        target_user = MagicMock()
+        target_user.role = "company"
+        target_user.zitadel_user_id = "zit-2"
+        mock_db = AsyncMock()
+        # Two SELECTs: locked org, then PortalUser lookup.
+        locked_result = MagicMock()
+        locked_result.scalar_one.return_value = locked_org
+        user_result = MagicMock()
+        user_result.scalar_one_or_none.return_value = target_user
+        mock_db.execute = AsyncMock(side_effect=[locked_result, user_result])
+        mock_db.commit = AsyncMock()
+
+        body = RoleUpdateRequest(role="kb_manager")
+        # perms.plan = free FORBIDS kb_manager — the test fails if the
+        # endpoint reads from perms.
+        perms = make_perms(role="admin", user_id="admin-1", org_id=42, plan="free")
+
+        await update_user_role(zitadel_user_id="zit-2", body=body, perms=perms, db=mock_db)
+
+        # The role assignment landed (no exception raised + target.role mutated).
+        assert target_user.role == "kb_manager"
 
     @pytest.mark.asyncio
     async def test_promote_admin_passes_on_every_plan(self):
