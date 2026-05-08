@@ -82,14 +82,25 @@ def _build_app(
     audience: str,
     introspect_return: dict[str, Any] | None,
     monkeypatch: pytest.MonkeyPatch,
+    *,
+    asserter_org_id: str = "org-abc",
+    asserter_denies: bool = False,
 ) -> TestClient:
-    """Return a TestClient with AuthMiddleware configured for the given audience."""
+    """Return a TestClient with AuthMiddleware configured for the given audience.
+
+    SPEC-SEC-IDENTITY-ASSERT-003 REQ-2: post-introspect, the middleware
+    calls portal /internal/identity/verify via IdentityAsserter. Tests
+    receive a stub asserter that returns allow with ``asserter_org_id``
+    (or deny when ``asserter_denies=True``).
+    """
     settings = SimpleNamespace(
         zitadel_introspection_url="https://example.test/oauth/v2/introspect",
         zitadel_client_id="cid",
         zitadel_client_secret="csecret",
         portal_caller_secret="",
         zitadel_api_audience=audience,
+        portal_api_url="http://portal-api.test:8100",
+        portal_internal_secret="test-internal-secret",  # noqa: S106
     )
     app = FastAPI()
 
@@ -99,6 +110,27 @@ def _build_app(
 
     app.add_middleware(AuthMiddleware, settings=settings)
     monkeypatch.setattr(AuthMiddleware, "_introspect", _AsyncIntrospectStub(introspect_return))
+
+    # SPEC-003 REQ-2.8: stub the IdentityAsserter so tests don't reach a
+    # real portal-api. Reset the module-level singleton on every build so
+    # one test's stub doesn't leak into the next.
+    from klai_identity_assert import VerifyResult
+
+    from app.middleware import auth as auth_module
+
+    class _StubAsserter:
+        async def verify(self, **_kwargs: Any) -> VerifyResult:
+            if asserter_denies:
+                return VerifyResult.deny("no_membership")
+            return VerifyResult.allow(
+                user_id="test-user-sub",
+                org_id=asserter_org_id,
+                org_slug="test-slug",
+                evidence="membership",
+            )
+
+    monkeypatch.setattr(auth_module, "_asserter", None)
+    monkeypatch.setattr(auth_module, "_get_asserter", lambda _settings: _StubAsserter())
     return TestClient(app)
 
 
@@ -206,11 +238,12 @@ class TestAudienceMatchAccepted:
             introspect_return={
                 "active": True,
                 "aud": "klai-connector",
+                "sub": "test-user-sub",
                 "urn:zitadel:iam:user:resourceowner:id": "org-abc",
             },
             monkeypatch=monkeypatch,
         )
-        resp = client.get("/resource", headers={"Authorization": "Bearer valid-token"})
+        resp = client.get("/resource", headers={"Authorization": "Bearer valid-token", "X-Org-Id": "org-abc"})
         assert resp.status_code == 200
 
     def test_correct_audience_in_list_accepted(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -220,15 +253,23 @@ class TestAudienceMatchAccepted:
             introspect_return={
                 "active": True,
                 "aud": ["klai-api", "klai-connector"],  # connector present in list
+                "sub": "test-user-sub",
                 "urn:zitadel:iam:user:resourceowner:id": "org-abc",
             },
             monkeypatch=monkeypatch,
         )
-        resp = client.get("/resource", headers={"Authorization": "Bearer list-aud-token"})
+        resp = client.get("/resource", headers={"Authorization": "Bearer list-aud-token", "X-Org-Id": "org-abc"})
         assert resp.status_code == 200
 
     def test_org_id_attached_to_request_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """org_id is extracted from the resourceowner claim after audience pass."""
+        """SPEC-SEC-IDENTITY-ASSERT-003 REQ-2.5: org_id is the
+        portal-resolved value, NOT the JWT resourceowner claim. The
+        introspection result may carry resourceowner but the middleware
+        ignores it; the asserter's response is authoritative."""
+        from klai_identity_assert import VerifyResult
+
+        from app.middleware import auth as auth_module
+
         app = FastAPI()
         settings = SimpleNamespace(
             zitadel_introspection_url="https://example.test/oauth/v2/introspect",
@@ -236,6 +277,8 @@ class TestAudienceMatchAccepted:
             zitadel_client_secret="csecret",
             portal_caller_secret="",
             zitadel_api_audience="klai-connector",
+            portal_api_url="http://portal-api.test:8100",
+            portal_internal_secret="test-internal-secret",  # noqa: S106
         )
 
         @app.get("/resource")
@@ -250,11 +293,26 @@ class TestAudienceMatchAccepted:
                 {
                     "active": True,
                     "aud": "klai-connector",
-                    "urn:zitadel:iam:user:resourceowner:id": "expected-org-id",
+                    "sub": "test-user-sub",
                 }
             ),
         )
+
+        class _StubAsserter:
+            async def verify(self, **_kwargs: Any) -> VerifyResult:
+                return VerifyResult.allow(
+                    user_id="test-user-sub",
+                    org_id="expected-org-id",
+                    org_slug="test-slug",
+                    evidence="membership",
+                )
+
+        monkeypatch.setattr(auth_module, "_asserter", None)
+        monkeypatch.setattr(auth_module, "_get_asserter", lambda _settings: _StubAsserter())
         client = TestClient(app)
-        resp = client.get("/resource", headers={"Authorization": "Bearer good-token"})
+        resp = client.get(
+            "/resource",
+            headers={"Authorization": "Bearer good-token", "X-Org-Id": "expected-org-id"},
+        )
         assert resp.status_code == 200
         assert resp.json()["org_id"] == "expected-org-id"

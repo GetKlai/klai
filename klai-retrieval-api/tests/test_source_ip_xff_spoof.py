@@ -91,13 +91,13 @@ class TestRateLimitKeyDerivationFromSourceIp:
 
     def test_internal_bucket_key_is_tcp_peer_for_internal_auth(self) -> None:
         req = _make_request(tcp_peer="172.18.0.42", xff="1.2.3.4")
-        auth = AuthContext(method="internal", sub=None, resourceowner=None, role=None)
+        auth = AuthContext(method="internal", sub=None, role=None)
         assert _rate_limit_key(auth, req) == "retrieval:rl:internal:172.18.0.42"
 
     def test_internal_bucket_ignores_spoofed_xff(self) -> None:
         """Two requests from the same TCP peer with different forged XFF values
         MUST map to the same bucket — otherwise the rate-limit is bypassable."""
-        auth = AuthContext(method="internal", sub=None, resourceowner=None, role=None)
+        auth = AuthContext(method="internal", sub=None, role=None)
         req1 = _make_request(tcp_peer="172.18.0.42", xff="1.2.3.4")
         req2 = _make_request(tcp_peer="172.18.0.42", xff="evil-spoof-attempt")
         assert _rate_limit_key(auth, req1) == _rate_limit_key(auth, req2)
@@ -106,7 +106,7 @@ class TestRateLimitKeyDerivationFromSourceIp:
         """JWT-authenticated requests use a hashed sub for the bucket, independent
         of both TCP peer and XFF. Regression check: the JWT path is unchanged by
         this SPEC."""
-        auth = AuthContext(method="jwt", sub="user-123", resourceowner=None, role=None)
+        auth = AuthContext(method="jwt", sub="user-123", role=None)
         req = _make_request(tcp_peer="172.18.0.42", xff="anything")
         key = _rate_limit_key(auth, req)
         assert key.startswith("retrieval:rl:jwt:")

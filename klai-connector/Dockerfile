@@ -19,6 +19,10 @@ COPY klai-libs/image-storage klai-libs/image-storage
 # SPEC-SEC-INTERNAL-001 B3: klai-log-utils path-dep (sync_engine.error_details
 # sanitiser + portal_client / knowledge_ingest secret guards).
 COPY klai-libs/log-utils klai-libs/log-utils
+# SPEC-SEC-IDENTITY-ASSERT-003 REQ-2: klai-identity-assert path-dep —
+# AuthMiddleware calls portal /internal/identity/verify via this lib
+# instead of reading the JWT resourceowner claim.
+COPY klai-libs/identity-assert klai-libs/identity-assert
 COPY klai-connector/pyproject.toml klai-connector/pyproject.toml
 COPY klai-connector/uv.lock klai-connector/uv.lock
 

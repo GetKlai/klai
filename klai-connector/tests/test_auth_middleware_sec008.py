@@ -43,6 +43,10 @@ def _make_settings(
     makes audience mandatory (Settings validator rejects empty). Middleware
     tests that explicitly test empty audience use the SimpleNamespace bypass
     (they test middleware behavior directly, not the Settings validator).
+
+    SPEC-SEC-IDENTITY-ASSERT-003 REQ-2: portal_api_url + portal_internal_secret
+    are now required because the post-introspect path calls portal
+    /internal/identity/verify via IdentityAsserter.
     """
     return SimpleNamespace(
         zitadel_introspection_url="https://example.test/oauth/v2/introspect",
@@ -50,6 +54,8 @@ def _make_settings(
         zitadel_client_secret="csecret",
         portal_caller_secret=portal_secret,
         zitadel_api_audience=audience,
+        portal_api_url="http://portal-api.test:8100",
+        portal_internal_secret="test-internal-secret",
     )
 
 
@@ -77,7 +83,8 @@ def _build_app(
     introspect_return: dict[str, Any] | None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[TestClient, _Recorder]:
-    """Create a FastAPI app with a class-level stub of ``_introspect``."""
+    """Create a FastAPI app with a class-level stub of ``_introspect`` and
+    a stub IdentityAsserter (SPEC-SEC-IDENTITY-ASSERT-003 REQ-2)."""
     app = FastAPI()
 
     @app.get("/ping")
@@ -89,6 +96,29 @@ def _build_app(
     recorder = _Recorder()
     recorder.return_value = introspect_return
     monkeypatch.setattr(AuthMiddleware, "_introspect", recorder)
+
+    # SPEC-003 REQ-2.8: stub IdentityAsserter to allow with the introspect
+    # response's resourceowner if present (back-compat with existing test
+    # fixtures that put it there) or "test-org" otherwise.
+    from klai_identity_assert import VerifyResult
+
+    org_id_default = "test-org"
+    if isinstance(introspect_return, dict):
+        # Best effort: use whatever org id the test put in the introspect
+        # response so its `request.state.org_id` assertion passes.
+        org_id_default = introspect_return.get("urn:zitadel:iam:user:resourceowner:id") or "test-org"
+
+    class _StubAsserter:
+        async def verify(self, **_kwargs: Any) -> VerifyResult:
+            return VerifyResult.allow(
+                user_id="test-user-sub",
+                org_id=str(org_id_default),
+                org_slug="test-slug",
+                evidence="membership",
+            )
+
+    monkeypatch.setattr(auth_module, "_asserter", None)
+    monkeypatch.setattr(auth_module, "_get_asserter", lambda _settings: _StubAsserter())
 
     client = TestClient(app)
     return client, recorder
@@ -174,11 +204,12 @@ class TestPortalBypass:
             introspect_return={
                 "active": True,
                 "aud": "klai-connector",
+                "sub": "test-user-sub",
                 "urn:zitadel:iam:user:resourceowner:id": "org-123",
             },
             monkeypatch=monkeypatch,
         )
-        resp = client.get("/ping", headers={"Authorization": "Bearer some-other-token"})
+        resp = client.get("/ping", headers={"Authorization": "Bearer some-other-token", "X-Org-Id": "org-123"})
         assert resp.status_code == 200
         assert recorder.calls == 1
 
@@ -200,11 +231,12 @@ class TestPortalBypass:
             introspect_return={
                 "active": True,
                 "aud": "klai-connector-test",  # matches _make_settings default audience
+                "sub": "test-user-sub",
                 "urn:zitadel:iam:user:resourceowner:id": "org-x",
             },
             monkeypatch=monkeypatch,
         )
-        resp = client.get("/ping", headers={"Authorization": "Bearer anything"})
+        resp = client.get("/ping", headers={"Authorization": "Bearer anything", "X-Org-Id": "org-x"})
         assert resp.status_code == 200
         assert recorder.calls == 1, "empty portal_secret must not short-circuit to bypass"
 
@@ -222,11 +254,12 @@ class TestAudienceVerification:
             introspect_return={
                 "active": True,
                 "aud": "klai-connector",
+                "sub": "test-user-sub",
                 "urn:zitadel:iam:user:resourceowner:id": "org-xyz",
             },
             monkeypatch=monkeypatch,
         )
-        resp = client.get("/ping", headers={"Authorization": "Bearer good-token"})
+        resp = client.get("/ping", headers={"Authorization": "Bearer good-token", "X-Org-Id": "org-xyz"})
         assert resp.status_code == 200
 
     def test_wrong_audience_string_is_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -264,11 +297,12 @@ class TestAudienceVerification:
             introspect_return={
                 "active": True,
                 "aud": ["klai-scribe", "klai-connector"],
+                "sub": "test-user-sub",
                 "urn:zitadel:iam:user:resourceowner:id": "org-xyz",
             },
             monkeypatch=monkeypatch,
         )
-        resp = client.get("/ping", headers={"Authorization": "Bearer ok-list"})
+        resp = client.get("/ping", headers={"Authorization": "Bearer ok-list", "X-Org-Id": "org-xyz"})
         assert resp.status_code == 200
 
     def test_missing_audience_claim_rejected_when_configured(self, monkeypatch: pytest.MonkeyPatch) -> None:
