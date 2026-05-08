@@ -94,3 +94,23 @@ DELETE FROM public.portal_retrieval_gaps
 -- lives in Redis with a 1h TTL (klai-portal/backend/app/services/
 -- retrieval_log.py) — the SPEC's REQ-9 was reinterpreted to gate the
 -- Redis blob's query_resolved field at write time (Unit 6) instead.
+
+-- ─── REQ-14: grafana_reader grants for the privacy dashboard + alerts ─────
+--
+-- The Grafana datasource ``PortalPostgres`` connects as ``grafana_reader``.
+-- Without these grants:
+--   - alert ``privacy_tenant_stuck_in_full`` fails with
+--     "permission denied for table portal_audit_log"
+--   - dashboard panel "Tenants currently in 'full' mode" fails the
+--     same way (it joins portal_orgs against portal_audit_log)
+--   - any future operator query against telemetry.query_shadow via
+--     Grafana's Explore UI hits "permission denied for schema telemetry"
+--
+-- Idempotent: ``GRANT`` on an already-granted privilege is a no-op.
+-- Applied as the klai superuser (post-deploy SQL) because grafana_reader
+-- is created at DB-init time and the post-init grants live alongside
+-- other RLS / role configuration on this same script-set.
+
+GRANT SELECT ON portal_audit_log TO grafana_reader;
+GRANT USAGE ON SCHEMA telemetry TO grafana_reader;
+GRANT SELECT ON telemetry.query_shadow TO grafana_reader;
