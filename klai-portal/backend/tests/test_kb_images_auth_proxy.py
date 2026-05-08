@@ -115,7 +115,15 @@ async def test_unauthenticated_request_rejected(kb_app):
     assert resp.status_code == 401
 
 
-def _mock_get_db():
+class _FakeScalarResult:
+    def __init__(self, value):
+        self._value = value
+
+    def scalar_one_or_none(self):
+        return self._value
+
+
+def _mock_get_db(kb_id=7):
     """Callable that returns an async generator yielding a MagicMock db session.
 
     Mirrors the signature of get_db(): called as get_db(), returns an
@@ -128,6 +136,7 @@ def _mock_get_db():
 
     async def _gen():
         db = MagicMock()
+        db.execute = AsyncMock(return_value=_FakeScalarResult(kb_id))
         db.aclose = AsyncMock()
         yield db
 
@@ -149,7 +158,7 @@ async def test_widget_public_image_works(kb_app):
         org_id=ORG_ID,
         zitadel_org_id="z",
         permissions={"chat": True},
-        kb_access={},
+        kb_access={7: "read"},
         rate_limit_rpm=60,
     )
     kb_app.dependency_overrides[get_optional_session] = lambda: None
@@ -179,7 +188,7 @@ async def test_partner_api_key_image_access(kb_app):
         org_id=ORG_ID,
         zitadel_org_id="z",
         permissions={},
-        kb_access={},
+        kb_access={7: "read"},
         rate_limit_rpm=120,
     )
     kb_app.dependency_overrides[get_optional_session] = lambda: None
@@ -196,6 +205,33 @@ async def test_partner_api_key_image_access(kb_app):
                 headers={"Authorization": "Bearer pk_live_testkey"},
             )
     assert resp.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_partner_api_key_without_kb_access_rejected(kb_app):
+    """Partner/widget callers must have explicit access to the requested KB."""
+    from app.api.partner_dependencies import PartnerAuthContext
+    from app.api.session_deps import get_optional_session
+
+    ctx = PartnerAuthContext(
+        key_id="pk_live_x",
+        org_id=ORG_ID,
+        zitadel_org_id="z",
+        permissions={},
+        kb_access={8: "read"},
+        rate_limit_rpm=120,
+    )
+    kb_app.dependency_overrides[get_optional_session] = lambda: None
+    with (
+        patch("app.api.kb_images.get_partner_key", new=AsyncMock(return_value=ctx)),
+        patch("app.core.database.get_db", new=_mock_get_db(kb_id=7)),
+    ):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=kb_app), base_url="http://test") as client:
+            resp = await client.get(
+                f"/kb-images/{ORG_ID}/{KB_SLUG}/{FILENAME}",
+                headers={"Authorization": "Bearer pk_live_testkey"},
+            )
+    assert resp.status_code == 403
 
 
 @pytest.mark.anyio

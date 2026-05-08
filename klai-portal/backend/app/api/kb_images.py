@@ -31,11 +31,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from minio import Minio
 from minio.error import S3Error
+from sqlalchemy import select
 
 from app.api.partner_dependencies import PartnerAuthContext, get_partner_key
 from app.api.session_deps import get_optional_session
 from app.core.config import settings
 from app.core.session import SessionContext
+from app.models.knowledge_bases import PortalKnowledgeBase
 
 logger = structlog.get_logger()
 
@@ -106,6 +108,7 @@ async def _stream_object(client: Minio, bucket: str, object_key: str) -> AsyncIt
 async def _resolve_caller_org_id(
     request: Request,
     session: SessionContext | None,
+    kb_slug: str,
 ) -> int:
     """Resolve the org_id of the caller from session or partner key.
 
@@ -132,6 +135,20 @@ async def _resolve_caller_org_id(
     db = await db_gen.__anext__()
     try:
         auth_ctx: PartnerAuthContext = await get_partner_key(request, db)
+        kb_result = await db.execute(
+            select(PortalKnowledgeBase.id).where(
+                PortalKnowledgeBase.org_id == auth_ctx.org_id,
+                PortalKnowledgeBase.slug == kb_slug,
+            )
+        )
+        kb_id = kb_result.scalar_one_or_none()
+        if kb_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Image not found",
+            )
+        if kb_id not in auth_ctx.kb_access:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
         return auth_ctx.org_id
     except HTTPException:
         raise
@@ -165,11 +182,12 @@ async def get_kb_image(
     """Auth-proxied KB-image read (SPEC-TI-009 AC-1).
 
     Authorization: session.org_id or partner key org_id must equal path org_id.
+    Partner/widget callers must also have KB access for the path kb_slug.
     Streams from Garage S3 API (private, authenticated).
     Cache-Control: private, max-age=86400.
     """
     # Step 1: Resolve caller identity
-    caller_org_id = await _resolve_caller_org_id(request, session)
+    caller_org_id = await _resolve_caller_org_id(request, session, kb_slug)
 
     # Step 2: Authorize -- caller org MUST match path org_id (AC-5)
     if caller_org_id != org_id:

@@ -23,9 +23,10 @@ from app.api.internal_connectors import finalize_connector_delete
 class _FakeConnector:
     """Minimal stand-in for ``PortalConnector`` in unit tests."""
 
-    def __init__(self, *, id: str, kb_id: int, state: str = "active") -> None:
+    def __init__(self, *, id: str, kb_id: int, org_id: int = 8, state: str = "active") -> None:
         self.id = id
         self.kb_id = kb_id
+        self.org_id = org_id
         self.state = state
 
 
@@ -226,6 +227,8 @@ async def test_finalize_delete_drops_row_when_state_deleting(
     )
     connector = _FakeConnector(id="conn-uuid", kb_id=42, state="deleting")
     db = _FakeDB(fetch_value=connector)
+    set_tenant = AsyncMock()
+    monkeypatch.setattr("app.api.internal_connectors.set_tenant", set_tenant)
 
     result = await finalize_connector_delete(
         connector_id="conn-uuid",
@@ -236,6 +239,7 @@ async def test_finalize_delete_drops_row_when_state_deleting(
     assert result is None  # 204 No Content
     # Two executes: SELECT then DELETE
     assert len(db.executes) == 2
+    set_tenant.assert_awaited_once_with(db, 8)
     assert db.commits == 1
 
 
