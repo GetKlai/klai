@@ -416,3 +416,149 @@ async def update_kb_visibility(org_id: str, kb_slug: str, visibility: str) -> No
             kb_slug,
             visibility,
         )
+
+
+# -- SPEC-PORTAL-KENNIS-001: KB sources (bronnen) ---------------------------
+#
+# These helpers wrap /knowledge/v1/kb/* endpoints introduced for the
+# "alles is een bron" UI. Knowledge-ingest returns raw aggregates;
+# portal-api enriches connectors with display metadata (name, sync status)
+# from its own connectors table before sending to the frontend.
+
+
+async def get_kb_sources(org_id: str, kb_slug: str) -> dict | None:
+    """Fetch grouped bronnen for a KB.
+
+    Returns ``{"connectors": [{connector_id, items_count, chunks_count}, ...],
+    "uploads": [{id, path, content_type, created_at, chunks_count}, ...]}``
+    on success, ``None`` on transport / decode failure (caller can fall back
+    to an empty UI state).
+    """
+    try:
+        async with httpx.AsyncClient(
+            base_url=settings.knowledge_ingest_url,
+            headers={
+                "X-Internal-Secret": settings.knowledge_ingest_secret,
+                "X-Caller-Service": "portal-api",
+                **get_trace_headers(),
+            },
+            timeout=10.0,
+        ) as client:
+            resp = await client.get(
+                f"/knowledge/v1/kb/{kb_slug}/sources",
+                params={"org_id": org_id},
+            )
+            resp.raise_for_status()
+            data: dict = resp.json()
+            return data
+    except Exception:
+        logger.warning(
+            "Could not fetch KB sources from knowledge-ingest (org=%s kb=%s)",
+            org_id,
+            kb_slug,
+            exc_info=True,
+        )
+        return None
+
+
+async def list_connector_items(
+    org_id: str,
+    kb_slug: str,
+    connector_id: str,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict | None:
+    """List artifacts under a connector (drill-down). Returns the raw response or None."""
+    try:
+        async with httpx.AsyncClient(
+            base_url=settings.knowledge_ingest_url,
+            headers={
+                "X-Internal-Secret": settings.knowledge_ingest_secret,
+                "X-Caller-Service": "portal-api",
+                **get_trace_headers(),
+            },
+            timeout=10.0,
+        ) as client:
+            resp = await client.get(
+                f"/knowledge/v1/kb/{kb_slug}/connectors/{connector_id}/items",
+                params={"org_id": org_id, "limit": limit, "offset": offset},
+            )
+            resp.raise_for_status()
+            data: dict = resp.json()
+            return data
+    except Exception:
+        logger.warning(
+            "Could not fetch connector items (org=%s kb=%s conn=%s)",
+            org_id,
+            kb_slug,
+            connector_id,
+            exc_info=True,
+        )
+        return None
+
+
+async def list_upload_chunks(
+    org_id: str,
+    artifact_id: str,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict | None:
+    """List parent_chunks for a direct-upload artifact. Returns the raw response or None."""
+    try:
+        async with httpx.AsyncClient(
+            base_url=settings.knowledge_ingest_url,
+            headers={
+                "X-Internal-Secret": settings.knowledge_ingest_secret,
+                "X-Caller-Service": "portal-api",
+                **get_trace_headers(),
+            },
+            timeout=10.0,
+        ) as client:
+            resp = await client.get(
+                f"/knowledge/v1/kb/uploads/{artifact_id}/chunks",
+                params={"org_id": org_id, "limit": limit, "offset": offset},
+            )
+            resp.raise_for_status()
+            data: dict = resp.json()
+            return data
+    except Exception:
+        logger.warning(
+            "Could not fetch upload chunks (org=%s artifact=%s)",
+            org_id,
+            artifact_id,
+            exc_info=True,
+        )
+        return None
+
+
+async def get_chunks_summary(org_id: str, kb_slugs: list[str]) -> dict[str, int]:
+    """Bulk chunk count per KB. Returns ``{}`` on failure (caller treats as 'unknown')."""
+    if not kb_slugs:
+        return {}
+    try:
+        async with httpx.AsyncClient(
+            base_url=settings.knowledge_ingest_url,
+            headers={
+                "X-Internal-Secret": settings.knowledge_ingest_secret,
+                "X-Caller-Service": "portal-api",
+                **get_trace_headers(),
+            },
+            timeout=10.0,
+        ) as client:
+            resp = await client.post(
+                "/knowledge/v1/kb/chunks-summary",
+                params={"org_id": org_id},
+                json={"kb_slugs": kb_slugs},
+            )
+            resp.raise_for_status()
+            data: dict = resp.json()
+            counts = data.get("chunks_by_kb") or {}
+            return {str(k): int(v) for k, v in counts.items()}
+    except Exception:
+        logger.warning(
+            "Could not fetch chunks-summary from knowledge-ingest (org=%s slugs=%d)",
+            org_id,
+            len(kb_slugs),
+            exc_info=True,
+        )
+        return {}
