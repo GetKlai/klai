@@ -16,14 +16,12 @@ from typing import Literal
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.admin import _get_caller_org, _require_admin
-from app.api.bearer import bearer
 from app.core.database import get_db
+from app.core.permissions import ProfileRole, UserPermissions, get_caller_at_least
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.partner_api_keys import PartnerAPIKey, PartnerApiKeyKbAccess
 from app.services.events import emit_event
@@ -151,15 +149,12 @@ async def _count_kb_access(key_id: str, db: AsyncSession) -> int:
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_api_key(
     body: CreateApiKeyRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> CreateApiKeyResponse:
     """Create a new partner API key."""
-    caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
     kb_ids = [entry.kb_id for entry in body.kb_access]
-    await _validate_kb_ids(kb_ids, org.id, db)
+    await _validate_kb_ids(kb_ids, perms.org_id, db)
 
     # Validate: knowledge_append requires at least one read_write KB
     if body.permissions.get("knowledge_append"):
@@ -174,14 +169,14 @@ async def create_api_key(
 
     key_row = PartnerAPIKey(
         id=key_id,
-        org_id=org.id,
+        org_id=perms.org_id,
         name=body.name,
         description=body.description,
         key_prefix=plaintext_key[:12],
         key_hash=key_hash,
         permissions=body.permissions,
         rate_limit_rpm=body.rate_limit_rpm,
-        created_by=caller_user_id,
+        created_by=perms.user_id,
     )
     db.add(key_row)
 
@@ -200,11 +195,11 @@ async def create_api_key(
 
     emit_event(
         "api_key.created",
-        org_id=org.id,
-        user_id=caller_user_id,
+        org_id=perms.org_id,
+        user_id=perms.user_id,
         properties={"api_key_id": key_id, "name": body.name},
     )
-    logger.info("API key created", api_key_id=key_id, org_id=org.id)
+    logger.info("API key created", api_key_id=key_id, org_id=perms.org_id)
 
     return CreateApiKeyResponse(
         id=key_row.id,
@@ -228,14 +223,11 @@ async def create_api_key(
 
 @router.get("")
 async def list_api_keys(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> list[ApiKeyResponse]:
     """List all API keys for the caller's org."""
-    _caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
-    result = await db.execute(select(PartnerAPIKey).where(PartnerAPIKey.org_id == org.id))
+    result = await db.execute(select(PartnerAPIKey).where(PartnerAPIKey.org_id == perms.org_id))
     keys = result.scalars().all()
     if not keys:
         return []
@@ -262,14 +254,11 @@ async def list_api_keys(
 @router.get("/{key_id}")
 async def get_api_key_detail(
     key_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> ApiKeyDetailResponse:
     """Get full detail for a single API key."""
-    _caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
-    key = await _get_key_or_404(key_id, org.id, db)
+    key = await _get_key_or_404(key_id, perms.org_id, db)
 
     kb_result = await db.execute(
         select(PartnerApiKeyKbAccess, PortalKnowledgeBase)
@@ -310,14 +299,11 @@ async def get_api_key_detail(
 async def update_api_key(
     key_id: str,
     body: UpdateApiKeyRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> ApiKeyResponse:
     """Partial update of an API key."""
-    caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
-    key = await _get_key_or_404(key_id, org.id, db)
+    key = await _get_key_or_404(key_id, perms.org_id, db)
 
     if body.name is not None:
         key.name = body.name
@@ -330,7 +316,7 @@ async def update_api_key(
 
     if body.kb_access is not None:
         kb_ids = [entry.kb_id for entry in body.kb_access]
-        await _validate_kb_ids(kb_ids, org.id, db)
+        await _validate_kb_ids(kb_ids, perms.org_id, db)
 
         await db.execute(delete(PartnerApiKeyKbAccess).where(PartnerApiKeyKbAccess.partner_api_key_id == key.id))
         for entry in body.kb_access:
@@ -348,8 +334,8 @@ async def update_api_key(
 
     emit_event(
         "api_key.updated",
-        org_id=org.id,
-        user_id=caller_user_id,
+        org_id=perms.org_id,
+        user_id=perms.user_id,
         properties={"api_key_id": key.id, "name": key.name},
     )
 
@@ -364,28 +350,25 @@ async def update_api_key(
 @router.delete("/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_api_key(
     key_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Permanently delete an API key and its KB access entries."""
-    caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
-    key = await _get_key_or_404(key_id, org.id, db)
+    key = await _get_key_or_404(key_id, perms.org_id, db)
 
     await db.execute(delete(PartnerApiKeyKbAccess).where(PartnerApiKeyKbAccess.partner_api_key_id == key.id))
     await db.execute(
         delete(PartnerAPIKey).where(
             PartnerAPIKey.id == key.id,
-            PartnerAPIKey.org_id == org.id,
+            PartnerAPIKey.org_id == perms.org_id,
         )
     )
     await db.commit()
 
     emit_event(
         "api_key.deleted",
-        org_id=org.id,
-        user_id=caller_user_id,
+        org_id=perms.org_id,
+        user_id=perms.user_id,
         properties={"api_key_id": key.id, "name": key.name},
     )
-    logger.info("API key deleted", api_key_id=key.id, org_id=org.id)
+    logger.info("API key deleted", api_key_id=key.id, org_id=perms.org_id)

@@ -16,14 +16,12 @@ import uuid
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.admin import _get_caller_org, _require_admin
-from app.api.bearer import bearer
 from app.core.database import get_db
+from app.core.permissions import ProfileRole, UserPermissions, get_caller_at_least
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.widgets import Widget, WidgetKbAccess, generate_widget_id
 from app.services.events import emit_event
@@ -152,14 +150,11 @@ async def _count_kb_access(widget_id: str, db: AsyncSession) -> int:
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_widget(
     body: CreateWidgetRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> WidgetDetailResponse:
     """Create a new chat widget."""
-    caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
-    await _validate_kb_ids(body.kb_ids, org.id, db)
+    await _validate_kb_ids(body.kb_ids, perms.org_id, db)
 
     widget_id_str = generate_widget_id()
     internal_id = str(uuid.uuid4())
@@ -167,13 +162,13 @@ async def create_widget(
 
     widget_row = Widget(
         id=internal_id,
-        org_id=org.id,
+        org_id=perms.org_id,
         name=body.name,
         description=body.description,
         widget_id=widget_id_str,
         widget_config=config,
         rate_limit_rpm=body.rate_limit_rpm,
-        created_by=caller_user_id,
+        created_by=perms.user_id,
     )
     db.add(widget_row)
 
@@ -186,11 +181,11 @@ async def create_widget(
 
     emit_event(
         "widget.created",
-        org_id=org.id,
-        user_id=caller_user_id,
+        org_id=perms.org_id,
+        user_id=perms.user_id,
         properties={"widget_id": internal_id, "widget_public_id": widget_id_str, "name": body.name},
     )
-    logger.info("Widget created", widget_id=internal_id, public_id=widget_id_str, org_id=org.id)
+    logger.info("Widget created", widget_id=internal_id, public_id=widget_id_str, org_id=perms.org_id)
 
     # Build detail response with KB names
     kb_access_list: list[dict] = []
@@ -214,14 +209,11 @@ async def create_widget(
 
 @router.get("")
 async def list_widgets(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> list[WidgetResponse]:
     """List all widgets for the caller's org."""
-    _caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
-    result = await db.execute(select(Widget).where(Widget.org_id == org.id))
+    result = await db.execute(select(Widget).where(Widget.org_id == perms.org_id))
     widgets = result.scalars().all()
     if not widgets:
         return []
@@ -248,14 +240,11 @@ async def list_widgets(
 @router.get("/{widget_id}")
 async def get_widget_detail(
     widget_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> WidgetDetailResponse:
     """Get full detail for a single widget."""
-    _caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
-    widget = await _get_widget_or_404(widget_id, org.id, db)
+    widget = await _get_widget_or_404(widget_id, perms.org_id, db)
 
     kb_result = await db.execute(
         select(WidgetKbAccess, PortalKnowledgeBase)
@@ -284,14 +273,11 @@ async def get_widget_detail(
 async def update_widget(
     widget_id: str,
     body: UpdateWidgetRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> WidgetResponse:
     """Partial update of a widget."""
-    caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
-    widget = await _get_widget_or_404(widget_id, org.id, db)
+    widget = await _get_widget_or_404(widget_id, perms.org_id, db)
 
     if body.name is not None:
         widget.name = body.name
@@ -303,7 +289,7 @@ async def update_widget(
         widget.widget_config = body.widget_config.model_dump()
 
     if body.kb_ids is not None:
-        await _validate_kb_ids(body.kb_ids, org.id, db)
+        await _validate_kb_ids(body.kb_ids, perms.org_id, db)
         await db.execute(delete(WidgetKbAccess).where(WidgetKbAccess.widget_id == widget.id))
         for kb_id in body.kb_ids:
             db.add(WidgetKbAccess(widget_id=widget.id, kb_id=kb_id))
@@ -314,8 +300,8 @@ async def update_widget(
 
     emit_event(
         "widget.updated",
-        org_id=org.id,
-        user_id=caller_user_id,
+        org_id=perms.org_id,
+        user_id=perms.user_id,
         properties={"widget_id": widget.id, "name": widget.name},
     )
 
@@ -330,28 +316,25 @@ async def update_widget(
 @router.delete("/{widget_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_widget(
     widget_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Permanently delete a widget and its KB access entries."""
-    caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
-    widget = await _get_widget_or_404(widget_id, org.id, db)
+    widget = await _get_widget_or_404(widget_id, perms.org_id, db)
 
     await db.execute(delete(WidgetKbAccess).where(WidgetKbAccess.widget_id == widget.id))
     await db.execute(
         delete(Widget).where(
             Widget.id == widget.id,
-            Widget.org_id == org.id,
+            Widget.org_id == perms.org_id,
         )
     )
     await db.commit()
 
     emit_event(
         "widget.deleted",
-        org_id=org.id,
-        user_id=caller_user_id,
+        org_id=perms.org_id,
+        user_id=perms.user_id,
         properties={"widget_id": widget.id, "name": widget.name},
     )
-    logger.info("Widget deleted", widget_id=widget.id, org_id=org.id)
+    logger.info("Widget deleted", widget_id=widget.id, org_id=perms.org_id)
