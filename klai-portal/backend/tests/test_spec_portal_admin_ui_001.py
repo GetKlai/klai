@@ -28,20 +28,41 @@ def _make_user(uid: str = "u1", role: str = "company") -> MagicMock:
     return user
 
 
-def _make_db(target: MagicMock | None, admin_count: int = 2) -> AsyncMock:
-    """AsyncMock DB that returns `target` from every scalar_one_or_none and
-    `admin_count` from scalar() (for the COUNT query). Sufficient because
-    update_user_role only reads two results: the target lookup and the
-    admin-count COUNT. The lock SELECT consumes a result the handler never
-    inspects.
+def _make_db(target: MagicMock | None, admin_count: int = 2, plan: str = "complete") -> AsyncMock:
+    """AsyncMock DB used by ``update_user_role``.
+
+    Returns three things in order across the two ``db.execute`` calls + one
+    ``db.scalar`` call the handler issues:
+
+    1. First ``db.execute`` (locked org SELECT...FOR UPDATE) yields a result
+       whose ``scalar_one()`` is a synthetic ``PortalOrg`` carrying ``plan``.
+       This is the row read by ``assert_role_allowed_for_plan`` after Phase
+       3 fix #2 (plan-from-locked-row, not from ``perms.plan`` snapshot).
+    2. Second ``db.execute`` (user lookup) yields a result whose
+       ``scalar_one_or_none()`` is ``target``.
+    3. ``db.scalar`` (admin-count COUNT) returns ``admin_count``.
+
+    Plan defaults to ``complete`` so the role-ceiling never blocks the
+    test path; specify a more restrictive plan to exercise the gate.
     """
     db = AsyncMock()
     db.add = MagicMock()
 
+    locked_org = MagicMock()
+    locked_org.plan = plan
+
+    locked_result = MagicMock()
+    locked_result.scalar_one.return_value = locked_org
+
+    user_result = MagicMock()
+    user_result.scalar_one_or_none.return_value = target
+
+    # First execute -> locked org. Second + later -> target user lookup.
+    call_count = {"n": 0}
+
     async def _execute(_stmt, *_args, **_kwargs):
-        result = MagicMock()
-        result.scalar_one_or_none.return_value = target
-        return result
+        call_count["n"] += 1
+        return locked_result if call_count["n"] == 1 else user_result
 
     async def _scalar(_stmt, *_args, **_kwargs):
         return admin_count
