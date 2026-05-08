@@ -499,6 +499,7 @@ async def retrieve(
                     source_label=r.get("source_label"),
                     title=r.get("title"),
                     image_urls=payload_list(r, "image_urls") or None,
+                    entity_names=payload_list(r, "entity_names") or None,
                     is_parent_text=is_parent,
                 )
             )
