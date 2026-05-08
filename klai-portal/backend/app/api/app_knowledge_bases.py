@@ -462,27 +462,36 @@ async def knowledge_bases_stats_summary(
     )
     items_by_slug: dict[str, int] = {kb.slug: (count or 0) for kb, count in zip(kbs, item_counts, strict=True)}
 
-    # SPEC-PORTAL-KENNIS-001: chunks per KB (one bulk call to knowledge-ingest).
-    # Empty dict on failure → falls back to 0 in the response, matches the field default.
-    chunks_by_slug = await knowledge_ingest_client.get_chunks_summary(org.zitadel_org_id, kb_slugs)
+    # SPEC-PORTAL-KENNIS-001: chunks + bronnen per KB (one bulk call to
+    # knowledge-ingest). Empty dicts on failure → falls back to 0 / connector
+    # count in the response.
+    _parent_chunks_by_slug, bronnen_by_slug = await knowledge_ingest_client.get_chunks_summary(
+        org.zitadel_org_id, kb_slugs
+    )
+    # NOTE: parent_chunks counts are unreliable for the user-facing "M chunks"
+    # display — the parent_chunks table is only populated for KBs that ran the
+    # citation-enrichment pipeline. The Qdrant point count (`items_by_slug`) is
+    # what the user actually thinks of as "chunks": indexed, retrievable units.
+    del _parent_chunks_by_slug
 
     stats: dict[str, KBStatsSummary] = {}
     for kb in kbs:
         queries, users, active_days = usage_by_slug.get(kb.slug, (0, 0, 0))
         connectors_count = connectors_by_slug.get(kb.slug, 0)
-        # bronnen ≈ connectors + direct uploads. We don't have a uploads-count
-        # endpoint yet (would require another fan-out call); for v1 we treat
-        # `items` (qdrant chunk count) as a proxy for whether any uploads exist.
-        # The KB detail page calls /sources for the precise number.
+        items_count = items_by_slug.get(kb.slug, 0)
+        # bronnen = distinct connector_ids + direct upload artifacts (from
+        # knowledge-ingest). Fall back to portal_connectors count when the
+        # ingest call failed and we have no aggregate data.
+        bronnen_count = bronnen_by_slug.get(kb.slug, connectors_count)
         stats[kb.slug] = KBStatsSummary(
-            items=items_by_slug.get(kb.slug, 0),
+            items=items_count,
             connectors=connectors_count,
-            chunks=chunks_by_slug.get(kb.slug, 0),
+            chunks=items_count,
             gaps_7d=gaps_by_slug.get(kb.slug, 0),
             usage_30d=queries,
             unique_users_30d=users,
             active_days_30d=active_days,
-            bronnen=connectors_count,
+            bronnen=bronnen_count,
         )
     return KBStatsSummaryResponse(stats=stats)
 

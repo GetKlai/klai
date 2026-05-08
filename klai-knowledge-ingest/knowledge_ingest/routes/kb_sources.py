@@ -98,6 +98,7 @@ class ChunksSummaryRequest(BaseModel):
 
 class ChunksSummaryResponse(BaseModel):
     chunks_by_kb: dict[str, int] = Field(default_factory=dict)
+    bronnen_by_kb: dict[str, int] = Field(default_factory=dict)
 
 
 # -- Endpoints --------------------------------------------------------------
@@ -184,7 +185,8 @@ async def chunks_summary(
         raise HTTPException(status_code=400, detail="kb_slugs limited to 200 per call")
     verified_org_id = await assert_caller_identity_tenant_only(request, claimed_org_id=org_id)
     if not body.kb_slugs:
-        return ChunksSummaryResponse(chunks_by_kb={})
+        return ChunksSummaryResponse(chunks_by_kb={}, bronnen_by_kb={})
     async with tenant_scoped_connection(verified_org_id) as conn:
         chunks_by_kb = await pg_store.count_chunks_per_kb(conn, verified_org_id, body.kb_slugs)
-    return ChunksSummaryResponse(chunks_by_kb=chunks_by_kb)
+        bronnen_by_kb = await pg_store.count_sources_per_kb(conn, verified_org_id, body.kb_slugs)
+    return ChunksSummaryResponse(chunks_by_kb=chunks_by_kb, bronnen_by_kb=bronnen_by_kb)
