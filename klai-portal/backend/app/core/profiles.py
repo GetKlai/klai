@@ -65,6 +65,52 @@ PROFILE_LADDER: list[str] = [
 # C2: SPEC-PORTAL-PROFILES-001 Phase 1.6.
 PROFILE_RANK: dict[str, int] = {role: idx for idx, role in enumerate(PROFILE_LADDER)}
 
+
+# SPEC-PORTAL-RBAC-REFACTOR-001 REQ-12 / REQ-13: plan-tier ceiling on which
+# role-strings are assignable to portal users on a given plan. Admin endpoints
+# (``invite_user``, ``update_user_role``, ``promote_admin``) MUST validate the
+# requested role against this map and reject with HTTP 403
+# ``role_not_allowed_for_plan`` when out-of-range.
+#
+# Tiers (ascending):
+#   "free"     -- single-user self-service; no group/admin features
+#   "core"     -- multi-user collaboration; group_manager exists, kb_manager does not
+#   "complete" -- full feature set; kb_manager unlocked (REQ-13)
+#
+# Why a separate map (instead of deriving from ``PLAN_LIMITS``): plan-limits
+# express runtime capabilities of an existing assignment; this map expresses
+# the assignment policy. They share the same plan keys but answer different
+# questions, so keeping them separate avoids accidentally widening the role
+# ladder when a capability is added to a plan.
+ALLOWED_PROFILES_PER_PLAN: dict[str, frozenset[str]] = {
+    "free": frozenset({"personal", "admin"}),
+    "core": frozenset({"personal", "company", "group_manager", "admin"}),
+    "complete": frozenset({"personal", "company", "kb_manager", "group_manager", "admin"}),
+}
+
+
+def assert_role_allowed_for_plan(role: str, plan: str) -> None:
+    """Raise HTTP 403 with ``role_not_allowed_for_plan`` if the requested role
+    is outside the plan's ceiling.
+
+    Unknown plans fall through to the most-restrictive ``free`` set rather
+    than fail-open. This mirrors the convention in ``get_plan_limits``.
+
+    SPEC-PORTAL-RBAC-REFACTOR-001 REQ-12 / REQ-13.
+    """
+    allowed = ALLOWED_PROFILES_PER_PLAN.get(plan, ALLOWED_PROFILES_PER_PLAN["free"])
+    if role not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error_code": "role_not_allowed_for_plan",
+                "role": role,
+                "plan": plan,
+                "allowed": sorted(allowed),
+            },
+        )
+
+
 # Capability strings for SPEC v0.2.0: only capabilities that are actually checked
 # via require_capability() on endpoints.  Direct-role checks (org-KB read filter,
 # append-via-chat, groups manage, billing, settings) are NOT capability strings.

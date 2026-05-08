@@ -138,7 +138,11 @@ async def test_invite_user_grants_portal_role_to_zitadel(
     org = MagicMock()
     org.id = 101
     org.seats = 100  # plenty of headroom; do not trip seat limit
-    org.plan = "free"
+    # The role→Zitadel-grant mapping does not depend on plan; pick the plan
+    # that allows every role in the parametrize matrix so the role-mapping
+    # assertion is the one under test, not the plan ceiling. REQ-12/REQ-13
+    # plan-ceiling behaviour is covered by ``test_admin_users_plan_ceiling.py``.
+    org.plan = "complete"
 
     mock_db = AsyncMock()
     locked_org_result = MagicMock()
@@ -154,7 +158,7 @@ async def test_invite_user_grants_portal_role_to_zitadel(
         preferred_language="nl",
     )
 
-    perms = make_perms(role="admin", user_id="admin-1", org_id=101, plan="free")
+    perms = make_perms(role="admin", user_id="admin-1", org_id=101, plan="complete")
 
     with (
         patch("app.api.admin.users.zitadel") as mock_zitadel,
@@ -214,7 +218,9 @@ async def test_invite_user_creates_personal_kb_before_commit() -> None:
     org = MagicMock()
     org.id = 8  # arbitrary
     org.seats = 100
-    org.plan = "free"
+    # Plan must allow ``kb_manager`` for the role-mapping branch to be the
+    # one under test; REQ-12/REQ-13 plan ceiling is covered separately.
+    org.plan = "complete"
 
     call_order: list[str] = []
 
@@ -239,7 +245,7 @@ async def test_invite_user_creates_personal_kb_before_commit() -> None:
         preferred_language="nl",
     )
 
-    perms = make_perms(role="admin", user_id="admin-1", org_id=8, plan="free")
+    perms = make_perms(role="admin", user_id="admin-1", org_id=8, plan="complete")
 
     with (
         patch("app.api.admin.users.zitadel") as mock_zitadel,

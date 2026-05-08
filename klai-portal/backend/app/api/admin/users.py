@@ -19,6 +19,7 @@ from app.core.permissions import (
     get_caller,
     get_caller_at_least,
 )
+from app.core.profiles import assert_role_allowed_for_plan
 from app.models.groups import PortalGroup, PortalGroupMembership
 from app.models.portal import PortalOrg, PortalUser
 from app.services.audit import log_event
@@ -163,6 +164,11 @@ async def invite_user(
     # Seat enforcement: lock the org row to prevent concurrent invites
     locked_result = await db.execute(select(PortalOrg).where(PortalOrg.id == perms.org_id).with_for_update())
     org = locked_result.scalar_one()
+
+    # REQ-12 / REQ-13: plan ceiling on assignable role. Check after the org
+    # lock so concurrent plan-downgrades cannot widen the role ladder
+    # mid-invite.
+    assert_role_allowed_for_plan(body.role, org.plan)
 
     # TODO: filter by status == 'active' once AUTH-001 adds status column
     active_count = await db.scalar(select(func.count()).select_from(PortalUser).where(PortalUser.org_id == org.id))
@@ -320,6 +326,12 @@ async def update_user_role(
     # patches that both see admin_count=2 can each succeed and leave the
     # workspace with zero admins.
     await _lock_org_for_role_change(db, perms.org_id)
+
+    # REQ-12 / REQ-13: plan ceiling on assignable role. ``perms.plan`` is
+    # the plan resolved by ``get_caller_at_least`` for this transaction;
+    # the row was locked by ``_lock_org_for_role_change`` so a concurrent
+    # plan downgrade cannot race the role assignment.
+    assert_role_allowed_for_plan(body.role, perms.plan)
 
     result = await db.execute(
         select(PortalUser).where(
@@ -555,6 +567,12 @@ async def promote_admin(
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     """C6.1: Promote an active member to admin. No max-admin limit."""
+    # REQ-12: plan ceiling. ``admin`` is in every plan's allow-set so this is
+    # a defensive guard — but keeping it makes the policy auditable in one
+    # place: any plan that ever drops "admin" from its allow-set will reject
+    # promotion immediately instead of silently succeeding.
+    assert_role_allowed_for_plan("admin", perms.plan)
+
     result = await db.execute(
         select(PortalUser).where(
             PortalUser.zitadel_user_id == zitadel_user_id,
