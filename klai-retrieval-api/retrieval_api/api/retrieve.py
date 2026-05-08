@@ -159,6 +159,15 @@ async def retrieve(
     if req.scope in ("personal", "both") and not req.user_id:
         raise HTTPException(status_code=400, detail="user_id required for scope=personal/both")
 
+    # SPEC-PORTAL-RBAC-REFACTOR-001 REQ-17 / REQ-6: personal-role callers may
+    # only search personal-scope KBs. Force scope to "personal" and strip any
+    # caller-supplied kb_slugs so they cannot reach org KBs via this endpoint.
+    if req.effective_role == "personal":
+        if req.scope != "personal":
+            req = req.model_copy(update={"scope": "personal", "kb_slugs": None})
+        elif req.kb_slugs is not None:
+            req = req.model_copy(update={"kb_slugs": None})
+
     # SPEC-SEC-010 REQ-3 + SPEC-SEC-IDENTITY-ASSERT-001 REQ-4: cross-user /
     # cross-org guard. JWT callers are matched against their JWT claims;
     # internal-secret callers are re-verified against portal-api so the
