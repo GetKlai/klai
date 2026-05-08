@@ -26,7 +26,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import get_db, set_tenant
 from app.models.connectors import PortalConnector
 
 logger = logging.getLogger(__name__)
@@ -95,7 +95,13 @@ async def finalize_connector_delete(
             detail=f"Connector is in state {connector.state!r}, expected 'deleting'",
         )
 
-    await db.execute(delete(PortalConnector).where(PortalConnector.id == connector_id))
+    await set_tenant(db, connector.org_id)
+    await db.execute(
+        delete(PortalConnector).where(
+            PortalConnector.id == connector_id,
+            PortalConnector.org_id == connector.org_id,
+        )
+    )
     await db.commit()
     logger.info(
         "finalize_connector_delete_completed",
