@@ -234,6 +234,14 @@ async def retrieve(
     # extra Qdrant scroll-call buys anything in practice.
     link_expand_seed_chunk_ids: set[str] = set()
     link_expand_candidate_urls = 0
+    # Default-empty serving lists so the bypassed=True path doesn't leave
+    # ``serving`` and ``expanded_in_top_k_ids`` unbound. Pyright cannot
+    # trace the if-bypassed/else-bypassed mutual exclusion across the
+    # two read sites further down (line ~542 + ~555) — initializing
+    # here is cleaner than scattered `# type: ignore` comments and makes
+    # the bypass path's downstream code defensively correct anyway.
+    serving: list[dict] = []
+    expanded_in_top_k_ids: list[str] = []
 
     # 3b. Query router — identifies relevant sources for post-rerank selection
     router_meta: dict = {"router_decision": None, "router_layer_used": "skipped"}

@@ -762,6 +762,15 @@ services:
     networks:
       - klai-net
       - monitoring
+      # SPEC-PRIVACY-QUERY-SHADOW-001 follow-up (2026-05-08): grafana
+      # needs net-postgres so the PortalPostgres datasource can resolve
+      # `postgres:5432`. Without this, EVERY postgres-backed alert rule
+      # and dashboard panel fails with "could not translate host name
+      # 'postgres' to address: Temporary failure in name resolution".
+      # Pre-existing bug — surfaced by the new privacy_tenant_stuck_in_full
+      # alert + a non-SPEC UI-created alert (UID bfjbxm0h95q0wf) that
+      # had been silently failing in the same way.
+      - net-postgres
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/api/health"]
       interval: 30s
