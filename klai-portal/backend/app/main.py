@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
-from app.api import me, signup
+from app.api import me, orgs, signup
 from app.api.admin import router as admin_router
 from app.api.admin_api_keys import router as admin_api_keys_router
 from app.api.admin_widgets import router as admin_widgets_router
@@ -269,6 +269,7 @@ from app.api.auth_bff import router as auth_bff_router  # noqa: E402
 
 app.include_router(signup.router)
 app.include_router(me.router)
+app.include_router(orgs.router)
 app.include_router(me_mcp_tokens_router)
 app.include_router(mcp_oauth_router)
 app.include_router(auth_router)
