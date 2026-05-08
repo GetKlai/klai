@@ -6,7 +6,7 @@
     "dev": "next dev --port 3010",
     "build": "next build",
     "start": "next start --port 3010",
-    "lint": "next lint",
+    "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -35,7 +35,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",
-    "eslint": "^10.1.0",
+    "eslint": "^9.39.4",
     "eslint-config-next": "^16.0.0",
     "rehype-parse": "^9.0.0",
     "rehype-stringify": "^10.0.0",
