@@ -19,6 +19,7 @@ yet — those are scoped out per SPEC §7 phasing.
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
@@ -58,6 +59,17 @@ MAX_TEXT_FILE_BYTES: int = 10 * 1024 * 1024
 # UTF-8 BOM that Excel and some Windows tools prepend to CSV.
 _UTF8_BOM = b"\xef\xbb\xbf"
 
+# Maximum length of a sanitised filename. 255 matches the most common
+# filesystem limit; anything longer suggests an attempt to overflow a
+# downstream display field. Truncation preserves the extension.
+_MAX_FILENAME_LENGTH = 255
+
+# Control characters and known troublemakers stripped from filenames
+# before they're persisted into ``extra`` jsonb or rendered in the UI.
+# React's JSX escaping makes XSS unlikely, but log lines and downstream
+# tools (S3 metadata, mail subjects, etc.) are not all HTML-aware.
+_FILENAME_FORBIDDEN = re.compile(r"[\x00-\x1f\x7f<>:\"/\\|?*]")
+
 
 @dataclass(frozen=True)
 class ValidatedTextFile:
@@ -74,6 +86,42 @@ class ValidatedTextFile:
     bytes_count: int
     source_ref: str
     title: str
+
+
+def sanitize_filename(raw: str | None) -> str:
+    """Normalise an uploaded filename for safe persistence and display.
+
+    Strips path components (defends against ``../etc/passwd.md``), removes
+    control characters and reserved-on-many-filesystems punctuation, caps
+    the length at :data:`_MAX_FILENAME_LENGTH` (preserving the extension),
+    and falls back to ``"untitled"`` when the result is empty after
+    stripping. The output is suitable for storing in a jsonb field, a
+    log line, or a UI rendering.
+    """
+    name = (raw or "").strip()
+    if not name:
+        return "untitled"
+
+    # Path basename — defends against `../` and absolute paths regardless
+    # of which OS produced the upload.
+    name = PurePosixPath(name).name
+    # `pathlib.PureWindowsPath` would catch `\\`-separated paths from old
+    # Windows clients; PurePosixPath does not. Apply backslash split as a
+    # belt-and-braces step.
+    name = name.split("\\")[-1]
+
+    name = _FILENAME_FORBIDDEN.sub("", name).strip()
+    if not name:
+        return "untitled"
+
+    if len(name) <= _MAX_FILENAME_LENGTH:
+        return name
+
+    # Preserve the extension when truncating so the downstream classifier
+    # still sees the right type.
+    suffix = PurePosixPath(name).suffix
+    stem_budget = max(0, _MAX_FILENAME_LENGTH - len(suffix))
+    return name[:stem_budget] + suffix
 
 
 def get_extension(filename: str) -> str:
