@@ -154,11 +154,29 @@ VictoriaLogs queries:
 - `service:portal-api AND event:kb_upload_poll_docling_error` — poller couldn't reach docling
 - `service:portal-api AND event:kb_upload_poll_transient` — docling slow (>5 s status poll)
 
+## Archive pipeline (`.zip` / `.tar`)
+
+`app/services/archive.py` implements stdlib-only safe extraction with
+sunzip-style guards. Each archive is unpacked **in memory** under:
+
+| Guard | Value |
+|---|---|
+| Member count | 50 |
+| Per-entry uncompressed | 50 MB |
+| Total uncompressed | 500 MB |
+| Compression ratio | 10:1 (after 1 MB output — catches 42 KB → 4 GB bombs) |
+| Path traversal | reject `..`, `/`, `\`, NUL, drive letters |
+| Nested archives | reject `.zip` / `.tar` entries (no recursion) |
+| Symlinks / devices (tar) | only `REGTYPE` extracted |
+| Whitelist per entry | only TEXT or DOCLING extensions |
+
+Each surviving member recurses through the same `_dispatch_blob`
+helper as a top-level file (with `allow_archive=False`). Successful
+entries become independent `kb_uploads` rows — the user sees one row
+per file in the archive in the UI.
+
 ## Out of scope (next iterations)
 
-- `.zip / .tar` archive support — needs sunzip-style guards (compression
-  ratio cap, per-entry size, path-traversal) that warrant their own
-  module + tests.
 - `.doc` legacy support — needs a `libreoffice-headless` sidecar
   container to convert to `.docx` before docling.
 - Garage S3 backing store — current architecture uses docling-serve's

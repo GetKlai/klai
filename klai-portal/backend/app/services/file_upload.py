@@ -62,12 +62,17 @@ _DOCLING_FORMATS: dict[str, dict[str, str]] = {
 
 DOCLING_EXTENSIONS: frozenset[str] = frozenset(_DOCLING_FORMATS)
 
-# Pending — recognised per the SPEC's full whitelist but the
-# implementation surface is non-trivial (sunzip-style guards for
-# archives, libreoffice sidecar for .doc).
-PENDING_EXTENSIONS: frozenset[str] = frozenset({".zip", ".tar", ".doc"})
+# Archive path — extracted via ``app.services.archive`` with sunzip-style
+# guards (compression-ratio cap, per-entry size, path-traversal, no nested
+# archives, no symlinks). Each safe member is then dispatched through the
+# matching text or docling pipeline.
+ARCHIVE_EXTENSIONS: frozenset[str] = frozenset({".zip", ".tar"})
 
-FULL_WHITELIST: frozenset[str] = TEXT_EXTENSIONS | DOCLING_EXTENSIONS | PENDING_EXTENSIONS
+# Pending — recognised per the SPEC's full whitelist but not yet
+# implemented. ``.doc`` needs the libreoffice-headless sidecar.
+PENDING_EXTENSIONS: frozenset[str] = frozenset({".doc"})
+
+FULL_WHITELIST: frozenset[str] = TEXT_EXTENSIONS | DOCLING_EXTENSIONS | ARCHIVE_EXTENSIONS | PENDING_EXTENSIONS
 
 # --- Size caps -------------------------------------------------------------
 
@@ -129,6 +134,8 @@ def classify_extension(filename: str) -> tuple[str, str]:
       :func:`validate_text_upload`.
     - ``"docling"`` — caller passes binary content + mime to the docling
       path via :func:`validate_binary_upload`.
+    - ``"archive"`` — caller extracts with ``app.services.archive`` and
+      recurses each member through this dispatcher.
     - ``"phase_pending"`` — recognised format but not yet implemented;
       caller records the file as skipped.
     """
@@ -142,6 +149,8 @@ def classify_extension(filename: str) -> tuple[str, str]:
         return ext, "text"
     if ext in DOCLING_EXTENSIONS:
         return ext, "docling"
+    if ext in ARCHIVE_EXTENSIONS:
+        return ext, "archive"
     if ext in PENDING_EXTENSIONS:
         return ext, "phase_pending"
     raise HTTPException(
