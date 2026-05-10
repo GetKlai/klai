@@ -55,13 +55,11 @@ Browser ──multipart 200 MB──▶ Caddy ──▶ portal-api
    role does not own `kb_uploads` and cannot ENABLE RLS on it. Run:
 
    ```bash
-   ssh core-01 "docker cp klai-core-postgres-1:/dev/null /tmp/post_deploy.sql"  # placeholder
-   # Either copy the file in:
    scp klai-portal/backend/alembic/versions/post_deploy_85e5d0a7cb98_kb_uploads_rls.sql \
-       core-01:/tmp/post_deploy.sql
-   ssh core-01 "docker cp /tmp/post_deploy.sql klai-core-postgres-1:/tmp/"
+       core-01:/tmp/post_deploy_kb_uploads.sql
+   ssh core-01 "docker cp /tmp/post_deploy_kb_uploads.sql klai-core-postgres-1:/tmp/"
    ssh core-01 "docker exec klai-core-postgres-1 sh -c \
-       'psql -U \$POSTGRES_USER -d \$POSTGRES_DB -f /tmp/post_deploy.sql'"
+       'psql -U \$POSTGRES_USER -d \$POSTGRES_DB -f /tmp/post_deploy_kb_uploads.sql'"
    ```
 
    Verify:
