@@ -21,6 +21,7 @@ from app.core.permissions import UserPermissions, get_caller
 from app.core.profiles import Capability
 from app.models.connectors import PortalConnector
 from app.models.groups import PortalGroup
+from app.models.kb_uploads import KBUpload
 from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase, PortalUserKBAccess
 from app.models.portal import PortalUser
 from app.models.retrieval_gaps import PortalRetrievalGap
@@ -31,6 +32,7 @@ from app.services.zitadel import zitadel
 
 logger = structlog.get_logger()
 _QDRANT_COLLECTION = "klai_knowledge"
+_VISIBLE_UPLOAD_STATUSES: tuple[str, ...] = ("processing", "ingesting", "failed")
 
 
 async def _get_non_system_group_or_404(group_id: int, org_id: int, db: AsyncSession) -> PortalGroup:
@@ -400,6 +402,21 @@ async def knowledge_bases_stats_summary(
         if slug is not None:
             connectors_by_slug[slug] = count
 
+    uploads_result = await db.execute(
+        select(KBUpload.kb_id, func.count(KBUpload.id))
+        .where(
+            KBUpload.org_id == org.id,
+            KBUpload.kb_id.in_(kb_ids),
+            KBUpload.status.in_(_VISIBLE_UPLOAD_STATUSES),
+        )
+        .group_by(KBUpload.kb_id)
+    )
+    visible_uploads_by_slug: dict[str, int] = {}
+    for kb_id, count in uploads_result.all():
+        slug = slug_by_id.get(kb_id)
+        if slug is not None:
+            visible_uploads_by_slug[slug] = count
+
     # Open gaps per KB in the last 7 days (best-effort via nearest_kb_slug).
     gaps_result = await db.execute(
         select(PortalRetrievalGap.nearest_kb_slug, func.count(PortalRetrievalGap.id))
@@ -471,7 +488,7 @@ async def knowledge_bases_stats_summary(
         # bronnen = distinct connector_ids + direct upload artifacts (from
         # knowledge-ingest). Fall back to portal_connectors count when the
         # ingest call failed and we have no aggregate data.
-        bronnen_count = bronnen_by_slug.get(kb.slug, connectors_count)
+        bronnen_count = bronnen_by_slug.get(kb.slug, connectors_count) + visible_uploads_by_slug.get(kb.slug, 0)
         stats[kb.slug] = KBStatsSummary(
             items=items_count,
             connectors=connectors_count,
@@ -1087,6 +1104,30 @@ async def list_kb_bronnen(
                 chunks_count=int(upload.get("chunks_count") or 0),
                 status=None,
                 created_at=created_at_dt,
+            )
+        )
+
+    upload_rows_result = await db.execute(
+        select(KBUpload)
+        .where(
+            KBUpload.org_id == org.id,
+            KBUpload.kb_id == kb.id,
+            KBUpload.status.in_(_VISIBLE_UPLOAD_STATUSES),
+        )
+        .order_by(KBUpload.created_at.desc())
+    )
+    for upload in upload_rows_result.scalars().all():
+        bronnen.append(
+            BronOut(
+                kind="upload",
+                id=str(upload.id),
+                name=upload.filename,
+                type_label=_upload_type_label(upload.mime or upload.extension),
+                connector_type=None,
+                items_count=1,
+                chunks_count=0,
+                status=upload.status,
+                created_at=upload.created_at,
             )
         )
 
