@@ -86,12 +86,13 @@ interface ContentResponse {
 type Status = 'synced' | 'pending' | 'not_synced'
 
 function mapStatus(bron: Bron): Status {
+  const s = (bron.status ?? '').toLowerCase()
   if (bron.kind === 'upload') {
-    // Uploads are one-shot: if it's in /sources, ingestion finished.
+    if (s === 'processing' || s === 'ingesting') return 'pending'
+    if (s === 'failed' || s.includes('error')) return 'not_synced'
     return 'synced'
   }
   // Connector — last_sync_status is the source of truth.
-  const s = (bron.status ?? '').toLowerCase()
   if (s === 'running' || s === 'pending' || s === 'syncing') return 'pending'
   if (s.includes('error') || s.includes('failed') || s === 'auth_error' || s === 'orphan') {
     return 'not_synced'
