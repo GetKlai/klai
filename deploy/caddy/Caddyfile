@@ -341,6 +341,27 @@
         }
     }
 
+    # SPEC-KB-FILE-UPLOAD-001 REQ-2: scoped multipart-body cap on the new
+    # KB file-upload endpoint. Phase 1A only handles text formats so the
+    # cap is 10 MB (matches portal-api's MAX_TEXT_FILE_BYTES); Phase 1B
+    # raises this to 200 MB when streaming + Garage land. Place BEFORE
+    # the general /api/* handler so `handle` first-match wins on the
+    # narrow path. Anything outside this matcher hits the default
+    # request-body limit on /api/* below.
+    @kb-file-upload path_regexp kb_file_upload ^/api/app/knowledge-bases/[^/]+/sources/file$
+    handle @kb-file-upload {
+        request_body {
+            max_size 10MB
+        }
+        reverse_proxy portal-api:8010 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-Org-Slug
+            header_up -X-User-ID
+        }
+    }
+
     handle /api/* {
         reverse_proxy portal-api:8010 {
             header_up -X-Internal-Secret
