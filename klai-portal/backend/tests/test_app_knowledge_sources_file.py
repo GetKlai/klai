@@ -122,6 +122,16 @@ def _upload(filename: str, content: bytes, content_type: str = "text/plain") -> 
     )
 
 
+def _make_request(files: list[UploadFile]) -> MagicMock:
+    """Build a mock Request whose form() returns the given UploadFiles."""
+    from starlette.datastructures import FormData
+
+    form_items: list[tuple[str, UploadFile]] = [("files", f) for f in files]
+    request = MagicMock()
+    request.form = AsyncMock(return_value=FormData(form_items))
+    return request
+
+
 class _FilePatches:
     """Bundle the ingest + docling + repo patches for the file route."""
 
@@ -233,7 +243,7 @@ class TestTextPipeline:
         files = [_upload("notes.md", b"# Hello\n\nworld", "text/markdown")]
 
         with _FilePatches(ingest_artifact_id="art-md-99") as patches:
-            resp = await add_file_source(kb_slug="personal", files=files, perms=_make_perms(), db=db)
+            resp = await add_file_source(kb_slug="personal", request=_make_request(files), perms=_make_perms(), db=db)
 
         assert len(resp.uploads) == 1
         assert resp.uploads[0].status == "done"
@@ -267,7 +277,7 @@ class TestTextPipeline:
         files = [_upload("rows.csv", b"\xef\xbb\xbfa,b\n1,2\n", "text/csv")]
 
         with _FilePatches() as patches:
-            await add_file_source(kb_slug="personal", files=files, perms=_make_perms(), db=db)
+            await add_file_source(kb_slug="personal", request=_make_request(files), perms=_make_perms(), db=db)
 
         assert patches.mock_ingest is not None
         payload = patches.mock_ingest.call_args.args[0]
@@ -287,7 +297,7 @@ class TestDoclingPipeline:
         files = [_upload("chemie.pdf", _TINY_PDF, "application/pdf")]
 
         with _FilePatches(docling_task_id="docling-task-xyz") as patches:
-            resp = await add_file_source(kb_slug="personal", files=files, perms=_make_perms(), db=db)
+            resp = await add_file_source(kb_slug="personal", request=_make_request(files), perms=_make_perms(), db=db)
 
         assert len(resp.uploads) == 1
         assert resp.uploads[0].status == "processing"
@@ -322,7 +332,7 @@ class TestDoclingPipeline:
         files = [_upload("fake.pdf", b"GIF89a\x00\x00\x00\x00", "application/pdf")]
 
         with _FilePatches() as patches, pytest.raises(HTTPException) as excinfo:
-            await add_file_source(kb_slug="personal", files=files, perms=_make_perms(), db=db)
+            await add_file_source(kb_slug="personal", request=_make_request(files), perms=_make_perms(), db=db)
 
         assert excinfo.value.status_code == 400
         assert excinfo.value.detail["error_code"] == "mime_mismatch"
@@ -344,7 +354,7 @@ class TestDoclingPipeline:
             ),
             pytest.raises(HTTPException) as excinfo,
         ):
-            await add_file_source(kb_slug="personal", files=files, perms=_make_perms(), db=db)
+            await add_file_source(kb_slug="personal", request=_make_request(files), perms=_make_perms(), db=db)
 
         assert excinfo.value.status_code == 400
         assert excinfo.value.detail["error_code"] == "extraction_failed"
@@ -363,7 +373,7 @@ class TestPhasePending:
         files = [_upload("legacy.doc", b"\xd0\xcf\x11\xe0", "application/msword")]
 
         with _FilePatches() as patches, pytest.raises(HTTPException) as excinfo:
-            await add_file_source(kb_slug="personal", files=files, perms=_make_perms(), db=db)
+            await add_file_source(kb_slug="personal", request=_make_request(files), perms=_make_perms(), db=db)
 
         assert excinfo.value.status_code == 400
         assert excinfo.value.detail["error_code"] == "phase_pending"
@@ -380,7 +390,7 @@ class TestPhasePending:
         files = [_upload("nope.zip", b"PK\x03\x04", "application/zip")]
 
         with _FilePatches(), pytest.raises(HTTPException) as excinfo:
-            await add_file_source(kb_slug="personal", files=files, perms=_make_perms(), db=db)
+            await add_file_source(kb_slug="personal", request=_make_request(files), perms=_make_perms(), db=db)
 
         assert excinfo.value.status_code == 400
         assert excinfo.value.detail["error_code"] == "archive_malformed"
@@ -402,7 +412,7 @@ class TestMixedRequest:
         ]
 
         with _FilePatches() as patches:
-            resp = await add_file_source(kb_slug="personal", files=files, perms=_make_perms(), db=db)
+            resp = await add_file_source(kb_slug="personal", request=_make_request(files), perms=_make_perms(), db=db)
 
         # Both accepted; one done (md), one processing (pdf).
         assert len(resp.uploads) == 2
@@ -428,7 +438,7 @@ class TestMixedRequest:
         ]
 
         with _FilePatches():
-            resp = await add_file_source(kb_slug="personal", files=files, perms=_make_perms(), db=db)
+            resp = await add_file_source(kb_slug="personal", request=_make_request(files), perms=_make_perms(), db=db)
 
         assert len(resp.uploads) == 1
         assert resp.uploads[0].status == "done"
@@ -449,7 +459,7 @@ class TestProtocolErrors:
         files = [_upload("malware.exe", b"MZ\x90", "application/octet-stream")]
 
         with _FilePatches(), pytest.raises(HTTPException) as excinfo:
-            await add_file_source(kb_slug="personal", files=files, perms=_make_perms(), db=db)
+            await add_file_source(kb_slug="personal", request=_make_request(files), perms=_make_perms(), db=db)
 
         assert excinfo.value.status_code == 400
         assert excinfo.value.detail["error_code"] == "unsupported_extension"
@@ -462,7 +472,7 @@ class TestProtocolErrors:
         db = _make_db_mock(kb)
 
         with _FilePatches(), pytest.raises(HTTPException) as excinfo:
-            await add_file_source(kb_slug="personal", files=[], perms=_make_perms(), db=db)
+            await add_file_source(kb_slug="personal", request=_make_request([]), perms=_make_perms(), db=db)
 
         assert excinfo.value.status_code == 400
         assert excinfo.value.detail["error_code"] == "no_files"
@@ -476,7 +486,7 @@ class TestProtocolErrors:
         files = [_upload(f"f{i}.md", b"x", "text/markdown") for i in range(11)]
 
         with _FilePatches(), pytest.raises(HTTPException) as excinfo:
-            await add_file_source(kb_slug="personal", files=files, perms=_make_perms(), db=db)
+            await add_file_source(kb_slug="personal", request=_make_request(files), perms=_make_perms(), db=db)
 
         assert excinfo.value.status_code == 400
         assert excinfo.value.detail["error_code"] == "too_many_files"
