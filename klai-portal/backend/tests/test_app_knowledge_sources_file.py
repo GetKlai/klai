@@ -355,12 +355,12 @@ class TestDoclingPipeline:
 
 class TestPhasePending:
     @pytest.mark.asyncio
-    async def test_zip_returns_phase_pending(self) -> None:
+    async def test_doc_returns_phase_pending(self) -> None:
         from app.api.app_knowledge_sources import add_file_source
 
         kb = _make_kb()
         db = _make_db_mock(kb)
-        files = [_upload("archive.zip", b"PK\x03\x04", "application/zip")]
+        files = [_upload("legacy.doc", b"\xd0\xcf\x11\xe0", "application/msword")]
 
         with _FilePatches() as patches, pytest.raises(HTTPException) as excinfo:
             await add_file_source(kb_slug="personal", files=files, perms=_make_perms(), db=db)
@@ -369,8 +369,21 @@ class TestPhasePending:
         assert excinfo.value.detail["error_code"] == "phase_pending"
         assert patches.mock_docling is not None
         patches.mock_docling.assert_not_called()
-        assert patches.mock_ingest is not None
-        patches.mock_ingest.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_malformed_zip_skipped(self) -> None:
+        from app.api.app_knowledge_sources import add_file_source
+
+        kb = _make_kb()
+        db = _make_db_mock(kb)
+        # Just the zip header magic — not a real archive.
+        files = [_upload("nope.zip", b"PK\x03\x04", "application/zip")]
+
+        with _FilePatches(), pytest.raises(HTTPException) as excinfo:
+            await add_file_source(kb_slug="personal", files=files, perms=_make_perms(), db=db)
+
+        assert excinfo.value.status_code == 400
+        assert excinfo.value.detail["error_code"] == "archive_malformed"
 
 
 # --- Mixed multi-file ------------------------------------------------------
@@ -404,7 +417,7 @@ class TestMixedRequest:
         patches.mock_docling.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_md_plus_zip_md_done_zip_skipped(self) -> None:
+    async def test_md_plus_malformed_zip_md_done_zip_skipped(self) -> None:
         from app.api.app_knowledge_sources import add_file_source
 
         kb = _make_kb()
@@ -420,7 +433,7 @@ class TestMixedRequest:
         assert len(resp.uploads) == 1
         assert resp.uploads[0].status == "done"
         assert len(resp.skipped) == 1
-        assert resp.skipped[0].reason == "phase_pending"
+        assert resp.skipped[0].reason == "archive_malformed"
 
 
 # --- Protocol-level rejections --------------------------------------------

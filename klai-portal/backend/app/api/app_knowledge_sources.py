@@ -40,6 +40,7 @@ from app.core.permissions import UserPermissions, get_caller
 from app.core.profiles import ProfileRole
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.services import (
+    archive,
     docling_client,
     file_upload,
     kb_uploads_repo,
@@ -380,9 +381,9 @@ def _failure_reason_from(exc: HTTPException) -> str:
     return "invalid"
 
 
-async def _ingest_text_path(
+async def _ingest_text_bytes(
     *,
-    upload: UploadFile,
+    body: bytes,
     filename: str,
     ext: str,
     kb: PortalKnowledgeBase,
@@ -390,12 +391,11 @@ async def _ingest_text_path(
     perms: UserPermissions,
     db: AsyncSession,
 ) -> tuple[FileUploadEntry | None, FileUploadSkippedEntry | None]:
-    """Read + decode + ingest a text-path file synchronously.
+    """Decode + ingest a text-path payload synchronously.
 
     Returns a one-of: either an accepted entry (status="done") OR a
     skipped entry. Never raises — all error paths surface via ``skipped``.
     """
-    body = await upload.read(file_upload.MAX_TEXT_FILE_BYTES + 1)
     try:
         validated = file_upload.validate_text_upload(filename, body)
     except HTTPException as exc:
@@ -442,23 +442,22 @@ async def _ingest_text_path(
     )
 
 
-async def _ingest_docling_path(
+async def _ingest_docling_bytes(
     *,
-    upload: UploadFile,
+    body: bytes,
     filename: str,
     ext: str,
     kb: PortalKnowledgeBase,
     perms: UserPermissions,
     db: AsyncSession,
 ) -> tuple[FileUploadEntry | None, FileUploadSkippedEntry | None]:
-    """Read + magic-byte-validate + submit a docling-path file.
+    """Magic-byte-validate + submit a docling-path payload.
 
     The function returns synchronously after docling-serve accepts the
     submission and returns a ``task_id``. The actual conversion runs in
     docling's worker queue; ``kb_upload_poller`` watches the task and
     transitions the row to ``done`` / ``failed`` once it terminates.
     """
-    body = await upload.read(file_upload.MAX_BINARY_FILE_BYTES + 1)
     try:
         validated = file_upload.validate_binary_upload(filename, body)
     except HTTPException as exc:
@@ -501,6 +500,81 @@ async def _ingest_docling_path(
     )
 
 
+async def _dispatch_blob(
+    *,
+    body: bytes,
+    filename: str,
+    kb: PortalKnowledgeBase,
+    org: Any,
+    perms: UserPermissions,
+    db: AsyncSession,
+    allow_archive: bool,
+) -> tuple[list[FileUploadEntry], list[FileUploadSkippedEntry]]:
+    """Classify ``filename`` + dispatch the bytes to the right pipeline.
+
+    Returns ``(accepted, skipped)``. ``allow_archive=False`` is used
+    for archive entries to prevent nested-archive attacks.
+    """
+    accepted: list[FileUploadEntry] = []
+    skipped: list[FileUploadSkippedEntry] = []
+
+    try:
+        ext, pipeline = file_upload.classify_extension(filename)
+    except HTTPException as exc:
+        skipped.append(FileUploadSkippedEntry(filename=filename, reason=_failure_reason_from(exc)))
+        return accepted, skipped
+
+    if pipeline == "phase_pending":
+        skipped.append(FileUploadSkippedEntry(filename=filename, reason="phase_pending", extension=ext))
+        return accepted, skipped
+
+    if pipeline == "archive":
+        if not allow_archive:
+            skipped.append(FileUploadSkippedEntry(filename=filename, reason="archive_nested", extension=ext))
+            return accepted, skipped
+        # Extract once, recurse per entry. Whole-archive failures bubble
+        # up as HTTPException to the caller so the route raises 400.
+        try:
+            extraction = archive.extract_archive(filename, body)
+        except archive.ArchiveAbort as exc:
+            reason = _failure_reason_from(exc)
+            skipped.append(FileUploadSkippedEntry(filename=filename, reason=reason, extension=ext))
+            return accepted, skipped
+
+        for entry_skip in extraction.skipped:
+            skipped.append(FileUploadSkippedEntry(filename=entry_skip.filename, reason=entry_skip.reason))
+
+        for member in extraction.extracted:
+            inner_accepted, inner_skipped = await _dispatch_blob(
+                body=member.content,
+                filename=member.filename,
+                kb=kb,
+                org=org,
+                perms=perms,
+                db=db,
+                allow_archive=False,
+            )
+            accepted.extend(inner_accepted)
+            skipped.extend(inner_skipped)
+
+        if not extraction.extracted and not extraction.skipped:
+            skipped.append(FileUploadSkippedEntry(filename=filename, reason="archive_empty", extension=ext))
+        return accepted, skipped
+
+    if pipeline == "text":
+        entry, skip = await _ingest_text_bytes(
+            body=body, filename=filename, ext=ext, kb=kb, org=org, perms=perms, db=db
+        )
+    else:  # docling
+        entry, skip = await _ingest_docling_bytes(body=body, filename=filename, ext=ext, kb=kb, perms=perms, db=db)
+
+    if entry is not None:
+        accepted.append(entry)
+    elif skip is not None:
+        skipped.append(skip)
+    return accepted, skipped
+
+
 @router.post(
     "/knowledge-bases/{kb_slug}/sources/file",
     response_model=FileSourcesIngestedResponse,
@@ -514,20 +588,21 @@ async def add_file_source(
 ) -> FileSourcesIngestedResponse:
     """Accept a multipart file upload and ingest it into the KB.
 
-    SPEC-KB-FILE-UPLOAD-001. Each file is classified into one of three
+    SPEC-KB-FILE-UPLOAD-001. Each file is classified into one of four
     pipelines:
 
     - **text** (``.md / .txt / .csv``): decoded and forwarded to
-      ``/ingest/v1/document`` synchronously. The ``kb_uploads`` row is
-      created in ``done`` state with the resulting ``artifact_id``.
+      ``/ingest/v1/document`` synchronously. ``kb_uploads.status=done``.
     - **docling** (``.pdf / .docx / .xlsx / .pptx / .json / .xml``):
       magic-byte validated and submitted to docling-serve's async
-      queue. The ``kb_uploads`` row is created in ``processing`` state
-      with the docling ``task_id``; the background poller advances it
-      to ``done`` / ``failed`` once docling finishes.
-    - **phase_pending** (``.zip / .tar / .doc``): not yet implemented.
-      Returned as ``skipped[].reason = "phase_pending"`` so the UI can
-      show a localised "binnenkort" message.
+      queue. ``kb_uploads.status=processing`` with the task_id; the
+      poller advances it to ``done`` / ``failed`` once docling finishes.
+    - **archive** (``.zip / .tar``): safely extracted via
+      ``app.services.archive`` (sunzip-style guards) and each member
+      recursed through this dispatcher (``allow_archive=False``).
+    - **phase_pending** (``.doc``): not yet implemented. Returned as
+      ``skipped[].reason = "phase_pending"`` so the UI can show a
+      localised "binnenkort" message.
 
     Multi-file requests partially succeed: accepted files appear in
     ``uploads`` (with their per-file status), rejected files in
@@ -558,77 +633,39 @@ async def add_file_source(
 
     for upload in files:
         filename = file_upload.sanitize_filename(upload.filename)
+        # Read the multipart part once. Starlette spools to disk above
+        # 1 MB so a 200 MB upload never holds 200 MB of RSS.
+        body = await upload.read(file_upload.MAX_BINARY_FILE_BYTES + 1)
 
-        try:
-            ext, pipeline = file_upload.classify_extension(filename)
-        except HTTPException as exc:
-            reason = _failure_reason_from(exc)
-            skipped.append(FileUploadSkippedEntry(filename=filename, reason=reason))
+        per_file_accepted, per_file_skipped = await _dispatch_blob(
+            body=body,
+            filename=filename,
+            kb=kb,
+            org=org,
+            perms=perms,
+            db=db,
+            allow_archive=True,
+        )
+        accepted.extend(per_file_accepted)
+        skipped.extend(per_file_skipped)
+
+        for entry in per_file_accepted:
             logger.info(
                 "kb_upload_received",
                 org_id=org.zitadel_org_id,
                 kb_slug=kb_slug,
-                filename=filename,
-                decision="rejected",
-                failure_reason=reason,
-            )
-            continue
-
-        if pipeline == "phase_pending":
-            skipped.append(FileUploadSkippedEntry(filename=filename, reason="phase_pending", extension=ext))
-            logger.info(
-                "kb_upload_received",
-                org_id=org.zitadel_org_id,
-                kb_slug=kb_slug,
-                filename=filename,
-                extension=ext,
-                decision="rejected",
-                failure_reason="phase_pending",
-            )
-            continue
-
-        if pipeline == "text":
-            entry, skip = await _ingest_text_path(
-                upload=upload,
-                filename=filename,
-                ext=ext,
-                kb=kb,
-                org=org,
-                perms=perms,
-                db=db,
-            )
-        else:  # docling pipeline
-            entry, skip = await _ingest_docling_path(
-                upload=upload,
-                filename=filename,
-                ext=ext,
-                kb=kb,
-                perms=perms,
-                db=db,
-            )
-
-        if entry is not None:
-            accepted.append(entry)
-            logger.info(
-                "kb_upload_received",
-                org_id=org.zitadel_org_id,
-                kb_slug=kb_slug,
-                filename=filename,
-                extension=ext,
-                pipeline=pipeline,
+                filename=entry.filename,
                 upload_id=str(entry.id),
                 decision="accepted",
                 status=entry.status,
             )
-        elif skip is not None:
-            skipped.append(skip)
+        for skip in per_file_skipped:
             logger.info(
                 "kb_upload_received",
                 org_id=org.zitadel_org_id,
                 kb_slug=kb_slug,
-                filename=filename,
-                extension=ext,
-                pipeline=pipeline,
+                filename=skip.filename,
+                extension=skip.extension,
                 decision="rejected",
                 failure_reason=skip.reason,
             )
