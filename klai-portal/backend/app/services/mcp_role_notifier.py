@@ -34,6 +34,7 @@ next reconnect/poll", which is the existing behaviour without REQ-18.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 
 import httpx
 import structlog
@@ -42,6 +43,13 @@ from app.core.config import settings
 from app.trace import get_trace_headers
 
 logger = structlog.get_logger()
+
+
+def _hash_user_id(user_id: str) -> str:
+    """PII-clean log key — same sha256[:16] format the receiver uses on
+    the knowledge-mcp side, so the two sides of the same notify-hop can
+    be correlated by ``user_id_hash`` in VictoriaLogs."""
+    return hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:16]
 
 
 # Per-call timeout. Short because the MCP endpoint is in-cluster and the
@@ -79,9 +87,10 @@ async def _notify_role_change_inner(zitadel_user_id: str) -> None:
             logger.warning(
                 "mcp_role_notify_non_2xx",
                 status_code=resp.status_code,
-                # ``user_id`` is a Zitadel sub (numeric or UUID) — not a secret,
-                # but log only the suffix to keep dashboards uncluttered.
-                user_id_suffix=zitadel_user_id[-6:],
+                # PII-clean: hash matches the receiver's log key so a single
+                # ``user_id_hash:<x>`` query in VictoriaLogs surfaces both
+                # sides of the cross-service hop.
+                user_id_hash=_hash_user_id(zitadel_user_id),
             )
         else:
             try:
@@ -91,7 +100,7 @@ async def _notify_role_change_inner(zitadel_user_id: str) -> None:
             logger.info(
                 "mcp_role_notify_ok",
                 notified=notified,
-                user_id_suffix=zitadel_user_id[-6:],
+                user_id_hash=_hash_user_id(zitadel_user_id),
             )
 
 
@@ -117,7 +126,7 @@ def fire_role_change_notification(zitadel_user_id: str) -> None:
             logger.warning(
                 "mcp_role_notify_failed",
                 exc_info=True,
-                user_id_suffix=zitadel_user_id[-6:],
+                user_id_hash=_hash_user_id(zitadel_user_id),
             )
 
     try:
