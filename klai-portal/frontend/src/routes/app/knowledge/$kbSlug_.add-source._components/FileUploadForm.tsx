@@ -1,62 +1,65 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { CheckCircle2, FileText, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import * as m from '@/paraglide/messages'
-import { apiFetch, ApiError } from '@/lib/apiFetch'
+import { ApiError, apiFetch } from '@/lib/apiFetch'
 
-// SPEC-KB-FILE-UPLOAD-001 Phase 1A: text formats only via the new
-// /api/app/knowledge-bases/{kb}/sources/file route. Binary formats
-// (.pdf .docx .pptx .xlsx etc.) ship in Phase 1B+; the backend returns
-// `phase_pending` per file in the `skipped` array which we surface as
-// a localised "binnenkort" message. The previous wiring against
-// DOCS_BASE (klai-docs/Gitea) was wrong: that endpoint only accepted
-// .md and crashed on 100MB+ binaries.
+// SPEC-KB-FILE-UPLOAD-001 — full whitelist routed through portal-api.
+// .md / .txt / .csv go to /ingest/v1/document directly. PDF / DOCX /
+// XLSX / PPTX / JSON / XML go to docling-serve's async queue; portal-api
+// returns 202 with status="processing" and we poll until terminal.
+// .zip / .tar / .doc come back as `phase_pending` (UI shows
+// "binnenkort"); they ship in a follow-up.
 
-const PHASE_1_ACCEPT = '.md,.txt,.csv'
-const PHASE_1_MAX_BYTES = 10 * 1024 * 1024 // 10 MB — matches backend MAX_TEXT_FILE_BYTES
-const PHASE_1_FORMATS_LABEL = 'Markdown, TXT, CSV'
+const ACCEPT_ATTR = '.csv,.doc,.docx,.json,.md,.pdf,.pptx,.tar,.txt,.xlsx,.xml,.zip'
+const MAX_FILE_BYTES = 200 * 1024 * 1024 // 200 MB — matches Caddy + portal-api
+const POLL_INTERVAL_MS = 2000
+const POLL_TIMEOUT_MS = 10 * 60 * 1000 // 10 min — covers a 100 MB PDF on CPU docling
+
+const FORMATS_LABEL = 'PDF, Word, Excel, PowerPoint, Markdown, TXT, CSV, JSON, XML'
 
 export interface FileUploadFormProps {
   kbSlug: string
   onBack: () => void
 }
 
-interface SkippedEntry {
+interface ServerSkippedEntry {
   filename: string
   reason: string
   extension?: string | null
 }
 
-interface UploadResponse {
-  uploads: Array<{ artifact_id: string; source_ref: string; source_type: string }>
-  skipped: SkippedEntry[]
+interface ServerUploadEntry {
+  id: string
+  filename: string
+  status: 'done' | 'processing' | 'ingesting' | 'failed'
+  source_type: string
+  source_ref: string
+  artifact_id: string | null
+  failure_reason?: string | null
+}
+
+interface ServerUploadResponse {
+  uploads: ServerUploadEntry[]
+  skipped: ServerSkippedEntry[]
 }
 
 interface ClientRejection {
   filename: string
-  reason: 'oversize' | 'unsupported_extension'
+  reason: 'oversize' | 'no_file_selected'
   size?: number
 }
 
-const SUPPORTED_EXTS = new Set(['.md', '.txt', '.csv'])
-
-function getExtension(name: string): string {
-  const dot = name.lastIndexOf('.')
-  return dot >= 0 ? name.slice(dot).toLowerCase() : ''
-}
-
-function partitionClientSide(files: File[]): { ok: File[]; rejected: ClientRejection[] } {
+function partitionClientSide(files: File[]): {
+  ok: File[]
+  rejected: ClientRejection[]
+} {
   const ok: File[] = []
   const rejected: ClientRejection[] = []
   for (const f of files) {
-    const ext = getExtension(f.name)
-    if (!SUPPORTED_EXTS.has(ext)) {
-      rejected.push({ filename: f.name, reason: 'unsupported_extension' })
-      continue
-    }
-    if (f.size > PHASE_1_MAX_BYTES) {
+    if (f.size > MAX_FILE_BYTES) {
       rejected.push({ filename: f.name, reason: 'oversize', size: f.size })
       continue
     }
@@ -68,24 +71,48 @@ function partitionClientSide(files: File[]): { ok: File[]; rejected: ClientRejec
 function reasonToMessage(reason: string): string {
   switch (reason) {
     case 'unsupported_extension':
-    case 'phase_pending':
-      return `Bestandstype niet ondersteund. Phase 1 ondersteunt: ${PHASE_1_FORMATS_LABEL}.`
-    case 'file_too_large':
-    case 'oversize':
-      return 'Bestand te groot (max 10 MB voor tekst).'
+      return `Bestandstype niet ondersteund. Toegestane formaten: ${FORMATS_LABEL}.`
+    case 'mime_mismatch':
+      return 'Bestand lijkt geen geldig bestandstype voor deze extensie. Controleer of het bestand niet beschadigd is.'
     case 'invalid_text_encoding':
-      return 'Bestand kon niet worden gedecodeerd (geen UTF-8 of Windows-1252).'
+      return 'Tekstbestand kon niet worden gedecodeerd (geen UTF-8 of Windows-1252).'
     case 'empty_content':
       return 'Bestand is leeg.'
-    case 'kb_quota_items_exceeded':
-      return 'Geen ruimte meer in deze kennisbank.'
+    case 'file_too_large':
+    case 'oversize':
+      return 'Bestand te groot (max 200 MB per bestand).'
+    case 'no_file_selected':
     case 'no_files':
       return 'Geen bestand geselecteerd.'
     case 'too_many_files':
       return 'Te veel bestanden geselecteerd (max 10 per upload).'
+    case 'phase_pending':
+      return 'Dit bestandstype wordt binnenkort ondersteund (.zip / .tar / .doc volgen).'
+    case 'kb_quota_items_exceeded':
+      return 'Geen ruimte meer in deze kennisbank.'
+    case 'extraction_failed':
+      return 'Document kon niet worden verwerkt. Controleer of het bestand niet beschadigd is.'
+    case 'docling_timeout':
+    case 'docling_unreachable':
+      return 'Documentverwerking duurt te lang of is tijdelijk niet bereikbaar. Probeer later opnieuw.'
+    case 'kb_or_org_missing':
+      return 'Kennisbank niet meer beschikbaar.'
     default:
       return 'Upload mislukt. Probeer opnieuw.'
   }
+}
+
+function fileSizeLabel(bytes: number): string {
+  if (bytes < 1024) return `${String(bytes)} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+interface DisplayEntry {
+  id: string
+  filename: string
+  status: 'done' | 'processing' | 'ingesting' | 'failed'
+  failureReason?: string | null
 }
 
 export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
@@ -94,9 +121,10 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [clientRejections, setClientRejections] = useState<ClientRejection[]>([])
-  const [serverSkipped, setServerSkipped] = useState<SkippedEntry[]>([])
+  const [serverSkipped, setServerSkipped] = useState<ServerSkippedEntry[]>([])
+  const [trackedEntries, setTrackedEntries] = useState<DisplayEntry[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
-  const [uploadSuccess, setUploadSuccess] = useState(false)
+  const [allDone, setAllDone] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const addFiles = useCallback((incoming: File[]) => {
@@ -105,60 +133,143 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
     if (rejected.length > 0) setClientRejections((prev) => [...prev, ...rejected])
   }, [])
 
-  const onDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    setIsDragOver(false)
-    addFiles(Array.from(e.dataTransfer.files))
-  }, [addFiles])
-
+  const onDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault()
+      setIsDragOver(false)
+      addFiles(Array.from(e.dataTransfer.files))
+    },
+    [addFiles],
+  )
   const onDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     setIsDragOver(true)
   }, [])
-
-  const onDragLeave = useCallback(() => {
-    setIsDragOver(false)
-  }, [])
+  const onDragLeave = useCallback(() => setIsDragOver(false), [])
 
   const fileUploadMutation = useMutation({
-    mutationFn: async (): Promise<UploadResponse> => {
+    mutationFn: async (): Promise<ServerUploadResponse> => {
       const formData = new FormData()
       for (const file of selectedFiles) formData.append('files', file)
-      // SPEC-KB-FILE-UPLOAD-001: new portal-api endpoint, NOT the
-      // klai-docs wiki route. Multi-file in one request — backend
-      // partial-success semantics live in the response.
-      return apiFetch<UploadResponse>(
+      return apiFetch<ServerUploadResponse>(
         `/api/app/knowledge-bases/${kbSlug}/sources/file`,
-        { method: 'POST', body: formData }
+        { method: 'POST', body: formData },
       )
     },
     onSuccess: (data) => {
       void queryClient.invalidateQueries({ queryKey: ['kb-items', kbSlug] })
       void queryClient.invalidateQueries({ queryKey: ['personal-knowledge', kbSlug] })
-      void queryClient.invalidateQueries({ queryKey: ['app-knowledge-bases-stats-summary'] })
+      void queryClient.invalidateQueries({
+        queryKey: ['app-knowledge-bases-stats-summary'],
+      })
       setServerSkipped(data.skipped)
       setSelectedFiles([])
-      // Only show full success when at least one file was accepted AND no skips.
-      if (data.uploads.length > 0 && data.skipped.length === 0) {
-        setUploadSuccess(true)
-        setTimeout(() => {
+      setTrackedEntries(
+        data.uploads.map((u) => ({
+          id: u.id,
+          filename: u.filename,
+          status: u.status,
+          failureReason: u.failure_reason ?? null,
+        })),
+      )
+    },
+  })
+
+  // Status polling: while any tracked entry is still ``processing`` or
+  // ``ingesting``, poll the per-row status endpoint every POLL_INTERVAL_MS.
+  // The poll loop terminates when every entry reaches a terminal state
+  // OR when POLL_TIMEOUT_MS elapses (operator/escalation case).
+  useEffect(() => {
+    if (trackedEntries.length === 0) return
+    const pendingIds = trackedEntries
+      .filter((e) => e.status === 'processing' || e.status === 'ingesting')
+      .map((e) => e.id)
+    if (pendingIds.length === 0) {
+      // All terminal — show success when at least one done, no failures.
+      const anyFailed = trackedEntries.some((e) => e.status === 'failed')
+      const anyDone = trackedEntries.some((e) => e.status === 'done')
+      if (anyDone && !anyFailed && serverSkipped.length === 0) {
+        setAllDone(true)
+        const t = setTimeout(() => {
           void navigate({
             to: '/app/knowledge/$kbSlug/overview',
             params: { kbSlug },
           })
         }, 1500)
+        return () => clearTimeout(t)
       }
-    },
-  })
+      return
+    }
 
+    let cancelled = false
+    const start = Date.now()
+
+    const tick = async (): Promise<void> => {
+      if (cancelled) return
+      if (Date.now() - start > POLL_TIMEOUT_MS) {
+        // Operator escalation case — flag remaining as failed in the UI
+        // so the user is not stuck on a spinner forever.
+        setTrackedEntries((prev) =>
+          prev.map((e) =>
+            e.status === 'processing' || e.status === 'ingesting'
+              ? { ...e, status: 'failed', failureReason: 'docling_timeout' }
+              : e,
+          ),
+        )
+        return
+      }
+
+      const updates = await Promise.all(
+        pendingIds.map(async (id) => {
+          try {
+            return await apiFetch<ServerUploadEntry>(
+              `/api/app/knowledge-bases/${kbSlug}/sources/file/${id}/status`,
+              { method: 'GET' },
+            )
+          } catch {
+            return null
+          }
+        }),
+      )
+      if (cancelled) return
+      setTrackedEntries((prev) =>
+        prev.map((e) => {
+          const update = updates.find((u) => u && u.id === e.id) ?? null
+          if (!update) return e
+          return {
+            ...e,
+            status: update.status,
+            failureReason: update.failure_reason ?? null,
+          }
+        }),
+      )
+    }
+
+    const handle = setInterval(() => void tick(), POLL_INTERVAL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(handle)
+    }
+  }, [trackedEntries, kbSlug, serverSkipped.length, navigate])
+
+  // Map the mutation error to a friendly message, parsing structured
+  // error_code + skipped[] from the backend.
   const errorMessage = (() => {
     if (!fileUploadMutation.error) return null
     if (fileUploadMutation.error instanceof ApiError) {
       try {
-        const parsed = JSON.parse(fileUploadMutation.error.detail) as { error_code?: string }
+        const parsed = JSON.parse(fileUploadMutation.error.detail) as {
+          error_code?: string
+          skipped?: ServerSkippedEntry[]
+        }
+        // Stash skipped[] from the rejection-response so the UI can
+        // render the same per-file rail as for partial successes.
+        if (parsed.skipped && parsed.skipped.length > 0) {
+          if (serverSkipped.length === 0) setServerSkipped(parsed.skipped)
+        }
         if (parsed.error_code) return reasonToMessage(parsed.error_code)
       } catch {
-        // Fall through to generic message.
+        // Fall through.
       }
       return reasonToMessage('default')
     }
@@ -168,7 +279,7 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
   return (
     <div className="space-y-6">
       {/* Success banner */}
-      {uploadSuccess && (
+      {allDone && (
         <div className="flex items-center gap-2 rounded-lg border border-[var(--color-success)] bg-[var(--color-success-bg)] px-4 py-3">
           <CheckCircle2 className="h-4 w-4 text-[var(--color-success)] shrink-0" />
           <p className="text-sm text-[var(--color-success-text)]">
@@ -199,13 +310,12 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
         <p className="text-sm font-medium text-gray-900">
           {m.knowledge_add_source_file_drop_hint()}
         </p>
-        <p className="text-xs text-gray-400 mt-2">{PHASE_1_FORMATS_LABEL} (max 10 MB per bestand)</p>
-        <p className="text-xs text-gray-400 mt-1">PDF, Word, Excel, PowerPoint volgen binnenkort</p>
+        <p className="text-xs text-gray-400 mt-2">{FORMATS_LABEL} (max 200 MB per bestand)</p>
         <input
           ref={fileInputRef}
           type="file"
           multiple
-          accept={PHASE_1_ACCEPT}
+          accept={ACCEPT_ATTR}
           className="sr-only"
           tabIndex={-1}
           onChange={(e) => {
@@ -216,7 +326,7 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
         />
       </div>
 
-      {/* Selected files list */}
+      {/* Selected files list (pre-submit) */}
       {selectedFiles.length > 0 && (
         <div className="space-y-1">
           {selectedFiles.map((file, i) => (
@@ -226,9 +336,7 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
             >
               <FileText className="h-4 w-4 text-gray-400 shrink-0" />
               <span className="flex-1 truncate text-sm text-gray-900">{file.name}</span>
-              <span className="text-xs text-gray-400 shrink-0">
-                {(file.size / 1024).toFixed(0)} KB
-              </span>
+              <span className="text-xs text-gray-400 shrink-0">{fileSizeLabel(file.size)}</span>
               <button
                 type="button"
                 aria-label={`Remove ${file.name}`}
@@ -245,9 +353,35 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
         </div>
       )}
 
+      {/* Tracked entries (post-submit, with status) */}
+      {trackedEntries.length > 0 && (
+        <div className="space-y-1">
+          {trackedEntries.map((entry) => (
+            <div
+              key={entry.id}
+              className="flex items-center gap-3 rounded-lg border border-gray-200 px-4 py-2.5"
+            >
+              <FileText className="h-4 w-4 text-gray-400 shrink-0" />
+              <span className="flex-1 truncate text-sm text-gray-900">{entry.filename}</span>
+              {entry.status === 'done' && (
+                <span className="text-xs text-[var(--color-success)] shrink-0">Verwerkt</span>
+              )}
+              {(entry.status === 'processing' || entry.status === 'ingesting') && (
+                <span className="text-xs text-gray-400 shrink-0">Bezig met verwerken…</span>
+              )}
+              {entry.status === 'failed' && (
+                <span className="text-xs text-[var(--color-destructive)] shrink-0">
+                  {reasonToMessage(entry.failureReason ?? 'default')}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Client-side rejections */}
       {clientRejections.length > 0 && (
-        <div className="rounded-lg border border-[var(--color-destructive)] bg-[var(--color-destructive-bg,_transparent)] p-3">
+        <div className="rounded-lg border border-[var(--color-destructive)] p-3">
           <p className="text-sm font-medium text-[var(--color-destructive)] mb-1">
             Niet toegevoegd:
           </p>
@@ -268,12 +402,10 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
         </div>
       )}
 
-      {/* Server-side per-file skipped (after upload completes) */}
+      {/* Server-side per-file skipped */}
       {serverSkipped.length > 0 && (
         <div className="rounded-lg border border-[var(--color-warning)] bg-[var(--color-warning-bg)] p-3">
-          <p className="text-sm font-medium text-[var(--color-warning)] mb-1">
-            Niet verwerkt:
-          </p>
+          <p className="text-sm font-medium text-[var(--color-warning)] mb-1">Niet verwerkt:</p>
           <ul className="text-xs text-[var(--color-warning)] space-y-0.5">
             {serverSkipped.map((r, i) => (
               <li key={`${r.filename}-${String(i)}`}>

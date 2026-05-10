@@ -23,6 +23,7 @@ loudly in VictoriaLogs rather than silently 404'ing.
 from __future__ import annotations
 
 import time
+import uuid
 from typing import Any
 from urllib.parse import urlparse
 
@@ -38,7 +39,12 @@ from app.core.database import get_db
 from app.core.permissions import UserPermissions, get_caller
 from app.core.profiles import ProfileRole
 from app.models.knowledge_bases import PortalKnowledgeBase
-from app.services import file_upload, knowledge_ingest_client
+from app.services import (
+    docling_client,
+    file_upload,
+    kb_uploads_repo,
+    knowledge_ingest_client,
+)
 from app.services.access import get_user_role_for_kb
 from app.services.kb_quota import assert_can_add_item_to_kb
 from app.services.source_extractors.exceptions import (
@@ -83,6 +89,25 @@ class FileUploadSkippedEntry(BaseModel):
     extension: str | None = None
 
 
+class FileUploadEntry(BaseModel):
+    """One accepted file. ``status`` is ``done`` for the text path
+    (synchronous) or ``processing`` for the docling path (async).
+
+    The frontend polls ``GET /sources/file/{id}/status`` while
+    ``status == "processing"``. ``artifact_id`` is null until the
+    upload reaches ``done``; ``failure_reason`` is null unless the row
+    transitions to ``failed``.
+    """
+
+    id: uuid.UUID
+    filename: str
+    status: str
+    source_type: str = "file"
+    source_ref: str
+    artifact_id: str | None = None
+    failure_reason: str | None = None
+
+
 class FileSourcesIngestedResponse(BaseModel):
     """Response for ``POST /sources/file``.
 
@@ -91,7 +116,7 @@ class FileSourcesIngestedResponse(BaseModel):
     success without forcing the user to re-upload the rest.
     """
 
-    uploads: list[SourceIngestedResponse]
+    uploads: list[FileUploadEntry]
     skipped: list[FileUploadSkippedEntry]
 
 
@@ -336,16 +361,144 @@ async def add_text_source(
 
 # --- File route ------------------------------------------------------------
 
-# SPEC-KB-FILE-UPLOAD-001 Phase 1A: text-path only via multipart upload.
-# .md / .txt / .csv route through the existing /ingest/v1/document text
-# pipeline. .pdf / .docx / .pptx / .xlsx / .json / .xml / .zip / .tar / .doc
-# are recognised but return ``phase_pending`` per file in the ``skipped``
-# array; the frontend maps that to a localised "binnenkort beschikbaar"
-# message instead of the previous 500-on-Gitea-wiki-upload bug.
-
 # Hard cap on multipart parts per request. Keeps Starlette form parsing
-# bounded and matches REQ-2 (max 10 files per submit).
+# bounded and matches the SPEC's "max 10 files per submit" rule.
 _MAX_FILES_PER_REQUEST = 10
+
+
+def _failure_reason_from(exc: HTTPException) -> str:
+    """Extract ``error_code`` from a structured ``HTTPException.detail``.
+
+    Defaults to ``"invalid"`` when ``detail`` is not a dict — defensive
+    against future raise sites that forget the structured shape.
+    """
+    detail = exc.detail
+    if isinstance(detail, dict):
+        code = detail.get("error_code")
+        if isinstance(code, str) and code:
+            return code
+    return "invalid"
+
+
+async def _ingest_text_path(
+    *,
+    upload: UploadFile,
+    filename: str,
+    ext: str,
+    kb: PortalKnowledgeBase,
+    org: Any,
+    perms: UserPermissions,
+    db: AsyncSession,
+) -> tuple[FileUploadEntry | None, FileUploadSkippedEntry | None]:
+    """Read + decode + ingest a text-path file synchronously.
+
+    Returns a one-of: either an accepted entry (status="done") OR a
+    skipped entry. Never raises — all error paths surface via ``skipped``.
+    """
+    body = await upload.read(file_upload.MAX_TEXT_FILE_BYTES + 1)
+    try:
+        validated = file_upload.validate_text_upload(filename, body)
+    except HTTPException as exc:
+        return None, FileUploadSkippedEntry(filename=filename, reason=_failure_reason_from(exc), extension=ext)
+
+    artifact_id = await _forward_ingest(
+        zitadel_org_id=org.zitadel_org_id,
+        kb=kb,
+        title=validated.title,
+        content=validated.content,
+        source_type="file",
+        content_type="plain_text",
+        source_ref=validated.source_ref,
+        extra={
+            "original_filename": filename,
+            "extension": ext,
+            "bytes": validated.bytes_count,
+            "pipeline": "text",
+        },
+    )
+
+    upload_view = await kb_uploads_repo.create_upload(
+        db,
+        kb_id=kb.id,
+        org_id=perms.org_id,
+        created_by=perms.user_id,
+        filename=filename,
+        extension=ext,
+        mime="text/plain",
+        bytes_count=validated.bytes_count,
+        source_ref=validated.source_ref,
+        status=kb_uploads_repo.STATUS_DONE,
+        artifact_id=artifact_id,
+    )
+    return (
+        FileUploadEntry(
+            id=upload_view.id,
+            filename=filename,
+            status=upload_view.status,
+            source_ref=validated.source_ref,
+            artifact_id=artifact_id,
+        ),
+        None,
+    )
+
+
+async def _ingest_docling_path(
+    *,
+    upload: UploadFile,
+    filename: str,
+    ext: str,
+    kb: PortalKnowledgeBase,
+    perms: UserPermissions,
+    db: AsyncSession,
+) -> tuple[FileUploadEntry | None, FileUploadSkippedEntry | None]:
+    """Read + magic-byte-validate + submit a docling-path file.
+
+    The function returns synchronously after docling-serve accepts the
+    submission and returns a ``task_id``. The actual conversion runs in
+    docling's worker queue; ``kb_upload_poller`` watches the task and
+    transitions the row to ``done`` / ``failed`` once it terminates.
+    """
+    body = await upload.read(file_upload.MAX_BINARY_FILE_BYTES + 1)
+    try:
+        validated = file_upload.validate_binary_upload(filename, body)
+    except HTTPException as exc:
+        return None, FileUploadSkippedEntry(filename=filename, reason=_failure_reason_from(exc), extension=ext)
+
+    try:
+        submission = await docling_client.submit_file_async(
+            filename=validated.filename,
+            content=validated.content,
+            content_type=validated.mime,
+        )
+    except docling_client.DoclingTimeoutError:
+        logger.exception("docling_submit_timeout", filename=filename, extension=ext, bytes=validated.bytes_count)
+        return None, FileUploadSkippedEntry(filename=filename, reason="docling_timeout", extension=ext)
+    except docling_client.DoclingError:
+        logger.exception("docling_submit_failed", filename=filename, extension=ext, bytes=validated.bytes_count)
+        return None, FileUploadSkippedEntry(filename=filename, reason="extraction_failed", extension=ext)
+
+    upload_view = await kb_uploads_repo.create_upload(
+        db,
+        kb_id=kb.id,
+        org_id=perms.org_id,
+        created_by=perms.user_id,
+        filename=validated.filename,
+        extension=validated.extension,
+        mime=validated.mime,
+        bytes_count=validated.bytes_count,
+        source_ref=validated.source_ref,
+        status=kb_uploads_repo.STATUS_PROCESSING,
+        docling_task_id=submission.task_id,
+    )
+    return (
+        FileUploadEntry(
+            id=upload_view.id,
+            filename=validated.filename,
+            status=upload_view.status,
+            source_ref=validated.source_ref,
+        ),
+        None,
+    )
 
 
 @router.post(
@@ -361,16 +514,25 @@ async def add_file_source(
 ) -> FileSourcesIngestedResponse:
     """Accept a multipart file upload and ingest it into the KB.
 
-    SPEC-KB-FILE-UPLOAD-001 Phase 1A. The endpoint validates each file's
-    extension, decodes text-path bytes to UTF-8, and forwards the
-    normalised ``(title, content)`` to the same
-    ``/ingest/v1/document`` endpoint that ``/sources/text`` uses. Binary
-    formats are recorded as ``skipped`` with reason ``phase_pending``
-    so the UI can surface the limitation without faking success.
+    SPEC-KB-FILE-UPLOAD-001. Each file is classified into one of three
+    pipelines:
 
-    Multi-file requests partially succeed: accepted files are ingested,
-    rejected files appear in ``skipped``. The endpoint returns 400 only
-    when no file is acceptable.
+    - **text** (``.md / .txt / .csv``): decoded and forwarded to
+      ``/ingest/v1/document`` synchronously. The ``kb_uploads`` row is
+      created in ``done`` state with the resulting ``artifact_id``.
+    - **docling** (``.pdf / .docx / .xlsx / .pptx / .json / .xml``):
+      magic-byte validated and submitted to docling-serve's async
+      queue. The ``kb_uploads`` row is created in ``processing`` state
+      with the docling ``task_id``; the background poller advances it
+      to ``done`` / ``failed`` once docling finishes.
+    - **phase_pending** (``.zip / .tar / .doc``): not yet implemented.
+      Returned as ``skipped[].reason = "phase_pending"`` so the UI can
+      show a localised "binnenkort" message.
+
+    Multi-file requests partially succeed: accepted files appear in
+    ``uploads`` (with their per-file status), rejected files in
+    ``skipped``. The endpoint returns 400 only when no file is
+    acceptable, so the frontend can surface a coherent error.
     """
     if not files:
         raise HTTPException(
@@ -391,18 +553,17 @@ async def add_file_source(
     kb = await _get_writable_kb_or_raise(kb_slug, perms, db)
     org = await _load_org_or_500(db, perms.org_id)
 
-    accepted: list[SourceIngestedResponse] = []
+    accepted: list[FileUploadEntry] = []
     skipped: list[FileUploadSkippedEntry] = []
 
     for upload in files:
-        filename = (upload.filename or "").strip() or "untitled"
+        filename = file_upload.sanitize_filename(upload.filename)
 
         try:
-            ext, phase = file_upload.classify_extension(filename)
+            ext, pipeline = file_upload.classify_extension(filename)
         except HTTPException as exc:
-            detail: Any = exc.detail
-            reason = detail.get("error_code") if isinstance(detail, dict) else "unsupported_extension"
-            skipped.append(FileUploadSkippedEntry(filename=filename, reason=reason or "unsupported_extension"))
+            reason = _failure_reason_from(exc)
+            skipped.append(FileUploadSkippedEntry(filename=filename, reason=reason))
             logger.info(
                 "kb_upload_received",
                 org_id=org.zitadel_org_id,
@@ -413,7 +574,7 @@ async def add_file_source(
             )
             continue
 
-        if phase == "phase_pending":
+        if pipeline == "phase_pending":
             skipped.append(FileUploadSkippedEntry(filename=filename, reason="phase_pending", extension=ext))
             logger.info(
                 "kb_upload_received",
@@ -426,61 +587,59 @@ async def add_file_source(
             )
             continue
 
-        # Read up to MAX+1 so the size guard catches the boundary correctly.
-        body = await upload.read(file_upload.MAX_TEXT_FILE_BYTES + 1)
-        try:
-            validated = file_upload.validate_text_upload(filename, body)
-        except HTTPException as exc:
-            detail = exc.detail
-            reason = detail.get("error_code") if isinstance(detail, dict) else "invalid"
-            skipped.append(FileUploadSkippedEntry(filename=filename, reason=reason or "invalid", extension=ext))
+        if pipeline == "text":
+            entry, skip = await _ingest_text_path(
+                upload=upload,
+                filename=filename,
+                ext=ext,
+                kb=kb,
+                org=org,
+                perms=perms,
+                db=db,
+            )
+        else:  # docling pipeline
+            entry, skip = await _ingest_docling_path(
+                upload=upload,
+                filename=filename,
+                ext=ext,
+                kb=kb,
+                perms=perms,
+                db=db,
+            )
+
+        if entry is not None:
+            accepted.append(entry)
             logger.info(
                 "kb_upload_received",
                 org_id=org.zitadel_org_id,
                 kb_slug=kb_slug,
                 filename=filename,
                 extension=ext,
+                pipeline=pipeline,
+                upload_id=str(entry.id),
+                decision="accepted",
+                status=entry.status,
+            )
+        elif skip is not None:
+            skipped.append(skip)
+            logger.info(
+                "kb_upload_received",
+                org_id=org.zitadel_org_id,
+                kb_slug=kb_slug,
+                filename=filename,
+                extension=ext,
+                pipeline=pipeline,
                 decision="rejected",
-                failure_reason=reason,
+                failure_reason=skip.reason,
             )
-            continue
 
-        artifact_id = await _forward_ingest(
-            zitadel_org_id=org.zitadel_org_id,
-            kb=kb,
-            title=validated.title,
-            content=validated.content,
-            source_type="file",
-            content_type="plain_text",
-            source_ref=validated.source_ref,
-            extra={
-                "original_filename": filename,
-                "extension": ext,
-                "phase": "1a",
-                "bytes": validated.bytes_count,
-            },
-        )
-        accepted.append(
-            SourceIngestedResponse(
-                artifact_id=artifact_id,
-                source_ref=validated.source_ref,
-                source_type="file",
-            )
-        )
-        logger.info(
-            "kb_upload_received",
-            org_id=org.zitadel_org_id,
-            kb_slug=kb_slug,
-            filename=filename,
-            extension=ext,
-            bytes=validated.bytes_count,
-            decision="accepted",
-        )
+    # Commit any kb_uploads INSERTs while the request session still has
+    # the tenant context bound. SQLAlchemy's autocommit-on-cleanup runs
+    # AFTER `Depends(get_caller)` resets the GUC — without an explicit
+    # flush+commit here, cat-D RLS would silently drop the inserts.
+    await db.commit()
 
     if not accepted:
-        # Every file was rejected. Surface a 400 with the first reason so
-        # the UI shows a coherent error instead of a confusing 202-with-
-        # zero-uploads response.
         first_reason = skipped[0].reason if skipped else "no_accepted_files"
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -499,3 +658,51 @@ async def add_file_source(
         duration_ms=int((time.monotonic() - start) * 1000),
     )
     return FileSourcesIngestedResponse(uploads=accepted, skipped=skipped)
+
+
+# --- Status polling endpoint -----------------------------------------------
+
+
+class FileUploadStatusResponse(BaseModel):
+    """Per-row status snapshot returned to the frontend poller."""
+
+    id: uuid.UUID
+    filename: str
+    status: str
+    source_ref: str
+    artifact_id: str | None = None
+    failure_reason: str | None = None
+
+
+@router.get(
+    "/knowledge-bases/{kb_slug}/sources/file/{upload_id}/status",
+    response_model=FileUploadStatusResponse,
+)
+async def get_file_source_status(
+    kb_slug: str,
+    upload_id: uuid.UUID,
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> FileUploadStatusResponse:
+    """Return the current status for a single upload.
+
+    Tenant-scoped via the request session's ``app.current_org_id``
+    GUC; cat-D RLS filters cross-org rows so an attacker that guesses
+    a UUID still gets a 404.
+    """
+    # Resolve the KB to enforce kb-existence + write-access (404 not 403
+    # for cross-org per portal-security.md).
+    await _get_writable_kb_or_raise(kb_slug, perms, db)
+
+    view = await kb_uploads_repo.get_view(db, upload_id=upload_id)
+    if view is None or view.kb_id is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload not found")
+
+    return FileUploadStatusResponse(
+        id=view.id,
+        filename=view.filename,
+        status=view.status,
+        source_ref=view.source_ref,
+        artifact_id=view.artifact_id,
+        failure_reason=view.failure_reason,
+    )

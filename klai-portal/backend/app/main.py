@@ -47,6 +47,7 @@ from app.middleware.session import SessionMiddleware
 from app.middleware.tenant_host import KlaiTenantHostMiddleware
 from app.services.bot_poller import poll_loop
 from app.services.events import _pending as _event_tasks
+from app.services.kb_upload_poller import run_poll_loop as run_kb_upload_poll_loop
 from app.services.recording_cleanup import recording_cleanup_loop
 from app.services.telemetry_purge import telemetry_purge_loop
 from app.services.vexa import vexa
@@ -180,6 +181,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     poller_task = asyncio.create_task(poll_loop())
     logger.info("Bot poller started")
 
+    # SPEC-KB-FILE-UPLOAD-001 — drives kb_uploads through to terminal
+    # state by polling docling-serve and forwarding markdown to
+    # knowledge-ingest once the docling task succeeds.
+    kb_upload_poller_task = asyncio.create_task(run_kb_upload_poll_loop())
+    logger.info("KB upload poller started")
+
     cleanup_task = asyncio.create_task(recording_cleanup_loop())
     logger.info("Recording cleanup loop started")
 
@@ -200,6 +207,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
     poller_task.cancel()
+    kb_upload_poller_task.cancel()
     cleanup_task.cancel()
     telemetry_purge_task.cancel()
     if imap_task is not None:
