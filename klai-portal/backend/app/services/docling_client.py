@@ -112,7 +112,7 @@ async def submit_file_async(
     filename: str,
     content: bytes,
     content_type: str,
-    to_formats: tuple[str, ...] = ("md",),
+    to_format: str = "md",
 ) -> DoclingSubmitResult:
     """Submit a file to docling-serve's async queue.
 
@@ -125,7 +125,9 @@ async def submit_file_async(
     :class:`DoclingTimeoutError` on transport timeouts.
     """
     files = [("files", (filename, content, content_type))]
-    data: list[tuple[str, str]] = [("to_formats", fmt) for fmt in to_formats]
+    # docling-serve accepts a comma-separated ``to_formats`` form field;
+    # a single value is the common case so we keep the signature simple.
+    data = {"to_formats": to_format}
 
     try:
         async with _client(_SUBMIT_TIMEOUT_S) as client:
