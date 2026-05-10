@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
@@ -94,6 +95,29 @@ def _make_connector(cid: str, ctype: str = "notion", name: str | None = "My Noti
     return c
 
 
+def _make_upload(filename: str = "Chemie Overal 4VWO.pdf", status: str = "processing") -> MagicMock:
+    upload = MagicMock()
+    upload.id = uuid4()
+    upload.kb_id = 42
+    upload.org_id = 1
+    upload.filename = filename
+    upload.extension = ".pdf"
+    upload.mime = "application/pdf"
+    upload.status = status
+    upload.created_at = datetime(2026, 5, 10, tzinfo=UTC)
+    return upload
+
+
+def _make_sources_db(connectors: list[MagicMock], uploads: list[MagicMock] | None = None) -> AsyncMock:
+    db = AsyncMock()
+    conn_query_result = MagicMock()
+    conn_query_result.scalars.return_value.all.return_value = connectors
+    upload_query_result = MagicMock()
+    upload_query_result.scalars.return_value.all.return_value = uploads or []
+    db.execute.side_effect = [conn_query_result, upload_query_result]
+    return db
+
+
 @pytest.mark.asyncio
 async def test_list_kb_bronnen_merges_connectors_and_uploads() -> None:
     """Happy path: 1 connector with items, 1 connector with no items, 1 upload."""
@@ -104,11 +128,7 @@ async def test_list_kb_bronnen_merges_connectors_and_uploads() -> None:
     conn_with_items = _make_connector("conn-1", "notion", "Productdocs")
     conn_empty = _make_connector("conn-2", "github", "Mono-repo", status="pending")
 
-    db = AsyncMock()
-    # First db.execute returns the PortalConnector list
-    conn_query_result = MagicMock()
-    conn_query_result.scalars.return_value.all.return_value = [conn_with_items, conn_empty]
-    db.execute.return_value = conn_query_result
+    db = _make_sources_db([conn_with_items, conn_empty])
 
     aggregates = {
         "connectors": [
@@ -177,10 +197,7 @@ async def test_list_kb_bronnen_handles_orphan_connector_id() -> None:
     org = _make_org()
     kb = _make_kb()
 
-    db = AsyncMock()
-    conn_query_result = MagicMock()
-    conn_query_result.scalars.return_value.all.return_value = []  # no portal connectors
-    db.execute.return_value = conn_query_result
+    db = _make_sources_db([])
 
     aggregates = {
         "connectors": [
@@ -225,10 +242,7 @@ async def test_list_kb_bronnen_falls_back_to_empty_on_ingest_failure() -> None:
     kb = _make_kb()
     conn = _make_connector("conn-1", "notion", "Productdocs")
 
-    db = AsyncMock()
-    conn_query_result = MagicMock()
-    conn_query_result.scalars.return_value.all.return_value = [conn]
-    db.execute.return_value = conn_query_result
+    db = _make_sources_db([conn])
 
     with (
         patch(
@@ -255,6 +269,47 @@ async def test_list_kb_bronnen_falls_back_to_empty_on_ingest_failure() -> None:
     assert result.bronnen[0].id == "conn-1"
     assert result.bronnen[0].items_count == 0
     assert result.bronnen[0].chunks_count == 0
+
+
+@pytest.mark.asyncio
+async def test_list_kb_bronnen_includes_processing_uploads_before_ingest_artifact_exists() -> None:
+    """A 202-accepted file must be visible while docling is still processing."""
+
+    from app.api.app_knowledge_bases import list_kb_bronnen
+
+    org = _make_org()
+    kb = _make_kb()
+    upload = _make_upload()
+    db = _make_sources_db([], [upload])
+
+    with (
+        patch(
+            "app.api.app_knowledge_bases._load_org_or_500",
+            new=AsyncMock(return_value=org),
+        ),
+        patch(
+            "app.api.app_knowledge_bases._get_kb_or_404",
+            new=AsyncMock(return_value=kb),
+        ),
+        patch(
+            "app.api.app_knowledge_bases.knowledge_ingest_client.get_kb_sources",
+            new=AsyncMock(return_value={"connectors": [], "uploads": []}),
+        ),
+    ):
+        result = await list_kb_bronnen(
+            kb_slug="kb-a",
+            perms=_make_perms(),
+            db=db,
+        )
+
+    assert len(result.bronnen) == 1
+    bron = result.bronnen[0]
+    assert bron.kind == "upload"
+    assert bron.name == "Chemie Overal 4VWO.pdf"
+    assert bron.type_label == "PDF"
+    assert bron.items_count == 1
+    assert bron.chunks_count == 0
+    assert bron.status == "processing"
 
 
 # -- get_bron_content -------------------------------------------------------
