@@ -180,6 +180,11 @@ class Settings(BaseSettings):
     # Same endpoint that klai-knowledge-ingest and klai-connector already target.
     crawl4ai_api_url: str = "http://crawl4ai:11235"
 
+    # docling-serve HTTP service — used by the file-upload binary path
+    # (SPEC-KB-FILE-UPLOAD-001). Internal-only on klai-net; no SSRF risk
+    # because the URL is config-pinned, not user-supplied.
+    docling_url: str = "http://docling-serve:5001"
+
     # Redis (used for retrieval logs and feedback idempotency -- SPEC-KB-015)
     redis_url: str = ""
 
