@@ -29,7 +29,7 @@ from urllib.parse import urlparse
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -582,7 +582,7 @@ async def _dispatch_blob(
 )
 async def add_file_source(
     kb_slug: str,
-    files: list[UploadFile] = File(...),
+    request: Request,
     perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> FileSourcesIngestedResponse:
@@ -608,7 +608,38 @@ async def add_file_source(
     ``uploads`` (with their per-file status), rejected files in
     ``skipped``. The endpoint returns 400 only when no file is
     acceptable, so the frontend can surface a coherent error.
+
+    The route does its own ``request.form()`` call rather than relying
+    on FastAPI's ``files: list[UploadFile] = File(...)`` injection
+    because the default ``max_part_size`` is 1 MB — Starlette 1.0's
+    multipart parser enforces that on every part including file parts,
+    so a 128 MB PDF mid-stream causes the parser to drop the connection
+    (Caddy then logs "use of closed network connection" → 502). We
+    raise the cap to ``MAX_BINARY_FILE_BYTES + 4 KiB`` so a 200 MB
+    member uploads cleanly.
     """
+    # Override Starlette's 1 MB default per-part cap. Adding 4 KiB
+    # accounts for the multipart envelope (boundary, headers, CRLFs).
+    try:
+        form = await request.form(
+            max_files=_MAX_FILES_PER_REQUEST,
+            max_part_size=file_upload.MAX_BINARY_FILE_BYTES + 4 * 1024,
+        )
+    except Exception as exc:
+        # Starlette MultiPartException + httpx parse errors land here.
+        # The most common is the user uploading > 200 MB; surface as
+        # 413 with the structured error code rather than 500.
+        logger.warning("kb_upload_form_parse_failed", error=str(exc), exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail={
+                "error_code": "file_too_large",
+                "max_bytes": file_upload.MAX_BINARY_FILE_BYTES,
+            },
+        ) from exc
+
+    files: list[UploadFile] = [v for v in form.getlist("files") if isinstance(v, UploadFile)]
+
     if not files:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
