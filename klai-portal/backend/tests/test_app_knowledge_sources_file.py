@@ -24,8 +24,9 @@ from contextlib import ExitStack
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException, UploadFile
-from starlette.datastructures import Headers
+from fastapi import HTTPException
+from starlette.datastructures import Headers, UploadFile
+from starlette.requests import Request
 
 from app.services.docling_client import DoclingError, DoclingSubmitResult
 from app.services.kb_uploads_repo import (
@@ -130,6 +131,41 @@ def _make_request(files: list[UploadFile]) -> MagicMock:
     request = MagicMock()
     request.form = AsyncMock(return_value=FormData(form_items))
     return request
+
+
+def _make_multipart_request(filename: str, content: bytes, content_type: str) -> Request:
+    """Build a real Starlette Request so request.form() creates UploadFile."""
+
+    boundary = "----klai-test-boundary"
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="files"; filename="{filename}"\r\n'
+        f"Content-Type: {content_type}\r\n"
+        "\r\n"
+    ).encode() + content + f"\r\n--{boundary}--\r\n".encode()
+    chunks = [body[i : i + 64 * 1024] for i in range(0, len(body), 64 * 1024)]
+
+    async def receive() -> dict[str, object]:
+        if chunks:
+            return {
+                "type": "http.request",
+                "body": chunks.pop(0),
+                "more_body": bool(chunks),
+            }
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/",
+            "headers": [
+                (b"content-type", f"multipart/form-data; boundary={boundary}".encode()),
+                (b"content-length", str(len(body)).encode("ascii")),
+            ],
+        },
+        receive,
+    )
 
 
 class _FilePatches:
@@ -321,6 +357,29 @@ class TestDoclingPipeline:
         kwargs = patches.mock_create_upload.call_args.kwargs
         assert kwargs["status"] == STATUS_PROCESSING
         assert kwargs["docling_task_id"] == "docling-task-xyz"
+
+    @pytest.mark.asyncio
+    async def test_real_starlette_multipart_pdf_is_accepted(self) -> None:
+        """Regression: request.form() returns Starlette UploadFile instances."""
+
+        from app.api.app_knowledge_sources import add_file_source
+
+        kb = _make_kb()
+        db = _make_db_mock(kb)
+        content = _TINY_PDF + (b"0" * (2 * 1024 * 1024))
+        request = _make_multipart_request("chemie.pdf", content, "application/pdf")
+
+        with _FilePatches(docling_task_id="docling-task-real-form") as patches:
+            resp = await add_file_source(kb_slug="personal", request=request, perms=_make_perms(), db=db)
+
+        assert len(resp.uploads) == 1
+        assert resp.uploads[0].status == "processing"
+        assert resp.uploads[0].filename == "chemie.pdf"
+        assert patches.mock_docling is not None
+        kwargs = patches.mock_docling.call_args.kwargs
+        assert kwargs["filename"] == "chemie.pdf"
+        assert kwargs["content"] == content
+        assert kwargs["content_type"] == "application/pdf"
 
     @pytest.mark.asyncio
     async def test_mime_mismatch_skipped_no_docling_call(self) -> None:
