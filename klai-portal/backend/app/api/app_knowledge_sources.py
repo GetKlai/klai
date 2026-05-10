@@ -28,7 +28,7 @@ from urllib.parse import urlparse
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,7 +38,7 @@ from app.core.database import get_db
 from app.core.permissions import UserPermissions, get_caller
 from app.core.profiles import ProfileRole
 from app.models.knowledge_bases import PortalKnowledgeBase
-from app.services import knowledge_ingest_client
+from app.services import file_upload, knowledge_ingest_client
 from app.services.access import get_user_role_for_kb
 from app.services.kb_quota import assert_can_add_item_to_kb
 from app.services.source_extractors.exceptions import (
@@ -73,6 +73,26 @@ class SourceIngestedResponse(BaseModel):
     artifact_id: str
     source_ref: str
     source_type: str
+
+
+class FileUploadSkippedEntry(BaseModel):
+    """One file that was rejected during a multi-file upload."""
+
+    filename: str
+    reason: str
+    extension: str | None = None
+
+
+class FileSourcesIngestedResponse(BaseModel):
+    """Response for ``POST /sources/file``.
+
+    Multi-file uploads return one entry per accepted file plus a
+    ``skipped`` array per rejected file so the UI can show partial
+    success without forcing the user to re-upload the rest.
+    """
+
+    uploads: list[SourceIngestedResponse]
+    skipped: list[FileUploadSkippedEntry]
 
 
 # --- Helpers ---------------------------------------------------------------
@@ -312,3 +332,170 @@ async def add_text_source(
         duration_ms=int((time.monotonic() - start) * 1000),
     )
     return SourceIngestedResponse(artifact_id=artifact_id, source_ref=source_ref, source_type="text")
+
+
+# --- File route ------------------------------------------------------------
+
+# SPEC-KB-FILE-UPLOAD-001 Phase 1A: text-path only via multipart upload.
+# .md / .txt / .csv route through the existing /ingest/v1/document text
+# pipeline. .pdf / .docx / .pptx / .xlsx / .json / .xml / .zip / .tar / .doc
+# are recognised but return ``phase_pending`` per file in the ``skipped``
+# array; the frontend maps that to a localised "binnenkort beschikbaar"
+# message instead of the previous 500-on-Gitea-wiki-upload bug.
+
+# Hard cap on multipart parts per request. Keeps Starlette form parsing
+# bounded and matches REQ-2 (max 10 files per submit).
+_MAX_FILES_PER_REQUEST = 10
+
+
+@router.post(
+    "/knowledge-bases/{kb_slug}/sources/file",
+    response_model=FileSourcesIngestedResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def add_file_source(
+    kb_slug: str,
+    files: list[UploadFile] = File(...),
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> FileSourcesIngestedResponse:
+    """Accept a multipart file upload and ingest it into the KB.
+
+    SPEC-KB-FILE-UPLOAD-001 Phase 1A. The endpoint validates each file's
+    extension, decodes text-path bytes to UTF-8, and forwards the
+    normalised ``(title, content)`` to the same
+    ``/ingest/v1/document`` endpoint that ``/sources/text`` uses. Binary
+    formats are recorded as ``skipped`` with reason ``phase_pending``
+    so the UI can surface the limitation without faking success.
+
+    Multi-file requests partially succeed: accepted files are ingested,
+    rejected files appear in ``skipped``. The endpoint returns 400 only
+    when no file is acceptable.
+    """
+    if not files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error_code": "no_files"},
+        )
+    if len(files) > _MAX_FILES_PER_REQUEST:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error_code": "too_many_files",
+                "max": _MAX_FILES_PER_REQUEST,
+                "received": len(files),
+            },
+        )
+
+    start = time.monotonic()
+    kb = await _get_writable_kb_or_raise(kb_slug, perms, db)
+    org = await _load_org_or_500(db, perms.org_id)
+
+    accepted: list[SourceIngestedResponse] = []
+    skipped: list[FileUploadSkippedEntry] = []
+
+    for upload in files:
+        filename = (upload.filename or "").strip() or "untitled"
+
+        try:
+            ext, phase = file_upload.classify_extension(filename)
+        except HTTPException as exc:
+            detail: Any = exc.detail
+            reason = detail.get("error_code") if isinstance(detail, dict) else "unsupported_extension"
+            skipped.append(FileUploadSkippedEntry(filename=filename, reason=reason or "unsupported_extension"))
+            logger.info(
+                "kb_upload_received",
+                org_id=org.zitadel_org_id,
+                kb_slug=kb_slug,
+                filename=filename,
+                decision="rejected",
+                failure_reason=reason,
+            )
+            continue
+
+        if phase == "phase_pending":
+            skipped.append(FileUploadSkippedEntry(filename=filename, reason="phase_pending", extension=ext))
+            logger.info(
+                "kb_upload_received",
+                org_id=org.zitadel_org_id,
+                kb_slug=kb_slug,
+                filename=filename,
+                extension=ext,
+                decision="rejected",
+                failure_reason="phase_pending",
+            )
+            continue
+
+        # Read up to MAX+1 so the size guard catches the boundary correctly.
+        body = await upload.read(file_upload.MAX_TEXT_FILE_BYTES + 1)
+        try:
+            validated = file_upload.validate_text_upload(filename, body)
+        except HTTPException as exc:
+            detail = exc.detail
+            reason = detail.get("error_code") if isinstance(detail, dict) else "invalid"
+            skipped.append(FileUploadSkippedEntry(filename=filename, reason=reason or "invalid", extension=ext))
+            logger.info(
+                "kb_upload_received",
+                org_id=org.zitadel_org_id,
+                kb_slug=kb_slug,
+                filename=filename,
+                extension=ext,
+                decision="rejected",
+                failure_reason=reason,
+            )
+            continue
+
+        artifact_id = await _forward_ingest(
+            zitadel_org_id=org.zitadel_org_id,
+            kb=kb,
+            title=validated.title,
+            content=validated.content,
+            source_type="file",
+            content_type="plain_text",
+            source_ref=validated.source_ref,
+            extra={
+                "original_filename": filename,
+                "extension": ext,
+                "phase": "1a",
+                "bytes": validated.bytes_count,
+            },
+        )
+        accepted.append(
+            SourceIngestedResponse(
+                artifact_id=artifact_id,
+                source_ref=validated.source_ref,
+                source_type="file",
+            )
+        )
+        logger.info(
+            "kb_upload_received",
+            org_id=org.zitadel_org_id,
+            kb_slug=kb_slug,
+            filename=filename,
+            extension=ext,
+            bytes=validated.bytes_count,
+            decision="accepted",
+        )
+
+    if not accepted:
+        # Every file was rejected. Surface a 400 with the first reason so
+        # the UI shows a coherent error instead of a confusing 202-with-
+        # zero-uploads response.
+        first_reason = skipped[0].reason if skipped else "no_accepted_files"
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error_code": first_reason,
+                "skipped": [s.model_dump() for s in skipped],
+            },
+        )
+
+    logger.info(
+        "file_sources_ingested",
+        org_id=org.zitadel_org_id,
+        kb_slug=kb_slug,
+        accepted_count=len(accepted),
+        skipped_count=len(skipped),
+        duration_ms=int((time.monotonic() - start) * 1000),
+    )
+    return FileSourcesIngestedResponse(uploads=accepted, skipped=skipped)
