@@ -24,6 +24,7 @@ from app.models.groups import PortalGroup, PortalGroupMembership
 from app.models.portal import PortalOrg, PortalUser
 from app.services.audit import log_event
 from app.services.github import remove_github_org_member
+from app.services.mcp_role_notifier import fire_role_change_notification
 from app.services.zitadel import zitadel
 
 logger = logging.getLogger(__name__)
@@ -367,6 +368,13 @@ async def update_user_role(
     await db.commit()
     logger.info("Role changed: user_id=%s, new_role=%s, org_id=%d", zitadel_user_id, body.role, perms.org_id)
 
+    # SPEC-PORTAL-RBAC-REFACTOR-001 REQ-14 + REQ-18: fan out a role-change
+    # notification to klai-knowledge-mcp so active MCP sessions for this
+    # user receive ``notifications/tools/list_changed`` and reload their
+    # tool-list under the new role's filter. Fire-and-forget — the
+    # role-change response never waits on the cross-service hop.
+    fire_role_change_notification(zitadel_user_id)
+
     return MessageResponse(message="Rol bijgewerkt.")
 
 
@@ -602,6 +610,9 @@ async def promote_admin(
         perms.org_id,
     )
     emit_event("user.role_promoted", org_id=perms.org_id, user_id=zitadel_user_id)
+    # SPEC-PORTAL-RBAC-REFACTOR-001 REQ-14 + REQ-18: see update_user_role for
+    # rationale. Fire-and-forget cross-service hop.
+    fire_role_change_notification(zitadel_user_id)
     return MessageResponse(message=f"User {zitadel_user_id} promoted to admin.")
 
 
@@ -671,6 +682,9 @@ async def demote_admin(
         perms.org_id,
     )
     emit_event("user.role_demoted", org_id=perms.org_id, user_id=zitadel_user_id)
+    # SPEC-PORTAL-RBAC-REFACTOR-001 REQ-14 + REQ-18: see update_user_role for
+    # rationale. Fire-and-forget cross-service hop.
+    fire_role_change_notification(zitadel_user_id)
     return MessageResponse(message=f"User {zitadel_user_id} demoted to company.")
 
 
