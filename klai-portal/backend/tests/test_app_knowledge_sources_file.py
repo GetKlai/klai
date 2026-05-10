@@ -138,11 +138,15 @@ def _make_multipart_request(filename: str, content: bytes, content_type: str) ->
 
     boundary = "----klai-test-boundary"
     body = (
-        f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="files"; filename="{filename}"\r\n'
-        f"Content-Type: {content_type}\r\n"
-        "\r\n"
-    ).encode() + content + f"\r\n--{boundary}--\r\n".encode()
+        (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="files"; filename="{filename}"\r\n'
+            f"Content-Type: {content_type}\r\n"
+            "\r\n"
+        ).encode()
+        + content
+        + f"\r\n--{boundary}--\r\n".encode()
+    )
     chunks = [body[i : i + 64 * 1024] for i in range(0, len(body), 64 * 1024)]
 
     async def receive() -> dict[str, object]:
