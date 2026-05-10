@@ -125,7 +125,11 @@ async def submit_file_async(
     :class:`DoclingTimeoutError` on transport timeouts.
     """
     files = [("files", (filename, content, content_type))]
-    data: list[tuple[str, str]] = [("to_formats", fmt) for fmt in to_formats]
+    # docling-serve accepts repeated ``to_formats=`` form fields. httpx
+    # encodes a sequence value as repeated fields under the same key, so
+    # ``{"to_formats": ["md", "html"]}`` becomes ``to_formats=md&to_formats=html``
+    # on the wire — matching the multi-value semantics docling expects.
+    data: dict[str, list[str]] = {"to_formats": list(to_formats)}
 
     try:
         async with _client(_SUBMIT_TIMEOUT_S) as client:
