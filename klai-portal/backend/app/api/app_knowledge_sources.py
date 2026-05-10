@@ -29,10 +29,11 @@ from urllib.parse import urlparse
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.datastructures import UploadFile
 
 from app.api.dependencies import _load_org_or_500
 from app.core.database import get_db
@@ -617,6 +618,11 @@ async def add_file_source(
     (Caddy then logs "use of closed network connection" → 502). We
     raise the cap to ``MAX_BINARY_FILE_BYTES + 4 KiB`` so a 200 MB
     member uploads cleanly.
+
+    NOTE: the ``UploadFile`` type used in the ``isinstance`` filter MUST
+    come from ``starlette.datastructures`` — ``fastapi.UploadFile`` is a
+    subclass, so ``isinstance(starlette_obj, fastapi.UploadFile)`` returns
+    ``False`` and silently filters every parsed file out of the list.
     """
     # Override Starlette's 1 MB default per-part cap. Adding 4 KiB
     # accounts for the multipart envelope (boundary, headers, CRLFs).
