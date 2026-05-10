@@ -10,6 +10,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.services.file_upload import (
+    ARCHIVE_EXTENSIONS,
     DOCLING_EXTENSIONS,
     FULL_WHITELIST,
     MAX_BINARY_FILE_BYTES,
@@ -86,6 +87,12 @@ class TestClassifyExtension:
         assert result_ext == ext
         assert pipeline == "docling"
 
+    @pytest.mark.parametrize("ext", sorted(ARCHIVE_EXTENSIONS))
+    def test_archive_extensions_route_to_archive_pipeline(self, ext: str) -> None:
+        result_ext, pipeline = classify_extension(f"foo{ext}")
+        assert result_ext == ext
+        assert pipeline == "archive"
+
     @pytest.mark.parametrize("ext", sorted(PENDING_EXTENSIONS))
     def test_pending_extensions_route_to_phase_pending(self, ext: str) -> None:
         result_ext, pipeline = classify_extension(f"foo{ext}")
@@ -94,10 +101,16 @@ class TestClassifyExtension:
 
     def test_full_whitelist_partition(self) -> None:
         # Every entry in FULL_WHITELIST routes to exactly one pipeline.
-        assert TEXT_EXTENSIONS | DOCLING_EXTENSIONS | PENDING_EXTENSIONS == FULL_WHITELIST
-        assert TEXT_EXTENSIONS.isdisjoint(DOCLING_EXTENSIONS)
-        assert TEXT_EXTENSIONS.isdisjoint(PENDING_EXTENSIONS)
-        assert DOCLING_EXTENSIONS.isdisjoint(PENDING_EXTENSIONS)
+        assert TEXT_EXTENSIONS | DOCLING_EXTENSIONS | ARCHIVE_EXTENSIONS | PENDING_EXTENSIONS == FULL_WHITELIST
+        for a, b in (
+            (TEXT_EXTENSIONS, DOCLING_EXTENSIONS),
+            (TEXT_EXTENSIONS, ARCHIVE_EXTENSIONS),
+            (TEXT_EXTENSIONS, PENDING_EXTENSIONS),
+            (DOCLING_EXTENSIONS, ARCHIVE_EXTENSIONS),
+            (DOCLING_EXTENSIONS, PENDING_EXTENSIONS),
+            (ARCHIVE_EXTENSIONS, PENDING_EXTENSIONS),
+        ):
+            assert a.isdisjoint(b)
 
     @pytest.mark.parametrize("filename", ["foo.exe", "script.sh", "page.html"])
     def test_unknown_extension_raises_400(self, filename: str) -> None:

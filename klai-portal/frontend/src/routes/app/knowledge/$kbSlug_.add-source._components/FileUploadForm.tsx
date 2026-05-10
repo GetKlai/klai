@@ -18,7 +18,7 @@ const MAX_FILE_BYTES = 200 * 1024 * 1024 // 200 MB — matches Caddy + portal-ap
 const POLL_INTERVAL_MS = 2000
 const POLL_TIMEOUT_MS = 10 * 60 * 1000 // 10 min — covers a 100 MB PDF on CPU docling
 
-const FORMATS_LABEL = 'PDF, Word, Excel, PowerPoint, Markdown, TXT, CSV, JSON, XML'
+const FORMATS_LABEL = 'PDF, Word, Excel, PowerPoint, Markdown, TXT, CSV, JSON, XML, ZIP, TAR'
 
 export interface FileUploadFormProps {
   kbSlug: string
@@ -87,7 +87,27 @@ function reasonToMessage(reason: string): string {
     case 'too_many_files':
       return 'Te veel bestanden geselecteerd (max 10 per upload).'
     case 'phase_pending':
-      return 'Dit bestandstype wordt binnenkort ondersteund (.zip / .tar / .doc volgen).'
+      return 'Dit bestandstype wordt binnenkort ondersteund (.doc volgt).'
+    case 'archive_malformed':
+      return 'Archief lijkt beschadigd of ongeldig.'
+    case 'archive_too_many_entries':
+      return 'Archief bevat te veel bestanden (max 50).'
+    case 'archive_total_size':
+      return 'Archief is uitgepakt te groot (max 500 MB totaal).'
+    case 'archive_entry_too_large':
+      return 'Een bestand in het archief is te groot (max 50 MB per bestand).'
+    case 'archive_compression_ratio':
+      return 'Archief lijkt verdacht (compressie-ratio te hoog) — afgewezen.'
+    case 'archive_path_traversal':
+      return 'Archief bevat een onveilige bestandsnaam (path-traversal).'
+    case 'archive_nested':
+      return 'Geneste archieven worden niet ondersteund.'
+    case 'archive_unsafe_entry':
+      return 'Archief bevat een bestand met een niet-toegestaan formaat of type.'
+    case 'archive_empty':
+      return 'Archief bevat geen bruikbare bestanden.'
+    case 'unsupported_archive_type':
+      return 'Archieftype wordt niet ondersteund (alleen .zip en .tar).'
     case 'kb_quota_items_exceeded':
       return 'Geen ruimte meer in deze kennisbank.'
     case 'extraction_failed':
