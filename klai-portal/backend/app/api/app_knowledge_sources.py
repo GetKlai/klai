@@ -347,6 +347,23 @@ async def add_text_source(
 # bounded and matches REQ-2 (max 10 files per submit).
 _MAX_FILES_PER_REQUEST = 10
 
+# Fallback failure_reason when an HTTPException raised by file_upload
+# does not carry the expected dict-shaped ``detail``. Defensive: today
+# every raise site uses a structured detail, but the fallback keeps log
+# lines and the response body's ``failure_reason`` field non-null even
+# under a future regression in the validation service.
+_UNKNOWN_FAILURE_REASON = "invalid"
+
+
+def _failure_reason_from(exc: HTTPException) -> str:
+    """Extract ``error_code`` from a structured detail, defaulting safely."""
+    detail = exc.detail
+    if isinstance(detail, dict):
+        code = detail.get("error_code")
+        if isinstance(code, str) and code:
+            return code
+    return _UNKNOWN_FAILURE_REASON
+
 
 @router.post(
     "/knowledge-bases/{kb_slug}/sources/file",
@@ -370,7 +387,10 @@ async def add_file_source(
 
     Multi-file requests partially succeed: accepted files are ingested,
     rejected files appear in ``skipped``. The endpoint returns 400 only
-    when no file is acceptable.
+    when no file is acceptable, so the frontend can render a coherent
+    error message — the rejection ``detail`` carries the same
+    ``skipped`` array so UI feedback is identical between partial and
+    total rejection.
     """
     if not files:
         raise HTTPException(
@@ -395,14 +415,13 @@ async def add_file_source(
     skipped: list[FileUploadSkippedEntry] = []
 
     for upload in files:
-        filename = (upload.filename or "").strip() or "untitled"
+        filename = file_upload.sanitize_filename(upload.filename)
 
         try:
             ext, phase = file_upload.classify_extension(filename)
         except HTTPException as exc:
-            detail: Any = exc.detail
-            reason = detail.get("error_code") if isinstance(detail, dict) else "unsupported_extension"
-            skipped.append(FileUploadSkippedEntry(filename=filename, reason=reason or "unsupported_extension"))
+            reason = _failure_reason_from(exc)
+            skipped.append(FileUploadSkippedEntry(filename=filename, reason=reason))
             logger.info(
                 "kb_upload_received",
                 org_id=org.zitadel_org_id,
@@ -431,9 +450,8 @@ async def add_file_source(
         try:
             validated = file_upload.validate_text_upload(filename, body)
         except HTTPException as exc:
-            detail = exc.detail
-            reason = detail.get("error_code") if isinstance(detail, dict) else "invalid"
-            skipped.append(FileUploadSkippedEntry(filename=filename, reason=reason or "invalid", extension=ext))
+            reason = _failure_reason_from(exc)
+            skipped.append(FileUploadSkippedEntry(filename=filename, reason=reason, extension=ext))
             logger.info(
                 "kb_upload_received",
                 org_id=org.zitadel_org_id,
@@ -478,9 +496,9 @@ async def add_file_source(
         )
 
     if not accepted:
-        # Every file was rejected. Surface a 400 with the first reason so
-        # the UI shows a coherent error instead of a confusing 202-with-
-        # zero-uploads response.
+        # Every file was rejected. Return 400 carrying the same skipped
+        # array as the success response so the frontend renders one
+        # consistent UI rail regardless of partial vs total rejection.
         first_reason = skipped[0].reason if skipped else "no_accepted_files"
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

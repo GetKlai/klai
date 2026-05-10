@@ -20,8 +20,50 @@ from app.services.file_upload import (
     derive_title,
     get_extension,
     normalise_text_content,
+    sanitize_filename,
     validate_text_upload,
 )
+
+
+class TestSanitizeFilename:
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("notes.md", "notes.md"),
+            ("  notes.md  ", "notes.md"),
+            ("", "untitled"),
+            (None, "untitled"),
+            ("   ", "untitled"),
+            # Path traversal attempts: keep only the basename.
+            ("../../etc/passwd.md", "passwd.md"),
+            ("/etc/passwd.md", "passwd.md"),
+            # Backslash from old Windows clients.
+            ("C:\\Users\\bob\\notes.md", "notes.md"),
+            # Control characters stripped.
+            ("hello\x00world.md", "helloworld.md"),
+            ("nl\nin\tname.md", "nlinname.md"),
+            # Reserved-on-Windows punctuation stripped.
+            ('weird<>:"|?*.md', "weird.md"),
+        ],
+    )
+    def test_normalises_known_attacks(self, raw: str | None, expected: str) -> None:
+        assert sanitize_filename(raw) == expected
+
+    def test_truncates_overlong_name_preserving_extension(self) -> None:
+        long_stem = "a" * 300
+        result = sanitize_filename(f"{long_stem}.md")
+        assert len(result) == 255
+        assert result.endswith(".md")
+        # Truncation preserves the dot + ext characters.
+        assert result.startswith("a" * (255 - 3))
+
+    def test_round_trip_with_classify(self) -> None:
+        # A path-traversal filename should still classify correctly after
+        # sanitisation — the basename keeps its extension.
+        sanitised = sanitize_filename("../../etc/passwd.md")
+        ext, phase = classify_extension(sanitised)
+        assert ext == ".md"
+        assert phase == "phase1"
 
 
 class TestGetExtension:
