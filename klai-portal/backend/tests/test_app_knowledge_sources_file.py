@@ -310,6 +310,7 @@ class TestTextPipeline:
         assert payload["content_type"] == "plain_text"
         assert payload["title"] == "notes"
         assert payload["content"] == "# Hello\n\nworld"
+        assert payload["user_id"] == "user-abc"
         assert payload["extra"]["pipeline"] == "text"
 
         # kb_uploads row created in 'done' state
