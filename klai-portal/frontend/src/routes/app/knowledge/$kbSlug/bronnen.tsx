@@ -38,11 +38,6 @@ import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { DOCS_BASE, getOrgSlug } from '@/lib/kb-editor/tree-utils'
 import { queryLogger } from '@/lib/logger'
 
-/** Strip a .md extension so the docs-editor's resolveSlug can match by slug. */
-function stripMdExt(name: string): string {
-  return name.replace(/\.md$/i, '')
-}
-
 export const Route = createFileRoute('/app/knowledge/$kbSlug/bronnen')({
   component: BronnenTab,
 })
@@ -465,24 +460,11 @@ function BronRow({
           </Tooltip>
         </InlineDeleteConfirm>
 
-        {/* Per-row "open in editor" shortcut — for .md uploads only.
-            Direct ChevronRight Link (no dropdown). Sits next to trash so the
-            existing expand-chevron at the row tail is still the chunks-preview
-            toggle. resolveSlug in the docs editor matches by id OR slug, so
-            the .md-stripped filename works as a $pageId for files whose
-            source name maps to a Gitea page slug. */}
-        {bron.kind === 'upload' && /\.md$/i.test(bron.name) && (
-          <Tooltip label="Bewerken in editor">
-            <Link
-              to="/app/docs/$kbSlug/$pageId"
-              params={{ kbSlug, pageId: stripMdExt(bron.name) }}
-              aria-label="Bewerken in editor"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors"
-            >
-              <Pencil className="h-4 w-4" />
-            </Link>
-          </Tooltip>
-        )}
+        {/* Per-row "open in editor" shortcut intentionally removed:
+            bron.name (e.g. 'why-now.md') does not map 1:1 to a Gitea page
+            slug, so naive stripMdExt → 404 'Pagina niet gevonden'.
+            TODO: re-add when wired through a page-index lookup so the
+            link is only shown for resolvable pages. */}
 
         <button
           type="button"
