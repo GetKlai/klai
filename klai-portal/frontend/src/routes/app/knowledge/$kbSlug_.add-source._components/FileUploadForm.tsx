@@ -212,7 +212,7 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
         setAllDone(true)
         const t = setTimeout(() => {
           void navigate({
-            to: '/app/knowledge/$kbSlug/overview',
+            to: '/app/knowledge/$kbSlug/bronnen',
             params: { kbSlug },
           })
         }, 1500)

@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute, redirect, Link } from '@tanstack/react-router'
 import { useAuth } from '@/lib/auth'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -11,12 +11,25 @@ import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { DashboardSection } from './-kb-helpers'
 import type { KnowledgeBase, KBStats } from './-kb-types'
 
+/**
+ * Legacy /overview route — redirects to /insights, which now hosts the
+ * Docs / Statistieken sections (see KBOverviewSections below) AND the
+ * taxonomy / coverage / sync-history blocks.
+ */
 export const Route = createFileRoute('/app/knowledge/$kbSlug/overview')({
-  component: OverviewTab,
+  beforeLoad: ({ params }) => {
+    throw redirect({
+      to: '/app/knowledge/$kbSlug/insights',
+      params: { kbSlug: params.kbSlug },
+    })
+  },
 })
 
-function OverviewTab() {
-  const { kbSlug } = Route.useParams()
+/**
+ * Reusable Docs + Statistieken sections — embedded into the Inzichten tab.
+ * Was the body of the standalone /overview route before the consolidation.
+ */
+export function KBOverviewSections({ kbSlug }: { kbSlug: string }) {
   const auth = useAuth()
   const { user } = useCurrentUser()
 
