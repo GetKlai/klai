@@ -105,7 +105,7 @@ export function useSourceSubmit<TBody>({
       setSuccessful(true)
       setTimeout(() => {
         void navigate({
-          to: '/app/knowledge/$kbSlug/overview',
+          to: '/app/knowledge/$kbSlug/bronnen',
           params: { kbSlug },
         })
       }, 1200)
