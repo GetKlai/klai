@@ -29,6 +29,7 @@ Browser ──multipart 200 MB──▶ Caddy ──▶ portal-api
                                                           chunks=[...]
                                                           content=<bounded preview>
                                                           content_hash=<source sha256>
+                                                          skip LLM enrichment when preview is truncated
                                                         → kb_uploads.status=done
                                              → failure: kb_uploads.status=failed
                                          frontend polls
@@ -176,6 +177,32 @@ The docling path must not forward one giant converted document in
 If logs show `skip_chunking=false` or no `chunks`, the portal-api image is
 not running the Docling chunk pipeline. If `content` is larger than 500,000
 characters, the preview bound has regressed.
+
+### Large document indexed but enrichment fails or retries
+
+Large Docling documents must stay searchable on raw Docling chunk vectors.
+They should not fan out into hundreds or thousands of LiteLLM enrichment
+requests during ingest. The expected behavior for a truncated Docling preview
+or a document above `enrichment_max_chunks` is:
+
+```text
+event=enrichment_enqueue_skipped reason=document_text_truncated
+```
+
+The artifact extra should include:
+
+```json
+{
+  "llm_enrichment_skipped": true,
+  "llm_enrichment_skip_reason": "document_text_truncated",
+  "docling_chunk_count": 1557
+}
+```
+
+This is not a failed ingest. It means search/RAG uses the raw Docling chunks
+already stored in Qdrant. If enrichment jobs are still retrying for such an
+artifact, the knowledge-ingest image is stale or an old queued job predates
+the policy guard.
 
 ### portal-api container OOM during upload
 

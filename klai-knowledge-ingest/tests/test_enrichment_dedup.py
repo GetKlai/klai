@@ -123,6 +123,7 @@ def _base_patches(mock_app):
             mock_settings.chunk_size = 1500
             mock_settings.chunk_overlap = 200
             mock_settings.enrichment_enabled = True
+            mock_settings.enrichment_max_chunks = 200
             mock_settings.taxonomy_centroid_match_threshold = 0.85
             yield
 
@@ -211,3 +212,33 @@ async def test_two_ingests_same_path_only_one_enrichment():
     # configure called twice (once per ingest), but only the first defer_async succeeds
     assert task_fn.configure.call_count == 2
     assert configured.defer_async.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_truncated_docling_document_skips_enrichment_enqueue():
+    """A bounded preview for a pre-chunked Docling file must not start LLM fan-out."""
+    from knowledge_ingest.models import IngestRequest
+    from knowledge_ingest.routes.ingest import ingest_document
+
+    mock_app, task_fn, _ = _make_mock_app()
+    conn = _make_mock_conn()
+    req = IngestRequest(
+        org_id="org-3",
+        kb_slug="chemie",
+        path="file:sha256:source",
+        content="Preview only",
+        source_type="file",
+        content_type="document",
+        skip_chunking=True,
+        chunks=["docling chunk one", "docling chunk two"],
+        extra={
+            "document_text_truncated": True,
+            "docling_chunk_count": 2,
+        },
+    )
+
+    async with _base_patches(mock_app):
+        result = await ingest_document(conn, req)
+
+    assert result["status"] == "ok"
+    task_fn.configure.assert_not_called()

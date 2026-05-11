@@ -214,6 +214,45 @@ async def test_load_and_enrich_skips_when_document_text_missing():
 
 
 @pytest.mark.asyncio
+async def test_load_and_enrich_skips_truncated_docling_artifact():
+    """Existing queued jobs for pre-chunked large Docling files soft-skip."""
+    fake_artifact = {
+        "artifact_id": "11111111-2222-3333-4444-555555555555",
+        "org_id": "org1",
+        "kb_slug": "chemie",
+        "path": "file:sha256:source",
+        "user_id": None,
+        "content_type": "document",
+        "synthesis_depth": 0,
+        "assertion_mode": "factual",
+        "provenance_type": "extracted",
+        "confidence": None,
+        "belief_time_start": 0,
+        "belief_time_end": 253402300800,
+        "extra": {
+            "document_text": "Preview only",
+            "document_text_truncated": True,
+            "docling_chunk_count": 1557,
+        },
+    }
+    with (
+        patch(
+            "knowledge_ingest.enrichment_tasks.pg_store.read_artifact_for_enrichment",
+            new_callable=AsyncMock,
+            return_value=fake_artifact,
+        ),
+        patch(
+            "knowledge_ingest.enrichment_tasks._enrich_document", new_callable=AsyncMock
+        ) as mock_enrich,
+    ):
+        from knowledge_ingest.enrichment_tasks import _load_and_enrich
+
+        await _load_and_enrich("11111111-2222-3333-4444-555555555555")
+
+    mock_enrich.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_load_and_enrich_passes_pg_state_to_enrich_document():
     """The kwargs handed to _enrich_document come entirely from PG —
     not from any caller-frozen state. This is the contract that closes
