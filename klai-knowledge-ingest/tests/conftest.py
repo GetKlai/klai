@@ -222,7 +222,7 @@ def _mock_db_helpers(request):
         import knowledge_ingest.db as _db_mod
 
         _db_mod._pool = None
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
     targets = [
@@ -230,6 +230,7 @@ def _mock_db_helpers(request):
         "knowledge_ingest.routes.ingest.tenant_scoped_connection",
         "knowledge_ingest.routes.crawl.tenant_scoped_connection",
         "knowledge_ingest.routes.personal.tenant_scoped_connection",
+        "knowledge_ingest.routes.kb_sources.tenant_scoped_connection",
         "knowledge_ingest.crawl_tasks.tenant_scoped_connection",
         "knowledge_ingest.rebuild_tasks.tenant_scoped_connection",
         "knowledge_ingest.enrichment_tasks.tenant_scoped_connection",

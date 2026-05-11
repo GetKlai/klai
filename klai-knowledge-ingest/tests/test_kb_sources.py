@@ -122,6 +122,7 @@ async def test_list_kb_sources_groups_connectors_and_uploads() -> None:
                     "content_type": "pdf",
                     "created_at": 1700000000,
                     "chunks_count": 7,
+                    "index_status": "synced",
                 },
             ],
         ]
@@ -139,6 +140,7 @@ async def test_list_kb_sources_groups_connectors_and_uploads() -> None:
             "content_type": "pdf",
             "created_at": 1700000000,
             "chunks_count": 7,
+            "index_status": "synced",
         },
     ]
     # Two distinct queries: connectors then uploads
