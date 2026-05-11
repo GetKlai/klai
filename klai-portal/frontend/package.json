@@ -6,7 +6,7 @@
   "scripts": {
     "i18n:compile": "paraglide-js compile --project ./project.inlang --outdir ./src/paraglide",
     "dev": "npm run i18n:compile && vite",
-    "build": "npm run i18n:compile && tsc -b && vite build",
+    "build": "npm run i18n:compile && tsc -b --force && vite build",
     "preview": "vite preview",
     "lint": "eslint .",
     "analyze": "npm run i18n:compile && ANALYZE=true vite build",
