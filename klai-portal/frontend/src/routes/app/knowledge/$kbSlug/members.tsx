@@ -152,12 +152,12 @@ function MembersTab() {
 
   if (isPersonal) {
     return (
-      <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_members_personal_kb_hint()}</p>
+      <p className="text-sm text-gray-400">{m.knowledge_members_personal_kb_hint()}</p>
     )
   }
 
   if (isLoading) {
-    return <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_loading()}</p>
+    return <p className="text-sm text-gray-400">{m.admin_connectors_loading()}</p>
   }
 
   const visibilityMode = kb ? deriveVisibilityMode(kb) : 'restricted'
@@ -230,7 +230,7 @@ function MembersTab() {
       {/* Visibility selector — owners only */}
       {kb && kb.owner_type === 'org' && isOwner && (
         <div className="space-y-2">
-          <h2 className="text-sm font-semibold text-[var(--color-foreground)]">
+          <h2 className="text-sm font-semibold text-gray-900">
             {m.knowledge_sharing_who_can_access()}
           </h2>
           <div className="flex flex-col gap-2">
@@ -241,18 +241,18 @@ function MembersTab() {
                 onClick={() => handleVisibilityChange(mode)}
                 className={`flex items-start gap-3 rounded-lg border p-3 text-left transition-colors ${
                   visibilityMode === mode
-                    ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/5'
-                    : 'border-[var(--color-border)] hover:border-[var(--color-accent)]/50'
+                    ? 'border-gray-200 bg-black/[0.06]'
+                    : 'border-gray-200 hover:border-gray-300'
                 }`}
               >
                 <Icon className={`h-4 w-4 mt-0.5 shrink-0 ${
-                  visibilityMode === mode ? 'text-[var(--color-accent)]' : 'text-[var(--color-muted-foreground)]'
+                  visibilityMode === mode ? 'text-gray-400' : 'text-gray-400'
                 }`} />
                 <div>
-                  <span className="text-sm font-medium text-[var(--color-foreground)]">
+                  <span className="text-sm font-medium text-gray-900">
                     {label}
                   </span>
-                  <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+                  <p className="text-xs text-gray-400 mt-0.5">
                     {description}
                   </p>
                 </div>
@@ -269,13 +269,13 @@ function MembersTab() {
             type="checkbox"
             checked={allowContribute}
             onChange={handleContributeToggle}
-            className="mt-1 h-4 w-4 rounded border-[var(--color-border)] text-[var(--color-accent)] focus:ring-[var(--color-ring)]"
+            className="mt-1 h-4 w-4 rounded border-gray-200 text-gray-400 focus:ring-[var(--color-ring)]"
           />
           <div>
-            <span className="text-sm font-medium text-[var(--color-foreground)]">
+            <span className="text-sm font-medium text-gray-900">
               {m.knowledge_sharing_contributor_toggle()}
             </span>
-            <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+            <p className="text-xs text-gray-400 mt-0.5">
               {m.knowledge_sharing_contributor_toggle_description()}
             </p>
           </div>
@@ -284,7 +284,7 @@ function MembersTab() {
 
       {/* Non-owner visibility display */}
       {kb && kb.owner_type === 'org' && !isOwner && (
-        <div className="flex items-center gap-2 text-sm text-[var(--color-muted-foreground)]">
+        <div className="flex items-center gap-2 text-sm text-gray-400">
           {visibilityMode === 'public' && <Globe className="h-4 w-4" />}
           {visibilityMode === 'org' && <Users className="h-4 w-4" />}
           {visibilityMode === 'restricted' && <Lock className="h-4 w-4" />}
@@ -298,7 +298,7 @@ function MembersTab() {
 
       {/* Groups — MemberPicker style */}
       <div className="space-y-2">
-        <h2 className="text-sm font-semibold text-[var(--color-foreground)]">
+        <h2 className="text-sm font-semibold text-gray-900">
           {visibilityMode !== 'restricted' ? m.knowledge_sharing_groups_extra() : m.knowledge_sharing_groups()}
         </h2>
         {/* Group search combobox — owners only */}
@@ -313,7 +313,7 @@ function MembersTab() {
               }
             }}
           >
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-muted-foreground)]" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
             <Input
               value={groupSearch}
               onChange={(e) => setGroupSearch(e.target.value)}
@@ -321,7 +321,7 @@ function MembersTab() {
               className="pl-9"
             />
             {groupFocused && filteredGroups.length > 0 && (
-              <div className="absolute z-10 mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] shadow-md max-h-40 overflow-y-auto">
+              <div className="absolute z-10 mt-1 w-full rounded-lg border border-gray-200 bg-[var(--color-card)] shadow-md max-h-40 overflow-y-auto">
                 {filteredGroups.map((g) => (
                   <button
                     key={g.id}
@@ -330,7 +330,7 @@ function MembersTab() {
                     onClick={() => {
                       inviteGroupMutation.mutate({ groupId: g.id, role: 'viewer' })
                     }}
-                    className="w-full px-3 py-2 text-left text-sm text-[var(--color-foreground)] hover:bg-[var(--color-secondary)] transition-colors"
+                    className="w-full px-3 py-2 text-left text-sm text-gray-900 hover:bg-gray-50 transition-colors"
                   >
                     {g.name}
                   </button>
@@ -348,16 +348,16 @@ function MembersTab() {
         {members?.groups.map((g) => (
           <div
             key={g.id}
-            className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2"
+            className="flex items-center justify-between rounded-lg border border-gray-200 bg-[var(--color-card)] px-3 py-2"
           >
-            <span className="text-sm text-[var(--color-foreground)]">{g.group_name}</span>
+            <span className="text-sm text-gray-900">{g.group_name}</span>
             <div className="flex items-center gap-2">
-              <span className="text-xs text-[var(--color-muted-foreground)]">{g.role}</span>
+              <span className="text-xs text-gray-400">{g.role}</span>
               {isOwner && (
                 <button
                   type="button"
                   onClick={() => setConfirmingRemoveGroup(g.id)}
-                  className="flex h-6 w-6 items-center justify-center text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)] transition-colors"
+                  className="flex h-6 w-6 items-center justify-center text-gray-400 hover:text-[var(--color-destructive)] transition-colors"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
@@ -367,13 +367,13 @@ function MembersTab() {
         ))}
 
         {(!members?.groups || members.groups.length === 0) && !isOwner && (
-          <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_members_empty_groups()}</p>
+          <p className="text-sm text-gray-400">{m.knowledge_members_empty_groups()}</p>
         )}
       </div>
 
       {/* Persons — MemberPicker style */}
       <div className="space-y-2">
-        <h2 className="text-sm font-semibold text-[var(--color-foreground)]">
+        <h2 className="text-sm font-semibold text-gray-900">
           {visibilityMode !== 'restricted' ? m.knowledge_sharing_persons_extra() : m.knowledge_sharing_persons()}
         </h2>
         {/* Person search combobox — owners only */}
@@ -388,7 +388,7 @@ function MembersTab() {
               }
             }}
           >
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-muted-foreground)]" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
             <Input
               value={userSearch}
               onChange={(e) => setUserSearch(e.target.value)}
@@ -396,7 +396,7 @@ function MembersTab() {
               className="pl-9"
             />
             {userFocused && filteredUsers.length > 0 && (
-              <div className="absolute z-10 mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] shadow-md max-h-40 overflow-y-auto">
+              <div className="absolute z-10 mt-1 w-full rounded-lg border border-gray-200 bg-[var(--color-card)] shadow-md max-h-40 overflow-y-auto">
                 {filteredUsers.map((u) => (
                   <button
                     key={u.zitadel_user_id}
@@ -405,10 +405,10 @@ function MembersTab() {
                     onClick={() => {
                       inviteUserMutation.mutate({ email: u.email, role: 'viewer' })
                     }}
-                    className="w-full px-3 py-2 text-left text-sm hover:bg-[var(--color-secondary)] transition-colors"
+                    className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 transition-colors"
                   >
-                    <span className="text-[var(--color-foreground)]">{u.display_name}</span>
-                    <span className="ml-2 text-xs text-[var(--color-muted-foreground)]">{u.email}</span>
+                    <span className="text-gray-900">{u.display_name}</span>
+                    <span className="ml-2 text-xs text-gray-400">{u.email}</span>
                   </button>
                 ))}
               </div>
@@ -424,21 +424,21 @@ function MembersTab() {
         {members?.users.map((u) => (
           <div
             key={u.id}
-            className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2"
+            className="flex items-center justify-between rounded-lg border border-gray-200 bg-[var(--color-card)] px-3 py-2"
           >
             <div>
-              <span className="text-sm text-[var(--color-foreground)]">{u.display_name ?? u.email ?? u.user_id}</span>
+              <span className="text-sm text-gray-900">{u.display_name ?? u.email ?? u.user_id}</span>
               {u.display_name && u.email && (
-                <span className="ml-2 text-xs text-[var(--color-muted-foreground)]">{u.email}</span>
+                <span className="ml-2 text-xs text-gray-400">{u.email}</span>
               )}
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-xs text-[var(--color-muted-foreground)]">{u.role}</span>
+              <span className="text-xs text-gray-400">{u.role}</span>
               {isOwner && u.user_id !== myUserId && (
                 <button
                   type="button"
                   onClick={() => setConfirmingRemoveUser(u.id)}
-                  className="flex h-6 w-6 items-center justify-center text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)] transition-colors"
+                  className="flex h-6 w-6 items-center justify-center text-gray-400 hover:text-[var(--color-destructive)] transition-colors"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
@@ -448,11 +448,11 @@ function MembersTab() {
         ))}
 
         {(!members?.users || members.users.length === 0) && !isOwner && (
-          <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_members_empty_users()}</p>
+          <p className="text-sm text-gray-400">{m.knowledge_members_empty_users()}</p>
         )}
       </div>
 
-      <p className="text-xs text-[var(--color-muted-foreground)] italic">
+      <p className="text-xs text-gray-400 italic">
         {m.knowledge_sharing_creator_note({ name: '' })}
       </p>
 

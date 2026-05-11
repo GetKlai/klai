@@ -122,7 +122,7 @@ const CONNECTOR_TYPES: {
   { type: 'google_slides', label: m.admin_connectors_type_google_slides, available: true, Icon: SiGoogleslides },
 ]
 
-const MARKDOWN_PROSE_CLASSES = 'overflow-y-auto max-h-64 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-[var(--color-foreground)] [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-[var(--color-foreground)] [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-[var(--color-foreground)] [&_h3]:mb-1 [&_p]:text-[var(--color-muted-foreground)] [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-[var(--color-muted-foreground)] [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-[var(--color-muted-foreground)] [&_ol]:mb-1.5 [&_strong]:font-semibold [&_strong]:text-[var(--color-foreground)] [&_hr]:border-[var(--color-border)] [&_hr]:my-2'
+const MARKDOWN_PROSE_CLASSES = 'overflow-y-auto max-h-64 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-gray-900 [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-gray-900 [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-gray-900 [&_h3]:mb-1 [&_p]:text-gray-400 [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-gray-400 [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-gray-400 [&_ol]:mb-1.5 [&_strong]:font-semibold [&_strong]:text-gray-900 [&_hr]:border-gray-200 [&_hr]:my-2'
 
 // -- Route -------------------------------------------------------------------
 
@@ -507,11 +507,11 @@ function AddConnectorPage() {
                     }}
                     className={[
                       'flex flex-col items-start gap-2 rounded-xl border p-4 text-left transition-all',
-                      !available ? 'cursor-not-allowed opacity-50' : 'border-[var(--color-border)] bg-[var(--color-card)] hover:border-[var(--color-accent)]/50',
+                      !available ? 'cursor-not-allowed opacity-50' : 'border-gray-200 bg-[var(--color-card)] hover:border-gray-300',
                     ].join(' ')}
                   >
-                    <Icon className="h-4 w-4 text-[var(--color-accent)]" />
-                    <span className="text-sm font-medium text-[var(--color-foreground)]">{label()}</span>
+                    <Icon className="h-4 w-4 text-gray-400" />
+                    <span className="text-sm font-medium text-gray-900">{label()}</span>
                     {!available && <Badge variant="outline" className="text-xs">{m.admin_connectors_coming_soon()}</Badge>}
                   </button>
                 ))}
@@ -576,13 +576,13 @@ function AddConnectorPage() {
                     <div className="space-y-1.5">
                       <Label htmlFor="notion-token">{m.admin_connectors_notion_access_token()}</Label>
                       <Input id="notion-token" type="password" required placeholder={m.admin_connectors_notion_access_token_placeholder()} value={notionConfig.access_token} onChange={(e) => setNotionConfig((p) => ({ ...p, access_token: e.target.value }))} />
-                      <p className="text-xs text-[var(--color-muted-foreground)]">
+                      <p className="text-xs text-gray-400">
                         {m.admin_connectors_notion_token_help_prefix()}{' '}
                         <a
                           href="https://www.notion.so/my-integrations"
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center gap-0.5 text-[var(--color-rl-accent-dark)] hover:text-[var(--color-foreground)] underline underline-offset-2"
+                          className="inline-flex items-center gap-0.5 text-[var(--color-rl-accent-dark)] hover:text-gray-900 underline underline-offset-2"
                         >
                           notion.so/my-integrations
                           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" fill="none" className="size-3 shrink-0" aria-hidden="true">
@@ -596,7 +596,7 @@ function AddConnectorPage() {
                       <Label htmlFor="notion-db-ids">{m.admin_connectors_notion_database_ids()}</Label>
                       <textarea
                         id="notion-db-ids"
-                        className="flex min-h-[80px] w-full rounded-md border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-sm placeholder:text-[var(--color-muted-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
+                        className="flex min-h-[80px] w-full rounded-md border border-gray-200 bg-[var(--color-input)] px-3 py-2 text-sm placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
                         placeholder={m.admin_connectors_notion_database_ids_placeholder()}
                         value={notionConfig.database_ids}
                         onChange={(e) => setNotionConfig((p) => ({ ...p, database_ids: e.target.value }))}
@@ -645,13 +645,13 @@ function AddConnectorPage() {
             {(selectedType === 'google_drive' || selectedType === 'google_docs' || selectedType === 'google_sheets' || selectedType === 'google_slides') && (
               <form onSubmit={(e) => { e.preventDefault(); createGoogleDriveMutation.mutate() }} className="space-y-3">
                 {selectedType === 'google_docs' && (
-                  <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_google_docs_subtitle()}</p>
+                  <p className="text-sm text-gray-400">{m.admin_connectors_google_docs_subtitle()}</p>
                 )}
                 {selectedType === 'google_sheets' && (
-                  <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_google_sheets_subtitle()}</p>
+                  <p className="text-sm text-gray-400">{m.admin_connectors_google_sheets_subtitle()}</p>
                 )}
                 {selectedType === 'google_slides' && (
-                  <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_google_slides_subtitle()}</p>
+                  <p className="text-sm text-gray-400">{m.admin_connectors_google_slides_subtitle()}</p>
                 )}
                 <div className="space-y-1.5">
                   <Label htmlFor="gd-name">{m.admin_connectors_field_name()}</Label>
@@ -660,7 +660,7 @@ function AddConnectorPage() {
                 <div className="space-y-1.5">
                   <Label htmlFor="gd-folder-id">{m.admin_connectors_google_drive_folder_id()}</Label>
                   <Input id="gd-folder-id" placeholder={m.admin_connectors_google_drive_folder_id_placeholder()} value={folderId} onChange={(e) => setFolderId(e.target.value)} />
-                  <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_google_drive_folder_id_help()}</p>
+                  <p className="text-xs text-gray-400">{m.admin_connectors_google_drive_folder_id_help()}</p>
                 </div>
                 <div className="space-y-1.5">
                   <Label>{m.admin_connectors_assertion_modes_label()}</Label>
@@ -697,7 +697,7 @@ function AddConnectorPage() {
                     value={msSiteUrl}
                     onChange={(e) => { setMsSiteUrl(e.target.value); setMsSiteUrlError(null) }}
                   />
-                  <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_ms_docs_site_url_help()}</p>
+                  <p className="text-xs text-gray-400">{m.admin_connectors_ms_docs_site_url_help()}</p>
                   {msSiteUrlError && (
                     <p className="text-xs text-[var(--color-destructive)]">{msSiteUrlError}</p>
                   )}
@@ -710,7 +710,7 @@ function AddConnectorPage() {
                     value={msDriveId}
                     onChange={(e) => setMsDriveId(e.target.value)}
                   />
-                  <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_ms_docs_drive_id_help()}</p>
+                  <p className="text-xs text-gray-400">{m.admin_connectors_ms_docs_drive_id_help()}</p>
                 </div>
                 <div className="space-y-1.5">
                   <Label>{m.admin_connectors_assertion_modes_label()}</Label>
@@ -860,11 +860,11 @@ function AddConnectorPage() {
                 {/* Step 3: Authentication question — Yes/No only, no other state. */}
                 {wcStep === 'auth-question' && (
                   <div className="space-y-4">
-                    <div className="rounded-lg border border-[var(--color-border)] p-4 space-y-3">
-                      <p className="text-sm font-medium text-[var(--color-foreground)]">
+                    <div className="rounded-lg border border-gray-200 p-4 space-y-3">
+                      <p className="text-sm font-medium text-gray-900">
                         Is this site behind a login?
                       </p>
-                      <p className="text-xs text-[var(--color-muted-foreground)]">
+                      <p className="text-xs text-gray-400">
                         Some knowledge bases require you to be logged in to see the content.
                         We&apos;ll verify either way before letting you save.
                       </p>
@@ -919,8 +919,8 @@ function AddConnectorPage() {
                     Hits REQ-2 /connectors/auth-probe; gates on classification === auth_ok. */}
                 {wcStep === 'auth-setup' && (
                   <div className="space-y-4">
-                    <div className="rounded-lg border border-[var(--color-border)] p-4 space-y-3">
-                      <p className="text-sm font-medium text-[var(--color-foreground)]">
+                    <div className="rounded-lg border border-gray-200 p-4 space-y-3">
+                      <p className="text-sm font-medium text-gray-900">
                         Authentication cookies
                       </p>
                       <CookieRowsInput
@@ -996,14 +996,14 @@ function AddConnectorPage() {
                     {/* Auth status reminder — public sites get a banner here, authenticated
                         sites land here only after auth-setup returned auth_ok. */}
                     {requiresLogin === false && (
-                      <div className="flex items-center justify-between rounded-lg border border-[var(--color-border)] px-4 py-3">
-                        <div className="flex items-center gap-2 text-xs text-[var(--color-muted-foreground)]">
+                      <div className="flex items-center justify-between rounded-lg border border-gray-200 px-4 py-3">
+                        <div className="flex items-center gap-2 text-xs text-gray-400">
                           <CheckCircle2 className="h-3.5 w-3.5 text-[var(--color-success)]" />
                           Public site — no login needed
                         </div>
                         <button
                           type="button"
-                          className="text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+                          className="text-xs text-gray-400 hover:text-gray-900"
                           onClick={() => setWcStep('auth-question')}
                         >
                           Actually, it needs login
@@ -1018,7 +1018,7 @@ function AddConnectorPage() {
                         </div>
                         <button
                           type="button"
-                          className="text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+                          className="text-xs text-gray-400 hover:text-gray-900"
                           onClick={() => setWcStep('auth-setup')}
                         >
                           Edit cookies
@@ -1042,7 +1042,7 @@ function AddConnectorPage() {
                         {/* Advanced: content selector */}
                         <button
                           type="button"
-                          className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
+                          className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-900 transition-colors"
                           onClick={() => setShowAdvancedSelector((p) => !p)}
                         >
                           <Settings className="h-3 w-3" />
@@ -1050,14 +1050,14 @@ function AddConnectorPage() {
                           {showAdvancedSelector ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
                         </button>
                         {showAdvancedSelector && (
-                          <div className="pl-4 border-l-2 border-[var(--color-border)] space-y-1.5">
+                          <div className="pl-4 border-l-2 border-gray-200 space-y-1.5">
                             <Input
                               id="wc-preview-selector"
                               placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()}
                               value={webcrawlerConfig.content_selector}
                               onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))}
                             />
-                            <p className="text-xs text-[var(--color-muted-foreground)]">
+                            <p className="text-xs text-gray-400">
                               Only needed if the preview picks up menus instead of the article.
                               Leave empty to let AI detect this automatically.
                             </p>
@@ -1088,7 +1088,7 @@ function AddConnectorPage() {
                       {!webcrawlerConfig.content_selector && (
                         <button
                           type="button"
-                          className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-accent)] transition-colors disabled:opacity-50"
+                          className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-900 transition-colors disabled:opacity-50"
                           disabled={previewMutation.isPending || !wcPreviewUrl}
                           onClick={() => {
                             invalidatePreview()
@@ -1106,14 +1106,14 @@ function AddConnectorPage() {
                     )}
                     {/* Loading state */}
                     {previewMutation.isPending && (
-                      <div className="rounded-lg border border-[var(--color-border)] p-4 flex items-center gap-2 text-sm text-[var(--color-muted-foreground)]">
+                      <div className="rounded-lg border border-gray-200 p-4 flex items-center gap-2 text-sm text-gray-400">
                         <Loader2 className="h-4 w-4 animate-spin" />
                         {m.admin_connectors_webcrawler_preview_loading()}
                       </div>
                     )}
                     {/* Empty state — before any preview has run */}
                     {!previewResult && !previewMutation.isPending && !previewError && (
-                      <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_empty()}</p>
+                      <p className="text-sm text-gray-400">{m.admin_connectors_webcrawler_preview_empty()}</p>
                     )}
                     {/* SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3:
                         Single source of truth: classification drives ALL feedback.
@@ -1134,8 +1134,8 @@ function AddConnectorPage() {
                         {/* Affordance: AI-detected selector badge + "Use this selector" CTA.
                             Shown for success and selector_required/empty when AI found something. */}
                         {previewResult.selector_source === 'ai' && previewResult.content_selector && (
-                          <div className="rounded-lg border border-[var(--color-accent)]/30 bg-[var(--color-accent)]/5 p-3 space-y-2">
-                            <div className="flex gap-2 items-center text-xs text-[var(--color-accent)]">
+                          <div className="rounded-lg border border-gray-200 bg-black/[0.06] p-3 space-y-2">
+                            <div className="flex gap-2 items-center text-xs text-gray-400">
                               <Sparkles className="h-3.5 w-3.5 shrink-0" />
                               <span>{m.admin_connectors_webcrawler_ai_selector_detected({ selector: previewResult.content_selector, count: String(previewResult.word_count) })}</span>
                             </div>
@@ -1163,7 +1163,7 @@ function AddConnectorPage() {
                           !webcrawlerConfig.content_selector && previewResult.selector_source !== 'ai' && (
                           <button
                             type="button"
-                            className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-accent)] transition-colors disabled:opacity-50"
+                            className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-900 transition-colors disabled:opacity-50"
                             disabled={previewMutation.isPending}
                             onClick={() => {
                               invalidatePreview()
@@ -1178,17 +1178,17 @@ function AddConnectorPage() {
                         {/* Affordance: extracted markdown body as proof — success only.
                             Shows what the crawler will actually store. */}
                         {previewResult.classification === 'success' && previewResult.word_count > 0 && (
-                          <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
+                          <div className="rounded-lg border border-gray-200 p-3 space-y-2">
                             <div className="flex items-center justify-between">
-                              <span className="text-sm font-medium text-[var(--color-foreground)]">{m.admin_connectors_webcrawler_preview_title()}</span>
-                              <span className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_word_count({ count: String(previewResult.word_count) })}</span>
+                              <span className="text-sm font-medium text-gray-900">{m.admin_connectors_webcrawler_preview_title()}</span>
+                              <span className="text-xs text-gray-400">{m.admin_connectors_webcrawler_preview_word_count({ count: String(previewResult.word_count) })}</span>
                             </div>
                             {previewResult.fit_markdown.trim() ? (
                               <div className={MARKDOWN_PROSE_CLASSES}>
-                                <ReactMarkdown components={{ a: ({ children }) => <span className="text-[var(--color-accent)]">{children}</span> }}>{previewResult.fit_markdown}</ReactMarkdown>
+                                <ReactMarkdown components={{ a: ({ children }) => <span className="text-gray-400">{children}</span> }}>{previewResult.fit_markdown}</ReactMarkdown>
                               </div>
                             ) : (
-                              <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_empty()}</p>
+                              <p className="text-sm text-gray-400">{m.admin_connectors_webcrawler_preview_empty()}</p>
                             )}
                           </div>
                         )}
@@ -1205,7 +1205,7 @@ function AddConnectorPage() {
                               <Shield className="h-3.5 w-3.5 shrink-0" />
                               <span>Auth protection enabled</span>
                             </div>
-                            <p className="text-xs text-[var(--color-muted-foreground)] ml-5.5">
+                            <p className="text-xs text-gray-400 ml-5.5">
                               We&apos;ll check this page before every sync to detect expired logins.
                               {authGuard.login_indicator_selector && (
                                 <> Pages without login indicator will be excluded.</>
@@ -1213,7 +1213,7 @@ function AddConnectorPage() {
                             </p>
                             <button
                               type="button"
-                              className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors ml-5.5"
+                              className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-900 transition-colors ml-5.5"
                               onClick={() => setShowAdvancedAuthGuard(!showAdvancedAuthGuard)}
                             >
                               <Settings className="h-3 w-3" />
@@ -1404,7 +1404,7 @@ export function PreviewClassificationFeedback({
       {classification === 'unknown' && onRetry && (
         <button
           type="button"
-          className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
+          className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-900 transition-colors"
           onClick={onRetry}
         >
           Retry
