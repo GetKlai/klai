@@ -1248,7 +1248,7 @@ async def reindex_upload(
     Returns 202 Accepted; indexing happens asynchronously.
     SPEC-PORTAL-KENNIS-002 A4.
     """
-    org = await _load_org_or_500(perms.org_id, db)
+    org = await _load_org_or_500(db, perms.org_id)
     kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
 
     # B1 viewer gate: contributors and above may trigger reindex
@@ -1285,7 +1285,7 @@ async def delete_kb_upload(
     Viewers get 403.
     SPEC-PORTAL-KENNIS-002 B2.
     """
-    org = await _load_org_or_500(perms.org_id, db)
+    org = await _load_org_or_500(db, perms.org_id)
     kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
 
     # B1 viewer gate
