@@ -52,6 +52,8 @@ interface Bron {
   status: string | null
   last_sync_at: string | null
   created_at: string | null
+  /** Upload-only: pending / synced / failed from Track 3 backend. */
+  index_status?: string | null
 }
 
 interface BronnenResponse {
@@ -92,8 +94,13 @@ type Status = 'synced' | 'pending' | 'not_synced'
 function mapStatus(bron: Bron): Status {
   const s = (bron.status ?? '').toLowerCase()
   if (bron.kind === 'upload') {
-    if (s === 'processing' || s === 'ingesting') return 'pending'
-    if (s === 'failed' || s.includes('error')) return 'not_synced'
+    // Track 3 introduced index_status as the authoritative field.
+    const idx = (bron.index_status ?? '').toLowerCase()
+    if (idx === 'pending' || s === 'processing' || s === 'ingesting') return 'pending'
+    if (idx === 'failed' || s === 'failed' || s.includes('error')) return 'not_synced'
+    // An upload without any chunks isn't actually retrievable — call it
+    // "niet gesynct" so the user knows it hasn't finished indexing yet.
+    if (bron.chunks_count === 0) return 'not_synced'
     return 'synced'
   }
   // Connector — last_sync_status is the source of truth.
@@ -331,7 +338,7 @@ function BronRow({
 
   return (
     <div>
-      <div className="group flex items-center gap-2 pr-2 hover:bg-gray-50 transition-colors">
+      <div className="group flex items-center gap-2 pr-2 hover:bg-black/[0.03] transition-colors">
         <button
           type="button"
           onClick={onToggle}
