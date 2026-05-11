@@ -42,6 +42,7 @@ from knowledge_ingest import (
 )
 from knowledge_ingest.content_profiles import get_profile
 from knowledge_ingest.db import cross_org_admin_connection, tenant_scoped_connection
+from knowledge_ingest.enrichment_policy import enrichment_skip_reason
 
 logger = structlog.get_logger()
 
@@ -143,6 +144,20 @@ async def _load_and_enrich(artifact_id: str) -> None:
 
     extra: dict = artifact["extra"] or {}
     document_text: str = extra.get("document_text", "") or ""
+    prechunked_skip = enrichment_skip_reason(
+        chunk_count=int(extra.get("docling_chunk_count") or 0),
+        extra_payload=extra,
+    )
+    if prechunked_skip is not None:
+        logger.info(
+            "enrichment_aborted_by_policy",
+            artifact_id=artifact_id,
+            kb_slug=artifact["kb_slug"],
+            path=artifact["path"],
+            reason=prechunked_skip,
+            docling_chunk_count=extra.get("docling_chunk_count"),
+        )
+        return
     if not document_text:
         # Pre-SPEC-INGEST-CONTENT-PG-001 artifact rows may have no
         # document_text on extra. Without a body we cannot enrich; the
@@ -161,6 +176,17 @@ async def _load_and_enrich(artifact_id: str) -> None:
     # is current, regardless of what was in flight at enqueue time.
     children, parents = chunker.chunk_markdown_with_parents(document_text)
     chunks_text = [c.text for c in children]
+    derived_skip = enrichment_skip_reason(chunk_count=len(chunks_text), extra_payload=extra)
+    if derived_skip is not None:
+        logger.info(
+            "enrichment_aborted_by_policy",
+            artifact_id=artifact_id,
+            kb_slug=artifact["kb_slug"],
+            path=artifact["path"],
+            reason=derived_skip,
+            chunks=len(chunks_text),
+        )
+        return
     parents_serialised: list[dict] = [
         {
             "text": p.text,

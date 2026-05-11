@@ -217,6 +217,7 @@ Data flow invariants:
 | D-8 | Converted document payload | Submit with `include_converted_doc=false` and `convert_image_export_mode=placeholder`. | RAG ingestion needs text chunks, not an embedded DoclingDocument or base64 image payloads. This keeps result and ingest payloads bounded. |
 | D-9 | Pre-chunked ingest contract | Forward Docling chunk text to `/ingest/v1/document` with `skip_chunking=true`, `chunks=[...]`, bounded `content`, and original file `content_hash`. | Prevents 422s from `content` max length, preserves Docling structure, and dedupes against the uploaded source instead of the preview. |
 | D-10 | Docling result lifecycle | Configure `DOCLING_SERVE_SINGLE_USE_RESULTS=false` and `DOCLING_SERVE_RESULT_REMOVAL_DELAY=86400`; still treat Docling results as volatile and ingest immediately after terminal success. | Docling Serve defaults are optimized for one client fetch. The portal poller may need retry tolerance after a transient `/ingest` failure or portal restart. Durable result storage in Klai remains a future hardening step. |
+| D-11 | Large-document enrichment | Skip per-chunk LLM enrichment when the ingest content is a truncated preview or when the chunk count exceeds `enrichment_max_chunks` (default 200). Keep the raw Docling vectors as the searchable source of truth. | A 1557-chunk textbook would require thousands of LiteLLM calls and can be rate-limited for minutes. Re-chunking the bounded preview during enrichment would also overwrite the full Docling index with partial content. |
 
 ---
 
@@ -375,6 +376,11 @@ forward those values to `knowledge-ingest` as `skip_chunking=true` and
 `knowledge-ingest` SHALL be a bounded preview no larger than 450,000
 characters and `content_hash` SHALL be the original uploaded source hash.
 
+**Ubiquitous.** WHEN a docling-path upload has `document_text_truncated=true`
+OR produces more chunks than `enrichment_max_chunks`, THE SYSTEM SHALL NOT
+enqueue per-chunk LLM enrichment. The raw Docling chunks SHALL remain indexed
+and searchable.
+
 **Event-driven.** WHEN docling-serve returns non-2xx OR times out (≥ 600 s),
 THE SYSTEM SHALL mark the artifact `failed` with `failure_reason:
 "docling_timeout"` or `"extraction_failed"` and NOT retry automatically.
@@ -397,6 +403,10 @@ THE SYSTEM SHALL mark the artifact `failed` with `failure_reason:
 - AC-4.8: The same Chemie upload does not produce HTTP 422 from
   `knowledge-ingest` and never transitions from Docling success to
   `docling_result_not_found`.
+- AC-4.9: The same Chemie upload stores 1557 raw chunks in Qdrant and skips
+  LLM enrichment with `llm_enrichment_skip_reason=document_text_truncated`.
+  No enrichment job may overwrite the index with chunks derived from the
+  bounded preview.
 
 ---
 

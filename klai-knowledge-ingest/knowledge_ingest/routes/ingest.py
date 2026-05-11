@@ -40,6 +40,7 @@ from knowledge_ingest.config import settings
 from knowledge_ingest.content_labeler import generate_content_label
 from knowledge_ingest.content_profiles import get_profile
 from knowledge_ingest.db import tenant_scoped_connection
+from knowledge_ingest.enrichment_policy import enrichment_skip_reason
 from knowledge_ingest.identity import assert_caller_identity, assert_caller_identity_tenant_only
 from knowledge_ingest.models import (
     BulkSyncRequest,
@@ -537,6 +538,10 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         extra_payload["connector_type"] = req.connector_type
     if req.source_domain:
         extra_payload["source_domain"] = req.source_domain
+    enrichment_skip = enrichment_skip_reason(chunk_count=len(texts), extra_payload=extra_payload)
+    if enrichment_skip is not None:
+        extra_payload["llm_enrichment_skipped"] = True
+        extra_payload["llm_enrichment_skip_reason"] = enrichment_skip
     # Visibility is authoritative from kb_config — set last so req.extra cannot override it
     extra_payload["visibility"] = visibility
 
@@ -574,7 +579,17 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     # fields are loaded from PostgreSQL at execution time. Closes the
     # race-window where two POSTs in quick succession could leave the
     # worker processing a stale (frozen-in-args) content snapshot.
-    if await org_config.is_enrichment_enabled(conn, req.org_id):
+    if enrichment_skip is not None:
+        logger.info(
+            "enrichment_enqueue_skipped",
+            reason=enrichment_skip,
+            chunks=len(texts),
+            kb_slug=req.kb_slug,
+            path=req.path,
+            org_id=req.org_id,
+            content_type=req.content_type,
+        )
+    elif await org_config.is_enrichment_enabled(conn, req.org_id):
         from knowledge_ingest import enrichment_tasks
 
         proc_app = enrichment_tasks.get_app()

@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     enrichment_model: str = "klai-fast"
     enrichment_timeout: float = 15.0
     enrichment_max_concurrent: int = 2  # Mistral account limit: 60 RPM shared across all aliases
+    # Larger docs keep raw chunk vectors; per-chunk LLM fan-out is not viable.
+    enrichment_max_chunks: int = 200
     enrichment_max_document_tokens: int = 2000
     # Sparse embedding sidecar (BGE-M3 FlagEmbedding)
     sparse_sidecar_url: str = "http://172.18.0.1:8001"
@@ -128,7 +130,7 @@ class Settings(BaseSettings):
     # actually contains.
     #
     # ``'leaf'`` returns the leaves of the cluster hierarchy — finer-grained,
-    # typically 2-4× more clusters than EOM on the same input. Targets the
+    # typically 2-4x more clusters than EOM on the same input. Targets the
     # 5-9 IA sweet spot at typical KB sizes; needs revisiting if the corpus
     # grows >300 docs (then the leaf count may climb past the comfortable
     # browsing range and hierarchical taxonomy becomes warranted).
