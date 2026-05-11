@@ -107,13 +107,13 @@ function GapsPage() {
       return (
         <div className="p-6 max-w-2xl opacity-50 cursor-default select-none" aria-disabled="true">
           <div className="flex items-start gap-3 mb-4">
-            <AlertTriangle className="h-7 w-7 text-[var(--color-foreground)]" />
-            <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+            <AlertTriangle className="h-7 w-7 text-gray-900" />
+            <h1 className="page-title text-xl/none font-semibold text-gray-900">
               {m.gaps_page_title()}
             </h1>
           </div>
           <Tooltip label={m.capability_tooltip_knowledge_only()}>
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {m.capability_tooltip_knowledge_only()}
             </p>
           </Tooltip>
@@ -122,7 +122,7 @@ function GapsPage() {
     }
     return (
       <div className="p-6 max-w-2xl">
-        <p className="text-[var(--color-muted-foreground)]">Admin access required.</p>
+        <p className="text-gray-400">Admin access required.</p>
       </div>
     )
   }
@@ -133,7 +133,7 @@ function GapsPage() {
     <div className="mx-auto max-w-4xl px-6 py-10">
       <div className="flex items-start justify-between mb-6">
         <div className="flex items-center gap-3">
-          <AlertTriangle className="h-7 w-7 text-[var(--color-foreground)]" />
+          <AlertTriangle className="h-7 w-7 text-gray-900" />
           <h1 className="page-title text-[26px] font-display-bold text-gray-900">
             {m.gaps_page_title()}
           </h1>
@@ -146,7 +146,7 @@ function GapsPage() {
         </Button>
       </div>
 
-      <p className="text-[var(--color-muted-foreground)] mb-6 leading-relaxed">
+      <p className="text-gray-400 mb-6 leading-relaxed">
         {m.gaps_index_card_body()}
       </p>
 
@@ -192,16 +192,16 @@ function GapsPage() {
       ) : gaps.length === 0 ? (
         <Card>
           <CardContent className="pt-6 pb-6 text-center">
-            <AlertTriangle className="h-8 w-8 text-[var(--color-muted-foreground)] mx-auto mb-2" />
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <AlertTriangle className="h-8 w-8 text-gray-400 mx-auto mb-2" />
+            <p className="text-sm text-gray-400">
               {m.gaps_empty_state()}
             </p>
           </CardContent>
         </Card>
       ) : (
-        <table className="w-full text-sm table-fixed border-t border-b border-[var(--color-border)]">
+        <table className="w-full text-sm table-fixed border-t border-b border-gray-200">
           <thead>
-            <tr className="border-b border-[var(--color-border)]">
+            <tr className="border-b border-gray-200">
               <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
                 {m.gaps_column_query()}
               </th>
@@ -226,9 +226,9 @@ function GapsPage() {
               return (
                 <tr
                   key={rowKey}
-                  className="border-b border-[var(--color-border)] last:border-b-0"
+                  className="border-b border-gray-200 last:border-b-0"
                 >
-                  <td className="py-4 pr-4 align-top text-[var(--color-foreground)] truncate max-w-xs">
+                  <td className="py-4 pr-4 align-top text-gray-900 truncate max-w-xs">
                     {gap.query_text}
                   </td>
                   <td className="py-4 pr-4 align-top w-24">
@@ -236,13 +236,13 @@ function GapsPage() {
                       {gap.gap_type === 'hard' ? m.gaps_type_hard() : m.gaps_type_soft()}
                     </span>
                   </td>
-                  <td className="py-4 pr-4 align-top text-[var(--color-muted-foreground)] w-36">
+                  <td className="py-4 pr-4 align-top text-gray-400 w-36">
                     {gap.nearest_kb_slug ?? '\u2014'}
                   </td>
-                  <td className="py-4 pr-4 align-top text-right font-medium text-[var(--color-foreground)] tabular-nums w-20">
+                  <td className="py-4 pr-4 align-top text-right font-medium text-gray-900 tabular-nums w-20">
                     {gap.occurrence_count}
                   </td>
-                  <td className="py-4 pr-4 align-top text-right text-[var(--color-muted-foreground)] whitespace-nowrap tabular-nums w-28">
+                  <td className="py-4 pr-4 align-top text-right text-gray-400 whitespace-nowrap tabular-nums w-28">
                     {new Date(gap.last_occurred).toLocaleDateString()}
                   </td>
                   <td className="py-4 align-top text-right w-12">

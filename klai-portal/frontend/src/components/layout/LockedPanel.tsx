@@ -19,14 +19,14 @@ export function LockedPanel({ message, cta }: LockedPanelProps) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
       <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-muted)]">
-        <Lock className="h-6 w-6 text-[var(--color-muted-foreground)]" />
+        <Lock className="h-6 w-6 text-gray-400" />
       </div>
       <div className="space-y-1">
         {message && (
-          <p className="text-sm text-[var(--color-muted-foreground)]">{message}</p>
+          <p className="text-sm text-gray-400">{message}</p>
         )}
       </div>
-      <p className="text-xs text-[var(--color-muted-foreground)]">
+      <p className="text-xs text-gray-400">
         {cta ?? m.product_guard_cta()}
       </p>
     </div>

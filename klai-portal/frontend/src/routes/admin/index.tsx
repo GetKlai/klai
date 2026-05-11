@@ -52,7 +52,7 @@ function AdminHome() {
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.admin_home_heading()}
         </h1>
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           {m.admin_home_subtitle()}
         </p>
       </div>
@@ -67,13 +67,13 @@ function AdminHome() {
             <section.icon
               size={20}
               strokeWidth={1.5}
-              className="text-[var(--color-muted-foreground)]"
+              className="text-gray-400"
             />
             <div>
-              <p className="text-sm font-medium text-[var(--color-foreground)] group-hover:text-[var(--color-rl-accent)] transition-colors">
+              <p className="text-sm font-medium text-gray-900 group-hover:text-[var(--color-rl-accent)] transition-colors">
                 {section.title}
               </p>
-              <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">
+              <p className="mt-0.5 text-xs text-gray-400">
                 {section.description}
               </p>
             </div>

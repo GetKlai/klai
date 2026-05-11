@@ -55,12 +55,12 @@ export function DetailsTab({ apiKey }: Props) {
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={3}
-            className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm text-[var(--color-foreground)] outline-none transition-colors placeholder:text-[var(--color-muted-foreground)] focus:ring-2 focus:ring-[var(--color-ring)]"
+            className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)]"
           />
         </div>
         <div className="space-y-1.5">
           <Label>{m.admin_api_keys_col_key_prefix()}</Label>
-          <code className="block text-xs font-mono text-[var(--color-muted-foreground)] py-2">
+          <code className="block text-xs font-mono text-gray-400 py-2">
             {apiKey.key_prefix}...
           </code>
         </div>

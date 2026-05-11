@@ -19,7 +19,7 @@ function TenantDeletedPage() {
           strokeWidth={1.5}
         />
         <div className="space-y-2">
-          <p className="text-xl font-semibold text-[var(--color-foreground)]">
+          <p className="text-xl font-semibold text-gray-900">
             {m.tenant_deleted_heading()}
           </p>
           <p className="text-sm text-gray-400">

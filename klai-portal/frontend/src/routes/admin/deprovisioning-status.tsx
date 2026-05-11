@@ -118,7 +118,7 @@ function PollingView({ isTimeout }: { isTimeout: boolean }) {
     <>
       <Loader2 className="h-10 w-10 animate-spin text-gray-900 mx-auto" />
       <div className="space-y-2">
-        <p className="text-xl font-semibold text-[var(--color-foreground)]">
+        <p className="text-xl font-semibold text-gray-900">
           {m.deprovisioning_status_heading()}
         </p>
         <p className="text-sm text-gray-400">
@@ -144,7 +144,7 @@ function FailedView({ step }: { step?: string }) {
     <>
       <AlertCircle size={40} className="mx-auto text-[var(--color-destructive)]" strokeWidth={1.5} />
       <div className="space-y-2">
-        <p className="text-xl font-semibold text-[var(--color-foreground)]">
+        <p className="text-xl font-semibold text-gray-900">
           {m.deprovisioning_status_failed_heading()}
         </p>
         {step && (
@@ -168,7 +168,7 @@ function ErrorView() {
     <>
       <AlertCircle size={40} className="mx-auto text-[var(--color-destructive)]" strokeWidth={1.5} />
       <div className="space-y-2">
-        <p className="text-xl font-semibold text-[var(--color-foreground)]">
+        <p className="text-xl font-semibold text-gray-900">
           {m.deprovisioning_status_failed_heading()}
         </p>
         <p className="text-sm text-gray-400">{m.error_generic()}</p>

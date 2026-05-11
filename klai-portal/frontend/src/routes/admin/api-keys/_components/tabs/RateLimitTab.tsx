@@ -45,7 +45,7 @@ export function RateLimitTab({ apiKey }: Props) {
               onChange={(e) => setRateLimit(Number(e.target.value))}
               className="max-w-[8rem]"
             />
-            <span className="text-sm text-[var(--color-muted-foreground)]">
+            <span className="text-sm text-gray-400">
               {m.admin_api_keys_rate_limit_unit()}
             </span>
           </div>

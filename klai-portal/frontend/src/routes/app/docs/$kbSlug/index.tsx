@@ -7,7 +7,7 @@ export const Route = createFileRoute('/app/docs/$kbSlug/')({
 
 function NoPageSelected() {
   return (
-    <div className="flex-1 flex items-center justify-center text-sm text-[var(--color-muted-foreground)]">
+    <div className="flex-1 flex items-center justify-center text-sm text-gray-400">
       {m.docs_editor_select_page()}
     </div>
   )
