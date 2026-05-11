@@ -11,6 +11,8 @@ import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { apiFetch } from '@/lib/apiFetch'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
+import { DOCS_BASE, getOrgSlug } from '@/lib/kb-editor/tree-utils'
 
 export const Route = createFileRoute('/app/docs/$kbSlug_/edit')({
   component: () => (
@@ -19,12 +21,6 @@ export const Route = createFileRoute('/app/docs/$kbSlug_/edit')({
     </ProductGuard>
   ),
 })
-
-const DOCS_BASE = '/api/docs/api'
-
-function getOrgSlug(): string {
-  return window.location.hostname.split('.')[0]
-}
 
 interface KnowledgeBase {
   id: string
@@ -36,9 +32,10 @@ interface KnowledgeBase {
 function EditKBPage() {
   const { kbSlug } = Route.useParams()
   const auth = useAuth()
+  const { user } = useCurrentUser()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
-  const orgSlug = getOrgSlug()
+  const orgSlug = getOrgSlug(user?.workspace_url)
 
   const [name, setName] = useState('')
   const [visibility, setVisibility] = useState<'public' | 'private'>('private')
