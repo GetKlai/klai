@@ -9,7 +9,8 @@ import { Label } from '@/components/ui/label'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
-import type { KnowledgeBase, MembersResponse } from './-kb-types'
+import { DeleteKbModal } from '@/components/ui/delete-kb-modal'
+import type { KnowledgeBase, MembersResponse, KBStats } from './-kb-types'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/settings')({
   component: SettingsTab,
@@ -41,6 +42,14 @@ function SettingsTab() {
   const isOwnerRole = !!(myUserId && members?.users.some((u) => u.user_id === myUserId && u.role === 'owner'))
   const isAdmin = currentUser?.isAdmin === true
   const isOwner = isCreator || isOwnerRole || isAdmin
+
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false)
+
+  const { data: stats } = useQuery<KBStats>({
+    queryKey: ['kb-stats', kbSlug],
+    queryFn: async () => apiFetch<KBStats>(`/api/app/knowledge-bases/${kbSlug}/stats`),
+    enabled: auth.isAuthenticated && !!kb,
+  })
 
   // Sync form state when KB data loads
   useEffect(() => {
@@ -154,7 +163,7 @@ function SettingsTab() {
 
       {/* Members */}
       {members && members.users.length > 0 && (
-        <div className="space-y-2">
+        <div className="space-y-2 border-t border-gray-200 pt-6">
           <h2 className="text-sm font-semibold text-gray-900">Leden</h2>
           <div className="border-t border-b border-gray-200 divide-y divide-gray-200">
             {members.users.map((u) => (
@@ -166,6 +175,37 @@ function SettingsTab() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Danger zone — owner / admin only */}
+      {isOwner && (
+        <div className="space-y-2 border-t border-gray-200 pt-6">
+          <h2 className="text-sm font-semibold text-[var(--color-destructive)]">
+            {m.knowledge_settings_danger_heading()}
+          </h2>
+          <p className="text-sm text-[var(--color-muted-foreground)]">
+            {m.knowledge_settings_danger_description()}
+          </p>
+          <div className="pt-2">
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setDeleteModalOpen(true)}
+            >
+              {m.knowledge_settings_delete_button()}
+            </Button>
+          </div>
+          <DeleteKbModal
+            open={deleteModalOpen}
+            onOpenChange={setDeleteModalOpen}
+            kbSlug={kb.slug}
+            kbName={kb.name}
+            itemCount={stats?.docs_count ?? null}
+            connectorCount={stats?.connector_count ?? 0}
+            hasGitea={!!kb.gitea_repo_slug}
+            hasDocs={kb.docs_enabled}
+          />
         </div>
       )}
     </div>

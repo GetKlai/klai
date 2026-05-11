@@ -1,17 +1,16 @@
 /**
  * SPEC-PORTAL-KENNIS-001 Phase D — KB detail shell with 3 tabs.
  *
- * Tabs: Bronnen (default) / Instellingen / Geavanceerd.
+ * Tabs: Bronnen (default) / Instellingen / Inzichten.
  *
  * Active-tab detection works on URL groups so legacy paths still
  * highlight the right tab while their old content renders:
  *   Bronnen      ← /bronnen, /overview, /items, /connectors
  *   Instellingen ← /settings, /members
- *   Geavanceerd  ← /advanced, /taxonomy
+ *   Inzichten    ← /insights, /advanced, /taxonomy
  *
- * Phase F + F-bis will replace /settings + /advanced with merged
- * /instellingen + /geavanceerd pages. For v1 the tabs link to the
- * existing pages so the shell ships on its own.
+ * SPEC-PORTAL-KENNIS-002 Track 1: renamed Geavanceerd → Inzichten.
+ * /advanced now redirects to /insights. Gate: isAdmin || kb_manager.
  */
 import { createFileRoute, Link, Outlet, redirect } from '@tanstack/react-router'
 import { useLocation } from '@tanstack/react-router'
@@ -23,6 +22,7 @@ import { apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
+import { meetsMinRole } from '@/lib/profiles'
 import type { KBTab, KnowledgeBase, KBStats, MembersResponse } from './-kb-types'
 
 const VALID_TABS = new Set<KBTab>([
@@ -33,6 +33,7 @@ const VALID_TABS = new Set<KBTab>([
   'taxonomy',
   'settings',
   'advanced',
+  'insights',
 ])
 
 const TAB_PATH_MAP: Record<string, string> = {
@@ -40,9 +41,9 @@ const TAB_PATH_MAP: Record<string, string> = {
   items: '/app/knowledge/$kbSlug/bronnen',
   connectors: '/app/knowledge/$kbSlug/bronnen',
   members: '/app/knowledge/$kbSlug/settings',
-  taxonomy: '/app/knowledge/$kbSlug/taxonomy',
+  taxonomy: '/app/knowledge/$kbSlug/insights',
   settings: '/app/knowledge/$kbSlug/settings',
-  advanced: '/app/knowledge/$kbSlug/taxonomy',
+  advanced: '/app/knowledge/$kbSlug/insights',
 }
 
 type KBSearch = {
@@ -74,7 +75,7 @@ export const Route = createFileRoute('/app/knowledge/$kbSlug')({
 
 // -- Tab definitions --------------------------------------------------------
 
-type TabId = 'bronnen' | 'instellingen' | 'geavanceerd'
+type TabId = 'bronnen' | 'instellingen' | 'inzichten'
 
 const TAB_DEFS: { id: TabId; to: string; icon: React.ElementType; label: string; matches: string[] }[] = [
   {
@@ -92,11 +93,11 @@ const TAB_DEFS: { id: TabId; to: string; icon: React.ElementType; label: string;
     matches: ['/settings', '/members', '/instellingen'],
   },
   {
-    id: 'geavanceerd',
-    to: '/app/knowledge/$kbSlug/taxonomy',
+    id: 'inzichten',
+    to: '/app/knowledge/$kbSlug/insights',
     icon: SlidersHorizontal,
-    label: 'Geavanceerd',
-    matches: ['/advanced', '/taxonomy', '/geavanceerd'],
+    label: 'Inzichten',
+    matches: ['/insights', '/advanced', '/taxonomy', '/inzichten'],
   },
 ]
 
@@ -138,18 +139,16 @@ function KbLayout() {
     enabled: auth.isAuthenticated && !!kb,
   })
 
-  // Members are needed for owner detection (controls Geavanceerd tab visibility).
-  const { data: members } = useQuery<MembersResponse>({
+  // Members prefetch so child tabs render without an extra spinner.
+  useQuery<MembersResponse>({
     queryKey: ['kb-members', kbSlug],
     queryFn: async () => apiFetch<MembersResponse>(`/api/app/knowledge-bases/${kbSlug}/members`),
     enabled: auth.isAuthenticated && !!kb,
   })
 
-  const myUserId = auth.user?.profile?.sub
-  const isCreator = !!(myUserId && kb?.created_by === myUserId)
-  const isOwnerRole = !!(myUserId && members?.users.some((u) => u.user_id === myUserId && u.role === 'owner'))
   const isAdmin = currentUser?.isAdmin === true
-  const isOwner = isCreator || isOwnerRole || isAdmin
+  // Gate: isAdmin OR has at least kb_manager role → may see Inzichten tab.
+  const canSeeInzichten = isAdmin || meetsMinRole(currentUser?.effective_role, 'kb_manager')
 
   if (isLoading) {
     return (
@@ -169,7 +168,7 @@ function KbLayout() {
     )
   }
 
-  const visibleTabs = TAB_DEFS.filter((tab) => tab.id !== 'geavanceerd' || isOwner)
+  const visibleTabs = TAB_DEFS.filter((tab) => tab.id !== 'inzichten' || canSeeInzichten)
   const activeId = activeTabId(location.pathname)
 
   return (
