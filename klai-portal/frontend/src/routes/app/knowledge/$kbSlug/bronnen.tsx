@@ -20,6 +20,7 @@ import {
   Image,
   Link as LinkIcon,
   Loader2,
+  MoreHorizontal,
   Pencil,
   Plus,
   RefreshCw,
@@ -30,6 +31,12 @@ import {
 import { SiAirtable, SiConfluence, SiGithub, SiGoogledrive, SiNotion } from '@icons-pack/react-simple-icons'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { Tooltip } from '@/components/ui/tooltip'
 import * as m from '@/paraglide/messages'
@@ -37,6 +44,11 @@ import { apiFetch } from '@/lib/apiFetch'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { DOCS_BASE, getOrgSlug } from '@/lib/kb-editor/tree-utils'
 import { queryLogger } from '@/lib/logger'
+
+/** Strip a .md extension so the docs-editor's resolveSlug can match by slug. */
+function stripMdExt(name: string): string {
+  return name.replace(/\.md$/i, '')
+}
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/bronnen')({
   component: BronnenTab,
@@ -448,6 +460,37 @@ function BronRow({
             </button>
           </Tooltip>
         </InlineDeleteConfirm>
+
+        {/* Per-row "Bewerken in editor" dropdown — for .md uploads only.
+            The dropdown trigger is hidden until the row is hovered. resolveSlug
+            in the docs editor matches by both id and slug, so passing the
+            .md-stripped filename as $pageId is sufficient for files whose
+            source name corresponds to a Gitea page slug. */}
+        {bron.kind === 'upload' && /\.md$/i.test(bron.name) && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label="Meer acties"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 opacity-0 group-hover:opacity-100 focus:opacity-100 data-[state=open]:opacity-100 transition-opacity"
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem asChild>
+                <Link
+                  to="/app/docs/$kbSlug/$pageId"
+                  params={{ kbSlug, pageId: stripMdExt(bron.name) }}
+                  className="flex items-center gap-2"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  Bewerken in editor
+                </Link>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
 
         <button
           type="button"
