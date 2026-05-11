@@ -20,6 +20,8 @@ import {
   Image,
   Link as LinkIcon,
   Loader2,
+  MoreHorizontal,
+  Pencil,
   Plus,
   RefreshCw,
   Trash2,
@@ -29,11 +31,22 @@ import {
 import { SiAirtable, SiConfluence, SiGithub, SiGoogledrive, SiNotion } from '@icons-pack/react-simple-icons'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { Tooltip } from '@/components/ui/tooltip'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
+
+/** Strip a .md extension so the docs-editor's resolveSlug can match by slug. */
+function stripMdExt(name: string): string {
+  return name.replace(/\.md$/i, '')
+}
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/bronnen')({
   component: BronnenTab,
@@ -425,6 +438,34 @@ function BronRow({
           </Tooltip>
         </InlineDeleteConfirm>
 
+        {/* Per-row dropdown — revealed on hover, shows "Bewerken in editor"
+            only for uploads whose name is a .md file (block-editor-compatible). */}
+        {bron.kind === 'upload' && /\.md$/i.test(bron.name) && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label="Meer acties"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 opacity-0 group-hover:opacity-100 focus:opacity-100 data-[state=open]:opacity-100 transition-opacity"
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem asChild>
+                <Link
+                  to="/app/docs/$kbSlug/$pageId"
+                  params={{ kbSlug, pageId: stripMdExt(bron.name) }}
+                  className="flex items-center gap-2"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  Bewerken in editor
+                </Link>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+
         <button
           type="button"
           onClick={onToggle}
@@ -463,6 +504,12 @@ function BronnenTab() {
   const bronnen = data?.bronnen ?? []
   const connectorBronnen = bronnen.filter((b) => b.kind === 'connector')
 
+  // KB data is already cached by the route shell; reuse same query key.
+  const { data: kb } = useQuery<{ docs_enabled: boolean }>({
+    queryKey: ['app-knowledge-base', kbSlug],
+    queryFn: () => apiFetch<{ docs_enabled: boolean }>(`/api/app/knowledge-bases/${kbSlug}`),
+  })
+
   // Sync-alles: fan out one POST per connector. We don't wait for completion;
   // each row will pick up the running status on the next poll.
   const syncAllMutation = useMutation({
@@ -493,6 +540,14 @@ function BronnenTab() {
             : m.kb_count_bronnen({ count: String(bronnen.length) })}
         </p>
         <div className="flex items-center gap-2">
+          {kb?.docs_enabled && (
+            <Link to="/app/docs/$kbSlug" params={{ kbSlug }}>
+              <Button variant="ghost" size="sm">
+                <Pencil className="h-4 w-4" />
+                Open in editor
+              </Button>
+            </Link>
+          )}
           {connectorBronnen.length > 0 && (
             <Button
               variant="ghost"
