@@ -214,11 +214,11 @@ function PollingView({ dots }: { dots: string }) {
     <>
       <div className="mx-auto h-10 w-10 animate-spin rounded-full border-2 border-[var(--color-rl-accent)] border-t-transparent" />
       <div className="space-y-2">
-        <p className="text-xl font-semibold text-[var(--color-foreground)]">
+        <p className="text-xl font-semibold text-gray-900">
           {m.provisioning_polling_title()}
           {dots}
         </p>
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           {m.provisioning_polling_subtitle()}
         </p>
       </div>
@@ -230,10 +230,10 @@ function ReadyView() {
   return (
     <>
       <CheckCircle size={40} className="mx-auto text-[var(--color-rl-accent)]" strokeWidth={1.5} />
-      <p className="text-xl font-semibold text-[var(--color-foreground)]">
+      <p className="text-xl font-semibold text-gray-900">
         {m.provisioning_ready_title()}
       </p>
-      <p className="text-sm text-[var(--color-muted-foreground)]">
+      <p className="text-sm text-gray-400">
         {m.provisioning_ready_subtitle()}
       </p>
     </>
@@ -245,10 +245,10 @@ function RecoverableErrorView() {
     <>
       <AlertCircle size={40} className="mx-auto text-[var(--color-destructive)]" strokeWidth={1.5} />
       <div className="space-y-2">
-        <p className="text-xl font-semibold text-[var(--color-foreground)]">
+        <p className="text-xl font-semibold text-gray-900">
           {m.provisioning_error_title()}
         </p>
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           {m.provisioning_error_body()}
         </p>
       </div>
@@ -264,10 +264,10 @@ function FatalErrorView() {
     <>
       <AlertCircle size={40} className="mx-auto text-[var(--color-destructive)]" strokeWidth={1.5} />
       <div className="space-y-2">
-        <p className="text-xl font-semibold text-[var(--color-foreground)]">
+        <p className="text-xl font-semibold text-gray-900">
           {m.provisioning_failed_title()}
         </p>
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           {m.provisioning_failed_body()}{' '}
           <a
             href="mailto:support@getklai.com"

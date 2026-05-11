@@ -60,10 +60,10 @@ function AdminProfiles() {
       header: () => m.admin_groups_name(),
       cell: (info) => (
         <div className="space-y-0.5">
-          <div className="font-medium text-[var(--color-foreground)]">
+          <div className="font-medium text-gray-900">
             {info.getValue()}
           </div>
-          <div className="text-xs text-[var(--color-muted-foreground)]">
+          <div className="text-xs text-gray-400">
             {info.row.original.description}
           </div>
         </div>
@@ -72,7 +72,7 @@ function AdminProfiles() {
     columnHelper.accessor('count', {
       header: () => m.admin_groups_members_title(),
       cell: (info) => (
-        <span className="text-[var(--color-foreground)] tabular-nums">
+        <span className="text-gray-900 tabular-nums">
           {info.getValue()}
         </span>
       ),
@@ -113,7 +113,7 @@ function AdminProfiles() {
           <h1 className="page-title text-[26px] font-display-bold text-gray-900">
             {m.admin_profiles_title()}
           </h1>
-          <p className="text-sm text-[var(--color-muted-foreground)]">
+          <p className="text-sm text-gray-400">
             {m.admin_profiles_subtitle()}
           </p>
         </div>
@@ -125,16 +125,16 @@ function AdminProfiles() {
           onRetry={() => void refetch()}
         />
       ) : isLoading ? (
-        <p className="py-8 text-sm text-[var(--color-muted-foreground)]">
+        <p className="py-8 text-sm text-gray-400">
           {m.admin_profiles_loading()}
         </p>
       ) : (
-        <table className="w-full text-sm border-t border-b border-[var(--color-border)]">
+        <table className="w-full text-sm border-t border-b border-gray-200">
           <thead>
             {table.getHeaderGroups().map((headerGroup) => (
               <tr
                 key={headerGroup.id}
-                className="border-b border-[var(--color-border)]"
+                className="border-b border-gray-200"
               >
                 {headerGroup.headers.map((header) => (
                   <th
@@ -154,12 +154,12 @@ function AdminProfiles() {
             {table.getRowModel().rows.map((row) => (
               <tr
                 key={row.id}
-                className="border-b border-[var(--color-border)] last:border-b-0"
+                className="border-b border-gray-200 last:border-b-0"
               >
                 {row.getVisibleCells().map((cell) => (
                   <td
                     key={cell.id}
-                    className="py-4 pr-4 align-top text-[var(--color-foreground)]"
+                    className="py-4 pr-4 align-top text-gray-900"
                   >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>

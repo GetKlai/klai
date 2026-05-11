@@ -167,7 +167,7 @@ function TranscribePage() {
           <h1 className="page-title text-[26px] font-display-bold text-gray-900">
             {m.app_tool_transcribe_title()}
           </h1>
-          <p className="text-sm text-[var(--color-muted-foreground)]">
+          <p className="text-sm text-gray-400">
             {!isLoading && m.app_transcribe_count_total({ count: String(totalCount) })}
           </p>
         </div>
@@ -192,7 +192,7 @@ function TranscribePage() {
       </div>
 
       {hasActiveMeetings && (
-        <div className="flex items-center gap-2 text-sm text-[var(--color-muted-foreground)]">
+        <div className="flex items-center gap-2 text-sm text-gray-400">
           <Loader2 className="h-4 w-4 animate-spin" />
           <span>{m.app_transcribe_auto_refresh()}</span>
         </div>
@@ -200,7 +200,7 @@ function TranscribePage() {
 
       {isLoading ? (
         <div className="flex justify-center py-8">
-          <Loader2 className="h-5 w-5 animate-spin text-[var(--color-muted-foreground)]" />
+          <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
         </div>
       ) : queryError ? (
         <QueryErrorState error={queryError instanceof Error ? queryError : new Error(String(queryError))} onRetry={() => { void refetchTranscriptions(); void refetchMeetings() }} />

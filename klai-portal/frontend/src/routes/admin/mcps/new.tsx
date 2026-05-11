@@ -27,7 +27,7 @@ function McpsNewPage() {
           <h1 className="page-title text-[26px] font-display-bold text-gray-900">
             {m.admin_mcps_new_title()}
           </h1>
-          <p className="text-sm text-[var(--color-muted-foreground)]">
+          <p className="text-sm text-gray-400">
             {m.admin_mcps_new_subtitle()}
           </p>
         </div>
@@ -42,17 +42,17 @@ function McpsNewPage() {
           {m.admin_mcps_load_error()}
         </p>
       ) : isLoading ? (
-        <p className="py-8 text-sm text-[var(--color-muted-foreground)]">
+        <p className="py-8 text-sm text-gray-400">
           {m.admin_mcps_loading()}
         </p>
       ) : availableServers.length === 0 ? (
-        <p className="py-8 text-sm text-[var(--color-muted-foreground)]">
+        <p className="py-8 text-sm text-gray-400">
           {m.admin_mcps_new_empty()}
         </p>
       ) : (
-        <table className="w-full text-sm table-fixed border-t border-b border-[var(--color-border)]">
+        <table className="w-full text-sm table-fixed border-t border-b border-gray-200">
           <thead>
-            <tr className="border-b border-[var(--color-border)]">
+            <tr className="border-b border-gray-200">
               <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide w-48">
                 {m.admin_mcps_col_name()}
               </th>
@@ -64,11 +64,11 @@ function McpsNewPage() {
           </thead>
           <tbody>
             {availableServers.map((server) => (
-              <tr key={server.id} className="border-b border-[var(--color-border)] last:border-b-0">
+              <tr key={server.id} className="border-b border-gray-200 last:border-b-0">
                 <td className="py-4 pr-4 align-top">
                   <span className="font-medium">{server.display_name || server.id}</span>
                 </td>
-                <td className="py-4 pr-4 align-top text-[var(--color-muted-foreground)]">
+                <td className="py-4 pr-4 align-top text-gray-400">
                   {server.description}
                 </td>
                 <td className="py-4 align-top text-right w-24">

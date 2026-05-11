@@ -129,7 +129,7 @@ function EditUserPage() {
           <h1 className="page-title text-[26px] font-display-bold text-gray-900">
             {m.admin_users_edit_heading()}
           </h1>
-          <p className="text-sm text-[var(--color-muted-foreground)]">
+          <p className="text-sm text-gray-400">
             {m.admin_users_edit_subtitle()}
           </p>
         </div>

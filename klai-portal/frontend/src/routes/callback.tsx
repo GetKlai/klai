@@ -243,7 +243,7 @@ function LoadingScreen() {
     <div className="flex min-h-screen items-center justify-center bg-[var(--color-background)]">
       <div className="space-y-3 text-center">
         <div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-[var(--color-rl-accent)] border-t-transparent" />
-        <p className="text-sm text-[var(--color-muted-foreground)]">{m.callback_loading()}</p>
+        <p className="text-sm text-gray-400">{m.callback_loading()}</p>
       </div>
     </div>
   )
@@ -264,8 +264,8 @@ function ErrorScreen({ error, retryable }: ErrorScreenProps) {
         <p className="text-sm font-medium text-[var(--color-destructive-text)]">
           {m.callback_error_heading()}
         </p>
-        <p className="text-sm text-[var(--color-muted-foreground)]">{friendly}</p>
-        <p className="text-xs font-mono break-all opacity-60 text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">{friendly}</p>
+        <p className="text-xs font-mono break-all opacity-60 text-gray-400">
           {technical}
         </p>
         <div className="flex items-center justify-center gap-2 pt-1">

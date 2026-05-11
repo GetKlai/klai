@@ -92,7 +92,7 @@ function AdminProfileDetail() {
             {profileLabel}
           </h1>
           {profileDescription && (
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {profileDescription}
             </p>
           )}
@@ -127,18 +127,18 @@ function AdminProfileDetail() {
           </div>
 
           {isLoading ? (
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
               {m.admin_profiles_loading()}
             </p>
           ) : members.length === 0 ? (
-            <p className="text-sm text-[var(--color-muted-foreground)] py-4 text-center">
+            <p className="text-sm text-gray-400 py-4 text-center">
               {m.admin_profiles_drill_in_empty()}
             </p>
           ) : (
-            <table className="w-full text-sm table-fixed border-t border-b border-[var(--color-border)]">
+            <table className="w-full text-sm table-fixed border-t border-b border-gray-200">
               <thead>
-                <tr className="border-b border-[var(--color-border)]">
+                <tr className="border-b border-gray-200">
                   <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide w-12">
                     {/* avatar */}
                   </th>
@@ -173,7 +173,7 @@ function AdminProfileDetail() {
                   return (
                     <tr
                       key={user.zitadel_user_id}
-                      className="border-b border-[var(--color-border)] last:border-b-0"
+                      className="border-b border-gray-200 last:border-b-0"
                     >
                       <td className="py-4 pr-4 align-top w-12">
                         <UserAvatar
@@ -184,19 +184,19 @@ function AdminProfileDetail() {
                           size="sm"
                         />
                       </td>
-                      <td className="py-4 pr-4 align-top text-[var(--color-foreground)]">
+                      <td className="py-4 pr-4 align-top text-gray-900">
                         {displayName(user)}
                       </td>
-                      <td className="py-4 pr-4 align-top text-[var(--color-muted-foreground)]">
+                      <td className="py-4 pr-4 align-top text-gray-400">
                         {user.email}
                       </td>
-                      <td className="py-4 pr-4 align-top text-[var(--color-foreground)] whitespace-nowrap tabular-nums w-28">
+                      <td className="py-4 pr-4 align-top text-gray-900 whitespace-nowrap tabular-nums w-28">
                         {formatDate(user.created_at)}
                       </td>
                       <td className="py-4 align-top text-right w-16">
                         {alreadyPersonal ? (
                           // No demote target on the lowest rung.
-                          <span className="text-xs text-[var(--color-muted-foreground)]">—</span>
+                          <span className="text-xs text-gray-400">—</span>
                         ) : (
                           <InlineDeleteConfirm
                             isConfirming={isConfirming}

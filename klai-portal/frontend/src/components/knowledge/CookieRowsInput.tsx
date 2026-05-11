@@ -119,7 +119,7 @@ export function CookieRowsInput({
         <Plus className="h-3.5 w-3.5 mr-1" />
         Add another cookie
       </Button>
-      <p className="text-xs text-[var(--color-muted-foreground)]">
+      <p className="text-xs text-gray-400">
         Open the site in your browser, log in, then read the cookie name and
         value from DevTools &rarr; Application &rarr; Cookies. Type or paste
         each separately — no need to format anything.

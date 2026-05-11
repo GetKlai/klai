@@ -192,8 +192,8 @@ function ChatPage() {
         {/* Loading overlay */}
         {showOverlay && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[var(--color-secondary)]">
-            <Loader2 className="h-6 w-6 animate-spin text-[var(--color-muted-foreground)]" />
-            <span className="text-sm text-[var(--color-muted-foreground)]">
+            <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+            <span className="text-sm text-gray-400">
               {m.chat_health_loading()}
             </span>
           </div>
@@ -202,12 +202,12 @@ function ChatPage() {
         {/* Error / stuck state */}
         {showError && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-[var(--color-secondary)]">
-            <AlertTriangle className="h-8 w-8 text-[var(--color-muted-foreground)]" />
+            <AlertTriangle className="h-8 w-8 text-gray-400" />
             <div className="text-center">
-              <p className="text-sm font-medium text-[var(--color-foreground)]">
+              <p className="text-sm font-medium text-gray-900">
                 {phase === 'stuck' ? m.chat_health_stuck_title() : m.chat_health_failed_title()}
               </p>
-              <p className="mt-1 max-w-sm text-xs text-[var(--color-muted-foreground)]">
+              <p className="mt-1 max-w-sm text-xs text-gray-400">
                 {phase === 'stuck'
                   ? m.chat_health_stuck_description()
                   : getErrorMessage(errorReason)}

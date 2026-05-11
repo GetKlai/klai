@@ -163,7 +163,7 @@ function AdminSettingsPage() {
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.admin_settings_heading()}
         </h1>
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           {m.admin_settings_subtitle()}
         </p>
       </div>
@@ -177,7 +177,7 @@ function AdminSettingsPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           {isLoading ? (
-            <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_users_loading()}</p>
+            <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
           ) : error ? (
             <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_fetch()}</p>
           ) : (
@@ -223,7 +223,7 @@ function AdminSettingsPage() {
         </CardHeader>
         <CardContent className="space-y-6">
           {isLoading ? (
-            <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_users_loading()}</p>
+            <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
           ) : error ? (
             <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_fetch()}</p>
           ) : (
@@ -242,7 +242,7 @@ function AdminSettingsPage() {
                   <option value="recommended">{m.admin_settings_mfa_recommended()}</option>
                   <option value="required">{m.admin_settings_mfa_required()}</option>
                 </Select>
-                <p className="text-xs text-[var(--color-muted-foreground)]">
+                <p className="text-xs text-gray-400">
                   {selectedMfa === 'optional' && m.admin_settings_mfa_optional_hint()}
                   {selectedMfa === 'recommended' && m.admin_settings_mfa_recommended_hint()}
                   {selectedMfa === 'required' && m.admin_settings_mfa_required_hint()}
@@ -270,7 +270,7 @@ function AdminSettingsPage() {
                       <Label htmlFor="settings-auto-accept" className="cursor-pointer">
                         {m.admin_settings_auto_accept_label({ domain: settings.primary_domain })}
                       </Label>
-                      <p className="text-xs text-[var(--color-muted-foreground)]">
+                      <p className="text-xs text-gray-400">
                         {settings.auto_accept_same_domain
                           ? m.admin_settings_auto_accept_hint_on()
                           : m.admin_settings_auto_accept_hint_off()}
@@ -321,7 +321,7 @@ function AdminSettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_settings_placeholder()}</p>
+          <p className="text-sm text-gray-400">{m.admin_settings_placeholder()}</p>
         </CardContent>
       </Card>
       <Card>
@@ -333,12 +333,12 @@ function AdminSettingsPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           {isLoading ? (
-            <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_users_loading()}</p>
+            <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
           ) : error ? (
             <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_fetch()}</p>
           ) : (
             <>
-              <p className="text-sm text-[var(--color-muted-foreground)]">
+              <p className="text-sm text-gray-400">
                 {m.admin_settings_telemetry_current({
                   level:
                     settings?.telemetry_level === 'off'
@@ -362,7 +362,7 @@ function AdminSettingsPage() {
                   <option value="shadow">{m.admin_settings_telemetry_shadow_name()}</option>
                   <option value="full">{m.admin_settings_telemetry_full_name()}</option>
                 </Select>
-                <p className="text-xs text-[var(--color-muted-foreground)]">
+                <p className="text-xs text-gray-400">
                   {selectedTelemetry === 'off' && m.admin_settings_telemetry_off_hint()}
                   {selectedTelemetry === 'shadow' && m.admin_settings_telemetry_shadow_hint()}
                   {selectedTelemetry === 'full' && m.admin_settings_telemetry_full_hint()}
@@ -385,7 +385,7 @@ function AdminSettingsPage() {
                     ? m.admin_settings_saving()
                     : m.admin_settings_save()}
               </Button>
-              <p className="text-xs text-[var(--color-muted-foreground)]">
+              <p className="text-xs text-gray-400">
                 <a href="/privacy" className="underline">
                   {m.admin_settings_telemetry_privacy_link()}
                 </a>
@@ -404,7 +404,7 @@ function AdminSettingsPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           {addonsLoading ? (
-            <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_users_loading()}</p>
+            <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
           ) : addonsQueryError ? (
             <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_fetch()}</p>
           ) : (

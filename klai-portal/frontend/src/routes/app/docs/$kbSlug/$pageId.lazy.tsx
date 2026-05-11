@@ -309,7 +309,7 @@ function KBPageEditor() {
   // REQ-STA-04: Page not found UI — shown when UUID/slug is not in pageIndex
   if (pageNotFound) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-4 text-[var(--color-muted-foreground)]">
+      <div className="flex flex-col items-center justify-center h-full gap-4 text-gray-400">
         <p className="text-lg font-medium">{m.docs_page_not_found()}</p>
         <p className="text-sm">{m.docs_page_not_found_desc()}</p>
         <button
@@ -326,9 +326,9 @@ function KBPageEditor() {
   if (!page && selectedPath) {
     return (
       <div className="flex-1 flex flex-col animate-pulse">
-        <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--color-border)]">
-          <div className="w-6 h-6 rounded bg-[var(--color-border)]" />
-          <div className="h-6 w-64 rounded bg-[var(--color-border)]" />
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-200">
+          <div className="w-6 h-6 rounded bg-gray-200" />
+          <div className="h-6 w-64 rounded bg-gray-200" />
           <div className="ml-auto flex gap-2">
             <div className="w-8 h-8 rounded bg-[var(--color-input)]" />
             <div className="w-8 h-8 rounded bg-[var(--color-input)]" />
@@ -407,10 +407,10 @@ function KBPageEditor() {
             role="dialog"
             aria-modal="true"
             aria-label={m.docs_wikilink_connect()}
-            className="w-[360px] max-w-[90vw] rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4 shadow-xl"
+            className="w-[360px] max-w-[90vw] rounded-xl border border-gray-200 bg-[var(--color-card)] p-4 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <p className="mb-2 text-xs text-[var(--color-muted-foreground)]">{m.docs_wikilink_connect()}</p>
+            <p className="mb-2 text-xs text-gray-400">{m.docs_wikilink_connect()}</p>
             <Input
               autoFocus
               placeholder={m.docs_wikilink_search_placeholder()}
@@ -430,7 +430,7 @@ function KBPageEditor() {
                 .map((p) => (
                   <button
                     key={p.slug}
-                    className="w-full text-left px-3 py-2 text-sm rounded flex items-center gap-2 hover:bg-[var(--color-secondary)] text-[var(--color-foreground)]"
+                    className="w-full text-left px-3 py-2 text-sm rounded flex items-center gap-2 hover:bg-gray-50 text-gray-900"
                     onClick={() => {
                       editorRef.current?.insertWikilink(p.id ?? p.slug, p.title, p.icon)
                       setShowWikilinkPicker(false)
@@ -442,7 +442,7 @@ function KBPageEditor() {
                   </button>
                 ))}
               {pageIndex.filter((p) => p.slug !== selectedPath).length === 0 && (
-                <p className="px-3 py-2 text-xs text-[var(--color-muted-foreground)]">{m.docs_wikilink_no_results()}</p>
+                <p className="px-3 py-2 text-xs text-gray-400">{m.docs_wikilink_no_results()}</p>
               )}
             </div>
           </div>

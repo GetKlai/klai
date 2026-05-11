@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { ArrowRight, CheckCircle } from 'lucide-react'
 import * as m from '@/paraglide/messages'
@@ -19,14 +19,31 @@ interface FormState {
   company_name: string
 }
 
+// SPEC-LAUNCH-SOFTLAUNCH-001 B-2: read the invite token from ?token=...
+// in the URL exactly once on mount. We do not parse the payload client-side
+// (it's opaque to the frontend); we just forward it to /api/signup which
+// verifies the HMAC and the email-match. Pre-filling email + company is a
+// separate query param so the bare URL is human-readable without any
+// payload decoding.
+function readInviteParamsFromUrl() {
+  if (typeof window === 'undefined') return { token: null, email: '', company: '' }
+  const params = new URLSearchParams(window.location.search)
+  return {
+    token: params.get('token'),
+    email: params.get('email') ?? '',
+    company: params.get('company') ?? '',
+  }
+}
+
 function SignupPage() {
   const { locale } = useLocale()
+  const invite = useMemo(() => readInviteParamsFromUrl(), [])
   const [form, setForm] = useState<FormState>({
     first_name: '',
     last_name: '',
-    email: '',
+    email: invite.email,
     password: '',
-    company_name: '',
+    company_name: invite.company,
   })
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -57,13 +74,31 @@ function SignupPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
+
+    // SPEC-LAUNCH-SOFTLAUNCH-001 B-1: block before server roundtrip when
+    // the password obviously fails the backend ≥12 char floor. The backend
+    // zxcvbn check (score >= 3, REQ-22.1 SPEC-SEC-HYGIENE-001) still runs
+    // server-side and surfaces a more specific error if the password is
+    // long enough but too predictable.
+    if (form.password.length < 12) {
+      setError(m.signup_password_too_short())
+      return
+    }
+
     setLoading(true)
 
     try {
       const resp = await fetch(`${API_BASE}/api/signup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, preferred_language: locale }),
+        body: JSON.stringify({
+          ...form,
+          preferred_language: locale,
+          // SPEC-LAUNCH-SOFTLAUNCH-001 B-2: forward invite token if present.
+          // Backend verifies HMAC + email match; absence is normal for
+          // unsolicited signups (those still go through the free-email block).
+          ...(invite.token ? { invite_token: invite.token } : {}),
+        }),
       })
 
       if (!resp.ok) {
@@ -100,13 +135,13 @@ function SignupPage() {
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-foreground)]">
             <CheckCircle size={22} className="text-[var(--color-rl-cream)]" strokeWidth={1.5} />
           </div>
-          <p className="text-xl font-semibold text-[var(--color-foreground)]">
+          <p className="text-xl font-semibold text-gray-900">
             {m.signup_confirm_heading()}
           </p>
-          <p className="text-sm text-[var(--color-muted-foreground)]">
+          <p className="text-sm text-gray-400">
             {m.signup_confirm_body({ email: form.email })}
           </p>
-          <p className="text-xs text-[var(--color-muted-foreground)] opacity-70">
+          <p className="text-xs text-gray-400 opacity-70">
             {m.signup_confirm_hint()}
           </p>
           <Link
@@ -123,10 +158,10 @@ function SignupPage() {
   return (
     <AuthPageLayout leftContent={leftContent} showLocale>
       <div className="space-y-1">
-        <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
+        <h2 className="text-xl font-semibold text-gray-900">
           {m.signup_heading()}
         </h2>
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           {m.signup_existing_account()}{' '}
           <Link to="/" className="font-medium text-[var(--color-rl-accent-dark)] underline">
             {m.signup_login_link()}
@@ -140,7 +175,7 @@ function SignupPage() {
           type="button"
           onClick={() => handleSocialSignup('368810756424073247')}
           disabled={loading}
-          className="flex w-full items-center justify-center gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm font-medium text-[var(--color-foreground)] transition hover:bg-[var(--color-muted)] disabled:opacity-50"
+          className="flex w-full items-center justify-center gap-3 rounded-lg border border-gray-200 bg-[var(--color-background)] px-3 py-2 text-sm font-medium text-gray-900 transition hover:bg-[var(--color-muted)] disabled:opacity-50"
         >
           {/* Google G */}
           <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
@@ -156,7 +191,7 @@ function SignupPage() {
           type="button"
           onClick={() => handleSocialSignup('368809521386094623')}
           disabled={loading}
-          className="flex w-full items-center justify-center gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm font-medium text-[var(--color-foreground)] transition hover:bg-[var(--color-muted)] disabled:opacity-50"
+          className="flex w-full items-center justify-center gap-3 rounded-lg border border-gray-200 bg-[var(--color-background)] px-3 py-2 text-sm font-medium text-gray-900 transition hover:bg-[var(--color-muted)] disabled:opacity-50"
         >
           {/* Microsoft squares */}
           <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
@@ -170,9 +205,9 @@ function SignupPage() {
       </div>
 
       <div className="relative flex items-center gap-3">
-        <div className="h-px flex-1 bg-[var(--color-border)]" />
-        <span className="text-xs text-[var(--color-muted-foreground)]">{m.signup_or_continue_with()}</span>
-        <div className="h-px flex-1 bg-[var(--color-border)]" />
+        <div className="h-px flex-1 bg-gray-200" />
+        <span className="text-xs text-gray-400">{m.signup_or_continue_with()}</span>
+        <div className="h-px flex-1 bg-gray-200" />
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -227,7 +262,7 @@ function SignupPage() {
         </Button>
       </form>
 
-      <p className="text-center text-xs text-[var(--color-muted-foreground)]">
+      <p className="text-center text-xs text-gray-400">
         {m.signup_privacy_text()}{' '}
         <a href="https://getklai.com/docs/legal/privacy" className="text-[var(--color-rl-accent-dark)] underline">
           {m.signup_privacy_link()}
@@ -256,7 +291,7 @@ function Field({
 }) {
   return (
     <div className="space-y-1">
-      <label htmlFor={name} className="block text-sm font-medium text-[var(--color-foreground)]">
+      <label htmlFor={name} className="block text-sm font-medium text-gray-900">
         {label}
       </label>
       <input
@@ -266,9 +301,9 @@ function Field({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         required={required}
-        className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
+        className="w-full rounded-lg border border-gray-200 bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
       />
-      {hint && <p className="text-xs text-[var(--color-muted-foreground)]">{hint}</p>}
+      {hint && <p className="text-xs text-gray-400">{hint}</p>}
     </div>
   )
 }

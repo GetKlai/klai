@@ -276,7 +276,7 @@ function UsersPage() {
                   <DropdownMenuTrigger asChild>
                     <button
                       aria-label={m.admin_users_col_actions()}
-                      className="inline-flex items-center justify-center rounded text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-secondary)]"
+                      className="inline-flex items-center justify-center rounded text-gray-400 transition-colors hover:bg-gray-50"
                     >
                       <MoreHorizontal className="h-4 w-4" />
                     </button>
@@ -303,7 +303,7 @@ function UsersPage() {
                             >
                               {profileLabel(targetRole)}
                               {user.role === targetRole && (
-                                <span className="ml-2 text-xs text-[var(--color-muted-foreground)]">
+                                <span className="ml-2 text-xs text-gray-400">
                                   ({m.admin_settings_saved()})
                                 </span>
                               )}
@@ -374,7 +374,7 @@ function UsersPage() {
           <h1 className="page-title text-[26px] font-display-bold text-gray-900">
             {m.admin_users_heading()}
           </h1>
-          <p className="text-sm text-[var(--color-muted-foreground)]">
+          <p className="text-sm text-gray-400">
             {!isLoading && !error && (
               plural(getLocale(), users.length) === 'one'
                 ? m.admin_users_count_one()
@@ -410,22 +410,22 @@ function UsersPage() {
       )}
 
       {isLoading ? (
-        <p className="py-8 text-sm text-[var(--color-muted-foreground)]">
+        <p className="py-8 text-sm text-gray-400">
           {m.admin_users_loading()}
         </p>
       ) : users.length === 0 ? (
-        <p className="py-8 text-sm text-[var(--color-muted-foreground)]">
+        <p className="py-8 text-sm text-gray-400">
           {m.admin_users_empty()}
         </p>
       ) : filteredUsers.length === 0 ? (
-        <p className="py-8 text-sm text-[var(--color-muted-foreground)]">
+        <p className="py-8 text-sm text-gray-400">
           {m.admin_users_empty()}
         </p>
       ) : (
-        <table data-help-id="admin-users-table" className="w-full text-sm border-t border-b border-[var(--color-border)]">
+        <table data-help-id="admin-users-table" className="w-full text-sm border-t border-b border-gray-200">
           <thead>
             {table.getHeaderGroups().map((headerGroup) => (
-              <tr key={headerGroup.id} className="border-b border-[var(--color-border)]">
+              <tr key={headerGroup.id} className="border-b border-gray-200">
                 {headerGroup.headers.map((header) => (
                   <th
                     key={header.id}
@@ -441,12 +441,12 @@ function UsersPage() {
             {table.getRowModel().rows.map((row) => (
               <tr
                 key={row.id}
-                className="border-b border-[var(--color-border)] last:border-b-0"
+                className="border-b border-gray-200 last:border-b-0"
               >
                 {row.getVisibleCells().map((cell) => (
                   <td
                     key={cell.id}
-                    className="py-4 pr-4 align-top text-[var(--color-foreground)]"
+                    className="py-4 pr-4 align-top text-gray-900"
                   >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>

@@ -70,14 +70,14 @@ function AppHome() {
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {getGreeting(userName)}
         </h1>
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           {m.app_home_subtitle()}
         </p>
       </div>
 
       {accessibleTools.length > 0 && (
         <div>
-          <h2 className="mb-4 text-sm font-semibold text-[var(--color-foreground)]">{m.app_home_tools()}</h2>
+          <h2 className="mb-4 text-sm font-semibold text-gray-900">{m.app_home_tools()}</h2>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             {accessibleTools.map((tool) => (
               <a
@@ -89,13 +89,13 @@ function AppHome() {
                 <tool.icon
                   size={20}
                   strokeWidth={1.5}
-                  className="text-[var(--color-muted-foreground)]"
+                  className="text-gray-400"
                 />
                 <div>
-                  <p className="text-sm font-medium text-[var(--color-foreground)] group-hover:text-[var(--color-rl-accent)] transition-colors">
+                  <p className="text-sm font-medium text-gray-900 group-hover:text-[var(--color-rl-accent)] transition-colors">
                     {tool.title}
                   </p>
-                  <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">
+                  <p className="mt-0.5 text-xs text-gray-400">
                     {tool.description}
                   </p>
                 </div>

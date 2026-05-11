@@ -85,22 +85,22 @@ function SocialSignupPage() {
   return (
     <AuthPageLayout leftContent={leftContent} showLocale>
       <div className="space-y-1">
-        <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
+        <h2 className="text-xl font-semibold text-gray-900">
           {m.signup_social_heading()}
         </h2>
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           {m.signup_social_subheading()}
         </p>
       </div>
 
       {/* Identity confirmation — read-only */}
-      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-muted)] px-3 py-2.5">
-        <p className="text-xs text-[var(--color-muted-foreground)]">
+      <div className="rounded-lg border border-gray-200 bg-[var(--color-muted)] px-3 py-2.5">
+        <p className="text-xs text-gray-400">
           {m.signup_social_identity_label()}
         </p>
-        <p className="text-sm font-medium text-[var(--color-foreground)]">{displayName}</p>
+        <p className="text-sm font-medium text-gray-900">{displayName}</p>
         {displayName !== email && (
-          <p className="text-xs text-[var(--color-muted-foreground)]">{email}</p>
+          <p className="text-xs text-gray-400">{email}</p>
         )}
       </div>
 
@@ -108,7 +108,7 @@ function SocialSignupPage() {
         <div className="space-y-1">
           <label
             htmlFor="company_name"
-            className="block text-sm font-medium text-[var(--color-foreground)]"
+            className="block text-sm font-medium text-gray-900"
           >
             {m.signup_social_company_label()}
           </label>
@@ -120,7 +120,7 @@ function SocialSignupPage() {
             onChange={(e) => setCompanyName(e.target.value)}
             required
             autoFocus
-            className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
+            className="w-full rounded-lg border border-gray-200 bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
           />
         </div>
 
@@ -147,7 +147,7 @@ function SocialSignupPage() {
         </Button>
       </form>
 
-      <p className="text-center text-xs text-[var(--color-muted-foreground)]">
+      <p className="text-center text-xs text-gray-400">
         {m.signup_privacy_text()}{' '}
         <a
           href="https://getklai.com/docs/legal/privacy"

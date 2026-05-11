@@ -302,8 +302,8 @@ function AddTranscribePage() {
                 }}
                 className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
                   activeTab === tab
-                    ? 'bg-[var(--color-background)] shadow-sm text-[var(--color-foreground)]'
-                    : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]'
+                    ? 'bg-[var(--color-background)] shadow-sm text-gray-900'
+                    : 'text-gray-400 hover:text-gray-900'
                 }`}
               >
                 {tab === 'record' ? m.app_transcribe_tab_record() : m.app_transcribe_tab_upload()}
@@ -315,7 +315,7 @@ function AddTranscribePage() {
           {activeTab === 'record' && (
             <div className="space-y-3">
               {micPermission === 'requesting' && (
-                <p className="text-sm text-[var(--color-muted-foreground)]">
+                <p className="text-sm text-gray-400">
                   {m.app_transcribe_record_permission_request()}
                 </p>
               )}
@@ -355,7 +355,7 @@ function AddTranscribePage() {
                     </Button>
 
                     {recording && (
-                      <span className="font-mono text-sm text-[var(--color-muted-foreground)]">
+                      <span className="font-mono text-sm text-gray-400">
                         {formatDuration(recordDuration)}
                       </span>
                     )}
@@ -379,7 +379,7 @@ function AddTranscribePage() {
                   )}
 
                   {!recording && !isTranscribing && (
-                    <p className="text-xs text-[var(--color-muted-foreground)]">
+                    <p className="text-xs text-gray-400">
                       {m.app_transcribe_record_shortcut_hint()}
                     </p>
                   )}
@@ -394,7 +394,7 @@ function AddTranscribePage() {
               className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
                 dragging
                   ? 'border-[var(--color-rl-accent)] bg-[var(--color-rl-accent)]/5'
-                  : 'border-[var(--color-border)] hover:border-[var(--color-rl-accent)]/50'
+                  : 'border-gray-200 hover:border-[var(--color-rl-accent)]/50'
               }`}
               onClick={() => fileInputRef.current?.click()}
               onDragOver={(e) => {
@@ -419,18 +419,18 @@ function AddTranscribePage() {
                   if (f) handleFile(f)
                 }}
               />
-              <Upload className="mx-auto mb-3 h-8 w-8 text-[var(--color-muted-foreground)]" />
+              <Upload className="mx-auto mb-3 h-8 w-8 text-gray-400" />
               {selectedFile ? (
                 <div>
                   <p className="font-medium text-sm">{selectedFile.name}</p>
-                  <p className="text-xs text-[var(--color-muted-foreground)] mt-1">
+                  <p className="text-xs text-gray-400 mt-1">
                     {(selectedFile.size / 1024 / 1024).toFixed(1)} MB
                   </p>
                 </div>
               ) : (
                 <div>
                   <p className="text-sm font-medium">{m.app_transcribe_dropzone_label()}</p>
-                  <p className="text-xs text-[var(--color-muted-foreground)] mt-1">
+                  <p className="text-xs text-gray-400 mt-1">
                     {m.app_transcribe_dropzone_hint({ formats: 'WAV, MP3, M4A, OGG, WebM', max: String(MAX_MB) })}
                   </p>
                 </div>
@@ -463,7 +463,7 @@ function AddTranscribePage() {
           )}
 
           {isTranscribing && (
-            <p className="text-xs text-[var(--color-muted-foreground)] text-center">
+            <p className="text-xs text-gray-400 text-center">
               {m.app_transcribe_processing_hint()}
             </p>
           )}

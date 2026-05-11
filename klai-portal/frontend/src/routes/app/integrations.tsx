@@ -56,7 +56,7 @@ function IntegrationsPage() {
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.integrations_heading()}
         </h1>
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           {m.integrations_subtitle()}
         </p>
       </div>
@@ -74,7 +74,7 @@ function IntegrationsPage() {
       {isLoading && (
         <Card>
           <CardContent className="pt-6">
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {m.integrations_loading()}
             </p>
           </CardContent>
@@ -91,7 +91,7 @@ function IntegrationsPage() {
             <div className="rounded-lg bg-[var(--color-muted)] p-4 font-mono text-sm">
               https://mcp.getklai.com/mcp
             </div>
-            <p className="mt-3 text-sm text-[var(--color-muted-foreground)]">
+            <p className="mt-3 text-sm text-gray-400">
               {m.integrations_empty_hint()}
             </p>
           </CardContent>
@@ -147,13 +147,13 @@ function IntegrationsPage() {
           <CardContent>
             <dl className="space-y-2 text-sm">
               <div className="flex gap-3">
-                <dt className="w-32 shrink-0 text-[var(--color-muted-foreground)]">
+                <dt className="w-32 shrink-0 text-gray-400">
                   {m.integrations_field_created()}
                 </dt>
                 <dd>{formatDate(token.created_at)}</dd>
               </div>
               <div className="flex gap-3">
-                <dt className="w-32 shrink-0 text-[var(--color-muted-foreground)]">
+                <dt className="w-32 shrink-0 text-gray-400">
                   {m.integrations_field_last_used()}
                 </dt>
                 <dd>
@@ -163,7 +163,7 @@ function IntegrationsPage() {
                 </dd>
               </div>
               <div className="flex gap-3">
-                <dt className="w-32 shrink-0 text-[var(--color-muted-foreground)]">
+                <dt className="w-32 shrink-0 text-gray-400">
                   {m.integrations_field_expires()}
                 </dt>
                 <dd>{formatDate(token.expires_at)}</dd>
