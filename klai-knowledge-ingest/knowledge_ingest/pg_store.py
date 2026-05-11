@@ -1158,14 +1158,15 @@ async def list_kb_sources(
             a.path AS path,
             a.content_type AS content_type,
             a.created_at AS created_at,
-            COUNT(pc.id) AS chunks_count
+            COUNT(pc.id) AS chunks_count,
+            a.index_status AS index_status
         FROM knowledge.artifacts a
         LEFT JOIN knowledge.parent_chunks pc ON pc.artifact_id = a.id
         WHERE a.org_id = $1
           AND a.kb_slug = $2
           AND a.belief_time_end = $3
           AND (a.extra IS NULL OR a.extra::jsonb->>'source_connector_id' IS NULL)
-        GROUP BY a.id, a.path, a.content_type, a.created_at
+        GROUP BY a.id, a.path, a.content_type, a.created_at, a.index_status
         ORDER BY a.created_at DESC
         """,
         org_id,
@@ -1179,6 +1180,7 @@ async def list_kb_sources(
             "content_type": row["content_type"],
             "created_at": int(row["created_at"]),
             "chunks_count": int(row["chunks_count"] or 0),
+            "index_status": row["index_status"],
         }
         for row in upload_rows
     ]
@@ -1292,3 +1294,73 @@ async def list_chunks_for_artifact(
         for row in rows
     ]
     return chunks, int(total or 0)
+
+
+async def set_artifact_index_status(
+    conn: asyncpg.Connection,
+    artifact_id: str,
+    org_id: str,
+    status: str,
+) -> dict | None:
+    """Update index_status on a direct-upload artifact scoped to org_id.
+
+    Returns a dict with ``{"artifact_id": str, "path": str}`` when the
+    artifact was found and updated, or ``None`` when it does not exist /
+    belongs to a different org.
+    """
+    row = await conn.fetchrow(
+        """
+        UPDATE knowledge.artifacts
+        SET index_status = $1
+        WHERE id = $2::uuid
+          AND org_id = $3
+          AND belief_time_end = $4
+          AND (extra IS NULL OR extra::jsonb->>'source_connector_id' IS NULL)
+        RETURNING id::text AS artifact_id, path
+        """,
+        status,
+        artifact_id,
+        org_id,
+        _SENTINEL,
+    )
+    if row is None:
+        return None
+    return {"artifact_id": row["artifact_id"], "path": row["path"]}
+
+
+async def get_kb_upload_artifact(
+    conn: asyncpg.Connection,
+    artifact_id: str,
+    org_id: str,
+    kb_slug: str,
+) -> dict | None:
+    """Fetch a single direct-upload artifact for ownership / existence check.
+
+    Returns a dict with ``{"artifact_id": str, "path": str, "user_id": str | None}``
+    or ``None`` when the artifact does not exist or is not a direct upload.
+    """
+    row = await conn.fetchrow(
+        """
+        SELECT
+            id::text AS artifact_id,
+            path,
+            user_id
+        FROM knowledge.artifacts
+        WHERE id = $1::uuid
+          AND org_id = $2
+          AND kb_slug = $3
+          AND belief_time_end = $4
+          AND (extra IS NULL OR extra::jsonb->>'source_connector_id' IS NULL)
+        """,
+        artifact_id,
+        org_id,
+        kb_slug,
+        _SENTINEL,
+    )
+    if row is None:
+        return None
+    return {
+        "artifact_id": row["artifact_id"],
+        "path": row["path"],
+        "user_id": row["user_id"],
+    }
