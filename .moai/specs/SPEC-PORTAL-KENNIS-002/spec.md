@@ -1,8 +1,9 @@
 ---
 id: SPEC-PORTAL-KENNIS-002
-version: 0.1.0
-status: draft
+version: 0.2.0
+status: ready
 created: 2026-05-11
+updated: 2026-05-11
 author: Jantine Doornbos
 priority: high
 parent: SPEC-PORTAL-KENNIS-001 (consolidates the post-merge direction)
@@ -82,11 +83,11 @@ Deze SPEC consolideert de richting die in het 2026-05-08 iteratie-traject naar v
 
 | Status | Wanneer | Label (nl) | Variant |
 |---|---|---|---|
-| `synced` | Connector `last_sync_status` in `{success, completed, ok}` OF upload aanwezig in `/sources` | Gesynct | `success` |
-| `pending` | Connector `last_sync_status` in `{running, pending, syncing}` | Bezig | `secondary` |
-| `not_synced` | Connector `last_sync_status` in `{error, failed, auth_error, orphan}` OF connector zonder ingest-data | Niet gesynct | `secondary` |
+| `synced` | Connector `last_sync_status` in `{success, completed, ok}` OF upload met afgeronde indexatie | Gesynct | `success` |
+| `pending` | Connector `last_sync_status` in `{running, pending, syncing}` OF upload tijdens (re-)indexatie | Bezig | `secondary` |
+| `not_synced` | Connector `last_sync_status` in `{error, failed, auth_error, orphan}` OF upload met gefaalde indexatie | Niet gesynct | `secondary` |
 
-Uploads kunnen niet `pending` of `not_synced` zijn — een upload die in `/sources` voorkomt is per definitie gesynct.
+Uploads kunnen dankzij re-index (Q5) ook `pending` of `not_synced` zijn. De status komt voor uploads uit een `index_status` veld op het artifact (toe te voegen).
 
 - **REQ-9** WHEN ten minste één bron de status `pending` heeft, THE system SHALL de `/sources` query automatisch elke 4 seconden hervragen zodat de UI live updatet.
 - **REQ-10** WHEN alle bronnen `synced` of `not_synced` zijn, THE system SHALL polling stoppen.
@@ -94,8 +95,8 @@ Uploads kunnen niet `pending` of `not_synced` zijn — een upload die in `/sourc
 ### Acties
 
 - **REQ-11** THE system SHALL een **"Bron toevoegen"** primary button tonen in de KB-header, op elke tab zichtbaar.
-- **REQ-12** WHEN er ten minste één connector-bron bestaat, THE system SHALL een **"Synchroniseer alles"** ghost-knop tonen boven de bronnenlijst. Klikken triggert per connector één POST `/api/app/knowledge-bases/{slug}/connectors/{id}/sync` parallel.
-- **REQ-13** Per connector-bron SHALL een refresh-knop in de rij zichtbaar zijn (niet hover-only). Klikken triggert dezelfde sync-endpoint. Tijdens `isPending` toont de knop een spinner en is disabled.
+- **REQ-12** WHEN er ten minste één bron bestaat, THE system SHALL een **"Synchroniseer alles"** ghost-knop tonen boven de bronnenlijst. Klikken triggert per connector een POST `/api/app/knowledge-bases/{slug}/connectors/{id}/sync` EN per upload een POST `/api/app/knowledge-bases/{slug}/uploads/{artifact_id}/reindex` — parallel via `Promise.allSettled`.
+- **REQ-13** Per bron SHALL een refresh-knop in de rij zichtbaar zijn (niet hover-only). Voor connectors triggert dit de sync-endpoint, voor uploads de reindex-endpoint. Tijdens `isPending` toont de knop een spinner en is disabled.
 - **REQ-14** WHEN een sync-knop wordt geklikt, THE system SHALL `['kb-bronnen', kbSlug]` en `['app-knowledge-bases-stats-summary']` invalideren bij succes.
 - **REQ-15** Per upload-bron SHALL een verwijder-actie beschikbaar zijn via `InlineDeleteConfirm`. Connectoren verwijderen blijft achter een explicit-confirm (kan dezelfde component gebruiken).
 - **REQ-16** WHEN de caller `is_platform_admin == true` is, THE system SHALL de owner-only gate in `_get_kb_with_owner_check` overslaan zodat admin alle connector-acties kan uitvoeren.
@@ -138,6 +139,7 @@ Uploads kunnen niet `pending` of `not_synced` zijn — een upload die in `/sourc
 - **NFR-1** De Bronnen-lijst SHALL renderen binnen 200ms na het binnenkomen van het `/sources` resultaat (geen JS-side filtering die N+1 doet).
 - **NFR-2** `Synchroniseer alles` SHALL non-blocking zijn: de POSTs fan out parallel; de UI wacht niet op completion. Verifieer met `Promise.allSettled`.
 - **NFR-3** Geen kleurige icoon-tints per provider (eerder afgewezen door brand). Alle bron-icons in `bg-gray-50 text-gray-500`.
+- **NFR-4** **Geen modals.** Bevestigingen, hernoemen, delete-flows gebeuren inline (`InlineDeleteConfirm`, `InlineEdit`). De enige toegestane modal-uitzondering is de bestaande `DeleteKbModal` voor de hele KB onder Geavanceerd (typed-name confirmation voor onomkeerbare org-impact). Geen `AlertDialog` of nieuwe modals voor bron-niveau acties.
 
 ## Acceptance criteria (samenvatting)
 
@@ -170,12 +172,28 @@ Deze SPEC documenteert grotendeels werk dat al op `main` staat (commits 2026-05-
 - ✅ Instellingen-tab zichtbaar voor admin + read-only voor niet-owners
 - ✅ Geavanceerd-tab routeert naar `/taxonomy` met danger zone onderaan
 
-**Openstaand:**
+**Openstaand (na Q&A 2026-05-11):**
 
-- ⏳ Per-upload delete via `InlineDeleteConfirm` (REQ-15) — sync-knop is er, delete-actie ontbreekt nog in de huidige bronnen.tsx
-- ⏳ Connector reauth flow als duidelijke recovery-knop bij `not_synced` met reden `auth_error`
-- ⏳ Sync-historie als sub-sectie onder Geavanceerd (REQ-28)
-- ⏳ End-to-end Playwright happy-path: load KB → sync alles → wacht → bekijk chunks
+Bronnen-tab:
+- ⏳ Per-upload prullenbak altijd zichtbaar + `InlineDeleteConfirm` (Q2, REQ-15)
+- ⏳ "Verbind opnieuw"-knop in connector-rij bij `not_synced + auth_error` (Q4)
+- ⏳ Upload reindex-knop per rij + uitbreiding van "Synchroniseer alles" naar uploads (Q5)
+- ⏳ Permissie-gating per actie volgens Q6-matrix (viewer = read-only, contributor = beperkt)
+
+Backend:
+- ⏳ Endpoint `POST /api/app/knowledge-bases/{slug}/uploads/{artifact_id}/reindex` (Q5)
+- ⏳ `index_status` veld op artifact-model + status-update wanneer reindex draait (Q5)
+- ⏳ Knowledge-ingest: re-enqueue route voor één artifact via bestaande enrichment-pipeline (Q5)
+- ⏳ Contributor delete-check: `artifact.created_by == caller.user_id` voor uploads (Q6b)
+- ⏳ Viewer-gate: bronnen tonen wel, alle muteer-endpoints 403 voor role=viewer (Q6)
+
+Geavanceerd-tab:
+- ⏳ Sync-historie sub-sectie: collapsible per connector, laatste 10 runs uit `connector.sync_runs` (Q8)
+
+Tests:
+- ⏳ E2E Playwright happy-path: load KB → sync alles → wacht → bekijk chunks → delete bron
+- ⏳ Permissie-test per rol: viewer ziet geen knoppen, contributor kan alleen eigen uploads weggooien, owner kan alles
+- ⏳ Integration-test: stats-summary `bronnen` count == `/sources` count voor dezelfde KB
 
 ## Risico's
 
@@ -184,9 +202,52 @@ Deze SPEC documenteert grotendeels werk dat al op `main` staat (commits 2026-05-
 - **Bronnen-count diverentie tussen list en detail.** Stats-summary telt via `count_sources_per_kb`; detail rendert via `list_kb_sources`. Beide queries op dezelfde tabel + filters, maar kunnen door RLS-context-verschil afwijken. Mitigatie: één integration-test die op één test-KB beide endpoints raakt en de count vergelijkt.
 - **Admin-bypass blast-radius.** REQ-16 geeft platform-admins toegang tot connector-CRUD op elke KB in hun tenant. Acceptabel per portal-security.md (admin = tenant-level superuser), maar logging op admin-acties is essentieel.
 
-## Open vragen
+## Beantwoorde vragen
 
-1. Moet een upload-bron ook een "Hernoemen"-actie krijgen, of accepteren we dat de oorspronkelijke bestandsnaam blijft?
-2. Wanneer een connector in `not_synced` staat door `auth_error` — willen we een aparte "Verbind opnieuw"-knop in de rij, of valt dat onder Geavanceerd?
-3. Moet `Synchroniseer alles` ook voor uploads iets doen (nu: enkel connectors)? Vermoedelijk nee, een upload kan niet hergesyncd worden zonder her-uploaden.
-4. Tab-volgorde: gebruiker noemde "Bronnen / Instellingen / Geavanceerd". Bevestigd?
+**Q1 — Tab-volgorde + namen** (2026-05-11)
+Bevestigd: **Bronnen** (default) → **Instellingen** → **Geavanceerd**. Geen extra tabs.
+
+**Q2 — Upload verwijderen UX** (2026-05-11)
+Prullenbak-icoon **altijd zichtbaar** in de rij, met `InlineDeleteConfirm` ("Verwijder '{naam}'? — Annuleren / Verwijder"). Geen hover-only, geen aparte modal. Updates REQ-15.
+
+**Q3 — Upload hernoemen** (2026-05-11)
+**Nee.** Bestandsnaam blijft staan zoals geüpload. Geen `display_name` veld, geen PATCH-endpoint voor artifact rename.
+
+**Q4 — Connector auth-fout recovery** (2026-05-11)
+**Aparte "Verbind opnieuw"-knop in de rij**, alleen zichtbaar als de connector status `not_synced` heeft met reden `auth_error`. Eén klik start de OAuth re-authorize flow direct (hergebruik `authorize_url` pattern uit `connectors.tsx::handleReconnect`). De knop staat tussen StatusBadge en sync-icoon. Sync-icoon blijft zichtbaar maar disabled zolang `auth_error` actief is — eerst opnieuw verbinden, dan syncen.
+
+**Q6 — Permissie-matrix** (2026-05-11)
+
+| Rol | Bron toevoegen | Per-bron sync / reindex | Bron verwijderen | Sync alles | Instellingen bewerken | Geavanceerd zien |
+|---|---|---|---|---|---|---|
+| **Viewer** | nee | nee | nee | nee | nee | nee |
+| **Contributor** | ja | ja | alleen eigen uploads | ja | nee | nee |
+| **Owner** | ja | ja | ja | ja | ja | ja |
+| **Admin** (platform) | ja | ja | ja | ja | ja | ja |
+
+Viewer is volledig read-only: ziet de bronnenlijst, ziet de inhoud van bronnen, kan niets muteren. Contributor mag bronnen toevoegen en syncen, mag alleen z'n eigen uploads verwijderen — andermans uploads en alle connectors blijven beschermd voor owner+admin. Raakt Instellingen en Geavanceerd niet aan.
+
+Owner-check op het backend: per-row delete moet `artifact.created_by == caller.user_id` valideren voor contributors. Voor connectors blijft `_get_kb_with_owner_check` de gate.
+
+**Q7 — Empty state op Bronnen-tab** (2026-05-11)
+Huidige patroon **houden**: gestippeld vlak met icoon + tekst + "Eerste bron toevoegen"-knop. Geen mini-onboarding-kaartjes, geen extreem minimale variant. Voldoet aan portal-patterns Empty States.
+
+**Q8 — Sync-historie** (2026-05-11)
+**Sub-sectie onder Geavanceerd**: "Sync-historie" naast de bestaande Taxonomie en Verwijderzone. Per connector de laatste N sync-runs (status / start-time / duur / fout-reden indien failed). Data komt uit `connector.sync_runs` (al gepopuleerd door klai-connector). Uploads hebben geen sync-historie — alleen connectors. Updates REQ-28.
+
+Concreet:
+- Nieuw endpoint of hergebruik van bestaande `/connectors/{id}/syncs?limit=N` (zie `connectors.tsx::sync_runs_query`)
+- UI: collapsible per connector met laatste 10 runs, default ingeklapt
+- Fout-reden: korte stringuit `sync_run.error_message` afgekapt; volledige stack via "Toon detail"
+- Onderaan elke run-rij: relatieve tijd ("2 uur geleden", "3 dagen geleden")
+
+**Q5 — "Synchroniseer alles" scope** (2026-05-11)
+**Alles betekent alles.** De knop synct connectors EN re-indexeert uploads. Voor uploads: chunks opnieuw embedden via de bestaande embedding-pipeline (TEI + bge-m3) en in Qdrant zetten. Per upload-bron krijgt de rij ook een individuele sync-knop met dezelfde semantiek (re-index).
+
+Extra werk:
+- Nieuw endpoint: `POST /api/app/knowledge-bases/{slug}/uploads/{artifact_id}/reindex`
+- Knowledge-ingest: re-enqueue-route die de bestaande enrichment-pipeline triggert voor één artifact, hergebruik `extra_payload` semantiek (zie `knowledge.md` § "Procrastinate enrichment passthrough")
+- Status-mapping: upload tijdens re-index → `pending`; daarna terug naar `synced`
+- Polling-loop (REQ-9/10) dekt beide bron-typen.
+
+## Open vragen
