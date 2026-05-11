@@ -292,7 +292,7 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
             }
 
     # Early exit if content is unchanged since last ingest
-    content_hash = hashlib.sha256(req.content.encode()).hexdigest()
+    content_hash = req.content_hash or hashlib.sha256(req.content.encode()).hexdigest()
     stored_hash = await pg_store.get_active_content_hash(conn, req.org_id, req.kb_slug, req.path)
     if stored_hash is not None and stored_hash == content_hash:
         logger.info(

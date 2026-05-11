@@ -469,6 +469,7 @@ async def _ingest_docling_bytes(
             filename=validated.filename,
             content=validated.content,
             content_type=validated.mime,
+            input_format=validated.docling_format,
         )
     except docling_client.DoclingTimeoutError:
         logger.exception("docling_submit_timeout", filename=filename, extension=ext, bytes=validated.bytes_count)

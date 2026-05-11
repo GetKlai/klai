@@ -111,9 +111,9 @@ async def _process_processing_row(view: KBUploadView) -> None:
         )
         return
 
-    # docling reports success — fetch the markdown and advance to ingesting.
+    # docling reports success — fetch the chunks/result and advance to ingesting.
     try:
-        markdown = await docling_client.get_result_markdown(view.docling_task_id)
+        result = await docling_client.get_result_document(view.docling_task_id)
     except docling_client.DoclingError:
         logger.exception(
             "kb_upload_result_fetch_failed",
@@ -129,7 +129,7 @@ async def _process_processing_row(view: KBUploadView) -> None:
         await kb_uploads_repo.mark_ingesting(db, upload_id=view.id)
         await db.commit()
 
-    await _ingest_and_finish(view, markdown=markdown)
+    await _ingest_and_finish(view, result=result)
 
 
 async def _process_ingesting_row(view: KBUploadView) -> None:
@@ -147,7 +147,7 @@ async def _process_ingesting_row(view: KBUploadView) -> None:
         return
 
     try:
-        markdown = await docling_client.get_result_markdown(view.docling_task_id)
+        result = await docling_client.get_result_document(view.docling_task_id)
     except docling_client.DoclingResultNotFoundError:
         logger.exception(
             "kb_upload_ingesting_result_not_found",
@@ -167,11 +167,11 @@ async def _process_ingesting_row(view: KBUploadView) -> None:
         # operator alert (Grafana log query) catches the long-stuck row.
         return
 
-    await _ingest_and_finish(view, markdown=markdown)
+    await _ingest_and_finish(view, result=result)
 
 
-async def _ingest_and_finish(view: KBUploadView, *, markdown: str) -> None:
-    """Forward a docling-derived markdown body to knowledge-ingest.
+async def _ingest_and_finish(view: KBUploadView, *, result: docling_client.DoclingIngestResult) -> None:
+    """Forward a docling-derived document result to knowledge-ingest.
 
     Resolves the KB + Org for the row, builds the IngestRequest payload
     in the same shape ``app_knowledge_sources._forward_ingest`` uses,
@@ -209,11 +209,13 @@ async def _ingest_and_finish(view: KBUploadView, *, markdown: str) -> None:
         return
 
     title = file_upload.derive_title(view.filename, view.extension)
+    source_content_hash = view.source_ref.removeprefix("file:sha256:")
     payload: dict[str, object] = {
         "org_id": org_zitadel_id,
         "kb_slug": kb_slug,
         "path": view.source_ref,
-        "content": markdown,
+        "content": result.content,
+        "content_hash": source_content_hash,
         "title": title,
         "source_type": "file",
         "content_type": "document",
@@ -226,8 +228,13 @@ async def _ingest_and_finish(view: KBUploadView, *, markdown: str) -> None:
             "bytes": view.bytes,
             "pipeline": "docling",
             "docling_task_id": view.docling_task_id,
+            "docling_chunk_count": result.chunk_count,
+            "document_text_truncated": result.chunks is not None,
         },
     }
+    if result.chunks is not None:
+        payload["skip_chunking"] = True
+        payload["chunks"] = list(result.chunks)
 
     try:
         artifact_id = await knowledge_ingest_client.ingest_document(payload)

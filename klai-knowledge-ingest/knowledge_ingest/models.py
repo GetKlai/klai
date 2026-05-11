@@ -34,10 +34,12 @@ class IngestRequest(BaseModel):
     skip_chunking: bool = False  # True when adapter provides pre-chunked text
     extra: dict = {}  # Adapter-specific metadata (participants, source_url, etc.)
     chunks: list[str] | None = None  # Pre-computed chunks (used with skip_chunking=True)
+    content_hash: str | None = None  # Optional full-source hash for pre-chunked/truncated content
     source_connector_id: str | None = None  # ID of the connector that produced this document
     source_ref: str | None = None  # Source reference (e.g. URL, Notion page ID, repo path)
     synthesis_depth: int | None = None  # Optional override (adapters set this explicitly)
-    allowed_assertion_modes: list[str] | None = None  # Connector-level hint: expected modes for this source
+    # Connector-level hint: expected modes for this source
+    allowed_assertion_modes: list[str] | None = None
     # SPEC-KB-021: source-aware enrichment
     kb_name: str | None = None  # Human-readable KB name (e.g. "Voys Helpdesk")
     connector_type: str | None = None  # Connector type slug (e.g. "redcactus-wiki", "webscrape")

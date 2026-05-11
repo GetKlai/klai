@@ -250,3 +250,65 @@ async def test_content_hash_stored_on_create():
 
     call_kwargs = mock_create.call_args.kwargs
     assert call_kwargs["content_hash"] == expected_hash
+
+
+@pytest.mark.asyncio
+async def test_content_hash_override_used_for_prechunked_ingest():
+    """Pre-chunked large documents can dedupe on full-source hash."""
+    req = _make_request("Preview only")
+    req.content_hash = "source-sha256"
+    req.skip_chunking = True
+    req.chunks = ["chunk one", "chunk two"]
+    conn = _make_mock_conn()
+
+    mock_create = AsyncMock(return_value="artifact-uuid-4")
+
+    with (
+        patch(
+            "knowledge_ingest.pg_store.get_active_content_hash",
+            new_callable=AsyncMock,
+            return_value=None,
+        ) as mock_get_hash,
+        patch("knowledge_ingest.pg_store.soft_delete_artifact", new_callable=AsyncMock),
+        patch("knowledge_ingest.pg_store.create_artifact", mock_create),
+        patch("knowledge_ingest.pg_store.update_artifact_extra", new_callable=AsyncMock),
+        patch(
+            "knowledge_ingest.embedder.embed",
+            new_callable=AsyncMock,
+            return_value=[[0.1] * 10, [0.2] * 10],
+        ),
+        patch("knowledge_ingest.qdrant_store.upsert_chunks", new_callable=AsyncMock) as mock_upsert,
+        patch(
+            "knowledge_ingest.org_config.is_enrichment_enabled",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+        patch(
+            "knowledge_ingest.routes.ingest.kb_config.get_kb_visibility",
+            new_callable=AsyncMock,
+            return_value="internal",
+        ),
+        patch(
+            "knowledge_ingest.portal_client.fetch_taxonomy_nodes",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "knowledge_ingest.content_labeler.generate_content_label",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch("knowledge_ingest.routes.ingest.settings") as mock_settings,
+    ):
+        mock_settings.graphiti_enabled = False
+        mock_settings.chunk_size = 1500
+        mock_settings.chunk_overlap = 200
+        mock_settings.enrichment_enabled = False
+
+        from knowledge_ingest.routes.ingest import ingest_document
+
+        await ingest_document(conn, req)
+
+    mock_get_hash.assert_called_once_with(conn, req.org_id, req.kb_slug, req.path)
+    assert mock_create.call_args.kwargs["content_hash"] == "source-sha256"
+    assert mock_upsert.call_args.kwargs["chunks"] == ["chunk one", "chunk two"]

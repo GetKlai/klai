@@ -18,6 +18,7 @@ import pytest
 from app.services import kb_upload_poller
 from app.services.docling_client import (
     DoclingError,
+    DoclingIngestResult,
     DoclingPollResult,
     DoclingResultNotFoundError,
     DoclingTaskStatus,
@@ -73,6 +74,7 @@ class _PollerPatches:
         poll_result: DoclingPollResult | None = None,
         poll_side_effect: Exception | None = None,
         markdown: str | None = "# converted markdown",
+        chunks: tuple[str, ...] | None = None,
         result_side_effect: Exception | None = None,
         ingest_artifact: str = "art-pdf-1",
         ingest_side_effect: Exception | None = None,
@@ -82,6 +84,7 @@ class _PollerPatches:
         self.poll_result = poll_result
         self.poll_side_effect = poll_side_effect
         self.markdown = markdown
+        self.chunks = chunks
         self.result_side_effect = result_side_effect
         self.ingest_artifact = ingest_artifact
         self.ingest_side_effect = ingest_side_effect
@@ -99,10 +102,15 @@ class _PollerPatches:
         self.mock_poll = AsyncMock(return_value=self.poll_result, side_effect=self.poll_side_effect)
         self.stack.enter_context(patch("app.services.kb_upload_poller.docling_client.poll_status", self.mock_poll))
 
-        self.mock_result = AsyncMock(return_value=self.markdown, side_effect=self.result_side_effect)
+        docling_result = DoclingIngestResult(
+            content=self.markdown or "",
+            chunks=self.chunks,
+            chunk_count=len(self.chunks or ()),
+        )
+        self.mock_result = AsyncMock(return_value=docling_result, side_effect=self.result_side_effect)
         self.stack.enter_context(
             patch(
-                "app.services.kb_upload_poller.docling_client.get_result_markdown",
+                "app.services.kb_upload_poller.docling_client.get_result_document",
                 self.mock_result,
             )
         )
@@ -286,6 +294,7 @@ class TestProcessingState:
         patches.mock_ingest.assert_called_once()  # type: ignore[union-attr]
         ingest_payload = patches.mock_ingest.call_args.args[0]  # type: ignore[union-attr]
         assert ingest_payload["content"] == "# converted"
+        assert ingest_payload["content_hash"] == "abc"
         assert ingest_payload["source_type"] == "file"
         assert ingest_payload["content_type"] == "document"
         assert ingest_payload["extra"]["pipeline"] == "docling"
@@ -294,6 +303,31 @@ class TestProcessingState:
         kwargs = patches.mock_mark_done.call_args.kwargs  # type: ignore[union-attr]
         assert kwargs["upload_id"] == view.id
         assert kwargs["artifact_id"] == "art-99"
+
+    @pytest.mark.asyncio
+    async def test_success_forwards_docling_chunks_as_prechunked_ingest(self) -> None:
+        view = _view(status=STATUS_PROCESSING)
+        with _PollerPatches(
+            poll_result=DoclingPollResult(
+                task_id="task-1",
+                status=DoclingTaskStatus.SUCCESS,
+                terminal=True,
+                error_message=None,
+                queue_position=None,
+            ),
+            markdown="Preview",
+            chunks=("Chunk one", "Chunk two"),
+        ) as patches:
+            await kb_upload_poller._process_processing_row(view)
+
+        patches.mock_ingest.assert_called_once()  # type: ignore[union-attr]
+        ingest_payload = patches.mock_ingest.call_args.args[0]  # type: ignore[union-attr]
+        assert ingest_payload["content"] == "Preview"
+        assert ingest_payload["skip_chunking"] is True
+        assert ingest_payload["chunks"] == ["Chunk one", "Chunk two"]
+        assert ingest_payload["content_hash"] == "abc"
+        assert ingest_payload["extra"]["docling_chunk_count"] == 2
+        assert ingest_payload["extra"]["document_text_truncated"] is True
 
     @pytest.mark.asyncio
     async def test_transient_timeout_leaves_row_pending(self) -> None:
