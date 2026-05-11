@@ -263,14 +263,19 @@ function BronRow({
   const [reauthPending, setReauthPending] = useState(false)
 
   // REQ-13: per-row sync/reindex button.
+  // For connectors → POST /connectors/{id}/sync (full source-side resync).
+  // For uploads → POST /uploads/{artifact_id}/reindex (re-enqueue chunking).
+  const syncEndpoint =
+    bron.kind === 'upload'
+      ? `/api/app/knowledge-bases/${kbSlug}/uploads/${bron.id}/reindex`
+      : `/api/app/knowledge-bases/${kbSlug}/connectors/${bron.id}/sync`
   const syncMutation = useMutation({
-    mutationFn: async () =>
-      apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/${bron.id}/sync`, { method: 'POST' }),
+    mutationFn: async () => apiFetch(syncEndpoint, { method: 'POST' }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['kb-bronnen', kbSlug] })
       void queryClient.invalidateQueries({ queryKey: ['app-knowledge-bases-stats-summary'] })
     },
-    onError: (err) => queryLogger.error('Bron sync failed', { kbSlug, bronId: bron.id, err }),
+    onError: (err) => queryLogger.error('Bron sync failed', { kbSlug, bronId: bron.id, kind: bron.kind, err }),
   })
 
   // REQ-15: delete upload artifact.
@@ -387,14 +392,30 @@ function BronRow({
           </div>
         )}
 
-        {/* REQ-13: sync button — disabled when auth_error is active. */}
-        {bron.kind === 'connector' && (
-          <Tooltip label={isAuthError ? 'Eerst opnieuw verbinden' : 'Synchroniseer bron'}>
+        {/* REQ-13: sync button — for connectors AND uploads.
+            Connector path: full resync at the source. Auth_error → reauth first.
+            Upload path: re-enqueue chunking via /uploads/{id}/reindex. */}
+        {(bron.kind === 'connector' || bron.kind === 'upload') && (
+          <Tooltip
+            label={
+              isAuthError
+                ? 'Eerst opnieuw verbinden'
+                : bron.kind === 'upload'
+                  ? 'Herindexeer bron'
+                  : 'Synchroniseer bron'
+            }
+          >
             <button
               type="button"
               onClick={() => { if (!syncDisabled) syncMutation.mutate() }}
               disabled={syncDisabled}
-              aria-label={isAuthError ? 'Eerst opnieuw verbinden' : 'Synchroniseer bron'}
+              aria-label={
+                isAuthError
+                  ? 'Eerst opnieuw verbinden'
+                  : bron.kind === 'upload'
+                    ? 'Herindexeer bron'
+                    : 'Synchroniseer bron'
+              }
               className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isSyncing ? (
