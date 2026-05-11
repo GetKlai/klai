@@ -1,7 +1,7 @@
 ---
 id: SPEC-KB-FILE-UPLOAD-001
 title: KB File Upload via docling-serve
-version: 0.1.0
+version: 0.2.0
 status: draft
 created_at: 2026-05-10
 owner: mark.vletter
@@ -22,6 +22,7 @@ related_specs:
 
 | Date       | Version | Author        | Note                                         |
 |------------|---------|---------------|----------------------------------------------|
+| 2026-05-11 | 0.2.0   | codex         | Align live design with Docling Serve async chunk endpoints, pre-chunked ingest, and result lifecycle requirements. |
 | 2026-05-10 | 0.1.0   | mark.vletter  | Initial draft. Phase 1-4 plan, EARS REQ-1..9 |
 
 ---
@@ -36,8 +37,10 @@ chunks in Qdrant + Postgres via the existing chunk → embed → graph pipeline.
 
 ### Outcome (success measured by)
 
-- Uploading a 100 MB PDF via the KB UI produces ≥ 100 retrievable chunks within
-  60 seconds end-to-end on production hardware.
+- Uploading a large structured document via the KB UI produces retrievable
+  chunks without exceeding the `knowledge-ingest` `IngestRequest.content`
+  bound. The 129 MB Chemie Overal 4VWO PDF is the production regression
+  fixture for this path.
 - The current `500: 500` failure on `/app/knowledge/<kb>/add-source` for
   non-`.md` files is gone; failure responses are structured with a
   machine-readable `error_code`.
@@ -73,13 +76,23 @@ file-upload endpoint** today. `app_knowledge_sources.py` has only `url`,
 `text`, and a deprecated `youtube` stub.
 
 `docling-serve v1.16.1` is already deployed (`deploy/docker-compose.yml:783`)
-on the internal `klai-net` and accepts every required binary format via
-`POST /v1/convert/file` and `POST /v1/chunk/hybrid/file`. The
+on the internal `klai-net` and accepts every required document format via
+`POST /v1/convert/file`, `POST /v1/chunk/hybrid/file`, and their async
+variants. The
 architecture document (`docs/architecture/klai-knowledge-architecture.md`)
 already describes the intended shape (`klai-connector file upload endpoint`)
 but the endpoint was never built — the design predates `SPEC-DECOMM-FOCUS-001`
 and the docling integration in `klai-focus/research-api/services/docling.py`
 was decommissioned with the rest of klai-focus.
+
+Production testing on 2026-05-11 showed why Docling must be treated as a
+generic conversion and chunking product, not as a PDF-to-Markdown helper:
+a 129 MB PDF converted through `/v1/convert/file/async` yielded about 491 MB
+of Markdown because images were embedded as base64. Switching only
+`image_export_mode=placeholder` avoided the image explosion but still kept the
+pipeline dependent on one oversized `content` field and on Docling's default
+single-use result storage. The live path therefore uses Docling Serve's async
+chunk endpoint and forwards Docling chunks directly to `knowledge-ingest`.
 
 ---
 
@@ -141,43 +154,52 @@ portal-api  POST /api/app/knowledge-bases/{kb_slug}/sources/file
   │     d. content-addressed S3 write to garage://klai-documents/<sha256>
   │     e. INSERT INTO kb_uploads (artifact_id, s3_key, bytes, mime, status='pending')
   │     f. emit knowledge.uploaded event per artifact
-  │     g. POST http://knowledge-ingest:8000/ingest/v1/file
-  │        body: { artifact_id, org_id, kb_slug, s3_key, mime, bytes, filename }
-  │        headers: X-Internal-Secret + X-Caller-Service: portal-api + trace
+  │     g. text-path: POST http://knowledge-ingest:8000/ingest/v1/document
+  │        body: { org_id, kb_slug, path, content, source_type="file", ... }
+  │     h. docling-path:
+  │        POST http://docling-serve:5001/v1/chunk/hybrid/file/async
+  │        body: file + include_converted_doc=false
+  │              + convert_image_export_mode=placeholder
+  │              + convert_from_formats=<explicit Docling enum when known>
+  │        persist { status='processing', docling_task_id }
   │  4. return 202 { uploads: [...] }
   ▼
-knowledge-ingest  POST /ingest/v1/file        (Procrastinate enqueue → 202)
-  │
-  └── background job: process_file_upload(artifact_id)
-        │
-        ├── fetch from Garage (streaming GET via s3_key)
-        ├── route by mime:
-        │   ├── text-path  (.md .txt simple .csv non-schema .json non-schema .xml):
-        │   │     normalize-encoding → markdown_chunker
-        │   ├── docling-path (.pdf .docx .pptx .xlsx schema-.json schema-.xml):
-        │   │     POST docling-serve /v1/chunk/hybrid/file
-        │   │     → chunks with page_numbers, headings, num_tokens
-        │   └── doc-path (.doc, Phase 4 only):
-        │         POST libreoffice-headless /convert (doc → docx)
-        │         → docling-path
-        ├── embed BGE-M3 dense (TEI) + sparse (bge-m3-sparse)
-        ├── INSERT artifacts + parent_chunks + chunks (existing pg_store)
-        ├── upsert Qdrant vectors (existing index_chunks)
-        ├── Graphiti graph extraction (existing, GRAPHITI_ENABLED)
-        ├── emit kb_file_extracted event with chunks_count + duration_ms
-        └── update kb_uploads.status = 'done' | 'failed' + failure_reason
+portal-api kb_upload_poller
+  │ poll /v1/status/poll/{task_id}
+  │ on success: fetch /v1/result/{task_id}
+  │ normalize ChunkDocumentResponse.chunks[].text
+  │ build bounded content preview (≤ 450k chars)
+  │ POST /ingest/v1/document
+  │ body includes:
+  │   skip_chunking=true
+  │   chunks=[Docling chunk text...]
+  │   content=<bounded preview>
+  │   content_hash=<original file sha256>
+  ▼
+knowledge-ingest /ingest/v1/document
+  │ respects pre-computed chunks when skip_chunking=true
+  │ stores source hash from content_hash to dedupe the original file,
+  │ not the truncated preview
   ▼
 portal-api artifact-status polling                      (existing pattern)
 ```
 
 Data flow invariants:
 
-- `kb_uploads.s3_key` is the only durable pointer to the binary. The binary is
-  never copied to local disk.
-- The artifact_id chosen by portal-api is reused as the knowledge-ingest
-  artifact id — same UUID across services, matches existing trace pattern.
-- Magic-byte validation happens **once**, in portal-api, before the Garage
-  write. Downstream services trust the validated mime.
+- Docling is the structural parser and chunker for the docling path. Klai must
+  not reconstruct document chunks by walking a giant Markdown string when
+  Docling already returned typed chunks.
+- `IngestRequest.content` is bounded metadata/classification input for
+  pre-chunked Docling documents. The complete document text is represented by
+  `chunks[]`.
+- `content_hash` is the full original source hash for pre-chunked/truncated
+  ingests. Deduplication must not use the bounded preview body.
+- Docling results are volatile service state. The poller should fetch the
+  terminal result once and ingest it immediately; production also configures
+  Docling with non-single-use results and a longer result TTL for restart and
+  retry tolerance.
+- Magic-byte validation happens **once**, in portal-api. Downstream services
+  trust the validated mime and explicit Docling input format.
 
 ---
 
@@ -191,6 +213,10 @@ Data flow invariants:
 | D-4 | Async UX | Poll-based artifact status (existing connector pattern). | WebSocket adds infra surface for marginal UX win; poll already works for connector syncs which have similar runtime. |
 | D-5 | Garage bucket policy | `klai-documents` is **private**, presigned-GET only, TTL 1 h. **Different from `kb-images`** which uses website-mode + Caddy reverse-proxy. | Documents may contain sensitive content (legal, HR). URL-guessing on a website-mode bucket leaks content. Presigned-GET requires authenticated portal-api session. |
 | D-6 | New table vs. extend | Extend knowledge-ingest artifacts via existing `extra` jsonb (add `source_kind: "file"`, `s3_key`, `original_filename`). New `kb_uploads` table on portal-api side for s3_key tracking + per-KB byte quota counter. | Existing artifacts table (with `source_connector_id` pattern) is the authoritative chunk system; mirroring that on portal-api would create dual-write. portal-api owns only what it needs to route status / quota. |
+| D-7 | Docling endpoint | Use `POST /v1/chunk/hybrid/file/async` for the docling path, not `/v1/convert/file/async`. | Docling Serve already exposes hybrid chunks with headings, page numbers, token counts and text. Using convert first creates oversized Markdown and loses the product's chunking semantics. |
+| D-8 | Converted document payload | Submit with `include_converted_doc=false` and `convert_image_export_mode=placeholder`. | RAG ingestion needs text chunks, not an embedded DoclingDocument or base64 image payloads. This keeps result and ingest payloads bounded. |
+| D-9 | Pre-chunked ingest contract | Forward Docling chunk text to `/ingest/v1/document` with `skip_chunking=true`, `chunks=[...]`, bounded `content`, and original file `content_hash`. | Prevents 422s from `content` max length, preserves Docling structure, and dedupes against the uploaded source instead of the preview. |
+| D-10 | Docling result lifecycle | Configure `DOCLING_SERVE_SINGLE_USE_RESULTS=false` and `DOCLING_SERVE_RESULT_REMOVAL_DELAY=86400`; still treat Docling results as volatile and ingest immediately after terminal success. | Docling Serve defaults are optimized for one client fetch. The portal poller may need retry tolerance after a transient `/ingest` failure or portal restart. Durable result storage in Klai remains a future hardening step. |
 
 ---
 
@@ -335,9 +361,19 @@ docling-path, or doc-path.
 | `application/msword` (.doc) — Phase 4 | doc → docling | `docx` after libreoffice |
 
 **Event-driven.** WHEN a file routes to docling-path, THE SYSTEM SHALL POST
-the binary to `http://docling-serve:5001/v1/chunk/hybrid/file` with the
-correct format parameter and `target_type=md` AND parse the chunked response
-into `(text, headings, page_numbers, num_tokens)` per chunk.
+the binary to `http://docling-serve:5001/v1/chunk/hybrid/file/async` with
+`include_converted_doc=false`, `convert_image_export_mode=placeholder`, and
+the correct explicit `convert_from_formats` value when the detected format
+maps to a Docling enum.
+
+**Event-driven.** WHEN Docling reports terminal success, THE SYSTEM SHALL fetch
+`/v1/result/{task_id}` once, parse `ChunkDocumentResponse.chunks[].text`, and
+forward those values to `knowledge-ingest` as `skip_chunking=true` and
+`chunks=[...]`.
+
+**Ubiquitous.** For docling-path uploads, the `content` field sent to
+`knowledge-ingest` SHALL be a bounded preview no larger than 450,000
+characters and `content_hash` SHALL be the original uploaded source hash.
 
 **Event-driven.** WHEN docling-serve returns non-2xx OR times out (≥ 600 s),
 THE SYSTEM SHALL mark the artifact `failed` with `failure_reason:
@@ -346,8 +382,8 @@ THE SYSTEM SHALL mark the artifact `failed` with `failure_reason:
 **Acceptance criteria:**
 - AC-4.1: `.md` upload produces chunks via the existing Markdown chunker
   (verified by absence of HTTP call to docling-serve in test).
-- AC-4.2: `.pdf` upload produces chunks via docling `/v1/chunk/hybrid/file`
-  with `format=pdf`.
+- AC-4.2: `.pdf` upload submits to docling
+  `/v1/chunk/hybrid/file/async` with `convert_from_formats=pdf`.
 - AC-4.3: A 5-page sample PDF produces ≥ 5 chunks each with non-null
   `page_numbers` payload field.
 - AC-4.4: An `.xml` file whose root local-name is `article` (JATS) routes
@@ -355,6 +391,12 @@ THE SYSTEM SHALL mark the artifact `failed` with `failure_reason:
 - AC-4.5 (Phase ≤ 3): `.doc` returns 400 `doc_format_not_yet_supported`.
 - AC-4.6 (Phase 4): `.doc` is converted via libreoffice-headless and
   produces docling chunks.
+- AC-4.7: The Chemie Overal 4VWO 129 MB PDF produces a `/ingest/v1/document`
+  request whose `content` is ≤ 450,000 chars, whose `chunks` array is non-empty,
+  and whose `skip_chunking` is true.
+- AC-4.8: The same Chemie upload does not produce HTTP 422 from
+  `knowledge-ingest` and never transitions from Docling success to
+  `docling_result_not_found`.
 
 ---
 

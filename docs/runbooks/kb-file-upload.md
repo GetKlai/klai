@@ -15,14 +15,20 @@ Browser ──multipart 200 MB──▶ Caddy ──▶ portal-api
                                          │
                                          └─ docling path (.pdf/.docx/.pptx/.xlsx/.json/.xml)
                                              magic-byte validate
-                                             POST docling-serve /v1/convert/file/async
+                                             POST docling-serve /v1/chunk/hybrid/file/async
+                                             include_converted_doc=false
+                                             convert_image_export_mode=placeholder
                                              → kb_uploads.status=processing + docling_task_id
                                                    │
                                                    ▼
                                          portal-api kb_upload_poller (every 5 s)
                                              docling /v1/status/poll/{task_id}
-                                             → success: GET /v1/result → markdown
+                                             → success: GET /v1/result → chunks[].text
                                                         → /ingest/v1/document
+                                                          skip_chunking=true
+                                                          chunks=[...]
+                                                          content=<bounded preview>
+                                                          content_hash=<source sha256>
                                                         → kb_uploads.status=done
                                              → failure: kb_uploads.status=failed
                                          frontend polls
@@ -36,8 +42,8 @@ Browser ──multipart 200 MB──▶ Caddy ──▶ portal-api
 |---|---|
 | Caddy | `request_body { max_size 200MB }` on `^/api/app/knowledge-bases/[^/]+/sources/file$` |
 | portal-api | new `POST /api/app/knowledge-bases/{kb}/sources/file`, new `GET .../sources/file/{id}/status`, new `kb_uploads` table + cat-D RLS, `kb_upload_poller` background task |
-| docling-serve | unchanged — uses the existing v1.16.1 deployment on klai-net |
-| knowledge-ingest | unchanged — receives docling-derived markdown via the existing `/ingest/v1/document` endpoint |
+| docling-serve | v1.16.1 on klai-net; async hybrid chunk endpoint; non-single-use result retention configured for retry tolerance |
+| knowledge-ingest | receives either normal text content or Docling pre-computed chunks via the existing `/ingest/v1/document` endpoint |
 
 ## Deploy steps
 
@@ -74,7 +80,9 @@ Browser ──multipart 200 MB──▶ Caddy ──▶ portal-api
    ```
 
 4. **Smoke test.** Upload `sample.md` via the UI on a test KB. Then
-   upload a small PDF (5 pages). Watch:
+   upload a small PDF (5 pages). For the regression path, upload
+   `/Users/mvletter/Downloads/Chemie Overal 4VWO.pdf` to a fresh test KB
+   and watch it reach `done` with non-zero chunks.
 
    ```bash
    # Should show one done + one processing within seconds
@@ -128,6 +136,47 @@ SET status = 'failed', failure_reason = 'operator_recovery', updated_at = NOW()
 WHERE id = '<uuid>';
 ```
 
+### Docling success followed by `docling_result_not_found`
+
+This means portal-api observed terminal success but could not fetch the
+result later. Docling Serve defaults are single-use results with a short
+removal delay, so Klai production must run docling-serve with:
+
+```yaml
+DOCLING_SERVE_SINGLE_USE_RESULTS: "false"
+DOCLING_SERVE_RESULT_REMOVAL_DELAY: "86400"
+```
+
+Diagnose the live container environment:
+
+```bash
+ssh core-01 "docker exec klai-core-docling-serve-1 sh -c \
+    'env | grep DOCLING_SERVE_ | sort'"
+```
+
+If the variables are missing after a merge, redeploy the compose stack or
+recreate the docling-serve container. Existing failed upload rows cannot be
+recovered from Docling if the result was already removed; re-upload the source
+after fixing the environment.
+
+### knowledge-ingest returns HTTP 422 for a large document
+
+The docling path must not forward one giant converted document in
+`content`. The expected request shape to `/ingest/v1/document` is:
+
+```json
+{
+  "content": "<= 450000 chars preview",
+  "content_hash": "<original file sha256>",
+  "skip_chunking": true,
+  "chunks": ["Docling chunk text", "..."]
+}
+```
+
+If logs show `skip_chunking=false` or no `chunks`, the portal-api image is
+not running the Docling chunk pipeline. If `content` is larger than 500,000
+characters, the preview bound has regressed.
+
 ### portal-api container OOM during upload
 
 200 MB binary uploads land in Starlette's `SpooledTemporaryFile` which
@@ -153,6 +202,8 @@ VictoriaLogs queries:
 - `service:portal-api AND event:kb_upload_docling_failed` — failed docling tasks
 - `service:portal-api AND event:kb_upload_poll_docling_error` — poller couldn't reach docling
 - `service:portal-api AND event:kb_upload_poll_transient` — docling slow (>5 s status poll)
+- `service:portal-api AND event:docling_submit_accepted` — submitted task IDs and source byte size
+- `service:portal-api AND event:docling_markdown_embedded_images_stripped` — defensive evidence that embedded image payloads were removed
 
 ## Archive pipeline (`.zip` / `.tar`)
 
