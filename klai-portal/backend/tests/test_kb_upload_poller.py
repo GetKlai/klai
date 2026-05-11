@@ -19,6 +19,7 @@ from app.services import kb_upload_poller
 from app.services.docling_client import (
     DoclingError,
     DoclingPollResult,
+    DoclingResultNotFoundError,
     DoclingTaskStatus,
     DoclingTimeoutError,
 )
@@ -180,6 +181,46 @@ class _PollerPatches:
         return org
 
 
+class _SessionBoundValue:
+    """Object that raises when accessed after the fake DB session closes."""
+
+    def __init__(self, value: str, closed: dict[str, bool]) -> None:
+        self.value = value
+        self.closed = closed
+
+    def get(self) -> str:
+        if self.closed["value"]:
+            raise RuntimeError("attribute accessed after session closed")
+        return self.value
+
+
+class _SessionBoundKB:
+    id = 42
+
+    def __init__(self, closed: dict[str, bool]) -> None:
+        self._slug = _SessionBoundValue("chemie", closed)
+        self._name = _SessionBoundValue("Chemie", closed)
+
+    @property
+    def slug(self) -> str:
+        return self._slug.get()
+
+    @property
+    def name(self) -> str:
+        return self._name.get()
+
+
+class _SessionBoundOrg:
+    id = 1
+
+    def __init__(self, closed: dict[str, bool]) -> None:
+        self._zitadel_org_id = _SessionBoundValue("zitadel-org-1", closed)
+
+    @property
+    def zitadel_org_id(self) -> str:
+        return self._zitadel_org_id.get()
+
+
 # ---- Processing-state transitions -----------------------------------------
 
 
@@ -316,6 +357,58 @@ class TestIngestingState:
         # No terminal transition — row stays ingesting for next tick.
         patches.mock_mark_failed.assert_not_called()  # type: ignore[union-attr]
         patches.mock_mark_done.assert_not_called()  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio
+    async def test_missing_docling_result_marks_failed(self) -> None:
+        view = _view(status=STATUS_INGESTING)
+        with _PollerPatches(
+            result_side_effect=DoclingResultNotFoundError("gone"),
+        ) as patches:
+            await kb_upload_poller._process_ingesting_row(view)
+
+        patches.mock_mark_failed.assert_called_once()  # type: ignore[union-attr]
+        kwargs = patches.mock_mark_failed.call_args.kwargs  # type: ignore[union-attr]
+        assert kwargs["failure_reason"] == "docling_result_not_found"
+        patches.mock_mark_done.assert_not_called()  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio
+    async def test_ingest_copies_kb_and_org_values_before_session_closes(self) -> None:
+        """Regression for production DetachedInstanceError on org.zitadel_org_id."""
+
+        view = _view(status=STATUS_INGESTING)
+        closed = {"value": False}
+        kb = _SessionBoundKB(closed)
+        org = _SessionBoundOrg(closed)
+
+        async def _execute_stub(stmt, *args, **kwargs):
+            text_repr = str(stmt).lower()
+            result = MagicMock()
+            if "portal_knowledge_bases" in text_repr:
+                result.scalar_one_or_none = MagicMock(return_value=kb)
+            elif "portal_orgs" in text_repr:
+                result.scalar_one_or_none = MagicMock(return_value=org)
+            else:
+                result.scalar_one_or_none = MagicMock(return_value=None)
+            return result
+
+        @asynccontextmanager
+        async def _scoped(_org_id: int):
+            db = AsyncMock()
+            db.execute.side_effect = _execute_stub
+            yield db
+            closed["value"] = True
+
+        with _PollerPatches(markdown="# retry", ingest_artifact="art-retry") as patches:
+            patches.stack.enter_context(patch("app.services.kb_upload_poller.tenant_scoped_session", _scoped))
+
+            await kb_upload_poller._process_ingesting_row(view)
+
+        patches.mock_ingest.assert_called_once()  # type: ignore[union-attr]
+        payload = patches.mock_ingest.call_args.args[0]  # type: ignore[union-attr]
+        assert payload["org_id"] == "zitadel-org-1"
+        assert payload["kb_slug"] == "chemie"
+        assert payload["kb_name"] == "Chemie"
+        patches.mock_mark_done.assert_called_once()  # type: ignore[union-attr]
 
 
 # ---- Loop wrapper ---------------------------------------------------------
