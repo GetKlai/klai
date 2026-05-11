@@ -20,7 +20,6 @@ import {
   Image,
   Link as LinkIcon,
   Loader2,
-  MoreHorizontal,
   Pencil,
   Plus,
   RefreshCw,
@@ -31,12 +30,6 @@ import {
 import { SiAirtable, SiConfluence, SiGithub, SiGoogledrive, SiNotion } from '@icons-pack/react-simple-icons'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { Tooltip } from '@/components/ui/tooltip'
 import * as m from '@/paraglide/messages'
@@ -461,35 +454,23 @@ function BronRow({
           </Tooltip>
         </InlineDeleteConfirm>
 
-        {/* Per-row "Bewerken in editor" dropdown — for .md uploads only.
-            The dropdown trigger is hidden until the row is hovered. resolveSlug
-            in the docs editor matches by both id and slug, so passing the
-            .md-stripped filename as $pageId is sufficient for files whose
-            source name corresponds to a Gitea page slug. */}
+        {/* Per-row "open in editor" shortcut — for .md uploads only.
+            Direct ChevronRight Link (no dropdown). Sits next to trash so the
+            existing expand-chevron at the row tail is still the chunks-preview
+            toggle. resolveSlug in the docs editor matches by id OR slug, so
+            the .md-stripped filename works as a $pageId for files whose
+            source name maps to a Gitea page slug. */}
         {bron.kind === 'upload' && /\.md$/i.test(bron.name) && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                aria-label="Meer acties"
-                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 opacity-0 group-hover:opacity-100 focus:opacity-100 data-[state=open]:opacity-100 transition-opacity"
-              >
-                <MoreHorizontal className="h-4 w-4" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem asChild>
-                <Link
-                  to="/app/docs/$kbSlug/$pageId"
-                  params={{ kbSlug, pageId: stripMdExt(bron.name) }}
-                  className="flex items-center gap-2"
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                  Bewerken in editor
-                </Link>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <Tooltip label="Bewerken in editor">
+            <Link
+              to="/app/docs/$kbSlug/$pageId"
+              params={{ kbSlug, pageId: stripMdExt(bron.name) }}
+              aria-label="Bewerken in editor"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors"
+            >
+              <Pencil className="h-4 w-4" />
+            </Link>
+          </Tooltip>
         )}
 
         <button
