@@ -24,6 +24,7 @@ portal-api dep.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -101,6 +102,14 @@ _STATUS_TIMEOUT_S: float = 5.0
 # this can be several MB of JSON. 30 s covers slow links.
 _RESULT_TIMEOUT_S: float = 30.0
 
+# Docling Serve defaults ``image_export_mode`` to ``embedded`` for Markdown,
+# which can put base64 PNGs directly in md_content. A 129 MB textbook produced
+# ~491 MB of markdown that exceeded knowledge-ingest's request schema. For RAG
+# ingestion, image placeholders are enough; OCR text remains in the markdown.
+_IMAGE_EXPORT_MODE = "placeholder"
+_IMAGE_PLACEHOLDER = "<!-- image -->"
+_EMBEDDED_DATA_IMAGE_RE = re.compile(r"!\[[^\]]*\]\(data:image/[^)]*;base64,[^)]+\)")
+
 
 def _client(timeout_s: float) -> httpx.AsyncClient:
     """Build an httpx client pointed at the configured docling-serve URL."""
@@ -133,7 +142,10 @@ async def submit_file_async(
     # encodes a sequence value as repeated fields under the same key, so
     # ``{"to_formats": ["md", "html"]}`` becomes ``to_formats=md&to_formats=html``
     # on the wire — matching the multi-value semantics docling expects.
-    data: dict[str, list[str]] = {"to_formats": list(to_formats)}
+    data: dict[str, object] = {
+        "to_formats": list(to_formats),
+        "image_export_mode": _IMAGE_EXPORT_MODE,
+    }
 
     try:
         async with _client(_SUBMIT_TIMEOUT_S) as client:
@@ -232,6 +244,20 @@ async def get_result_markdown(task_id: str) -> str:
     return _extract_markdown(payload, task_id)
 
 
+def _strip_embedded_images(markdown: str, task_id: str) -> str:
+    """Replace embedded base64 image markdown with a stable placeholder."""
+    stripped, count = _EMBEDDED_DATA_IMAGE_RE.subn(_IMAGE_PLACEHOLDER, markdown)
+    if count:
+        logger.info(
+            "docling_markdown_embedded_images_stripped",
+            task_id=task_id,
+            images=count,
+            original_chars=len(markdown),
+            stripped_chars=len(stripped),
+        )
+    return stripped
+
+
 def _extract_markdown(payload: Any, task_id: str) -> str:
     """Pull the ``md_content`` field from a single-document response.
 
@@ -250,4 +276,4 @@ def _extract_markdown(payload: Any, task_id: str) -> str:
         raise DoclingError(
             f"docling produced no markdown for {task_id} (status={status}, errors={errors!r})",
         )
-    return md
+    return _strip_embedded_images(md, task_id)
