@@ -7,8 +7,9 @@ Covers the three pipelines exposed by the route:
 - **docling** (``.pdf / .docx / .xlsx / .pptx / .json / .xml``): magic-
   byte validate + submit to docling-serve async queue. Row created in
   ``processing`` state with the ``task_id``.
-- **phase_pending** (``.zip / .tar / .doc``): recorded as ``skipped``
-  with that reason.
+- **archive** (``.zip / .tar``): safely extracted as an all-or-nothing
+  batch; each member recurses through the text/docling paths.
+- **phase_pending** (``.doc``): recorded as ``skipped`` with that reason.
 
 The tests mock ``knowledge_ingest_client.ingest_document``,
 ``docling_client.submit_file_async`` and ``kb_uploads_repo`` helpers
@@ -20,6 +21,7 @@ from __future__ import annotations
 
 import io
 import uuid
+import zipfile
 from contextlib import ExitStack
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -170,6 +172,14 @@ def _make_multipart_request(filename: str, content: bytes, content_type: str) ->
         },
         receive,
     )
+
+
+def _build_zip(members: list[tuple[str, bytes]]) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for name, data in members:
+            zf.writestr(name, data)
+    return buffer.getvalue()
 
 
 class _FilePatches:
@@ -457,6 +467,76 @@ class TestPhasePending:
 
         assert excinfo.value.status_code == 400
         assert excinfo.value.detail["error_code"] == "archive_malformed"
+
+
+# --- Archive pipeline ------------------------------------------------------
+
+
+class TestArchivePipeline:
+    @pytest.mark.asyncio
+    async def test_zip_with_valid_markdown_members_ingests_each_member(self) -> None:
+        from app.api.app_knowledge_sources import add_file_source
+
+        kb = _make_kb()
+        db = _make_db_mock(kb)
+        zip_bytes = _build_zip([("one.md", b"# One"), ("two.md", b"# Two")])
+        files = [_upload("bundle.zip", zip_bytes, "application/zip")]
+
+        with _FilePatches() as patches:
+            resp = await add_file_source(kb_slug="personal", request=_make_request(files), perms=_make_perms(), db=db)
+
+        assert len(resp.uploads) == 2
+        assert {u.filename for u in resp.uploads} == {"one.md", "two.md"}
+        assert {u.status for u in resp.uploads} == {"done"}
+        assert resp.skipped == []
+        assert patches.mock_ingest is not None
+        assert patches.mock_ingest.call_count == 2
+        assert patches.mock_docling is not None
+        patches.mock_docling.assert_not_called()
+        assert patches.mock_create_upload is not None
+        assert patches.mock_create_upload.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_zip_with_unsupported_member_rejects_whole_archive(self) -> None:
+        from app.api.app_knowledge_sources import add_file_source
+
+        kb = _make_kb()
+        db = _make_db_mock(kb)
+        zip_bytes = _build_zip([("one.md", b"# One"), ("script.exe", b"MZ\x90")])
+        files = [_upload("bundle.zip", zip_bytes, "application/zip")]
+
+        with _FilePatches() as patches, pytest.raises(HTTPException) as excinfo:
+            await add_file_source(kb_slug="personal", request=_make_request(files), perms=_make_perms(), db=db)
+
+        assert excinfo.value.status_code == 400
+        assert excinfo.value.detail["error_code"] == "unsupported_extension"
+        assert patches.mock_ingest is not None
+        patches.mock_ingest.assert_not_called()
+        assert patches.mock_docling is not None
+        patches.mock_docling.assert_not_called()
+        assert patches.mock_create_upload is not None
+        patches.mock_create_upload.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_zip_with_mime_mismatch_rejects_before_any_member_ingest(self) -> None:
+        from app.api.app_knowledge_sources import add_file_source
+
+        kb = _make_kb()
+        db = _make_db_mock(kb)
+        zip_bytes = _build_zip([("one.md", b"# One"), ("fake.pdf", b"GIF89a\x00\x00")])
+        files = [_upload("bundle.zip", zip_bytes, "application/zip")]
+
+        with _FilePatches() as patches, pytest.raises(HTTPException) as excinfo:
+            await add_file_source(kb_slug="personal", request=_make_request(files), perms=_make_perms(), db=db)
+
+        assert excinfo.value.status_code == 400
+        assert excinfo.value.detail["error_code"] == "mime_mismatch"
+        assert patches.mock_ingest is not None
+        patches.mock_ingest.assert_not_called()
+        assert patches.mock_docling is not None
+        patches.mock_docling.assert_not_called()
+        assert patches.mock_create_upload is not None
+        patches.mock_create_upload.assert_not_called()
 
 
 # --- Mixed multi-file ------------------------------------------------------

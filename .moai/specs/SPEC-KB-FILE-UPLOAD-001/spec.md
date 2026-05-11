@@ -218,6 +218,8 @@ Data flow invariants:
 | D-9 | Pre-chunked ingest contract | Forward Docling chunk text to `/ingest/v1/document` with `skip_chunking=true`, `chunks=[...]`, bounded `content`, and original file `content_hash`. | Prevents 422s from `content` max length, preserves Docling structure, and dedupes against the uploaded source instead of the preview. |
 | D-10 | Docling result lifecycle | Configure `DOCLING_SERVE_SINGLE_USE_RESULTS=false` and `DOCLING_SERVE_RESULT_REMOVAL_DELAY=86400`; still treat Docling results as volatile and ingest immediately after terminal success. | Docling Serve defaults are optimized for one client fetch. The portal poller may need retry tolerance after a transient `/ingest` failure or portal restart. Durable result storage in Klai remains a future hardening step. |
 | D-11 | Large-document enrichment | Skip per-chunk LLM enrichment when the ingest content is a truncated preview or when the chunk count exceeds `enrichment_max_chunks` (default 200). Keep the raw Docling vectors as the searchable source of truth. | A 1557-chunk textbook would require thousands of LiteLLM calls and can be rate-limited for minutes. Re-chunking the bounded preview during enrichment would also overwrite the full Docling index with partial content. |
+| D-12 | Archive semantics | Treat `.zip` / `.tar` as batch transport containers, never as semantic documents. Each accepted member becomes its own `kb_uploads` row and artifact; the archive itself is not indexed. | Docling and vector-store style retrieval systems operate on actual document files, not archive containers. Per-entry artifacts preserve filenames, status, retry behavior, deletion, citations, and quota accounting. |
+| D-13 | Archive acceptance policy | Archive ingest is all-or-nothing. If any member is unsupported, unsafe, malformed, too large, nested, mime-mismatched, or otherwise not accepted by the normal file rules, reject the whole archive before creating downstream ingest jobs. | Partial success is useful for multi-file browser uploads, but archives are opaque to users before upload. In business usage, silently indexing only part of an archive creates incomplete KBs and hard-to-debug trust issues. |
 
 ---
 
@@ -286,52 +288,144 @@ container metrics).
 
 ---
 
-### REQ-3 — Archive safety
+### REQ-3 — Archive safety and batch semantics
 
-**Ubiquitous.** Archives (`.zip`, `.tar`) shall be unpacked with streaming
-guards that abort early on adversarial content.
+**Ubiquitous.** Archives (`.zip`, `.tar`) shall be treated as batch
+containers. The archive file itself SHALL NOT be indexed. Every accepted
+member SHALL become an independent upload row, downstream ingest job, artifact,
+source row, and citation target.
 
-**Event-driven.** WHEN an archive entry's compression ratio exceeds 10:1,
-THE SYSTEM SHALL abort extraction and return `error_code:
-"archive_compression_ratio"` within 10 MB of decompression progress.
+**Ubiquitous.** Archive ingest SHALL be all-or-nothing. The system SHALL NOT
+create any `kb_uploads` rows, Docling tasks, Qdrant points, or artifacts for an
+archive until every member has passed archive preflight, extraction guards, and
+the same per-file validation used by top-level uploads.
 
-**Event-driven.** WHEN cumulative uncompressed size exceeds 500 MB OR
-per-entry uncompressed size exceeds 50 MB, THE SYSTEM SHALL abort with
-`error_code: "archive_total_size"` or `error_code:
+**State-driven.** BEFORE extracting member payloads, the system SHALL perform
+archive preflight using metadata available without decompression:
+
+- member count;
+- member paths;
+- extensions;
+- nested archive detection;
+- declared uncompressed size where available;
+- duplicate normalized paths;
+- tar member type;
+- cumulative declared uncompressed size where available.
+
+**Event-driven.** WHEN preflight finds any unacceptable member, THE SYSTEM
+SHALL reject the entire archive with the member-specific `error_code` and SHALL
+NOT process any other member.
+
+**Ubiquitous.** Archive members SHALL use the same accepted document whitelist
+as direct uploads, excluding archive extensions and phase-pending formats:
+`.csv`, `.docx`, `.json`, `.md`, `.pdf`, `.pptx`, `.txt`, `.xlsx`, `.xml`.
+`.doc` inside an archive SHALL reject the whole archive with
+`error_code: "doc_format_not_yet_supported"`.
+
+**Event-driven.** WHEN an archive contains more than 200 file members, THE
+SYSTEM SHALL reject the archive with `error_code: "archive_too_many_entries"`.
+
+**Event-driven.** WHEN an archive contains more than 10 Docling-path members
+(`.pdf`, `.docx`, `.pptx`, `.xlsx`, `.json`, `.xml`), THE SYSTEM SHALL reject
+the archive with `error_code: "archive_too_many_docling_entries"`.
+
+**Ubiquitous.** Archive preflight SHALL compute an archive complexity score so
+the allowed member count scales with member type and declared size:
+
+| Member shape | Complexity units |
+|---|---:|
+| `.md`, `.txt`, `.csv` up to 1 MB | 1 |
+| `.md`, `.txt`, `.csv` above 1 MB | 2 |
+| `.json`, `.xml` | 3 |
+| `.docx`, `.xlsx`, `.pptx` | 5 |
+| `.pdf` up to 10 MB | 10 |
+| `.pdf` above 10 MB | 10 + 1 per additional started 10 MB |
+
+WHEN the archive complexity score exceeds 200 units, THE SYSTEM SHALL reject
+the archive with `error_code: "archive_complexity_budget_exceeded"`.
+
+**Event-driven.** WHEN cumulative uncompressed size exceeds 500 MB OR a
+member's uncompressed size exceeds 50 MB, THE SYSTEM SHALL reject the archive
+with `error_code: "archive_total_size"` or `error_code:
 "archive_entry_too_large"`.
 
-**Event-driven.** WHEN an archive contains more than 50 entries, THE SYSTEM
-SHALL abort with `error_code: "archive_too_many_entries"` after counting the
-51st entry header.
+**Event-driven.** WHEN an entry name contains a NUL byte, an absolute path,
+parent traversal (`..`), a Windows drive prefix, or a path that normalizes
+outside the archive root, THE SYSTEM SHALL reject the archive with
+`error_code: "archive_path_traversal"`.
 
-**Event-driven.** WHEN an entry name contains `..`, an absolute path, or a
-backslash separator, THE SYSTEM SHALL abort with `error_code:
-"archive_path_traversal"`.
+**Event-driven.** WHEN two member paths normalize to the same value, THE SYSTEM
+SHALL reject the archive with `error_code: "archive_duplicate_entry"`.
 
 **Event-driven.** WHEN an entry's extension is `.zip` or `.tar` (nested
-archive), THE SYSTEM SHALL abort with `error_code: "archive_nested"`.
+archive), THE SYSTEM SHALL reject the archive with `error_code:
+"archive_nested"`.
 
-**Event-driven.** WHEN a tar entry has type other than REGTYPE / AREGTYPE,
-THE SYSTEM SHALL abort with `error_code: "archive_unsafe_entry"`.
+**Event-driven.** WHEN a tar member has type other than REGTYPE / AREGTYPE, THE
+SYSTEM SHALL reject the archive with `error_code: "archive_unsafe_entry"`.
 
-**Event-driven.** WHEN an entry's extension is whitelisted but its
-magic-byte content fails REQ-1 validation, THE SYSTEM SHALL skip the entry
-(not the entire archive) and record `entry_skipped` reason in the artifact
-log.
+**State-driven.** WHILE extracting each member into a disk-backed staging area,
+the system SHALL stream bytes and enforce per-entry size, total size, and
+compression-ratio limits. The system SHALL NOT hold all decompressed member
+bytes in memory.
+
+**Event-driven.** WHEN a zip member's compression ratio exceeds 10:1 after the
+first 1 MB of decompressed output, THE SYSTEM SHALL abort extraction and return
+`error_code: "archive_compression_ratio"` within 10 MB of decompression
+progress.
+
+**Event-driven.** WHEN an extracted member's magic-byte content fails the same
+validation required by REQ-1, THE SYSTEM SHALL reject the entire archive with
+the underlying file `error_code` (`mime_mismatch`, `empty_content`, or
+`invalid_text_encoding`) and SHALL delete all staged member files.
+
+**Event-driven.** WHEN all members pass validation, THE SYSTEM SHALL create one
+archive batch id, create one upload row per member with initial status
+`pending`, and enqueue one independent ingest job per member. Docling-path
+members SHALL enter the normal Docling queue; text-path members SHALL enter the
+normal direct ingest path. The request handler SHALL NOT run Docling conversion
+inline for archive members. The request SHALL return HTTP 202 with one upload
+entry per member, not one upload entry for the archive.
+
+**Ubiquitous.** Each member upload row and artifact SHALL include archive
+provenance metadata:
+
+- `archive_batch_id`;
+- `archive_filename`;
+- `archive_source_ref`;
+- `archive_member_path`;
+- `archive_member_index`;
+- `archive_member_count`.
+
+**Unwanted behaviour.** IF any member fails archive or file validation, THEN
+THE SYSTEM SHALL reject the whole archive. Partial indexing of a user-supplied
+archive is forbidden.
 
 **Acceptance criteria:**
 - AC-3.1: A canonical 42 KB → 4 GB zip-bomb fixture aborts within 10 MB
   decompression.
-- AC-3.2: A `.zip` with 51 valid `.md` entries returns 400
+- AC-3.2: A `.zip` with 201 valid `.md` entries returns 400
   `archive_too_many_entries`.
 - AC-3.3: A `.tar` containing `../../etc/passwd` returns 400
   `archive_path_traversal`.
-- AC-3.4: A `.zip` containing `nested.zip` rejects that entry with
-  `archive_nested`; the rest of the archive proceeds.
+- AC-3.4: A `.zip` containing `nested.zip` rejects the whole archive with
+  `archive_nested`; no upload rows are created.
 - AC-3.5: A `.tar` symlink entry returns 400 `archive_unsafe_entry`.
-- AC-3.6: A `.zip` with mixed `[1.md, 2.pdf, 3.exe]` produces 2 artifacts
-  (md, pdf) and 1 entry log line `entry_skipped: unsupported_extension` for
-  the `.exe`.
+- AC-3.6: A `.zip` with mixed `[1.md, 2.pdf, 3.exe]` returns 400
+  `unsupported_extension`; no artifacts, upload rows, Docling tasks, or Qdrant
+  points are created.
+- AC-3.7: A `.zip` with 5 valid members (`.md`, `.txt`, `.pdf`, `.docx`,
+  `.xlsx`) returns 202 with 5 upload entries and a shared `archive_batch_id`.
+- AC-3.8: A `.zip` with 11 valid PDF members returns 400
+  `archive_too_many_docling_entries`.
+- AC-3.9: A `.zip` with two paths that normalize to the same member path
+  returns 400 `archive_duplicate_entry`.
+- AC-3.10: A `.zip` with 150 valid small `.md` files returns 202 with 150
+  upload entries and a shared `archive_batch_id`.
+- AC-3.11: A `.zip` whose members stay under hard count limits but exceed 200
+  complexity units returns 400 `archive_complexity_budget_exceeded`.
+- AC-3.12: During a 500 MB archive staging run, portal-api RSS stays below
+  100 MB delta over baseline.
 
 ---
 
@@ -464,7 +558,10 @@ archive_compression_ratio
 archive_total_size
 archive_entry_too_large
 archive_too_many_entries
+archive_too_many_docling_entries
+archive_complexity_budget_exceeded
 archive_path_traversal
+archive_duplicate_entry
 archive_nested
 archive_unsafe_entry
 kb_quota_bytes_exceeded
@@ -667,12 +764,18 @@ Deliverables:
 ### Phase 3 — archives
 
 Deliverables:
-- New `knowledge-ingest/adapters/archive.py` (sunzip-style streaming
-  extractor with all REQ-3 guards).
+- New/updated `portal-api/app/services/archive.py` with two-stage archive
+  handling: metadata preflight, disk-backed staging, per-member validation,
+  then all-or-nothing job creation.
 - portal-api whitelist extends to `.zip .tar`.
 - Per-entry quota counts uncompressed bytes.
+- Archive entries become independent `kb_uploads` rows and artifacts with a
+  shared `archive_batch_id`; the archive itself is never indexed.
+- One archive may contain at most 200 accepted members, at most 10
+  Docling-path members, and at most 200 archive complexity units.
 - Tests: zip-bomb fixture, path-traversal fixture, nested-archive,
-  symlink-in-tar, mixed-content (md + pdf + exe → 2 + 1 skipped),
+  symlink-in-tar, duplicate normalized path, too-many-Docling-members,
+  mixed-content rejection (md + pdf + exe → whole archive rejected),
   Playwright real `.zip` upload.
 
 ### Phase 4 — `.doc` legacy support
@@ -708,6 +811,8 @@ Deliverables:
 | R-13 | docling-serve resource exhaustion on multiple large PDFs concurrently | MED | Procrastinate worker concurrency cap at 2 docling-jobs/worker. Monitor docling-serve memory in Grafana. |
 | R-14 | Frontend uploads many small files at once → 100/24h rate limit hit fast | LOW | Client batches ≤ 10 files per submit; per-org rate is per-artifact, archives count entries individually. Phase 5 may relax to per-byte quota. |
 | R-15 | `kb-documents` bucket reachable from internet via DNS-leak | MED | Garage `klai-documents` bucket has no website-mode binding; only S3 API on internal port 3900 (not exposed via Caddy). Verified by AC-9.5. |
+| R-16 | Archive partial ingest creates a misleading KB | HIGH | All-or-nothing archive staging: validate every member before creating any upload rows, Docling tasks, artifacts, or Qdrant points. One bad member rejects the whole archive. |
+| R-17 | Archive staging OOMs portal-api | HIGH | Stream members to disk-backed temp files/object storage; never accumulate all decompressed bytes in memory. AC-3.12 covers RSS. |
 
 ---
 
@@ -728,7 +833,7 @@ Deliverables:
 | `klai-portal/backend/app/api/internal.py` (or new) | 1 | Webhook receiver for knowledge-ingest status updates: `POST /internal/kb-uploads/status`. |
 | `klai-knowledge-ingest/knowledge_ingest/routes/ingest.py` | 1, 2, 3, 4 | +`POST /ingest/v1/file` (~80 LOC initial; grows per phase). |
 | `klai-knowledge-ingest/knowledge_ingest/adapters/docling.py` | 2 | NEW (~150 LOC): httpx client to docling-serve, schema detection, chunk normalization. |
-| `klai-knowledge-ingest/knowledge_ingest/adapters/archive.py` | 3 | NEW (~200 LOC): streaming sunzip with all REQ-3 guards. |
+| `klai-portal/backend/app/services/archive.py` | 3 | NEW/UPDATED (~250 LOC): archive preflight, disk-backed staging, all-or-nothing validation, and member metadata. |
 | `klai-knowledge-ingest/knowledge_ingest/adapters/libreoffice.py` | 4 | NEW (~80 LOC): HTTP client → docx → docling. |
 | `klai-knowledge-ingest/knowledge_ingest/config.py` | 1, 4 | +`docling_url: str`, `libreoffice_url: str` (Phase 4). |
 | `klai-knowledge-ingest/alembic/versions/<rev>_artifact_file_source.py` | 1 | If existing artifacts table needs new jsonb fields (`source_kind`, `s3_key`, `original_filename`), add via `extra` jsonb (no schema change). May be a no-op if jsonb is already free-form. |
