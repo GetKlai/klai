@@ -19,6 +19,12 @@ interface RoleGuardProps {
 
 export function RoleGuard({ minRole, children }: RoleGuardProps) {
   const { user } = useCurrentUser()
+  // Platform admins bypass profile-role gates — mirrors the backend
+  // is_platform_admin bypass on owner/role checks. Klai staff can preview
+  // every gated surface without needing per-org role grants.
+  if (user?.isAdmin) {
+    return <>{children}</>
+  }
   if (meetsMinRole(user?.effective_role, minRole)) {
     return <>{children}</>
   }
