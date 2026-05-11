@@ -1,6 +1,6 @@
 ---
 id: SPEC-PORTAL-KENNIS-002
-version: 0.2.0
+version: 0.3.0
 status: ready
 created: 2026-05-11
 updated: 2026-05-11
@@ -17,8 +17,8 @@ Een KB-detailscherm dat een niet-technische gebruiker meteen begrijpt:
 
 - **Alles is een bron.** Connectors en directe uploads renderen identiek.
 - **De drie acties die er toe doen** — bron toevoegen, bron verwijderen, bron syncen — zijn altijd zichtbaar en één klik weg.
-- **Drie tabs**, niets meer. Bronnen / Instellingen / Geavanceerd.
-- **Alle complexiteit** (taxonomie, gevorderde connector-config, danger zone) staat onder **Geavanceerd**. De Bronnen-tab is rustig.
+- **Drie tabs**, niets meer. Bronnen / Instellingen / Inzichten.
+- **Alle KB-configuratie** (naam, leden, taxonomie, danger zone) hoort thuis op Instellingen. **Inzichten** is een pure info-tab (sync-historie en toekomstige diagnostics) — geen mutaties. De Bronnen-tab is rustig.
 - **Past in de grid.** KB-titel ligt op dezelfde lijn als het sidebar-logo. Lijsten gebruiken de portal-list-pattern (top+bottom border, divide-y, geen rounded boxes per rij).
 
 Deze SPEC consolideert de richting die in het 2026-05-08 iteratie-traject naar voren kwam. SPEC-PORTAL-KENNIS-001 carvde de feat-branch over naar main; deze SPEC legt de definitieve UI vast en sluit de losse eindjes.
@@ -32,10 +32,11 @@ Deze SPEC consolideert de richting die in het 2026-05-08 iteratie-traject naar v
 | Bron verwijderen | Inline op de rij (hover of via inline-confirm) — destructive maar bereikbaar |
 | Status zien | Eén badge per rij: **Gesynct / Bezig / Niet gesynct** |
 | Inhoud bekijken | Klik op rij → expandt inline. Connector → items → chunks. Upload → chunks. |
-| Naam/omschrijving wijzigen | Instellingen-tab |
-| Leden / toegang | Instellingen-tab (onder Bewerken) |
-| Taxonomie, danger zone | Geavanceerd-tab |
-| Sync-historie, error-details | Geavanceerd-tab (later) |
+| Naam/omschrijving wijzigen | Instellingen-tab → Algemeen |
+| Leden / toegang | Instellingen-tab → Toegang |
+| Taxonomie | Instellingen-tab → collapsible "Bronnen-structuur" (geavanceerd, default ingeklapt, kb_manager+) |
+| KB verwijderen (danger zone) | Instellingen-tab → Verwijderen (onderaan) |
+| Sync-historie, error-details | Inzichten-tab |
 
 ## Scope
 
@@ -43,11 +44,12 @@ Deze SPEC consolideert de richting die in het 2026-05-08 iteratie-traject naar v
 
 **Frontend:**
 - `routes/app/knowledge/$kbSlug/bronnen.tsx` — unified list, sync-knoppen, inline drill-down, 3-state status
-- `routes/app/knowledge/$kbSlug/route.tsx` — 3-tab shell, KB-titel in h-[66px] strip
-- `routes/app/knowledge/$kbSlug/settings.tsx` — Instellingen-tab: KB-velden + ledenlijst
-- `routes/app/knowledge/$kbSlug/taxonomy.tsx` — Geavanceerd-tab: taxonomie + danger zone
+- `routes/app/knowledge/$kbSlug/route.tsx` — 3-tab shell (Bronnen / Instellingen / Inzichten), KB-titel in h-[66px] strip
+- `routes/app/knowledge/$kbSlug/settings.tsx` — Instellingen-tab: Algemeen + Toegang + Bronnen-structuur (taxonomie, collapsible) + Verwijderen (danger zone)
+- `routes/app/knowledge/$kbSlug/insights.tsx` *(nieuw)* — Inzichten-tab: sync-historie per connector
+- `routes/app/knowledge/$kbSlug/taxonomy.tsx` — wordt sub-component, geïmporteerd in settings.tsx als collapsible sectie (route blijft bereikbaar voor backward-compat; redirect naar `/settings#bronnen-structuur` overweegt)
 - `routes/app/knowledge/index.tsx` — KB-lijst met dezelfde status-taal, "Gesynct"-label
-- i18n: `kb_status_*` labels (nl + en)
+- i18n: `kb_status_*` labels (nl + en), nieuwe keys voor tab-namen en sectie-headers
 
 **Backend:**
 - `klai-knowledge-ingest`: `count_sources_per_kb` + `chunks-summary` extended met `bronnen_by_kb`
@@ -72,10 +74,16 @@ Deze SPEC consolideert de richting die in het 2026-05-08 iteratie-traject naar v
 
 ### Tab-structuur
 
-- **REQ-4** THE system SHALL exact drie tabs tonen: **Bronnen** (default), **Instellingen**, **Geavanceerd**. Geen extra tabs.
+- **REQ-4** THE system SHALL exact drie tabs tonen: **Bronnen** (default), **Instellingen**, **Inzichten**. Geen extra tabs.
+  - **Instellingen** = *wat is deze KB?* — alle configuratie: naam, beschrijving, leden, bronnen-structuur (taxonomie, collapsible), verwijderen. Alle mutaties die de KB definiëren.
+  - **Inzichten** = *wat is er gebeurd?* — pure info-tab: sync-historie en (later) gebruiksstatistieken / citaten-data. Geen mutaties, geen settings.
 - **REQ-5** Tab-bar SHALL alleen labels tonen (geen iconen) met onderstreep-indicator voor de actieve tab. Sentence-case, geen uppercase.
-- **REQ-6** WHEN de gebruiker niet de minimale rol `kb_manager` heeft AND geen platform admin is, THE system SHALL de Geavanceerd-tab verbergen.
-- **REQ-7** Legacy URL-querystrings (`?tab=overview|items|connectors|members|taxonomy|advanced|settings`) SHALL redirecten naar de juiste nieuwe tab.
+- **REQ-6** THE Inzichten-tab SHALL zichtbaar zijn voor owner + admin. Contributor en viewer zien de tab niet (consistent met "geen mutaties = ja zien" zou nog kunnen, maar sync-error-details bevatten interne info die we niet aan iedereen tonen). De **Bronnen-structuur** sectie in Instellingen SHALL alleen zichtbaar zijn voor kb_manager+ en admin.
+- **REQ-7** Legacy URL-querystrings (`?tab=overview|items|connectors|members|taxonomy|advanced|settings`) SHALL redirecten:
+  - `overview|items|connectors` → `/bronnen`
+  - `members|settings` → `/settings`
+  - `taxonomy|advanced` → `/settings` (met scroll-anchor `#bronnen-structuur` indien aanwezig)
+  - Nieuw: `/insights` is de Inzichten-tab.
 
 ### Status-model
 
@@ -119,13 +127,20 @@ Uploads kunnen dankzij re-index (Q5) ook `pending` of `not_synced` zijn. De stat
 
 - **REQ-23** THE Instellingen-tab SHALL voor elke caller zichtbaar zijn (geen `return null`). Niet-owners zien een read-only formulier.
 - **REQ-24** Admins SHALL het formulier kunnen bewerken zelfs als ze geen KB-rol owner hebben.
-- **REQ-25** THE Instellingen-tab SHALL een ledenlijst onder het formulier tonen (e-mail + rol per lid).
+- **REQ-25** THE Instellingen-tab SHALL vier secties tonen, in deze volgorde, gescheiden door `border-t border-gray-200 pt-6`:
+  1. **Algemeen** — naam (editable voor owner/admin), beschrijving (editable), slug (read-only)
+  2. **Toegang** — ledenlijst (e-mail + rol per lid). Voor owners + admins: acties om leden toe te voegen / rol te wijzigen / te verwijderen (verhuist vanuit `members.tsx`).
+  3. **Bronnen-structuur** — collapsible (default ingeklapt), alleen zichtbaar voor kb_manager+ en admin. Importeert de bestaande taxonomy-UI als sub-component. Header: "Bronnen-structuur (geavanceerd)".
+  4. **Verwijderen** — danger zone met **"Verwijder KB"**-knop, alleen zichtbaar voor owner of admin. Hergebruikt `DeleteKbModal` (typed-name confirmation — enige toegestane modal-uitzondering per NFR-4).
+- **REQ-26** Niet-owners zien sectie 1 en 2 read-only; sectie 4 is volledig verborgen. Sectie 3 verschijnt enkel bij kb_manager+ of admin.
 
-### Geavanceerd-tab
+### Inzichten-tab
 
-- **REQ-26** THE Geavanceerd-tab SHALL routeren naar `/taxonomy` als URL.
-- **REQ-27** Onderaan de taxonomie SHALL een **Verwijderzone** staan met de "Verwijder KB"-knop, alleen zichtbaar voor owner of admin.
-- **REQ-28** Toekomstige geavanceerde features (per-connector reauth UI, sync-historie, RLS-debug) SHALL hier worden ingehangen — niet op de Bronnen-tab.
+- **REQ-27** THE Inzichten-tab SHALL routeren naar `/insights` als URL en uitsluitend info-surfaces bevatten:
+  1. **Sync-historie** — per connector een collapsible met laatste 10 runs (status / start-time / duur / fout-reden). Data uit `connector.sync_runs`. Default ingeklapt.
+  2. *(toekomst)* Gebruiksstatistieken — top-gecirteerde chunks, query-volume, unieke gebruikers.
+- **REQ-28** THE Inzichten-tab SHALL geen mutaties of destructive actions bevatten — pure read-only view. Een sync vanaf hier triggeren is niet mogelijk (gebruik Bronnen-tab).
+- **REQ-29** Inzichten-tab SHALL zichtbaar zijn voor owner + admin (zie REQ-6). Toekomstige diagnostic / power-features (RLS-debug, Qdrant-state, embedding-model-info) horen hier ingehangen te worden.
 
 ### Copy / i18n
 
@@ -158,9 +173,9 @@ Een KB-detail-bezoek slaagt als de gebruiker:
 
 ## Status van de implementatie (2026-05-11)
 
-Deze SPEC documenteert grotendeels werk dat al op `main` staat (commits 2026-05-08):
+Deze SPEC documenteert grotendeels werk dat al op `main` staat (commits 2026-05-08). De Q9-rename (Geavanceerd → Inzichten + taxonomie naar Instellingen) is nieuw en nog niet gebouwd.
 
-- ✅ 3-tab shell (Bronnen / Instellingen / Geavanceerd) — `route.tsx`
+- ✅ 3-tab shell (Bronnen / Instellingen / nu nog "Geavanceerd") — `route.tsx`
 - ✅ KB-titel in `h-[66px]` strip met `page-title` utility
 - ✅ 3-state status-model + i18n labels
 - ✅ Per-row sync-knop + "Synchroniseer alles"
@@ -170,7 +185,7 @@ Deze SPEC documenteert grotendeels werk dat al op `main` staat (commits 2026-05-
 - ✅ Qdrant count gebruikt voor `chunks` display
 - ✅ Admin-bypass op `_get_kb_with_owner_check`
 - ✅ Instellingen-tab zichtbaar voor admin + read-only voor niet-owners
-- ✅ Geavanceerd-tab routeert naar `/taxonomy` met danger zone onderaan
+- ✅ Derde tab routeert naar `/taxonomy` met danger zone onderaan (wordt nu verbouwd per Q9)
 
 **Openstaand (na Q&A 2026-05-11):**
 
@@ -187,13 +202,24 @@ Backend:
 - ⏳ Contributor delete-check: `artifact.created_by == caller.user_id` voor uploads (Q6b)
 - ⏳ Viewer-gate: bronnen tonen wel, alle muteer-endpoints 403 voor role=viewer (Q6)
 
-Geavanceerd-tab:
+Instellingen-tab (Q9 reorg):
+- ⏳ Vier secties: Algemeen, Toegang, Bronnen-structuur (collapsible), Verwijderen — in deze volgorde (REQ-25)
+- ⏳ Taxonomie-UI inbouwen als sub-component van `settings.tsx` (huidige `taxonomy.tsx` opbreken of importeren), kb_manager-gated
+- ⏳ Toegang-sectie: ledenmanagement (toevoegen / rol wijzigen / verwijderen) verhuist vanuit `members.tsx`
+- ⏳ Danger zone naar Instellingen verplaatsen (uit `taxonomy.tsx`); `DeleteKbModal` blijft als enige modal-uitzondering
+- ⏳ Route `/advanced` deprecaten; redirect naar `/settings` met scroll-anchor
+
+Inzichten-tab (nieuw):
+- ⏳ Nieuwe route `routes/app/knowledge/$kbSlug/insights.tsx`
 - ⏳ Sync-historie sub-sectie: collapsible per connector, laatste 10 runs uit `connector.sync_runs` (Q8)
+- ⏳ Tab-label "Inzichten" in `route.tsx` TAB_DEFS; legacy redirects `?tab=taxonomy|advanced` → `/settings`
+- ⏳ Permissie-gate: owner + admin (verbergen voor contributor + viewer)
 
 Tests:
 - ⏳ E2E Playwright happy-path: load KB → sync alles → wacht → bekijk chunks → delete bron
-- ⏳ Permissie-test per rol: viewer ziet geen knoppen, contributor kan alleen eigen uploads weggooien, owner kan alles
+- ⏳ Permissie-test per rol: viewer ziet geen knoppen, contributor kan alleen eigen uploads weggooien, owner kan alles, en zien-tab-of-niet matcht Q6-matrix
 - ⏳ Integration-test: stats-summary `bronnen` count == `/sources` count voor dezelfde KB
+- ⏳ Legacy URL redirect tests: `?tab=advanced` en `?tab=taxonomy` landen op `/settings`
 
 ## Risico's
 
@@ -205,7 +231,9 @@ Tests:
 ## Beantwoorde vragen
 
 **Q1 — Tab-volgorde + namen** (2026-05-11)
-Bevestigd: **Bronnen** (default) → **Instellingen** → **Geavanceerd**. Geen extra tabs.
+Bevestigd: **Bronnen** (default) → **Instellingen** → **Inzichten**. Geen extra tabs.
+
+*Iteratie 2026-05-11 (laat in de Q&A):* "Geavanceerd" hernoemd naar **Inzichten** omdat taxonomie als collapsible sectie verhuist naar Instellingen. Inzichten wordt daardoor een echte info-tab (sync-historie + toekomstige diagnostics).
 
 **Q2 — Upload verwijderen UX** (2026-05-11)
 Prullenbak-icoon **altijd zichtbaar** in de rij, met `InlineDeleteConfirm` ("Verwijder '{naam}'? — Annuleren / Verwijder"). Geen hover-only, geen aparte modal. Updates REQ-15.
@@ -218,22 +246,25 @@ Prullenbak-icoon **altijd zichtbaar** in de rij, met `InlineDeleteConfirm` ("Ver
 
 **Q6 — Permissie-matrix** (2026-05-11)
 
-| Rol | Bron toevoegen | Per-bron sync / reindex | Bron verwijderen | Sync alles | Instellingen bewerken | Geavanceerd zien |
-|---|---|---|---|---|---|---|
-| **Viewer** | nee | nee | nee | nee | nee | nee |
-| **Contributor** | ja | ja | alleen eigen uploads | ja | nee | nee |
-| **Owner** | ja | ja | ja | ja | ja | ja |
-| **Admin** (platform) | ja | ja | ja | ja | ja | ja |
+| Rol | Bron toevoegen | Per-bron sync / reindex | Bron verwijderen | Sync alles | Instellingen bewerken | Bronnen-structuur (taxonomie) zien | Inzichten zien |
+|---|---|---|---|---|---|---|---|
+| **Viewer** | nee | nee | nee | nee | nee | nee | nee |
+| **Contributor** | ja | ja | alleen eigen uploads | ja | nee | nee | nee |
+| **Owner** | ja | ja | ja | ja | ja | ja | ja |
+| **Admin** (platform) | ja | ja | ja | ja | ja | ja | ja |
 
-Viewer is volledig read-only: ziet de bronnenlijst, ziet de inhoud van bronnen, kan niets muteren. Contributor mag bronnen toevoegen en syncen, mag alleen z'n eigen uploads verwijderen — andermans uploads en alle connectors blijven beschermd voor owner+admin. Raakt Instellingen en Geavanceerd niet aan.
+Viewer is volledig read-only: ziet de bronnenlijst, ziet de inhoud van bronnen, kan niets muteren. Contributor mag bronnen toevoegen en syncen, mag alleen z'n eigen uploads verwijderen — andermans uploads en alle connectors blijven beschermd voor owner+admin. Contributor ziet wel de Instellingen-tab (read-only: naam, beschrijving, ledenlijst) maar niet de Bronnen-structuur-sectie en niet de Inzichten-tab.
 
 Owner-check op het backend: per-row delete moet `artifact.created_by == caller.user_id` valideren voor contributors. Voor connectors blijft `_get_kb_with_owner_check` de gate.
 
 **Q7 — Empty state op Bronnen-tab** (2026-05-11)
 Huidige patroon **houden**: gestippeld vlak met icoon + tekst + "Eerste bron toevoegen"-knop. Geen mini-onboarding-kaartjes, geen extreem minimale variant. Voldoet aan portal-patterns Empty States.
 
-**Q8 — Sync-historie** (2026-05-11)
-**Sub-sectie onder Geavanceerd**: "Sync-historie" naast de bestaande Taxonomie en Verwijderzone. Per connector de laatste N sync-runs (status / start-time / duur / fout-reden indien failed). Data komt uit `connector.sync_runs` (al gepopuleerd door klai-connector). Uploads hebben geen sync-historie — alleen connectors. Updates REQ-28.
+**Q8 — Sync-historie** (2026-05-11, geüpdatet na Q9)
+**Belangrijkste content van de Inzichten-tab**: per connector de laatste N sync-runs (status / start-time / duur / fout-reden indien failed). Data komt uit `connector.sync_runs` (al gepopuleerd door klai-connector). Uploads hebben geen sync-historie — alleen connectors. Updates REQ-27.
+
+**Q9 — Geavanceerd hernoemen + taxonomie verhuizen** (2026-05-11)
+"Geavanceerd" hernoemd naar **Inzichten**. Taxonomie verhuist als collapsible sectie "Bronnen-structuur" naar Instellingen (sectie 3, default ingeklapt, kb_manager-gated). Inzichten wordt daardoor een pure info-tab zonder mutaties. Splitst de eerdere overlap tussen "instellen" en "geavanceerd" netjes op: alle config in Instellingen, alle info in Inzichten.
 
 Concreet:
 - Nieuw endpoint of hergebruik van bestaande `/connectors/{id}/syncs?limit=N` (zie `connectors.tsx::sync_runs_query`)
