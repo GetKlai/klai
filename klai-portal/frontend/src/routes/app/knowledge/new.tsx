@@ -290,7 +290,7 @@ function StepName({
 
   return (
     <div className="flex flex-col gap-5">
-      <p className="text-sm font-medium text-[var(--color-foreground)]">
+      <p className="text-sm font-medium text-gray-900">
         {m.knowledge_wizard_title_step1()}
       </p>
 
@@ -313,19 +313,19 @@ function StepName({
                 className={[
                   'flex flex-col items-start gap-1 rounded-xl border p-4 text-left transition-all',
                   data.ownerType === type
-                    ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/5 ring-1 ring-[var(--color-accent)]'
-                    : 'border-[var(--color-border)] bg-[var(--color-card)] hover:border-[var(--color-accent)]/50',
+                    ? 'border-gray-200 bg-black/[0.06] ring-1 ring-gray-900'
+                    : 'border-gray-200 bg-[var(--color-card)] hover:border-gray-300',
                 ].join(' ')}
               >
                 {type === 'org' ? (
-                  <Users className="h-4 w-4 text-[var(--color-accent)]" />
+                  <Users className="h-4 w-4 text-gray-400" />
                 ) : (
-                  <User className="h-4 w-4 text-[var(--color-accent)]" />
+                  <User className="h-4 w-4 text-gray-400" />
                 )}
-                <span className="text-sm font-medium text-[var(--color-foreground)]">
+                <span className="text-sm font-medium text-gray-900">
                   {type === 'org' ? m.knowledge_new_scope_org() : m.knowledge_new_scope_personal()}
                 </span>
-                <span className="text-xs text-[var(--color-muted-foreground)]">
+                <span className="text-xs text-gray-400">
                   {type === 'org'
                     ? m.knowledge_new_scope_org_description()
                     : m.knowledge_new_scope_personal_description()}
@@ -356,7 +356,7 @@ function StepName({
           onChange={(e) => handleSlugChange(e.target.value)}
           pattern="[a-z0-9\-]+"
         />
-        <p className="text-xs text-[var(--color-muted-foreground)]">
+        <p className="text-xs text-gray-400">
           {m.knowledge_new_slug_hint()}
         </p>
         {errorKey === 'conflict' && (
@@ -375,7 +375,7 @@ function StepName({
           onChange={(e) => setData((prev) => ({ ...prev, description: e.target.value }))}
           placeholder={m.knowledge_wizard_description_placeholder()}
           rows={3}
-          className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm text-[var(--color-foreground)] outline-none transition-colors placeholder:text-[var(--color-muted-foreground)] focus:ring-2 focus:ring-[var(--color-ring)] disabled:cursor-not-allowed disabled:opacity-50 resize-none"
+          className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)] disabled:cursor-not-allowed disabled:opacity-50 resize-none"
         />
       </div>
     </div>
@@ -416,7 +416,7 @@ function StepAccess({
 
   return (
     <div className="flex flex-col gap-5">
-      <p className="text-sm font-medium text-[var(--color-foreground)]">
+      <p className="text-sm font-medium text-gray-900">
         {m.knowledge_wizard_title_step2({ name: data.name })}
       </p>
 
@@ -435,16 +435,16 @@ function StepAccess({
             className={[
               'flex items-start gap-3 rounded-xl border p-4 text-left transition-all',
               data.visibilityMode === key
-                ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/5 ring-1 ring-[var(--color-accent)]'
-                : 'border-[var(--color-border)] bg-[var(--color-card)] hover:border-[var(--color-accent)]/50',
+                ? 'border-gray-200 bg-black/[0.06] ring-1 ring-gray-900'
+                : 'border-gray-200 bg-[var(--color-card)] hover:border-gray-300',
             ].join(' ')}
           >
-            <Icon className="h-5 w-5 mt-0.5 text-[var(--color-accent)]" />
+            <Icon className="h-5 w-5 mt-0.5 text-gray-400" />
             <div>
-              <span className="text-sm font-medium text-[var(--color-foreground)]">
+              <span className="text-sm font-medium text-gray-900">
                 {title}
               </span>
-              <span className="block text-xs text-[var(--color-muted-foreground)]">{desc}</span>
+              <span className="block text-xs text-gray-400">{desc}</span>
             </div>
           </button>
         ))}
@@ -476,7 +476,7 @@ function StepPermissions({
 
   return (
     <div className="flex flex-col gap-5">
-      <p className="text-sm font-medium text-[var(--color-foreground)]">
+      <p className="text-sm font-medium text-gray-900">
         {isRestricted
           ? m.knowledge_wizard_title_step3_restricted({ name: data.name })
           : m.knowledge_wizard_title_step3({ name: data.name })}
@@ -487,7 +487,7 @@ function StepPermissions({
         <Card>
           <CardContent className="pt-4">
             <div className="flex flex-col gap-3">
-              <p className="text-sm text-[var(--color-foreground)]">
+              <p className="text-sm text-gray-900">
                 {m.knowledge_wizard_default_role_label()}
               </p>
               <label className="flex items-start gap-2 cursor-pointer">
@@ -497,13 +497,13 @@ function StepPermissions({
                   onChange={(e) =>
                     setData((prev) => ({ ...prev, allowContribute: e.target.checked }))
                   }
-                  className="mt-1 h-4 w-4 rounded border-[var(--color-border)] text-[var(--color-accent)] focus:ring-[var(--color-ring)]"
+                  className="mt-1 h-4 w-4 rounded border-gray-200 text-gray-400 focus:ring-[var(--color-ring)]"
                 />
                 <div>
-                  <span className="text-sm font-medium text-[var(--color-foreground)]">
+                  <span className="text-sm font-medium text-gray-900">
                     {m.knowledge_wizard_contributor_checkbox()}
                   </span>
-                  <span className="block text-xs text-[var(--color-muted-foreground)]">
+                  <span className="block text-xs text-gray-400">
                     {m.knowledge_sharing_contributor_toggle_description()}
                   </span>
                 </div>
@@ -515,7 +515,7 @@ function StepPermissions({
 
       {/* Variant B: restricted — explanation */}
       {isRestricted && (
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           {m.knowledge_wizard_restricted_desc()}
         </p>
       )}
@@ -523,10 +523,10 @@ function StepPermissions({
       {/* Extra permissions heading for org/public */}
       {!isRestricted && (
         <div>
-          <p className="text-sm font-medium text-[var(--color-foreground)]">
+          <p className="text-sm font-medium text-gray-900">
             {m.knowledge_wizard_extra_permissions_title()}
           </p>
-          <p className="text-xs text-[var(--color-muted-foreground)]">
+          <p className="text-xs text-gray-400">
             {m.knowledge_wizard_extra_permissions_desc()}
           </p>
         </div>
@@ -555,7 +555,7 @@ function StepPermissions({
       />
 
       {/* Owner info */}
-      <p className="text-xs text-[var(--color-muted-foreground)] italic">
+      <p className="text-xs text-gray-400 italic">
         {m.knowledge_wizard_owner_info()}
       </p>
     </div>
@@ -593,7 +593,7 @@ function StepConfirm({
 
   return (
     <div className="flex flex-col gap-5">
-      <p className="text-sm font-medium text-[var(--color-foreground)]">
+      <p className="text-sm font-medium text-gray-900">
         {m.knowledge_wizard_confirm_title()}
       </p>
 
@@ -602,16 +602,16 @@ function StepConfirm({
           <div className="space-y-3 text-sm">
             {/* Name + slug */}
             <div className="flex items-start gap-2">
-              <Brain className="h-4 w-4 mt-0.5 text-[var(--color-accent)]" />
+              <Brain className="h-4 w-4 mt-0.5 text-gray-400" />
               <div>
-                <p className="font-medium text-[var(--color-foreground)]">{data.name}</p>
-                <p className="text-xs text-[var(--color-muted-foreground)]">{data.slug}</p>
+                <p className="font-medium text-gray-900">{data.name}</p>
+                <p className="text-xs text-gray-400">{data.slug}</p>
               </div>
             </div>
 
             {/* Description */}
             {data.description && (
-              <p className="text-[var(--color-muted-foreground)] italic">
+              <p className="text-gray-400 italic">
                 &ldquo;{data.description}&rdquo;
               </p>
             )}
@@ -619,14 +619,14 @@ function StepConfirm({
             {/* Visibility (org scope only) */}
             {data.ownerType === 'org' && (
               <div className="flex items-center gap-2">
-                <VisibilityIcon className="h-4 w-4 text-[var(--color-accent)]" />
-                <span className="text-[var(--color-foreground)]">{visibilityLabel}</span>
+                <VisibilityIcon className="h-4 w-4 text-gray-400" />
+                <span className="text-gray-900">{visibilityLabel}</span>
               </div>
             )}
 
             {/* Default org role */}
             {data.ownerType === 'org' && data.visibilityMode !== 'restricted' && (
-              <p className="text-[var(--color-muted-foreground)]">
+              <p className="text-gray-400">
                 {m.knowledge_sharing_summary_org_default({
                   role: data.allowContribute ? 'contributor' : 'viewer',
                 })}
@@ -635,7 +635,7 @@ function StepConfirm({
 
             {/* Personal scope info */}
             {data.ownerType === 'user' && (
-              <p className="text-[var(--color-muted-foreground)]">
+              <p className="text-gray-400">
                 {m.knowledge_wizard_personal_only()}
               </p>
             )}
@@ -643,20 +643,20 @@ function StepConfirm({
             {/* Extra members */}
             {data.ownerType === 'org' &&
               (data.initialGroups.length > 0 || data.initialUsers.length > 0) && (
-                <div className="border-t border-[var(--color-border)] pt-2">
+                <div className="border-t border-gray-200 pt-2">
                   {data.visibilityMode === 'restricted' ? (
-                    <p className="text-xs font-medium text-[var(--color-muted-foreground)] mb-1">
+                    <p className="text-xs font-medium text-gray-400 mb-1">
                       {m.knowledge_sharing_summary_only_shared()}
                     </p>
                   ) : (
-                    <p className="text-xs font-medium text-[var(--color-muted-foreground)] mb-1">
+                    <p className="text-xs font-medium text-gray-400 mb-1">
                       {m.knowledge_wizard_extra_permissions_title()}:
                     </p>
                   )}
                   {data.initialGroups.map((g) => (
                     <p
                       key={g.id}
-                      className="text-xs text-[var(--color-muted-foreground)] pl-3"
+                      className="text-xs text-gray-400 pl-3"
                     >
                       &bull; {g.name} ({g.role})
                     </p>
@@ -664,7 +664,7 @@ function StepConfirm({
                   {data.initialUsers.map((u) => (
                     <p
                       key={u.id}
-                      className="text-xs text-[var(--color-muted-foreground)] pl-3"
+                      className="text-xs text-gray-400 pl-3"
                     >
                       &bull; {u.name || u.email} ({u.role})
                     </p>
@@ -673,7 +673,7 @@ function StepConfirm({
               )}
 
             {/* Docs auto */}
-            <p className="text-[var(--color-muted-foreground)]">
+            <p className="text-gray-400">
               {m.knowledge_sharing_summary_docs_auto()}
             </p>
           </div>
@@ -697,7 +697,7 @@ function StepConfirm({
 
       {/* Quota notice for personal KBs on limited plans */}
       {data.ownerType === 'user' && !canCreateKB && (
-        <p className="text-sm text-[var(--color-muted-foreground)] opacity-70">
+        <p className="text-sm text-gray-400 opacity-70">
           {m.kb_limit_tooltip_kb_count()}
         </p>
       )}

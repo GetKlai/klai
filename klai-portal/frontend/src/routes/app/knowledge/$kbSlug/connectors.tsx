@@ -193,7 +193,7 @@ function ConnectorsTab() {
   }
 
   if (isLoading) {
-    return <p className="py-4 text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_loading()}</p>
+    return <p className="py-4 text-sm text-gray-400">{m.admin_connectors_loading()}</p>
   }
 
   return (
@@ -217,9 +217,9 @@ function ConnectorsTab() {
         </div>
       )}
       {connectors.length > 0 && (
-        <table className="w-full text-sm table-fixed border-t border-b border-[var(--color-border)]">
+        <table className="w-full text-sm table-fixed border-t border-b border-gray-200">
           <thead>
-            <tr className="border-b border-[var(--color-border)]">
+            <tr className="border-b border-gray-200">
               <th className="py-3 pr-2 w-6" />
               <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
                 {m.admin_connectors_col_name()}
@@ -241,17 +241,17 @@ function ConnectorsTab() {
               const isSyncing = syncingIds.has(c.id)
               const isRunning = c.last_sync_status?.toUpperCase() === 'RUNNING'
               return (
-                <tr key={c.id} className="border-b border-[var(--color-border)] last:border-b-0">
+                <tr key={c.id} className="border-b border-gray-200 last:border-b-0">
                   <td className="py-4 pr-2 align-top w-6">
                     <Tooltip className="leading-none mt-px" label={typeLabel}>
-                      <Icon className="h-4 w-4 text-[var(--color-muted-foreground)]" />
+                      <Icon className="h-4 w-4 text-gray-400" />
                     </Tooltip>
                   </td>
                   <td className="py-4 pr-4 align-top">
-                    <span className="font-medium text-[var(--color-foreground)]">{c.name}</span>
+                    <span className="font-medium text-gray-900">{c.name}</span>
                   </td>
                   <td className="py-4 pr-4 align-top w-28">
-                    <span className="text-xs text-[var(--color-muted-foreground)]">{typeLabel}</span>
+                    <span className="text-xs text-gray-400">{typeLabel}</span>
                   </td>
                   <td className="py-4 pr-4 align-top w-32">
                     <SyncStatusBadge
@@ -285,7 +285,7 @@ function ConnectorsTab() {
                       </div>
                     )}
                     {c.last_sync_documents_ok != null && c.last_sync_documents_ok > 0 && (
-                      <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)] tabular-nums">
+                      <p className="mt-0.5 text-xs text-gray-400 tabular-nums">
                         {c.last_sync_documents_ok.toLocaleString()} {m.connectors_documents_indexed()}
                       </p>
                     )}
@@ -309,7 +309,7 @@ function ConnectorsTab() {
                             disabled={isSyncing || isRunning}
                             onClick={() => void handleSync(c.id)}
                             aria-label={isSyncing || isRunning ? m.admin_connectors_syncing() : m.admin_connectors_action_sync()}
-                            className="inline-flex items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70 disabled:opacity-40"
+                            className="inline-flex items-center justify-center text-gray-400 transition-opacity hover:opacity-70 disabled:opacity-40"
                           >
                             {isSyncing || isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                           </button>
@@ -343,7 +343,7 @@ function ConnectorsTab() {
       )}
 
       {connectors.length === 0 && (
-        <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_detail_connectors_empty()}</p>
+        <p className="text-sm text-gray-400">{m.knowledge_detail_connectors_empty()}</p>
       )}
 
       {isOwner && (
@@ -382,7 +382,7 @@ function ConnectorsTab() {
                   This connector&apos;s last sync failed. The site likely now requires
                   authentication, or the content selector no longer matches.
                 </p>
-                <p className="text-xs text-[var(--color-muted-foreground)]">
+                <p className="text-xs text-gray-400">
                   Re-run the wizard to verify authentication and selector. The wizard
                   refuses to save until both checks pass — no more silent broken syncs.
                 </p>

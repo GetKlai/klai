@@ -108,7 +108,7 @@ type PreviewResult = {
   classification_reason: string | null
 }
 
-const MARKDOWN_PROSE_CLASSES = 'overflow-y-auto max-h-64 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-[var(--color-foreground)] [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-[var(--color-foreground)] [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-[var(--color-foreground)] [&_h3]:mb-1 [&_p]:text-[var(--color-muted-foreground)] [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-[var(--color-muted-foreground)] [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-[var(--color-muted-foreground)] [&_ol]:mb-1.5 [&_strong]:font-semibold [&_strong]:text-[var(--color-foreground)] [&_hr]:border-[var(--color-border)] [&_hr]:my-2'
+const MARKDOWN_PROSE_CLASSES = 'overflow-y-auto max-h-64 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-gray-900 [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-gray-900 [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-gray-900 [&_h3]:mb-1 [&_p]:text-gray-400 [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-gray-400 [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-gray-400 [&_ol]:mb-1.5 [&_strong]:font-semibold [&_strong]:text-gray-900 [&_hr]:border-gray-200 [&_hr]:my-2'
 
 
 function EditConnectorPage() {
@@ -459,7 +459,7 @@ function EditConnectorPage() {
             {m.admin_connectors_edit_title()}
           </h1>
           {connector && (
-            <p className="text-sm text-[var(--color-muted-foreground)]">{connector.name}</p>
+            <p className="text-sm text-gray-400">{connector.name}</p>
           )}
         </div>
         <Button type="button" variant="ghost" size="sm" onClick={goBack}>
@@ -544,11 +544,11 @@ function EditConnectorPage() {
               {/* Step 2: Authentication question */}
               {wcStep === 'auth-question' && (
                 <div className="space-y-4">
-                  <div className="rounded-lg border border-[var(--color-border)] p-4 space-y-3">
-                    <p className="text-sm font-medium text-[var(--color-foreground)]">
+                  <div className="rounded-lg border border-gray-200 p-4 space-y-3">
+                    <p className="text-sm font-medium text-gray-900">
                       Is this site behind a login?
                     </p>
-                    <p className="text-xs text-[var(--color-muted-foreground)]">
+                    <p className="text-xs text-gray-400">
                       Some knowledge bases require you to be logged in to see the content.
                       We&apos;ll verify either way before letting you save.
                     </p>
@@ -599,8 +599,8 @@ function EditConnectorPage() {
               {/* Step 3: Auth setup — REQ-2 auth-probe */}
               {wcStep === 'auth-setup' && (
                 <div className="space-y-4">
-                  <div className="rounded-lg border border-[var(--color-border)] p-4 space-y-3">
-                    <p className="text-sm font-medium text-[var(--color-foreground)]">
+                  <div className="rounded-lg border border-gray-200 p-4 space-y-3">
+                    <p className="text-sm font-medium text-gray-900">
                       Authentication cookies
                     </p>
                     <CookieRowsInput
@@ -670,14 +670,14 @@ function EditConnectorPage() {
                 <div className="space-y-4">
                   {/* Auth status reminder */}
                   {requiresLogin === false && (
-                    <div className="flex items-center justify-between rounded-lg border border-[var(--color-border)] px-4 py-3">
-                      <div className="flex items-center gap-2 text-xs text-[var(--color-muted-foreground)]">
+                    <div className="flex items-center justify-between rounded-lg border border-gray-200 px-4 py-3">
+                      <div className="flex items-center gap-2 text-xs text-gray-400">
                         <CheckCircle2 className="h-3.5 w-3.5 text-[var(--color-success)]" />
                         Public site — no login needed
                       </div>
                       <button
                         type="button"
-                        className="text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+                        className="text-xs text-gray-400 hover:text-gray-900"
                         onClick={() => setWcStep('auth-question')}
                       >
                         Actually, it needs login
@@ -692,7 +692,7 @@ function EditConnectorPage() {
                       </div>
                       <button
                         type="button"
-                        className="text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+                        className="text-xs text-gray-400 hover:text-gray-900"
                         onClick={() => setWcStep('auth-setup')}
                       >
                         Edit cookies
@@ -715,7 +715,7 @@ function EditConnectorPage() {
                   {/* Advanced: content selector */}
                   <button
                     type="button"
-                    className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
+                    className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-900 transition-colors"
                     onClick={() => setShowAdvancedSelector((p) => !p)}
                   >
                     <Settings className="h-3 w-3" />
@@ -723,7 +723,7 @@ function EditConnectorPage() {
                     {showAdvancedSelector ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
                   </button>
                   {showAdvancedSelector && (
-                    <div className="pl-4 border-l-2 border-[var(--color-border)] space-y-1.5">
+                    <div className="pl-4 border-l-2 border-gray-200 space-y-1.5">
                       <Input
                         id="edit-wc-content-selector"
                         placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()}
@@ -733,7 +733,7 @@ function EditConnectorPage() {
                           invalidatePreview()
                         }}
                       />
-                      <p className="text-xs text-[var(--color-muted-foreground)]">
+                      <p className="text-xs text-gray-400">
                         Only needed if the preview picks up menus instead of the article.
                         Leave empty to let AI detect this automatically.
                       </p>
@@ -765,7 +765,7 @@ function EditConnectorPage() {
                     {!webcrawlerConfig.content_selector && (
                       <button
                         type="button"
-                        className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-accent)] transition-colors disabled:opacity-50"
+                        className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-900 transition-colors disabled:opacity-50"
                         disabled={previewMutation.isPending || !wcPreviewUrl}
                         onClick={() => {
                           invalidatePreview()
@@ -787,13 +787,13 @@ function EditConnectorPage() {
                     <p className="text-sm text-[var(--color-destructive)]">{previewError}</p>
                   )}
                   {previewMutation.isPending && (
-                    <div className="rounded-lg border border-[var(--color-border)] p-4 flex items-center gap-2 text-sm text-[var(--color-muted-foreground)]">
+                    <div className="rounded-lg border border-gray-200 p-4 flex items-center gap-2 text-sm text-gray-400">
                       <Loader2 className="h-4 w-4 animate-spin" />
                       {m.admin_connectors_webcrawler_preview_loading()}
                     </div>
                   )}
                   {!previewResult && !previewMutation.isPending && !previewError && (
-                    <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_empty()}</p>
+                    <p className="text-sm text-gray-400">{m.admin_connectors_webcrawler_preview_empty()}</p>
                   )}
                   {previewResult !== null && !previewMutation.isPending && (
                     <div className="space-y-3">
@@ -812,8 +812,8 @@ function EditConnectorPage() {
 
                       {/* AI-detected selector badge + "Use this selector" CTA */}
                       {previewResult.selector_source === 'ai' && previewResult.content_selector && (
-                        <div className="rounded-lg border border-[var(--color-accent)]/30 bg-[var(--color-accent)]/5 p-3 space-y-2">
-                          <div className="flex gap-2 items-center text-xs text-[var(--color-accent)]">
+                        <div className="rounded-lg border border-gray-200 bg-black/[0.06] p-3 space-y-2">
+                          <div className="flex gap-2 items-center text-xs text-gray-400">
                             <Sparkles className="h-3.5 w-3.5 shrink-0" />
                             <span>{m.admin_connectors_webcrawler_ai_selector_detected({ selector: previewResult.content_selector, count: String(previewResult.word_count) })}</span>
                           </div>
@@ -839,7 +839,7 @@ function EditConnectorPage() {
                         !webcrawlerConfig.content_selector && previewResult.selector_source !== 'ai' && (
                         <button
                           type="button"
-                          className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-accent)] transition-colors disabled:opacity-50"
+                          className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-900 transition-colors disabled:opacity-50"
                           disabled={previewMutation.isPending}
                           onClick={() => {
                             invalidatePreview()
@@ -853,17 +853,17 @@ function EditConnectorPage() {
 
                       {/* Extracted markdown body — success only */}
                       {previewResult.classification === 'success' && previewResult.word_count > 0 && (
-                        <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
+                        <div className="rounded-lg border border-gray-200 p-3 space-y-2">
                           <div className="flex items-center justify-between">
-                            <span className="text-sm font-medium text-[var(--color-foreground)]">{m.admin_connectors_webcrawler_preview_title()}</span>
-                            <span className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_word_count({ count: String(previewResult.word_count) })}</span>
+                            <span className="text-sm font-medium text-gray-900">{m.admin_connectors_webcrawler_preview_title()}</span>
+                            <span className="text-xs text-gray-400">{m.admin_connectors_webcrawler_preview_word_count({ count: String(previewResult.word_count) })}</span>
                           </div>
                           {previewResult.fit_markdown.trim() ? (
                             <div className={MARKDOWN_PROSE_CLASSES}>
-                              <ReactMarkdown components={{ a: ({ children }) => <span className="text-[var(--color-accent)]">{children}</span> }}>{previewResult.fit_markdown}</ReactMarkdown>
+                              <ReactMarkdown components={{ a: ({ children }) => <span className="text-gray-400">{children}</span> }}>{previewResult.fit_markdown}</ReactMarkdown>
                             </div>
                           ) : (
-                            <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_empty()}</p>
+                            <p className="text-sm text-gray-400">{m.admin_connectors_webcrawler_preview_empty()}</p>
                           )}
                         </div>
                       )}
@@ -878,12 +878,12 @@ function EditConnectorPage() {
                             <Shield className="h-3.5 w-3.5 shrink-0" />
                             <span>Auth protection enabled</span>
                           </div>
-                          <p className="text-xs text-[var(--color-muted-foreground)] ml-5.5">
+                          <p className="text-xs text-gray-400 ml-5.5">
                             We&apos;ll check this page before every sync to detect expired logins.
                           </p>
                           <button
                             type="button"
-                            className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors ml-5.5"
+                            className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-900 transition-colors ml-5.5"
                             onClick={() => setShowAdvancedAuthGuard(!showAdvancedAuthGuard)}
                           >
                             <Settings className="h-3 w-3" />
@@ -1029,7 +1029,7 @@ function EditConnectorPage() {
                   value={notionConfig.new_access_token}
                   onChange={(e) => setNotionConfig((p) => ({ ...p, new_access_token: e.target.value }))}
                 />
-                <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_notion_token_help_update()}</p>
+                <p className="text-xs text-gray-400">{m.admin_connectors_notion_token_help_update()}</p>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="edit-conn-notion-dbs">{m.admin_connectors_notion_database_ids()}</Label>
@@ -1039,7 +1039,7 @@ function EditConnectorPage() {
                   placeholder={m.admin_connectors_notion_database_ids_placeholder()}
                   value={notionConfig.database_ids}
                   onChange={(e) => setNotionConfig((p) => ({ ...p, database_ids: e.target.value }))}
-                  className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-sm text-[var(--color-foreground)] placeholder:text-[var(--color-muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)] resize-none"
+                  className="w-full rounded-lg border border-gray-200 bg-[var(--color-input)] px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)] resize-none"
                 />
               </div>
               <div className="space-y-1.5">
@@ -1074,7 +1074,7 @@ function EditConnectorPage() {
               <div className="space-y-1.5">
                 <Label htmlFor="edit-conn-folder-id">{m.admin_connectors_google_drive_folder_id()}</Label>
                 <Input id="edit-conn-folder-id" placeholder={m.admin_connectors_google_drive_folder_id_placeholder()} value={folderId} onChange={(e) => setFolderId(e.target.value)} />
-                <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_google_drive_folder_id_help()}</p>
+                <p className="text-xs text-gray-400">{m.admin_connectors_google_drive_folder_id_help()}</p>
               </div>
               <div className="space-y-1.5">
                 <Label>{m.admin_connectors_assertion_modes_label()}</Label>
@@ -1111,7 +1111,7 @@ function EditConnectorPage() {
                   value={msSiteUrl}
                   onChange={(e) => { setMsSiteUrl(e.target.value); setMsSiteUrlError(null) }}
                 />
-                <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_ms_docs_site_url_help()}</p>
+                <p className="text-xs text-gray-400">{m.admin_connectors_ms_docs_site_url_help()}</p>
                 {msSiteUrlError && (
                   <p className="text-xs text-[var(--color-destructive)]">{msSiteUrlError}</p>
                 )}
@@ -1119,7 +1119,7 @@ function EditConnectorPage() {
               <div className="space-y-1.5">
                 <Label htmlFor="edit-ms-drive-id">{m.admin_connectors_ms_docs_drive_id()}</Label>
                 <Input id="edit-ms-drive-id" placeholder="b!xyz..." value={msDriveId} onChange={(e) => setMsDriveId(e.target.value)} />
-                <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_ms_docs_drive_id_help()}</p>
+                <p className="text-xs text-gray-400">{m.admin_connectors_ms_docs_drive_id_help()}</p>
               </div>
               <div className="space-y-1.5">
                 <Label>{m.admin_connectors_assertion_modes_label()}</Label>
@@ -1149,13 +1149,13 @@ function EditConnectorPage() {
                 <Input id="edit-conn-name" required value={name} onChange={(e) => setName(e.target.value)} />
               </div>
               {connector.connector_type === 'google_docs' && (
-                <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_google_docs_subtitle()}</p>
+                <p className="text-sm text-gray-400">{m.admin_connectors_google_docs_subtitle()}</p>
               )}
               {connector.connector_type === 'google_sheets' && (
-                <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_google_sheets_subtitle()}</p>
+                <p className="text-sm text-gray-400">{m.admin_connectors_google_sheets_subtitle()}</p>
               )}
               {connector.connector_type === 'google_slides' && (
-                <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_google_slides_subtitle()}</p>
+                <p className="text-sm text-gray-400">{m.admin_connectors_google_slides_subtitle()}</p>
               )}
               <div className="space-y-1.5">
                 <Label>{m.admin_connectors_assertion_modes_label()}</Label>
@@ -1187,7 +1187,7 @@ function EditConnectorPage() {
               <div className="space-y-1.5">
                 <Label htmlFor="edit-at-api-key">{m.admin_connectors_airtable_api_key_label()}</Label>
                 <Input id="edit-at-api-key" type="password" placeholder={m.admin_connectors_airtable_api_key_hint()} value={airtableConfig.api_key} onChange={(e) => setAirtableConfig((p) => ({ ...p, api_key: e.target.value }))} />
-                <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_notion_token_help_update()}</p>
+                <p className="text-xs text-gray-400">{m.admin_connectors_notion_token_help_update()}</p>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="edit-at-base-id">{m.admin_connectors_airtable_base_id_label()}</Label>
@@ -1265,7 +1265,7 @@ function EditConnectorPage() {
           )}
 
           {!connector && (
-            <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_loading()}</p>
+            <p className="text-sm text-gray-400">{m.admin_connectors_loading()}</p>
           )}
     </div>
   )

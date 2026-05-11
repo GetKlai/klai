@@ -46,7 +46,7 @@ export function SourceTypeGrid({ kbSlug, onSelectUpload }: SourceTypeGridProps) 
         </h2>
         {!hasExternalConnectors ? (
           <Tooltip label={m.connector_type_locked_tooltip()}>
-            <div className="flex items-center gap-2 py-4 text-sm text-[var(--color-muted-foreground)] opacity-60 cursor-default select-none">
+            <div className="flex items-center gap-2 py-4 text-sm text-gray-400 opacity-60 cursor-default select-none">
               <Lock className="h-4 w-4" />
               {m.connector_type_locked_tooltip()}
             </div>

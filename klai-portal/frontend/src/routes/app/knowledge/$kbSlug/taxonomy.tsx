@@ -244,7 +244,7 @@ function CoverageWidget({
                 </p>
               ) : null}
             </form>
-            <div className="h-1.5 w-full rounded-full bg-[var(--color-border)] overflow-hidden">
+            <div className="h-1.5 w-full rounded-full bg-gray-200 overflow-hidden">
               <div
                 className={`h-full rounded-full transition-all ${barColor(pct)}`}
                 style={{ width: `${pct}%` }}
@@ -305,9 +305,9 @@ function CoverageWidget({
               )}
             </div>
           </div>
-          <div className="h-1.5 w-full rounded-full bg-[var(--color-border)] overflow-hidden">
+          <div className="h-1.5 w-full rounded-full bg-gray-200 overflow-hidden">
             <div
-              className="h-full rounded-full bg-[var(--color-border)]"
+              className="h-full rounded-full bg-gray-200"
               style={{ width: `${total > 0 ? Math.round((coverage.untagged_count / total) * 100) : 0}%` }}
             />
           </div>
