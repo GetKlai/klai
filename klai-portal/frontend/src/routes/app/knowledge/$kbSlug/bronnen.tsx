@@ -34,6 +34,7 @@ import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { Tooltip } from '@/components/ui/tooltip'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { DOCS_BASE, getOrgSlug } from '@/lib/kb-editor/tree-utils'
 import { queryLogger } from '@/lib/logger'
 
@@ -477,11 +478,12 @@ function BronnenTab() {
   // "Open in editor" when the editor actually has something to show — i.e.
   // when the docs-tree endpoint returns at least one node. Same query key
   // as route.tsx so a tree hit here warms the cache for the editor route.
-  const orgSlug = getOrgSlug()
+  const { user } = useCurrentUser()
+  const orgSlug = getOrgSlug(user?.workspace_url)
   const { data: docsTree } = useQuery<{ id: string }[]>({
     queryKey: ['docs-tree', orgSlug, kbSlug],
     queryFn: () => apiFetch<{ id: string }[]>(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/tree`),
-    enabled: !!kb?.docs_enabled,
+    enabled: !!kb?.docs_enabled && !!orgSlug,
     // 404 / forbidden / empty repo: fall back to "no pages" silently.
     retry: false,
   })

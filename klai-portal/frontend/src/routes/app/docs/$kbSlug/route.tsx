@@ -22,6 +22,7 @@ import {
   type PageIndexEntry,
 } from '@/lib/kb-editor/KBEditorContext'
 import { apiFetch } from '@/lib/apiFetch'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { editorLogger, treeLogger } from '@/lib/logger'
 import { SidebarPanel } from '@/components/kb-editor/SidebarPanel'
 import { DeletePageModal } from '@/components/kb-editor/DeletePageModal'
@@ -51,8 +52,9 @@ function KBEditorLayout() {
   const pageId = 'pageId' in allParams ? (allParams as { pageId: string }).pageId : undefined
   const navigate = useNavigate()
   const auth = useAuth()
+  const { user } = useCurrentUser()
   const isAuthenticated = auth.isAuthenticated
-  const orgSlug = getOrgSlug()
+  const orgSlug = getOrgSlug(user?.workspace_url)
 
   // Shared display state — owned here, set by page component via context
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')

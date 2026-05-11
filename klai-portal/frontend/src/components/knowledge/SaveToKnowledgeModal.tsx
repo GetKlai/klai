@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { DOCS_BASE, getOrgSlug, slugify } from '@/lib/kb-editor/tree-utils'
 import { apiFetch } from '@/lib/apiFetch'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
 import * as m from '@/paraglide/messages'
 import { editorLogger } from '@/lib/logger'
 
@@ -24,7 +25,8 @@ export function SaveToKnowledgeModal({
   initialContent, initialTitle, onClose, onSuccess,
 }: SaveToKnowledgeModalProps) {
   const auth = useAuth()
-  const orgSlug = getOrgSlug()
+  const { user } = useCurrentUser()
+  const orgSlug = getOrgSlug(user?.workspace_url)
   const userUuid = auth.user?.profile?.sub ?? ''
 
   const [title, setTitle] = useState(initialTitle || (initialContent.split(/[.!?]/)[0]?.slice(0, 80) ?? ''))
