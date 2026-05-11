@@ -6,6 +6,11 @@ on:
     paths:
       - 'klai-docs/**'
       - '.github/workflows/docs.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'klai-docs/**'
+      - '.github/workflows/docs.yml'
   workflow_dispatch:
 
 permissions:
@@ -20,7 +25,33 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  lint-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: klai-docs/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: klai-docs
+
+      - name: Lint
+        run: npm run lint
+        working-directory: klai-docs
+
+      - name: Build
+        run: npm run build
+        working-directory: klai-docs
+
   build-and-push:
+    needs: lint-build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
 
     steps:
