@@ -502,6 +502,30 @@ async def _ingest_docling_bytes(
     )
 
 
+def _validate_archive_member_bytes(
+    *,
+    body: bytes,
+    filename: str,
+) -> FileUploadSkippedEntry | None:
+    """Run normal per-file validation without creating rows or side effects."""
+    try:
+        ext, pipeline = file_upload.classify_extension(filename)
+        if pipeline == "text":
+            file_upload.validate_text_upload(filename, body)
+        elif pipeline == "docling":
+            file_upload.validate_binary_upload(filename, body)
+        elif pipeline == "archive":
+            return FileUploadSkippedEntry(filename=filename, reason="archive_nested", extension=ext)
+        elif pipeline == "phase_pending":
+            return FileUploadSkippedEntry(filename=filename, reason="phase_pending", extension=ext)
+    except HTTPException as exc:
+        return FileUploadSkippedEntry(
+            filename=filename,
+            reason=_failure_reason_from(exc),
+        )
+    return None
+
+
 async def _dispatch_blob(
     *,
     body: bytes,
@@ -534,8 +558,6 @@ async def _dispatch_blob(
         if not allow_archive:
             skipped.append(FileUploadSkippedEntry(filename=filename, reason="archive_nested", extension=ext))
             return accepted, skipped
-        # Extract once, recurse per entry. Whole-archive failures bubble
-        # up as HTTPException to the caller so the route raises 400.
         try:
             extraction = archive.extract_archive(filename, body)
         except archive.ArchiveAbort as exc:
@@ -543,8 +565,16 @@ async def _dispatch_blob(
             skipped.append(FileUploadSkippedEntry(filename=filename, reason=reason, extension=ext))
             return accepted, skipped
 
-        for entry_skip in extraction.skipped:
-            skipped.append(FileUploadSkippedEntry(filename=entry_skip.filename, reason=entry_skip.reason))
+        if not extraction.extracted:
+            skipped.append(FileUploadSkippedEntry(filename=filename, reason="archive_empty", extension=ext))
+            return accepted, skipped
+
+        # Archive ingest is all-or-nothing. Validate every extracted member
+        # before starting any downstream ingest/docling side effect.
+        for member in extraction.extracted:
+            member_skip = _validate_archive_member_bytes(body=member.content, filename=member.filename)
+            if member_skip is not None:
+                return [], [member_skip]
 
         for member in extraction.extracted:
             inner_accepted, inner_skipped = await _dispatch_blob(
@@ -558,9 +588,6 @@ async def _dispatch_blob(
             )
             accepted.extend(inner_accepted)
             skipped.extend(inner_skipped)
-
-        if not extraction.extracted and not extraction.skipped:
-            skipped.append(FileUploadSkippedEntry(filename=filename, reason="archive_empty", extension=ext))
         return accepted, skipped
 
     if pipeline == "text":

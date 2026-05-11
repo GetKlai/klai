@@ -2,8 +2,9 @@
 
 > SPEC-KB-FILE-UPLOAD-001 — file ingestion for `.md / .txt / .csv /
 > .pdf / .docx / .pptx / .xlsx / .json / .xml`. Archive (`.zip / .tar`)
-> and `.doc` are documented as `phase_pending` in the UI; they ship in
-> a follow-up.
+> support is specified as an all-or-nothing batch container path: preflight,
+> stage, validate every member, then enqueue each member as its own upload.
+> Legacy `.doc` remains phase-pending until the LibreOffice sidecar ships.
 
 ## Architecture
 
@@ -35,6 +36,17 @@ Browser ──multipart 200 MB──▶ Caddy ──▶ portal-api
                                          frontend polls
                                          /api/app/knowledge-bases/{kb}/sources/file/{id}/status
                                          every 2 s until terminal
+
+archive path (.zip/.tar):
+Browser ──multipart archive──▶ portal-api archive preflight
+                              ├─ any bad member: reject whole archive, no rows/jobs
+                              └─ all members valid:
+                                   stage members on disk/object storage
+                                   create archive_batch_id
+                                   create one kb_uploads row per member
+                                   enqueue one member ingest job per row
+                                   text members → direct ingest
+                                   docling members → Docling async queue + poller
 ```
 
 ## What's live in each service
@@ -234,24 +246,58 @@ VictoriaLogs queries:
 
 ## Archive pipeline (`.zip` / `.tar`)
 
-`app/services/archive.py` implements stdlib-only safe extraction with
-sunzip-style guards. Each archive is unpacked **in memory** under:
+Archive files are transport containers, not documents. Klai should never send
+the archive itself to Docling or index it as one artifact. The intended flow is:
+
+1. Preflight archive metadata before decompression where possible.
+2. Reject the whole archive if any member is not acceptable.
+3. Stream surviving member payloads into disk-backed staging.
+4. Run the same per-file validation as direct uploads.
+5. Only after every member is valid, create one upload row and queued downstream
+   job per member with a shared `archive_batch_id`.
+
+This means unsupported files inside an archive are not skipped. A zip containing
+`notes.md`, `handbook.pdf`, and `script.exe` is rejected entirely. This is
+intentional: partial archive ingest makes a KB look complete when it is not.
+
+Preflight can catch member count, paths, extensions, nested archives, duplicate
+normalized paths, tar member types, and declared sizes. It cannot fully prove
+compression ratio or magic-byte correctness. Those checks still happen while
+streaming the member content.
+
+`app/services/archive.py` should implement stdlib-only safe extraction with
+sunzip-style guards. Member payloads must be staged on disk or object storage,
+not accumulated in process memory.
 
 | Guard | Value |
 |---|---|
-| Member count | 50 |
+| Member count | 200 file members |
+| Docling-path members | 10 |
+| Archive complexity budget | 200 units |
 | Per-entry uncompressed | 50 MB |
 | Total uncompressed | 500 MB |
 | Compression ratio | 10:1 (after 1 MB output — catches 42 KB → 4 GB bombs) |
-| Path traversal | reject `..`, `/`, `\`, NUL, drive letters |
-| Nested archives | reject `.zip` / `.tar` entries (no recursion) |
-| Symlinks / devices (tar) | only `REGTYPE` extracted |
-| Whitelist per entry | only TEXT or DOCLING extensions |
+| Path traversal | reject NUL, absolute paths, `..`, drive letters, paths outside archive root |
+| Duplicate normalized paths | reject whole archive |
+| Nested archives | reject whole archive on `.zip` / `.tar` entries |
+| Symlinks / devices (tar) | reject whole archive; only `REGTYPE` / `AREGTYPE` allowed |
+| Whitelist per entry | `.csv`, `.docx`, `.json`, `.md`, `.pdf`, `.pptx`, `.txt`, `.xlsx`, `.xml` |
 
-Each surviving member recurses through the same `_dispatch_blob`
-helper as a top-level file (with `allow_archive=False`). Successful
-entries become independent `kb_uploads` rows — the user sees one row
-per file in the archive in the UI.
+Complexity units:
+
+| Member shape | Units |
+|---|---:|
+| `.md`, `.txt`, `.csv` up to 1 MB | 1 |
+| `.md`, `.txt`, `.csv` above 1 MB | 2 |
+| `.json`, `.xml` | 3 |
+| `.docx`, `.xlsx`, `.pptx` | 5 |
+| `.pdf` up to 10 MB | 10 |
+| `.pdf` above 10 MB | 10 + 1 per additional started 10 MB |
+
+Accepted entries recurse through the same direct upload dispatcher with
+`allow_archive=False`. Text entries complete through direct ingest; Docling
+entries enter the Docling queue. The UI should show one source row per member,
+not one source row for the archive.
 
 ## Out of scope (next iterations)
 
