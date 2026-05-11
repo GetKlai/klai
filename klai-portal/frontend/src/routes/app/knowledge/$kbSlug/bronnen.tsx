@@ -226,9 +226,15 @@ function BronContent({ kbSlug, bron }: { kbSlug: string; bron: Bron }) {
   // upload
   const chunks = data?.chunks ?? []
   if (chunks.length === 0) {
+    // Two cases produce empty chunks here:
+    //  1) Truly unindexed — index_status='pending'/'failed' on the row above.
+    //  2) Indexed via docs/graphiti path — vectors live in Qdrant, no
+    //     parent_chunks row exists for preview. Badge above says 'Gesynct'.
+    // Don't claim "no chunks indexed" in the indexed-Gesynct case — that
+    // contradicts the badge. Speak to the preview gap instead.
     return (
       <div className="pl-[44px] pr-2 pb-3 text-xs text-gray-400">
-        Nog geen chunks geïndexeerd.
+        Geen tekst-preview beschikbaar — open de bron in de editor om de inhoud te bekijken.
       </div>
     )
   }
