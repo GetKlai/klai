@@ -11,7 +11,7 @@
  */
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   ChevronRight,
   File,
@@ -261,11 +261,14 @@ function BronRow({
   expanded,
   onToggle,
   kbSlug,
+  editablePageId,
 }: {
   bron: Bron
   expanded: boolean
   onToggle: () => void
   kbSlug: string
+  /** Gitea page slug for this bron, when one exists. Null = no editor link. */
+  editablePageId: string | null
 }) {
   const queryClient = useQueryClient()
   const status = mapStatus(bron)
@@ -460,11 +463,22 @@ function BronRow({
           </Tooltip>
         </InlineDeleteConfirm>
 
-        {/* Per-row "open in editor" shortcut intentionally removed:
-            bron.name (e.g. 'why-now.md') does not map 1:1 to a Gitea page
-            slug, so naive stripMdExt → 404 'Pagina niet gevonden'.
-            TODO: re-add when wired through a page-index lookup so the
-            link is only shown for resolvable pages. */}
+        {/* Per-row "Bewerken in editor" — only rendered when the bron name
+            actually maps to a Gitea page slug in the KB's page-index. The
+            mapping is computed once at KB level (see BronnenTab) so each
+            row only renders when there's a confirmed click target. */}
+        {editablePageId !== null && (
+          <Tooltip label="Bewerken in editor">
+            <Link
+              to="/app/docs/$kbSlug/$pageId"
+              params={{ kbSlug, pageId: editablePageId }}
+              aria-label="Bewerken in editor"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors"
+            >
+              <Pencil className="h-4 w-4" />
+            </Link>
+          </Tooltip>
+        )}
 
         <button
           type="button"
@@ -526,6 +540,31 @@ function BronnenTab() {
     retry: false,
   })
   const hasEditorPages = !!docsTree && docsTree.length > 0
+
+  // Page-index: list of {id, slug, title} pairs for THIS KB's Gitea pages.
+  // We use it to decide whether to render the per-row 'Bewerken in editor'
+  // pencil — only show when the bron's name strips to a slug that exists
+  // in the page-index. Prevents 'Pagina niet gevonden' on click. Stable
+  // key with route.tsx so a hit here warms the editor's cache.
+  const { data: pageIndex } = useQuery<{ id: string | null; slug: string }[]>({
+    queryKey: ['docs-page-index', orgSlug, kbSlug],
+    queryFn: () =>
+      apiFetch<{ id: string | null; slug: string }[]>(
+        `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/page-index`,
+      ),
+    enabled: !!kb?.docs_enabled && !!orgSlug && hasEditorPages,
+    retry: false,
+  })
+  // Build a slug → pageId map. resolveSlug in the docs editor matches by id
+  // OR slug; we pass the slug as pageId because it is what the URL renders
+  // and what resolves bidirectionally.
+  const slugToPageId = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const entry of pageIndex ?? []) {
+      map.set(entry.slug, entry.slug)
+    }
+    return map
+  }, [pageIndex])
 
   // Sync-alles: fan out one POST per connector. We don't wait for completion;
   // each row will pick up the running status on the next poll.
@@ -616,17 +655,28 @@ function BronnenTab() {
         </div>
       ) : (
         <div className="border-t border-b border-gray-200 divide-y divide-gray-200">
-          {bronnen.map((bron) => (
-            <BronRow
-              key={`${bron.kind}-${bron.id}`}
-              bron={bron}
-              expanded={expandedId === `${bron.kind}-${bron.id}`}
-              onToggle={() =>
-                setExpandedId(expandedId === `${bron.kind}-${bron.id}` ? null : `${bron.kind}-${bron.id}`)
-              }
-              kbSlug={kbSlug}
-            />
-          ))}
+          {bronnen.map((bron) => {
+            // Match bron.name (e.g. 'why-now.md') against the page-index slugs.
+            // Try both the raw name and the .md-stripped variant — page slugs
+            // in Gitea typically come without the extension.
+            let editablePageId: string | null = null
+            if (bron.kind === 'upload') {
+              const stripped = bron.name.replace(/\.md$/i, '')
+              editablePageId = slugToPageId.get(stripped) ?? slugToPageId.get(bron.name) ?? null
+            }
+            return (
+              <BronRow
+                key={`${bron.kind}-${bron.id}`}
+                bron={bron}
+                expanded={expandedId === `${bron.kind}-${bron.id}`}
+                onToggle={() =>
+                  setExpandedId(expandedId === `${bron.kind}-${bron.id}` ? null : `${bron.kind}-${bron.id}`)
+                }
+                kbSlug={kbSlug}
+                editablePageId={editablePageId}
+              />
+            )
+          })}
         </div>
       )}
     </div>
