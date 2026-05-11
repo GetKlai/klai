@@ -84,6 +84,10 @@ class DoclingTimeoutError(DoclingError):
     """Raised when docling-serve does not respond within the HTTP timeout."""
 
 
+class DoclingResultNotFoundError(DoclingError):
+    """Raised when docling-serve no longer has a completed task result."""
+
+
 # Submission timeout: docling-serve buffers the upload to disk before
 # returning the task_id. For a 200 MB file this can take 20-30 s on
 # the existing pipe; 60 s gives plenty of headroom without holding the
@@ -218,6 +222,8 @@ async def get_result_markdown(task_id: str) -> str:
             task_id=task_id,
             status=exc.response.status_code,
         )
+        if exc.response.status_code == 404:
+            raise DoclingResultNotFoundError(f"docling result not found for {task_id}") from exc
         raise DoclingError(f"docling result returned {exc.response.status_code}") from exc
     except httpx.RequestError as exc:
         logger.exception("docling_result_request_error", task_id=task_id)
