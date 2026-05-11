@@ -1,5 +1,6 @@
 /**
  * SPEC-PORTAL-KENNIS-001 Phase E — Bronnen tab.
+ * SPEC-PORTAL-KENNIS-002 Track 2 — per-row delete + Verbind opnieuw bij auth_error.
  *
  * "Alles is een bron." One unified list of every source in this KB
  * (connector aggregates + direct uploads), same row shape, same actions.
@@ -17,15 +18,18 @@ import {
   FileText,
   Globe,
   Image,
+  Link as LinkIcon,
   Loader2,
   Plus,
   RefreshCw,
+  Trash2,
   Type,
   Zap,
 } from 'lucide-react'
 import { SiAirtable, SiConfluence, SiGithub, SiGoogledrive, SiNotion } from '@icons-pack/react-simple-icons'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { Tooltip } from '@/components/ui/tooltip'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
@@ -244,7 +248,11 @@ function BronRow({
 }) {
   const queryClient = useQueryClient()
   const status = mapStatus(bron)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [reauthError, setReauthError] = useState(false)
+  const [reauthPending, setReauthPending] = useState(false)
 
+  // REQ-13: per-row sync/reindex button.
   const syncMutation = useMutation({
     mutationFn: async () =>
       apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/${bron.id}/sync`, { method: 'POST' }),
@@ -255,7 +263,54 @@ function BronRow({
     onError: (err) => queryLogger.error('Bron sync failed', { kbSlug, bronId: bron.id, err }),
   })
 
+  // REQ-15: delete upload artifact.
+  const deleteUploadMutation = useMutation({
+    mutationFn: async () =>
+      apiFetch(`/api/knowledge/personal/items/${bron.id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['kb-bronnen', kbSlug] })
+      void queryClient.invalidateQueries({ queryKey: ['app-knowledge-bases-stats-summary'] })
+    },
+    onError: (err) => queryLogger.error('Bron delete (upload) failed', { kbSlug, bronId: bron.id, err }),
+  })
+
+  // REQ-15: delete connector source.
+  const deleteConnectorMutation = useMutation({
+    mutationFn: async () =>
+      apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/${bron.id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['kb-bronnen', kbSlug] })
+      void queryClient.invalidateQueries({ queryKey: ['app-knowledge-bases-stats-summary'] })
+    },
+    onError: (err) => queryLogger.error('Bron delete (connector) failed', { kbSlug, bronId: bron.id, err }),
+  })
+
+  const deleteMutation = bron.kind === 'upload' ? deleteUploadMutation : deleteConnectorMutation
+  const isDeleting = deleteMutation.isPending
+
+  // Q4: "Verbind opnieuw" — connector has auth_error status.
+  const isAuthError = bron.kind === 'connector' && (bron.status ?? '').toLowerCase().includes('auth')
+
+  async function handleReauth() {
+    setReauthError(false)
+    setReauthPending(true)
+    try {
+      const { authorize_url } = await apiFetch<{ authorize_url: string }>(
+        `/api/app/knowledge-bases/${kbSlug}/connectors/${bron.id}/reauth`,
+      )
+      window.location.href = authorize_url
+      // Stay pending: page will redirect away; spinner stays until navigation.
+    } catch (err) {
+      setReauthPending(false)
+      setReauthError(true)
+      queryLogger.error('Connector reauth failed', { kbSlug, bronId: bron.id, err })
+      void queryClient.invalidateQueries({ queryKey: ['kb-bronnen', kbSlug] })
+    }
+  }
+
+  // REQ-3/Q4: sync is disabled while auth_error is active (must reauth first).
   const isSyncing = syncMutation.isPending || status === 'pending'
+  const syncDisabled = isSyncing || isAuthError
 
   // Meta line: type label, optional item count for connectors. Drop the
   // chunk count — the parent_chunks number is unreliable per-row.
@@ -285,13 +340,42 @@ function BronRow({
           </div>
         </button>
         <StatusBadge status={status} />
+
+        {/* Q4: "Verbind opnieuw" — only for connectors in auth_error state. */}
+        {isAuthError && (
+          <div className="flex flex-col items-end gap-0.5">
+            <Tooltip label="Verbind opnieuw met de externe dienst">
+              <button
+                type="button"
+                onClick={() => void handleReauth()}
+                disabled={reauthPending}
+                aria-label="Verbind opnieuw"
+                className="inline-flex h-8 items-center gap-1.5 px-2 rounded-md text-xs font-medium text-[var(--color-rl-accent-dark)] hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {reauthPending ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <LinkIcon className="h-3.5 w-3.5" />
+                )}
+                Verbind opnieuw
+              </button>
+            </Tooltip>
+            {reauthError && (
+              <span className="text-[10px] text-[var(--color-destructive)] px-2">
+                Verbinden mislukt
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* REQ-13: sync button — disabled when auth_error is active. */}
         {bron.kind === 'connector' && (
-          <Tooltip label="Synchroniseer bron">
+          <Tooltip label={isAuthError ? 'Eerst opnieuw verbinden' : 'Synchroniseer bron'}>
             <button
               type="button"
-              onClick={() => syncMutation.mutate()}
-              disabled={isSyncing}
-              aria-label="Synchroniseer bron"
+              onClick={() => { if (!syncDisabled) syncMutation.mutate() }}
+              disabled={syncDisabled}
+              aria-label={isAuthError ? 'Eerst opnieuw verbinden' : 'Synchroniseer bron'}
               className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isSyncing ? (
@@ -302,6 +386,29 @@ function BronRow({
             </button>
           </Tooltip>
         )}
+
+        {/* REQ-15: delete button — always visible, inline-confirm pattern. */}
+        <InlineDeleteConfirm
+          isConfirming={confirmingDelete}
+          isPending={isDeleting}
+          label={`Verwijder '${bron.name}'?`}
+          cancelLabel="Annuleren"
+          onConfirm={() => { deleteMutation.mutate(); setConfirmingDelete(false) }}
+          onCancel={() => setConfirmingDelete(false)}
+        >
+          <Tooltip label="Verwijder bron">
+            <button
+              type="button"
+              onClick={() => setConfirmingDelete(true)}
+              disabled={isDeleting}
+              aria-label="Verwijder bron"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-[var(--color-destructive)] hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </Tooltip>
+        </InlineDeleteConfirm>
+
         <button
           type="button"
           onClick={onToggle}
