@@ -184,6 +184,7 @@ async def _forward_ingest(
     content_type: str,
     source_ref: str,
     extra: dict,
+    user_id: str | None = None,
 ) -> str:
     """Build the IngestRequest payload and post it to knowledge-ingest."""
     payload: dict = {
@@ -198,6 +199,8 @@ async def _forward_ingest(
         "kb_name": kb.name,
         "extra": extra,
     }
+    if user_id:
+        payload["user_id"] = user_id
     try:
         return await knowledge_ingest_client.ingest_document(payload)
     except httpx.HTTPStatusError as exc:
@@ -270,6 +273,7 @@ async def add_url_source(
         content_type="web_page",
         source_ref=source_ref,
         extra={"source_url": source_ref},
+        user_id=perms.user_id if kb.owner_type == "user" else None,
     )
     logger.info(
         "source_ingested",
@@ -349,6 +353,7 @@ async def add_text_source(
         content_type="plain_text",
         source_ref=source_ref,
         extra={"original_title": (body.title or "").strip() or None},
+        user_id=perms.user_id if kb.owner_type == "user" else None,
     )
     logger.info(
         "source_ingested",
@@ -416,6 +421,7 @@ async def _ingest_text_bytes(
             "bytes": validated.bytes_count,
             "pipeline": "text",
         },
+        user_id=perms.user_id if kb.owner_type == "user" else None,
     )
 
     upload_view = await kb_uploads_repo.create_upload(
