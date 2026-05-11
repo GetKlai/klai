@@ -1,4 +1,4 @@
-"""KB sources routes — SPEC-PORTAL-KENNIS-001.
+"""KB sources routes — SPEC-PORTAL-KENNIS-001 / SPEC-PORTAL-KENNIS-002.
 
 Endpoints feeding the "alles is een bron" UI on the portal:
 
@@ -22,6 +22,12 @@ Endpoints feeding the "alles is een bron" UI on the portal:
        Used by portal-api stats-summary to fill the per-KB "M chunks"
        count without an N+1 fan-out.
 
+  POST /knowledge/v1/artifacts/{artifact_id}/reindex?org_id=...
+       → Set index_status="pending" and re-enqueue enrichment (SPEC-PORTAL-KENNIS-002 A2).
+
+  DELETE /knowledge/v1/kb/{kb_slug}/uploads/{artifact_id}?org_id=...&user_id=...
+       → Soft-delete a direct-upload artifact + remove Qdrant chunks (B2).
+
 All endpoints assert tenant identity via ``assert_caller_identity_tenant_only``
 (SPEC-TI-003) and use ``tenant_scoped_connection`` so RLS context is set on
 the connection before the SELECTs.
@@ -33,7 +39,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from knowledge_ingest import pg_store
+from knowledge_ingest import enrichment_tasks, pg_store, qdrant_store
 from knowledge_ingest.db import tenant_scoped_connection
 from knowledge_ingest.identity import assert_caller_identity_tenant_only
 
@@ -56,6 +62,7 @@ class UploadSummary(BaseModel):
     content_type: str
     created_at: int
     chunks_count: int = 0
+    index_status: str = "synced"
 
 
 class KBSourcesResponse(BaseModel):
@@ -190,3 +197,95 @@ async def chunks_summary(
         chunks_by_kb = await pg_store.count_chunks_per_kb(conn, verified_org_id, body.kb_slugs)
         bronnen_by_kb = await pg_store.count_sources_per_kb(conn, verified_org_id, body.kb_slugs)
     return ChunksSummaryResponse(chunks_by_kb=chunks_by_kb, bronnen_by_kb=bronnen_by_kb)
+
+
+# -- SPEC-PORTAL-KENNIS-002: reindex + delete ----------------------------------
+
+
+class ReindexResponse(BaseModel):
+    artifact_id: str
+    index_status: str
+
+
+@router.post(
+    "/knowledge/v1/artifacts/{artifact_id}/reindex",
+    response_model=ReindexResponse,
+    status_code=202,
+)
+async def reindex_upload(
+    request: Request,
+    artifact_id: str,
+    org_id: str = Query(..., description="Zitadel org ID"),
+) -> ReindexResponse:
+    """Set index_status='pending' and re-enqueue enrichment for a direct-upload artifact.
+
+    Returns 404 when the artifact does not exist or belongs to a different org.
+    Returns 202 Accepted when the enrichment job has been enqueued.
+    """
+    verified_org_id = await assert_caller_identity_tenant_only(request, claimed_org_id=org_id)
+    async with tenant_scoped_connection(verified_org_id) as conn:
+        updated = await pg_store.set_artifact_index_status(
+            conn, artifact_id, verified_org_id, "pending"
+        )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="artifact not found")
+
+    proc_app = enrichment_tasks.get_app()
+    await proc_app.enrich_document_interactive.configure(
+        queueing_lock=f"reindex:{verified_org_id}:{artifact_id}",
+    ).defer_async(artifact_id=artifact_id)
+
+    logger.info(
+        "reindex_enqueued",
+        artifact_id=artifact_id,
+        org_id=verified_org_id,
+    )
+    return ReindexResponse(artifact_id=artifact_id, index_status="pending")
+
+
+@router.delete(
+    "/knowledge/v1/kb/{kb_slug}/uploads/{artifact_id}",
+    status_code=204,
+)
+async def delete_upload(
+    request: Request,
+    kb_slug: str,
+    artifact_id: str,
+    org_id: str = Query(..., description="Zitadel org ID"),
+    user_id: str | None = Query(
+        default=None,
+        description=(
+            "When provided, the artifact is deleted only if it belongs to this user "
+            "(contributor-scoped delete). Omit for owner/admin deletes."
+        ),
+    ),
+) -> None:
+    """Soft-delete a direct-upload artifact and remove its Qdrant chunks.
+
+    Returns 404 when the artifact does not exist.
+    Returns 403 when ``user_id`` is provided but does not match the artifact owner.
+    """
+    verified_org_id = await assert_caller_identity_tenant_only(request, claimed_org_id=org_id)
+    async with tenant_scoped_connection(verified_org_id) as conn:
+        artifact = await pg_store.get_kb_upload_artifact(
+            conn, artifact_id, verified_org_id, kb_slug
+        )
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="artifact not found")
+
+        # Contributor ownership check: only allow deleting own uploads.
+        if user_id is not None and artifact["user_id"] != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="you can only delete your own uploads",
+            )
+
+        await pg_store.soft_delete_artifact(conn, verified_org_id, kb_slug, artifact["path"])
+
+    await qdrant_store.delete_document(verified_org_id, kb_slug, artifact["path"])
+    logger.info(
+        "upload_deleted",
+        artifact_id=artifact_id,
+        kb_slug=kb_slug,
+        org_id=verified_org_id,
+    )
