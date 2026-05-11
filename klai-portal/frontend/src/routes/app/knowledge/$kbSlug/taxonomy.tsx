@@ -369,7 +369,7 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
   // TaxonomyTab can be rendered standalone (via the /taxonomy route) or
   // embedded under /insights. `useParams({ strict: false })` reads the
   // current match generically so this works in both contexts.
-  const routeParams = useParams({ strict: false }) as { kbSlug?: string }
+  const routeParams = useParams({ strict: false })
   const kbSlug = kbSlugProp ?? routeParams.kbSlug ?? ''
   const auth = useAuth()
   const queryClient = useQueryClient()
