@@ -102,13 +102,18 @@ type Status = 'synced' | 'pending' | 'not_synced'
 function mapStatus(bron: Bron): Status {
   const s = (bron.status ?? '').toLowerCase()
   if (bron.kind === 'upload') {
-    // Track 3 introduced index_status as the authoritative field.
+    // index_status is the authoritative field (Track 3).
+    // parent_chunks count is NOT a reliable proxy for "synced": artifacts
+    // that came through the docs-editor / graphiti path index into Qdrant
+    // but leave parent_chunks empty — the overview page already counts the
+    // vector_chunk_count separately. An artifact with index_status='synced'
+    // IS retrievable by the LLM, regardless of parent_chunks.
     const idx = (bron.index_status ?? '').toLowerCase()
     if (idx === 'pending' || s === 'processing' || s === 'ingesting') return 'pending'
     if (idx === 'failed' || s === 'failed' || s.includes('error')) return 'not_synced'
-    // An upload without any chunks isn't actually retrievable — call it
-    // "niet gesynct" so the user knows it hasn't finished indexing yet.
-    if (bron.chunks_count === 0) return 'not_synced'
+    if (idx === 'synced') return 'synced'
+    // Unknown status with no chunks → assume not yet indexed.
+    if (bron.chunks_count === 0 && !idx) return 'not_synced'
     return 'synced'
   }
   // Connector — last_sync_status is the source of truth.
