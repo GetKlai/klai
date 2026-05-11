@@ -1,4 +1,4 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useParams } from '@tanstack/react-router'
 import { useAuth } from '@/lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
@@ -365,8 +365,12 @@ function TagCloud({
 
 // -- Main taxonomy tab --------------------------------------------------------
 
-export function TaxonomyTab() {
-  const { kbSlug } = Route.useParams()
+export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
+  // TaxonomyTab can be rendered standalone (via the /taxonomy route) or
+  // embedded under /insights. `useParams({ strict: false })` reads the
+  // current match generically so this works in both contexts.
+  const routeParams = useParams({ strict: false }) as { kbSlug?: string }
+  const kbSlug = kbSlugProp ?? routeParams.kbSlug ?? ''
   const auth = useAuth()
   const queryClient = useQueryClient()
   const { user } = useCurrentUser()
