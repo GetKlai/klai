@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '@/lib/auth'
 
 import { apiFetch } from '@/lib/apiFetch'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { chatKbLogger } from '@/lib/logger'
 import * as m from '@/paraglide/messages'
 
@@ -23,13 +24,38 @@ interface ChatHealth {
   reason: string | null
 }
 
-function useChatBaseUrl(): string {
+/**
+ * Derive the per-tenant LibreChat host from the user's canonical workspace URL.
+ *
+ * NEVER from window.location.hostname — personal users live on `my.getklai.com`
+ * but their actual workspace (and provisioned LibreChat container) is on their
+ * org subdomain (e.g. `getklai.getklai.com`). Using window.location yields
+ * `chat-my.getklai.com`, a host that does not exist:
+ *   1. iframe falls through to portal SPA wildcard
+ *   2. SPA calls /api/me on `chat-my`, KlaiTenantHostMiddleware 409s with
+ *      `redirect_to: https://{actual_slug}.getklai.com/api/me`
+ *   3. apiFetch does window.location.replace(redirect_to) — iframe location
+ *      flips to /api/me, browser renders the JSON viewer
+ * (Diagnosed 2026-05-11 — Jantine on my.getklai.com saw raw /api/me JSON in
+ * the chat tab.)
+ *
+ * Returns null until workspace_url is known.
+ */
+function useChatBaseUrl(workspaceUrl: string | null): string | null {
   return useMemo(() => {
-    const { hostname } = window.location
-    if (hostname === 'localhost') return 'http://localhost:3080'
-    const [tenant, ...rest] = hostname.split('.')
-    return `https://chat-${tenant}.${rest.join('.')}`
-  }, [])
+    if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+      return 'http://localhost:3080'
+    }
+    if (!workspaceUrl) return null
+    try {
+      const url = new URL(workspaceUrl)
+      const [tenant, ...rest] = url.hostname.split('.')
+      return `${url.protocol}//chat-${tenant}.${rest.join('.')}`
+    } catch (err) {
+      chatKbLogger.error('Invalid workspace_url, cannot derive chat host', { workspaceUrl, err })
+      return null
+    }
+  }, [workspaceUrl])
 }
 
 function getIframeSrc(baseUrl: string): string {
@@ -56,7 +82,8 @@ export const Route = createFileRoute('/app/chat')({
 })
 
 function ChatPage() {
-  const baseUrl = useChatBaseUrl()
+  const { user } = useCurrentUser()
+  const baseUrl = useChatBaseUrl(user?.workspace_url ?? null)
   const auth = useAuth()
   const [phase, setPhase] = useState<Phase>('health_check')
   const [errorReason, setErrorReason] = useState<string | null>(null)
@@ -72,6 +99,7 @@ function ChatPage() {
 
   const runHealthCheck = useCallback(async () => {
     if (!auth.isAuthenticated) return
+    if (!baseUrl) return  // workspace_url not yet resolved
 
     setPhase('health_check')
     setErrorReason(null)
@@ -105,8 +133,10 @@ function ChatPage() {
       chatKbLogger.error('Chat health check request failed', { err })
       // Health endpoint itself failed — still try loading the iframe as fallback.
       // The health check is a safety net, not a gate.
-      setIframeSrc(getIframeSrc(baseUrl))
-      setPhase('loading_iframe')
+      if (baseUrl) {
+        setIframeSrc(getIframeSrc(baseUrl))
+        setPhase('loading_iframe')
+      }
     }
   }, [auth.isAuthenticated, baseUrl, clearStuckTimer])
 
