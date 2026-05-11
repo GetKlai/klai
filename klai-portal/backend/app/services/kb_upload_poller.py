@@ -148,6 +148,15 @@ async def _process_ingesting_row(view: KBUploadView) -> None:
 
     try:
         markdown = await docling_client.get_result_markdown(view.docling_task_id)
+    except docling_client.DoclingResultNotFoundError:
+        logger.exception(
+            "kb_upload_ingesting_result_not_found",
+            upload_id=str(view.id),
+        )
+        async with tenant_scoped_session(view.org_id) as db:
+            await kb_uploads_repo.mark_failed(db, upload_id=view.id, failure_reason="docling_result_not_found")
+            await db.commit()
+        return
     except docling_client.DoclingError:
         logger.exception(
             "kb_upload_ingesting_result_fetch_failed",
@@ -175,7 +184,19 @@ async def _ingest_and_finish(view: KBUploadView, *, markdown: str) -> None:
         org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == view.org_id))
         org = org_result.scalar_one_or_none()
 
-    if kb is None or org is None:
+        if kb is None or org is None:
+            kb_slug = None
+            kb_name = None
+            org_zitadel_id = None
+        else:
+            # Copy ORM-backed values while the session is still open. The
+            # session context commits on exit, which expires attributes; using
+            # ORM instances afterwards can raise DetachedInstanceError.
+            kb_slug = kb.slug
+            kb_name = kb.name
+            org_zitadel_id = org.zitadel_org_id
+
+    if kb_slug is None or kb_name is None or org_zitadel_id is None:
         logger.error(
             "kb_upload_ingest_kb_or_org_missing",
             upload_id=str(view.id),
@@ -189,15 +210,15 @@ async def _ingest_and_finish(view: KBUploadView, *, markdown: str) -> None:
 
     title = file_upload.derive_title(view.filename, view.extension)
     payload: dict[str, object] = {
-        "org_id": org.zitadel_org_id,
-        "kb_slug": kb.slug,
+        "org_id": org_zitadel_id,
+        "kb_slug": kb_slug,
         "path": view.source_ref,
         "content": markdown,
         "title": title,
         "source_type": "file",
         "content_type": "document",
         "source_ref": view.source_ref,
-        "kb_name": kb.name,
+        "kb_name": kb_name,
         "extra": {
             "original_filename": view.filename,
             "extension": view.extension,
@@ -214,7 +235,7 @@ async def _ingest_and_finish(view: KBUploadView, *, markdown: str) -> None:
         logger.exception(
             "kb_upload_ingest_forward_failed",
             upload_id=str(view.id),
-            kb_slug=kb.slug,
+            kb_slug=kb_slug,
         )
         # Stay at ingesting — knowledge-ingest may be transiently down.
         # Operator alert catches rows stuck > N minutes.
@@ -227,7 +248,7 @@ async def _ingest_and_finish(view: KBUploadView, *, markdown: str) -> None:
         "kb_upload_done",
         upload_id=str(view.id),
         artifact_id=artifact_id,
-        kb_slug=kb.slug,
+        kb_slug=kb_slug,
         bytes=view.bytes,
     )
 
