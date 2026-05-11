@@ -410,7 +410,6 @@ export function TaxonomyTab() {
 
   const myUserId = auth.user?.profile?.sub
   const isCreator = !!(myUserId && kb?.created_by === myUserId)
-  const isOwnerRole = !!(myUserId && members?.users.some((u) => u.user_id === myUserId && u.role === 'owner'))
   const isContributor = isCreator || !!(myUserId && members?.users.some((u) => u.user_id === myUserId && (u.role === 'owner' || u.role === 'contributor')))
   const isAdmin = user?.isAdmin === true
 

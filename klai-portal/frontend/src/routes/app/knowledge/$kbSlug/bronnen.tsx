@@ -292,14 +292,23 @@ function BronRow({
   const isAuthError = bron.kind === 'connector' && (bron.status ?? '').toLowerCase().includes('auth')
 
   async function handleReauth() {
+    // Use the existing OAuth authorize endpoint — same pattern as
+    // connectors.tsx::handleReconnect. The endpoint needs the connector_type
+    // (notion / google_drive / etc.), not a dedicated /reauth route.
+    if (!bron.connector_type) {
+      setReauthError(true)
+      return
+    }
     setReauthError(false)
     setReauthPending(true)
     try {
       const { authorize_url } = await apiFetch<{ authorize_url: string }>(
-        `/api/app/knowledge-bases/${kbSlug}/connectors/${bron.id}/reauth`,
+        `/api/oauth/${encodeURIComponent(bron.connector_type)}/authorize` +
+          `?kb_slug=${encodeURIComponent(kbSlug)}` +
+          `&connector_id=${encodeURIComponent(bron.id)}`,
       )
-      window.location.href = authorize_url
-      // Stay pending: page will redirect away; spinner stays until navigation.
+      window.location.assign(authorize_url)
+      // Stay pending: page redirects away; spinner stays until navigation.
     } catch (err) {
       setReauthPending(false)
       setReauthError(true)
