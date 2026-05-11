@@ -531,6 +531,62 @@ async def list_upload_chunks(
         return None
 
 
+async def reindex_artifact(org_id: str, artifact_id: str) -> None:
+    """Re-enqueue a direct-upload artifact for indexing via knowledge-ingest.
+
+    SPEC-PORTAL-KENNIS-002 A4: Portal calls this to trigger a reindex after
+    an upload has been set to index_status='pending'. Raises on failure so
+    the portal endpoint can return a clear error.
+    """
+    async with httpx.AsyncClient(
+        base_url=settings.knowledge_ingest_url,
+        headers={
+            "X-Internal-Secret": settings.knowledge_ingest_secret,
+            "X-Caller-Service": "portal-api",
+            **get_trace_headers(),
+        },
+        timeout=10.0,
+    ) as client:
+        resp = await client.post(
+            f"/knowledge/v1/artifacts/{artifact_id}/reindex",
+            params={"org_id": org_id},
+        )
+        resp.raise_for_status()
+
+
+async def delete_kb_upload(
+    org_id: str,
+    kb_slug: str,
+    artifact_id: str,
+    user_id: str | None = None,
+) -> None:
+    """Delete a direct-upload artifact from knowledge-ingest (soft-delete + Qdrant purge).
+
+    SPEC-PORTAL-KENNIS-002 B2: Portal calls this when a user deletes an upload.
+    Pass user_id to enforce contributor ownership check on the ingest side
+    (the caller can only delete their own uploads). Omit user_id for
+    admin/owner deletes (no ownership restriction).
+    Raises on failure (404 if not found, 403 if not owner, 5xx on error).
+    """
+    params: dict = {"org_id": org_id}
+    if user_id is not None:
+        params["user_id"] = user_id
+    async with httpx.AsyncClient(
+        base_url=settings.knowledge_ingest_url,
+        headers={
+            "X-Internal-Secret": settings.knowledge_ingest_secret,
+            "X-Caller-Service": "portal-api",
+            **get_trace_headers(),
+        },
+        timeout=15.0,
+    ) as client:
+        resp = await client.delete(
+            f"/knowledge/v1/kb/{kb_slug}/uploads/{artifact_id}",
+            params=params,
+        )
+        resp.raise_for_status()
+
+
 async def get_chunks_summary(org_id: str, kb_slugs: list[str]) -> tuple[dict[str, int], dict[str, int]]:
     """Bulk chunk + bronnen counts per KB.
 
