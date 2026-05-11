@@ -783,6 +783,12 @@ services:
   docling-serve:
     image: ghcr.io/docling-project/docling-serve:v1.16.1
     restart: unless-stopped
+    environment:
+      # Portal-api may need to retry /v1/result after a transient
+      # knowledge-ingest failure or restart. Docling Serve's defaults are
+      # single-use results, which are too fragile for our async poller.
+      DOCLING_SERVE_SINGLE_USE_RESULTS: "false"
+      DOCLING_SERVE_RESULT_REMOVAL_DELAY: "86400"
     networks:
       - klai-net
     # NOT exposed via Caddy — internal Docker network only
