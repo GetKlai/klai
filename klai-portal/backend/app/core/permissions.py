@@ -272,6 +272,15 @@ def get_caller_at_least(min_role: ProfileRole):
     required_rank = PROFILE_RANK[min_role]
 
     async def _dep(perms: UserPermissions = Depends(get_caller)) -> UserPermissions:
+        # Platform-admin bypass: Klai staff (members of the platform org)
+        # skip per-tenant role gates. Mirrors the frontend RoleGuard
+        # bypass on `user?.isAdmin` so the two surfaces stay consistent.
+        # Symptom that triggered adding this: org-owner of the platform
+        # org has effective_role='personal' (no per-org admin grant),
+        # so taxonomy/coverage and similar admin-gated endpoints would
+        # 403 her even though the frontend tab is open.
+        if perms.is_platform_admin:
+            return perms
         caller_rank = PROFILE_RANK[perms.effective_role]
         if caller_rank < required_rank:
             raise HTTPException(
