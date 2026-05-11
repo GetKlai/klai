@@ -926,6 +926,7 @@ class BronOut(BaseModel):
     status: str | None = None  # raw last_sync_status for connectors; None for uploads
     last_sync_at: datetime | None = None
     created_at: datetime | None = None  # for uploads — sort key
+    index_status: str | None = None  # "synced", "pending", or "not_synced" for uploads; None for connectors
 
 
 class BronnenResponse(BaseModel):
@@ -1104,6 +1105,7 @@ async def list_kb_bronnen(
                 chunks_count=int(upload.get("chunks_count") or 0),
                 status=None,
                 created_at=created_at_dt,
+                index_status=str(upload.get("index_status") or "synced"),
             )
         )
 
@@ -1227,6 +1229,88 @@ async def get_bron_content(
         total=int(data.get("total") or 0),
         limit=limit,
         offset=offset,
+    )
+
+
+# -- Uploads: reindex / delete ------------------------------------------------
+
+
+@router.post("/knowledge-bases/{kb_slug}/uploads/{artifact_id}/reindex", status_code=202)
+async def reindex_upload(
+    kb_slug: str,
+    artifact_id: str,
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Re-enqueue a direct-upload artifact for indexing.
+
+    Requires at least contributor role on the KB.
+    Returns 202 Accepted; indexing happens asynchronously.
+    SPEC-PORTAL-KENNIS-002 A4.
+    """
+    org = await _load_org_or_500(perms.org_id, db)
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+
+    # B1 viewer gate: contributors and above may trigger reindex
+    role = await get_user_role_for_kb(
+        kb.id,
+        perms.user_id,
+        db,
+        default_org_role=kb.default_org_role,
+        kb_org_id=kb.org_id,
+        kb_created_by=kb.created_by,
+    )
+    if role not in ("contributor", "owner"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Contributor or owner access required",
+        )
+
+    await knowledge_ingest_client.reindex_artifact(org.zitadel_org_id, artifact_id)
+    return {"artifact_id": artifact_id, "status": "pending"}
+
+
+@router.delete("/knowledge-bases/{kb_slug}/uploads/{artifact_id}", status_code=204)
+async def delete_kb_upload(
+    kb_slug: str,
+    artifact_id: str,
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Delete a direct-upload artifact from the KB.
+
+    Owners may delete any upload.
+    Contributors may only delete their own uploads (ownership enforced by
+    knowledge-ingest via X-User-ID check).
+    Viewers get 403.
+    SPEC-PORTAL-KENNIS-002 B2.
+    """
+    org = await _load_org_or_500(perms.org_id, db)
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+
+    # B1 viewer gate
+    role = await get_user_role_for_kb(
+        kb.id,
+        perms.user_id,
+        db,
+        default_org_role=kb.default_org_role,
+        kb_org_id=kb.org_id,
+        kb_created_by=kb.created_by,
+    )
+    if role not in ("contributor", "owner"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Contributor or owner access required",
+        )
+
+    # Contributors: pass user_id so knowledge-ingest enforces ownership.
+    # Owners: omit user_id to allow cross-user deletes.
+    caller_user_id = perms.user_id if role == "contributor" else None
+    await knowledge_ingest_client.delete_kb_upload(
+        org.zitadel_org_id,
+        kb.slug,
+        artifact_id,
+        user_id=caller_user_id,
     )
 
 
