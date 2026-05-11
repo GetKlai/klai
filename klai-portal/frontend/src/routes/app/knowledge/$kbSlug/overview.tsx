@@ -60,12 +60,12 @@ export function KBOverviewSections({ kbSlug }: { kbSlug: string }) {
     <div className="space-y-8">
       <DashboardSection icon={BookOpen} title={m.knowledge_detail_section_docs()}>
         {!kb.docs_enabled ? (
-          <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_detail_docs_not_enabled()}</p>
+          <p className="text-sm text-gray-400">{m.knowledge_detail_docs_not_enabled()}</p>
         ) : (
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <FileText className="h-4 w-4 text-[var(--color-muted-foreground)]" />
-              <span className="text-sm text-[var(--color-foreground)]">{docsLabel}</span>
+              <FileText className="h-4 w-4 text-gray-400" />
+              <span className="text-sm text-gray-900">{docsLabel}</span>
             </div>
             {kb.gitea_repo_slug && (
               <Link to="/app/docs/$kbSlug" params={{ kbSlug: kb.slug }} >
@@ -80,7 +80,7 @@ export function KBOverviewSections({ kbSlug }: { kbSlug: string }) {
         <div className="flex gap-8 mb-5">
           <div>
             <p className="text-xs text-gray-400 tracking-wide mb-1">{m.knowledge_detail_stats_search_index()}</p>
-            <p className="text-sm font-medium text-[var(--color-foreground)]">
+            <p className="text-sm font-medium text-gray-900">
               {stats?.volume != null
                 ? m.knowledge_detail_volume({ count: String(stats.volume) })
                 : m.knowledge_detail_volume_unknown()}
@@ -88,7 +88,7 @@ export function KBOverviewSections({ kbSlug }: { kbSlug: string }) {
           </div>
           <div>
             <p className="text-xs text-gray-400 tracking-wide mb-1">{m.knowledge_detail_stats_queries()}</p>
-            <p className="text-sm font-medium text-[var(--color-foreground)]">
+            <p className="text-sm font-medium text-gray-900">
               {stats?.usage_last_30d != null
                 ? String(stats.usage_last_30d)
                 : m.knowledge_detail_usage_unknown()}
@@ -96,7 +96,7 @@ export function KBOverviewSections({ kbSlug }: { kbSlug: string }) {
           </div>
           <div>
             <p className="text-xs text-gray-400 tracking-wide mb-1">{m.knowledge_detail_stats_users()}</p>
-            <p className="text-sm font-medium text-[var(--color-foreground)]">
+            <p className="text-sm font-medium text-gray-900">
               {stats?.unique_users_30d != null
                 ? String(stats.unique_users_30d)
                 : m.knowledge_detail_usage_unknown()}
@@ -104,7 +104,7 @@ export function KBOverviewSections({ kbSlug }: { kbSlug: string }) {
           </div>
           <div>
             <p className="text-xs text-gray-400 tracking-wide mb-1">{m.knowledge_detail_stats_active_days()}</p>
-            <p className="text-sm font-medium text-[var(--color-foreground)]">
+            <p className="text-sm font-medium text-gray-900">
               {stats?.active_days_30d != null
                 ? m.knowledge_detail_active_days_value({ count: String(stats.active_days_30d) })
                 : m.knowledge_detail_usage_unknown()}
@@ -117,7 +117,7 @@ export function KBOverviewSections({ kbSlug }: { kbSlug: string }) {
                   <AlertTriangle className="h-3 w-3" />
                   {m.gaps_overview_tile()}
                 </p>
-                <p className="text-sm font-medium text-[var(--color-foreground)] group-hover:text-[var(--color-accent)] transition-colors">
+                <p className="text-sm font-medium text-gray-900 group-hover:text-gray-900 transition-colors">
                   {stats.org_gap_count_7d}
                 </p>
               </div>
@@ -131,39 +131,39 @@ export function KBOverviewSections({ kbSlug }: { kbSlug: string }) {
             {m.knowledge_detail_volume_breakdown_title()}
           </p>
           <div className="grid grid-cols-3 gap-3">
-            <div className="flex items-start gap-2 rounded-lg border border-[var(--color-border)] p-3">
-              <Database className="h-4 w-4 text-[var(--color-accent)] mt-0.5 shrink-0" />
+            <div className="flex items-start gap-2 rounded-lg border border-gray-200 p-3">
+              <Database className="h-4 w-4 text-gray-400 mt-0.5 shrink-0" />
               <div>
-                <p className="text-xs font-medium text-[var(--color-foreground)]">
+                <p className="text-xs font-medium text-gray-900">
                   {m.knowledge_detail_volume_sources()}
                 </p>
-                <p className="text-sm text-[var(--color-foreground)]">
+                <p className="text-sm text-gray-900">
                   {stats?.source_page_count != null
                     ? m.knowledge_detail_volume_sources_count({ count: String(stats.source_page_count) })
                     : m.knowledge_detail_volume_unavailable()}
                 </p>
               </div>
             </div>
-            <div className="flex items-start gap-2 rounded-lg border border-[var(--color-border)] p-3">
-              <Search className="h-4 w-4 text-[var(--color-accent)] mt-0.5 shrink-0" />
+            <div className="flex items-start gap-2 rounded-lg border border-gray-200 p-3">
+              <Search className="h-4 w-4 text-gray-400 mt-0.5 shrink-0" />
               <div>
-                <p className="text-xs font-medium text-[var(--color-foreground)]">
+                <p className="text-xs font-medium text-gray-900">
                   {m.knowledge_detail_volume_search_chunks()}
                 </p>
-                <p className="text-sm text-[var(--color-foreground)]">
+                <p className="text-sm text-gray-900">
                   {stats?.vector_chunk_count != null
                     ? m.knowledge_detail_volume_search_chunks_count({ count: String(stats.vector_chunk_count) })
                     : m.knowledge_detail_volume_unavailable()}
                 </p>
               </div>
             </div>
-            <div className="flex items-start gap-2 rounded-lg border border-[var(--color-border)] p-3">
-              <GitBranch className="h-4 w-4 text-[var(--color-accent)] mt-0.5 shrink-0" />
+            <div className="flex items-start gap-2 rounded-lg border border-gray-200 p-3">
+              <GitBranch className="h-4 w-4 text-gray-400 mt-0.5 shrink-0" />
               <div>
-                <p className="text-xs font-medium text-[var(--color-foreground)]">
+                <p className="text-xs font-medium text-gray-900">
                   {m.knowledge_detail_volume_graph()}
                 </p>
-                <p className="text-sm text-[var(--color-foreground)]">
+                <p className="text-sm text-gray-900">
                   {stats?.graph_entity_count != null && stats?.graph_edge_count != null
                     ? m.knowledge_detail_volume_graph_count({
                         entities: String(stats.graph_entity_count),

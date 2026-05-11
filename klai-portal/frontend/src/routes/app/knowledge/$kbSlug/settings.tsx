@@ -82,7 +82,7 @@ function SettingsTab() {
     <div className="space-y-6">
       {/* General settings */}
       <div className="space-y-2">
-        <h2 className="text-sm font-semibold text-[var(--color-foreground)]">
+        <h2 className="text-sm font-semibold text-gray-900">
           {m.knowledge_settings_general_heading()}
         </h2>
         <form
@@ -116,7 +116,7 @@ function SettingsTab() {
               onChange={(e) => setDescription(e.target.value)}
               disabled={!isOwner}
               rows={3}
-              className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm text-[var(--color-foreground)] outline-none transition-colors placeholder:text-[var(--color-muted-foreground)] focus:ring-2 focus:ring-[var(--color-ring)] disabled:cursor-not-allowed disabled:opacity-50 resize-none"
+              className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)] disabled:cursor-not-allowed disabled:opacity-50 resize-none"
             />
           </div>
 
@@ -127,9 +127,9 @@ function SettingsTab() {
               type="text"
               value={kb.slug}
               disabled
-              className="bg-[var(--color-secondary)] text-[var(--color-muted-foreground)]"
+              className="bg-[var(--color-secondary)] text-gray-400"
             />
-            <p className="text-xs text-[var(--color-muted-foreground)]">
+            <p className="text-xs text-gray-400">
               {m.knowledge_settings_slug_hint()}
             </p>
           </div>
@@ -184,7 +184,7 @@ function SettingsTab() {
           <h2 className="text-sm font-semibold text-[var(--color-destructive)]">
             {m.knowledge_settings_danger_heading()}
           </h2>
-          <p className="text-sm text-[var(--color-muted-foreground)]">
+          <p className="text-sm text-gray-400">
             {m.knowledge_settings_danger_description()}
           </p>
           <div className="pt-2">
