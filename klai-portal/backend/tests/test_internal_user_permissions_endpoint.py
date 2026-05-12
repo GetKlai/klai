@@ -31,14 +31,16 @@ def _fake_perms(
     is_platform_admin: bool = False,
     provisioning_status: str = "active",
 ) -> UserPermissions:
+    # SPEC-PORTAL-EXTENSIONS-UNIFY-001: enabled_addons folded into
+    # platform_unlocked_features. The `addons=` kwarg is kept for test
+    # readability but merges into the unified set.
     return UserPermissions(
         user_id="zit-user-1",
         org_id=42,
         org_slug="voys",
         role=role,
         plan=plan,
-        enabled_addons=frozenset(addons),
-        platform_unlocked_features=frozenset(platform_unlocks),
+        platform_unlocked_features=frozenset(platform_unlocks) | frozenset(addons),
         effective_role=role,
         effective_capabilities=frozenset({Capability.KB_CONNECTORS}),
         effective_products=frozenset({"chat"}),
@@ -119,9 +121,10 @@ class TestGetUserPermissionsEndpoint:
         assert result.role == "kb_manager"
         assert result.effective_role == "kb_manager"
         assert result.plan == "knowledge"
-        # Frozenset → sorted list invariant.
-        assert result.enabled_addons == ["docs", "scribe"]
-        assert result.platform_unlocked_features == ["custom_mcps", "widgets"]
+        # Frozenset → sorted list invariant. Unified set contains both the
+        # legacy "addons" and the explicit platform-unlocks (SPEC-PORTAL-
+        # EXTENSIONS-UNIFY-001 merged them on 2026-05-12).
+        assert result.platform_unlocked_features == ["custom_mcps", "docs", "scribe", "widgets"]
         # Capability enum → string.
         assert result.effective_capabilities == ["kb.connectors"]
         assert result.effective_products == ["chat"]

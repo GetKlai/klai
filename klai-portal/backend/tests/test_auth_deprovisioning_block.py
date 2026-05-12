@@ -49,7 +49,6 @@ def _make_perms(provisioning_status: str = "active") -> UserPermissions:
         org_slug="voys",
         role=ProfileRole.ADMIN,
         plan="knowledge",
-        enabled_addons=frozenset(),
         platform_unlocked_features=frozenset(),
         effective_role=ProfileRole.ADMIN,
         effective_capabilities=frozenset(),

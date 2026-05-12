@@ -77,20 +77,16 @@ class PortalOrg(Base):
     # @MX:NOTE SPEC-AUTH-009 R5 -- when True, domain_match picker entries skip join-request
     # approval and directly INSERT a portal_users row (R4-C4.3). Default False.
     auto_accept_same_domain: Mapped[bool] = mapped_column(nullable=False, default=False, server_default="false")
-    # @MX:NOTE: SPEC-PORTAL-PROFILES-001 Phase 2 P2.1 — per-tenant add-on toggles.
-    # Stores which add-on products (scribe, docs) the admin has enabled for this org.
-    # A user/group still needs an entitlement in portal_user_products / portal_group_products;
-    # access = enabled_addons AND user/group entitlement (both required).
-    enabled_addons: Mapped[list[str]] = mapped_column(
-        ARRAY(Text()),
-        nullable=False,
-        default=list,
-        server_default="{}",
-    )
-    # @MX:NOTE: SPEC-PORTAL-RBAC-REFACTOR-001 Phase 5A — platform-admin-managed feature gates.
-    # Stores which platform-locked features (partner_api, widgets, custom_mcps) Klai staff
-    # has explicitly unlocked for this org. NOT editable by tenant admins.
-    # Empty by default for all tenants; set via /api/admin/orgs/{slug}/platform-unlocks.
+    # @MX:NOTE: SPEC-PORTAL-EXTENSIONS-UNIFY-001 (2026-05-12) — single gating
+    # column for all tenant extensions. Stores every Klai-staff-managed feature
+    # unlock for this org: scribe, docs (= user-facing products with profile-
+    # floor), partner_api, widgets, custom_mcps (= platform-only gates).
+    # NOT editable by tenant admins; mutated via /api/admin/extensions and
+    # /api/admin/orgs/{slug}/platform-unlocks (both gated by
+    # require_platform_admin). The legacy `enabled_addons` column was dropped
+    # in the same migration that introduced this comment — data was copied
+    # forward by the post-deploy SQL (set-union with the existing
+    # platform_unlocked_features values).
     platform_unlocked_features: Mapped[list[str]] = mapped_column(
         ARRAY(Text()),
         nullable=False,
