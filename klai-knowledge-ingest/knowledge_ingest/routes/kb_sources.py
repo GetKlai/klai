@@ -59,6 +59,8 @@ class ConnectorAggregate(BaseModel):
 class UploadSummary(BaseModel):
     id: str
     path: str
+    display_name: str | None = None
+    source_url: str | None = None
     content_type: str
     created_at: int
     chunks_count: int = 0
@@ -207,6 +209,16 @@ class ReindexResponse(BaseModel):
     index_status: str
 
 
+class RenameUploadRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+
+class RenameUploadResponse(BaseModel):
+    artifact_id: str
+    path: str
+    display_name: str
+
+
 @router.post(
     "/knowledge/v1/artifacts/{artifact_id}/reindex",
     response_model=ReindexResponse,
@@ -241,6 +253,36 @@ async def reindex_upload(
         org_id=verified_org_id,
     )
     return ReindexResponse(artifact_id=artifact_id, index_status="pending")
+
+
+@router.patch(
+    "/knowledge/v1/kb/{kb_slug}/uploads/{artifact_id}",
+    response_model=RenameUploadResponse,
+)
+async def rename_upload(
+    request: Request,
+    kb_slug: str,
+    artifact_id: str,
+    body: RenameUploadRequest,
+    org_id: str = Query(..., description="Zitadel org ID"),
+) -> RenameUploadResponse:
+    """Rename the user-facing label for a direct-upload artifact.
+
+    This intentionally does not mutate ``artifacts.path`` because that field
+    is also the document identity used in Qdrant cleanup and reindex flows.
+    """
+    verified_org_id = await assert_caller_identity_tenant_only(request, claimed_org_id=org_id)
+    async with tenant_scoped_connection(verified_org_id) as conn:
+        updated = await pg_store.update_artifact_display_name(
+            conn,
+            artifact_id,
+            verified_org_id,
+            kb_slug,
+            body.name.strip(),
+        )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="artifact not found")
+    return RenameUploadResponse(**updated)
 
 
 @router.delete(
