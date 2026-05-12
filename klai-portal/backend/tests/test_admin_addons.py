@@ -19,7 +19,7 @@ from fastapi import HTTPException
 from tests.conftest import make_perms
 
 
-def _mock_org(enabled_addons: list[str] | None = None, plan: str = "core") -> MagicMock:
+def _mock_org(enabled_addons: list[str] | None = None, plan: str = "chat") -> MagicMock:
     org = MagicMock()
     org.id = 42
     org.plan = plan

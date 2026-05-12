@@ -12,7 +12,7 @@ import pytest
 from fastapi import HTTPException
 
 
-def _mock_org_user_row(role: str, plan: str = "core", enabled_addons: list[str] | None = None) -> MagicMock:
+def _mock_org_user_row(role: str, plan: str = "chat", enabled_addons: list[str] | None = None) -> MagicMock:
     """Build a mock row that get_effective_products consumes (role, plan, enabled_addons)."""
     row = MagicMock()
     row.one_or_none.return_value = (role, plan, enabled_addons or [])
@@ -24,7 +24,7 @@ async def test_grants_when_feature_in_effective_products() -> None:
     from app.api.dependencies import require_product
 
     db = AsyncMock()
-    db.execute = AsyncMock(return_value=_mock_org_user_row("personal", "core"))
+    db.execute = AsyncMock(return_value=_mock_org_user_row("personal", "chat"))
     dep = require_product("chat")
     with patch("app.api.dependencies.get_current_user_id", return_value="user-1"):
         # Should not raise
@@ -36,7 +36,7 @@ async def test_denies_when_feature_missing() -> None:
     from app.api.dependencies import require_product
 
     db = AsyncMock()
-    db.execute = AsyncMock(return_value=_mock_org_user_row("personal", "core", []))
+    db.execute = AsyncMock(return_value=_mock_org_user_row("personal", "chat", []))
     dep = require_product("scribe")  # personal + scribe disabled at tenant -> denied
     with patch("app.api.dependencies.get_current_user_id", return_value="user-1"):
         with pytest.raises(HTTPException) as exc_info:
@@ -50,7 +50,7 @@ async def test_admin_blocked_when_addon_off() -> None:
     from app.api.dependencies import require_product
 
     db = AsyncMock()
-    db.execute = AsyncMock(return_value=_mock_org_user_row("admin", "core", []))
+    db.execute = AsyncMock(return_value=_mock_org_user_row("admin", "chat", []))
     dep = require_product("scribe")
     with patch("app.api.dependencies.get_current_user_id", return_value="admin-1"):
         with pytest.raises(HTTPException) as exc_info:
@@ -64,7 +64,7 @@ async def test_admin_passes_when_addon_on() -> None:
     from app.api.dependencies import require_product
 
     db = AsyncMock()
-    db.execute = AsyncMock(return_value=_mock_org_user_row("admin", "core", ["scribe"]))
+    db.execute = AsyncMock(return_value=_mock_org_user_row("admin", "chat", ["scribe"]))
     dep = require_product("scribe")
     with patch("app.api.dependencies.get_current_user_id", return_value="admin-1"):
         await dep(user_id="admin-1", db=db)  # no raise
@@ -76,7 +76,7 @@ async def test_personal_blocked_even_if_addon_on() -> None:
     from app.api.dependencies import require_product
 
     db = AsyncMock()
-    db.execute = AsyncMock(return_value=_mock_org_user_row("personal", "core", ["scribe"]))
+    db.execute = AsyncMock(return_value=_mock_org_user_row("personal", "chat", ["scribe"]))
     dep = require_product("scribe")
     with patch("app.api.dependencies.get_current_user_id", return_value="user-1"):
         with pytest.raises(HTTPException) as exc_info:
@@ -89,7 +89,7 @@ async def test_company_passes_when_addon_on() -> None:
     from app.api.dependencies import require_product
 
     db = AsyncMock()
-    db.execute = AsyncMock(return_value=_mock_org_user_row("company", "core", ["scribe"]))
+    db.execute = AsyncMock(return_value=_mock_org_user_row("company", "chat", ["scribe"]))
     dep = require_product("scribe")
     with patch("app.api.dependencies.get_current_user_id", return_value="user-1"):
         await dep(user_id="user-1", db=db)

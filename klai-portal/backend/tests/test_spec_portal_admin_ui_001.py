@@ -28,7 +28,7 @@ def _make_user(uid: str = "u1", role: str = "company") -> MagicMock:
     return user
 
 
-def _make_db(target: MagicMock | None, admin_count: int = 2, plan: str = "complete") -> AsyncMock:
+def _make_db(target: MagicMock | None, admin_count: int = 2, plan: str = "knowledge") -> AsyncMock:
     """AsyncMock DB used by ``update_user_role``.
 
     Returns three things in order across the two ``db.execute`` calls + one

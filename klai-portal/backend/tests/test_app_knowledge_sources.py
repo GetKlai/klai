@@ -34,7 +34,7 @@ def _make_db_mock(kb: MagicMock | None = None) -> AsyncMock:
     return db
 
 
-def _make_org(plan: str = "complete") -> MagicMock:
+def _make_org(plan: str = "knowledge") -> MagicMock:
     org = MagicMock()
     org.id = 1
     org.plan = plan

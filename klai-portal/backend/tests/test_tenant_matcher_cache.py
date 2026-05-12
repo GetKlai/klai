@@ -1,17 +1,22 @@
 """SPEC-SEC-HYGIENE-001 REQ-27 / AC-27: tenant_matcher cache TTL must be
-short enough that a plan downgrade reflects within a minute.
+short enough that an add-on toggle reflects within a minute.
 
-Pre-fix CACHE_TTL was 5 minutes, which meant a tenant downgrading from
-`professional` to `free` could still send invite-bot meeting traffic for
-up to 5 minutes after the downgrade landed (the cache held the old
-plan-eligible result). Business-logic hygiene fix: shrink the TTL to 60
-seconds (Option A from the SPEC — preferred for simplicity over an
-explicit invalidate_cache hook on the plan-change path).
+Pre-fix CACHE_TTL was 5 minutes, which meant a tenant disabling the scribe
+add-on could still send invite-bot meeting traffic for up to 5 minutes
+after the toggle landed (the cache held the old eligible result).
+Business-logic hygiene fix: shrink the TTL to 60 seconds (Option A from
+the SPEC — preferred for simplicity over an explicit invalidate_cache
+hook on the add-on toggle path).
+
+SPEC-PORTAL-PLAN-RENAME-001 update: scribe gating moved from a plan-bound
+SCRIBE_PLANS allowlist to a per-org ``enabled_addons`` list. The cache
+test now exercises an add-on REMOVAL across the TTL boundary; same
+semantic concern, different signal.
 
 Tests:
 - The CACHE_TTL constant equals 60 seconds (REQ-27.1 Option A choice).
-- Behavioural: an expired cache entry is re-fetched, so a plan
-  downgrade is reflected on the second call (REQ-27.3).
+- Behavioural: an expired cache entry is re-fetched, so an add-on
+  toggle is reflected on the next call (REQ-27.3).
 """
 
 from __future__ import annotations
@@ -40,8 +45,8 @@ def test_cache_ttl_is_sixty_seconds() -> None:
     )
 
 
-def _mock_session_with_org(plan: str) -> AsyncMock:
-    org_row = SimpleNamespace(id=42, plan=plan)
+def _mock_session_with_org(enabled_addons: list[str]) -> AsyncMock:
+    org_row = SimpleNamespace(id=42, enabled_addons=enabled_addons)
     mock_result = MagicMock()
     mock_result.one_or_none.return_value = org_row
     mock_session = AsyncMock()
@@ -52,9 +57,9 @@ def _mock_session_with_org(plan: str) -> AsyncMock:
 
 
 @pytest.mark.asyncio
-async def test_expired_cache_re_fetches_after_downgrade() -> None:
+async def test_expired_cache_re_fetches_after_addon_disabled() -> None:
     """REQ-27.3: after the TTL elapses, the next find_tenant call re-fetches
-    Zitadel + plan, so a downgrade from professional → free is reflected.
+    Zitadel + add-on state, so disabling the scribe add-on is reflected.
 
     Test technique: instead of moving the wall clock, mutate the cache
     expiry to a past timestamp between the two calls. This exercises the
@@ -63,13 +68,13 @@ async def test_expired_cache_re_fetches_after_downgrade() -> None:
     mock_zitadel = AsyncMock()
     mock_zitadel.find_user_by_email.return_value = ("user-1", "zorg-1")
 
-    # First call: tenant on professional plan → cached
+    # First call: tenant has scribe add-on enabled → cached.
     with (
         patch.object(tenant_matcher, "zitadel", mock_zitadel),
         patch.object(
             tenant_matcher,
             "AsyncSessionLocal",
-            return_value=_mock_session_with_org("professional"),
+            return_value=_mock_session_with_org(["scribe"]),
         ),
     ):
         result1 = await find_tenant("alice@example.com")
@@ -80,19 +85,20 @@ async def test_expired_cache_re_fetches_after_downgrade() -> None:
     expired_when = datetime.now(UTC) - timedelta(seconds=1)
     tenant_matcher._cache["alice@example.com"] = (result1, expired_when)
 
-    # Second call: same email, but plan has been downgraded to free.
-    # Cache expired → re-fetch → plan check fails → returns None.
+    # Second call: same email, but the scribe add-on has been disabled.
+    # Cache expired → re-fetch → add-on check fails → returns None.
     with (
         patch.object(tenant_matcher, "zitadel", mock_zitadel),
         patch.object(
             tenant_matcher,
             "AsyncSessionLocal",
-            return_value=_mock_session_with_org("free"),
+            return_value=_mock_session_with_org([]),
         ),
     ):
         result2 = await find_tenant("alice@example.com")
     assert result2 is None, (
-        "Cache expired before the second call; a downgraded plan must make find_tenant return None on the next request."
+        "Cache expired before the second call; disabling the scribe add-on "
+        "must make find_tenant return None on the next request."
     )
     # Zitadel was called twice — once for the populated entry, once after expiry.
     assert mock_zitadel.find_user_by_email.await_count == 2

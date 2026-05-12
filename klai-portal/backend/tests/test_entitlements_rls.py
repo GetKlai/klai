@@ -27,7 +27,7 @@ async def test_no_set_tenant_invocation(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(entitlements, "set_tenant", set_tenant_mock, raising=False)
 
     row = MagicMock()
-    row.one_or_none.return_value = ("admin", "core", ["scribe"])
+    row.one_or_none.return_value = ("admin", "chat", ["scribe"])
     db = AsyncMock()
     db.execute = AsyncMock(return_value=row)
 
@@ -40,7 +40,7 @@ async def test_no_set_tenant_invocation(monkeypatch: pytest.MonkeyPatch) -> None
 async def test_single_query_no_union() -> None:
     """RBAC-001: derivation issues exactly ONE SELECT, no UNION over RLS tables."""
     row = MagicMock()
-    row.one_or_none.return_value = ("admin", "core", [])
+    row.one_or_none.return_value = ("admin", "chat", [])
     db = AsyncMock()
     db.execute = AsyncMock(return_value=row)
 

@@ -27,7 +27,7 @@ def _make_db_mock() -> AsyncMock:
     return db
 
 
-def _make_org(plan: str = "core") -> MagicMock:
+def _make_org(plan: str = "chat") -> MagicMock:
     org = MagicMock()
     org.plan = plan
     org.id = 1
@@ -45,7 +45,7 @@ class TestCreateKBPersonalQuota:
         from app.api.app_knowledge_bases import create_app_knowledge_base
 
         mock_db = _make_db_mock()
-        org = _make_org("core")
+        org = _make_org("chat")
 
         # KB count query: at limit
         mock_count_result = MagicMock()
@@ -66,7 +66,7 @@ class TestCreateKBPersonalQuota:
             with pytest.raises(HTTPException) as exc_info:
                 await create_app_knowledge_base(
                     body=body,
-                    perms=make_perms(user_id="user-core", plan="core", role="kb_manager"),
+                    perms=make_perms(user_id="user-core", plan="chat", role="kb_manager"),
                     db=mock_db,
                 )
 
@@ -79,7 +79,7 @@ class TestCreateKBPersonalQuota:
         from app.api.app_knowledge_bases import create_app_knowledge_base
 
         mock_db = _make_db_mock()
-        org = _make_org("core")
+        org = _make_org("chat")
 
         mock_count_result = MagicMock()
         mock_count_result.scalar_one.return_value = 8  # above limit
@@ -99,7 +99,7 @@ class TestCreateKBPersonalQuota:
             with pytest.raises(HTTPException) as exc_info:
                 await create_app_knowledge_base(
                     body=body,
-                    perms=make_perms(user_id="user-core", plan="core", role="kb_manager"),
+                    perms=make_perms(user_id="user-core", plan="chat", role="kb_manager"),
                     db=mock_db,
                 )
 
@@ -116,7 +116,7 @@ class TestCreateKBOrgQuota:
         from app.api.app_knowledge_bases import create_app_knowledge_base
 
         mock_db = _make_db_mock()
-        org = _make_org("core")
+        org = _make_org("chat")
 
         body = MagicMock()
         body.owner_type = "org"
@@ -132,7 +132,7 @@ class TestCreateKBOrgQuota:
             with pytest.raises(HTTPException) as exc_info:
                 await create_app_knowledge_base(
                     body=body,
-                    perms=make_perms(user_id="user-core", plan="core", role="kb_manager"),
+                    perms=make_perms(user_id="user-core", plan="chat", role="kb_manager"),
                     db=mock_db,
                 )
 
@@ -144,7 +144,7 @@ class TestCreateKBOrgQuota:
         from app.api.app_knowledge_bases import create_app_knowledge_base
 
         mock_db = _make_db_mock()
-        org = _make_org("professional")
+        org = _make_org("chat")
 
         body = MagicMock()
         body.owner_type = "org"
@@ -160,7 +160,7 @@ class TestCreateKBOrgQuota:
             with pytest.raises(HTTPException) as exc_info:
                 await create_app_knowledge_base(
                     body=body,
-                    perms=make_perms(user_id="user-pro", plan="professional", role="kb_manager"),
+                    perms=make_perms(user_id="user-pro", plan="chat", role="kb_manager"),
                     db=mock_db,
                 )
 
@@ -173,7 +173,7 @@ class TestCreateKBOrgQuota:
         from app.api.app_knowledge_bases import create_app_knowledge_base
 
         mock_db = _make_db_mock()
-        org = _make_org("complete")
+        org = _make_org("knowledge")
 
         mock_kb = MagicMock()
         mock_kb.id = 1
@@ -221,7 +221,7 @@ class TestCreateKBOrgQuota:
             try:
                 await create_app_knowledge_base(
                     body=body,
-                    perms=make_perms(user_id="user-complete", plan="complete", role="kb_manager"),
+                    perms=make_perms(user_id="user-complete", plan="knowledge", role="kb_manager"),
                     db=mock_db,
                 )
             except HTTPException as exc:

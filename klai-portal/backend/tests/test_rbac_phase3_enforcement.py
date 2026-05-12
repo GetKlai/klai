@@ -39,28 +39,37 @@ from tests.conftest import make_perms
 
 
 class TestAllowedProfilesPerPlan:
-    """REQ-12 / REQ-13: locks the canonical plan→role allow-set so an
-    accidental edit cannot widen or narrow the policy without a test
-    failure surfacing it."""
+    """SPEC-PORTAL-PLAN-RENAME-001: locks the canonical plan→role allow-set
+    so an accidental edit cannot widen or narrow the policy without a
+    test failure surfacing it.
+
+    Plan ladder: free (sentinel) < chat (€28) < knowledge (€68 full unlock).
+    """
 
     def test_free_admin_only_plus_personal(self):
         assert ALLOWED_PROFILES_PER_PLAN["free"] == frozenset({"personal", "admin"})
 
-    def test_core_excludes_kb_manager(self):
-        # REQ-13: kb_manager is unlocked only on ``complete``.
-        assert "kb_manager" not in ALLOWED_PROFILES_PER_PLAN["core"]
-        assert "group_manager" in ALLOWED_PROFILES_PER_PLAN["core"]
+    def test_chat_excludes_kb_manager_and_group_manager(self):
+        # kb_manager / group_manager need kb.create_org / kb.members which
+        # the chat tier does not unlock; assigning them would be cosmetic.
+        assert "kb_manager" not in ALLOWED_PROFILES_PER_PLAN["chat"]
+        assert "group_manager" not in ALLOWED_PROFILES_PER_PLAN["chat"]
+        assert ALLOWED_PROFILES_PER_PLAN["chat"] == frozenset({"personal", "company", "admin"})
 
-    def test_complete_includes_all_five_roles(self):
-        assert ALLOWED_PROFILES_PER_PLAN["complete"] == frozenset(
+    def test_knowledge_includes_all_five_roles(self):
+        assert ALLOWED_PROFILES_PER_PLAN["knowledge"] == frozenset(
             {"personal", "company", "kb_manager", "group_manager", "admin"}
         )
+
+    def test_legacy_slugs_are_gone(self):
+        for legacy in ("core", "professional", "complete"):
+            assert legacy not in ALLOWED_PROFILES_PER_PLAN
 
 
 class TestAssertRoleAllowedForPlan:
     def test_admin_passes_on_every_plan(self):
         # ``admin`` is a billing-decision role; it must always be assignable.
-        for plan in ("free", "core", "complete"):
+        for plan in ("free", "chat", "knowledge"):
             assert_role_allowed_for_plan("admin", plan)
 
     def test_kb_manager_rejected_on_free_with_correct_error_shape(self):
@@ -74,14 +83,14 @@ class TestAssertRoleAllowedForPlan:
         assert detail["plan"] == "free"
         assert "admin" in detail["allowed"]
 
-    def test_kb_manager_rejected_on_core(self):
+    def test_kb_manager_rejected_on_chat(self):
         with pytest.raises(HTTPException) as exc:
-            assert_role_allowed_for_plan("kb_manager", "core")
+            assert_role_allowed_for_plan("kb_manager", "chat")
         assert exc.value.status_code == 403
         assert exc.value.detail["error_code"] == "role_not_allowed_for_plan"
 
-    def test_kb_manager_passes_on_complete(self):
-        assert_role_allowed_for_plan("kb_manager", "complete")
+    def test_kb_manager_passes_on_knowledge(self):
+        assert_role_allowed_for_plan("kb_manager", "knowledge")
 
     def test_unknown_plan_falls_back_to_free_set(self):
         # Defensive: a typo in a plan field MUST NOT widen the role ladder.
@@ -251,7 +260,7 @@ class TestPlanCeilingOnRoleAssignment:
         org = MagicMock()
         org.id = 101
         org.seats = 100
-        org.plan = "core"  # REQ-13: kb_manager NOT allowed on core
+        org.plan = "chat"  # SPEC-PORTAL-PLAN-RENAME-001: kb_manager NOT allowed on chat
 
         mock_db = AsyncMock()
         locked_org_result = MagicMock()
@@ -266,7 +275,7 @@ class TestPlanCeilingOnRoleAssignment:
             role="kb_manager",
             preferred_language="nl",
         )
-        perms = make_perms(role="admin", user_id="admin-1", org_id=101, plan="core")
+        perms = make_perms(role="admin", user_id="admin-1", org_id=101, plan="chat")
 
         with pytest.raises(HTTPException) as exc:
             await invite_user(body=body, perms=perms, db=mock_db)
@@ -274,11 +283,11 @@ class TestPlanCeilingOnRoleAssignment:
         assert exc.value.status_code == 403
         assert exc.value.detail["error_code"] == "role_not_allowed_for_plan"
         assert exc.value.detail["role"] == "kb_manager"
-        assert exc.value.detail["plan"] == "core"
+        assert exc.value.detail["plan"] == "chat"
 
     @pytest.mark.asyncio
-    async def test_invite_user_accepts_kb_manager_on_complete(self):
-        """The mirror case: ``complete`` plan accepts ``kb_manager``.
+    async def test_invite_user_accepts_kb_manager_on_knowledge(self):
+        """The mirror case: ``knowledge`` plan accepts ``kb_manager``.
 
         We rely on the existing ``test_invite_user_grants_portal_role_to_zitadel``
         parametrize for full role-mapping coverage; this test pins the
@@ -289,7 +298,7 @@ class TestPlanCeilingOnRoleAssignment:
         org = MagicMock()
         org.id = 101
         org.seats = 100
-        org.plan = "complete"
+        org.plan = "knowledge"
 
         mock_db = AsyncMock()
         locked_org_result = MagicMock()
@@ -304,7 +313,7 @@ class TestPlanCeilingOnRoleAssignment:
             role="kb_manager",
             preferred_language="nl",
         )
-        perms = make_perms(role="admin", user_id="admin-1", org_id=101, plan="complete")
+        perms = make_perms(role="admin", user_id="admin-1", org_id=101, plan="knowledge")
 
         with (
             patch("app.api.admin.users.zitadel") as mock_zitadel,
@@ -336,7 +345,7 @@ class TestPlanCeilingOnRoleAssignment:
         body = RoleUpdateRequest(role="company")
         # perms.plan deliberately MISMATCHES locked_org.plan to prove the
         # endpoint reads the locked row, not the snapshot.
-        perms = make_perms(role="admin", user_id="admin-1", org_id=42, plan="complete")
+        perms = make_perms(role="admin", user_id="admin-1", org_id=42, plan="knowledge")
 
         with pytest.raises(HTTPException) as exc:
             await update_user_role(zitadel_user_id="zit-2", body=body, perms=perms, db=mock_db)
@@ -344,7 +353,7 @@ class TestPlanCeilingOnRoleAssignment:
         assert exc.value.status_code == 403
         assert exc.value.detail["error_code"] == "role_not_allowed_for_plan"
         assert exc.value.detail["role"] == "company"
-        # CRITICAL: must be 'free' (locked row), not 'complete' (perms snapshot).
+        # CRITICAL: must be 'free' (locked row), not 'knowledge' (perms snapshot).
         assert exc.value.detail["plan"] == "free"
 
     @pytest.mark.asyncio
@@ -359,9 +368,9 @@ class TestPlanCeilingOnRoleAssignment:
         accept — proving it ignores the snapshot."""
         from app.api.admin.users import RoleUpdateRequest, update_user_role
 
-        # Locked plan = complete (allows kb_manager).
+        # Locked plan = knowledge (allows kb_manager).
         locked_org = MagicMock()
-        locked_org.plan = "complete"
+        locked_org.plan = "knowledge"
         target_user = MagicMock()
         target_user.role = "company"
         target_user.zitadel_user_id = "zit-2"
@@ -392,7 +401,7 @@ class TestPlanCeilingOnRoleAssignment:
         """
         from app.api.admin.users import promote_admin
 
-        for plan in ("free", "core", "complete"):
+        for plan in ("free", "chat", "knowledge"):
             mock_db = AsyncMock()
             target = MagicMock()
             target.role = "company"

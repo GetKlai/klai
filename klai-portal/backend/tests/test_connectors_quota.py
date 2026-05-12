@@ -31,7 +31,7 @@ sys.modules.setdefault("connector_credentials", _stub_mod)
 sys.modules.setdefault("connector_credentials.cipher", _stub_cipher)
 
 
-def _make_org(plan: str = "core") -> MagicMock:
+def _make_org(plan: str = "chat") -> MagicMock:
     org = MagicMock()
     org.plan = plan
     org.id = 1
@@ -82,7 +82,7 @@ class TestTriggerSyncItemQuota:
         """Core-user personal KB with 20 items → 403 kb_quota_items_exceeded."""
         from app.api.connectors import trigger_sync
 
-        org = _make_org("core")
+        org = _make_org("chat")
         kb = _make_kb(owner_type="user", slug="my-kb")
         connector = _make_connector()
         db = _make_db(kb, connector)
@@ -108,7 +108,7 @@ class TestTriggerSyncItemQuota:
                 await trigger_sync(
                     kb_slug="my-kb",
                     connector_id="conn-1",
-                    perms=make_perms(role="company", plan="core", org_id=1),
+                    perms=make_perms(role="company", plan="chat", org_id=1),
                     db=db,
                 )
 
@@ -120,7 +120,7 @@ class TestTriggerSyncItemQuota:
         """Core-user personal KB with 19 items → sync is triggered (no 403)."""
         from app.api.connectors import trigger_sync
 
-        org = _make_org("core")
+        org = _make_org("chat")
         kb = _make_kb(owner_type="user", slug="my-kb")
         connector = _make_connector()
         db = _make_db(kb, connector)
@@ -153,7 +153,7 @@ class TestTriggerSyncItemQuota:
             result = await trigger_sync(
                 kb_slug="my-kb",
                 connector_id="conn-1",
-                perms=make_perms(role="company", plan="core", org_id=1),
+                perms=make_perms(role="company", plan="chat", org_id=1),
                 db=db,
             )
 
@@ -164,7 +164,7 @@ class TestTriggerSyncItemQuota:
         """Complete-plan user: no item limit → sync proceeds even with 100 items."""
         from app.api.connectors import trigger_sync
 
-        org = _make_org("complete")
+        org = _make_org("knowledge")
         kb = _make_kb(owner_type="user", slug="my-kb")
         connector = _make_connector()
         db = _make_db(kb, connector)
@@ -197,7 +197,7 @@ class TestTriggerSyncItemQuota:
             result = await trigger_sync(
                 kb_slug="my-kb",
                 connector_id="conn-1",
-                perms=make_perms(role="kb_manager", plan="complete", org_id=1),
+                perms=make_perms(role="kb_manager", plan="knowledge", org_id=1),
                 db=db,
             )
 
@@ -220,7 +220,7 @@ class TestConnectorCapabilityGate:
 
         mock_db = AsyncMock()
         mock_org = MagicMock()
-        mock_org.plan = "core"
+        mock_org.plan = "chat"
         mock_user = MagicMock()
         mock_user.role = "member"
         mock_result = MagicMock()
@@ -242,7 +242,7 @@ class TestConnectorCapabilityGate:
 
         mock_db = AsyncMock()
         mock_org = MagicMock()
-        mock_org.plan = "core"
+        mock_org.plan = "chat"
         mock_user = MagicMock()
         mock_user.role = "admin"
         mock_result = MagicMock()
