@@ -474,6 +474,18 @@ services:
       # a future admin-api caller picks up the real token, matching the
       # pre-migration env-shape.
       VEXA_ADMIN_TOKEN: ${VEXA_ADMIN_TOKEN}
+      # ─── Garage S3 — KB-image auth-proxy (SPEC-TI-009 + SPEC-PORTAL-DOCS-IMAGE-PASTE-001) ─
+      # portal-api is the auth-proxy for /kb-images/{org_id}/{kb_slug}/{filename}
+      # (read: SPEC-TI-009 GET; write: SPEC-PORTAL-DOCS-IMAGE-PASTE-001 POST).
+      # Without these vars the route 503s with "Image storage not configured".
+      # Missing from compose pre-fix because SPEC-SEC-ENVFILE-SCOPE-001 didn't
+      # include them when portal-api's environment block was made explicit —
+      # the read-route was never browser-fetched until 2026-05-12, so nobody
+      # noticed. Same env shape as klai-connector + klai-knowledge-ingest.
+      GARAGE_S3_ENDPOINT: garage:3900
+      GARAGE_S3_ACCESS_KEY: ${GARAGE_ACCESS_KEY}
+      GARAGE_S3_SECRET_KEY: ${GARAGE_SECRET_KEY}
+      GARAGE_KB_BUCKET: ${GARAGE_BUCKET:-klai-images}
       # ─── Billing — Moneybird ────────────────────────────────────
       # Validator in config.py requires MONEYBIRD_WEBHOOK_TOKEN at boot.
       MONEYBIRD_WEBHOOK_TOKEN: ${MONEYBIRD_WEBHOOK_TOKEN}
