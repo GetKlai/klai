@@ -587,6 +587,36 @@ async def delete_kb_upload(
         resp.raise_for_status()
 
 
+async def rename_kb_upload(
+    org_id: str,
+    kb_slug: str,
+    artifact_id: str,
+    name: str,
+) -> dict:
+    """Update the display name for a direct-upload artifact.
+
+    The ingest service stores this as artifact metadata, not as ``path``.
+    ``path`` remains the stable document key for Qdrant cleanup/reindex.
+    """
+    async with httpx.AsyncClient(
+        base_url=settings.knowledge_ingest_url,
+        headers={
+            "X-Internal-Secret": settings.knowledge_ingest_secret,
+            "X-Caller-Service": "portal-api",
+            **get_trace_headers(),
+        },
+        timeout=10.0,
+    ) as client:
+        resp = await client.patch(
+            f"/knowledge/v1/kb/{kb_slug}/uploads/{artifact_id}",
+            params={"org_id": org_id},
+            json={"name": name},
+        )
+        resp.raise_for_status()
+        data: dict = resp.json()
+        return data
+
+
 async def get_chunks_summary(org_id: str, kb_slugs: list[str]) -> tuple[dict[str, int], dict[str, int]]:
     """Bulk chunk + bronnen counts per KB.
 

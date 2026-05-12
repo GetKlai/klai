@@ -9,7 +9,7 @@ from typing import Literal
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -921,6 +921,7 @@ class BronOut(BaseModel):
     name: str  # display name (connector.name OR artifact.path)
     type_label: str  # "Notion", "GitHub", "PDF", "URL", etc. — frontend may translate
     connector_type: str | None = None  # raw connector_type for connectors; None for uploads
+    source_url: str | None = None  # direct URL uploads only; stable source URL for drill-down display
     items_count: int = 0  # number of artifacts under a connector; 1 for direct uploads
     chunks_count: int = 0  # parent_chunks across the bron's artifact(s)
     status: str | None = None  # raw last_sync_status for connectors; None for uploads
@@ -931,6 +932,15 @@ class BronOut(BaseModel):
 
 class BronnenResponse(BaseModel):
     bronnen: list[BronOut] = []
+
+
+class RenameUploadRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+
+class RenameUploadResponse(BaseModel):
+    artifact_id: str
+    display_name: str
 
 
 class BronContentItem(BaseModel):
@@ -983,6 +993,8 @@ def _upload_type_label(content_type: str) -> str:
     ct = content_type.lower()
     if ct in {"pdf", "application/pdf"}:
         return "PDF"
+    if ct == "web_page":
+        return "Website"
     if ct in {"url", "html", "text/html"}:
         return "Link"
     if ct in {"text", "markdown", "txt", "text/plain", "text/markdown"}:
@@ -1098,9 +1110,10 @@ async def list_kb_bronnen(
             BronOut(
                 kind="upload",
                 id=str(upload.get("id") or ""),
-                name=str(upload.get("path") or "(zonder naam)"),
+                name=str(upload.get("display_name") or upload.get("path") or "(zonder naam)"),
                 type_label=_upload_type_label(str(upload.get("content_type") or "")),
                 connector_type=None,
+                source_url=upload.get("source_url"),
                 items_count=1,
                 chunks_count=int(upload.get("chunks_count") or 0),
                 status=None,
@@ -1268,6 +1281,52 @@ async def reindex_upload(
 
     await knowledge_ingest_client.reindex_artifact(org.zitadel_org_id, artifact_id)
     return {"artifact_id": artifact_id, "status": "pending"}
+
+
+@router.patch(
+    "/knowledge-bases/{kb_slug}/uploads/{artifact_id}",
+    response_model=RenameUploadResponse,
+)
+async def rename_kb_upload(
+    kb_slug: str,
+    artifact_id: str,
+    body: RenameUploadRequest,
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> RenameUploadResponse:
+    """Rename the display label for a direct-upload artifact.
+
+    The ingest-side artifact path is left untouched because it is the stable
+    Qdrant document key. This endpoint changes only the user-facing name.
+    """
+    org = await _load_org_or_500(db, perms.org_id)
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+
+    role = await get_user_role_for_kb(
+        kb.id,
+        perms.user_id,
+        db,
+        default_org_role=kb.default_org_role,
+        kb_org_id=kb.org_id,
+        kb_created_by=kb.created_by,
+    )
+    if role not in ("contributor", "owner"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Contributor or owner access required",
+        )
+
+    display_name = body.name.strip()
+    result = await knowledge_ingest_client.rename_kb_upload(
+        org.zitadel_org_id,
+        kb.slug,
+        artifact_id,
+        display_name,
+    )
+    return RenameUploadResponse(
+        artifact_id=str(result.get("artifact_id") or artifact_id),
+        display_name=str(result.get("display_name") or display_name),
+    )
 
 
 @router.delete("/knowledge-bases/{kb_slug}/uploads/{artifact_id}", status_code=204)

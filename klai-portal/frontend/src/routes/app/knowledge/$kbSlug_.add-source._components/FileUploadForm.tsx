@@ -5,6 +5,7 @@ import { CheckCircle2, FileText, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import * as m from '@/paraglide/messages'
 import { ApiError, apiFetch } from '@/lib/apiFetch'
+import { invalidateKnowledgeSourceLists } from '../$kbSlug/-kb-query-keys'
 
 // SPEC-KB-FILE-UPLOAD-001 — full whitelist routed through portal-api.
 // .md / .txt / .csv go to /ingest/v1/document directly. PDF / DOCX /
@@ -177,11 +178,7 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
       )
     },
     onSuccess: (data) => {
-      void queryClient.invalidateQueries({ queryKey: ['kb-items', kbSlug] })
-      void queryClient.invalidateQueries({ queryKey: ['personal-knowledge', kbSlug] })
-      void queryClient.invalidateQueries({
-        queryKey: ['app-knowledge-bases-stats-summary'],
-      })
+      invalidateKnowledgeSourceLists(queryClient, kbSlug)
       setServerSkipped(data.skipped)
       setSelectedFiles([])
       setTrackedEntries(

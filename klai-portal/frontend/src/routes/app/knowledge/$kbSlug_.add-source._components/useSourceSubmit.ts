@@ -11,6 +11,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { ApiError, apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
+import { invalidateKnowledgeSourceLists } from '../$kbSlug/-kb-query-keys'
 
 export type SourceKind = 'url' | 'text'
 
@@ -97,11 +98,7 @@ export function useSourceSubmit<TBody>({
         }
       ),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['kb-items', kbSlug] })
-      void queryClient.invalidateQueries({ queryKey: ['personal-knowledge', kbSlug] })
-      void queryClient.invalidateQueries({
-        queryKey: ['app-knowledge-bases-stats-summary'],
-      })
+      invalidateKnowledgeSourceLists(queryClient, kbSlug)
       setSuccessful(true)
       setTimeout(() => {
         void navigate({

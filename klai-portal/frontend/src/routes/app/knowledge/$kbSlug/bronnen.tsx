@@ -13,22 +13,18 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import {
+  Check,
   ChevronRight,
   File,
-  FileText,
-  Globe,
-  Image,
   Link as LinkIcon,
   Loader2,
   Pencil,
   Plus,
   RefreshCw,
   Trash2,
-  Type,
+  X,
   Zap,
 } from 'lucide-react'
-import { SiAirtable, SiConfluence, SiGithub, SiGoogledrive, SiNotion } from '@icons-pack/react-simple-icons'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -37,136 +33,19 @@ import { apiFetch } from '@/lib/apiFetch'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { DOCS_BASE, getOrgSlug } from '@/lib/kb-editor/tree-utils'
 import { queryLogger } from '@/lib/logger'
+import type { Bron, BronnenResponse, ContentResponse, PageIndexEntry } from './-bronnen-types'
+import { BronIcon, editablePageIdForBron, mapBronStatus, StatusBadge } from './-bronnen-helpers'
+import { kbQueryKeys } from './-kb-query-keys'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/bronnen')({
   component: BronnenTab,
 })
 
-// -- Types ------------------------------------------------------------------
-
-interface Bron {
-  kind: 'connector' | 'upload'
-  id: string
-  name: string
-  type_label: string
-  connector_type: string | null
-  items_count: number
-  chunks_count: number
-  status: string | null
-  last_sync_at: string | null
-  created_at: string | null
-  /** Upload-only: pending / synced / failed from Track 3 backend. */
-  index_status?: string | null
-}
-
-interface BronnenResponse {
-  bronnen: Bron[]
-}
-
-interface ConnectorItem {
-  id: string
-  path: string
-  content_type: string
-  chunks_count: number
-  created_at: string
-}
-
-interface UploadChunk {
-  id: number
-  position: number
-  text: string
-  token_count: number
-}
-
-interface ContentResponse {
-  kind: 'connector' | 'upload'
-  items: ConnectorItem[]
-  chunks: UploadChunk[]
-  total: number
-  limit: number
-  offset: number
-}
-
-// -- Status mapping ---------------------------------------------------------
-//
-// User mental model: a bron is gesynchroniseerd, pending (mid-sync), or
-// niet gesynchroniseerd (failed / never started). Three states only.
-
-type Status = 'synced' | 'pending' | 'not_synced'
-
-function mapStatus(bron: Bron): Status {
-  const s = (bron.status ?? '').toLowerCase()
-  if (bron.kind === 'upload') {
-    // index_status is the authoritative field (Track 3).
-    // parent_chunks count is NOT a reliable proxy for "synced": artifacts
-    // that came through the docs-editor / graphiti path index into Qdrant
-    // but leave parent_chunks empty — the overview page already counts the
-    // vector_chunk_count separately. An artifact with index_status='synced'
-    // IS retrievable by the LLM, regardless of parent_chunks.
-    const idx = (bron.index_status ?? '').toLowerCase()
-    if (idx === 'pending' || s === 'processing' || s === 'ingesting') return 'pending'
-    if (idx === 'failed' || s === 'failed' || s.includes('error')) return 'not_synced'
-    if (idx === 'synced') return 'synced'
-    // Unknown status with no chunks → assume not yet indexed.
-    if (bron.chunks_count === 0 && !idx) return 'not_synced'
-    return 'synced'
-  }
-  // Connector — last_sync_status is the source of truth.
-  if (s === 'running' || s === 'pending' || s === 'syncing') return 'pending'
-  if (s.includes('error') || s.includes('failed') || s === 'auth_error' || s === 'orphan') {
-    return 'not_synced'
-  }
-  if (s === 'success' || s === 'completed' || s === 'ok') return 'synced'
-  // Has data but unknown explicit status — assume synced.
-  if (bron.items_count > 0 || bron.chunks_count > 0) return 'synced'
-  return 'not_synced'
-}
-
-function StatusBadge({ status }: { status: Status }) {
-  const labelMap = {
-    synced: m.kb_status_klaar(),
-    pending: m.kb_status_bezig(),
-    not_synced: m.kb_status_leeg(),
-  } as const
-  // Synced = success (subtle green). Pending = secondary (neutral).
-  // Not_synced = subtle secondary: it's "not yet" not "failed".
-  const variantMap = {
-    synced: 'success' as const,
-    pending: 'secondary' as const,
-    not_synced: 'secondary' as const,
-  }
-  return <Badge variant={variantMap[status]}>{labelMap[status]}</Badge>
-}
-
-// -- Bron icon --------------------------------------------------------------
-
-function BronIcon({ bron }: { bron: Bron }) {
-  if (bron.kind === 'connector') {
-    const t = bron.connector_type ?? ''
-    if (t === 'github') return <SiGithub className="h-4 w-4" />
-    if (t === 'notion') return <SiNotion className="h-4 w-4" />
-    if (t === 'google_drive') return <SiGoogledrive className="h-4 w-4" />
-    if (t === 'airtable') return <SiAirtable className="h-4 w-4" />
-    if (t === 'confluence') return <SiConfluence className="h-4 w-4" />
-    if (t === 'web_crawler') return <Globe className="h-4 w-4" />
-    if (t === 'ms_docs') return <FileText className="h-4 w-4" />
-    return <Zap className="h-4 w-4" />
-  }
-  // upload
-  const ct = (bron.connector_type ?? '').toLowerCase()
-  const path = bron.name.toLowerCase()
-  if (path.endsWith('.pdf') || ct === 'pdf') return <FileText className="h-4 w-4" />
-  if (path.startsWith('http') || ct === 'url' || ct === 'html') return <Globe className="h-4 w-4" />
-  if (ct.startsWith('image') || /\.(png|jpe?g|gif|webp|svg)$/i.test(path)) return <Image className="h-4 w-4" />
-  if (ct === 'text' || ct === 'markdown') return <Type className="h-4 w-4" />
-  return <File className="h-4 w-4" />
-}
-
 // -- Bron content (drill-down) ----------------------------------------------
 
 function BronContent({ kbSlug, bron }: { kbSlug: string; bron: Bron }) {
   const { data, isLoading, isError } = useQuery<ContentResponse>({
-    queryKey: ['bron-content', kbSlug, bron.kind, bron.id],
+    queryKey: kbQueryKeys.bronContent(kbSlug, bron.kind, bron.id),
     queryFn: () =>
       apiFetch<ContentResponse>(
         `/api/app/knowledge-bases/${kbSlug}/sources/${bron.id}/content?kind=${bron.kind}&limit=20`,
@@ -221,6 +100,15 @@ function BronContent({ kbSlug, bron }: { kbSlug: string; bron: Bron }) {
   // upload
   const chunks = data?.chunks ?? []
   if (chunks.length === 0) {
+    if (bron.source_url) {
+      return (
+        <div className="pl-[44px] pr-2 pb-3 flex items-center gap-2 text-xs">
+          <File className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+          <span className="text-gray-700 truncate">{bron.source_url}</span>
+          <span className="text-gray-400 shrink-0">URL</span>
+        </div>
+      )
+    }
     // Two cases produce empty chunks here:
     //  1) Truly unindexed — index_status='pending'/'failed' on the row above.
     //  2) Indexed via docs/graphiti path — vectors live in Qdrant, no
@@ -271,10 +159,12 @@ function BronRow({
   editablePageId: string | null
 }) {
   const queryClient = useQueryClient()
-  const status = mapStatus(bron)
+  const status = mapBronStatus(bron)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [reauthError, setReauthError] = useState(false)
   const [reauthPending, setReauthPending] = useState(false)
+  const [isRenaming, setIsRenaming] = useState(false)
+  const [draftName, setDraftName] = useState(bron.name)
 
   // REQ-13: per-row sync/reindex button.
   // For connectors → POST /connectors/{id}/sync (full source-side resync).
@@ -286,8 +176,8 @@ function BronRow({
   const syncMutation = useMutation({
     mutationFn: async () => apiFetch(syncEndpoint, { method: 'POST' }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['kb-bronnen', kbSlug] })
-      void queryClient.invalidateQueries({ queryKey: ['app-knowledge-bases-stats-summary'] })
+      void queryClient.invalidateQueries({ queryKey: kbQueryKeys.bronnen(kbSlug) })
+      void queryClient.invalidateQueries({ queryKey: kbQueryKeys.statsSummary() })
     },
     onError: (err) => queryLogger.error('Bron sync failed', { kbSlug, bronId: bron.id, kind: bron.kind, err }),
   })
@@ -295,10 +185,10 @@ function BronRow({
   // REQ-15: delete upload artifact.
   const deleteUploadMutation = useMutation({
     mutationFn: async () =>
-      apiFetch(`/api/knowledge/personal/items/${bron.id}`, { method: 'DELETE' }),
+      apiFetch(`/api/app/knowledge-bases/${kbSlug}/uploads/${bron.id}`, { method: 'DELETE' }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['kb-bronnen', kbSlug] })
-      void queryClient.invalidateQueries({ queryKey: ['app-knowledge-bases-stats-summary'] })
+      void queryClient.invalidateQueries({ queryKey: kbQueryKeys.bronnen(kbSlug) })
+      void queryClient.invalidateQueries({ queryKey: kbQueryKeys.statsSummary() })
     },
     onError: (err) => queryLogger.error('Bron delete (upload) failed', { kbSlug, bronId: bron.id, err }),
   })
@@ -308,14 +198,27 @@ function BronRow({
     mutationFn: async () =>
       apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/${bron.id}`, { method: 'DELETE' }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['kb-bronnen', kbSlug] })
-      void queryClient.invalidateQueries({ queryKey: ['app-knowledge-bases-stats-summary'] })
+      void queryClient.invalidateQueries({ queryKey: kbQueryKeys.bronnen(kbSlug) })
+      void queryClient.invalidateQueries({ queryKey: kbQueryKeys.statsSummary() })
     },
     onError: (err) => queryLogger.error('Bron delete (connector) failed', { kbSlug, bronId: bron.id, err }),
   })
 
   const deleteMutation = bron.kind === 'upload' ? deleteUploadMutation : deleteConnectorMutation
   const isDeleting = deleteMutation.isPending
+
+  const renameMutation = useMutation({
+    mutationFn: async (name: string) =>
+      apiFetch(`/api/app/knowledge-bases/${kbSlug}/uploads/${bron.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name }),
+      }),
+    onSuccess: () => {
+      setIsRenaming(false)
+      void queryClient.invalidateQueries({ queryKey: kbQueryKeys.bronnen(kbSlug) })
+    },
+    onError: (err) => queryLogger.error('Bron rename failed', { kbSlug, bronId: bron.id, err }),
+  })
 
   // Q4: "Verbind opnieuw" — connector has auth_error status.
   const isAuthError = bron.kind === 'connector' && (bron.status ?? '').toLowerCase().includes('auth')
@@ -342,7 +245,7 @@ function BronRow({
       setReauthPending(false)
       setReauthError(true)
       queryLogger.error('Connector reauth failed', { kbSlug, bronId: bron.id, err })
-      void queryClient.invalidateQueries({ queryKey: ['kb-bronnen', kbSlug] })
+      void queryClient.invalidateQueries({ queryKey: kbQueryKeys.bronnen(kbSlug) })
     }
   }
 
@@ -361,22 +264,70 @@ function BronRow({
   return (
     <div>
       <div className="group flex items-center gap-2 pr-2 hover:bg-black/[0.03] transition-colors">
-        <button
-          type="button"
-          onClick={onToggle}
-          className="flex flex-1 min-w-0 items-center gap-3 px-2 py-3.5 text-left"
-          aria-expanded={expanded}
-        >
+        <div className="flex flex-1 min-w-0 items-center gap-3 px-2 py-3.5">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-50 text-gray-400">
             <BronIcon bron={bron} />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex items-baseline gap-2 flex-wrap">
-              <span className="text-[15px] font-display text-gray-900 truncate">{bron.name}</span>
-              <span className="text-xs text-gray-400">{meta}</span>
-            </div>
+            {isRenaming ? (
+              <div className="flex items-center gap-1 min-w-[220px] max-w-full">
+                <input
+                  value={draftName}
+                  autoFocus
+                  onChange={(e) => setDraftName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      setDraftName(bron.name)
+                      setIsRenaming(false)
+                    }
+                    if (e.key === 'Enter' && draftName.trim()) {
+                      renameMutation.mutate(draftName.trim())
+                    }
+                  }}
+                  className="h-8 min-w-0 flex-1 rounded-md border border-gray-200 bg-white px-2 text-sm text-gray-900 outline-none focus:border-gray-400"
+                />
+                <button
+                  type="button"
+                  aria-label="Naam opslaan"
+                  disabled={!draftName.trim() || renameMutation.isPending}
+                  onClick={() => {
+                    if (draftName.trim()) renameMutation.mutate(draftName.trim())
+                  }}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 disabled:opacity-50"
+                >
+                  {renameMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Check className="h-4 w-4" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  aria-label="Naam bewerken annuleren"
+                  onClick={() => {
+                    setDraftName(bron.name)
+                    setIsRenaming(false)
+                  }}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={onToggle}
+                className="min-w-0 text-left"
+                aria-expanded={expanded}
+              >
+                <span className="flex items-baseline gap-2 flex-wrap">
+                  <span className="text-[15px] font-display text-gray-900 truncate">{bron.name}</span>
+                  <span className="text-xs text-gray-400">{meta}</span>
+                </span>
+              </button>
+            )}
           </div>
-        </button>
+        </div>
         <StatusBadge status={status} />
 
         {/* Q4: "Verbind opnieuw" — only for connectors in auth_error state. */}
@@ -463,6 +414,35 @@ function BronRow({
           </Tooltip>
         </InlineDeleteConfirm>
 
+        {bron.kind === 'connector' && (
+          <Tooltip label="Bewerk bron">
+            <Link
+              to="/app/knowledge/$kbSlug/edit-connector/$connectorId"
+              params={{ kbSlug, connectorId: bron.id }}
+              aria-label="Bewerk bron"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors"
+            >
+              <Pencil className="h-4 w-4" />
+            </Link>
+          </Tooltip>
+        )}
+
+        {bron.kind === 'upload' && (
+          <Tooltip label="Naam aanpassen">
+            <button
+              type="button"
+              onClick={() => {
+                setDraftName(bron.name)
+                setIsRenaming(true)
+              }}
+              aria-label="Naam aanpassen"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors"
+            >
+              <Pencil className="h-4 w-4" />
+            </button>
+          </Tooltip>
+        )}
+
         {/* Per-row "Bewerken in editor" — only rendered when the bron name
             actually maps to a Gitea page slug in the KB's page-index. The
             mapping is computed once at KB level (see BronnenTab) so each
@@ -504,13 +484,13 @@ function BronnenTab() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
   const { data, isLoading, isError } = useQuery<BronnenResponse>({
-    queryKey: ['kb-bronnen', kbSlug],
+    queryKey: kbQueryKeys.bronnen(kbSlug),
     queryFn: () => apiFetch<BronnenResponse>(`/api/app/knowledge-bases/${kbSlug}/sources`),
     retry: false,
     // Poll while any connector is syncing so the badge updates without refresh.
     refetchInterval: (query) => {
       const list = query.state.data?.bronnen ?? []
-      const anyPending = list.some((b) => mapStatus(b) === 'pending')
+      const anyPending = list.some((b) => mapBronStatus(b) === 'pending')
       return anyPending ? 4000 : false
     },
   })
@@ -520,7 +500,7 @@ function BronnenTab() {
 
   // KB data is already cached by the route shell; reuse same query key.
   const { data: kb } = useQuery<{ docs_enabled: boolean }>({
-    queryKey: ['app-knowledge-base', kbSlug],
+    queryKey: kbQueryKeys.knowledgeBase(kbSlug),
     queryFn: () => apiFetch<{ docs_enabled: boolean }>(`/api/app/knowledge-bases/${kbSlug}`),
   })
 
@@ -533,7 +513,7 @@ function BronnenTab() {
   const { user } = useCurrentUser()
   const orgSlug = getOrgSlug(user?.workspace_url)
   const { data: docsTree } = useQuery<{ id: string }[]>({
-    queryKey: ['docs-tree', orgSlug, kbSlug],
+    queryKey: kbQueryKeys.docsTree(orgSlug, kbSlug),
     queryFn: () => apiFetch<{ id: string }[]>(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/tree`),
     enabled: !!kb?.docs_enabled && !!orgSlug,
     // 404 / forbidden / empty repo: fall back to "no pages" silently.
@@ -546,10 +526,10 @@ function BronnenTab() {
   // pencil — only show when the bron's name strips to a slug that exists
   // in the page-index. Prevents 'Pagina niet gevonden' on click. Stable
   // key with route.tsx so a hit here warms the editor's cache.
-  const { data: pageIndex } = useQuery<{ id: string | null; slug: string }[]>({
-    queryKey: ['docs-page-index', orgSlug, kbSlug],
+  const { data: pageIndex } = useQuery<PageIndexEntry[]>({
+    queryKey: kbQueryKeys.docsPageIndex(orgSlug, kbSlug),
     queryFn: () =>
-      apiFetch<{ id: string | null; slug: string }[]>(
+      apiFetch<PageIndexEntry[]>(
         `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/page-index`,
       ),
     enabled: !!kb?.docs_enabled && !!orgSlug && hasEditorPages,
@@ -580,8 +560,8 @@ function BronnenTab() {
       return results
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['kb-bronnen', kbSlug] })
-      void queryClient.invalidateQueries({ queryKey: ['app-knowledge-bases-stats-summary'] })
+      void queryClient.invalidateQueries({ queryKey: kbQueryKeys.bronnen(kbSlug) })
+      void queryClient.invalidateQueries({ queryKey: kbQueryKeys.statsSummary() })
     },
     onError: (err) => queryLogger.error('Sync-all failed', { kbSlug, err }),
   })
@@ -656,14 +636,7 @@ function BronnenTab() {
       ) : (
         <div className="border-t border-b border-gray-200 divide-y divide-gray-200">
           {bronnen.map((bron) => {
-            // Match bron.name (e.g. 'why-now.md') against the page-index slugs.
-            // Try both the raw name and the .md-stripped variant — page slugs
-            // in Gitea typically come without the extension.
-            let editablePageId: string | null = null
-            if (bron.kind === 'upload') {
-              const stripped = bron.name.replace(/\.md$/i, '')
-              editablePageId = slugToPageId.get(stripped) ?? slugToPageId.get(bron.name) ?? null
-            }
+            const editablePageId = editablePageIdForBron(bron, slugToPageId)
             return (
               <BronRow
                 key={`${bron.kind}-${bron.id}`}
