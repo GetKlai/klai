@@ -1730,5 +1730,15 @@
   "admin_settings_extensions_active_slug": "Actief: {slug}",
   "admin_settings_extensions_status_on": "Aan",
   "admin_settings_extensions_status_off": "Uit",
-  "admin_settings_extensions_managed_by_klai": "Deze uitbreidingen worden door Klai beheerd. Neem contact op om wijzigingen aan te vragen."
+  "admin_settings_extensions_managed_by_klai": "Deze uitbreidingen worden door Klai beheerd. Neem contact op om wijzigingen aan te vragen.",
+  "admin_extension_partner_api_label": "API keys",
+  "admin_extension_partner_api_description": "Programmatische toegang via pk_live_* API-keys.",
+  "admin_extension_widgets_label": "Chat-widgets",
+  "admin_extension_widgets_description": "Embed chat-widget op klant-website.",
+  "admin_extension_custom_mcps_label": "Custom MCP servers",
+  "admin_extension_custom_mcps_description": "Eigen Model Context Protocol servers koppelen.",
+  "admin_extension_scribe_label": "Scribe — meeting-transcripties",
+  "admin_extension_scribe_description": "Automatische meeting-transcriptie.",
+  "admin_extension_docs_label": "Docs — gedeelde KBs",
+  "admin_extension_docs_description": "Documentatie-KBs delen binnen de organisatie."
 }

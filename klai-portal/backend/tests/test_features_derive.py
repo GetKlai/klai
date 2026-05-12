@@ -133,3 +133,34 @@ def test_addon_products_floor_company() -> None:
     # SPEC sparring decision: scribe/docs gate at "company".
     assert FEATURE_MIN_PROFILE["scribe"] == "company"
     assert FEATURE_MIN_PROFILE["docs"] == "company"
+
+
+def test_known_features_consistent_with_feature_min_profile() -> None:
+    """SPEC-PORTAL-EXTENSIONS-UNIFY-001 drift-guard.
+
+    A platform-feature that surfaces as a user-facing product MUST:
+    - Be in ``KNOWN_FEATURES`` (so PATCH validation accepts it).
+    - Have a ``FEATURE_MIN_PROFILE`` entry (so derive_user_products emits it).
+    - Be in ``PRODUCT_FEATURES`` (the explicit subset).
+
+    Adding a new product means editing both files; this test fails CI if
+    one of the edits is missed, mechanically preventing the "silent skip
+    in derive_user_products" failure mode.
+    """
+    from app.core.extensions_registry import KNOWN_FEATURES, PRODUCT_FEATURES
+
+    # Plan-only products (chat / knowledge) are NOT platform-features and
+    # therefore not in KNOWN_FEATURES.
+    plan_only_products = {"chat", "knowledge"}
+    product_floors = set(FEATURE_MIN_PROFILE.keys()) - plan_only_products
+
+    # The product-floors must exactly match PRODUCT_FEATURES.
+    assert product_floors == PRODUCT_FEATURES, (
+        f"FEATURE_MIN_PROFILE (minus plan-products) = {sorted(product_floors)} "
+        f"diverges from PRODUCT_FEATURES = {sorted(PRODUCT_FEATURES)}"
+    )
+
+    # And every product-feature must be a member of KNOWN_FEATURES.
+    assert PRODUCT_FEATURES <= KNOWN_FEATURES, (
+        f"PRODUCT_FEATURES not a subset of KNOWN_FEATURES: {sorted(PRODUCT_FEATURES - KNOWN_FEATURES)}"
+    )

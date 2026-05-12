@@ -9,6 +9,7 @@ import { Select } from '@/components/ui/select'
 import { Checkbox } from '@/components/ui/checkbox'
 import { apiFetch } from '@/lib/apiFetch'
 import { fetchMe } from '@/lib/api-me'
+import { extensionDescription, extensionLabel } from '@/lib/extensions-i18n'
 import * as m from '@/paraglide/messages'
 import { adminLogger } from '@/lib/logger'
 
@@ -27,11 +28,10 @@ type OrgSettings = {
   telemetry_level: TelemetryLevel
 }
 
-// SPEC-PORTAL-EXTENSIONS-UNIFY-001 Phase 3/4 — extensions API shape.
+// SPEC-PORTAL-EXTENSIONS-UNIFY-001 — extensions API shape (i18n-clean:
+// labels + descriptions live in Paraglide via lib/extensions-i18n.ts).
 type ExtensionItem = {
   key: string
-  label: string
-  description: string
   enabled: boolean
   requires_profile: string | null
   manageable_by_caller: boolean
@@ -459,8 +459,8 @@ function AdminSettingsPage() {
                   return (
                     <li key={item.key} className="flex items-center justify-between gap-4 px-2 py-3">
                       <div className="min-w-0 flex-1">
-                        <p className="text-[15px] font-display text-gray-900">{item.label}</p>
-                        <p className="text-xs text-gray-400 mt-0.5">{item.description}</p>
+                        <p className="text-[15px] font-display text-gray-900">{extensionLabel(item.key)}</p>
+                        <p className="text-xs text-gray-400 mt-0.5">{extensionDescription(item.key)}</p>
                       </div>
                       {item.manageable_by_caller ? (
                         <Checkbox
