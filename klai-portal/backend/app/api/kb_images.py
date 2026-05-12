@@ -233,6 +233,7 @@ async def get_kb_image(
 # @MX:SPEC: SPEC-PORTAL-DOCS-IMAGE-PASTE-001
 @router.post("/kb-images/{kb_slug}")
 async def upload_kb_image(
+    request: Request,
     kb_slug: str,
     file: UploadFile,
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.PERSONAL)),
@@ -282,7 +283,26 @@ async def upload_kb_image(
             detail="Image storage not configured",
         )
 
-    # Step 3: Read body + size guard (REQ-3).
+    # Step 3a: Early size guard via Content-Length header.
+    # FastAPI/Starlette has NO default body-size limit; a malicious client
+    # could send Content-Length: 100000000 and force the server to read 100 MB
+    # into memory before we ever reach the post-read len() check. Reject early.
+    declared_length = request.headers.get("content-length")
+    if declared_length is not None:
+        try:
+            if int(declared_length) > MAX_IMAGE_SIZE:
+                raise HTTPException(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    detail="Image too large (max 5 MB)",
+                )
+        except ValueError:
+            # Malformed Content-Length — fall through; the post-read check is the safety net.
+            pass
+
+    # Step 3b: Read body + canonical size guard (REQ-3). Still required because:
+    # (a) Content-Length is optional and can be omitted by clients,
+    # (b) chunked transfer-encoding has no Content-Length,
+    # (c) a malformed Content-Length falls through to here.
     data = await file.read()
     if len(data) > MAX_IMAGE_SIZE:
         raise HTTPException(

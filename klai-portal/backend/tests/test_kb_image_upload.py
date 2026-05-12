@@ -104,6 +104,19 @@ def _make_kb(org_id: int = 42, slug: str = "klai-help") -> MagicMock:
     return kb
 
 
+def _make_request(content_length: str | None = None) -> MagicMock:
+    """Stub Request with a real dict for ``headers`` so .get() behaves like
+    the actual Starlette Headers object. ``MagicMock().headers.get(...)``
+    returns a truthy MagicMock — wrong for tests that read optional headers
+    (see klai testing.md "MagicMock is truthy" pitfall)."""
+    req = MagicMock()
+    headers: dict[str, str] = {}
+    if content_length is not None:
+        headers["content-length"] = content_length
+    req.headers = headers
+    return req
+
+
 @pytest.mark.asyncio
 async def test_upload_png_returns_url_and_not_deduplicated() -> None:
     """AC-1: 200 OK with content-addressed URL and deduplicated=False on first upload."""
@@ -119,6 +132,7 @@ async def test_upload_png_returns_url_and_not_deduplicated() -> None:
         patch("app.api.kb_images.ImageStore", store_cls),
     ):
         result = await upload_kb_image(
+            request=_make_request(),
             kb_slug="klai-help",
             file=upload,
             perms=perms,
@@ -146,6 +160,7 @@ async def test_upload_same_bytes_twice_deduplicates() -> None:
         patch("app.api.kb_images.ImageStore", store_cls),
     ):
         result = await upload_kb_image(
+            request=_make_request(),
             kb_slug="klai-help",
             file=_make_upload("screenshot.png", _PNG_1X1, "image/png"),
             perms=perms,
@@ -170,6 +185,7 @@ async def test_upload_too_large_returns_413() -> None:
     ):
         with pytest.raises(HTTPException) as exc:
             await upload_kb_image(
+                request=_make_request(),
                 kb_slug="klai-help",
                 file=_make_upload("big.png", too_big, "image/png"),
                 perms=perms,
@@ -196,6 +212,7 @@ async def test_upload_exe_returns_415() -> None:
     ):
         with pytest.raises(HTTPException) as exc:
             await upload_kb_image(
+                request=_make_request(),
                 kb_slug="klai-help",
                 file=_make_upload("fake.png", _EXE_BYTES, "image/png"),
                 perms=perms,
@@ -224,6 +241,7 @@ async def test_upload_svg_returns_415() -> None:
     ):
         with pytest.raises(HTTPException) as exc:
             await upload_kb_image(
+                request=_make_request(),
                 kb_slug="klai-help",
                 file=_make_upload("logo.svg", _SVG_BYTES, "image/svg+xml"),
                 perms=perms,
@@ -256,6 +274,7 @@ async def test_upload_cross_tenant_returns_404() -> None:
     ):
         with pytest.raises(HTTPException) as exc:
             await upload_kb_image(
+                request=_make_request(),
                 kb_slug="other-org-kb",
                 file=_make_upload("screenshot.png", _PNG_1X1, "image/png"),
                 perms=perms,
@@ -288,6 +307,7 @@ async def test_cross_tenant_emits_warning_log() -> None:
         ):
             with pytest.raises(HTTPException):
                 await upload_kb_image(
+                    request=_make_request(),
                     kb_slug="other-org-kb",
                     file=_make_upload("screenshot.png", _PNG_1X1, "image/png"),
                     perms=perms,
@@ -318,6 +338,7 @@ async def test_upload_without_garage_endpoint_returns_503() -> None:
     ):
         with pytest.raises(HTTPException) as exc:
             await upload_kb_image(
+                request=_make_request(),
                 kb_slug="klai-help",
                 file=_make_upload("screenshot.png", _PNG_1X1, "image/png"),
                 perms=perms,
@@ -325,3 +346,66 @@ async def test_upload_without_garage_endpoint_returns_503() -> None:
             )
 
     assert exc.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_oversized_content_length_rejected_before_body_read() -> None:
+    """Defense in depth: Content-Length > MAX_IMAGE_SIZE -> 413 BEFORE the body
+    is read into memory. Without this guard, FastAPI's lack of a default body
+    size limit means a malicious client could force the server to buffer 100 MB
+    in memory before the post-read len() check fires.
+
+    Verifies the early-reject path by passing a Content-Length header well
+    above the limit while sending a tiny actual body. If the check were
+    skipped, the 413 would still fire (post-read), but the test would have
+    no way to assert the *early* exit; we assert that file.read() was never
+    invoked (the upload stream is untouched).
+    """
+    from app.api.kb_images import upload_kb_image
+
+    perms = make_perms(role="personal", org_id=42)
+    spy_upload = _make_upload("tiny.png", _PNG_1X1, "image/png")
+    # Wrap .read so we can assert it was not invoked.
+    spy_upload.read = AsyncMock(side_effect=AssertionError("body must not be read"))
+
+    with (
+        patch("app.api.kb_images._get_kb_or_404", AsyncMock(return_value=_make_kb())),
+        patch("app.api.kb_images.settings", _mock_settings_with_garage()),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await upload_kb_image(
+                request=_make_request(content_length=str(5 * 1024 * 1024 + 1)),
+                kb_slug="klai-help",
+                file=spy_upload,
+                perms=perms,
+                db=AsyncMock(),
+            )
+
+    assert exc.value.status_code == 413
+    assert "5 MB" in exc.value.detail
+    spy_upload.read.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_malformed_content_length_falls_through_to_canonical_check() -> None:
+    """Defense: a non-integer Content-Length is ignored and the post-read
+    len() guard remains the safety net. A 6 MB body still returns 413."""
+    from app.api.kb_images import upload_kb_image
+
+    perms = make_perms(role="personal", org_id=42)
+    too_big = b"\x00" * (5 * 1024 * 1024 + 1)
+
+    with (
+        patch("app.api.kb_images._get_kb_or_404", AsyncMock(return_value=_make_kb())),
+        patch("app.api.kb_images.settings", _mock_settings_with_garage()),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await upload_kb_image(
+                request=_make_request(content_length="not-a-number"),
+                kb_slug="klai-help",
+                file=_make_upload("big.png", too_big, "image/png"),
+                perms=perms,
+                db=AsyncMock(),
+            )
+
+    assert exc.value.status_code == 413
