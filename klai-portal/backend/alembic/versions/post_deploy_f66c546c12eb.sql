@@ -39,6 +39,19 @@ CREATE OR REPLACE FUNCTION billing._rls_current_org_id() RETURNS integer AS $$
     SELECT NULLIF(current_setting('app.current_org_id', true), '')::integer;
 $$ LANGUAGE sql STABLE;
 
+-- Explicit grants for portal_api. Postgres' default ACL grants USAGE on
+-- new schemas and EXECUTE on new functions to PUBLIC, so this is
+-- defensive: if a future hardening pass runs
+--     REVOKE EXECUTE ON ALL FUNCTIONS ... FROM PUBLIC;
+-- the RLS policy's USING clause would silently return NULL (no rows
+-- visible) instead of failing loud. Explicit grants make portal_api's
+-- read path immune to that drift. ``knowledge._rls_current_org_id()``
+-- (created earlier under the same pattern) relies on the default PUBLIC
+-- grants; we tighten this one because the migration is fresh and the
+-- pattern is now established here for any future Cat-D helpers.
+GRANT USAGE ON SCHEMA billing TO portal_api;
+GRANT EXECUTE ON FUNCTION billing._rls_current_org_id() TO portal_api;
+
 -- ---------------------------------------------------------------------------
 -- 2. Enable + force RLS on portal_user_seat_history.
 --

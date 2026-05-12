@@ -21,7 +21,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.permissions import ProfileRole, UserPermissions, get_caller_at_least
-from app.core.seats import SEAT_PRICE_MONTHLY, SeatType
+from app.core.seats import (
+    SeatType,
+    breakdown_to_monthly_bill,
+    monthly_seat_cost,
+)
 from app.models.portal import PortalUser
 
 router = APIRouter()
@@ -82,6 +86,11 @@ async def billing_breakdown(
     instead, where ``valid_to IS NULL`` + ``status='active'`` carries
     the same intent.
     """
+    # Pre-seed with all three known tiers at zero so the response always
+    # contains a row per ``_SEAT_ORDER`` member, even when the org has no
+    # users on a given tier. An unknown seat_type value cannot reach this
+    # dict — the ``ck_portal_users_seat_type`` CHECK constraint enforces
+    # the three-value domain at the DB layer.
     rows_by_seat: dict[str, int] = {seat.value: 0 for seat in _SEAT_ORDER}
 
     result = await db.execute(
@@ -93,24 +102,30 @@ async def billing_breakdown(
         .group_by(PortalUser.seat_type)
     )
     for seat_type_value, count in result.all():
-        # Defensive: a future migration could in theory introduce a new
-        # seat tier not in _SEAT_ORDER. We never want to silently DROP
-        # such users from the count — surface them under the literal
-        # column even though monthly_eur falls back to 0.
         if seat_type_value in rows_by_seat:
             rows_by_seat[seat_type_value] = int(count)
-        else:
-            rows_by_seat[seat_type_value] = int(count)
+        # else: ignored. Reaching this branch means the DB CHECK constraint
+        # has been weakened OR a future migration introduced a new tier
+        # without updating SEAT_PRICE_MONTHLY / _SEAT_ORDER. Either way it
+        # is a code-deploy mismatch; the missing pricing data makes the
+        # row uncomputable. Dropping silently is safer than surfacing a
+        # row with a fabricated 0 EUR cost.
 
-    breakdown_rows: list[SeatBreakdownRow] = []
-    total_users = 0
-    total_monthly_eur = 0
-    for seat in _SEAT_ORDER:
-        count = rows_by_seat[seat.value]
-        monthly_eur = SEAT_PRICE_MONTHLY[seat] * count
-        breakdown_rows.append(SeatBreakdownRow(seat_type=seat.value, count=count, monthly_eur=monthly_eur))
-        total_users += count
-        total_monthly_eur += monthly_eur
+    # Compose the per-tier rows and aggregate totals. ``monthly_seat_cost``
+    # and ``breakdown_to_monthly_bill`` are the canonical pricing helpers in
+    # ``app.core.seats`` — keeping the cost arithmetic threaded through them
+    # means Phase 5 (Moneybird prorate) can swap the monthly snapshot for a
+    # daily-prorated computation in ONE place without touching this handler.
+    breakdown_rows: list[SeatBreakdownRow] = [
+        SeatBreakdownRow(
+            seat_type=seat.value,
+            count=rows_by_seat[seat.value],
+            monthly_eur=monthly_seat_cost(seat) * rows_by_seat[seat.value],
+        )
+        for seat in _SEAT_ORDER
+    ]
+    total_users = sum(rows_by_seat.values())
+    total_monthly_eur = breakdown_to_monthly_bill({seat: rows_by_seat[seat.value] for seat in _SEAT_ORDER})
 
     return SeatBreakdownResponse(
         rows=breakdown_rows,

@@ -35,6 +35,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+from app.core.features import FEATURE_MIN_PROFILE
 from app.core.profiles import PROFILE_CAPABILITIES, PROFILE_RANK
 
 # ---------------------------------------------------------------------------
@@ -193,11 +194,6 @@ def effective_features(seat_type: SeatType, role: str) -> frozenset[str]:
     strings (e.g. a legacy snapshot value in ``portal_user_seat_history``).
     Unknown role -> rank -1 -> nothing unlocked. Fail-closed.
     """
-    # Local import: features.py imports from profiles.py, and this module
-    # also imports from profiles.py. Lazy import here avoids a future
-    # circular-import risk if features.py later imports from seats.py.
-    from app.core.features import FEATURE_MIN_PROFILE
-
     seat_unlocked = SEAT_FEATURES[seat_type]
     caller_rank = PROFILE_RANK.get(role, -1)
     return frozenset(

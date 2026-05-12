@@ -129,32 +129,84 @@ class TestBillingBreakdownQueryShape:
 
 
 class TestBillingBreakdownRbacWiring:
-    def test_endpoint_depends_on_admin_role_gate(self) -> None:
-        # The actual 403 branch is in get_caller_at_least(ADMIN) and is
-        # pinned in test_permissions.py. Here we only verify the endpoint
-        # is wired to the right gate — drop the dependency by mistake and
-        # this test fails.
+    """Behavioural RBAC check on the admin-or-above gate.
+
+    The previous shape ("introspect ``__qualname__`` or ``callable``") was
+    dead-soft: ``callable(expected)`` is always ``True`` for a closure, so
+    the assertion passed regardless of which dependency was wired. The
+    replacement runs the dependency directly with a fake ``UserPermissions``
+    and asserts the real contract: non-admin -> 403, admin -> pass-through.
+    """
+
+    def _endpoint_dependency(self):
+        """Extract the closure that ``Depends(...)`` wraps on the endpoint."""
         import inspect
 
         signature = inspect.signature(billing_breakdown)
         perms_param = signature.parameters.get("perms")
-        assert perms_param is not None, "endpoint must take perms parameter"
+        assert perms_param is not None, "endpoint must take a `perms` parameter"
         dep = perms_param.default
-        # FastAPI's Depends wraps the dependency factory; the function it
-        # holds is the closure returned by get_caller_at_least(ADMIN).
-        from app.core.permissions import ProfileRole, get_caller_at_least
+        assert dep is not None and dep.dependency is not None, "endpoint must wire a Depends(...) on `perms`"
+        return dep.dependency
 
-        assert dep.dependency is not None
-        # The factory at module-import-time produced a specific callable.
-        # Re-invoke it the same way to get the comparable identity.
-        expected = get_caller_at_least(ProfileRole.ADMIN)
-        # Function-identity equality across factory calls is NOT
-        # guaranteed (each call returns a fresh closure). What IS stable
-        # is that the closure's __wrapped__ / __qualname__ originates
-        # from get_caller_at_least. Use that as the structural check.
-        assert "get_caller_at_least" in dep.dependency.__qualname__ or callable(expected), (
-            f"Expected the endpoint to depend on get_caller_at_least(ADMIN). Got dependency: {dep.dependency!r}"
+    def test_dependency_is_get_caller_at_least_closure(self) -> None:
+        """Structural check: the dependency is the closure produced by
+        ``get_caller_at_least`` AND it captured the ADMIN rank. Drop the
+        gate by mistake — e.g. swap to ``Depends(get_caller)`` directly —
+        and this test fails.
+        """
+        dep = self._endpoint_dependency()
+
+        # The closure produced by ``get_caller_at_least`` lives at
+        # ``permissions.py:272`` as a nested ``async def _dep``; Python
+        # prefixes its ``__qualname__`` with ``get_caller_at_least.``.
+        assert "get_caller_at_least" in dep.__qualname__, (
+            f"endpoint dependency is not the get_caller_at_least closure. Got: {dep.__qualname__!r}"
         )
+
+        # Verify the closure captured the ADMIN rank (not some other tier).
+        # ``required_rank = PROFILE_RANK[min_role]`` -> the free variable
+        # ``required_rank`` is the int rank of the role the factory was
+        # called with.
+        from app.core.profiles import PROFILE_RANK, ProfileRole
+
+        captured = {
+            name: cell.cell_contents
+            for name, cell in zip(
+                dep.__code__.co_freevars or (),
+                dep.__closure__ or (),
+                strict=False,
+            )
+        }
+        assert captured.get("required_rank") == PROFILE_RANK[ProfileRole.ADMIN], (
+            f"dependency captured rank {captured.get('required_rank')!r}, "
+            f"expected ADMIN rank {PROFILE_RANK[ProfileRole.ADMIN]}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_dependency_403s_on_non_admin_caller(self) -> None:
+        """Behavioural check: a personal-role caller MUST be refused 403.
+
+        If a future refactor widens the gate (e.g. ``min_role`` becomes
+        ``COMPANY``), this test fires.
+        """
+        from fastapi import HTTPException
+
+        dep = self._endpoint_dependency()
+        non_admin = make_perms(role="personal", org_id=101)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await dep(perms=non_admin)
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_dependency_passes_admin_caller_through(self) -> None:
+        """Sanity case: an admin caller passes the gate without raising."""
+        dep = self._endpoint_dependency()
+        admin = make_perms(role="admin", org_id=101)
+
+        result = await dep(perms=admin)
+        assert result is admin, "dependency must return the same UserPermissions instance it received"
 
 
 class TestSeatBreakdownRowValidation:
