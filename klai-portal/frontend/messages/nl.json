@@ -1682,5 +1682,17 @@
   "admin_settings_telemetry_full_name": "Volledig",
   "admin_settings_telemetry_full_hint": "Klai slaat letterlijke vragen op in operationele logs voor 7 dagen. Alleen aanzetten als u of Klai actief een specifiek probleem onderzoekt. Vergeet niet terug te zetten naar Schaduw — er komt na 14 dagen een herinnering.",
   "admin_settings_telemetry_disabled_for_non_admin": "Alleen organisatie-beheerders kunnen deze instelling wijzigen.",
-  "admin_settings_telemetry_privacy_link": "Lees meer over de privacy-modi in ons privacybeleid"
+  "admin_settings_telemetry_privacy_link": "Lees meer over de privacy-modi in ons privacybeleid",
+  "admin_section_mcps_title": "MCP servers",
+  "admin_section_mcps_description": "Koppel Model Context Protocol servers aan jouw werkruimte.",
+  "admin_settings_extensions_title": "Uitbreidingen",
+  "admin_settings_extensions_description_tenant": "Functies die Klai voor jouw organisatie heeft vrijgegeven.",
+  "admin_settings_extensions_description_platform": "Beheer de uitbreidingen die per tenant zijn vrijgegeven. Alleen Klai-staff kan deze schakelen.",
+  "admin_settings_extensions_tenant_picker_label": "Tenant slug",
+  "admin_settings_extensions_tenant_picker_apply": "Toepassen",
+  "admin_settings_extensions_tenant_picker_reset": "Terug naar eigen org",
+  "admin_settings_extensions_active_slug": "Actief: {slug}",
+  "admin_settings_extensions_status_on": "Aan",
+  "admin_settings_extensions_status_off": "Uit",
+  "admin_settings_extensions_managed_by_klai": "Deze uitbreidingen worden door Klai beheerd. Neem contact op om wijzigingen aan te vragen."
 }
