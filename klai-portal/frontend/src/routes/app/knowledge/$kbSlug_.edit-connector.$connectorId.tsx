@@ -33,12 +33,13 @@ import type {
   StepDeepLink,
   WcStep,
 } from './-connector-types'
+import { MARKDOWN_PROSE_CLASSES, VALID_STEPS } from './-connector-constants'
 
 // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-1 / REQ-5: edit wizard uses the same
 // 5-step flow as add-connector. ?step=auth|selector deep-link into the wizard.
 // SPEC D-1: always require re-verify on edit entry (no pre-pass from last_sync_status).
 // `WcStep` and `StepDeepLink` types live in ./-connector-types (shared with add).
-const VALID_STEPS = new Set<StepDeepLink>(['auth', 'selector'])
+// `VALID_STEPS` constant lives in ./-connector-constants (shared too).
 
 function _stepToWcStep(step: StepDeepLink | undefined): WcStep | undefined {
   if (step === 'auth') return 'auth-setup'
@@ -56,9 +57,6 @@ export const Route = createFileRoute('/app/knowledge/$kbSlug_/edit-connector/$co
   }),
   component: EditConnectorPage,
 })
-
-const MARKDOWN_PROSE_CLASSES = 'overflow-y-auto max-h-64 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-gray-900 [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-gray-900 [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-gray-900 [&_h3]:mb-1 [&_p]:text-gray-400 [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-gray-400 [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-gray-400 [&_ol]:mb-1.5 [&_strong]:font-semibold [&_strong]:text-gray-900 [&_hr]:border-gray-200 [&_hr]:my-2'
-
 
 function EditConnectorPage() {
   const { kbSlug, connectorId } = Route.useParams()
