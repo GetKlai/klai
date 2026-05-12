@@ -44,7 +44,7 @@ Automated dependency updates are handled by Dependabot / Renovate. Upgrades foll
 |---|---|---|
 | `litellm` | `ghcr.io/berriai/litellm:v1.83.7-stable` | Pinned explicitly (moved from rolling `:main-stable` on 2026-04-19). v1.83.x fixes CVE-2026-35030 (OIDC userinfo cache key collision — auth bypass). Re-assess monthly; LiteLLM ships stable tags ~weekly. |
 | `ollama` | `ollama/ollama:0.21.0` | CPU fallback for LLM inference. |
-| `librechat-getklai` | `ghcr.io/danny-avila/librechat:v0.8.5-rc1` | Multi-tenant chat UI. **Currently on RC1** — rolled in from `:latest` during 2026-04-19 audit. 3 mounted CJS patches (`format.cjs`, `stream.cjs`, `search.cjs`) target internal paths in `@librechat/agents` — any LibreChat upgrade must re-verify those patches against the new bundle. Goal: move to stable v0.8.5 when released. |
+| `librechat-getklai` | `ghcr.io/danny-avila/librechat:v0.8.5-rc1` | Multi-tenant chat UI. **Currently on RC1** — rolled in from `:latest` during 2026-04-19 audit. 4 mounted patches (`format.cjs`, `share.js`, `stream.cjs`, `search.cjs`) target LibreChat internal files — any LibreChat upgrade must re-verify those patches against `deploy/librechat/patch-manifest.txt`. Goal: move to stable v0.8.5 when released. |
 
 ### Document + search
 
