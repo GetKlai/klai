@@ -1,70 +1,69 @@
 # Process Rules
 
-## caddy-proxy-route-without-browser-leg (HIGH)
-A Caddy `reverse_proxy` directive that is only consumed by **RAG content**
-(LLM sees the URL as a token string, never fetches it) is **untested in
-production by definition**. The route can have a wrong upstream port, the
-wrong `handle` vs `handle_path` choice, or a wrong auth model — and the
-only signal would be a 5xx alert that never fires because nothing fetches it.
+## url-shape-multi-file-drift (CRIT)
 
-Reference: SPEC-TI-009 `/kb-images/*` block landed 2026-04-22 with **three**
-stacked bugs (port 8000 instead of 8010, `handle_path` strips the matched
-prefix, read-route auth-check compared portal_orgs.id against zitadel_org_id
-strings). All three were invisible until 2026-05-12 when
-SPEC-PORTAL-DOCS-IMAGE-PASTE-001 (PR #592) shipped the first browser-leg
-consumer (docs-editor image paste). Caddy access logs of that 3-week window
-contained zero `/kb-images/*` requests beyond the operator's own diagnostic
-curls. 1553 production images sat in S3 but were only consumed as RAG
-context — the LLM read the URL as a string, no browser ever fetched.
+When a wire-level URL (or any other serialization contract) is constructed
+in **more than one file**, the files inevitably drift and the drift is
+**invisible** in unit tests. The 2026-05-12 SPEC-TI-009 → SPEC-KB-IMAGES-V2
+regression chain is the canonical instance: three files each hardcoded a
+slice of `/kb-images/{org}/images/{kb}/{sha}.{ext}`:
 
-**Symptom class:** a feature ships with an obviously-broken transport layer
-that produces no metrics, no alerts, no support tickets, because the
-intended browser-leg consumer doesn't exist yet (or was deferred to a
-later SPEC). The bug becomes visible only when somebody finally adds a
-real `<img src>` or `<a href>` that hits the URL.
+- `klai_image_storage.storage.PUBLIC_IMAGE_PATH_PREFIX` + `build_public_url`
+- `klai-portal/backend/app/api/kb_images.py` `@router.get(...)`
+- `klai-portal/frontend/.../BlockPageEditor.tsx` `fetch(...)`
 
-**Prevention (mechanical, in this order):**
+Five separate transport bugs accumulated silently for 3 weeks (Caddy port,
+Caddy `handle_path`, env-var omission, frontend `/api/` prefix, route
+4-vs-5-segment) because the only consumer — RAG context — used the URL as
+a string token, never fetched it. Each bug needed its own PR (#598 / #600
+/ #602 / #607). The root cause was always the same: three files, three
+independent definitions, drift impossible to detect in unit tests.
 
-1. **For every new Caddy `reverse_proxy` block, the PR description MUST
-   answer: "which browser-side consumer (`<img>`, `<a href>`, `<script>`,
-   `fetch(...)`) will exercise this route, and how is that consumer
-   verified in this PR?"** If the answer is "none — only LLM context"
-   then either:
-   - Ship the browser-leg consumer in the same PR, OR
-   - Add a Grafana synthetic-check that curls the route every 5 minutes
-     and alerts on non-2xx. This is the only mechanical equivalent of a
-     browser-leg test when no real consumer exists.
+**Symptom class:** any serialization contract that lives in multiple files
+will drift, and the drift will be silent if the contract is only consumed
+by code that doesn't validate it (LLM context, archival writes, dormant
+endpoints). The bug appears the moment a *real consumer* tries to
+round-trip the value.
 
-2. **`caddy validate` is necessary but not sufficient.** The bug above
-   passed `caddy validate --config` (configuration is syntactically
-   valid) — it was only wrong against the upstream port and the FastAPI
-   route shape, neither of which Caddy can know. A post-deploy curl
-   smoketest (200 OR auth-expected 401/403) is the only way to catch
-   transport mismatches.
+**Prevention (mechanical):**
 
-3. **Prefer `handle` over `handle_path` for routes whose upstream FastAPI
-   handler declares the path prefix in its decorator.** `handle_path`
-   strips the matched prefix from the request URI before forwarding —
-   if the upstream expects the full path (which `@router.get("/kb-images/...")`
-   does), the route never matches and you get a 404 that looks identical
-   to "route doesn't exist". Only use `handle_path` when the upstream
-   explicitly expects the prefix-stripped form. In klai's Caddyfile there
-   was exactly **one** `handle_path` block (the broken one) versus 16
-   `handle` blocks — that asymmetry alone was a smell that nobody flagged.
+1. **One file owns the contract.** A wire-level URL, key-format, message
+   envelope, or token shape MUST be defined in exactly one module. Every
+   other file imports from there. Concretely for kb-images:
+   `klai_image_storage.kb_image.KbImage` is the single source; the portal
+   re-export shim `app/core/kb_image_url.py` is a thin forward, not a
+   second source. SPEC-KB-IMAGES-V2-001 REQ-1.
 
-4. **For every new `reverse_proxy <service>:<port>` line, verify the
-   port matches the service's actual listener.** `docker inspect
-   <container> .Config.ExposedPorts` is the canonical source. Klai's
-   portal-api `Dockerfile` exposes only `8010/tcp` — and yet the Caddy
-   directive said `:8000`. Nothing in CI compares these two.
+2. **A boot-time assertion verifies the contract didn't drift.** For
+   FastAPI: at app startup, parse a canonical instance through the
+   value-class's `from_path` AND check that the route declaration's path
+   strings come literally from the value-class's `ROUTE_TEMPLATE` constant.
+   If they differ, refuse to boot. SPEC-KB-IMAGES-V2-001 REQ-3 +
+   `_assert_kb_image_routes_match_value_class` in `app/main.py`.
 
-5. **When inheriting a route convention from a sister service (here:
-   knowledge-ingest's `zitadel_org_id` text-typed RLS), the new consumer
-   in another service MUST match the same convention or have an explicit
-   resolution helper.** The read-route assumed `org_id` was an int
-   (portal_orgs.id) because portal-api's session model is int-based; the
-   producer was zitadel-string-based. Cross-service ID-type mismatches
-   need an ADR or a Pydantic discriminator, not a silent type annotation.
+3. **A CI guard blocks new string-literals of the contract prefix.**
+   `rules/no-hardcoded-kb-image-path.yml` (ast-grep) fails any PR that
+   adds a `"/kb-images/"` literal in production Python outside the
+   allow-list. The frontend has the same coverage via the vitest drift
+   test on `lib/kb-image-url.ts`. SPEC-KB-IMAGES-V2-001 REQ-5 + REQ-7.
+
+4. **A real E2E test in CI exercises the whole stack.** Unit tests
+   inevitably mock the very layer where contracts drift. Only a Playwright
+   test that POSTs → fetches the returned URL → asserts `naturalWidth > 0`
+   detects all five regression patterns at once.
+   `klai-portal/frontend/e2e/kb-images.spec.ts` (currently dormant; needs
+   seeded storage-state secret to activate). SPEC-KB-IMAGES-V2-001 REQ-6.
+
+5. **Cross-language mirrors need their own drift test.** When a TypeScript
+   file mirrors a Python contract (frontend ↔ backend), a unit test in
+   the TS file MUST compare its outputs to fixture strings generated by
+   the Python side. Drift in either direction fails the test.
+   See `lib/__tests__/kb-image-url.test.ts` for the kb-image case.
+
+**Pre-V2 prevention bullet points (port mismatch, handle vs handle_path,
+auth-id type mismatch) are now consequences of rule 1: with one file
+owning the contract, those individual gotchas can no longer occur because
+no second file gets to write a divergent value.**
 
 ## postgres-no-return-type-overload (HIGH)
 PostgreSQL does NOT support function overloading by return type alone.

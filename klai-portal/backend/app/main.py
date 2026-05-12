@@ -76,9 +76,61 @@ async def _run_stuck_detector() -> None:
         logger.warning("Provisioning stuck-detector failed at startup", exc_info=True)
 
 
+def _assert_kb_image_routes_match_value_class(app: FastAPI) -> None:
+    """SPEC-KB-IMAGES-V2-001 REQ-3: fail boot if the FastAPI route paths
+    declared in ``app/api/kb_images.py`` drift from ``KbImage.ROUTE_TEMPLATE``
+    / ``KbImage.UPLOAD_ROUTE_TEMPLATE``.
+
+    Rationale: pre-V2 the route declaration and the URL-shape generator in
+    ``klai_image_storage`` lived in different files. A literal-string drift
+    between the two produced silent 404s on browser fetches that went
+    undetected for 3 weeks (PRs #598/#600/#602/#607). The boot-time check
+    here closes that loop — if the value-class's templates and the actual
+    registered routes don't match, the service refuses to start.
+    """
+    from app.core.kb_image_url import KbImage
+
+    declared_paths = {
+        getattr(route, "path", None)
+        for route in app.routes
+        if getattr(route, "path", "") and "kb-images" in getattr(route, "path", "")
+    }
+    expected = {KbImage.ROUTE_TEMPLATE, KbImage.UPLOAD_ROUTE_TEMPLATE}
+    if declared_paths != expected:
+        raise RuntimeError(
+            "SPEC-KB-IMAGES-V2-001 REQ-3 boot-time check failed: "
+            f"kb-image routes declared={declared_paths!r} but "
+            f"KbImage templates expect={expected!r}. "
+            "A drift here means a future PR re-introduced the v1 silent-404 "
+            "regression. Refuse to boot until kb_images.py is restored to "
+            "use KbImage.ROUTE_TEMPLATE + KbImage.UPLOAD_ROUTE_TEMPLATE."
+        )
+
+    # Round-trip self-check: KbImage(...).public_path must be parseable back
+    # via KbImage.from_path. If we ever break this invariant the boot-time
+    # check above is still active but this gives a clearer error first.
+    probe = KbImage(
+        zitadel_org_id="368884765035593759",
+        kb_slug="support",
+        sha256="0" * 64,
+        ext="png",
+    )
+    if KbImage.from_path(probe.public_path) != probe:
+        raise RuntimeError(
+            "SPEC-KB-IMAGES-V2-001 REQ-3 boot-time check failed: "
+            "KbImage.public_path does not round-trip through KbImage.from_path. "
+            "Either the public_path generator or the _PATH_RE drifted."
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     import asyncio
+
+    # SPEC-KB-IMAGES-V2-001 REQ-3: fail boot if kb-image route declaration
+    # drifts from the KbImage value-class. Runs FIRST so subsequent startup
+    # work doesn't waste time when the contract is already broken.
+    _assert_kb_image_routes_match_value_class(app)
 
     # SPEC-SEC-SESSION-001 REQ-4: validate SSO_COOKIE_KEY in BOTH dev and prod
     # modes, before any other startup work. Empty / unset key aborts the

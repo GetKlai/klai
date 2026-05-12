@@ -1,0 +1,56 @@
+# SPEC-KB-IMAGES-V2-001 REQ-5 — block hardcoded "/kb-images/" path-literals
+# outside the single-source-of-truth module(s).
+#
+# Why: pre-V2, three independent files (klai_image_storage, kb_images.py,
+# BlockPageEditor.tsx) each hardcoded part of the kb-image URL. Drift
+# between them produced silent 404s for 3 weeks (PRs #598/#600/#602/#607).
+# V2 collapses URL-shape into ``klai_image_storage.kb_image.KbImage``.
+# Every other reference must import from there — a new string-literal in
+# Python code is a regression of the v1 problem.
+#
+# Allow-listed sources (the single source itself + a portal-side
+# re-export shim + tests that intentionally probe the shape):
+#   klai-libs/image-storage/klai_image_storage/kb_image.py
+#   klai-portal/backend/app/core/kb_image_url.py
+#   klai-libs/image-storage/tests/test_kb_image.py
+#   klai-libs/image-storage/tests/test_storage.py
+#   klai-portal/backend/tests/test_kb_image_*.py
+#   klai-portal/backend/tests/test_kb_images_*.py
+#
+# Frontend TS mirror has its own drift-test in
+#   klai-portal/frontend/src/lib/__tests__/kb-image-url.test.ts
+
+id: no-hardcoded-kb-image-path
+language: python
+severity: error
+message: |
+  Hardcoded "/kb-images/" path-literal is forbidden outside the kb_image
+  value-class (SPEC-KB-IMAGES-V2-001 REQ-5). Import KbImage from
+  `klai_image_storage.kb_image` (or `app.core.kb_image_url` in
+  klai-portal) and use its `.public_path`, `.s3_key`, `ROUTE_TEMPLATE`,
+  or `UPLOAD_ROUTE_TEMPLATE` instead.
+
+rule:
+  pattern: $STR
+  constraints:
+    STR:
+      kind: string
+      regex: '/kb-images/'
+
+files:
+  - klai-portal/backend/app/**/*.py
+  - klai-connector/app/**/*.py
+  - klai-knowledge-ingest/knowledge_ingest/**/*.py
+  - klai-libs/image-storage/klai_image_storage/**/*.py
+
+ignores:
+  # The single source of truth. URL-shape definitions live here.
+  - klai-libs/image-storage/klai_image_storage/kb_image.py
+  # Portal-side re-export shim — forwards KbImage to handlers without adding logic.
+  - klai-portal/backend/app/core/kb_image_url.py
+  # Test files that probe the URL shape are intentionally exempt — they're
+  # not production code paths that could drift.
+  - klai-libs/image-storage/tests/**/*.py
+  - klai-portal/backend/tests/**/*.py
+  - klai-connector/tests/**/*.py
+  - klai-knowledge-ingest/tests/**/*.py

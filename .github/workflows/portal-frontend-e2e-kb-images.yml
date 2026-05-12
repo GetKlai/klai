@@ -1,0 +1,83 @@
+# SPEC-KB-IMAGES-V2-001 REQ-6: Playwright end-to-end test for the kb-image
+# round-trip (Caddy → portal-api → Garage → browser `<img>`).
+#
+# This workflow is DORMANT until the `KLAI_E2E_STORAGE_STATE_BASE64` secret
+# is configured. Without that secret the Playwright test would fail at the
+# login step. See `klai-portal/frontend/e2e/kb-images.spec.ts` for the
+# activation procedure.
+#
+# When activated, the test runs on every PR that touches any kb-image-shape
+# carrier (route declaration, value-class, lib pipeline, frontend mirror,
+# or the docs-editor that uploads through them). It's the only test that
+# proves the full transport stack works end-to-end — unit tests historically
+# missed five stacked transport bugs in this exact area.
+
+name: kb-images E2E (Playwright)
+
+on:
+  pull_request:
+    paths:
+      - 'klai-portal/backend/app/api/kb_images.py'
+      - 'klai-portal/backend/app/core/kb_image_url.py'
+      - 'klai-libs/image-storage/klai_image_storage/kb_image.py'
+      - 'klai-libs/image-storage/klai_image_storage/pipeline.py'
+      - 'klai-libs/image-storage/klai_image_storage/storage.py'
+      - 'klai-portal/frontend/src/lib/kb-image-url.ts'
+      - 'klai-portal/frontend/src/components/kb-editor/**'
+      - 'klai-portal/frontend/e2e/kb-images.spec.ts'
+      - 'deploy/caddy/Caddyfile'
+      - '.github/workflows/portal-frontend-e2e-kb-images.yml'
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    # DORMANT GUARD: flip to `if: ${{ secrets.KLAI_E2E_STORAGE_STATE_BASE64 != '' }}`
+    # once the storage-state secret is seeded. Keep this conditional in
+    # place so a missing secret produces a clear skipped-check, not a
+    # red CI run on every PR.
+    if: false
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: klai-portal/frontend/package-lock.json
+
+      - name: Install
+        working-directory: klai-portal/frontend
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        working-directory: klai-portal/frontend
+        run: npx playwright install chromium --with-deps
+
+      - name: Restore Playwright storage-state
+        working-directory: klai-portal/frontend
+        env:
+          STATE_B64: ${{ secrets.KLAI_E2E_STORAGE_STATE_BASE64 }}
+        run: |
+          mkdir -p e2e/.state
+          echo "$STATE_B64" | base64 -d > e2e/.state/storage.json
+          test -s e2e/.state/storage.json || (echo "empty storage-state" && exit 1)
+
+      - name: Run kb-image E2E
+        working-directory: klai-portal/frontend
+        env:
+          KLAI_E2E_BASE_URL: ${{ secrets.KLAI_E2E_BASE_URL }}
+          KLAI_E2E_KB_SLUG: ${{ secrets.KLAI_E2E_KB_SLUG }}
+        run: npx playwright test e2e/kb-images.spec.ts --reporter=line
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: klai-portal/frontend/playwright-report
+          retention-days: 7
