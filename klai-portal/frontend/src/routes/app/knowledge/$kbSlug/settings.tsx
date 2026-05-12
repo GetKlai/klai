@@ -11,6 +11,7 @@ import { apiFetch } from '@/lib/apiFetch'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { DeleteKbModal } from '@/components/ui/delete-kb-modal'
 import type { KnowledgeBase, MembersResponse, KBStats } from './-kb-types'
+import { kbQueryKeys } from './-kb-query-keys'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/settings')({
   component: SettingsTab,
@@ -25,7 +26,7 @@ function SettingsTab() {
   const [showSaved, setShowSaved] = useState(false)
 
   const { data: kb } = useQuery<KnowledgeBase>({
-    queryKey: ['app-knowledge-base', kbSlug],
+    queryKey: kbQueryKeys.knowledgeBase(kbSlug),
     queryFn: async () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`),
     enabled: auth.isAuthenticated,
   })
@@ -67,7 +68,7 @@ function SettingsTab() {
       })
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['app-knowledge-base', kbSlug] })
+      void queryClient.invalidateQueries({ queryKey: kbQueryKeys.knowledgeBase(kbSlug) })
       setShowSaved(true)
       setTimeout(() => setShowSaved(false), 2000)
     },

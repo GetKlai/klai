@@ -20,6 +20,7 @@ import { QueryErrorState } from '@/components/ui/query-error-state'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { ProductGuard } from '@/components/layout/ProductGuard'
+import { kbQueryKeys } from './$kbSlug/-kb-query-keys'
 
 export const Route = createFileRoute('/app/knowledge/')({
   component: () => (
@@ -173,7 +174,7 @@ function KnowledgePage() {
   })
 
   const { data: statsData } = useQuery<KBStatsSummaryResponse>({
-    queryKey: ['app-knowledge-bases-stats-summary'],
+    queryKey: kbQueryKeys.statsSummary(),
     queryFn: () => apiFetch<KBStatsSummaryResponse>('/api/app/knowledge-bases/stats-summary'),
     enabled: auth.isAuthenticated,
     retry: false,

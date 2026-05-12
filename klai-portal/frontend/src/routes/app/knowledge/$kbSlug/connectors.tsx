@@ -23,6 +23,7 @@ import { RoleGuard } from '@/components/layout/RoleGuard'
 import { apiFetch } from '@/lib/apiFetch'
 import { SyncStatusBadge } from './-kb-helpers'
 import type { ConnectorSummary, KnowledgeBase, MembersResponse } from './-kb-types'
+import { kbQueryKeys } from './-kb-query-keys'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/connectors')({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -77,7 +78,7 @@ function ConnectorsTab() {
   const [reconnectErrorId, setReconnectErrorId] = useState<string | null>(null)
 
   const { data: kb } = useQuery<KnowledgeBase>({
-    queryKey: ['app-knowledge-base', kbSlug],
+    queryKey: kbQueryKeys.knowledgeBase(kbSlug),
     queryFn: async () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`),
     enabled: auth.isAuthenticated,
   })
@@ -91,7 +92,7 @@ function ConnectorsTab() {
   const isOwner = isCreator || !!(myUserId && members?.users.some((u) => u.user_id === myUserId && u.role === 'owner'))
 
   const { data: connectors = [], isLoading } = useQuery<ConnectorSummary[]>({
-    queryKey: ['kb-connectors-portal', kbSlug],
+    queryKey: kbQueryKeys.connectorsPortal(kbSlug),
     queryFn: async () => apiFetch<ConnectorSummary[]>(`/api/app/knowledge-bases/${kbSlug}/connectors/`),
     enabled: auth.isAuthenticated,
     refetchInterval: (query) => {
@@ -150,19 +151,19 @@ function ConnectorsTab() {
     mutationFn: async (id: string) => {
       await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/${id}`, { method: 'DELETE' })
     },
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: kbQueryKeys.connectorsPortal(kbSlug) }),
   })
 
   async function handleSync(id: string) {
     setSyncingIds((prev) => new Set([...prev, id]))
     try {
       await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/${id}/sync`, { method: 'POST' })
-      queryClient.setQueryData(['kb-connectors-portal', kbSlug], (old: ConnectorSummary[] | undefined) =>
+      queryClient.setQueryData(kbQueryKeys.connectorsPortal(kbSlug), (old: ConnectorSummary[] | undefined) =>
         old?.map((c) => c.id === id ? { ...c, last_sync_status: 'running' } : c)
       )
-      void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
+      void queryClient.invalidateQueries({ queryKey: kbQueryKeys.connectorsPortal(kbSlug) })
     } catch {
-      void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
+      void queryClient.invalidateQueries({ queryKey: kbQueryKeys.connectorsPortal(kbSlug) })
     } finally {
       setSyncingIds((prev) => { const next = new Set(prev); next.delete(id); return next })
     }
@@ -188,7 +189,7 @@ function ConnectorsTab() {
       setReconnectErrorId(connectorId)
       // Also refetch in case the error was a stale-session 401 — the
       // connectors list will refresh with up-to-date status.
-      void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
+      void queryClient.invalidateQueries({ queryKey: kbQueryKeys.connectorsPortal(kbSlug) })
     }
   }
 
