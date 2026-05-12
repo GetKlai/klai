@@ -39,7 +39,7 @@ def _mock_image_store() -> MagicMock:
     async def _upload(*args, **kwargs):
         key = f"org/images/kb/{args[3]}"
         return ImageUploadResult(
-            object_key=key, public_url=f"/kb-images/{key}", deduplicated=False,
+            object_key=key, deduplicated=False,
         )
 
     store.upload_image = _upload

@@ -5,6 +5,7 @@ import { BlockNoteSchema, defaultInlineContentSpecs } from '@blocknote/core'
 import '@blocknote/mantine/style.css'
 import { WikiLink } from '@/components/kb-editor/WikiLink'
 import { apiFetch, ApiError } from '@/lib/apiFetch'
+import { kbImageUploadPath } from '@/lib/kb-image-url'
 import { editorLogger } from '@/lib/logger'
 
 // Status -> NL message map for image upload errors. BlockNote surfaces the
@@ -59,12 +60,13 @@ export const BlockPageEditor = forwardRef<
       const fd = new FormData()
       fd.append('file', file)
       try {
-        // The kb-images router is mounted at /kb-images (no /api prefix —
-        // see klai-portal/backend/app/main.py and SPEC-TI-009's Caddy block).
-        // Posting to /api/kb-images/... gives a 404 because the route only
-        // exists at /kb-images/...
+        // SPEC-KB-IMAGES-V2-001 REQ-7: the URL is sourced from the
+        // ``kb-image-url.ts`` mirror module, the only place in the frontend
+        // that knows the kb-image route shape. A drift between this URL and
+        // the Python KbImage value-class is caught by the vitest unit test
+        // in ``lib/__tests__/kb-image-url.test.ts``.
         const res = await apiFetch<{ url: string; deduplicated: boolean }>(
-          `/kb-images/${encodeURIComponent(kbSlug)}`,
+          kbImageUploadPath(kbSlug),
           { method: 'POST', body: fd },
         )
         editorLogger.debug('Image uploaded', {

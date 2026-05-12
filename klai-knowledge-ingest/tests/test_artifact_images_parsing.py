@@ -1,69 +1,77 @@
 """Unit tests for ``_parse_image_refs`` and orphan-key SQL semantics.
 
-SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-06.2.
+SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-06.2 + SPEC-KB-IMAGES-V2-001 REQ-1.
 
-The integration tests for the orphan-keys SQL live alongside other
-real-postgres tests in tests/integration/. These unit tests cover only
-the URL-parsing helper which is pure-python and can be exhaustively
-verified without a database.
+These tests now go through ``KbImage.from_path`` (the single source of
+truth for kb-image URL parsing), so fixtures must use canonical-shape
+URLs: a 64-char hex sha + a supported extension (jpg|png|gif|webp).
 """
 
 from __future__ import annotations
 
 from knowledge_ingest.routes.ingest import _parse_image_refs
 
+# Realistic sha256s — content hashes of small fixture byte strings.
+_SHA_A = "a" * 64
+_SHA_B = "b" * 64
+_SHA_VALID = "1c" * 32
+
 
 class TestParseImageRefs:
     def test_handles_canonical_kb_image_url(self) -> None:
         urls = [
-            "/kb-images/368884765035593759/images/support/abc123def.png",
+            f"/kb-images/368884765035593759/images/support/{_SHA_A}.png",
         ]
         refs = _parse_image_refs(urls)
         assert refs == [
             (
-                "368884765035593759/images/support/abc123def.png",
-                "abc123def",
+                f"368884765035593759/images/support/{_SHA_A}.png",
+                _SHA_A,
             )
         ]
 
     def test_handles_multiple_urls(self) -> None:
         urls = [
-            "/kb-images/o1/images/kb1/aaa111.png",
-            "/kb-images/o1/images/kb1/bbb222.webp",
+            f"/kb-images/o1/images/kb1/{_SHA_A}.png",
+            f"/kb-images/o1/images/kb1/{_SHA_B}.webp",
         ]
         refs = _parse_image_refs(urls)
         assert len(refs) == 2
-        assert refs[0] == ("o1/images/kb1/aaa111.png", "aaa111")
-        assert refs[1] == ("o1/images/kb1/bbb222.webp", "bbb222")
+        assert refs[0] == (f"o1/images/kb1/{_SHA_A}.png", _SHA_A)
+        assert refs[1] == (f"o1/images/kb1/{_SHA_B}.webp", _SHA_B)
 
     def test_skips_non_kb_image_urls(self) -> None:
         """Manual uploads pointing at external CDNs are not tracked."""
         urls = [
             "https://cdn.example.com/foo.png",
             "/some-other-prefix/bar.jpg",
-            "/kb-images/o1/images/kb1/valid.png",
+            f"/kb-images/o1/images/kb1/{_SHA_VALID}.png",
         ]
         refs = _parse_image_refs(urls)
-        assert refs == [("o1/images/kb1/valid.png", "valid")]
+        assert refs == [(f"o1/images/kb1/{_SHA_VALID}.png", _SHA_VALID)]
 
     def test_skips_non_string_entries(self) -> None:
-        urls: list = ["/kb-images/o1/images/kb1/abc.png", None, 42, {"url": "x"}]
+        urls: list = [
+            f"/kb-images/o1/images/kb1/{_SHA_A}.png",
+            None,
+            42,
+            {"url": "x"},
+        ]
         refs = _parse_image_refs(urls)
-        assert refs == [("o1/images/kb1/abc.png", "abc")]
+        assert refs == [(f"o1/images/kb1/{_SHA_A}.png", _SHA_A)]
 
-    def test_skips_url_with_no_extension(self) -> None:
-        """Defensive: malformed URLs without an extension still produce a
-        usable content_hash but we accept it (the basename is the hash).
-        """
-        urls = ["/kb-images/o1/images/kb1/abc"]
+    def test_skips_url_without_canonical_shape(self) -> None:
+        """SPEC-KB-IMAGES-V2-001 REQ-1: only canonical shape (5 segments + 64-hex
+        sha + supported ext) is accepted. Anything else is silently skipped —
+        same fail-safe as before, stricter shape."""
+        urls = [
+            "/kb-images/o1/images/kb1/abc",  # no ext, short basename
+            "/kb-images/o1/images/kb1/short.png",  # wrong sha length
+            f"/kb-images/o1/images/kb1/{_SHA_A}.svg",  # disallowed ext
+            "/kb-images/.png",  # missing org/kb/file segments
+        ]
         refs = _parse_image_refs(urls)
-        # No "." in basename -> rsplit returns the whole string -> hash=basename
-        assert refs == [("o1/images/kb1/abc", "abc")]
+        assert refs == []
 
     def test_empty_input_returns_empty_list(self) -> None:
         assert _parse_image_refs([]) == []
-
-    def test_skips_url_when_basename_collapses_to_empty(self) -> None:
-        urls = ["/kb-images/.png"]
-        refs = _parse_image_refs(urls)
-        assert refs == []
