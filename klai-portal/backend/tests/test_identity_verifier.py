@@ -647,14 +647,14 @@ class TestPartnerKeyPath:
             db=mock_db,
             jwks_resolver=_FakeJwksResolver(),
             caller_service="portal-api",
-            claimed_user_id="partner:abc-123",
+            claimed_user_id="partner:11111111-1111-1111-1111-111111111111",
             claimed_org_id="zitadel-org-acme",
             bearer_jwt=None,
         )
 
         assert decision.verified is True
         assert decision.evidence == "partner_key"
-        assert decision.user_id == "partner:abc-123"
+        assert decision.user_id == "partner:11111111-1111-1111-1111-111111111111"
         assert decision.org_id == "zitadel-org-acme"
         assert decision.org_slug == "acme"
 
@@ -667,7 +667,7 @@ class TestPartnerKeyPath:
             db=mock_db,
             jwks_resolver=_FakeJwksResolver(),
             caller_service="portal-api",
-            claimed_user_id="partner:does-not-exist",
+            claimed_user_id="partner:22222222-2222-2222-2222-222222222222",
             claimed_org_id="zitadel-org-acme",
             bearer_jwt=None,
         )
@@ -688,7 +688,7 @@ class TestPartnerKeyPath:
             db=mock_db,
             jwks_resolver=_FakeJwksResolver(),
             caller_service="portal-api",
-            claimed_user_id="partner:abc-123",
+            claimed_user_id="partner:11111111-1111-1111-1111-111111111111",
             claimed_org_id="zitadel-org-victim",  # forged claim
             bearer_jwt=None,
         )
@@ -704,7 +704,7 @@ class TestPartnerKeyPath:
             db=mock_db,
             jwks_resolver=_FakeJwksResolver(),
             caller_service="knowledge-mcp",  # NOT portal-api
-            claimed_user_id="partner:abc-123",
+            claimed_user_id="partner:11111111-1111-1111-1111-111111111111",
             claimed_org_id="zitadel-org-acme",
             bearer_jwt=None,
         )
@@ -712,6 +712,30 @@ class TestPartnerKeyPath:
         assert decision.verified is False
         assert decision.reason == "partner_key_not_found"
         # No DB call should have happened on the gating reject.
+        mock_db.execute.assert_not_called()
+
+    async def test_deny_when_partner_key_id_not_uuid(self, mock_db: AsyncMock) -> None:
+        """2026-05-12 HOTFIX guard: a partner_key_id that is not a UUID (e.g.
+        the widget-id ``wgt_<hex>`` accidentally forwarded as a synthetic
+        partner claim) MUST be rejected pre-DB with ``partner_key_not_found``.
+        Otherwise asyncpg raises DataError, SQLAlchemy wraps it as
+        DBAPIError (not DataError), the narrow except is bypassed, the
+        endpoint 5xx's, and the SDK collapses to ``portal_unreachable`` —
+        masking every widget chat call as a generic "Er ging iets mis"
+        outage. Pre-check is fail-fast + fail-safe.
+        """
+        decision = await verify_identity_claim(
+            db=mock_db,
+            jwks_resolver=_FakeJwksResolver(),
+            caller_service="portal-api",
+            claimed_user_id="partner:wgt_47b8c9c46d10b17c527923e0a5454bef3285b71f",
+            claimed_org_id="zitadel-org-acme",
+            bearer_jwt=None,
+        )
+
+        assert decision.verified is False
+        assert decision.reason == "partner_key_not_found"
+        # No DB call must have happened on the gating reject.
         mock_db.execute.assert_not_called()
 
     async def test_deny_when_malformed_key_length(self, mock_db: AsyncMock) -> None:
@@ -736,7 +760,7 @@ class TestPartnerKeyPath:
             db=mock_db,
             jwks_resolver=_FakeJwksResolver(),
             caller_service="portal-api",
-            claimed_user_id="partner:abc-123",
+            claimed_user_id="partner:11111111-1111-1111-1111-111111111111",
             claimed_org_id="zitadel-org-acme",
             bearer_jwt="some.jwt.value",
         )
@@ -765,7 +789,7 @@ class TestPartnerKeyPath:
             db=mock_db,
             jwks_resolver=_FakeJwksResolver(),
             caller_service="portal-api",
-            claimed_user_id="partner:not-a-uuid",
+            claimed_user_id="partner:33333333-3333-3333-3333-333333333333",
             claimed_org_id="zitadel-org-acme",
             bearer_jwt=None,
         )
@@ -793,7 +817,7 @@ class TestPartnerKeyPath:
                 db=mock_db,
                 jwks_resolver=_FakeJwksResolver(),
                 caller_service="portal-api",
-                claimed_user_id="partner:abc-123",
+                claimed_user_id="partner:11111111-1111-1111-1111-111111111111",
                 claimed_org_id="zitadel-org-acme",
                 bearer_jwt=None,
             )
@@ -809,7 +833,7 @@ class TestPartnerKeyPath:
             db=mock_db,
             jwks_resolver=_FakeJwksResolver(),
             caller_service="portal-api",
-            claimed_user_id="partner:abc-123",
+            claimed_user_id="partner:11111111-1111-1111-1111-111111111111",
             claimed_org_id="zitadel-org-acme",
             bearer_jwt=None,
             claimed_org_slug="impostor-slug",
@@ -829,7 +853,7 @@ class TestPartnerKeyPath:
             db=mock_db,
             jwks_resolver=_FakeJwksResolver(),
             caller_service="portal-api",
-            claimed_user_id="partner:abc-123",
+            claimed_user_id="partner:11111111-1111-1111-1111-111111111111",
             claimed_org_id="zitadel-org-acme",
             bearer_jwt=None,
             claimed_org_slug=None,
