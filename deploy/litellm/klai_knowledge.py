@@ -266,6 +266,13 @@ PORTAL_RETRIEVAL_LOG_URL = os.getenv(
 )
 EMBEDDING_MODEL_VERSION = os.getenv("EMBEDDING_MODEL_VERSION", "bge-m3-v1")
 KB_IMAGES_BASE_URL = os.getenv("KB_IMAGES_BASE_URL", "https://getklai.getklai.com")
+_MARKDOWN_IMAGE_RE = re.compile(
+    r"!\[([^\]]*)\]\((\S+?)(?:\s+['\"][^'\"]*['\"])?\)"
+)
+_MARKDOWN_LINK_RE = re.compile(
+    r"(?<!!)\[([^\]]+)\]\((\S+?)(?:\s+['\"][^'\"]*['\"])?\)"
+)
+_RAW_URL_RE = re.compile(r"https?://[^\s<>()\]]+")
 
 # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-2 — anti-hallucination injection
 # fired when retrieval-api signals confidence_band ∈ {low, unknown}. Dutch
@@ -1092,6 +1099,137 @@ def _compose_libre_chat_prefix(*blocks: str) -> str:
     return "\n\n".join(b for b in (GROUNDED_CHAT_SYSTEM_PROMPT, *blocks) if b)
 
 
+def _normalise_guard_url(url: object) -> str:
+    if not isinstance(url, str):
+        return ""
+    return url.strip().strip("<>")
+
+
+def _absolute_image_url(url: object) -> str:
+    normalised = _normalise_guard_url(url)
+    if not normalised:
+        return ""
+    return f"{KB_IMAGES_BASE_URL}{normalised}" if normalised.startswith("/") else normalised
+
+
+def _sanitize_kb_markdown_output(
+    text: str,
+    *,
+    allowed_source_urls: set[str],
+    allowed_image_urls: set[str],
+) -> tuple[str, int]:
+    """Remove model-invented URLs/images from KB-grounded answers."""
+    allowed_urls = allowed_source_urls | allowed_image_urls
+    changed = 0
+
+    def _replace_image(match: re.Match[str]) -> str:
+        nonlocal changed
+        alt = match.group(1).strip()
+        url = _normalise_guard_url(match.group(2))
+        if url in allowed_image_urls:
+            return match.group(0)
+        changed += 1
+        return alt or "[image unavailable in knowledge base]"
+
+    def _replace_link(match: re.Match[str]) -> str:
+        nonlocal changed
+        label = match.group(1)
+        url = _normalise_guard_url(match.group(2))
+        if url in allowed_source_urls:
+            return match.group(0)
+        changed += 1
+        return label
+
+    def _replace_raw_url(match: re.Match[str]) -> str:
+        nonlocal changed
+        raw = match.group(0)
+        url = raw.rstrip(".,;:")
+        suffix = raw[len(url) :]
+        if _normalise_guard_url(url) in allowed_urls:
+            return raw
+        changed += 1
+        return f"[link removed]{suffix}"
+
+    sanitized = _MARKDOWN_IMAGE_RE.sub(_replace_image, text)
+    sanitized = _MARKDOWN_LINK_RE.sub(_replace_link, sanitized)
+    sanitized = _RAW_URL_RE.sub(_replace_raw_url, sanitized)
+    return sanitized, changed
+
+
+def _sanitize_response_message_content(
+    content: object,
+    *,
+    allowed_source_urls: set[str],
+    allowed_image_urls: set[str],
+) -> tuple[object, int]:
+    if isinstance(content, str):
+        return _sanitize_kb_markdown_output(
+            content,
+            allowed_source_urls=allowed_source_urls,
+            allowed_image_urls=allowed_image_urls,
+        )
+    if not isinstance(content, list):
+        return content, 0
+
+    changed = 0
+    sanitized_parts: list[object] = []
+    for part in content:
+        if not isinstance(part, dict):
+            sanitized_parts.append(part)
+            continue
+        text = part.get("text")
+        if not isinstance(text, str):
+            sanitized_parts.append(part)
+            continue
+        sanitized_text, part_changed = _sanitize_kb_markdown_output(
+            text,
+            allowed_source_urls=allowed_source_urls,
+            allowed_image_urls=allowed_image_urls,
+        )
+        changed += part_changed
+        sanitized_parts.append({**part, "text": sanitized_text})
+    return sanitized_parts, changed
+
+
+def _get_choice_message(choice: object, key: str) -> object:
+    if isinstance(choice, dict):
+        return choice.get(key)
+    return getattr(choice, key, None)
+
+
+def _get_message_content(message: object) -> object:
+    if isinstance(message, dict):
+        return message.get("content")
+    return getattr(message, "content", None)
+
+
+def _set_message_content(message: object, content: object) -> None:
+    if isinstance(message, dict):
+        message["content"] = content
+    else:
+        setattr(message, "content", content)
+
+
+def _sanitize_kb_response(response: object, kb_meta: dict[str, Any]) -> int:
+    allowed_source_urls = set(kb_meta.get("allowed_source_urls") or [])
+    allowed_image_urls = set(kb_meta.get("allowed_image_urls") or [])
+    changed = 0
+    for choice in getattr(response, "choices", []) or []:
+        for key in ("message", "delta"):
+            message = _get_choice_message(choice, key)
+            if message is None:
+                continue
+            sanitized, content_changed = _sanitize_response_message_content(
+                _get_message_content(message),
+                allowed_source_urls=allowed_source_urls,
+                allowed_image_urls=allowed_image_urls,
+            )
+            if content_changed:
+                _set_message_content(message, sanitized)
+                changed += content_changed
+    return changed
+
+
 def _compose_general_chat_prefix(*blocks: str) -> str:
     """Compose the system-prompt prefix for path A when the user has
     explicitly opted out of every KB scope (``kb_personal_enabled=False``
@@ -1579,9 +1717,14 @@ class KlaiKnowledgeHook(CustomLogger):
             "- Do NOT add images in the TL;DR (section 1).]\n"
         )
         lines = [header, source_link_instruction]
+        allowed_source_urls: set[str] = set()
+        allowed_image_urls: set[str] = set()
         for chunk in chunks:
             title = chunk.get("title") or chunk.get("metadata", {}).get("title", "")
             source_url = chunk.get("source_url", "")
+            normalised_source_url = _normalise_guard_url(source_url)
+            if normalised_source_url:
+                allowed_source_urls.add(normalised_source_url)
             scope_label = chunk.get("scope", "org")
             # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): English chunk
             # labels. These appear inside the system prompt only — the model
@@ -1599,14 +1742,13 @@ class KlaiKnowledgeHook(CustomLogger):
             lines.append(text)
             if source_url:
                 lines.append(f"source_url: {source_url}")
-            image_urls = chunk.get("image_urls") or []
-            if image_urls:
-                absolute_urls = [
-                    f"{KB_IMAGES_BASE_URL}{u}" if u.startswith("/") else u
-                    for u in image_urls
-                ]
-                for i, img_url in enumerate(absolute_urls, 1):
-                    lines.append(f"![afbeelding {i}]({img_url})")
+            absolute_urls = [
+                url for url in (_absolute_image_url(u) for u in chunk.get("image_urls") or [])
+                if url
+            ]
+            allowed_image_urls.update(absolute_urls)
+            for i, img_url in enumerate(absolute_urls, 1):
+                lines.append(f"![afbeelding {i}]({img_url})")
             lines.append("")
         lines.append("[End knowledge base context]")
         # SPEC-RAG-MULTILINGUAL-CHAT-001: KB content is often in a different
@@ -1659,6 +1801,8 @@ class KlaiKnowledgeHook(CustomLogger):
             "user_id": user_id,
             "chunks_injected": len(chunks),
             "chunk_ids": chunk_ids,
+            "allowed_source_urls": sorted(allowed_source_urls),
+            "allowed_image_urls": sorted(allowed_image_urls),
             "retrieval_ms": retrieval_ms,
             "gate_bypassed": False,
         }
@@ -1667,6 +1811,12 @@ class KlaiKnowledgeHook(CustomLogger):
     async def async_post_call_success_hook(self, data, user_api_key_dict, response):
         kb_meta = data.get("metadata", {}).get("_klai_kb_meta")
         if kb_meta and not kb_meta.get("gate_bypassed"):
+            sanitized_count = _sanitize_kb_response(response, kb_meta)
+            if sanitized_count:
+                logger.warning(
+                    "KB output guard sanitized %d invented URL/image references",
+                    sanitized_count,
+                )
             logger.info(
                 "KB injection: org=%s user=%s chunks=%d retrieval_ms=%d",
                 kb_meta["org_id"],
@@ -1674,6 +1824,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 kb_meta["chunks_injected"],
                 kb_meta["retrieval_ms"],
             )
+        return response
 
     async def async_post_call_failure_hook(self, *args, **kwargs):
         pass
