@@ -69,9 +69,39 @@ class AutoJoinAdminNotificationVars(_BaseVars):
     domain: str
     admin_email: EmailStr
 
+
+class WaitlistConfirmationVars(_BaseVars):
+    """Variables for the `waitlist_confirmation` email.
+
+    SPEC-LAUNCH-SOFTLAUNCH-001 B-2 Q3 — sent to a waitlist subscriber
+    shortly after they submit the form. Recipient is bound to
+    ``variables.email``.
+    """
+
+    name: str
+    email: EmailStr
+    company: str
+
+
+class WaitlistInviteVars(_BaseVars):
+    """Variables for the `waitlist_invite` email.
+
+    SPEC-LAUNCH-SOFTLAUNCH-001 B-2 Q1/Q2 — sent when a Twenty CRM
+    waitlist deal transitions to stage ``INVITED``.
+    """
+
+    name: str
+    email: EmailStr
+    company: str
+    signup_url: HttpUrl
+    expires_in_hours: int
+
+
 # REQ-2.2: registry keyed on template_name. Handler resolves schema via
 # TEMPLATE_SCHEMAS[template_name]; unknown key -> HTTP 400.
 TEMPLATE_SCHEMAS: dict[str, type[_BaseVars]] = {
     "join_request_admin": JoinRequestAdminVars,
     "join_request_approved": JoinRequestApprovedVars,
+    "waitlist_confirmation": WaitlistConfirmationVars,
+    "waitlist_invite": WaitlistInviteVars,
 }
