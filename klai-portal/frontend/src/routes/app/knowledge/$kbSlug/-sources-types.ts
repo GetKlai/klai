@@ -41,3 +41,8 @@ export interface ContentResponse {
   limit: number
   offset: number
 }
+
+export interface PageIndexEntry {
+  id: string | null
+  slug: string
+}
