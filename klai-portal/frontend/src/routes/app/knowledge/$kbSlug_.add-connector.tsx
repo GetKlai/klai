@@ -11,12 +11,12 @@ import { StepIndicator, type StepItem } from '@/components/ui/step-indicator'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { MultiSelect, type MultiSelectOption } from '@/components/ui/multi-select'
+import { MultiSelect } from '@/components/ui/multi-select'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { MS_SITE_URL_PATTERN } from '@/lib/ms-docs'
-import { joinSeedUrl } from './$kbSlug/-kb-helpers'
-import type { CookieRow } from './$kbSlug/-kb-types'
+import { joinSeedUrl, ASSERTION_MODE_OPTIONS } from './$kbSlug/-kb-helpers'
+import type { CookieRow, GitHubConfig, WebCrawlerConfig } from './$kbSlug/-kb-types'
 import { CookieRowsInput } from '@/components/knowledge/CookieRowsInput'
 import { kbQueryKeys } from '@/lib/kb-query-keys'
 
@@ -54,21 +54,6 @@ type PreviewClassification =
   | 'auth_wall_detected'
   | 'unknown'
 
-interface GitHubConfig {
-  installation_id: string
-  repo_owner: string
-  repo_name: string
-  branch: string
-  path_filter: string
-}
-
-interface WebCrawlerConfig {
-  base_url: string
-  path_prefix: string
-  max_pages: string
-  content_selector: string
-}
-
 interface AuthGuardSuggestion {
   canary_url: string | null
   canary_fingerprint: string | null
@@ -95,15 +80,6 @@ interface ConfluenceConfig {
   api_token: string
   space_keys: string
 }
-
-const ASSERTION_MODE_OPTIONS: MultiSelectOption[] = [
-  { value: 'factual',     label: 'Fact',        description: 'Established fact, documentation, specs' },
-  { value: 'procedural',  label: 'Procedure',   description: "Step-by-step instructions, how-to's" },
-  { value: 'belief',      label: 'Claim',       description: 'Not conclusively proven claim' },
-  { value: 'quoted',      label: 'Quote',       description: 'Literal source material' },
-  { value: 'hypothesis',  label: 'Speculation', description: 'Hypotheses, brainstorm' },
-  { value: 'unknown',     label: 'Unknown',     description: 'Type not specified' },
-]
 
 const CONNECTOR_TYPES: {
   type: ConnectorType
