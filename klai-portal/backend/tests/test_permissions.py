@@ -51,13 +51,17 @@ def _row(
     provisioning_status: str = "active",
 ) -> tuple[MagicMock, MagicMock]:
     """Build a (PortalOrg, PortalUser) tuple as `db.execute(...).one_or_none()` would
-    return for the resolver query."""
+    return for the resolver query.
+
+    SPEC-PORTAL-EXTENSIONS-UNIFY-001: `enabled_addons=` kept as back-compat alias —
+    its value is merged into `platform_unlocked_features` for the mock org so older
+    tests can still express their setup without rewriting.
+    """
     org = MagicMock()
     org.id = org_id
     org.slug = slug
     org.plan = plan
-    org.enabled_addons = enabled_addons or []
-    org.platform_unlocked_features = platform_unlocked_features or []
+    org.platform_unlocked_features = list({*(platform_unlocked_features or []), *(enabled_addons or [])})
     org.provisioning_status = provisioning_status
 
     user = MagicMock()
@@ -140,7 +144,9 @@ async def test_resolve_returns_user_permissions_dataclass() -> None:
     assert perms.org_slug == "voys"
     assert perms.role == ProfileRole.ADMIN
     assert perms.plan == "knowledge"
-    assert isinstance(perms.enabled_addons, frozenset)
+    # SPEC-PORTAL-EXTENSIONS-UNIFY-001: enabled_addons folded into
+    # platform_unlocked_features; UserPermissions no longer carries
+    # enabled_addons as a separate field.
     assert isinstance(perms.platform_unlocked_features, frozenset)
     assert perms.effective_role == ProfileRole.ADMIN
     assert isinstance(perms.effective_capabilities, frozenset)
@@ -331,7 +337,6 @@ async def test_get_caller_at_least_admin_passes_for_admin() -> None:
         org_slug="voys",
         role=ProfileRole.ADMIN,
         plan="knowledge",
-        enabled_addons=frozenset(),
         platform_unlocked_features=frozenset(),
         effective_role=ProfileRole.ADMIN,
         effective_capabilities=frozenset(),
@@ -353,7 +358,6 @@ async def test_get_caller_at_least_admin_blocks_company() -> None:
         org_slug="voys",
         role=ProfileRole.COMPANY,
         plan="knowledge",
-        enabled_addons=frozenset(),
         platform_unlocked_features=frozenset(),
         effective_role=ProfileRole.COMPANY,
         effective_capabilities=frozenset(),
@@ -386,7 +390,6 @@ async def test_get_caller_at_least_role_matrix(caller: ProfileRole, required: Pr
         org_slug="voys",
         role=caller,
         plan="knowledge",
-        enabled_addons=frozenset(),
         platform_unlocked_features=frozenset(),
         effective_role=caller,
         effective_capabilities=frozenset(),
@@ -422,7 +425,6 @@ def _perms_with(
         org_slug="voys",
         role=role,
         plan="knowledge",
-        enabled_addons=frozenset(),
         platform_unlocked_features=platform_features,
         effective_role=role,
         effective_capabilities=caps,

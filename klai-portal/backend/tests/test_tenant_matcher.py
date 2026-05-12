@@ -2,7 +2,7 @@
 
 SPEC-PORTAL-PLAN-RENAME-001: scribe gating moved from a plan-bound
 allowlist (SCRIBE_PLANS = {"professional", "complete"}) to a per-org
-add-on toggle (``portal_orgs.enabled_addons`` contains ``"scribe"``).
+add-on toggle (``portal_orgs.platform_unlocked_features`` contains ``"scribe"``).
 """
 
 from types import SimpleNamespace
@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services.tenant_matcher import SCRIBE_ADDON, clear_cache, find_tenant
+from app.services.tenant_matcher import SCRIBE_FEATURE, clear_cache, find_tenant
 
 
 @pytest.fixture(autouse=True)
@@ -19,9 +19,9 @@ def _clear_cache() -> None:
     clear_cache()
 
 
-def _make_org_row(org_id: int = 42, enabled_addons: list[str] | None = None) -> SimpleNamespace:
-    """Create a fake DB row with id and enabled_addons attributes."""
-    return SimpleNamespace(id=org_id, enabled_addons=enabled_addons or [])
+def _make_org_row(org_id: int = 42, platform_unlocked_features: list[str] | None = None) -> SimpleNamespace:
+    """Create a fake DB row with id and platform_unlocked_features attributes."""
+    return SimpleNamespace(id=org_id, platform_unlocked_features=platform_unlocked_features or [])
 
 
 def _mock_session_with_org(org_row: SimpleNamespace | None = None) -> AsyncMock:
@@ -46,7 +46,7 @@ async def test_known_email_with_scribe_addon_returns_user_and_org() -> None:
     mock_zitadel = AsyncMock()
     mock_zitadel.find_user_by_email.return_value = ("user-123", "zorg-456")
 
-    mock_session = _mock_session_with_org(_make_org_row(42, enabled_addons=["scribe"]))
+    mock_session = _mock_session_with_org(_make_org_row(42, platform_unlocked_features=["scribe"]))
 
     with (
         patch("app.services.tenant_matcher.zitadel", mock_zitadel),
@@ -76,7 +76,7 @@ async def test_cache_prevents_second_zitadel_call() -> None:
     mock_zitadel = AsyncMock()
     mock_zitadel.find_user_by_email.return_value = ("user-123", "zorg-456")
 
-    mock_session = _mock_session_with_org(_make_org_row(42, enabled_addons=["scribe"]))
+    mock_session = _mock_session_with_org(_make_org_row(42, platform_unlocked_features=["scribe"]))
 
     with (
         patch("app.services.tenant_matcher.zitadel", mock_zitadel),
@@ -95,11 +95,11 @@ async def test_cache_prevents_second_zitadel_call() -> None:
 
 @pytest.mark.asyncio
 async def test_org_with_scribe_addon_allowed() -> None:
-    """An org with ``scribe`` in enabled_addons is allowed."""
+    """An org with ``scribe`` in platform_unlocked_features is allowed."""
     mock_zitadel = AsyncMock()
     mock_zitadel.find_user_by_email.return_value = ("user-1", "zorg-1")
 
-    mock_session = _mock_session_with_org(_make_org_row(10, enabled_addons=["scribe"]))
+    mock_session = _mock_session_with_org(_make_org_row(10, platform_unlocked_features=["scribe"]))
 
     with (
         patch("app.services.tenant_matcher.zitadel", mock_zitadel),
@@ -116,7 +116,7 @@ async def test_org_with_scribe_and_other_addons_allowed() -> None:
     mock_zitadel = AsyncMock()
     mock_zitadel.find_user_by_email.return_value = ("user-2", "zorg-2")
 
-    mock_session = _mock_session_with_org(_make_org_row(20, enabled_addons=["scribe", "docs"]))
+    mock_session = _mock_session_with_org(_make_org_row(20, platform_unlocked_features=["scribe", "docs"]))
 
     with (
         patch("app.services.tenant_matcher.zitadel", mock_zitadel),
@@ -129,11 +129,11 @@ async def test_org_with_scribe_and_other_addons_allowed() -> None:
 
 @pytest.mark.asyncio
 async def test_org_without_scribe_addon_rejected() -> None:
-    """An org whose enabled_addons does not contain ``scribe`` is rejected."""
+    """An org whose platform_unlocked_features does not contain ``scribe`` is rejected."""
     mock_zitadel = AsyncMock()
     mock_zitadel.find_user_by_email.return_value = ("user-3", "zorg-3")
 
-    mock_session = _mock_session_with_org(_make_org_row(30, enabled_addons=["docs"]))
+    mock_session = _mock_session_with_org(_make_org_row(30, platform_unlocked_features=["docs"]))
 
     with (
         patch("app.services.tenant_matcher.zitadel", mock_zitadel),
@@ -146,11 +146,11 @@ async def test_org_without_scribe_addon_rejected() -> None:
 
 @pytest.mark.asyncio
 async def test_org_with_no_addons_rejected() -> None:
-    """An org with an empty enabled_addons list is rejected."""
+    """An org with an empty platform_unlocked_features list is rejected."""
     mock_zitadel = AsyncMock()
     mock_zitadel.find_user_by_email.return_value = ("user-4", "zorg-4")
 
-    mock_session = _mock_session_with_org(_make_org_row(40, enabled_addons=[]))
+    mock_session = _mock_session_with_org(_make_org_row(40, platform_unlocked_features=[]))
 
     with (
         patch("app.services.tenant_matcher.zitadel", mock_zitadel),
@@ -179,5 +179,5 @@ async def test_no_portal_org_returns_none() -> None:
 
 
 def test_scribe_addon_constant() -> None:
-    """The exported SCRIBE_ADDON constant matches the canonical add-on name."""
-    assert SCRIBE_ADDON == "scribe"
+    """The exported SCRIBE_FEATURE constant matches the canonical add-on name."""
+    assert SCRIBE_FEATURE == "scribe"

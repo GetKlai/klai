@@ -1,8 +1,9 @@
 """System group registry.
 
-SPEC-PORTAL-RBAC-001 v0.2.0: empty registry. Role-bind and add-on groups are
-removed -- profile is the single writer of `portal_users.role`, and add-ons
-are derived from `portal_orgs.enabled_addons` + profile rank. The
+SPEC-PORTAL-RBAC-001 v0.2.0 + SPEC-PORTAL-EXTENSIONS-UNIFY-001: empty
+registry. Role-bind and add-on groups are removed -- profile is the single
+writer of `portal_users.role`, and products are derived from
+`portal_orgs.platform_unlocked_features` + profile rank. The
 `create_system_groups` helper remains as a no-op so the provisioning state
 machine keeps its API surface stable.
 """

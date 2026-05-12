@@ -229,6 +229,12 @@ def make_perms(
     Replaces the legacy ``patch("..._get_caller_org", return_value=(uid, org,
     user))`` test pattern. Produces a frozen ``UserPermissions`` with derived
     capabilities + products consistent with the other inputs.
+
+    SPEC-PORTAL-EXTENSIONS-UNIFY-001 (2026-05-12): ``UserPermissions.enabled_addons``
+    is gone. The ``enabled_addons=`` parameter is kept here as a back-compat
+    alias for existing call-sites — its value is merged into
+    ``platform_unlocked_features`` so callers do not need to rewrite all at once.
+    Prefer ``platform_unlocked_features=`` in new tests.
     """
     from app.core.features import derive_user_products
     from app.core.permissions import UserPermissions
@@ -236,8 +242,8 @@ def make_perms(
     from app.core.profiles import PROFILE_CAPABILITIES, Capability, ProfileRole
 
     role_enum = role if isinstance(role, ProfileRole) else ProfileRole(str(role))
-    addons = frozenset(enabled_addons or [])
-    plat_features = frozenset(platform_unlocked_features or [])
+    # Back-compat: legacy enabled_addons param merges into platform_unlocked_features.
+    plat_features = frozenset((platform_unlocked_features or []) + (enabled_addons or []))
 
     if role_enum == ProfileRole.ADMIN:
         knowledge_caps = get_plan_limits("knowledge").capabilities
@@ -247,7 +253,7 @@ def make_perms(
         plan_caps = get_plan_limits(plan).capabilities
         eff_caps = frozenset(Capability(c) for c in (set(role_caps) & set(plan_caps)))
 
-    eff_products = frozenset(derive_user_products(role_enum.value, plan, list(addons)))
+    eff_products = frozenset(derive_user_products(role_enum.value, plan, list(plat_features)))
 
     return UserPermissions(
         user_id=user_id,
@@ -255,7 +261,6 @@ def make_perms(
         org_slug=org_slug,
         role=role_enum,
         plan=plan,
-        enabled_addons=addons,
         platform_unlocked_features=plat_features,
         effective_role=role_enum,
         effective_capabilities=eff_caps,

@@ -1,10 +1,14 @@
 """Admin product endpoints.
 
 SPEC-PORTAL-RBAC-001 v0.2.0: per-user/per-group product assignment is removed.
-Products are derived from (profile, plan, enabled_addons) -- see
+Products are derived from (profile, plan, platform_unlocked_features) -- see
 `app.core.features.derive_user_products`. The legacy assignment endpoints
 return 410 Gone. Two read-only endpoints remain because the frontend uses
 them for the assignable-products list and the per-user effective view.
+
+SPEC-PORTAL-EXTENSIONS-UNIFY-001 (2026-05-12): the third derivation input
+was renamed from `enabled_addons` to `platform_unlocked_features` after
+the two gating columns were unified.
 """
 
 from typing import Literal
@@ -40,6 +44,10 @@ class ProductsResponse(BaseModel):
 
 class EffectiveProductOut(BaseModel):
     product: str
+    # Source classification — "plan" for chat/knowledge, "addon" for
+    # scribe/docs (granted via platform_unlocked_features). The wire-name
+    # remains "addon" for frontend backward-compatibility; conceptually
+    # it now means "platform-unlocked product" per SPEC-PORTAL-EXTENSIONS-UNIFY-001.
     source: Literal["plan", "addon"]
 
 
@@ -57,12 +65,12 @@ async def list_available_products(
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> ProductsResponse:
-    """Return products available to the caller given (profile, org plan, enabled add-ons).
+    """Return products available to the caller given (profile, plan, platform_unlocked_features).
 
     UserPermissions already carries `effective_products` derived from the
-    same (role, plan, enabled_addons) input — return that instead of
-    re-deriving. Equivalent to calling `derive_user_products` from this
-    handler in earlier code, just sourced one layer up.
+    same triple — return that instead of re-deriving. Equivalent to calling
+    `derive_user_products` from this handler in earlier code, just sourced
+    one layer up.
     """
     return ProductsResponse(products=sorted(perms.effective_products))
 
@@ -73,7 +81,7 @@ async def get_user_effective_products(
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> EffectiveProductsResponse:
-    """Return effective products for a user with source attribution (plan or addon)."""
+    """Return effective products for a user with source attribution (plan vs platform-unlock)."""
     target = await db.scalar(
         select(PortalUser).where(
             PortalUser.zitadel_user_id == zitadel_user_id,
@@ -86,15 +94,15 @@ async def get_user_effective_products(
     # Derive products specifically for the TARGET user with the caller's
     # tenant config — same shape `get_effective_products` would return,
     # but routed through `derive_user_products` so we can also classify
-    # each product as plan- vs addon-sourced for the response.
+    # each product as plan- vs platform-unlock-sourced for the response.
     effective = sorted(
         derive_user_products(
             role=target.role,
             plan=perms.plan,
-            enabled_addons=list(perms.enabled_addons),
+            platform_unlocked_features=list(perms.platform_unlocked_features),
         )
     )
-    enabled_addons = set(perms.enabled_addons)
+    unlocked = set(perms.platform_unlocked_features)
     # Keep the canonical resolver as a sanity sentinel so any future drift
     # between derive_user_products and get_effective_products surfaces here
     # rather than at the user-visible response.
@@ -109,7 +117,10 @@ async def get_user_effective_products(
         products=[
             EffectiveProductOut(
                 product=p,
-                source="addon" if p in enabled_addons else "plan",
+                # Wire-name "addon" preserved for frontend back-compat;
+                # semantically: this product came from platform_unlocked_features
+                # rather than from the plan baseline.
+                source="addon" if p in unlocked else "plan",
             )
             for p in effective
         ]
