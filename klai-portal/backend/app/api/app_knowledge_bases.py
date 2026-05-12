@@ -147,7 +147,7 @@ class KBStatsSummary(BaseModel):
     usage_30d: int  # knowledge.queried events for this KB (30 days)
     unique_users_30d: int  # distinct users that queried this KB (30 days)
     active_days_30d: int  # distinct days with at least one query (30 days, max 30)
-    bronnen: int = 0  # SPEC-PORTAL-KENNIS-001: total bronnen count (connectors + direct uploads)
+    sources: int = 0  # SPEC-PORTAL-KENNIS-001: total sources count (connectors + direct uploads)
 
 
 class KBStatsSummaryResponse(BaseModel):
@@ -468,10 +468,10 @@ async def knowledge_bases_stats_summary(
     )
     items_by_slug: dict[str, int] = {kb.slug: (count or 0) for kb, count in zip(kbs, item_counts, strict=True)}
 
-    # SPEC-PORTAL-KENNIS-001: chunks + bronnen per KB (one bulk call to
+    # SPEC-PORTAL-KENNIS-001: chunks + sources per KB (one bulk call to
     # knowledge-ingest). Empty dicts on failure → falls back to 0 / connector
     # count in the response.
-    _parent_chunks_by_slug, bronnen_by_slug = await knowledge_ingest_client.get_chunks_summary(
+    _parent_chunks_by_slug, sources_by_slug = await knowledge_ingest_client.get_chunks_summary(
         org.zitadel_org_id, kb_slugs
     )
     # NOTE: parent_chunks counts are unreliable for the user-facing "M chunks"
@@ -485,10 +485,10 @@ async def knowledge_bases_stats_summary(
         queries, users, active_days = usage_by_slug.get(kb.slug, (0, 0, 0))
         connectors_count = connectors_by_slug.get(kb.slug, 0)
         items_count = items_by_slug.get(kb.slug, 0)
-        # bronnen = distinct connector_ids + direct upload artifacts (from
+        # sources = distinct connector_ids + direct upload artifacts (from
         # knowledge-ingest). Fall back to portal_connectors count when the
         # ingest call failed and we have no aggregate data.
-        bronnen_count = bronnen_by_slug.get(kb.slug, connectors_count) + visible_uploads_by_slug.get(kb.slug, 0)
+        sources_count = sources_by_slug.get(kb.slug, connectors_count) + visible_uploads_by_slug.get(kb.slug, 0)
         stats[kb.slug] = KBStatsSummary(
             items=items_count,
             connectors=connectors_count,
@@ -497,7 +497,7 @@ async def knowledge_bases_stats_summary(
             usage_30d=queries,
             unique_users_30d=users,
             active_days_30d=active_days,
-            bronnen=bronnen_count,
+            sources=sources_count,
         )
     return KBStatsSummaryResponse(stats=stats)
 
@@ -913,8 +913,8 @@ async def get_kb_stats(
 # (this one) instead of two (connectors + items).
 
 
-class BronOut(BaseModel):
-    """Uniform shape for one row on the Bronnen tab."""
+class SourceOut(BaseModel):
+    """Uniform shape for one row on the Sources tab."""
 
     kind: str  # "connector" or "upload"
     id: str  # connector_id (for connectors) or artifact_id (for uploads)
@@ -930,8 +930,8 @@ class BronOut(BaseModel):
     index_status: str | None = None  # "synced", "pending", or "not_synced" for uploads; None for connectors
 
 
-class BronnenResponse(BaseModel):
-    bronnen: list[BronOut] = []
+class SourcesResponse(BaseModel):
+    sources: list[SourceOut] = []
 
 
 class RenameUploadRequest(BaseModel):
@@ -943,7 +943,7 @@ class RenameUploadResponse(BaseModel):
     display_name: str
 
 
-class BronContentItem(BaseModel):
+class SourceContentItem(BaseModel):
     """One artifact under a connector (drill-down)."""
 
     id: str
@@ -953,7 +953,7 @@ class BronContentItem(BaseModel):
     created_at: datetime
 
 
-class BronContentChunk(BaseModel):
+class SourceContentChunk(BaseModel):
     """One parent_chunk under a direct-upload artifact (drill-down)."""
 
     id: int
@@ -962,10 +962,10 @@ class BronContentChunk(BaseModel):
     token_count: int
 
 
-class BronContentResponse(BaseModel):
+class SourceContentResponse(BaseModel):
     kind: str  # "connector" or "upload"
-    items: list[BronContentItem] = []  # populated when kind == connector
-    chunks: list[BronContentChunk] = []  # populated when kind == upload
+    items: list[SourceContentItem] = []  # populated when kind == connector
+    chunks: list[SourceContentChunk] = []  # populated when kind == upload
     total: int = 0
     limit: int
     offset: int
@@ -1006,14 +1006,14 @@ def _upload_type_label(content_type: str) -> str:
 
 @router.get(
     "/knowledge-bases/{kb_slug}/sources",
-    response_model=BronnenResponse,
+    response_model=SourcesResponse,
 )
-async def list_kb_bronnen(
+async def list_kb_sources(
     kb_slug: str,
     perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
-) -> BronnenResponse:
-    """Unified bronnen list for a KB.
+) -> SourcesResponse:
+    """Unified sources list for a KB.
 
     SPEC-PORTAL-KENNIS-001 Phase E. Combines:
       - portal_connectors (display name, sync status, type)
@@ -1042,7 +1042,7 @@ async def list_kb_bronnen(
     if aggregates is None:
         aggregates = {"connectors": [], "uploads": []}
 
-    bronnen: list[BronOut] = []
+    sources: list[SourceOut] = []
 
     # 1) Connector rows: merge knowledge-ingest counts with portal display data.
     seen_connector_ids: set[str] = set()
@@ -1056,8 +1056,8 @@ async def list_kb_bronnen(
             # Orphan: artifacts reference a connector that no longer exists in
             # portal DB. Surface anyway so the user can see the data and clean
             # it up via Geavanceerd. Display fallbacks keep the row meaningful.
-            bronnen.append(
-                BronOut(
+            sources.append(
+                SourceOut(
                     kind="connector",
                     id=cid,
                     name=f"(verwijderde koppeling) {cid[:8]}",
@@ -1069,8 +1069,8 @@ async def list_kb_bronnen(
                 )
             )
         else:
-            bronnen.append(
-                BronOut(
+            sources.append(
+                SourceOut(
                     kind="connector",
                     id=cid,
                     name=portal_conn.name or _connector_type_label(portal_conn.connector_type),
@@ -1088,8 +1088,8 @@ async def list_kb_bronnen(
         cid = str(portal_conn.id)
         if cid in seen_connector_ids:
             continue
-        bronnen.append(
-            BronOut(
+        sources.append(
+            SourceOut(
                 kind="connector",
                 id=cid,
                 name=portal_conn.name or _connector_type_label(portal_conn.connector_type),
@@ -1106,8 +1106,8 @@ async def list_kb_bronnen(
     for upload in aggregates.get("uploads", []):
         created_at_unix = upload.get("created_at")
         created_at_dt = datetime.fromtimestamp(int(created_at_unix), tz=dt.UTC) if created_at_unix is not None else None
-        bronnen.append(
-            BronOut(
+        sources.append(
+            SourceOut(
                 kind="upload",
                 id=str(upload.get("id") or ""),
                 name=str(upload.get("display_name") or upload.get("path") or "(zonder naam)"),
@@ -1132,8 +1132,8 @@ async def list_kb_bronnen(
         .order_by(KBUpload.created_at.desc())
     )
     for upload in upload_rows_result.scalars().all():
-        bronnen.append(
-            BronOut(
+        sources.append(
+            SourceOut(
                 kind="upload",
                 id=str(upload.id),
                 name=upload.filename,
@@ -1146,14 +1146,14 @@ async def list_kb_bronnen(
             )
         )
 
-    return BronnenResponse(bronnen=bronnen)
+    return SourcesResponse(sources=sources)
 
 
 @router.get(
     "/knowledge-bases/{kb_slug}/sources/{source_id}/content",
-    response_model=BronContentResponse,
+    response_model=SourceContentResponse,
 )
-async def get_bron_content(
+async def get_source_content(
     kb_slug: str,
     source_id: str,
     kind: str,
@@ -1161,7 +1161,7 @@ async def get_bron_content(
     offset: int = 0,
     perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
-) -> BronContentResponse:
+) -> SourceContentResponse:
     """Drill-down: items under a connector, or chunks under a direct upload.
 
     The ``kind`` query param disambiguates whether ``source_id`` is a
@@ -1200,9 +1200,9 @@ async def get_bron_content(
             org.zitadel_org_id, kb.slug, source_id, limit=limit, offset=offset
         )
         if data is None:
-            return BronContentResponse(kind=kind, items=[], total=0, limit=limit, offset=offset)
+            return SourceContentResponse(kind=kind, items=[], total=0, limit=limit, offset=offset)
         items = [
-            BronContentItem(
+            SourceContentItem(
                 id=str(row.get("id") or ""),
                 path=str(row.get("path") or ""),
                 content_type=str(row.get("content_type") or "unknown"),
@@ -1211,7 +1211,7 @@ async def get_bron_content(
             )
             for row in (data.get("items") or [])
         ]
-        return BronContentResponse(
+        return SourceContentResponse(
             kind=kind,
             items=items,
             total=int(data.get("total") or 0),
@@ -1226,9 +1226,9 @@ async def get_bron_content(
     # caller has access to this KB.
     data = await knowledge_ingest_client.list_upload_chunks(org.zitadel_org_id, source_id, limit=limit, offset=offset)
     if data is None:
-        return BronContentResponse(kind=kind, chunks=[], total=0, limit=limit, offset=offset)
+        return SourceContentResponse(kind=kind, chunks=[], total=0, limit=limit, offset=offset)
     chunks = [
-        BronContentChunk(
+        SourceContentChunk(
             id=int(row.get("id") or 0),
             position=int(row.get("position") or 0),
             text=str(row.get("text") or ""),
@@ -1236,7 +1236,7 @@ async def get_bron_content(
         )
         for row in (data.get("chunks") or [])
     ]
-    return BronContentResponse(
+    return SourceContentResponse(
         kind=kind,
         chunks=chunks,
         total=int(data.get("total") or 0),
