@@ -1,4 +1,4 @@
-export type Plan = 'core' | 'professional' | 'complete' | 'free'
+export type Plan = 'chat' | 'knowledge' | 'free'
 export type BillingCycle = 'monthly' | 'yearly'
 export type BillingStatus = 'pending' | 'mandate_requested' | 'active' | 'payment_failed' | 'cancelled'
 
@@ -24,8 +24,9 @@ export interface MandateForm {
   internal_reference: string
 }
 
+// SPEC-PORTAL-PLAN-RENAME-001: 2-tier plan ladder. Prices match the live
+// pricing page on getklai.com/pricing.
 export const PLANS: { id: Plan; name: string; monthly: number; yearly: number }[] = [
-  { id: 'core', name: 'Chat', monthly: 22, yearly: 18 },
-  { id: 'professional', name: 'Chat + Scribe', monthly: 42, yearly: 34 },
-  { id: 'complete', name: 'Chat + Scribe + Knowledge', monthly: 60, yearly: 48 },
+  { id: 'chat', name: 'Klai Chat', monthly: 28, yearly: 20 },
+  { id: 'knowledge', name: 'Klai Chat + Knowledge', monthly: 68, yearly: 48 },
 ]

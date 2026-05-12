@@ -52,7 +52,7 @@ describe('errorMessageFor — SPEC D8 mapping', () => {
   it('ApiError 403 with kb_quota_items_exceeded error_code → kb full banner', () => {
     const err = new ApiError(
       403,
-      JSON.stringify({ error_code: 'kb_quota_items_exceeded', plan: 'core', limit: 20, current: 20 }),
+      JSON.stringify({ error_code: 'kb_quota_items_exceeded', plan: 'chat', limit: 20, current: 20 }),
     )
     expect(errorMessageFor('text', err)).toBe(
       keyOf('This knowledge base has reached its document limit'),
