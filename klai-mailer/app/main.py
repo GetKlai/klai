@@ -242,6 +242,21 @@ async def _resolve_expected_recipient(
             raise HTTPException(status_code=400, detail="recipient mismatch")
         return str(validated_vars.admin_email)
 
+    if template_name in ("waitlist_confirmation", "waitlist_invite"):
+        # SPEC-LAUNCH-SOFTLAUNCH-001 B-2: recipient is the subscriber's own
+        # email (validated as EmailStr by the schema). Same binding pattern
+        # as `join_request_approved` (REQ-3.2).
+        expected = str(validated_vars.email).strip().lower()
+        if supplied_norm and supplied_norm != expected:
+            struct_logger.warning(
+                "mailer_recipient_mismatch",
+                template=template_name,
+                expected_hash=hashlib.sha256(expected.encode()).hexdigest(),
+                supplied_hash=hashlib.sha256(supplied_norm.encode()).hexdigest(),
+            )
+            raise HTTPException(status_code=400, detail="recipient mismatch")
+        return str(validated_vars.email)
+
     # Fallback for any template that somehow bypassed TEMPLATE_SCHEMAS —
     # defensively 400 rather than passing through attacker `to`.
     raise HTTPException(status_code=400, detail=f"Unknown template: {template_name}")
