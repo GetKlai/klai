@@ -116,6 +116,14 @@ async def _reset_tenant_context(session: AsyncSession) -> None:
         await session.execute(text("SELECT set_config('app.current_org_id', '', false)"))
     with contextlib.suppress(Exception):
         await session.execute(text("SELECT set_config('app.cross_org_admin', '', false)"))
+    # SPEC-PORTAL-PRICING-PER-USER-001 Phase 2: ``klai.changed_by_user_id``
+    # is a per-request actor-id GUC consumed by the
+    # ``portal_users_seat_history_trg`` trigger. Reset on connection
+    # release so the next request never inherits the previous user's
+    # identity — a stale value here would attribute a system-write to
+    # the wrong admin in the audit trail.
+    with contextlib.suppress(Exception):
+        await session.execute(text("SELECT set_config('klai.changed_by_user_id', '', false)"))
 
 
 async def get_db() -> AsyncGenerator[AsyncSession]:
