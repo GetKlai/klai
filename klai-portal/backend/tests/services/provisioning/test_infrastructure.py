@@ -389,12 +389,20 @@ class TestCharacterizeFlushRedisAndRestartLibrechat:
 class TestCharacterizeStartLibrechatContainer:
     """Characterization tests for _start_librechat_container."""
 
+    def _write_lc_files(self, tmp_path: Path, slug: str = "acme") -> None:
+        (tmp_path / "librechat.yaml").write_text("version: 1.0\n")
+        tenant_dir = tmp_path / slug
+        tenant_dir.mkdir(parents=True, exist_ok=True)
+        (tenant_dir / ".env").write_text("MONGO_URI=mongodb://example\nALLOW_IFRAME=true\nJWT_SECRET=keep-me\n")
+        patch_dir = tmp_path / "patches"
+        patch_dir.mkdir(exist_ok=True)
+        for name in ("format.cjs", "stream.cjs", "search.cjs"):
+            (patch_dir / name).write_text("// patch\n")
+
     def test_starts_container_with_correct_config(self, tmp_path):
         from app.services.provisioning import _start_librechat_container
 
-        # Create base yaml file
-        base_yaml = Path(tmp_path) / "librechat.yaml"
-        base_yaml.write_text("version: 1.0\n")
+        self._write_lc_files(tmp_path)
 
         mock_client = MagicMock()
         mock_client.containers.get.side_effect = type("NotFound", (Exception,), {})("not found")
@@ -418,6 +426,67 @@ class TestCharacterizeStartLibrechatContainer:
             assert call_kwargs[1]["detach"] is True
             assert call_kwargs[1]["network"] == "klai-net"
 
+    def test_passes_tenant_env_as_process_environment(self, tmp_path):
+        from app.services.provisioning import _start_librechat_container
+
+        self._write_lc_files(tmp_path)
+
+        mock_client = MagicMock()
+        with (
+            patch("app.services.provisioning.infrastructure.docker") as mock_docker,
+            patch("app.services.provisioning.infrastructure.settings") as mock_settings,
+        ):
+            mock_settings.librechat_host_data_path = "/opt/klai/librechat-data"
+            mock_settings.librechat_container_data_path = str(tmp_path)
+            mock_settings.librechat_image = "ghcr.io/danny-avila/librechat:latest"
+            mock_docker.from_env.return_value = mock_client
+            mock_docker.errors.NotFound = type("NotFound", (Exception,), {})
+            mock_client.containers.get.side_effect = mock_docker.errors.NotFound("not found")
+
+            _start_librechat_container("acme", "/opt/klai/librechat-data/acme/.env")
+
+        environment = mock_client.containers.run.call_args[1]["environment"]
+        assert environment["MONGO_URI"] == "mongodb://example"
+        assert environment["JWT_SECRET"] == "keep-me"
+        assert environment["ALLOW_SHARED_LINKS"] == "true"
+        assert environment["ALLOW_SHARED_LINKS_PUBLIC"] == "true"
+        env_file_content = (tmp_path / "acme" / ".env").read_text()
+        assert "ALLOW_SHARED_LINKS=true" in env_file_content
+        assert "ALLOW_SHARED_LINKS_PUBLIC=true" in env_file_content
+
+    def test_mounts_live_librechat_patches(self, tmp_path):
+        from app.services.provisioning import _start_librechat_container
+
+        self._write_lc_files(tmp_path)
+
+        mock_client = MagicMock()
+        with (
+            patch("app.services.provisioning.infrastructure.docker") as mock_docker,
+            patch("app.services.provisioning.infrastructure.settings") as mock_settings,
+        ):
+            mock_settings.librechat_host_data_path = "/opt/klai/librechat-data"
+            mock_settings.librechat_container_data_path = str(tmp_path)
+            mock_settings.librechat_image = "ghcr.io/danny-avila/librechat:latest"
+            mock_docker.from_env.return_value = mock_client
+            mock_docker.errors.NotFound = type("NotFound", (Exception,), {})
+            mock_client.containers.get.side_effect = mock_docker.errors.NotFound("not found")
+
+            _start_librechat_container("acme", "/opt/klai/librechat-data/acme/.env")
+
+        volumes = mock_client.containers.run.call_args[1]["volumes"]
+        assert volumes["/opt/klai/librechat-data/patches/format.cjs"] == {
+            "bind": "/app/node_modules/@librechat/agents/dist/cjs/messages/format.cjs",
+            "mode": "ro",
+        }
+        assert volumes["/opt/klai/librechat-data/patches/stream.cjs"] == {
+            "bind": "/app/node_modules/@librechat/agents/dist/cjs/stream.cjs",
+            "mode": "ro",
+        }
+        assert volumes["/opt/klai/librechat-data/patches/search.cjs"] == {
+            "bind": "/app/node_modules/@librechat/agents/dist/cjs/tools/search/search.cjs",
+            "mode": "ro",
+        }
+
     def test_provisioning_labels_are_set(self, tmp_path):
         """SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-2a: tenant-LibreChats MUST
         carry klai.managed_by, klai.tenant_slug, and klai.kind labels so
@@ -430,8 +499,7 @@ class TestCharacterizeStartLibrechatContainer:
         """
         from app.services.provisioning import _start_librechat_container
 
-        base_yaml = Path(tmp_path) / "librechat.yaml"
-        base_yaml.write_text("version: 1.0\n")
+        self._write_lc_files(tmp_path, slug="voys")
 
         mock_client = MagicMock()
         mock_client.containers.get.side_effect = type("NotFound", (Exception,), {})("not found")
@@ -461,8 +529,9 @@ class TestCharacterizeStartLibrechatContainer:
         """
         from app.services.provisioning import _start_librechat_container
 
-        base_yaml = Path(tmp_path) / "librechat.yaml"
-        base_yaml.write_text("version: 1.0\n")
+        self._write_lc_files(tmp_path, slug="voys")
+        self._write_lc_files(tmp_path, slug="acme-corp")
+        self._write_lc_files(tmp_path, slug="klai-internal")
 
         mock_client = MagicMock()
         mock_client.containers.get.side_effect = type("NotFound", (Exception,), {})("not found")
