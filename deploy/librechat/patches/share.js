@@ -64,7 +64,7 @@ function sanitizeMarkdown(text) {
       if (isAllowedImageUrl(url)) {
         return _match;
       }
-      return alt ? String(alt) : '';
+      return '';
     })
     .replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g, (_match, label, url) => {
       if (isPlaceholderUrl(url)) {
