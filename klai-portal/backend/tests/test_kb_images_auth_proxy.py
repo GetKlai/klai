@@ -17,8 +17,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+# Portal session org_id (portal_orgs.id, numeric).
 ORG_ID = 42
 OTHER_ORG_ID = 99
+# Zitadel org_id (string) — the canonical S3 key prefix used by connector +
+# crawler + the read-route path param. Resolved from session.org_id via the
+# _resolve_zitadel_org_id helper (mocked in tests).
+ZITADEL_ORG_ID = "368884765035593759"
+OTHER_ZITADEL_ORG_ID = "368884765035000000"
 KB_SLUG = "my-kb"
 FILENAME = "abc123.png"
 
@@ -75,31 +81,40 @@ def _mock_minio(data=b"fake", content_type="image/png"):
 
 @pytest.mark.anyio
 async def test_authenticated_user_can_read_own_org_image(kb_app):
-    """AC-1: session user reads own org image -> 200."""
+    """AC-1: session user reads own org image -> 200.
+
+    The path uses zitadel_org_id (string). The route resolves session.org_id
+    (portal int) to zitadel via _resolve_zitadel_org_id (patched here) and
+    compares against the path.
+    """
     from app.api.session_deps import get_optional_session
 
     session = _make_session(org_id=ORG_ID)
     kb_app.dependency_overrides[get_optional_session] = lambda: session
+    kb_app.dependency_overrides[__import__("app.core.database", fromlist=["get_db"]).get_db] = _mock_get_db()
     mock_cls = _mock_minio()
     with (
         patch("app.api.kb_images.Minio", mock_cls),
         patch("app.api.kb_images.settings", _mock_settings()),
+        patch("app.api.kb_images._resolve_zitadel_org_id", AsyncMock(return_value=ZITADEL_ORG_ID)),
     ):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=kb_app), base_url="http://test") as client:
-            resp = await client.get(f"/kb-images/{ORG_ID}/{KB_SLUG}/{FILENAME}")
+            resp = await client.get(f"/kb-images/{ZITADEL_ORG_ID}/{KB_SLUG}/{FILENAME}")
     assert resp.status_code == 200
     assert resp.headers["Cache-Control"] == "private, max-age=86400"
 
 
 @pytest.mark.anyio
 async def test_authenticated_user_cannot_read_foreign_org_image(kb_app):
-    """AC-5: session user org=42 requests org=99 image -> 403."""
+    """AC-5: session user (zitadel=A) requests org-B image -> 403."""
     from app.api.session_deps import get_optional_session
 
     session = _make_session(org_id=ORG_ID)
     kb_app.dependency_overrides[get_optional_session] = lambda: session
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=kb_app), base_url="http://test") as client:
-        resp = await client.get(f"/kb-images/{OTHER_ORG_ID}/{KB_SLUG}/{FILENAME}")
+    kb_app.dependency_overrides[__import__("app.core.database", fromlist=["get_db"]).get_db] = _mock_get_db()
+    with patch("app.api.kb_images._resolve_zitadel_org_id", AsyncMock(return_value=ZITADEL_ORG_ID)):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=kb_app), base_url="http://test") as client:
+            resp = await client.get(f"/kb-images/{OTHER_ZITADEL_ORG_ID}/{KB_SLUG}/{FILENAME}")
     assert resp.status_code == 403
     assert resp.json()["detail"] == "Access denied"
 
@@ -110,8 +125,9 @@ async def test_unauthenticated_request_rejected(kb_app):
     from app.api.session_deps import get_optional_session
 
     kb_app.dependency_overrides[get_optional_session] = lambda: None
+    kb_app.dependency_overrides[__import__("app.core.database", fromlist=["get_db"]).get_db] = _mock_get_db()
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=kb_app), base_url="http://test") as client:
-        resp = await client.get(f"/kb-images/{ORG_ID}/{KB_SLUG}/{FILENAME}")
+        resp = await client.get(f"/kb-images/{ZITADEL_ORG_ID}/{KB_SLUG}/{FILENAME}")
     assert resp.status_code == 401
 
 
@@ -140,29 +156,31 @@ def _mock_get_db():
 
 @pytest.mark.anyio
 async def test_widget_public_image_works(kb_app):
-    """Widget/partner caller with matching org_id -> 200."""
+    """Widget/partner caller with matching zitadel_org_id -> 200."""
     from app.api.partner_dependencies import PartnerAuthContext
     from app.api.session_deps import get_optional_session
 
     ctx = PartnerAuthContext(
         key_id="wgt",
         org_id=ORG_ID,
-        zitadel_org_id="z",
+        zitadel_org_id=ZITADEL_ORG_ID,
         permissions={"chat": True},
         kb_access={},
         rate_limit_rpm=60,
     )
     kb_app.dependency_overrides[get_optional_session] = lambda: None
+    kb_app.dependency_overrides[__import__("app.core.database", fromlist=["get_db"]).get_db] = _mock_get_db()
     mock_cls = _mock_minio(content_type="image/webp")
     with (
         patch("app.api.kb_images.get_partner_key", new=AsyncMock(return_value=ctx)),
         patch("app.core.database.get_db", new=_mock_get_db()),
         patch("app.api.kb_images.Minio", mock_cls),
         patch("app.api.kb_images.settings", _mock_settings()),
+        patch("app.api.kb_images._resolve_zitadel_org_id", AsyncMock(return_value=ZITADEL_ORG_ID)),
     ):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=kb_app), base_url="http://test") as client:
             resp = await client.get(
-                f"/kb-images/{ORG_ID}/{KB_SLUG}/{FILENAME}",
+                f"/kb-images/{ZITADEL_ORG_ID}/{KB_SLUG}/{FILENAME}",
                 headers={"Authorization": "Bearer some-widget-token"},
             )
     assert resp.status_code == 200
@@ -170,29 +188,31 @@ async def test_widget_public_image_works(kb_app):
 
 @pytest.mark.anyio
 async def test_partner_api_key_image_access(kb_app):
-    """Partner API key with matching org_id -> 200."""
+    """Partner API key with matching zitadel_org_id -> 200."""
     from app.api.partner_dependencies import PartnerAuthContext
     from app.api.session_deps import get_optional_session
 
     ctx = PartnerAuthContext(
         key_id="pk_live_x",
         org_id=ORG_ID,
-        zitadel_org_id="z",
+        zitadel_org_id=ZITADEL_ORG_ID,
         permissions={},
         kb_access={},
         rate_limit_rpm=120,
     )
     kb_app.dependency_overrides[get_optional_session] = lambda: None
+    kb_app.dependency_overrides[__import__("app.core.database", fromlist=["get_db"]).get_db] = _mock_get_db()
     mock_cls = _mock_minio(content_type="image/jpeg")
     with (
         patch("app.api.kb_images.get_partner_key", new=AsyncMock(return_value=ctx)),
         patch("app.core.database.get_db", new=_mock_get_db()),
         patch("app.api.kb_images.Minio", mock_cls),
         patch("app.api.kb_images.settings", _mock_settings()),
+        patch("app.api.kb_images._resolve_zitadel_org_id", AsyncMock(return_value=ZITADEL_ORG_ID)),
     ):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=kb_app), base_url="http://test") as client:
             resp = await client.get(
-                f"/kb-images/{ORG_ID}/{KB_SLUG}/{FILENAME}",
+                f"/kb-images/{ZITADEL_ORG_ID}/{KB_SLUG}/{FILENAME}",
                 headers={"Authorization": "Bearer pk_live_testkey"},
             )
     assert resp.status_code == 200
@@ -207,6 +227,7 @@ async def test_404_for_nonexistent_object(kb_app):
 
     session = _make_session(org_id=ORG_ID)
     kb_app.dependency_overrides[get_optional_session] = lambda: session
+    kb_app.dependency_overrides[__import__("app.core.database", fromlist=["get_db"]).get_db] = _mock_get_db()
 
     mock_cls = MagicMock()
     mock_client = MagicMock()
@@ -233,9 +254,10 @@ async def test_404_for_nonexistent_object(kb_app):
     with (
         patch("app.api.kb_images.Minio", mock_cls),
         patch("app.api.kb_images.settings", _mock_settings()),
+        patch("app.api.kb_images._resolve_zitadel_org_id", AsyncMock(return_value=ZITADEL_ORG_ID)),
     ):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=kb_app), base_url="http://test") as client:
-            resp = await client.get(f"/kb-images/{ORG_ID}/{KB_SLUG}/{FILENAME}")
+            resp = await client.get(f"/kb-images/{ZITADEL_ORG_ID}/{KB_SLUG}/{FILENAME}")
     assert resp.status_code == 404
 
 
@@ -246,12 +268,14 @@ async def test_cache_control_header_set_correctly(kb_app):
 
     session = _make_session(org_id=ORG_ID)
     kb_app.dependency_overrides[get_optional_session] = lambda: session
+    kb_app.dependency_overrides[__import__("app.core.database", fromlist=["get_db"]).get_db] = _mock_get_db()
     mock_cls = _mock_minio()
     with (
         patch("app.api.kb_images.Minio", mock_cls),
         patch("app.api.kb_images.settings", _mock_settings()),
+        patch("app.api.kb_images._resolve_zitadel_org_id", AsyncMock(return_value=ZITADEL_ORG_ID)),
     ):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=kb_app), base_url="http://test") as client:
-            resp = await client.get(f"/kb-images/{ORG_ID}/{KB_SLUG}/{FILENAME}")
+            resp = await client.get(f"/kb-images/{ZITADEL_ORG_ID}/{KB_SLUG}/{FILENAME}")
     assert resp.status_code == 200
     assert resp.headers["Cache-Control"] == "private, max-age=86400"
