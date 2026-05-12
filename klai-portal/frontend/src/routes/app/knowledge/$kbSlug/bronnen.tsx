@@ -317,13 +317,13 @@ function BronRow({
               <button
                 type="button"
                 onClick={onToggle}
-                className="min-w-0 text-left"
+                className="min-w-0 w-full text-left"
                 aria-expanded={expanded}
               >
-                <span className="flex items-baseline gap-2 flex-wrap">
-                  <span className="text-[15px] font-display text-gray-900 truncate">{bron.name}</span>
-                  <span className="text-xs text-gray-400">{meta}</span>
-                </span>
+                <div className="flex items-baseline gap-2 min-w-0">
+                  <span className="text-[15px] font-display text-gray-900 truncate min-w-0 flex-1">{bron.name}</span>
+                  <span className="text-xs text-gray-400 shrink-0">{meta}</span>
+                </div>
               </button>
             )}
           </div>
