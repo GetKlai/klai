@@ -198,13 +198,28 @@ function renderInline(
 }
 
 function applyStyles(text: string, styles: Record<string, boolean | string>): string {
-  let value = text;
+  if (!text) return text;
+
+  const hasStyle =
+    styles.code || styles.bold || styles.italic || styles.strike || styles.underline;
+  if (!hasStyle) return text;
+
+  // Markdown emphasis markers cannot have whitespace between the marker and the
+  // wrapped content: "** foo **" renders as literal asterisks, "**foo**" renders
+  // bold. Pull leading/trailing whitespace out of the styled span so the run
+  // still renders with emphasis even when authors include surrounding spaces in
+  // the BlockNote text-run (a common shape produced by the editor itself).
+  const match = text.match(/^(\s*)([\s\S]*?)(\s*)$/);
+  if (!match || !match[2]) return text;
+  const [, leading, core, trailing] = match;
+
+  let value = core;
   if (styles.code) value = `\`${value.replace(/`/g, "\\`")}\``;
   if (styles.bold) value = `**${value}**`;
   if (styles.italic) value = `_${value}_`;
   if (styles.strike) value = `~~${value}~~`;
   if (styles.underline) value = `<u>${value}</u>`;
-  return value;
+  return `${leading}${value}${trailing}`;
 }
 
 function extractPlainText(content: InlineContent[] | string | undefined): string {
