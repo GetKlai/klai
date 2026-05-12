@@ -191,12 +191,20 @@ async def _resolve_zitadel_org_id(org_id: int, db: AsyncSession) -> str:
 # @MX:REASON: Single enforcement point for cross-tenant image access control.
 #   Every image fetch from the browser goes through this handler.
 #   Changing the org_id check or the S3 key format breaks tenant isolation.
-#   The path org_id is a zitadel_org_id (string) to match the convention used
-#   by klai-connector + klai-knowledge-ingest (which both use zitadel_org_id
-#   as the canonical tenant id in the knowledge domain — see knowledge.artifacts.org_id
-#   text column and the _rls_current_org_id() text helper).
+#
+#   The path has a literal 'images' segment between org_id and kb_slug.
+#   This matches the S3 key + public URL shape that ImageStore generates:
+#       object_key:  {org_id}/images/{kb_slug}/{sha256}.{ext}
+#       public_url:  /kb-images/{org_id}/images/{kb_slug}/{sha256}.{ext}
+#   Removing 'images' here would make the route declaration diverge from
+#   what ImageStore.build_public_url() returns — a 5-segment URL no longer
+#   matches a 4-segment route → 404 on every browser fetch (the latent bug
+#   that survived from SPEC-TI-009 until the 2026-05-12 e2e smoketest).
+#
+#   The path org_id is a zitadel_org_id (string) to match the convention
+#   used by klai-connector + klai-knowledge-ingest.
 # @MX:SPEC: SPEC-TI-009, finding B-4
-@router.get("/kb-images/{org_id}/{kb_slug}/{filename}")
+@router.get("/kb-images/{org_id}/images/{kb_slug}/{filename}")
 async def get_kb_image(
     org_id: str,
     kb_slug: str,
