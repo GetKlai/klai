@@ -57,6 +57,12 @@ class MeResponse(BaseModel):
     effective_role: str = "personal"
     effective_capabilities: list[str] = []
     org_found: bool = False
+    # SPEC-PORTAL-EXTENSIONS-UNIFY-001 Phase 3: expose the gating state to
+    # the frontend so /admin/index.tsx can filter tiles per tenant and
+    # /admin/settings can render the read-only status list. Platform-admin
+    # callers (Klai staff) additionally see the tenant-picker.
+    is_platform_admin: bool = False
+    platform_unlocked_features: list[str] = []
 
 
 def _extract_roles(info: dict) -> list[str]:
@@ -175,6 +181,8 @@ async def me(
         effective_role=_eff_role,
         effective_capabilities=_capabilities,
         org_found=org_found,
+        is_platform_admin=perms.is_platform_admin if perms is not None else False,
+        platform_unlocked_features=sorted(perms.platform_unlocked_features) if perms is not None else [],
     )
 
 

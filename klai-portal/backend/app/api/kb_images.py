@@ -27,14 +27,21 @@ import asyncio
 from collections.abc import AsyncIterator
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
+from klai_image_storage import ImageStore
+from klai_image_storage.storage import MAX_IMAGE_SIZE
 from minio import Minio
 from minio.error import S3Error
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.app_knowledge_bases import _get_kb_or_404
 from app.api.partner_dependencies import PartnerAuthContext, get_partner_key
 from app.api.session_deps import get_optional_session
 from app.core.config import settings
+from app.core.database import get_db
+from app.core.permissions import UserPermissions, get_caller_at_least
+from app.core.profiles import ProfileRole
 from app.core.session import SessionContext
 
 logger = structlog.get_logger()
@@ -43,6 +50,15 @@ router = APIRouter(tags=["KB Images"])
 
 _CACHE_CONTROL = "private, max-age=86400"
 _STREAM_CHUNK_SIZE = 65536
+
+# MIME -> file extension mapping for the content-addressed key
+# (the ImageStore lib normalises the ext internally, but we want stable suffixes).
+_MIME_EXT: dict[str, str] = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/gif": "gif",
+    "image/webp": "webp",
+}
 
 
 def _make_minio_client() -> Minio:
@@ -207,3 +223,143 @@ async def get_kb_image(
             "X-Content-Type-Options": "nosniff",
         },
     )
+
+
+# @MX:ANCHOR: KB-image upload — single enforcement point for tenant-scoped writes
+# @MX:REASON: Changing the auth dependency, the kb_slug → org_id binding via
+#   _get_kb_or_404, the SVG-reject branch, or the magic-byte MIME check breaks
+#   tenant isolation or opens an XSS path via inline SVG. The 5 MB hard cap also
+#   serves as memory-DoS guard for parallel uploads.
+# @MX:SPEC: SPEC-PORTAL-DOCS-IMAGE-PASTE-001
+@router.post("/kb-images/{kb_slug}")
+async def upload_kb_image(
+    request: Request,
+    kb_slug: str,
+    file: UploadFile,
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.PERSONAL)),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, object]:
+    """Accept a multipart image upload for a KB and store it in Garage S3.
+
+    Auth model:
+    - Caller MUST have an authenticated portal session (BFF cookie).
+    - org_id is taken from ``perms.org_id`` (NOT from a path parameter).
+    - kb_slug MUST resolve to a KB belonging to caller.org_id, enforced via
+      :func:`_get_kb_or_404`. Cross-tenant attempts return 404 (per
+      portal-security.md "never leak existence").
+
+    Storage:
+    - Body capped at 5 MB (``MAX_IMAGE_SIZE`` from klai_image_storage).
+    - Magic-byte MIME validation via ``ImageStore.validate_image``.
+    - SVG hard-rejected (REQ-5): the read-route streams images inline without
+      CSP; an SVG-with-<script> would XSS on direct URL navigation. Connectors
+      still accept SVG (different trust boundary).
+    - Object key follows the existing read-route format
+      ``{org_id}/images/{kb_slug}/{sha256}.{ext}``; identical bytes dedupe via
+      content addressing.
+
+    Response: ``{"url": "/kb-images/...", "deduplicated": bool}`` where ``url``
+    is the relative path served by the GET endpoint above.
+    """
+    # Step 1: KB-scope authorization. A 404 here is the strong-or-weak signal:
+    # either the kb_slug truly doesn't exist in the caller's org (typo) OR it
+    # belongs to a different org (cross-tenant attempt). We cannot distinguish
+    # without a second cross-org query, which would be expensive AND violate
+    # the "never leak existence" rule. So we emit a neutral observability
+    # event and let downstream alerting decide based on rate / pattern.
+    try:
+        kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_404_NOT_FOUND:
+            logger.warning(
+                "kb_image_upload_kb_not_found",
+                caller_org_id=perms.org_id,
+                kb_slug=kb_slug,
+                # 'kb_not_found' covers both typo-in-own-org AND cross-tenant
+                # probe. Spike in this event with distinct kb_slugs from a
+                # single caller signals enumeration; spike with the same
+                # kb_slug from one caller signals typo.
+                reason="kb_not_found_or_cross_tenant",
+            )
+        raise
+
+    # Step 2: Feature-flag guard. Empty endpoint => Garage not configured
+    # (see python.md "Feature flag via empty env var").
+    if not settings.garage_s3_endpoint:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Image storage not configured",
+        )
+
+    # Step 3a: Early size guard via Content-Length header.
+    # FastAPI/Starlette has NO default body-size limit; a malicious client
+    # could send Content-Length: 100000000 and force the server to read 100 MB
+    # into memory before we ever reach the post-read len() check. Reject early.
+    declared_length = request.headers.get("content-length")
+    if declared_length is not None:
+        try:
+            if int(declared_length) > MAX_IMAGE_SIZE:
+                raise HTTPException(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    detail="Image too large (max 5 MB)",
+                )
+        except ValueError:
+            # Malformed Content-Length — fall through; the post-read check is the safety net.
+            pass
+
+    # Step 3b: Read body + canonical size guard (REQ-3). Still required because:
+    # (a) Content-Length is optional and can be omitted by clients,
+    # (b) chunked transfer-encoding has no Content-Length,
+    # (c) a malformed Content-Length falls through to here.
+    data = await file.read()
+    if len(data) > MAX_IMAGE_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail="Image too large (max 5 MB)",
+        )
+
+    # Step 4: Magic-byte MIME validation (REQ-4) + SVG hard-reject (REQ-5).
+    mime = ImageStore.validate_image(data)
+    if not mime:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Unsupported image type",
+        )
+    if mime == "image/svg+xml":
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="SVG uploads not supported",
+        )
+
+    ext = _MIME_EXT.get(mime)
+    if ext is None:
+        # validate_image returned a MIME we have no extension for — defensive.
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Unsupported image type",
+        )
+
+    # Step 5: Upload via the shared lib (content-addressed dedup).
+    store = ImageStore(
+        endpoint=settings.garage_s3_endpoint,
+        access_key=settings.garage_s3_access_key,
+        secret_key=settings.garage_s3_secret_key,
+        bucket=settings.garage_kb_bucket,
+    )
+    result = await store.upload_image(str(perms.org_id), kb_slug, data, ext)
+
+    logger.info(
+        "kb_image_uploaded",
+        org_id=perms.org_id,
+        kb_slug=kb_slug,
+        kb_id=kb.id,
+        size=len(data),
+        object_key=result.object_key,
+        deduplicated=result.deduplicated,
+        mime=mime,
+    )
+
+    return {
+        "url": f"/{result.public_url.lstrip('/')}",
+        "deduplicated": result.deduplicated,
+    }

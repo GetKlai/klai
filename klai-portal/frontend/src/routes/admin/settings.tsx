@@ -6,8 +6,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
-import { apiFetch } from '@/lib/apiFetch'
+import { Input } from '@/components/ui/input'
 import { Checkbox } from '@/components/ui/checkbox'
+import { apiFetch } from '@/lib/apiFetch'
+import { fetchMe } from '@/lib/api-me'
 import * as m from '@/paraglide/messages'
 import { adminLogger } from '@/lib/logger'
 
@@ -24,6 +26,21 @@ type OrgSettings = {
   auto_accept_same_domain: boolean
   primary_domain: string | null
   telemetry_level: TelemetryLevel
+}
+
+// SPEC-PORTAL-EXTENSIONS-UNIFY-001 Phase 3/4 — extensions API shape.
+type ExtensionItem = {
+  key: string
+  label: string
+  description: string
+  enabled: boolean
+  requires_profile: string | null
+  manageable_by_caller: boolean
+}
+
+type ExtensionsResponse = {
+  org_slug: string
+  extensions: ExtensionItem[]
 }
 
 function AdminSettingsPage() {
@@ -105,57 +122,65 @@ function AdminSettingsPage() {
     },
   })
 
-  // SPEC-PORTAL-PROFILES-001 P3.6: Add-on toggles.
-  // UX pattern: ticking a checkbox stages the change; user clicks Save to commit.
-  // Consistent with Language and MFA sections above.
-  const [addons, setAddons] = useState<string[]>([])
-  const [savedAddons, setSavedAddons] = useState(false)
+  // ---------------------------------------------------------------------
+  // SPEC-PORTAL-EXTENSIONS-UNIFY-001 Phase 4: Uitbreidingen sectie.
+  // - Tenant-admin: read-only status view of own-org extensions.
+  // - Platform-admin (Klai staff): tenant-picker + interactive checkboxes.
+  // ---------------------------------------------------------------------
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: ({ signal }) => fetchMe(signal),
+    enabled: auth.isAuthenticated,
+  })
+  const isPlatformAdmin = me?.is_platform_admin ?? false
 
-  const { data: addonsData, isLoading: addonsLoading, error: addonsQueryError } = useQuery({
-    queryKey: ['admin-enabled-addons'],
-    queryFn: async () => apiFetch<{ enabled_addons: string[] }>('/api/admin/settings/addons'),
+  // Tenant-picker state — only used by platform-admins. Empty string = own org.
+  const [pickerSlug, setPickerSlug] = useState<string>('')
+  const [pickerInput, setPickerInput] = useState<string>('')
+  const activeSlug = isPlatformAdmin && pickerSlug !== '' ? pickerSlug : ''
+
+  const extQueryKey = ['admin-extensions', activeSlug] as const
+  const { data: extensions, isLoading: extensionsLoading, error: extensionsError } = useQuery({
+    queryKey: extQueryKey,
+    queryFn: async () =>
+      apiFetch<ExtensionsResponse>(
+        activeSlug ? `/api/admin/extensions?org_slug=${encodeURIComponent(activeSlug)}` : '/api/admin/extensions',
+      ),
     enabled: auth.isAuthenticated,
   })
 
-  useEffect(() => {
-    if (addonsData) {
-      setAddons(addonsData.enabled_addons ?? [])
-    }
-  }, [addonsData])
-
-  const addonsMutation = useMutation({
-    mutationFn: (next: string[]) =>
-      apiFetch('/api/admin/settings/addons', {
+  const extensionsMutation = useMutation({
+    mutationFn: (next: { org_slug: string; enabled_features: string[] }) =>
+      apiFetch<ExtensionsResponse>('/api/admin/extensions', {
         method: 'PATCH',
-        body: JSON.stringify({ enabled_addons: next }),
+        body: JSON.stringify(next),
       }),
-    onSuccess: (_data, next) => {
-      adminLogger.info('Add-ons updated', { enabled_addons: next })
-      // SPEC-PORTAL-RBAC-001 REQ-12: keep the addons-list cache in sync with
-      // the saved state so addonsDirty flips back to false and the Save
-      // button disables straight away.
-      queryClient.setQueryData(['admin-enabled-addons'], { enabled_addons: next })
-      // The sidebar in /app reads `user.products` from useCurrentUser()
-      // (queryKey ['current-user']). user.products is derived server-side
-      // from (role, plan, enabled_addons), so flipping an add-on toggle
-      // invalidates that view too. Without this, /app keeps the stale
-      // products list until the next hard refresh and the toggled-off
-      // add-on lingers in the sidebar.
-      void queryClient.invalidateQueries({ queryKey: ['current-user'] })
-      setSavedAddons(true)
-      setTimeout(() => setSavedAddons(false), 2500)
+    onSuccess: (data) => {
+      adminLogger.info('Extensions updated', {
+        org_slug: data.org_slug,
+        enabled: data.extensions.filter((e) => e.enabled).map((e) => e.key),
+      })
+      queryClient.setQueryData(extQueryKey, data)
+      // Invalidate /api/me so the tile-filter on /admin/index.tsx reflects
+      // the new state without a hard refresh.
+      void queryClient.invalidateQueries({ queryKey: ['me'] })
     },
   })
 
-  function toggleStaged(addon: string, enabled: boolean) {
-    setAddons((prev) =>
-      enabled ? [...new Set([...prev, addon])] : prev.filter((a) => a !== addon),
-    )
+  function toggleExtension(key: string, enabled: boolean) {
+    if (!extensions) return
+    const current = new Set(extensions.extensions.filter((e) => e.enabled).map((e) => e.key))
+    if (enabled) current.add(key)
+    else current.delete(key)
+    extensionsMutation.mutate({
+      org_slug: extensions.org_slug,
+      enabled_features: [...current].sort(),
+    })
   }
 
-  const addonsDirty =
-    addonsData != null &&
-    JSON.stringify([...addons].sort()) !== JSON.stringify([...(addonsData.enabled_addons ?? [])].sort())
+  function applyPicker() {
+    setPickerSlug(pickerInput.trim())
+  }
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-10 space-y-6" data-help-id="admin-settings-general">
@@ -395,47 +420,101 @@ function AdminSettingsPage() {
         </CardContent>
       </Card>
 
+      {/* SPEC-PORTAL-EXTENSIONS-UNIFY-001 Phase 4 — Uitbreidingen */}
       <Card>
         <CardHeader>
-          <CardTitle>{m.admin_settings_addons_title()}</CardTitle>
+          <CardTitle>{m.admin_settings_extensions_title()}</CardTitle>
           <CardDescription>
-            {m.admin_settings_addons_description()}
+            {isPlatformAdmin
+              ? m.admin_settings_extensions_description_platform()
+              : m.admin_settings_extensions_description_tenant()}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {addonsLoading ? (
-            <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
-          ) : addonsQueryError ? (
-            <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_fetch()}</p>
-          ) : (
-            <>
-              <div className="space-y-3">
-                <Checkbox
-                  checked={addons.includes('scribe')}
-                  onChange={(e) => toggleStaged('scribe', e.target.checked)}
-                  disabled={addonsMutation.isPending}
-                  label={m.admin_settings_addon_scribe()}
-                />
-                <Checkbox
-                  checked={addons.includes('docs')}
-                  onChange={(e) => toggleStaged('docs', e.target.checked)}
-                  disabled={addonsMutation.isPending}
-                  label={m.admin_settings_addon_docs()}
+          {isPlatformAdmin && (
+            <div className="flex items-end gap-2 border-b pb-4 mb-2">
+              <div className="flex-1 space-y-1.5">
+                <Label htmlFor="extensions-tenant-slug">
+                  {m.admin_settings_extensions_tenant_picker_label()}
+                </Label>
+                <Input
+                  id="extensions-tenant-slug"
+                  type="text"
+                  value={pickerInput}
+                  placeholder={extensions?.org_slug ?? ''}
+                  onChange={(e) => setPickerInput(e.target.value)}
                 />
               </div>
-              {addonsMutation.error && (
+              <Button variant="outline" onClick={applyPicker} disabled={pickerInput.trim() === ''}>
+                {m.admin_settings_extensions_tenant_picker_apply()}
+              </Button>
+              {pickerSlug !== '' && (
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setPickerSlug('')
+                    setPickerInput('')
+                  }}
+                >
+                  {m.admin_settings_extensions_tenant_picker_reset()}
+                </Button>
+              )}
+            </div>
+          )}
+
+          {extensionsLoading ? (
+            <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
+          ) : extensionsError ? (
+            <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_fetch()}</p>
+          ) : !extensions ? null : (
+            <>
+              {isPlatformAdmin && (
+                <p className="text-xs text-gray-400">
+                  {m.admin_settings_extensions_active_slug({ slug: extensions.org_slug })}
+                </p>
+              )}
+              <ul className="divide-y divide-gray-200 border-t border-b border-gray-200">
+                {extensions.extensions.map((item) => (
+                  <li
+                    key={item.key}
+                    className="flex items-center justify-between gap-4 px-2 py-3"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[15px] font-display text-gray-900">{item.label}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">{item.description}</p>
+                    </div>
+                    {item.manageable_by_caller ? (
+                      <Checkbox
+                        checked={item.enabled}
+                        onChange={(e) => toggleExtension(item.key, e.target.checked)}
+                        disabled={extensionsMutation.isPending}
+                        label=""
+                      />
+                    ) : (
+                      <span
+                        className={[
+                          'shrink-0 rounded-full px-3 py-0.5 text-xs font-medium',
+                          item.enabled
+                            ? 'bg-[var(--color-rl-cream)] text-[var(--color-rl-accent-dark)]'
+                            : 'bg-gray-100 text-gray-400',
+                        ].join(' ')}
+                      >
+                        {item.enabled
+                          ? m.admin_settings_extensions_status_on()
+                          : m.admin_settings_extensions_status_off()}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              {!isPlatformAdmin && (
+                <p className="text-xs text-gray-400">
+                  {m.admin_settings_extensions_managed_by_klai()}
+                </p>
+              )}
+              {extensionsMutation.error && (
                 <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_save()}</p>
               )}
-              <Button
-                onClick={() => addonsMutation.mutate(addons)}
-                disabled={addonsMutation.isPending || savedAddons || !addonsDirty}
-              >
-                {savedAddons
-                  ? m.admin_settings_saved()
-                  : addonsMutation.isPending
-                    ? m.admin_settings_saving()
-                    : m.admin_settings_save()}
-              </Button>
             </>
           )}
         </CardContent>

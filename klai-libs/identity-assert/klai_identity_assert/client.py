@@ -106,6 +106,17 @@ def _interpret_response(payload: Any) -> VerifyResult:
             "no_membership",
             "org_slug_mismatch",
             "cache_unavailable",
+            # F2 fix-forward (retrieval coupling audit 2026-05-06): partner-key
+            # paths. Portal-api denies a synthetic ``partner:<key_id>`` claim
+            # when the key row is absent (``partner_key_not_found``) or when
+            # the key exists but belongs to a different org than the claimed
+            # one (``partner_key_org_mismatch``). Both are authoritative
+            # portal-side denials — surface them with their stable code so
+            # operators can distinguish "configuration drift" from a real
+            # outage. Without this entry the SDK collapsed them to
+            # ``portal_unreachable``, which obscured the actual reject.
+            "partner_key_not_found",
+            "partner_key_org_mismatch",
         )
         if isinstance(reason, str) and reason in known:
             return VerifyResult.deny(reason)  # type: ignore[arg-type]
@@ -117,7 +128,15 @@ def _interpret_response(payload: Any) -> VerifyResult:
     evidence = body.get("evidence")
     if not isinstance(user_id, str) or not isinstance(org_id, str) or not isinstance(org_slug, str):
         return VerifyResult.deny("portal_unreachable")
-    if evidence not in ("jwt", "membership"):
+    # ``partner_key`` (F2 fix-forward 2026-05-06): synthetic ``partner:<key_id>``
+    # identities verified server-side against ``partner_api_keys``. Portal-api's
+    # IdentityVerifySuccess schema (klai-portal/backend/app/api/internal.py)
+    # declares ``evidence: Literal["jwt", "membership", "partner_key"]`` — we
+    # mirror that allowlist here so the contract stays symmetric. New evidence
+    # types from the server MUST be added here in the SAME release, otherwise
+    # the SDK fail-closes to ``portal_unreachable`` (silent partner-chat outage
+    # — see retrieve-caller-service-header-mismatch pitfall + commit comment).
+    if evidence not in ("jwt", "membership", "partner_key"):
         return VerifyResult.deny("portal_unreachable")
     return VerifyResult.allow(user_id=user_id, org_id=org_id, org_slug=org_slug, evidence=evidence)
 

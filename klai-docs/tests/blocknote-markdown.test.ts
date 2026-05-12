@@ -77,4 +77,52 @@ describe("blockNoteJsonToMarkdown", () => {
     expect(blockNoteJsonToMarkdown("## Legacy markdown")).toBeNull();
     expect(blockNoteJsonToMarkdown("[not json")).toBeNull();
   });
+
+  it("moves whitespace out of bold/italic/strike/underline/code runs so emphasis still renders", () => {
+    const content = JSON.stringify([
+      {
+        type: "paragraph",
+        content: [
+          { type: "text", text: "If you are a Chat user, you have access to", styles: {} },
+          { type: "text", text: " File upload", styles: { bold: true } },
+          { type: "text", text: " and ", styles: {} },
+          { type: "text", text: "URL crawler only", styles: { bold: true } },
+          { type: "text", text: ". Trailing space ", styles: { italic: true } },
+          { type: "text", text: "inline.", styles: {} },
+        ],
+        children: [],
+      },
+    ]);
+
+    const markdown = blockNoteJsonToMarkdown(content);
+
+    // Bold renders even with a leading space in the run (space moved outside the markers)
+    expect(markdown).toContain("to **File upload** and **URL crawler only**");
+    // Trailing space stays OUTSIDE the italic markers so emphasis still renders;
+    // escapeMarkdown turns "." into "\.". Resulting fragment: _\. Trailing space_ inline\.
+    expect(markdown).toContain("**URL crawler only**_\\. Trailing space_ inline\\.");
+    // The original bug shape — opening marker glued to whitespace — must not reappear.
+    // (Closing "**" followed by a space is fine: "**bold** word".)
+    expect(markdown).not.toContain("** File upload");
+    expect(markdown).not.toContain("** Trailing space");
+  });
+
+  it("leaves all-whitespace styled runs as plain text (no empty emphasis markers)", () => {
+    const content = JSON.stringify([
+      {
+        type: "paragraph",
+        content: [
+          { type: "text", text: "before", styles: {} },
+          { type: "text", text: "   ", styles: { bold: true } },
+          { type: "text", text: "after", styles: {} },
+        ],
+        children: [],
+      },
+    ]);
+
+    const markdown = blockNoteJsonToMarkdown(content);
+
+    expect(markdown).toBe("before   after");
+    expect(markdown).not.toContain("**");
+  });
 });

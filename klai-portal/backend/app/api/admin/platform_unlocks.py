@@ -29,7 +29,11 @@ router = APIRouter()
 
 # Recognised platform-locked feature identifiers.
 # Any string is technically valid, but these are the documented values.
-_KNOWN_FEATURES = frozenset({"partner_api", "widgets", "custom_mcps"})
+# SPEC-PORTAL-EXTENSIONS-UNIFY-001 (2026-05-12): scribe and docs joined this
+# set when the dual-track gating was unified — they are still user-facing
+# products (FEATURE_MIN_PROFILE entry "company"), but their on/off toggle
+# is now Klai-staff-only like the rest.
+_KNOWN_FEATURES = frozenset({"partner_api", "widgets", "custom_mcps", "scribe", "docs"})
 
 
 # ---------------------------------------------------------------------------

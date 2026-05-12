@@ -1718,5 +1718,17 @@
   "kb_tab_sources": "Sources",
   "kb_tab_settings": "Settings",
   "kb_tab_insights": "Insights",
-  "kb_detail_back": "Back"
+  "kb_detail_back": "Back",
+  "admin_section_mcps_title": "MCP servers",
+  "admin_section_mcps_description": "Connect Model Context Protocol servers to your workspace.",
+  "admin_settings_extensions_title": "Extensions",
+  "admin_settings_extensions_description_tenant": "Features Klai has enabled for your organisation.",
+  "admin_settings_extensions_description_platform": "Manage which extensions are enabled per tenant. Klai staff only.",
+  "admin_settings_extensions_tenant_picker_label": "Tenant slug",
+  "admin_settings_extensions_tenant_picker_apply": "Apply",
+  "admin_settings_extensions_tenant_picker_reset": "Back to own org",
+  "admin_settings_extensions_active_slug": "Active: {slug}",
+  "admin_settings_extensions_status_on": "On",
+  "admin_settings_extensions_status_off": "Off",
+  "admin_settings_extensions_managed_by_klai": "These extensions are managed by Klai. Contact us to request changes."
 }
