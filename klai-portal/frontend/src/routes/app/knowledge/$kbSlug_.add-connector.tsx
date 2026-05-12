@@ -18,6 +18,7 @@ import { MS_SITE_URL_PATTERN } from '@/lib/ms-docs'
 import { joinSeedUrl } from './$kbSlug/-kb-helpers'
 import type { CookieRow } from './$kbSlug/-kb-types'
 import { CookieRowsInput } from '@/components/knowledge/CookieRowsInput'
+import { kbQueryKeys } from '@/lib/kb-query-keys'
 
 // -- Types -------------------------------------------------------------------
 
@@ -292,7 +293,7 @@ function AddConnectorPage() {
       })
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
+      void queryClient.invalidateQueries({ queryKey: kbQueryKeys.connectorsPortal(kbSlug) })
       goBack()
     },
   })
@@ -320,7 +321,7 @@ function AddConnectorPage() {
       return { authorizeUrl: authorize_url }
     },
     onSuccess: ({ authorizeUrl }) => {
-      void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
+      void queryClient.invalidateQueries({ queryKey: kbQueryKeys.connectorsPortal(kbSlug) })
       // .assign() over `.href =` — consistent with connectors.tsx reconnect flow;
       // react-hooks/immutability flags the property-assignment form.
       window.location.assign(authorizeUrl)
@@ -355,7 +356,7 @@ function AddConnectorPage() {
       return { authorizeUrl: authorize_url }
     },
     onSuccess: ({ authorizeUrl }) => {
-      void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
+      void queryClient.invalidateQueries({ queryKey: kbQueryKeys.connectorsPortal(kbSlug) })
       // .assign() over `.href =` — consistent with connectors.tsx reconnect flow;
       // react-hooks/immutability flags the property-assignment form.
       window.location.assign(authorizeUrl)

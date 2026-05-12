@@ -1073,7 +1073,7 @@ async def count_chunks_per_kb(
 async def count_sources_per_kb(
     conn: asyncpg.Connection, org_id: str, kb_slugs: list[str]
 ) -> dict[str, int]:
-    """Return ``{kb_slug: bronnen_count}`` for active artifacts.
+    """Return ``{kb_slug: sources_count}`` for active artifacts.
 
     A "bron" is what the user sees in the KB detail Bronnen tab:
       - one row per distinct ``source_connector_id`` (connector groups
@@ -1093,7 +1093,7 @@ async def count_sources_per_kb(
                COUNT(DISTINCT COALESCE(
                    a.extra::jsonb->>'source_connector_id',
                    a.id::text
-               )) AS bronnen_count
+               )) AS sources_count
         FROM knowledge.artifacts a
         WHERE a.org_id = $1
           AND a.kb_slug = ANY($2::text[])
@@ -1104,13 +1104,13 @@ async def count_sources_per_kb(
         kb_slugs,
         _SENTINEL,
     )
-    return {row["kb_slug"]: int(row["bronnen_count"] or 0) for row in rows}
+    return {row["kb_slug"]: int(row["sources_count"] or 0) for row in rows}
 
 
 async def list_kb_sources(
     conn: asyncpg.Connection, org_id: str, kb_slug: str
 ) -> dict[str, list[dict]]:
-    """List all bronnen for a KB, grouped by kind.
+    """List all sources for a KB, grouped by kind.
 
     Returns ``{"connectors": [...], "uploads": [...]}`` where:
       - connectors: one row per distinct ``source_connector_id`` found in

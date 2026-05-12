@@ -20,6 +20,7 @@ import { QueryErrorState } from '@/components/ui/query-error-state'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { ProductGuard } from '@/components/layout/ProductGuard'
+import { kbQueryKeys } from '@/lib/kb-query-keys'
 
 export const Route = createFileRoute('/app/knowledge/')({
   component: () => (
@@ -51,7 +52,7 @@ interface KBStatsSummary {
   items: number
   connectors: number
   chunks: number
-  bronnen: number
+  sources: number
   gaps_7d: number
   usage_30d: number
   unique_users_30d: number
@@ -76,7 +77,7 @@ type Status = 'klaar' | 'bezig' | 'probleem' | 'leeg'
 function deriveStatus(stats: KBStatsSummary | undefined): Status {
   if (!stats) return 'leeg'
   if (stats.chunks > 0) return 'klaar'
-  if (stats.bronnen > 0 || stats.connectors > 0) return 'bezig'
+  if (stats.sources > 0 || stats.connectors > 0) return 'bezig'
   return 'leeg'
 }
 
@@ -115,16 +116,16 @@ function KbRow({
   stats: KBStatsSummary | undefined
   isMine: boolean
 }) {
-  const bronnen = stats?.bronnen ?? 0
+  const sourcesCount = stats?.sources ?? 0
   const chunks = stats?.chunks ?? 0
   const status = deriveStatus(stats)
 
-  const bronnenLabel = bronnen === 1 ? m.kb_count_bron_singular() : m.kb_count_bronnen({ count: String(bronnen) })
+  const sourcesLabel = sourcesCount === 1 ? m.kb_count_bron_singular() : m.kb_count_bronnen({ count: String(sourcesCount) })
   const chunksLabel = chunks === 1 ? m.kb_count_chunk_singular() : m.kb_count_chunks({ count: String(chunks) })
 
   return (
     <Link
-      to="/app/knowledge/$kbSlug/bronnen"
+      to="/app/knowledge/$kbSlug/sources"
       params={{ kbSlug: kb.slug }}
       className="group flex items-center gap-3 px-2 py-3.5 hover:bg-gray-50 transition-colors"
     >
@@ -140,7 +141,7 @@ function KbRow({
             </Badge>
           )}
           <span className="text-xs text-gray-400">
-            {bronnenLabel} · {chunksLabel}
+            {sourcesLabel} · {chunksLabel}
           </span>
         </div>
         {kb.description && (
@@ -188,7 +189,7 @@ function KnowledgePage() {
   })
 
   const { data: statsData } = useQuery<KBStatsSummaryResponse>({
-    queryKey: ['app-knowledge-bases-stats-summary'],
+    queryKey: kbQueryKeys.statsSummary(),
     queryFn: () => apiFetch<KBStatsSummaryResponse>('/api/app/knowledge-bases/stats-summary'),
     enabled: auth.isAuthenticated,
     retry: false,

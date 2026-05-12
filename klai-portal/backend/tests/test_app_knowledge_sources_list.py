@@ -1,9 +1,9 @@
-"""SPEC-PORTAL-KENNIS-001 — bronnen endpoints unit tests.
+"""SPEC-PORTAL-KENNIS-001 — sources endpoints unit tests.
 
 Pin the wiring of:
-  - `list_kb_bronnen` — merges portal connectors + knowledge-ingest aggregates
+  - `list_kb_sources` — merges portal connectors + knowledge-ingest aggregates
     into one uniform list, including newly-created connectors with zero items.
-  - `get_bron_content` — drill-down with kind=connector | kind=upload, plus
+  - `get_source_content` — drill-down with kind=connector | kind=upload, plus
     the input-validation guards (kind, limit, offset).
 
 The label helpers are pure functions — covered with table-style tests.
@@ -66,7 +66,7 @@ def test_upload_type_label_known_content_types() -> None:
     assert _upload_type_label("unknown") == "Bestand"
 
 
-# -- list_kb_bronnen --------------------------------------------------------
+# -- list_kb_sources --------------------------------------------------------
 
 
 def _make_org() -> MagicMock:
@@ -120,9 +120,9 @@ def _make_sources_db(connectors: list[MagicMock], uploads: list[MagicMock] | Non
 
 
 @pytest.mark.asyncio
-async def test_list_kb_bronnen_merges_connectors_and_uploads() -> None:
+async def test_list_kb_sources_merges_connectors_and_uploads() -> None:
     """Happy path: 1 connector with items, 1 connector with no items, 1 upload."""
-    from app.api.app_knowledge_bases import list_kb_bronnen
+    from app.api.app_knowledge_bases import list_kb_sources
 
     org = _make_org()
     kb = _make_kb()
@@ -162,16 +162,16 @@ async def test_list_kb_bronnen_merges_connectors_and_uploads() -> None:
             new=AsyncMock(return_value=aggregates),
         ),
     ):
-        result = await list_kb_bronnen(
+        result = await list_kb_sources(
             kb_slug="kb-a",
             perms=_make_perms(),
             db=db,
         )
 
-    bronnen = result.bronnen
-    assert len(bronnen) == 3  # conn-1 (with items), conn-2 (empty), 1 upload
+    sources = result.sources
+    assert len(sources) == 3  # conn-1 (with items), conn-2 (empty), 1 upload
 
-    by_id = {b.id: b for b in bronnen}
+    by_id = {b.id: b for b in sources}
     assert by_id["conn-1"].kind == "connector"
     assert by_id["conn-1"].items_count == 5
     assert by_id["conn-1"].chunks_count == 23
@@ -191,8 +191,8 @@ async def test_list_kb_bronnen_merges_connectors_and_uploads() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_kb_bronnen_labels_url_upload_as_website_with_source_url() -> None:
-    from app.api.app_knowledge_bases import list_kb_bronnen
+async def test_list_kb_sources_labels_url_upload_as_website_with_source_url() -> None:
+    from app.api.app_knowledge_bases import list_kb_sources
 
     org = _make_org()
     kb = _make_kb()
@@ -228,25 +228,25 @@ async def test_list_kb_bronnen_labels_url_upload_as_website_with_source_url() ->
             new=AsyncMock(return_value=aggregates),
         ),
     ):
-        result = await list_kb_bronnen(
+        result = await list_kb_sources(
             kb_slug="kb-a",
             perms=_make_perms(),
             db=db,
         )
 
-    bron = result.bronnen[0]
+    bron = result.sources[0]
     assert bron.name == "https://example.com/"
     assert bron.type_label == "Websitepagina"
     assert bron.source_url == "https://example.com/"
 
 
 @pytest.mark.asyncio
-async def test_list_kb_bronnen_handles_orphan_connector_id() -> None:
+async def test_list_kb_sources_handles_orphan_connector_id() -> None:
     """Aggregates reference a connector that no longer exists in portal DB.
 
     Surface the row anyway so the user can clean it up via Geavanceerd.
     """
-    from app.api.app_knowledge_bases import list_kb_bronnen
+    from app.api.app_knowledge_bases import list_kb_sources
 
     org = _make_org()
     kb = _make_kb()
@@ -274,23 +274,23 @@ async def test_list_kb_bronnen_handles_orphan_connector_id() -> None:
             new=AsyncMock(return_value=aggregates),
         ),
     ):
-        result = await list_kb_bronnen(
+        result = await list_kb_sources(
             kb_slug="kb-a",
             perms=_make_perms(),
             db=db,
         )
 
-    assert len(result.bronnen) == 1
-    bron = result.bronnen[0]
+    assert len(result.sources) == 1
+    bron = result.sources[0]
     assert bron.id == "deleted-conn"
     assert bron.status == "orphan"
     assert "verwijderde" in bron.name
 
 
 @pytest.mark.asyncio
-async def test_list_kb_bronnen_falls_back_to_empty_on_ingest_failure() -> None:
+async def test_list_kb_sources_falls_back_to_empty_on_ingest_failure() -> None:
     """Knowledge-ingest unreachable → still return portal-side connectors."""
-    from app.api.app_knowledge_bases import list_kb_bronnen
+    from app.api.app_knowledge_bases import list_kb_sources
 
     org = _make_org()
     kb = _make_kb()
@@ -312,24 +312,24 @@ async def test_list_kb_bronnen_falls_back_to_empty_on_ingest_failure() -> None:
             new=AsyncMock(return_value=None),  # transport failure
         ),
     ):
-        result = await list_kb_bronnen(
+        result = await list_kb_sources(
             kb_slug="kb-a",
             perms=_make_perms(),
             db=db,
         )
 
     # Connector still surfaced via portal-side list, with zero counts.
-    assert len(result.bronnen) == 1
-    assert result.bronnen[0].id == "conn-1"
-    assert result.bronnen[0].items_count == 0
-    assert result.bronnen[0].chunks_count == 0
+    assert len(result.sources) == 1
+    assert result.sources[0].id == "conn-1"
+    assert result.sources[0].items_count == 0
+    assert result.sources[0].chunks_count == 0
 
 
 @pytest.mark.asyncio
-async def test_list_kb_bronnen_includes_processing_uploads_before_ingest_artifact_exists() -> None:
+async def test_list_kb_sources_includes_processing_uploads_before_ingest_artifact_exists() -> None:
     """A 202-accepted file must be visible while docling is still processing."""
 
-    from app.api.app_knowledge_bases import list_kb_bronnen
+    from app.api.app_knowledge_bases import list_kb_sources
 
     org = _make_org()
     kb = _make_kb()
@@ -350,14 +350,14 @@ async def test_list_kb_bronnen_includes_processing_uploads_before_ingest_artifac
             new=AsyncMock(return_value={"connectors": [], "uploads": []}),
         ),
     ):
-        result = await list_kb_bronnen(
+        result = await list_kb_sources(
             kb_slug="kb-a",
             perms=_make_perms(),
             db=db,
         )
 
-    assert len(result.bronnen) == 1
-    bron = result.bronnen[0]
+    assert len(result.sources) == 1
+    bron = result.sources[0]
     assert bron.kind == "upload"
     assert bron.name == "Chemie Overal 4VWO.pdf"
     assert bron.type_label == "PDF"
@@ -366,15 +366,15 @@ async def test_list_kb_bronnen_includes_processing_uploads_before_ingest_artifac
     assert bron.status == "processing"
 
 
-# -- get_bron_content -------------------------------------------------------
+# -- get_source_content -------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_get_bron_content_rejects_invalid_kind() -> None:
-    from app.api.app_knowledge_bases import get_bron_content
+async def test_get_source_content_rejects_invalid_kind() -> None:
+    from app.api.app_knowledge_bases import get_source_content
 
     with pytest.raises(HTTPException) as exc:
-        await get_bron_content(
+        await get_source_content(
             kb_slug="kb-a",
             source_id="sid",
             kind="banana",
@@ -388,11 +388,11 @@ async def test_get_bron_content_rejects_invalid_kind() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_bron_content_rejects_limit_out_of_range() -> None:
-    from app.api.app_knowledge_bases import get_bron_content
+async def test_get_source_content_rejects_limit_out_of_range() -> None:
+    from app.api.app_knowledge_bases import get_source_content
 
     with pytest.raises(HTTPException) as exc:
-        await get_bron_content(
+        await get_source_content(
             kb_slug="kb-a",
             source_id="sid",
             kind="upload",
@@ -405,8 +405,8 @@ async def test_get_bron_content_rejects_limit_out_of_range() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_bron_content_connector_returns_items() -> None:
-    from app.api.app_knowledge_bases import get_bron_content
+async def test_get_source_content_connector_returns_items() -> None:
+    from app.api.app_knowledge_bases import get_source_content
 
     org = _make_org()
     kb = _make_kb()
@@ -446,7 +446,7 @@ async def test_get_bron_content_connector_returns_items() -> None:
             new=AsyncMock(return_value=ingest_response),
         ),
     ):
-        result = await get_bron_content(
+        result = await get_source_content(
             kb_slug="kb-a",
             source_id="conn-1",
             kind="connector",
@@ -465,9 +465,9 @@ async def test_get_bron_content_connector_returns_items() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_bron_content_connector_404_when_not_in_kb() -> None:
+async def test_get_source_content_connector_404_when_not_in_kb() -> None:
     """Cross-tenant guard: connector ID that doesn't belong to this KB → 404."""
-    from app.api.app_knowledge_bases import get_bron_content
+    from app.api.app_knowledge_bases import get_source_content
 
     org = _make_org()
     kb = _make_kb()
@@ -488,7 +488,7 @@ async def test_get_bron_content_connector_404_when_not_in_kb() -> None:
         ),
         pytest.raises(HTTPException) as exc,
     ):
-        await get_bron_content(
+        await get_source_content(
             kb_slug="kb-a",
             source_id="other-org-connector",
             kind="connector",
@@ -501,8 +501,8 @@ async def test_get_bron_content_connector_404_when_not_in_kb() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_bron_content_upload_returns_chunks() -> None:
-    from app.api.app_knowledge_bases import get_bron_content
+async def test_get_source_content_upload_returns_chunks() -> None:
+    from app.api.app_knowledge_bases import get_source_content
 
     org = _make_org()
     kb = _make_kb()
@@ -533,7 +533,7 @@ async def test_get_bron_content_upload_returns_chunks() -> None:
             new=AsyncMock(return_value=ingest_response),
         ),
     ):
-        result = await get_bron_content(
+        result = await get_source_content(
             kb_slug="kb-a",
             source_id="art-1",
             kind="upload",

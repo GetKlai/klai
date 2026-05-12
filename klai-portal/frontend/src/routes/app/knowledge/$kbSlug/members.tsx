@@ -18,6 +18,7 @@ import * as m from '@/paraglide/messages'
 import { RoleGuard } from '@/components/layout/RoleGuard'
 import { apiFetch } from '@/lib/apiFetch'
 import type { KnowledgeBase, MembersResponse } from './-kb-types'
+import { kbQueryKeys } from '@/lib/kb-query-keys'
 
 interface OrgGroup {
   id: number
@@ -64,7 +65,7 @@ function MembersTab() {
   const [confirmingRemoveGroup, setConfirmingRemoveGroup] = useState<number | null>(null)
 
   const { data: kb } = useQuery<KnowledgeBase>({
-    queryKey: ['app-knowledge-base', kbSlug],
+    queryKey: kbQueryKeys.knowledgeBase(kbSlug),
     queryFn: async () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`),
     enabled: auth.isAuthenticated,
   })
@@ -102,7 +103,7 @@ function MembersTab() {
       })
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['app-knowledge-base', kbSlug] })
+      void queryClient.invalidateQueries({ queryKey: kbQueryKeys.knowledgeBase(kbSlug) })
     },
   })
 

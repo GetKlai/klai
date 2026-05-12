@@ -80,8 +80,8 @@ async def test_count_sources_per_kb_returns_dict_keyed_by_slug() -> None:
     conn = MagicMock()
     conn.fetch = AsyncMock(
         return_value=[
-            {"kb_slug": "kb-a", "bronnen_count": 4},
-            {"kb_slug": "kb-b", "bronnen_count": 0},
+            {"kb_slug": "kb-a", "sources_count": 4},
+            {"kb_slug": "kb-b", "sources_count": 0},
         ]
     )
 

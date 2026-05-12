@@ -21,6 +21,7 @@ related:
 | Date | Version | Change |
 |------|---------|--------|
 | 2026-05-12 | 0.1.0 | Initial draft. Scope = unify `enabled_addons` + `platform_unlocked_features` in één laag (`platform_unlocked_features`), fix security gap op `/api/admin/api-keys`, tenant-visible status + superadmin tenant-picker op `/admin/settings`, DROP `enabled_addons` kolom. Prod-data uitgelezen 2026-05-12. |
+| 2026-05-12 | 1.0.0 | Shipped + post-ship cleanup. Tenant-picker geschrapt (scope-creep; cross-tenant beheer blijft via bestaande `PATCH /api/admin/orgs/{slug}/platform-unlocks`). UX op `/admin/settings` Uitbreidingen-sectie gewijzigd naar stage-then-Save patroon, consistent met Language/MFA/Telemetry. `tenant_lifecycle_events.event_type` CHECK constraint uitgebreid met `platform_features_updated` (post-deploy SQL, klai-superuser). Write-path geconsolideerd: `/api/admin/extensions` GET-only, PATCH retired naar bestaande platform-unlocks endpoint. `KNOWN_FEATURES`/labels/descriptions verhuisd naar `app/core/extensions_registry.py` als publieke single-source-of-truth. |
 
 ---
 
