@@ -183,7 +183,7 @@ def make_org(
     *,
     org_id: int = 101,
     slug: str = "voys",
-    plan: str = "complete",
+    plan: str = "knowledge",
     enabled_addons: list[str] | None = None,
     platform_unlocked_features: list[str] | None = None,
     provisioning_status: str = "active",
@@ -218,7 +218,7 @@ def make_perms(
     user_id: str = "uid-test",
     org_id: int = 101,
     org_slug: str = "voys",
-    plan: str = "complete",
+    plan: str = "knowledge",
     enabled_addons: list[str] | None = None,
     platform_unlocked_features: list[str] | None = None,
     is_platform_admin: bool = False,
@@ -240,8 +240,8 @@ def make_perms(
     plat_features = frozenset(platform_unlocked_features or [])
 
     if role_enum == ProfileRole.ADMIN:
-        complete_caps = get_plan_limits("complete").capabilities
-        eff_caps = frozenset(Capability(c) for c in complete_caps)
+        knowledge_caps = get_plan_limits("knowledge").capabilities
+        eff_caps = frozenset(Capability(c) for c in knowledge_caps)
     else:
         role_caps = PROFILE_CAPABILITIES.get(role_enum.value, frozenset())
         plan_caps = get_plan_limits(plan).capabilities

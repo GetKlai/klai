@@ -8,7 +8,7 @@ Phase 1.5 changes (SPEC v0.2.0):
   - personal / company roles on complete-plan only get kb.connectors (role is floor).
   - kb_manager / group_manager / admin on complete-plan get all capabilities.
   - Admin bypass is intentional and preserved (gets complete-tier regardless of plan).
-  - kb.advanced removed from PLAN_LIMITS["complete"].capabilities.
+  - kb.advanced removed from PLAN_LIMITS["knowledge"].capabilities.
 """
 
 import sys
@@ -79,7 +79,7 @@ class TestGetEffectiveCapabilities:
         """personal role + core plan → kb.connectors (basic cap is in both)."""
         from app.api.dependencies import get_effective_capabilities
 
-        caps = await get_effective_capabilities(user_id="u", db=_make_db_with_user("core", "personal"))
+        caps = await get_effective_capabilities(user_id="u", db=_make_db_with_user("chat", "personal"))
         assert "kb.connectors" in caps
 
     @pytest.mark.asyncio
@@ -87,7 +87,7 @@ class TestGetEffectiveCapabilities:
         """personal role + core plan → no kb.connectors.external (role blocks)."""
         from app.api.dependencies import get_effective_capabilities
 
-        caps = await get_effective_capabilities(user_id="u", db=_make_db_with_user("core", "personal"))
+        caps = await get_effective_capabilities(user_id="u", db=_make_db_with_user("chat", "personal"))
         assert "kb.connectors.external" not in caps
 
     @pytest.mark.asyncio
@@ -95,7 +95,7 @@ class TestGetEffectiveCapabilities:
         """personal role + complete plan → only kb.connectors (role is the floor)."""
         from app.api.dependencies import get_effective_capabilities
 
-        caps = await get_effective_capabilities(user_id="u", db=_make_db_with_user("complete", "personal"))
+        caps = await get_effective_capabilities(user_id="u", db=_make_db_with_user("knowledge", "personal"))
         assert caps == {"kb.connectors"}
 
     @pytest.mark.asyncio
@@ -103,7 +103,7 @@ class TestGetEffectiveCapabilities:
         """company role + complete plan → only kb.connectors (role is the floor)."""
         from app.api.dependencies import get_effective_capabilities
 
-        caps = await get_effective_capabilities(user_id="u", db=_make_db_with_user("complete", "company"))
+        caps = await get_effective_capabilities(user_id="u", db=_make_db_with_user("knowledge", "company"))
         assert caps == {"kb.connectors"}
 
     @pytest.mark.asyncio
@@ -111,7 +111,7 @@ class TestGetEffectiveCapabilities:
         """kb_manager role + complete plan → all capabilities."""
         from app.api.dependencies import get_effective_capabilities
 
-        caps = await get_effective_capabilities(user_id="u", db=_make_db_with_user("complete", "kb_manager"))
+        caps = await get_effective_capabilities(user_id="u", db=_make_db_with_user("knowledge", "kb_manager"))
         expected = {"kb.connectors", "kb.connectors.external", "kb.create_org", "kb.members", "kb.taxonomy", "kb.gaps"}
         assert caps == expected
 
@@ -120,7 +120,7 @@ class TestGetEffectiveCapabilities:
         """kb_manager role + core plan → only kb.connectors (plan is the ceiling)."""
         from app.api.dependencies import get_effective_capabilities
 
-        caps = await get_effective_capabilities(user_id="u", db=_make_db_with_user("core", "kb_manager"))
+        caps = await get_effective_capabilities(user_id="u", db=_make_db_with_user("chat", "kb_manager"))
         assert caps == {"kb.connectors"}
 
     @pytest.mark.asyncio
@@ -128,7 +128,7 @@ class TestGetEffectiveCapabilities:
         """kb_manager role + professional plan → only kb.connectors (plan ceiling)."""
         from app.api.dependencies import get_effective_capabilities
 
-        caps = await get_effective_capabilities(user_id="u", db=_make_db_with_user("professional", "kb_manager"))
+        caps = await get_effective_capabilities(user_id="u", db=_make_db_with_user("chat", "kb_manager"))
         assert caps == {"kb.connectors"}
 
     @pytest.mark.asyncio
@@ -136,7 +136,7 @@ class TestGetEffectiveCapabilities:
         """Admin bypass: admin always gets complete-tier capabilities, regardless of plan."""
         from app.api.dependencies import get_effective_capabilities
 
-        caps = await get_effective_capabilities(user_id="u", db=_make_db_with_user("core", "admin"))
+        caps = await get_effective_capabilities(user_id="u", db=_make_db_with_user("chat", "admin"))
         expected = {"kb.connectors", "kb.connectors.external", "kb.create_org", "kb.members", "kb.taxonomy", "kb.gaps"}
         assert caps == expected
 
@@ -166,7 +166,7 @@ class TestGetEffectiveCapabilities:
         """kb.advanced was removed from PLAN_LIMITS[complete] in SPEC v0.2.0."""
         from app.api.dependencies import get_effective_capabilities
 
-        caps = await get_effective_capabilities(user_id="u", db=_make_db_with_user("complete", "kb_manager"))
+        caps = await get_effective_capabilities(user_id="u", db=_make_db_with_user("knowledge", "kb_manager"))
         assert "kb.advanced" not in caps
 
 
@@ -179,7 +179,7 @@ class TestRequireCapability:
         from app.api.dependencies import require_capability
 
         dep = require_capability("kb.connectors")
-        await dep(user_id="u", db=_make_db_with_user("core", "personal"))
+        await dep(user_id="u", db=_make_db_with_user("chat", "personal"))
 
     @pytest.mark.asyncio
     async def test_personal_on_complete_lacks_kb_members(self) -> None:
@@ -190,7 +190,7 @@ class TestRequireCapability:
 
         dep = require_capability("kb.members")
         with pytest.raises(HTTPException) as exc_info:
-            await dep(user_id="u", db=_make_db_with_user("complete", "personal"))
+            await dep(user_id="u", db=_make_db_with_user("knowledge", "personal"))
         assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
@@ -198,7 +198,7 @@ class TestRequireCapability:
         from app.api.dependencies import require_capability
 
         dep = require_capability("kb.members")
-        await dep(user_id="u", db=_make_db_with_user("complete", "kb_manager"))
+        await dep(user_id="u", db=_make_db_with_user("knowledge", "kb_manager"))
 
     @pytest.mark.asyncio
     async def test_kb_manager_on_core_lacks_kb_connectors_external(self) -> None:
@@ -209,7 +209,7 @@ class TestRequireCapability:
 
         dep = require_capability("kb.connectors.external")
         with pytest.raises(HTTPException) as exc_info:
-            await dep(user_id="u", db=_make_db_with_user("core", "kb_manager"))
+            await dep(user_id="u", db=_make_db_with_user("chat", "kb_manager"))
         assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
@@ -219,7 +219,7 @@ class TestRequireCapability:
 
         for cap in ["kb.connectors", "kb.connectors.external", "kb.members", "kb.taxonomy", "kb.gaps"]:
             dep = require_capability(cap)
-            await dep(user_id="u", db=_make_db_with_user("core", "admin"))
+            await dep(user_id="u", db=_make_db_with_user("chat", "admin"))
 
     @pytest.mark.asyncio
     async def test_personal_on_core_lacks_kb_gaps(self) -> None:
@@ -230,7 +230,7 @@ class TestRequireCapability:
 
         dep = require_capability("kb.gaps")
         with pytest.raises(HTTPException) as exc_info:
-            await dep(user_id="u", db=_make_db_with_user("core", "personal"))
+            await dep(user_id="u", db=_make_db_with_user("chat", "personal"))
         assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
@@ -242,7 +242,7 @@ class TestRequireCapability:
 
         dep = require_capability("kb.taxonomy")
         with pytest.raises(HTTPException) as exc_info:
-            await dep(user_id="u", db=_make_db_with_user("core", "personal"))
+            await dep(user_id="u", db=_make_db_with_user("chat", "personal"))
         assert exc_info.value.status_code == 403
 
 

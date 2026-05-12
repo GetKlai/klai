@@ -46,7 +46,7 @@ def _mock_perms(*, org_id: int = 42, role: ProfileRole = ProfileRole.COMPANY) ->
         org_id=org_id,
         org_slug="acme",
         role=role,
-        plan="complete",
+        plan="knowledge",
         enabled_addons=frozenset(),
         platform_unlocked_features=frozenset(),
         effective_role=role,

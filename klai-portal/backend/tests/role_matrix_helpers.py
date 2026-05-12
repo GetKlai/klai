@@ -52,7 +52,7 @@ def make_org(
     *,
     org_id: int = 101,
     slug: str = "voys",
-    plan: str = "complete",
+    plan: str = "knowledge",
 ) -> MagicMock:
     """Synthetic ``PortalOrg`` mock with sensible defaults for admin-gated tests."""
     org = MagicMock(spec=PortalOrg)

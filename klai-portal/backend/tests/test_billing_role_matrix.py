@@ -38,7 +38,7 @@ _MODULE = "app.api.billing"
 
 def _mandate_body() -> MandateRequest:
     return MandateRequest(
-        plan="complete",
+        plan="knowledge",
         billing_cycle="monthly",
         seats=2,
         address="Teststraat 1",

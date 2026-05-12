@@ -122,7 +122,7 @@ async def test_resolve_returns_none_for_unknown_user() -> None:
 @pytest.mark.asyncio
 async def test_resolve_uses_single_query() -> None:
     """AC-1: resolver MUST issue exactly one SELECT against the database."""
-    db = _db_with_row(_row(role="admin", plan="complete"))
+    db = _db_with_row(_row(role="admin", plan="knowledge"))
     await resolve_user_permissions("uid-test", db)
     assert db.execute.call_count == 1, (
         f"resolve_user_permissions issued {db.execute.call_count} queries; AC-1 requires exactly 1"
@@ -131,7 +131,7 @@ async def test_resolve_uses_single_query() -> None:
 
 @pytest.mark.asyncio
 async def test_resolve_returns_user_permissions_dataclass() -> None:
-    db = _db_with_row(_row(role="admin", plan="complete", slug="voys", org_id=101))
+    db = _db_with_row(_row(role="admin", plan="knowledge", slug="voys", org_id=101))
     perms = await resolve_user_permissions("uid-test", db)
     assert isinstance(perms, UserPermissions)
     # All 12 fields populated
@@ -139,7 +139,7 @@ async def test_resolve_returns_user_permissions_dataclass() -> None:
     assert perms.org_id == 101
     assert perms.org_slug == "voys"
     assert perms.role == ProfileRole.ADMIN
-    assert perms.plan == "complete"
+    assert perms.plan == "knowledge"
     assert isinstance(perms.enabled_addons, frozenset)
     assert isinstance(perms.platform_unlocked_features, frozenset)
     assert perms.effective_role == ProfileRole.ADMIN
@@ -156,7 +156,7 @@ async def test_resolve_admin_on_core_gets_complete_capabilities() -> None:
     Mirrors the existing `dependencies.get_effective_capabilities` semantics —
     admin-bypass is intentional per SPEC-PORTAL-PROFILES-001 v0.2.0/v0.3.0.
     """
-    db = _db_with_row(_row(role="admin", plan="core"))
+    db = _db_with_row(_row(role="admin", plan="chat"))
     perms = await resolve_user_permissions("uid-test", db)
     assert perms is not None
     expected = frozenset(
@@ -175,7 +175,7 @@ async def test_resolve_admin_on_core_gets_complete_capabilities() -> None:
 @pytest.mark.asyncio
 async def test_resolve_personal_on_complete_gets_kb_connectors_only() -> None:
     """AC-8: personal on `complete` → `{kb.connectors}`."""
-    db = _db_with_row(_row(role="personal", plan="complete"))
+    db = _db_with_row(_row(role="personal", plan="knowledge"))
     perms = await resolve_user_permissions("uid-test", db)
     assert perms is not None
     assert perms.effective_capabilities == frozenset({Capability.KB_CONNECTORS})
@@ -193,7 +193,7 @@ async def test_resolve_personal_on_free_gets_no_capabilities() -> None:
 @pytest.mark.asyncio
 async def test_resolve_products_for_admin_with_addons() -> None:
     """Effective products = plan_features union enabled_addons (subject to floor)."""
-    db = _db_with_row(_row(role="admin", plan="complete", enabled_addons=["scribe", "docs"]))
+    db = _db_with_row(_row(role="admin", plan="knowledge", enabled_addons=["scribe", "docs"]))
     perms = await resolve_user_permissions("uid-test", db)
     assert perms is not None
     assert perms.effective_products == frozenset({"chat", "knowledge", "scribe", "docs"})
@@ -202,7 +202,7 @@ async def test_resolve_products_for_admin_with_addons() -> None:
 @pytest.mark.asyncio
 async def test_resolve_products_for_personal_excludes_addons() -> None:
     """`scribe`/`docs` floor = company; personal does NOT get them even when enabled."""
-    db = _db_with_row(_row(role="personal", plan="complete", enabled_addons=["scribe", "docs"]))
+    db = _db_with_row(_row(role="personal", plan="knowledge", enabled_addons=["scribe", "docs"]))
     perms = await resolve_user_permissions("uid-test", db)
     assert perms is not None
     assert perms.effective_products == frozenset({"chat", "knowledge"})
@@ -211,7 +211,7 @@ async def test_resolve_products_for_personal_excludes_addons() -> None:
 @pytest.mark.asyncio
 async def test_resolve_platform_admin_flag_for_getklai_org() -> None:
     """Org with slug == settings.platform_org_slug → is_platform_admin=True."""
-    db = _db_with_row(_row(role="admin", plan="complete", slug="getklai"))
+    db = _db_with_row(_row(role="admin", plan="knowledge", slug="getklai"))
     perms = await resolve_user_permissions("uid-test", db)
     assert perms is not None
     assert perms.is_platform_admin is True
@@ -219,7 +219,7 @@ async def test_resolve_platform_admin_flag_for_getklai_org() -> None:
 
 @pytest.mark.asyncio
 async def test_resolve_platform_admin_flag_for_tenant_org() -> None:
-    db = _db_with_row(_row(role="admin", plan="complete", slug="voys"))
+    db = _db_with_row(_row(role="admin", plan="knowledge", slug="voys"))
     perms = await resolve_user_permissions("uid-test", db)
     assert perms is not None
     assert perms.is_platform_admin is False
@@ -228,7 +228,7 @@ async def test_resolve_platform_admin_flag_for_tenant_org() -> None:
 @pytest.mark.asyncio
 async def test_resolve_platform_unlocked_features_default_empty() -> None:
     """Phase 5 prep: column default is empty list. Resolver wraps as frozenset."""
-    db = _db_with_row(_row(role="admin", plan="complete"))
+    db = _db_with_row(_row(role="admin", plan="knowledge"))
     perms = await resolve_user_permissions("uid-test", db)
     assert perms is not None
     assert perms.platform_unlocked_features == frozenset()
@@ -236,7 +236,7 @@ async def test_resolve_platform_unlocked_features_default_empty() -> None:
 
 @pytest.mark.asyncio
 async def test_resolve_platform_unlocked_features_populated() -> None:
-    db = _db_with_row(_row(role="admin", plan="complete", platform_unlocked_features=["partner_api", "widgets"]))
+    db = _db_with_row(_row(role="admin", plan="knowledge", platform_unlocked_features=["partner_api", "widgets"]))
     perms = await resolve_user_permissions("uid-test", db)
     assert perms is not None
     assert perms.platform_unlocked_features == frozenset({"partner_api", "widgets"})
@@ -245,7 +245,7 @@ async def test_resolve_platform_unlocked_features_populated() -> None:
 @pytest.mark.asyncio
 async def test_resolve_dataclass_is_frozen() -> None:
     """UserPermissions is frozen — no caller can mutate it after construction."""
-    db = _db_with_row(_row(role="admin", plan="complete"))
+    db = _db_with_row(_row(role="admin", plan="knowledge"))
     perms = await resolve_user_permissions("uid-test", db)
     assert perms is not None
     with pytest.raises((AttributeError, TypeError)):
@@ -259,7 +259,7 @@ async def test_resolve_dataclass_is_frozen() -> None:
 
 @pytest.mark.asyncio
 async def test_get_caller_returns_user_permissions() -> None:
-    db = _db_with_row(_row(role="admin", plan="complete"))
+    db = _db_with_row(_row(role="admin", plan="knowledge"))
     creds = MagicMock(credentials="tok-admin")
 
     with (
@@ -306,7 +306,7 @@ async def test_get_caller_403_during_deprovisioning() -> None:
 
     A caller whose org is in `deprovisioning` must be blocked at the gate with
     error_code=`tenant_deleting`."""
-    db = _db_with_row(_row(role="admin", plan="complete", provisioning_status="deprovisioning"))
+    db = _db_with_row(_row(role="admin", plan="knowledge", provisioning_status="deprovisioning"))
     creds = MagicMock(credentials="tok-admin")
 
     with (
@@ -330,7 +330,7 @@ async def test_get_caller_at_least_admin_passes_for_admin() -> None:
         org_id=101,
         org_slug="voys",
         role=ProfileRole.ADMIN,
-        plan="complete",
+        plan="knowledge",
         enabled_addons=frozenset(),
         platform_unlocked_features=frozenset(),
         effective_role=ProfileRole.ADMIN,
@@ -352,7 +352,7 @@ async def test_get_caller_at_least_admin_blocks_company() -> None:
         org_id=101,
         org_slug="voys",
         role=ProfileRole.COMPANY,
-        plan="complete",
+        plan="knowledge",
         enabled_addons=frozenset(),
         platform_unlocked_features=frozenset(),
         effective_role=ProfileRole.COMPANY,
@@ -385,7 +385,7 @@ async def test_get_caller_at_least_role_matrix(caller: ProfileRole, required: Pr
         org_id=101,
         org_slug="voys",
         role=caller,
-        plan="complete",
+        plan="knowledge",
         enabled_addons=frozenset(),
         platform_unlocked_features=frozenset(),
         effective_role=caller,
@@ -421,7 +421,7 @@ def _perms_with(
         org_id=101,
         org_slug="voys",
         role=role,
-        plan="complete",
+        plan="knowledge",
         enabled_addons=frozenset(),
         platform_unlocked_features=platform_features,
         effective_role=role,

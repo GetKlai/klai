@@ -16,7 +16,7 @@ import pytest
 from app.services import entitlements
 
 
-def _row(role: str, plan: str = "core", enabled_addons: list[str] | None = None) -> MagicMock:
+def _row(role: str, plan: str = "chat", enabled_addons: list[str] | None = None) -> MagicMock:
     """Build a mock row that mirrors the SELECT (role, plan, enabled_addons) result."""
     row = MagicMock()
     row.one_or_none.return_value = (role, plan, enabled_addons or [])
@@ -32,7 +32,7 @@ def _empty_row() -> MagicMock:
 @pytest.mark.asyncio
 async def test_returns_plan_products_for_core_personal() -> None:
     db = AsyncMock()
-    db.execute = AsyncMock(return_value=_row("personal", "core", []))
+    db.execute = AsyncMock(return_value=_row("personal", "chat", []))
 
     result = await entitlements.get_effective_products("user-1", db)
     assert sorted(result) == ["chat", "knowledge"]
@@ -41,7 +41,7 @@ async def test_returns_plan_products_for_core_personal() -> None:
 @pytest.mark.asyncio
 async def test_personal_does_not_see_enabled_addon() -> None:
     db = AsyncMock()
-    db.execute = AsyncMock(return_value=_row("personal", "core", ["scribe"]))
+    db.execute = AsyncMock(return_value=_row("personal", "chat", ["scribe"]))
 
     result = await entitlements.get_effective_products("user-1", db)
     assert "scribe" not in result
@@ -50,7 +50,7 @@ async def test_personal_does_not_see_enabled_addon() -> None:
 @pytest.mark.asyncio
 async def test_company_sees_enabled_addon() -> None:
     db = AsyncMock()
-    db.execute = AsyncMock(return_value=_row("company", "core", ["scribe"]))
+    db.execute = AsyncMock(return_value=_row("company", "chat", ["scribe"]))
 
     result = await entitlements.get_effective_products("user-1", db)
     assert "scribe" in result
@@ -59,7 +59,7 @@ async def test_company_sees_enabled_addon() -> None:
 @pytest.mark.asyncio
 async def test_admin_sees_both_addons() -> None:
     db = AsyncMock()
-    db.execute = AsyncMock(return_value=_row("admin", "core", ["scribe", "docs"]))
+    db.execute = AsyncMock(return_value=_row("admin", "chat", ["scribe", "docs"]))
 
     result = await entitlements.get_effective_products("user-1", db)
     assert set(result) == {"chat", "knowledge", "scribe", "docs"}
@@ -79,7 +79,7 @@ async def test_returns_empty_when_user_has_no_portal_row() -> None:
 @pytest.mark.asyncio
 async def test_addon_disabled_at_tenant_level_filters_out() -> None:
     db = AsyncMock()
-    db.execute = AsyncMock(return_value=_row("admin", "core", []))
+    db.execute = AsyncMock(return_value=_row("admin", "chat", []))
 
     result = await entitlements.get_effective_products("user-1", db)
     assert "scribe" not in result
@@ -101,7 +101,7 @@ async def test_namespace_passes_through_simplenamespace_db() -> None:
     """Sanity check that the function accepts SimpleNamespace-style fakes."""
 
     async def _execute(_stmt: object) -> object:
-        return _row("admin", "core", [])
+        return _row("admin", "chat", [])
 
     db = SimpleNamespace(execute=_execute)
     result = await entitlements.get_effective_products("user-1", db)  # type: ignore[arg-type]

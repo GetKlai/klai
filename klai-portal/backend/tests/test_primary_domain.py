@@ -38,7 +38,7 @@ def _mock_deps(mz, morg):
     inst = MagicMock()
     inst.id = 1
     inst.slug = "bedrijf-bv"
-    inst.plan = "professional"
+    inst.plan = "chat"
     morg.return_value = inst
     return inst
 

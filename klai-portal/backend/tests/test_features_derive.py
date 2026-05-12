@@ -24,15 +24,15 @@ from app.core.features import (
         # free plan: nothing
         ("personal", "free", set()),
         ("admin", "free", set()),
-        # core plan: chat + knowledge for everyone
-        ("personal", "core", {"chat", "knowledge"}),
-        ("company", "core", {"chat", "knowledge"}),
-        ("kb_manager", "core", {"chat", "knowledge"}),
-        ("group_manager", "core", {"chat", "knowledge"}),
-        ("admin", "core", {"chat", "knowledge"}),
-        # professional/complete same as core (current PLAN_FEATURES)
-        ("admin", "professional", {"chat", "knowledge"}),
-        ("admin", "complete", {"chat", "knowledge"}),
+        # chat plan: chat + knowledge product for every role (PLAN_LIMITS
+        # ceilings differ; PLAN_FEATURES only emits the product set).
+        ("personal", "chat", {"chat", "knowledge"}),
+        ("company", "chat", {"chat", "knowledge"}),
+        ("kb_manager", "chat", {"chat", "knowledge"}),
+        ("group_manager", "chat", {"chat", "knowledge"}),
+        ("admin", "chat", {"chat", "knowledge"}),
+        # knowledge plan: same product set, full unlock via PLAN_LIMITS.
+        ("admin", "knowledge", {"chat", "knowledge"}),
     ],
 )
 def test_plan_features_only(role: str, plan: str, expected: set[str]) -> None:
@@ -63,18 +63,18 @@ def test_plan_features_only(role: str, plan: str, expected: set[str]) -> None:
 )
 def test_addon_threshold(role: str, enabled_addons: list[str], expected_added: set[str]) -> None:
     base = {"chat", "knowledge"}
-    result = derive_user_products(role, "core", enabled_addons)
+    result = derive_user_products(role, "chat", enabled_addons)
     assert result == base | expected_added
 
 
 def test_disabled_addon_not_granted_even_to_admin() -> None:
-    assert derive_user_products("admin", "core", []) == {"chat", "knowledge"}
-    assert "scribe" not in derive_user_products("admin", "core", [])
+    assert derive_user_products("admin", "chat", []) == {"chat", "knowledge"}
+    assert "scribe" not in derive_user_products("admin", "chat", [])
 
 
 def test_unknown_addon_in_enabled_list_ignored() -> None:
     # If a stale db row has e.g. "x_legacy_feature" the derivation drops it.
-    result = derive_user_products("admin", "core", ["scribe", "x_legacy_feature"])
+    result = derive_user_products("admin", "chat", ["scribe", "x_legacy_feature"])
     assert result == {"chat", "knowledge", "scribe"}
 
 
@@ -89,11 +89,11 @@ def test_unknown_plan_returns_empty() -> None:
 
 def test_unknown_role_grants_nothing_with_addons() -> None:
     # Unknown role -> rank -1, fails every FEATURE_MIN_PROFILE check.
-    assert derive_user_products("nobody", "core", ["scribe"]) == set()
+    assert derive_user_products("nobody", "chat", ["scribe"]) == set()
 
 
 def test_empty_enabled_addons_treated_as_no_addons() -> None:
-    assert derive_user_products("admin", "core", []) == {"chat", "knowledge"}
+    assert derive_user_products("admin", "chat", []) == {"chat", "knowledge"}
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +106,7 @@ def test_addon_features_set() -> None:
 
 
 def test_plan_features_keys() -> None:
-    assert set(PLAN_FEATURES.keys()) == {"free", "core", "professional", "complete"}
+    assert set(PLAN_FEATURES.keys()) == {"free", "chat", "knowledge"}
 
 
 def test_feature_min_profile_keys() -> None:

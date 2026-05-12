@@ -24,34 +24,33 @@ from tests.conftest import make_perms
 
 
 class TestPlanProducts:
+    """SPEC-PORTAL-PLAN-RENAME-001: 2-tier ladder (chat / knowledge) + free."""
+
     def test_free_plan_has_no_products(self) -> None:
         assert PLAN_FEATURES["free"] == frozenset()
 
-    def test_core_plan_has_chat_and_knowledge(self) -> None:
-        assert PLAN_FEATURES["core"] == frozenset({"chat", "knowledge"})
+    def test_chat_plan_has_chat_and_knowledge(self) -> None:
+        assert PLAN_FEATURES["chat"] == frozenset({"chat", "knowledge"})
 
-    def test_professional_plan_has_chat_and_knowledge(self) -> None:
-        assert PLAN_FEATURES["professional"] == frozenset({"chat", "knowledge"})
-
-    def test_complete_plan_has_chat_and_knowledge(self) -> None:
-        assert PLAN_FEATURES["complete"] == frozenset({"chat", "knowledge"})
+    def test_knowledge_plan_has_chat_and_knowledge(self) -> None:
+        # Same product set as chat — the difference is in PLAN_LIMITS
+        # (unlimited KBs + external connectors), not in PLAN_FEATURES.
+        assert PLAN_FEATURES["knowledge"] == frozenset({"chat", "knowledge"})
 
     def test_unknown_plan_falls_back_to_empty(self) -> None:
         # PLAN_FEATURES.get(...) is the public-safe accessor; unknown plans
         # collapse to an empty set the same way the old get_plan_products did.
         assert PLAN_FEATURES.get("nonexistent", frozenset()) == frozenset()
 
-    def test_plan_features_dict_has_four_entries(self) -> None:
-        assert len(PLAN_FEATURES) == 4
+    def test_plan_features_dict_has_three_entries(self) -> None:
+        assert len(PLAN_FEATURES) == 3
 
     def test_plan_hierarchy_is_superset(self) -> None:
         free = PLAN_FEATURES["free"]
-        core = PLAN_FEATURES["core"]
-        professional = PLAN_FEATURES["professional"]
-        complete = PLAN_FEATURES["complete"]
-        assert free.issubset(core)
-        assert core.issubset(professional)
-        assert professional == complete  # both chat + knowledge
+        chat = PLAN_FEATURES["chat"]
+        knowledge = PLAN_FEATURES["knowledge"]
+        assert free.issubset(chat)
+        assert chat == knowledge  # same product set; difference lives in PLAN_LIMITS
 
 
 # ---------------------------------------------------------------------------
@@ -69,10 +68,10 @@ class TestListAvailableProducts:
     """
 
     @pytest.mark.asyncio
-    async def test_returns_plan_features_for_core(self) -> None:
+    async def test_returns_plan_features_for_chat(self) -> None:
         from app.api.admin.products import list_available_products
 
-        perms = make_perms(role="admin", plan="core", enabled_addons=[])
+        perms = make_perms(role="admin", plan="chat", enabled_addons=[])
         result = await list_available_products(perms=perms, db=AsyncMock())
         assert sorted(result.products) == ["chat", "knowledge"]
 
@@ -80,7 +79,7 @@ class TestListAvailableProducts:
     async def test_returns_plan_plus_enabled_addons_for_admin(self) -> None:
         from app.api.admin.products import list_available_products
 
-        perms = make_perms(role="admin", plan="core", enabled_addons=["scribe", "docs"])
+        perms = make_perms(role="admin", plan="chat", enabled_addons=["scribe", "docs"])
         result = await list_available_products(perms=perms, db=AsyncMock())
         assert set(result.products) == {"chat", "knowledge", "scribe", "docs"}
 
@@ -143,16 +142,16 @@ class TestPlanChange:
         from app.api.admin.settings import change_plan
 
         org = MagicMock()
-        org.plan = "core"
+        org.plan = "chat"
 
         mock_db = AsyncMock()
         mock_db.get = AsyncMock(return_value=org)
         body = MagicMock()
-        body.plan = "professional"
+        body.plan = "knowledge"
 
         await change_plan(body=body, perms=make_perms(role="admin"), db=mock_db)
 
-        assert org.plan == "professional"
+        assert org.plan == "knowledge"
         # No product-row cleanup queries -- products derive from (role, plan, enabled_addons).
         mock_db.delete.assert_not_called()
         mock_db.commit.assert_awaited_once()

@@ -18,7 +18,7 @@ export const Route = createLazyFileRoute('/admin/billing')({
 
 // --- Types ---
 
-type Plan = 'core' | 'professional' | 'complete' | 'free'
+type Plan = 'chat' | 'knowledge' | 'free'
 type BillingCycle = 'monthly' | 'yearly'
 type BillingStatus = 'pending' | 'mandate_requested' | 'active' | 'payment_failed' | 'cancelled'
 
@@ -45,17 +45,16 @@ interface MandateForm {
 }
 
 // --- Plan definitions ---
-
+// SPEC-PORTAL-PLAN-RENAME-001: 2-tier ladder. Prices match the live
+// pricing page on getklai.com/pricing.
 const PLANS: { id: Plan; name: string; monthly: number; yearly: number }[] = [
-  { id: 'core', name: 'Chat', monthly: 22, yearly: 18 },
-  { id: 'professional', name: 'Chat + Scribe', monthly: 42, yearly: 34 },
-  { id: 'complete', name: 'Chat + Scribe + Knowledge', monthly: 60, yearly: 48 },
+  { id: 'chat', name: 'Klai Chat', monthly: 28, yearly: 20 },
+  { id: 'knowledge', name: 'Klai Chat + Knowledge', monthly: 68, yearly: 48 },
 ]
 
 function getPlanDescription(id: Plan): string {
-  if (id === 'core') return m.admin_billing_plan_chat_description()
-  if (id === 'professional') return m.admin_billing_plan_professional_description()
-  return m.admin_billing_plan_complete_description()
+  if (id === 'chat') return m.admin_billing_plan_chat_description()
+  return m.admin_billing_plan_knowledge_description()
 }
 
 function getPlanLabel(plan: Plan): string {
@@ -200,7 +199,7 @@ function SetupView({
   onComplete: (s: BillingStatusResponse) => void
 }) {
   const [form, setForm] = useState<MandateForm>({
-    plan: 'professional',
+    plan: 'knowledge',
     billing_cycle: 'monthly',
     seats: 1,
     address: '',

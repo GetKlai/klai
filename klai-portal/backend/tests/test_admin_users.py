@@ -142,7 +142,7 @@ async def test_invite_user_grants_portal_role_to_zitadel(
     # that allows every role in the parametrize matrix so the role-mapping
     # assertion is the one under test, not the plan ceiling. REQ-12/REQ-13
     # plan-ceiling behaviour is covered by ``test_admin_users_plan_ceiling.py``.
-    org.plan = "complete"
+    org.plan = "knowledge"
 
     mock_db = AsyncMock()
     locked_org_result = MagicMock()
@@ -158,7 +158,7 @@ async def test_invite_user_grants_portal_role_to_zitadel(
         preferred_language="nl",
     )
 
-    perms = make_perms(role="admin", user_id="admin-1", org_id=101, plan="complete")
+    perms = make_perms(role="admin", user_id="admin-1", org_id=101, plan="knowledge")
 
     with (
         patch("app.api.admin.users.zitadel") as mock_zitadel,
@@ -220,7 +220,7 @@ async def test_invite_user_creates_personal_kb_before_commit() -> None:
     org.seats = 100
     # Plan must allow ``kb_manager`` for the role-mapping branch to be the
     # one under test; REQ-12/REQ-13 plan ceiling is covered separately.
-    org.plan = "complete"
+    org.plan = "knowledge"
 
     call_order: list[str] = []
 
@@ -245,7 +245,7 @@ async def test_invite_user_creates_personal_kb_before_commit() -> None:
         preferred_language="nl",
     )
 
-    perms = make_perms(role="admin", user_id="admin-1", org_id=8, plan="complete")
+    perms = make_perms(role="admin", user_id="admin-1", org_id=8, plan="knowledge")
 
     with (
         patch("app.api.admin.users.zitadel") as mock_zitadel,
