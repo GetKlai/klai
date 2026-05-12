@@ -8,7 +8,7 @@ from typing import Literal
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
@@ -18,7 +18,7 @@ from app.api.dependencies import _load_org_or_500, get_kb_with_access, require_c
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.permissions import UserPermissions, get_caller
-from app.core.profiles import Capability
+from app.core.profiles import Capability, ProfileRole
 from app.models.connectors import PortalConnector
 from app.models.groups import PortalGroup
 from app.models.kb_uploads import KBUpload
@@ -26,9 +26,18 @@ from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase,
 from app.models.portal import PortalUser
 from app.models.retrieval_gaps import PortalRetrievalGap
 from app.services import docs_client, knowledge_ingest_client
-from app.services.access import get_user_role_for_kb
+from app.services.access import get_user_role_for_kb, is_personal_kb
+from app.services.audit import log_event
 from app.services.kb_quota import assert_can_create_org_kb, assert_can_create_personal_kb
 from app.services.zitadel import zitadel
+
+# SPEC-PORTAL-KB-OWNERSHIP-001 REQ-1.1 — header-based admin-override token.
+# Header value mirrors the I-CONFIRM-REMOVAL precedent in
+# klai-infra/sync-env.yml: a typed string forces explicit operator intent
+# rather than a click-through boolean. The dual-confirmation modal in the
+# frontend is what gives the operator the chance to abort.
+ADMIN_OVERRIDE_HEADER = "X-Admin-Override-Confirm"
+ADMIN_OVERRIDE_VALUE = "I-WAS-NOT-CREATOR"
 
 logger = structlog.get_logger()
 _QDRANT_COLLECTION = "klai_knowledge"
@@ -627,12 +636,29 @@ async def create_app_knowledge_base(
 )
 async def delete_app_knowledge_base(
     kb_slug: str,
+    request: Request,
     perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Delete a KB and all associated data. Requires owner access.
+    """Delete a KB and all associated data.
 
-    Deletion order:
+    Two paths to a delete (SPEC-PORTAL-KB-OWNERSHIP-001 REQ-1):
+
+    1. **Owner pad**: caller has owner role on the KB (creator implicitly,
+       or explicit owner via portal_user_kb_access). No override header.
+    2. **Admin-override pad**: caller has ProfileRole.ADMIN, the KB is
+       org-owned (``owner_type='org'``), AND the request carries
+       ``X-Admin-Override-Confirm: I-WAS-NOT-CREATOR``. The header forces
+       explicit intent — the frontend only attaches it after a typed
+       "DELETE" confirmation in a second modal.
+
+    Personal KBs of other users are 404 (firewall in
+    ``get_kb_with_access`` runs before this body). The handler body
+    re-checks the personal-firewall as belt-and-braces: if a future
+    refactor accidentally moves the dep, the body still refuses to
+    admin-override on personal KBs.
+
+    Deletion order (identical for both paths — REQ-1.5):
     1. docs-app (only if gitea_repo_slug or docs_enabled) — Qdrant vectors, Gitea, docs DB row.
     2. knowledge-ingest (always) — FalkorDB graph nodes, Qdrant chunks, PG artifacts.
     3. Portal DB — KB row + cascaded access rows.
@@ -641,7 +667,42 @@ async def delete_app_knowledge_base(
     """
     org = await _load_org_or_500(db, perms.org_id)
     kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
-    await _require_owner(kb, perms.user_id, db)
+
+    role = await get_user_role_for_kb(
+        kb.id,
+        perms.user_id,
+        db,
+        default_org_role=kb.default_org_role,
+        kb_org_id=kb.org_id,
+        kb_created_by=kb.created_by,
+    )
+    is_owner = role == "owner"
+
+    admin_override_used = False
+    if not is_owner:
+        # Admin-override pad gating (REQ-1.1, REQ-1.2, REQ-1.3).
+        override_header = request.headers.get(ADMIN_OVERRIDE_HEADER, "")
+        is_admin = perms.effective_role == ProfileRole.ADMIN
+        header_present = override_header == ADMIN_OVERRIDE_VALUE
+        # Belt-and-braces: even with the override header + admin role, refuse
+        # to delete a personal KB of someone else. The route-level firewall
+        # already returns 404 before this body, but a future refactor that
+        # removes the dep must not silently expose personal data to admins.
+        if is_admin and header_present and is_personal_kb(kb) and kb.owner_user_id != perms.user_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Knowledge base not found",
+            )
+        if not (is_admin and header_present and not is_personal_kb(kb)):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"Owner access required, or set header "
+                    f"'{ADMIN_OVERRIDE_HEADER}: {ADMIN_OVERRIDE_VALUE}' as an admin"
+                    " to delete an org KB you did not create"
+                ),
+            )
+        admin_override_used = True
 
     # Step 1: Clean up docs-app (Qdrant vectors managed by docs, Gitea webhook/repo, docs DB row).
     if kb.gitea_repo_slug or kb.docs_enabled:
@@ -650,6 +711,35 @@ async def delete_app_knowledge_base(
     # Step 2: Clean up knowledge-ingest data (FalkorDB graph nodes, Qdrant chunks, PG artifacts).
     # Always called, regardless of docs/gitea state — connector-based KBs never have gitea_repo_slug.
     await knowledge_ingest_client.delete_kb(org.zitadel_org_id, kb.slug)
+
+    # REQ-1.4 + REQ-4.1 — emit audit event when the admin-override pad fired.
+    # Owner deletes still leave an auth trail via Caddy access logs; admin
+    # cross-user deletes need the explicit application-level event so the
+    # actor and previous_owner are queryable from portal_audit_log.
+    if admin_override_used:
+        await log_event(
+            org_id=perms.org_id,
+            actor=perms.user_id,
+            action="kb.admin_deleted",
+            resource_type="kb",
+            resource_id=str(kb.id),
+            details={
+                "previous_owner": kb.created_by,
+                "kb_name": kb.name,
+                "kb_slug": kb.slug,
+            },
+        )
+        # REQ-4.2 — structlog event so the same data lands in VictoriaLogs
+        # for cross-service trace correlation. structlog kwargs become
+        # top-level JSON keys, queryable as `event:kb_admin_deleted` etc.
+        logger.info(
+            "kb_admin_deleted",
+            org_id=perms.org_id,
+            actor_user_id=perms.user_id,
+            kb_id=kb.id,
+            kb_slug=kb.slug,
+            previous_owner=kb.created_by,
+        )
 
     # Step 3: Portal DB -- delete KB row (cascades access rows).
     # No tombstone: slug is free to reuse after a full delete (all data wiped).
