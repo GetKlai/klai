@@ -1,47 +1,31 @@
 /**
  * One row in the Sources tab list.
  *
- * Owns: icon · name · meta · status · actions · drill-down toggle.
- * Mutations live in `-sources-hooks.ts`; the inline rename uses the
- * shared `<InlineEdit>` primitive per portal-frontend.md.
+ * Composition:
+ *   - This file owns header (icon + InlineEdit name + meta) + status
+ *     badge + drill-down content + rename overlay.
+ *   - `-sources-row-actions.tsx` owns the action cluster (reauth, sync,
+ *     delete, connector-config, upload-rename trigger, docs-editor link,
+ *     chevron).
  *
  * Pencil-icon disambiguation (SPEC-PORTAL-SOURCES-RENAME-001 REQ-5/6/7):
- *   - Pencil → upload inline rename ONLY
+ *   - Pencil → upload inline rename
  *   - Settings → connector edit-config route
  *   - NotebookPen → open in docs editor
  *
- * Save/cancel for the rename overlay live in the actions cell using the
- * documented `h-6 text-[10px] [&_svg]:size-2.5` Button pattern. The
- * action icons stay in the DOM (opacity-0 + pointer-events-none) so
- * the cell width never changes between view and edit modes.
+ * Inline rename overlay uses the `<InlineEdit>` primitive and the
+ * documented `h-6 text-[10px] [&_svg]:size-2.5` Save/Cancel Button
+ * pattern from portal-frontend.md.
  */
-import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
-import {
-  Check,
-  ChevronRight,
-  Link as LinkIcon,
-  Loader2,
-  NotebookPen,
-  Pencil,
-  RefreshCw,
-  Settings,
-  Trash2,
-  X,
-} from 'lucide-react'
+import { Check, Loader2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { InlineEdit } from '@/components/ui/inline-edit'
-import { Tooltip } from '@/components/ui/tooltip'
 import * as m from '@/paraglide/messages'
 import { SourceContent } from './-sources-content'
+import { SourceRowActions } from './-sources-row-actions'
 import { mapSourceStatus, SourceIcon, StatusBadge } from './-sources-helpers'
-import {
-  useSourceDelete,
-  useSourceRename,
-  useSourceReauth,
-  useSourceSync,
-} from './-sources-hooks'
+import { useSourceRename } from './-sources-hooks'
 import type { Source } from './-sources-types'
 
 interface SourceRowProps {
@@ -59,13 +43,10 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
   const [isRenaming, setIsRenaming] = useState(false)
   const [draftName, setDraftName] = useState(source.name)
 
-  const syncMutation = useSourceSync(kbSlug, source)
-  const deleteMutation = useSourceDelete(kbSlug, source)
   // `useSourceRename` closes the overlay via its onSuccess callback.
-  // On error it stays open so the user can retry without re-typing
+  // Failures keep the overlay open so the user can retry without re-typing
   // (mirrors the pre-rename behaviour from PR #574).
   const renameMutation = useSourceRename(kbSlug, source, () => setIsRenaming(false))
-  const reauth = useSourceReauth(kbSlug, source)
 
   function startRename() {
     setDraftName(source.name)
@@ -80,11 +61,6 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
     if (trimmed && trimmed !== source.name) renameMutation.mutate(trimmed)
     else cancelRename()
   }
-
-  const isAuthError = source.kind === 'connector' && (source.status ?? '').toLowerCase().includes('auth')
-  const isSyncing = syncMutation.isPending || status === 'pending'
-  const syncDisabled = isSyncing || isAuthError
-  const isDeleting = deleteMutation.isPending
 
   // Meta line: type label, optional item count for connectors. Drop the
   // chunk count — the parent_chunks number is unreliable per-row.
@@ -128,138 +104,21 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
 
         <StatusBadge status={status} />
 
-        {/* Actions cell. When renaming, the default icons fade out and the
-            Save/Cancel buttons overlay — same width, no layout shift. */}
+        {/* Actions cell with rename-overlay slot.
+            When renaming, SourceRowActions fades out and the Save/Cancel
+            buttons sit on top — same width, no layout shift. */}
         <div className="relative flex items-center">
-          <div className={`flex items-center ${isRenaming ? 'opacity-0 pointer-events-none' : ''}`}>
-            {/* "Verbind opnieuw" — only for connectors in auth_error state. */}
-            {isAuthError && (
-              <Tooltip label={m.kb_sources_row_reauth_tooltip()}>
-                <button
-                  type="button"
-                  onClick={() => void reauth.start()}
-                  disabled={reauth.pending}
-                  aria-label={m.kb_sources_row_reauth_label()}
-                  className="inline-flex h-8 items-center gap-1.5 px-2 rounded-md text-xs font-medium text-[var(--color-rl-accent-dark)] hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {reauth.pending ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <LinkIcon className="h-3.5 w-3.5" />
-                  )}
-                  {m.kb_sources_row_reauth_label()}
-                </button>
-              </Tooltip>
-            )}
-
-            {/* Sync / reindex. Auth_error blocks the connector branch. */}
-            <Tooltip
-              label={
-                isAuthError
-                  ? m.kb_sources_row_sync_blocked_auth()
-                  : source.kind === 'upload'
-                    ? m.kb_sources_row_reindex_tooltip()
-                    : m.kb_sources_row_sync_tooltip()
-              }
-            >
-              <button
-                type="button"
-                onClick={() => { if (!syncDisabled) syncMutation.mutate() }}
-                disabled={syncDisabled}
-                aria-label={
-                  isAuthError
-                    ? m.kb_sources_row_sync_blocked_auth()
-                    : source.kind === 'upload'
-                      ? m.kb_sources_row_reindex_tooltip()
-                      : m.kb_sources_row_sync_tooltip()
-                }
-                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isSyncing ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-4 w-4" />
-                )}
-              </button>
-            </Tooltip>
-
-            {/* Delete — inline-confirm pattern. */}
-            <InlineDeleteConfirm
-              isConfirming={confirmingDelete}
-              isPending={isDeleting}
-              label={m.kb_sources_row_delete_confirm({ name: source.name })}
-              cancelLabel={m.kb_sources_row_cancel()}
-              onConfirm={() => { deleteMutation.mutate(); setConfirmingDelete(false) }}
-              onCancel={() => setConfirmingDelete(false)}
-            >
-              <Tooltip label={m.kb_sources_row_delete_tooltip()}>
-                <button
-                  type="button"
-                  onClick={() => setConfirmingDelete(true)}
-                  disabled={isDeleting}
-                  aria-label={m.kb_sources_row_delete_tooltip()}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-[var(--color-destructive)] hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </Tooltip>
-            </InlineDeleteConfirm>
-
-            {/* REQ-6 — Connector edit uses Settings icon, not Pencil. */}
-            {source.kind === 'connector' && (
-              <Tooltip label={m.kb_sources_row_edit_connector_tooltip()}>
-                <Link
-                  to="/app/knowledge/$kbSlug/edit-connector/$connectorId"
-                  params={{ kbSlug, connectorId: source.id }}
-                  aria-label={m.kb_sources_row_edit_connector_tooltip()}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors"
-                >
-                  <Settings className="h-4 w-4" />
-                </Link>
-              </Tooltip>
-            )}
-
-            {/* REQ-5 — Upload rename uses Pencil. */}
-            {source.kind === 'upload' && (
-              <Tooltip label={m.kb_sources_row_rename_tooltip()}>
-                <button
-                  type="button"
-                  onClick={startRename}
-                  aria-label={m.kb_sources_row_rename_tooltip()}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors"
-                >
-                  <Pencil className="h-4 w-4" />
-                </button>
-              </Tooltip>
-            )}
-
-            {/* REQ-7 — Docs-editor link uses NotebookPen, not Pencil. */}
-            {editablePageId !== null && (
-              <Tooltip label={m.kb_sources_row_open_in_editor()}>
-                <Link
-                  to="/app/docs/$kbSlug/$pageId"
-                  params={{ kbSlug, pageId: editablePageId }}
-                  aria-label={m.kb_sources_row_open_in_editor()}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors"
-                >
-                  <NotebookPen className="h-4 w-4" />
-                </Link>
-              </Tooltip>
-            )}
-
-            <button
-              type="button"
-              onClick={onToggle}
-              aria-label={expanded ? m.kb_sources_row_hide_content() : m.kb_sources_row_show_content()}
-              className="inline-flex h-8 w-8 items-center justify-center text-gray-300 hover:text-gray-500 transition-colors"
-            >
-              <ChevronRight
-                className={`h-4 w-4 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
-              />
-            </button>
-          </div>
-
-          {/* Save / Cancel overlay, only when renaming. */}
+          <SourceRowActions
+            source={source}
+            kbSlug={kbSlug}
+            editablePageId={editablePageId}
+            isRenaming={isRenaming}
+            onStartRename={startRename}
+            expanded={expanded}
+            onToggle={onToggle}
+            confirmingDelete={confirmingDelete}
+            onSetConfirmingDelete={setConfirmingDelete}
+          />
           {isRenaming && (
             <div className="absolute inset-y-0 right-0 z-10 flex items-center gap-1 whitespace-nowrap">
               <Button
