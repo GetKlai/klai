@@ -1,6 +1,6 @@
 ---
 id: SPEC-PORTAL-PRICING-PER-USER-001
-version: "0.3.0"
+version: "0.4.0"
 status: ready-for-run
 created: 2026-05-12
 updated: 2026-05-12
@@ -23,6 +23,7 @@ related:
 | 2026-05-12 | 0.1.0 | Initial draft. Proposed `PROFILE_TIER` (profile derives tier). |
 | 2026-05-12 | 0.2.0 | **Architecture rewrite.** Profile-derives-tier was an anti-pattern (conflates billing with permissions). Replaced with industry-standard seat+role decoupled model. |
 | 2026-05-12 | 0.3.0 | **Sparring resolved + gap-fixes.** S-1 through S-8 answered (see decisions below). Add explicit `CAPABILITY_TO_SEAT_FEATURE` mapping table. Replace workspace-`enabled_addons` model with seat-included scribe/docs (gated by `FEATURE_MIN_PROFILE` company-floor). Add `portal_user_seat_history` for prorated billing audit. Write actual ast-grep rule body for AC-13. Reframed "industry-standard" claim (decoupled is right *for Klai* because the website promises per-user pricing — Linear/Notion's workspace-uniform is also valid for that audience). Status flipped to `ready-for-run`. |
+| 2026-05-12 | 0.4.0 | **Adversarial pre-run review.** 8 findings addressed before Phase 1 implementation. (1) Viewer-seat capability semantics made explicit — viewer is billing-only; read-only access is enforced by `effective_features` rendering on the FE + absence of write capabilities on the BE; no `chat_readonly` / `knowledge_readonly` capability layer added in Phase 1 because backfill produces zero viewer-users (Phase 2 adds explicit `chat.send` / `kb.write` capabilities). (2) AC-13 ast-grep rule rewritten — dict-literal pattern dropped (ast-grep's order-dependent dict-key match is brittle); replaced with assignment + mapping-call patterns + a required `rules/tests/` positive/negative fixture set that CI runs alongside the rule; `alembic/**` added to `files.exclude`. (3) History append moved from SQLAlchemy event-listener to a Postgres `BEFORE UPDATE OR INSERT` trigger PLUS a partial `UNIQUE INDEX (user_id) WHERE valid_to IS NULL` — immune to `session.execute(update(...))` ORM-bypass and to concurrent-update race. (4) RLS policy added on `portal_user_seat_history` (Cat-D pattern, schema-qualified `billing._rls_current_org_id()` helper per `postgres-no-return-type-overload` pitfall). (5) `status TEXT NOT NULL` snapshot column added to the history table so the Phase 5 prorate query can scope to billable periods (a `deactivated` row closes the user's billable window cleanly). (6) Phase 1 migration step "DROP COLUMN enabled_addons" removed — the column was already dropped by SPEC-PORTAL-EXTENSIONS-UNIFY-001 (`e0ad7c2b1e80`, merged 2026-05-12); the Phase 1 alembic migration would have crashed on `column does not exist`. (7) `effective_features` uses `.get(role, -1)` for unknown-role safety, mirroring the FEATURE_MIN_PROFILE lookup pattern. (8) AC-7 endpoint contract makes `require_at_least("admin")` RBAC explicit on `GET /api/admin/billing/breakdown`. Status stays `ready-for-run`. |
 
 ### Sparring resolved (v0.3.0)
 
@@ -132,6 +133,13 @@ class SeatType(StrEnum):
 # Role-floor (FEATURE_MIN_PROFILE) keeps personal-role users out: scribe/docs
 # require role >= company. Mark v0.3.0: "scribe is voor iedereen vanaf
 # Bedrijfschat, net als docs."
+# v0.4.0: viewer is billing-only. `chat_readonly` / `knowledge_readonly` are
+# FE-rendering hints (sidebar shows the surfaces in read-only mode), NOT
+# capabilities. Backend write-endpoints enforce capability requirements
+# (e.g. `chat.send`, `kb.write`); a viewer has none of those, so endpoint-
+# level access falls back to 403 even if the FE were bypassed. Phase 1
+# backfill produces zero viewer-users — adding explicit read capabilities
+# is deferred to Phase 2 (seat-selector arrival).
 SEAT_FEATURES: dict[SeatType, frozenset[str]] = {
     SeatType.VIEWER: frozenset({"chat_readonly", "knowledge_readonly"}),
     SeatType.CHAT: frozenset({
@@ -205,9 +213,14 @@ def effective_features(seat_type: SeatType, role: str) -> frozenset[str]:
     Role gates whether the user can actually open it. Personal-role
     users on a chat seat have scribe in SEAT_FEATURES but FEATURE_MIN_PROFILE
     keeps them out — they don't see scribe in the sidebar.
+
+    v0.4.0: `.get(role, -1)` defends against unknown roles in the rank
+    lookup — a future ladder-rename or a stale-snapshot history row
+    must not be able to 500 this function. Unknown role → rank -1 →
+    no features unlocked (fail-closed).
     """
     seat_unlocked = SEAT_FEATURES[seat_type]
-    caller_rank = PROFILE_RANK[role]
+    caller_rank = PROFILE_RANK.get(role, -1)
     return frozenset(
         f for f in seat_unlocked
         if caller_rank >= PROFILE_RANK.get(FEATURE_MIN_PROFILE.get(f, "personal"), -1)
@@ -261,9 +274,8 @@ def monthly_bill(org_id: int) -> int:
 | `portal_users.role` | Per-user permissions | **Unchanged.** Per-user permission axis. |
 | `ALLOWED_PROFILES_PER_PLAN` | Gate on role assignment | **Removed.** Profile is always assignable. |
 | Capability resolution | `PROFILE_CAPABILITIES[role] ∩ PLAN_LIMITS[org.plan].capabilities` | `PROFILE_CAPABILITIES[role]` filtered through `CAPABILITY_TO_SEAT_FEATURE` against `SEAT_FEATURES[user.seat_type]` |
-| `enabled_addons` (scribe/docs) | Workspace toggle, separately billed | **Removed.** Both seats include scribe + docs. `FEATURE_MIN_PROFILE` keeps personal-role users out. |
-| `portal_users.seat_type` | Does not exist | **New column.** Per-user billing axis. |
-| `portal_user_seat_history` | Does not exist | **New table.** Append-only audit of seat changes (`user_id, seat_type, role, valid_from, valid_to`). Required for prorated Phase 5 billing. |
+| `enabled_addons` (scribe/docs) | Workspace toggle, separately billed | **Already removed** by sibling SPEC-PORTAL-EXTENSIONS-UNIFY-001 (alembic head `e0ad7c2b1e80`, 2026-05-12). Both seats include scribe + docs; `FEATURE_MIN_PROFILE` keeps personal-role users out. v0.4.0: Phase 1 migration omits the redundant DROP. |
+| `portal_user_seat_history` | Does not exist | **New table.** Append-only audit of seat changes (`user_id, seat_type, role, status, valid_from, valid_to`). v0.4.0: `status` snapshot + partial-unique `(user_id) WHERE valid_to IS NULL` + Postgres trigger + RLS (Cat-D). Required for prorated Phase 5 billing. |
 | Billing line-items | `plan × seats` flat | Per-seat-type line-items: `chat: N × €28 + knowledge: M × €68 + viewer: K × €0` |
 
 ### Smart defaults in admin UI
@@ -333,30 +345,111 @@ CREATE TABLE portal_user_seat_history (
     org_id          INT NOT NULL REFERENCES portal_orgs(id),
     seat_type       TEXT NOT NULL CHECK (seat_type IN ('viewer', 'chat', 'knowledge')),
     role            TEXT NOT NULL,        -- snapshot of role at the time
+    status          TEXT NOT NULL,        -- v0.4.0: snapshot of portal_users.status
+                                          -- ('active'|'suspended'|'offboarded' per
+                                          --  portal_users.ck_portal_users_status)
+                                          -- so Phase 5 prorate can scope to billable
+                                          -- windows (only 'active' is billable).
     valid_from      TIMESTAMPTZ NOT NULL,
     valid_to        TIMESTAMPTZ,          -- NULL = current row, set on next change
     changed_by      VARCHAR(64),          -- zitadel_user_id of admin who made the change
-    change_reason   TEXT,                 -- 'invite', 'role_change', 'seat_change', 'deactivate'
+    change_reason   TEXT,                 -- 'invite', 'role_change', 'seat_change',
+                                          -- 'status_change', 'backfill'
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_pu_seat_hist_user_validto ON portal_user_seat_history(user_id, valid_to);
 CREATE INDEX idx_pu_seat_hist_org_validfrom ON portal_user_seat_history(org_id, valid_from);
+
+-- v0.4.0: partial-unique guarantees at most ONE open (current) row per user.
+-- Combined with the Postgres trigger below, this serializes concurrent
+-- UPDATEs on the same portal_users row — no overlapping "current" history.
+CREATE UNIQUE INDEX idx_pu_seat_hist_one_open_per_user
+    ON portal_user_seat_history (user_id)
+    WHERE valid_to IS NULL;
 ```
 
-Phase 1 migration:
-- Create the table
-- Backfill: for each existing `portal_users` row, INSERT one history row with `valid_from = portal_users.created_at`, `valid_to = NULL`, `change_reason = 'backfill'`
-- Wire SQLAlchemy event listener: every UPDATE to `portal_users.seat_type` or `portal_users.role` or `portal_users.status` writes a new row + sets the previous row's `valid_to`
+**v0.4.0: Postgres trigger replaces SQLAlchemy event listener.** ORM events miss `session.execute(update(...).values(...))`-style bulk updates (which several admin scripts use), so an audit gap can land silently. A `BEFORE UPDATE OR INSERT` trigger on `portal_users` is immune to ORM-bypass and runs in the same transaction:
 
-Phase 5 prorate query (illustrative):
+```sql
+CREATE OR REPLACE FUNCTION portal_users_seat_history_trg() RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        INSERT INTO portal_user_seat_history
+            (user_id, org_id, seat_type, role, status, valid_from, change_reason)
+        VALUES
+            (NEW.id, NEW.org_id, NEW.seat_type, NEW.role::text, NEW.status::text,
+             NOW(), 'invite');
+        RETURN NEW;
+    END IF;
+    -- UPDATE path: only fire when an audited column changed
+    IF (NEW.seat_type IS DISTINCT FROM OLD.seat_type)
+       OR (NEW.role     IS DISTINCT FROM OLD.role)
+       OR (NEW.status   IS DISTINCT FROM OLD.status) THEN
+        -- Close the previous "current" row
+        UPDATE portal_user_seat_history
+           SET valid_to = NOW()
+         WHERE user_id = NEW.id
+           AND valid_to IS NULL;
+        -- Append the new current row
+        INSERT INTO portal_user_seat_history
+            (user_id, org_id, seat_type, role, status, valid_from, change_reason)
+        VALUES
+            (NEW.id, NEW.org_id, NEW.seat_type, NEW.role::text, NEW.status::text,
+             NOW(),
+             CASE
+                 WHEN NEW.seat_type IS DISTINCT FROM OLD.seat_type THEN 'seat_change'
+                 WHEN NEW.role      IS DISTINCT FROM OLD.role      THEN 'role_change'
+                 ELSE 'status_change'
+             END);
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER portal_users_seat_history
+    AFTER INSERT OR UPDATE ON portal_users
+    FOR EACH ROW EXECUTE FUNCTION portal_users_seat_history_trg();
+```
+
+**v0.4.0: RLS on the history table (Cat-D pattern).** Phase 5 queries this table per-org for prorate billing; without RLS a buggy aggregation could leak rows across tenants. Schema-qualified helper avoids the return-type-overload trap (see `postgres-no-return-type-overload` pitfall):
+
+```sql
+-- Schema-qualified helper. Distinct from portal-api's existing
+-- public._rls_current_org_id() (which returns integer) to avoid
+-- the return-type-overload collision documented in process-rules.md.
+CREATE SCHEMA IF NOT EXISTS billing;
+
+CREATE OR REPLACE FUNCTION billing._rls_current_org_id() RETURNS integer AS $$
+    SELECT NULLIF(current_setting('app.current_org_id', true), '')::integer;
+$$ LANGUAGE sql STABLE;
+
+ALTER TABLE portal_user_seat_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE portal_user_seat_history FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY tenant_isolation ON portal_user_seat_history
+    USING      (org_id = billing._rls_current_org_id())
+    WITH CHECK (org_id = billing._rls_current_org_id());
+```
+
+This RLS DDL runs in the post-deploy SQL block (klai-owned, alembic role cannot ENABLE RLS on its own — see `alembic-cannot-drop-non-portal_api-tables` pitfall, which extends to ENABLE RLS / CREATE POLICY). Phase 1 ships an `alembic/versions/post_deploy_<rev>.sql` file alongside the migration; the operator applies it as `klai` superuser after `alembic upgrade head` succeeds.
+
+Phase 1 migration:
+- Create the table (alembic, runs as `portal_api`)
+- Backfill: for each existing `portal_users` row, INSERT one history row with `valid_from = portal_users.created_at`, `valid_to = NULL`, `change_reason = 'backfill'`, `status` copied from `portal_users.status`
+- Install the Postgres trigger (alembic — function + trigger are portal_api-ownable)
+- Post-deploy SQL: ENABLE / FORCE RLS + CREATE POLICY (klai-superuser path; `apply_post_deploy_sql.sh`)
+
+Phase 5 prorate query (illustrative, v0.4.0 — scopes by `status` so deactivate-windows don't bill):
 ```sql
 SELECT
   user_id,
   seat_type,
-  EXTRACT(EPOCH FROM (LEAST(valid_to, $period_end) - GREATEST(valid_from, $period_start))) / 86400 AS days_active
+  EXTRACT(EPOCH FROM (LEAST(COALESCE(valid_to, $period_end), $period_end)
+                      - GREATEST(valid_from, $period_start))) / 86400 AS days_active
 FROM portal_user_seat_history
 WHERE org_id = $org_id
+  AND status = 'active'                            -- v0.4.0: only billable rows
   AND valid_from < $period_end
   AND (valid_to IS NULL OR valid_to > $period_start)
 ;
@@ -372,8 +465,8 @@ Six phases. Each is independently shippable; rollback at any phase leaves prod f
 
 ### Phase 1 — Add seat_type + seat_history + read-only billing breakdown (~1.5 days)
 
-- Add `seats.py` module with `SeatType`, `SEAT_FEATURES`, `CAPABILITY_TO_SEAT_FEATURE`, prices, helpers
-- Alembic migration (single transaction — clean container build, no rolling-deploy split needed per Mark v0.3.0):
+- Add `seats.py` module with `SeatType`, `SEAT_FEATURES`, `CAPABILITY_TO_SEAT_FEATURE`, prices, helpers (v0.4.0: `effective_features` uses `.get(role, -1)` for unknown-role safety)
+- Alembic migration (chains off `e0ad7c2b1e80`, the EXTENSIONS-UNIFY head verified 2026-05-12):
   ```sql
   -- 1. Add seat_type column + backfill from current role
   ALTER TABLE portal_users ADD COLUMN seat_type TEXT;
@@ -386,8 +479,9 @@ Six phases. Each is independently shippable; rollback at any phase leaves prod f
   ALTER TABLE portal_users ADD CONSTRAINT portal_users_seat_type_check
       CHECK (seat_type IN ('viewer', 'chat', 'knowledge'));
 
-  -- 2. Drop the workspace addon-toggle (scribe + docs are seat-included now)
-  ALTER TABLE portal_orgs DROP COLUMN enabled_addons;
+  -- 2. (REMOVED v0.4.0) "DROP COLUMN enabled_addons" — column was already
+  --    dropped by SPEC-PORTAL-EXTENSIONS-UNIFY-001 (alembic head
+  --    e0ad7c2b1e80, merged 2026-05-12). Running it here crashes.
 
   -- 3. Create seat-history table (Phase 5 dependency, but row is cheap; create early)
   CREATE TABLE portal_user_seat_history (
@@ -396,6 +490,7 @@ Six phases. Each is independently shippable; rollback at any phase leaves prod f
       org_id          INT NOT NULL REFERENCES portal_orgs(id),
       seat_type       TEXT NOT NULL CHECK (seat_type IN ('viewer', 'chat', 'knowledge')),
       role            TEXT NOT NULL,
+      status          TEXT NOT NULL,   -- v0.4.0: billable-window snapshot
       valid_from      TIMESTAMPTZ NOT NULL,
       valid_to        TIMESTAMPTZ,
       changed_by      VARCHAR(64),
@@ -404,17 +499,45 @@ Six phases. Each is independently shippable; rollback at any phase leaves prod f
   );
   CREATE INDEX idx_pu_seat_hist_user_validto ON portal_user_seat_history(user_id, valid_to);
   CREATE INDEX idx_pu_seat_hist_org_validfrom ON portal_user_seat_history(org_id, valid_from);
+  -- v0.4.0: partial-unique enforces "at most one open row per user".
+  CREATE UNIQUE INDEX idx_pu_seat_hist_one_open_per_user
+      ON portal_user_seat_history (user_id) WHERE valid_to IS NULL;
 
-  -- 4. Backfill history: one row per existing user
-  INSERT INTO portal_user_seat_history (user_id, org_id, seat_type, role, valid_from, change_reason)
-  SELECT id, org_id, seat_type, role::text, created_at, 'backfill' FROM portal_users;
+  -- 4. Backfill history: one row per existing user (carries status snapshot)
+  INSERT INTO portal_user_seat_history
+      (user_id, org_id, seat_type, role, status, valid_from, change_reason)
+  SELECT id, org_id, seat_type, role::text, status::text, created_at, 'backfill'
+    FROM portal_users;
+
+  -- 5. v0.4.0: Install BEFORE/AFTER UPDATE trigger (replaces ORM event-listener)
+  --    Body defined in the "Seat-history table" section above.
+  CREATE OR REPLACE FUNCTION portal_users_seat_history_trg() RETURNS TRIGGER AS $$ ... $$;
+  CREATE TRIGGER portal_users_seat_history
+      AFTER INSERT OR UPDATE ON portal_users
+      FOR EACH ROW EXECUTE FUNCTION portal_users_seat_history_trg();
   ```
   Existing `kb_manager` users keep their KM features (Knowledge seat), `personal` users keep theirs (Chat seat). Zero behavior change at this phase.
-- Wire SQLAlchemy event listener: every UPDATE to `portal_users.seat_type` / `role` / `status` appends a history row and sets previous row's `valid_to`
-- Drop the now-defunct add-on UI from `/admin/settings/addons` (scribe / docs sliders gone)
-- Add `/api/admin/billing/breakdown` endpoint returning `{seat_type: count}`
+
+- **Post-deploy SQL** (`alembic/versions/post_deploy_<rev>.sql`, applied as `klai` superuser via `apply_post_deploy_sql.sh`):
+  ```sql
+  -- RLS for the new history table (Cat-D pattern, schema-qualified helper).
+  CREATE SCHEMA IF NOT EXISTS billing;
+  CREATE OR REPLACE FUNCTION billing._rls_current_org_id() RETURNS integer AS $$
+      SELECT NULLIF(current_setting('app.current_org_id', true), '')::integer;
+  $$ LANGUAGE sql STABLE;
+
+  ALTER TABLE portal_user_seat_history ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE portal_user_seat_history FORCE ROW LEVEL SECURITY;
+  CREATE POLICY tenant_isolation ON portal_user_seat_history
+      USING      (org_id = billing._rls_current_org_id())
+      WITH CHECK (org_id = billing._rls_current_org_id());
+  ```
+
+- v0.4.0: NO SQLAlchemy event listener (the Postgres trigger replaces it). This sidesteps `session.execute(update(...))` ORM-bypass and concurrent-update races.
+- v0.4.0: NO `/admin/settings/addons` UI to drop — already removed by SPEC-PORTAL-EXTENSIONS-UNIFY-001 (#594, Phase 4). Verified zero `enabled_addons` consumer code outside the BC wire-name (which stays).
+- Add `GET /api/admin/billing/breakdown` endpoint returning `{seat_type: count}` — **v0.4.0: requires `require_at_least("admin")` AND tenant scope** (FastAPI dependency, mirrors the existing `/admin/*` router gate). Tests: non-admin → 403; cross-tenant → only own org counts.
 - Add display-only "Per-seat breakdown" panel on `/admin/billing`
-- Tests: seat_type defaults derived correctly, breakdown endpoint counts, history-row append on every change
+- Tests: seat_type defaults derived correctly, breakdown endpoint counts + RBAC + tenant-scope, trigger appends history row on every audited UPDATE (and on bulk `session.execute(update(...))` — explicit test for ORM-bypass safety), partial-unique blocks a manual double-open insert
 
 ### Phase 2 — Seat assignment as first-class admin UI element (~1 day)
 
@@ -475,7 +598,7 @@ Six phases. Each is independently shippable; rollback at any phase leaves prod f
 
 **AC-6**: WHEN any user's effective capabilities are computed, the result SHALL equal `PROFILE_CAPABILITIES[role]` filtered through `SEAT_FEATURES[seat_type]`. NO plan-based intersection.
 
-**AC-7**: WHEN admin views `/admin/billing`, the page SHALL display per-seat-type user counts AND per-seat-type monthly cost AND the org's total monthly cost.
+**AC-7**: WHEN admin views `/admin/billing`, the page SHALL display per-seat-type user counts AND per-seat-type monthly cost AND the org's total monthly cost. The backing endpoint `GET /api/admin/billing/breakdown` (v0.4.0): SHALL require `require_at_least("admin")` AND SHALL scope counts to the caller's tenant only. Tests SHALL verify non-admin → 403 AND cross-tenant org_id in URL → 404/403 (no count-leak across orgs).
 
 **AC-8**: WHEN admin views `/admin/users`, each row SHALL display two columns: "Role" and "Seat" (each with the current value, both editable).
 
@@ -487,9 +610,12 @@ Six phases. Each is independently shippable; rollback at any phase leaves prod f
 
 **AC-12**: WHEN any tenant's billing is migrated to per-seat (Phase 5), the migration SHALL only happen after admin click on `/admin/billing` "switch to per-user billing" CTA. Until clicked, the tenant remains on legacy `plan × seats` billing. NO automatic per-tenant billing change.
 
-**AC-13** (regression guard): WHEN any future code path tries to derive the seat type from the role automatically (the v0.1.0 anti-pattern), CI SHALL fail. The ast-grep rule below MUST live at `rules/no-profile-derives-seat.yml` and run in the portal-api workflow:
+**AC-13** (regression guard): WHEN any future code path tries to derive the seat type from the role automatically (the v0.1.0 anti-pattern), CI SHALL fail. An ast-grep rule MUST live at `rules/no-profile-derives-seat.yml` AND a matching test-fixture set MUST live at `rules/tests/no-profile-derives-seat-tests.yml`. The rule is exercised by `sg test -t rules/tests/` in the portal-api workflow on every PR.
+
+**v0.4.0 — rule-body and fixture contract.** The implementation PR MUST satisfy the following observable behavior. The exact ast-grep pattern is left to the implementer because ast-grep's dict-key-across-`$$$` matching is order-dependent and brittle — v0.3.0 baked patterns that did not actually fire. Acceptable strategies: (a) `pattern: $X = {$$$}` constrained by a `has` clause requiring both a role-string literal and a `SeatType.$ANY` inside, (b) `pattern: SeatType.$ANY` constrained by `inside` a dict-literal context with an adjacent role-string sibling, or (c) a small wrapper script doing AST-search via `sg run` and post-filtering — whichever yields the fixture matrix below.
 
 ```yaml
+# rules/no-profile-derives-seat.yml — frontmatter contract (rule body filled by implementer)
 id: no-profile-derives-seat
 language: python
 severity: error
@@ -498,22 +624,6 @@ message: |
   axis with the permission axis (SPEC-PORTAL-PRICING-PER-USER-001 anti-pattern).
   Use suggest_seat(role) for smart-defaults; admin overrides go through the
   explicit seat selector. See spec section "Why decoupled".
-rule:
-  any:
-    # Pattern A: dict literal mapping any subset of role-strings to a SeatType.
-    - pattern: |
-        {
-          $$$,
-          "personal": SeatType.$$$,
-          $$$,
-          "kb_manager": SeatType.$$$,
-          $$$
-        }
-    # Pattern B: direct subscript on a profile-keyed dict whose value is a SeatType call site.
-    - pattern: $X[$ROLE_STR] = SeatType.$ANY
-      where:
-        ROLE_STR:
-          regex: '^"(personal|company|kb_manager|group_manager|admin)"$'
 fix-suggestion: |
   Use the explicit suggest_seat() helper:
       seat = suggest_seat(role)  # returns the recommended default
@@ -522,11 +632,25 @@ files:
   include:
     - "klai-portal/backend/app/**/*.py"
   exclude:
-    - "klai-portal/backend/app/core/seats.py"   # the canonical PROFILE → SeatType
-    - "klai-portal/backend/tests/**"
+    - "klai-portal/backend/app/core/seats.py"     # canonical mapping site
+    - "klai-portal/backend/tests/**"               # fixtures may inline
+    - "klai-portal/backend/alembic/versions/**"   # v0.4.0: data-migration may inline
 ```
 
-The exception `app/core/seats.py` is the SINGLE place the mapping is allowed (definition site). Tests are excluded so they can build fixtures explicitly.
+The rule's required fixture matrix (all must be observed-correct under `sg test`):
+
+| # | Fixture | Expected verdict |
+|---|---|---|
+| P1 | `MY_MAP = {"personal": SeatType.CHAT, "kb_manager": SeatType.KNOWLEDGE}` outside `seats.py` | **FAIL** |
+| P2 | `seat_for_role = {"company": SeatType.CHAT}` (subset of role keys) | **FAIL** |
+| P3 | `def my_seat(role): return SeatType.KNOWLEDGE if role == "kb_manager" else SeatType.CHAT` | **FAIL** |
+| P4 | `MY_MAP[role] = SeatType.CHAT` (subscript-assignment in non-canonical file) | **FAIL** |
+| P5 | Same as P1 but in a fenced docstring/comment block | **FAIL** (lint sees source text; manual `# noqa` allowed if intentional doc-example) |
+| N1 | `seat = suggest_seat(role)` | PASS |
+| N2 | `seat = SeatType.CHAT  # literal, no role coupling` | PASS |
+| N3 | Same as P1 but located inside `app/core/seats.py` | PASS (canonical site, excluded by `files.exclude`) |
+
+The exception `app/core/seats.py` is the SINGLE place the mapping is allowed (definition site). Tests are excluded so they can build fixtures explicitly. `alembic/versions/**` is excluded (v0.4.0) because data-migrations may inline a one-shot backfill mapping for legacy rows — the Phase 1 migration itself uses raw SQL CASE, not Python dict, but future migrations may not. The rule is fail-loud — a positive fixture that the rule does NOT catch breaks `sg test` in CI.
 
 ---
 
@@ -554,7 +678,11 @@ After SPEC-PORTAL-PLAN-RENAME-001 deploy, allowlist enforcement should mean ZERO
 | Mixed-seat billing line-items break Moneybird's existing template | Test against Moneybird sandbox before Phase 5 ships per tenant. Rollback plan: revert to legacy single-tier billing per affected tenant. |
 | Admin demotes user OR lowers seat → silent capability loss the user never agreed to | Phase 2 confirm-modal includes consequence ("Roman will lose access to org KBs and KB management features") and emits a `user.seat_changed` audit event. |
 | `viewer` seat triggers free-tier abuse (org creates 1000 viewer seats) | Defer abuse-rate-limiting to a later SPEC if observed in practice. v0.2.0 trusts admins. |
-| Profile-derives-seat anti-pattern creeps back via "convenient" code | AC-13 ast-grep CI rule blocks direct `SEAT_FOR_ROLE[role]` outside the explicit `suggest_seat()` helper. |
+| Profile-derives-seat anti-pattern creeps back via "convenient" code | AC-13 ast-grep CI rule blocks direct `SEAT_FOR_ROLE[role]` outside the explicit `suggest_seat()` helper. v0.4.0 strengthened with fixture-matrix testing under `sg test`. |
+| History-row append misses bulk `session.execute(update(...).values(...))` writes (ORM event-listener bypass) | **v0.4.0:** Postgres `AFTER INSERT OR UPDATE` trigger replaces the ORM listener — fires regardless of how the UPDATE arrived. Plus partial-unique `(user_id) WHERE valid_to IS NULL` serializes concurrent writes. |
+| Cross-tenant data-leak via aggregate query on `portal_user_seat_history` | **v0.4.0:** RLS enabled at create-table time (Cat-D pattern, `billing._rls_current_org_id()` schema-qualified helper). FORCE RLS prevents accidental bypass even by table owner. |
+| Phase 1 alembic migration crashes because `portal_orgs.enabled_addons` column does not exist | **v0.4.0:** DROP-COLUMN step removed — column already dropped by SPEC-PORTAL-EXTENSIONS-UNIFY-001 at head `e0ad7c2b1e80` (verified on prod 2026-05-12). |
+| `effective_features` 500s for an unknown role (e.g. legacy snapshot value in `portal_user_seat_history`) | **v0.4.0:** `PROFILE_RANK.get(role, -1)` returns rank -1 → no features unlocked → fail-closed instead of crash. |
 
 ---
 
