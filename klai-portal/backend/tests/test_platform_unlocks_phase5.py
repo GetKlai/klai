@@ -500,6 +500,47 @@ class TestPlatformUnlocksEndpoints:
         assert result.platform_unlocked_features == []
 
     @pytest.mark.asyncio
+    async def test_patch_unknown_feature_returns_400(self) -> None:
+        """SPEC-PORTAL-EXTENSIONS-UNIFY-001 cleanup: PATCH validates every key
+        against KNOWN_FEATURES so silent-drops in derive_user_products can't
+        be introduced by typoed payloads."""
+        from app.api.admin.platform_unlocks import (
+            PatchPlatformUnlocksRequest,
+            patch_platform_unlocks,
+        )
+
+        perms = self._make_platform_admin_perms()
+        body = PatchPlatformUnlocksRequest(platform_unlocked_features=["partner_api", "x_legacy_feature"])
+
+        db = _make_db_async()
+        with pytest.raises(HTTPException) as exc:
+            await patch_platform_unlocks(slug="customer-org", body=body, perms=perms, db=db)
+        assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert "x_legacy_feature" in str(exc.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_patch_dedupes_and_sorts_persisted_set(self) -> None:
+        """SPEC-PORTAL-EXTENSIONS-UNIFY-001 cleanup: storage is deterministic
+        even if the caller sends duplicates / unsorted."""
+        from app.api.admin.platform_unlocks import (
+            PatchPlatformUnlocksRequest,
+            patch_platform_unlocks,
+        )
+
+        perms = self._make_platform_admin_perms()
+        org = self._make_target_org([])
+
+        db = _make_db_async()
+        db.execute = AsyncMock(return_value=_make_scalar_result(org))
+
+        body = PatchPlatformUnlocksRequest(platform_unlocked_features=["widgets", "scribe", "widgets", "scribe"])
+
+        with patch("app.api.admin.platform_unlocks.emit_lifecycle_event", new_callable=AsyncMock):
+            await patch_platform_unlocks(slug="customer-org", body=body, perms=perms, db=db)
+
+        assert org.platform_unlocked_features == ["scribe", "widgets"]
+
+    @pytest.mark.asyncio
     async def test_patch_404_when_org_not_found(self) -> None:
         from app.api.admin.platform_unlocks import (
             PatchPlatformUnlocksRequest,
