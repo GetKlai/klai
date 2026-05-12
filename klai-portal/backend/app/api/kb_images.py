@@ -41,6 +41,7 @@ from app.api.partner_dependencies import PartnerAuthContext, get_partner_key
 from app.api.session_deps import get_optional_session
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.kb_image_url import KbImage
 from app.core.permissions import UserPermissions, get_caller_at_least
 from app.core.profiles import ProfileRole
 from app.core.session import SessionContext
@@ -52,15 +53,6 @@ router = APIRouter(tags=["KB Images"])
 
 _CACHE_CONTROL = "private, max-age=86400"
 _STREAM_CHUNK_SIZE = 65536
-
-# MIME -> file extension mapping for the content-addressed key
-# (the ImageStore lib normalises the ext internally, but we want stable suffixes).
-_MIME_EXT: dict[str, str] = {
-    "image/jpeg": "jpg",
-    "image/png": "png",
-    "image/gif": "gif",
-    "image/webp": "webp",
-}
 
 
 def _make_minio_client() -> Minio:
@@ -187,37 +179,33 @@ async def _resolve_zitadel_org_id(org_id: int, db: AsyncSession) -> str:
     return zitadel
 
 
-# @MX:ANCHOR: KB-image auth-proxy endpoint -- AC-1 through AC-5 of SPEC-TI-009
-# @MX:REASON: Single enforcement point for cross-tenant image access control.
-#   Every image fetch from the browser goes through this handler.
-#   Changing the org_id check or the S3 key format breaks tenant isolation.
+# @MX:ANCHOR: KB-image auth-proxy endpoint — single enforcement point for
+#   cross-tenant image access control. Every image fetch from the browser
+#   goes through this handler. Changing the org_id check or the S3 key
+#   format breaks tenant isolation.
 #
-#   The path has a literal 'images' segment between org_id and kb_slug.
-#   This matches the S3 key + public URL shape that ImageStore generates:
-#       object_key:  {org_id}/images/{kb_slug}/{sha256}.{ext}
-#       public_url:  /kb-images/{org_id}/images/{kb_slug}/{sha256}.{ext}
-#   Removing 'images' here would make the route declaration diverge from
-#   what ImageStore.build_public_url() returns — a 5-segment URL no longer
-#   matches a 4-segment route → 404 on every browser fetch (the latent bug
-#   that survived from SPEC-TI-009 until the 2026-05-12 e2e smoketest).
-#
-#   The path org_id is a zitadel_org_id (string) to match the convention
-#   used by klai-connector + klai-knowledge-ingest.
-# @MX:SPEC: SPEC-TI-009, finding B-4
-@router.get("/kb-images/{org_id}/images/{kb_slug}/{filename}")
+#   The route path is sourced from KbImage.ROUTE_TEMPLATE (the single source
+#   of truth for kb-image URL shapes per SPEC-KB-IMAGES-V2-001). Direct
+#   string-literals here are forbidden and caught by
+#   ``rules/no-hardcoded-kb-image-path.yml``. A drift between this route
+#   declaration and what ``KbImage(...).public_path`` returns is caught at
+#   portal-api boot by ``_assert_kb_image_routes_match_value_class`` in
+#   ``app.main`` — the service refuses to start.
+# @MX:SPEC: SPEC-KB-IMAGES-V2-001 REQ-2 (was SPEC-TI-009)
+@router.get(KbImage.ROUTE_TEMPLATE)
 async def get_kb_image(
-    org_id: str,
+    zitadel_org_id: str,
     kb_slug: str,
     filename: str,
     request: Request,
     session: SessionContext | None = Depends(get_optional_session),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
-    """Auth-proxied KB-image read (SPEC-TI-009 AC-1).
+    """Auth-proxied KB-image read.
 
     Authorization: caller's zitadel_org_id (looked up from session.org_id or
-    partner key) MUST equal the path's org_id. Streams from Garage S3 API
-    (private, authenticated). Cache-Control: private, max-age=86400.
+    partner key) MUST equal the path's zitadel_org_id. Streams from Garage
+    S3 API (private, authenticated). Cache-Control: private, max-age=86400.
 
     The path uses zitadel_org_id (an 18-digit string) because that's the
     canonical tenant id in the knowledge domain — the connector + crawler
@@ -231,19 +219,19 @@ async def get_kb_image(
     caller_zitadel_org_id = await _resolve_zitadel_org_id(caller_org_id, db)
 
     # Step 3: Authorize — caller's zitadel org MUST match path org_id (AC-5)
-    if caller_zitadel_org_id != org_id:
+    if caller_zitadel_org_id != zitadel_org_id:
         logger.warning(
             "kb_image_cross_tenant_blocked",
             caller_org_id=caller_org_id,
             caller_zitadel_org_id=caller_zitadel_org_id,
-            path_org_id=org_id,
+            path_org_id=zitadel_org_id,
             kb_slug=kb_slug,
             filename=filename,
         )
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    # Step 4: Build Garage S3 object key (format from SPEC-KB-IMAGE-002)
-    object_key = f"{org_id}/images/{kb_slug}/{filename}"
+    # Step 4: Build Garage S3 object key (format from SPEC-KB-IMAGE-002 via KbImage)
+    object_key = f"{zitadel_org_id}/images/{kb_slug}/{filename}"
 
     # Step 5: Guard against unconfigured Garage endpoint (dev / test env)
     if not settings.garage_s3_endpoint:
@@ -256,7 +244,7 @@ async def get_kb_image(
 
     content_type = await asyncio.to_thread(_stat_object, client, settings.garage_kb_bucket, object_key)
 
-    structlog.contextvars.bind_contextvars(org_id=org_id, kb_slug=kb_slug)
+    structlog.contextvars.bind_contextvars(org_id=zitadel_org_id, kb_slug=kb_slug)
 
     # Step 6: Return StreamingResponse with cache headers (AC-1)
     return StreamingResponse(
@@ -273,9 +261,10 @@ async def get_kb_image(
 # @MX:REASON: Changing the auth dependency, the kb_slug → org_id binding via
 #   _get_kb_or_404, the SVG-reject branch, or the magic-byte MIME check breaks
 #   tenant isolation or opens an XSS path via inline SVG. The 5 MB hard cap also
-#   serves as memory-DoS guard for parallel uploads.
-# @MX:SPEC: SPEC-PORTAL-DOCS-IMAGE-PASTE-001
-@router.post("/kb-images/{kb_slug}")
+#   serves as memory-DoS guard for parallel uploads. The route path is sourced
+#   from KbImage.UPLOAD_ROUTE_TEMPLATE (SPEC-KB-IMAGES-V2-001 REQ-2).
+# @MX:SPEC: SPEC-PORTAL-DOCS-IMAGE-PASTE-001 + SPEC-KB-IMAGES-V2-001 REQ-2
+@router.post(KbImage.UPLOAD_ROUTE_TEMPLATE)
 async def upload_kb_image(
     request: Request,
     kb_slug: str,
@@ -302,8 +291,8 @@ async def upload_kb_image(
       ``{org_id}/images/{kb_slug}/{sha256}.{ext}``; identical bytes dedupe via
       content addressing.
 
-    Response: ``{"url": "/kb-images/...", "deduplicated": bool}`` where ``url``
-    is the relative path served by the GET endpoint above.
+    Response: ``{"url": kb_image_path, "deduplicated": bool}`` where the URL
+    is the relative path served by the GET endpoint above (KbImage.public_path).
     """
     # Step 1: KB-scope authorization. A 404 here is the strong-or-weak signal:
     # either the kb_slug truly doesn't exist in the caller's org (typo) OR it
@@ -375,29 +364,56 @@ async def upload_kb_image(
             detail="SVG uploads not supported",
         )
 
-    ext = _MIME_EXT.get(mime)
-    if ext is None:
-        # validate_image returned a MIME we have no extension for — defensive.
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="Unsupported image type",
-        )
-
     # Step 5: Resolve caller's zitadel_org_id — the S3 key prefix convention
     # used by klai-connector + klai-knowledge-ingest, matched by the read-route
-    # above. Using portal_orgs.id here would create a dual prefix conventie
+    # above. Using portal_orgs.id here would create a dual prefix convention
     # (zitadel for connector-images, portal-int for user uploads) and break
     # the read-route's auth check uniformity.
     zitadel_org_id = await _resolve_zitadel_org_id(perms.org_id, db)
 
-    # Step 6: Upload via the shared lib (content-addressed dedup).
+    # Step 6: Build the KbImage value object — single source of truth for both
+    # the S3 key and the public URL. ImageStore writes by s3_key; the response
+    # returns public_path. The two cannot drift because they're derived from
+    # the same object (SPEC-KB-IMAGES-V2-001 REQ-1).
+    try:
+        kb_image = KbImage.from_bytes(
+            zitadel_org_id=zitadel_org_id,
+            kb_slug=kb_slug,
+            data=data,
+            mime=mime,
+        )
+    except ValueError as exc:
+        # Defensive: validate_image already filtered MIMEs we accept, and the
+        # kb_slug came through _get_kb_or_404 which only returns valid slugs.
+        # If we land here it's a programming error, not a client error.
+        logger.exception("kb_image_value_class_rejected_inputs", err=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Unsupported image type",
+        ) from exc
+
+    # Step 7: Upload via the shared lib (content-addressed dedup).
     store = ImageStore(
         endpoint=settings.garage_s3_endpoint,
         access_key=settings.garage_s3_access_key,
         secret_key=settings.garage_s3_secret_key,
         bucket=settings.garage_kb_bucket,
     )
-    result = await store.upload_image(zitadel_org_id, kb_slug, data, ext)
+    result = await store.upload_image(zitadel_org_id, kb_slug, data, kb_image.ext)
+
+    # Sanity guard: ImageStore must have produced the same s3_key as KbImage.
+    # If this fires, ImageStore.build_object_key drifted from KbImage.s3_key
+    # — a regression of the v1 problem under the v2 design. Fail loud.
+    if result.object_key != kb_image.s3_key:
+        logger.error(
+            "kb_image_store_key_drift",
+            store_key=result.object_key,
+            kb_image_key=kb_image.s3_key,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="image store key mismatch",
+        )
 
     logger.info(
         "kb_image_uploaded",
@@ -412,6 +428,9 @@ async def upload_kb_image(
     )
 
     return {
-        "url": f"/{result.public_url.lstrip('/')}",
+        # The URL is sourced from KbImage.public_path — the single source of
+        # truth. ImageStore.build_public_url no longer exists (REQ-4) precisely
+        # to make this drift-impossible.
+        "url": kb_image.public_path,
         "deduplicated": result.deduplicated,
     }

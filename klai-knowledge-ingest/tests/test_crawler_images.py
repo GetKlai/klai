@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
-
 from klai_image_storage import (
     ImageStore,
     ImageUploadResult,
@@ -62,15 +61,19 @@ async def test_srcset_debris_is_filtered() -> None:
             "https://help.voys.nl/real.png": (200, _png_bytes()),
         }
     )
+
     # Stub the S3 side effects so we can run without a real bucket.
-    store._object_exists = AsyncMock(return_value=False)  # type: ignore[attr-defined]
-    store.upload_image = AsyncMock(  # type: ignore[attr-defined]
-        return_value=ImageUploadResult(
-            object_key="org/images/support/abc.png",
-            public_url="/kb-images/org/images/support/abc.png",
+    # SPEC-KB-IMAGES-V2-001: upload_image's object_key MUST match what
+    # KbImage.s3_key would compute for the same bytes. Use a side_effect
+    # that hashes the bytes the same way ImageStore.build_object_key does.
+    async def _fake_upload(o: str, k: str, d: bytes, e: str) -> ImageUploadResult:
+        return ImageUploadResult(
+            object_key=f"{o}/images/{k}/{hashlib.sha256(d).hexdigest()}.{e}",
             deduplicated=False,
         )
-    )
+
+    store._object_exists = AsyncMock(return_value=False)  # type: ignore[attr-defined]
+    store.upload_image = AsyncMock(side_effect=_fake_upload)  # type: ignore[attr-defined]
 
     result = await download_and_upload_crawl_images(
         media_images=[
@@ -86,7 +89,8 @@ async def test_srcset_debris_is_filtered() -> None:
         http_client=client,
     )
 
-    assert result == ["/kb-images/org/images/support/abc.png"]
+    expected_hash = hashlib.sha256(_png_bytes()).hexdigest()
+    assert result == [f"/kb-images/org/images/support/{expected_hash}.png"]
     # Confirm the filtered fragments never triggered a GET.
     called_urls = [c.args[0] for c in client.get.call_args_list]  # type: ignore[union-attr]
     assert called_urls == ["https://help.voys.nl/real.png"]
@@ -101,14 +105,15 @@ async def test_dedups_identical_urls_across_srcset() -> None:
             "https://help.voys.nl/img.png": (200, _png_bytes()),
         }
     )
-    store._object_exists = AsyncMock(return_value=False)  # type: ignore[attr-defined]
-    store.upload_image = AsyncMock(  # type: ignore[attr-defined]
-        return_value=ImageUploadResult(
-            object_key="org/images/support/img.png",
-            public_url="/kb-images/org/images/support/img.png",
+
+    async def _fake_upload(o: str, k: str, d: bytes, e: str) -> ImageUploadResult:
+        return ImageUploadResult(
+            object_key=f"{o}/images/{k}/{hashlib.sha256(d).hexdigest()}.{e}",
             deduplicated=False,
         )
-    )
+
+    store._object_exists = AsyncMock(return_value=False)  # type: ignore[attr-defined]
+    store.upload_image = AsyncMock(side_effect=_fake_upload)  # type: ignore[attr-defined]
 
     result = await download_and_upload_crawl_images(
         media_images=[
@@ -123,7 +128,8 @@ async def test_dedups_identical_urls_across_srcset() -> None:
         http_client=client,
     )
 
-    assert result == ["/kb-images/org/images/support/img.png"]
+    expected_hash = hashlib.sha256(_png_bytes()).hexdigest()
+    assert result == [f"/kb-images/org/images/support/{expected_hash}.png"]
     assert client.get.call_count == 1  # type: ignore[union-attr]
 
 
@@ -139,11 +145,9 @@ async def test_partial_http_failure_does_not_abort_page() -> None:
         }
     )
 
-    async def fake_upload(
-        org_id: str, kb_slug: str, data: bytes, ext: str
-    ) -> ImageUploadResult:
+    async def fake_upload(org_id: str, kb_slug: str, data: bytes, ext: str) -> ImageUploadResult:
         key = f"{org_id}/images/{kb_slug}/{hashlib.sha256(data).hexdigest()}.{ext}"
-        return ImageUploadResult(key, f"/kb-images/{key}", deduplicated=False)
+        return ImageUploadResult(object_key=key, deduplicated=False)
 
     store._object_exists = AsyncMock(return_value=False)  # type: ignore[attr-defined]
     store.upload_image = AsyncMock(side_effect=fake_upload)  # type: ignore[attr-defined]
@@ -173,14 +177,15 @@ async def test_relative_urls_resolved_against_base() -> None:
             "https://help.voys.nl/assets/img.png": (200, _png_bytes()),
         }
     )
-    store._object_exists = AsyncMock(return_value=False)  # type: ignore[attr-defined]
-    store.upload_image = AsyncMock(  # type: ignore[attr-defined]
-        return_value=ImageUploadResult(
-            object_key="org/images/support/x.png",
-            public_url="/kb-images/org/images/support/x.png",
+
+    async def _fake_upload(o: str, k: str, d: bytes, e: str) -> ImageUploadResult:
+        return ImageUploadResult(
+            object_key=f"{o}/images/{k}/{hashlib.sha256(d).hexdigest()}.{e}",
             deduplicated=False,
         )
-    )
+
+    store._object_exists = AsyncMock(return_value=False)  # type: ignore[attr-defined]
+    store.upload_image = AsyncMock(side_effect=_fake_upload)  # type: ignore[attr-defined]
 
     result = await download_and_upload_crawl_images(
         media_images=[{"src": "/assets/img.png"}],
@@ -191,7 +196,8 @@ async def test_relative_urls_resolved_against_base() -> None:
         http_client=client,
     )
 
-    assert result == ["/kb-images/org/images/support/x.png"]
+    expected_hash = hashlib.sha256(_png_bytes()).hexdigest()
+    assert result == [f"/kb-images/org/images/support/{expected_hash}.png"]
     called_urls = [c.args[0] for c in client.get.call_args_list]  # type: ignore[union-attr]
     assert called_urls == ["https://help.voys.nl/assets/img.png"]
 

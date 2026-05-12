@@ -23,7 +23,7 @@ class TestDownloadAndUploadImages:
         async def fake_upload(*args, **kwargs):
             from klai_image_storage import ImageUploadResult
             return ImageUploadResult(
-                object_key="org/img/hash.png", public_url="/kb-images/org/img/hash.png", deduplicated=False,
+                object_key="org/img/hash.png", deduplicated=False,
             )
 
         mock_store.upload_image = fake_upload
@@ -114,7 +114,7 @@ class TestDownloadAndUploadImages:
 
         async def fake_upload(*args, **kwargs):
             from klai_image_storage import ImageUploadResult
-            return ImageUploadResult(object_key="key", public_url="/kb-images/key", deduplicated=False)
+            return ImageUploadResult(object_key="key", deduplicated=False)
 
         mock_store.upload_image = fake_upload
 
@@ -146,7 +146,7 @@ class TestDownloadAndUploadImages:
 
         async def fake_upload(*args, **kwargs):
             from klai_image_storage import ImageUploadResult
-            return ImageUploadResult(object_key="key", public_url="/kb-images/key", deduplicated=False)
+            return ImageUploadResult(object_key="key", deduplicated=False)
 
         mock_store.upload_image = fake_upload
 
@@ -184,7 +184,7 @@ class TestUploadImagesIsConnectorAgnostic:
         async def fake_upload(*args, **kwargs):
             from klai_image_storage import ImageUploadResult
             return ImageUploadResult(
-                object_key="k", public_url="/kb-images/k", deduplicated=False,
+                object_key="k", deduplicated=False,
             )
 
         engine._image_store.upload_image = fake_upload

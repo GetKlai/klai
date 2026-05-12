@@ -7,9 +7,10 @@ The store wraps the synchronous minio client with :func:`asyncio.to_thread`
 so the embedding service's event loop (FastAPI endpoints, Procrastinate
 workers, connector sync tasks) stays non-blocking. Images are uploaded
 authenticated over the S3 API (Garage on :3900) and served through
-an auth-proxy at ``GET /kb-images/{org_id}/{kb_slug}/{filename}`` in
-portal-api (SPEC-TI-009 / finding B-4). Direct anonymous reads via
-Garage website mode (:3902) were closed as part of that SPEC.
+the auth-proxied read route on portal-api (see KbImage.ROUTE_TEMPLATE
+in klai_image_storage.kb_image — SPEC-KB-IMAGES-V2-001). Direct
+anonymous reads via Garage website mode (:3902) were closed as part
+of SPEC-TI-009.
 
 Content-addressed keys (SHA-256 of bytes) give free deduplication across
 tenants' own KBs. The key format + URL prefix are wire-level contracts;
@@ -42,17 +43,26 @@ _SVG_SIGNATURES = (b"<?xml", b"<svg")
 MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5 MB
 MAX_IMAGES_PER_DOCUMENT = 20
 
-# Public URL prefix served by Caddy → Garage website endpoint.
-# The full URL becomes: https://{tenant}.getklai.com/kb-images/{object_key}
-PUBLIC_IMAGE_PATH_PREFIX = "/kb-images"
+# SPEC-KB-IMAGES-V2-001 REQ-4: ``PUBLIC_IMAGE_PATH_PREFIX`` and
+# ``ImageStore.build_public_url`` are deliberately removed. URL-shape is now
+# the exclusive responsibility of ``app/core/kb_image_url.py::KbImage`` in
+# klai-portal. Other services that need a public URL string should construct
+# their own ``KbImage`` (importing the value-class or constructing the path
+# inline against KbImage.ROUTE_TEMPLATE). This eliminates the multi-file
+# drift that caused the 2026-05-12 5-layer regression.
 
 
 @dataclass(frozen=True)
 class ImageUploadResult:
-    """Result of an image upload operation."""
+    """Result of an image upload operation.
+
+    SPEC-KB-IMAGES-V2-001 REQ-4: the ``public_url`` field is intentionally
+    absent. URL-shape is the exclusive responsibility of klai-portal's
+    ``KbImage`` value-class. Callers that need a URL build one themselves
+    from ``object_key`` (or, in klai-portal context, from ``KbImage``).
+    """
 
     object_key: str
-    public_url: str
     deduplicated: bool
 
 
@@ -96,10 +106,9 @@ class ImageStore:
         ext = ext.lower().lstrip(".")
         return f"{org_id}/images/{kb_slug}/{content_hash}.{ext}"
 
-    @staticmethod
-    def build_public_url(object_key: str) -> str:
-        """Build the relative public URL for an image served via Caddy."""
-        return f"{PUBLIC_IMAGE_PATH_PREFIX}/{object_key}"
+    # SPEC-KB-IMAGES-V2-001 REQ-4: ``build_public_url`` removed. URL-shape is
+    # owned by ``app/core/kb_image_url.py::KbImage`` in klai-portal. Use that
+    # value-class (or its TypeScript mirror) wherever a public URL is needed.
 
     @staticmethod
     def validate_image(data: bytes) -> str | None:
@@ -143,11 +152,7 @@ class ImageStore:
 
         if await self._object_exists(object_key):
             logger.info("image_deduplicated", object_key=object_key)
-            return ImageUploadResult(
-                object_key=object_key,
-                public_url=self.build_public_url(object_key),
-                deduplicated=True,
-            )
+            return ImageUploadResult(object_key=object_key, deduplicated=True)
 
         await asyncio.to_thread(
             self._client.put_object,
@@ -158,11 +163,7 @@ class ImageStore:
             content_type=self.validate_image(data) or "application/octet-stream",
         )
         logger.info("image_uploaded", object_key=object_key, size=len(data))
-        return ImageUploadResult(
-            object_key=object_key,
-            public_url=self.build_public_url(object_key),
-            deduplicated=False,
-        )
+        return ImageUploadResult(object_key=object_key, deduplicated=False)
 
     async def _object_exists(self, object_key: str) -> bool:
         """Check if an object exists in the bucket."""

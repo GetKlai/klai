@@ -54,17 +54,9 @@ class TestBuildObjectKey:
         assert k1 != k2
 
 
-class TestBuildPublicUrl:
-    def test_prefixes_with_kb_images_path(self) -> None:
-        # `/kb-images/` is an intentional wire-level invariant —
-        # asserted as a literal so no refactor can silently change it.
-        url = ImageStore.build_public_url("org/images/kb/hash.png")
-        assert url == "/kb-images/org/images/kb/hash.png"
-
-    def test_public_url_format(self) -> None:
-        """Public URL uses /kb-images/ prefix."""
-        url = ImageStore.build_public_url("org-1/images/kb/abc123.png")
-        assert url == "/kb-images/org-1/images/kb/abc123.png"
+# SPEC-KB-IMAGES-V2-001 REQ-4: TestBuildPublicUrl removed alongside
+# ImageStore.build_public_url. URL-shape is now KbImage's responsibility
+# — see test_kb_image.py for the round-trip + drift coverage.
 
 
 class TestValidateImage:
@@ -116,7 +108,6 @@ class TestUploadImage:
         assert isinstance(result, ImageUploadResult)
         assert result.deduplicated is False
         assert result.object_key.startswith("org-1/images/kb-1/")
-        assert result.public_url.startswith("/kb-images/org-1/images/kb-1/")
         mock_client.put_object.assert_called_once()
 
     async def test_deduplicates_when_object_exists(self, fresh_store: ImageStore) -> None:
@@ -128,7 +119,7 @@ class TestUploadImage:
 
         result = await fresh_store.upload_image("org-1", "kb-1", b"data", ".jpg")
 
-        assert result.public_url.startswith("/kb-images/")
+        assert result.object_key.startswith("org-1/images/kb-1/")
         assert result.deduplicated is True
         mock_client.put_object.assert_not_called()
 
@@ -150,17 +141,20 @@ class TestUploadImage:
 
 
 class TestImageUploadResult:
-    """Result dataclass is frozen and captures all three fields."""
+    """Result dataclass is frozen and captures object_key + deduplicated.
+
+    SPEC-KB-IMAGES-V2-001 REQ-4: public_url is no longer a field — URL
+    construction is KbImage's job. ImageStore is purely an S3 boundary.
+    """
 
     def test_is_frozen(self) -> None:
         from dataclasses import FrozenInstanceError
 
-        r = ImageUploadResult(object_key="k", public_url="/kb-images/k", deduplicated=False)
+        r = ImageUploadResult(object_key="k", deduplicated=False)
         with pytest.raises(FrozenInstanceError):
             r.object_key = "other"  # type: ignore[misc]
 
     def test_fields(self) -> None:
-        r = ImageUploadResult(object_key="k", public_url="/kb-images/k", deduplicated=True)
+        r = ImageUploadResult(object_key="k", deduplicated=True)
         assert r.object_key == "k"
-        assert r.public_url == "/kb-images/k"
         assert r.deduplicated is True

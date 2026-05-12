@@ -191,39 +191,30 @@ from knowledge_ingest.source_label import (  # noqa: E402
     compute_source_label as _compute_source_label,
 )
 
-# SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-06.2: convention for the public
-# URL prefix that ImageStore prepends to every uploaded key (matches
-# ``klai_image_storage.storage.PUBLIC_IMAGE_PATH_PREFIX``). We re-derive
-# the s3_key by stripping this prefix.
-_IMAGE_URL_PREFIX = "/kb-images/"
-
 
 def _parse_image_refs(image_urls: list) -> list[tuple[str, str]]:
     """Convert image URLs into (s3_key, content_hash) tuples for bookkeeping.
 
-    Public URL shape: ``/kb-images/{org}/images/{kb}/{sha256}.{ext}``.
-    The ``content_hash`` is the basename minus the extension; the
-    ``s3_key`` is the full URL minus the ``/kb-images/`` prefix.
+    SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-06.2 — URL parsing for the
+    cleanup bookkeeping table.
 
-    Skips any URL that does not match the expected shape (manual uploads
-    pointing at external CDNs, malformed entries) — those simply do not
-    get connector-scoped cleanup. The bookkeeping table is best-effort:
-    not having a row for an image means the cleanup query will never
-    propose it as orphan, which is the safe default.
+    SPEC-KB-IMAGES-V2-001 REQ-1: parses via ``KbImage.from_path`` to share
+    the URL shape with the rest of the codebase. The s3_key is read from
+    the KbImage instance; content_hash is the sha256 field. Skips any URL
+    that does not match the canonical shape (manual uploads pointing at
+    external CDNs, malformed entries) — those simply do not get
+    connector-scoped cleanup, which is the safe default.
     """
+    from klai_image_storage.kb_image import KbImage  # local to avoid import cycle
+
     refs: list[tuple[str, str]] = []
     for raw in image_urls or []:
         if not isinstance(raw, str):
             continue
-        if not raw.startswith(_IMAGE_URL_PREFIX):
+        kb_image = KbImage.from_path(raw)
+        if kb_image is None:
             continue
-        s3_key = raw[len(_IMAGE_URL_PREFIX) :]
-        # Final segment is "{sha256}.{ext}" — strip the extension.
-        basename = s3_key.rsplit("/", 1)[-1]
-        content_hash = basename.rsplit(".", 1)[0]
-        if not content_hash or "/" in content_hash:
-            continue
-        refs.append((s3_key, content_hash))
+        refs.append((kb_image.s3_key, kb_image.sha256))
     return refs
 
 
