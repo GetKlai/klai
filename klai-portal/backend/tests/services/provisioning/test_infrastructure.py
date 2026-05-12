@@ -29,7 +29,7 @@ def _mock_settings():
         mock.redis_host = "redis"
         mock.redis_port = 6379
         mock.redis_password = "test-redis-pw"
-        mock.librechat_image = "ghcr.io/danny-avila/librechat:latest"
+        mock.librechat_image = "ghcr.io/danny-avila/librechat:v0.8.5-rc1"
         mock.librechat_host_data_path = "/opt/klai/librechat-data"
         mock.librechat_container_data_path = "/tmp/test-librechat-data"  # noqa: S108
         mock.mongodb_container_name = "mongodb"
@@ -413,7 +413,7 @@ class TestCharacterizeStartLibrechatContainer:
         ):
             mock_settings.librechat_host_data_path = "/opt/klai/librechat-data"
             mock_settings.librechat_container_data_path = str(tmp_path)
-            mock_settings.librechat_image = "ghcr.io/danny-avila/librechat:latest"
+            mock_settings.librechat_image = "ghcr.io/danny-avila/librechat:v0.8.5-rc1"
             mock_docker.from_env.return_value = mock_client
             mock_docker.errors.NotFound = type("NotFound", (Exception,), {})
             mock_client.containers.get.side_effect = mock_docker.errors.NotFound("not found")
@@ -438,7 +438,7 @@ class TestCharacterizeStartLibrechatContainer:
         ):
             mock_settings.librechat_host_data_path = "/opt/klai/librechat-data"
             mock_settings.librechat_container_data_path = str(tmp_path)
-            mock_settings.librechat_image = "ghcr.io/danny-avila/librechat:latest"
+            mock_settings.librechat_image = "ghcr.io/danny-avila/librechat:v0.8.5-rc1"
             mock_docker.from_env.return_value = mock_client
             mock_docker.errors.NotFound = type("NotFound", (Exception,), {})
             mock_client.containers.get.side_effect = mock_docker.errors.NotFound("not found")
@@ -466,7 +466,7 @@ class TestCharacterizeStartLibrechatContainer:
         ):
             mock_settings.librechat_host_data_path = "/opt/klai/librechat-data"
             mock_settings.librechat_container_data_path = str(tmp_path)
-            mock_settings.librechat_image = "ghcr.io/danny-avila/librechat:latest"
+            mock_settings.librechat_image = "ghcr.io/danny-avila/librechat:v0.8.5-rc1"
             mock_docker.from_env.return_value = mock_client
             mock_docker.errors.NotFound = type("NotFound", (Exception,), {})
             mock_client.containers.get.side_effect = mock_docker.errors.NotFound("not found")
@@ -514,7 +514,7 @@ class TestCharacterizeStartLibrechatContainer:
         ):
             mock_settings.librechat_host_data_path = "/opt/klai/librechat-data"
             mock_settings.librechat_container_data_path = str(tmp_path)
-            mock_settings.librechat_image = "ghcr.io/danny-avila/librechat:latest"
+            mock_settings.librechat_image = "ghcr.io/danny-avila/librechat:v0.8.5-rc1"
             mock_docker.from_env.return_value = mock_client
             mock_docker.errors.NotFound = type("NotFound", (Exception,), {})
             mock_client.containers.get.side_effect = mock_docker.errors.NotFound("not found")
@@ -546,7 +546,7 @@ class TestCharacterizeStartLibrechatContainer:
         ):
             mock_settings.librechat_host_data_path = "/opt/klai/librechat-data"
             mock_settings.librechat_container_data_path = str(tmp_path)
-            mock_settings.librechat_image = "ghcr.io/danny-avila/librechat:latest"
+            mock_settings.librechat_image = "ghcr.io/danny-avila/librechat:v0.8.5-rc1"
             mock_docker.from_env.return_value = mock_client
             mock_docker.errors.NotFound = type("NotFound", (Exception,), {})
             mock_client.containers.get.side_effect = mock_docker.errors.NotFound("not found")
