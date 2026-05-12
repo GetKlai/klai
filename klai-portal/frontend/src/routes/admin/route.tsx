@@ -1,10 +1,13 @@
 import { createFileRoute, Outlet } from '@tanstack/react-router'
+import { useQuery } from '@tanstack/react-query'
 import { LayoutDashboard, Users, FolderKanban, Settings, CreditCard, Puzzle, Key, MessageSquare, Sliders, Skull, ShieldCheck, type LucideIcon } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { HelpButton } from '@/components/help/HelpButton'
 import * as m from '@/paraglide/messages'
 import { useProtectedRoute } from '@/hooks/useProtectedRoute'
 import { meetsMinRole, type ProfileRole } from '@/lib/profiles'
+import { useAuth } from '@/lib/auth'
+import { fetchMe } from '@/lib/api-me'
 
 export const Route = createFileRoute('/admin')({
   component: AdminLayout,
@@ -13,17 +16,29 @@ export const Route = createFileRoute('/admin')({
 // SPEC-PORTAL-PROFILES-001 P3.2: per-tab minimum role on the admin sidebar.
 // kb_manager and group_manager can enter /admin for groups + templates.
 // Everything else remains admin-only.
-const ADMIN_NAV_ITEMS: Array<{ to: string; label: string; icon: LucideIcon; minRole: ProfileRole; end?: boolean }> = [
+//
+// SPEC-PORTAL-EXTENSIONS-UNIFY-001 Phase 4: api-keys, widgets, and mcps are
+// additionally platform-unlock-gated via `requiresFeature`. The nav-item is
+// hidden when the caller's org does not have the feature unlocked, unless
+// the caller is a platform-admin (Klai staff always sees everything).
+const ADMIN_NAV_ITEMS: Array<{
+  to: string
+  label: string
+  icon: LucideIcon
+  minRole: ProfileRole
+  end?: boolean
+  requiresFeature?: string
+}> = [
   { to: '/admin', label: m.admin_nav_overview(), icon: LayoutDashboard, minRole: 'kb_manager', end: true },
   { to: '/admin/users', label: m.admin_nav_users(), icon: Users, minRole: 'admin' },
   // SPEC-PORTAL-ADMIN-UI-001 REQ-11: Profiles between Users and Groups.
   { to: '/admin/profiles', label: m.admin_nav_profiles(), icon: ShieldCheck, minRole: 'admin' },
   { to: '/admin/groups', label: m.admin_nav_groups(), icon: FolderKanban, minRole: 'group_manager' },
   { to: '/admin/billing', label: m.admin_nav_billing(), icon: CreditCard, minRole: 'admin' },
-  { to: '/admin/api-keys', label: m.admin_nav_api_keys(), icon: Key, minRole: 'admin' },
-  { to: '/admin/widgets', label: m.admin_nav_widgets(), icon: MessageSquare, minRole: 'admin' },
+  { to: '/admin/api-keys', label: m.admin_nav_api_keys(), icon: Key, minRole: 'admin', requiresFeature: 'partner_api' },
+  { to: '/admin/widgets', label: m.admin_nav_widgets(), icon: MessageSquare, minRole: 'admin', requiresFeature: 'widgets' },
   { to: '/admin/templates', label: m.admin_nav_templates(), icon: Sliders, minRole: 'kb_manager' },
-  { to: '/admin/mcps', label: m.admin_nav_mcps(), icon: Puzzle, minRole: 'admin' },
+  { to: '/admin/mcps', label: m.admin_nav_mcps(), icon: Puzzle, minRole: 'admin', requiresFeature: 'custom_mcps' },
   { to: '/admin/settings', label: m.admin_nav_settings(), icon: Settings, minRole: 'admin' },
   { to: '/admin/danger-zone', label: m.admin_nav_danger_zone(), icon: Skull, minRole: 'admin' },
 ]
@@ -35,11 +50,29 @@ function AdminLayout() {
     noRoleFallback: '/app',
   })
 
-  // Filter nav items to only show what this user's role allows.
+  const auth = useAuth()
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: ({ signal }) => fetchMe(signal),
+    enabled: auth.isAuthenticated,
+  })
+
+  // Filter nav items: role-check first, then platform-unlock-check.
   const effectiveRole = user?.effective_role
-  const adminNav = ADMIN_NAV_ITEMS
-    .filter((item) => meetsMinRole(effectiveRole, item.minRole))
-    .map(({ to, label, icon, end }) => ({ to, label, icon, end }))
+  const unlocked = me?.platform_unlocked_features ?? []
+  const isPlatformAdmin = me?.is_platform_admin ?? false
+
+  const adminNav = ADMIN_NAV_ITEMS.filter((item) => {
+    if (!meetsMinRole(effectiveRole, item.minRole)) return false
+    if (item.requiresFeature) {
+      // While /api/me is loading, keep the item visible to avoid a flash of
+      // missing nav. Platform-admin always sees everything.
+      if (!me) return true
+      if (isPlatformAdmin) return true
+      return unlocked.includes(item.requiresFeature)
+    }
+    return true
+  }).map(({ to, label, icon, end }) => ({ to, label, icon, end }))
 
   if (!canRender) {
     return (
