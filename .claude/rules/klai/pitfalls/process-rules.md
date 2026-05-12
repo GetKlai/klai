@@ -148,6 +148,80 @@ WITH CHECK (org_id = NULLIF(current_setting('app.current_org_id', true), '')::in
   in the same PR, or extend the rls-policy-smoke-test CI job to import
   `app.main` and invoke the lifespan assertion.
 
+## rls-with-check-blocks-migration-update (HIGH)
+The WITH CHECK clause on Cat-A RLS policies (the inline-NULLIF pattern,
+no IS-NULL permissive branch) FIRES on every UPDATE — even from
+portal_api, even inside an alembic migration. Migrations run without a
+tenant context, so `current_setting('app.current_org_id', true)` returns
+empty, NULLIF returns NULL, and `org_id = NULL` evaluates to NULL (not
+true). Every row is rejected with `new row violates row-level security
+policy`. The migration transaction rolls back. The container crashloops.
+
+This is the sibling failure-mode to `rls-policy-shape-must-match-
+lifespan-assert`: reads against Cat-A tables with no GUC succeed because
+the USING clause has the `IS NULL` permissive branch; writes fail
+because WITH CHECK does NOT have that branch (intentionally — it's the
+strict-side of the asymmetric policy).
+
+Reference incident: SPEC-PORTAL-PRICING-PER-USER-001 Phase 1 (PR #599,
+2026-05-12). The migration ran `UPDATE portal_users SET seat_type =
+CASE...` to backfill the new column. portal-api crashlooped on first
+deploy. Recovery: hand-applied the migration as klai superuser
+(`SET ROLE klai` bypasses FORCE RLS for the table owner) and stamped
+`alembic_version = 'f66c546c12eb'`. The structural fix (PR #608) split
+the migration:
+- `upgrade()` does portal_api-safe DDL only (ADD COLUMN with NOT NULL
+  DEFAULT — instant metadata op in PG 11+, no per-row write, no WITH
+  CHECK fires; CREATE TABLE; CREATE INDEX).
+- `post_deploy_<rev>.sql` does the per-row UPDATE + history-table
+  INSERT + trigger creation + RLS DDL, applied by an operator as klai.
+
+**Class summary:**
+
+| Operation on Cat-A table | Safe in alembic upgrade()? | Why |
+|---|---|---|
+| `ALTER TABLE ADD COLUMN col TYPE NOT NULL DEFAULT 'x'` | YES (PG 11+) | Metadata-only; existing rows lazily read the default; no row UPDATE; no WITH CHECK |
+| `ALTER TABLE ADD COLUMN col TYPE NOT NULL` (no default) | NO | Requires UPDATE on existing rows to satisfy NOT NULL |
+| `UPDATE table SET ...` | NO | WITH CHECK fires per row; no tenant context = NULL = rejected |
+| `INSERT INTO table ...` | NO | Same — INSERT triggers WITH CHECK |
+| `ALTER TABLE ALTER COLUMN ... SET NOT NULL` (after backfill) | NO inside the same tx | The UPDATE backfill is what triggers WITH CHECK; if the backfill is in post-deploy, ALTER NOT NULL belongs there too |
+| `DROP COLUMN`, `ADD CHECK CONSTRAINT`, `ADD INDEX`, `CREATE TABLE` | YES | Pure DDL; no row-write |
+| `CREATE TRIGGER` on Cat-A table | YES | DDL only |
+| `ALTER TABLE ENABLE / FORCE ROW LEVEL SECURITY` | NO | Requires klai superuser (separate class — `alembic-cannot-drop-non-portal_api-tables`) |
+
+**Prevention (mechanical):**
+
+1. **CI guard**: file-content test on every migration that touches
+   portal_users (or any other FORCE-RLS Cat-A table). The test rejects
+   any `UPDATE\s+portal_users` or `INSERT\s+INTO\s+portal_users` inside
+   `op.execute(...)`. Pattern: `test_no_update_on_portal_users` in
+   `tests/test_pricing_per_user_phase1_migration.py` is the reference.
+
+2. **SPEC pre-flight on prod-snapshot**: any SPEC that adds a column to
+   portal_users MUST include a pre-merge step that runs `alembic
+   upgrade head` against a snapshot of production (or a stage DB with
+   the same RLS policies). Any error here is a deployment-blocker.
+   File-content regex tests pass on the python source — they cannot
+   catch this runtime failure.
+
+3. **Pattern for new columns**: prefer `ADD COLUMN col TYPE NOT NULL
+   DEFAULT '<sensible>'` over `ADD COLUMN col TYPE` + later UPDATE. The
+   default-on-add path is instant metadata, RLS-safe, and produces a
+   sensible value for every existing row. If the right value differs
+   per row (e.g. derived from another column), move the per-row UPDATE
+   to post-deploy SQL.
+
+4. **Smoke-recovery for crashloops**: when portal-api logs show
+   `new row violates row-level security policy` during alembic upgrade:
+   ```bash
+   ssh core-01 "docker exec klai-core-postgres-1 sh -c \
+       'psql -U \$POSTGRES_USER -d \$POSTGRES_DB' < /tmp/manual-migration.sql"
+   ```
+   where `manual-migration.sql` replicates the migration's intent
+   verbatim (klai bypasses FORCE RLS) and ends with `UPDATE
+   alembic_version SET version_num = '<rev>'`. Then `docker restart
+   klai-core-portal-api-1`.
+
 ## asyncpg-pool-guc-not-shared (HIGH)
 Postgres GUCs (`current_setting('app.foo', true)`) are **connection-local**,
 not pool-local. Setting the GUC on connection A does NOT propagate to
