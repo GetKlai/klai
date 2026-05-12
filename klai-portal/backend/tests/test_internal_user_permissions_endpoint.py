@@ -25,7 +25,7 @@ from app.core.profiles import Capability, ProfileRole
 def _fake_perms(
     *,
     role: ProfileRole = ProfileRole.ADMIN,
-    plan: str = "complete",
+    plan: str = "knowledge",
     addons: tuple[str, ...] = (),
     platform_unlocks: tuple[str, ...] = (),
     is_platform_admin: bool = False,
@@ -96,7 +96,7 @@ class TestGetUserPermissionsEndpoint:
 
         perms = _fake_perms(
             role=ProfileRole.KB_MANAGER,
-            plan="complete",
+            plan="knowledge",
             addons=("scribe", "docs"),
             platform_unlocks=("widgets", "custom_mcps"),
             is_platform_admin=False,
@@ -118,7 +118,7 @@ class TestGetUserPermissionsEndpoint:
         assert result.org_slug == "voys"
         assert result.role == "kb_manager"
         assert result.effective_role == "kb_manager"
-        assert result.plan == "complete"
+        assert result.plan == "knowledge"
         # Frozenset → sorted list invariant.
         assert result.enabled_addons == ["docs", "scribe"]
         assert result.platform_unlocked_features == ["custom_mcps", "widgets"]

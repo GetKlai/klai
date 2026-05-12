@@ -24,7 +24,7 @@ def _make_user(uid: str = "u1", role: str = "company") -> MagicMock:
     return u
 
 
-def _make_db(target: MagicMock | None = None, admin_count: int = 2, plan: str = "complete") -> AsyncMock:
+def _make_db(target: MagicMock | None = None, admin_count: int = 2, plan: str = "knowledge") -> AsyncMock:
     """Return an AsyncMock DB shaped for ``promote_admin`` / ``demote_admin``:
 
     - First ``execute()`` is the locked-org SELECT...FOR UPDATE (added by

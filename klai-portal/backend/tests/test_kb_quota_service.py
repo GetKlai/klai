@@ -24,7 +24,7 @@ def _make_db_mock() -> AsyncMock:
     return db
 
 
-def _make_org(plan: str = "core") -> MagicMock:
+def _make_org(plan: str = "chat") -> MagicMock:
     org = MagicMock()
     org.plan = plan
     org.id = 1
@@ -47,7 +47,7 @@ class TestAssertCanCreatePersonalKB:
         # Should not raise
         await assert_can_create_personal_kb(
             user_id="user-1",
-            org=_make_org("core"),
+            org=_make_org("chat"),
             db=mock_db,
         )
 
@@ -62,7 +62,7 @@ class TestAssertCanCreatePersonalKB:
 
         await assert_can_create_personal_kb(
             user_id="user-1",
-            org=_make_org("core"),
+            org=_make_org("chat"),
             db=mock_db,
         )
 
@@ -78,7 +78,7 @@ class TestAssertCanCreatePersonalKB:
         with pytest.raises(HTTPException) as exc_info:
             await assert_can_create_personal_kb(
                 user_id="user-1",
-                org=_make_org("core"),
+                org=_make_org("chat"),
                 db=mock_db,
             )
 
@@ -97,7 +97,7 @@ class TestAssertCanCreatePersonalKB:
         with pytest.raises(HTTPException) as exc_info:
             await assert_can_create_personal_kb(
                 user_id="user-1",
-                org=_make_org("core"),
+                org=_make_org("chat"),
                 db=mock_db,
             )
 
@@ -116,14 +116,14 @@ class TestAssertCanCreatePersonalKB:
         with pytest.raises(HTTPException) as exc_info:
             await assert_can_create_personal_kb(
                 user_id="user-1",
-                org=_make_org("core"),
+                org=_make_org("chat"),
                 db=mock_db,
             )
 
         detail = exc_info.value.detail
         assert "plan" in detail
         assert "limit" in detail
-        assert detail["plan"] == "core"
+        assert detail["plan"] == "chat"
         assert detail["limit"] == 5
 
     @pytest.mark.asyncio
@@ -139,7 +139,7 @@ class TestAssertCanCreatePersonalKB:
 
         await assert_can_create_personal_kb(
             user_id="user-complete",
-            org=_make_org("complete"),
+            org=_make_org("knowledge"),
             db=mock_db,
             role="kb_manager",
         )
@@ -156,7 +156,7 @@ class TestAssertCanCreatePersonalKB:
 
         await assert_can_create_personal_kb(
             user_id="user-complete",
-            org=_make_org("complete"),
+            org=_make_org("knowledge"),
             db=mock_db,
             role="kb_manager",
         )
@@ -175,7 +175,7 @@ class TestAssertCanCreatePersonalKB:
         with pytest.raises(HTTPException) as exc_info:
             await assert_can_create_personal_kb(
                 user_id="user-pro",
-                org=_make_org("professional"),
+                org=_make_org("chat"),
                 db=mock_db,
             )
 
@@ -192,7 +192,7 @@ class TestAssertCanCreateOrgKB:
 
         mock_db = _make_db_mock()
 
-        await assert_can_create_org_kb(org=_make_org("complete"), db=mock_db, role="kb_manager")
+        await assert_can_create_org_kb(org=_make_org("knowledge"), db=mock_db, role="kb_manager")
 
     @pytest.mark.asyncio
     async def test_raises_403_for_core_plan(self) -> None:
@@ -201,7 +201,7 @@ class TestAssertCanCreateOrgKB:
         mock_db = _make_db_mock()
 
         with pytest.raises(HTTPException) as exc_info:
-            await assert_can_create_org_kb(org=_make_org("core"), db=mock_db)
+            await assert_can_create_org_kb(org=_make_org("chat"), db=mock_db)
 
         assert exc_info.value.status_code == 403
         assert exc_info.value.detail["error_code"] == "kb_quota_org_kb_not_allowed"
@@ -213,7 +213,7 @@ class TestAssertCanCreateOrgKB:
         mock_db = _make_db_mock()
 
         with pytest.raises(HTTPException) as exc_info:
-            await assert_can_create_org_kb(org=_make_org("professional"), db=mock_db)
+            await assert_can_create_org_kb(org=_make_org("chat"), db=mock_db)
 
         assert exc_info.value.status_code == 403
         assert exc_info.value.detail["error_code"] == "kb_quota_org_kb_not_allowed"
@@ -225,7 +225,7 @@ class TestAssertCanCreateOrgKB:
         mock_db = _make_db_mock()
 
         with pytest.raises(HTTPException) as exc_info:
-            await assert_can_create_org_kb(org=_make_org("core"), db=mock_db)
+            await assert_can_create_org_kb(org=_make_org("chat"), db=mock_db)
 
         detail = exc_info.value.detail
         assert "plan" in detail
@@ -252,7 +252,7 @@ class TestAssertCanAddItemToKB:
         from app.services.kb_quota import assert_can_add_item_to_kb
 
         kb = _make_kb(owner_type="user")
-        org = _make_org("core")
+        org = _make_org("chat")
 
         with patch(
             "app.services.kb_quota.knowledge_ingest_client.get_source_count",
@@ -275,7 +275,7 @@ class TestAssertCanAddItemToKB:
         from app.services.kb_quota import assert_can_add_item_to_kb
 
         kb = _make_kb(owner_type="user")
-        org = _make_org("core")
+        org = _make_org("chat")
 
         with patch(
             "app.services.kb_quota.knowledge_ingest_client.get_source_count",
@@ -293,7 +293,7 @@ class TestAssertCanAddItemToKB:
         from app.services.kb_quota import assert_can_add_item_to_kb
 
         kb = _make_kb(owner_type="user")
-        org = _make_org("complete")
+        org = _make_org("knowledge")
 
         with patch(
             "app.services.kb_quota.knowledge_ingest_client.get_source_count",
@@ -310,7 +310,7 @@ class TestAssertCanAddItemToKB:
         from app.services.kb_quota import assert_can_add_item_to_kb
 
         kb = _make_kb(owner_type="org")
-        org = _make_org("core")
+        org = _make_org("chat")
 
         with patch(
             "app.services.kb_quota.knowledge_ingest_client.get_source_count",
@@ -327,7 +327,7 @@ class TestAssertCanAddItemToKB:
         from app.services.kb_quota import assert_can_add_item_to_kb
 
         kb = _make_kb(owner_type="user")
-        org = _make_org("core")
+        org = _make_org("chat")
 
         with patch(
             "app.services.kb_quota.knowledge_ingest_client.get_source_count",
@@ -397,7 +397,7 @@ class TestAdvisoryLockPersonalKB:
 
         await assert_can_create_personal_kb(
             user_id="user-1",
-            org=_make_org("core"),
+            org=_make_org("chat"),
             db=mock_db,
         )
 
@@ -423,7 +423,7 @@ class TestAdvisoryLockPersonalKB:
 
         await assert_can_create_personal_kb(
             user_id="user-abc",
-            org=_make_org("core"),
+            org=_make_org("chat"),
             db=mock_db,
         )
 
@@ -453,7 +453,7 @@ class TestAdvisoryLockPersonalKB:
 
         await assert_can_create_personal_kb(
             user_id="user-1",
-            org=_make_org("core"),
+            org=_make_org("chat"),
             db=mock_db,
         )
 
@@ -477,7 +477,7 @@ class TestAdvisoryLockPersonalKB:
         with pytest.raises(HTTPException) as exc_info:
             await assert_can_create_personal_kb(
                 user_id="user-1",
-                org=_make_org("core"),
+                org=_make_org("chat"),
                 db=mock_db,
             )
 
@@ -493,7 +493,7 @@ class TestAdvisoryLockPersonalKB:
 
         await assert_can_create_personal_kb(
             user_id="user-complete",
-            org=_make_org("complete"),
+            org=_make_org("knowledge"),
             db=mock_db,
             role="kb_manager",
         )

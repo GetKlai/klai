@@ -20,7 +20,7 @@ sys.modules.setdefault("connector_credentials", _stub_mod)
 sys.modules.setdefault("connector_credentials.cipher", _stub_cipher)
 
 
-def _make_org(plan: str = "core") -> MagicMock:
+def _make_org(plan: str = "chat") -> MagicMock:
     org = MagicMock()
     org.plan = plan
     org.id = 1
@@ -99,7 +99,7 @@ class TestCreateConnectorProfilePlanMatrix:
             result = await create_connector(
                 kb_slug="my-kb",
                 body=body,
-                perms=make_perms(role="kb_manager", plan="complete", org_id=1),
+                perms=make_perms(role="kb_manager", plan="knowledge", org_id=1),
                 db=db,
             )
 
@@ -129,7 +129,7 @@ class TestCreateConnectorProfilePlanMatrix:
                 await create_connector(
                     kb_slug="my-kb",
                     body=body,
-                    perms=make_perms(role="kb_manager", plan="core", org_id=1),
+                    perms=make_perms(role="kb_manager", plan="chat", org_id=1),
                     db=db,
                 )
 
@@ -161,7 +161,7 @@ class TestCreateConnectorProfilePlanMatrix:
                 await create_connector(
                     kb_slug="my-kb",
                     body=body,
-                    perms=make_perms(role="personal", plan="complete", org_id=1),
+                    perms=make_perms(role="personal", plan="knowledge", org_id=1),
                     db=db,
                 )
 
@@ -195,7 +195,7 @@ class TestCreateConnectorProfilePlanMatrix:
             result = await create_connector(
                 kb_slug="my-kb",
                 body=body,
-                perms=make_perms(role="personal", plan="complete", org_id=1),
+                perms=make_perms(role="personal", plan="knowledge", org_id=1),
                 db=db,
             )
 
@@ -228,7 +228,7 @@ class TestCreateConnectorProfilePlanMatrix:
             result = await create_connector(
                 kb_slug="my-kb",
                 body=body,
-                perms=make_perms(role="kb_manager", plan="core", org_id=1),
+                perms=make_perms(role="kb_manager", plan="chat", org_id=1),
                 db=db,
             )
 

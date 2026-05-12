@@ -58,7 +58,7 @@ def _make_db_mock(kb: MagicMock | None = None) -> AsyncMock:
 def _make_org() -> MagicMock:
     org = MagicMock()
     org.id = 1
-    org.plan = "complete"
+    org.plan = "knowledge"
     org.slug = "voys"
     org.zitadel_org_id = "zitadel-org-1"
     return org

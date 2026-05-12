@@ -68,7 +68,7 @@ describe('apiFetch — detail body handling', () => {
     // Portal-api emits this shape for quota / capability / structured errors:
     //   HTTPException(status_code=403, detail={"error_code": "kb_quota_items_exceeded", ...})
     const body = {
-      detail: { error_code: 'kb_quota_items_exceeded', plan: 'core', limit: 20, current: 20 },
+      detail: { error_code: 'kb_quota_items_exceeded', plan: 'chat', limit: 20, current: 20 },
     }
     // Factory: each call gets a fresh Response (bodies are single-use).
     vi.stubGlobal(

@@ -1,13 +1,18 @@
 """
-Tests for SPEC-PORTAL-UNIFY-KB-001 Phase A: plan_limits module.
+Tests for plan_limits module.
+
+SPEC-PORTAL-PLAN-RENAME-001: collapsed legacy 4-tier ladder
+(free/core/professional/complete) into the live 2-tier marketing model:
+
+    free       -- internal sentinel (no billing)
+    chat       -- "Klai Chat"            (€28/mo)
+    knowledge  -- "Klai Chat + Knowledge" (€68/mo) — full unlock
 
 Covers:
 - KBLimits dataclass structure
-- PLAN_LIMITS table integrity per D2 spec
-- get_plan_limits helper with fallback
+- PLAN_LIMITS table integrity for the new 2-tier set
+- get_plan_limits helper with fallback to chat (most-restricted paid tier)
 - get_effective_limits signature (R-O1 stub)
-- plans.py PLAN_PRODUCTS now includes knowledge for all plans
-- system_groups.py label rename: "Chat + Focus" -> "Chat"
 """
 
 import pytest
@@ -15,36 +20,27 @@ import pytest
 from app.core.features import PLAN_FEATURES
 
 
-class TestPlanProductsKnowledgeAdded:
-    """AC-1: All active plans include 'knowledge'."""
+class TestPlanFeaturesCanonicalSet:
+    """SPEC-PORTAL-PLAN-RENAME-001 — only chat/knowledge/free exist."""
 
-    def test_core_plan_includes_knowledge(self) -> None:
-        assert "knowledge" in PLAN_FEATURES["core"]
+    def test_plan_features_keys_are_chat_knowledge_free(self) -> None:
+        assert set(PLAN_FEATURES.keys()) == {"free", "chat", "knowledge"}
 
-    def test_professional_plan_includes_knowledge(self) -> None:
-        assert "knowledge" in PLAN_FEATURES["professional"]
+    def test_chat_plan_includes_chat_and_knowledge(self) -> None:
+        """Klai Chat plan: chat + knowledge product, with KB-quota limits."""
+        assert PLAN_FEATURES["chat"] == frozenset({"chat", "knowledge"})
 
-    def test_complete_plan_includes_knowledge(self) -> None:
-        assert "knowledge" in PLAN_FEATURES["complete"]
+    def test_knowledge_plan_includes_chat_and_knowledge(self) -> None:
+        """+ Knowledge plan: same products, fully unlocked via PLAN_LIMITS."""
+        assert PLAN_FEATURES["knowledge"] == frozenset({"chat", "knowledge"})
 
-    def test_core_plan_products_are_chat_and_knowledge(self) -> None:
-        """Core plan: chat + knowledge (no scribe)."""
-        assert PLAN_FEATURES["core"] == frozenset({"chat", "knowledge"})
-
-    def test_professional_plan_products_are_chat_and_knowledge(self) -> None:
-        """SPEC-PORTAL-PROFILES-001 P2.2: professional no longer includes scribe (add-on)."""
-        assert PLAN_FEATURES["professional"] == frozenset({"chat", "knowledge"})
-
-    def test_complete_plan_products_are_chat_and_knowledge(self) -> None:
-        """SPEC-PORTAL-PROFILES-001 P2.2: complete no longer includes scribe (add-on)."""
-        assert PLAN_FEATURES["complete"] == frozenset({"chat", "knowledge"})
-
-    def test_free_plan_still_has_no_products(self) -> None:
+    def test_free_plan_has_no_products(self) -> None:
         assert PLAN_FEATURES["free"] == frozenset()
 
-    def test_all_non_free_plans_have_knowledge(self) -> None:
-        for plan in ("core", "professional", "complete"):
-            assert "knowledge" in PLAN_FEATURES[plan], f"Plan '{plan}' missing knowledge"
+    def test_legacy_slugs_are_gone(self) -> None:
+        """Regression guard: 'core', 'professional', 'complete' must not return."""
+        for legacy in ("core", "professional", "complete"):
+            assert legacy not in PLAN_FEATURES
 
 
 class TestSystemGroupsRemoved:
@@ -112,89 +108,70 @@ class TestKBLimitsDataclass:
 
 
 class TestPlanLimitsTable:
-    """AC-1/AC-2: PLAN_LIMITS table integrity per D2 spec."""
+    """SPEC-PORTAL-PLAN-RENAME-001: 2-tier paid ladder + free sentinel."""
 
     def test_plan_limits_is_importable(self) -> None:
         from app.core.plan_limits import PLAN_LIMITS  # noqa: F401
 
-    def test_plan_limits_has_core_entry(self) -> None:
+    def test_plan_limits_has_chat_entry(self) -> None:
         from app.core.plan_limits import PLAN_LIMITS
 
-        assert "core" in PLAN_LIMITS
+        assert "chat" in PLAN_LIMITS
 
-    def test_plan_limits_has_professional_entry(self) -> None:
+    def test_plan_limits_has_knowledge_entry(self) -> None:
         from app.core.plan_limits import PLAN_LIMITS
 
-        assert "professional" in PLAN_LIMITS
+        assert "knowledge" in PLAN_LIMITS
 
-    def test_plan_limits_has_complete_entry(self) -> None:
+    def test_plan_limits_has_free_entry(self) -> None:
         from app.core.plan_limits import PLAN_LIMITS
 
-        assert "complete" in PLAN_LIMITS
+        assert "free" in PLAN_LIMITS
 
-    def test_every_plan_features_key_has_limits_entry(self) -> None:
+    def test_plan_limits_keys_match_plan_features(self) -> None:
         """Every plan in PLAN_FEATURES must have a matching PLAN_LIMITS entry."""
         from app.core.plan_limits import PLAN_LIMITS
 
-        for plan in PLAN_FEATURES:
-            assert plan in PLAN_LIMITS, f"PLAN_LIMITS missing entry for plan '{plan}'"
+        assert set(PLAN_LIMITS.keys()) == set(PLAN_FEATURES.keys())
 
-    def test_core_limits_max_personal_kbs_is_5(self) -> None:
+    def test_chat_limits_max_personal_kbs_is_5(self) -> None:
         from app.core.plan_limits import PLAN_LIMITS
 
-        assert PLAN_LIMITS["core"].max_personal_kbs_per_user == 5
+        assert PLAN_LIMITS["chat"].max_personal_kbs_per_user == 5
 
-    def test_professional_limits_max_personal_kbs_is_5(self) -> None:
+    def test_knowledge_limits_max_personal_kbs_is_unlimited(self) -> None:
         from app.core.plan_limits import PLAN_LIMITS
 
-        assert PLAN_LIMITS["professional"].max_personal_kbs_per_user == 5
+        assert PLAN_LIMITS["knowledge"].max_personal_kbs_per_user is None
 
-    def test_complete_limits_max_personal_kbs_is_none(self) -> None:
+    def test_chat_limits_max_items_per_kb_is_20(self) -> None:
         from app.core.plan_limits import PLAN_LIMITS
 
-        assert PLAN_LIMITS["complete"].max_personal_kbs_per_user is None
+        assert PLAN_LIMITS["chat"].max_items_per_kb == 20
 
-    def test_core_limits_max_items_per_kb_is_20(self) -> None:
+    def test_knowledge_limits_max_items_per_kb_is_unlimited(self) -> None:
         from app.core.plan_limits import PLAN_LIMITS
 
-        assert PLAN_LIMITS["core"].max_items_per_kb == 20
+        assert PLAN_LIMITS["knowledge"].max_items_per_kb is None
 
-    def test_professional_limits_max_items_per_kb_is_20(self) -> None:
+    def test_chat_cannot_create_org_kbs(self) -> None:
         from app.core.plan_limits import PLAN_LIMITS
 
-        assert PLAN_LIMITS["professional"].max_items_per_kb == 20
+        assert PLAN_LIMITS["chat"].can_create_org_kbs is False
 
-    def test_complete_limits_max_items_per_kb_is_none(self) -> None:
+    def test_knowledge_can_create_org_kbs(self) -> None:
         from app.core.plan_limits import PLAN_LIMITS
 
-        assert PLAN_LIMITS["complete"].max_items_per_kb is None
+        assert PLAN_LIMITS["knowledge"].can_create_org_kbs is True
 
-    def test_core_cannot_create_org_kbs(self) -> None:
+    def test_chat_capabilities_only_kb_connectors(self) -> None:
+        """Klai Chat tier: basic personal-KB connectors only."""
         from app.core.plan_limits import PLAN_LIMITS
 
-        assert PLAN_LIMITS["core"].can_create_org_kbs is False
+        assert PLAN_LIMITS["chat"].capabilities == frozenset({"kb.connectors"})
 
-    def test_professional_cannot_create_org_kbs(self) -> None:
-        from app.core.plan_limits import PLAN_LIMITS
-
-        assert PLAN_LIMITS["professional"].can_create_org_kbs is False
-
-    def test_complete_can_create_org_kbs(self) -> None:
-        from app.core.plan_limits import PLAN_LIMITS
-
-        assert PLAN_LIMITS["complete"].can_create_org_kbs is True
-
-    def test_core_capabilities_has_kb_connectors(self) -> None:
-        from app.core.plan_limits import PLAN_LIMITS
-
-        assert PLAN_LIMITS["core"].capabilities == frozenset({"kb.connectors"})
-
-    def test_professional_capabilities_has_kb_connectors(self) -> None:
-        from app.core.plan_limits import PLAN_LIMITS
-
-        assert PLAN_LIMITS["professional"].capabilities == frozenset({"kb.connectors"})
-
-    def test_complete_capabilities_contains_expected_strings(self) -> None:
+    def test_knowledge_capabilities_full_unlock(self) -> None:
+        """+ Knowledge tier: external connectors, org-KBs, members/taxonomy/gaps."""
         from app.core.plan_limits import PLAN_LIMITS
 
         expected = {
@@ -205,39 +182,44 @@ class TestPlanLimitsTable:
             "kb.taxonomy",
             "kb.gaps",
         }
-        assert PLAN_LIMITS["complete"].capabilities == frozenset(expected)
+        assert PLAN_LIMITS["knowledge"].capabilities == frozenset(expected)
 
-    def test_core_and_professional_limits_are_equal(self) -> None:
-        """D2: professional is intentionally identical to core (consistency)."""
+    def test_free_capabilities_is_empty(self) -> None:
+        """Free sentinel grants no capabilities at all."""
         from app.core.plan_limits import PLAN_LIMITS
 
-        assert PLAN_LIMITS["core"] == PLAN_LIMITS["professional"]
+        assert PLAN_LIMITS["free"].capabilities == frozenset()
 
 
 class TestGetPlanLimits:
-    """get_plan_limits helper with fallback."""
+    """get_plan_limits helper with fallback to chat (cheapest paid)."""
 
-    def test_get_plan_limits_returns_core(self) -> None:
+    def test_get_plan_limits_returns_chat(self) -> None:
         from app.core.plan_limits import PLAN_LIMITS, get_plan_limits
 
-        assert get_plan_limits("core") == PLAN_LIMITS["core"]
+        assert get_plan_limits("chat") == PLAN_LIMITS["chat"]
 
-    def test_get_plan_limits_returns_professional(self) -> None:
+    def test_get_plan_limits_returns_knowledge(self) -> None:
         from app.core.plan_limits import PLAN_LIMITS, get_plan_limits
 
-        assert get_plan_limits("professional") == PLAN_LIMITS["professional"]
+        assert get_plan_limits("knowledge") == PLAN_LIMITS["knowledge"]
 
-    def test_get_plan_limits_returns_complete(self) -> None:
+    def test_get_plan_limits_returns_free(self) -> None:
         from app.core.plan_limits import PLAN_LIMITS, get_plan_limits
 
-        assert get_plan_limits("complete") == PLAN_LIMITS["complete"]
+        assert get_plan_limits("free") == PLAN_LIMITS["free"]
 
-    def test_get_plan_limits_unknown_plan_falls_back_to_core(self) -> None:
-        """Unknown plan falls back to core (safe default = most restricted)."""
+    def test_get_plan_limits_unknown_plan_falls_back_to_chat(self) -> None:
+        """Unknown plan falls back to chat (the most-restrictive paid tier).
+
+        Note: free is the sentinel for no-billing; falling back to it would
+        silently grant 'no products at all' which is more surprising than
+        the cheapest paid tier.
+        """
         from app.core.plan_limits import PLAN_LIMITS, get_plan_limits
 
         result = get_plan_limits("nonexistent")
-        assert result == PLAN_LIMITS["core"]
+        assert result == PLAN_LIMITS["chat"]
 
 
 class TestGetEffectiveLimits:
@@ -256,7 +238,7 @@ class TestGetEffectiveLimits:
         mock_db = AsyncMock()
         mock_result = MagicMock()
         mock_org = MagicMock()
-        mock_org.plan = "core"
+        mock_org.plan = "chat"
         mock_result.scalar_one_or_none.return_value = mock_org
         mock_db.execute.return_value = mock_result
 
@@ -276,4 +258,4 @@ class TestGetEffectiveLimits:
         mock_db.execute.return_value = mock_result
 
         result = await get_effective_limits(org_id=99999, db=mock_db)
-        assert result == PLAN_LIMITS["core"]
+        assert result == PLAN_LIMITS["chat"]

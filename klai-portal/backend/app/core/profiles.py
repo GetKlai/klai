@@ -66,16 +66,18 @@ PROFILE_LADDER: list[str] = [
 PROFILE_RANK: dict[str, int] = {role: idx for idx, role in enumerate(PROFILE_LADDER)}
 
 
-# SPEC-PORTAL-RBAC-REFACTOR-001 REQ-12 / REQ-13: plan-tier ceiling on which
-# role-strings are assignable to portal users on a given plan. Admin endpoints
-# (``invite_user``, ``update_user_role``, ``promote_admin``) MUST validate the
-# requested role against this map and reject with HTTP 403
+# SPEC-PORTAL-PLAN-RENAME-001: plan-tier ceiling on which role-strings are
+# assignable to portal users on a given plan. Admin endpoints
+# (``invite_user``, ``update_user_role``, ``promote_admin``) MUST validate
+# the requested role against this map and reject with HTTP 403
 # ``role_not_allowed_for_plan`` when out-of-range.
 #
-# Tiers (ascending):
-#   "free"     -- single-user self-service; no group/admin features
-#   "core"     -- multi-user collaboration; group_manager exists, kb_manager does not
-#   "complete" -- full feature set; kb_manager unlocked (REQ-13)
+# Tiers:
+#   "free"      -- internal sentinel; pre-billing / trial. Single-user only.
+#   "chat"      -- "Klai Chat" (€28). Multi-user, no KB-management roles
+#                  (kb_manager / group_manager require capabilities this plan
+#                  does not unlock — kb.create_org, kb.members).
+#   "knowledge" -- "Klai Chat + Knowledge" (€68). Full role ladder unlocked.
 #
 # Why a separate map (instead of deriving from ``PLAN_LIMITS``): plan-limits
 # express runtime capabilities of an existing assignment; this map expresses
@@ -84,8 +86,8 @@ PROFILE_RANK: dict[str, int] = {role: idx for idx, role in enumerate(PROFILE_LAD
 # ladder when a capability is added to a plan.
 ALLOWED_PROFILES_PER_PLAN: dict[str, frozenset[str]] = {
     "free": frozenset({"personal", "admin"}),
-    "core": frozenset({"personal", "company", "group_manager", "admin"}),
-    "complete": frozenset({"personal", "company", "kb_manager", "group_manager", "admin"}),
+    "chat": frozenset({"personal", "company", "admin"}),
+    "knowledge": frozenset({"personal", "company", "kb_manager", "group_manager", "admin"}),
 }
 
 
