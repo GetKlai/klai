@@ -9,6 +9,7 @@
     "build": "rm -rf src/paraglide node_modules/.tmp && npm run i18n:compile && tsc -b --force && vite build",
     "preview": "vite preview",
     "lint": "eslint .",
+    "security:audit": "node scripts/audit-ci.mjs",
     "analyze": "npm run i18n:compile && ANALYZE=true vite build",
     "test": "vitest run",
     "test:watch": "vitest",
