@@ -119,6 +119,8 @@ async def test_list_kb_sources_groups_connectors_and_uploads() -> None:
                 {
                     "id": "art-1",
                     "path": "report.pdf",
+                    "display_name": "Annual report",
+                    "source_url": None,
                     "content_type": "pdf",
                     "created_at": 1700000000,
                     "chunks_count": 7,
@@ -137,6 +139,8 @@ async def test_list_kb_sources_groups_connectors_and_uploads() -> None:
         {
             "id": "art-1",
             "path": "report.pdf",
+            "display_name": "Annual report",
+            "source_url": None,
             "content_type": "pdf",
             "created_at": 1700000000,
             "chunks_count": 7,
@@ -150,7 +154,39 @@ async def test_list_kb_sources_groups_connectors_and_uploads() -> None:
     assert "source_connector_id" in connector_sql
     assert "IS NOT NULL" in connector_sql
     assert "extra IS NULL" in upload_sql or "IS NULL" in upload_sql
+    assert "display_name" in upload_sql
+    assert "source_url" in upload_sql
     assert "ORDER BY a.created_at DESC" in upload_sql
+
+
+@pytest.mark.asyncio
+async def test_update_artifact_display_name_stores_metadata_not_path() -> None:
+    conn = MagicMock()
+    conn.fetchrow = AsyncMock(
+        return_value={
+            "artifact_id": "art-1",
+            "path": "https://example.com/",
+            "display_name": "Example docs",
+        }
+    )
+
+    result = await pg_store.update_artifact_display_name(
+        conn,
+        "art-1",
+        "org-1",
+        "kb-a",
+        "Example docs",
+    )
+
+    assert result == {
+        "artifact_id": "art-1",
+        "path": "https://example.com/",
+        "display_name": "Example docs",
+    }
+    sql = conn.fetchrow.await_args.args[0]
+    assert "jsonb_build_object('display_name'" in sql
+    assert "SET extra" in sql
+    assert "SET path" not in sql
 
 
 @pytest.mark.asyncio
