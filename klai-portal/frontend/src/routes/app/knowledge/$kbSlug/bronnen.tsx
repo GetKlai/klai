@@ -11,7 +11,7 @@
  */
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import {
   Check,
   ChevronRight,
@@ -33,8 +33,8 @@ import { apiFetch } from '@/lib/apiFetch'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { DOCS_BASE, getOrgSlug } from '@/lib/kb-editor/tree-utils'
 import { queryLogger } from '@/lib/logger'
-import type { Bron, BronnenResponse, ContentResponse, PageIndexEntry } from './-bronnen-types'
-import { BronIcon, editablePageIdForBron, mapBronStatus, StatusBadge } from './-bronnen-helpers'
+import type { Bron, BronnenResponse, ContentResponse } from './-bronnen-types'
+import { BronIcon, mapBronStatus, StatusBadge } from './-bronnen-helpers'
 import { kbQueryKeys } from './-kb-query-keys'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/bronnen')({
@@ -149,14 +149,11 @@ function BronRow({
   expanded,
   onToggle,
   kbSlug,
-  editablePageId,
 }: {
   bron: Bron
   expanded: boolean
   onToggle: () => void
   kbSlug: string
-  /** Gitea page slug for this bron, when one exists. Null = no editor link. */
-  editablePageId: string | null
 }) {
   const queryClient = useQueryClient()
   const status = mapBronStatus(bron)
@@ -443,23 +440,6 @@ function BronRow({
           </Tooltip>
         )}
 
-        {/* Per-row "Bewerken in editor" — only rendered when the bron name
-            actually maps to a Gitea page slug in the KB's page-index. The
-            mapping is computed once at KB level (see BronnenTab) so each
-            row only renders when there's a confirmed click target. */}
-        {editablePageId !== null && (
-          <Tooltip label="Bewerken in editor">
-            <Link
-              to="/app/docs/$kbSlug/$pageId"
-              params={{ kbSlug, pageId: editablePageId }}
-              aria-label="Bewerken in editor"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors"
-            >
-              <Pencil className="h-4 w-4" />
-            </Link>
-          </Tooltip>
-        )}
-
         <button
           type="button"
           onClick={onToggle}
@@ -520,31 +500,6 @@ function BronnenTab() {
     retry: false,
   })
   const hasEditorPages = !!docsTree && docsTree.length > 0
-
-  // Page-index: list of {id, slug, title} pairs for THIS KB's Gitea pages.
-  // We use it to decide whether to render the per-row 'Bewerken in editor'
-  // pencil — only show when the bron's name strips to a slug that exists
-  // in the page-index. Prevents 'Pagina niet gevonden' on click. Stable
-  // key with route.tsx so a hit here warms the editor's cache.
-  const { data: pageIndex } = useQuery<PageIndexEntry[]>({
-    queryKey: kbQueryKeys.docsPageIndex(orgSlug, kbSlug),
-    queryFn: () =>
-      apiFetch<PageIndexEntry[]>(
-        `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/page-index`,
-      ),
-    enabled: !!kb?.docs_enabled && !!orgSlug && hasEditorPages,
-    retry: false,
-  })
-  // Build a slug → pageId map. resolveSlug in the docs editor matches by id
-  // OR slug; we pass the slug as pageId because it is what the URL renders
-  // and what resolves bidirectionally.
-  const slugToPageId = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const entry of pageIndex ?? []) {
-      map.set(entry.slug, entry.slug)
-    }
-    return map
-  }, [pageIndex])
 
   // Sync-alles: fan out one POST per connector. We don't wait for completion;
   // each row will pick up the running status on the next poll.
@@ -636,7 +591,6 @@ function BronnenTab() {
       ) : (
         <div className="border-t border-b border-gray-200 divide-y divide-gray-200">
           {bronnen.map((bron) => {
-            const editablePageId = editablePageIdForBron(bron, slugToPageId)
             return (
               <BronRow
                 key={`${bron.kind}-${bron.id}`}
@@ -646,7 +600,6 @@ function BronnenTab() {
                   setExpandedId(expandedId === `${bron.kind}-${bron.id}` ? null : `${bron.kind}-${bron.id}`)
                 }
                 kbSlug={kbSlug}
-                editablePageId={editablePageId}
               />
             )
           })}

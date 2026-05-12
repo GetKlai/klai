@@ -10,8 +10,6 @@ export const kbQueryKeys = {
   statsSummary: () => ['app-knowledge-bases-stats-summary'] as const,
   docsTree: (orgSlug: string | undefined, kbSlug: string) =>
     ['docs-tree', orgSlug, kbSlug] as const,
-  docsPageIndex: (orgSlug: string | undefined, kbSlug: string) =>
-    ['docs-page-index', orgSlug, kbSlug] as const,
   connectorsPortal: (kbSlug: string) => ['kb-connectors-portal', kbSlug] as const,
 }
 

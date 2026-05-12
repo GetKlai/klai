@@ -75,12 +75,3 @@ export function BronIcon({ bron }: { bron: Bron }) {
   if (ct === 'tekst') return <Type className="h-4 w-4" />
   return <File className="h-4 w-4" />
 }
-
-export function editablePageIdForBron(
-  bron: Bron,
-  slugToPageId: Map<string, string>,
-): string | null {
-  if (bron.kind !== 'upload') return null
-  const stripped = bron.name.replace(/\.md$/i, '')
-  return slugToPageId.get(stripped) ?? slugToPageId.get(bron.name) ?? null
-}
