@@ -11,7 +11,7 @@ import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { useKBQuota } from '@/hooks/useKBQuota'
 import type { PersonalItemsResponse } from './-kb-types'
-import { kbQueryKeys } from './-kb-query-keys'
+import { kbQueryKeys } from '@/lib/kb-query-keys'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/items')({
   component: ItemsTab,

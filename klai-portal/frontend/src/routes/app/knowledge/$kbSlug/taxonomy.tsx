@@ -20,7 +20,7 @@ import type {
   KnowledgeBase, MembersResponse, TaxonomyNode, TaxonomyProposal,
   TaxonomyCoverage, TopTagsResponse,
 } from './-kb-types'
-import { kbQueryKeys } from './-kb-query-keys'
+import { kbQueryKeys } from '@/lib/kb-query-keys'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/taxonomy')({
   component: () => (

@@ -11,7 +11,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { ApiError, apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
-import { invalidateKnowledgeSourceLists } from '../$kbSlug/-kb-query-keys'
+import { invalidateKnowledgeSourceLists } from '@/lib/kb-query-keys'
 
 export type SourceKind = 'url' | 'text'
 

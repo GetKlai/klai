@@ -12,7 +12,7 @@ import { useQuery } from '@tanstack/react-query'
 import { File, Loader2 } from 'lucide-react'
 import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
-import { kbQueryKeys } from './-kb-query-keys'
+import { kbQueryKeys } from '@/lib/kb-query-keys'
 import type { ContentResponse, Source } from './-sources-types'
 
 interface DrillDownProps {

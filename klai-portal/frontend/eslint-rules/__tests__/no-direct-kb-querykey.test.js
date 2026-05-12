@@ -19,9 +19,9 @@ ruleTester.run('klai/no-direct-kb-querykey', rule, {
       filename: 'src/routes/app/knowledge/$kbSlug/sources.tsx',
       code: `useQuery({ queryKey: kbQueryKeys.sources(kbSlug) })`,
     },
-    // Inside the helper file itself — exempt.
+    // Inside the registry file itself — exempt.
     {
-      filename: 'src/routes/app/knowledge/$kbSlug/-kb-query-keys.ts',
+      filename: 'src/lib/kb-query-keys.ts',
       code: `const k = { queryKey: ['kb-sources', kbSlug] }`,
     },
     // Unrelated literal key — out of scope for this rule.
