@@ -154,15 +154,23 @@ def make_user(
     org_id: int = 101,
     user_pk: int = 9001,
     email: str | None = None,
+    seat_type: str | None = None,
 ):
     """Synthetic PortalUser mock with the chosen role.
 
     Accepts either ``ProfileRole.X`` (preferred for new tests) or the bare
     string form (for tests that have not migrated yet). Both resolve via
     ``str(role)`` to the underlying enum value.
+
+    SPEC-PORTAL-PRICING-PER-USER-001 Phase 1: ``seat_type`` defaults to the
+    role's ``suggest_seat()`` smart-default, matching the migration's
+    backfill (personal/company -> chat, kb_manager/group_manager/admin ->
+    knowledge). Tests that exercise mismatched (role, seat) combos pass
+    ``seat_type=`` explicitly.
     """
     from unittest.mock import MagicMock
 
+    from app.core.seats import suggest_seat
     from app.models.portal import PortalUser
 
     role_str = role if isinstance(role, str) else str(role)
@@ -176,6 +184,7 @@ def make_user(
     user.last_name = "Tester"
     user.status = "active"
     user.preferred_language = "nl"
+    user.seat_type = seat_type if seat_type is not None else str(suggest_seat(role_str))
     return user
 
 
