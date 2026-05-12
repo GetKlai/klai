@@ -1,0 +1,35 @@
+{
+  "$schema": "https://github.com/IBM/audit-ci/raw/main/docs/schema.json",
+  "high": true,
+  "allowlist": [
+    // GHSA-rmmr-r34h-pfm5 — @tanstack/history malware advisory.
+    //
+    // Context:
+    //   On 2026-05-11 a supply-chain attacker published malicious versions of
+    //   84 @tanstack/* packages (postmortem:
+    //   https://tanstack.com/blog/npm-supply-chain-compromise-postmortem).
+    //   For @tanstack/history specifically, only 1.161.9 and 1.161.12 were
+    //   compromised. Both were unpublished by npm security; the latest
+    //   published version is 1.161.6, which our lockfile pins.
+    //
+    //   The GHSA advisory was filed with affected: '*' (all versions), so
+    //   npm audit flags every @tanstack/history install — including ours,
+    //   which is clean. This blocks portal-frontend deploys.
+    //
+    //   See also TanStack issue #7384 (community-tracked over-reporting):
+    //   https://github.com/TanStack/router/issues/7384
+    //
+    // Remove this allowlist when ANY of:
+    //   1. @tanstack/react-router ships a version that drops the
+    //      @tanstack/history transitive dependency, AND we upgrade past it.
+    //   2. GHSA-rmmr-r34h-pfm5 is amended to narrow the affected range from
+    //      '*' to the specific compromised versions.
+    //   3. The package-lock.json no longer resolves @tanstack/history.
+    //
+    // Defense-in-depth: a pre-install / lockfile-check guard against the
+    // specific compromised versions (1.161.9, 1.161.12) being reintroduced
+    // can be added separately; this allowlist intentionally only suppresses
+    // the broad advisory, not version-specific detection.
+    "GHSA-rmmr-r34h-pfm5"
+  ]
+}
