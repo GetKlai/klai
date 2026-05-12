@@ -1714,5 +1714,9 @@
   "kb_sources_list_error": "Could not load sources.",
   "kb_sources_empty_title": "No sources yet",
   "kb_sources_empty_subtitle": "Add files, links or connectors to bring knowledge into this collection.",
-  "kb_sources_empty_cta": "Add the first source"
+  "kb_sources_empty_cta": "Add the first source",
+  "kb_tab_sources": "Sources",
+  "kb_tab_settings": "Settings",
+  "kb_tab_insights": "Insights",
+  "kb_detail_back": "Back"
 }

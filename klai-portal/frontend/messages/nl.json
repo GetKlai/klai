@@ -1714,5 +1714,9 @@
   "kb_sources_list_error": "Kon bronnen niet laden.",
   "kb_sources_empty_title": "Nog geen bronnen",
   "kb_sources_empty_subtitle": "Voeg bestanden, links of koppelingen toe om kennis aan deze collectie toe te voegen.",
-  "kb_sources_empty_cta": "Eerste bron toevoegen"
+  "kb_sources_empty_cta": "Eerste bron toevoegen",
+  "kb_tab_sources": "Bronnen",
+  "kb_tab_settings": "Instellingen",
+  "kb_tab_insights": "Inzichten",
+  "kb_detail_back": "Terug"
 }

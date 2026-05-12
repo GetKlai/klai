@@ -78,26 +78,35 @@ export const Route = createFileRoute('/app/knowledge/$kbSlug')({
 
 type TabId = 'bronnen' | 'instellingen' | 'inzichten'
 
-const TAB_DEFS: { id: TabId; to: string; icon: React.ElementType; label: string; matches: string[] }[] = [
+interface TabDef {
+  id: TabId
+  to: string
+  icon: React.ElementType
+  /** Lazy label so Paraglide resolves the active locale per render. */
+  label: () => string
+  matches: string[]
+}
+
+const TAB_DEFS: TabDef[] = [
   {
     id: 'bronnen',
     to: '/app/knowledge/$kbSlug/sources',
     icon: BookOpen,
-    label: 'Bronnen',
-    matches: ['/bronnen', '/overview', '/items', '/connectors'],
+    label: () => m.kb_tab_sources(),
+    matches: ['/bronnen', '/overview', '/items', '/connectors', '/sources'],
   },
   {
     id: 'instellingen',
     to: '/app/knowledge/$kbSlug/settings',
     icon: Settings,
-    label: 'Instellingen',
+    label: () => m.kb_tab_settings(),
     matches: ['/settings', '/members', '/instellingen'],
   },
   {
     id: 'inzichten',
     to: '/app/knowledge/$kbSlug/insights',
     icon: SlidersHorizontal,
-    label: 'Inzichten',
+    label: () => m.kb_tab_insights(),
     matches: ['/insights', '/advanced', '/taxonomy', '/inzichten'],
   },
 ]
@@ -184,7 +193,7 @@ function KbLayout() {
           className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-900 transition-colors shrink-0"
         >
           <ArrowLeft className="h-4 w-4" />
-          Terug
+          {m.kb_detail_back()}
         </Link>
       </div>
 
@@ -209,7 +218,7 @@ function KbLayout() {
                 }`}
               >
                 <Icon className="h-4 w-4" />
-                {label}
+                {label()}
               </Link>
             )
           })}
