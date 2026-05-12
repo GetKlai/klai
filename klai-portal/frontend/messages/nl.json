@@ -1718,5 +1718,17 @@
   "kb_tab_sources": "Bronnen",
   "kb_tab_settings": "Instellingen",
   "kb_tab_insights": "Inzichten",
-  "kb_detail_back": "Terug"
+  "kb_detail_back": "Terug",
+  "admin_section_mcps_title": "MCP servers",
+  "admin_section_mcps_description": "Koppel Model Context Protocol servers aan jouw werkruimte.",
+  "admin_settings_extensions_title": "Uitbreidingen",
+  "admin_settings_extensions_description_tenant": "Functies die Klai voor jouw organisatie heeft vrijgegeven.",
+  "admin_settings_extensions_description_platform": "Beheer de uitbreidingen die per tenant zijn vrijgegeven. Alleen Klai-staff kan deze schakelen.",
+  "admin_settings_extensions_tenant_picker_label": "Tenant slug",
+  "admin_settings_extensions_tenant_picker_apply": "Toepassen",
+  "admin_settings_extensions_tenant_picker_reset": "Terug naar eigen org",
+  "admin_settings_extensions_active_slug": "Actief: {slug}",
+  "admin_settings_extensions_status_on": "Aan",
+  "admin_settings_extensions_status_off": "Uit",
+  "admin_settings_extensions_managed_by_klai": "Deze uitbreidingen worden door Klai beheerd. Neem contact op om wijzigingen aan te vragen."
 }
