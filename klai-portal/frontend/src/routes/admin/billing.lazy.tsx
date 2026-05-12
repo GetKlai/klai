@@ -164,15 +164,38 @@ function formatEur(amount: number): string {
   }).format(amount)
 }
 
+interface PerSeatStatusResponse {
+  enabled: boolean
+  available: boolean
+}
+
 function SeatBreakdownPanel() {
   const [data, setData] = useState<SeatBreakdownResponse | null>(null)
+  const [status, setStatus] = useState<PerSeatStatusResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    apiFetch<SeatBreakdownResponse>(`/api/admin/billing/breakdown`)
-      .then(setData)
-      .catch(() => setError(m.admin_billing_breakdown_error()))
+    // Two parallel fetches: the seat counts + the per-tenant
+    // per-seat-billing opt-in status. Failing the status fetch falls
+    // back to "Phase 5 light not available" semantics — the breakdown
+    // stays visible and the CTA banner shows the coming-soon copy.
+    Promise.allSettled([
+      apiFetch<SeatBreakdownResponse>(`/api/admin/billing/breakdown`),
+      apiFetch<PerSeatStatusResponse>(`/api/admin/billing/per-seat-status`),
+    ])
+      .then(([breakdown, perSeat]) => {
+        if (breakdown.status === 'fulfilled') {
+          setData(breakdown.value)
+        } else {
+          setError(m.admin_billing_breakdown_error())
+        }
+        if (perSeat.status === 'fulfilled') {
+          setStatus(perSeat.value)
+        } else {
+          setStatus({ enabled: false, available: false })
+        }
+      })
       .finally(() => setLoading(false))
   }, [])
 
@@ -211,6 +234,34 @@ function SeatBreakdownPanel() {
               <span className="text-right tabular-nums">{data.total_users}</span>
               <span className="text-right tabular-nums">{formatEur(data.total_monthly_eur)}</span>
             </div>
+          </div>
+        )}
+
+        {/*
+          SPEC-PORTAL-PRICING-PER-USER-001 Phase 5 (light) — per-tenant
+          opt-in banner. The CTA is intentionally disabled during the
+          Phase 5 light window: the Moneybird mutation path lands in
+          Phase 5b (follow-up SPEC) with sandbox testing + per-tenant
+          consent. Until then, the banner surfaces visibility on the
+          eventual transition without enabling a button that would 501.
+        */}
+        {status && !status.enabled && (
+          <div className="mt-4 rounded-md border border-[var(--color-border)] bg-[var(--color-rl-cream)] px-4 py-3 text-sm">
+            <p className="font-medium text-gray-900">
+              {m.admin_billing_per_seat_cta_title()}
+            </p>
+            <p className="mt-1 text-xs text-gray-500">
+              {m.admin_billing_per_seat_cta_description()}
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled
+              className="mt-3 cursor-not-allowed opacity-60"
+              title={m.admin_billing_per_seat_cta_unavailable_tooltip()}
+            >
+              {m.admin_billing_per_seat_cta_button()}
+            </Button>
           </div>
         )}
       </CardContent>
