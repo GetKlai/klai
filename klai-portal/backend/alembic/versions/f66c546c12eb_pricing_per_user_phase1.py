@@ -1,41 +1,50 @@
 """SPEC-PORTAL-PRICING-PER-USER-001 Phase 1.
 
 Adds the per-user billing axis (``portal_users.seat_type``) plus the
-append-only seat-change audit table (``portal_user_seat_history``) and
-the trigger that maintains it. RLS for the new table lives in the
-sibling post-deploy SQL file ``post_deploy_f66c546c12eb.sql`` (klai-
-superuser path; portal_api cannot ENABLE RLS on its own — see
-``alembic-cannot-drop-non-portal_api-tables`` pitfall, which extends to
-``ENABLE / FORCE ROW LEVEL SECURITY`` and ``CREATE POLICY``).
+append-only seat-change audit table (``portal_user_seat_history``).
+Trigger + RLS + per-row data-backfill live in the sibling post-deploy
+SQL file ``post_deploy_f66c546c12eb.sql`` (klai-superuser path) —
+portal_api cannot UPDATE FORCE-RLS-protected ``portal_users`` rows
+without setting a tenant context per row (see
+``rls-with-check-blocks-migration-update`` pitfall, added in this
+hotfix).
 
 Backfill mapping (matches ``app/core/seats.py::DEFAULT_SEAT_FOR_ROLE``):
-    personal | company                       -> chat
-    kb_manager | group_manager | admin       -> knowledge
-    (any other / unknown role string)        -> chat   (cheapest non-zero)
+    personal | company                       -> chat  (column DEFAULT)
+    kb_manager | group_manager | admin       -> knowledge  (post-deploy UPDATE)
 
-Why a Postgres trigger and not a SQLAlchemy event listener: the listener
-misses ``session.execute(update(PortalUser).values(...))`` bulk paths
-(several admin scripts use those) AND races on concurrent UPDATEs of the
-same user-row. The trigger fires on every UPDATE regardless of how it
-arrived and runs in the same transaction. The partial-unique index
-``idx_pu_seat_hist_one_open_per_user`` serializes concurrent writes.
+What changed vs the pre-hotfix shape:
+  * The role -> seat backfill UPDATE was rejected on prod by the
+    Cat-A inline-NULLIF RLS policy's WITH CHECK clause (which has NO
+    "IS NULL permissive" branch — see ``rls-policy-shape-must-match-
+    lifespan-assert``). With no ``app.current_org_id`` set inside the
+    alembic transaction, every WITH CHECK predicate evaluates to NULL
+    and the UPDATE fails with ``InsufficientPrivilegeError`` ->
+    portal-api crashloops. Recovery on prod was a hand-applied
+    klai-superuser SQL on 2026-05-12 that bypassed RLS; this file
+    captures the correct shape so future deploys reproduce it.
+  * ``ADD COLUMN ... NOT NULL DEFAULT 'chat'`` is instant metadata
+    in PG 11+ — no row-rewrite happens, so no WITH CHECK fires. All
+    existing rows inherit ``seat_type='chat'`` immediately. The
+    role-based UPDATE that bumps KMs/admins to ``knowledge`` lives in
+    post-deploy SQL.
+  * History backfill + trigger creation also moved to post-deploy.
+    The trigger gets installed AFTER the history backfill so the
+    backfill INSERT does NOT trigger itself.
+  * Intermediate state (alembic complete, post-deploy not yet applied):
+    portal_users.seat_type exists with all rows at 'chat',
+    portal_user_seat_history exists but empty. Python model resolves
+    cleanly (SeatType.CHAT is valid). KMs/admins read as 'chat' until
+    post-deploy runs — wrong-but-not-broken; admins see a slightly
+    off /admin/billing/breakdown for ~5 min until the operator runs
+    ``scripts/apply_post_deploy_sql.sh post_deploy_f66c546c12eb.sql``.
 
 Revision ID: f66c546c12eb
 Revises: c0d5e2a7b9f3
 Create Date: 2026-05-12
 
-Rebased on 2026-05-12 to chain off ``c0d5e2a7b9f3`` (tenant-lifecycle
-platform-features CHECK constraint fix) instead of ``e0ad7c2b1e80``
-(extensions-unify). The original parent was the production head when
-this PR opened; ``c0d5e2a7b9f3`` landed on main while this PR was in
-review and created a temporary alembic head-split (per the
-``alembic-multi-pr-head-split`` pitfall). Resolution chosen: rebase the
-second-merging migration onto the first head — preferred when the
-migration files are still recent and the parent change is small.
-Schema-side: the two migrations touch different tables (this one adds
-``portal_users.seat_type``; that one is a no-op stamp + post-deploy SQL
-on ``tenant_lifecycle_events``), so the linearisation has no
-content-level conflict.
+Rebased on 2026-05-12 to chain off ``c0d5e2a7b9f3`` (see prior
+revision comment in git history).
 """
 
 from __future__ import annotations
@@ -49,116 +58,24 @@ branch_labels = None
 depends_on = None
 
 
-# ---------------------------------------------------------------------------
-# Trigger function body. Defined as a module-level constant so the
-# upgrade() and downgrade() helpers can reference it without escaping.
-# ---------------------------------------------------------------------------
-
-# Fires AFTER INSERT OR UPDATE on portal_users. On INSERT, snapshots the
-# initial state with change_reason='invite'. On UPDATE, closes the
-# previous open row (idx_pu_seat_hist_one_open_per_user enforces "exactly
-# one open row per user", so the WHERE clause matches at most one row)
-# and inserts a new open row with the appropriate change_reason. Only
-# audited columns trigger the append (IS DISTINCT FROM handles NULL).
-#
-# changed_by attribution (Phase 1 limitation):
-#   ``changed_by VARCHAR(64)`` is on the table but the trigger writes
-#   NULL for now. The actor identity lives in Python (the FastAPI
-#   handler's ``perms.user_id``) and is NOT propagated to the
-#   transaction-local GUC the trigger could read. Phase 2 (admin seat-
-#   selector + cost-delta modal) is the natural place to land the
-#   propagation pattern:
-#     - portal-api session middleware runs
-#         SET LOCAL klai.changed_by_user_id = '<zitadel_user_id>';
-#       on every authenticated request.
-#     - The trigger reads it via
-#         current_setting('klai.changed_by_user_id', true)
-#       and stores into ``changed_by`` (NULL when unset, e.g. signup).
-#   Until then, the history row is the WHAT (seat/role/status snapshot)
-#   without the WHO. Audit-of-WHO can be reconstructed by joining
-#   ``portal_user_seat_history.valid_from`` against ``portal_audit_log``
-#   on the same timestamp window — the audit-log entries already carry
-#   the acting admin's user_id.
-#
-# DELETE path is NOT covered. portal_users rows are soft-deleted via
-# ``status = 'offboarded'`` (admin/users.py:542) — the trigger captures
-# that transition. Hard DELETE only happens via the FK CASCADE when an
-# org is deprovisioned, and at that point we deliberately want the
-# history rows to disappear too (the org's tenant scope is gone).
-_TRIGGER_FUNCTION_BODY = """
-CREATE OR REPLACE FUNCTION portal_users_seat_history_trg() RETURNS TRIGGER AS $$
-BEGIN
-    IF TG_OP = 'INSERT' THEN
-        INSERT INTO portal_user_seat_history
-            (user_id, org_id, seat_type, role, status, valid_from, change_reason)
-        VALUES
-            (NEW.id, NEW.org_id, NEW.seat_type, NEW.role::text, NEW.status::text,
-             NOW(), 'invite');
-        RETURN NEW;
-    END IF;
-    -- UPDATE path: only fire when an audited column changed
-    IF (NEW.seat_type IS DISTINCT FROM OLD.seat_type)
-       OR (NEW.role     IS DISTINCT FROM OLD.role)
-       OR (NEW.status   IS DISTINCT FROM OLD.status) THEN
-        -- Close the previous (current) row. The partial-unique index
-        -- guarantees at most one row matches.
-        UPDATE portal_user_seat_history
-           SET valid_to = NOW()
-         WHERE user_id = NEW.id
-           AND valid_to IS NULL;
-        -- Append the new current row, attributing the change to the
-        -- column that most-recently moved (precedence: seat > role > status
-        -- so a combined PATCH still records a meaningful reason).
-        INSERT INTO portal_user_seat_history
-            (user_id, org_id, seat_type, role, status, valid_from, change_reason)
-        VALUES
-            (NEW.id, NEW.org_id, NEW.seat_type, NEW.role::text, NEW.status::text,
-             NOW(),
-             CASE
-                 WHEN NEW.seat_type IS DISTINCT FROM OLD.seat_type THEN 'seat_change'
-                 WHEN NEW.role      IS DISTINCT FROM OLD.role      THEN 'role_change'
-                 ELSE 'status_change'
-             END);
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-"""
-
-
 def upgrade() -> None:
     # -----------------------------------------------------------------------
-    # 1. Add seat_type column to portal_users (nullable for backfill window).
+    # 1. Add seat_type column to portal_users.
+    #
+    #    NOT NULL DEFAULT 'chat' is intentional — Postgres 11+ records the
+    #    default as metadata and serves it lazily for existing rows, so the
+    #    ALTER TABLE is instant (no row-rewrite) and no WITH CHECK fires.
+    #    All existing rows immediately read as 'chat'. The post-deploy SQL
+    #    upgrades KMs/admins to 'knowledge'.
     # -----------------------------------------------------------------------
     op.add_column(
         "portal_users",
-        sa.Column("seat_type", sa.String(length=16), nullable=True),
-    )
-
-    # -----------------------------------------------------------------------
-    # 2. Backfill from role. Mirrors DEFAULT_SEAT_FOR_ROLE in seats.py.
-    # -----------------------------------------------------------------------
-    op.execute(
-        """
-        UPDATE portal_users
-           SET seat_type = CASE
-               WHEN role IN ('kb_manager', 'group_manager', 'admin') THEN 'knowledge'
-               WHEN role IN ('personal', 'company')                  THEN 'chat'
-               ELSE 'chat'
-           END
-        ;
-        """
-    )
-
-    # -----------------------------------------------------------------------
-    # 3. Lock the column down: NOT NULL + default + CHECK constraint.
-    # -----------------------------------------------------------------------
-    op.alter_column(
-        "portal_users",
-        "seat_type",
-        existing_type=sa.String(length=16),
-        nullable=False,
-        server_default="chat",
+        sa.Column(
+            "seat_type",
+            sa.String(length=16),
+            nullable=False,
+            server_default="chat",
+        ),
     )
     op.create_check_constraint(
         "ck_portal_users_seat_type",
@@ -167,7 +84,11 @@ def upgrade() -> None:
     )
 
     # -----------------------------------------------------------------------
-    # 4. Create the seat-history table.
+    # 2. Create the empty seat-history table + indexes.
+    #
+    #    Trigger + RLS + initial backfill are post-deploy. The trigger
+    #    must be installed AFTER the history backfill INSERT or it will
+    #    fire on the backfill UPDATE (which we don't want).
     # -----------------------------------------------------------------------
     op.create_table(
         "portal_user_seat_history",
@@ -208,8 +129,9 @@ def upgrade() -> None:
         ["org_id", "valid_from"],
     )
     # Partial-unique: at most one OPEN (current) row per user. The trigger
-    # below depends on this — closes the open row before inserting the new
-    # one. Concurrent UPDATEs race for this lock, not for the table.
+    # (created in post-deploy) depends on this — closes the open row
+    # before inserting the new one. Concurrent UPDATEs race for this lock,
+    # not for the table.
     op.create_index(
         "idx_pu_seat_hist_one_open_per_user",
         "portal_user_seat_history",
@@ -219,56 +141,37 @@ def upgrade() -> None:
     )
 
     # -----------------------------------------------------------------------
-    # 5. Backfill the history: one row per existing portal_users entry,
-    #    valid_from = the user's created_at, valid_to NULL (current).
-    # -----------------------------------------------------------------------
-    op.execute(
-        """
-        INSERT INTO portal_user_seat_history
-            (user_id, org_id, seat_type, role, status, valid_from, change_reason)
-        SELECT id, org_id, seat_type, role::text, status::text, created_at, 'backfill'
-          FROM portal_users
-        ;
-        """
-    )
-
-    # -----------------------------------------------------------------------
-    # 6. Install the trigger function + trigger. From here on, every
-    #    INSERT/UPDATE on portal_users is mirrored into portal_user_seat_history.
-    # -----------------------------------------------------------------------
-    op.execute(_TRIGGER_FUNCTION_BODY)
-    op.execute(
-        """
-        DROP TRIGGER IF EXISTS portal_users_seat_history ON portal_users;
-        CREATE TRIGGER portal_users_seat_history
-            AFTER INSERT OR UPDATE ON portal_users
-            FOR EACH ROW EXECUTE FUNCTION portal_users_seat_history_trg();
-        """
-    )
-
-    # -----------------------------------------------------------------------
-    # 7. RLS for portal_user_seat_history lives in
-    #    alembic/versions/post_deploy_f66c546c12eb.sql — applied as klai
-    #    superuser via scripts/apply_post_deploy_sql.sh. portal_api
-    #    cannot ENABLE / FORCE RLS on a table even if it owns it (same
-    #    class as alembic-cannot-drop-non-portal_api-tables).
+    # 3. Everything else (role-based UPDATE backfill, history backfill,
+    #    trigger function + trigger, RLS + billing._rls_current_org_id
+    #    helper) lives in alembic/versions/post_deploy_f66c546c12eb.sql.
+    #    Applied by an operator as the klai superuser via
+    #    ``scripts/apply_post_deploy_sql.sh post_deploy_f66c546c12eb.sql``.
+    #
+    #    Why this split:
+    #      - portal_users has FORCE RLS with WITH CHECK clauses that
+    #        require ``app.current_org_id`` to match each row's org_id.
+    #        Migrations run without a tenant context -> WITH CHECK
+    #        evaluates to NULL -> rows-violate-policy 500.
+    #      - portal_user_seat_history needs ENABLE/FORCE RLS + CREATE
+    #        POLICY, which require table-owner-or-superuser privileges
+    #        the same way ENABLE RLS does (see
+    #        ``alembic-cannot-drop-non-portal_api-tables`` pitfall).
+    #    Both classes are addressed by running the rest as klai.
     # -----------------------------------------------------------------------
 
 
 def downgrade() -> None:
-    # Reverse-order teardown. Trigger first (depends on the table), then
-    # the table, then the column.
-    op.execute("DROP TRIGGER IF EXISTS portal_users_seat_history ON portal_users")
-    op.execute("DROP FUNCTION IF EXISTS portal_users_seat_history_trg() CASCADE")
+    # Reverse-order teardown. Trigger + RLS objects are not alembic-
+    # managed (post-deploy SQL); to fully revert RLS, the operator runs:
+    #   DROP TRIGGER IF EXISTS portal_users_seat_history ON portal_users;
+    #   DROP FUNCTION IF EXISTS portal_users_seat_history_trg() CASCADE;
+    #   DROP POLICY IF EXISTS tenant_isolation ON portal_user_seat_history;
+    #   DROP FUNCTION IF EXISTS billing._rls_current_org_id();
+    #   DROP SCHEMA IF EXISTS billing;
+    # but the table is dropped here so the policy is moot.
     op.drop_index("idx_pu_seat_hist_one_open_per_user", table_name="portal_user_seat_history")
     op.drop_index("idx_pu_seat_hist_org_validfrom", table_name="portal_user_seat_history")
     op.drop_index("idx_pu_seat_hist_user_validto", table_name="portal_user_seat_history")
     op.drop_table("portal_user_seat_history")
     op.drop_constraint("ck_portal_users_seat_type", "portal_users", type_="check")
     op.drop_column("portal_users", "seat_type")
-    # RLS objects in post_deploy_f66c546c12eb.sql are not alembic-managed;
-    # to fully revert RLS, the operator runs:
-    #   DROP POLICY IF EXISTS tenant_isolation ON portal_user_seat_history;
-    #   DROP FUNCTION IF EXISTS billing._rls_current_org_id();
-    #   DROP SCHEMA IF EXISTS billing;
-    # but the table is gone here so the policy is moot.
