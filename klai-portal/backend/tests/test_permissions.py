@@ -44,6 +44,7 @@ def _row(
     *,
     role: str,
     plan: str,
+    seat_type: str | None = None,
     enabled_addons: list[str] | None = None,
     platform_unlocked_features: list[str] | None = None,
     org_id: int = 101,
@@ -56,7 +57,15 @@ def _row(
     SPEC-PORTAL-EXTENSIONS-UNIFY-001: `enabled_addons=` kept as back-compat alias —
     its value is merged into `platform_unlocked_features` for the mock org so older
     tests can still express their setup without rewriting.
+
+    SPEC-PORTAL-PRICING-PER-USER-001 Phase 4: ``seat_type`` is the new
+    capability-intersection axis (replaces plan). Default = the smart-
+    default for the chosen role (``suggest_seat`` semantics) so existing
+    tests that pre-date the seat axis produce intuitive results without
+    extra kwargs.
     """
+    from app.core.seats import suggest_seat
+
     org = MagicMock()
     org.id = org_id
     org.slug = slug
@@ -69,6 +78,11 @@ def _row(
     user.zitadel_user_id = "uid-test"
     user.org_id = org_id
     user.id = 42
+    user.seat_type = seat_type if seat_type is not None else str(suggest_seat(role))
+    return user_pair(org, user)
+
+
+def user_pair(org: MagicMock, user: MagicMock) -> tuple[MagicMock, MagicMock]:
     return org, user
 
 
@@ -188,12 +202,56 @@ async def test_resolve_personal_on_complete_gets_kb_connectors_only() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resolve_personal_on_free_gets_no_capabilities() -> None:
-    """AC-8: personal on `free` → empty set (free has no plan-tier caps)."""
-    db = _db_with_row(_row(role="personal", plan="free"))
+async def test_resolve_personal_on_viewer_seat_gets_no_capabilities() -> None:
+    """SPEC-PORTAL-PRICING-PER-USER-001 Phase 4 (2026-05-12) — replaces
+    the pre-Phase-4 ``test_resolve_personal_on_free_gets_no_capabilities``.
+
+    Capability intersection moved from plan-axis to seat-axis. Free-plan
+    tenants are gone as a billing-tier signal; the equivalent "user has
+    no caps" combination is now ``personal`` role on a ``viewer`` seat —
+    viewer-seat unlocks ``chat_readonly`` / ``knowledge_readonly`` but no
+    capability in ``CAPABILITY_TO_SEAT_FEATURE`` maps to either, so the
+    intersection is empty.
+    """
+    db = _db_with_row(_row(role="personal", plan="free", seat_type="viewer"))
     perms = await resolve_user_permissions("uid-test", db)
     assert perms is not None
     assert perms.effective_capabilities == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_resolve_kb_manager_on_chat_seat_keeps_only_basic_connector() -> None:
+    """SPEC-PORTAL-PRICING-PER-USER-001 Phase 4 — the canonical decoupled
+    case from the SPEC's example matrix.
+
+    kb_manager role + chat seat: role grants the full KB-management
+    capability set, but the chat-seat only unlocks ``kb.connectors``
+    (not ``kb.connectors.external``, not ``knowledge.full``). Result:
+    only ``kb.connectors`` survives the seat-side filter. This is the
+    behaviour the admin UI surfaces as a ⚠ warning (AC-5).
+    """
+    db = _db_with_row(_row(role="kb_manager", plan="knowledge", seat_type="chat"))
+    perms = await resolve_user_permissions("uid-test", db)
+    assert perms is not None
+    assert perms.effective_capabilities == frozenset({Capability.KB_CONNECTORS})
+
+
+@pytest.mark.asyncio
+async def test_resolve_kb_manager_on_knowledge_seat_keeps_full_caps() -> None:
+    """Mirror case: kb_manager on knowledge-seat gets the full KM cap-set."""
+    db = _db_with_row(_row(role="kb_manager", plan="knowledge", seat_type="knowledge"))
+    perms = await resolve_user_permissions("uid-test", db)
+    assert perms is not None
+    assert perms.effective_capabilities == frozenset(
+        {
+            Capability.KB_CONNECTORS,
+            Capability.KB_CONNECTORS_EXTERNAL,
+            Capability.KB_CREATE_ORG,
+            Capability.KB_MEMBERS,
+            Capability.KB_TAXONOMY,
+            Capability.KB_GAPS,
+        }
+    )
 
 
 @pytest.mark.asyncio
