@@ -21,6 +21,10 @@ export interface MeResponse {
   portal_role?: string
   products?: string[]
   org_found?: boolean
+  // SPEC-PORTAL-EXTENSIONS-UNIFY-001 Phase 3: powers Phase 4 tile-filter on
+  // /admin/index.tsx and the Uitbreidingen-sectie on /admin/settings.
+  is_platform_admin?: boolean
+  platform_unlocked_features?: string[]
 }
 
 /**
