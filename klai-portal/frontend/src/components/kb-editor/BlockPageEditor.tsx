@@ -4,6 +4,7 @@ import { BlockNoteView } from '@blocknote/mantine'
 import { BlockNoteSchema, defaultInlineContentSpecs } from '@blocknote/core'
 import '@blocknote/mantine/style.css'
 import { WikiLink } from '@/components/kb-editor/WikiLink'
+import { apiFetch } from '@/lib/apiFetch'
 import { editorLogger } from '@/lib/logger'
 
 export type BlockPageEditorHandle = {
@@ -34,6 +35,30 @@ export const BlockPageEditor = forwardRef<
 >(({ initialContent, onChange, pageIndex = [], kbSlug = '', currentPageSlug = '', onNavigateToPage, onRequestWikilinkPicker }, ref) => {
   const editor = useCreateBlockNote({
     schema: wikilinkSchema,
+    // SPEC-PORTAL-DOCS-IMAGE-PASTE-001 REQ-6:
+    // BlockNote's default paste-flow checks Files BEFORE HTML/Markdown.
+    // Configuring `uploadFile` is sufficient for clipboard paste, drag-drop,
+    // and slash-menu image insert to all route to the portal-api endpoint —
+    // no changes to `pasteHandler` are required.
+    uploadFile: async (file: File): Promise<string> => {
+      if (!kbSlug) {
+        editorLogger.warn('uploadFile invoked without kbSlug — skipping')
+        throw new Error('kbSlug required for image upload')
+      }
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await apiFetch<{ url: string; deduplicated: boolean }>(
+        `/api/kb-images/${encodeURIComponent(kbSlug)}`,
+        { method: 'POST', body: fd },
+      )
+      editorLogger.debug('Image uploaded', {
+        kbSlug,
+        size: file.size,
+        type: file.type,
+        deduplicated: res.deduplicated,
+      })
+      return res.url
+    },
     pasteHandler: ({ event, editor, defaultPasteHandler }) => {
       // When clipboard has both text/html and text/plain (e.g. VS Code copy),
       // BlockNote defaults to HTML which often lacks heading structure.
