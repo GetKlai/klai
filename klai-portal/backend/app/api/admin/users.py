@@ -19,9 +19,12 @@ from app.core.permissions import (
     get_caller,
     get_caller_at_least,
 )
-from app.core.profiles import (
-    assert_role_allowed_for_plan,  # noqa: F401 — deprecated no-op, kept importable for the one-release deprecation window per SPEC-PORTAL-PRICING-PER-USER-001 Phase 3
-)
+
+# SPEC-PORTAL-PRICING-PER-USER-001 Phase 3 (2026-05-12): the
+# ``assert_role_allowed_for_plan`` import from ``app.core.profiles`` is
+# gone. The function is a deprecated no-op there for the one-release
+# transition window and this file no longer calls it. Phase 6 deletes
+# the function entirely.
 from app.models.groups import PortalGroup, PortalGroupMembership
 from app.models.portal import PortalOrg, PortalUser
 from app.services.audit import log_event
