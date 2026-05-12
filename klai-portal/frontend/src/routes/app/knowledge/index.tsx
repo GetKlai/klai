@@ -153,6 +153,21 @@ function KbRow({
   )
 }
 
+// -- Sort -------------------------------------------------------------------
+
+/**
+ * Rank for the KB list ordering. Lower rank = closer to the top.
+ *
+ * 0 — Personal KBs (owned by the current user — only one per user in practice)
+ * 1 — Default org KB (slug "org", rendered as "Organisatiekennis")
+ * 2 — Every other org-owned KB (team / topic collections)
+ */
+function kbSortRank(kb: KnowledgeBase): 0 | 1 | 2 {
+  if (kb.owner_type === 'user') return 0
+  if (kb.slug === 'org') return 1
+  return 2
+}
+
 // -- Page -------------------------------------------------------------------
 
 function KnowledgePage() {
@@ -182,12 +197,18 @@ function KnowledgePage() {
   const statsBySlug = statsData?.stats ?? {}
   const allKbs = kbsData?.knowledge_bases ?? []
 
+  // Display order: personal KBs first, then the default org KB
+  // ("Organisatiekennis", slug='org' per default_knowledge_bases.py),
+  // then every other org-owned collection. Array.sort is stable since
+  // ES2019, so within each rank the API order is preserved.
+  const sortedKbs = [...allKbs].sort((a, b) => kbSortRank(a) - kbSortRank(b))
+
   const filteredKbs = search.trim()
-    ? allKbs.filter((kb) => {
+    ? sortedKbs.filter((kb) => {
         const q = search.toLowerCase()
         return kb.name.toLowerCase().includes(q) || (kb.description ?? '').toLowerCase().includes(q)
       })
-    : allKbs
+    : sortedKbs
 
   return (
     <div className="mx-auto max-w-3xl px-6 pb-10">
