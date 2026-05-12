@@ -407,6 +407,8 @@ async def _resolve_partner_key_org_slug(
     F2 fix-forward (retrieval coupling audit 2026-05-06).
     """
 
+    import uuid as _uuid
+
     from sqlalchemy.exc import DataError
 
     from app.models.partner_api_keys import PartnerAPIKey
@@ -415,6 +417,23 @@ async def _resolve_partner_key_org_slug(
     # the DB. Fast reject saves a query on obviously-malformed inputs and
     # avoids forwarding garbage into asyncpg's UUID parser.
     if not partner_key_id or len(partner_key_id) > 64:
+        return None, "partner_key_not_found"
+
+    # 2026-05-12 HOTFIX (chat-widget-launch-day): assert partner_key_id parses
+    # as a UUID BEFORE hitting the DB. ``PartnerAPIKey.id`` is a uuid column
+    # so any non-UUID input (e.g. widget callers that authenticate via the
+    # ``widgets`` table and forward ``wgt_<hex>`` strings) is a guaranteed
+    # miss — but if we let asyncpg attempt the bind, it raises
+    # ``asyncpg.exceptions.DataError`` which SQLAlchemy wraps as
+    # ``DBAPIError`` (NOT ``DataError``). The narrow ``except DataError``
+    # below was therefore bypassed and the exception bubbled to a 5xx — the
+    # SDK collapsed it to ``portal_unreachable``, which masked every widget
+    # chat call as "Er ging iets mis". Fail-fast here keeps the contract
+    # surface ("partner_key_not_found") and avoids a server crash.
+    try:
+        _uuid.UUID(partner_key_id)
+    except (ValueError, AttributeError, TypeError):
+        logger.info("identity_verify_partner_non_uuid_key_id")
         return None, "partner_key_not_found"
 
     # partner_api_keys is RLS Category-B — SELECT works without tenant
