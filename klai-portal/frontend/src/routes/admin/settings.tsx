@@ -153,20 +153,28 @@ function AdminSettingsPage() {
     }
   }, [extensions])
 
+  type PlatformUnlocksResponse = { slug: string; platform_unlocked_features: string[] }
+
   const extensionsMutation = useMutation({
     mutationFn: (next: { org_slug: string; enabled_features: string[] }) =>
-      apiFetch<ExtensionsResponse>('/api/admin/extensions', {
-        method: 'PATCH',
-        body: JSON.stringify(next),
-      }),
+      // Single write-path for extensions: PATCH /api/admin/orgs/{slug}/platform-unlocks.
+      // Cleanup of SPEC-PORTAL-EXTENSIONS-UNIFY-001: the brief
+      // /api/admin/extensions PATCH was retired so there is exactly one
+      // audit trail in tenant_lifecycle_events.
+      apiFetch<PlatformUnlocksResponse>(
+        `/api/admin/orgs/${encodeURIComponent(next.org_slug)}/platform-unlocks`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ platform_unlocked_features: next.enabled_features }),
+        },
+      ),
     onSuccess: (data) => {
       adminLogger.info('Extensions updated', {
-        org_slug: data.org_slug,
-        enabled: data.extensions.filter((e) => e.enabled).map((e) => e.key),
+        org_slug: data.slug,
+        enabled: data.platform_unlocked_features,
       })
-      queryClient.setQueryData(['admin-extensions'], data)
-      // Invalidate /api/me so the tile-filter on /admin/index.tsx reflects
-      // the new state without a hard refresh.
+      // Refresh the read-side payload + the /api/me tile-filter input.
+      void queryClient.invalidateQueries({ queryKey: ['admin-extensions'] })
       void queryClient.invalidateQueries({ queryKey: ['me'] })
       setSavedExtensions(true)
       setTimeout(() => setSavedExtensions(false), 2500)

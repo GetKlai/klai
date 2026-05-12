@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.extensions_registry import KNOWN_FEATURES
 from app.core.permissions import UserPermissions, require_platform_admin
 from app.models.portal import PortalOrg
 from app.services.audit.tenant_lifecycle import emit_lifecycle_event
@@ -26,14 +27,6 @@ from app.services.audit.tenant_lifecycle import emit_lifecycle_event
 logger = structlog.get_logger()
 
 router = APIRouter()
-
-# Recognised platform-locked feature identifiers.
-# Any string is technically valid, but these are the documented values.
-# SPEC-PORTAL-EXTENSIONS-UNIFY-001 (2026-05-12): scribe and docs joined this
-# set when the dual-track gating was unified — they are still user-facing
-# products (FEATURE_MIN_PROFILE entry "company"), but their on/off toggle
-# is now Klai-staff-only like the rest.
-_KNOWN_FEATURES = frozenset({"partner_api", "widgets", "custom_mcps", "scribe", "docs"})
 
 
 # ---------------------------------------------------------------------------
@@ -107,11 +100,22 @@ async def patch_platform_unlocks(
     Replaces the full array — callers must send the complete desired set.
     Only platform admins (Klai staff) may call this endpoint.
     Changes are audited in ``tenant_lifecycle_events``.
+
+    SPEC-PORTAL-EXTENSIONS-UNIFY-001 cleanup: validates every requested
+    feature key against ``KNOWN_FEATURES`` (400 on unknown), and
+    de-dupes + sorts the persisted set so storage is deterministic.
     """
+    unknown = [k for k in body.platform_unlocked_features if k not in KNOWN_FEATURES]
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown feature(s): {sorted(unknown)}. Valid: {sorted(KNOWN_FEATURES)}",
+        )
+
     org = await _get_org_by_slug(slug, db)
 
     previous = list(org.platform_unlocked_features or [])
-    new_features = list(body.platform_unlocked_features)
+    new_features = sorted(set(body.platform_unlocked_features))
 
     org.platform_unlocked_features = new_features  # type: ignore[assignment]
 
