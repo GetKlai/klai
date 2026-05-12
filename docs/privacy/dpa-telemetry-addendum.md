@@ -12,7 +12,7 @@ sessions.
 
 ## Article — Telemetry modes for query content (Klai)
 
-The Tenant ("Controller") and Klai BV ("Processor") acknowledge that
+The Tenant ("Controller") and Klai B.V. i.o. ("Processor") acknowledge that
 Klai's chat platform processes queries submitted by the Tenant's
 end-users in order to produce knowledge-base-grounded answers. Klai
 records aggregate telemetry about these queries to maintain service
