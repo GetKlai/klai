@@ -37,9 +37,9 @@ const VALID_TABS = new Set<KBTab>([
 ])
 
 const TAB_PATH_MAP: Record<string, string> = {
-  overview: '/app/knowledge/$kbSlug/bronnen',
-  items: '/app/knowledge/$kbSlug/bronnen',
-  connectors: '/app/knowledge/$kbSlug/bronnen',
+  overview: '/app/knowledge/$kbSlug/sources',
+  items: '/app/knowledge/$kbSlug/sources',
+  connectors: '/app/knowledge/$kbSlug/sources',
   members: '/app/knowledge/$kbSlug/settings',
   taxonomy: '/app/knowledge/$kbSlug/insights',
   settings: '/app/knowledge/$kbSlug/settings',
@@ -58,7 +58,7 @@ export const Route = createFileRoute('/app/knowledge/$kbSlug')({
   }),
   beforeLoad: ({ search, params }) => {
     if (search.tab) {
-      const target = TAB_PATH_MAP[search.tab] ?? '/app/knowledge/$kbSlug/bronnen'
+      const target = TAB_PATH_MAP[search.tab] ?? '/app/knowledge/$kbSlug/sources'
       throw redirect({
         to: target,
         params: { kbSlug: params.kbSlug },
@@ -80,7 +80,7 @@ type TabId = 'bronnen' | 'instellingen' | 'inzichten'
 const TAB_DEFS: { id: TabId; to: string; icon: React.ElementType; label: string; matches: string[] }[] = [
   {
     id: 'bronnen',
-    to: '/app/knowledge/$kbSlug/bronnen',
+    to: '/app/knowledge/$kbSlug/sources',
     icon: BookOpen,
     label: 'Bronnen',
     matches: ['/bronnen', '/overview', '/items', '/connectors'],

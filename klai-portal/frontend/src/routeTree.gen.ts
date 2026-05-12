@@ -82,13 +82,13 @@ import { Route as AppTemplatesSlugEditRouteImport } from './routes/app/templates
 import { Route as AppKnowledgeKbSlugAddSourceRouteImport } from './routes/app/knowledge/$kbSlug_.add-source'
 import { Route as AppKnowledgeKbSlugAddConnectorRouteImport } from './routes/app/knowledge/$kbSlug_.add-connector'
 import { Route as AppKnowledgeKbSlugTaxonomyRouteImport } from './routes/app/knowledge/$kbSlug/taxonomy'
+import { Route as AppKnowledgeKbSlugSourcesRouteImport } from './routes/app/knowledge/$kbSlug/sources'
 import { Route as AppKnowledgeKbSlugSettingsRouteImport } from './routes/app/knowledge/$kbSlug/settings'
 import { Route as AppKnowledgeKbSlugOverviewRouteImport } from './routes/app/knowledge/$kbSlug/overview'
 import { Route as AppKnowledgeKbSlugMembersRouteImport } from './routes/app/knowledge/$kbSlug/members'
 import { Route as AppKnowledgeKbSlugItemsRouteImport } from './routes/app/knowledge/$kbSlug/items'
 import { Route as AppKnowledgeKbSlugInsightsRouteImport } from './routes/app/knowledge/$kbSlug/insights'
 import { Route as AppKnowledgeKbSlugConnectorsRouteImport } from './routes/app/knowledge/$kbSlug/connectors'
-import { Route as AppKnowledgeKbSlugBronnenRouteImport } from './routes/app/knowledge/$kbSlug/bronnen'
 import { Route as AppKnowledgeKbSlugAdvancedRouteImport } from './routes/app/knowledge/$kbSlug/advanced'
 import { Route as AppDocsKbSlugEditRouteImport } from './routes/app/docs/$kbSlug_.edit'
 import { Route as AppDocsKbSlugPageIdRouteImport } from './routes/app/docs/$kbSlug/$pageId'
@@ -470,6 +470,12 @@ const AppKnowledgeKbSlugTaxonomyRoute =
     path: '/taxonomy',
     getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
   } as any)
+const AppKnowledgeKbSlugSourcesRoute =
+  AppKnowledgeKbSlugSourcesRouteImport.update({
+    id: '/sources',
+    path: '/sources',
+    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
+  } as any)
 const AppKnowledgeKbSlugSettingsRoute =
   AppKnowledgeKbSlugSettingsRouteImport.update({
     id: '/settings',
@@ -503,12 +509,6 @@ const AppKnowledgeKbSlugConnectorsRoute =
   AppKnowledgeKbSlugConnectorsRouteImport.update({
     id: '/connectors',
     path: '/connectors',
-    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
-  } as any)
-const AppKnowledgeKbSlugBronnenRoute =
-  AppKnowledgeKbSlugBronnenRouteImport.update({
-    id: '/bronnen',
-    path: '/bronnen',
     getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
   } as any)
 const AppKnowledgeKbSlugAdvancedRoute =
@@ -637,13 +637,13 @@ export interface FileRoutesByFullPath {
   '/app/docs/$kbSlug/$pageId': typeof AppDocsKbSlugPageIdRoute
   '/app/docs/$kbSlug/edit': typeof AppDocsKbSlugEditRoute
   '/app/knowledge/$kbSlug/advanced': typeof AppKnowledgeKbSlugAdvancedRoute
-  '/app/knowledge/$kbSlug/bronnen': typeof AppKnowledgeKbSlugBronnenRoute
   '/app/knowledge/$kbSlug/connectors': typeof AppKnowledgeKbSlugConnectorsRoute
   '/app/knowledge/$kbSlug/insights': typeof AppKnowledgeKbSlugInsightsRoute
   '/app/knowledge/$kbSlug/items': typeof AppKnowledgeKbSlugItemsRoute
   '/app/knowledge/$kbSlug/members': typeof AppKnowledgeKbSlugMembersRoute
   '/app/knowledge/$kbSlug/overview': typeof AppKnowledgeKbSlugOverviewRoute
   '/app/knowledge/$kbSlug/settings': typeof AppKnowledgeKbSlugSettingsRoute
+  '/app/knowledge/$kbSlug/sources': typeof AppKnowledgeKbSlugSourcesRoute
   '/app/knowledge/$kbSlug/taxonomy': typeof AppKnowledgeKbSlugTaxonomyRoute
   '/app/knowledge/$kbSlug/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
   '/app/knowledge/$kbSlug/add-source': typeof AppKnowledgeKbSlugAddSourceRoute
@@ -723,13 +723,13 @@ export interface FileRoutesByTo {
   '/app/docs/$kbSlug/$pageId': typeof AppDocsKbSlugPageIdRoute
   '/app/docs/$kbSlug/edit': typeof AppDocsKbSlugEditRoute
   '/app/knowledge/$kbSlug/advanced': typeof AppKnowledgeKbSlugAdvancedRoute
-  '/app/knowledge/$kbSlug/bronnen': typeof AppKnowledgeKbSlugBronnenRoute
   '/app/knowledge/$kbSlug/connectors': typeof AppKnowledgeKbSlugConnectorsRoute
   '/app/knowledge/$kbSlug/insights': typeof AppKnowledgeKbSlugInsightsRoute
   '/app/knowledge/$kbSlug/items': typeof AppKnowledgeKbSlugItemsRoute
   '/app/knowledge/$kbSlug/members': typeof AppKnowledgeKbSlugMembersRoute
   '/app/knowledge/$kbSlug/overview': typeof AppKnowledgeKbSlugOverviewRoute
   '/app/knowledge/$kbSlug/settings': typeof AppKnowledgeKbSlugSettingsRoute
+  '/app/knowledge/$kbSlug/sources': typeof AppKnowledgeKbSlugSourcesRoute
   '/app/knowledge/$kbSlug/taxonomy': typeof AppKnowledgeKbSlugTaxonomyRoute
   '/app/knowledge/$kbSlug/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
   '/app/knowledge/$kbSlug/add-source': typeof AppKnowledgeKbSlugAddSourceRoute
@@ -815,13 +815,13 @@ export interface FileRoutesById {
   '/app/docs/$kbSlug/$pageId': typeof AppDocsKbSlugPageIdRoute
   '/app/docs/$kbSlug_/edit': typeof AppDocsKbSlugEditRoute
   '/app/knowledge/$kbSlug/advanced': typeof AppKnowledgeKbSlugAdvancedRoute
-  '/app/knowledge/$kbSlug/bronnen': typeof AppKnowledgeKbSlugBronnenRoute
   '/app/knowledge/$kbSlug/connectors': typeof AppKnowledgeKbSlugConnectorsRoute
   '/app/knowledge/$kbSlug/insights': typeof AppKnowledgeKbSlugInsightsRoute
   '/app/knowledge/$kbSlug/items': typeof AppKnowledgeKbSlugItemsRoute
   '/app/knowledge/$kbSlug/members': typeof AppKnowledgeKbSlugMembersRoute
   '/app/knowledge/$kbSlug/overview': typeof AppKnowledgeKbSlugOverviewRoute
   '/app/knowledge/$kbSlug/settings': typeof AppKnowledgeKbSlugSettingsRoute
+  '/app/knowledge/$kbSlug/sources': typeof AppKnowledgeKbSlugSourcesRoute
   '/app/knowledge/$kbSlug/taxonomy': typeof AppKnowledgeKbSlugTaxonomyRoute
   '/app/knowledge/$kbSlug_/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
   '/app/knowledge/$kbSlug_/add-source': typeof AppKnowledgeKbSlugAddSourceRoute
@@ -908,13 +908,13 @@ export interface FileRouteTypes {
     | '/app/docs/$kbSlug/$pageId'
     | '/app/docs/$kbSlug/edit'
     | '/app/knowledge/$kbSlug/advanced'
-    | '/app/knowledge/$kbSlug/bronnen'
     | '/app/knowledge/$kbSlug/connectors'
     | '/app/knowledge/$kbSlug/insights'
     | '/app/knowledge/$kbSlug/items'
     | '/app/knowledge/$kbSlug/members'
     | '/app/knowledge/$kbSlug/overview'
     | '/app/knowledge/$kbSlug/settings'
+    | '/app/knowledge/$kbSlug/sources'
     | '/app/knowledge/$kbSlug/taxonomy'
     | '/app/knowledge/$kbSlug/add-connector'
     | '/app/knowledge/$kbSlug/add-source'
@@ -994,13 +994,13 @@ export interface FileRouteTypes {
     | '/app/docs/$kbSlug/$pageId'
     | '/app/docs/$kbSlug/edit'
     | '/app/knowledge/$kbSlug/advanced'
-    | '/app/knowledge/$kbSlug/bronnen'
     | '/app/knowledge/$kbSlug/connectors'
     | '/app/knowledge/$kbSlug/insights'
     | '/app/knowledge/$kbSlug/items'
     | '/app/knowledge/$kbSlug/members'
     | '/app/knowledge/$kbSlug/overview'
     | '/app/knowledge/$kbSlug/settings'
+    | '/app/knowledge/$kbSlug/sources'
     | '/app/knowledge/$kbSlug/taxonomy'
     | '/app/knowledge/$kbSlug/add-connector'
     | '/app/knowledge/$kbSlug/add-source'
@@ -1085,13 +1085,13 @@ export interface FileRouteTypes {
     | '/app/docs/$kbSlug/$pageId'
     | '/app/docs/$kbSlug_/edit'
     | '/app/knowledge/$kbSlug/advanced'
-    | '/app/knowledge/$kbSlug/bronnen'
     | '/app/knowledge/$kbSlug/connectors'
     | '/app/knowledge/$kbSlug/insights'
     | '/app/knowledge/$kbSlug/items'
     | '/app/knowledge/$kbSlug/members'
     | '/app/knowledge/$kbSlug/overview'
     | '/app/knowledge/$kbSlug/settings'
+    | '/app/knowledge/$kbSlug/sources'
     | '/app/knowledge/$kbSlug/taxonomy'
     | '/app/knowledge/$kbSlug_/add-connector'
     | '/app/knowledge/$kbSlug_/add-source'
@@ -1637,6 +1637,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppKnowledgeKbSlugTaxonomyRouteImport
       parentRoute: typeof AppKnowledgeKbSlugRouteRoute
     }
+    '/app/knowledge/$kbSlug/sources': {
+      id: '/app/knowledge/$kbSlug/sources'
+      path: '/sources'
+      fullPath: '/app/knowledge/$kbSlug/sources'
+      preLoaderRoute: typeof AppKnowledgeKbSlugSourcesRouteImport
+      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
+    }
     '/app/knowledge/$kbSlug/settings': {
       id: '/app/knowledge/$kbSlug/settings'
       path: '/settings'
@@ -1677,13 +1684,6 @@ declare module '@tanstack/react-router' {
       path: '/connectors'
       fullPath: '/app/knowledge/$kbSlug/connectors'
       preLoaderRoute: typeof AppKnowledgeKbSlugConnectorsRouteImport
-      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
-    }
-    '/app/knowledge/$kbSlug/bronnen': {
-      id: '/app/knowledge/$kbSlug/bronnen'
-      path: '/bronnen'
-      fullPath: '/app/knowledge/$kbSlug/bronnen'
-      preLoaderRoute: typeof AppKnowledgeKbSlugBronnenRouteImport
       parentRoute: typeof AppKnowledgeKbSlugRouteRoute
     }
     '/app/knowledge/$kbSlug/advanced': {
@@ -1875,13 +1875,13 @@ const AppDocsKbSlugRouteRouteWithChildren =
 
 interface AppKnowledgeKbSlugRouteRouteChildren {
   AppKnowledgeKbSlugAdvancedRoute: typeof AppKnowledgeKbSlugAdvancedRoute
-  AppKnowledgeKbSlugBronnenRoute: typeof AppKnowledgeKbSlugBronnenRoute
   AppKnowledgeKbSlugConnectorsRoute: typeof AppKnowledgeKbSlugConnectorsRoute
   AppKnowledgeKbSlugInsightsRoute: typeof AppKnowledgeKbSlugInsightsRoute
   AppKnowledgeKbSlugItemsRoute: typeof AppKnowledgeKbSlugItemsRoute
   AppKnowledgeKbSlugMembersRoute: typeof AppKnowledgeKbSlugMembersRoute
   AppKnowledgeKbSlugOverviewRoute: typeof AppKnowledgeKbSlugOverviewRoute
   AppKnowledgeKbSlugSettingsRoute: typeof AppKnowledgeKbSlugSettingsRoute
+  AppKnowledgeKbSlugSourcesRoute: typeof AppKnowledgeKbSlugSourcesRoute
   AppKnowledgeKbSlugTaxonomyRoute: typeof AppKnowledgeKbSlugTaxonomyRoute
   AppKnowledgeKbSlugIndexRoute: typeof AppKnowledgeKbSlugIndexRoute
 }
@@ -1889,13 +1889,13 @@ interface AppKnowledgeKbSlugRouteRouteChildren {
 const AppKnowledgeKbSlugRouteRouteChildren: AppKnowledgeKbSlugRouteRouteChildren =
   {
     AppKnowledgeKbSlugAdvancedRoute: AppKnowledgeKbSlugAdvancedRoute,
-    AppKnowledgeKbSlugBronnenRoute: AppKnowledgeKbSlugBronnenRoute,
     AppKnowledgeKbSlugConnectorsRoute: AppKnowledgeKbSlugConnectorsRoute,
     AppKnowledgeKbSlugInsightsRoute: AppKnowledgeKbSlugInsightsRoute,
     AppKnowledgeKbSlugItemsRoute: AppKnowledgeKbSlugItemsRoute,
     AppKnowledgeKbSlugMembersRoute: AppKnowledgeKbSlugMembersRoute,
     AppKnowledgeKbSlugOverviewRoute: AppKnowledgeKbSlugOverviewRoute,
     AppKnowledgeKbSlugSettingsRoute: AppKnowledgeKbSlugSettingsRoute,
+    AppKnowledgeKbSlugSourcesRoute: AppKnowledgeKbSlugSourcesRoute,
     AppKnowledgeKbSlugTaxonomyRoute: AppKnowledgeKbSlugTaxonomyRoute,
     AppKnowledgeKbSlugIndexRoute: AppKnowledgeKbSlugIndexRoute,
   }
