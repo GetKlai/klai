@@ -29,7 +29,49 @@ def _mock_user(status: str = "active", org_id: int = 1) -> MagicMock:
     user.status = status
     user.org_id = org_id
     user.zitadel_user_id = "user-1"
+    user.github_username = None
     return user
+
+
+def _empty_result() -> MagicMock:
+    """A SQLAlchemy Result mock that satisfies every reader the
+    Phase 3 offboard flow uses (scalars, scalar_one, scalar_one_or_none,
+    rowcount). Defaults are 'no rows / empty list / count 0' so tests
+    that don't care about a specific intermediate query can reuse it."""
+
+    r = MagicMock()
+    r.scalar_one_or_none.return_value = None
+    r.scalar_one.return_value = 0
+    r.rowcount = 0
+    r.scalars.return_value.all.return_value = []
+    return r
+
+
+def _offboard_db_mock(user: MagicMock, org: MagicMock) -> AsyncMock:
+    """SPEC-PORTAL-KB-OWNERSHIP-001 Phase 3 — offboard now hits the DB many
+    more times (preview SELECTs, apply_dispositions, revoke_user_credentials,
+    membership delete). Build a flexible mock that returns the user / org
+    for the first two SELECTs and empty results for everything else.
+    """
+
+    user_lookup = MagicMock()
+    user_lookup.scalar_one_or_none.return_value = user
+    org_lookup = MagicMock()
+    org_lookup.scalar_one_or_none.return_value = org
+
+    db = AsyncMock()
+    db.delete = AsyncMock()
+    db.commit = AsyncMock()
+
+    queue: list[MagicMock] = [user_lookup, org_lookup]
+
+    def _next_result(*_args, **_kwargs):
+        if queue:
+            return queue.pop(0)
+        return _empty_result()
+
+    db.execute.side_effect = _next_result
+    return db
 
 
 # ---------------------------------------------------------------------------
@@ -158,22 +200,22 @@ class TestReactivateUser:
 class TestOffboardUser:
     @pytest.mark.asyncio
     async def test_offboard_active_user_cascade(self) -> None:
-        """Offboard deletes memberships, calls Zitadel, sets status.
+        """Offboard with no KBs / tokens: still flips status, deletes memberships, calls Zitadel.
 
-        SPEC-PORTAL-RBAC-001: portal_user_products is no longer written/deleted
-        per user lifecycle event -- products derive from (role, plan,
-        enabled_addons) at read time. The execute call count drops from 3 to 2.
+        SPEC-PORTAL-KB-OWNERSHIP-001 Phase 3: offboard now ALSO computes the
+        preview, applies KB-dispositions, and revokes API-keys / MCP-tokens
+        in the same DB transaction. With an empty preview the new path is a
+        sequence of empty SELECTs / rowcount=0 mutations, so the only
+        observable side-effects are the same as before: status flip + commit
+        + Zitadel deactivate.
         """
         from app.api.admin.users import offboard_user
 
         user = _mock_user(status="active")
-
-        mock_db = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = user
-        # First execute: user lookup
-        # Second execute: delete memberships
-        mock_db.execute.side_effect = [mock_result, MagicMock()]
+        org = _mock_org(org_id=1)
+        org.slug = "voys"
+        org.zitadel_org_id = "zitadel-org-1"
+        mock_db = _offboard_db_mock(user, org)
         mock_zitadel = AsyncMock()
 
         with (
@@ -182,14 +224,15 @@ class TestOffboardUser:
         ):
             mock_settings.zitadel_portal_org_id = "org-id"
             result = await offboard_user(
-                zitadel_user_id="user-1", perms=make_perms(role="admin", user_id="admin-1", org_id=1), db=mock_db
+                zitadel_user_id="user-1",
+                body=None,
+                perms=make_perms(role="admin", user_id="admin-1", org_id=1),
+                db=mock_db,
             )
 
         assert user.status == "offboarded"
         assert "offboarded" in result.message
         mock_zitadel.deactivate_user.assert_awaited_once()
-        # 2 execute calls: user lookup + delete memberships
-        assert mock_db.execute.await_count == 2
         mock_db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -215,11 +258,10 @@ class TestOffboardUser:
         from app.api.admin.users import offboard_user
 
         user = _mock_user(status="suspended")
-
-        mock_db = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = user
-        mock_db.execute.side_effect = [mock_result, MagicMock(), MagicMock()]
+        org = _mock_org(org_id=1)
+        org.slug = "voys"
+        org.zitadel_org_id = "zitadel-org-1"
+        mock_db = _offboard_db_mock(user, org)
         mock_zitadel = AsyncMock()
 
         with (
@@ -228,7 +270,10 @@ class TestOffboardUser:
         ):
             mock_settings.zitadel_portal_org_id = "org-id"
             await offboard_user(
-                zitadel_user_id="user-1", perms=make_perms(role="admin", user_id="admin-1", org_id=1), db=mock_db
+                zitadel_user_id="user-1",
+                body=None,
+                perms=make_perms(role="admin", user_id="admin-1", org_id=1),
+                db=mock_db,
             )
 
         assert user.status == "offboarded"
