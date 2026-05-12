@@ -2145,3 +2145,103 @@ class TestKlaiKnowledgeHookNLBiasRegression:
             "[LANGUAGE REMINDER] must appear AFTER [End knowledge base "
             "context] — last-mentioned wins for Mistral."
         )
+
+
+class TestKlaiKnowledgeHookUrlImageGrounding:
+    """Regression guards for fake URL/image Markdown in KB answers."""
+
+    def _system_msg(self, result: dict) -> str:
+        msgs = [m for m in result["messages"] if m["role"] == "system"]
+        assert len(msgs) == 1, f"expected exactly one system message, got {len(msgs)}"
+        return msgs[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_prompt_forbids_invented_source_urls_and_images(self, monkeypatch):
+        """A chunk without URLs/images must tell the model to answer without links/images."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Heb je hier ook een afbeelding bij?"}
+            ],
+        }
+        chunks = [
+            {
+                "text": "Het molair volume is het volume van een mol gas.",
+                "scope": "org",
+                "metadata": {"title": "Molair volume"},
+                "chunk_id": "c1",
+                "reranker_score": 0.91,
+            }
+        ]
+        retrieval_resp = _make_resp({"chunks": chunks, "retrieval_bypassed": False})
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=retrieval_resp)
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        sys_content = self._system_msg(result)
+        format_section = sys_content.split("[ANSWER FORMAT — always follow this", 1)[1]
+        format_section = format_section.split("[End knowledge base context]", 1)[0]
+
+        assert "NEVER invent a URL" in format_section
+        assert "If no chunk has a source_url" in format_section
+        assert "NEVER create, guess, search for, or suggest an image URL" in format_section
+        assert "no explicit image tag is present" in format_section
+        assert "no image is available in the knowledge base" in format_section
+        assert "placeholder, example, or documentation-only" in format_section
+        assert "example.com" not in format_section
+        assert "![afbeelding" not in format_section
+
+    @pytest.mark.asyncio
+    async def test_prompt_only_exposes_images_from_chunk_image_urls(self, monkeypatch):
+        """Image markdown in the prompt is generated only from retrieved image_urls."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "Laat de afbeelding zien."}],
+        }
+        chunks = [
+            {
+                "text": "Deze handleiding heeft een diagram.",
+                "scope": "org",
+                "metadata": {"title": "Diagram"},
+                "source_url": "https://docs.getklai.com/diagram",
+                "image_urls": ["/kb-images/org/images/support/diagram.png"],
+                "chunk_id": "c1",
+                "reranker_score": 0.91,
+            }
+        ]
+        retrieval_resp = _make_resp({"chunks": chunks, "retrieval_bypassed": False})
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=retrieval_resp)
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        sys_content = self._system_msg(result)
+        assert "Only include image markdown if a chunk below already contains" in sys_content
+        assert (
+            "![afbeelding 1](https://getklai.getklai.com/kb-images/org/images/support/diagram.png)"
+            in sys_content
+        )
+        assert "ALWAYS include them literally" not in sys_content
