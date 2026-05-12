@@ -124,6 +124,100 @@ function Field({
   )
 }
 
+// --- Per-seat breakdown panel (SPEC-PORTAL-PRICING-PER-USER-001 Phase 1) ---
+//
+// Display-only panel that shows the org's current per-seat-type user
+// count and corresponding monthly cost. Phase 1 reads the source of
+// truth from `portal_users.seat_type` (not from `portal_user_seat_history`
+// — that table is reserved for Phase 5 prorate billing).
+//
+// The actual subscription line-items still bill flat (plan x seats) until
+// Phase 5 ships the per-tenant per-seat Moneybird migration. Admins see
+// this panel as a "what your bill would look like under per-user pricing"
+// preview.
+
+type SeatTier = 'viewer' | 'chat' | 'knowledge'
+
+interface SeatBreakdownRow {
+  seat_type: SeatTier
+  count: number
+  monthly_eur: number
+}
+
+interface SeatBreakdownResponse {
+  rows: SeatBreakdownRow[]
+  total_users: number
+  total_monthly_eur: number
+}
+
+function seatLabel(tier: SeatTier): string {
+  if (tier === 'viewer') return m.admin_billing_breakdown_seat_viewer()
+  if (tier === 'chat') return m.admin_billing_breakdown_seat_chat()
+  return m.admin_billing_breakdown_seat_knowledge()
+}
+
+function formatEur(amount: number): string {
+  return new Intl.NumberFormat(getLocale(), {
+    style: 'currency',
+    currency: 'EUR',
+    maximumFractionDigits: 0,
+  }).format(amount)
+}
+
+function SeatBreakdownPanel() {
+  const [data, setData] = useState<SeatBreakdownResponse | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    apiFetch<SeatBreakdownResponse>(`/api/admin/billing/breakdown`)
+      .then(setData)
+      .catch(() => setError(m.admin_billing_breakdown_error()))
+      .finally(() => setLoading(false))
+  }, [])
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{m.admin_billing_breakdown_title()}</CardTitle>
+        <CardDescription>{m.admin_billing_breakdown_description()}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {loading && (
+          <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--color-rl-accent)] border-t-transparent" />
+        )}
+        {error && (
+          <p className="text-sm text-[var(--color-destructive-text)]">{error}</p>
+        )}
+        {data && (
+          <div className="space-y-2">
+            <div className="grid grid-cols-[1fr_auto_auto] gap-x-6 text-xs uppercase tracking-wide text-gray-400">
+              <span>{m.admin_billing_breakdown_col_seat()}</span>
+              <span className="text-right">{m.admin_billing_breakdown_col_count()}</span>
+              <span className="text-right">{m.admin_billing_breakdown_col_monthly()}</span>
+            </div>
+            {data.rows.map((row) => (
+              <div
+                key={row.seat_type}
+                className="grid grid-cols-[1fr_auto_auto] gap-x-6 text-sm"
+              >
+                <span className="font-medium">{seatLabel(row.seat_type)}</span>
+                <span className="text-right tabular-nums">{row.count}</span>
+                <span className="text-right tabular-nums">{formatEur(row.monthly_eur)}</span>
+              </div>
+            ))}
+            <div className="grid grid-cols-[1fr_auto_auto] gap-x-6 border-t border-gray-200 pt-2 text-sm font-semibold">
+              <span>{m.admin_billing_breakdown_total()}</span>
+              <span className="text-right tabular-nums">{data.total_users}</span>
+              <span className="text-right tabular-nums">{formatEur(data.total_monthly_eur)}</span>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 // --- Main page ---
 
 function BillingPage() {
@@ -566,6 +660,8 @@ function ActiveView({
           </div>
         </CardContent>
       </Card>
+
+      <SeatBreakdownPanel />
 
       <Card>
         <CardHeader>

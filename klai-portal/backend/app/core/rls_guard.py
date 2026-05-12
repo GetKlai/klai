@@ -65,6 +65,7 @@ RLS_DML_TABLES: frozenset[str] = frozenset(
         "portal_taxonomy_proposals",
         "portal_user_kb_access",
         "portal_user_products",
+        "portal_user_seat_history",  # SPEC-PORTAL-PRICING-PER-USER-001 Cat-D
         "vexa_meetings",
         "widget_kb_access",
         "widgets",

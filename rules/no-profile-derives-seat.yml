@@ -1,0 +1,92 @@
+# SPEC-PORTAL-PRICING-PER-USER-001 AC-13 — block reintroduction of the
+# profile-derives-seat anti-pattern.
+#
+# Why: SPEC v0.1.0 implemented "decoupled seat + role" via a function that
+# *derived* the seat from the role. That collapsed the two axes back into
+# one — exactly the conflation Microsoft 365 / HubSpot / Salesforce all
+# documented as a governance anti-pattern. v0.2.0+ keeps them properly
+# orthogonal. Defaults are still convenient (admin clicks once and the
+# seat-selector auto-picks) — but the mapping lives in EXACTLY ONE place:
+# ``DEFAULT_SEAT_FOR_ROLE`` in ``klai-portal/backend/app/core/seats.py``,
+# wrapped by ``suggest_seat(role)``. Every other call site goes through
+# ``suggest_seat`` (smart default) or sets seat_type independently (admin
+# override path).
+#
+# This rule catches the two anti-pattern shapes that are tractable in
+# ast-grep:
+#
+#   1. A dict literal that maps role-string keys to ``SeatType.X`` values.
+#      ``MY_MAP = {"personal": SeatType.CHAT, "kb_manager": SeatType.KNOWLEDGE}``
+#
+#   2. A subscript assignment whose RHS is a SeatType reference.
+#      ``MY_MAP[role] = SeatType.CHAT``
+#
+# Both fire as ERROR. The canonical mapping site
+# (``app/core/seats.py::DEFAULT_SEAT_FOR_ROLE``) is excluded; tests and
+# alembic data-migrations are excluded too (they may legitimately inline
+# fixture / backfill mappings).
+#
+# Pattern strategy v0.4.0: SPEC v0.3.0's dict-literal pattern used
+# ``$$$`` to match dict keys positionally, which ast-grep does not
+# evaluate as "any key in any position" (key ordering matters). The
+# replacement uses ``kind: dictionary`` + a compound ``all: [has: ...,
+# has: ...]`` so the rule fires whenever a dict (in any order, with any
+# subset of role keys) contains BOTH a role-string AND a SeatType
+# attribute reference.
+
+id: no-profile-derives-seat
+language: python
+severity: error
+message: |
+  Direct seat-from-role mapping outside ``suggest_seat()`` conflates the
+  billing axis with the permission axis (SPEC-PORTAL-PRICING-PER-USER-001
+  anti-pattern). Use ``suggest_seat(role)`` for smart-defaults; admin
+  overrides set seat_type independently from role via the explicit seat
+  selector. See spec section "Why decoupled".
+
+rule:
+  any:
+    # Pattern A: dict literal containing both a role-string key and a
+    # SeatType.X reference somewhere inside. Catches:
+    #   {"personal": SeatType.CHAT, ...}
+    #   {"kb_manager": SeatType.KNOWLEDGE}
+    #   etc.
+    - kind: dictionary
+      all:
+        - has:
+            pattern: SeatType.$WHICH
+            stopBy: end
+        - has:
+            any:
+              - pattern: '"personal"'
+              - pattern: '"company"'
+              - pattern: '"kb_manager"'
+              - pattern: '"group_manager"'
+              - pattern: '"admin"'
+            stopBy: end
+
+    # Pattern B: subscript-assignment with SeatType RHS. Catches:
+    #   SEAT_FOR_ROLE[role] = SeatType.CHAT
+    #   m["personal"]       = SeatType.KNOWLEDGE
+    - pattern: $X[$Y] = SeatType.$WHICH
+
+fix: |
+  # Use the canonical helper:
+  #   from app.core.seats import suggest_seat
+  #   seat = suggest_seat(role)
+  # Admin override (set seat_type independently from role): pass seat_type
+  # through the explicit selector — never via a role mapping.
+
+files:
+  - klai-portal/backend/app/**/*.py
+  - rules/tests/fixtures/*.py
+
+ignores:
+  # Canonical mapping site — DEFAULT_SEAT_FOR_ROLE lives here.
+  - "klai-portal/backend/app/core/seats.py"
+  # Tests build their own fixtures.
+  - "klai-portal/backend/tests/**"
+  # Data-migrations may inline a one-shot backfill mapping for legacy
+  # rows; Phase 1's migration uses raw SQL CASE (not Python dict), but
+  # future migrations may not.
+  - "klai-portal/backend/alembic/versions/**"
