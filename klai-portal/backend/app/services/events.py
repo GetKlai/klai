@@ -2,7 +2,7 @@
 Fire-and-forget product event emission.
 
 Usage:
-    emit_event("signup", org_id=org.id, user_id=user_id, properties={"plan": "core"})
+    emit_event("signup", org_id=org.id, user_id=user_id, properties={"plan": "chat"})
 
 Events are written to `product_events` in a separate lightweight transaction.
 Failures are logged at WARNING level; the caller is never affected.

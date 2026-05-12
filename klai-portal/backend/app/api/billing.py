@@ -18,7 +18,7 @@ from app.services.zitadel import zitadel
 
 logger = logging.getLogger(__name__)
 
-Plan = Literal["core", "professional", "complete", "free"]
+Plan = Literal["chat", "knowledge", "free"]
 BillingCycle = Literal["monthly", "yearly"]
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])

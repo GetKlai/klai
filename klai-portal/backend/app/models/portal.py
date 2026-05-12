@@ -44,7 +44,7 @@ class PortalOrg(Base):
     moneybird_contact_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     moneybird_subscription_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     billing_status: Mapped[str] = mapped_column(Text, nullable=False, default="pending", server_default="pending")
-    plan: Mapped[str] = mapped_column(Text, nullable=False, default="professional", server_default="professional")
+    plan: Mapped[str] = mapped_column(Text, nullable=False, default="chat", server_default="chat")
     billing_cycle: Mapped[str] = mapped_column(Text, nullable=False, default="monthly", server_default="monthly")
     seats: Mapped[int] = mapped_column(nullable=False, default=1, server_default="1")
     # Slug uniqueness is enforced by the partial unique index `ix_portal_orgs_slug_active`
