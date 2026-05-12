@@ -38,7 +38,7 @@ def test_connector_type_label_known_types() -> None:
     assert _connector_type_label("notion") == "Notion"
     assert _connector_type_label("google_drive") == "Google Drive"
     assert _connector_type_label("ms_docs") == "Microsoft Docs"
-    assert _connector_type_label("web_crawler") == "Website"
+    assert _connector_type_label("web_crawler") == "Website (pagina's)"
     assert _connector_type_label("airtable") == "Airtable"
     assert _connector_type_label("confluence") == "Confluence"
     assert _connector_type_label("mcp_connector") == "MCP"
@@ -58,7 +58,7 @@ def test_upload_type_label_known_content_types() -> None:
     assert _upload_type_label("application/pdf") == "PDF"
     assert _upload_type_label("html") == "Link"
     assert _upload_type_label("text/html") == "Link"
-    assert _upload_type_label("web_page") == "Website"
+    assert _upload_type_label("web_page") == "Websitepagina"
     assert _upload_type_label("text") == "Tekst"
     assert _upload_type_label("text/markdown") == "Tekst"
     assert _upload_type_label("image/png") == "Afbeelding"
@@ -236,7 +236,7 @@ async def test_list_kb_bronnen_labels_url_upload_as_website_with_source_url() ->
 
     bron = result.bronnen[0]
     assert bron.name == "https://example.com/"
-    assert bron.type_label == "Website"
+    assert bron.type_label == "Websitepagina"
     assert bron.source_url == "https://example.com/"
 
 

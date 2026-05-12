@@ -64,9 +64,7 @@ async def _dispatch_confirmations() -> dict[str, int]:
             email=deal.email,
             company=deal.company,
         )
-        ok = await twenty.update_opportunity_stage(
-            deal.opportunity_id, twenty.STAGE_CONFIRMATION_SENT
-        )
+        ok = await twenty.update_opportunity_stage(deal.opportunity_id, twenty.STAGE_CONFIRMATION_SENT)
         if ok:
             counters["sent"] += 1
             logger.info(
@@ -120,9 +118,7 @@ async def _dispatch_invites() -> dict[str, int]:
             )
             continue
 
-        ok = await twenty.update_opportunity_stage(
-            deal.opportunity_id, twenty.STAGE_INVITED_SENT
-        )
+        ok = await twenty.update_opportunity_stage(deal.opportunity_id, twenty.STAGE_INVITED_SENT)
         if ok:
             counters["sent"] += 1
             logger.info(

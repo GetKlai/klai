@@ -3,16 +3,12 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import patch
 
 import pytest
 
 from app.services.waitlist_token import (
     DEFAULT_TTL_SECONDS,
     InviteTokenPayload,
-    WaitlistTokenUnavailable,
-    sign_invite_token,
-    verify_invite_token,
 )
 
 
@@ -55,7 +51,7 @@ def test_sign_normalises_email_to_lowercase(_key: str) -> None:
 
 
 def test_verify_rejects_tampered_payload(_key: str) -> None:
-    from app.services.waitlist_token import sign_invite_token, verify_invite_token
+    from app.services.waitlist_token import sign_invite_token
 
     token = sign_invite_token("eline@vermeer.nl", "Vermeer Advocaten")
     payload_b64, sig_b64 = token.split(".")
@@ -97,7 +93,7 @@ def test_sign_raises_when_key_unconfigured(monkeypatch: pytest.MonkeyPatch) -> N
     importlib.import_module("app.core.config")
     wt = importlib.import_module("app.services.waitlist_token")
 
-    with pytest.raises(WaitlistTokenUnavailable):
+    with pytest.raises(wt.WaitlistTokenUnavailable):
         wt.sign_invite_token("a@b.com", "Co")
 
 
