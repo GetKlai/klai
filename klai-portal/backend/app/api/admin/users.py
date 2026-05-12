@@ -246,8 +246,9 @@ async def invite_user(
     )
     db.add(user_row)
 
-    # SPEC-PORTAL-RBAC-001: products are derived from (role, plan, enabled_addons)
-    # at read time; no per-user entitlement rows are written here.
+    # SPEC-PORTAL-RBAC-001: products are derived from (role, plan,
+    # platform_unlocked_features) at read time; no per-user entitlement
+    # rows are written here.
     #
     # Personal KB is created in the SAME transaction as the portal_users INSERT
     # so that the tenant-scoped GUC (`app.current_org_id`) is still active when

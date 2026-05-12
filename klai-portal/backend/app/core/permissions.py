@@ -75,7 +75,6 @@ class UserPermissions:
     org_slug: str
     role: ProfileRole
     plan: str
-    enabled_addons: frozenset[str]
     platform_unlocked_features: frozenset[str]
     effective_role: ProfileRole
     effective_capabilities: frozenset[Capability]
@@ -149,10 +148,9 @@ async def resolve_user_permissions(zitadel_user_id: str, db: AsyncSession) -> Us
 
     role = ProfileRole(user.role)
     plan = org.plan
-    enabled_addons = frozenset(org.enabled_addons or [])
     platform_features = _platform_unlocked_set(org)
     effective_caps = _derive_effective_capabilities(role, plan)
-    effective_prods = frozenset(derive_user_products(role.value, plan, list(enabled_addons)))
+    effective_prods = frozenset(derive_user_products(role.value, plan, list(platform_features)))
     kb_limits = effective_kb_limits(role.value, plan)
     is_platform_admin = org.slug == _app_settings.platform_org_slug
 
@@ -162,7 +160,6 @@ async def resolve_user_permissions(zitadel_user_id: str, db: AsyncSession) -> Us
         org_slug=org.slug,
         role=role,
         plan=plan,
-        enabled_addons=enabled_addons,
         platform_unlocked_features=platform_features,
         effective_role=role,  # alias-fase: identical to role until profile-stacking lands
         effective_capabilities=effective_caps,
