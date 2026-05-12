@@ -96,9 +96,7 @@ def sign_invite_token(
     """
     key = _key_bytes()
     if key is None:
-        raise WaitlistTokenUnavailable(
-            "WAITLIST_TOKEN_KEY is not configured — set it in SOPS before issuing invites."
-        )
+        raise WaitlistTokenUnavailable("WAITLIST_TOKEN_KEY is not configured — set it in SOPS before issuing invites.")
 
     payload = {
         "email": email.strip().lower(),

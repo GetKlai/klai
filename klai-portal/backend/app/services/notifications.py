@@ -265,12 +265,7 @@ async def issue_waitlist_invite(
         return False
 
     base = settings.frontend_url.rstrip("/")
-    signup_url = (
-        f"{base}/signup"
-        f"?token={quote(token)}"
-        f"&email={quote(email)}"
-        f"&company={quote(company)}"
-    )
+    signup_url = f"{base}/signup?token={quote(token)}&email={quote(email)}&company={quote(company)}"
 
     expires_in_hours = max(1, ttl_seconds // 3600)
     await send_waitlist_invite(
