@@ -396,7 +396,7 @@ class TestCharacterizeStartLibrechatContainer:
         (tenant_dir / ".env").write_text("MONGO_URI=mongodb://example\nALLOW_IFRAME=true\nJWT_SECRET=keep-me\n")
         patch_dir = tmp_path / "patches"
         patch_dir.mkdir(exist_ok=True)
-        for name in ("format.cjs", "stream.cjs", "search.cjs"):
+        for name in ("format.cjs", "share.js", "stream.cjs", "search.cjs"):
             (patch_dir / name).write_text("// patch\n")
 
     def test_starts_container_with_correct_config(self, tmp_path):
@@ -476,6 +476,10 @@ class TestCharacterizeStartLibrechatContainer:
         volumes = mock_client.containers.run.call_args[1]["volumes"]
         assert volumes["/opt/klai/librechat-data/patches/format.cjs"] == {
             "bind": "/app/node_modules/@librechat/agents/dist/cjs/messages/format.cjs",
+            "mode": "ro",
+        }
+        assert volumes["/opt/klai/librechat-data/patches/share.js"] == {
+            "bind": "/app/api/server/routes/share.js",
             "mode": "ro",
         }
         assert volumes["/opt/klai/librechat-data/patches/stream.cjs"] == {
