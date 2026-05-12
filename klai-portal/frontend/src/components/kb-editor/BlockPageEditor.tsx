@@ -59,8 +59,12 @@ export const BlockPageEditor = forwardRef<
       const fd = new FormData()
       fd.append('file', file)
       try {
+        // The kb-images router is mounted at /kb-images (no /api prefix —
+        // see klai-portal/backend/app/main.py and SPEC-TI-009's Caddy block).
+        // Posting to /api/kb-images/... gives a 404 because the route only
+        // exists at /kb-images/...
         const res = await apiFetch<{ url: string; deduplicated: boolean }>(
-          `/api/kb-images/${encodeURIComponent(kbSlug)}`,
+          `/kb-images/${encodeURIComponent(kbSlug)}`,
           { method: 'POST', body: fd },
         )
         editorLogger.debug('Image uploaded', {
