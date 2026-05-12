@@ -12,7 +12,7 @@ AC-4  test_upload_exe_returns_415
 AC-5  test_upload_svg_returns_415
 AC-6  test_upload_cross_tenant_returns_404
 AC-7  (covered by permissions test — see module docstring)
-AC-8  test_cross_tenant_emits_warning_log
+AC-8  test_kb_not_found_emits_warning_log
 
 Mocking strategy: we patch ``app.api.kb_images.ImageStore`` with a class whose
 instances expose an async ``upload_image`` returning a stub
@@ -285,8 +285,11 @@ async def test_upload_cross_tenant_returns_404() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cross_tenant_emits_warning_log() -> None:
-    """AC-8: REQ-7 — cross-tenant attempt emits kb_image_upload_cross_tenant_blocked warning.
+async def test_kb_not_found_emits_warning_log() -> None:
+    """AC-8: REQ-7 — a 404 from _get_kb_or_404 emits kb_image_upload_kb_not_found
+    warning with a neutral reason field. The event covers both typo-in-own-org
+    and cross-tenant probe — distinguishing requires a cross-org query which
+    would violate the 'never leak existence' rule.
 
     Uses ``structlog.testing.capture_logs`` because structlog is configured with
     ``ProcessorFormatter`` and writes to stdout, not via the stdlib logging
@@ -314,11 +317,12 @@ async def test_cross_tenant_emits_warning_log() -> None:
                     db=AsyncMock(),
                 )
 
-    cross_tenant_events = [e for e in captured if e.get("event") == "kb_image_upload_cross_tenant_blocked"]
-    assert len(cross_tenant_events) == 1, f"expected 1 warning, got: {captured}"
-    event = cross_tenant_events[0]
+    not_found_events = [e for e in captured if e.get("event") == "kb_image_upload_kb_not_found"]
+    assert len(not_found_events) == 1, f"expected 1 warning, got: {captured}"
+    event = not_found_events[0]
     assert event.get("caller_org_id") == 42
     assert event.get("kb_slug") == "other-org-kb"
+    assert event.get("reason") == "kb_not_found_or_cross_tenant"
     assert event.get("log_level") == "warning"
 
 

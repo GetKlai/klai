@@ -261,17 +261,25 @@ async def upload_kb_image(
     Response: ``{"url": "/kb-images/...", "deduplicated": bool}`` where ``url``
     is the relative path served by the GET endpoint above.
     """
-    # Step 1: KB-scope authorization. Cross-tenant attempts surface as 404
-    # from the helper's WHERE clause; we wrap to emit an observability warning
-    # (REQ-7) for security monitoring before re-raising.
+    # Step 1: KB-scope authorization. A 404 here is the strong-or-weak signal:
+    # either the kb_slug truly doesn't exist in the caller's org (typo) OR it
+    # belongs to a different org (cross-tenant attempt). We cannot distinguish
+    # without a second cross-org query, which would be expensive AND violate
+    # the "never leak existence" rule. So we emit a neutral observability
+    # event and let downstream alerting decide based on rate / pattern.
     try:
         kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
     except HTTPException as exc:
         if exc.status_code == status.HTTP_404_NOT_FOUND:
             logger.warning(
-                "kb_image_upload_cross_tenant_blocked",
+                "kb_image_upload_kb_not_found",
                 caller_org_id=perms.org_id,
                 kb_slug=kb_slug,
+                # 'kb_not_found' covers both typo-in-own-org AND cross-tenant
+                # probe. Spike in this event with distinct kb_slugs from a
+                # single caller signals enumeration; spike with the same
+                # kb_slug from one caller signals typo.
+                reason="kb_not_found_or_cross_tenant",
             )
         raise
 
