@@ -99,7 +99,7 @@ async def test_authenticated_user_can_read_own_org_image(kb_app):
         patch("app.api.kb_images._resolve_zitadel_org_id", AsyncMock(return_value=ZITADEL_ORG_ID)),
     ):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=kb_app), base_url="http://test") as client:
-            resp = await client.get(f"/kb-images/{ZITADEL_ORG_ID}/{KB_SLUG}/{FILENAME}")
+            resp = await client.get(f"/kb-images/{ZITADEL_ORG_ID}/images/{KB_SLUG}/{FILENAME}")
     assert resp.status_code == 200
     assert resp.headers["Cache-Control"] == "private, max-age=86400"
 
@@ -114,7 +114,7 @@ async def test_authenticated_user_cannot_read_foreign_org_image(kb_app):
     kb_app.dependency_overrides[__import__("app.core.database", fromlist=["get_db"]).get_db] = _mock_get_db()
     with patch("app.api.kb_images._resolve_zitadel_org_id", AsyncMock(return_value=ZITADEL_ORG_ID)):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=kb_app), base_url="http://test") as client:
-            resp = await client.get(f"/kb-images/{OTHER_ZITADEL_ORG_ID}/{KB_SLUG}/{FILENAME}")
+            resp = await client.get(f"/kb-images/{OTHER_ZITADEL_ORG_ID}/images/{KB_SLUG}/{FILENAME}")
     assert resp.status_code == 403
     assert resp.json()["detail"] == "Access denied"
 
@@ -127,7 +127,7 @@ async def test_unauthenticated_request_rejected(kb_app):
     kb_app.dependency_overrides[get_optional_session] = lambda: None
     kb_app.dependency_overrides[__import__("app.core.database", fromlist=["get_db"]).get_db] = _mock_get_db()
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=kb_app), base_url="http://test") as client:
-        resp = await client.get(f"/kb-images/{ZITADEL_ORG_ID}/{KB_SLUG}/{FILENAME}")
+        resp = await client.get(f"/kb-images/{ZITADEL_ORG_ID}/images/{KB_SLUG}/{FILENAME}")
     assert resp.status_code == 401
 
 
@@ -180,7 +180,7 @@ async def test_widget_public_image_works(kb_app):
     ):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=kb_app), base_url="http://test") as client:
             resp = await client.get(
-                f"/kb-images/{ZITADEL_ORG_ID}/{KB_SLUG}/{FILENAME}",
+                f"/kb-images/{ZITADEL_ORG_ID}/images/{KB_SLUG}/{FILENAME}",
                 headers={"Authorization": "Bearer some-widget-token"},
             )
     assert resp.status_code == 200
@@ -212,7 +212,7 @@ async def test_partner_api_key_image_access(kb_app):
     ):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=kb_app), base_url="http://test") as client:
             resp = await client.get(
-                f"/kb-images/{ZITADEL_ORG_ID}/{KB_SLUG}/{FILENAME}",
+                f"/kb-images/{ZITADEL_ORG_ID}/images/{KB_SLUG}/{FILENAME}",
                 headers={"Authorization": "Bearer pk_live_testkey"},
             )
     assert resp.status_code == 200
@@ -257,7 +257,7 @@ async def test_404_for_nonexistent_object(kb_app):
         patch("app.api.kb_images._resolve_zitadel_org_id", AsyncMock(return_value=ZITADEL_ORG_ID)),
     ):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=kb_app), base_url="http://test") as client:
-            resp = await client.get(f"/kb-images/{ZITADEL_ORG_ID}/{KB_SLUG}/{FILENAME}")
+            resp = await client.get(f"/kb-images/{ZITADEL_ORG_ID}/images/{KB_SLUG}/{FILENAME}")
     assert resp.status_code == 404
 
 
@@ -276,6 +276,6 @@ async def test_cache_control_header_set_correctly(kb_app):
         patch("app.api.kb_images._resolve_zitadel_org_id", AsyncMock(return_value=ZITADEL_ORG_ID)),
     ):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=kb_app), base_url="http://test") as client:
-            resp = await client.get(f"/kb-images/{ZITADEL_ORG_ID}/{KB_SLUG}/{FILENAME}")
+            resp = await client.get(f"/kb-images/{ZITADEL_ORG_ID}/images/{KB_SLUG}/{FILENAME}")
     assert resp.status_code == 200
     assert resp.headers["Cache-Control"] == "private, max-age=86400"
