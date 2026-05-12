@@ -58,17 +58,20 @@ function AdminLayout() {
   })
 
   // Filter nav items: role-check first, then platform-unlock-check.
+  // The platform-unlock filter applies uniformly — including to platform-admin
+  // callers. Platform-admins managing other tenants do so via the Uitbreidingen
+  // tenant-picker on /admin/settings; their own sidebar/tegels mirror what a
+  // normal admin in their own tenant would see (emulation view). Without this
+  // alignment, the sidebar contradicts the Uitbreidingen status panel.
   const effectiveRole = user?.effective_role
   const unlocked = me?.platform_unlocked_features ?? []
-  const isPlatformAdmin = me?.is_platform_admin ?? false
 
   const adminNav = ADMIN_NAV_ITEMS.filter((item) => {
     if (!meetsMinRole(effectiveRole, item.minRole)) return false
     if (item.requiresFeature) {
       // While /api/me is loading, keep the item visible to avoid a flash of
-      // missing nav. Platform-admin always sees everything.
+      // missing nav.
       if (!me) return true
-      if (isPlatformAdmin) return true
       return unlocked.includes(item.requiresFeature)
     }
     return true

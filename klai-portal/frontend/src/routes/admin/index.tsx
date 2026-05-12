@@ -113,9 +113,10 @@ function sectionIsVisible(
 ): boolean {
   if (!section.requiresFeature) return true
   // Show all tiles while /api/me is still loading — avoids a flash of
-  // "no tiles" before the first response lands. Platform-admin always sees
-  // everything; tenant-admin sees only their unlocked features.
+  // "no tiles" before the first response lands. Both tenant-admin and
+  // platform-admin see exactly what their own tenant has unlocked
+  // (emulation view). Cross-tenant management uses the tenant-picker on
+  // /admin/settings, not the platform-admin's own sidebar/tegels.
   if (!me) return true
-  if (me.is_platform_admin) return true
   return (me.platform_unlocked_features ?? []).includes(section.requiresFeature)
 }
