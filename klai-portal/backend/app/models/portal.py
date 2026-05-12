@@ -119,6 +119,10 @@ class PortalUser(Base):
     __table_args__ = (
         CheckConstraint("status IN ('active', 'suspended', 'offboarded')", name="ck_portal_users_status"),
         UniqueConstraint("zitadel_user_id", "org_id", name="uq_portal_users_zitadel_user_org"),
+        # SPEC-PORTAL-PRICING-PER-USER-001 Phase 1 — seat_type is the billing
+        # axis; role is the permissions axis. Composition lives in
+        # app/core/seats.py::effective_features / effective_capabilities.
+        CheckConstraint("seat_type IN ('viewer', 'chat', 'knowledge')", name="ck_portal_users_seat_type"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -137,6 +141,18 @@ class PortalUser(Base):
         nullable=False,
         default="company",
         server_default="company::portal_user_role",
+    )
+    # SPEC-PORTAL-PRICING-PER-USER-001 Phase 1: per-user billing tier.
+    # Backfilled from role at migration time (personal/company -> chat,
+    # kb_manager/group_manager/admin -> knowledge). Admin edits the value
+    # independently of role via Phase 2's seat-selector. Validation lives
+    # in the ``ck_portal_users_seat_type`` CHECK constraint above plus the
+    # Phase-1 alembic migration that backfills + sets NOT NULL.
+    seat_type: Mapped[Literal["viewer", "chat", "knowledge"]] = mapped_column(
+        String(16),
+        nullable=False,
+        default="chat",
+        server_default="chat",
     )
     preferred_language: Mapped[Literal["nl", "en"]] = mapped_column(
         String(8), nullable=False, default="nl", server_default="nl"
