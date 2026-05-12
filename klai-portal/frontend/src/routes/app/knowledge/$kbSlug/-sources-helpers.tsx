@@ -9,18 +9,18 @@ import {
 import { SiAirtable, SiConfluence, SiGithub, SiGoogledrive, SiNotion } from '@icons-pack/react-simple-icons'
 import { Badge } from '@/components/ui/badge'
 import * as m from '@/paraglide/messages'
-import type { Bron } from './-bronnen-types'
+import type { Source } from './-sources-types'
 
-export type BronStatus = 'synced' | 'pending' | 'not_synced'
+export type SourceStatus = 'synced' | 'pending' | 'not_synced'
 
-export function mapBronStatus(bron: Bron): BronStatus {
-  const s = (bron.status ?? '').toLowerCase()
-  if (bron.kind === 'upload') {
-    const idx = (bron.index_status ?? '').toLowerCase()
+export function mapSourceStatus(source: Source): SourceStatus {
+  const s = (source.status ?? '').toLowerCase()
+  if (source.kind === 'upload') {
+    const idx = (source.index_status ?? '').toLowerCase()
     if (idx === 'pending' || s === 'processing' || s === 'ingesting') return 'pending'
     if (idx === 'failed' || s === 'failed' || s.includes('error')) return 'not_synced'
     if (idx === 'synced') return 'synced'
-    if (bron.chunks_count === 0 && !idx) return 'not_synced'
+    if (source.chunks_count === 0 && !idx) return 'not_synced'
     return 'synced'
   }
   if (s === 'running' || s === 'pending' || s === 'syncing') return 'pending'
@@ -28,11 +28,11 @@ export function mapBronStatus(bron: Bron): BronStatus {
     return 'not_synced'
   }
   if (s === 'success' || s === 'completed' || s === 'ok') return 'synced'
-  if (bron.items_count > 0 || bron.chunks_count > 0) return 'synced'
+  if (source.items_count > 0 || source.chunks_count > 0) return 'synced'
   return 'not_synced'
 }
 
-export function StatusBadge({ status }: { status: BronStatus }) {
+export function StatusBadge({ status }: { status: SourceStatus }) {
   const labelMap = {
     synced: m.kb_status_klaar(),
     pending: m.kb_status_bezig(),
@@ -46,9 +46,9 @@ export function StatusBadge({ status }: { status: BronStatus }) {
   return <Badge variant={variantMap[status]}>{labelMap[status]}</Badge>
 }
 
-export function BronIcon({ bron }: { bron: Bron }) {
-  if (bron.kind === 'connector') {
-    const t = bron.connector_type ?? ''
+export function SourceIcon({ source }: { source: Source }) {
+  if (source.kind === 'connector') {
+    const t = source.connector_type ?? ''
     if (t === 'github') return <SiGithub className="h-4 w-4" />
     if (t === 'notion') return <SiNotion className="h-4 w-4" />
     if (t === 'google_drive') return <SiGoogledrive className="h-4 w-4" />
@@ -58,12 +58,12 @@ export function BronIcon({ bron }: { bron: Bron }) {
     if (t === 'ms_docs') return <FileText className="h-4 w-4" />
     return <Zap className="h-4 w-4" />
   }
-  const ct = (bron.type_label ?? '').toLowerCase()
-  const path = bron.name.toLowerCase()
+  const ct = (source.type_label ?? '').toLowerCase()
+  const path = source.name.toLowerCase()
   if (path.endsWith('.pdf') || ct === 'pdf') return <FileText className="h-4 w-4" />
   if (
     path.startsWith('http')
-    || bron.source_url
+    || source.source_url
     || ct === 'website'
     || ct === 'websitepagina'
     || ct === "website (pagina's)"
@@ -74,4 +74,13 @@ export function BronIcon({ bron }: { bron: Bron }) {
   if (ct.startsWith('afbeelding') || /\.(png|jpe?g|gif|webp|svg)$/i.test(path)) return <Image className="h-4 w-4" />
   if (ct === 'tekst') return <Type className="h-4 w-4" />
   return <File className="h-4 w-4" />
+}
+
+export function editablePageIdForSource(
+  source: Source,
+  slugToPageId: Map<string, string>,
+): string | null {
+  if (source.kind !== 'upload') return null
+  const stripped = source.name.replace(/\.md$/i, '')
+  return slugToPageId.get(stripped) ?? slugToPageId.get(source.name) ?? null
 }

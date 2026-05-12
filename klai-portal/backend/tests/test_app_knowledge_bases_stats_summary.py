@@ -59,5 +59,5 @@ async def test_stats_summary_counts_processing_uploads_before_ingest_artifact_ex
         result = await knowledge_bases_stats_summary(perms=_make_perms(), db=db)
 
     stats = result.stats["chemie"]
-    assert stats.bronnen == 1
+    assert stats.sources == 1
     assert stats.chunks == 0
