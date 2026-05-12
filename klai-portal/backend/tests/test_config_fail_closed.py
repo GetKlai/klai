@@ -223,3 +223,27 @@ def test_valid_env_constructs_settings() -> None:
     assert cfg.settings.encryption_key
     assert cfg.settings.sso_cookie_key
     assert cfg.settings.bff_session_key
+
+
+# ---------------------------------------------------------------------------
+# SPEC-LAUNCH-SOFTLAUNCH-001 S-3: mock_billing prod guard
+# ---------------------------------------------------------------------------
+
+
+def test_settings_refuses_mock_billing_in_prod(monkeypatch: pytest.MonkeyPatch) -> None:
+    """S-3: mock_billing=True with domain=getklai.com raises at startup."""
+    monkeypatch.setenv("MOCK_BILLING", "true")
+    monkeypatch.setenv("DOMAIN", "getklai.com")
+    sys.modules.pop("app.core.config", None)
+    with pytest.raises(ValidationError, match="MOCK_BILLING"):
+        importlib.import_module("app.core.config")
+
+
+def test_settings_allows_mock_billing_in_dev(monkeypatch: pytest.MonkeyPatch) -> None:
+    """S-3 inverse: mock_billing=True on a non-prod domain boots fine."""
+    monkeypatch.setenv("MOCK_BILLING", "true")
+    monkeypatch.setenv("DOMAIN", "localhost")
+    sys.modules.pop("app.core.config", None)
+    cfg = importlib.import_module("app.core.config")
+    assert cfg.settings.mock_billing is True
+    assert cfg.settings.domain == "localhost"

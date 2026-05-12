@@ -168,6 +168,18 @@ class Settings(BaseSettings):
     ms_docs_client_secret: str = ""
     ms_docs_tenant_id: str = "common"  # multi-tenant default; accepts any M365 tenant
 
+    # SPEC-LAUNCH-SOFTLAUNCH-001 B-2: HMAC key for waitlist invite tokens.
+    # Empty in dev/CI — feature degrades to "no bypass possible" rather than
+    # crashing. Generate with: openssl rand -base64 48
+    waitlist_token_key: str = ""  # PORTAL_API_WAITLIST_TOKEN_KEY
+
+    # SPEC-LAUNCH-SOFTLAUNCH-001 B-2 sub-batch 3: Twenty CRM REST API.
+    # The waitlist endpoint on the website (klai-website/src/pages/api/waitlist.ts)
+    # creates the deal; portal-api polls Twenty for stage transitions and sends
+    # the corresponding mail. Empty URL = poller is disabled.
+    twenty_url: str = ""  # e.g. https://twenty.getklai.com (TWENTY_URL)
+    twenty_api_key: str = ""  # TWENTY_API_KEY
+
     # Mock mode — disables real Moneybird calls for pre-launch testing
     mock_billing: bool = False
     frontend_url: str = ""  # e.g. http://localhost:5174 in dev; empty = same origin as API in prod
@@ -744,6 +756,23 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Missing required: BFF_SESSION_KEY (SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-10). "
                 "Set it in SOPS before starting portal-api."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _refuse_mock_billing_in_prod(self) -> "Settings":
+        """SPEC-LAUNCH-SOFTLAUNCH-001 S-3: refuse mock_billing=True in production.
+
+        billing.py:62 short-circuits the Moneybird flow and stamps every tenant
+        as billing_status="active" when mock_billing is True. If MOCK_BILLING=1
+        accidentally lands in /opt/klai/.env on core-01, every new signup gets
+        unlimited paid access silently. Fail at startup rather than in prod.
+        """
+        if self.mock_billing and self.domain == "getklai.com":
+            raise ValueError(
+                "Refusing to boot: MOCK_BILLING=True is incompatible with domain=getklai.com "
+                "(SPEC-LAUNCH-SOFTLAUNCH-001 S-3). Either unset MOCK_BILLING in /opt/klai/.env "
+                "or use a non-production domain (dev/staging only)."
             )
         return self
 
