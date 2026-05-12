@@ -371,6 +371,37 @@ characterization tests green.
 | Paraglide build cache holds stale `kb_count_bron*` keys | Low | Low | Phase 5 includes `rm -rf src/paraglide && bun run build` — same pattern as commit `25803fac build(frontend): nuke paraglide + tsbuildinfo before each build`. |
 | `add-source` wizard navigates to `/bronnen` from somewhere we missed | Medium | Medium | `git grep -E "'/app/knowledge/\\\$kbSlug/bronnen'\|/bronnen[\"\\\b]"` before merge; all hits must land in renamed code or in the legacy-redirect entry. |
 
+## Deploy ordering
+
+The Phase 1 wire-shape rename (`bronnen` → `sources` on both
+`/chunks-summary` and `/knowledge-bases/.../sources`) is breaking — old
+portal-api code reading `bronnen_by_kb` against new ingest, or new
+portal-api reading `sources_by_kb` against old ingest, would render
+empty counts.
+
+**Mitigation (shipped in this PR — commit 751402f5):** dual-key window
+on `/chunks-summary`. Knowledge-ingest emits BOTH `sources_by_kb` AND
+`bronnen_by_kb` for one release; portal-api reads `sources_by_kb` with
+a `bronnen_by_kb` fallback. Three regression tests pin this in
+`test_knowledge_ingest_chunks_summary_dual_key.py`.
+
+Net effect: deploy ordering does NOT matter for this window. Any
+order — portal-api first, ingest first, or both at once — keeps the
+KB-list counts rendering.
+
+**Removal contract:** drop the legacy `bronnen_by_kb` field on the
+ingest side AND the `bronnen_by_kb` fallback on the portal-api side
+together, in a follow-up PR, AFTER every pod in fleet has been on
+this release for at least one full deploy cycle. Both call sites
+carry a comment pointing at this paragraph.
+
+**Note on the other wire field** — `GET /sources` returns
+`{"sources": [...]}` instead of `{"bronnen": [...]}`. This is also a
+breaking rename, but the only consumer is the in-repo frontend which
+ships in the same PR. If a future external consumer is identified
+(mobile app, partner widget), apply a pydantic `Field(alias="bronnen")`
+on `SourcesResponse` in a follow-up — same dual-key pattern.
+
 ## PR Description Checklist
 
 - [ ] No alembic migration. No model change. No new endpoint.
