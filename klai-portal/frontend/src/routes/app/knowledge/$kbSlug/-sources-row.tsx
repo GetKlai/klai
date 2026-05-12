@@ -33,6 +33,7 @@ import { Button } from '@/components/ui/button'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { InlineEdit } from '@/components/ui/inline-edit'
 import { Tooltip } from '@/components/ui/tooltip'
+import * as m from '@/paraglide/messages'
 import { SourceContent } from './-sources-content'
 import { mapSourceStatus, SourceIcon, StatusBadge } from './-sources-helpers'
 import {
@@ -141,12 +142,12 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
           <div className={`flex items-center ${isRenaming ? 'opacity-0 pointer-events-none' : ''}`}>
             {/* "Verbind opnieuw" — only for connectors in auth_error state. */}
             {isAuthError && (
-              <Tooltip label="Verbind opnieuw met de externe dienst">
+              <Tooltip label={m.kb_sources_row_reauth_tooltip()}>
                 <button
                   type="button"
                   onClick={() => void reauth.start()}
                   disabled={reauth.pending}
-                  aria-label="Verbind opnieuw"
+                  aria-label={m.kb_sources_row_reauth_label()}
                   className="inline-flex h-8 items-center gap-1.5 px-2 rounded-md text-xs font-medium text-[var(--color-rl-accent-dark)] hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {reauth.pending ? (
@@ -154,7 +155,7 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
                   ) : (
                     <LinkIcon className="h-3.5 w-3.5" />
                   )}
-                  Verbind opnieuw
+                  {m.kb_sources_row_reauth_label()}
                 </button>
               </Tooltip>
             )}
@@ -163,10 +164,10 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
             <Tooltip
               label={
                 isAuthError
-                  ? 'Eerst opnieuw verbinden'
+                  ? m.kb_sources_row_sync_blocked_auth()
                   : source.kind === 'upload'
-                    ? 'Herindexeer bron'
-                    : 'Synchroniseer bron'
+                    ? m.kb_sources_row_reindex_tooltip()
+                    : m.kb_sources_row_sync_tooltip()
               }
             >
               <button
@@ -175,10 +176,10 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
                 disabled={syncDisabled}
                 aria-label={
                   isAuthError
-                    ? 'Eerst opnieuw verbinden'
+                    ? m.kb_sources_row_sync_blocked_auth()
                     : source.kind === 'upload'
-                      ? 'Herindexeer bron'
-                      : 'Synchroniseer bron'
+                      ? m.kb_sources_row_reindex_tooltip()
+                      : m.kb_sources_row_sync_tooltip()
                 }
                 className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
@@ -194,17 +195,17 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
             <InlineDeleteConfirm
               isConfirming={confirmingDelete}
               isPending={isDeleting}
-              label={`Verwijder '${source.name}'?`}
-              cancelLabel="Annuleren"
+              label={m.kb_sources_row_delete_confirm({ name: source.name })}
+              cancelLabel={m.kb_sources_row_cancel()}
               onConfirm={() => { deleteMutation.mutate(); setConfirmingDelete(false) }}
               onCancel={() => setConfirmingDelete(false)}
             >
-              <Tooltip label="Verwijder bron">
+              <Tooltip label={m.kb_sources_row_delete_tooltip()}>
                 <button
                   type="button"
                   onClick={() => setConfirmingDelete(true)}
                   disabled={isDeleting}
-                  aria-label="Verwijder bron"
+                  aria-label={m.kb_sources_row_delete_tooltip()}
                   className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-[var(--color-destructive)] hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Trash2 className="h-4 w-4" />
@@ -214,11 +215,11 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
 
             {/* REQ-6 — Connector edit uses Settings icon, not Pencil. */}
             {source.kind === 'connector' && (
-              <Tooltip label="Bewerk koppeling">
+              <Tooltip label={m.kb_sources_row_edit_connector_tooltip()}>
                 <Link
                   to="/app/knowledge/$kbSlug/edit-connector/$connectorId"
                   params={{ kbSlug, connectorId: source.id }}
-                  aria-label="Bewerk koppeling"
+                  aria-label={m.kb_sources_row_edit_connector_tooltip()}
                   className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors"
                 >
                   <Settings className="h-4 w-4" />
@@ -228,11 +229,11 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
 
             {/* REQ-5 — Upload rename uses Pencil. */}
             {source.kind === 'upload' && (
-              <Tooltip label="Naam aanpassen">
+              <Tooltip label={m.kb_sources_row_rename_tooltip()}>
                 <button
                   type="button"
                   onClick={startRename}
-                  aria-label="Naam aanpassen"
+                  aria-label={m.kb_sources_row_rename_tooltip()}
                   className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors"
                 >
                   <Pencil className="h-4 w-4" />
@@ -242,11 +243,11 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
 
             {/* REQ-7 — Docs-editor link uses NotebookPen, not Pencil. */}
             {editablePageId !== null && (
-              <Tooltip label="Bewerken in editor">
+              <Tooltip label={m.kb_sources_row_open_in_editor()}>
                 <Link
                   to="/app/docs/$kbSlug/$pageId"
                   params={{ kbSlug, pageId: editablePageId }}
-                  aria-label="Bewerken in editor"
+                  aria-label={m.kb_sources_row_open_in_editor()}
                   className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors"
                 >
                   <NotebookPen className="h-4 w-4" />
@@ -257,7 +258,7 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
             <button
               type="button"
               onClick={onToggle}
-              aria-label={expanded ? 'Inhoud verbergen' : 'Inhoud tonen'}
+              aria-label={expanded ? m.kb_sources_row_hide_content() : m.kb_sources_row_show_content()}
               className="inline-flex h-8 w-8 items-center justify-center text-gray-300 hover:text-gray-500 transition-colors"
             >
               <ChevronRight
@@ -276,7 +277,7 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
                 onClick={saveRename}
               >
                 {renameMutation.isPending ? <Loader2 className="animate-spin" /> : <Check />}
-                Opslaan
+                {m.kb_sources_row_save()}
               </Button>
               <Button
                 size="sm"
@@ -285,7 +286,7 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
                 onClick={cancelRename}
               >
                 <X />
-                Annuleren
+                {m.kb_sources_row_cancel()}
               </Button>
             </div>
           )}
