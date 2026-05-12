@@ -40,7 +40,8 @@ import { datetime, plural } from '@/paraglide/registry'
 import { apiFetch } from '@/lib/apiFetch'
 import { adminLogger } from '@/lib/logger'
 import { QueryErrorState } from '@/components/ui/query-error-state'
-import { useSuspendUser, useReactivateUser, useOffboardUser } from '@/hooks/useUserLifecycle'
+import { useSuspendUser, useReactivateUser } from '@/hooks/useUserLifecycle'
+import { OffboardWizard } from '@/components/admin/offboard-wizard'
 import { PROFILE_LADDER, type ProfileRole } from '@/lib/profiles'
 import { cleanErrorMessage } from '../_components/errors'
 
@@ -131,7 +132,6 @@ function UsersPage() {
 
   const suspendMutation = useSuspendUser()
   const reactivateMutation = useReactivateUser()
-  const offboardMutation = useOffboardUser()
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['admin-users'],
@@ -484,33 +484,23 @@ function UsersPage() {
         </table>
       )}
 
-      <AlertDialog
-        open={confirmingOffboardId !== null}
-        onOpenChange={(open) => { if (!open) setConfirmingOffboardId(null) }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{m.admin_users_confirm_offboard_title()}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {m.admin_users_confirm_offboard_description()}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{m.admin_users_cancel()}</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-[var(--color-destructive)] text-white hover:bg-[var(--color-destructive)]/90"
-              onClick={() => {
-                if (confirmingOffboardId) {
-                  offboardMutation.mutate(confirmingOffboardId)
-                }
-                setConfirmingOffboardId(null)
-              }}
-            >
-              {m.admin_users_action_offboard()}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* SPEC-PORTAL-KB-OWNERSHIP-001 Phase 4 — offboard via wizard.
+          Replaces the simple confirm dialog: the admin must now choose a
+          disposition (transfer / delete) per KB the user solely owns. */}
+      {confirmingOffboardId !== null && currentUserId && (() => {
+        const target = users.find((u) => u.zitadel_user_id === confirmingOffboardId)
+        if (!target) return null
+        const label = `${target.first_name} ${target.last_name}`.trim() || target.email
+        return (
+          <OffboardWizard
+            userId={confirmingOffboardId}
+            userLabel={label}
+            currentAdminId={currentUserId}
+            open={confirmingOffboardId !== null}
+            onOpenChange={(open) => { if (!open) setConfirmingOffboardId(null) }}
+          />
+        )
+      })()}
 
       {/* R6: confirm leave workspace dialog (C6.6) */}
       <AlertDialog
