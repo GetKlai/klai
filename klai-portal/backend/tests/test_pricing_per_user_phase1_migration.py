@@ -50,11 +50,14 @@ class TestMigrationChain:
     def test_revision_id_matches_filename(self, migration_src: str) -> None:
         assert re.search(r'^revision\s*=\s*"f66c546c12eb"\s*$', migration_src, re.M)
 
-    def test_chains_off_extensions_unify(self, migration_src: str) -> None:
-        # extensions-unify is the verified production head as of
-        # 2026-05-12. Drifting off this base means a head-split — see
-        # alembic-multi-pr-head-split pitfall.
-        assert re.search(r'down_revision\s*=\s*"e0ad7c2b1e80"', migration_src)
+    def test_chains_off_tenant_lifecycle_platform_features(self, migration_src: str) -> None:
+        # Originally chained off e0ad7c2b1e80 (extensions-unify, the prod
+        # head when this PR opened). Rebased to c0d5e2a7b9f3
+        # (tenant-lifecycle platform-features fix) after that landed on
+        # main mid-review and created an alembic head-split — see
+        # alembic-multi-pr-head-split pitfall. Drift in either direction
+        # means a new split.
+        assert re.search(r'down_revision\s*=\s*"c0d5e2a7b9f3"', migration_src)
 
 
 # ---------------------------------------------------------------------------
