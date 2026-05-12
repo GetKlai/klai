@@ -20,6 +20,7 @@ import type {
   KnowledgeBase, MembersResponse, TaxonomyNode, TaxonomyProposal,
   TaxonomyCoverage, TopTagsResponse,
 } from './-kb-types'
+import { kbQueryKeys } from './-kb-query-keys'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/taxonomy')({
   component: () => (
@@ -401,7 +402,7 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
 
   // Derive permissions from cached queries
   const { data: kb } = useQuery<KnowledgeBase>({
-    queryKey: ['app-knowledge-base', kbSlug],
+    queryKey: kbQueryKeys.knowledgeBase(kbSlug),
     queryFn: async () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`),
     enabled: auth.isAuthenticated,
   })

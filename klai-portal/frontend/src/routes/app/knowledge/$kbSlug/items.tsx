@@ -11,6 +11,7 @@ import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { useKBQuota } from '@/hooks/useKBQuota'
 import type { PersonalItemsResponse } from './-kb-types'
+import { kbQueryKeys } from './-kb-query-keys'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/items')({
   component: ItemsTab,
@@ -24,7 +25,7 @@ function ItemsTab() {
   const { canAddItem } = useKBQuota(kbSlug)
 
   const { data, isLoading } = useQuery<PersonalItemsResponse>({
-    queryKey: ['personal-knowledge', kbSlug],
+    queryKey: kbQueryKeys.personalKnowledge(kbSlug),
     queryFn: async () => apiFetch<PersonalItemsResponse>('/api/knowledge/personal/items'),
     enabled: auth.isAuthenticated,
   })
@@ -37,7 +38,7 @@ function ItemsTab() {
       })
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['personal-knowledge'] })
+      void queryClient.invalidateQueries({ queryKey: kbQueryKeys.personalKnowledge(kbSlug) })
     },
     onSettled: () => setDeletingId(null),
   })
