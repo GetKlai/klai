@@ -11,6 +11,7 @@ import { apiFetch } from '@/lib/apiFetch'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import * as m from '@/paraglide/messages'
 import { editorLogger } from '@/lib/logger'
+import { kbQueryKeys } from '@/routes/app/knowledge/$kbSlug/-kb-query-keys'
 
 interface SaveToKnowledgeModalProps {
   initialContent: string
@@ -37,7 +38,7 @@ export function SaveToKnowledgeModal({
 
   // Get page index for slug collision avoidance
   const { data: pageIndex = [] } = useQuery<Array<{ slug: string }>>({
-    queryKey: ['docs-page-index', orgSlug, 'personal'],
+    queryKey: kbQueryKeys.docsPageIndex(orgSlug, 'personal'),
     queryFn: async () => {
       try {
         return await apiFetch<Array<{ slug: string }>>(`${DOCS_BASE}/orgs/${orgSlug}/kbs/personal/page-index`)
