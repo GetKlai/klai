@@ -1,10 +1,16 @@
-"""Admin API Key management endpoints — SPEC-WIDGET-002.
+"""Admin API Key management endpoints — SPEC-WIDGET-002 + SPEC-PORTAL-EXTENSIONS-UNIFY-001.
 
 CRUD for developer-facing partner API keys (`pk_live_...`) scoped to the
-caller's org. Auth: Zitadel OIDC session with admin/owner role check.
+caller's org. Auth: Zitadel OIDC session with admin role check AND the
+`partner_api` platform-unlock (SPEC-PORTAL-EXTENSIONS-UNIFY-001 Phase 1,
+2026-05-12). Tenants without `partner_api` in `platform_unlocked_features`
+get 403 on every endpoint — the feature is opt-in per tenant via Klai
+platform admin (`/api/admin/extensions` or
+`/api/admin/orgs/{slug}/platform-unlocks`).
 
 Split from the previous admin_integrations.py which combined API keys
-and widgets. Widgets now live in admin_widgets.py.
+and widgets. Widgets now live in admin_widgets.py and use the same
+double-gate pattern (admin role + platform-unlock).
 
 No `active` / revoke action — DELETE is the only way to end a key.
 """
@@ -21,7 +27,12 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.permissions import ProfileRole, UserPermissions, get_caller_at_least
+from app.core.permissions import (
+    ProfileRole,
+    UserPermissions,
+    get_caller_at_least,
+    require_platform_unlocked,
+)
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.partner_api_keys import PartnerAPIKey, PartnerApiKeyKbAccess
 from app.services.events import emit_event
@@ -150,6 +161,7 @@ async def _count_kb_access(key_id: str, db: AsyncSession) -> int:
 async def create_api_key(
     body: CreateApiKeyRequest,
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    _platform: UserPermissions = Depends(require_platform_unlocked("partner_api")),
     db: AsyncSession = Depends(get_db),
 ) -> CreateApiKeyResponse:
     """Create a new partner API key."""
@@ -224,6 +236,7 @@ async def create_api_key(
 @router.get("")
 async def list_api_keys(
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    _platform: UserPermissions = Depends(require_platform_unlocked("partner_api")),
     db: AsyncSession = Depends(get_db),
 ) -> list[ApiKeyResponse]:
     """List all API keys for the caller's org."""
@@ -255,6 +268,7 @@ async def list_api_keys(
 async def get_api_key_detail(
     key_id: str,
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    _platform: UserPermissions = Depends(require_platform_unlocked("partner_api")),
     db: AsyncSession = Depends(get_db),
 ) -> ApiKeyDetailResponse:
     """Get full detail for a single API key."""
@@ -300,6 +314,7 @@ async def update_api_key(
     key_id: str,
     body: UpdateApiKeyRequest,
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    _platform: UserPermissions = Depends(require_platform_unlocked("partner_api")),
     db: AsyncSession = Depends(get_db),
 ) -> ApiKeyResponse:
     """Partial update of an API key."""
@@ -351,6 +366,7 @@ async def update_api_key(
 async def delete_api_key(
     key_id: str,
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    _platform: UserPermissions = Depends(require_platform_unlocked("partner_api")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Permanently delete an API key and its KB access entries."""
