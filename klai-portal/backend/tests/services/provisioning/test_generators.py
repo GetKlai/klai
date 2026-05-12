@@ -105,6 +105,8 @@ class TestCharacterizeGenerateLibrechatEnvSnapshot:
         assert "MONGO_URI=mongodb://librechat-snapshot-org:pw-snap@mongodb:27017" in result
         assert "OPENID_CLIENT_ID=cid-snap" in result
         assert "DOMAIN_CLIENT=https://chat-snapshot-org.getklai.com" in result
+        assert "ALLOW_SHARED_LINKS=true" in result
+        assert "ALLOW_SHARED_LINKS_PUBLIC=true" in result
         assert "KLAI_ZITADEL_ORG_ID=org-snap-123" in result
         assert "KLAI_ORG_SLUG=snapshot-org" in result
         # Deterministic secrets
