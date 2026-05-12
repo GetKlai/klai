@@ -228,6 +228,7 @@ def make_perms(
     org_id: int = 101,
     org_slug: str = "voys",
     plan: str = "knowledge",
+    seat_type: str | None = None,
     enabled_addons: list[str] | None = None,
     platform_unlocked_features: list[str] | None = None,
     is_platform_admin: bool = False,
@@ -248,19 +249,29 @@ def make_perms(
     from app.core.features import derive_user_products
     from app.core.permissions import UserPermissions
     from app.core.plan_limits import get_plan_limits
-    from app.core.profiles import PROFILE_CAPABILITIES, Capability, ProfileRole
+    from app.core.profiles import Capability, ProfileRole
+    from app.core.seats import SeatType, suggest_seat
+    from app.core.seats import effective_capabilities as seat_effective_capabilities
 
     role_enum = role if isinstance(role, ProfileRole) else ProfileRole(str(role))
     # Back-compat: legacy enabled_addons param merges into platform_unlocked_features.
     plat_features = frozenset((platform_unlocked_features or []) + (enabled_addons or []))
 
+    # SPEC-PORTAL-PRICING-PER-USER-001 Phase 4: capability resolution uses
+    # seat_type. Default seat = suggest_seat(role) when caller doesn't pin
+    # one — mirrors the prod backfill semantics.
+    seat_str = seat_type if seat_type is not None else str(suggest_seat(role_enum.value))
+    try:
+        seat_enum = SeatType(seat_str)
+    except ValueError:
+        seat_enum = SeatType.CHAT
+
     if role_enum == ProfileRole.ADMIN:
-        knowledge_caps = get_plan_limits("knowledge").capabilities
-        eff_caps = frozenset(Capability(c) for c in knowledge_caps)
+        # Admin bypass: full KNOWLEDGE-seat capabilities regardless of
+        # the actual seat. Mirrors resolve_user_permissions semantics.
+        eff_caps = frozenset(Capability(c) for c in seat_effective_capabilities(role_enum.value, SeatType.KNOWLEDGE))
     else:
-        role_caps = PROFILE_CAPABILITIES.get(role_enum.value, frozenset())
-        plan_caps = get_plan_limits(plan).capabilities
-        eff_caps = frozenset(Capability(c) for c in (set(role_caps) & set(plan_caps)))
+        eff_caps = frozenset(Capability(c) for c in seat_effective_capabilities(role_enum.value, seat_enum))
 
     eff_products = frozenset(derive_user_products(role_enum.value, plan, list(plat_features)))
 
@@ -270,6 +281,7 @@ def make_perms(
         org_slug=org_slug,
         role=role_enum,
         plan=plan,
+        seat_type=seat_str,
         platform_unlocked_features=plat_features,
         effective_role=role_enum,
         effective_capabilities=eff_caps,
