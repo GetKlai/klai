@@ -28,6 +28,7 @@ import type {
   PreviewResult,
   WcStep,
 } from './-connector-types'
+import { MARKDOWN_PROSE_CLASSES, VALID_PRESELECT_TYPES } from './-connector-constants'
 import { CookieRowsInput } from '@/components/knowledge/CookieRowsInput'
 import { kbQueryKeys } from '@/lib/kb-query-keys'
 
@@ -49,14 +50,8 @@ const CONNECTOR_TYPES: {
   { type: 'google_slides', label: m.admin_connectors_type_google_slides, available: true, Icon: SiGoogleslides },
 ]
 
-const MARKDOWN_PROSE_CLASSES = 'overflow-y-auto max-h-64 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-gray-900 [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-gray-900 [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-gray-900 [&_h3]:mb-1 [&_p]:text-gray-400 [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-gray-400 [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-gray-400 [&_ol]:mb-1.5 [&_strong]:font-semibold [&_strong]:text-gray-900 [&_hr]:border-gray-200 [&_hr]:my-2'
-
 // -- Route -------------------------------------------------------------------
 
-const VALID_PRESELECT_TYPES = new Set<ConnectorType>([
-  'github', 'notion', 'google_drive', 'google_docs', 'google_sheets', 'google_slides',
-  'airtable', 'confluence', 'ms_docs', 'web_crawler',
-])
 type AddConnectorSearch = { type?: ConnectorType }
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug_/add-connector')({
