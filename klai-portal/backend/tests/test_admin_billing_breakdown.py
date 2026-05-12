@@ -221,3 +221,79 @@ class TestSeatBreakdownRowValidation:
 
         with pytest.raises(ValidationError):
             SeatBreakdownRow(seat_type="premium", count=1, monthly_eur=10)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 (light) — per-seat billing switch stub
+# ---------------------------------------------------------------------------
+
+
+class TestPerSeatBillingStatus:
+    """SPEC-PORTAL-PRICING-PER-USER-001 Phase 5 (light): the
+    ``GET /api/admin/billing/per-seat-status`` endpoint returns the
+    per-tenant feature-flag value plus an ``available`` field that the
+    FE uses to render the CTA. ``available`` is hard-coded to False
+    during the Phase 5 light window — Phase 5b flips it once the
+    Moneybird mutation path is wired.
+    """
+
+    @pytest.mark.asyncio
+    async def test_returns_enabled_false_for_default_tenant(self) -> None:
+        from app.api.admin.billing import per_seat_billing_status
+
+        db = AsyncMock()
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = False
+        db.execute = AsyncMock(return_value=result)
+        perms = make_perms(role="admin", org_id=101)
+
+        response = await per_seat_billing_status(perms=perms, db=db)
+        assert response.enabled is False
+        # Phase 5 light: available=False until Phase 5b wires Moneybird.
+        assert response.available is False
+
+    @pytest.mark.asyncio
+    async def test_returns_enabled_true_when_flag_set(self) -> None:
+        from app.api.admin.billing import per_seat_billing_status
+
+        db = AsyncMock()
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = True
+        db.execute = AsyncMock(return_value=result)
+        perms = make_perms(role="admin", org_id=101)
+
+        response = await per_seat_billing_status(perms=perms, db=db)
+        assert response.enabled is True
+        # ``available`` stays False even when ``enabled`` is True — the
+        # flag-flip happens in Phase 5b, this gate stays hard-locked
+        # until that follow-up SPEC lands.
+        assert response.available is False
+
+
+class TestSwitchToPerSeatStub:
+    """SPEC-PORTAL-PRICING-PER-USER-001 Phase 5 (light): the
+    ``POST /api/admin/billing/switch-to-per-seat`` endpoint exists so the
+    FE CTA hits a real URL, but the body is a 501 stub. Phase 5b
+    replaces this with the actual Moneybird mutation behind explicit
+    per-tenant consent (the CTA-click).
+    """
+
+    @pytest.mark.asyncio
+    async def test_endpoint_returns_501_with_structured_detail(self) -> None:
+        from fastapi import HTTPException
+
+        from app.api.admin.billing import switch_to_per_seat_billing
+
+        db = AsyncMock()
+        perms = make_perms(role="admin", org_id=101)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await switch_to_per_seat_billing(perms=perms, db=db)
+
+        assert exc_info.value.status_code == 501
+        detail = exc_info.value.detail
+        assert isinstance(detail, dict)
+        assert detail["error_code"] == "per_seat_billing_not_implemented"
+        assert "spec" in detail
+        # Verify the stub did NOT touch the DB — no commits, no inserts.
+        db.commit.assert_not_awaited()
