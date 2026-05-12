@@ -58,6 +58,7 @@ def test_upload_type_label_known_content_types() -> None:
     assert _upload_type_label("application/pdf") == "PDF"
     assert _upload_type_label("html") == "Link"
     assert _upload_type_label("text/html") == "Link"
+    assert _upload_type_label("web_page") == "Website"
     assert _upload_type_label("text") == "Tekst"
     assert _upload_type_label("text/markdown") == "Tekst"
     assert _upload_type_label("image/png") == "Afbeelding"
@@ -138,6 +139,8 @@ async def test_list_kb_bronnen_merges_connectors_and_uploads() -> None:
             {
                 "id": "art-1",
                 "path": "report.pdf",
+                "display_name": "Annual report",
+                "source_url": None,
                 "content_type": "pdf",
                 "created_at": 1700000000,
                 "chunks_count": 7,
@@ -180,10 +183,61 @@ async def test_list_kb_bronnen_merges_connectors_and_uploads() -> None:
     assert by_id["conn-2"].status == "pending"
 
     assert by_id["art-1"].kind == "upload"
-    assert by_id["art-1"].name == "report.pdf"
+    assert by_id["art-1"].name == "Annual report"
     assert by_id["art-1"].type_label == "PDF"
+    assert by_id["art-1"].source_url is None
     assert by_id["art-1"].chunks_count == 7
     assert by_id["art-1"].created_at is not None
+
+
+@pytest.mark.asyncio
+async def test_list_kb_bronnen_labels_url_upload_as_website_with_source_url() -> None:
+    from app.api.app_knowledge_bases import list_kb_bronnen
+
+    org = _make_org()
+    kb = _make_kb()
+    db = _make_sources_db([])
+
+    aggregates = {
+        "connectors": [],
+        "uploads": [
+            {
+                "id": "art-url",
+                "path": "https://example.com/",
+                "display_name": None,
+                "source_url": "https://example.com/",
+                "content_type": "web_page",
+                "created_at": 1700000000,
+                "chunks_count": 0,
+                "index_status": "synced",
+            },
+        ],
+    }
+
+    with (
+        patch(
+            "app.api.app_knowledge_bases._load_org_or_500",
+            new=AsyncMock(return_value=org),
+        ),
+        patch(
+            "app.api.app_knowledge_bases._get_kb_or_404",
+            new=AsyncMock(return_value=kb),
+        ),
+        patch(
+            "app.api.app_knowledge_bases.knowledge_ingest_client.get_kb_sources",
+            new=AsyncMock(return_value=aggregates),
+        ),
+    ):
+        result = await list_kb_bronnen(
+            kb_slug="kb-a",
+            perms=_make_perms(),
+            db=db,
+        )
+
+    bron = result.bronnen[0]
+    assert bron.name == "https://example.com/"
+    assert bron.type_label == "Website"
+    assert bron.source_url == "https://example.com/"
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,4 @@
 """Tests for source_label computation (SPEC-KB-021 Change 1)."""
-import pytest
 
 from knowledge_ingest.models import IngestRequest
 from knowledge_ingest.source_label import compute_source_label as _compute_source_label
@@ -20,6 +19,18 @@ def test_compute_source_label_webcrawl():
     """source_type=crawl + source_domain → domain as label."""
     req = _make_request(source_type="crawl", source_domain="help.mitel.nl")
     assert _compute_source_label(req) == "help.mitel.nl"
+
+
+def test_compute_source_label_direct_url_uses_hostname():
+    """source_type=url + source_ref URL → domain as label."""
+    req = _make_request(source_type="url", source_ref="https://docs.getklai.com/path")
+    assert _compute_source_label(req) == "docs.getklai.com"
+
+
+def test_compute_source_label_direct_url_uses_extra_source_url_fallback():
+    """source_type=url without source_ref can still label by extra.source_url."""
+    req = _make_request(source_type="url", extra={"source_url": "https://help.example.com/a"})
+    assert _compute_source_label(req) == "help.example.com"
 
 
 def test_compute_source_label_crawl_no_domain_falls_back_to_kb_slug():

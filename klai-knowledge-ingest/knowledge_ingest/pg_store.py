@@ -1156,6 +1156,8 @@ async def list_kb_sources(
         SELECT
             a.id::text AS id,
             a.path AS path,
+            COALESCE(NULLIF(a.extra::jsonb->>'display_name', ''), a.path) AS display_name,
+            NULLIF(a.extra::jsonb->>'source_url', '') AS source_url,
             a.content_type AS content_type,
             a.created_at AS created_at,
             COUNT(pc.id) AS chunks_count,
@@ -1166,7 +1168,7 @@ async def list_kb_sources(
           AND a.kb_slug = $2
           AND a.belief_time_end = $3
           AND (a.extra IS NULL OR a.extra::jsonb->>'source_connector_id' IS NULL)
-        GROUP BY a.id, a.path, a.content_type, a.created_at, a.index_status
+        GROUP BY a.id, a.path, a.extra, a.content_type, a.created_at, a.index_status
         ORDER BY a.created_at DESC
         """,
         org_id,
@@ -1177,6 +1179,8 @@ async def list_kb_sources(
         {
             "id": row["id"],
             "path": row["path"],
+            "display_name": row["display_name"],
+            "source_url": row["source_url"],
             "content_type": row["content_type"],
             "created_at": int(row["created_at"]),
             "chunks_count": int(row["chunks_count"] or 0),
@@ -1326,6 +1330,45 @@ async def set_artifact_index_status(
     if row is None:
         return None
     return {"artifact_id": row["artifact_id"], "path": row["path"]}
+
+
+async def update_artifact_display_name(
+    conn: asyncpg.Connection,
+    artifact_id: str,
+    org_id: str,
+    kb_slug: str,
+    display_name: str,
+) -> dict | None:
+    """Set a direct-upload display name without changing the storage path.
+
+    ``path`` is the Qdrant/delete/reindex identity for direct uploads. Renaming
+    it in place would leave vector payloads and artifact rows disagreeing, so
+    the editable user-facing name lives in ``extra.display_name``.
+    """
+    row = await conn.fetchrow(
+        """
+        UPDATE knowledge.artifacts
+        SET extra = COALESCE(extra, '{}'::jsonb) || jsonb_build_object('display_name', $1::text)
+        WHERE id = $2::uuid
+          AND org_id = $3
+          AND kb_slug = $4
+          AND belief_time_end = $5
+          AND (extra IS NULL OR extra::jsonb->>'source_connector_id' IS NULL)
+        RETURNING id::text AS artifact_id, path, extra::jsonb->>'display_name' AS display_name
+        """,
+        display_name,
+        artifact_id,
+        org_id,
+        kb_slug,
+        _SENTINEL,
+    )
+    if row is None:
+        return None
+    return {
+        "artifact_id": row["artifact_id"],
+        "path": row["path"],
+        "display_name": row["display_name"],
+    }
 
 
 async def get_kb_upload_artifact(
