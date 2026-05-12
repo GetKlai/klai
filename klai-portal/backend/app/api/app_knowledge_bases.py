@@ -978,7 +978,7 @@ def _connector_type_label(connector_type: str) -> str:
         "notion": "Notion",
         "google_drive": "Google Drive",
         "ms_docs": "Microsoft Docs",
-        "web_crawler": "Website",
+        "web_crawler": "Website (pagina's)",
         "airtable": "Airtable",
         "confluence": "Confluence",
         "mcp_connector": "MCP",
@@ -994,7 +994,7 @@ def _upload_type_label(content_type: str) -> str:
     if ct in {"pdf", "application/pdf"}:
         return "PDF"
     if ct == "web_page":
-        return "Website"
+        return "Websitepagina"
     if ct in {"url", "html", "text/html"}:
         return "Link"
     if ct in {"text", "markdown", "txt", "text/plain", "text/markdown"}:

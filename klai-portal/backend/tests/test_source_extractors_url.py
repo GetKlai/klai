@@ -106,6 +106,28 @@ class TestHappyPath:
         body = _json.loads(str(sent["json"]))
         assert body["urls"] == ["https://example.com/page"]
 
+    async def test_single_page_uses_same_no_selector_sanitization_as_crawler(
+        self,
+        mock_httpx_factory,
+    ) -> None:
+        from app.services.source_extractors.url import extract_url
+
+        sent = mock_httpx_factory(_crawl_response("# Hello"))
+        await extract_url("https://example.com/page")
+
+        import json as _json
+
+        body = _json.loads(str(sent["json"]))
+        params = body["crawler_config"]["params"]
+
+        assert params["excluded_tags"] == ["nav", "footer", "header", "aside", "script", "style"]
+        assert "document.querySelectorAll(sel).forEach(el => el.remove())" in params["js_code_before_wait"]
+        assert "details:not([open])" in params["js_code"]
+        assert params["markdown_generator"]["params"]["content_filter"] == {
+            "type": "PruningContentFilter",
+            "params": {"threshold": 0.45, "threshold_type": "dynamic"},
+        }
+
 
 class TestTitleDerivation:
     async def test_h1_wins(self, mock_httpx_factory) -> None:
