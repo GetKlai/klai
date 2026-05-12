@@ -17,69 +17,19 @@ import { apiFetch } from '@/lib/apiFetch'
 import { MS_SITE_URL_PATTERN } from '@/lib/ms-docs'
 import { joinSeedUrl, ASSERTION_MODE_OPTIONS } from './$kbSlug/-kb-helpers'
 import type { CookieRow, GitHubConfig, WebCrawlerConfig } from './$kbSlug/-kb-types'
+import type {
+  AirtableConfig,
+  AuthGuardSuggestion,
+  AuthProbeResult,
+  ConfluenceConfig,
+  ConnectorType,
+  NotionAddConfig,
+  PreviewClassification,
+  PreviewResult,
+  WcStep,
+} from './-connector-types'
 import { CookieRowsInput } from '@/components/knowledge/CookieRowsInput'
 import { kbQueryKeys } from '@/lib/kb-query-keys'
-
-// -- Types -------------------------------------------------------------------
-
-type ConnectorType =
-  | 'github' | 'web_crawler' | 'google_drive' | 'notion' | 'ms_docs'
-  | 'airtable' | 'confluence'
-  | 'google_docs' | 'google_sheets' | 'google_slides'
-// SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-1: web_crawler wizard step order is
-// Details → AuthQuestion → AuthSetup (only if requires login) → Selector → Settings.
-// AuthSetup runs the REQ-2 auth-probe; Selector gates on the REQ-3 success
-// classification. Other connector types (github/notion/...) are unaffected.
-type WcStep = 'details' | 'auth-question' | 'auth-setup' | 'selector' | 'settings'
-
-type AuthProbeClassification =
-  | 'auth_ok'
-  | 'auth_failed_no_cookies'
-  | 'auth_failed_still_walled'
-  | 'auth_failed_credentials_invalid'
-  | 'auth_failed_unreachable'
-
-interface AuthProbeResult {
-  classification: AuthProbeClassification
-  match_reasons: string[]
-  word_count: number
-  auth_guard: AuthGuardSuggestion | null
-}
-
-type PreviewClassification =
-  | 'success'
-  | 'selector_required'
-  | 'selector_returns_empty'
-  | 'requires_javascript'
-  | 'auth_wall_detected'
-  | 'unknown'
-
-interface AuthGuardSuggestion {
-  canary_url: string | null
-  canary_fingerprint: string | null
-  login_indicator_selector: string | null
-  login_indicator_description: string | null
-}
-
-interface NotionConfig {
-  access_token: string
-  database_ids: string
-  max_pages: string
-}
-
-interface AirtableConfig {
-  api_key: string
-  base_id: string
-  table_names: string
-  view_name: string
-}
-
-interface ConfluenceConfig {
-  base_url: string
-  email: string
-  api_token: string
-  space_keys: string
-}
 
 const CONNECTOR_TYPES: {
   type: ConnectorType
@@ -139,7 +89,7 @@ function AddConnectorPage() {
   // wizard collects them directly in the shape the backend persists and the
   // cron-sync consumes — no string-to-array parsing layer.
   const [wcCookieRows, setWcCookieRows] = useState<CookieRow[]>([])
-  const [notionConfig, setNotionConfig] = useState<NotionConfig>({
+  const [notionConfig, setNotionConfig] = useState<NotionAddConfig>({
     access_token: '', database_ids: '', max_pages: '500',
   })
   const [notionStep, setNotionStep] = useState<'credentials' | 'settings'>('credentials')
@@ -160,14 +110,10 @@ function AddConnectorPage() {
   const [showAdvancedSelector, setShowAdvancedSelector] = useState(false)
   const [requiresLogin, setRequiresLogin] = useState<boolean | null>(null)
   const [wcPreviewUrl, setWcPreviewUrl] = useState('')
-  const [previewResult, setPreviewResult] = useState<{
-    fit_markdown: string; word_count: number; warnings: string[]
-    content_selector: string | null; selector_source: string | null
-    auth_guard: AuthGuardSuggestion | null
-    // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3
-    classification: PreviewClassification
-    classification_reason: string | null
-  } | null>(null)
+  // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3: classification + classification_reason
+  // surface the preview-pipeline judgement to the operator. Type lives in
+  // ./-connector-types so add and edit share one shape.
+  const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null)
   const [showAdvancedAuthGuard, setShowAdvancedAuthGuard] = useState(false)
   // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2: auth-probe state.
   const [authProbeResult, setAuthProbeResult] = useState<AuthProbeResult | null>(null)
