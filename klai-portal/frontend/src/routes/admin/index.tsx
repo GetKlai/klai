@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Users, FolderKanban, CreditCard, Settings, Key, MessageSquare } from 'lucide-react'
+import { Users, FolderKanban, CreditCard, Settings, Key, MessageSquare, ChevronRight } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 
 export const Route = createFileRoute('/admin/')({
@@ -7,6 +7,7 @@ export const Route = createFileRoute('/admin/')({
 })
 
 function AdminHome() {
+  // SPEC-PORTAL-UI-CONSISTENCY-001 REQ-4 / REQ-5: rows, not cards.
   const adminSections = [
     {
       title: m.admin_section_users_title(),
@@ -57,26 +58,25 @@ function AdminHome() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="divide-y divide-gray-200 border-t border-b border-gray-200">
         {adminSections.map((section) => (
           <a
             key={section.title}
             href={section.href}
-            className="group flex flex-col gap-3 rounded-xl border bg-[var(--color-card)] p-5 transition-shadow hover:shadow-md"
+            className="group flex items-center gap-3 px-2 py-3.5 hover:bg-gray-50 transition-colors"
           >
-            <section.icon
-              size={20}
-              strokeWidth={1.5}
-              className="text-gray-400"
-            />
-            <div>
-              <p className="text-sm font-medium text-gray-900 group-hover:text-[var(--color-rl-accent)] transition-colors">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-50 text-gray-400">
+              <section.icon className="h-4 w-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <span className="text-[15px] font-display text-gray-900 group-hover:underline">
                 {section.title}
-              </p>
-              <p className="mt-0.5 text-xs text-gray-400">
+              </span>
+              <p className="text-xs text-gray-400 mt-0.5">
                 {section.description}
               </p>
             </div>
+            <ChevronRight className="h-4 w-4 text-gray-300 shrink-0" />
           </a>
         ))}
       </div>
