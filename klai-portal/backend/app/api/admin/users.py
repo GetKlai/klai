@@ -72,6 +72,10 @@ class UserOut(BaseModel):
     first_name: str
     last_name: str
     role: Literal["personal", "company", "kb_manager", "group_manager", "admin"]
+    # SPEC-PORTAL-PRICING-PER-USER-001 Phase 2: per-user billing tier alongside
+    # the existing role (permissions axis). Surfaced so /admin/users can render
+    # the seat column without an extra round-trip.
+    seat_type: Literal["viewer", "chat", "knowledge"]
     preferred_language: Literal["nl", "en"]
     status: str
     created_at: datetime
@@ -88,6 +92,11 @@ class InviteRequest(BaseModel):
     last_name: str
     role: Literal["personal", "company", "kb_manager", "group_manager", "admin"] = "company"
     preferred_language: Literal["nl", "en"] = "nl"
+    # SPEC-PORTAL-PRICING-PER-USER-001 Phase 2: admin can override the
+    # smart-default seat-tier at invite-time. None means "use
+    # ``suggest_seat(role)``" — the personal/company -> chat,
+    # kb_manager+/admin -> knowledge mapping in ``app.core.seats``.
+    seat_type: Literal["viewer", "chat", "knowledge"] | None = None
 
 
 class InviteResponse(BaseModel):
@@ -103,6 +112,17 @@ class UserUpdateRequest(BaseModel):
 
 class RoleUpdateRequest(BaseModel):
     role: Literal["personal", "company", "kb_manager", "group_manager", "admin"]
+
+
+class SeatUpdateRequest(BaseModel):
+    """Body for ``PATCH /api/admin/users/{zitadel_user_id}/seat``.
+
+    SPEC-PORTAL-PRICING-PER-USER-001 Phase 2. Admin changes only the
+    billing tier; role stays put. Use ``PATCH .../role`` for the
+    other axis.
+    """
+
+    seat_type: Literal["viewer", "chat", "knowledge"]
 
 
 class MessageResponse(BaseModel):
@@ -146,6 +166,7 @@ async def list_users(
                 first_name=profile.get("firstName", ""),
                 last_name=profile.get("lastName", ""),
                 role=portal_user.role,
+                seat_type=portal_user.seat_type,  # Phase 2: surface billing axis
                 preferred_language=portal_user.preferred_language,
                 status=portal_user.status,
                 created_at=portal_user.created_at,
@@ -238,10 +259,17 @@ async def invite_user(
                 detail=f"Failed to assign project role: {exc}",
             ) from exc
 
+    # SPEC-PORTAL-PRICING-PER-USER-001 Phase 2: seat_type is admin-overridable
+    # at invite-time; falls back to the smart-default for the chosen role.
+    from app.core.seats import suggest_seat
+
+    seat_type_value = body.seat_type if body.seat_type is not None else str(suggest_seat(body.role))
+
     user_row = PortalUser(
         zitadel_user_id=zitadel_user_id,
         org_id=org.id,
         role=body.role,
+        seat_type=seat_type_value,
         preferred_language=body.preferred_language,
     )
     db.add(user_row)
@@ -377,6 +405,71 @@ async def update_user_role(
     fire_role_change_notification(zitadel_user_id)
 
     return MessageResponse(message="Rol bijgewerkt.")
+
+
+@router.patch("/users/{zitadel_user_id}/seat", response_model=MessageResponse)
+async def update_user_seat(
+    zitadel_user_id: str,
+    body: SeatUpdateRequest,
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """SPEC-PORTAL-PRICING-PER-USER-001 Phase 2 — change a user's billing tier.
+
+    Independent from ``PATCH .../role``: admin can move a user's seat
+    without touching their role. The Postgres trigger on portal_users
+    appends a ``seat_change`` row to ``portal_user_seat_history``; this
+    handler also emits a ``user.seat_changed`` audit-log event with the
+    cost-delta so customer-support questions ("why did our bill go up?")
+    can be answered from one query.
+
+    No-op (200) when the requested seat equals the current value.
+    """
+    from app.core.seats import SeatType, monthly_seat_cost
+
+    result = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == zitadel_user_id,
+            PortalUser.org_id == perms.org_id,
+        )
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    old_seat = user.seat_type
+    new_seat = body.seat_type
+    if old_seat == new_seat:
+        return MessageResponse(message="Seat ongewijzigd.")
+
+    user.seat_type = new_seat
+    await db.commit()
+    logger.info(
+        "Seat changed: user_id=%s, old=%s, new=%s, org_id=%d",
+        zitadel_user_id,
+        old_seat,
+        new_seat,
+        perms.org_id,
+    )
+
+    # Cost delta surfaces in the audit detail so a CSV export of the audit
+    # log doubles as a per-org billing-change trail. Positive delta = price
+    # went up, negative = price went down.
+    cost_delta = monthly_seat_cost(SeatType(new_seat)) - monthly_seat_cost(SeatType(old_seat))
+    await log_event(
+        org_id=perms.org_id,
+        actor=perms.user_id,
+        action="user.seat_changed",
+        resource_type="portal_user",
+        resource_id=zitadel_user_id,
+        details={
+            "old_seat": old_seat,
+            "new_seat": new_seat,
+            "cost_delta_eur": cost_delta,
+        },
+    )
+
+    return MessageResponse(message="Seat bijgewerkt.")
 
 
 @router.post("/users/{zitadel_user_id}/resend-invite", response_model=MessageResponse)

@@ -212,6 +212,17 @@ async def _resolve_caller_with_options(
 
     await set_tenant(db, perms.org_id)
 
+    # SPEC-PORTAL-PRICING-PER-USER-001 Phase 2: propagate the caller's
+    # zitadel_user_id into ``klai.changed_by_user_id``. The
+    # ``portal_users_seat_history_trg`` trigger reads this GUC and stores
+    # it into ``portal_user_seat_history.changed_by`` so the audit trail
+    # carries the WHO. Empty GUC -> trigger writes NULL ("no acting
+    # admin" — correct semantics for signup flows and internal callers).
+    await db.execute(
+        text("SELECT set_config('klai.changed_by_user_id', :uid, false)"),
+        {"uid": zitadel_user_id},
+    )
+
     # SPEC-INFRA-TENANT-DELETE-001 R6: enable platform-admin RLS on
     # tenant_lifecycle_events when caller is in the platform org. Same value
     # as `admin/__init__::_get_caller_org` — must remain '1' (text), not 'true'.

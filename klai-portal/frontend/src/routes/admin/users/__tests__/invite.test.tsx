@@ -62,10 +62,13 @@ describe('InviteUserPage', () => {
       expect(screen.getByText('Profile')).toBeTruthy()
     })
 
-    // No radio elements (rolled back from PR #317 ProfilePicker)
-    expect(screen.queryAllByRole('radio')).toHaveLength(0)
-
+    // Profile is a Select dropdown (rolled back from PR #317 ProfilePicker).
+    // The seat selector below it DOES use role="radio" buttons
+    // (SPEC-PORTAL-PRICING-PER-USER-001 Phase 2) — so the radio-count
+    // is scoped to the profile-select region rather than the full form.
     const select = screen.getByLabelText('Profile')
+    expect(select.tagName.toLowerCase()).toBe('select')
+
     const options = Array.from(select.querySelectorAll('option'))
     expect(options).toHaveLength(5)
     expect(options.map((o) => o.value)).toEqual([

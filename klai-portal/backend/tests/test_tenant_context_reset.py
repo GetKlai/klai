@@ -95,13 +95,16 @@ async def test_reset_clears_both_rls_gucs() -> None:
 
     await db_module._reset_tenant_context(session)
 
-    # rollback + 2 set_config calls
+    # rollback + 3 set_config calls (current_org_id + cross_org_admin
+    # + klai.changed_by_user_id from SPEC-PORTAL-PRICING-PER-USER-001
+    # Phase 2's actor-attribution propagation).
     assert session.rollback.await_count == 1
-    assert session.execute.await_count == 2
+    assert session.execute.await_count == 3
 
     rendered = [str(c.args[0]) for c in session.execute.await_args_list]
     assert any("app.current_org_id" in s for s in rendered), rendered
     assert any("app.cross_org_admin" in s for s in rendered), rendered
+    assert any("klai.changed_by_user_id" in s for s in rendered), rendered
 
 
 @pytest.mark.asyncio
@@ -120,7 +123,7 @@ async def test_reset_swallows_rollback_failure_and_still_tries_to_clear() -> Non
     await db_module._reset_tenant_context(session)
 
     # Still attempted both GUC resets.
-    assert session.execute.await_count == 2
+    assert session.execute.await_count == 3
 
 
 @pytest.mark.asyncio
@@ -144,7 +147,7 @@ async def test_reset_swallows_set_config_failure_on_first_guc() -> None:
     await db_module._reset_tenant_context(session)
 
     # Both set_config calls attempted despite the first one raising.
-    assert session.execute.await_count == 2
+    assert session.execute.await_count == 3
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +194,7 @@ async def test_pin_and_reset_clears_stale_tenant_at_checkout() -> None:
     assert session.connection.await_count == 1
     # Reset: rollback + two set_config calls (current_org_id + cross_org_admin).
     assert session.rollback.await_count == 1
-    assert session.execute.await_count == 2
+    assert session.execute.await_count == 3
     rendered = [str(c.args[0]) for c in session.execute.await_args_list]
     assert any("app.current_org_id" in s for s in rendered), rendered
     assert any("app.cross_org_admin" in s for s in rendered), rendered
@@ -225,8 +228,10 @@ async def test_pin_runs_connection_before_reset() -> None:
     await db_module._pin_and_reset_connection(session)
 
     assert calls[0] == "connection", f"connection() must run first, got {calls}"
-    # Then the reset sequence (rollback, execute, execute).
-    assert calls[1:] == ["rollback", "execute", "execute"], calls
+    # Then the reset sequence: rollback + 3 set_config calls
+    # (current_org_id + cross_org_admin + klai.changed_by_user_id from
+    # SPEC-PORTAL-PRICING-PER-USER-001 Phase 2).
+    assert calls[1:] == ["rollback", "execute", "execute", "execute"], calls
 
 
 @pytest.mark.asyncio
@@ -260,7 +265,7 @@ async def test_get_db_clears_stale_guc_before_yielding(monkeypatch: pytest.Monke
         # handler's first query (which typically lands before set_tenant)
         # can still hit a stale RLS context.
         assert session.rollback.await_count == 1
-        assert session.execute.await_count == 2
+        assert session.execute.await_count == 3
         break
 
     assert yielded_sessions == [fake_session]
@@ -283,7 +288,7 @@ async def test_pin_session_also_clears_stale_guc() -> None:
     # Same contract as _pin_and_reset_connection.
     assert session.connection.await_count == 1
     assert session.rollback.await_count == 1
-    assert session.execute.await_count == 2
+    assert session.execute.await_count == 3
 
 
 # ---------------------------------------------------------------------------
