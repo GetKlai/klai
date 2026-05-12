@@ -317,6 +317,21 @@ class TestPostDeployRls:
         assert "BEGIN;" in post_deploy_src
         assert "COMMIT;" in post_deploy_src
 
+    def test_portal_api_receives_explicit_schema_and_function_grants(self, post_deploy_src: str) -> None:
+        """portal_api must be able to USAGE the ``billing`` schema AND
+        EXECUTE the helper. Postgres' default ACL grants both to PUBLIC,
+        but a future cluster-wide hardening pass that does
+        ``REVOKE EXECUTE ON ALL FUNCTIONS ... FROM PUBLIC`` would silently
+        break the RLS USING clause (returns NULL -> zero rows visible).
+        Explicit grants make portal_api's read path immune to that drift.
+        """
+        assert "GRANT USAGE ON SCHEMA billing TO portal_api" in post_deploy_src, (
+            "missing GRANT USAGE for portal_api on billing schema"
+        )
+        assert "GRANT EXECUTE ON FUNCTION billing._rls_current_org_id() TO portal_api" in post_deploy_src, (
+            "missing GRANT EXECUTE for portal_api on billing._rls_current_org_id()"
+        )
+
 
 # ---------------------------------------------------------------------------
 # RLS guard allow-list updated

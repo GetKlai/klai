@@ -47,6 +47,31 @@ depends_on = None
 # one open row per user", so the WHERE clause matches at most one row)
 # and inserts a new open row with the appropriate change_reason. Only
 # audited columns trigger the append (IS DISTINCT FROM handles NULL).
+#
+# changed_by attribution (Phase 1 limitation):
+#   ``changed_by VARCHAR(64)`` is on the table but the trigger writes
+#   NULL for now. The actor identity lives in Python (the FastAPI
+#   handler's ``perms.user_id``) and is NOT propagated to the
+#   transaction-local GUC the trigger could read. Phase 2 (admin seat-
+#   selector + cost-delta modal) is the natural place to land the
+#   propagation pattern:
+#     - portal-api session middleware runs
+#         SET LOCAL klai.changed_by_user_id = '<zitadel_user_id>';
+#       on every authenticated request.
+#     - The trigger reads it via
+#         current_setting('klai.changed_by_user_id', true)
+#       and stores into ``changed_by`` (NULL when unset, e.g. signup).
+#   Until then, the history row is the WHAT (seat/role/status snapshot)
+#   without the WHO. Audit-of-WHO can be reconstructed by joining
+#   ``portal_user_seat_history.valid_from`` against ``portal_audit_log``
+#   on the same timestamp window — the audit-log entries already carry
+#   the acting admin's user_id.
+#
+# DELETE path is NOT covered. portal_users rows are soft-deleted via
+# ``status = 'offboarded'`` (admin/users.py:542) — the trigger captures
+# that transition. Hard DELETE only happens via the FK CASCADE when an
+# org is deprovisioned, and at that point we deliberately want the
+# history rows to disappear too (the org's tenant scope is gone).
 _TRIGGER_FUNCTION_BODY = """
 CREATE OR REPLACE FUNCTION portal_users_seat_history_trg() RETURNS TRIGGER AS $$
 BEGIN
