@@ -21,8 +21,21 @@ arrived and runs in the same transaction. The partial-unique index
 ``idx_pu_seat_hist_one_open_per_user`` serializes concurrent writes.
 
 Revision ID: f66c546c12eb
-Revises: e0ad7c2b1e80
+Revises: c0d5e2a7b9f3
 Create Date: 2026-05-12
+
+Rebased on 2026-05-12 to chain off ``c0d5e2a7b9f3`` (tenant-lifecycle
+platform-features CHECK constraint fix) instead of ``e0ad7c2b1e80``
+(extensions-unify). The original parent was the production head when
+this PR opened; ``c0d5e2a7b9f3`` landed on main while this PR was in
+review and created a temporary alembic head-split (per the
+``alembic-multi-pr-head-split`` pitfall). Resolution chosen: rebase the
+second-merging migration onto the first head — preferred when the
+migration files are still recent and the parent change is small.
+Schema-side: the two migrations touch different tables (this one adds
+``portal_users.seat_type``; that one is a no-op stamp + post-deploy SQL
+on ``tenant_lifecycle_events``), so the linearisation has no
+content-level conflict.
 """
 
 from __future__ import annotations
@@ -31,7 +44,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "f66c546c12eb"
-down_revision = "e0ad7c2b1e80"
+down_revision = "c0d5e2a7b9f3"
 branch_labels = None
 depends_on = None
 
