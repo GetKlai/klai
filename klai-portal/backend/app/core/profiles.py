@@ -66,57 +66,22 @@ PROFILE_LADDER: list[str] = [
 PROFILE_RANK: dict[str, int] = {role: idx for idx, role in enumerate(PROFILE_LADDER)}
 
 
-# SPEC-PORTAL-PLAN-RENAME-001: plan-tier ceiling on which role-strings are
-# assignable to portal users on a given plan. Admin endpoints
-# (``invite_user``, ``update_user_role``, ``promote_admin``) MUST validate
-# the requested role against this map and reject with HTTP 403
-# ``role_not_allowed_for_plan`` when out-of-range.
+# SPEC-PORTAL-PRICING-PER-USER-001 Phase 6 (2026-05-12) — removed:
+#   * ``ALLOWED_PROFILES_PER_PLAN``: the plan -> role allow-set map.
+#     Phase 3 made ``assert_role_allowed_for_plan`` a deprecated no-op;
+#     Phase 6 deletes the constant + function entirely. Role assignment
+#     is decoupled from plan; the permission axis is ``role``, the
+#     billing axis is ``portal_users.seat_type``.
+#   * ``assert_role_allowed_for_plan(role, plan)``: deprecated function
+#     deleted in this phase. Last cycle still allowed importing it as a
+#     no-op; Phase 6 removes that escape hatch. Any caller now fails at
+#     import time, which is the intended forcing function for the final
+#     sweep.
 #
-# Tiers:
-#   "free"      -- internal sentinel; pre-billing / trial. Single-user only.
-#   "chat"      -- "Klai Chat" (€28). Multi-user, no KB-management roles
-#                  (kb_manager / group_manager require capabilities this plan
-#                  does not unlock — kb.create_org, kb.members).
-#   "knowledge" -- "Klai Chat + Knowledge" (€68). Full role ladder unlocked.
-#
-# Why a separate map (instead of deriving from ``PLAN_LIMITS``): plan-limits
-# express runtime capabilities of an existing assignment; this map expresses
-# the assignment policy. They share the same plan keys but answer different
-# questions, so keeping them separate avoids accidentally widening the role
-# ladder when a capability is added to a plan.
-ALLOWED_PROFILES_PER_PLAN: dict[str, frozenset[str]] = {
-    "free": frozenset({"personal", "admin"}),
-    "chat": frozenset({"personal", "company", "admin"}),
-    "knowledge": frozenset({"personal", "company", "kb_manager", "group_manager", "admin"}),
-}
-
-
-def assert_role_allowed_for_plan(role: str, plan: str) -> None:
-    """**Deprecated**: returns immediately. SPEC-PORTAL-PRICING-PER-USER-001
-    Phase 3 (2026-05-12) decoupled role-assignment from plan ceilings —
-    role is now the permission axis only, and ``seat_type`` is the
-    billing axis. Plans no longer restrict which roles are assignable.
-
-    The function is kept as a no-op for one release cycle so external
-    callers don't break at import time. Any remaining caller emits a
-    DeprecationWarning so it surfaces in CI logs and gets removed at
-    the next sweep. Phase 6 will delete the function entirely.
-
-    SPEC-PORTAL-RBAC-REFACTOR-001 REQ-12 / REQ-13 supersession.
-    """
-    import warnings
-
-    warnings.warn(
-        "assert_role_allowed_for_plan is deprecated — "
-        "SPEC-PORTAL-PRICING-PER-USER-001 Phase 3 decouples role "
-        "from plan ceiling. Remove the call; admin can assign any "
-        "role independent of plan.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    # Intentional no-op: do NOT raise. The legacy behaviour is gone.
-    _ = (role, plan)
-    return None
+# Tests that pinned the old plan->role allow-set (``TestAllowedProfilesPerPlan``
+# in ``tests/test_rbac_phase3_enforcement.py``) are removed in the same
+# PR. The constant is dead in this codebase and SOPS env / dashboards
+# never referenced it.
 
 
 # Capability strings for SPEC v0.2.0: only capabilities that are actually checked

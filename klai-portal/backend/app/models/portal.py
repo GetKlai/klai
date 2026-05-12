@@ -44,9 +44,29 @@ class PortalOrg(Base):
     moneybird_contact_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     moneybird_subscription_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     billing_status: Mapped[str] = mapped_column(Text, nullable=False, default="pending", server_default="pending")
+    # @MX:DEPRECATED — SPEC-PORTAL-PRICING-PER-USER-001 Phase 6 (2026-05-12).
+    # ``plan`` is no longer the capability-intersection axis (Phase 4 moved
+    # that to ``portal_users.seat_type``) and no longer gates role assignment
+    # (Phase 3 removed ``assert_role_allowed_for_plan``). The column stays
+    # for the legacy Moneybird billing path (``app/api/billing.py`` +
+    # webhooks.py) until Phase 5b ships the real per-seat-type Moneybird
+    # migration. Phase 6 dropped the ``portal_orgs_plan_check`` constraint
+    # so the column is now free-form.
     plan: Mapped[str] = mapped_column(Text, nullable=False, default="chat", server_default="chat")
     billing_cycle: Mapped[str] = mapped_column(Text, nullable=False, default="monthly", server_default="monthly")
+    # @MX:DEPRECATED — SPEC-PORTAL-PRICING-PER-USER-001 Phase 6 (2026-05-12).
+    # The hard ``portal_orgs.seats`` cap on invite was removed in Phase 3.
+    # Phase 5b's follow-up SPEC drops this column after the real per-seat-
+    # type Moneybird migration ships. Until then ``seats`` is still read by
+    # the legacy billing path.
     seats: Mapped[int] = mapped_column(nullable=False, default=1, server_default="1")
+    # SPEC-PORTAL-PRICING-PER-USER-001 Phase 5 (light, 2026-05-12) — per-
+    # tenant opt-in for the future Moneybird per-seat-type billing path.
+    # Default ``false`` for every existing tenant. A tenant admin flips
+    # this via the ``/admin/billing`` "switch to per-user billing" CTA
+    # (Phase 5b lands the actual mutation; Phase 5 light ships the flag
+    # column + a 501 stub on the switch endpoint).
+    billing_per_seat_enabled: Mapped[bool] = mapped_column(nullable=False, default=False, server_default="false")
     # Slug uniqueness is enforced by the partial unique index `ix_portal_orgs_slug_active`
     # (WHERE deleted_at IS NULL), defined in alembic/versions/p1r2o3v4s5b1.
     slug: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
