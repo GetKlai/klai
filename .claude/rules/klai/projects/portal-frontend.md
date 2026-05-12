@@ -308,6 +308,72 @@ Never use a modal for table row actions.
 
 ---
 
+## File organization for shared types and helpers
+
+When two or more route files share types, constants, or non-route helpers,
+the location is decided by **smallest-shared scope**, not by convenience.
+
+### Decision tree
+
+1. **Used by one route file only?** → declare inline, or in a colocated
+   `_components/` directory if it's a sub-component split.
+2. **Used by 2+ route files within one directory?** → extract to a
+   `-`-prefixed sibling file in that directory:
+   `-<feature>-{types,helpers,hooks,query-keys,feedback}.{ts,tsx}`.
+3. **Used by 2+ route files across sibling directories under one common
+   parent?** → extract to a `-`-prefixed file in **that common parent**,
+   not in either subdirectory.
+4. **Used by 3+ unrelated areas (admin, app, setup, login)?** → it's
+   app-wide infrastructure; goes in `@/lib/`. Examples already there:
+   `apiFetch`, `auth`, `logger`, `locale`. Feature-specific types do
+   NOT belong in `@/lib/`.
+
+### Naming
+
+- File: `-<feature>-{types,helpers,hooks,query-keys,feedback}.{ts,tsx}`.
+  Pure type files use `.ts`. Files with JSX (components, render helpers)
+  use `.tsx`.
+- Directory: `_components/` for a directory of sub-components owned by
+  one route. TanStack Router ignores both `-` prefix files and `_`
+  prefix directories.
+- Feature segment is kebab-case and matches the feature folder it sits
+  in (e.g. `-bronnen-types.ts` next to `bronnen.tsx`).
+
+### Anti-patterns
+
+- **Cross-route imports.** `import { X } from './sibling-route'` where
+  `sibling-route.tsx` is a route file is always a smell. Extract `X` to
+  a `-`-prefixed sibling file at the smallest-shared scope. Tests
+  importing from a route file have the same smell.
+
+- **Cross-directory `-` imports.** `import from './sub/-foo'` from a
+  file that lives one level above `sub/` means the helper is in the
+  wrong directory. The helper should live at the parent level (one
+  directory up). Existing instances are tactical legacy; new code
+  must follow rule 3 above.
+
+- **Feature types in `@/lib/`.** `@/lib/` is for app-wide infrastructure
+  (API client, auth, logger). Feature-specific types pollute the
+  namespace and lose the smallest-shared-scope signal. The exception is
+  a small (< 30 lines) tactical helper used by exactly one feature
+  (e.g. `lib/ms-docs.ts`); even then, prefer a `-`-prefixed sibling.
+
+- **Duplicate definitions across files.** If `interface FooConfig`
+  appears in more than one file with the same body, that's a bug
+  waiting to happen. Extract per the decision tree, even if the
+  current usage is "just two files".
+
+### Why this matters
+
+Feature-local ad-hoc choices have produced five different shared-helper
+locations in this codebase (`-kb-helpers.tsx`, `-kb-types.ts`,
+`-bronnen-helpers.tsx`, `admin/api-keys/-types.ts`, `admin/widgets/-types.ts`).
+Each was a reasonable choice in isolation; together they make "where
+does this type belong" an open question every time. The decision tree
+above is the answer — apply it before adding a new shared file.
+
+---
+
 ## Multi-step wizard password fields (MED)
 
 Any wizard step containing a `type="password"` or secret input must be wrapped in a
