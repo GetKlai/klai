@@ -50,12 +50,18 @@ export const Route = createFileRoute('/admin/users/')({
 
 type UserStatus = 'active' | 'suspended' | 'offboarded'
 
+type SeatType = 'viewer' | 'chat' | 'knowledge'
+
 interface User {
   zitadel_user_id: string
   email: string
   first_name: string
   last_name: string
   role: ProfileRole
+  // SPEC-PORTAL-PRICING-PER-USER-001 Phase 2: per-user billing tier,
+  // orthogonal to role. Surfaced as its own column on /admin/users so
+  // admins see who's on which seat without drilling into the user page.
+  seat_type: SeatType
   status: UserStatus
   preferred_language: 'nl' | 'en'
   created_at: string
@@ -82,6 +88,20 @@ function ProfileBadge({ role, pending }: { role: ProfileRole; pending?: boolean 
     return <Badge variant="warning">{profileLabel(role)}</Badge>
   }
   return <Badge variant={variant}>{profileLabel(role)}</Badge>
+}
+
+// SPEC-PORTAL-PRICING-PER-USER-001 Phase 2: render seat tier alongside
+// role. Same shape as ProfileBadge so the table layout stays uniform.
+function seatLabel(seat: SeatType): string {
+  const msgs = m as unknown as Record<string, (() => string) | undefined>
+  const labelFn = msgs[`admin_users_seat_${seat}_label`]
+  return labelFn ? labelFn() : seat
+}
+
+function SeatBadge({ seat }: { seat: SeatType }) {
+  const variant: 'secondary' | 'accent' | 'warning' =
+    seat === 'knowledge' ? 'accent' : seat === 'chat' ? 'secondary' : 'warning'
+  return <Badge variant={variant}>{seatLabel(seat)}</Badge>
 }
 
 function StatusBadge({ status }: { status: UserStatus }) {
@@ -203,6 +223,13 @@ function UsersPage() {
       cell: (info) => (
         <ProfileBadge role={info.getValue()} pending={info.row.original.invite_pending} />
       ),
+    }),
+    // SPEC-PORTAL-PRICING-PER-USER-001 Phase 2: seat column. Display-only
+    // here — seat-change UI lives at the user-detail page (PATCH
+    // /api/admin/users/{id}/seat handles the mutation).
+    columnHelper.accessor('seat_type', {
+      header: () => m.admin_users_col_seat(),
+      cell: (info) => <SeatBadge seat={info.getValue()} />,
     }),
     columnHelper.accessor('status', {
       header: () => m.admin_users_col_status(),
