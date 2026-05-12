@@ -38,6 +38,7 @@ _LIBRECHAT_REQUIRED_ENV_FLAGS = {
 
 _LIBRECHAT_PATCH_MOUNTS = {
     "patches/format.cjs": "/app/node_modules/@librechat/agents/dist/cjs/messages/format.cjs",
+    "patches/share.js": "/app/api/server/routes/share.js",
     "patches/stream.cjs": "/app/node_modules/@librechat/agents/dist/cjs/stream.cjs",
     "patches/search.cjs": "/app/node_modules/@librechat/agents/dist/cjs/tools/search/search.cjs",
 }
