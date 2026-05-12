@@ -21,7 +21,7 @@ import { CookieRowsInput } from '@/components/knowledge/CookieRowsInput'
 import {
   AuthProbeFeedback,
   PreviewClassificationFeedback,
-} from './$kbSlug_.add-connector'
+} from './-connector-feedback'
 import { kbQueryKeys } from '@/lib/kb-query-keys'
 import type {
   AirtableConfig,
