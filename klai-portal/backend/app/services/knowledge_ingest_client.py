@@ -644,7 +644,13 @@ async def get_chunks_summary(org_id: str, kb_slugs: list[str]) -> tuple[dict[str
             resp.raise_for_status()
             data: dict = resp.json()
             chunks = {str(k): int(v) for k, v in (data.get("chunks_by_kb") or {}).items()}
-            sources = {str(k): int(v) for k, v in (data.get("sources_by_kb") or {}).items()}
+            # SPEC-PORTAL-SOURCES-RENAME-001 dual-key window: prefer the new
+            # `sources_by_kb` key; fall back to the legacy `bronnen_by_kb`
+            # so this client keeps rendering counts during a rolling deploy
+            # where the ingest container has not yet been bumped. Remove the
+            # fallback after every ingest container in fleet ships the new key.
+            sources_raw = data.get("sources_by_kb") or data.get("bronnen_by_kb") or {}
+            sources = {str(k): int(v) for k, v in sources_raw.items()}
             return chunks, sources
     except Exception:
         logger.warning(
