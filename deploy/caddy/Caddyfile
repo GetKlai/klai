@@ -279,8 +279,16 @@
     # portal-api verifies session.org_id == path[org_id] before streaming from S3.
     # Operator step: disable Garage website-mode ->
     #   ssh core-01 "docker exec klai-core-garage-1 garage bucket website --deny klai-images"
-    handle_path /kb-images/* {
-        reverse_proxy portal-api:8000 {
+    #
+    # SPEC-TI-009 follow-up (kb-images was silently 502 since 2026-04-22 because
+    # this block had two stacked bugs that no browser-leg traffic ever surfaced):
+    #   1. handle_path strips the /kb-images/ prefix before forwarding upstream,
+    #      so FastAPI never matched its declared route @router.get("/kb-images/...").
+    #      Use `handle` instead — keeps the path intact.
+    #   2. portal-api listens only on :8010 in production (uvicorn entrypoint
+    #      runs `--port 8010`). Routing to :8000 produced "Connection refused".
+    handle /kb-images/* {
+        reverse_proxy portal-api:8010 {
             header_up -X-Internal-Secret
             header_up -X-Caller-Service
             header_up -X-Org-ID

@@ -33,6 +33,7 @@ from klai_image_storage import ImageStore
 from klai_image_storage.storage import MAX_IMAGE_SIZE
 from minio import Minio
 from minio.error import S3Error
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.app_knowledge_bases import _get_kb_or_404
@@ -43,6 +44,7 @@ from app.core.database import get_db
 from app.core.permissions import UserPermissions, get_caller_at_least
 from app.core.profiles import ProfileRole
 from app.core.session import SessionContext
+from app.models.portal import PortalOrg
 
 logger = structlog.get_logger()
 
@@ -164,44 +166,78 @@ async def _resolve_caller_org_id(
             logger.debug("kb_image_db_aclose_error", exc_info=True)
 
 
+async def _resolve_zitadel_org_id(org_id: int, db: AsyncSession) -> str:
+    """Look up the zitadel_org_id for a given portal_orgs.id.
+
+    The kb-images S3 key prefix uses zitadel_org_id (string) because that's
+    the canonical tenant id in the knowledge domain (knowledge.artifacts.org_id
+    is text, _rls_current_org_id() returns text). Auth-flow gives us
+    portal_orgs.id (numeric) from the session — we resolve via portal_orgs
+    once per request.
+
+    Raises HTTPException(404) if the org is gone (e.g. mid-deprovision).
+    """
+    result = await db.execute(select(PortalOrg.zitadel_org_id).where(PortalOrg.id == org_id))
+    zitadel = result.scalar_one_or_none()
+    if zitadel is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Organisation not found",
+        )
+    return zitadel
+
+
 # @MX:ANCHOR: KB-image auth-proxy endpoint -- AC-1 through AC-5 of SPEC-TI-009
 # @MX:REASON: Single enforcement point for cross-tenant image access control.
-#   Every image fetch from the browser goes through this handler after the
-#   Caddy backend is switched from garage:3902 to portal-api:8000.
+#   Every image fetch from the browser goes through this handler.
 #   Changing the org_id check or the S3 key format breaks tenant isolation.
+#   The path org_id is a zitadel_org_id (string) to match the convention used
+#   by klai-connector + klai-knowledge-ingest (which both use zitadel_org_id
+#   as the canonical tenant id in the knowledge domain — see knowledge.artifacts.org_id
+#   text column and the _rls_current_org_id() text helper).
 # @MX:SPEC: SPEC-TI-009, finding B-4
 @router.get("/kb-images/{org_id}/{kb_slug}/{filename}")
 async def get_kb_image(
-    org_id: int,
+    org_id: str,
     kb_slug: str,
     filename: str,
     request: Request,
     session: SessionContext | None = Depends(get_optional_session),
+    db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     """Auth-proxied KB-image read (SPEC-TI-009 AC-1).
 
-    Authorization: session.org_id or partner key org_id must equal path org_id.
-    Streams from Garage S3 API (private, authenticated).
-    Cache-Control: private, max-age=86400.
+    Authorization: caller's zitadel_org_id (looked up from session.org_id or
+    partner key) MUST equal the path's org_id. Streams from Garage S3 API
+    (private, authenticated). Cache-Control: private, max-age=86400.
+
+    The path uses zitadel_org_id (an 18-digit string) because that's the
+    canonical tenant id in the knowledge domain — the connector + crawler
+    pipelines both write S3 keys under {zitadel_org_id}/... and Caddy
+    serves browser fetches with the same prefix.
     """
-    # Step 1: Resolve caller identity
+    # Step 1: Resolve caller identity → portal_orgs.id (int)
     caller_org_id = await _resolve_caller_org_id(request, session)
 
-    # Step 2: Authorize -- caller org MUST match path org_id (AC-5)
-    if caller_org_id != org_id:
+    # Step 2: Look up the caller's zitadel_org_id (S3 keys use the zitadel id)
+    caller_zitadel_org_id = await _resolve_zitadel_org_id(caller_org_id, db)
+
+    # Step 3: Authorize — caller's zitadel org MUST match path org_id (AC-5)
+    if caller_zitadel_org_id != org_id:
         logger.warning(
             "kb_image_cross_tenant_blocked",
             caller_org_id=caller_org_id,
+            caller_zitadel_org_id=caller_zitadel_org_id,
             path_org_id=org_id,
             kb_slug=kb_slug,
             filename=filename,
         )
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    # Step 3: Build Garage S3 object key (format from SPEC-KB-IMAGE-002)
+    # Step 4: Build Garage S3 object key (format from SPEC-KB-IMAGE-002)
     object_key = f"{org_id}/images/{kb_slug}/{filename}"
 
-    # Step 4: Guard against unconfigured Garage endpoint (dev / test env)
+    # Step 5: Guard against unconfigured Garage endpoint (dev / test env)
     if not settings.garage_s3_endpoint:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -214,7 +250,7 @@ async def get_kb_image(
 
     structlog.contextvars.bind_contextvars(org_id=org_id, kb_slug=kb_slug)
 
-    # Step 5: Return StreamingResponse with cache headers (AC-1)
+    # Step 6: Return StreamingResponse with cache headers (AC-1)
     return StreamingResponse(
         _stream_object(client, settings.garage_kb_bucket, object_key),
         media_type=content_type,
@@ -339,18 +375,26 @@ async def upload_kb_image(
             detail="Unsupported image type",
         )
 
-    # Step 5: Upload via the shared lib (content-addressed dedup).
+    # Step 5: Resolve caller's zitadel_org_id — the S3 key prefix convention
+    # used by klai-connector + klai-knowledge-ingest, matched by the read-route
+    # above. Using portal_orgs.id here would create a dual prefix conventie
+    # (zitadel for connector-images, portal-int for user uploads) and break
+    # the read-route's auth check uniformity.
+    zitadel_org_id = await _resolve_zitadel_org_id(perms.org_id, db)
+
+    # Step 6: Upload via the shared lib (content-addressed dedup).
     store = ImageStore(
         endpoint=settings.garage_s3_endpoint,
         access_key=settings.garage_s3_access_key,
         secret_key=settings.garage_s3_secret_key,
         bucket=settings.garage_kb_bucket,
     )
-    result = await store.upload_image(str(perms.org_id), kb_slug, data, ext)
+    result = await store.upload_image(zitadel_org_id, kb_slug, data, ext)
 
     logger.info(
         "kb_image_uploaded",
         org_id=perms.org_id,
+        zitadel_org_id=zitadel_org_id,
         kb_slug=kb_slug,
         kb_id=kb.id,
         size=len(data),

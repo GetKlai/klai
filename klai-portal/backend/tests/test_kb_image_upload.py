@@ -69,6 +69,14 @@ def _make_image_store_mock(deduplicated: bool = False) -> MagicMock:
     return constructor
 
 
+# Zitadel org_id used as the S3 key prefix. See SPEC-TI-009 follow-up:
+# kb-images uses zitadel_org_id (string) as the prefix because that matches
+# what klai-connector and klai-knowledge-ingest write. The route resolves
+# session.org_id (portal int) -> zitadel via _resolve_zitadel_org_id, which
+# we mock to return this value.
+ZITADEL_ORG_ID = "368884765035593759"
+
+
 # Minimal valid PNG bytes (1x1 transparent pixel).
 _PNG_1X1 = bytes.fromhex(
     "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4"
@@ -130,6 +138,7 @@ async def test_upload_png_returns_url_and_not_deduplicated() -> None:
         patch("app.api.kb_images._get_kb_or_404", AsyncMock(return_value=_make_kb())),
         patch("app.api.kb_images.settings", _mock_settings_with_garage()),
         patch("app.api.kb_images.ImageStore", store_cls),
+        patch("app.api.kb_images._resolve_zitadel_org_id", AsyncMock(return_value=ZITADEL_ORG_ID)),
     ):
         result = await upload_kb_image(
             request=_make_request(),
@@ -140,7 +149,7 @@ async def test_upload_png_returns_url_and_not_deduplicated() -> None:
         )
 
     assert result["deduplicated"] is False
-    assert result["url"].startswith("/kb-images/42/images/klai-help/")
+    assert result["url"].startswith(f"/kb-images/{ZITADEL_ORG_ID}/images/klai-help/")
     assert result["url"].endswith(".png")
     # ImageStore was instantiated once with the configured Garage settings.
     store_cls.assert_called_once()
@@ -158,6 +167,7 @@ async def test_upload_same_bytes_twice_deduplicates() -> None:
         patch("app.api.kb_images._get_kb_or_404", AsyncMock(return_value=_make_kb())),
         patch("app.api.kb_images.settings", _mock_settings_with_garage()),
         patch("app.api.kb_images.ImageStore", store_cls),
+        patch("app.api.kb_images._resolve_zitadel_org_id", AsyncMock(return_value=ZITADEL_ORG_ID)),
     ):
         result = await upload_kb_image(
             request=_make_request(),
