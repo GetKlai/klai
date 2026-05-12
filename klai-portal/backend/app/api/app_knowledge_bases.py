@@ -1001,7 +1001,13 @@ def _upload_type_label(content_type: str) -> str:
         return "Tekst"
     if ct.startswith("image"):
         return "Afbeelding"
-    return content_type.split("/")[-1].upper() if "/" in content_type else content_type.title()
+    # Fallback for unrecognised types: split MIME by "/" and uppercase the
+    # subtype ("text/plain" → "PLAIN"), or for non-MIME slugs replace
+    # underscores with spaces before title-casing ("plain_text" → "Plain Text").
+    # Previously str.title() left underscores intact and rendered "Plain_Text".
+    if "/" in content_type:
+        return content_type.split("/")[-1].upper()
+    return content_type.replace("_", " ").title()
 
 
 @router.get(
