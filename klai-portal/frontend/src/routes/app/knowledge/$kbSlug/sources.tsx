@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button'
 import { apiFetch } from '@/lib/apiFetch'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { DOCS_BASE, getOrgSlug } from '@/lib/kb-editor/tree-utils'
+import * as m from '@/paraglide/messages'
 import { editablePageIdForSource, mapSourceStatus } from './-sources-helpers'
 import { SourcesActionBar } from './-sources-actionbar'
 import { SourceRow } from './-sources-row'
@@ -111,19 +112,19 @@ function SourcesTab() {
         </div>
       ) : isError ? (
         <div className="border-t border-b border-gray-200 py-10 text-center text-sm text-[var(--color-destructive)]">
-          Kon bronnen niet laden.
+          {m.kb_sources_list_error()}
         </div>
       ) : sources.length === 0 ? (
         <div className="rounded-lg border border-dashed border-gray-200 py-12 text-center">
           <Zap className="h-8 w-8 text-gray-300 mx-auto mb-3" />
-          <p className="text-sm font-medium text-gray-900">Nog geen bronnen</p>
+          <p className="text-sm font-medium text-gray-900">{m.kb_sources_empty_title()}</p>
           <p className="text-xs text-gray-400 mt-1 max-w-sm mx-auto">
-            Voeg bestanden, links of koppelingen toe om kennis aan deze collectie toe te voegen.
+            {m.kb_sources_empty_subtitle()}
           </p>
           <Link to="/app/knowledge/$kbSlug/add-source" params={{ kbSlug }} className="inline-block mt-4">
             <Button variant="default">
               <Plus className="h-4 w-4" />
-              Eerste bron toevoegen
+              {m.kb_sources_empty_cta()}
             </Button>
           </Link>
         </div>

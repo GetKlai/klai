@@ -11,6 +11,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { File, Loader2 } from 'lucide-react'
 import { apiFetch } from '@/lib/apiFetch'
+import * as m from '@/paraglide/messages'
 import { kbQueryKeys } from './-kb-query-keys'
 import type { ContentResponse, Source } from './-sources-types'
 
@@ -35,7 +36,7 @@ function ConnectorContent({ data }: { data: ContentResponse }) {
   if (items.length === 0) {
     return (
       <div className="pl-[44px] pr-2 pb-3 text-xs text-gray-400">
-        Nog geen items in deze bron.
+        {m.kb_sources_content_empty_connector()}
       </div>
     )
   }
@@ -45,12 +46,14 @@ function ConnectorContent({ data }: { data: ContentResponse }) {
         <div key={item.id} className="flex items-center gap-2 text-xs py-1.5">
           <File className="h-3.5 w-3.5 text-gray-400 shrink-0" />
           <span className="text-gray-700 flex-1 truncate">{item.path}</span>
-          <span className="text-gray-400 shrink-0">{item.chunks_count} chunks</span>
+          <span className="text-gray-400 shrink-0">
+            {m.kb_sources_content_item_chunks({ count: String(item.chunks_count) })}
+          </span>
         </div>
       ))}
       {data.total > items.length && (
         <p className="text-xs text-gray-400 pt-1">
-          En nog {data.total - items.length} meer...
+          {m.kb_sources_content_overflow_items({ count: String(data.total - items.length) })}
         </p>
       )}
     </div>
@@ -65,7 +68,7 @@ function UploadContent({ source, data }: { source: Source; data: ContentResponse
         <div className="pl-[44px] pr-2 pb-3 flex items-center gap-2 text-xs">
           <File className="h-3.5 w-3.5 text-gray-400 shrink-0" />
           <span className="text-gray-700 truncate">{source.source_url}</span>
-          <span className="text-gray-400 shrink-0">URL</span>
+          <span className="text-gray-400 shrink-0">{m.kb_sources_content_url_badge()}</span>
         </div>
       )
     }
@@ -77,7 +80,7 @@ function UploadContent({ source, data }: { source: Source; data: ContentResponse
     // contradicts the badge. Speak to the preview gap instead.
     return (
       <div className="pl-[44px] pr-2 pb-3 text-xs text-gray-400">
-        Geen tekst-preview beschikbaar — open de bron in de editor om de inhoud te bekijken.
+        {m.kb_sources_content_no_preview()}
       </div>
     )
   }
@@ -86,16 +89,16 @@ function UploadContent({ source, data }: { source: Source; data: ContentResponse
       {chunks.map((chunk) => (
         <div key={chunk.id} className="text-xs py-1.5">
           <div className="flex items-center gap-2 text-gray-400 mb-0.5">
-            <span>Deel {chunk.position + 1}</span>
+            <span>{m.kb_sources_content_chunk_position({ pos: String(chunk.position + 1) })}</span>
             <span>·</span>
-            <span>{chunk.token_count} tokens</span>
+            <span>{m.kb_sources_content_chunk_tokens({ count: String(chunk.token_count) })}</span>
           </div>
           <p className="text-gray-700 line-clamp-3">{chunk.text}</p>
         </div>
       ))}
       {data.total > chunks.length && (
         <p className="text-xs text-gray-400 pt-1">
-          En nog {data.total - chunks.length} chunks meer...
+          {m.kb_sources_content_overflow_chunks({ count: String(data.total - chunks.length) })}
         </p>
       )}
     </div>
@@ -109,7 +112,7 @@ export function SourceContent({ kbSlug, source }: DrillDownProps) {
     return (
       <div className="pl-[44px] pr-2 pb-3 flex items-center gap-2 text-xs text-gray-400">
         <Loader2 className="h-3 w-3 animate-spin" />
-        Inhoud laden...
+        {m.kb_sources_content_loading()}
       </div>
     )
   }
@@ -117,7 +120,7 @@ export function SourceContent({ kbSlug, source }: DrillDownProps) {
   if (isError || !data) {
     return (
       <div className="pl-[44px] pr-2 pb-3 text-xs text-[var(--color-destructive)]">
-        Kon inhoud niet laden.
+        {m.kb_sources_content_error()}
       </div>
     )
   }

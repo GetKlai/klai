@@ -9,7 +9,7 @@
  * Left of the slots: subtle count ("N bronnen" / "N bron").
  */
 import { Link } from '@tanstack/react-router'
-import { Loader2, Pencil, Plus, RefreshCw } from 'lucide-react'
+import { Loader2, NotebookPen, Plus, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import * as m from '@/paraglide/messages'
 import { useSyncAllConnectors } from './-sources-hooks'
@@ -40,8 +40,8 @@ export function SourcesActionBar({
         {showEditorLink && (
           <Link to="/app/docs/$kbSlug" params={{ kbSlug }}>
             <Button variant="ghost" size="sm">
-              <Pencil className="h-4 w-4" />
-              Open in editor
+              <NotebookPen className="h-4 w-4" />
+              {m.kb_sources_action_open_editor()}
             </Button>
           </Link>
         )}
@@ -57,13 +57,13 @@ export function SourcesActionBar({
             ) : (
               <RefreshCw className="h-4 w-4" />
             )}
-            Synchroniseer alles
+            {m.kb_sources_action_sync_all()}
           </Button>
         )}
         <Link to="/app/knowledge/$kbSlug/add-source" params={{ kbSlug }}>
           <Button variant="default" size="sm">
             <Plus className="h-4 w-4" />
-            Bron toevoegen
+            {m.kb_sources_action_add()}
           </Button>
         </Link>
       </div>
