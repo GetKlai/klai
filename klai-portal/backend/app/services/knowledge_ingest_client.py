@@ -418,7 +418,7 @@ async def update_kb_visibility(org_id: str, kb_slug: str, visibility: str) -> No
         )
 
 
-# -- SPEC-PORTAL-KENNIS-001: KB sources (bronnen) ---------------------------
+# -- SPEC-PORTAL-KENNIS-001: KB sources ---------------------------
 #
 # These helpers wrap /knowledge/v1/kb/* endpoints introduced for the
 # "alles is een bron" UI. Knowledge-ingest returns raw aggregates;
@@ -427,7 +427,7 @@ async def update_kb_visibility(org_id: str, kb_slug: str, visibility: str) -> No
 
 
 async def get_kb_sources(org_id: str, kb_slug: str) -> dict | None:
-    """Fetch grouped bronnen for a KB.
+    """Fetch grouped sources for a KB.
 
     Returns ``{"connectors": [{connector_id, items_count, chunks_count}, ...],
     "uploads": [{id, path, content_type, created_at, chunks_count}, ...]}``
@@ -618,9 +618,9 @@ async def rename_kb_upload(
 
 
 async def get_chunks_summary(org_id: str, kb_slugs: list[str]) -> tuple[dict[str, int], dict[str, int]]:
-    """Bulk chunk + bronnen counts per KB.
+    """Bulk chunk + sources counts per KB.
 
-    Returns ``(chunks_by_kb, bronnen_by_kb)``. Each map is keyed by KB
+    Returns ``(chunks_by_kb, sources_by_kb)``. Each map is keyed by KB
     slug; missing keys mean "no data". Returns two empty dicts on failure
     (caller treats as 'unknown' and shows zero).
     """
@@ -644,8 +644,14 @@ async def get_chunks_summary(org_id: str, kb_slugs: list[str]) -> tuple[dict[str
             resp.raise_for_status()
             data: dict = resp.json()
             chunks = {str(k): int(v) for k, v in (data.get("chunks_by_kb") or {}).items()}
-            bronnen = {str(k): int(v) for k, v in (data.get("bronnen_by_kb") or {}).items()}
-            return chunks, bronnen
+            # SPEC-PORTAL-SOURCES-RENAME-001 dual-key window: prefer the new
+            # `sources_by_kb` key; fall back to the legacy `bronnen_by_kb`
+            # so this client keeps rendering counts during a rolling deploy
+            # where the ingest container has not yet been bumped. Remove the
+            # fallback after every ingest container in fleet ships the new key.
+            sources_raw = data.get("sources_by_kb") or data.get("bronnen_by_kb") or {}
+            sources = {str(k): int(v) for k, v in sources_raw.items()}
+            return chunks, sources
     except Exception:
         logger.warning(
             "Could not fetch chunks-summary from knowledge-ingest (org=%s slugs=%d)",

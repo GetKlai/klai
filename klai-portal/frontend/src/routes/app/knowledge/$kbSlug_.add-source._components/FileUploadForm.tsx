@@ -5,7 +5,7 @@ import { CheckCircle2, FileText, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import * as m from '@/paraglide/messages'
 import { ApiError, apiFetch } from '@/lib/apiFetch'
-import { invalidateKnowledgeSourceLists } from '../$kbSlug/-kb-query-keys'
+import { invalidateKnowledgeSourceLists } from '@/lib/kb-query-keys'
 
 // SPEC-KB-FILE-UPLOAD-001 — full whitelist routed through portal-api.
 // .md / .txt / .csv go to /ingest/v1/document directly. PDF / DOCX /
@@ -209,7 +209,7 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
         setAllDone(true)
         const t = setTimeout(() => {
           void navigate({
-            to: '/app/knowledge/$kbSlug/bronnen',
+            to: '/app/knowledge/$kbSlug/sources',
             params: { kbSlug },
           })
         }, 1500)
