@@ -42,7 +42,11 @@ import httpx
 # ``/opt/klai/scripts/compose-up.sh litellm`` (= ``docker compose up -d
 # --remove-orphans litellm``) so new mounts are picked up automatically —
 # matching every other klai service deploy.
-from klai_chat_prompts import GENERAL_CHAT_SYSTEM_PROMPT, GROUNDED_CHAT_SYSTEM_PROMPT
+from klai_chat_prompts import (
+    GENERAL_CHAT_SYSTEM_PROMPT,
+    GROUNDED_CHAT_SYSTEM_PROMPT,
+    META_CHAT_SYSTEM_PROMPT,
+)
 
 # SPEC-MCP-RETRIEVAL-001 Phase 1: telemetry helpers moved out of this file
 # into ``klai-libs/retrieval-telemetry/`` so klai-knowledge-mcp's new
@@ -266,12 +270,8 @@ PORTAL_RETRIEVAL_LOG_URL = os.getenv(
 )
 EMBEDDING_MODEL_VERSION = os.getenv("EMBEDDING_MODEL_VERSION", "bge-m3-v1")
 KB_IMAGES_BASE_URL = os.getenv("KB_IMAGES_BASE_URL", "https://getklai.getklai.com")
-_MARKDOWN_IMAGE_RE = re.compile(
-    r"!\[([^\]]*)\]\((\S+?)(?:\s+['\"][^'\"]*['\"])?\)"
-)
-_MARKDOWN_LINK_RE = re.compile(
-    r"(?<!!)\[([^\]]+)\]\((\S+?)(?:\s+['\"][^'\"]*['\"])?\)"
-)
+_MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\((\S+?)(?:\s+['\"][^'\"]*['\"])?\)")
+_MARKDOWN_LINK_RE = re.compile(r"(?<!!)\[([^\]]+)\]\((\S+?)(?:\s+['\"][^'\"]*['\"])?\)")
 _RAW_URL_RE = re.compile(r"https?://[^\s<>()\]]+")
 
 # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-2 — anti-hallucination injection
@@ -314,6 +314,75 @@ def _is_trivial(text: str) -> bool:
     if len(text) < 8:
         return True
     return bool(_TRIVIAL_PATTERNS.match(text))
+
+
+# Meta-question patterns — detect questions ABOUT Klai itself (capability
+# discovery) rather than questions about content in the knowledge base.
+# Anchored at start AND end of string so we only match short stand-alone
+# meta-questions, not content questions that happen to contain a meta-y
+# substring (e.g. "hoe werkt onze prijsstrategie" must NOT match
+# "hoe werkt"; "ik wil weten wat ik hier kan doen" must NOT match either).
+#
+# Background: 2026-05-12 Voys "Meldingen" incident. The user typed
+# "wat kan ik hier?" — 16 chars, fell through `_is_trivial`, hit
+# retrieval, returned a tangential KB chunk about voice-mail
+# announcements ("Meldingen") that lexically matched on common Dutch
+# words. The chunk became the answer. Solution: detect meta-questions
+# before retrieval and route to META_CHAT_SYSTEM_PROMPT instead.
+#
+# Tight regex by design — preferring false negatives (a meta-question
+# slipping through to retrieval, where it might still get a reasonable
+# answer or a low-confidence abstention) over false positives (a
+# legitimate content question losing access to its KB chunks).
+_META_QUERY_PATTERNS = re.compile(
+    r"^\s*(?:"
+    # NL — "wat kan/kun ik/je/jij" + 0-3 modifier words ("hier", "doen",
+    # "allemaal", "met klai/jou/je"). The {0,3} is what makes
+    # "wat kan ik hier doen?" match alongside "wat kan ik?".
+    r"wat\s+(?:kan|kun)\s+(?:ik|je|jij)"
+    r"(?:\s+(?:hier|met\s+(?:klai|jou|je)|allemaal|doen)){0,3}"
+    # NL — "wat is/doet/doe klai/jij/je"
+    r"|wat\s+(?:is|doet|doe)\s+(?:klai|jij|je)"
+    # NL — "wat kan/kun klai/je/jij (doen)?"
+    r"|wat\s+(?:kan|kun)\s+(?:klai|je|jij)(?:\s+doen)?"
+    # NL — "hoe werkt deze chat/dit/klai/jij/je". Longest alternatives
+    # first so "deze chat" wins over "dit" in left-to-right alternation.
+    r"|hoe\s+werkt\s+(?:deze\s+chat|dit|klai|jij|je)"
+    # NL — "hoe gebruik/werk ik (met)? deze chat/klai/dit"
+    r"|hoe\s+(?:gebruik|werk)\s+ik\s+(?:met\s+)?(?:deze\s+chat|klai|dit)"
+    # NL — "wie ben je"
+    r"|wie\s+ben\s+je"
+    # NL — "waarvoor is dit/klai"
+    r"|waarvoor\s+is\s+(?:dit|klai)"
+    # NL — "waar is dit/klai voor"
+    r"|waar\s+is\s+(?:dit|klai)\s+voor"
+    # NL/EN — "help" standalone (single rule, case-insensitive flag)
+    r"|help"
+    # EN — "what can I/you do" + 0-2 modifier suffixes
+    r"|what\s+can\s+(?:i|you)\s+do"
+    r"(?:\s+(?:here|with\s+(?:klai|you))){0,2}"
+    # EN — "what is/are/does klai (do)?"
+    r"|what\s+(?:is|are|does)\s+klai(?:\s+do)?"
+    # EN — "how does this chat/this/klai work". Longest alternative first.
+    r"|how\s+does\s+(?:this\s+chat|this|klai)\s+work"
+    # EN — "how do I use this chat/klai/this". Longest alternative first.
+    r"|how\s+do\s+i\s+use\s+(?:this\s+chat|klai|this)"
+    # EN — "who are you"
+    r"|who\s+are\s+you"
+    r")[\s!.?]*$",
+    re.IGNORECASE,
+)
+
+
+def _is_meta_query(text: str) -> bool:
+    """Return True if the user is asking ABOUT Klai itself (capability
+    discovery) rather than asking a content question.
+
+    Anchored full-string match — long content questions that contain
+    a meta-y substring do not match. See ``_META_QUERY_PATTERNS`` for
+    the rationale.
+    """
+    return bool(_META_QUERY_PATTERNS.match(text.strip()))
 
 
 def _last_user_message(messages: list[dict]) -> str | None:
@@ -1109,7 +1178,11 @@ def _absolute_image_url(url: object) -> str:
     normalised = _normalise_guard_url(url)
     if not normalised:
         return ""
-    return f"{KB_IMAGES_BASE_URL}{normalised}" if normalised.startswith("/") else normalised
+    return (
+        f"{KB_IMAGES_BASE_URL}{normalised}"
+        if normalised.startswith("/")
+        else normalised
+    )
 
 
 def _sanitize_kb_markdown_output(
@@ -1258,6 +1331,35 @@ def _compose_general_chat_prefix(*blocks: str) -> str:
     return "\n\n".join(b for b in (GENERAL_CHAT_SYSTEM_PROMPT, *blocks) if b)
 
 
+def _compose_meta_chat_prefix(*blocks: str) -> str:
+    """Compose the system-prompt prefix for path A when the user is asking
+    a META question about Klai itself ("what is Klai", "what can I do
+    here", "how does this chat work") rather than a content question.
+
+    Triggered by :func:`_is_meta_query` matching the latest user message.
+    Same language-detection contract as the other two prefixes, but the
+    KB-grounding rules are swapped for capability-explanation rules so
+    the model:
+
+    * does NOT emit [n] citations (no chunks in scope),
+    * does NOT pull or quote any KB content (the user didn't ask for any),
+    * describes Klai at the level of "what kind of thing it is", not a
+      fabricated feature list.
+
+    Templates still apply on this branch — admins may want to override
+    or extend the canned capability description per org. Reachable only
+    from the meta-query branch in
+    :class:`KlaiKnowledgeHook.async_pre_call_hook` (path A only). Paths
+    B and C are server-to-server and never see meta-questions.
+
+    Background: 2026-05-12 Voys "Meldingen" incident. Without this
+    early-return path, a vague meta-question ("wat kan ik hier?") fell
+    through to retrieval, matched a tangential KB chunk on common
+    words, and the model defended that match as the answer.
+    """
+    return "\n\n".join(b for b in (META_CHAT_SYSTEM_PROMPT, *blocks) if b)
+
+
 class KlaiKnowledgeHook(CustomLogger):
     async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
         if call_type not in ("completion", "acompletion"):
@@ -1291,6 +1393,32 @@ class KlaiKnowledgeHook(CustomLogger):
         # Fail-open: empty list on any portal-api error.
         template_instructions = await _get_templates(org_id, librechat_user_id, cache)
         templates_block = _build_template_instructions_block(template_instructions)
+
+        # Meta-question early-return (Voys "Meldingen" incident, 2026-05-12).
+        # When the user asks ABOUT Klai itself ("wat kan ik hier?", "what is
+        # Klai?", "how does this chat work?") rather than asking a content
+        # question, skip retrieval entirely and inject META_CHAT_SYSTEM_PROMPT
+        # so the model gives a plain capability-description answer without
+        # fabricating features or grasping at tangential KB chunks.
+        #
+        # Sits AFTER _is_trivial / org_id / librechat_user_id checks so it
+        # only fires inside a valid path-A request. Sits BEFORE the KB
+        # feature flag because a user without KB entitlement asking "what
+        # is Klai?" still deserves a real answer — not the generic libre
+        # prefix that promises KB grounding.
+        #
+        # Templates still apply so admins can extend the canned capability
+        # description per org.
+        if _is_meta_query(query):
+            _prepend_system_prefix(messages, _compose_meta_chat_prefix(templates_block))
+            data["messages"] = messages
+            logger.info(
+                "meta_query_detected org_id=%s user_id=%s query=%r",
+                org_id,
+                librechat_user_id,
+                query[:80],
+            )
+            return data
 
         # Feature gate + KB scope preference (version-based cache, 30s propagation)
         feature = await _get_kb_feature(librechat_user_id, org_id, cache)
@@ -1743,7 +1871,10 @@ class KlaiKnowledgeHook(CustomLogger):
             if source_url:
                 lines.append(f"source_url: {source_url}")
             absolute_urls = [
-                url for url in (_absolute_image_url(u) for u in chunk.get("image_urls") or [])
+                url
+                for url in (
+                    _absolute_image_url(u) for u in chunk.get("image_urls") or []
+                )
                 if url
             ]
             allowed_image_urls.update(absolute_urls)
