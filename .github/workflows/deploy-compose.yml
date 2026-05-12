@@ -42,6 +42,7 @@ jobs:
           chmod +x deploy/check-image-tags.sh deploy/check-image-pullable.sh
           sh deploy/check-image-tags.sh
           sh deploy/check-image-pullable.sh
+          sh deploy/librechat/check-patch-drift.sh
 
       - name: Sync docker-compose.yml + config + run smoke-test
         uses: appleboy/ssh-action@v1

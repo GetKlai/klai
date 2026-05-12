@@ -1,4 +1,4 @@
---- messages.js	(upstream LibreChat ghcr.io/danny-avila/librechat:latest)
+--- messages.js	(upstream LibreChat ghcr.io/danny-avila/librechat:v0.8.5-rc1)
 +++ messages.js	(SPEC-KB-015 patch)
 @@ -391,6 +391,37 @@
        { context: 'updateFeedback' },
