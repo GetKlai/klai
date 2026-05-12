@@ -26,88 +26,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from app.core.profiles import (
-    ALLOWED_PROFILES_PER_PLAN,
-    ProfileRole,
-    assert_role_allowed_for_plan,
-)
+from app.core.profiles import ProfileRole
 from tests.conftest import make_perms
 
 # ---------------------------------------------------------------------------
-# Constant + helper invariants
+# Phase 6 (2026-05-12): TestAllowedProfilesPerPlan + TestAssertRoleAllowedForPlanDeprecated
+# were removed in SPEC-PORTAL-PRICING-PER-USER-001 Phase 6 along with the
+# ``ALLOWED_PROFILES_PER_PLAN`` constant and ``assert_role_allowed_for_plan``
+# function. The plan-as-permission-axis concept is gone — capability
+# resolution is on the seat-axis (Phase 4) and role assignment is no
+# longer gated by plan (Phase 3). The REQ-7 (personal cannot write to
+# org KB) and REQ-6 (effective_role propagation) tests below are
+# orthogonal enforcement layers and stay.
 # ---------------------------------------------------------------------------
-
-
-class TestAllowedProfilesPerPlan:
-    """SPEC-PORTAL-PLAN-RENAME-001: locks the canonical plan→role allow-set
-    so an accidental edit cannot widen or narrow the policy without a
-    test failure surfacing it.
-
-    Plan ladder: free (sentinel) < chat (€28) < knowledge (€68 full unlock).
-    """
-
-    def test_free_admin_only_plus_personal(self):
-        assert ALLOWED_PROFILES_PER_PLAN["free"] == frozenset({"personal", "admin"})
-
-    def test_chat_excludes_kb_manager_and_group_manager(self):
-        # kb_manager / group_manager need kb.create_org / kb.members which
-        # the chat tier does not unlock; assigning them would be cosmetic.
-        assert "kb_manager" not in ALLOWED_PROFILES_PER_PLAN["chat"]
-        assert "group_manager" not in ALLOWED_PROFILES_PER_PLAN["chat"]
-        assert ALLOWED_PROFILES_PER_PLAN["chat"] == frozenset({"personal", "company", "admin"})
-
-    def test_knowledge_includes_all_five_roles(self):
-        assert ALLOWED_PROFILES_PER_PLAN["knowledge"] == frozenset(
-            {"personal", "company", "kb_manager", "group_manager", "admin"}
-        )
-
-    def test_legacy_slugs_are_gone(self):
-        for legacy in ("core", "professional", "complete"):
-            assert legacy not in ALLOWED_PROFILES_PER_PLAN
-
-
-class TestAssertRoleAllowedForPlanDeprecated:
-    """SPEC-PORTAL-PRICING-PER-USER-001 Phase 3 (2026-05-12): the function
-    is now a no-op that emits a ``DeprecationWarning``. Role assignment
-    is decoupled from plan ceilings — admin can assign any role on any
-    plan.
-
-    The function lives on for one release cycle so import sites do not
-    break. Phase 6 deletes it entirely.
-    """
-
-    @pytest.mark.parametrize(
-        ("role", "plan"),
-        [
-            ("kb_manager", "free"),
-            ("kb_manager", "chat"),
-            ("kb_manager", "knowledge"),
-            ("company", "free"),
-            ("admin", "free"),
-            ("admin", "chat"),
-            ("admin", "knowledge"),
-            # Unknown plan no longer falls back to free's allow-set —
-            # the no-op accepts everything.
-            ("kb_manager", "totally-not-a-plan"),
-        ],
-    )
-    def test_no_op_for_every_combo(self, role: str, plan: str):
-        with pytest.warns(DeprecationWarning, match="decouples role from plan ceiling"):
-            assert_role_allowed_for_plan(role, plan)
-
-    def test_no_op_does_not_raise(self):
-        # The pre-Phase-3 contract was: raise HTTPException(403) on any
-        # mismatch. The new contract is: NEVER raise.
-        try:
-            with pytest.warns(DeprecationWarning):
-                assert_role_allowed_for_plan("kb_manager", "free")
-        except HTTPException as exc:  # pragma: no cover — would mean regression
-            pytest.fail(
-                f"assert_role_allowed_for_plan must be a no-op after Phase 3 "
-                f"but raised HTTPException({exc.status_code}): {exc.detail!r}. "
-                f"Phase 3 of SPEC-PORTAL-PRICING-PER-USER-001 decoupled role "
-                f"from plan ceiling — the gate is removed."
-            )
 
 
 # ---------------------------------------------------------------------------

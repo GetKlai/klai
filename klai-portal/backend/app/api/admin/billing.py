@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,7 +26,7 @@ from app.core.seats import (
     breakdown_to_monthly_bill,
     monthly_seat_cost,
 )
-from app.models.portal import PortalUser
+from app.models.portal import PortalOrg, PortalUser
 
 router = APIRouter()
 
@@ -131,4 +131,86 @@ async def billing_breakdown(
         rows=breakdown_rows,
         total_users=total_users,
         total_monthly_eur=total_monthly_eur,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 (light) — per-seat billing switch stub
+# ---------------------------------------------------------------------------
+
+
+class PerSeatStatusResponse(BaseModel):
+    """SPEC-PORTAL-PRICING-PER-USER-001 Phase 5 (light) — per-tenant
+    opt-in status for the future Moneybird per-seat-type billing path.
+
+    ``enabled`` reflects ``portal_orgs.billing_per_seat_enabled``. The
+    FE breakdown panel uses this to render the "switch to per-user
+    billing" CTA. Phase 5b (a follow-up SPEC) wires the actual
+    Moneybird mutation behind this flag; today the switch endpoint
+    is a 501 stub.
+    """
+
+    enabled: bool = Field(..., description="Whether per-seat-type billing is active for this org")
+    available: bool = Field(
+        ...,
+        description=(
+            "Whether the FE may surface the switch CTA at all. False during "
+            "the Phase 5 light window (Moneybird mutation not yet implemented)."
+        ),
+    )
+
+
+@router.get("/billing/per-seat-status", response_model=PerSeatStatusResponse)
+async def per_seat_billing_status(
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> PerSeatStatusResponse:
+    """Return the per-tenant per-seat-billing opt-in status.
+
+    Always tenant-scoped (caller's org only). ``available`` is hard-coded
+    to ``False`` during the Phase 5 light window — Phase 5b flips it to
+    ``True`` once the Moneybird mutation path is wired and tested.
+    """
+    result = await db.execute(select(PortalOrg.billing_per_seat_enabled).where(PortalOrg.id == perms.org_id))
+    enabled_val = result.scalar_one_or_none()
+    enabled = bool(enabled_val) if enabled_val is not None else False
+    return PerSeatStatusResponse(
+        enabled=enabled,
+        # SPEC-PORTAL-PRICING-PER-USER-001 Phase 5 (light): the switch
+        # endpoint is a 501 stub until Phase 5b lands the Moneybird
+        # mutation. Setting ``available=False`` here keeps the FE CTA
+        # disabled across every tenant.
+        available=False,
+    )
+
+
+@router.post("/billing/switch-to-per-seat", response_model=None)
+async def switch_to_per_seat_billing(
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Phase 5 light stub for the per-seat-type Moneybird migration.
+
+    Returns HTTP 501 with a structured detail explaining the staged
+    rollout. Phase 5b (a follow-up SPEC) replaces this body with the
+    real mutation: cancel the current single-tier subscription, create
+    per-seat-type line-items (chat / knowledge / viewer), flip
+    ``portal_orgs.billing_per_seat_enabled`` to true.
+
+    The endpoint exists in Phase 5 light so the FE CTA can hit a real
+    URL and surface a deterministic error rather than a 404 — admins
+    see "coming soon, no billing change" instead of a broken-link page.
+    """
+    _ = (perms, db)  # binds the auth + db dependencies; body is a stub
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail={
+            "error_code": "per_seat_billing_not_implemented",
+            "message": (
+                "Per-user billing migration is staged. Phase 5 (light) ships "
+                "the breakdown view; Phase 5b (follow-up SPEC) wires the "
+                "Moneybird mutation. No billing change has been made."
+            ),
+            "spec": "SPEC-PORTAL-PRICING-PER-USER-001 Phase 5",
+        },
     )
