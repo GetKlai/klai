@@ -10,6 +10,7 @@ import { apiFetch } from '@/lib/apiFetch'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { DashboardSection } from './-kb-helpers'
 import type { KnowledgeBase, KBStats } from './-kb-types'
+import { kbQueryKeys } from '@/lib/kb-query-keys'
 
 /**
  * Legacy /overview route — redirects to /insights, which now hosts the
@@ -36,7 +37,7 @@ export function KBOverviewSections({ kbSlug }: { kbSlug: string }) {
   // These queries reuse the same queryKeys as the parent layout -- TanStack Query
   // serves cached data without re-fetching.
   const { data: kb } = useQuery<KnowledgeBase>({
-    queryKey: ['app-knowledge-base', kbSlug],
+    queryKey: kbQueryKeys.knowledgeBase(kbSlug),
     queryFn: async () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`),
     enabled: auth.isAuthenticated,
   })

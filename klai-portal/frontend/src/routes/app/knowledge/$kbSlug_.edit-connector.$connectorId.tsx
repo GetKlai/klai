@@ -22,6 +22,7 @@ import {
   AuthProbeFeedback,
   PreviewClassificationFeedback,
 } from './$kbSlug_.add-connector'
+import { kbQueryKeys } from '@/lib/kb-query-keys'
 
 // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-1 / REQ-5: edit wizard uses the same
 // 5-step flow as add-connector. ?step=auth|selector deep-link into the wizard.
@@ -123,7 +124,7 @@ function EditConnectorPage() {
   }
 
   const { data: connectors = [] } = useQuery<ConnectorSummary[]>({
-    queryKey: ['kb-connectors-portal', kbSlug],
+    queryKey: kbQueryKeys.connectorsPortal(kbSlug),
     queryFn: async () => apiFetch<ConnectorSummary[]>(`/api/app/knowledge-bases/${kbSlug}/connectors/`),
     enabled: auth.isAuthenticated,
   })
@@ -378,7 +379,7 @@ function EditConnectorPage() {
       })
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
+      void queryClient.invalidateQueries({ queryKey: kbQueryKeys.connectorsPortal(kbSlug) })
       goBack()
     },
   })

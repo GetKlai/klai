@@ -6,7 +6,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
-import { Input } from '@/components/ui/input'
 import { Checkbox } from '@/components/ui/checkbox'
 import { apiFetch } from '@/lib/apiFetch'
 import { fetchMe } from '@/lib/api-me'
@@ -124,63 +123,80 @@ function AdminSettingsPage() {
 
   // ---------------------------------------------------------------------
   // SPEC-PORTAL-EXTENSIONS-UNIFY-001 Phase 4: Uitbreidingen sectie.
-  // - Tenant-admin: read-only status view of own-org extensions.
-  // - Platform-admin (Klai staff): tenant-picker + interactive checkboxes.
+  // Staged-toggle pattern, consistent with the Language / MFA / Telemetry
+  // sections above: checkbox change updates local state only; Save commits.
+  // Tenant-admin: checkboxes always disabled (read-only).
+  // Platform-admin (Klai staff): checkboxes interactive on own org.
   // ---------------------------------------------------------------------
   const { data: me } = useQuery({
     queryKey: ['me'],
     queryFn: ({ signal }) => fetchMe(signal),
     enabled: auth.isAuthenticated,
   })
-  const isPlatformAdmin = me?.is_platform_admin ?? false
 
-  // Tenant-picker state — only used by platform-admins. Empty string = own org.
-  const [pickerSlug, setPickerSlug] = useState<string>('')
-  const [pickerInput, setPickerInput] = useState<string>('')
-  const activeSlug = isPlatformAdmin && pickerSlug !== '' ? pickerSlug : ''
-
-  const extQueryKey = ['admin-extensions', activeSlug] as const
   const { data: extensions, isLoading: extensionsLoading, error: extensionsError } = useQuery({
-    queryKey: extQueryKey,
-    queryFn: async () =>
-      apiFetch<ExtensionsResponse>(
-        activeSlug ? `/api/admin/extensions?org_slug=${encodeURIComponent(activeSlug)}` : '/api/admin/extensions',
-      ),
+    queryKey: ['admin-extensions'],
+    queryFn: async () => apiFetch<ExtensionsResponse>('/api/admin/extensions'),
     enabled: auth.isAuthenticated,
   })
 
+  // Staged feature set + saved-flash state. Mirrors Language / MFA / Telemetry
+  // sections — a Save button commits, not the checkbox change itself.
+  const [stagedExtensions, setStagedExtensions] = useState<Set<string>>(new Set())
+  const [savedExtensions, setSavedExtensions] = useState(false)
+
+  useEffect(() => {
+    if (extensions) {
+      setStagedExtensions(
+        new Set(extensions.extensions.filter((e) => e.enabled).map((e) => e.key)),
+      )
+    }
+  }, [extensions])
+
+  type PlatformUnlocksResponse = { slug: string; platform_unlocked_features: string[] }
+
   const extensionsMutation = useMutation({
     mutationFn: (next: { org_slug: string; enabled_features: string[] }) =>
-      apiFetch<ExtensionsResponse>('/api/admin/extensions', {
-        method: 'PATCH',
-        body: JSON.stringify(next),
-      }),
+      // Single write-path for extensions: PATCH /api/admin/orgs/{slug}/platform-unlocks.
+      // Cleanup of SPEC-PORTAL-EXTENSIONS-UNIFY-001: the brief
+      // /api/admin/extensions PATCH was retired so there is exactly one
+      // audit trail in tenant_lifecycle_events.
+      apiFetch<PlatformUnlocksResponse>(
+        `/api/admin/orgs/${encodeURIComponent(next.org_slug)}/platform-unlocks`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ platform_unlocked_features: next.enabled_features }),
+        },
+      ),
     onSuccess: (data) => {
       adminLogger.info('Extensions updated', {
-        org_slug: data.org_slug,
-        enabled: data.extensions.filter((e) => e.enabled).map((e) => e.key),
+        org_slug: data.slug,
+        enabled: data.platform_unlocked_features,
       })
-      queryClient.setQueryData(extQueryKey, data)
-      // Invalidate /api/me so the tile-filter on /admin/index.tsx reflects
-      // the new state without a hard refresh.
+      // Refresh the read-side payload + the /api/me tile-filter input.
+      void queryClient.invalidateQueries({ queryKey: ['admin-extensions'] })
       void queryClient.invalidateQueries({ queryKey: ['me'] })
+      setSavedExtensions(true)
+      setTimeout(() => setSavedExtensions(false), 2500)
     },
   })
 
-  function toggleExtension(key: string, enabled: boolean) {
-    if (!extensions) return
-    const current = new Set(extensions.extensions.filter((e) => e.enabled).map((e) => e.key))
-    if (enabled) current.add(key)
-    else current.delete(key)
-    extensionsMutation.mutate({
-      org_slug: extensions.org_slug,
-      enabled_features: [...current].sort(),
+  function stageExtension(key: string, enabled: boolean) {
+    setStagedExtensions((prev) => {
+      const next = new Set(prev)
+      if (enabled) next.add(key)
+      else next.delete(key)
+      return next
     })
   }
 
-  function applyPicker() {
-    setPickerSlug(pickerInput.trim())
-  }
+  const savedEnabled = new Set(
+    extensions?.extensions.filter((e) => e.enabled).map((e) => e.key) ?? [],
+  )
+  const extensionsDirty =
+    extensions != null &&
+    (stagedExtensions.size !== savedEnabled.size ||
+      [...stagedExtensions].some((k) => !savedEnabled.has(k)))
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-10 space-y-6" data-help-id="admin-settings-general">
@@ -425,95 +441,76 @@ function AdminSettingsPage() {
         <CardHeader>
           <CardTitle>{m.admin_settings_extensions_title()}</CardTitle>
           <CardDescription>
-            {isPlatformAdmin
+            {(me?.is_platform_admin ?? false)
               ? m.admin_settings_extensions_description_platform()
               : m.admin_settings_extensions_description_tenant()}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {isPlatformAdmin && (
-            <div className="flex items-end gap-2 border-b pb-4 mb-2">
-              <div className="flex-1 space-y-1.5">
-                <Label htmlFor="extensions-tenant-slug">
-                  {m.admin_settings_extensions_tenant_picker_label()}
-                </Label>
-                <Input
-                  id="extensions-tenant-slug"
-                  type="text"
-                  value={pickerInput}
-                  placeholder={extensions?.org_slug ?? ''}
-                  onChange={(e) => setPickerInput(e.target.value)}
-                />
-              </div>
-              <Button variant="outline" onClick={applyPicker} disabled={pickerInput.trim() === ''}>
-                {m.admin_settings_extensions_tenant_picker_apply()}
-              </Button>
-              {pickerSlug !== '' && (
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setPickerSlug('')
-                    setPickerInput('')
-                  }}
-                >
-                  {m.admin_settings_extensions_tenant_picker_reset()}
-                </Button>
-              )}
-            </div>
-          )}
-
           {extensionsLoading ? (
             <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
           ) : extensionsError ? (
             <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_fetch()}</p>
           ) : !extensions ? null : (
             <>
-              {isPlatformAdmin && (
-                <p className="text-xs text-gray-400">
-                  {m.admin_settings_extensions_active_slug({ slug: extensions.org_slug })}
-                </p>
-              )}
               <ul className="divide-y divide-gray-200 border-t border-b border-gray-200">
-                {extensions.extensions.map((item) => (
-                  <li
-                    key={item.key}
-                    className="flex items-center justify-between gap-4 px-2 py-3"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="text-[15px] font-display text-gray-900">{item.label}</p>
-                      <p className="text-xs text-gray-400 mt-0.5">{item.description}</p>
-                    </div>
-                    {item.manageable_by_caller ? (
-                      <Checkbox
-                        checked={item.enabled}
-                        onChange={(e) => toggleExtension(item.key, e.target.checked)}
-                        disabled={extensionsMutation.isPending}
-                        label=""
-                      />
-                    ) : (
-                      <span
-                        className={[
-                          'shrink-0 rounded-full px-3 py-0.5 text-xs font-medium',
-                          item.enabled
-                            ? 'bg-[var(--color-rl-cream)] text-[var(--color-rl-accent-dark)]'
-                            : 'bg-gray-100 text-gray-400',
-                        ].join(' ')}
-                      >
-                        {item.enabled
-                          ? m.admin_settings_extensions_status_on()
-                          : m.admin_settings_extensions_status_off()}
-                      </span>
-                    )}
-                  </li>
-                ))}
+                {extensions.extensions.map((item) => {
+                  const staged = stagedExtensions.has(item.key)
+                  return (
+                    <li key={item.key} className="flex items-center justify-between gap-4 px-2 py-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[15px] font-display text-gray-900">{item.label}</p>
+                        <p className="text-xs text-gray-400 mt-0.5">{item.description}</p>
+                      </div>
+                      {item.manageable_by_caller ? (
+                        <Checkbox
+                          checked={staged}
+                          onChange={(e) => stageExtension(item.key, e.target.checked)}
+                          disabled={extensionsMutation.isPending}
+                          label=""
+                        />
+                      ) : (
+                        <span
+                          className={[
+                            'shrink-0 rounded-full px-3 py-0.5 text-xs font-medium',
+                            item.enabled
+                              ? 'bg-[var(--color-rl-cream)] text-[var(--color-rl-accent-dark)]'
+                              : 'bg-gray-100 text-gray-400',
+                          ].join(' ')}
+                        >
+                          {item.enabled
+                            ? m.admin_settings_extensions_status_on()
+                            : m.admin_settings_extensions_status_off()}
+                        </span>
+                      )}
+                    </li>
+                  )
+                })}
               </ul>
-              {!isPlatformAdmin && (
+              {!(me?.is_platform_admin ?? false) && (
                 <p className="text-xs text-gray-400">
                   {m.admin_settings_extensions_managed_by_klai()}
                 </p>
               )}
               {extensionsMutation.error && (
                 <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_save()}</p>
+              )}
+              {(me?.is_platform_admin ?? false) && (
+                <Button
+                  onClick={() =>
+                    extensionsMutation.mutate({
+                      org_slug: extensions.org_slug,
+                      enabled_features: [...stagedExtensions].sort(),
+                    })
+                  }
+                  disabled={extensionsMutation.isPending || savedExtensions || !extensionsDirty}
+                >
+                  {savedExtensions
+                    ? m.admin_settings_saved()
+                    : extensionsMutation.isPending
+                      ? m.admin_settings_saving()
+                      : m.admin_settings_save()}
+                </Button>
               )}
             </>
           )}

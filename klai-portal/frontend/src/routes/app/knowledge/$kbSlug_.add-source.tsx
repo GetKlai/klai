@@ -44,7 +44,7 @@ function AddSourcePage() {
 
   function goBack() {
     void navigate({
-      to: '/app/knowledge/$kbSlug/bronnen',
+      to: '/app/knowledge/$kbSlug/sources',
       params: { kbSlug },
     })
   }

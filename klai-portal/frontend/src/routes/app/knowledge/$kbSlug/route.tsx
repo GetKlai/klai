@@ -24,6 +24,7 @@ import { ProductGuard } from '@/components/layout/ProductGuard'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { meetsMinRole } from '@/lib/profiles'
 import type { KBTab, KnowledgeBase, KBStats, MembersResponse } from './-kb-types'
+import { kbQueryKeys } from '@/lib/kb-query-keys'
 
 const VALID_TABS = new Set<KBTab>([
   'overview',
@@ -37,9 +38,9 @@ const VALID_TABS = new Set<KBTab>([
 ])
 
 const TAB_PATH_MAP: Record<string, string> = {
-  overview: '/app/knowledge/$kbSlug/bronnen',
-  items: '/app/knowledge/$kbSlug/bronnen',
-  connectors: '/app/knowledge/$kbSlug/bronnen',
+  overview: '/app/knowledge/$kbSlug/sources',
+  items: '/app/knowledge/$kbSlug/sources',
+  connectors: '/app/knowledge/$kbSlug/sources',
   members: '/app/knowledge/$kbSlug/settings',
   taxonomy: '/app/knowledge/$kbSlug/insights',
   settings: '/app/knowledge/$kbSlug/settings',
@@ -58,7 +59,7 @@ export const Route = createFileRoute('/app/knowledge/$kbSlug')({
   }),
   beforeLoad: ({ search, params }) => {
     if (search.tab) {
-      const target = TAB_PATH_MAP[search.tab] ?? '/app/knowledge/$kbSlug/bronnen'
+      const target = TAB_PATH_MAP[search.tab] ?? '/app/knowledge/$kbSlug/sources'
       throw redirect({
         to: target,
         params: { kbSlug: params.kbSlug },
@@ -77,26 +78,35 @@ export const Route = createFileRoute('/app/knowledge/$kbSlug')({
 
 type TabId = 'bronnen' | 'instellingen' | 'inzichten'
 
-const TAB_DEFS: { id: TabId; to: string; icon: React.ElementType; label: string; matches: string[] }[] = [
+interface TabDef {
+  id: TabId
+  to: string
+  icon: React.ElementType
+  /** Lazy label so Paraglide resolves the active locale per render. */
+  label: () => string
+  matches: string[]
+}
+
+const TAB_DEFS: TabDef[] = [
   {
     id: 'bronnen',
-    to: '/app/knowledge/$kbSlug/bronnen',
+    to: '/app/knowledge/$kbSlug/sources',
     icon: BookOpen,
-    label: 'Bronnen',
-    matches: ['/bronnen', '/overview', '/items', '/connectors'],
+    label: () => m.kb_tab_sources(),
+    matches: ['/bronnen', '/overview', '/items', '/connectors', '/sources'],
   },
   {
     id: 'instellingen',
     to: '/app/knowledge/$kbSlug/settings',
     icon: Settings,
-    label: 'Instellingen',
+    label: () => m.kb_tab_settings(),
     matches: ['/settings', '/members', '/instellingen'],
   },
   {
     id: 'inzichten',
     to: '/app/knowledge/$kbSlug/insights',
     icon: SlidersHorizontal,
-    label: 'Inzichten',
+    label: () => m.kb_tab_insights(),
     matches: ['/insights', '/advanced', '/taxonomy', '/inzichten'],
   },
 ]
@@ -119,7 +129,7 @@ function KbLayout() {
   const { user: currentUser } = useCurrentUser()
 
   const { data: kb, isLoading, isError } = useQuery<KnowledgeBase>({
-    queryKey: ['app-knowledge-base', kbSlug],
+    queryKey: kbQueryKeys.knowledgeBase(kbSlug),
     queryFn: async () => {
       try {
         return await apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`)
@@ -183,7 +193,7 @@ function KbLayout() {
           className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-900 transition-colors shrink-0"
         >
           <ArrowLeft className="h-4 w-4" />
-          Terug
+          {m.kb_detail_back()}
         </Link>
       </div>
 
@@ -208,7 +218,7 @@ function KbLayout() {
                 }`}
               >
                 <Icon className="h-4 w-4" />
-                {label}
+                {label()}
               </Link>
             )
           })}

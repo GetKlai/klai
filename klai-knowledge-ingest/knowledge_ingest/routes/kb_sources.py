@@ -106,7 +106,22 @@ class ChunksSummaryRequest(BaseModel):
 
 
 class ChunksSummaryResponse(BaseModel):
+    """Response for /knowledge/v1/kb/chunks-summary.
+
+    SPEC-PORTAL-SOURCES-RENAME-001 dual-key window
+    --------------------------------------------
+    The canonical key for the per-KB source count is ``sources_by_kb``.
+    For one release window we ALSO emit ``bronnen_by_kb`` with the same
+    payload so an old portal-api container can keep reading the legacy
+    key during a rolling deploy and the KB-list page does not flicker to
+    0 between the two container restarts.
+
+    Drop ``bronnen_by_kb`` after every portal-api in fleet has been
+    updated to read ``sources_by_kb`` (target: one release cycle).
+    """
+
     chunks_by_kb: dict[str, int] = Field(default_factory=dict)
+    sources_by_kb: dict[str, int] = Field(default_factory=dict)
     bronnen_by_kb: dict[str, int] = Field(default_factory=dict)
 
 
@@ -119,7 +134,7 @@ async def get_kb_sources(
     kb_slug: str,
     org_id: str = Query(..., description="Zitadel org ID"),
 ) -> KBSourcesResponse:
-    """List bronnen for a KB: connector aggregates + direct uploads."""
+    """List sources for a KB: connector aggregates + direct uploads."""
     verified_org_id = await assert_caller_identity_tenant_only(request, claimed_org_id=org_id)
     async with tenant_scoped_connection(verified_org_id) as conn:
         result = await pg_store.list_kb_sources(conn, verified_org_id, kb_slug)
@@ -194,11 +209,17 @@ async def chunks_summary(
         raise HTTPException(status_code=400, detail="kb_slugs limited to 200 per call")
     verified_org_id = await assert_caller_identity_tenant_only(request, claimed_org_id=org_id)
     if not body.kb_slugs:
-        return ChunksSummaryResponse(chunks_by_kb={}, bronnen_by_kb={})
+        return ChunksSummaryResponse(chunks_by_kb={}, sources_by_kb={}, bronnen_by_kb={})
     async with tenant_scoped_connection(verified_org_id) as conn:
         chunks_by_kb = await pg_store.count_chunks_per_kb(conn, verified_org_id, body.kb_slugs)
-        bronnen_by_kb = await pg_store.count_sources_per_kb(conn, verified_org_id, body.kb_slugs)
-    return ChunksSummaryResponse(chunks_by_kb=chunks_by_kb, bronnen_by_kb=bronnen_by_kb)
+        sources_by_kb = await pg_store.count_sources_per_kb(conn, verified_org_id, body.kb_slugs)
+    # SPEC-PORTAL-SOURCES-RENAME-001 dual-key window — emit BOTH so a
+    # rolling deploy where portal-api lags behind keeps rendering counts.
+    return ChunksSummaryResponse(
+        chunks_by_kb=chunks_by_kb,
+        sources_by_kb=sources_by_kb,
+        bronnen_by_kb=sources_by_kb,
+    )
 
 
 # -- SPEC-PORTAL-KENNIS-002: reindex + delete ----------------------------------
