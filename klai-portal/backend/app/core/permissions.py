@@ -96,16 +96,17 @@ def _derive_effective_capabilities(role: ProfileRole, plan: str) -> frozenset[Ca
     """Profile capabilities ∩ plan capabilities, with admin bypass.
 
     Mirrors ``app/api/dependencies.py::get_effective_capabilities``:
-    admins on any plan tier receive the full ``complete``-tier capability
+    admins on any plan tier receive the full ``knowledge``-tier capability
     set so they can preview what a plan upgrade unlocks before paying for
-    it. Intentional per SPEC-PORTAL-PROFILES-001 v0.2.0 / v0.3.0.
+    it. Intentional per SPEC-PORTAL-PLAN-RENAME-001 (carrying forward the
+    SPEC-PORTAL-PROFILES-001 v0.2.0 / v0.3.0 admin-bypass policy).
     """
     if role == ProfileRole.ADMIN:
-        # Use the complete-tier plan capabilities verbatim — these are the
-        # capability strings, but already typed via Capability(StrEnum) so
-        # the frozenset equality matches.
-        complete_caps = get_plan_limits("complete").capabilities
-        return frozenset(Capability(c) for c in complete_caps)
+        # Use the knowledge-tier (full unlock) plan capabilities verbatim —
+        # these are the capability strings, but already typed via
+        # Capability(StrEnum) so the frozenset equality matches.
+        knowledge_caps = get_plan_limits("knowledge").capabilities
+        return frozenset(Capability(c) for c in knowledge_caps)
 
     role_caps = PROFILE_CAPABILITIES.get(role.value, frozenset())
     plan_caps = get_plan_limits(plan).capabilities

@@ -17,14 +17,17 @@ and the user's profile is high enough, they get it. Period.
 from app.core.profiles import PROFILE_RANK
 
 # @MX:ANCHOR fan_in=2+ -- single source of truth for plan-included products.
-# SPEC-PORTAL-RBAC-REFACTOR-001 Phase 1 (REQ-2): the legacy app.core.plans
-# module was removed; PLAN_FEATURES is now the canonical mapping for both
-# derive_user_products() and admin/settings.py::change_plan validation.
+# SPEC-PORTAL-PLAN-RENAME-001: keys MUST stay in sync with PLAN_LIMITS
+# (core/plan_limits.py) and ALLOWED_PROFILES_PER_PLAN (core/profiles.py).
+# The portal_orgs.plan CHECK constraint enforces this set at the DB level.
+#
+# Note: the slugs `chat` and `knowledge` are also feature-strings — that
+# overlap is intentional. Keys in this dict are PLAN names; values are
+# FEATURE name sets. The two namespaces never collide at a call site.
 PLAN_FEATURES: dict[str, frozenset[str]] = {
     "free": frozenset(),
-    "core": frozenset({"chat", "knowledge"}),
-    "professional": frozenset({"chat", "knowledge"}),
-    "complete": frozenset({"chat", "knowledge"}),
+    "chat": frozenset({"chat", "knowledge"}),
+    "knowledge": frozenset({"chat", "knowledge"}),
 }
 
 # @MX:ANCHOR fan_in=2+ -- canonical add-on registry.
