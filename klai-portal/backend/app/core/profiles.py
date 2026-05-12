@@ -92,25 +92,31 @@ ALLOWED_PROFILES_PER_PLAN: dict[str, frozenset[str]] = {
 
 
 def assert_role_allowed_for_plan(role: str, plan: str) -> None:
-    """Raise HTTP 403 with ``role_not_allowed_for_plan`` if the requested role
-    is outside the plan's ceiling.
+    """**Deprecated**: returns immediately. SPEC-PORTAL-PRICING-PER-USER-001
+    Phase 3 (2026-05-12) decoupled role-assignment from plan ceilings —
+    role is now the permission axis only, and ``seat_type`` is the
+    billing axis. Plans no longer restrict which roles are assignable.
 
-    Unknown plans fall through to the most-restrictive ``free`` set rather
-    than fail-open. This mirrors the convention in ``get_plan_limits``.
+    The function is kept as a no-op for one release cycle so external
+    callers don't break at import time. Any remaining caller emits a
+    DeprecationWarning so it surfaces in CI logs and gets removed at
+    the next sweep. Phase 6 will delete the function entirely.
 
-    SPEC-PORTAL-RBAC-REFACTOR-001 REQ-12 / REQ-13.
+    SPEC-PORTAL-RBAC-REFACTOR-001 REQ-12 / REQ-13 supersession.
     """
-    allowed = ALLOWED_PROFILES_PER_PLAN.get(plan, ALLOWED_PROFILES_PER_PLAN["free"])
-    if role not in allowed:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "error_code": "role_not_allowed_for_plan",
-                "role": role,
-                "plan": plan,
-                "allowed": sorted(allowed),
-            },
-        )
+    import warnings
+
+    warnings.warn(
+        "assert_role_allowed_for_plan is deprecated — "
+        "SPEC-PORTAL-PRICING-PER-USER-001 Phase 3 decouples role "
+        "from plan ceiling. Remove the call; admin can assign any "
+        "role independent of plan.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    # Intentional no-op: do NOT raise. The legacy behaviour is gone.
+    _ = (role, plan)
+    return None
 
 
 # Capability strings for SPEC v0.2.0: only capabilities that are actually checked

@@ -19,7 +19,12 @@ from app.core.permissions import (
     get_caller,
     get_caller_at_least,
 )
-from app.core.profiles import assert_role_allowed_for_plan
+
+# SPEC-PORTAL-PRICING-PER-USER-001 Phase 3 (2026-05-12): the
+# ``assert_role_allowed_for_plan`` import from ``app.core.profiles`` is
+# gone. The function is a deprecated no-op there for the one-release
+# transition window and this file no longer calls it. Phase 6 deletes
+# the function entirely.
 from app.models.groups import PortalGroup, PortalGroupMembership
 from app.models.portal import PortalOrg, PortalUser
 from app.services.audit import log_event
@@ -183,19 +188,28 @@ async def invite_user(
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> InviteResponse:
-    # Seat enforcement: lock the org row to prevent concurrent invites
+    # Lock the org row to prevent concurrent invites racing on portal_users
+    # INSERT. We still need the row for Zitadel-side state (zitadel org id
+    # is read from settings, but org.id / org.plan / billing snapshots may
+    # be inspected by downstream logic — keep the lock to preserve
+    # serializable semantics across the invite transaction).
     locked_result = await db.execute(select(PortalOrg).where(PortalOrg.id == perms.org_id).with_for_update())
     org = locked_result.scalar_one()
 
-    # REQ-12 / REQ-13: plan ceiling on assignable role. Check after the org
-    # lock so concurrent plan-downgrades cannot widen the role ladder
-    # mid-invite.
-    assert_role_allowed_for_plan(body.role, org.plan)
-
-    # TODO: filter by status == 'active' once AUTH-001 adds status column
-    active_count = await db.scalar(select(func.count()).select_from(PortalUser).where(PortalUser.org_id == org.id))
-    if active_count is not None and active_count >= org.seats:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Seat limit reached")
+    # SPEC-PORTAL-PRICING-PER-USER-001 Phase 3 (2026-05-12) — removed
+    # gates:
+    #   * ``assert_role_allowed_for_plan(body.role, org.plan)``: the
+    #     plan-ceiling on assignable role is gone. Role is the permissions
+    #     axis only; seat_type is the billing axis. Admin can assign any
+    #     role independently of plan; mismatches with the assigned seat
+    #     are surfaced as a non-blocking warning in the invite modal
+    #     (AC-5) and reconciled in Phase 4's capability resolver.
+    #   * ``if active_count >= org.seats: raise 409 Seat limit reached``:
+    #     the hard seat-cap is gone. Headcount is derived from active
+    #     users via /admin/billing/breakdown; Phase 5 prorates the bill
+    #     from portal_user_seat_history per active seat per day.
+    # Both removals are guarded by ``rules/no-portal-plan-gate.yml`` (ast-
+    # grep) so a future refactor cannot silently reintroduce them.
 
     try:
         user_data = await zitadel.invite_user(
@@ -361,11 +375,11 @@ async def update_user_role(
     locked_org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == perms.org_id).with_for_update())
     locked_org = locked_org_result.scalar_one()
 
-    # REQ-12 / REQ-13: plan ceiling on assignable role. Read ``plan`` from
-    # the locked row, NOT ``perms.plan`` — the latter is a snapshot from
-    # request start and a concurrent platform-admin plan downgrade between
-    # request start and now would let an out-of-range role through.
-    assert_role_allowed_for_plan(body.role, locked_org.plan)
+    # SPEC-PORTAL-PRICING-PER-USER-001 Phase 3 (2026-05-12): plan-ceiling
+    # role check removed (was REQ-12 / REQ-13). Role is decoupled from
+    # plan; admin can change to any role independently. Seat-tier mismatch
+    # surfaces in the admin UI as a non-blocking warning.
+    _ = locked_org  # retained lock for serializable semantics
 
     result = await db.execute(
         select(PortalUser).where(
@@ -679,11 +693,11 @@ async def promote_admin(
     locked_org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == perms.org_id).with_for_update())
     locked_org = locked_org_result.scalar_one()
 
-    # REQ-12: plan ceiling. ``admin`` is in every plan's allow-set so this
-    # is a defensive guard — but keeping it makes the policy auditable in
-    # one place: any plan that ever drops "admin" from its allow-set will
-    # reject promotion immediately instead of silently succeeding.
-    assert_role_allowed_for_plan("admin", locked_org.plan)
+    # SPEC-PORTAL-PRICING-PER-USER-001 Phase 3 (2026-05-12): the
+    # ``assert_role_allowed_for_plan("admin", locked_org.plan)`` check is
+    # gone. Plan ceilings no longer gate role assignment; promotion to
+    # admin is permitted on every plan.
+    _ = locked_org  # retained lock for serializable semantics
 
     result = await db.execute(
         select(PortalUser).where(

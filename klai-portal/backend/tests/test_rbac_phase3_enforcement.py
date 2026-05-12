@@ -66,37 +66,48 @@ class TestAllowedProfilesPerPlan:
             assert legacy not in ALLOWED_PROFILES_PER_PLAN
 
 
-class TestAssertRoleAllowedForPlan:
-    def test_admin_passes_on_every_plan(self):
-        # ``admin`` is a billing-decision role; it must always be assignable.
-        for plan in ("free", "chat", "knowledge"):
-            assert_role_allowed_for_plan("admin", plan)
+class TestAssertRoleAllowedForPlanDeprecated:
+    """SPEC-PORTAL-PRICING-PER-USER-001 Phase 3 (2026-05-12): the function
+    is now a no-op that emits a ``DeprecationWarning``. Role assignment
+    is decoupled from plan ceilings — admin can assign any role on any
+    plan.
 
-    def test_kb_manager_rejected_on_free_with_correct_error_shape(self):
-        with pytest.raises(HTTPException) as exc:
-            assert_role_allowed_for_plan("kb_manager", "free")
-        assert exc.value.status_code == 403
-        detail = exc.value.detail
-        assert isinstance(detail, dict)
-        assert detail["error_code"] == "role_not_allowed_for_plan"
-        assert detail["role"] == "kb_manager"
-        assert detail["plan"] == "free"
-        assert "admin" in detail["allowed"]
+    The function lives on for one release cycle so import sites do not
+    break. Phase 6 deletes it entirely.
+    """
 
-    def test_kb_manager_rejected_on_chat(self):
-        with pytest.raises(HTTPException) as exc:
-            assert_role_allowed_for_plan("kb_manager", "chat")
-        assert exc.value.status_code == 403
-        assert exc.value.detail["error_code"] == "role_not_allowed_for_plan"
+    @pytest.mark.parametrize(
+        ("role", "plan"),
+        [
+            ("kb_manager", "free"),
+            ("kb_manager", "chat"),
+            ("kb_manager", "knowledge"),
+            ("company", "free"),
+            ("admin", "free"),
+            ("admin", "chat"),
+            ("admin", "knowledge"),
+            # Unknown plan no longer falls back to free's allow-set —
+            # the no-op accepts everything.
+            ("kb_manager", "totally-not-a-plan"),
+        ],
+    )
+    def test_no_op_for_every_combo(self, role: str, plan: str):
+        with pytest.warns(DeprecationWarning, match="decouples role from plan ceiling"):
+            assert_role_allowed_for_plan(role, plan)
 
-    def test_kb_manager_passes_on_knowledge(self):
-        assert_role_allowed_for_plan("kb_manager", "knowledge")
-
-    def test_unknown_plan_falls_back_to_free_set(self):
-        # Defensive: a typo in a plan field MUST NOT widen the role ladder.
-        with pytest.raises(HTTPException) as exc:
-            assert_role_allowed_for_plan("kb_manager", "totally-not-a-plan")
-        assert exc.value.detail["error_code"] == "role_not_allowed_for_plan"
+    def test_no_op_does_not_raise(self):
+        # The pre-Phase-3 contract was: raise HTTPException(403) on any
+        # mismatch. The new contract is: NEVER raise.
+        try:
+            with pytest.warns(DeprecationWarning):
+                assert_role_allowed_for_plan("kb_manager", "free")
+        except HTTPException as exc:  # pragma: no cover — would mean regression
+            pytest.fail(
+                f"assert_role_allowed_for_plan must be a no-op after Phase 3 "
+                f"but raised HTTPException({exc.status_code}): {exc.detail!r}. "
+                f"Phase 3 of SPEC-PORTAL-PRICING-PER-USER-001 decoupled role "
+                f"from plan ceiling — the gate is removed."
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -249,24 +260,34 @@ class TestPersonalCannotWriteToOrgKB:
 # ---------------------------------------------------------------------------
 
 
-class TestPlanCeilingOnRoleAssignment:
-    """REQ-12: invite_user / update_user_role / promote_admin reject roles
-    outside the org plan's allow-set with HTTP 403 ``role_not_allowed_for_plan``."""
+class TestPlanCeilingGoneOnRoleAssignment:
+    """SPEC-PORTAL-PRICING-PER-USER-001 Phase 3 (2026-05-12): the plan-
+    ceiling gates on invite_user / update_user_role / promote_admin are
+    gone. Role is decoupled from plan; ``seat_type`` is the billing axis.
+
+    Replaces the pre-Phase-3 ``TestPlanCeilingOnRoleAssignment`` which
+    asserted 403 for the same combinations.
+    """
 
     @pytest.mark.asyncio
-    async def test_invite_user_rejects_kb_manager_on_core(self):
+    async def test_invite_user_accepts_kb_manager_on_chat_plan(self):
+        """The exact case that PR #599's pre-flight checked for: a
+        ``kb_manager`` invite on a ``chat``-plan org. Pre-Phase-3 this was
+        the 403 ``role_not_allowed_for_plan`` that drove the SPEC.
+        Phase 3 makes the invite succeed; the seat assignment defaults
+        to ``knowledge`` via ``suggest_seat(kb_manager)`` so the user
+        actually gets the features their role implies.
+        """
         from app.api.admin.users import InviteRequest, invite_user
 
         org = MagicMock()
         org.id = 101
-        org.seats = 100
-        org.plan = "chat"  # SPEC-PORTAL-PLAN-RENAME-001: kb_manager NOT allowed on chat
+        org.plan = "chat"
 
         mock_db = AsyncMock()
         locked_org_result = MagicMock()
         locked_org_result.scalar_one.return_value = org
         mock_db.execute.return_value = locked_org_result
-        mock_db.scalar.return_value = 0
 
         body = InviteRequest(
             email="km@example.com",
@@ -277,40 +298,48 @@ class TestPlanCeilingOnRoleAssignment:
         )
         perms = make_perms(role="admin", user_id="admin-1", org_id=101, plan="chat")
 
-        with pytest.raises(HTTPException) as exc:
+        with (
+            patch("app.api.admin.users.zitadel") as mock_zitadel,
+            patch(
+                "app.services.default_knowledge_bases.create_default_personal_kb",
+                new=AsyncMock(),
+            ),
+        ):
+            mock_zitadel.invite_user = AsyncMock(return_value={"userId": "new-km"})
+            mock_zitadel.grant_user_role = AsyncMock()
+            # Must not raise — plan ceiling is gone.
             await invite_user(body=body, perms=perms, db=mock_db)
 
-        assert exc.value.status_code == 403
-        assert exc.value.detail["error_code"] == "role_not_allowed_for_plan"
-        assert exc.value.detail["role"] == "kb_manager"
-        assert exc.value.detail["plan"] == "chat"
-
     @pytest.mark.asyncio
-    async def test_invite_user_accepts_kb_manager_on_knowledge(self):
-        """The mirror case: ``knowledge`` plan accepts ``kb_manager``.
-
-        We rely on the existing ``test_invite_user_grants_portal_role_to_zitadel``
-        parametrize for full role-mapping coverage; this test pins the
-        plan-ceiling path specifically does not over-block.
+    async def test_invite_user_no_seat_cap(self):
+        """SPEC AC-2: inviting the (N+1)th user on an org with
+        ``seats = N`` succeeds. Bill rolls up from active user count per
+        seat tier (Phase 5), not from ``org.seats``.
         """
         from app.api.admin.users import InviteRequest, invite_user
 
         org = MagicMock()
         org.id = 101
-        org.seats = 100
+        # Hard cap of 5 — pre-Phase-3 this would 409 once active >= 5.
+        org.seats = 5
         org.plan = "knowledge"
 
         mock_db = AsyncMock()
-        locked_org_result = MagicMock()
-        locked_org_result.scalar_one.return_value = org
-        mock_db.execute.return_value = locked_org_result
-        mock_db.scalar.return_value = 0
+        locked = MagicMock()
+        locked.scalar_one.return_value = org
+        mock_db.execute.return_value = locked
+
+        # Important: db.scalar() is NOT consulted in the new flow (the
+        # active-count select was removed). If a future refactor adds it
+        # back, returning a number >= seats from this mock would trip the
+        # old cap — but that branch is gone now.
+        mock_db.scalar.return_value = 999  # would have tripped old cap
 
         body = InviteRequest(
-            email="km@example.com",
-            first_name="K",
-            last_name="M",
-            role="kb_manager",
+            email="overflow@example.com",
+            first_name="O",
+            last_name="V",
+            role="company",
             preferred_language="nl",
         )
         perms = make_perms(role="admin", user_id="admin-1", org_id=101, plan="knowledge")
@@ -322,60 +351,26 @@ class TestPlanCeilingOnRoleAssignment:
                 new=AsyncMock(),
             ),
         ):
-            mock_zitadel.invite_user = AsyncMock(return_value={"userId": "new-km"})
+            mock_zitadel.invite_user = AsyncMock(return_value={"userId": "new-over"})
             mock_zitadel.grant_user_role = AsyncMock()
-            # Should not raise — plan permits the role.
+            # Must not raise. Pre-Phase-3 raised
+            # HTTPException(409, "Seat limit reached").
             await invite_user(body=body, perms=perms, db=mock_db)
 
     @pytest.mark.asyncio
-    async def test_update_user_role_rejects_company_on_free(self):
-        """REQ-12: free plan does not allow ``company`` — even if ``perms.plan``
-        from the request-start snapshot says otherwise (the locked org row
-        is the authoritative source of truth)."""
+    async def test_update_user_role_to_kb_manager_on_free_plan(self):
+        """Pre-Phase-3 this was 403. Phase 3 makes it succeed.
+
+        Mirror of the deleted ``test_update_user_role_rejects_company_on_free``.
+        """
         from app.api.admin.users import RoleUpdateRequest, update_user_role
 
-        # Locked org row from the FOR UPDATE select reports plan='free'.
         locked_org = MagicMock()
-        locked_org.plan = "free"
-        mock_db = AsyncMock()
-        locked_result = MagicMock()
-        locked_result.scalar_one.return_value = locked_org
-        mock_db.execute.return_value = locked_result
-
-        body = RoleUpdateRequest(role="company")
-        # perms.plan deliberately MISMATCHES locked_org.plan to prove the
-        # endpoint reads the locked row, not the snapshot.
-        perms = make_perms(role="admin", user_id="admin-1", org_id=42, plan="knowledge")
-
-        with pytest.raises(HTTPException) as exc:
-            await update_user_role(zitadel_user_id="zit-2", body=body, perms=perms, db=mock_db)
-
-        assert exc.value.status_code == 403
-        assert exc.value.detail["error_code"] == "role_not_allowed_for_plan"
-        assert exc.value.detail["role"] == "company"
-        # CRITICAL: must be 'free' (locked row), not 'knowledge' (perms snapshot).
-        assert exc.value.detail["plan"] == "free"
-
-    @pytest.mark.asyncio
-    async def test_update_user_role_uses_locked_plan_not_perms_snapshot(self):
-        """Regression guard: ``update_user_role`` MUST read ``plan`` from the
-        FOR UPDATE-locked org row, not from ``perms.plan`` (which is a
-        snapshot from request start that a concurrent platform-admin
-        downgrade could have invalidated).
-
-        Reverse case of the test above: locked plan permits the role even
-        though ``perms.plan`` (snapshot) would forbid it. Endpoint must
-        accept — proving it ignores the snapshot."""
-        from app.api.admin.users import RoleUpdateRequest, update_user_role
-
-        # Locked plan = knowledge (allows kb_manager).
-        locked_org = MagicMock()
-        locked_org.plan = "knowledge"
+        locked_org.plan = "free"  # used to trigger the deprecated gate
         target_user = MagicMock()
         target_user.role = "company"
         target_user.zitadel_user_id = "zit-2"
         mock_db = AsyncMock()
-        # Two SELECTs: locked org, then PortalUser lookup.
         locked_result = MagicMock()
         locked_result.scalar_one.return_value = locked_org
         user_result = MagicMock()
@@ -384,20 +379,19 @@ class TestPlanCeilingOnRoleAssignment:
         mock_db.commit = AsyncMock()
 
         body = RoleUpdateRequest(role="kb_manager")
-        # perms.plan = free FORBIDS kb_manager — the test fails if the
-        # endpoint reads from perms.
         perms = make_perms(role="admin", user_id="admin-1", org_id=42, plan="free")
 
         await update_user_role(zitadel_user_id="zit-2", body=body, perms=perms, db=mock_db)
 
-        # The role assignment landed (no exception raised + target.role mutated).
+        # Role assignment landed.
         assert target_user.role == "kb_manager"
 
     @pytest.mark.asyncio
-    async def test_promote_admin_passes_on_every_plan(self):
-        """``admin`` is the one role every plan must accept; this guards
-        against an accidental tightening (e.g. dropping admin from the
-        ``free`` set) silently breaking owner-self-promote flows.
+    async def test_promote_admin_passes_on_every_plan_no_warning(self):
+        """``admin`` was always allowed pre-Phase-3 too, but the test
+        still ran through ``assert_role_allowed_for_plan``. Post-Phase-3
+        that call site is gone — promotion succeeds without invoking the
+        deprecated function at all.
         """
         from app.api.admin.users import promote_admin
 
@@ -415,16 +409,9 @@ class TestPlanCeilingOnRoleAssignment:
 
             with (
                 patch("app.api.admin.users.emit_event"),
-                patch(
-                    "app.api.admin.users.log_event",
-                    new=AsyncMock(),
-                ),
-                patch(
-                    "app.api.admin.users.zitadel.grant_user_role",
-                    new=AsyncMock(),
-                ),
+                patch("app.api.admin.users.log_event", new=AsyncMock()),
+                patch("app.api.admin.users.zitadel.grant_user_role", new=AsyncMock()),
             ):
-                # Must not raise on any plan — admin is always allowed.
                 await promote_admin(zitadel_user_id="zit-target", perms=perms, db=mock_db)
 
 
