@@ -17,11 +17,14 @@ from tests.conftest import make_org, make_perms
 
 
 def _db_with_org(org: MagicMock) -> AsyncMock:
-    """Mock AsyncSession that returns the given org on `.execute().scalar_one_or_none()`."""
+    """Mock AsyncSession that returns the given org on ``db.get(PortalOrg, org_id)``.
+
+    The endpoint resolves the caller's org via ``_load_org_or_500`` which uses
+    ``db.get``; older versions of these tests stubbed ``db.execute`` directly,
+    which silently no-op'd after the cleanup PR.
+    """
     db = AsyncMock()
-    result = MagicMock()
-    result.scalar_one_or_none = MagicMock(return_value=org)
-    db.execute = AsyncMock(return_value=result)
+    db.get = AsyncMock(return_value=org)
     return db
 
 
@@ -57,8 +60,10 @@ class TestListExtensions:
             assert item.manageable_by_caller is True
 
     @pytest.mark.asyncio
-    async def test_response_payload_is_sorted_and_labelled(self) -> None:
-        """Each item carries its display label + description; order is stable."""
+    async def test_response_payload_is_sorted_and_language_agnostic(self) -> None:
+        """SPEC-PORTAL-EXTENSIONS-UNIFY-001 polish: backend returns keys only,
+        no language-specific label/description. Frontend maps to Paraglide
+        messages client-side so NL/EN switching is server-free."""
         perms = make_perms(role="admin", org_id=42)
         org = make_org(org_id=42, slug="acme", platform_unlocked_features=["partner_api"])
         db = _db_with_org(org)
@@ -66,7 +71,7 @@ class TestListExtensions:
         # Sorted by key alphabetically.
         keys_in_order = [item.key for item in result.extensions]
         assert keys_in_order == sorted(keys_in_order)
-        # Every item has a non-empty label.
+        # No label/description fields leak through — the schema is i18n-clean.
         for item in result.extensions:
-            assert item.label
-            assert item.description
+            assert not hasattr(item, "label") or "label" not in item.model_fields
+            assert not hasattr(item, "description") or "description" not in item.model_fields
