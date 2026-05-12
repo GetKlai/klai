@@ -1,4 +1,4 @@
-export interface Bron {
+export interface Source {
   kind: 'connector' | 'upload'
   id: string
   name: string
@@ -14,8 +14,8 @@ export interface Bron {
   index_status?: string | null
 }
 
-export interface BronnenResponse {
-  bronnen: Bron[]
+export interface SourcesResponse {
+  sources: Source[]
 }
 
 export interface ConnectorItem {
