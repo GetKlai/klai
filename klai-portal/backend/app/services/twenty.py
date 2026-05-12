@@ -76,7 +76,7 @@ def _client() -> httpx.AsyncClient:
         TwentyUnavailable: when the URL or API key is missing.
     """
     if not is_configured():
-        raise TwentyUnavailable("Twenty CRM not configured — set TWENTY_URL and TWENTY_API_KEY in SOPS.")
+        raise TwentyUnavailable("Twenty CRM not configured - set TWENTY_URL and TWENTY_API_KEY in SOPS.")
     return httpx.AsyncClient(
         base_url=settings.twenty_url,
         headers={
