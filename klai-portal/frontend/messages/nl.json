@@ -67,6 +67,7 @@
   "signup_privacy_link": "privacyverklaring",
   "signup_error_server": "Fout {status} — probeer opnieuw",
   "signup_error_connection": "Kan geen verbinding maken met de server",
+  "signup_password_too_short": "Wachtwoord moet minimaal 12 tekens zijn",
   "signup_or_continue_with": "of ga verder met",
   "signup_with_google": "Ga verder met Google",
   "signup_with_microsoft": "Ga verder met Microsoft",
