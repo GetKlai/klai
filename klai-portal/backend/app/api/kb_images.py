@@ -37,6 +37,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.app_knowledge_bases import _get_kb_or_404
+from app.api.dependencies import get_kb_with_access
 from app.api.partner_dependencies import PartnerAuthContext, get_partner_key
 from app.api.session_deps import get_optional_session
 from app.core.config import settings
@@ -264,7 +265,7 @@ async def get_kb_image(
 #   serves as memory-DoS guard for parallel uploads. The route path is sourced
 #   from KbImage.UPLOAD_ROUTE_TEMPLATE (SPEC-KB-IMAGES-V2-001 REQ-2).
 # @MX:SPEC: SPEC-PORTAL-DOCS-IMAGE-PASTE-001 + SPEC-KB-IMAGES-V2-001 REQ-2
-@router.post(KbImage.UPLOAD_ROUTE_TEMPLATE)
+@router.post(KbImage.UPLOAD_ROUTE_TEMPLATE, dependencies=[Depends(get_kb_with_access)])
 async def upload_kb_image(
     request: Request,
     kb_slug: str,

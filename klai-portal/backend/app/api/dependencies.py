@@ -7,13 +7,74 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import get_current_user_id
 from app.api.bearer import bearer as bearer  # re-export for routes that import from here
 from app.core.database import get_db
+from app.core.permissions import UserPermissions, get_caller
 from app.core.plan_limits import PLAN_LIMITS, get_plan_limits
 from app.core.profiles import (
     PROFILE_CAPABILITIES,
     Capability,
 )
+from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg, PortalUser
+from app.services.access import is_personal_kb
 from app.services.entitlements import get_effective_products
+
+
+async def get_kb_with_access(
+    kb_slug: str,
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> PortalKnowledgeBase:
+    """Resolve a KB by slug + enforce the personal-firewall.
+
+    SPEC-PORTAL-KB-OWNERSHIP-001 REQ-3.1 — single source of truth for
+    every ``/api/app/knowledge-bases/{kb_slug}/...`` route.
+
+    Three steps, in order:
+
+    1. **Magic-slug shortcuts**: ``personal`` resolves to the caller's
+       ``personal-{user_id}`` KB; ``org`` resolves to the tenant's org
+       KB. Both are lazy-created if provisioning missed them. These
+       slugs are by definition owned-by-or-visible-to the caller, so
+       the firewall step is a no-op.
+    2. **Tenant-scope**: SELECT WHERE org_id = caller.org_id AND slug = kb_slug.
+       Cross-tenant slugs return 0 rows -> 404. Org-scoping is also
+       enforced at the DB level via Cat-D RLS on
+       ``portal_knowledge_bases``; this is belt+braces.
+    3. **Personal-firewall**: if the resolved KB is personal
+       (``is_personal_kb()``) AND the caller is not the
+       ``owner_user_id``, raise 404. NOT 403 — leaking existence of a
+       personal KB to non-owners is itself a privacy violation. Admins
+       also receive 404 (no role-bypass).
+
+    Authorisation (owner / contributor / viewer) is layered on TOP of
+    this gate via ``_require_owner`` etc. in the KB API module. This
+    dependency only handles existence + privacy; it does not gate
+    write actions.
+    """
+    # Magic-slug shortcuts. Imported here to avoid a top-level circular import
+    # via app.services.default_knowledge_bases -> set_tenant -> ... -> dependencies.
+    if kb_slug == "personal":
+        from app.services.default_knowledge_bases import resolve_personal_kb
+
+        return await resolve_personal_kb(perms.user_id, perms.org_id, db)
+    if kb_slug == "org":
+        from app.services.default_knowledge_bases import resolve_org_kb
+
+        return await resolve_org_kb(perms.user_id, perms.org_id, db)
+
+    result = await db.execute(
+        select(PortalKnowledgeBase).where(
+            PortalKnowledgeBase.org_id == perms.org_id,
+            PortalKnowledgeBase.slug == kb_slug,
+        )
+    )
+    kb = result.scalar_one_or_none()
+    if kb is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base not found")
+    # Personal-firewall: existence-non-disclosure.
+    if is_personal_kb(kb) and kb.owner_user_id != perms.user_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base not found")
+    return kb
 
 
 def require_product(product: str):

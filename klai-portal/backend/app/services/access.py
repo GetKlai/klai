@@ -7,6 +7,11 @@ All query functions enforce org-level scoping. Group-scoped access is layered on
                          meeting queries. Do not bypass with direct select(VexaMeeting).
 @MX:ANCHOR fan_in=3+ -- get_accessible_kb_slugs is the authoritative entry point for
                          KB access checks. Do not bypass.
+@MX:ANCHOR fan_in=3+ -- is_personal_kb is the single-source-of-truth for the
+                         personal-vs-org discriminator (SPEC-PORTAL-KB-OWNERSHIP-001
+                         REQ-3 firewall). Used by every gate that must hide a
+                         personal KB from non-owners. Do not duplicate the
+                         ``owner_type=='user'`` check inline.
 """
 
 from sqlalchemy import func, or_, select
@@ -16,6 +21,23 @@ from app.models.groups import PortalGroupMembership
 from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase, PortalUserKBAccess
 from app.models.meetings import VexaMeeting
 from app.models.portal import PortalUser
+
+
+def is_personal_kb(kb: PortalKnowledgeBase) -> bool:
+    """Return True iff ``kb`` is a personal knowledge base.
+
+    Personal KBs (``owner_type == 'user'``) are user-private: only the
+    ``owner_user_id`` may see, query, or modify them. Admins included — there
+    is NO admin-bypass for personal KBs (SPEC-PORTAL-KB-OWNERSHIP-001 REQ-3).
+
+    @MX:NOTE -- single source of truth. Every personal-firewall check
+    (``get_kb_with_access`` in ``app/api/dependencies.py``, future RLS
+    policies) MUST go through this helper rather than inlining
+    ``kb.owner_type == 'user'``. A future schema migration that introduces
+    a third owner_type value (e.g. ``'group'``) flips behaviour at one
+    central point.
+    """
+    return kb.owner_type == "user"
 
 
 def _accessible_meetings_filter(user_id: str, org_id: int):

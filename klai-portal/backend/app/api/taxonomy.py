@@ -13,7 +13,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _load_org_or_500, require_capability
+from app.api.dependencies import _load_org_or_500, get_kb_with_access, require_capability
 from app.core.config import settings
 from app.core.database import get_db, set_tenant
 from app.core.permissions import ProfileRole, UserPermissions, get_caller, get_caller_at_least
@@ -197,7 +197,7 @@ async def _check_circular_reference(
 @router.get(
     "/{kb_slug}/taxonomy/nodes",
     response_model=TaxonomyNodesResponse,
-    dependencies=[Depends(require_capability(Capability.KB_TAXONOMY))],
+    dependencies=[Depends(require_capability(Capability.KB_TAXONOMY)), Depends(get_kb_with_access)],
 )
 async def list_taxonomy_nodes(
     kb_slug: str,
@@ -220,7 +220,7 @@ async def list_taxonomy_nodes(
     "/{kb_slug}/taxonomy/nodes",
     response_model=TaxonomyNodeOut,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_capability(Capability.KB_TAXONOMY))],
+    dependencies=[Depends(require_capability(Capability.KB_TAXONOMY)), Depends(get_kb_with_access)],
 )
 async def create_taxonomy_node(
     kb_slug: str,
@@ -270,7 +270,7 @@ async def create_taxonomy_node(
 @router.patch(
     "/{kb_slug}/taxonomy/nodes/{node_id}",
     response_model=TaxonomyNodeOut,
-    dependencies=[Depends(require_capability(Capability.KB_TAXONOMY))],
+    dependencies=[Depends(require_capability(Capability.KB_TAXONOMY)), Depends(get_kb_with_access)],
 )
 async def update_taxonomy_node(
     kb_slug: str,
@@ -340,7 +340,7 @@ async def update_taxonomy_node(
 @router.delete(
     "/{kb_slug}/taxonomy/nodes/{node_id}",
     status_code=status.HTTP_200_OK,
-    dependencies=[Depends(require_capability(Capability.KB_TAXONOMY))],
+    dependencies=[Depends(require_capability(Capability.KB_TAXONOMY)), Depends(get_kb_with_access)],
 )
 async def delete_taxonomy_node(
     kb_slug: str,
@@ -392,7 +392,7 @@ async def delete_taxonomy_node(
 @router.get(
     "/{kb_slug}/taxonomy/proposals",
     response_model=ProposalsResponse,
-    dependencies=[Depends(require_capability(Capability.KB_TAXONOMY))],
+    dependencies=[Depends(require_capability(Capability.KB_TAXONOMY)), Depends(get_kb_with_access)],
 )
 async def list_taxonomy_proposals(
     kb_slug: str,
@@ -669,6 +669,7 @@ async def _execute_rename(
 @router.post(
     "/{kb_slug}/taxonomy/proposals/{proposal_id}/approve",
     response_model=ProposalOut,
+    dependencies=[Depends(get_kb_with_access)],
 )
 async def approve_proposal(
     kb_slug: str,
@@ -784,6 +785,7 @@ async def approve_proposal(
 @router.post(
     "/{kb_slug}/taxonomy/proposals/{proposal_id}/reject",
     response_model=ProposalOut,
+    dependencies=[Depends(get_kb_with_access)],
 )
 async def reject_proposal(
     kb_slug: str,
@@ -821,7 +823,7 @@ async def reject_proposal(
 # -- Bootstrap & backfill triggers -------------------------------------------
 
 
-@router.post("/{kb_slug}/taxonomy/bootstrap")
+@router.post("/{kb_slug}/taxonomy/bootstrap", dependencies=[Depends(get_kb_with_access)])
 async def trigger_bootstrap(
     kb_slug: str,
     perms: UserPermissions = Depends(get_caller),
@@ -859,7 +861,7 @@ async def trigger_bootstrap(
     return result
 
 
-@router.post("/{kb_slug}/taxonomy/backfill-trigger")
+@router.post("/{kb_slug}/taxonomy/backfill-trigger", dependencies=[Depends(get_kb_with_access)])
 async def trigger_backfill(
     kb_slug: str,
     perms: UserPermissions = Depends(get_caller),
@@ -895,7 +897,7 @@ async def trigger_backfill(
     return result
 
 
-@router.get("/{kb_slug}/taxonomy/backfill/{job_id}")
+@router.get("/{kb_slug}/taxonomy/backfill/{job_id}", dependencies=[Depends(get_kb_with_access)])
 async def get_backfill_status(
     kb_slug: str,
     job_id: int,
@@ -1029,7 +1031,7 @@ def _make_coverage_response(
     )
 
 
-@router.get("/{kb_slug}/taxonomy/coverage", response_model=CoverageResponse)
+@router.get("/{kb_slug}/taxonomy/coverage", response_model=CoverageResponse, dependencies=[Depends(get_kb_with_access)])
 async def taxonomy_coverage(
     kb_slug: str,
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
@@ -1133,7 +1135,7 @@ async def _fetch_ingest_top_tags(org_id: str, kb_slug: str, limit: int, taxonomy
         return None
 
 
-@router.get("/{kb_slug}/taxonomy/top-tags", response_model=TopTagsResponse)
+@router.get("/{kb_slug}/taxonomy/top-tags", response_model=TopTagsResponse, dependencies=[Depends(get_kb_with_access)])
 async def taxonomy_top_tags(
     kb_slug: str,
     limit: int = 20,
