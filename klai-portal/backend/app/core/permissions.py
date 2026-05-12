@@ -35,9 +35,8 @@ from app.api.bearer import bearer
 from app.core.config import settings as _app_settings
 from app.core.database import get_db, set_tenant
 from app.core.features import derive_user_products
-from app.core.plan_limits import KBLimits, get_plan_limits
+from app.core.plan_limits import KBLimits
 from app.core.profiles import (
-    PROFILE_CAPABILITIES,
     PROFILE_LADDER,
     Capability,
     ProfileRole,
@@ -84,6 +83,15 @@ class UserPermissions:
     # Carried for the deprovisioning-block gate in get_caller. Not part of the
     # 12-field public contract; consumers should not branch on it directly.
     provisioning_status: str = "active"
+    # SPEC-PORTAL-PRICING-PER-USER-001 Phase 4 (2026-05-12): per-user
+    # billing tier. Read from ``portal_users.seat_type``. Drives the
+    # capability resolver — Phase 4 swap moves the intersection axis
+    # from plan to seat. ``plan`` stays on this struct for legacy
+    # callers (kb_quota.py, billing snapshots); Phase 6 deprecates it.
+    # Defaulted to ``"chat"`` (cheapest paid tier) so existing test
+    # constructors that pre-date Phase 4 still build without an explicit
+    # arg. The resolver always passes the real value.
+    seat_type: str = "chat"
 
 
 # ---------------------------------------------------------------------------
@@ -91,25 +99,47 @@ class UserPermissions:
 # ---------------------------------------------------------------------------
 
 
-def _derive_effective_capabilities(role: ProfileRole, plan: str) -> frozenset[Capability]:
-    """Profile capabilities ∩ plan capabilities, with admin bypass.
+def _derive_effective_capabilities(role: ProfileRole, seat_type: str) -> frozenset[Capability]:
+    """Profile capabilities ∩ seat-unlocked capabilities, with admin bypass.
 
-    Mirrors ``app/api/dependencies.py::get_effective_capabilities``:
-    admins on any plan tier receive the full ``knowledge``-tier capability
-    set so they can preview what a plan upgrade unlocks before paying for
-    it. Intentional per SPEC-PORTAL-PLAN-RENAME-001 (carrying forward the
-    SPEC-PORTAL-PROFILES-001 v0.2.0 / v0.3.0 admin-bypass policy).
+    SPEC-PORTAL-PRICING-PER-USER-001 Phase 4 (2026-05-12) — capability
+    intersection swapped from plan-axis to seat-axis. The plan-based
+    derivation (carried forward through SPEC-PORTAL-PLAN-RENAME-001) is
+    gone; billing tier is now ``portal_users.seat_type`` and that's the
+    table the resolver intersects against.
+
+    Pre-Phase-4 shape:
+        cap = PROFILE_CAPABILITIES[role] ∩ PLAN_LIMITS[org.plan].capabilities
+
+    Post-Phase-4 shape:
+        cap = PROFILE_CAPABILITIES[role] filtered through
+              CAPABILITY_TO_SEAT_FEATURE against SEAT_FEATURES[seat_type]
+
+    Both shapes preserve the admin-bypass: an ``admin`` role on any seat
+    receives the full KNOWLEDGE-tier capability set. The bypass exists
+    so a platform admin can preview the full feature surface regardless
+    of their billing tier (e.g. an admin who happens to be on a viewer
+    seat for cost reasons still sees the full admin UI). This mirrors
+    the pre-Phase-4 ``ADMIN -> knowledge plan`` bypass.
     """
     if role == ProfileRole.ADMIN:
-        # Use the knowledge-tier (full unlock) plan capabilities verbatim —
-        # these are the capability strings, but already typed via
-        # Capability(StrEnum) so the frozenset equality matches.
-        knowledge_caps = get_plan_limits("knowledge").capabilities
-        return frozenset(Capability(c) for c in knowledge_caps)
+        # Admin bypass: full KNOWLEDGE-seat capabilities regardless of
+        # the user's actual seat. Uses the seats-module canonical
+        # composition so the bypass cannot drift from the KNOWLEDGE
+        # tier's actual unlock set.
+        from app.core.seats import SeatType, effective_capabilities
 
-    role_caps = PROFILE_CAPABILITIES.get(role.value, frozenset())
-    plan_caps = get_plan_limits(plan).capabilities
-    return frozenset(Capability(c) for c in (set(role_caps) & set(plan_caps)))
+        return frozenset(Capability(c) for c in effective_capabilities(role.value, SeatType.KNOWLEDGE))
+
+    from app.core.seats import SeatType, effective_capabilities
+
+    try:
+        seat = SeatType(seat_type)
+    except ValueError:
+        # Unknown seat string (data drift) -> fall back to the cheapest
+        # paid tier. Matches the suggest_seat fail-closed pricing default.
+        seat = SeatType.CHAT
+    return frozenset(Capability(c) for c in effective_capabilities(role.value, seat))
 
 
 def _platform_unlocked_set(org: PortalOrg) -> frozenset[str]:
@@ -148,8 +178,13 @@ async def resolve_user_permissions(zitadel_user_id: str, db: AsyncSession) -> Us
 
     role = ProfileRole(user.role)
     plan = org.plan
+    # SPEC-PORTAL-PRICING-PER-USER-001 Phase 4: capability resolution
+    # axis swapped from plan to seat_type. ``plan`` stays on UserPermissions
+    # for the legacy kb-quota path (services/kb_quota.py reads org.plan to
+    # cap personal-KB count) — that swap is a follow-up.
+    seat_type = user.seat_type
     platform_features = _platform_unlocked_set(org)
-    effective_caps = _derive_effective_capabilities(role, plan)
+    effective_caps = _derive_effective_capabilities(role, seat_type)
     effective_prods = frozenset(derive_user_products(role.value, plan, list(platform_features)))
     kb_limits = effective_kb_limits(role.value, plan)
     is_platform_admin = org.slug == _app_settings.platform_org_slug
@@ -160,6 +195,7 @@ async def resolve_user_permissions(zitadel_user_id: str, db: AsyncSession) -> Us
         org_slug=org.slug,
         role=role,
         plan=plan,
+        seat_type=seat_type,
         platform_unlocked_features=platform_features,
         effective_role=role,  # alias-fase: identical to role until profile-stacking lands
         effective_capabilities=effective_caps,
