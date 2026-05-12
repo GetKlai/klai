@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _load_org_or_500, get_effective_capabilities, require_capability
+from app.api.dependencies import _load_org_or_500, get_effective_capabilities, get_kb_with_access, require_capability
 from app.core.database import get_db
 from app.core.permissions import UserPermissions, get_caller
 from app.core.profiles import Capability, ProfileRole, check_connector_allowed
@@ -67,7 +67,12 @@ router = APIRouter(
     prefix="/api/app/knowledge-bases/{kb_slug}/connectors",
     tags=["connectors"],
     # R-X2 / AC-3: all connector endpoints require the kb.connectors capability.
-    dependencies=[Depends(require_capability(Capability.KB_CONNECTORS))],
+    # SPEC-PORTAL-KB-OWNERSHIP-001 REQ-3: firewall personal-KBs of other users
+    # at the router level — every connector route inherits the gate.
+    dependencies=[
+        Depends(require_capability(Capability.KB_CONNECTORS)),
+        Depends(get_kb_with_access),
+    ],
 )
 
 # -- Webcrawler config schema (SPEC-CRAWL-003) --------------------------------

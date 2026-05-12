@@ -14,7 +14,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _load_org_or_500, require_capability
+from app.api.dependencies import _load_org_or_500, get_kb_with_access, require_capability
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.permissions import UserPermissions, get_caller
@@ -502,7 +502,7 @@ async def knowledge_bases_stats_summary(
     return KBStatsSummaryResponse(stats=stats)
 
 
-@router.get("/knowledge-bases/{kb_slug}", response_model=AppKBOut)
+@router.get("/knowledge-bases/{kb_slug}", response_model=AppKBOut, dependencies=[Depends(get_kb_with_access)])
 async def get_app_knowledge_base(
     kb_slug: str,
     perms: UserPermissions = Depends(get_caller),
@@ -622,7 +622,9 @@ async def create_app_knowledge_base(
     return _kb_out(kb)
 
 
-@router.delete("/knowledge-bases/{kb_slug}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/knowledge-bases/{kb_slug}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(get_kb_with_access)]
+)
 async def delete_app_knowledge_base(
     kb_slug: str,
     perms: UserPermissions = Depends(get_caller),
@@ -662,7 +664,9 @@ class UpdateDefaultOrgRoleRequest(BaseModel):
     default_org_role: str | None  # "viewer", "contributor", or null
 
 
-@router.put("/knowledge-bases/{kb_slug}/default-org-role", response_model=AppKBOut)
+@router.put(
+    "/knowledge-bases/{kb_slug}/default-org-role", response_model=AppKBOut, dependencies=[Depends(get_kb_with_access)]
+)
 async def update_default_org_role(
     kb_slug: str,
     body: UpdateDefaultOrgRoleRequest,
@@ -695,7 +699,7 @@ class AppKBUpdateRequest(BaseModel):
     default_org_role: str | None = None
 
 
-@router.patch("/knowledge-bases/{kb_slug}", response_model=AppKBOut)
+@router.patch("/knowledge-bases/{kb_slug}", response_model=AppKBOut, dependencies=[Depends(get_kb_with_access)])
 async def update_knowledge_base(
     kb_slug: str,
     body: AppKBUpdateRequest,
@@ -766,7 +770,7 @@ async def update_knowledge_base(
 # -- Stats --------------------------------------------------------------------
 
 
-@router.get("/knowledge-bases/{kb_slug}/stats", response_model=KBStatsOut)
+@router.get("/knowledge-bases/{kb_slug}/stats", response_model=KBStatsOut, dependencies=[Depends(get_kb_with_access)])
 async def get_kb_stats(
     kb_slug: str,
     perms: UserPermissions = Depends(get_caller),
@@ -1013,6 +1017,7 @@ def _upload_type_label(content_type: str) -> str:
 @router.get(
     "/knowledge-bases/{kb_slug}/sources",
     response_model=SourcesResponse,
+    dependencies=[Depends(get_kb_with_access)],
 )
 async def list_kb_sources(
     kb_slug: str,
@@ -1158,6 +1163,7 @@ async def list_kb_sources(
 @router.get(
     "/knowledge-bases/{kb_slug}/sources/{source_id}/content",
     response_model=SourceContentResponse,
+    dependencies=[Depends(get_kb_with_access)],
 )
 async def get_source_content(
     kb_slug: str,
@@ -1254,7 +1260,11 @@ async def get_source_content(
 # -- Uploads: reindex / delete ------------------------------------------------
 
 
-@router.post("/knowledge-bases/{kb_slug}/uploads/{artifact_id}/reindex", status_code=202)
+@router.post(
+    "/knowledge-bases/{kb_slug}/uploads/{artifact_id}/reindex",
+    status_code=202,
+    dependencies=[Depends(get_kb_with_access)],
+)
 async def reindex_upload(
     kb_slug: str,
     artifact_id: str,
@@ -1292,6 +1302,7 @@ async def reindex_upload(
 @router.patch(
     "/knowledge-bases/{kb_slug}/uploads/{artifact_id}",
     response_model=RenameUploadResponse,
+    dependencies=[Depends(get_kb_with_access)],
 )
 async def rename_kb_upload(
     kb_slug: str,
@@ -1335,7 +1346,9 @@ async def rename_kb_upload(
     )
 
 
-@router.delete("/knowledge-bases/{kb_slug}/uploads/{artifact_id}", status_code=204)
+@router.delete(
+    "/knowledge-bases/{kb_slug}/uploads/{artifact_id}", status_code=204, dependencies=[Depends(get_kb_with_access)]
+)
 async def delete_kb_upload(
     kb_slug: str,
     artifact_id: str,
@@ -1385,7 +1398,7 @@ async def delete_kb_upload(
 @router.get(
     "/knowledge-bases/{kb_slug}/members",
     response_model=MembersResponse,
-    dependencies=[Depends(require_capability(Capability.KB_MEMBERS))],
+    dependencies=[Depends(require_capability(Capability.KB_MEMBERS)), Depends(get_kb_with_access)],
 )
 async def list_members(
     kb_slug: str,
@@ -1441,7 +1454,7 @@ async def list_members(
     "/knowledge-bases/{kb_slug}/members/users",
     response_model=UserMemberOut,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_capability(Capability.KB_MEMBERS))],
+    dependencies=[Depends(require_capability(Capability.KB_MEMBERS)), Depends(get_kb_with_access)],
 )
 async def invite_user(
     kb_slug: str,
@@ -1509,7 +1522,7 @@ async def invite_user(
 @router.patch(
     "/knowledge-bases/{kb_slug}/members/users/{access_id}",
     response_model=UserMemberOut,
-    dependencies=[Depends(require_capability(Capability.KB_MEMBERS))],
+    dependencies=[Depends(require_capability(Capability.KB_MEMBERS)), Depends(get_kb_with_access)],
 )
 async def update_user_role(
     kb_slug: str,
@@ -1556,7 +1569,7 @@ async def update_user_role(
 @router.delete(
     "/knowledge-bases/{kb_slug}/members/users/{access_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(require_capability(Capability.KB_MEMBERS))],
+    dependencies=[Depends(require_capability(Capability.KB_MEMBERS)), Depends(get_kb_with_access)],
 )
 async def remove_user(
     kb_slug: str,
@@ -1589,7 +1602,7 @@ async def remove_user(
     "/knowledge-bases/{kb_slug}/members/groups",
     response_model=GroupMemberOut,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_capability(Capability.KB_MEMBERS))],
+    dependencies=[Depends(require_capability(Capability.KB_MEMBERS)), Depends(get_kb_with_access)],
 )
 async def invite_group(
     kb_slug: str,
@@ -1644,7 +1657,7 @@ async def invite_group(
 @router.patch(
     "/knowledge-bases/{kb_slug}/members/groups/{access_id}",
     response_model=GroupMemberOut,
-    dependencies=[Depends(require_capability(Capability.KB_MEMBERS))],
+    dependencies=[Depends(require_capability(Capability.KB_MEMBERS)), Depends(get_kb_with_access)],
 )
 async def update_group_role(
     kb_slug: str,
@@ -1689,7 +1702,7 @@ async def update_group_role(
 @router.delete(
     "/knowledge-bases/{kb_slug}/members/groups/{access_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(require_capability(Capability.KB_MEMBERS))],
+    dependencies=[Depends(require_capability(Capability.KB_MEMBERS)), Depends(get_kb_with_access)],
 )
 async def remove_group(
     kb_slug: str,
@@ -1792,7 +1805,11 @@ class CrawlPreviewResponse(BaseModel):
     classification_reason: str | None = None
 
 
-@router.post("/knowledge-bases/{kb_slug}/connectors/crawl-preview", response_model=CrawlPreviewResponse)
+@router.post(
+    "/knowledge-bases/{kb_slug}/connectors/crawl-preview",
+    response_model=CrawlPreviewResponse,
+    dependencies=[Depends(get_kb_with_access)],
+)
 async def crawl_preview(
     kb_slug: str,
     body: CrawlPreviewRequest,
@@ -1849,7 +1866,11 @@ class AuthProbeResponse(BaseModel):
     auth_guard: dict | None = None
 
 
-@router.post("/knowledge-bases/{kb_slug}/connectors/auth-probe", response_model=AuthProbeResponse)
+@router.post(
+    "/knowledge-bases/{kb_slug}/connectors/auth-probe",
+    response_model=AuthProbeResponse,
+    dependencies=[Depends(get_kb_with_access)],
+)
 async def auth_probe(
     kb_slug: str,
     body: AuthProbeRequest,
