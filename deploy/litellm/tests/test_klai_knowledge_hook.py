@@ -5,6 +5,7 @@ litellm is not installed locally (runs in Docker), so we mock the import.
 import importlib
 import sys
 import types
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -2202,6 +2203,9 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "placeholder, example, or documentation-only" in format_section
         assert "example.com" not in format_section
         assert "![afbeelding" not in format_section
+        kb_meta = result["metadata"]["_klai_kb_meta"]
+        assert kb_meta["allowed_source_urls"] == []
+        assert kb_meta["allowed_image_urls"] == []
 
     @pytest.mark.asyncio
     async def test_prompt_only_exposes_images_from_chunk_image_urls(self, monkeypatch):
@@ -2245,3 +2249,74 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
             in sys_content
         )
         assert "ALWAYS include them literally" not in sys_content
+        kb_meta = result["metadata"]["_klai_kb_meta"]
+        assert kb_meta["allowed_source_urls"] == ["https://docs.getklai.com/diagram"]
+        assert kb_meta["allowed_image_urls"] == [
+            "https://getklai.getklai.com/kb-images/org/images/support/diagram.png"
+        ]
+
+    def test_sanitizer_removes_unretrieved_links_and_images(self, monkeypatch):
+        """Output guard keeps only exact URLs retrieved for this KB call."""
+        mod = _load_hook(monkeypatch)
+
+        text = (
+            "Bron: [ok](https://docs.getklai.com/diagram) "
+            "[fake](https://example.com/fake). "
+            "Goed: ![diagram](https://getklai.getklai.com/kb-images/org/diagram.png) "
+            "Slecht: ![fake](https://example.com/fake.png) "
+            "Raw: https://example.com/raw"
+        )
+
+        sanitized, changed = mod._sanitize_kb_markdown_output(
+            text,
+            allowed_source_urls={"https://docs.getklai.com/diagram"},
+            allowed_image_urls={
+                "https://getklai.getklai.com/kb-images/org/diagram.png"
+            },
+        )
+
+        assert changed == 3
+        assert "[ok](https://docs.getklai.com/diagram)" in sanitized
+        assert "![diagram](https://getklai.getklai.com/kb-images/org/diagram.png)" in sanitized
+        assert "https://example.com" not in sanitized
+        assert "fake" in sanitized
+        assert "[link removed]" in sanitized
+
+    @pytest.mark.asyncio
+    async def test_post_call_guard_mutates_response_content(self, monkeypatch):
+        """The proxy post-call hook strips invented URLs before returning response."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content=(
+                            "Zie [bron](https://docs.getklai.com/diagram) "
+                            "en ![fake](https://example.com/fake.png)."
+                        )
+                    )
+                )
+            ]
+        )
+        data = {
+            "metadata": {
+                "_klai_kb_meta": {
+                    "org_id": "org123",
+                    "user_id": "user123",
+                    "chunks_injected": 1,
+                    "retrieval_ms": 12,
+                    "gate_bypassed": False,
+                    "allowed_source_urls": ["https://docs.getklai.com/diagram"],
+                    "allowed_image_urls": [],
+                }
+            }
+        }
+
+        returned = await hook.async_post_call_success_hook(data, None, response)
+
+        assert returned is response
+        content = response.choices[0].message.content
+        assert "[bron](https://docs.getklai.com/diagram)" in content
+        assert "https://example.com" not in content
+        assert "![fake]" not in content
