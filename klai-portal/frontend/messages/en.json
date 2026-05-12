@@ -1730,5 +1730,15 @@
   "admin_settings_extensions_active_slug": "Active: {slug}",
   "admin_settings_extensions_status_on": "On",
   "admin_settings_extensions_status_off": "Off",
-  "admin_settings_extensions_managed_by_klai": "These extensions are managed by Klai. Contact us to request changes."
+  "admin_settings_extensions_managed_by_klai": "These extensions are managed by Klai. Contact us to request changes.",
+  "admin_extension_partner_api_label": "API keys",
+  "admin_extension_partner_api_description": "Programmatic access via pk_live_* API keys.",
+  "admin_extension_widgets_label": "Chat widgets",
+  "admin_extension_widgets_description": "Embed a chat widget on customer-facing sites.",
+  "admin_extension_custom_mcps_label": "Custom MCP servers",
+  "admin_extension_custom_mcps_description": "Connect your own Model Context Protocol servers.",
+  "admin_extension_scribe_label": "Scribe — meeting transcripts",
+  "admin_extension_scribe_description": "Automatic meeting transcription.",
+  "admin_extension_docs_label": "Docs — shared KBs",
+  "admin_extension_docs_description": "Share documentation KBs across the organisation."
 }
