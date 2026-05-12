@@ -27,6 +27,8 @@ lifecycle is the source of truth on whether a job should still be alive.
 from __future__ import annotations
 
 import asyncio
+import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -58,6 +60,15 @@ logger = get_logger(__name__)
 _TICK_S: float = 60.0
 _FINALIZE_AFTER_S: float = 5 * 60.0
 _FORCE_FAIL_AFTER_S: float = 7 * 24 * 60 * 60.0
+
+
+@dataclass(frozen=True)
+class _ReaperCandidate:
+    id: uuid.UUID
+    connector_id: uuid.UUID
+    org_id: str | None
+    started_at: datetime
+    cursor_state: dict | None
 
 
 class SyncRunReaper:
@@ -137,7 +148,17 @@ class SyncRunReaper:
                     SyncRun.cursor_state["remote_job_id"].astext.isnot(None),  # type: ignore[index]
                 ),
             )
-            rows = (await session.execute(stmt)).scalars().all()
+            db_rows = (await session.execute(stmt)).scalars().all()
+            rows = [
+                _ReaperCandidate(
+                    id=row.id,
+                    connector_id=row.connector_id,
+                    org_id=row.org_id,
+                    started_at=row.started_at,
+                    cursor_state=row.cursor_state if isinstance(row.cursor_state, dict) else None,
+                )
+                for row in db_rows
+            ]
 
         for row in rows:
             if await self._reap_row(row, force_fail_cutoff=force_fail_cutoff):
@@ -150,7 +171,7 @@ class SyncRunReaper:
             )
         return finalised
 
-    async def _reap_row(self, row: SyncRun, *, force_fail_cutoff: datetime) -> bool:
+    async def _reap_row(self, row: _ReaperCandidate, *, force_fail_cutoff: datetime) -> bool:
         """Process a single candidate. Returns True if the row was finalised."""
         cursor = row.cursor_state if isinstance(row.cursor_state, dict) else {}
         remote_job_id = cursor.get("remote_job_id")
