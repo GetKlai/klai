@@ -18,7 +18,7 @@ import * as m from '@/paraglide/messages'
 import { RoleGuard } from '@/components/layout/RoleGuard'
 import { apiFetch } from '@/lib/apiFetch'
 import type { KnowledgeBase, MembersResponse } from './-kb-types'
-import { kbQueryKeys } from './-kb-query-keys'
+import { kbQueryKeys } from '@/lib/kb-query-keys'
 
 interface OrgGroup {
   id: number

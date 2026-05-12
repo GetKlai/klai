@@ -9,7 +9,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
-import { kbQueryKeys } from './-kb-query-keys'
+import { kbQueryKeys } from '@/lib/kb-query-keys'
 import type { Source } from './-sources-types'
 
 /**
@@ -76,8 +76,10 @@ export function useSourceDelete(kbSlug: string, source: Source) {
  * edited via the dedicated `/edit-connector` route. The mutation does NOT
  * touch `artifacts.path` (Qdrant identity) — only `extra.display_name`.
  *
- * `onSettled` closes the inline edit overlay regardless of success/fail so
- * the user is never stuck on a spinning save button when the request errors.
+ * The `onSuccess` callback closes the inline edit overlay; failures keep the
+ * overlay open so the user can retry without re-typing. This matches the
+ * pre-rename behaviour from PR #574 — closing on error silently dropped
+ * the user's typed name with no feedback.
  */
 export function useSourceRename(kbSlug: string, source: Source, onDone: () => void) {
   const queryClient = useQueryClient()
@@ -89,8 +91,8 @@ export function useSourceRename(kbSlug: string, source: Source, onDone: () => vo
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: kbQueryKeys.sources(kbSlug) })
+      onDone()
     },
-    onSettled: onDone,
     onError: (err) =>
       queryLogger.error('Source rename failed', {
         kbSlug,

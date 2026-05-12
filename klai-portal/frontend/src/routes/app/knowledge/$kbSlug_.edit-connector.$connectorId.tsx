@@ -22,7 +22,7 @@ import {
   AuthProbeFeedback,
   PreviewClassificationFeedback,
 } from './$kbSlug_.add-connector'
-import { kbQueryKeys } from './$kbSlug/-kb-query-keys'
+import { kbQueryKeys } from '@/lib/kb-query-keys'
 
 // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-1 / REQ-5: edit wizard uses the same
 // 5-step flow as add-connector. ?step=auth|selector deep-link into the wizard.

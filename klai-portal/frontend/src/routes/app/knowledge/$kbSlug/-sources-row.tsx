@@ -16,7 +16,7 @@
  * the cell width never changes between view and edit modes.
  */
 import { Link } from '@tanstack/react-router'
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import {
   Check,
   ChevronRight,
@@ -61,19 +61,11 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
 
   const syncMutation = useSourceSync(kbSlug, source)
   const deleteMutation = useSourceDelete(kbSlug, source)
+  // `useSourceRename` closes the overlay via its onSuccess callback.
+  // On error it stays open so the user can retry without re-typing
+  // (mirrors the pre-rename behaviour from PR #574).
   const renameMutation = useSourceRename(kbSlug, source, () => setIsRenaming(false))
   const reauth = useSourceReauth(kbSlug, source)
-
-  // Close edit mode when rename mutation finishes (success OR error).
-  // Pattern from portal-frontend.md: useRef + useEffect, never setIsRenaming
-  // inside onSuccess (that races with InlineEdit's blur handler).
-  const wasRenaming = useRef(false)
-  useEffect(() => {
-    if (wasRenaming.current && !renameMutation.isPending) {
-      setIsRenaming(false)
-    }
-    wasRenaming.current = renameMutation.isPending
-  }, [renameMutation.isPending])
 
   function startRename() {
     setDraftName(source.name)

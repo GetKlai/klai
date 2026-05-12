@@ -23,7 +23,7 @@ import {
 } from '@/lib/kb-editor/KBEditorContext'
 import { apiFetch } from '@/lib/apiFetch'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
-import { kbQueryKeys } from '@/routes/app/knowledge/$kbSlug/-kb-query-keys'
+import { kbQueryKeys } from '@/lib/kb-query-keys'
 import { editorLogger, treeLogger } from '@/lib/logger'
 import { SidebarPanel } from '@/components/kb-editor/SidebarPanel'
 import { DeletePageModal } from '@/components/kb-editor/DeletePageModal'

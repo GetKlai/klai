@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { invalidateKnowledgeSourceLists, kbQueryKeys } from '../$kbSlug/-kb-query-keys'
+import { invalidateKnowledgeSourceLists, kbQueryKeys } from '@/lib/kb-query-keys'
 
 describe('kbQueryKeys', () => {
   it('invalidates the sources query after source mutations', () => {

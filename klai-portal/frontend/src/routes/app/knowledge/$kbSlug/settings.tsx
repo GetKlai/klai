@@ -11,7 +11,7 @@ import { apiFetch } from '@/lib/apiFetch'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { DeleteKbModal } from '@/components/ui/delete-kb-modal'
 import type { KnowledgeBase, MembersResponse, KBStats } from './-kb-types'
-import { kbQueryKeys } from './-kb-query-keys'
+import { kbQueryKeys } from '@/lib/kb-query-keys'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/settings')({
   component: SettingsTab,

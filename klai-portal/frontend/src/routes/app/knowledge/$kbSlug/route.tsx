@@ -24,7 +24,7 @@ import { ProductGuard } from '@/components/layout/ProductGuard'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { meetsMinRole } from '@/lib/profiles'
 import type { KBTab, KnowledgeBase, KBStats, MembersResponse } from './-kb-types'
-import { kbQueryKeys } from './-kb-query-keys'
+import { kbQueryKeys } from '@/lib/kb-query-keys'
 
 const VALID_TABS = new Set<KBTab>([
   'overview',

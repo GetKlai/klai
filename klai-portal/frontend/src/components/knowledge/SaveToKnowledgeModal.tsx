@@ -11,7 +11,7 @@ import { apiFetch } from '@/lib/apiFetch'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import * as m from '@/paraglide/messages'
 import { editorLogger } from '@/lib/logger'
-import { kbQueryKeys } from '@/routes/app/knowledge/$kbSlug/-kb-query-keys'
+import { kbQueryKeys } from '@/lib/kb-query-keys'
 
 interface SaveToKnowledgeModalProps {
   initialContent: string

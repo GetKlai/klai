@@ -18,7 +18,7 @@ import { MS_SITE_URL_PATTERN } from '@/lib/ms-docs'
 import { joinSeedUrl } from './$kbSlug/-kb-helpers'
 import type { CookieRow } from './$kbSlug/-kb-types'
 import { CookieRowsInput } from '@/components/knowledge/CookieRowsInput'
-import { kbQueryKeys } from './$kbSlug/-kb-query-keys'
+import { kbQueryKeys } from '@/lib/kb-query-keys'
 
 // -- Types -------------------------------------------------------------------
 

@@ -21,7 +21,7 @@ import * as m from '@/paraglide/messages'
 import { editablePageIdForSource, mapSourceStatus } from './-sources-helpers'
 import { SourcesActionBar } from './-sources-actionbar'
 import { SourceRow } from './-sources-row'
-import { kbQueryKeys } from './-kb-query-keys'
+import { kbQueryKeys } from '@/lib/kb-query-keys'
 import type { PageIndexEntry, SourcesResponse } from './-sources-types'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/sources')({

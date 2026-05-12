@@ -10,7 +10,7 @@ import { apiFetch } from '@/lib/apiFetch'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { DashboardSection } from './-kb-helpers'
 import type { KnowledgeBase, KBStats } from './-kb-types'
-import { kbQueryKeys } from './-kb-query-keys'
+import { kbQueryKeys } from '@/lib/kb-query-keys'
 
 /**
  * Legacy /overview route — redirects to /insights, which now hosts the

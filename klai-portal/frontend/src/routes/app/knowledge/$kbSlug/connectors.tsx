@@ -23,7 +23,7 @@ import { RoleGuard } from '@/components/layout/RoleGuard'
 import { apiFetch } from '@/lib/apiFetch'
 import { SyncStatusBadge } from './-kb-helpers'
 import type { ConnectorSummary, KnowledgeBase, MembersResponse } from './-kb-types'
-import { kbQueryKeys } from './-kb-query-keys'
+import { kbQueryKeys } from '@/lib/kb-query-keys'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/connectors')({
   validateSearch: (search: Record<string, unknown>) => ({
