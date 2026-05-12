@@ -55,7 +55,9 @@ def test_vendored_grounded_prompt_matches_canonical() -> None:
     vendored = _load("_drift_vendored_prompts", _VENDORED_PATH)
     canonical = _load("_drift_canonical_prompts", _CANONICAL_PATH)
 
-    assert vendored.GROUNDED_CHAT_SYSTEM_PROMPT == canonical.GROUNDED_CHAT_SYSTEM_PROMPT, (
+    assert (
+        vendored.GROUNDED_CHAT_SYSTEM_PROMPT == canonical.GROUNDED_CHAT_SYSTEM_PROMPT
+    ), (
         "GROUNDED_CHAT_SYSTEM_PROMPT drift between vendored and canonical.\n"
         "  Update deploy/litellm/klai_chat_prompts.py to match "
         "klai-libs/chat-prompts/klai_chat_prompts/__init__.py.\n"
@@ -75,8 +77,30 @@ def test_vendored_general_prompt_matches_canonical() -> None:
     vendored = _load("_drift_vendored_general", _VENDORED_PATH)
     canonical = _load("_drift_canonical_general", _CANONICAL_PATH)
 
-    assert vendored.GENERAL_CHAT_SYSTEM_PROMPT == canonical.GENERAL_CHAT_SYSTEM_PROMPT, (
+    assert (
+        vendored.GENERAL_CHAT_SYSTEM_PROMPT == canonical.GENERAL_CHAT_SYSTEM_PROMPT
+    ), (
         "GENERAL_CHAT_SYSTEM_PROMPT drift between vendored and canonical.\n"
+        "  Update deploy/litellm/klai_chat_prompts.py to match "
+        "klai-libs/chat-prompts/klai_chat_prompts/__init__.py."
+    )
+
+
+def test_vendored_meta_prompt_matches_canonical() -> None:
+    """The ``META_CHAT_SYSTEM_PROMPT`` constant string MUST be byte-identical
+    between vendored and canonical copies. The LiteLLM hook (path A) prepends
+    this prompt on the meta-question early-return path (``_is_meta_query``);
+    drift here would mean Klai answers "what is Klai?" with stale wording in
+    production while passing local tests against the canonical lib.
+
+    Paths B (partner_chat) and C (synthesis) do NOT use META — they are
+    server-to-server with KB scope always in play.
+    """
+    vendored = _load("_drift_vendored_meta", _VENDORED_PATH)
+    canonical = _load("_drift_canonical_meta", _CANONICAL_PATH)
+
+    assert vendored.META_CHAT_SYSTEM_PROMPT == canonical.META_CHAT_SYSTEM_PROMPT, (
+        "META_CHAT_SYSTEM_PROMPT drift between vendored and canonical.\n"
         "  Update deploy/litellm/klai_chat_prompts.py to match "
         "klai-libs/chat-prompts/klai_chat_prompts/__init__.py."
     )
