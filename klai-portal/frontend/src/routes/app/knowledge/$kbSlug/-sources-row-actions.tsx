@@ -10,6 +10,11 @@
  * occupy the same width without layout shift. The actual Save/Cancel
  * controls live in `-sources-row.tsx` because they share state with
  * the `<InlineEdit>` overlay.
+ *
+ * The six icon-only affordances all share the same h-8/w-8 rounded
+ * button shell with hover + disabled states; extracted into the
+ * `RowActionIconButton` component below so each individual action site
+ * only owns its label, icon, and click handler.
  */
 import { Link } from '@tanstack/react-router'
 import {
@@ -22,6 +27,7 @@ import {
   Settings,
   Trash2,
 } from 'lucide-react'
+import type { ComponentType, ReactNode } from 'react'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { Tooltip } from '@/components/ui/tooltip'
 import * as m from '@/paraglide/messages'
@@ -32,6 +38,74 @@ import {
   useSourceSync,
 } from './-sources-hooks'
 import type { Source } from './-sources-types'
+
+interface RowActionIconButtonProps {
+  label: string
+  icon: ComponentType<{ className?: string }>
+  onClick?: () => void
+  disabled?: boolean
+  /** Optional element to replace the icon while loading (e.g. spinner). */
+  spinner?: ReactNode
+  /** Style variant — `destructive` paints hover red. */
+  variant?: 'default' | 'destructive'
+}
+
+/** Shared icon-only h-8/w-8 button + tooltip + aria-label, the canonical
+ *  affordance for any per-row action in the Sources tab. */
+function RowActionIconButton({
+  label,
+  icon: Icon,
+  onClick,
+  disabled,
+  spinner,
+  variant = 'default',
+}: RowActionIconButtonProps) {
+  const hoverClass = variant === 'destructive'
+    ? 'hover:text-[var(--color-destructive)]'
+    : 'hover:text-gray-900'
+  return (
+    <Tooltip label={label}>
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        aria-label={label}
+        className={`inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 ${hoverClass} hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed`}
+      >
+        {spinner ?? <Icon className="h-4 w-4" />}
+      </button>
+    </Tooltip>
+  )
+}
+
+/** Link-shaped sibling of `RowActionIconButton` — same shell, but the
+ *  target is a TanStack Router `<Link>` rather than a click handler. */
+function RowActionIconLink({
+  label,
+  icon: Icon,
+  to,
+  params,
+}: {
+  label: string
+  icon: ComponentType<{ className?: string }>
+  to: string
+  // TanStack params are route-strict; we accept the runtime shape and let
+  // the caller pin its own typing.
+  params: Record<string, string>
+}) {
+  return (
+    <Tooltip label={label}>
+      <Link
+        to={to}
+        params={params}
+        aria-label={label}
+        className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors"
+      >
+        <Icon className="h-4 w-4" />
+      </Link>
+    </Tooltip>
+  )
+}
 
 interface SourceRowActionsProps {
   source: Source
@@ -73,6 +147,8 @@ export function SourceRowActions({
 
   return (
     <div className={`flex items-center ${isRenaming ? 'opacity-0 pointer-events-none' : ''}`}>
+      {/* Reauth is the only non-icon-only action — it carries a label so
+          the affordance is unambiguous when an auth_error appears. */}
       {isAuthError && (
         <Tooltip label={m.kb_sources_row_reauth_tooltip()}>
           <button
@@ -90,17 +166,13 @@ export function SourceRowActions({
         </Tooltip>
       )}
 
-      <Tooltip label={syncTooltip}>
-        <button
-          type="button"
-          onClick={() => { if (!syncDisabled) syncMutation.mutate() }}
-          disabled={syncDisabled}
-          aria-label={syncTooltip}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {isSyncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-        </button>
-      </Tooltip>
+      <RowActionIconButton
+        label={syncTooltip}
+        icon={RefreshCw}
+        onClick={() => { if (!syncDisabled) syncMutation.mutate() }}
+        disabled={syncDisabled}
+        spinner={isSyncing ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}
+      />
 
       <InlineDeleteConfirm
         isConfirming={confirmingDelete}
@@ -110,56 +182,39 @@ export function SourceRowActions({
         onConfirm={() => { deleteMutation.mutate(); onSetConfirmingDelete(false) }}
         onCancel={() => onSetConfirmingDelete(false)}
       >
-        <Tooltip label={m.kb_sources_row_delete_tooltip()}>
-          <button
-            type="button"
-            onClick={() => onSetConfirmingDelete(true)}
-            disabled={isDeleting}
-            aria-label={m.kb_sources_row_delete_tooltip()}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-[var(--color-destructive)] hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
-        </Tooltip>
+        <RowActionIconButton
+          label={m.kb_sources_row_delete_tooltip()}
+          icon={Trash2}
+          onClick={() => onSetConfirmingDelete(true)}
+          disabled={isDeleting}
+          variant="destructive"
+        />
       </InlineDeleteConfirm>
 
       {source.kind === 'connector' && (
-        <Tooltip label={m.kb_sources_row_edit_connector_tooltip()}>
-          <Link
-            to="/app/knowledge/$kbSlug/edit-connector/$connectorId"
-            params={{ kbSlug, connectorId: source.id }}
-            aria-label={m.kb_sources_row_edit_connector_tooltip()}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors"
-          >
-            <Settings className="h-4 w-4" />
-          </Link>
-        </Tooltip>
+        <RowActionIconLink
+          label={m.kb_sources_row_edit_connector_tooltip()}
+          icon={Settings}
+          to="/app/knowledge/$kbSlug/edit-connector/$connectorId"
+          params={{ kbSlug, connectorId: source.id }}
+        />
       )}
 
       {source.kind === 'upload' && (
-        <Tooltip label={m.kb_sources_row_rename_tooltip()}>
-          <button
-            type="button"
-            onClick={onStartRename}
-            aria-label={m.kb_sources_row_rename_tooltip()}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors"
-          >
-            <Pencil className="h-4 w-4" />
-          </button>
-        </Tooltip>
+        <RowActionIconButton
+          label={m.kb_sources_row_rename_tooltip()}
+          icon={Pencil}
+          onClick={onStartRename}
+        />
       )}
 
       {editablePageId !== null && (
-        <Tooltip label={m.kb_sources_row_open_in_editor()}>
-          <Link
-            to="/app/docs/$kbSlug/$pageId"
-            params={{ kbSlug, pageId: editablePageId }}
-            aria-label={m.kb_sources_row_open_in_editor()}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors"
-          >
-            <NotebookPen className="h-4 w-4" />
-          </Link>
-        </Tooltip>
+        <RowActionIconLink
+          label={m.kb_sources_row_open_in_editor()}
+          icon={NotebookPen}
+          to="/app/docs/$kbSlug/$pageId"
+          params={{ kbSlug, pageId: editablePageId }}
+        />
       )}
 
       <button

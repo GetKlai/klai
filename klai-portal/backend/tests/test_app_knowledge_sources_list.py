@@ -66,6 +66,20 @@ def test_upload_type_label_known_content_types() -> None:
     assert _upload_type_label("unknown") == "Bestand"
 
 
+def test_upload_type_label_fallback_replaces_underscores() -> None:
+    """Regression: bare-underscore content_type slugs previously rendered as
+    "Plain_Text" because str.title() does not split on underscores. The
+    fallback now replaces underscores with spaces before title-casing so
+    the user-visible meta line reads "Plain Text" / "Rich Text Format" /
+    etc."""
+    from app.api.app_knowledge_bases import _upload_type_label
+
+    assert _upload_type_label("plain_text") == "Plain Text"
+    assert _upload_type_label("rich_text_format") == "Rich Text Format"
+    # MIME-shaped fallback still uppercases the subtype.
+    assert _upload_type_label("application/octet-stream") == "OCTET-STREAM"
+
+
 # -- list_kb_sources --------------------------------------------------------
 
 
