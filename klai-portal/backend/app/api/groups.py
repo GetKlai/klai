@@ -3,8 +3,9 @@ Group management endpoints.
 All endpoints require authentication and are scoped to the caller's org.
 
 SPEC-PORTAL-RBAC-001 v0.2.0: groups are content-scoping (KB access) only.
-Products are derived from (profile, plan, enabled_addons) and not assigned
-per group. The legacy product-assignment endpoints below return 410 Gone.
+Products are derived from (profile, plan, platform_unlocked_features) and
+not assigned per group. The legacy product-assignment endpoints below
+return 410 Gone.
 """
 
 import logging

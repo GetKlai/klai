@@ -1,20 +1,24 @@
-"""SPEC-PORTAL-RBAC-001: derive_user_products parametrized matrix.
+"""SPEC-PORTAL-RBAC-001 + SPEC-PORTAL-EXTENSIONS-UNIFY-001:
+derive_user_products parametrized matrix.
 
-Pure-function tests on the canonical (role, plan, enabled_addons) -> products
-derivation. No DB, no mocks; just the function contract.
+Pure-function tests on the canonical (role, plan, platform_unlocked_features)
+-> products derivation. No DB, no mocks; just the function contract.
+
+NB: positional args throughout so the tests stay readable regardless of the
+third-parameter rename history (enabled_addons -> platform_unlocked_features
+on 2026-05-12).
 """
 
 import pytest
 
 from app.core.features import (
-    ADDON_FEATURES,
     FEATURE_MIN_PROFILE,
     PLAN_FEATURES,
     derive_user_products,
 )
 
 # ---------------------------------------------------------------------------
-# Plan + role matrix (no add-ons)
+# Plan + role matrix (no platform-unlocks)
 # ---------------------------------------------------------------------------
 
 
@@ -40,42 +44,53 @@ def test_plan_features_only(role: str, plan: str, expected: set[str]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Add-on threshold gating: scribe/docs floor at "company"
+# Platform-unlocked product threshold gating: scribe/docs floor at "company"
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    "role,enabled_addons,expected_added",
+    "role,unlocked,expected_added",
     [
-        # personal: addons enabled at tenant but not granted
+        # personal: products unlocked at tenant but not granted to personal-rank
         ("personal", ["scribe"], set()),
         ("personal", ["docs"], set()),
         ("personal", ["scribe", "docs"], set()),
-        # company: addons granted
+        # company: products granted
         ("company", ["scribe"], {"scribe"}),
         ("company", ["docs"], {"docs"}),
         ("company", ["scribe", "docs"], {"scribe", "docs"}),
-        # kb_manager and above: same as company (addon FLOOR is "company")
+        # kb_manager and above: same as company (product FLOOR is "company")
         ("kb_manager", ["scribe", "docs"], {"scribe", "docs"}),
         ("group_manager", ["scribe", "docs"], {"scribe", "docs"}),
         ("admin", ["scribe", "docs"], {"scribe", "docs"}),
     ],
 )
-def test_addon_threshold(role: str, enabled_addons: list[str], expected_added: set[str]) -> None:
+def test_product_threshold(role: str, unlocked: list[str], expected_added: set[str]) -> None:
     base = {"chat", "knowledge"}
-    result = derive_user_products(role, "chat", enabled_addons)
+    result = derive_user_products(role, "chat", unlocked)
     assert result == base | expected_added
 
 
-def test_disabled_addon_not_granted_even_to_admin() -> None:
+def test_no_unlocks_admin_gets_plan_only() -> None:
     assert derive_user_products("admin", "chat", []) == {"chat", "knowledge"}
     assert "scribe" not in derive_user_products("admin", "chat", [])
 
 
-def test_unknown_addon_in_enabled_list_ignored() -> None:
+def test_unknown_feature_in_unlocked_list_ignored() -> None:
     # If a stale db row has e.g. "x_legacy_feature" the derivation drops it.
     result = derive_user_products("admin", "chat", ["scribe", "x_legacy_feature"])
     assert result == {"chat", "knowledge", "scribe"}
+
+
+def test_pure_platform_gate_does_not_appear_as_product() -> None:
+    # SPEC-PORTAL-EXTENSIONS-UNIFY-001: features without FEATURE_MIN_PROFILE
+    # entry are platform-gates (widgets/custom_mcps/partner_api), not products.
+    # They never surface in derive_user_products output regardless of role.
+    result = derive_user_products("admin", "knowledge", ["widgets", "custom_mcps", "partner_api"])
+    assert result == {"chat", "knowledge"}
+    assert "widgets" not in result
+    assert "custom_mcps" not in result
+    assert "partner_api" not in result
 
 
 # ---------------------------------------------------------------------------
@@ -87,12 +102,12 @@ def test_unknown_plan_returns_empty() -> None:
     assert derive_user_products("admin", "enterprise_xl", []) == set()
 
 
-def test_unknown_role_grants_nothing_with_addons() -> None:
+def test_unknown_role_grants_nothing_with_unlocks() -> None:
     # Unknown role -> rank -1, fails every FEATURE_MIN_PROFILE check.
     assert derive_user_products("nobody", "chat", ["scribe"]) == set()
 
 
-def test_empty_enabled_addons_treated_as_no_addons() -> None:
+def test_empty_unlocks_treated_as_plan_only() -> None:
     assert derive_user_products("admin", "chat", []) == {"chat", "knowledge"}
 
 
@@ -101,25 +116,20 @@ def test_empty_enabled_addons_treated_as_no_addons() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_addon_features_set() -> None:
-    assert ADDON_FEATURES == frozenset({"scribe", "docs"})
-
-
 def test_plan_features_keys() -> None:
     assert set(PLAN_FEATURES.keys()) == {"free", "chat", "knowledge"}
 
 
-def test_feature_min_profile_keys() -> None:
-    # Every PLAN_FEATURES product and every ADDON_FEATURE must declare a floor.
+def test_feature_min_profile_covers_plan_products() -> None:
+    """Every product that comes from a plan MUST declare a profile-floor."""
     declared = set(FEATURE_MIN_PROFILE.keys())
     plan_products: set[str] = set()
     for s in PLAN_FEATURES.values():
         plan_products |= s
-    expected = plan_products | set(ADDON_FEATURES)
-    assert declared >= expected, f"missing floors for: {expected - declared}"
+    assert declared >= plan_products, f"missing floors for plan-products: {plan_products - declared}"
 
 
-def test_addon_floor_company() -> None:
-    # SPEC sparring decision #1: scribe/docs gate at "company".
+def test_addon_products_floor_company() -> None:
+    # SPEC sparring decision: scribe/docs gate at "company".
     assert FEATURE_MIN_PROFILE["scribe"] == "company"
     assert FEATURE_MIN_PROFILE["docs"] == "company"

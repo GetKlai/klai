@@ -9,7 +9,7 @@ the SPEC — preferred for simplicity over an explicit invalidate_cache
 hook on the add-on toggle path).
 
 SPEC-PORTAL-PLAN-RENAME-001 update: scribe gating moved from a plan-bound
-SCRIBE_PLANS allowlist to a per-org ``enabled_addons`` list. The cache
+SCRIBE_PLANS allowlist to a per-org ``platform_unlocked_features`` list. The cache
 test now exercises an add-on REMOVAL across the TTL boundary; same
 semantic concern, different signal.
 
@@ -45,8 +45,8 @@ def test_cache_ttl_is_sixty_seconds() -> None:
     )
 
 
-def _mock_session_with_org(enabled_addons: list[str]) -> AsyncMock:
-    org_row = SimpleNamespace(id=42, enabled_addons=enabled_addons)
+def _mock_session_with_org(platform_unlocked_features: list[str]) -> AsyncMock:
+    org_row = SimpleNamespace(id=42, platform_unlocked_features=platform_unlocked_features)
     mock_result = MagicMock()
     mock_result.one_or_none.return_value = org_row
     mock_session = AsyncMock()

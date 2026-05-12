@@ -1,4 +1,13 @@
-"""Admin org settings and plan management endpoints."""
+"""Admin org settings and plan management endpoints.
+
+SPEC-PORTAL-EXTENSIONS-UNIFY-001 (2026-05-12): the legacy self-service
+addons endpoints (GET/PATCH /api/admin/settings/addons) are deprecated.
+GET remains as a read-only facade returning the subset of
+platform_unlocked_features that are user-facing products (scribe/docs).
+PATCH returns 410 Gone — tenants can no longer toggle add-ons themselves.
+The full extension-management lives behind /api/admin/extensions and is
+gated by require_platform_admin for cross-org writes.
+"""
 
 import logging
 from typing import Literal
@@ -9,10 +18,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import _load_org_or_500
 from app.core.database import get_db
-from app.core.features import ADDON_FEATURES, PLAN_FEATURES
+from app.core.features import FEATURE_MIN_PROFILE, PLAN_FEATURES
 from app.core.permissions import ProfileRole, UserPermissions, get_caller_at_least
-from app.services.audit import log_event
-from app.services.events import emit_event
+
+# Set of user-facing product keys (= keys that appear in derive_user_products
+# output). Used by the deprecated /settings/addons GET facade to return only
+# the "addon-like" subset of platform_unlocked_features, preserving its
+# original response shape for any lingering frontend reader.
+_ADDON_PRODUCT_KEYS: frozenset[str] = frozenset(
+    k for k, _floor in FEATURE_MIN_PROFILE.items() if k not in {"chat", "knowledge"}
+)
 
 logger = logging.getLogger(__name__)
 
@@ -112,8 +127,8 @@ async def change_plan(
     """Upgrade or downgrade org plan.
 
     SPEC-PORTAL-RBAC-001 v0.2.0: products are derived from (profile, plan,
-    enabled_addons), so changing the plan automatically (re-)gates the
-    feature set on the next request. No per-user/group product cleanup
+    platform_unlocked_features), so changing the plan automatically (re-)gates
+    the feature set on the next request. No per-user/group product cleanup
     needed -- those tables are no longer the source of truth.
     """
     new_plan = body.plan
@@ -128,7 +143,14 @@ async def change_plan(
 
 
 # ---------------------------------------------------------------------------
-# Add-on toggle endpoints (SPEC-PORTAL-PROFILES-001 Phase 2 P2.4)
+# Deprecated add-on toggle endpoints (SPEC-PORTAL-EXTENSIONS-UNIFY-001)
+#
+# The original self-service toggle behaviour is gone: tenant-admins can no
+# longer enable or disable extensions. GET remains as a read-only facade so
+# any lingering frontend reader sees a stable response shape during the
+# transition window. PATCH returns 410 Gone — the new path is
+# `/api/admin/extensions` (Phase 3, gated by require_platform_admin for
+# writes).
 # ---------------------------------------------------------------------------
 
 
@@ -136,65 +158,32 @@ class AddonsOut(BaseModel):
     enabled_addons: list[str]
 
 
-class AddonsUpdate(BaseModel):
-    enabled_addons: list[str]
-
-
-@router.get("/settings/addons", response_model=AddonsOut)
+@router.get("/settings/addons", response_model=AddonsOut, deprecated=True)
 async def get_addons(
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> AddonsOut:
-    """Return the tenant's currently enabled add-ons."""
-    return AddonsOut(enabled_addons=list(perms.enabled_addons))
+    """Read-only facade — returns the subset of platform_unlocked_features
+    that are user-facing products (scribe/docs).
 
-
-@router.patch("/settings/addons", response_model=AddonsOut)
-async def update_addons(
-    body: AddonsUpdate,
-    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
-    db: AsyncSession = Depends(get_db),
-) -> AddonsOut:
-    """Enable or disable tenant-level add-ons.
-
-    # @MX:NOTE: SPEC-PORTAL-PROFILES-001 Phase 2 P2.4 — only values in
-    # ADDON_FEATURES are accepted. Unknown values raise 400. Per
-    # SPEC-PORTAL-RBAC-001 v0.2.0, products are derived purely from
-    # (role, plan, enabled_addons); there are no per-user / per-group
-    # entitlement tables to keep in sync. Disabling an add-on simply
-    # stops surfacing it to the derivation function on the next request.
+    Wire-name `enabled_addons` preserved for backward compatibility with the
+    legacy frontend. Will be removed once /admin/settings frontend is migrated
+    to /api/admin/extensions in Phase 3.
     """
-    unknown = [p for p in body.enabled_addons if p not in ADDON_FEATURES]
-    if unknown:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unknown add-on product(s): {unknown}. Valid: {sorted(ADDON_FEATURES)}",
-        )
+    unlocked = set(perms.platform_unlocked_features)
+    addons = sorted(unlocked & _ADDON_PRODUCT_KEYS)
+    return AddonsOut(enabled_addons=addons)
 
-    org = await _load_org_or_500(db, perms.org_id)
-    before = list(org.enabled_addons or [])
-    after = list(body.enabled_addons)
 
-    org.enabled_addons = after
-
-    added = sorted(set(after) - set(before))
-    removed = sorted(set(before) - set(after))
-
-    await log_event(
-        org_id=perms.org_id,
-        actor=perms.user_id,
-        action="addons.updated",
-        resource_type="org",
-        resource_id=str(perms.org_id),
-        details={"before": before, "after": after, "added": added, "removed": removed},
+@router.patch("/settings/addons", status_code=status.HTTP_410_GONE, deprecated=True)
+async def update_addons_gone() -> dict:
+    """Deprecated by SPEC-PORTAL-EXTENSIONS-UNIFY-001. All extension toggles
+    are platform-admin controlled — see PATCH /api/admin/extensions."""
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail=(
+            "Tenant-level add-on toggles are no longer self-service. "
+            "Extensions are managed by Klai platform admins via "
+            "/api/admin/extensions."
+        ),
     )
-    await db.commit()
-
-    emit_event(
-        "tenant.addons_updated",
-        org_id=perms.org_id,
-        user_id=perms.user_id,
-        properties={"enabled_addons": after, "added": added, "removed": removed},
-    )
-
-    return AddonsOut(enabled_addons=after)

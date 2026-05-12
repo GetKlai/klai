@@ -422,7 +422,10 @@ class UserPermissionsResponse(BaseModel):
     org_slug: str
     role: str
     plan: str
-    enabled_addons: list[str]
+    # SPEC-PORTAL-EXTENSIONS-UNIFY-001: enabled_addons column dropped 2026-05-12.
+    # platform_unlocked_features is now the single source of truth for
+    # tenant-level extension state. No consumer of /internal/identity/permissions
+    # was reading enabled_addons (audited 2026-05-12 across all klai services).
     platform_unlocked_features: list[str]
     effective_role: str
     effective_capabilities: list[str]
@@ -470,7 +473,6 @@ async def get_user_permissions(
         org_slug=perms.org_slug,
         role=perms.role.value,
         plan=perms.plan,
-        enabled_addons=sorted(perms.enabled_addons),
         platform_unlocked_features=sorted(perms.platform_unlocked_features),
         effective_role=perms.effective_role.value,
         effective_capabilities=sorted(c.value for c in perms.effective_capabilities),
