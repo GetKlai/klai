@@ -1,5 +1,71 @@
 # Process Rules
 
+## caddy-proxy-route-without-browser-leg (HIGH)
+A Caddy `reverse_proxy` directive that is only consumed by **RAG content**
+(LLM sees the URL as a token string, never fetches it) is **untested in
+production by definition**. The route can have a wrong upstream port, the
+wrong `handle` vs `handle_path` choice, or a wrong auth model — and the
+only signal would be a 5xx alert that never fires because nothing fetches it.
+
+Reference: SPEC-TI-009 `/kb-images/*` block landed 2026-04-22 with **three**
+stacked bugs (port 8000 instead of 8010, `handle_path` strips the matched
+prefix, read-route auth-check compared portal_orgs.id against zitadel_org_id
+strings). All three were invisible until 2026-05-12 when
+SPEC-PORTAL-DOCS-IMAGE-PASTE-001 (PR #592) shipped the first browser-leg
+consumer (docs-editor image paste). Caddy access logs of that 3-week window
+contained zero `/kb-images/*` requests beyond the operator's own diagnostic
+curls. 1553 production images sat in S3 but were only consumed as RAG
+context — the LLM read the URL as a string, no browser ever fetched.
+
+**Symptom class:** a feature ships with an obviously-broken transport layer
+that produces no metrics, no alerts, no support tickets, because the
+intended browser-leg consumer doesn't exist yet (or was deferred to a
+later SPEC). The bug becomes visible only when somebody finally adds a
+real `<img src>` or `<a href>` that hits the URL.
+
+**Prevention (mechanical, in this order):**
+
+1. **For every new Caddy `reverse_proxy` block, the PR description MUST
+   answer: "which browser-side consumer (`<img>`, `<a href>`, `<script>`,
+   `fetch(...)`) will exercise this route, and how is that consumer
+   verified in this PR?"** If the answer is "none — only LLM context"
+   then either:
+   - Ship the browser-leg consumer in the same PR, OR
+   - Add a Grafana synthetic-check that curls the route every 5 minutes
+     and alerts on non-2xx. This is the only mechanical equivalent of a
+     browser-leg test when no real consumer exists.
+
+2. **`caddy validate` is necessary but not sufficient.** The bug above
+   passed `caddy validate --config` (configuration is syntactically
+   valid) — it was only wrong against the upstream port and the FastAPI
+   route shape, neither of which Caddy can know. A post-deploy curl
+   smoketest (200 OR auth-expected 401/403) is the only way to catch
+   transport mismatches.
+
+3. **Prefer `handle` over `handle_path` for routes whose upstream FastAPI
+   handler declares the path prefix in its decorator.** `handle_path`
+   strips the matched prefix from the request URI before forwarding —
+   if the upstream expects the full path (which `@router.get("/kb-images/...")`
+   does), the route never matches and you get a 404 that looks identical
+   to "route doesn't exist". Only use `handle_path` when the upstream
+   explicitly expects the prefix-stripped form. In klai's Caddyfile there
+   was exactly **one** `handle_path` block (the broken one) versus 16
+   `handle` blocks — that asymmetry alone was a smell that nobody flagged.
+
+4. **For every new `reverse_proxy <service>:<port>` line, verify the
+   port matches the service's actual listener.** `docker inspect
+   <container> .Config.ExposedPorts` is the canonical source. Klai's
+   portal-api `Dockerfile` exposes only `8010/tcp` — and yet the Caddy
+   directive said `:8000`. Nothing in CI compares these two.
+
+5. **When inheriting a route convention from a sister service (here:
+   knowledge-ingest's `zitadel_org_id` text-typed RLS), the new consumer
+   in another service MUST match the same convention or have an explicit
+   resolution helper.** The read-route assumed `org_id` was an int
+   (portal_orgs.id) because portal-api's session model is int-based; the
+   producer was zitadel-string-based. Cross-service ID-type mismatches
+   need an ADR or a Pydantic discriminator, not a silent type annotation.
+
 ## postgres-no-return-type-overload (HIGH)
 PostgreSQL does NOT support function overloading by return type alone.
 Two zero-argument functions with the same name and different return
