@@ -181,10 +181,7 @@ async def signup(
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    "Uitnodigingslink is verlopen of klopt niet bij dit e-mailadres. "
-                    "Vraag een nieuwe link aan."
-                ),
+                detail=("Uitnodigingslink is verlopen of klopt niet bij dit e-mailadres. Vraag een nieuwe link aan."),
             )
 
     if not _has_valid_invite and is_free_email_provider(_email_domain):

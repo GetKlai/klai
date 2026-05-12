@@ -46,6 +46,7 @@ STAGE_INVITED = "INVITED"
 STAGE_INVITED_SENT = "INVITED_SENT"
 STAGE_WON = "WON"
 STAGE_UNSUBSCRIBED = "UNSUBSCRIBED"
+WAITLIST_DEAL_NAME_SEPARATOR = "\N{EN DASH}"
 
 
 class TwentyUnavailable(RuntimeError):
@@ -75,9 +76,7 @@ def _client() -> httpx.AsyncClient:
         TwentyUnavailable: when the URL or API key is missing.
     """
     if not is_configured():
-        raise TwentyUnavailable(
-            "Twenty CRM not configured — set TWENTY_URL and TWENTY_API_KEY in SOPS."
-        )
+        raise TwentyUnavailable("Twenty CRM not configured — set TWENTY_URL and TWENTY_API_KEY in SOPS.")
     return httpx.AsyncClient(
         base_url=settings.twenty_url,
         headers={
@@ -107,10 +106,11 @@ async def list_waitlist_opportunities_in_stage(stage: str) -> list[dict[str, Any
     """Return raw opportunity rows in the given stage.
 
     Filters by ``name[like]:Waitlist%`` so the poller only acts on rows
-    created by the website's waitlist endpoint — never on other deal
+    created by the website's waitlist endpoint - never on other deal
     pipelines an operator may run in the same Twenty workspace. The
-    waitlist endpoint always names deals ``"Waitlist – <Company>"`` or
-    ``"Waitlist – <Name>"`` (see klai-website/src/pages/api/waitlist.ts).
+    waitlist endpoint always names deals ``"Waitlist <en dash> <Company>"``
+    or ``"Waitlist <en dash> <Name>"`` (see
+    klai-website/src/pages/api/waitlist.ts).
     """
     async with _client() as client:
         # Twenty REST filter syntax: ?filter=field[op]:value, combinable
@@ -193,10 +193,10 @@ async def resolve_deal(opportunity: dict[str, Any]) -> WaitlistDeal | None:
             if isinstance(company, dict):
                 company_name = (company.get("name") or "").strip()
         if not company_name:
-            # Fall back to the deal name: "Waitlist – <Company>" or "Waitlist – <Name>"
+            # Fall back to the deal name: "Waitlist <en dash> <Company>".
             deal_name = opportunity.get("name") or ""
-            if "–" in deal_name:
-                company_name = deal_name.split("–", 1)[1].strip()
+            if WAITLIST_DEAL_NAME_SEPARATOR in deal_name:
+                company_name = deal_name.split(WAITLIST_DEAL_NAME_SEPARATOR, 1)[1].strip()
             else:
                 company_name = first_name or "your company"
 

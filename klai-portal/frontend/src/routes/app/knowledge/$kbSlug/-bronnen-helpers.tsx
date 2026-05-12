@@ -61,7 +61,14 @@ export function BronIcon({ bron }: { bron: Bron }) {
   const ct = (bron.type_label ?? '').toLowerCase()
   const path = bron.name.toLowerCase()
   if (path.endsWith('.pdf') || ct === 'pdf') return <FileText className="h-4 w-4" />
-  if (path.startsWith('http') || bron.source_url || ct === 'website' || ct === 'link') {
+  if (
+    path.startsWith('http')
+    || bron.source_url
+    || ct === 'website'
+    || ct === 'websitepagina'
+    || ct === "website (pagina's)"
+    || ct === 'link'
+  ) {
     return <Globe className="h-4 w-4" />
   }
   if (ct.startsWith('afbeelding') || /\.(png|jpe?g|gif|webp|svg)$/i.test(path)) return <Image className="h-4 w-4" />
