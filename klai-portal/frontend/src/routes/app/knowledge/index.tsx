@@ -124,7 +124,7 @@ function KbRow({
 
   return (
     <Link
-      to="/app/knowledge/$kbSlug/bronnen"
+      to="/app/knowledge/$kbSlug/sources"
       params={{ kbSlug: kb.slug }}
       className="group flex items-center gap-3 px-2 py-3.5 hover:bg-gray-50 transition-colors"
     >

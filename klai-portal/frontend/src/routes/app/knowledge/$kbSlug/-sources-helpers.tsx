@@ -46,7 +46,7 @@ export function StatusBadge({ status }: { status: SourceStatus }) {
   return <Badge variant={variantMap[status]}>{labelMap[status]}</Badge>
 }
 
-export function SourceIcon({ bron }: { source: Source }) {
+export function SourceIcon({ source }: { source: Source }) {
   if (source.kind === 'connector') {
     const t = source.connector_type ?? ''
     if (t === 'github') return <SiGithub className="h-4 w-4" />

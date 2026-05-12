@@ -5,7 +5,7 @@ export const Route = createFileRoute('/app/knowledge/$kbSlug/')({
     // Default landing for a KB → bronnen (the actual data). Stats/dashboard
     // content lives under /insights now (no separate /overview view).
     throw redirect({
-      to: '/app/knowledge/$kbSlug/bronnen',
+      to: '/app/knowledge/$kbSlug/sources',
       params: { kbSlug: params.kbSlug },
     })
   },
