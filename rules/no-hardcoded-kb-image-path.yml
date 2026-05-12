@@ -31,11 +31,8 @@ message: |
   or `UPLOAD_ROUTE_TEMPLATE` instead.
 
 rule:
-  pattern: $STR
-  constraints:
-    STR:
-      kind: string
-      regex: '/kb-images/'
+  kind: string
+  regex: '/kb-images/'
 
 files:
   - klai-portal/backend/app/**/*.py

@@ -7,9 +7,10 @@ The store wraps the synchronous minio client with :func:`asyncio.to_thread`
 so the embedding service's event loop (FastAPI endpoints, Procrastinate
 workers, connector sync tasks) stays non-blocking. Images are uploaded
 authenticated over the S3 API (Garage on :3900) and served through
-an auth-proxy at ``GET /kb-images/{org_id}/{kb_slug}/{filename}`` in
-portal-api (SPEC-TI-009 / finding B-4). Direct anonymous reads via
-Garage website mode (:3902) were closed as part of that SPEC.
+the auth-proxied read route on portal-api (see KbImage.ROUTE_TEMPLATE
+in klai_image_storage.kb_image — SPEC-KB-IMAGES-V2-001). Direct
+anonymous reads via Garage website mode (:3902) were closed as part
+of SPEC-TI-009.
 
 Content-addressed keys (SHA-256 of bytes) give free deduplication across
 tenants' own KBs. The key format + URL prefix are wire-level contracts;

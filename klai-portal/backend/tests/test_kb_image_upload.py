@@ -49,7 +49,6 @@ def _make_image_store_mock(deduplicated: bool = False) -> MagicMock:
             object_key = f"{org_id}/images/{kb_slug}/{sha}.{ext}"
             return ImageUploadResult(
                 object_key=object_key,
-
                 deduplicated=deduplicated,
             )
 

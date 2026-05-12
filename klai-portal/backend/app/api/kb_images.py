@@ -291,8 +291,8 @@ async def upload_kb_image(
       ``{org_id}/images/{kb_slug}/{sha256}.{ext}``; identical bytes dedupe via
       content addressing.
 
-    Response: ``{"url": "/kb-images/...", "deduplicated": bool}`` where ``url``
-    is the relative path served by the GET endpoint above.
+    Response: ``{"url": kb_image_path, "deduplicated": bool}`` where the URL
+    is the relative path served by the GET endpoint above (KbImage.public_path).
     """
     # Step 1: KB-scope authorization. A 404 here is the strong-or-weak signal:
     # either the kb_slug truly doesn't exist in the caller's org (typo) OR it

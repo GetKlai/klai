@@ -191,6 +191,7 @@ from knowledge_ingest.source_label import (  # noqa: E402
     compute_source_label as _compute_source_label,
 )
 
+
 def _parse_image_refs(image_urls: list) -> list[tuple[str, str]]:
     """Convert image URLs into (s3_key, content_hash) tuples for bookkeeping.
 

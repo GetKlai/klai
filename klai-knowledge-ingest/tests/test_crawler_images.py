@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
-
 from klai_image_storage import (
     ImageStore,
     ImageUploadResult,
@@ -62,6 +61,7 @@ async def test_srcset_debris_is_filtered() -> None:
             "https://help.voys.nl/real.png": (200, _png_bytes()),
         }
     )
+
     # Stub the S3 side effects so we can run without a real bucket.
     # SPEC-KB-IMAGES-V2-001: upload_image's object_key MUST match what
     # KbImage.s3_key would compute for the same bytes. Use a side_effect
@@ -105,6 +105,7 @@ async def test_dedups_identical_urls_across_srcset() -> None:
             "https://help.voys.nl/img.png": (200, _png_bytes()),
         }
     )
+
     async def _fake_upload(o: str, k: str, d: bytes, e: str) -> ImageUploadResult:
         return ImageUploadResult(
             object_key=f"{o}/images/{k}/{hashlib.sha256(d).hexdigest()}.{e}",
@@ -144,9 +145,7 @@ async def test_partial_http_failure_does_not_abort_page() -> None:
         }
     )
 
-    async def fake_upload(
-        org_id: str, kb_slug: str, data: bytes, ext: str
-    ) -> ImageUploadResult:
+    async def fake_upload(org_id: str, kb_slug: str, data: bytes, ext: str) -> ImageUploadResult:
         key = f"{org_id}/images/{kb_slug}/{hashlib.sha256(data).hexdigest()}.{ext}"
         return ImageUploadResult(object_key=key, deduplicated=False)
 
@@ -178,6 +177,7 @@ async def test_relative_urls_resolved_against_base() -> None:
             "https://help.voys.nl/assets/img.png": (200, _png_bytes()),
         }
     )
+
     async def _fake_upload(o: str, k: str, d: bytes, e: str) -> ImageUploadResult:
         return ImageUploadResult(
             object_key=f"{o}/images/{k}/{hashlib.sha256(d).hexdigest()}.{e}",
