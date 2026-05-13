@@ -246,12 +246,14 @@ async def test_password_set_zitadel_5xx(respx_zitadel: respx.MockRouter) -> None
 @pytest.mark.asyncio
 async def test_verify_email_happy(respx_zitadel: respx.MockRouter) -> None:
     """REQ-3.8 — verify_email happy path emits audit."""
-    respx_zitadel.route().mock(return_value=httpx.Response(200, json={}))
+    verify_route = respx_zitadel.post("/v2/users/uid-1/email/verify").mock(return_value=httpx.Response(200, json={}))
     body = VerifyEmailRequest(user_id="uid-1", code="123456", org_id="org-1")
 
     with capture_logs() as captured, _audit_log_patch() as audit_log:
         await verify_email(body=body)
 
+    assert verify_route.called
+    assert verify_route.calls.last.request.read() == b'{"verificationCode":"123456"}'
     audit_log.assert_called_once()
     assert audit_log.call_args.kwargs["action"] == "auth.email.verified"
     assert _capture_events(captured, "verify_email_failed") == []
