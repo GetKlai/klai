@@ -101,6 +101,7 @@ class ZitadelClient:
         password: str,
         preferred_language: str = "nl",
         send_codes: bool = True,
+        is_email_verified: bool = False,
     ) -> dict:
         """Create a human user inside a specific org.
 
@@ -135,7 +136,7 @@ class ZitadelClient:
                 },
                 "email": {
                     "email": email,
-                    "isEmailVerified": False,
+                    "isEmailVerified": is_email_verified,
                 },
                 "password": password,
                 "passwordChangeRequired": False,

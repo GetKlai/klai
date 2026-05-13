@@ -1,18 +1,17 @@
-"""Self-service signup must fire a Klai-branded email-verification mail.
+"""Self-service signup must create users in ACTIVE state, not INITIAL.
 
-Background: Zitadel's stock InitCode event for a freshly-created user is
-dropped by klai-mailer (SPEC-MAILER-DROP-INITCODE-001) in favour of Klai's
-own send_invite_code / send_email_verification_code flows. Without an
-explicit follow-up call after create_human_user, signup users get NO mail
-and the "Confirm your email" page is a lie. These tests pin the contract:
+Background: original plan was to send a Klai-branded verification mail
+after signup via Zitadel /v2/users/.../email/send + a custom urlTemplate.
+That endpoint rejects USER_STATE_INITIAL users (which is exactly the
+state ``_import + isEmailVerified=False`` leaves them in) with error
+"User is not yet initialized (COMMAND-uz0Uu)" — verified live against
+prod Zitadel during the 2026-05-13 signup-mail incident.
 
-  1. ``zitadel.create_human_user`` is called with ``send_codes=False`` so
-     the Zitadel stock InitCode does not even fire.
-  2. After role grant, ``zitadel.send_email_verification_code`` is called
-     exactly once with the url_template built from AuthLinkRoute.VERIFY_EMAIL.
-  3. If the verification mail call fails, signup returns 502 with a
-     ``signup_partial_failure`` payload (mirrors invite_user partial-failure
-     pattern in admin/users.py).
+Workaround: treat the signup form itself as the verification step. The
+user proved control of the email AND set their own password, so the
+account is created with ``isEmailVerified=True`` and transitions
+straight to ACTIVE. No mail flow needed for signup; admin-invite still
+uses send_invite_code (different lifecycle).
 """
 
 from __future__ import annotations
@@ -20,7 +19,6 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
 
 _BASE = {
     "first_name": "Founder",
@@ -32,14 +30,10 @@ _BASE = {
 }
 
 
-def _mock_zitadel(mz: MagicMock, *, send_verify_fails: bool = False) -> None:
+def _mock_zitadel(mz: MagicMock) -> None:
     mz.create_org = AsyncMock(return_value={"id": "zit-org-001"})
     mz.create_human_user = AsyncMock(return_value={"userId": "zit-user-001"})
     mz.grant_user_role = AsyncMock()
-    if send_verify_fails:
-        mz.send_email_verification_code = AsyncMock(side_effect=RuntimeError("zitadel boom"))
-    else:
-        mz.send_email_verification_code = AsyncMock()
 
 
 def _mock_portal_org(morg: MagicMock) -> MagicMock:
@@ -51,9 +45,13 @@ def _mock_portal_org(morg: MagicMock) -> MagicMock:
     return inst
 
 
-class TestSignupTriggersEmailVerify:
+class TestSignupCreatesActiveUser:
     @pytest.mark.asyncio
-    async def test_create_human_user_suppresses_initcode(self) -> None:
+    async def test_create_human_user_is_email_verified_true(self) -> None:
+        """is_email_verified=True is the contract — without it Zitadel parks
+        the user in USER_STATE_INITIAL and ANY subsequent login/email API
+        call fails with COMMAND-uz0Uu.
+        """
         from app.api.signup import SignupRequest, signup
 
         body = SignupRequest(**_BASE)
@@ -72,15 +70,18 @@ class TestSignupTriggersEmailVerify:
             await signup(body=body, background_tasks=MagicMock(), db=AsyncMock())
 
         kw = mz.create_human_user.call_args.kwargs
-        assert kw.get("send_codes") is False, (
-            "signup MUST pass send_codes=False — otherwise Zitadel fires "
-            "InitCode which klai-mailer drops, and the user gets no mail."
+        assert kw.get("is_email_verified") is True, (
+            "signup MUST pass is_email_verified=True — Zitadel /v2/users/.../email/send "
+            "rejects INITIAL users, so without immediate-verify the account is unusable."
         )
 
     @pytest.mark.asyncio
-    async def test_send_email_verification_code_called_once(self) -> None:
+    async def test_create_human_user_send_codes_false(self) -> None:
+        """send_codes=False keeps Zitadel from firing the stock InitCode
+        event (which klai-mailer drops per SPEC-MAILER-DROP-INITCODE-001).
+        Pure log-noise reduction — but pinned to prevent future regressions.
+        """
         from app.api.signup import SignupRequest, signup
-        from app.core.config import settings
 
         body = SignupRequest(**_BASE)
         with (
@@ -97,38 +98,5 @@ class TestSignupTriggersEmailVerify:
             _mock_portal_org(morg)
             await signup(body=body, background_tasks=MagicMock(), db=AsyncMock())
 
-        mz.send_email_verification_code.assert_called_once()
-        call = mz.send_email_verification_code.call_args
-        # Positional user_id
-        assert call.args == ("zit-user-001",), f"unexpected positional args: {call.args!r}"
-        # Keyword url_template lands on /verify with the three Zitadel placeholders
-        url_template = call.kwargs["url_template"]
-        assert url_template.startswith(settings.portal_url.rstrip("/") + "/verify")
-        for placeholder in ("{{.UserID}}", "{{.Code}}", "{{.OrgID}}"):
-            assert placeholder in url_template, f"missing placeholder {placeholder!r}"
-
-    @pytest.mark.asyncio
-    async def test_verification_send_failure_yields_502_partial(self) -> None:
-        from app.api.signup import SignupRequest, signup
-
-        body = SignupRequest(**_BASE)
-        with (
-            patch("app.api.signup.check_signup_email_rate_limit", AsyncMock(return_value=True)),
-            patch("app.api.signup.zitadel") as mz,
-            patch("app.api.signup.provision_tenant"),
-            patch("app.api.signup.emit_event"),
-            patch("app.api.signup.invalidate_tenant_slug_cache"),
-            patch("app.api.signup.set_tenant", AsyncMock()),
-            patch("app.api.signup.PortalOrg") as morg,
-            patch("app.api.signup.PortalUser"),
-        ):
-            _mock_zitadel(mz, send_verify_fails=True)
-            _mock_portal_org(morg)
-            with pytest.raises(HTTPException) as exc_info:
-                await signup(body=body, background_tasks=MagicMock(), db=AsyncMock())
-
-        assert exc_info.value.status_code == 502
-        detail = exc_info.value.detail
-        assert isinstance(detail, dict)
-        assert detail.get("code") == "signup_partial_failure"
-        assert detail.get("user_id") == "zit-user-001"
+        kw = mz.create_human_user.call_args.kwargs
+        assert kw.get("send_codes") is False
