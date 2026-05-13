@@ -36,10 +36,12 @@ PasswordChange:
   footerText: "If you didn't make this change yourself, email us right away at mail@${DOMAIN}."
 
 InviteUser:
-  subject: "You've been invited to Klai"
-  preHeader: "Your access is ready"
-  title: "Invitation"
+  # See nl.yaml comment — Klai uses the InitCode brand voice ("Activate your
+  # Klai account") on the v2 invite_code flow that owns admin-invites.
+  subject: "Activate your Klai account"
+  preHeader: "Just one click and your Klai environment is live"
+  title: "Activate account"
   greeting: "Hi {{.FirstName}},"
-  text: "One of your colleagues is inviting you to use Klai. Klai is the privacy-friendly AI solution for businesses. Sensitive information stays protected, and your data remains yours."
-  buttonText: "Set up my account"
+  text: "We've created a Klai account for you. Activate it using the button below and choose your password. After that, log in at my.${DOMAIN}."
+  buttonText: "Activate account"
   footerText: "If you weren't expecting this email, feel free to ignore it."
