@@ -1,5 +1,62 @@
 # Changelog
 
+## [Unreleased] — 2026-05-13 — SPEC-PORTAL-PRICING-PER-USER-001 v0.5.x: Per-user accounts, profile-derived account type
+
+Klai's billing axis is now per-user: each user has an **account type** (`chat` €28/mo or `knowledge` €68/mo, matching [getklai.com/pricing](https://getklai.com/pricing)) and a **role / profile** kept as two orthogonal columns on `portal_users`. The invite UI shows only the Profile dropdown — account type is derived live via `suggest_seat(role)` and rendered as a read-only badge with `role="status"` + `aria-live="polite"`. Admin-support flow (`PATCH /api/admin/users/{id}`) still accepts an explicit `seat_type` so a customer's billing intent can override a role's default. The legacy `viewer` tier has been dropped — it never appeared on the marketing page.
+
+### Added
+
+- **`klai-portal/backend/app/core/seats.py`** — `SeatType.{CHAT, KNOWLEDGE}` enum + `DEFAULT_SEAT_FOR_ROLE` mapping + `suggest_seat(role)` derivation. Single canonical mapping; the FE mirrors via `accountTypeForRole(role)` in `invite.tsx` for the read-only badge.
+- **`portal_user_seat_history` table** — append-only ledger of seat assignments, enforced via Postgres `BEFORE UPDATE OR INSERT` trigger + partial `UNIQUE INDEX (user_id) WHERE valid_to IS NULL`. RLS Cat-D (strict tenant, schema-qualified `billing._rls_current_org_id()` helper). Feeds Phase 5b's prorated billing query when Moneybird per-seat lands.
+- **`GET /api/admin/billing/breakdown`** — per-account-type user counts + monthly cost preview. Display-only until Phase 5b flips per-tenant billing on.
+- **i18n keys** — `admin_users_field_account_type`, `admin_users_col_account_type`, `admin_users_account_chat_label`, `admin_users_account_knowledge_label`, `admin_users_account_price_per_month`, `admin_users_account_derived_hint`, `admin_billing_breakdown_col_account_type`, `admin_billing_breakdown_account_chat`, `admin_billing_breakdown_account_knowledge` in `en.json` + `nl.json` (symmetric 1761 keys each).
+- **Migration `f1ff304b7b0a`** — narrows both `seat_type` CHECK constraints to `IN ('chat', 'knowledge')` on `portal_users` and `portal_user_seat_history`. Portal_api-owned DDL only; entrypoint runs `alembic upgrade head` automatically.
+- **`tests/test_pricing_per_user_drop_viewer_migration.py`** — 11 file-content regex assertions pinning the migration shape (no UPDATE/INSERT smuggled in, both CHECKs narrowed, downgrade restorable). Guards the `rls-with-check-blocks-migration-update` trap class.
+- **A11y badge contract** — read-only account-type display in `invite.tsx` uses `role="status"` + `aria-live="polite"` + `aria-labelledby="account-type-label"`. Test pins the contract.
+
+### Changed
+
+- **`SeatType` narrowed from 3 to 2 values** — viewer tier removed. Pre-flight verified zero `seat_type='viewer'` rows on prod before deployment.
+- **Invite endpoint contract** — `POST /api/admin/users/invite` no longer accepts a `seat_type` field; server derives unconditionally from `role` via `suggest_seat(role)` to prevent client tamper. Existing `PATCH /api/admin/users/{id}` retains `seat_type` for admin override.
+- **UX rename** — "Seat" / "Seat tier" → "Account type" across invite, users list, billing breakdown.
+- **i18n key-id rename** — `admin_users_seat_*` → `admin_users_account_*`, `admin_billing_breakdown_col_seat` → `admin_billing_breakdown_col_account_type`, `_seat_chat`/`_seat_knowledge` → `_account_chat`/`_account_knowledge`.
+- **`.moai/project/product.md`** — "Product Entitlements & Plans" section rewritten to describe the per-user account-type model as source of truth for billing math; org plan now described as quota/feature-ceiling helper only.
+
+### Fixed
+
+- **Phase 1 prod RLS crash** — initial Phase 1 migration ran `UPDATE portal_users SET seat_type = ...` inside `alembic upgrade()`. The Cat-A inline-NULLIF WITH CHECK policy on `portal_users` requires a tenant context that alembic doesn't have; every row was rejected, portal-api crashlooped on prod. Recovered by hand-applying as klai superuser; durable fix splits per-row UPDATE + INSERT + trigger creation + RLS DDL into `post_deploy_<rev>.sql` (operator-applied). Captured pitfall: `rls-with-check-blocks-migration-update` in `.claude/rules/klai/pitfalls/process-rules.md`.
+- **id-vs-value drift on i18n keys** — v0.5.0 left key ids `_col_seat` / `_seat_chat` / `_seat_knowledge` with values rewritten to "Account type" wording; v0.5.1 renamed the ids to match.
+- **A11y mis-pointer** — v0.5.0 invite badge used `<Label htmlFor="account-type">` targeting a non-focusable `<div>`. v0.5.1 replaced with standalone heading + `aria-labelledby`-driven status region.
+
+### Architecture notes
+
+This SPEC shipped as v0.1.0 → v0.5.1 across one week. The most consequential pivot was v0.5.0: after Phases 1-6 shipped, Mark inspected the live invite UI and asked to drop the viewer tier (not on the marketing page) AND collapse the seat selector into a Profile-derived badge. The pivot LOOKS like the v0.1.0 `PROFILE_TIER` shape that v0.2.0 labelled an anti-pattern — but the two are structurally different: v0.5.x keeps `seat_type` + `role` as orthogonal columns (admin override still possible via PATCH endpoint); only the invite UI simplifies. The architecture note in SPEC HISTORY row 0.5.0 documents the distinction.
+
+Phase 5b — Moneybird per-seat subscription mutation — is tracked separately in [SPEC-PORTAL-MONEYBIRD-PER-SEAT-001](.moai/specs/SPEC-PORTAL-MONEYBIRD-PER-SEAT-001/spec.md) (`needs-research`; Q1-Q5 open). Until per-tenant billing is flipped on, the breakdown endpoint is display-only and customers still pay the legacy `org.plan × org.seats` invoice.
+
+### Verification (prod, Voys tenant, Google SSO)
+
+- Profile dropdown: 5 ladder options (no viewer); flipping kb_manager updates badge to "Klai Chat + Knowledge €68/mo" live.
+- Users list column header: "Account type"; zero "Viewer" mentions in DOM.
+- Migration applied: `alembic current` → `f1ff304b7b0a`; `pg_constraint` confirms `CHECK (seat_type = ANY (ARRAY['chat'::text, 'knowledge'::text]))`.
+- A11y contract: `role=status`, `aria-live=polite`, `aria-labelledby=account-type-label`, heading text "Account type", no legacy `<label for="account-type">`.
+
+### Coverage
+
+- Backend: 2630/2630 pytest passing (+11 migration regex tests vs pre-v0.5.0 baseline)
+- Frontend: 238/238 vitest passing (+13 derived-badge + a11y assertions)
+- i18n: en.json ⇄ nl.json symmetric (1761 keys each)
+
+### PRs
+
+- #599 Phase 1 + initial prod incident
+- #608 RLS WITH CHECK durable fix (split per-row writes to post-deploy)
+- #609 / #611 / #612 / #614 / #616 Phases 2-6
+- #621 v0.5.0 viewer-drop + account-type-derived-from-Profile + UX rename
+- #624 v0.5.1 polish (a11y + i18n key rename + migration regex test)
+
+---
+
 ## [Unreleased] — 2026-05-07 — SPEC-RAG-MULTILINGUAL-CHAT-001: Language-agnostic chat answer layer
 
 Klai chat now auto-detects the language of the user's most recent substantive
