@@ -33,6 +33,7 @@ from app.api.auth import invalidate_tenant_slug_cache
 from app.core.config import settings
 from app.core.database import get_db, set_tenant
 from app.models.portal import PortalOrg, PortalUser
+from app.services.auth_links import AuthLinkRoute, build_url_template
 from app.services.bff_session import SessionService
 from app.services.domain_validation import is_free_email_provider
 from app.services.events import emit_event
@@ -219,6 +220,11 @@ async def signup(
     logger.info("Org created in Zitadel: name=%s, org_id=%s", body.company_name, zitadel_org_id)
 
     # 2. Create human user in the portal org (all users live here for OIDC compatibility)
+    #
+    # send_codes=False suppresses Zitadel's stock InitCode notification.
+    # klai-mailer drops that event (SPEC-MAILER-DROP-INITCODE-001) so without
+    # this suppression the user gets no mail at all. Step 4 below explicitly
+    # fires a Klai-branded email-verification code instead.
     try:
         user_data = await zitadel.create_human_user(
             org_id=settings.zitadel_portal_org_id,
@@ -227,6 +233,7 @@ async def signup(
             last_name=body.last_name,
             password=body.password,
             preferred_language=body.preferred_language,
+            send_codes=False,
         )
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 409:
@@ -262,7 +269,37 @@ async def signup(
             detail="Creation failed, please try again later",
         ) from exc
 
-    # 4. Persist to PostgreSQL
+    # 4. Fire Klai-branded email-verification mail.
+    #
+    # The user now exists in Zitadel with isEmailVerified=false but no mail
+    # has been sent (we suppressed InitCode in step 2). This explicit call
+    # fires user.human.email.verification.code.added which klai-mailer
+    # /notify renders with the Klai wrapper. The url_template lands the
+    # click on my.getklai.com/verify (frontend route consumes ?userID=...
+    # &code=...&orgID=... and POSTs to /api/auth/verify-email).
+    verify_url_template = build_url_template(AuthLinkRoute.VERIFY_EMAIL)
+    try:
+        await zitadel.send_email_verification_code(zitadel_user_id, url_template=verify_url_template)
+    except Exception as exc:
+        logger.exception(
+            "Email verification mail failed during signup for user %s: %s",
+            body.email,
+            exc,
+        )
+        # Mirror the invite_user partial-failure pattern: the Zitadel user
+        # exists but the verification mail failed. Tell the caller so an
+        # operator can recover (or the user can retry via a future resend
+        # endpoint).
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={
+                "code": "signup_partial_failure",
+                "user_id": zitadel_user_id,
+                "message": "Account created but verification mail failed — try again later",
+            },
+        ) from exc
+
+    # 5. Persist to PostgreSQL
     try:
         org_row = PortalOrg(
             zitadel_org_id=zitadel_org_id,

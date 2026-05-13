@@ -100,6 +100,7 @@ class ZitadelClient:
         last_name: str,
         password: str,
         preferred_language: str = "nl",
+        send_codes: bool = True,
     ) -> dict:
         """Create a human user inside a specific org.
 
@@ -111,6 +112,15 @@ class ZitadelClient:
         eliminates a class of "user signed up as Steven@... but typed
         steven@... at login" issues at the source. The display ``email``
         field keeps its original case for outgoing mail headers.
+
+        ``send_codes`` controls whether Zitadel auto-fires the InitCode
+        notification on import. Callers that follow up with their own
+        Klai-branded verification trigger (e.g. ``send_email_verification_code``)
+        MUST pass ``send_codes=False`` — klai-mailer drops the InitCode
+        event (SPEC-MAILER-DROP-INITCODE-001) and a stray firing produces
+        zero user-visible mail. Default ``True`` preserves backward
+        compatibility for any non-signup caller that relies on Zitadel's
+        stock InitCode flow.
         """
         resp = await self._http.post(
             "/management/v1/users/human/_import",
@@ -129,6 +139,7 @@ class ZitadelClient:
                 },
                 "password": password,
                 "passwordChangeRequired": False,
+                "sendCodes": send_codes,
             },
         )
         resp.raise_for_status()
@@ -258,6 +269,43 @@ class ZitadelClient:
             f"/management/v1/users/{user_id}/email/_verify",
             headers={"x-zitadel-orgid": org_id},
             json={"verificationCode": code},
+        )
+        resp.raise_for_status()
+
+    async def send_email_verification_code(
+        self,
+        user_id: str,
+        *,
+        url_template: str,
+    ) -> None:
+        """Trigger Zitadel to mail an email-verification code to the user.
+
+        Used by the self-service signup flow: after ``create_human_user``
+        with ``send_codes=False`` (which suppresses Zitadel's stock
+        InitCode mail — klai-mailer drops it per SPEC-MAILER-DROP-INITCODE-001),
+        this explicit call fires ``user.human.email.verification.code.added``
+        which klai-mailer ``/notify`` does render through the Klai email
+        wrapper.
+
+        Body shape (per ``zitadel/user/v2/user_service.proto::SendEmailCode``
+        + ``zitadel/user/v2/email.proto::SendEmailVerificationCode``):
+
+        .. code-block:: json
+
+            {
+              "sendCode": {
+                "urlTemplate": "https://my.getklai.com/verify?userID={{.UserID}}&code={{.Code}}&orgID={{.OrgID}}"
+              }
+            }
+
+        ``url_template`` MUST be passed explicitly so the click-through
+        lands on Klai's ``/verify`` route (built via
+        :func:`app.services.auth_links.build_url_template`), not Zitadel's
+        hosted UI.
+        """
+        resp = await self._http.post(
+            f"/v2/users/{user_id}/email/send",
+            json={"sendCode": {"urlTemplate": url_template}},
         )
         resp.raise_for_status()
 
