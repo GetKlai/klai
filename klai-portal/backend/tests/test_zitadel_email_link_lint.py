@@ -29,8 +29,11 @@ APP_DIR = Path(__file__).resolve().parents[1] / "app"
 # SendPasswordResetLink, and SendEmailVerificationCode all carry a
 # ``url_template`` field.
 _ENDPOINT_PATTERNS = (
-    re.compile(r"/v2/users/[^/]+(?:/invite_code(?:/resend)?|/password_reset)"),
-    re.compile(r"/v2/users/[^/]+/email/(?:_send_code|_resend)"),
+    # Anchored end ($ or ?) so consumer endpoints like .../invite_code/verify
+    # (which post to a matching prefix but are NOT mail-triggers and don't
+    # take a urlTemplate) don't trip the lint.
+    re.compile(r"/v2/users/[^/]+(?:/invite_code(?:/resend)?|/password_reset)(?:$|\?)"),
+    re.compile(r"/v2/users/[^/]+/email/(?:_send_code|_resend)(?:$|\?)"),
 )
 
 
