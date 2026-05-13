@@ -1230,6 +1230,70 @@ async def create_gap_event(
     return {"ok": True}
 
 
+class OnboardingStartRequest(BaseModel):
+    """Body for /internal/onboarding/start.
+
+    Triggered from a Twenty CRM Workflow's manual "Start onboarding"
+    button on a Person record. The Workflow's HTTP-action posts the
+    person's email + name + the Cal.com booking link. portal-api proxies
+    to klai-mailer's /internal/send (template ``onboarding_invite``).
+
+    @MX:NOTE: The mailer binds the recipient to ``variables.email``
+    server-side, so ``email`` here is both the routing address AND the
+    template variable. There is no separate ``to`` field by design.
+    """
+
+    name: str
+    email: str
+    cal_url: str | None = None
+
+
+class OnboardingStartResponse(BaseModel):
+    sent: bool
+
+
+@router.post("/onboarding/start", response_model=OnboardingStartResponse)
+async def start_onboarding_drip(
+    request: Request,
+    body: OnboardingStartRequest,
+) -> OnboardingStartResponse:
+    """Send the onboarding Mail 1 (welcome + Cal booking-CTA) to a waitlister.
+
+    Auth: same ``Authorization: Bearer <INTERNAL_SECRET>`` pattern as
+    every other ``/internal/*`` endpoint. The Twenty Workflow HTTP-action
+    is the canonical caller; cURL with the same Bearer also works for
+    manual triggers.
+
+    Returns 200 ``{"sent": true}`` on mailer-accepted, 502 if the mailer
+    rejected (4xx/5xx) or was unreachable. The downstream rate-limit
+    (per-recipient Redis bucket on the mailer) means duplicate clicks
+    within the cooldown window will surface as 502 here -- that is the
+    safety against the operator double-clicking the workflow button.
+    """
+    await _require_internal_token(request)
+
+    from app.services.notifications import send_onboarding_invite
+
+    cal_url = body.cal_url or "https://cal.getklai.com/klai/onboarding-intake"
+
+    sent = await send_onboarding_invite(
+        name=body.name,
+        email=body.email,
+        cal_url=cal_url,
+    )
+
+    # Cross-tenant operation (the Person may belong to any tenant in Twenty),
+    # so we audit with org_id=0 like /librechat/regenerate.
+    await _audit_internal_call(request, org_id=0)
+
+    if not sent:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="mailer rejected or unreachable",
+        )
+    return OnboardingStartResponse(sent=True)
+
+
 class RegenerateResponse(BaseModel):
     tenants_updated: list[str]
     errors: list[str]
