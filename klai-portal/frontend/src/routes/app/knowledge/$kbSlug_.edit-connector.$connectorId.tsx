@@ -15,7 +15,6 @@ import { StepIndicator, type StepItem } from '@/components/ui/step-indicator'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { MS_SITE_URL_PATTERN } from '@/lib/ms-docs'
-import { ASSERTION_MODE_OPTIONS, joinSeedUrl } from './$kbSlug/-kb-helpers'
 import type { ConnectorSummary, CookieRow } from './$kbSlug/-kb-types'
 import { CookieRowsInput } from '@/components/knowledge/CookieRowsInput'
 import {
@@ -35,7 +34,12 @@ import type {
   WcStep,
   WebCrawlerConfig,
 } from './-connector-types'
-import { MARKDOWN_PROSE_CLASSES, VALID_STEPS } from './-connector-constants'
+import {
+  ASSERTION_MODE_OPTIONS,
+  joinSeedUrl,
+  MARKDOWN_PROSE_CLASSES,
+  VALID_STEPS,
+} from './-connector-constants'
 
 // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-1 / REQ-5: edit wizard uses the same
 // 5-step flow as add-connector. ?step=auth|selector deep-link into the wizard.

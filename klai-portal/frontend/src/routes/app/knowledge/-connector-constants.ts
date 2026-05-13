@@ -1,8 +1,14 @@
-// Shared constants for the connector wizard pages.
+// Shared constants and tiny helpers for the connector wizard pages.
 // Companion to `-connector-types.ts`. Per the
 // "File organization for shared types and helpers" rule
 // (.claude/rules/klai/projects/portal-frontend.md).
+//
+// `joinSeedUrl` is a one-function helper kept here rather than in its own
+// `-connector-helpers.ts` because a single function does not warrant a
+// separate file (would be the proliferation anti-pattern the rule warns
+// against). When a second wizard-only helper appears, split this file.
 
+import { type MultiSelectOption } from '@/components/ui/multi-select'
 import type { ConnectorType, StepDeepLink } from './-connector-types'
 
 // Tailwind class string applied to the markdown preview pane in both
@@ -22,3 +28,31 @@ export const VALID_PRESELECT_TYPES = new Set<ConnectorType>([
 // by the route's validateSearch to deep-link into the auth-setup or
 // selector wizard step.
 export const VALID_STEPS = new Set<StepDeepLink>(['auth', 'selector'])
+
+// SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-9: assertion-mode options
+// shown in the wizard's allowedAssertionModes MultiSelect.
+export const ASSERTION_MODE_OPTIONS: MultiSelectOption[] = [
+  { value: 'factual',    label: 'Fact',        description: 'Established fact, documentation, specs' },
+  { value: 'procedural', label: 'Procedure',   description: "Step-by-step instructions, how-to's" },
+  { value: 'belief',     label: 'Claim',       description: 'Not conclusively proven claim' },
+  { value: 'quoted',     label: 'Quote',       description: 'Literal source material' },
+  { value: 'hypothesis', label: 'Speculation', description: 'Hypotheses, brainstorm' },
+  { value: 'unknown',    label: 'Unknown',     description: 'Type not specified' },
+]
+
+/**
+ * SPEC-CONNECTOR-INPUT-VALIDATION-001 hotfix — slash-safe URL build.
+ *
+ * Combines ``base_url`` and ``path_prefix`` without producing the ``//``
+ * artifact that crawl4ai handles inconsistently (`https://x.com/` + `/nl/`
+ * = `https://x.com//nl/`). Trims trailing slash off base, leading slash
+ * off path, then joins with single `/` if path is non-empty.
+ *
+ * Used by both add-connector and edit-connector wizard auth-probe call sites.
+ */
+export function joinSeedUrl(baseUrl: string, pathPrefix: string): string {
+  const base = baseUrl.replace(/\/+$/, '')
+  const path = (pathPrefix || '').replace(/^\/+/, '').replace(/\/+$/, '')
+  if (!path) return base + '/'
+  return `${base}/${path}/`
+}

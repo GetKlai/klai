@@ -15,7 +15,6 @@ import { MultiSelect } from '@/components/ui/multi-select'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { MS_SITE_URL_PATTERN } from '@/lib/ms-docs'
-import { joinSeedUrl, ASSERTION_MODE_OPTIONS } from './$kbSlug/-kb-helpers'
 import type { CookieRow } from './$kbSlug/-kb-types'
 import type {
   AirtableConfig,
@@ -30,7 +29,12 @@ import type {
   WcStep,
   WebCrawlerConfig,
 } from './-connector-types'
-import { MARKDOWN_PROSE_CLASSES, VALID_PRESELECT_TYPES } from './-connector-constants'
+import {
+  ASSERTION_MODE_OPTIONS,
+  joinSeedUrl,
+  MARKDOWN_PROSE_CLASSES,
+  VALID_PRESELECT_TYPES,
+} from './-connector-constants'
 import { AuthProbeFeedback, PreviewClassificationFeedback } from './-connector-feedback'
 import { CookieRowsInput } from '@/components/knowledge/CookieRowsInput'
 import { kbQueryKeys } from '@/lib/kb-query-keys'

@@ -1,8 +1,9 @@
-// Shared helpers for knowledge base detail routes
+// Shared helpers for knowledge base detail routes (KB tabs).
+// Connector-wizard-only helpers live in
+// `klai-portal/frontend/src/routes/app/knowledge/-connector-constants.ts`.
 
 import { Badge } from '@/components/ui/badge'
 import { Tooltip } from '@/components/ui/tooltip'
-import { type MultiSelectOption } from '@/components/ui/multi-select'
 import * as m from '@/paraglide/messages'
 
 function formatRelativeTime(dateStr: string): string {
@@ -14,15 +15,6 @@ function formatRelativeTime(dateStr: string): string {
   if (Math.abs(diffMin) < 60) return rtf.format(diffMin, 'minute')
   if (Math.abs(diffHour) < 24) return rtf.format(diffHour, 'hour')
   return rtf.format(diffDay, 'day')
-}
-
-export function roleBadge(role: string) {
-  const labels: Record<string, () => string> = {
-    viewer: m.knowledge_members_role_viewer,
-    contributor: m.knowledge_members_role_contributor,
-    owner: m.knowledge_members_role_owner,
-  }
-  return <Badge variant="secondary">{(labels[role] ?? (() => role))()}</Badge>
 }
 
 export function SyncStatusBadge({
@@ -110,33 +102,13 @@ export function DashboardSection({
   )
 }
 
-export const ASSERTION_MODE_OPTIONS: MultiSelectOption[] = [
-  { value: 'factual',    label: 'Fact',        description: 'Established fact, documentation, specs' },
-  { value: 'procedural', label: 'Procedure',   description: "Step-by-step instructions, how-to's" },
-  { value: 'belief',     label: 'Claim',       description: 'Not conclusively proven claim' },
-  { value: 'quoted',     label: 'Quote',       description: 'Literal source material' },
-  { value: 'hypothesis', label: 'Speculation', description: 'Hypotheses, brainstorm' },
-  { value: 'unknown',    label: 'Unknown',     description: 'Type not specified' },
-]
-
-/**
- * SPEC-CONNECTOR-INPUT-VALIDATION-001 hotfix — slash-safe URL build.
- *
- * Combines ``base_url`` and ``path_prefix`` without producing the ``//``
- * artifact that crawl4ai handles inconsistently (`https://x.com/` + `/nl/`
- * = `https://x.com//nl/`). Trims trailing slash off base, leading slash
- * off path, then joins with single `/` if path is non-empty.
- *
- * Used by both add-connector and edit-connector wizard auth-probe call sites.
- */
-export function joinSeedUrl(baseUrl: string, pathPrefix: string): string {
-  const base = baseUrl.replace(/\/+$/, '')
-  const path = (pathPrefix || '').replace(/^\/+/, '').replace(/\/+$/, '')
-  if (!path) return base + '/'
-  return `${base}/${path}/`
-}
-
-// parseCookieString was removed: the wizard now collects cookies as
-// structured {name, value} rows via CookieRowsInput, matching the shape
+// `ASSERTION_MODE_OPTIONS` and `joinSeedUrl` were moved to
+// `klai-portal/frontend/src/routes/app/knowledge/-connector-constants.ts`
+// — wizard-only, smallest-shared scope is the parent route dir.
+//
+// `roleBadge` was removed (dead code — no consumers).
+//
+// `parseCookieString` was removed earlier: the wizard now collects cookies
+// as structured {name, value} rows via CookieRowsInput, matching the shape
 // the backend persists and the cron-sync consumes. No parser layer means
 // no chance of cookie-name guessing. See components/knowledge/CookieRowsInput.tsx.
