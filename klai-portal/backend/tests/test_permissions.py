@@ -63,6 +63,14 @@ def _row(
     default for the chosen role (``suggest_seat`` semantics) so existing
     tests that pre-date the seat axis produce intuitive results without
     extra kwargs.
+
+    ``plan`` is still meaningful post-Phase-4: it still drives
+    ``derive_user_products(role, plan, platform_features)`` (which
+    products surface in the FE sidebar) and ``effective_kb_limits(role,
+    plan)`` (the per-user KB quota). Only the capability-intersection
+    axis moved to ``seat_type``. Phase 5b / a follow-up SPEC will
+    finish the plan -> seat sweep across products + kb-quota; until
+    then this kwarg is a real input, not a stale relic.
     """
     from app.core.seats import suggest_seat
 
