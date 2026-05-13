@@ -22,6 +22,7 @@ import { toast } from 'sonner'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { useSuspendUser, useReactivateUser, useOffboardUser } from '@/hooks/useUserLifecycle'
+import { OffboardWizard } from '@/components/admin/offboard-wizard'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { PROFILE_LADDER, type ProfileRole } from '@/lib/profiles'
 import { ProfilePicker } from '../../_components/ProfilePicker'
@@ -84,6 +85,7 @@ function EditUserPage() {
   const suspendMutation = useSuspendUser()
   const reactivateMutation = useReactivateUser()
   const offboardMutation = useOffboardUser()
+  const [offboardWizardOpen, setOffboardWizardOpen] = useState(false)
 
   // SPEC-PORTAL-ADMIN-UI-001 v0.3.0 REQ-12: ÉÉN form, ÉÉN save. Submit-handler
   // stuurt PATCH /users/<id> voor naam/taal en — alleen als profile gewijzigd
@@ -249,36 +251,25 @@ function EditUserPage() {
           )}
 
           {(user.status === 'active' || user.status === 'suspended') && !user.invite_pending && (
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="destructive" disabled={offboardMutation.isPending}>
-                  {offboardMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                  {m.admin_users_action_offboard()}
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>{m.admin_users_confirm_offboard_title()}</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    {m.admin_users_confirm_offboard_description()}
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>{m.admin_users_cancel()}</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={() => {
-                      offboardMutation.mutate(userId, {
-                        onSuccess: () => {
-                          void navigate({ to: '/admin/users' })
-                        },
-                      })
-                    }}
-                  >
-                    {m.admin_users_action_offboard()}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+            <>
+              <Button
+                variant="destructive"
+                disabled={offboardMutation.isPending}
+                onClick={() => setOffboardWizardOpen(true)}
+              >
+                {offboardMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                {m.admin_users_action_offboard()}
+              </Button>
+              {currentUser?.user_id && (
+                <OffboardWizard
+                  userId={userId}
+                  userLabel={`${user.first_name} ${user.last_name}`.trim() || user.email}
+                  currentAdminId={currentUser.user_id}
+                  open={offboardWizardOpen}
+                  onOpenChange={setOffboardWizardOpen}
+                />
+              )}
+            </>
           )}
         </div>
       )}

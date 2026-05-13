@@ -82,6 +82,25 @@ ALLOWED_HELPER_FUNCTIONS: frozenset[str] = frozenset(
         "ensure_default_knowledge_bases",
         "create_default_org_kb",
         "create_default_personal_kb",
+        # app/services/default_knowledge_bases.py — magic-slug shortcuts
+        # called from get_kb_with_access dep, which itself runs after
+        # _get_caller_org has set tenant. SPEC-PORTAL-KB-OWNERSHIP-001 REQ-3.1.
+        "resolve_personal_kb",
+        "resolve_org_kb",
+        # app/api/dependencies.py — get_kb_with_access is a FastAPI dependency
+        # that runs after Depends(get_caller) → tenant context is set
+        # before the SELECT on portal_knowledge_bases fires.
+        "get_kb_with_access",
+        # app/services/kb_offboarding.py — SPEC-PORTAL-KB-OWNERSHIP-001 Phase 3.
+        # All entry points are called from admin/users.py routes that gate on
+        # ``Depends(get_caller_at_least(ProfileRole.ADMIN))`` — tenant context
+        # is established by the upstream dep before any of these run.
+        "compute_offboard_preview",
+        "apply_dispositions",
+        "_load_kb_or_404",
+        "_do_transfer",
+        "_do_delete",
+        "revoke_user_credentials",
         # app/core/system_groups.py — no-op stub after SPEC-PORTAL-RBAC-001.
         "create_system_groups",
         # app/api/app_knowledge_bases.py — all helpers take org_id and
