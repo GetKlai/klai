@@ -1,7 +1,7 @@
 ---
 id: SPEC-PORTAL-KB-NEW-CLEANUP-001
-version: 0.1.0
-status: draft
+version: 0.2.0
+status: implemented
 created: 2026-05-13
 author: Mark Vletter
 priority: medium
@@ -21,9 +21,8 @@ Reduce `klai-portal/frontend/src/routes/app/knowledge/new.tsx` from
 Multi-step KB-creation wizard, similar pattern to the connector
 wizards.
 
-This SPEC is **draft**. Note that `new.tsx` already has companion
-files (`new._types.ts` exists), so the colocation pattern is partially
-applied. Annotation cycle should determine the remaining split.
+Implemented on 2026-05-13. `new.tsx` is now 176 lines and keeps route
+orchestration only.
 
 ## Motivation metrics
 
@@ -62,6 +61,34 @@ connector wizards are now organized.
 - Backend KB-creation API changes
 - Adding new wizard steps
 - Permission / role-related changes
+
+## Implementation Summary
+
+- Extracted step JSX into route-local components under
+  `new._components/`:
+  - `-StepName.tsx`
+  - `-StepAccess.tsx`
+  - `-StepPermissions.tsx`
+  - `-StepConfirm.tsx`
+- Extracted member queries and the create-KB mutation into
+  `new._wizard-hooks.ts`.
+- Kept shared route-local state and API shapes in `new._types.ts`.
+- Added characterization coverage for create-KB payload mapping in
+  `__tests__/-new-wizard-hooks.test.ts`.
+
+## Validation
+
+- `npm run lint -- src/routes/app/knowledge/new.tsx src/routes/app/knowledge/new._wizard-hooks.ts src/routes/app/knowledge/new._types.ts src/routes/app/knowledge/new._components/-StepName.tsx src/routes/app/knowledge/new._components/-StepAccess.tsx src/routes/app/knowledge/new._components/-StepPermissions.tsx src/routes/app/knowledge/new._components/-StepConfirm.tsx src/routes/app/knowledge/__tests__/-new-wizard-hooks.test.ts`
+- `npm test -- src/routes/app/knowledge/__tests__/-new-wizard-hooks.test.ts`
+- `npx tsc -b --pretty false --force`
+- `npm run build`
+- Playwright MCP e2e on Voys tenant:
+  - created `e2e-kb-new-cleanup-20260513-092032` through
+    `/app/knowledge/new`
+  - verified redirect to
+    `/app/knowledge/e2e-kb-new-cleanup-20260513-092032/sources`
+  - deleted the test KB via `/api/app/knowledge-bases/{slug}` and
+    verified it no longer appears in the KB list API/page
 
 ## Approach
 
