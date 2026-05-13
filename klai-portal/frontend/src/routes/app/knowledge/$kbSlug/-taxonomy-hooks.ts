@@ -1,20 +1,18 @@
 /**
- * Taxonomy queries + mutations extracted out of TaxonomyTab.tsx by
- * SPEC-PORTAL-TAXONOMY-SPLIT-001 commit 1.
+ * Taxonomy queries + mutations for the Taxonomy/Insights tab.
+ * Extracted from TaxonomyTab.tsx by SPEC-PORTAL-TAXONOMY-SPLIT-001.
  *
- * Each hook here owns one taxonomy concern. Query keys are unchanged
- * from the pre-SPEC inline versions. Mutation invalidation sets follow
- * the contract in Appendix A of the SPEC.
+ * Each hook owns one taxonomy concern. Query keys are unchanged from
+ * the pre-extraction inline versions. Mutation invalidation sets are
+ * the behaviour-preservation contract — see SPEC Appendix A.
  *
  * `applyAllMutation` is intentionally NOT here — it orchestrates a
- * loop of `apiFetch(/approve?auto_categorise=false)` calls, three
- * queryClient invalidations, and a `backfillMutation.mutate()`
- * trigger. That orchestration belongs in the orchestrator
+ * loop of raw `apiFetch(/approve?auto_categorise=false)` calls plus a
+ * backfill trigger. That orchestration belongs in the orchestrator
  * (TaxonomyTab.tsx). See SPEC Beslissingen § B5.
  *
  * Auth gating is the caller's responsibility — pass `enabled` to the
- * query hooks. This matches the pattern from
- * `klai-portal/frontend/src/routes/app/knowledge/$kbSlug/-sources-hooks.ts`.
+ * query hooks. Matches the `-sources-hooks.ts` pattern.
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '@/lib/apiFetch'
@@ -38,6 +36,14 @@ export type SuggestState =
 type SuggestStateSetter = (
   next: SuggestState | ((prev: SuggestState) => SuggestState),
 ) => void
+
+/**
+ * Stale window for the heavier server-side aggregations (coverage +
+ * top-tags). They're expensive to recompute on every navigation and
+ * the data is fresh enough at 5 minutes. The lighter queries (nodes,
+ * proposals) use TanStack Query's default.
+ */
+const AGGREGATE_QUERY_STALE_MS = 5 * 60 * 1000
 
 // -- Queries -----------------------------------------------------------------
 
@@ -89,7 +95,7 @@ export function useTaxonomyCoverage(kbSlug: string, enabled = true) {
       }
     },
     enabled,
-    staleTime: 5 * 60 * 1000,
+    staleTime: AGGREGATE_QUERY_STALE_MS,
   })
 }
 
@@ -108,7 +114,7 @@ export function useTopTags(
       )
     },
     enabled,
-    staleTime: 5 * 60 * 1000,
+    staleTime: AGGREGATE_QUERY_STALE_MS,
   })
 }
 
