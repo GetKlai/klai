@@ -1,8 +1,9 @@
 ---
 id: SPEC-PORTAL-TAXONOMY-EXTRACT-001
-version: 0.1.0
-status: ready
+version: 0.1.1
+status: done
 created: 2026-05-13
+completed: 2026-05-13
 author: Mark Vletter
 priority: high
 parent: SPEC-PORTAL-CONNECTOR-WIZARD-EXTRACT-001 (deferred-fix marker in insights.tsx points here)
