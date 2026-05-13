@@ -30,6 +30,9 @@ def _configure_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "sso_cookie_key", "")
     monkeypatch.setattr(settings, "bff_session_ttl_seconds", 86400)
     monkeypatch.setattr(settings, "domain", "getklai.com")
+    monkeypatch.setattr(settings, "debug", False)
+    monkeypatch.setattr(settings, "auth_dev_mode", False)
+    monkeypatch.setattr(settings, "auth_dev_user_id", "")
 
 
 @pytest.fixture
@@ -273,4 +276,38 @@ class TestCsrfEnforcement:
 
         client = TestClient(app)
         resp = client.post("/api/perf", cookies={SESSION_COOKIE_NAME: sid})
+        assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# AUTH_DEV_MODE synthetic session
+# ---------------------------------------------------------------------------
+
+
+class TestAuthDevMode:
+    def test_get_without_cookie_uses_synthetic_session(self, monkeypatch: pytest.MonkeyPatch, app: FastAPI) -> None:
+        monkeypatch.setattr(settings, "debug", True)
+        monkeypatch.setattr(settings, "auth_dev_mode", True)
+        monkeypatch.setattr(settings, "auth_dev_user_id", "dev-user-1")
+        monkeypatch.setattr("app.core.dev_seed._dev_org_id", 7)
+
+        client = TestClient(app)
+        resp = client.get("/api/app/ping")
+
+        assert resp.status_code == 200
+        assert resp.json() == {"user": "dev-user-1", "csrf": "dev-csrf"}
+
+    def test_post_without_cookie_skips_csrf_for_synthetic_session(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        app: FastAPI,
+    ) -> None:
+        monkeypatch.setattr(settings, "debug", True)
+        monkeypatch.setattr(settings, "auth_dev_mode", True)
+        monkeypatch.setattr(settings, "auth_dev_user_id", "dev-user-1")
+        monkeypatch.setattr("app.core.dev_seed._dev_org_id", 7)
+
+        client = TestClient(app)
+        resp = client.post("/api/app/mutate")
+
         assert resp.status_code == 200

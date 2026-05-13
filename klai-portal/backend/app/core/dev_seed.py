@@ -21,9 +21,17 @@ DEV_ORG_SLUG = "dev"
 DEV_USER_EMAIL = "dev@klai.local"
 DEV_USER_DISPLAY_NAME = "Dev User"
 
+_dev_org_id: int | None = None
+
+
+def get_dev_org_id() -> int | None:
+    """Return the portal org id created/resolved by the dev seed startup hook."""
+    return _dev_org_id
+
 
 async def ensure_dev_user_exists(db: AsyncSession, dev_user_id: str) -> None:
     """Create dev org + user if they don't exist. Idempotent via ON CONFLICT."""
+    global _dev_org_id
 
     # Use raw SQL to avoid RLS complications — this runs at startup before
     # any tenant context is set, on the superuser connection.
@@ -64,6 +72,8 @@ async def ensure_dev_user_exists(db: AsyncSession, dev_user_id: str) -> None:
         )
         org_id = row.scalar_one()
         logger.info("dev_seed_org_exists", org_id=org_id, slug=DEV_ORG_SLUG)
+
+    _dev_org_id = int(org_id)
 
     # Insert dev user
     user_result = await db.execute(

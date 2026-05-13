@@ -18,6 +18,8 @@ from fastapi import Request, Response, status
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
+from app.core.config import settings
+from app.core.dev_seed import get_dev_org_id
 from app.core.session import (
     CSRF_HEADER_NAME,
     SESSION_COOKIE_NAME,
@@ -29,6 +31,9 @@ logger = structlog.get_logger()
 
 # Methods considered "safe" — never mutate server state and are exempt from CSRF.
 _CSRF_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+_DEV_SESSION_ID = "dev-session"
+_DEV_CSRF_TOKEN = "dev-csrf"
+_JS_MAX_SAFE_INTEGER = 9_007_199_254_740_991
 
 # Route prefixes that intentionally operate without a session.
 #
@@ -140,6 +145,15 @@ class SessionMiddleware(BaseHTTPMiddleware):
             csrf_failure = _check_csrf(request, record)
             if csrf_failure is not None:
                 return csrf_failure
+        elif settings.is_auth_dev_mode:
+            context = _dev_session_context()
+            request.state.session = context
+            structlog.contextvars.bind_contextvars(
+                user_id=context.zitadel_user_id,
+                session_id=context.sid,
+            )
+            if context.org_id is not None:
+                structlog.contextvars.bind_contextvars(org_id=str(context.org_id))
 
         return await call_next(request)
 
@@ -176,6 +190,18 @@ def _to_context(record: SessionRecord) -> SessionContext:
         csrf_token=record.csrf_token,
         access_token_expires_at=record.access_token_expires_at,
         org_id=record.org_id,
+    )
+
+
+def _dev_session_context() -> SessionContext:
+    dev_user_id = settings.auth_dev_user_id or "dev-user-1"
+    return SessionContext(
+        sid=_DEV_SESSION_ID,
+        zitadel_user_id=dev_user_id,
+        access_token="",
+        csrf_token=_DEV_CSRF_TOKEN,
+        access_token_expires_at=_JS_MAX_SAFE_INTEGER,
+        org_id=get_dev_org_id(),
     )
 
 
