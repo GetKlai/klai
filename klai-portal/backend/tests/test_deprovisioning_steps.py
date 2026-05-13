@@ -770,6 +770,41 @@ class TestDeleteScribeArtifacts:
             f"boto3 must receive a scheme-prefixed endpoint URL; got {captured_kwargs.get('endpoint_url')!r}"
         )
 
+    @pytest.mark.asyncio
+    async def test_no_such_bucket_is_idempotent(self) -> None:
+        """SPEC R3 — al-weg = geen exception. If the scribe S3 bucket itself
+        does not exist (tenant never uploaded audio, or Scribe backend not
+        yet provisioned), the step must return gracefully rather than
+        propagate ``NoSuchBucket`` as a step failure.
+
+        SPEC-INFRA-TENANT-DELETE-003 Bug D — surfaced on the e2e tenant
+        retry after Bug C (scheme) was fixed.
+        """
+        state = _make_state(slug="acme")
+
+        class _NoSuchBucket(Exception):
+            pass
+
+        mock_s3 = MagicMock()
+        mock_s3.exceptions.NoSuchBucket = _NoSuchBucket
+        mock_paginator = MagicMock()
+        mock_paginator.paginate.side_effect = _NoSuchBucket("Bucket not found: klai-scribe")
+        mock_s3.get_paginator.return_value = mock_paginator
+
+        with (
+            patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings,
+            patch("boto3.client", return_value=mock_s3),
+        ):
+            mock_settings.garage_s3_endpoint = "http://garage:3900"
+            mock_settings.garage_s3_access_key = "key"
+            mock_settings.garage_s3_secret_key = "secret"
+            mock_settings.garage_s3_bucket = "klai-scribe"
+            from app.services.provisioning.deprovisioning_steps import _delete_scribe_artifacts
+
+            await _delete_scribe_artifacts(state)  # must not raise
+
+        mock_s3.delete_objects.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # Step 11 — _delete_litellm_team
