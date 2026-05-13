@@ -64,7 +64,17 @@ The v2 invite_code flow (SPEC-PORTAL-AUTH-EMAIL-LINKS-001) owns admin-invites
 since 2026-05-13; the InitCode event no longer represents a user-visible
 flow we want to mail. See `_DROPPED_EVENT_TYPES` in `app/main.py`.
 
-Message text templates (subject, greeting, body, button text, footer) live in `zitadel-message-texts/en.yaml` and `nl.yaml`. These are applied in the Zitadel console; klai-mailer receives the already-rendered content.
+Message text templates (subject, greeting, body, button text, footer) are
+configured in the **Zitadel console** at *Instance > Settings > Message Texts*
+(per event-type, per language). klai-mailer never renders the text itself —
+Zitadel pre-renders against its own template store and sends the already-
+rendered content as part of the webhook payload.
+
+Single source of truth: the Zitadel instance. Edits to the message texts
+must be made there directly. There is no in-repo copy of the templates by
+design — a previous `zitadel-message-texts/` audit-copy was removed in
+2026-05-13 because it caused drift confusion (devs assumed editing the file
+would change production; it never did).
 
 ## Deployment
 

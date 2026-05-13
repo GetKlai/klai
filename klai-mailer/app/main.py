@@ -125,14 +125,14 @@ async def health() -> dict:
 # automatically when a human user is created without a password or IDP-link,
 # regardless of the `sendCodes` flag on the import call. Since Klai migrated
 # admin invites to the v2 invite_code flow (which fires `user.human.invite.code.added`
-# with our own Klai-branded URL template), the InitCode mail is a duplicate
-# pointing at Zitadel's stock hosted UI — a UX regression discovered in
-# E2E verification of SPEC-PORTAL-AUTH-EMAIL-LINKS-001.
+# with our own Klai-branded URL template), the InitCode event is a duplicate
+# pointing at Zitadel's stock hosted UI.
 #
-# We accept the event with 204 so Zitadel marks it as delivered (no retry),
-# and emit a structured `event="dropped_legacy_event"` log so the drop is
-# observable in VictoriaLogs. The InitCode message texts in
-# `zitadel-message-texts/{nl,en}.yaml` are removed in the same PR.
+# The user-visible "Activeer je Klai-account" brand voice now lives on the
+# InviteUser template in the Zitadel instance message-text config (see
+# README § Notification types). The InitCode event-type is dropped here at
+# /notify with 204 so Zitadel marks it as delivered (no retry); the
+# `event="dropped_legacy_event"` log makes the drop observable in VictoriaLogs.
 _DROPPED_EVENT_TYPES = frozenset({"user.human.initialization.code.added"})
 
 
