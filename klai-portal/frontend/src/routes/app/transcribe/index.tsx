@@ -161,8 +161,8 @@ function TranscribePage() {
   const totalCount = (transcriptionsData?.total ?? 0) + (meetingsData?.total ?? 0)
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-10 space-y-6">
-      <div className="flex items-start justify-between">
+    <div className="mx-auto max-w-3xl px-6 py-10 space-y-8">
+      <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
           <h1 className="page-title text-[26px] font-display-bold text-gray-900">
             {m.app_tool_transcribe_title()}
@@ -171,7 +171,7 @@ function TranscribePage() {
             {!isLoading && m.app_transcribe_count_total({ count: String(totalCount) })}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <Button
             variant="outline"
             size="sm"
