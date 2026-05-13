@@ -1,104 +1,130 @@
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, Folder, FolderOpen, Loader2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, File, Folder, FolderOpen, Loader2 } from 'lucide-react'
 import { apiFetch } from '@/lib/apiFetch'
 import { Button } from '@/components/ui/button'
 
-interface MsFolder {
+interface MsItem {
   id: string
   name: string
+  kind: 'folder' | 'file'
   child_count: number
 }
 
 interface FoldersResponse {
-  folders: MsFolder[]
+  // Endpoint name kept as ``folders`` for backwards-compat; payload
+  // includes files too (kind: 'file', not selectable in v1).
+  folders: MsItem[]
 }
 
 interface NodeProps {
   kbSlug: string
   connectorId: string
-  folder: MsFolder
+  item: MsItem
   depth: number
   selectedId: string
   onSelect: (id: string) => void
   onSeeName: (id: string, name: string) => void
 }
 
-function FolderNode({ kbSlug, connectorId, folder, depth, selectedId, onSelect, onSeeName }: NodeProps) {
+function ItemNode({ kbSlug, connectorId, item, depth, selectedId, onSelect, onSeeName }: NodeProps) {
+  const isFolder = item.kind === 'folder'
   const [expanded, setExpanded] = useState(false)
-  const hasChildren = folder.child_count > 0
-  const isSelected = selectedId === folder.id
+  const isSelected = isFolder && selectedId === item.id
 
-  // Lazy load children only after the user expands this node.
+  // Lazy load children only after the user expands this folder.
+  // We always allow expansion — Graph's ``childCount`` is unreliable for
+  // some special folders, and showing an empty state is more useful than
+  // a disabled chevron the user can't try.
   const { data, isLoading } = useQuery<FoldersResponse>({
-    queryKey: ['ms-docs-folders', kbSlug, connectorId, folder.id],
+    queryKey: ['ms-docs-folders', kbSlug, connectorId, item.id],
     queryFn: async () =>
       apiFetch<FoldersResponse>(
-        `/api/app/knowledge-bases/${encodeURIComponent(kbSlug)}/connectors/${connectorId}/ms-docs/folders?parent=${encodeURIComponent(folder.id)}`,
+        `/api/app/knowledge-bases/${encodeURIComponent(kbSlug)}/connectors/${connectorId}/ms-docs/folders?parent=${encodeURIComponent(item.id)}`,
       ),
-    enabled: expanded && hasChildren,
+    enabled: expanded && isFolder,
     staleTime: 60_000,
   })
 
-  // Surface every child folder's id+name to the parent so a later
+  // Surface every visible folder's id+name to the parent so a later
   // ``onConfirm`` can echo the chosen name without a fresh API call.
   useEffect(() => {
-    onSeeName(folder.id, folder.name)
+    if (!isFolder) return
+    onSeeName(item.id, item.name)
     if (data?.folders) {
-      for (const child of data.folders) onSeeName(child.id, child.name)
+      for (const child of data.folders) {
+        if (child.kind === 'folder') onSeeName(child.id, child.name)
+      }
     }
-  }, [data, folder.id, folder.name, onSeeName])
+  }, [data, item.id, item.name, isFolder, onSeeName])
 
   return (
     <div>
       <div
         className={[
-          'group flex items-center gap-1 rounded-md px-1 py-1 transition-colors cursor-pointer',
-          isSelected ? 'bg-gray-100' : 'hover:bg-gray-50',
+          'group flex items-center gap-1 rounded-md px-1 py-1 transition-colors',
+          isFolder ? 'cursor-pointer' : 'cursor-default',
+          isSelected ? 'bg-gray-100' : isFolder ? 'hover:bg-gray-50' : '',
         ].join(' ')}
         style={{ paddingLeft: `${depth * 16 + 4}px` }}
-        onClick={() => onSelect(folder.id)}
+        onClick={() => isFolder && onSelect(item.id)}
       >
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            if (hasChildren) setExpanded((p) => !p)
-          }}
-          disabled={!hasChildren}
-          className="inline-flex h-5 w-5 items-center justify-center text-gray-400 disabled:opacity-30"
-          aria-label={expanded ? 'Collapse' : 'Expand'}
-        >
-          {hasChildren ? (
-            expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />
-          ) : (
-            <span className="h-3.5 w-3.5" />
-          )}
-        </button>
-        {expanded ? (
-          <FolderOpen className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+        {/* Chevron: folders only, always enabled (lazy fetch verifies). */}
+        {isFolder ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              setExpanded((p) => !p)
+            }}
+            className="inline-flex h-5 w-5 items-center justify-center text-gray-400 hover:text-gray-900"
+            aria-label={expanded ? 'Inklappen' : 'Uitklappen'}
+          >
+            {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+          </button>
         ) : (
-          <Folder className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+          <span className="inline-flex h-5 w-5" />
         )}
-        <span className="text-sm text-gray-900 truncate flex-1">{folder.name}</span>
-        {folder.child_count > 0 && (
-          <span className="text-[11px] text-gray-400 shrink-0">{folder.child_count}</span>
+        {isFolder ? (
+          expanded ? (
+            <FolderOpen className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+          ) : (
+            <Folder className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+          )
+        ) : (
+          <File className="h-3.5 w-3.5 text-gray-300 shrink-0" />
+        )}
+        <span
+          className={[
+            'text-sm truncate flex-1',
+            isFolder ? 'text-gray-900' : 'text-gray-400',
+          ].join(' ')}
+        >
+          {item.name}
+        </span>
+        {isFolder && item.child_count > 0 && (
+          <span className="text-[11px] text-gray-400 shrink-0">{item.child_count}</span>
         )}
       </div>
-      {expanded && (
+      {expanded && isFolder && (
         <div>
           {isLoading && (
-            <div className="flex items-center gap-2 text-xs text-gray-400" style={{ paddingLeft: `${(depth + 1) * 16 + 4}px` }}>
+            <div className="flex items-center gap-2 text-xs text-gray-400 py-1" style={{ paddingLeft: `${(depth + 1) * 16 + 4}px` }}>
               <Loader2 className="h-3 w-3 animate-spin" />
-              Loading…
+              Laden…
+            </div>
+          )}
+          {data && data.folders.length === 0 && !isLoading && (
+            <div className="text-xs text-gray-400 italic py-1" style={{ paddingLeft: `${(depth + 1) * 16 + 4}px` }}>
+              Leeg
             </div>
           )}
           {data?.folders.map((child) => (
-            <FolderNode
+            <ItemNode
               key={child.id}
               kbSlug={kbSlug}
               connectorId={connectorId}
-              folder={child}
+              item={child}
               depth={depth + 1}
               selectedId={selectedId}
               onSelect={onSelect}
@@ -158,7 +184,8 @@ export function MsDocsFolderPicker({ kbSlug, connectorId, initialFolderId, onCon
       <div className="border-b border-gray-200 px-3 py-2">
         <p className="text-sm font-medium text-gray-900">Kies een map om te syncen</p>
         <p className="text-xs text-gray-400 mt-0.5">
-          Klik op de pijltjes om submappen uit te klappen. Selecteer een map of kies &quot;hele drive&quot;.
+          Klik op &#9656; om uit te klappen. Bestanden zie je grijs — die worden meegenomen
+          als je de bovenliggende map kiest. Alleen mappen zijn selecteerbaar.
         </p>
       </div>
 
@@ -186,14 +213,14 @@ export function MsDocsFolderPicker({ kbSlug, connectorId, initialFolderId, onCon
           </div>
         )}
         {data?.folders.length === 0 && !isLoading && (
-          <div className="px-2 py-2 text-xs text-gray-400">Geen mappen gevonden in deze drive.</div>
+          <div className="px-2 py-2 text-xs text-gray-400">Deze drive is leeg.</div>
         )}
-        {data?.folders.map((folder) => (
-          <FolderNode
-            key={folder.id}
+        {data?.folders.map((item) => (
+          <ItemNode
+            key={item.id}
             kbSlug={kbSlug}
             connectorId={connectorId}
-            folder={folder}
+            item={item}
             depth={0}
             selectedId={selectedId}
             onSelect={setSelectedId}
