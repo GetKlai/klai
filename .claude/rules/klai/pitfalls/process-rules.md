@@ -2121,3 +2121,70 @@ check entirely.
    identity paths.
 
 Reference: SPEC-SEC-IDENTITY-ASSERT-002 + ops timeline 2026-05-08.
+
+## previous-deploy-failure-blocks-yours (HIGH)
+A failed `Build and deploy portal-frontend` (or any other deploy
+workflow) on `main` does not surface as a global blocker. The
+GitHub Actions UI shows "1 failed" on a single run, but the next
+contributor's push still triggers the same workflow against the
+same broken main. Their deploy fails for the SAME pre-existing
+reason — and they get blamed for "their" deploy failure when in
+fact it was inherited from the previous merge.
+
+Reference: 2026-05-13 — PR #614 (SPEC-PORTAL-PRICING-PER-USER-001
+Phase 5+6, merged 22:42 CEST) shipped a `Promise.allSettled(...)`
+chain in `klai-portal/frontend/src/routes/admin/billing.lazy.tsx`
+without a `void` prefix or `.catch()`, tripping
+`@typescript-eslint/no-floating-promises`. The deploy CI for #614
+failed silently. ~5 hours later, PR #613
+(SPEC-PORTAL-CONNECTOR-WIZARD-EXTRACT-001) was admin-merged with a
+green PR-CI; its deploy CI inherited the broken main and failed on
+the SAME billing.lazy.tsx error. Felt like #613 had introduced the
+break — actually #614 had, and the failure had been invisible
+because nobody runs `gh run list --branch main` between merges.
+
+**Why this slips through:**
+
+1. PR-level CI ran against the rebased PR branch + main, both green.
+   Deploy CI runs ONLY after merge, against post-merge main.
+2. A failed deploy CI shows up as one red run in the actions list,
+   but does NOT mark main as "do not push." There's no equivalent
+   of branch protection for "main is currently broken in CI."
+3. Slack alerts (if any) for deploy-failures often go to a separate
+   channel that the next dev doesn't watch.
+
+**Prevention (ordered by mechanical strength):**
+
+1. **Pre-push gate**: a Husky / `pre-push` hook in klai-portal that
+   runs `gh run list --branch main --workflow "Build and deploy
+   portal-frontend" --limit 1 --json conclusion -q '.[0].conclusion'`
+   and refuses to push if the result is `failure`. The dev sees
+   immediately: "main's last deploy is red — fix that first."
+
+2. **Status alert in Slack/email** when a deploy CI on main
+   transitions to red. Subscribes the team broadly, not the
+   merger only. Equivalent to the alerter-on-alerter pattern from
+   SPEC-OBS-001.
+
+3. **Mechanical fix in the workflow itself**: the
+   `Build and deploy portal-frontend` workflow could fail loudly
+   in a separate `pre-build-precheck` job that runs `gh run list
+   --workflow "..." --status failure --branch main --limit 1` and
+   refuses to start the build until the previous failure is
+   resolved (auto-cancel). Heavier; only worth it if option 1
+   isn't enforced.
+
+4. **Manual playbook**: when admin-merging a PR, ALWAYS check
+   `gh run list --branch main --limit 5` first. If the previous
+   deploy is red → fix that first, then merge yours.
+
+5. **The hotfix pattern**: the right response when you discover
+   you've inherited a broken main is to land the SMALLEST
+   possible fix as a separate hotfix PR (NOT mix it into your
+   PR's commit history). #617 (the one-line `void` prefix) is
+   the canonical example.
+
+**Audit (2026-05-13):** No mechanical pre-push gate exists today.
+Manual playbook is the current state. Option 1 (Husky pre-push
+hook) is the cheapest mechanical guard and would have caught
+this incident before either dev pushed.
