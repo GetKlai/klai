@@ -375,15 +375,68 @@ class ZitadelClient:
         return resp.json()["callbackUrl"]
 
     async def set_password_with_code(self, user_id: str, code: str, new_password: str) -> None:
-        """Set a new password using a verification code from a password-reset email."""
-        resp = await self._http.post(
+        """Set a new password using a one-time code from email.
+
+        Zitadel has TWO distinct code flows that both land on Klai's
+        ``/password/set`` page:
+
+        - **Password reset** (from ``/password/forgot``) — one API call:
+          ``POST /v2/users/{id}/password`` with ``{newPassword, verificationCode}``.
+          Zitadel consumes the password_reset code and sets the password
+          atomically.
+
+        - **Invite** (from admin-invite mail) — two API calls:
+          1. ``POST /v2/users/{id}/invite_code/verify`` with
+             ``{verificationCode: code}`` — verifies the invite code AND
+             marks the user's email as verified.
+          2. ``POST /v2/users/{id}/password`` with ``{newPassword}`` (no
+             code) — sets the password on the now-verified user.
+
+          The invite_code consumer does NOT accept reset-style codes, and
+          the password endpoint does NOT accept invite codes. Without this
+          split the invite-flow returns 400 ``invalid_code``.
+
+        We try the invite-flow first because invite-codes are the more
+        common case (every newly invited user goes through it). If the
+        verify step returns a 4xx we fall back to the reset-flow.
+
+        Behaviour parity with the previous implementation:
+        - Raises ``httpx.HTTPStatusError`` (caller maps to 400/502).
+        - Both flows leave the user in a state where they can immediately
+          authenticate with the new password — the auto-login chain in
+          ``password_set`` works for either path.
+        """
+        # ---- Path 1: invite flow ------------------------------------------------
+        verify_resp = await self._http.post(
+            f"/v2/users/{user_id}/invite_code/verify",
+            json={"verificationCode": code},
+        )
+        if verify_resp.is_success:
+            # Invite verified; set the password without a code on the now-verified user.
+            password_resp = await self._http.post(
+                f"/v2/users/{user_id}/password",
+                json={"newPassword": {"password": new_password, "changeRequired": False}},
+            )
+            password_resp.raise_for_status()
+            return
+
+        # invite_code/verify returned 4xx/5xx. Two reasons it might:
+        #   - 4xx: the code is not an invite code (likely a password-reset code).
+        #          Fall back to the reset-flow below.
+        #   - 5xx: Zitadel itself is unhealthy. Propagate as HTTPStatusError so
+        #          the caller emits zitadel_5xx and returns 502.
+        if verify_resp.status_code >= 500:
+            verify_resp.raise_for_status()
+
+        # ---- Path 2: reset flow (1 call) ---------------------------------------
+        reset_resp = await self._http.post(
             f"/v2/users/{user_id}/password",
             json={
                 "newPassword": {"password": new_password, "changeRequired": False},
                 "verificationCode": code,
             },
         )
-        resp.raise_for_status()
+        reset_resp.raise_for_status()
 
     async def find_user_id_by_email(self, email: str) -> str | None:
         """Return the Zitadel userId for the given email, or None if not found.
