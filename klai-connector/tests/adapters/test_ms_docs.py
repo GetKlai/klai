@@ -98,7 +98,7 @@ async def test_list_documents_first_sync_hits_me_drive_delta(
     }
     call_url: dict[str, str] = {}
 
-    async def _fake_get(url: str) -> dict[str, Any]:
+    async def _fake_get(url: str, connector: Any = None) -> dict[str, Any]:
         call_url["url"] = url
         return delta_response
 
@@ -159,7 +159,7 @@ async def test_list_documents_incremental_uses_persisted_delta_link(
     }
     call_urls: list[str] = []
 
-    async def _fake_get(url: str) -> dict[str, Any]:
+    async def _fake_get(url: str, connector: Any = None) -> dict[str, Any]:
         call_urls.append(url)
         return delta_response
 
@@ -189,7 +189,7 @@ async def test_list_documents_paginates_next_link(
     }
     responses = iter([page1, page2])
 
-    async def _fake_get(url: str) -> dict[str, Any]:
+    async def _fake_get(url: str, connector: Any = None) -> dict[str, Any]:
         return next(responses)
 
     with patch.object(ms_adapter, "_graph_get_json", side_effect=_fake_get):
@@ -213,7 +213,7 @@ async def test_list_documents_drive_id_takes_precedence(ms_adapter: Any) -> None
     }
     call_urls: list[str] = []
 
-    async def _fake_get(url: str) -> dict[str, Any]:
+    async def _fake_get(url: str, connector: Any = None) -> dict[str, Any]:
         call_urls.append(url)
         return delta_response
 
@@ -272,7 +272,7 @@ async def test_get_cursor_state_bootstraps_when_empty(
         "@odata.deltaLink": "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=boot",
     }
 
-    async def _fake_get(url: str) -> dict[str, Any]:
+    async def _fake_get(url: str, connector: Any = None) -> dict[str, Any]:
         return delta_response
 
     with patch.object(ms_adapter, "_graph_get_json", side_effect=_fake_get):
@@ -296,7 +296,7 @@ async def test_content_type_mime_mapping(
     items = [_drive_item(f"item-{i}", f"f{i}", mime) for i, mime in enumerate(mime_map)]
     delta_response = {"value": items, "@odata.deltaLink": "https://graph/.../delta?t=x"}
 
-    async def _fake_get(url: str) -> dict[str, Any]:
+    async def _fake_get(url: str, connector: Any = None) -> dict[str, Any]:
         return delta_response
 
     with patch.object(ms_adapter, "_graph_get_json", side_effect=_fake_get):
@@ -321,7 +321,7 @@ async def test_identifier_capture_sender_and_mentioned(
         "@odata.deltaLink": "https://graph/.../delta?t=x",
     }
 
-    async def _fake_get(url: str) -> dict[str, Any]:
+    async def _fake_get(url: str, connector: Any = None) -> dict[str, Any]:
         return delta_response
 
     with patch.object(ms_adapter, "_graph_get_json", side_effect=_fake_get):
@@ -349,7 +349,7 @@ async def test_identifier_capture_tolerates_missing_emails(
         "@odata.deltaLink": "https://graph/.../delta?t=x",
     }
 
-    async def _fake_get(url: str) -> dict[str, Any]:
+    async def _fake_get(url: str, connector: Any = None) -> dict[str, Any]:
         return delta_response
 
     with patch.object(ms_adapter, "_graph_get_json", side_effect=_fake_get):
@@ -482,7 +482,7 @@ async def test_metadata_keyed_by_stable_graph_id_not_python_id(
         "@odata.deltaLink": "https://graph/.../delta?t=x",
     }
 
-    async def _fake_get(url: str) -> dict[str, Any]:
+    async def _fake_get(url: str, connector: Any = None) -> dict[str, Any]:
         return delta_response
 
     with patch.object(ms_adapter, "_graph_get_json", side_effect=_fake_get):
