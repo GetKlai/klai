@@ -375,9 +375,7 @@ class ZitadelClient:
         resp.raise_for_status()
         return resp.json()["callbackUrl"]
 
-    async def set_password_with_code(
-        self, user_id: str, code: str, new_password: str
-    ) -> Literal["invite", "reset"]:
+    async def set_password_with_code(self, user_id: str, code: str, new_password: str) -> Literal["invite", "reset"]:
         """Set a new password using a one-time code from email.
 
         Returns ``"invite"`` if the code was consumed via the invite flow
