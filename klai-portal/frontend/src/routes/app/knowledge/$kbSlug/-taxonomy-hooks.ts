@@ -305,40 +305,57 @@ export function useBootstrapTaxonomy(
   })
 }
 
+/** Maximum backfill-job poll attempts before timing out. 120 × 5 s = 10 min. */
+const BACKFILL_MAX_POLLS = 120
+/** Delay between successive backfill-job poll attempts. */
+const BACKFILL_POLL_INTERVAL_MS = 5_000
+
 /**
- * Enqueue a backfill job and poll until it succeeds, fails, or times
- * out (max 120 polls × 5s = 10 min).
+ * Poll `taxonomy/backfill/{jobId}` until the job succeeds, fails, or we
+ * exhaust the poll budget. Throws on failure / timeout; resolves with
+ * the final job record on success.
+ */
+async function pollBackfillJob(
+  kbSlug: string,
+  jobId: number,
+): Promise<{ job_id: number; status: string }> {
+  for (let i = 0; i < BACKFILL_MAX_POLLS; i++) {
+    await new Promise((r) => setTimeout(r, BACKFILL_POLL_INTERVAL_MS))
+    const s = await apiFetch<{ job_id: number; status: string }>(
+      `/api/app/knowledge-bases/${kbSlug}/taxonomy/backfill/${jobId}`,
+    )
+    if (s.status === 'succeeded') return s
+    if (s.status === 'failed') throw new Error('Backfill job failed')
+  }
+  throw new Error('Backfill timed out')
+}
+
+/**
+ * Enqueue a backfill job and poll until it terminates (success / failure
+ * / timeout).
  *
  * `opts.proposalsForFallback` is a getter the hook calls during
  * `onError` to compute the fallback state (proposals_ready when any
  * remain pending, idle otherwise). It's a getter, not a snapshot,
  * because TanStack Query data can change between mutation start and
  * error. Caller (TaxonomyTab) passes
- * `() => proposalsQuery.data?.proposals ?? []`.
+ * `() => proposalsQuery.data?.proposals ?? []`. Defaults to `() => []`
+ * so callers that don't track a pending count get the `idle` fallback.
  */
 export function useBackfillTaxonomy(
   kbSlug: string,
   onStateChange: SuggestStateSetter,
-  opts: { proposalsForFallback: () => TaxonomyProposal[] },
+  opts: { proposalsForFallback?: () => TaxonomyProposal[] } = {},
 ) {
   const queryClient = useQueryClient()
+  const proposalsForFallback = opts.proposalsForFallback ?? (() => [])
   return useMutation({
     mutationFn: async () => {
       const enqueue = await apiFetch<{ job_id: number; status: string }>(
         `/api/app/knowledge-bases/${kbSlug}/taxonomy/backfill-trigger`,
         { method: 'POST' },
       )
-      const jobId = enqueue.job_id
-      const MAX_POLLS = 120
-      for (let i = 0; i < MAX_POLLS; i++) {
-        await new Promise((r) => setTimeout(r, 5000))
-        const s = await apiFetch<{ job_id: number; status: string }>(
-          `/api/app/knowledge-bases/${kbSlug}/taxonomy/backfill/${jobId}`,
-        )
-        if (s.status === 'succeeded') return s
-        if (s.status === 'failed') throw new Error('Backfill job failed')
-      }
-      throw new Error('Backfill timed out')
+      return pollBackfillJob(kbSlug, enqueue.job_id)
     },
     onMutate: () => onStateChange('applying'),
     onSuccess: () => {
@@ -352,9 +369,7 @@ export function useBackfillTaxonomy(
       taxonomyLogger.error('Backfill failed', { slug: kbSlug, error: err })
       onStateChange((prev) => {
         if (prev === 'applying') {
-          const pending = opts
-            .proposalsForFallback()
-            .filter((p) => p.status === 'pending').length
+          const pending = proposalsForFallback().filter((p) => p.status === 'pending').length
           return pending > 0 ? 'proposals_ready' : 'idle'
         }
         return prev
