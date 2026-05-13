@@ -82,6 +82,14 @@ _CSRF_EXEMPT_PREFIXES: tuple[str, ...] = (
     # The auto-login chain mints a fresh BFF session as part of the response.
     # REQ-4.3 / AC-2
     "/api/auth/password/set",
+    # pre-session: signup verify-email endpoint. Same shape as
+    # /api/auth/password/set — caller arrives from a one-time mail-link
+    # with userID + code + orgID embedded by Zitadel substitution. The
+    # one-time code IS the authentication; no BFF cookie / csrf_token
+    # exists at the time of POST. Symmetric with /api/auth/password/reset
+    # + /api/auth/password/set in the password-reset arc.
+    # REQ-4.3 / AC-2
+    "/api/auth/verify-email",
     # Zitadel Login V2 TOTP finisher — same pre-session rationale as
     # /api/auth/login.
     # REQ-4.3 / AC-2
