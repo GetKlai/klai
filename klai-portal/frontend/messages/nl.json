@@ -350,6 +350,7 @@
   "account_sar_description": "Download een overzicht van alle persoonlijke gegevens die Klai over jou verwerkt (AVG art. 15).",
   "account_sar_button": "Download mijn gegevens",
   "account_sar_downloading": "Exporteren...",
+  "account_sar_rate_limited": "Je kunt je gegevens maximaal 5 keer per uur downloaden. Probeer het later opnieuw.",
   "account_sar_error": "Export mislukt, probeer opnieuw",
   "sidebar_account": "Mijn account",
   "provisioning_polling_title": "Werkruimte wordt aangemaakt",

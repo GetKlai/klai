@@ -1,7 +1,8 @@
 ---
 id: SPEC-GDPR-003
 version: 0.1.0
-status: draft
+status: done
+completed: 2026-05-13
 created: 2026-05-13
 updated: 2026-05-13
 author: klai-team
@@ -14,6 +15,7 @@ supersedes_scope_of: SPEC-GDPR-001 (LibreChat + Twenty + rate-limit out-of-scope
 | Datum      | Versie | Wijziging                                                          |
 |------------|--------|--------------------------------------------------------------------|
 | 2026-05-13 | 0.1.0  | Initieel SPEC — AVG art. 15 volledigheid + abuse-controls          |
+| 2026-05-13 | 0.1.0  | Geimplementeerd via Moai:run in Richmond workspace                 |
 
 ---
 
@@ -30,6 +32,17 @@ SPEC-GDPR-001 leverde een werkende self-service SAR-export, maar drie onderdelen
 Bij juridische review (2026-05-13) is vastgesteld dat **LibreChat-chats** en **Twenty CRM-persoonsgegevens** persoonsgegevens zijn in de zin van AVG Art. 4(1) en daarmee onder het inzagerecht van Art. 15 vallen. De huidige "stuur een e-mail"-route is juridisch geldig (Art. 12(3) — antwoord binnen 1 maand), maar de marketing-belofte van een self-service-knop dekt niet de werkelijkheid. Deze SPEC sluit dat gat én pakt twee bekende security-gaten mee (rate-limit + audit-log van de download zelf).
 
 **Moneybird blijft buiten scope:** betaalgegevens zijn organisatie-data van de tenant, geen persoonsgegevens van de individuele eindgebruiker. De org-contactpersoon kan een aparte uitvraag doen via `privacy@getklai.com`.
+
+## Outcome
+
+Geimplementeerd op 2026-05-13:
+
+- SAR-export bevat nu `klai_portal.librechat_conversations` met strikt op `portal_users.librechat_user_id` gescopete LibreChat-conversaties en berichten.
+- Twenty CRM wordt op `portal_users.email` bevraagd en vult `external_systems.twenty_crm.records` met de SAR-veilige velden.
+- LibreChat en Twenty falen graceful met `null` in de betreffende sectie en warning logs.
+- `/api/me/sar-export` heeft een user-keyed Redis sliding-window rate limit van 5 exports per uur met HTTP 429 + `Retry-After`, en fail-closed HTTP 503 bij Redis-onbeschikbaarheid.
+- Succesvolle exports en rate-limit rejects schrijven onafhankelijke `PortalAuditLog` entries met `sar.exported` en `sar.rate_limited`.
+- De accountpagina toont een specifieke 429-melding.
 
 ## AVG-context
 

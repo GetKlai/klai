@@ -13,7 +13,9 @@ from fastapi import HTTPException
 
 def _mock_org() -> MagicMock:
     org = MagicMock()
+    org.id = 1
     org.moneybird_contact_id = "mb-123"
+    org.librechat_container = "librechat-test"
     return org
 
 
@@ -59,6 +61,19 @@ class TestSarExport:
         stub = AsyncMock()
         monkeypatch.setattr("app.api.me.set_tenant", stub)
         return stub
+
+    @pytest.fixture(autouse=True)
+    def _stub_rate_limit(self, monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+        redis_pool = MagicMock()
+        monkeypatch.setattr("app.api.me.get_redis_pool", AsyncMock(return_value=redis_pool))
+        stub = AsyncMock(return_value=(True, 0))
+        monkeypatch.setattr("app.api.me.check_rate_limit", stub)
+        return stub
+
+    @pytest.fixture(autouse=True)
+    def _stub_external_sources(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("app.api.me._load_twenty_records", AsyncMock(return_value=[]))
+        monkeypatch.setattr("app.api.me._write_sar_audit", AsyncMock())
 
     @pytest.mark.asyncio
     async def test_sets_tenant_before_rls_queries(self, _stub_set_tenant: AsyncMock) -> None:
@@ -153,11 +168,13 @@ class TestSarExport:
         assert "audit_events" in portal
         assert "usage_events" in portal
         assert "meetings" in portal
+        assert "librechat_conversations" in portal
 
         ext = result_dict["external_systems"]
         assert "moneybird" in ext
         assert "librechat" in ext
         assert "twenty_crm" in ext
+        assert ext["twenty_crm"]["records"] == []
 
     @pytest.mark.asyncio
     async def test_identity_includes_mfa_status(self) -> None:
@@ -296,3 +313,115 @@ class TestSarExport:
         assert result.klai_portal.account.preferred_language == "nl"
         assert result.klai_portal.group_memberships == []
         assert result.klai_portal.meetings == []
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_exceeded_returns_429_and_audits(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from app.api import me as me_module
+
+        org = _mock_org()
+        portal_user = _mock_portal_user()
+
+        mock_result_org_user = MagicMock()
+        mock_result_org_user.one_or_none.return_value = (org, portal_user)
+
+        db = AsyncMock()
+        db.execute.side_effect = [mock_result_org_user]
+
+        audit_stub = AsyncMock()
+        monkeypatch.setattr(me_module, "_write_sar_audit", audit_stub)
+        monkeypatch.setattr(me_module, "check_rate_limit", AsyncMock(return_value=(False, 123)))
+
+        with patch("app.api.me.zitadel") as mock_zitadel:
+            mock_zitadel.get_userinfo = AsyncMock(return_value={"sub": "user-limited"})
+
+            with pytest.raises(HTTPException) as exc_info:
+                await me_module.sar_export(credentials=MagicMock(), db=db)
+
+        assert exc_info.value.status_code == 429
+        assert exc_info.value.headers == {"Retry-After": "123"}
+        audit_stub.assert_awaited_once_with(org.id, "user-limited", "sar.rate_limited")
+
+    @pytest.mark.asyncio
+    async def test_successful_export_writes_audit_entry(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from app.api import me as me_module
+
+        org = _mock_org()
+        portal_user = _mock_portal_user()
+
+        mock_result_org_user = MagicMock()
+        mock_result_org_user.one_or_none.return_value = (org, portal_user)
+        mock_result_empty = MagicMock()
+        mock_result_empty.all.return_value = []
+        mock_result_meetings = MagicMock()
+        mock_result_meetings.scalars.return_value.all.return_value = []
+
+        db = AsyncMock()
+        db.execute.side_effect = [
+            mock_result_org_user,
+            mock_result_empty,
+            mock_result_empty,
+            mock_result_empty,
+            mock_result_empty,
+            mock_result_meetings,
+        ]
+
+        audit_stub = AsyncMock()
+        monkeypatch.setattr(me_module, "_write_sar_audit", audit_stub)
+
+        with patch("app.api.me.zitadel") as mock_zitadel:
+            mock_zitadel.get_userinfo = AsyncMock(return_value={"sub": "user-audit"})
+            mock_zitadel.get_user_by_id = AsyncMock(return_value=_zitadel_user_response())
+            mock_zitadel.has_any_mfa = AsyncMock(return_value=False)
+
+            await me_module.sar_export(credentials=MagicMock(), db=db)
+
+        audit_stub.assert_awaited_once_with(org.id, "user-audit", "sar.exported")
+
+    @pytest.mark.asyncio
+    async def test_twenty_records_are_included_when_lookup_matches(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from app.api import me as me_module
+
+        org = _mock_org()
+        portal_user = _mock_portal_user()
+
+        mock_result_org_user = MagicMock()
+        mock_result_org_user.one_or_none.return_value = (org, portal_user)
+        mock_result_empty = MagicMock()
+        mock_result_empty.all.return_value = []
+        mock_result_meetings = MagicMock()
+        mock_result_meetings.scalars.return_value.all.return_value = []
+
+        db = AsyncMock()
+        db.execute.side_effect = [
+            mock_result_org_user,
+            mock_result_empty,
+            mock_result_empty,
+            mock_result_empty,
+            mock_result_empty,
+            mock_result_meetings,
+        ]
+
+        monkeypatch.setattr(
+            me_module,
+            "_load_twenty_records",
+            AsyncMock(
+                return_value=[
+                    me_module.SarTwentyCRMRecord(
+                        first_name="Test",
+                        last_name="User",
+                        email="test@example.com",
+                        company_name="Acme",
+                    )
+                ]
+            ),
+        )
+
+        with patch("app.api.me.zitadel") as mock_zitadel:
+            mock_zitadel.get_userinfo = AsyncMock(return_value={"sub": "user-twenty"})
+            mock_zitadel.get_user_by_id = AsyncMock(return_value=_zitadel_user_response())
+            mock_zitadel.has_any_mfa = AsyncMock(return_value=False)
+
+            result = await me_module.sar_export(credentials=MagicMock(), db=db)
+
+        assert result.external_systems.twenty_crm.records is not None
+        assert result.external_systems.twenty_crm.records[0].company_name == "Acme"
