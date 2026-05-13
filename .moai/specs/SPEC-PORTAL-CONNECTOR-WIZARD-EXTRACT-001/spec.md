@@ -487,56 +487,56 @@ new rule's "smallest-shared scope" spirit at the SPEC level too.
 
 ### Repo-wide god-component candidates (each its own SPEC)
 
-| File | Regels | useState | useEffect | mutations/queries | Profiel | SPEC priority |
-|---|---|---|---|---|---|---|
-| `$kbSlug/taxonomy.tsx` | 1088 | 16 | 2 | ~12 | `TaxonomyTab` 720 regels, 8 inline mutations, 166-regel inline `proposals.map()` callback. Cross-imported by `insights.tsx`. | High — actual code-review pain |
-| `knowledge/new.tsx` | 713 | 4 | 0 | 4 | Multi-step KB-creation wizard; types already in `new._types.ts`. Modest useState count suggests it's reasonable for its size. | Medium — likely manageable refactor |
-| `admin/billing.lazy.tsx` | 673 | 11 | 2 | 0 | 11 useState in one component without mutations/queries is unusual — local form state machine. | Medium |
-| `setup/mfa.lazy.tsx` | 668 | **19** | 3 | 0 | 19 useState — highest in the codebase. Multi-step MFA setup. Strong refactor candidate. | High — fragility risk |
-| `app/transcribe/add.tsx` | 530 | 12 | 4 | 3 | Transcribe upload form. | Medium |
-| `admin/settings.tsx` | 524 | 9 | 3 | 9 | 9 mutations inline → mutation-hooks extraction. | Medium |
-| `admin/users/index.tsx` | 517 | 5 | 0 | 6 | 6 mutations inline; row-level affordances likely candidate for `_components/UserRow.tsx`. | Medium |
-| `$kbSlug/members.tsx` | 497 | 7 | 0 | 10 | 10 mutations is the densest mutation-per-line in the survey; row-level affordances. | Medium-high — touchy area, well-tested |
-| `$kbSlug/connectors.tsx` | 425 | 8 | 2 | 5 | Borderline — review value of refactor before SPEC. | Low |
+**UPDATE 2026-05-13:** All 9 candidates below have been promoted to
+their own SPEC documents in this same followups commit. The original
+F-table is preserved as a record; the live tracking lives in those
+SPECs. Order below matches the 90-day churn ranking (most-touched first):
 
-### Architectural smells (no-SPEC-needed; can be one-PR cleanups)
+| File | SPEC | Status |
+|---|---|---|
+| `$kbSlug/taxonomy.tsx` (1088 lines, 44 commits/90d, eslint-disable in insights.tsx) | `SPEC-PORTAL-TAXONOMY-EXTRACT-001` (move) + `SPEC-PORTAL-TAXONOMY-SPLIT-001` (interior split) | EXTRACT: ready · SPLIT: draft |
+| `admin/users/index.tsx` (517 lines, 33 commits/90d) | `SPEC-PORTAL-ADMIN-USERS-CLEANUP-001` | draft |
+| `$kbSlug/connectors.tsx` (425 lines, 29 commits/90d) | `SPEC-PORTAL-CONNECTORS-TAB-CLEANUP-001` | draft (borderline — annotation cycle may close as won't-fix) |
+| `knowledge/new.tsx` (713 lines, 28 commits/90d) | `SPEC-PORTAL-KB-NEW-CLEANUP-001` | draft |
+| `admin/settings.tsx` (524 lines, 26 commits/90d, 9 mutations) | `SPEC-PORTAL-ADMIN-SETTINGS-CLEANUP-001` | draft |
+| `admin/billing.lazy.tsx` (673 lines, 22 commits/90d, 11 useState) | `SPEC-PORTAL-BILLING-CLEANUP-001` | draft (coordinate with active PRICING-PER-USER-001) |
+| `app/transcribe/add.tsx` (530 lines, 22 commits/90d) | `SPEC-PORTAL-TRANSCRIBE-ADD-CLEANUP-001` | draft |
+| `setup/mfa.lazy.tsx` (668 lines, 16 commits/90d, **19 useState**) | `SPEC-PORTAL-MFA-SETUP-CLEANUP-001` | draft (worst structure in repo, low churn = stable pain) |
+| `$kbSlug/members.tsx` (497 lines, 15 commits/90d, 10 mutations) | `SPEC-PORTAL-KB-MEMBERS-CLEANUP-001` | draft (densest mutations per line) |
 
-- **F-S1: `insights.tsx` cross-route imports.** `insights.tsx`
-  (33 lines) imports `TaxonomyTab` from `./taxonomy` (1088 lines)
-  and `KBOverviewSections` from `./overview`. Both are route files.
-  Per the new rule this is a smell. Fix: extract `TaxonomyTab` to
-  `$kbSlug/-taxonomy-component.tsx` (or co-located inside taxonomy's
-  own `_components/`) and `KBOverviewSections` to a similar place.
-  Resolves the smell and makes F-table row 1 (`taxonomy.tsx`) easier.
+### Architectural smells
+
+- **F-S1: `insights.tsx` cross-route imports.**
+  **PARTIALLY RESOLVED 2026-05-13.** `KBOverviewSections` extracted to
+  `$kbSlug/_components/KBOverviewSections.tsx` (followups PR #620).
+  `TaxonomyTab` cross-route import remains marked with
+  `eslint-disable-next-line` + TODO; SPEC-PORTAL-TAXONOMY-EXTRACT-001
+  will close it.
 
 - **F-S2: Duplicate `interface User`-like types.** Out of scope for
-  this audit; flagged for next codebase-wide types audit.
+  this audit; flagged for next codebase-wide types audit. Still open.
 
-- **F-S3: ESLint `no-restricted-imports` rule** preventing
-  `import from '../<route-name>.tsx'` patterns. Once the existing
-  cross-route imports are eliminated (F-S1 + this SPEC), add the
-  rule to prevent regression.
+- **F-S3: ESLint rule preventing `import from '../<route-name>.tsx'`.**
+  **DONE 2026-05-13.** Implemented as `klai/no-cross-route-import` in
+  followups PR #620 (`klai-portal/frontend/eslint-rules/no-cross-route-import.js`)
+  with 13 unit tests + cross-reference in portal-frontend.md (PR #622).
 
 ### Convention adoption follow-ups
 
 - **F-C1: Audit existing `-`-prefixed files** against the new rule.
-  Five feature-local instances exist today
-  (`-kb-*`, `-bronnen-*`, `admin/api-keys/-*`, `admin/widgets/-*`,
-  `app/templates/-template-form.tsx`). Verify each matches the rule's
-  decision-tree clauses (smallest-shared scope, naming convention).
-  Cleanup-only — no new SPECs spawned unless an instance is
-  badly-placed.
+  Still open. Five feature-local instances exist today (`-kb-*`,
+  `-bronnen-*`, `admin/api-keys/-*`, `admin/widgets/-*`,
+  `app/templates/-template-form.tsx`). Cleanup-only — no new SPECs
+  spawned unless an instance is badly-placed.
 
-- **F-C2: Hoist legacy cross-directory imports.** add/edit-connector
-  consume from `$kbSlug/-kb-*` because that's where the symbols
-  happened to live. Per the new rule's clause 3, the smallest-shared
-  scope across `$kbSlug/` (KB-tabs) AND
-  `$kbSlug_.{add,edit}-connector.tsx` (wizards) is the parent
-  `routes/app/knowledge/`. A future SPEC could relocate the
-  wizard-relevant subset (`ASSERTION_MODE_OPTIONS`, `GitHubConfig`,
-  `WebCrawlerConfig`, etc.) to parent-level `-knowledge-*` files.
-  Not urgent — the legacy imports are tactical and tests catch
-  regressions.
+- **F-C2: Hoist legacy cross-directory imports.**
+  **DONE 2026-05-13** (PR #620 followups). Wizard-only symbols
+  (`GitHubConfig`, `WebCrawlerConfig`, `ASSERTION_MODE_OPTIONS`,
+  `joinSeedUrl`) hoisted from `$kbSlug/-kb-*` to parent-level
+  `-connector-*` files. Both wizard pages now consume zero symbols
+  from `$kbSlug/-kb-helpers.tsx` cross-directory. Remaining legitimate
+  cross-directory imports (`CookieRow`, `ConnectorSummary`) stay in
+  `-kb-types.ts` because they ARE genuinely shared with KB-tab routes.
 
 ## See Also
 
