@@ -30,6 +30,7 @@ import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import set_tenant
 from app.models.templates import PortalTemplate
 
 logger = structlog.get_logger()
@@ -94,10 +95,30 @@ async def ensure_default_templates(
     Non-fatal: any exception is logged and swallowed — callers MUST NOT
     depend on this for correctness.
 
-    Call sites MUST have called ``set_tenant(org_id)`` on the session
-    beforehand so RLS admits the COUNT and the inserts.
+    Sets the tenant GUC itself as defense-in-depth. ``portal_templates``
+    is a Cat-D RLS table (strict ``USING (org_id = NULLIF(current_setting(
+    'app.current_org_id', true), '')::int)``); since no explicit WITH
+    CHECK clause is defined, the USING expression is used as WITH CHECK
+    for INSERTs. When the GUC is empty, the policy evaluates
+    ``org_id = NULL`` → NULL → fails WITH CHECK with
+    ``InsufficientPrivilegeError``. Production incident 2026-05-13 on
+    ``org_id=10`` (e2e tenant): the orchestrator's prior ``set_tenant``
+    via ``ensure_default_knowledge_bases`` did not survive an
+    intermediate commit / pool checkout, leaving the GUC empty for this
+    seeder. The tenant ended up with zero default templates and the
+    warning ``default_templates_seeding_failed`` fired.
+
+    Setting ``app.current_org_id`` here guarantees the INSERT WITH
+    CHECK passes regardless of how the caller manages the session.
+    Both call sites (provisioning orchestrator step 6b, and the lazy
+    seeder on ``GET /api/app/templates``) operate on pinned sessions,
+    so the ``set_config(..., false)`` is session-scoped and idempotent
+    even when the caller already set the same GUC.
     """
     try:
+        # Defense in depth — see docstring. Must run BEFORE COUNT/INSERT.
+        await set_tenant(db, org_id)
+
         count_result = await db.execute(
             select(func.count()).select_from(PortalTemplate).where(PortalTemplate.org_id == org_id)
         )
