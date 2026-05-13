@@ -2,66 +2,74 @@
 /**
  * Cross-platform Playwright MCP launcher.
  *
- * Pattern: `--isolated --storage-state ~/.claude/mcp-storageState.json`.
- * Each Claude Code session gets its own ephemeral Chrome profile that is
- * preloaded with login cookies + localStorage from the storage-state JSON.
- * Multiple parallel Claude Code sessions are safe (no profile lock) and
- * all start authenticated.
+ * Default pattern: persistent profile, parallel-safe via workspace-hash.
+ * Fallback: `--isolated` (ephemeral profile, logged-out) when the env
+ * var `PLAYWRIGHT_ISOLATED=1` is set.
  *
- * Why this pattern (May 2026, post-research):
- *   - Microsoft has no officially-supported "parallel + shared login"
- *     CLI option besides this. Issue #1530 (named session management)
- *     was closed as "not planned".
- *   - The browser extension is the alternative Microsoft pushes; we
- *     reject it because it grants the AI full access to every other
- *     site the user is logged in to in their daily Chrome.
- *   - PR #346's `--user-data-dir` is single-instance, so it cannot
- *     serve parallel sessions.
- *   - The April 2026 attempt at this pattern (PR #354) failed because
- *     the seed step relied on `npx playwright codegen --save-storage`,
- *     which is flaky on macOS.
+ * Why default is persistent (verified 2026-05-13 against Microsoft docs):
+ *   @playwright/mcp@latest stores its persistent profile at
+ *   `~/Library/Caches/ms-playwright/mcp-{channel}-{workspace-hash}` on
+ *   macOS (analogous paths on Linux/Windows). The `{workspace-hash}` is
+ *   derived from the MCP client's workspace root, so every distinct
+ *   workspace gets its own profile directory automatically.
  *
- * The seed step (verified 2026-05-07):
- *   `@playwright/mcp >= 0.0.74` exposes `browser_run_code_unsafe`,
- *   which executes a Playwright snippet server-side with a `page`
- *   handle. Calling `page.context().storageState({ path })` from
- *   inside such a snippet writes the current cookies + localStorage
- *   to the storage-state file directly. No external codegen, no
- *   Inspector window, no Ctrl+C dance.
+ *   In our setup (Conductor + a canonical clone) each parallel session
+ *   runs from a different workspace root, so each picks a different
+ *   hash, so each opens a different profile. No lock conflict. Login
+ *   state persists between Claude Code restarts within that workspace.
  *
- *   1. With this launcher in place but no storage-state file yet,
- *      open a Playwright MCP session — the browser starts logged out.
- *   2. `browser_navigate` to a login URL, log in by hand.
- *   3. Have the AI call `browser_run_code_unsafe` with this snippet:
- *        async (page) => {
- *          await page.context().storageState({
- *            path: '/Users/<you>/.claude/mcp-storageState.json',
- *          });
- *          return { url: page.url(),
- *                   cookies: (await page.context().cookies()).length };
- *        }
- *      The tool returns immediately with the new cookie count.
- *   4. Restart Claude Code (so the launcher picks the file up at
- *      startup via the `--storage-state` flag).
- *   5. Refresh the same way every ~3 weeks when Google's session
- *      cookies expire.
+ *   The one situation where the default would still conflict is two
+ *   Claude Code instances inside the SAME workspace touching the
+ *   Playwright MCP simultaneously. We don't do that. If you ever
+ *   need it, set PLAYWRIGHT_ISOLATED=1 on the second instance.
  *
- *   NOTE: there is no separate `browser_storage_state` MCP tool. An
- *   earlier draft of this launcher and its docs claimed there was;
- *   that was a hallucination. The functionality lives in the generic
- *   `browser_run_code_unsafe` tool, as shown above.
+ * When to use the isolated fallback (PLAYWRIGHT_ISOLATED=1):
+ *   - You explicitly want a fresh, logged-out browser (testing the
+ *     login flow itself, verifying unauthenticated routes, etc).
+ *   - Two Claude Code instances inside the same workspace.
+ *   - Disposable verification where you don't want to pollute the
+ *     workspace's persistent profile.
+ *
+ * Storage-state file (`~/.claude/mcp-storageState.json`):
+ *   When present, the launcher passes `--storage-state` so a fresh
+ *   profile (or an isolated session) is preloaded with cookies +
+ *   localStorage from the seed file. With the persistent default this
+ *   is now mostly redundant — the profile auto-saves login on first
+ *   use — but it's harmless and useful as a first-boot preload for
+ *   brand-new workspaces.
+ *
+ *   To (re)seed: open a Playwright MCP session, browser_navigate to a
+ *   login URL, log in by hand, then call `browser_run_code_unsafe`:
+ *     async (page) => {
+ *       await page.context().storageState({
+ *         path: '/Users/<you>/.claude/mcp-storageState.json',
+ *       });
+ *       return { url: page.url(),
+ *                cookies: (await page.context().cookies()).length };
+ *     }
+ *
+ *   NOTE: there is no separate `browser_storage_state` MCP tool. The
+ *   functionality lives in the generic `browser_run_code_unsafe` tool.
  *
  * Why CLI flags instead of a JSON config file:
  *   microsoft/playwright-mcp#1446 — `userDataDir` set in a JSON
- *   --config file is silently ignored on @playwright/mcp@0.0.70.
- *   CLI flag works correctly.
+ *   `--config` file is silently ignored on `@playwright/mcp@0.0.70`.
+ *   CLI flags work correctly.
  *
  * Why `--browser chrome`:
- *   On @>=0.0.74 the valid `--browser` values are
- *   chrome|firefox|webkit|msedge. `chromium` was dropped. `chrome`
- *   uses the system Google Chrome installation but, combined with
- *   `--isolated`, gets its own ephemeral profile per session — no
- *   collision with the user's regular Chrome browser.
+ *   On `@playwright/mcp >= 0.0.74` the valid `--browser` values are
+ *   chrome|firefox|webkit|msedge (chromium was dropped). `chrome` uses
+ *   the system Google Chrome install; the workspace-hashed profile
+ *   path means it does NOT collide with the user's regular Chrome
+ *   browsing profile.
+ *
+ * History note: earlier versions of this launcher hardcoded `--isolated`
+ * because Microsoft's docs didn't surface workspace-hashing clearly.
+ * Once the workspace-hash mechanism was confirmed (2026-05-13, see
+ * playwright.dev/mcp/configuration/user-profile + issue #1294), the
+ * default flipped to persistent. The `--user-data-dir` single-instance
+ * lock pitfall is mitigated by the hash; it only re-emerges if you
+ * override with an explicit `--user-data-dir` argument.
  */
 import { spawn } from 'child_process';
 import { homedir, platform } from 'os';
@@ -71,22 +79,31 @@ import { existsSync } from 'fs';
 const isWin = platform() === 'win32';
 const STATE_FILE = join(homedir(), '.claude', 'mcp-storageState.json');
 
+// Default: persistent profile (login state survives between sessions).
+// Opt-in `--isolated` via PLAYWRIGHT_ISOLATED=1 for the explicit
+// "I want a fresh, logged-out browser" case (testing the login flow,
+// incognito-style verification, etc).
+const isolated = process.env.PLAYWRIGHT_ISOLATED === '1';
+
 const args = [
   '--yes',
   '@playwright/mcp@latest',
   '--browser', 'chrome',
-  '--isolated',
 ];
+
+if (isolated) {
+  args.push('--isolated');
+}
 
 if (existsSync(STATE_FILE)) {
   args.push('--storage-state', STATE_FILE);
-} else {
+} else if (isolated) {
   process.stderr.write(
-    `playwright-launcher: ${STATE_FILE} not found.\n` +
-    `Browser starts logged-out. To seed the file from inside a running\n` +
-    `MCP session: open a login URL via browser_navigate, log in by hand,\n` +
-    `then have the AI call browser_run_code_unsafe with a snippet that\n` +
-    `runs page.context().storageState({path: STATE_FILE}). Restart\n` +
+    `playwright-launcher: ${STATE_FILE} not found and PLAYWRIGHT_ISOLATED=1.\n` +
+    `Isolated browser starts logged-out. To seed the file from inside a\n` +
+    `running MCP session: open a login URL via browser_navigate, log in by\n` +
+    `hand, then have the AI call browser_run_code_unsafe with a snippet\n` +
+    `that runs page.context().storageState({path: STATE_FILE}). Restart\n` +
     `Claude Code afterwards so the launcher picks up the file.\n`
   );
 }
