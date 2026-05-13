@@ -119,6 +119,8 @@ export function ProposalCard({
       ? { label: m.knowledge_taxonomy_proposals_status_rejected(), variant: 'destructive' }
       : { label: m.knowledge_taxonomy_proposals_status_pending(), variant: 'accent' }
 
+  const description = payloadDescription(proposal.payload)
+
   return (
     <Card
       className={isRejected ? 'opacity-60' : isApproved ? 'bg-[var(--color-success)]/5' : undefined}
@@ -180,9 +182,9 @@ export function ProposalCard({
             ) : (
               <>
                 <p className="text-sm font-medium text-gray-900">{proposal.title}</p>
-                {payloadDescription(proposal.payload) && (
+                {description && (
                   <p className="text-xs text-gray-400 mt-0.5">
-                    {payloadDescription(proposal.payload)}
+                    {description}
                   </p>
                 )}
                 <p className="text-xs text-gray-400 mt-0.5">
