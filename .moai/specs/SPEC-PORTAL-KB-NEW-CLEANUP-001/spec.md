@@ -1,8 +1,9 @@
 ---
 id: SPEC-PORTAL-KB-NEW-CLEANUP-001
 version: 0.2.0
-status: implemented
+status: done
 created: 2026-05-13
+completed: 2026-05-13
 author: Mark Vletter
 priority: medium
 parent: SPEC-PORTAL-CONNECTOR-WIZARD-EXTRACT-001 (god-component § Follow-ups, carved out)
