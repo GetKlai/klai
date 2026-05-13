@@ -1630,161 +1630,157 @@ deploy (PR #296, 12:11 CEST) used UIDs `spec-infra-container-hygiene-001-tenant-
 4. The `rsync without --delete` quirk is a SEPARATE class: `deploy-compose.yml` syncs `deploy/grafana/provisioning/` to `/opt/klai/grafana/provisioning/` with `rsync -ac` (no `--delete`). Revert-removed files persist on disk. For any future revert that removes provisioning files, the operator MUST `ssh core-01 "rm /opt/klai/grafana/provisioning/<deleted-path>"` after the revert merges. Long-term fix is to add `--delete` to the rsync (separate SPEC — `--delete` has its own blast-radius considerations because server-only files would also disappear).
 
 ## playwright-mcp-config-cycle (HIGH)
-The `@playwright/mcp` configuration in `.mcp.json` has been "fixed" at least
-five times since April 2026 (commits `940d079e`, `0ceab6b6`, `b26d5e01`,
-`0a423697`, `ce6a8ab5`) — each fix re-introduced the failure mode that the
-previous fix was trying to eliminate. The user has explicitly named this an
+The `@playwright/mcp` configuration has been "fixed" at least six times
+since April 2026, each fix re-introducing the failure mode the previous
+fix was trying to eliminate. The user has explicitly named this an
 "every-time-you-fix-it-it-breaks-the-other-thing" cycle. Before changing
-ANYTHING about this config, you MUST internalise this entry, because the
-failure modes look like ordinary bugs each time you encounter them.
+ANYTHING about this config, you MUST internalise this entry — the failure
+modes look like ordinary bugs each time you encounter them.
 
 **Use case (settled, do not re-derive):**
 AI-driven coding sessions where the assistant validates its own changes
-end-to-end via Playwright MCP. The user logs in ONCE; the AI takes over
-from there. Multiple coding sessions can run in parallel, each needing a
-visible browser with the same login already loaded. The AI does not log
-out, does not change passwords, does not mutate auth state. Read-only
-login state is therefore sufficient.
+end-to-end via Playwright MCP. You log in ONCE per workspace; the AI
+takes over from there. Multiple Conductor workspaces run Playwright in
+parallel, each needing a visible browser with that workspace's login
+already loaded. The AI must not click Log out; the workspace profile is
+the source of truth for login state.
 
-**The constraint on the platform.** `@playwright/mcp` and Chromium together
-allow two profile modes:
+**Canonical setup (post-2026-05-13):**
+`@playwright/mcp@latest --browser chrome`, with NO `--isolated` and NO
+`--user-data-dir` in the default args. Playwright MCP then uses its
+**workspace-hashed persistent profile** at:
 
-- Persistent `--user-data-dir`: login persists, BUT "A persistent profile
-  can only be used by one browser instance at a time, so concurrent MCP
-  clients sharing the same workspace will conflict." Symptom: second
-  Claude Code session fails with `Browser is already in use`.
-- `--isolated`: parallel sessions work, ephemeral profile per process. By
-  itself the profile starts empty; combine with `--storage-state <file>`
-  to preload cookies/localStorage at startup.
+- macOS: `~/Library/Caches/ms-playwright/mcp-{channel}-{workspace-hash}`
+- Linux: `~/.cache/ms-playwright/mcp-{channel}-{workspace-hash}`
+- Windows: `%LOCALAPPDATA%\ms-playwright\mcp-{channel}-{workspace-hash}`
 
-`--storage-state` is read-only at startup and never written back. Microsoft
-explicitly declined named-session-with-auto-save in
-[#1530](https://github.com/microsoft/playwright-mcp/issues/1530)
-(closed Not Planned, May 2026). For this repo's use case (AI doesn't mutate
-auth) read-only is fine — refresh the file once when Google's session
-cookies expire (~3 weeks).
+The `{workspace-hash}` is derived from the MCP client's workspace root,
+so each Conductor workspace gets its own profile directory automatically.
+No lock conflict across workspaces. Login state persists between Claude
+Code restarts within a workspace.
 
-**The canonical answer for this use case:**
-`--isolated --storage-state ~/.claude/mcp-storageState.json`. Seed the
-storage-state file via `browser_run_code_unsafe` with one Playwright
-snippet that calls `page.context().storageState({ path })` — verified
-working on 2026-05-07. Do NOT use `npx playwright codegen
---save-storage=...`: that path is flaky on macOS (the file only writes
-on a specific Inspector-side close event; closing the browser the
-wrong way means no file appears). PR #354 shipped codegen as the seed
-and lost a week of debugging before the 2026-05-07 retry confirmed
-the failure mode. Note: there is **no** separate `browser_storage_state`
-MCP tool in `@playwright/mcp@latest` — earlier drafts of this entry
-referenced one that does not exist. The functionality lives in the
-generic `browser_run_code_unsafe` tool, which executes Playwright code
-server-side; calling `page.context().storageState({ path: '...' })`
-writes the cookies + localStorage directly. No external tooling, no
-Inspector window, no Ctrl+C dance.
+The opt-in fallback is `PLAYWRIGHT_ISOLATED=1` (read by
+`.claude/scripts/playwright-launcher.mjs`), which adds `--isolated` and
+gives that session an ephemeral, logged-out profile. Use it when you
+specifically don't want login state — testing login flows, public-route
+verification, or a second Claude Code inside the same workspace.
+
+Verified 2026-05-13 against
+[playwright.dev/mcp/configuration/user-profile](https://playwright.dev/mcp/configuration/user-profile)
+("Each project gets a separate profile automatically based on the workspace")
+and [microsoft/playwright-mcp#1294](https://github.com/microsoft/playwright-mcp/issues/1294).
+
+**Storage-state seed (`~/.claude/mcp-storageState.json`) is now optional.**
+With the persistent default the workspace profile auto-saves login, so
+the ~3-week refresh cadence is dead. The seed file is still useful as a
+first-boot preload for brand-new workspaces, and for isolated sessions
+that need to start authenticated. Seed via `browser_run_code_unsafe`
+calling `page.context().storageState({ path })` — there is **no**
+separate `browser_storage_state` MCP tool (earlier drafts of this rule
+referenced one that does not exist; the functionality lives in the
+generic `browser_run_code_unsafe` tool).
 
 **Anti-patterns — do NOT propose any of these without re-reading this entry:**
 
-1. `--config <some.json>` with `userDataDir` set inside the JSON. **Silently
-   broken on `@playwright/mcp@0.0.70`** ([issue #1446](https://github.com/microsoft/playwright-mcp/issues/1446)):
+1. `--config <some.json>` with `userDataDir` set inside the JSON. Silently
+   broken on `@playwright/mcp@0.0.70`
+   ([issue #1446](https://github.com/microsoft/playwright-mcp/issues/1446)):
    the JSON `userDataDir` is ignored and the browser launches with an
    in-memory profile. CLI flags work; JSON does not. If you must use a JSON
    config for some reason, verify on the running version that `userDataDir`
    is honoured before relying on it.
-2. Persistent `--user-data-dir` for the primary playwright server.
-   Single-instance only — second concurrent session fails with the lock
-   error. Was tried in commits `b26d5e01` (apr 2) and `ce6a8ab5` (may 5).
-3. `--isolated` ALONE (no `--storage-state`) for the primary server. Each
-   session starts logged-out — defeats the whole point.
+2. Explicit `--user-data-dir <fixed-path>` shared across workspaces (i.e.
+   overriding the workspace-hash with a single path everyone shares).
+   Single-instance lock returns — a second workspace touching it fails
+   with `Browser is already in use`. This is the failure mode the
+   workspace-hash mechanism is designed to AVOID; do not re-introduce it
+   by hardcoding the path. The `{workspace-hash}` default is what makes
+   persistent + parallel coexist.
+3. `--isolated` as the DEFAULT (i.e. hardcoded in the launcher). Each
+   session starts logged-out, which forced a brittle storage-state seed
+   workflow with a ~3-week refresh cadence. This was the pre-2026-05-13
+   pattern; replaced because the persistent default is simpler and
+   doesn't break the read-only invariant of the storage-state seed when
+   the AI accidentally logs out.
 4. `--headless` on a server the AI uses to validate its own changes. The
    AI cannot SEE a headless browser; nothing to verify. Headed only.
-5. `--executable-path <Brave/Chrome>` for the primary browser. On Windows,
-   Brave/Chrome cannot run a second instance with a different profile —
-   the second instance becomes a background process with no visible window.
-   Use Playwright's bundled Chromium (omit `--executable-path` entirely).
+5. `--executable-path <Brave/Chrome>` to a different Chrome binary. On
+   Windows, Brave/Chrome cannot run a second instance with a different
+   profile — the second instance becomes a background process with no
+   visible window. Stick with Playwright's `--browser chrome` (system
+   Google Chrome install, workspace-hashed profile dir).
 6. Homegrown "slot pool" launchers that copy login files between profile
    directories at start/exit. Tempting because it sounds clever, but:
    - Not an industry standard pattern; no widely-validated implementation.
    - Race conditions on simultaneous shutdowns (last-write-wins on cookies).
    - SQLite cookie file copies during/after browser shutdown can corrupt.
-   - Only justified if the AI mutates auth state across sessions, which
-     this use case does not require.
-   Was attempted on 2026-05-05; reverted in favour of `--storage-state`.
-7. "Just remove all profile config and let Playwright pick its default" —
-   default IS persistent `--user-data-dir`, so this re-triggers
-   anti-pattern (2) from the other direction.
-8. `npx playwright codegen --save-storage=...` as the seed step on macOS.
+   - Made obsolete by workspace-hashed profiles — each Conductor workspace
+     already gets its own login store, no copying needed.
+   Was attempted on 2026-05-05; reverted.
+7. `npx playwright codegen --save-storage=...` as the seed step on macOS.
    The codegen process only writes the file on a specific Inspector-side
    close event; close the browser the wrong way and the file never
    appears. PR #354 (apr 2026) shipped this as the documented seed step
    and lost a full week of "but it should work" debugging before the
    2026-05-07 retry confirmed the failure mode. Use `browser_run_code_unsafe`
-   with `page.context().storageState({ path })` instead (see canonical
-   answer above).
+   with `page.context().storageState({ path })` instead.
+8. Clicking `Log out` in the persistent-profile browser. The launcher
+   provides login state in the workspace profile; logging out wipes that
+   state and forces a fresh hand-login on the next session. If you need
+   to verify a logout flow specifically, use `PLAYWRIGHT_ISOLATED=1`
+   (ephemeral profile) so the persistent workspace state is untouched.
+9. A second `playwright-isolated` MCP server entry in `.mcp.json`. Was
+   dropped on 2026-05-07 because the `mcp__playwright-isolated__*` tool
+   prefix was being mistakenly chosen by Claude over `mcp__playwright__*`,
+   giving logged-out browsers when login was expected. For one-off
+   unauthenticated checks: open a fresh tab in the existing Playwright
+   MCP browser with `browser_tabs(action: "new")`. For a fully-fresh
+   session, use `PLAYWRIGHT_ISOLATED=1` as the spawn-time env var, not a
+   second MCP entry.
 
-**The current working setup (do not change without strong cause):**
+**The current working setup:**
 
 - Primary `playwright` server in `.mcp.json` invokes
-  `.claude/scripts/playwright-launcher.mjs`, which spawns
-  `npx @playwright/mcp@latest --browser chrome --isolated
-  --storage-state ~/.claude/mcp-storageState.json`. Headed (no `--headless`).
-  Multi-session safe (each launch gets its own ephemeral profile).
-  All sessions preload the same login state. **Note**: on
-  `@playwright/mcp >= 0.0.74` the valid `--browser` values are
-  `chrome|firefox|webkit|msedge`. `chromium` was dropped — passing it
-  silently breaks the launcher. Use `chrome` (system Google Chrome
-  install; combined with `--isolated`, gets its own ephemeral profile
-  per session and does not collide with the user's regular Chrome).
-- No secondary MCP server. The earlier `playwright-isolated` (no
-  storage-state, for unauthenticated CSS work) was dropped on
-  2026-05-07 because the `mcp__playwright-isolated__*` tool prefix
-  was being mistakenly chosen by Claude over `mcp__playwright__*`,
-  giving logged-out browsers when login was expected. For one-off
-  unauthenticated checks: open a fresh tab in the existing Playwright
-  MCP browser with `browser_tabs(action: "new")` — the new tab does
-  share the storage-state, but for CSS-only work that doesn't matter.
-- Login seed/refresh (run when `~/.claude/mcp-storageState.json` is
-  missing, or when Google cookies have expired and sessions start
-  logged-out):
-  1. With the launcher in place but no storage-state file (or after
-     deleting it), restart Claude Code so the MCP server picks up the
-     new config. Open a new Playwright MCP session — the browser starts
-     logged-out.
-  2. Have the AI `browser_navigate` to a login URL (e.g.
-     `https://voys.getklai.com`).
-  3. Log in by hand (Google SSO + 2FA), wait until you're on the
-     post-login workspace.
-  4. Have the AI call `browser_run_code_unsafe` with this snippet (it
-     writes the current cookies + localStorage to disk):
-     ```js
-     async (page) => {
-       await page.context().storageState({
-         path: '/Users/<you>/.claude/mcp-storageState.json'
-       });
-       return { url: page.url(), cookieCount: (await page.context().cookies()).length };
-     }
-     ```
-     The tool returns immediately with the new cookie count. Verify the
-     file mtime/size with `ls -la ~/.claude/mcp-storageState.json`.
-  5. Restart Claude Code so the launcher picks the new file up via
-     `--storage-state` at startup.
-  6. From now on all MCP sessions, including parallel Claude Code
-     instances, start authenticated.
+  `.claude/scripts/playwright-launcher.mjs`, which spawns:
+  `npx @playwright/mcp@latest --browser chrome` (headed) and adds
+  `--storage-state ~/.claude/mcp-storageState.json` when the seed file
+  exists. With `PLAYWRIGHT_ISOLATED=1` set in the environment, the
+  launcher additionally passes `--isolated` for that one session.
+- No secondary MCP server. For unauthenticated work: `browser_tabs(new)`
+  in the existing browser, or `PLAYWRIGHT_ISOLATED=1` for a fresh session.
+- Login per workspace: open a Playwright session, navigate to a login
+  URL, log in by hand once. Subsequent sessions in that workspace start
+  authenticated automatically (Chrome persists the cookies in the
+  workspace's profile dir). No periodic refresh required.
+- `@playwright/mcp >= 0.0.74` valid `--browser` values are
+  `chrome|firefox|webkit|msedge` (`chromium` was dropped — passing it
+  silently breaks the launcher).
 
 **Prevention — symptom → correct response:**
 
 | Symptom | Correct response | Wrong response |
 |---|---|---|
-| Sessions start logged-out | Verify `~/.claude/mcp-storageState.json` exists and is recent. If missing/stale, re-seed by running `browser_run_code_unsafe` with `page.context().storageState({ path })` after a fresh login (see "Login seed/refresh" above). | Add `--user-data-dir` back (anti-pattern 2); fall back to `playwright codegen --save-storage` (anti-pattern 8); search for a non-existent `browser_storage_state` tool. |
-| `Browser is already in use` on a second session | Confirm `.mcp.json` uses `--isolated` not `--user-data-dir`. Each session must get its own ephemeral profile. | Add a slot-pool launcher (anti-pattern 6) |
-| AI cannot see what the browser is doing | Confirm no `--headless` flag in the primary server. | Tell the user to "just check the browser themselves" — defeats the point |
-| User says "iedere keer hetzelfde probleem" | Stop. Re-read this entry. Do not propose a config change before identifying which anti-pattern you are about to commit. | Propose another config edit |
-| `browser_run_code_unsafe` tool not visible in current session | Tool-schema-cache is from an older `@playwright/mcp` pin (pre `0.0.74` exposed `browser_run_code` instead). Restart Claude Code so it reloads the schema list from `@latest`. | Try `browser_evaluate` to read cookies (HttpOnly cookies are invisible) or write a homegrown seed script (anti-pattern 6 territory). |
-| `--browser chromium` rejected on launch | `@playwright/mcp >= 0.0.74` dropped `chromium` as a valid value. Use `--browser chrome`. | Pin back to `@0.0.70` (loses `browser_run_code_unsafe` — anti-pattern 8 territory). |
-| Storage state file is hand-edited / non-standard | Delete it, re-seed via `browser_run_code_unsafe` after a fresh login. | Hand-edit JSON in storageState |
+| Sessions in a new workspace start logged-out | Log in by hand once in the persistent browser; the workspace profile keeps it. Optionally seed `~/.claude/mcp-storageState.json` so future new workspaces start authenticated. | Hardcode `--isolated` back as default (anti-pattern 3); fall back to `playwright codegen --save-storage` (anti-pattern 7). |
+| Sessions in an EXISTING workspace start logged-out | The workspace profile got wiped (AI clicked Log out, or someone `rm -rf`'d the cache dir). Log in again by hand. If this keeps happening, find what's clicking Log out (anti-pattern 8). | Add `--user-data-dir` to a shared path (anti-pattern 2). |
+| `Browser is already in use` on a second session | Two MCP clients inside the SAME workspace. Set `PLAYWRIGHT_ISOLATED=1` on the second. Across-workspace concurrency is fine — they hash to different profile dirs. | Hardcode `--user-data-dir` to a shared path (anti-pattern 2); add a slot-pool launcher (anti-pattern 6). |
+| AI cannot see what the browser is doing | Confirm no `--headless` flag in the launcher (anti-pattern 4). | Tell the user to "just check the browser themselves" — defeats the point. |
+| User says "iedere keer hetzelfde probleem" | Stop. Re-read this entry. Do not propose a config change before identifying which anti-pattern you are about to commit. | Propose another config edit. |
+| `browser_run_code_unsafe` tool not visible | Tool-schema-cache is from an older `@playwright/mcp` pin (pre `0.0.74` exposed `browser_run_code` instead). Restart Claude Code so it reloads the schema list from `@latest`. | Try `browser_evaluate` to read cookies (HttpOnly cookies are invisible) or write a homegrown seed script (anti-pattern 6 territory). |
+| `--browser chromium` rejected on launch | `@playwright/mcp >= 0.0.74` dropped `chromium` as a valid value. Use `--browser chrome`. | Pin back to `@0.0.70` (loses `browser_run_code_unsafe`). |
+| Need to test the login flow itself | Set `PLAYWRIGHT_ISOLATED=1` for that session — ephemeral profile, starts logged-out. Workspace profile is untouched. | Click Log out in the persistent browser (anti-pattern 8). |
+| Storage state file is hand-edited / non-standard | Delete it; with persistent profile you don't need it. Optionally re-seed via `browser_run_code_unsafe` after a fresh login. | Hand-edit JSON in storageState. |
 
-If a future @playwright/mcp version introduces auto-write-back of storage
-state on session close, the manual refresh step can be removed. Until
-then, refreshing the storage-state file every few weeks is the cost of
-this design — accept it.
+**History:** between April and May 2026 we cycled through `--user-data-dir`,
+`--isolated`, `--isolated + storage-state`, codegen-seeded storage state,
+and a slot-pool launcher. Each had a failure mode the next "fix"
+reintroduced. The 2026-05-13 confirmation of Microsoft's
+workspace-hashed persistent profiles ended the cycle: persistent works
+across parallel workspaces natively, login state lives where Chrome
+expects it, and the storage-state seed is demoted from "mandatory
+ritual" to "optional first-boot convenience". If a future
+`@playwright/mcp` release changes the workspace-hash behaviour or the
+default profile path, re-verify the parallel-safety claim before
+trusting this entry.
 
 ## stale-decommission-attracts-defensive-fixes (HIGH)
 Wanneer een service is gedecommissioned maar de source-directory in de

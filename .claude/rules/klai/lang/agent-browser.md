@@ -16,8 +16,8 @@ paths:
 | Smoke test na deploy (intent: "klop service aan, niets stuk?") | **Agent Browser** | AI-navigatie tolereert UI-drift, geen selector-onderhoud |
 | Onboarding/signup regression (intent-stable, UI-volatile) | **Agent Browser** | Idem |
 | Audit-style runs (a11y, copy-consistency, design checks) | **Agent Browser** | Past bij exploratory scoring door evaluator-active |
-| One-off CSS/visual check zonder login | Playwright MCP via incognito-tab | Eén MCP-server, ingelogd via storage-state — open een nieuwe tab als je een schone context wilt |
-| Authenticated portal regression met vaste selectors | Playwright MCP | Storage-state via `~/.claude/mcp-storageState.json` |
+| One-off CSS/visual check zonder login | Playwright MCP via incognito-tab óf `PLAYWRIGHT_ISOLATED=1` | Eén MCP-server, ingelogd via workspace-hashed persistent profile — open een nieuwe tab voor een schone context, of zet de env var voor een volledig logged-out browser |
+| Authenticated portal regression met vaste selectors | Playwright MCP | Persistent workspace profile (login state survives Claude Code restarts). Storage-state seed (`~/.claude/mcp-storageState.json`) is optional first-boot preload |
 
 Default: voor alles met "verify dat X werkt" → Playwright. Voor alles met "explore of er iets stuk is" → Agent Browser.
 
@@ -79,7 +79,7 @@ agent-browser --session "$SESSION" \
               open https://app.getklai.com/dashboard
 ```
 
-Refresh storage-state om de paar weken (zelfde cadans als Playwright). Als sessies "logged-out" starten: state file is verlopen → opnieuw `state save`.
+Refresh `~/.claude/agent-browser-state.json` om de paar weken wanneer Google's session cookies verlopen. (Dit geldt voor Agent Browser; Playwright MCP heeft die cadens niet meer — die gebruikt sinds 2026-05-13 een workspace-hashed persistent profile dat zichzelf onderhoudt.) Als Agent Browser sessies "logged-out" starten: state file is verlopen → opnieuw `state save`.
 
 ## Cleanup [HARD]
 
