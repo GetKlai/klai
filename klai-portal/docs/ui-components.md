@@ -3,6 +3,10 @@
 > Component reference for `frontend/src/components/ui/`.
 > These are owned, copy-paste components - not a black-box library.
 > Modify the source directly when you need to change default styling.
+>
+> This file is component-level guidance. The current portal UX/layout source of
+> truth is `.claude/rules/klai/design/portal-patterns.md`; when these disagree,
+> update this file to match the portal patterns and the current implementation.
 
 ---
 
@@ -33,7 +37,8 @@ Always pair with a `<Label>` and matching `id`/`htmlFor`.
 
 `components/ui/label.tsx`
 
-Form field label. Uses `var(--color-purple-deep)`, `text-sm font-medium`.
+Form field label. Uses `text-sm font-medium` and the current portal foreground
+color. Always pair it with a matching field `id`.
 
 ```tsx
 import { Label } from '@/components/ui/label'
@@ -96,7 +101,29 @@ import { Select } from '@/components/ui/select'
 </div>
 ```
 
+### Section with header
+
+For tab/detail pages and compact settings pages, prefer an unframed section.
+This is the current pattern for detail tabs such as API keys/widgets and for
+account settings.
+
+```tsx
+<div>
+  <h2 className="text-sm font-medium text-gray-900 mb-2">Taal</h2>
+  <p className="text-sm text-gray-400 mb-6">
+    Standaardtaal voor nieuwe gebruikers.
+  </p>
+  <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+    {/* fields, save button */}
+  </div>
+</div>
+```
+
 ### Card section with header
+
+Use a card only where the surrounding page already uses card sections or where
+the content benefits from being a framed standalone block. Do not wrap ordinary
+tab/detail settings in a large rounded bordered card by default.
 
 ```tsx
 <Card>
@@ -117,8 +144,8 @@ import { Select } from '@/components/ui/select'
   <CardContent className="pt-0 px-0 pb-0 overflow-hidden rounded-xl">
     <table className="w-full text-sm">
       <thead>
-        <tr className="border-b border-[var(--color-border)]">
-          <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
+        <tr className="border-b border-gray-200">
+          <th className="px-6 py-3 text-left text-xs font-medium text-gray-400">
             Naam
           </th>
         </tr>
@@ -127,9 +154,9 @@ import { Select } from '@/components/ui/select'
         {rows.map((row, i) => (
           <tr
             key={row.id}
-            className={i % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}
+            className="hover:bg-gray-50"
           >
-            <td className="px-6 py-3 text-[var(--color-purple-deep)]">{row.name}</td>
+            <td className="px-6 py-3 text-gray-900">{row.name}</td>
           </tr>
         ))}
       </tbody>
@@ -174,16 +201,19 @@ This offset is font-specific. If the base font changes, re-measure by asking the
 
 ## Color tokens
 
-Use CSS variables for all semantic colors. Never use raw Tailwind color classes for these purposes.
+Use Tailwind grayscale literals for prose, borders, subtle backgrounds, and
+hover layers. Use CSS variables for semantic or themeable states.
 
-| Token | Use for |
+| Color | Use for |
 |---|---|
-| `var(--color-purple-deep)` | Headings, primary text, active icons |
+| `text-gray-900` | Headings, primary prose text, names |
+| `text-gray-400` | Muted descriptions, metadata, placeholder-like text |
+| `border-gray-200` / `divide-gray-200` | Borders and dividers |
+| `bg-gray-50` / `hover:bg-gray-50` | Subtle surfaces and row hover |
 | `var(--color-muted-foreground)` | Secondary text, placeholder, disabled |
 | `var(--color-destructive)` | Error text, delete confirm buttons |
 | `var(--color-success)` | Save confirm buttons, positive feedback |
-| `var(--color-border)` | Borders, dividers, row hover backgrounds |
-| `var(--color-accent)` | Focus rings, links |
+| `var(--color-ring)` | Focus rings |
 
 ```tsx
 // Error message
@@ -202,13 +232,69 @@ Use CSS variables for all semantic colors. Never use raw Tailwind color classes 
 
 ---
 
+## Detail tabs
+
+Use underline tabs with icons and URL search state on detail/settings pages.
+Do not use pill tabs for authenticated app/admin detail surfaces.
+
+```tsx
+const tabs: { id: TabId; label: string; icon: React.ElementType }[] = [
+  { id: 'settings', label: m.account_tab_settings(), icon: Settings },
+  { id: 'danger', label: m.admin_shared_tab_danger(), icon: AlertTriangle },
+]
+
+<div className="border-b border-gray-200">
+  <nav className="-mb-px flex gap-6">
+    {tabs.map(({ id, label, icon: TabIcon }) => {
+      const isActive = id === activeTab
+      return (
+        <button
+          key={id}
+          type="button"
+          onClick={() => setTab(id)}
+          className={[
+            'flex items-center gap-1.5 pb-3 text-sm font-medium border-b-2 transition-colors',
+            isActive
+              ? 'border-gray-200 text-gray-900'
+              : 'border-transparent text-gray-400 hover:text-gray-900',
+          ].join(' ')}
+        >
+          <TabIcon className="h-4 w-4" />
+          {label}
+        </button>
+      )
+    })}
+  </nav>
+</div>
+```
+
+Danger tabs are unframed sections:
+
+```tsx
+<div>
+  <h2 className="text-sm font-medium text-[var(--color-destructive)] mb-2">
+    Verwijderen
+  </h2>
+  <p className="text-sm text-gray-400 mb-4">
+    Deze actie kan niet ongedaan worden gemaakt.
+  </p>
+  <Button variant="destructive" size="sm">
+    <Trash2 className="h-4 w-4 mr-2" />
+    Verwijderen
+  </Button>
+</div>
+```
+
+---
+
 ## Rules
 
 - Never write inline Tailwind field classes on `<input>` or `<select>` elements in pages - always use `<Input>` / `<Select>` from `components/ui/`
 - Add/edit forms belong in a separate route page (e.g. `/admin/users/invite`), not in modals or inline cards
 - `<Label>` always has `htmlFor` matching the field `id`
+- Do not use uppercase labels or tracking utilities in the portal; use sentence case
 - Never use `text-red-*`, `bg-red-*`, `text-green-*`, `bg-green-*` for semantic states — use `--color-destructive` / `--color-success`
-- See `klai-claude/docs/patterns/frontend.md` for the full portal-ui-components pattern
+- Use `.claude/rules/klai/design/portal-patterns.md` for page-level layout and visual language
 
 ---
 

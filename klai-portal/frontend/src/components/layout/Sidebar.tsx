@@ -3,7 +3,6 @@ import { useState } from 'react'
 import { useAuth } from '@/lib/auth'
 import { LayoutGrid, LogOut, PanelLeftClose, PanelLeftOpen, Shield, UserCircle, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { useLocale } from '@/lib/locale'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { STORAGE_KEYS } from '@/lib/storage'
 import * as m from '@/paraglide/messages'
@@ -24,7 +23,6 @@ interface SidebarProps {
 export function Sidebar({ navItems }: SidebarProps) {
   const auth = useAuth()
   const location = useLocation()
-  const { locale, switchLocale } = useLocale()
   const { user } = useCurrentUser()
 
   const inAdmin = location.pathname.startsWith('/admin')
@@ -163,48 +161,6 @@ export function Sidebar({ navItems }: SidebarProps) {
           </Link>
         </div>
       )}
-
-      {/* Locale switcher */}
-      <div className={cn(
-        'border-t border-[var(--color-sidebar-border)] py-2',
-        collapsed ? 'flex justify-center' : 'flex items-center gap-1 px-6'
-      )}>
-        {collapsed ? (
-          <button
-            onClick={() => switchLocale(locale === 'nl' ? 'en' : 'nl')}
-            title={locale === 'nl' ? 'Switch to English' : 'Wisselen naar Nederlands'}
-            className="text-xs font-medium text-[var(--color-sidebar-foreground)]/70 hover:text-[var(--color-sidebar-foreground)] transition-colors"
-          >
-            {locale.toUpperCase()}
-          </button>
-        ) : (
-          <>
-            <button
-              onClick={() => switchLocale('nl')}
-              className={cn(
-                'text-xs transition-colors',
-                locale === 'nl'
-                  ? 'font-semibold text-[var(--color-sidebar-foreground)]'
-                  : 'opacity-40 hover:opacity-70 text-[var(--color-sidebar-muted-foreground)]'
-              )}
-            >
-              NL
-            </button>
-            <span className="text-xs opacity-30 text-[var(--color-sidebar-muted-foreground)]">/</span>
-            <button
-              onClick={() => switchLocale('en')}
-              className={cn(
-                'text-xs transition-colors',
-                locale === 'en'
-                  ? 'font-semibold text-[var(--color-sidebar-foreground)]'
-                  : 'opacity-40 hover:opacity-70 text-[var(--color-sidebar-muted-foreground)]'
-              )}
-            >
-              EN
-            </button>
-          </>
-        )}
-      </div>
 
       {/* User + logout */}
       <div className="border-t border-[var(--color-sidebar-border)] pt-2 pb-4">
