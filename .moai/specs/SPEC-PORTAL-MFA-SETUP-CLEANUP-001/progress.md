@@ -48,3 +48,10 @@ Valid route states:
 - `npm test`: passed, 33 files / 250 tests.
 - `npm run lint`: passed.
 - `npm run build`: passed. Existing route-tree warnings remain outside `src/routes/setup`; new setup helper files are ignored through the `-` file prefix.
+
+## Voys Tenant Smoke
+
+- Date: 2026-05-13
+- Tooling: Playwright MCP against `https://voys.getklai.com/setup/mfa` with an already-authenticated Voys Google SSO session.
+- Checked: method picker renders, email-code selection enables Continue, email-code setup screen renders, back returns to a clean picker, passkey selection enables Continue, passkey setup screen renders, back returns to a clean picker, optional skip redirects to `/admin`.
+- Not performed: no MFA factor was registered and no confirmation code was submitted.
