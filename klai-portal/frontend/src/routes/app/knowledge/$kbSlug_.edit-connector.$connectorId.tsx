@@ -54,13 +54,17 @@ function _stepToWcStep(step: StepDeepLink | undefined): WcStep | undefined {
   return undefined
 }
 
-type EditSearch = { step?: StepDeepLink }
+type EditSearch = { step?: StepDeepLink; show?: 'picker' }
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug_/edit-connector/$connectorId')({
   validateSearch: (search: Record<string, unknown>): EditSearch => ({
     step: (VALID_STEPS as Set<string>).has(search.step as string)
       ? (search.step as StepDeepLink)
       : undefined,
+    // SPEC-MS-DOCS-001 post-OAuth flow: ``?show=picker`` lands here after
+    // a successful MS connect and auto-opens the folder/file picker on
+    // mount (handled inside ``EditConnectorPage``).
+    show: search.show === 'picker' ? 'picker' : undefined,
   }),
   component: EditConnectorPage,
 })
@@ -256,7 +260,10 @@ function EditConnectorPage() {
       setMsFolderName(cfg.folder_name ?? '')
       setMsFileIds(Array.isArray(cfg.item_ids) ? cfg.item_ids : [])
       setMsSiteUrlError(null)
-      setMsShowFolderPicker(false)
+      // Auto-open the picker when arriving here from OAuth callback
+      // (?show=picker). One-time on mount — subsequent toggles via the
+      // "Wijzigen" / "Sluiten" button are handled by msShowFolderPicker.
+      setMsShowFolderPicker(search.show === 'picker')
     }
     if (connector.connector_type === 'airtable') {
       const cfg = connector.config as { api_key?: string; base_id?: string; table_names?: string[]; view_name?: string }

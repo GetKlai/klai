@@ -442,9 +442,16 @@ async def callback_provider(
         connector_id,
     )
 
-    # 6. Redirect back to the frontend connectors page.
+    # 6. Redirect back to the frontend.
+    # For first-time ms_docs connects: land on the edit page with the
+    # picker auto-opened so the user can pick folders/files as a natural
+    # next step of the wizard. Reconnects keep the legacy ?oauth=connected
+    # redirect — there's nothing for the user to pick after a re-consent.
     kb_slug = payload.get("kb_slug", "")
-    target = _frontend_redirect_url(f"/app/knowledge/{kb_slug}/connectors?oauth=connected")
+    if provider == "ms_docs" and not was_reconnect:
+        target = _frontend_redirect_url(f"/app/knowledge/{kb_slug}/edit-connector/{connector.id}?show=picker")
+    else:
+        target = _frontend_redirect_url(f"/app/knowledge/{kb_slug}/connectors?oauth=connected")
     response = RedirectResponse(url=target, status_code=status.HTTP_302_FOUND)
     # Clear the state cookie now that it's been consumed.
     response.delete_cookie(key=_STATE_COOKIE_NAME, path="/api/oauth")
