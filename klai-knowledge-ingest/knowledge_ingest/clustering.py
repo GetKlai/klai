@@ -13,7 +13,7 @@ import json
 import math
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -106,9 +106,7 @@ def classify_by_centroid(
 
 def load_centroids(org_id: str, kb_slug: str) -> CentroidStore | None:
     """Load centroid store from JSON sidecar. Returns None if not found or stale."""
-    path = os.path.expanduser(
-        f"{settings.taxonomy_centroids_dir}/{org_id}_{kb_slug}.json"
-    )
+    path = os.path.expanduser(f"{settings.taxonomy_centroids_dir}/{org_id}_{kb_slug}.json")
     if not os.path.exists(path):
         return None
     try:
@@ -175,6 +173,207 @@ def save_centroids(store: CentroidStore) -> None:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f)
     logger.info("centroid_store_saved", path=path, clusters=len(store.clusters))
+
+
+# ---------------------------------------------------------------------------
+# SPEC-TAXONOMY-V2-001: Bootstrap clustering helpers
+# ---------------------------------------------------------------------------
+
+
+def compute_min_cluster_size(doc_count: int, floor: int = 3) -> int:
+    """Compute adaptive min_cluster_size for HDBSCAN.
+
+    Formula: ``max(floor, doc_count // 50)``. Adapts to corpus size per
+    SPEC-TAXONOMY-V2-001.
+
+    Default ``floor`` lowered 5 → 3 in SPEC-TAXONOMY-V2-CONSOLIDATION-002.
+    With floor=5, HDBSCAN's EOM cluster-selection under-fitted at typical
+    KB sizes — small stable clusters (3-4 docs each) couldn't form, so EOM
+    merged everything into ~3 huge clusters. floor=3 lets those small
+    stable clusters survive, landing typical bootstrap output in the IA
+    sweet spot of 5-9 top-level nodes. Production reads the value from
+    ``settings.taxonomy_bootstrap_min_cluster_size_floor``; the function-
+    parameter default exists only for direct callers (tests, scripts).
+    """
+    return max(floor, doc_count // 50)
+
+
+def reduce_embeddings_umap(
+    embeddings: Any,
+    n_components: int = 10,
+    n_neighbors: int = 15,
+    random_state: int = 42,
+) -> Any:
+    """Reduce high-dimensional embeddings via UMAP before clustering.
+
+    SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B1: curse-of-dimensionality mitigation.
+    HDBSCAN density estimation degrades in 1024-dim space; UMAP projects to a
+    lower-dimensional manifold where density-based clustering is reliable.
+
+    Args:
+        embeddings: (n_docs, dim) float32 array of unit-normalised embeddings.
+        n_components: target dimensionality after reduction (default: 10, BERTopic best-practice).
+        n_neighbors: UMAP n_neighbors parameter (default: 15, BERTopic best-practice).
+        random_state: for reproducibility (default: 42).
+
+    Returns:
+        Reduced (n_docs, n_components) array, or the original embeddings unchanged
+        when umap-learn is not installed (with a warning log).
+    """
+    try:
+        import umap
+    except ImportError:
+        logger.warning(
+            "bootstrap_umap_unavailable_fallback",
+            reason="umap-learn not installed; running HDBSCAN on raw embeddings",
+        )
+        return embeddings
+
+    n_samples = len(embeddings)
+    # n_neighbors must be < n_samples; clamp to avoid umap ValueError on small corpora
+    effective_n_neighbors = min(n_neighbors, max(2, n_samples - 1))
+    reducer = umap.UMAP(
+        n_components=n_components,
+        n_neighbors=effective_n_neighbors,
+        metric="cosine",
+        random_state=random_state,
+    )
+    return reducer.fit_transform(embeddings)
+
+
+def cluster_documents_hdbscan(
+    embeddings: Any,
+    min_cluster_size: int = 5,
+    pre_reduce: bool = True,
+    cluster_selection_method: str = "leaf",
+) -> tuple[Any, dict]:
+    """Run HDBSCAN on document embeddings and return (labels, metrics).
+
+    SPEC-TAXONOMY-V2-001 AC-1, AC-16.
+    SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B1: UMAP pre-reduction (pre_reduce=True by default).
+    SPEC-TAXONOMY-V2-001-FOLLOWUP-001 B5: cluster_probability_mean replaces dbcv_score.
+        sklearn 1.8 HDBSCAN does NOT expose relative_validity_ (confirmed in production via
+        hasattr() returning False). Use cluster_persistence_ (always available) instead.
+    SPEC-TAXONOMY-V2-CONSOLIDATION-003: cluster_selection_method default 'eom' → 'leaf'.
+        EOM under-fitted at typical KB sizes (e.g. Voys/support 154 docs → 3 clusters even
+        with min_cluster_size_floor=3) because EOM rejects smaller stable sub-clusters in
+        favour of bigger 'most stable' merges. Leaf returns the leaves of the cluster
+        hierarchy → typically 2-4× more clusters, lands in the 5-9 IA sweet spot.
+
+    Args:
+        embeddings: (n_docs, dim) float32 array of unit-normalised embeddings.
+        min_cluster_size: minimum cluster size for HDBSCAN.
+        pre_reduce: when True (default), reduce embeddings via UMAP before HDBSCAN
+                    and switch HDBSCAN metric to "euclidean" (UMAP output is not cosine-meaningful).
+                    When False, run HDBSCAN directly with metric="cosine" (legacy behaviour).
+        cluster_selection_method: 'eom' (excess of mass — fewer, more stable clusters)
+                    or 'leaf' (default — finer-grained leaves of the cluster hierarchy).
+
+    Returns:
+        labels: (n_docs,) int array; -1 = outlier/noise.
+        metrics: dict with keys clusters_found, outlier_count, cluster_probability_mean.
+                 cluster_probability_mean is None when 0 clusters found or attribute unavailable.
+    """
+    import numpy as np
+
+    try:
+        from sklearn.cluster import HDBSCAN
+    except ImportError:
+        logger.error("clustering_sklearn_not_available_v2")
+        # Return all-outlier labels as fallback
+        n = len(embeddings)
+        return np.full(n, -1, dtype=np.int32), {
+            "clusters_found": 0,
+            "outlier_count": n,
+            "cluster_probability_mean": None,
+        }
+
+    if pre_reduce:
+        # Settings drive UMAP runtime params so env-overrides take effect
+        # (FOLLOWUP-001 B1). Defaults match BERTopic best-practice for 1k-10k corpora.
+        embeddings = reduce_embeddings_umap(
+            embeddings,
+            n_components=settings.taxonomy_bootstrap_umap_n_components,
+            n_neighbors=settings.taxonomy_bootstrap_umap_n_neighbors,
+            random_state=settings.taxonomy_bootstrap_umap_random_state,
+        )
+        hdbscan_metric = "euclidean"
+    else:
+        hdbscan_metric = "cosine"
+
+    hdb = HDBSCAN(
+        min_cluster_size=min_cluster_size,
+        metric=hdbscan_metric,
+        cluster_selection_method=cluster_selection_method,
+    )
+    labels = hdb.fit_predict(embeddings)
+
+    cluster_ids = set(int(lbl) for lbl in labels if lbl >= 0)
+    clusters_found = len(cluster_ids)
+    outlier_count = int((labels == -1).sum())
+
+    # Mean cluster-membership probability — sklearn HDBSCAN's actually-available
+    # quality proxy. Higher = more confident clustering (per-point probability of
+    # belonging to its assigned cluster, averaged over non-outlier points).
+    #
+    # Note: sklearn 1.8's HDBSCAN port does NOT expose either `relative_validity_`
+    # (DBCV, B3 attempt) or `cluster_persistence_` (B5 attempt). Both attributes
+    # exist only in the standalone `hdbscan` package. We use `probabilities_`
+    # which sklearn does populate. SPEC-TAXONOMY-V2-001-FOLLOWUP-001 cleanup.
+    cluster_probability_mean: float | None = None
+    if clusters_found >= 1 and hasattr(hdb, "probabilities_"):
+        try:
+            probs = hdb.probabilities_
+            mask = labels >= 0
+            if probs is not None and mask.sum() > 0:
+                cluster_probability_mean = float(probs[mask].mean())
+        except Exception:
+            cluster_probability_mean = None
+
+    return labels, {
+        "clusters_found": clusters_found,
+        "outlier_count": outlier_count,
+        "cluster_probability_mean": cluster_probability_mean,
+    }
+
+
+def closest_to_centroid(
+    cluster_indices: list[int],
+    embeddings: Any,
+    n: int = 8,
+) -> list[int]:
+    """Return indices of the N documents closest to the cluster centroid.
+
+    SPEC-TAXONOMY-V2-001 AC-4 — per the SPEC pseudocode.
+
+    Args:
+        cluster_indices: list of row indices into embeddings that belong to this cluster.
+        embeddings: full (n_docs, dim) embedding matrix.
+        n: max number of indices to return.
+
+    Returns:
+        List of up to n indices from cluster_indices, sorted by cosine similarity
+        to the cluster centroid (highest first).
+    """
+    import numpy as np
+
+    if not cluster_indices:
+        return []
+
+    cluster_vecs = embeddings[cluster_indices]
+    centroid = cluster_vecs.mean(axis=0)
+    centroid_norm = np.linalg.norm(centroid)
+    if centroid_norm == 0.0:
+        return cluster_indices[:n]
+
+    vec_norms = np.linalg.norm(cluster_vecs, axis=1)
+    # Avoid division by zero for zero-norm vectors
+    denom = vec_norms * centroid_norm
+    denom = np.where(denom == 0.0, 1e-10, denom)
+    sims = (cluster_vecs @ centroid) / denom
+
+    top_n_local = list(np.argsort(-sims)[:n])
+    return [cluster_indices[i] for i in top_n_local]
 
 
 # ---------------------------------------------------------------------------

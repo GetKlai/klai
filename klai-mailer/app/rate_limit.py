@@ -47,16 +47,51 @@ def reset_redis_client() -> None:
 
 
 def get_redis() -> Any:
-    """Return the module-level redis asyncio client, creating lazily."""
+    """Return the module-level redis asyncio client, creating lazily.
+
+    Uses ``parse_redis_url`` instead of ``redis_asyncio.from_url`` for the same
+    reason `app/nonce.py` does: `from_url` delegates to ``urllib.parse.urlparse``,
+    which crashes with ``ValueError("Port could not be cast")`` on URLs whose
+    password contains reserved characters (``:``, ``/``, ``+``, ``@``) that the
+    operator forgot to percent-encode in SOPS. By peeling the userinfo
+    structurally and passing fields as kwargs, the password is opaque bytes.
+    See ``klai-libs/webhook-replay/webhook_replay/redis_url.py`` for full
+    rationale (canonical home post-extraction).
+
+    Audit 2026-05-05 finding C4: pre-fix this module retained the ``from_url``
+    path even after the nonce store was migrated, leaving a runtime-crash
+    surface on the rate-limit code path that is invisible to ``config.py``'s
+    structural REDIS_URL validator (the validator passes for any URL whose
+    structure is valid; password-with-reserved-chars is structurally valid
+    and only fails at ``from_url`` time).
+    """
     global _redis_client
     if _redis_client is None:
         import redis.asyncio as redis_asyncio
-        _redis_client = redis_asyncio.from_url(
-            settings.redis_url,
-            decode_responses=False,
-            socket_timeout=2.0,
-            socket_connect_timeout=2.0,
-        )
+        from webhook_replay.redis_url import RedisURLError, parse_redis_url
+
+        try:
+            parsed = parse_redis_url(settings.redis_url)
+        except RedisURLError as exc:
+            # Match nonce.py behaviour: structurally-broken URLs surface at
+            # first-use time as a runtime exception rather than at boot. The
+            # rate-limit path falls open on Redis errors (REQ-4.5), so this
+            # exception bubbles out of the limit check and the caller logs
+            # `mailer_rate_limit_redis_unreachable`.
+            raise RuntimeError(f"REDIS_URL is malformed: {exc}") from exc
+        kwargs: dict[str, Any] = {
+            "host": parsed.host,
+            "port": parsed.port,
+            "username": parsed.username,
+            "password": parsed.password,
+            "db": parsed.db,
+            "decode_responses": False,
+            "socket_timeout": 2.0,
+            "socket_connect_timeout": 2.0,
+        }
+        if parsed.use_ssl:
+            kwargs["ssl"] = True
+        _redis_client = redis_asyncio.Redis(**kwargs)
     return _redis_client
 
 

@@ -44,7 +44,13 @@ TENANT_ESTABLISHING_CALLS: frozenset[str] = frozenset(
         "set_tenant",
         "tenant_scoped_session",
         "cross_org_session",
-        "_get_caller_org",  # FastAPI dependency that calls set_tenant internally
+        "_get_caller_org",  # legacy imperative helper — calls set_tenant internally
+        "get_caller",  # SPEC-PORTAL-RBAC-REFACTOR-001 declarative dependency
+        "get_caller_at_least",  # role-bounded variant; resolves through get_caller
+        "require_platform_admin",  # platform-admin gate; resolves through get_caller
+        "require_product",  # product gate; resolves through get_caller
+        "require_capability",  # capability gate; resolves through get_caller
+        "require_platform_unlocked",  # phase 5 platform-feature gate
         "get_partner_key",  # same, for partner auth
         "get_partner_auth_context",  # widget session token path
     }
@@ -76,7 +82,26 @@ ALLOWED_HELPER_FUNCTIONS: frozenset[str] = frozenset(
         "ensure_default_knowledge_bases",
         "create_default_org_kb",
         "create_default_personal_kb",
-        # app/core/system_groups.py — calls set_tenant itself.
+        # app/services/default_knowledge_bases.py — magic-slug shortcuts
+        # called from get_kb_with_access dep, which itself runs after
+        # _get_caller_org has set tenant. SPEC-PORTAL-KB-OWNERSHIP-001 REQ-3.1.
+        "resolve_personal_kb",
+        "resolve_org_kb",
+        # app/api/dependencies.py — get_kb_with_access is a FastAPI dependency
+        # that runs after Depends(get_caller) → tenant context is set
+        # before the SELECT on portal_knowledge_bases fires.
+        "get_kb_with_access",
+        # app/services/kb_offboarding.py — SPEC-PORTAL-KB-OWNERSHIP-001 Phase 3.
+        # All entry points are called from admin/users.py routes that gate on
+        # ``Depends(get_caller_at_least(ProfileRole.ADMIN))`` — tenant context
+        # is established by the upstream dep before any of these run.
+        "compute_offboard_preview",
+        "apply_dispositions",
+        "_load_kb_or_404",
+        "_do_transfer",
+        "_do_delete",
+        "revoke_user_credentials",
+        # app/core/system_groups.py — no-op stub after SPEC-PORTAL-RBAC-001.
         "create_system_groups",
         # app/api/app_knowledge_bases.py — all helpers take org_id and
         # are only reachable via _get_caller_org routes.
@@ -106,10 +131,6 @@ ALLOWED_HELPER_FUNCTIONS: frozenset[str] = frozenset(
         # app/api/connectors.py — takes org_id, called from connector routes
         # under _get_caller_org.
         "_get_kb_for_org",
-        # app/api/dependencies.py — group-admin check helpers take org_id,
-        # invoked from routes that already ran _get_caller_org.
-        "_require_admin_or_group_admin",
-        "_require_admin_or_group_manager",
         # app/api/groups.py — org-scoped helper, called from routes under
         # _get_caller_org.
         "_get_group_or_404",

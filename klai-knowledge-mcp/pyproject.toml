@@ -14,6 +14,7 @@ dependencies = [
     # SPEC-SEC-INTERNAL-001 REQ-4 / REQ-8: shared sanitize_response_body +
     # secret-introspection helpers used by every upstream-error log/return path.
     "klai-log-utils",
+    "klai-retrieval-telemetry",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +28,10 @@ dev = [
 [tool.uv.sources]
 klai-identity-assert = { path = "../klai-libs/identity-assert", editable = true }
 klai-log-utils = { path = "../klai-libs/log-utils", editable = true }
+# SPEC-MCP-RETRIEVAL-001 Phase 1: shared retrieval telemetry helpers used
+# by the search_knowledge tool (gap-events, retrieval-log POSTs). Editable
+# path-dep so changes to the canonical lib propagate without a republish.
+klai-retrieval-telemetry = { path = "../klai-libs/retrieval-telemetry", editable = true }
 
 [tool.ruff]
 line-length = 100

@@ -161,6 +161,8 @@ DOMAIN_CLIENT=https://chat-{slug}.{domain}
 DOMAIN_SERVER=https://chat-{slug}.{domain}
 APP_TITLE=Klai Chat
 ALLOW_IFRAME=true
+ALLOW_SHARED_LINKS=true
+ALLOW_SHARED_LINKS_PUBLIC=true
 
 # Session secrets
 JWT_SECRET={jwt_secret}

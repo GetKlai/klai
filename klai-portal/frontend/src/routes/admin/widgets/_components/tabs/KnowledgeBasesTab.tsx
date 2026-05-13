@@ -32,7 +32,7 @@ export function KnowledgeBasesTab({ widget }: Props) {
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       <section className="space-y-4">
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           {m.admin_widgets_wizard_kb_access_intro_widget()}
         </p>
         <KbAccessEditor value={kbIds} onChange={setKbIds} />

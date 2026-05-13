@@ -42,8 +42,8 @@ export function CreatedKeyModal({ apiKey, open, onConfirm }: CreatedKeyModalProp
           </AlertDialogDescription>
         </AlertDialogHeader>
 
-        <div className="my-4 flex items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-card)] p-3">
-          <code className="flex-1 break-all text-xs font-mono text-[var(--color-foreground)]">
+        <div className="my-4 flex items-center gap-2 rounded-md border border-gray-200 bg-[var(--color-card)] p-3">
+          <code className="flex-1 break-all text-xs font-mono text-gray-900">
             {apiKey}
           </code>
           <Button

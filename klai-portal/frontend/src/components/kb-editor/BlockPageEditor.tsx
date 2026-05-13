@@ -4,7 +4,20 @@ import { BlockNoteView } from '@blocknote/mantine'
 import { BlockNoteSchema, defaultInlineContentSpecs } from '@blocknote/core'
 import '@blocknote/mantine/style.css'
 import { WikiLink } from '@/components/kb-editor/WikiLink'
+import { apiFetch, ApiError } from '@/lib/apiFetch'
+import { kbImageUploadPath } from '@/lib/kb-image-url'
 import { editorLogger } from '@/lib/logger'
+
+// Status -> NL message map for image upload errors. BlockNote surfaces the
+// thrown Error message directly to the user (toast/inline), so an opaque
+// "500 Internal Server Error" would be unactionable. These cover the three
+// real reject paths in POST /kb-images/{kb_slug}; everything else falls back
+// to a generic NL message.
+const UPLOAD_ERROR_MESSAGES_NL: Record<number, string> = {
+  413: 'Afbeelding te groot (max 5 MB).',
+  415: 'Dit bestandstype wordt niet ondersteund. Gebruik PNG, JPEG, GIF of WebP.',
+  503: 'Afbeeldingen kunnen op dit moment niet worden opgeslagen.',
+}
 
 export type BlockPageEditorHandle = {
   getContent: () => string
@@ -34,6 +47,58 @@ export const BlockPageEditor = forwardRef<
 >(({ initialContent, onChange, pageIndex = [], kbSlug = '', currentPageSlug = '', onNavigateToPage, onRequestWikilinkPicker }, ref) => {
   const editor = useCreateBlockNote({
     schema: wikilinkSchema,
+    // SPEC-PORTAL-DOCS-IMAGE-PASTE-001 REQ-6:
+    // BlockNote's default paste-flow checks Files BEFORE HTML/Markdown.
+    // Configuring `uploadFile` is sufficient for clipboard paste, drag-drop,
+    // and slash-menu image insert to all route to the portal-api endpoint —
+    // no changes to `pasteHandler` are required.
+    uploadFile: async (file: File): Promise<string> => {
+      if (!kbSlug) {
+        editorLogger.warn('uploadFile invoked without kbSlug — skipping')
+        throw new Error('Afbeelding uploaden mislukt: geen kennisbank-context.')
+      }
+      const fd = new FormData()
+      fd.append('file', file)
+      try {
+        // SPEC-KB-IMAGES-V2-001 REQ-7: the URL is sourced from the
+        // ``kb-image-url.ts`` mirror module, the only place in the frontend
+        // that knows the kb-image route shape. A drift between this URL and
+        // the Python KbImage value-class is caught by the vitest unit test
+        // in ``lib/__tests__/kb-image-url.test.ts``.
+        const res = await apiFetch<{ url: string; deduplicated: boolean }>(
+          kbImageUploadPath(kbSlug),
+          { method: 'POST', body: fd },
+        )
+        editorLogger.debug('Image uploaded', {
+          kbSlug,
+          size: file.size,
+          type: file.type,
+          deduplicated: res.deduplicated,
+        })
+        return res.url
+      } catch (err) {
+        if (err instanceof ApiError) {
+          editorLogger.warn('Image upload rejected by server', {
+            kbSlug,
+            status: err.status,
+            detail: err.detail,
+            size: file.size,
+            type: file.type,
+          })
+          const userMessage =
+            UPLOAD_ERROR_MESSAGES_NL[err.status] ??
+            'Afbeelding uploaden mislukt. Probeer het opnieuw.'
+          throw new Error(userMessage, { cause: err })
+        }
+        editorLogger.error('Image upload failed', {
+          kbSlug,
+          err: String(err),
+          size: file.size,
+          type: file.type,
+        })
+        throw new Error('Afbeelding uploaden mislukt. Probeer het opnieuw.', { cause: err })
+      }
+    },
     pasteHandler: ({ event, editor, defaultPasteHandler }) => {
       // When clipboard has both text/html and text/plain (e.g. VS Code copy),
       // BlockNote defaults to HTML which often lacks heading structure.

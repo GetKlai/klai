@@ -12,6 +12,7 @@ denies `/exec/*/start` by design, and even if we flipped the allow-bit it
 would hand any tenant-provisioning bug a shell on the host.
 """
 
+import asyncio
 import time
 from pathlib import Path
 
@@ -29,6 +30,27 @@ logger = structlog.get_logger()
 # MongoDB error code for "user not found" (raised by dropUser when the target
 # user does not exist). Non-fatal for idempotent drop.
 _MONGO_USER_NOT_FOUND = 11
+
+_LIBRECHAT_REQUIRED_ENV_FLAGS = {
+    "ALLOW_SHARED_LINKS": "true",
+    "ALLOW_SHARED_LINKS_PUBLIC": "true",
+}
+
+_LIBRECHAT_PATCH_MOUNTS = {
+    "patches/format.cjs": "/app/node_modules/@librechat/agents/dist/cjs/messages/format.cjs",
+    "patches/share.js": "/app/api/server/routes/share.js",
+    "patches/stream.cjs": "/app/node_modules/@librechat/agents/dist/cjs/stream.cjs",
+    "patches/search.cjs": "/app/node_modules/@librechat/agents/dist/cjs/tools/search/search.cjs",
+}
+
+# Process-wide lock that serialises Caddy file writes + container restarts.
+# Both `provision_tenant` (orchestrator.py) and `deprovision_tenant`
+# (deprovisioning_orchestrator.py + deprovisioning_steps.py) acquire this
+# lock around `_write_tenant_caddyfile` / file-unlink + `_reload_caddy`.
+# Defined here (next to _reload_caddy) so a single import path works for
+# both code paths and accidental "two locks, both serialise nothing" is
+# impossible. See SPEC-INFRA-TENANT-DELETE-001 R11.
+_caddy_lock: asyncio.Lock = asyncio.Lock()
 
 
 def _redis_sync_client() -> redis.Redis:
@@ -71,6 +93,21 @@ def _sync_remove_container(name: str) -> None:
         pass
 
 
+def _sync_drop_mongodb_tenant_database(slug: str) -> None:
+    """Drop the MongoDB database for a tenant (sync, for use with run_in_executor).
+
+    Idempotent: dropping a non-existent database is a no-op in MongoDB —
+    the server returns ok:1 even when the database does not exist.
+
+    # @MX:NOTE: idempotent — al-weg = geen exception. SPEC-INFRA-TENANT-DELETE-001 R3.
+    """
+    db_name = f"librechat-{slug}"
+    with _mongo_admin_client() as client:
+        # MongoDB dropDatabase on a missing DB returns ok:1, no error raised.
+        client.drop_database(db_name)
+        logger.info("mongodb_tenant_database_dropped", slug=slug, db=db_name)
+
+
 def _sync_drop_mongodb_tenant_user(slug: str) -> None:
     """Drop the MongoDB user for a tenant (sync, for use with run_in_executor).
 
@@ -105,6 +142,53 @@ def _create_mongodb_tenant_user(slug: str, tenant_password: str) -> None:
         logger.info("mongodb_tenant_user_created", slug=slug, db=db_name)
     except OperationFailure as exc:
         raise RuntimeError(f"MongoDB tenant user creation failed for {slug} (code {exc.code}): {exc.details}") from exc
+
+
+def _read_dotenv_file(path: Path) -> dict[str, str]:
+    """Parse the generated tenant .env into Docker process env values."""
+    values: dict[str, str] = {}
+    for lineno, raw_line in enumerate(path.read_text().splitlines(), start=1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, sep, value = line.partition("=")
+        if not sep or not key:
+            raise RuntimeError(f"Invalid LibreChat env line in {path} at line {lineno}")
+        values[key] = value
+    return values
+
+
+def _ensure_librechat_env_flags(path: Path) -> dict[str, str]:
+    """Persist required non-secret flags and return process env for Docker."""
+    env = _read_dotenv_file(path)
+    changed = False
+    for key, value in _LIBRECHAT_REQUIRED_ENV_FLAGS.items():
+        if env.get(key) != value:
+            env[key] = value
+            changed = True
+
+    if changed:
+        lines = path.read_text().splitlines()
+        seen: set[str] = set()
+        updated: list[str] = []
+        for line in lines:
+            key, sep, _value = line.partition("=")
+            if sep and key in _LIBRECHAT_REQUIRED_ENV_FLAGS:
+                updated.append(f"{key}={_LIBRECHAT_REQUIRED_ENV_FLAGS[key]}")
+                seen.add(key)
+            else:
+                updated.append(line)
+
+        missing = [key for key in _LIBRECHAT_REQUIRED_ENV_FLAGS if key not in seen]
+        insert_at = next(
+            (idx + 1 for idx, line in enumerate(updated) if line.startswith("ALLOW_IFRAME=")),
+            len(updated),
+        )
+        for offset, key in enumerate(missing):
+            updated.insert(insert_at + offset, f"{key}={_LIBRECHAT_REQUIRED_ENV_FLAGS[key]}")
+        path.write_text("\n".join(updated).rstrip() + "\n")
+
+    return env
 
 
 def _flush_redis_and_restart_librechat(slug: str) -> None:
@@ -251,18 +335,45 @@ def _start_librechat_container(
     tenant_yaml_content = _generate_librechat_yaml(base_yaml_path, mcp_servers)
     tenant_yaml_dir = Path(settings.librechat_container_data_path) / slug
     tenant_yaml_dir.mkdir(parents=True, exist_ok=True)
+    (tenant_yaml_dir / "images").mkdir(exist_ok=True)
     (tenant_yaml_dir / "librechat.yaml").write_text(tenant_yaml_content)
+    tenant_env_path = tenant_yaml_dir / ".env"
+    if not tenant_env_path.exists():
+        raise RuntimeError(f"LibreChat tenant env file missing for {slug}: {tenant_env_path}")
+    container_environment = _ensure_librechat_env_flags(tenant_env_path)
+
+    volumes = {
+        env_file_host_path: {"bind": "/app/.env", "mode": "ro"},
+        f"{librechat_host_base}/{slug}/librechat.yaml": {"bind": "/app/librechat.yaml", "mode": "ro"},
+        f"{librechat_host_base}/{slug}/images": {"bind": "/app/client/public/images", "mode": "rw"},
+    }
+    for source_rel_path, destination in _LIBRECHAT_PATCH_MOUNTS.items():
+        patch_container_path = Path(settings.librechat_container_data_path) / source_rel_path
+        if not patch_container_path.exists():
+            raise RuntimeError(f"LibreChat patch file missing: {patch_container_path}")
+        volumes[f"{librechat_host_base}/{source_rel_path}"] = {"bind": destination, "mode": "ro"}
+
+    # @MX:ANCHOR provisioning-labels — SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-2.
+    # These three labels mark the container as klasse-B (provisioning-managed)
+    # so that hooks (.claude/hooks/klai/container-hygiene-preflight.sh) and
+    # the weekly orphan-audit recognise it as a legitimate prod container,
+    # NOT as a wees-container without compose-label. Removing or renaming
+    # these breaks the hygiene-detection layer; treat as part of the
+    # tenant-provisioning contract. See container-hygiene.md.
+    container_labels = {
+        "klai.managed_by": "portal-api-provisioning",
+        "klai.tenant_slug": slug,
+        "klai.kind": "librechat",
+    }
 
     client.containers.run(  # type: ignore[call-overload]  # nosemgrep: docker-arbitrary-container-run
         image=settings.librechat_image,
         name=container_name,
         detach=True,
         restart_policy={"Name": "unless-stopped"},  # type: ignore[arg-type]
-        volumes={
-            env_file_host_path: {"bind": "/app/.env", "mode": "ro"},
-            f"{librechat_host_base}/{slug}/librechat.yaml": {"bind": "/app/librechat.yaml", "mode": "ro"},
-            f"{librechat_host_base}/{slug}/images": {"bind": "/app/client/public/images", "mode": "rw"},
-        },
+        labels=container_labels,
+        environment=container_environment,
+        volumes=volumes,
         network="klai-net",
     )
 

@@ -59,7 +59,7 @@ function StatusBadge({ status, source }: { status: string; source: Source }) {
     done:       { label: m.app_meetings_status_done(),       classes: 'bg-[var(--color-success)]/10 text-[var(--color-success)]' },
     failed:     { label: m.app_transcribe_status_failed(),   classes: 'bg-[var(--color-destructive)]/10 text-[var(--color-destructive)]' },
   }
-  const c = config[status] ?? { label: status, classes: 'bg-[var(--color-rl-cream)] text-[var(--color-foreground)]' }
+  const c = config[status] ?? { label: status, classes: 'bg-[var(--color-rl-cream)] text-gray-900' }
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${c.classes}`}>
       {c.label}
@@ -81,7 +81,7 @@ function MetaText({ item }: { item: UnifiedItem }) {
   )
 
   return (
-    <span className="text-xs text-[var(--color-muted-foreground)]">
+    <span className="text-xs text-gray-400">
       {item.language && (
         <>
           <img
@@ -206,12 +206,12 @@ export function TranscriptionTable({
   if (allItems.length === 0) {
     return (
       <div data-help-id="transcribe-list" className="flex flex-col items-center gap-3 py-16 text-center">
-        <Mic className="h-10 w-10 text-[var(--color-muted-foreground)] opacity-40" />
+        <Mic className="h-10 w-10 text-gray-400 opacity-40" />
         <div className="space-y-1">
-          <p className="font-medium text-[var(--color-foreground)]">
+          <p className="font-medium text-gray-900">
             {m.app_transcribe_empty_heading()}
           </p>
-          <p className="text-sm text-[var(--color-muted-foreground)]">
+          <p className="text-sm text-gray-400">
             {m.app_transcribe_empty_body()}
           </p>
         </div>
@@ -231,13 +231,13 @@ export function TranscriptionTable({
       </div>
 
       {filteredItems.length === 0 ? (
-        <p className="py-8 text-sm text-[var(--color-muted-foreground)]">
+        <p className="py-8 text-sm text-gray-400">
           {m.app_transcribe_search_empty()}
         </p>
       ) : (
-        <table className="w-full text-sm table-fixed border-t border-b border-[var(--color-border)]">
+        <table className="w-full text-sm table-fixed border-t border-b border-gray-200">
           <thead>
-            <tr className="border-b border-[var(--color-border)]">
+            <tr className="border-b border-gray-200">
               <th className="py-3 pr-2 w-6" />
               <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
                 {m.app_transcribe_col_text()}
@@ -265,7 +265,7 @@ export function TranscriptionTable({
               return (
                 <tr
                   key={`${item.source}-${item.id}`}
-                  className="border-b border-[var(--color-border)] last:border-b-0"
+                  className="border-b border-gray-200 last:border-b-0"
                 >
                   {/* Source icon */}
                   <td className="py-4 pr-2 align-top w-6">
@@ -278,9 +278,9 @@ export function TranscriptionTable({
                       }
                     >
                       {item.source === 'upload' ? (
-                        <Mic className="h-4 w-4 text-[var(--color-muted-foreground)]" />
+                        <Mic className="h-4 w-4 text-gray-400" />
                       ) : (
-                        <Video className="h-4 w-4 text-[var(--color-muted-foreground)]" />
+                        <Video className="h-4 w-4 text-gray-400" />
                       )}
                     </Tooltip>
                   </td>
@@ -301,24 +301,24 @@ export function TranscriptionTable({
                           item.status === 'done' ? (
                             <button
                               type="button"
-                              className="truncate font-medium text-left text-[var(--color-foreground)] hover:underline cursor-pointer"
+                              className="truncate font-medium text-left text-gray-900 hover:underline cursor-pointer"
                               onClick={() => onNavigateToDetail(item)}
                             >
                               {item.title}
                             </button>
                           ) : (
-                            <span className="truncate font-medium text-[var(--color-foreground)]">
+                            <span className="truncate font-medium text-gray-900">
                               {item.title}
                             </span>
                           )
                         ) : (
-                          <span className="truncate text-[var(--color-muted-foreground)]">
+                          <span className="truncate text-gray-400">
                             {item.meeting_url ?? '\u2014'}
                           </span>
                         )}
                         {item.source === 'upload' && item.has_summary && (
                           <Tooltip label={m.app_transcribe_has_summary()}>
-                            <FileText className="inline-block ml-1.5 h-3.5 w-3.5 align-text-bottom text-[var(--color-muted-foreground)]" />
+                            <FileText className="inline-block ml-1.5 h-3.5 w-3.5 align-text-bottom text-gray-400" />
                           </Tooltip>
                         )}
                         {item.status !== 'done' && (
@@ -335,7 +335,7 @@ export function TranscriptionTable({
 
                   {/* Date */}
                   <td className="py-4 pr-2 align-top text-left whitespace-nowrap w-28">
-                    <span className="text-sm text-[var(--color-foreground)] tabular-nums">
+                    <span className="text-sm text-gray-900 tabular-nums">
                       {formatDate(item.created_at)}
                     </span>
                   </td>

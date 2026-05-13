@@ -29,16 +29,16 @@ export function AccessControlPanel({
   onSave,
 }: AccessControlPanelProps) {
   return (
-    <div className="border-b border-[var(--color-border)] bg-[var(--color-muted)] px-5 py-4">
+    <div className="border-b border-gray-200 bg-[var(--color-muted)] px-5 py-4">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <Lock size={14} className="text-[var(--color-foreground)]" />
-          <span className="text-sm font-medium text-[var(--color-foreground)]">
+          <Lock size={14} className="text-gray-900" />
+          <span className="text-sm font-medium text-gray-900">
             {m.docs_access_panel_title()}
           </span>
         </div>
         <button
-          className="text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+          className="text-xs text-gray-400 hover:text-gray-900"
           onClick={onClose}
         >
           {m.docs_access_close()}
@@ -55,7 +55,7 @@ export function AccessControlPanel({
               onChange={() => onAccessModeChange('org')}
               className="accent-[var(--color-accent)]"
             />
-            <span className="text-sm text-[var(--color-foreground)]">
+            <span className="text-sm text-gray-900">
               <Users size={13} className="inline mr-1" />
               {m.docs_access_everyone()}
             </span>
@@ -69,7 +69,7 @@ export function AccessControlPanel({
               onChange={() => onAccessModeChange('specific')}
               className="accent-[var(--color-accent)]"
             />
-            <span className="text-sm text-[var(--color-foreground)]">
+            <span className="text-sm text-gray-900">
               <Lock size={13} className="inline mr-1" />
               {m.docs_access_specific()}
             </span>
@@ -102,8 +102,8 @@ export function AccessControlPanel({
             {accessUsers.length > 0 && (
               <ul className="space-y-1">
                 {accessUsers.map((uid) => (
-                  <li key={uid} className="flex items-center justify-between rounded bg-[var(--color-card)] border border-[var(--color-border)] px-2 py-1">
-                    <span className="text-xs text-[var(--color-foreground)] truncate">{uid}</span>
+                  <li key={uid} className="flex items-center justify-between rounded bg-[var(--color-card)] border border-gray-200 px-2 py-1">
+                    <span className="text-xs text-gray-900 truncate">{uid}</span>
                     <button
                       className="ml-2 text-xs text-[var(--color-destructive)] hover:opacity-70 shrink-0"
                       onClick={() => onRemoveUser(uid)}
@@ -131,7 +131,7 @@ export function AccessControlPanel({
             )}
           </Button>
           {accessSaveStatus === 'saved' && (
-            <span className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)]">
+            <span className="flex items-center gap-1 text-xs text-gray-400">
               <Check size={11} />{m.docs_access_saved()}
             </span>
           )}

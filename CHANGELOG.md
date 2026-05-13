@@ -1,5 +1,349 @@
 # Changelog
 
+## [Unreleased] — 2026-05-13 — SPEC-PORTAL-PRICING-PER-USER-001 v0.5.x: Per-user accounts, profile-derived account type
+
+Klai's billing axis is now per-user: each user has an **account type** (`chat` €28/mo or `knowledge` €68/mo, matching [getklai.com/pricing](https://getklai.com/pricing)) and a **role / profile** kept as two orthogonal columns on `portal_users`. The invite UI shows only the Profile dropdown — account type is derived live via `suggest_seat(role)` and rendered as a read-only badge with `role="status"` + `aria-live="polite"`. Admin-support flow (`PATCH /api/admin/users/{id}`) still accepts an explicit `seat_type` so a customer's billing intent can override a role's default. The legacy `viewer` tier has been dropped — it never appeared on the marketing page.
+
+### Added
+
+- **`klai-portal/backend/app/core/seats.py`** — `SeatType.{CHAT, KNOWLEDGE}` enum + `DEFAULT_SEAT_FOR_ROLE` mapping + `suggest_seat(role)` derivation. Single canonical mapping; the FE mirrors via `accountTypeForRole(role)` in `invite.tsx` for the read-only badge.
+- **`portal_user_seat_history` table** — append-only ledger of seat assignments, enforced via Postgres `BEFORE UPDATE OR INSERT` trigger + partial `UNIQUE INDEX (user_id) WHERE valid_to IS NULL`. RLS Cat-D (strict tenant, schema-qualified `billing._rls_current_org_id()` helper). Feeds Phase 5b's prorated billing query when Moneybird per-seat lands.
+- **`GET /api/admin/billing/breakdown`** — per-account-type user counts + monthly cost preview. Display-only until Phase 5b flips per-tenant billing on.
+- **i18n keys** — `admin_users_field_account_type`, `admin_users_col_account_type`, `admin_users_account_chat_label`, `admin_users_account_knowledge_label`, `admin_users_account_price_per_month`, `admin_users_account_derived_hint`, `admin_billing_breakdown_col_account_type`, `admin_billing_breakdown_account_chat`, `admin_billing_breakdown_account_knowledge` in `en.json` + `nl.json` (symmetric 1761 keys each).
+- **Migration `f1ff304b7b0a`** — narrows both `seat_type` CHECK constraints to `IN ('chat', 'knowledge')` on `portal_users` and `portal_user_seat_history`. Portal_api-owned DDL only; entrypoint runs `alembic upgrade head` automatically.
+- **`tests/test_pricing_per_user_drop_viewer_migration.py`** — 11 file-content regex assertions pinning the migration shape (no UPDATE/INSERT smuggled in, both CHECKs narrowed, downgrade restorable). Guards the `rls-with-check-blocks-migration-update` trap class.
+- **A11y badge contract** — read-only account-type display in `invite.tsx` uses `role="status"` + `aria-live="polite"` + `aria-labelledby="account-type-label"`. Test pins the contract.
+
+### Changed
+
+- **`SeatType` narrowed from 3 to 2 values** — viewer tier removed. Pre-flight verified zero `seat_type='viewer'` rows on prod before deployment.
+- **Invite endpoint contract** — `POST /api/admin/users/invite` no longer accepts a `seat_type` field; server derives unconditionally from `role` via `suggest_seat(role)` to prevent client tamper. Existing `PATCH /api/admin/users/{id}` retains `seat_type` for admin override.
+- **UX rename** — "Seat" / "Seat tier" → "Account type" across invite, users list, billing breakdown.
+- **i18n key-id rename** — `admin_users_seat_*` → `admin_users_account_*`, `admin_billing_breakdown_col_seat` → `admin_billing_breakdown_col_account_type`, `_seat_chat`/`_seat_knowledge` → `_account_chat`/`_account_knowledge`.
+- **`.moai/project/product.md`** — "Product Entitlements & Plans" section rewritten to describe the per-user account-type model as source of truth for billing math; org plan now described as quota/feature-ceiling helper only.
+
+### Fixed
+
+- **Phase 1 prod RLS crash** — initial Phase 1 migration ran `UPDATE portal_users SET seat_type = ...` inside `alembic upgrade()`. The Cat-A inline-NULLIF WITH CHECK policy on `portal_users` requires a tenant context that alembic doesn't have; every row was rejected, portal-api crashlooped on prod. Recovered by hand-applying as klai superuser; durable fix splits per-row UPDATE + INSERT + trigger creation + RLS DDL into `post_deploy_<rev>.sql` (operator-applied). Captured pitfall: `rls-with-check-blocks-migration-update` in `.claude/rules/klai/pitfalls/process-rules.md`.
+- **id-vs-value drift on i18n keys** — v0.5.0 left key ids `_col_seat` / `_seat_chat` / `_seat_knowledge` with values rewritten to "Account type" wording; v0.5.1 renamed the ids to match.
+- **A11y mis-pointer** — v0.5.0 invite badge used `<Label htmlFor="account-type">` targeting a non-focusable `<div>`. v0.5.1 replaced with standalone heading + `aria-labelledby`-driven status region.
+
+### Architecture notes
+
+This SPEC shipped as v0.1.0 → v0.5.1 across one week. The most consequential pivot was v0.5.0: after Phases 1-6 shipped, Mark inspected the live invite UI and asked to drop the viewer tier (not on the marketing page) AND collapse the seat selector into a Profile-derived badge. The pivot LOOKS like the v0.1.0 `PROFILE_TIER` shape that v0.2.0 labelled an anti-pattern — but the two are structurally different: v0.5.x keeps `seat_type` + `role` as orthogonal columns (admin override still possible via PATCH endpoint); only the invite UI simplifies. The architecture note in SPEC HISTORY row 0.5.0 documents the distinction.
+
+Phase 5b — Moneybird per-seat subscription mutation — is tracked separately in [SPEC-PORTAL-MONEYBIRD-PER-SEAT-001](.moai/specs/SPEC-PORTAL-MONEYBIRD-PER-SEAT-001/spec.md) (`needs-research`; Q1-Q5 open). Until per-tenant billing is flipped on, the breakdown endpoint is display-only and customers still pay the legacy `org.plan × org.seats` invoice.
+
+### Verification (prod, Voys tenant, Google SSO)
+
+- Profile dropdown: 5 ladder options (no viewer); flipping kb_manager updates badge to "Klai Chat + Knowledge €68/mo" live.
+- Users list column header: "Account type"; zero "Viewer" mentions in DOM.
+- Migration applied: `alembic current` → `f1ff304b7b0a`; `pg_constraint` confirms `CHECK (seat_type = ANY (ARRAY['chat'::text, 'knowledge'::text]))`.
+- A11y contract: `role=status`, `aria-live=polite`, `aria-labelledby=account-type-label`, heading text "Account type", no legacy `<label for="account-type">`.
+
+### Coverage
+
+- Backend: 2630/2630 pytest passing (+11 migration regex tests vs pre-v0.5.0 baseline)
+- Frontend: 238/238 vitest passing (+13 derived-badge + a11y assertions)
+- i18n: en.json ⇄ nl.json symmetric (1761 keys each)
+
+### PRs
+
+- #599 Phase 1 + initial prod incident
+- #608 RLS WITH CHECK durable fix (split per-row writes to post-deploy)
+- #609 / #611 / #612 / #614 / #616 Phases 2-6
+- #621 v0.5.0 viewer-drop + account-type-derived-from-Profile + UX rename
+- #624 v0.5.1 polish (a11y + i18n key rename + migration regex test)
+
+---
+
+## [Unreleased] — 2026-05-07 — SPEC-RAG-MULTILINGUAL-CHAT-001: Language-agnostic chat answer layer
+
+Klai chat now auto-detects the language of the user's most recent substantive
+message and responds in that language across all three production chat paths
+(LibreChat → LiteLLM hook → Mistral, portal-api `/partner/v1/chat/completions`,
+retrieval-api `/chat`). Six target languages: NL, EN, DE, FR, PT, ES. Cross-
+lingual retrieval was already working via bge-m3 (multilingual embedding —
+75.5% Recall@100 on MKQA); the bottleneck was the synthesis layer, which
+hardcoded a NL/EN switch. Three industry-standard guards prevent spurious
+language switches: minimum-message-length (≥5 words substantive), single-
+foreign-word tolerance ("merci!" doesn't flip the conversation), and
+substantive-switch persistence (a full sentence in another language flips and
+stays flipped). Verified live on Voys-tenant LibreChat with all 6 target
+languages.
+
+### Added
+
+- **`klai-libs/chat-prompts`** — new shared library exporting
+  `GROUNDED_CHAT_SYSTEM_PROMPT`. Single source of truth for the multilingual
+  prompt foundation. Imported by `klai-portal/backend/app/services/partner_chat.py`
+  (path B), `klai-retrieval-api/retrieval_api/services/synthesis.py` (path C),
+  and `deploy/litellm/klai_knowledge.py` (path A — via vendored single-file
+  copy with drift test).
+- **Cross-lingual eval-suite** —
+  `klai-retrieval-api/evaluation/cross_lingual_runner.py` runs each test query
+  against the synthesis service and computes `language_correctness` per
+  language. Pre-merge gate floor: ≥95% per language for all six targets.
+- **`chat_synthesis_complete` log event** — emitted by paths B + C with
+  `query_language_detected`, `response_language_detected`,
+  `language_correctness`, `response_length_chars`, `org_id`, `request_id`.
+  Path A emit deferred to SPEC-LITELLM-CUSTOM-IMAGE-001 (lingua not in stock
+  litellm image; documented in
+  `docs/runbooks/multilingual-chat-observability.md`).
+- **Lint script** `scripts/lint-no-duplicate-chat-prompt.sh` — CI gate that
+  rejects any PR re-introducing prompt anchors outside their canonical
+  location. Catches both grounded-prompt anchors (canonical in chat-prompts
+  lib) and LiteLLM-hook prefix anchors (canonical in `klai_knowledge.py`).
+- **English chat-prompt anchors in LiteLLM hook** — Phase 4 rewrote the
+  four NL prefix blocks in `deploy/litellm/klai_knowledge.py` (Klai
+  Templates wrapper, KB-unavailable notice, KB header narrow + broad,
+  ANSWER FORMAT) to English-prefixed multilingual instructions. Model
+  receives English instructions but answers in the user's detected language.
+- **Multilingual coverage tests** — 9 new tests in
+  `deploy/litellm/tests/test_klai_knowledge_hook.py` cover DE/FR/PT/ES
+  query → multilingual-foundation prepended invariant.
+- **Documentation** —
+  `docs/architecture/knowledge-ingest-flow.md` (three-paths description),
+  `docs/runbooks/multilingual-chat-observability.md` (operator runbook for
+  `language_correctness` telemetry),
+  `.claude/rules/klai/projects/knowledge.md` ("chat system prompt — three
+  locations, never duplicate" pitfall),
+  `docs/retros/2026-05-07-litellm-restart-vs-recreate.md` (incident retro),
+  `.claude/rules/klai/pitfalls/process-rules.md`
+  (`docker-compose-restart-vs-recreate` CRIT entry),
+  `.moai/specs/SPEC-LITELLM-CUSTOM-IMAGE-001/` (follow-up SPEC for custom
+  litellm Dockerfile + path-A telemetry + vendored-files removal).
+
+### Changed
+
+- **Synthesis system prompt** —
+  `klai-retrieval-api/retrieval_api/services/synthesis.py` and
+  `klai-portal/backend/app/services/partner_chat.py` now import
+  `GROUNDED_CHAT_SYSTEM_PROMPT` from `klai-libs/chat-prompts` instead of
+  inlining a NL/EN switch. v1.1 introduced this for paths B + C; v1.2
+  Phase 4 extended it to path A.
+- **`deploy/litellm/klai_knowledge.py`** — imports the multilingual
+  foundation via vendored single-file copy at
+  `deploy/litellm/klai_chat_prompts.py` (drift-tested against canonical
+  `klai-libs/chat-prompts`). New helper `_compose_libre_chat_prefix(*blocks)`
+  guarantees the foundation leads every LibreChat-only system message
+  across all 8 hook code paths (no entitlement, KB disabled, opt-out,
+  identity-resolve-failed, retrieval-bypassed, no chunks, KB-unavailable,
+  success).
+- **`.github/workflows/litellm-hook-deploy.yml`** — switched from
+  `docker compose restart litellm` to
+  `/opt/klai/scripts/compose-up.sh litellm` (canonical wrapper from
+  SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3). Fixes a deploy bug discovered
+  during the Phase 4 ship: `restart` silently ignores new bind-mounts and
+  env-vars, only `up -d --remove-orphans` picks them up.
+- **Chunk-scope labels in LiteLLM hook system prompt** — `[persoonlijk]` →
+  `[personal]`, `### [Bron]` → `### [Source]`, `### Kennisbank` →
+  `### Knowledge Base`, `[Einde kennisbank-context]` →
+  `[End knowledge base context]`. English labels for consistency with the
+  English-prefixed instructions; never echoed verbatim by the model so
+  user-facing language is unaffected.
+
+### Configuration
+
+No new environment variables. Existing `KNOWLEDGE_RETRIEVE_URL`,
+`PORTAL_INTERNAL_SECRET`, `RETRIEVAL_INTERNAL_SECRET`, etc. unchanged.
+
+`docker-compose.yml` adds one new bind-mount for the litellm service:
+```
+- ./litellm/klai_chat_prompts.py:/app/klai_chat_prompts.py:ro
+```
+
+### Migration
+
+No database migration required. New mount + new lib become active on next
+LiteLLM container recreate (handled automatically by
+`compose-up.sh litellm` in the deploy workflow).
+
+### Verification
+
+Production smoke test (Voys-tenant LibreChat, 2026-05-07): six languages
+verified — DE / FR / PT / ES (target multilingual) all return
+target-language answers with citations to the NL Notion knowledge base;
+NL / EN regression checks unchanged. Container health verified via
+VictoriaLogs (`Application startup complete`, `/health/liveliness 200`,
+zero `ImportError`).
+
+### Follow-ups
+
+- **SPEC-LITELLM-CUSTOM-IMAGE-001** (drafted, not implemented) — replace
+  the two vendored single-files (`klai_service_auth.py`,
+  `klai_chat_prompts.py`) with a custom litellm Dockerfile that
+  `pip install`s the canonical libraries + `lingua-language-detector`.
+  Closes the path-A `chat_synthesis_complete` emit gap and eliminates
+  the vendored single-file pattern entirely.
+- **SPEC-SEC-SERVICE-AUTH-001 REQ-5** — remove the legacy
+  `X-Internal-Secret` auth fallback path. Unblocked by the planned custom
+  litellm image.
+
+---
+
+## [Unreleased] — 2026-05-06 — SPEC-INGEST-RECONCILE-001: Coverage-complete + observable connector ingestion
+
+Two empirical silent-drop bugs (Voys Help NL: 41/208 sitemap pages ingested;
+Voys Notion: 79/120 pages persisted) and the underlying recurrence pattern.
+Four bundled fixes shipped across PRs #440, #443 (hotfix), #444 (followup), and
+#447 (positional-fallback hardening).
+
+### Added
+
+- **`knowledge.crawl_jobs.fetch_outcomes`** — JSONB column with one entry per
+  discovered candidate URL: `{url, reason_code, status_code, content_length}`.
+  Operators can now answer "where did the missing pages go?" without log
+  forensics. CHECK constraint enforces array shape; element-level
+  `reason_code` validation is application-side (alembic
+  `0005_crawl_jobs_fetch_outcomes.py`, knowledge-schema head
+  `c1d4e7f2a8b6 (mergepoint)`).
+- **`connector.sync_runs.skip_reasons`** — JSONB column mapping
+  `{reason_code: count}` for documents fetched/parsed but not persisted as
+  artifacts. CHECK constraint enforces every key is a member of
+  `PersistSkipReason` via `skip_reasons - allowed[] = '{}'::jsonb` (no
+  subquery — Postgres rejects those in CHECK). Migration 009.
+- **`FetchReasonCode`** + **`PersistSkipReason`** stable enums
+  (`knowledge_ingest/reason_codes.py` + mirror in `klai-connector/app/`).
+  Drift between the two copies caught by the parity tests on both sides.
+- **`rules/no-unbounded-gather-crawl-page.yml`** — ast-grep CI lint that
+  blocks reintroduction of unbounded `asyncio.gather` over `crawl_page`
+  (the supplement-loop anti-pattern that produced Bug A).
+- **Same-domain guard** on `_combine_bulk_responses`'s positional fallback —
+  prevents response-reordering from silently mislabelling outcomes with
+  cross-site content.
+
+### Changed
+
+- **`crawl_site` rewritten** to decouple discovery from fetch. Discovery =
+  `union(sitemap_xml, BFS_seed_from_homepage)`, canonicalised + deduped +
+  capped (sitemap-priority on cap). Fetch = single `POST /crawl` bulk call
+  whose server-side `MemoryAdaptiveDispatcher` owns concurrency.
+- **`crawl_site` return shape** is now `(results, fetch_outcomes)` tuple.
+  Five test files updated for the new contract.
+- **`_fetch_seed_page`** now uses the same `crawler_config` (incl.
+  `login_indicator_selector`) as the bulk path. Previously the seed went
+  through `crawl_page` which silently dropped the indicator — auth-walled
+  sites would extract login-form anchors as BFS seeds.
+- **`documents_ok` arithmetic** redefined per AC-7:
+  `documents_total - documents_failed - sum(skip_reasons.values())`.
+  Application layer maintains this invariant by `continue`-ing on every
+  skip and never incrementing `documents_ok` for skipped or failed docs.
+
+### Removed
+
+- Custom `asyncio.gather(*[crawl_page(u) for u in supplement_urls])` loop
+  in `crawl4ai_client.crawl_site`. Replaced by `POST /crawl` bulk
+  submission that surfaces per-URL outcomes natively.
+
+## [Unreleased] — 2026-05-XX — SPEC-DECOMM-FOCUS-001: Drop Klai Focus / research-api
+
+Final cleanup of the SPEC-PORTAL-UNIFY-KB-001 (April 2026) decommission. The
+service has been undeployed since 2026-04-23; this SPEC removes the residue
+that kept it visually alive (allowlists, dead code paths, stale docs, CI
+workflow).
+
+### Removed
+
+- **`klai-focus/` directory** (50 files, ~5.3k lines) — full FastAPI app,
+  alembic migrations, Dockerfile, GHCR build/deploy GitHub Actions workflow.
+- **`scope=notebook` and `scope=broad`** from retrieval-api `RetrieveRequest`
+  Literal. Both scopes were the integration with research-api; 0 callers in
+  production code, 0 hits in 24h logs at audit time.
+- **`_search_notebook` + `_notebook_filter`** from `services/search.py`,
+  including the parallel-merge tak in `scope=broad`.
+- **`qdrant_focus_collection`** from `retrieval-api/config.py`.
+- **`klai_focus`** from `klai-portal/.../deprovisioning_steps.py` — the
+  `_delete_qdrant_points` step now targets only `klai_knowledge`.
+- **`research-api`** from `klai-libs/identity-assert/KNOWN_CALLER_SERVICES`
+  (added 2026-05-05 as defensive-but-inert hotfix in PR #311; rolled back
+  here) and from the mirror copy in `portal-api/services/identity_verifier.py`.
+- **`svc-research-api`** from `klai-libs/service-auth` scope-grant docstring.
+- **`research-api`** + **`klai-focus`** from `klai-libs/image-storage`
+  SSRF-blocklist + tests; same trim in `klai-portal/.../source_extractors`
+  and `klai-knowledge-ingest/tests/test_url_validator.py`.
+- **`klai-focus/research-api/app/main.py`** from
+  `rules/cors_middleware_last.yml` ast-grep config.
+- **`klai-focus/**`** from `.github/workflows/semgrep.yml` path-filter and
+  scan target list.
+- **research-api comment-line** in `deploy/caddy/Caddyfile` (history is in
+  the SPEC).
+- **Klai Focus section** + **`research-api` row** in
+  `docs/architecture/knowledge-ingest-flow.md` — replaced by a short
+  historical marker.
+
+### Added
+
+- **`docs/runbooks/decommission-focus.md`** — one-shot operator runbook for
+  the destructive server-side cleanup (Qdrant `klai_focus` DELETE,
+  `/opt/klai/research-uploads/` rm, `/opt/klai/research-api-src/` rm,
+  `focus.legacy_data_purged` product_events insert).
+- **`tests/test_research_api_caller_rejected.py`** in retrieval-api —
+  receiver-side regression test that locks in the allowlist removal
+  (per pitfalls/process-rules.md → retrieve-caller-service-header-mismatch).
+- **`test_retrieve_scope_notebook_returns_422`** +
+  **`test_retrieve_scope_broad_returns_422`** in `retrieval-api/tests/test_api.py`
+  — Pydantic `Literal` rejection regression guards for R-E1.
+
+### Migration
+
+The destructive cleanup of server-side residue (Qdrant collection,
+research-uploads PDFs, research-api-src directory, SOPS env vars in
+klai-infra) is documented in `docs/runbooks/decommission-focus.md` and
+runs as a single one-shot operator action after the PR merges. There are
+no application-side migrations.
+
+---
+
+## [Unreleased] — 2026-04-30 — SPEC-AUTH-009: Multi-tenant workspace discovery & admin handover
+
+Replaces SPEC-AUTH-006's admin-managed allowlist with implicit founder-domain-ownership model (Notion/Slack hybrid).
+User's verified email domain becomes the workspace primary_domain at creation. New users with matching domain see existing workspaces in picker.
+Joining defaults to join-request; admins can toggle auto-accept. Admin handover (promote/demote/leave) with min-1-admin enforcement.
+Free-email signup (gmail, outlook) rejected. Alembic migration drops `portal_org_allowed_domains` table and related endpoints.
+
+### Added
+
+- **`portal_orgs.primary_domain`** (VARCHAR 253, NOT NULL, lowercase-normalized) — implicit founder domain claim
+- **`portal_orgs.auto_accept_same_domain`** (BOOLEAN, default FALSE) — admin toggle for auto-join
+- **`PendingEntry` schema** — discriminated `kind` (member | domain_match) with `auto_accept` flag for picker display
+- **Workspace picker redesign** — extends `/select-workspace` to show domain_match entries; sort by (member first, auto_accept priority, alphabetical); footer link to self-serve signup
+- **`POST /api/auth/users/{user_id}/promote-admin`** — promote member to admin
+- **`POST /api/auth/users/{user_id}/demote-admin`** — demote admin to member (min-1-admin enforced)
+- **`DELETE /api/auth/users/me`** — leave workspace (self-removal, min-1-admin enforced)
+- **Admin handover UI** — `/admin/users` page extended with promote/demote/leave actions per klai-portal-ui patterns
+- **`auto_join_admin_notification_*` mailer template** — sent to admins when a user auto-joins same domain
+- **i18n keys** — picker entry microcopy (Lid, Vraag toegang aan, Auto-toegang), admin handover actions, free-email rejection message
+
+### Removed
+
+- **`portal_org_allowed_domains` table** — Alembic migration drops it (pre-launch, test data only)
+- **`app/api/admin/domains.py`** — FastAPI router removed
+- **`PortalOrgAllowedDomain` model** — removed from `app/models/portal.py`
+- **`frontend/src/routes/admin/domains.tsx`** — route removed; routeTree.gen.ts regenerated
+- **i18n keys** — `admin_domains_*` removed from messages (Paraglide regeneration automatic)
+- **Tests** — `test_admin_domains.py`, `test_allowed_domains.py` removed; free-email blocklist tests retained in `test_domain_validation.py`
+
+### Changed
+
+- **`idp_callback` flow** — rewritten to build picker entries from member_orgs + domain_orgs; branches on totals (0/0 → no-account, 1/0 → direct finalize, 0/1 → single picker, ≥2 → multi picker)
+- **Self-serve signup** (`/$locale/signup`) — now sets `primary_domain` from founder's email; rejects free-email with HTTP 400
+- **`/api/auth/select-workspace` response** — discriminated union (kind: member | auto_join | join_request_pending) with routing details
+- **`/no-account` page** — extended with self-serve workspace creation CTA
+
+### Migration
+
+Alembic revision: `a1b2c3d4e5f6_spec_auth_009_primary_domain`
+- `ALTER TABLE portal_orgs ADD COLUMN primary_domain VARCHAR(253), ADD COLUMN auto_accept_same_domain BOOLEAN DEFAULT FALSE`
+- `CREATE INDEX ix_portal_orgs_primary_domain ON portal_orgs (primary_domain) WHERE deleted_at IS NULL`
+- Pre-migration: manual UPDATE for any row with `primary_domain IS NULL` (test data only, pre-launch)
+- Post-migration: `DROP TABLE portal_org_allowed_domains`
+
+### Known Issue
+
+Pre-existing flaky test `test_single_member_finalizes_directly` (asyncpg pool state-pollution; passes isolated, occasionally fails in full suite).
+Observed rate < 2% in full suite runs. Not caused by this SPEC. Tracked in infrastructure backlog.
+
 ## [Unreleased] — 2026-04-29 — SPEC-SEC-INTERNAL-001: service-wide internal-secret surface hardening
 
 Closes Cornelis 2026-04-22 audit findings #14 (rate-limit fail-open),

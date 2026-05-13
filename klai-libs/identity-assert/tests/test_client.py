@@ -82,9 +82,7 @@ async def test_verify_returns_allow_on_jwt_evidence(fake_user_id: str, fake_org_
     await asserter.aclose()
 
 
-async def test_verify_returns_allow_on_membership_evidence(
-    fake_user_id: str, fake_org_id: str
-) -> None:
+async def test_verify_returns_allow_on_membership_evidence(fake_user_id: str, fake_org_id: str) -> None:
     transport = _mock_portal(
         body={
             "verified": True,
@@ -110,9 +108,130 @@ async def test_verify_returns_allow_on_membership_evidence(
     await asserter.aclose()
 
 
-async def test_verify_returns_deny_on_no_membership(
-    fake_user_id: str, other_org_id: str
+async def test_verify_returns_allow_on_partner_key_evidence(fake_user_id: str, fake_org_id: str) -> None:
+    """Widget / partner-API path: portal-api verifies a synthetic
+    ``partner:<key_id>`` claim against the ``partner_api_keys`` table and
+    returns ``evidence="partner_key"`` (F2 fix-forward, retrieval coupling
+    audit 2026-05-06). The SDK MUST accept this evidence value just like
+    ``"jwt"`` / ``"membership"``; without it the synthetic partner claim
+    collapses to ``portal_unreachable`` and every widget chat returns 403.
+    See pitfalls/process-rules.md → retrieve-caller-service-header-mismatch.
+    """
+
+    transport = _mock_portal(
+        body={
+            "verified": True,
+            "user_id": "partner:wgt_47b8c9c46d10b17c527923e0a5454bef3285b71f",
+            "org_id": fake_org_id,
+            "org_slug": "acme",
+            "cache_ttl_seconds": 60,
+            "evidence": "partner_key",
+        },
+    )
+    asserter = await _build_asserter(transport)
+
+    result = await asserter.verify(
+        caller_service="portal-api",
+        claimed_user_id="partner:wgt_47b8c9c46d10b17c527923e0a5454bef3285b71f",
+        claimed_org_id=fake_org_id,
+        bearer_jwt=None,
+    )
+
+    assert result.verified is True
+    assert result.user_id == "partner:wgt_47b8c9c46d10b17c527923e0a5454bef3285b71f"
+    assert result.org_id == fake_org_id
+    assert result.org_slug == "acme"
+    assert result.evidence == "partner_key"
+    assert result.cached is False
+    await asserter.aclose()
+
+
+async def test_verify_returns_deny_on_partner_key_not_found(fake_user_id: str, fake_org_id: str) -> None:
+    """Portal-side authoritative deny: the ``partner_api_keys`` row for the
+    claimed key_id does not exist (revoked, never provisioned, typo). The
+    SDK MUST surface ``partner_key_not_found`` with its stable code so
+    operators can distinguish configuration drift from a real outage —
+    not collapse to ``portal_unreachable``.
+    """
+
+    transport = _mock_portal(
+        status_code=403,
+        body={"verified": False, "reason": "partner_key_not_found"},
+    )
+    asserter = await _build_asserter(transport)
+
+    result = await asserter.verify(
+        caller_service="portal-api",
+        claimed_user_id="partner:wgt_does_not_exist",
+        claimed_org_id=fake_org_id,
+        bearer_jwt=None,
+    )
+
+    assert result.verified is False
+    assert result.reason == "partner_key_not_found"
+    await asserter.aclose()
+
+
+async def test_verify_returns_deny_on_partner_key_org_mismatch(fake_user_id: str, other_org_id: str) -> None:
+    """Portal-side authoritative deny: the partner key exists but belongs to
+    a different org than the one the caller claimed. Cross-tenant defence
+    — distinct stable code so it shows up as a security signal in logs,
+    not as ``portal_unreachable`` noise.
+    """
+
+    transport = _mock_portal(
+        status_code=403,
+        body={"verified": False, "reason": "partner_key_org_mismatch"},
+    )
+    asserter = await _build_asserter(transport)
+
+    result = await asserter.verify(
+        caller_service="portal-api",
+        claimed_user_id="partner:wgt_belongs_to_other_org",
+        claimed_org_id=other_org_id,
+        bearer_jwt=None,
+    )
+
+    assert result.verified is False
+    assert result.reason == "partner_key_org_mismatch"
+    await asserter.aclose()
+
+
+async def test_unrecognised_evidence_still_collapses_to_portal_unreachable(
+    fake_user_id: str, fake_org_id: str
 ) -> None:
+    """Fail-closed regression: an evidence value not in the SDK allowlist
+    MUST still collapse to ``portal_unreachable``. This prevents a future
+    server-side evidence type from silently allowing through without an
+    explicit SDK update — the contract is symmetric and intentionally
+    strict (see commit comment in _interpret_response).
+    """
+
+    transport = _mock_portal(
+        body={
+            "verified": True,
+            "user_id": fake_user_id,
+            "org_id": fake_org_id,
+            "org_slug": "acme",
+            "cache_ttl_seconds": 60,
+            "evidence": "some_future_evidence_we_do_not_know",
+        },
+    )
+    asserter = await _build_asserter(transport)
+
+    result = await asserter.verify(
+        caller_service="scribe",
+        claimed_user_id=fake_user_id,
+        claimed_org_id=fake_org_id,
+        bearer_jwt=None,
+    )
+
+    assert result.verified is False
+    assert result.reason == "portal_unreachable"
+    await asserter.aclose()
+
+
+async def test_verify_returns_deny_on_no_membership(fake_user_id: str, other_org_id: str) -> None:
     transport = _mock_portal(
         status_code=403,
         body={"verified": False, "reason": "no_membership"},
@@ -133,9 +252,7 @@ async def test_verify_returns_deny_on_no_membership(
     await asserter.aclose()
 
 
-async def test_verify_returns_deny_on_jwt_identity_mismatch(
-    fake_user_id: str, fake_org_id: str
-) -> None:
+async def test_verify_returns_deny_on_jwt_identity_mismatch(fake_user_id: str, fake_org_id: str) -> None:
     transport = _mock_portal(
         status_code=403,
         body={"verified": False, "reason": "jwt_identity_mismatch"},
@@ -154,9 +271,7 @@ async def test_verify_returns_deny_on_jwt_identity_mismatch(
     await asserter.aclose()
 
 
-async def test_verify_fails_closed_on_network_error(
-    fake_user_id: str, fake_org_id: str
-) -> None:
+async def test_verify_fails_closed_on_network_error(fake_user_id: str, fake_org_id: str) -> None:
     def fail(_request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("portal down")
 
@@ -191,9 +306,7 @@ async def test_verify_fails_closed_on_5xx(fake_user_id: str, fake_org_id: str) -
     await asserter.aclose()
 
 
-async def test_verify_fails_closed_on_unknown_caller_service(
-    fake_user_id: str, fake_org_id: str
-) -> None:
+async def test_verify_fails_closed_on_unknown_caller_service(fake_user_id: str, fake_org_id: str) -> None:
     transport = _mock_portal(body={"verified": True})
     asserter = await _build_asserter(transport)
 
@@ -209,9 +322,7 @@ async def test_verify_fails_closed_on_unknown_caller_service(
     await asserter.aclose()
 
 
-async def test_verify_fails_closed_on_malformed_json(
-    fake_user_id: str, fake_org_id: str
-) -> None:
+async def test_verify_fails_closed_on_malformed_json(fake_user_id: str, fake_org_id: str) -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=b"not-json")
 
@@ -230,9 +341,7 @@ async def test_verify_fails_closed_on_malformed_json(
     await asserter.aclose()
 
 
-async def test_verify_caches_allow_results(
-    fake_user_id: str, fake_org_id: str
-) -> None:
+async def test_verify_caches_allow_results(fake_user_id: str, fake_org_id: str) -> None:
     call_count = {"value": 0}
 
     def handler(_request: httpx.Request) -> httpx.Response:
@@ -332,9 +441,7 @@ async def test_verify_propagates_x_request_id(fake_user_id: str, fake_org_id: st
     await asserter.aclose()
 
 
-async def test_verify_uses_authorization_bearer_for_internal_secret(
-    fake_user_id: str, fake_org_id: str
-) -> None:
+async def test_verify_uses_authorization_bearer_for_internal_secret(fake_user_id: str, fake_org_id: str) -> None:
     """portal-api's /internal/* contract expects ``Authorization: Bearer <secret>``.
 
     This is intentionally NOT a custom ``X-Internal-Secret`` header — that
@@ -375,9 +482,7 @@ async def test_verify_uses_authorization_bearer_for_internal_secret(
     await asserter.aclose()
 
 
-async def test_verify_or_raise_returns_on_allow(
-    fake_user_id: str, fake_org_id: str
-) -> None:
+async def test_verify_or_raise_returns_on_allow(fake_user_id: str, fake_org_id: str) -> None:
     transport = _mock_portal(
         body={
             "verified": True,
@@ -401,9 +506,7 @@ async def test_verify_or_raise_returns_on_allow(
     await asserter.aclose()
 
 
-async def test_verify_or_raise_raises_portal_unreachable(
-    fake_user_id: str, fake_org_id: str
-) -> None:
+async def test_verify_or_raise_raises_portal_unreachable(fake_user_id: str, fake_org_id: str) -> None:
     def fail(_request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("portal down")
 
@@ -420,9 +523,7 @@ async def test_verify_or_raise_raises_portal_unreachable(
     await asserter.aclose()
 
 
-async def test_verify_or_raise_raises_identity_denied(
-    fake_user_id: str, other_org_id: str
-) -> None:
+async def test_verify_or_raise_raises_identity_denied(fake_user_id: str, other_org_id: str) -> None:
     transport = _mock_portal(
         status_code=403,
         body={"verified": False, "reason": "no_membership"},
@@ -450,9 +551,7 @@ def test_init_rejects_empty_internal_secret() -> None:
         IdentityAsserter(portal_base_url="http://x", internal_secret="")
 
 
-async def test_aclose_owns_only_constructed_client(
-    fake_user_id: str, fake_org_id: str
-) -> None:
+async def test_aclose_owns_only_constructed_client(fake_user_id: str, fake_org_id: str) -> None:
     """Asserter MUST NOT close a borrowed http_client (caller owns lifecycle)."""
 
     capture: dict[str, object] = {}
@@ -524,9 +623,7 @@ async def test_verify_request_body_shape(fake_user_id: str, fake_org_id: str) ->
     await asserter.aclose()
 
 
-async def test_verify_request_body_carries_claimed_org_slug(
-    fake_user_id: str, fake_org_id: str
-) -> None:
+async def test_verify_request_body_carries_claimed_org_slug(fake_user_id: str, fake_org_id: str) -> None:
     """REQ-2.6: when caller passes claimed_org_slug, it lands in the request body."""
     capture: dict[str, object] = {}
     transport = _mock_portal(
@@ -557,9 +654,7 @@ async def test_verify_request_body_carries_claimed_org_slug(
     await asserter.aclose()
 
 
-async def test_verify_returns_deny_on_org_slug_mismatch(
-    fake_user_id: str, fake_org_id: str
-) -> None:
+async def test_verify_returns_deny_on_org_slug_mismatch(fake_user_id: str, fake_org_id: str) -> None:
     """REQ-2.6: portal returns 403 + reason='org_slug_mismatch' → library surfaces it."""
     transport = _mock_portal(
         status_code=403,
@@ -637,9 +732,7 @@ async def test_verify_cache_hit_denies_on_slug_mismatch_without_portal_call(
     await asserter.aclose()
 
 
-async def test_unrecognised_reason_code_collapses_to_portal_unreachable(
-    fake_user_id: str, fake_org_id: str
-) -> None:
+async def test_unrecognised_reason_code_collapses_to_portal_unreachable(fake_user_id: str, fake_org_id: str) -> None:
     """If portal returns a reason code the library does not know, fail closed."""
 
     transport = _mock_portal(
@@ -675,3 +768,122 @@ async def test_verify_returns_verify_result_type(
     assert isinstance(result, VerifyResult)
     assert result.verified is False
     assert result.reason == "portal_unreachable"
+
+
+# ---------------------------------------------------------------------------
+# verify_tenant tests
+# ---------------------------------------------------------------------------
+
+
+async def test_verify_tenant_happy_path(fake_org_id: str) -> None:
+    """verify_tenant returns allow_tenant on a valid portal response."""
+    transport = _mock_portal(
+        body={
+            "verified": True,
+            "org_id": fake_org_id,
+            "org_slug": "acme",
+            "cache_ttl_seconds": 60,
+            "evidence": "tenant_only",
+        },
+    )
+    asserter = await _build_asserter(transport)
+
+    result = await asserter.verify_tenant(
+        caller_service="portal-api",
+        claimed_org_id=fake_org_id,
+    )
+
+    assert result.verified is True
+    assert result.org_id == fake_org_id
+    assert result.org_slug == "acme"
+    assert result.evidence == "tenant_only"
+    assert result.user_id is None
+    assert result.cached is False
+    await asserter.aclose()
+
+
+async def test_verify_tenant_posts_to_correct_url(fake_org_id: str) -> None:
+    """verify_tenant MUST post to /internal/identity/verify-tenant (not /verify)."""
+    capture: dict[str, object] = {}
+    transport = _mock_portal(
+        body={
+            "verified": True,
+            "org_id": fake_org_id,
+            "org_slug": "acme",
+            "cache_ttl_seconds": 60,
+            "evidence": "tenant_only",
+        },
+        capture=capture,
+    )
+    asserter = await _build_asserter(transport)
+
+    await asserter.verify_tenant(
+        caller_service="portal-api",
+        claimed_org_id=fake_org_id,
+    )
+
+    assert "/internal/identity/verify-tenant" in str(capture["url"])
+    # The user-bound endpoint path MUST NOT appear.
+    assert str(capture["url"]).rstrip("/") != f"{PORTAL_URL}/internal/identity/verify"
+    await asserter.aclose()
+
+
+async def test_verify_tenant_deny_on_tenant_not_found(fake_org_id: str) -> None:
+    """verify_tenant deny on portal returning tenant_not_found reason."""
+    transport = _mock_portal(
+        status_code=403,
+        body={"verified": False, "reason": "tenant_not_found"},
+    )
+    asserter = await _build_asserter(transport)
+
+    result = await asserter.verify_tenant(
+        caller_service="portal-api",
+        claimed_org_id=fake_org_id,
+    )
+
+    assert result.verified is False
+    assert result.reason == "tenant_not_found"
+    await asserter.aclose()
+
+
+async def test_verify_tenant_fails_closed_on_5xx(fake_org_id: str) -> None:
+    """verify_tenant returns portal_unreachable on 5xx responses."""
+    transport = _mock_portal(status_code=503, body={"detail": "down"})
+    asserter = await _build_asserter(transport)
+
+    result = await asserter.verify_tenant(
+        caller_service="portal-api",
+        claimed_org_id=fake_org_id,
+    )
+
+    assert result.verified is False
+    assert result.reason == "portal_unreachable"
+    await asserter.aclose()
+
+
+async def test_verify_tenant_rejects_non_tenant_only_evidence(fake_org_id: str) -> None:
+    """verify_tenant fails closed if portal returns evidence != 'tenant_only'.
+
+    A user-bound evidence ('jwt', 'membership') on the tenant-only endpoint
+    is a contract violation — the interpreter must reject it rather than
+    silently accept it.
+    """
+    transport = _mock_portal(
+        body={
+            "verified": True,
+            "org_id": fake_org_id,
+            "org_slug": "acme",
+            "cache_ttl_seconds": 60,
+            "evidence": "membership",  # wrong evidence type for this endpoint
+        },
+    )
+    asserter = await _build_asserter(transport)
+
+    result = await asserter.verify_tenant(
+        caller_service="portal-api",
+        claimed_org_id=fake_org_id,
+    )
+
+    assert result.verified is False
+    assert result.reason == "portal_unreachable"
+    await asserter.aclose()

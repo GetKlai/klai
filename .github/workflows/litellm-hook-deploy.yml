@@ -25,5 +25,31 @@ jobs:
       - name: Sync hook files to core-01
         run: rsync -av deploy/litellm/ klai@${{ secrets.CORE01_HOST }}:/opt/klai/litellm/
 
-      - name: Restart LiteLLM
-        run: ssh klai@${{ secrets.CORE01_HOST }} "cd /opt/klai && docker compose restart litellm"
+      # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3 — use the canonical
+      # compose-up wrapper (already used by caddy, klai-connector,
+      # klai-mailer, knowledge-ingest, klai-knowledge-mcp, docs-app).
+      #
+      # Why not `docker compose restart litellm`: `restart` keeps the
+      # existing container env intact — it ignores docker-compose.yml
+      # mount + env-var changes. SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4
+      # added a new bind-mount (klai_chat_prompts.py) that the previous
+      # `restart` deploy silently dropped on the floor — the proxy
+      # crashlooped on ImportError until a follow-up commit inlined the
+      # constant to remove the new-mount dependency.
+      #
+      # Why --force-recreate: stock `docker compose up -d` only recreates
+      # when the compose DEFINITION diffs (volume list, env-vars, image
+      # tag). It does NOT detect bind-mount FILE CONTENT changes. The
+      # litellm container imports klai_knowledge.py / klai_chat_prompts.py
+      # / klai_retrieval_telemetry.py / klai_service_auth.py /
+      # custom_router.py at module load — without --force-recreate, an
+      # rsync of a new Python file is followed by a no-op `up -d` and
+      # Python keeps the cached module from the previous boot. Net
+      # effect: PR merged → CI green → live container still runs the
+      # OLD code until someone manually recreates. Hit twice in a row
+      # on PR #497 (no-KB GENERAL prompt) and PR #501 (telemetry mount
+      # + anti-hallucination); each required a manual
+      # `docker compose up -d --force-recreate litellm` to land. See
+      # pitfall `bind-mount-content-vs-python-module-cache`.
+      - name: Recreate LiteLLM container
+        run: ssh klai@${{ secrets.CORE01_HOST }} "/opt/klai/scripts/compose-up.sh --force-recreate litellm"

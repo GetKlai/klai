@@ -12,6 +12,7 @@ routing and assertion-mode filtering. This is chunk-level and distinct from
 the document-level content_type (kb_article/pdf_document/meeting_transcript/
 web_crawl/...) consumed by retrieval_api.services.evidence_tier.
 """
+
 import asyncio
 import json
 from dataclasses import dataclass
@@ -54,6 +55,66 @@ Reply with ONLY a JSON object, no markdown, no explanation:
 {{"context_prefix": "<string>", "chunk_type": "<procedural|conceptual|reference|warning|example>", \
 "questions": ["<string>", ...]}}"""
 
+# SPEC-RAG-CONTEXTUAL-001 — Anthropic-pattern: instead of feeding the full
+# document text on every chunk's enrichment call, feed a pre-computed 1-2
+# sentence summary. Cuts per-chunk input tokens ~8x for a 20-chunk doc.
+ENRICHMENT_PROMPT_SUMMARY_NL = """\
+Kennisbank: {kb_name}
+Bron: {source_context}
+Documenttitel: {title}
+Pad: {path}
+
+<document_summary>
+{document_summary}
+</document_summary>
+
+<chunk>
+{chunk_text}
+</chunk>
+{participant_context}
+Genereer een JSON-object met:
+- "context_prefix": een zin van max 120 tokens die deze chunk plaatst binnen het document \
+(welke KB en bronsysteem, welk document/sectie, eventuele domeinspecifieke terminologie).
+- "chunk_type": classificeer de chunk als exact één van: \
+"procedural" (stap-voor-stap instructies), "conceptual" (uitleg van begrippen), \
+"reference" (naslag/specificaties), "warning" (waarschuwingen/beperkingen), \
+"example" (voorbeelden/cases).
+- "questions": 3-5 vragen die deze chunk beantwoordt. \
+{question_focus}
+
+Reply with ONLY a JSON object, no markdown, no explanation:
+{{"context_prefix": "<string>", "chunk_type": "<procedural|conceptual|reference|warning|example>", \
+"questions": ["<string>", ...]}}"""
+
+ENRICHMENT_PROMPT_SUMMARY_EN = """\
+Knowledge base: {kb_name}
+Source: {source_context}
+Document title: {title}
+Path: {path}
+
+<document_summary>
+{document_summary}
+</document_summary>
+
+<chunk>
+{chunk_text}
+</chunk>
+{participant_context}
+Generate a JSON object with:
+- "context_prefix": a single sentence (max 120 tokens) that places this chunk \
+within the document (which KB and source system, which document/section, any \
+domain-specific terminology).
+- "chunk_type": classify the chunk as exactly one of: \
+"procedural" (step-by-step instructions), "conceptual" (explanation of concepts), \
+"reference" (specifications/lookup), "warning" (warnings/limitations), \
+"example" (examples/cases).
+- "questions": 3-5 questions this chunk answers. \
+{question_focus}
+
+Reply with ONLY a JSON object, no markdown, no explanation:
+{{"context_prefix": "<string>", "chunk_type": "<procedural|conceptual|reference|warning|example>", \
+"questions": ["<string>", ...]}}"""
+
 # Appended to the prompt on the retry call when chunk_type validation fails.
 # Strengthens the instruction so the LLM picks one of the five valid values.
 # SPEC-CRAWLER-005 REQ-03.2 / EC-4
@@ -77,9 +138,9 @@ class EnrichmentResult(BaseModel):
 @dataclass
 class EnrichedChunk:
     original_text: str
-    enriched_text: str       # "{context_prefix}\n\n{original_text}"
+    enriched_text: str  # "{context_prefix}\n\n{original_text}"
     context_prefix: str
-    questions: list[str]     # embedded as vector_questions for depth 0-1; stored in payload for all
+    questions: list[str]  # embedded as vector_questions for depth 0-1; stored in payload for all
     # @MX:NOTE: SPEC-KB-021 chunk-level classification (procedural/conceptual/
     #   reference/warning/example). Distinct from the document-level content_type
     #   field ("kb_article", "pdf_document", ...) stored on the Qdrant point
@@ -102,7 +163,7 @@ def _strip_frontmatter(text: str) -> str:
     end = text.find("\n---", 3)
     if end == -1:
         return text
-    return text[end + 4:].lstrip()
+    return text[end + 4 :].lstrip()
 
 
 async def _call_llm(prompt: str, path: str) -> dict:
@@ -184,6 +245,8 @@ async def enrich_chunk(
     source_domain: str = "",
     artifact_id: str = "",
     chunk_index: int = 0,
+    document_summary: str | None = None,
+    document_language: str | None = None,
 ) -> EnrichmentResult:
     """
     Call LiteLLM proxy to generate contextual prefix + HyPE questions for one chunk.
@@ -194,16 +257,26 @@ async def enrich_chunk(
     invalid chunk_type, the function falls back to chunk_type="reference" and emits a
     structured crawl_chunk_type_drop warning log for ops monitoring.
 
-    When context_window is provided, it is used as the document context in the prompt
-    instead of truncating the full document_text.
+    Document context selection (in priority order):
+
+    1. ``document_summary`` non-empty → use the SPEC-RAG-CONTEXTUAL-001
+       Anthropic-pattern prompt that injects only a 1-2-sentence summary
+       instead of the full document body. Cuts per-chunk input tokens ~8x
+       for a 20-chunk document. Picks NL or EN template based on
+       ``document_language`` (auto-falls-back to EN for unknown).
+    2. ``context_window`` provided → use as the document context window
+       in the legacy full-document prompt.
+    3. Otherwise → truncate ``document_text`` to settings.enrichment_max_document_tokens.
     """
-    if context_window is not None:
-        doc_context = context_window
-    else:
-        doc_context = _truncate_to_tokens(
-            _strip_frontmatter(document_text),
-            settings.enrichment_max_document_tokens,
-        )
+    use_summary = bool(document_summary and document_summary.strip())
+    if not use_summary:
+        if context_window is not None:
+            doc_context = context_window
+        else:
+            doc_context = _truncate_to_tokens(
+                _strip_frontmatter(document_text),
+                settings.enrichment_max_document_tokens,
+            )
     # Default question focus if none provided
     effective_focus = question_focus or (
         "De vragen moeten natuurlijke zoekopdrachten zijn die een gebruiker zou typen."
@@ -218,16 +291,34 @@ async def enrich_chunk(
         source_parts.append(source_domain)
     source_context = " | ".join(source_parts) if source_parts else "onbekend"
 
-    prompt = ENRICHMENT_PROMPT.format(
-        kb_name=kb_name or "onbekend",
-        source_context=source_context,
-        title=title,
-        path=path,
-        document_text=doc_context,
-        chunk_text=chunk_text,
-        question_focus=effective_focus,
-        participant_context=participant_context,
-    )
+    if use_summary:
+        # Pick the language-specific summary template; default to EN for
+        # unknown languages (klai-fast handles English best on benchmarks).
+        if document_language == "nl":
+            summary_template = ENRICHMENT_PROMPT_SUMMARY_NL
+        else:
+            summary_template = ENRICHMENT_PROMPT_SUMMARY_EN
+        prompt = summary_template.format(
+            kb_name=kb_name or "onbekend",
+            source_context=source_context,
+            title=title,
+            path=path,
+            document_summary=document_summary or "",
+            chunk_text=chunk_text,
+            question_focus=effective_focus,
+            participant_context=participant_context,
+        )
+    else:
+        prompt = ENRICHMENT_PROMPT.format(
+            kb_name=kb_name or "onbekend",
+            source_context=source_context,
+            title=title,
+            path=path,
+            document_text=doc_context,
+            chunk_text=chunk_text,
+            question_focus=effective_focus,
+            participant_context=participant_context,
+        )
 
     # First LLM call
     data = await _call_llm(prompt, path)
@@ -292,6 +383,8 @@ async def enrich_chunks(
     connector_type: str = "",
     source_domain: str = "",
     artifact_id: str = "",
+    document_summary: str | None = None,
+    document_language: str | None = None,
 ) -> list[EnrichedChunk]:
     """
     Enrich all chunks with a semaphore limiting concurrent LLM calls.
@@ -303,15 +396,31 @@ async def enrich_chunks(
     The strategy is applied per-chunk (with chunk_index) so rolling_window gets correct positioning.
     kb_name, connector_type, source_domain: source-aware enrichment fields (SPEC-KB-021).
     artifact_id: passed through to enrich_chunk for crawl_chunk_type_drop log correlation.
+
+    document_summary / document_language: SPEC-RAG-CONTEXTUAL-001. When a summary
+    is provided, every chunk's enrichment prompt feeds the summary instead of
+    the full document context window — Anthropic's contextual-retrieval pattern.
+    Falls back to the legacy full-document path when summary is None or empty.
     """
     semaphore = asyncio.Semaphore(settings.enrichment_max_concurrent)
     strategy_fn = STRATEGIES.get(context_strategy, STRATEGIES["first_n"])
 
+    use_summary = bool(document_summary and document_summary.strip())
+
     async def _enrich_one(chunk_text: str, chunk_index: int) -> EnrichedChunk:
-        context_window = strategy_fn(document_text, context_tokens, chunk_index=chunk_index)
+        # Skip context-strategy work when we already have a summary — the
+        # legacy strategies only matter for the full-document prompt path.
+        context_window = (
+            None
+            if use_summary
+            else strategy_fn(document_text, context_tokens, chunk_index=chunk_index)
+        )
         async with semaphore:
             result = await enrich_chunk(
-                document_text, chunk_text, title, path,
+                document_text,
+                chunk_text,
+                title,
+                path,
                 question_focus=question_focus,
                 participant_context=participant_context,
                 context_window=context_window,
@@ -320,6 +429,8 @@ async def enrich_chunks(
                 source_domain=source_domain,
                 artifact_id=artifact_id,
                 chunk_index=chunk_index,
+                document_summary=document_summary,
+                document_language=document_language,
             )
         enriched_text = f"{result.context_prefix}\n\n{chunk_text}"
         return EnrichedChunk(

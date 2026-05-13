@@ -29,10 +29,10 @@ function NoAccountPage() {
   return (
     <AuthPageLayout leftContent={leftContent} showLocale>
       <div className="space-y-2">
-        <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
+        <h2 className="text-xl font-semibold text-gray-900">
           {m.no_account_heading()}
         </h2>
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           {m.no_account_body()}
         </p>
       </div>

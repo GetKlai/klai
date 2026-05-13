@@ -135,7 +135,6 @@ async def test_rejects_missing_hostname() -> None:
         "knowledge-ingest",
         "klai-connector",
         "klai-mailer",
-        "research-api",
         "retrieval-api",
         "scribe",
         "garage",

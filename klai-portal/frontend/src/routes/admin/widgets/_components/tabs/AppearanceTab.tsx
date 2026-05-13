@@ -80,7 +80,7 @@ export function AppearanceTab({ widget }: Props) {
       <section className="space-y-4">
         <div className="space-y-1.5">
           <Label htmlFor="widget-title">{m.admin_widgets_widget_title_label()}</Label>
-          <p className="text-xs text-[var(--color-muted-foreground)]">
+          <p className="text-xs text-gray-400">
             {m.admin_widgets_widget_title_help()}
           </p>
           <Input
@@ -92,7 +92,7 @@ export function AppearanceTab({ widget }: Props) {
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="widget-welcome">{m.admin_widgets_widget_welcome_label()}</Label>
-          <p className="text-xs text-[var(--color-muted-foreground)]">
+          <p className="text-xs text-gray-400">
             {m.admin_widgets_widget_welcome_help()}
           </p>
           <Input
@@ -116,7 +116,7 @@ export function AppearanceTab({ widget }: Props) {
                       ),
                     )
                   }
-                  className="flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-xs font-mono text-[var(--color-foreground)] outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
+                  className="flex-1 rounded-md border border-gray-200 bg-[var(--color-input)] px-3 py-2 text-xs font-mono text-gray-900 outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
                 >
                   <option value="">{m.admin_widgets_widget_css_var_placeholder()}</option>
                   {CSS_VAR_KEYS.map((k) => (
@@ -138,7 +138,7 @@ export function AppearanceTab({ widget }: Props) {
                 <button
                   type="button"
                   onClick={() => setCssVarRows((prev) => prev.filter((_, i) => i !== index))}
-                  className="text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)] transition-colors"
+                  className="text-gray-400 hover:text-[var(--color-destructive)] transition-colors"
                   aria-label={m.admin_widgets_widget_css_var_remove()}
                 >
                   ×

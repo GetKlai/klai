@@ -1,11 +1,11 @@
 """Tests for HMAC webhook verification (TASK-009)."""
+
 import hashlib
 import hmac
 import json
-
-import pytest
 from unittest.mock import AsyncMock, patch
 
+import pytest
 
 WEBHOOK_SECRET = "gitea-webhook-secret-456"
 
@@ -39,30 +39,34 @@ def hmac_client():
             mock_settings.chunk_size = 1500
             mock_settings.chunk_overlap = 200
             mock_settings.enrichment_enabled = False  # use immediate ingest path (no Procrastinate)
-            with patch(
-                "knowledge_ingest.qdrant_store.ensure_collection",
-                new_callable=AsyncMock,
-            ), patch(
-                "knowledge_ingest.db.get_pool",
-                new_callable=AsyncMock,
-                return_value=mock_pool,
-            ), patch(
-                "knowledge_ingest.db.close_pool",
-                new_callable=AsyncMock,
-            ), patch(
-                "knowledge_ingest.config.settings.enrichment_enabled",
-                False,
+            with (
+                patch(
+                    "knowledge_ingest.qdrant_store.ensure_collection",
+                    new_callable=AsyncMock,
+                ),
+                patch(
+                    "knowledge_ingest.db.get_pool",
+                    new_callable=AsyncMock,
+                    return_value=mock_pool,
+                ),
+                patch(
+                    "knowledge_ingest.db.close_pool",
+                    new_callable=AsyncMock,
+                ),
+                patch(
+                    "knowledge_ingest.config.settings.enrichment_enabled",
+                    False,
+                ),
             ):
                 import os
 
-                from knowledge_ingest.app import app
                 from fastapi.testclient import TestClient
+
+                from knowledge_ingest.app import app
 
                 with TestClient(app, raise_server_exceptions=False) as c:
                     # SPEC-SEC-011: middleware now requires the header.
-                    c.headers.update(
-                        {"X-Internal-Secret": os.environ["KNOWLEDGE_INGEST_SECRET"]}
-                    )
+                    c.headers.update({"X-Internal-Secret": os.environ["KNOWLEDGE_INGEST_SECRET"]})
                     yield c
 
 
@@ -71,18 +75,22 @@ def test_webhook_with_valid_hmac(hmac_client):
     body = json.dumps(VALID_PAYLOAD).encode()
     sig = _sign(body, WEBHOOK_SECRET)
 
-    with patch(
-        "knowledge_ingest.routes.ingest._get_org_id",
-        new_callable=AsyncMock,
-        return_value="zitadel-org-123",
-    ), patch(
-        "knowledge_ingest.routes.ingest._fetch_gitea_file",
-        new_callable=AsyncMock,
-        return_value="# Test doc\nContent here",
-    ), patch(
-        "knowledge_ingest.routes.ingest.ingest_document",
-        new_callable=AsyncMock,
-        return_value={"status": "ok", "chunks": 1, "title": "Test doc"},
+    with (
+        patch(
+            "knowledge_ingest.routes.ingest._get_org_id",
+            new_callable=AsyncMock,
+            return_value="zitadel-org-123",
+        ),
+        patch(
+            "knowledge_ingest.routes.ingest._fetch_gitea_file",
+            new_callable=AsyncMock,
+            return_value="# Test doc\nContent here",
+        ),
+        patch(
+            "knowledge_ingest.routes.ingest.ingest_document",
+            new_callable=AsyncMock,
+            return_value={"status": "ok", "chunks": 1, "title": "Test doc"},
+        ),
     ):
         resp = hmac_client.post(
             "/ingest/v1/webhook/gitea",
@@ -139,21 +147,25 @@ def test_webhook_personal_kb_extracts_user_id(hmac_client):
 
     captured: list = []
 
-    async def _fake_ingest(req):
+    async def _fake_ingest(conn, req):
         captured.append(req)
         return {"status": "ok", "chunks": 1, "title": "Note"}
 
-    with patch(
-        "knowledge_ingest.routes.ingest._get_org_id",
-        new_callable=AsyncMock,
-        return_value="zitadel-org-123",
-    ), patch(
-        "knowledge_ingest.routes.ingest._fetch_gitea_file",
-        new_callable=AsyncMock,
-        return_value="# Note\nContent",
-    ), patch(
-        "knowledge_ingest.routes.ingest.ingest_document",
-        side_effect=_fake_ingest,
+    with (
+        patch(
+            "knowledge_ingest.routes.ingest._get_org_id",
+            new_callable=AsyncMock,
+            return_value="zitadel-org-123",
+        ),
+        patch(
+            "knowledge_ingest.routes.ingest._fetch_gitea_file",
+            new_callable=AsyncMock,
+            return_value="# Note\nContent",
+        ),
+        patch(
+            "knowledge_ingest.routes.ingest.ingest_document",
+            side_effect=_fake_ingest,
+        ),
     ):
         resp = hmac_client.post(
             "/ingest/v1/webhook/gitea",
@@ -184,21 +196,25 @@ def test_webhook_non_personal_kb_no_user_id(hmac_client):
 
     captured: list = []
 
-    async def _fake_ingest(req):
+    async def _fake_ingest(conn, req):
         captured.append(req)
         return {"status": "ok", "chunks": 1, "title": "Doc"}
 
-    with patch(
-        "knowledge_ingest.routes.ingest._get_org_id",
-        new_callable=AsyncMock,
-        return_value="zitadel-org-123",
-    ), patch(
-        "knowledge_ingest.routes.ingest._fetch_gitea_file",
-        new_callable=AsyncMock,
-        return_value="# Doc\nContent",
-    ), patch(
-        "knowledge_ingest.routes.ingest.ingest_document",
-        side_effect=_fake_ingest,
+    with (
+        patch(
+            "knowledge_ingest.routes.ingest._get_org_id",
+            new_callable=AsyncMock,
+            return_value="zitadel-org-123",
+        ),
+        patch(
+            "knowledge_ingest.routes.ingest._fetch_gitea_file",
+            new_callable=AsyncMock,
+            return_value="# Doc\nContent",
+        ),
+        patch(
+            "knowledge_ingest.routes.ingest.ingest_document",
+            side_effect=_fake_ingest,
+        ),
     ):
         resp = hmac_client.post(
             "/ingest/v1/webhook/gitea",

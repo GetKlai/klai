@@ -36,6 +36,7 @@ from app.core.system_groups import create_system_groups
 from app.models.portal import PortalOrg, PortalUser
 from app.services.provisioning.generators import _generate_librechat_env, _slugify_unique
 from app.services.provisioning.infrastructure import (
+    _caddy_lock,
     _create_mongodb_tenant_user,
     _reload_caddy,
     _start_librechat_container,
@@ -53,8 +54,11 @@ from app.services.zitadel import zitadel
 
 logger = structlog.get_logger()
 
-# File lock to prevent concurrent tenant caddyfile writes.
-_caddy_lock = asyncio.Lock()
+# Caddy lock moved to infrastructure.py so deprovisioning_steps.py can share the
+# same lock — defining it twice would silently lose the serialisation guarantee.
+# Re-exported here for backward-compat with any external code that imported it
+# from this module historically.
+__all__ = ["_caddy_lock", "provision_tenant"]
 
 
 @dataclass
@@ -331,7 +335,16 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
                     json={
                         "team_id": team_id,
                         "metadata": {"org_id": zitadel_org_id},
-                        "models": ["klai-llm", "klai-fallback"],
+                        # @MX:ANCHOR fan_in=2 LibreChat tenants call klai-primary
+                        # directly; LiteLLM's custom_router may upgrade to
+                        # klai-large (tool calls) or downgrade to klai-fast (web
+                        # search). All three MUST be in scope.
+                        # @MX:REASON: deploy/litellm/config.yaml defines the
+                        # tier ladder klai-primary, klai-fast, klai-medium,
+                        # klai-large + the klai-bge-m3 embeddings model.
+                        # Internal-only aliases (klai-medium, klai-bge-m3)
+                        # are excluded from tenant keys (see platform/litellm.md).
+                        "models": ["klai-primary", "klai-fast", "klai-large"],
                     },
                 )
                 key_resp.raise_for_status()

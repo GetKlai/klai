@@ -6,7 +6,6 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "httpx>=0.27",
-    "python-jose[cryptography]>=3.3",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
     "asyncpg>=0.30",
@@ -20,6 +19,10 @@ dependencies = [
     # the transcription-service error log path so a reflected
     # KNOWLEDGE_INGEST_SECRET / litellm_master_key never lands in VictoriaLogs.
     "klai-log-utils",
+    # SPEC-SEC-IDENTITY-ASSERT-002 REQ-3.4: klai-identity-assert removed.
+    # scribe-api is BFF-only and accepts portal-verified X-Klai-Verified-*
+    # headers gated by X-Internal-Secret. python-jose removed for the same
+    # reason — scribe no longer decodes JWTs locally.
 ]
 
 [tool.uv.sources]

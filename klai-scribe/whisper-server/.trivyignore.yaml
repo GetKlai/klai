@@ -1,0 +1,24 @@
+# Per-service Trivy ignore-list for whisper-server.
+# Schema: SPEC-CI-TRIVY-POLICY-001 REQ-5 (id + ≥40-char statement + expired_at).
+# Referenced from .github/workflows/whisper-server.yml via `trivyignores:`.
+
+vulnerabilities:
+  - id: CVE-2025-68973
+    statement: |
+      gnupg keybox parser out-of-bounds write. PR #411 of
+      SPEC-CI-TRIVY-POLICY-001 added `apt purge -y --auto-remove gnupg
+      gnupg2` to the Dockerfile, which removes most of the gnupg
+      family (gpg, gpg-agent, gpgsm, dirmngr, etc.). However, `gpgv`
+      remains because it's a hard dependency of `apt` itself — apt
+      uses gpgv to verify package signatures during install, so it
+      cannot be auto-removed without breaking apt.
+
+      Exposure analysis: gpgv only runs when apt-get install/update
+      executes against signed repositories. The whisper-server runtime
+      container never runs apt — it runs uvicorn for inference.
+      The vulnerable keybox parser code in gpgv requires being invoked
+      with a malicious keybox file, which has no path in our deployed
+      image (no apt invocation, no keybox file ingest, no user-supplied
+      keys). Re-evaluate when Ubuntu 24.04 ships gpgv ≥ 2.4.4-2ubuntu17.4
+      via Renovate's CUDA base-image bumps.
+    expired_at: 2026-08-01

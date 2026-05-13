@@ -21,6 +21,8 @@ COPY klai-libs/log-utils klai-libs/log-utils
 # `uv sync --frozen --no-dev` does NOT install it. Copying anyway is a
 # small overhead and keeps the workspace consistent for future dev-deps.
 COPY klai-libs/identity-assert klai-libs/identity-assert
+# SPEC-RAG-MULTILINGUAL-CHAT-001 REQ-02: shared chat-prompt constant.
+COPY klai-libs/chat-prompts klai-libs/chat-prompts
 COPY klai-portal/backend/pyproject.toml klai-portal/backend/pyproject.toml
 COPY klai-portal/backend/uv.lock klai-portal/backend/uv.lock
 

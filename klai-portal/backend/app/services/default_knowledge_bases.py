@@ -24,6 +24,60 @@ def personal_kb_slug(user_id: str) -> str:
     return f"personal-{user_id}"
 
 
+async def resolve_personal_kb(caller_id: str, org_id: int, db: AsyncSession) -> PortalKnowledgeBase:
+    """Return the caller's personal KB, creating it as fallback if provisioning missed it.
+
+    Used by the magic-slug ``personal`` shortcut in ``get_kb_with_access``
+    (SPEC-PORTAL-KB-OWNERSHIP-001 REQ-3.1) and by direct API consumers.
+    Idempotent: returns the existing row when present, creates one and
+    commits when missing. The row is locked with ``with_for_update`` to
+    serialise concurrent first-time fallbacks.
+    """
+    slug = personal_kb_slug(caller_id)
+    result = await db.execute(
+        select(PortalKnowledgeBase)
+        .where(PortalKnowledgeBase.org_id == org_id, PortalKnowledgeBase.slug == slug)
+        .with_for_update()
+    )
+    kb = result.scalar_one_or_none()
+    if kb:
+        return kb
+
+    try:
+        kb = await create_default_personal_kb(caller_id, org_id, db)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.exception("fallback_personal_kb_creation_failed", caller_id=caller_id, org_id=org_id)
+        raise
+    return kb
+
+
+async def resolve_org_kb(caller_id: str, org_id: int, db: AsyncSession) -> PortalKnowledgeBase:
+    """Return the org KB, creating it as fallback if provisioning missed it.
+
+    Magic-slug ``org`` shortcut backing ``get_kb_with_access``. Same
+    idempotent + locked pattern as ``resolve_personal_kb``.
+    """
+    result = await db.execute(
+        select(PortalKnowledgeBase)
+        .where(PortalKnowledgeBase.org_id == org_id, PortalKnowledgeBase.slug == "org")
+        .with_for_update()
+    )
+    kb = result.scalar_one_or_none()
+    if kb:
+        return kb
+
+    try:
+        kb = await create_default_org_kb(org_id, created_by=caller_id, db=db)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.exception("fallback_org_kb_creation_failed", org_id=org_id)
+        raise
+    return kb
+
+
 async def create_default_org_kb(
     org_id: int,
     created_by: str,

@@ -7,6 +7,9 @@ package. Both services import from here; neither keeps a local copy.
 
 Public API (all re-exported at package root):
 
+- :class:`KbImage` — single source of truth for KB-image URL + S3-key +
+  FastAPI route shape (SPEC-KB-IMAGES-V2-001 REQ-1). Every klai service
+  that needs to build a kb-image URL imports this class.
 - :class:`ImageStore` — async S3 client with content-addressed keys and
   dedup
 - :class:`ImageUploadResult` — result dataclass returned by
@@ -25,6 +28,7 @@ wire-level contracts — every uploaded image's URL depends on them —
 and consumers should never override them.
 """
 
+from klai_image_storage.kb_image import KbImage
 from klai_image_storage.pipeline import (
     download_and_upload_adapter_images,
     download_and_upload_crawl_images,
@@ -53,6 +57,7 @@ from klai_image_storage.utils import (
 __all__ = [
     "ImageStore",
     "ImageUploadResult",
+    "KbImage",
     "ParsedImage",
     "PinnedResolverTransport",
     "SsrfBlockedError",

@@ -7,16 +7,17 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.security import HTTPAuthorizationCredentials
 from log_utils import verify_shared_secret  # SPEC-SEC-INTERNAL-001 REQ-1.1
 from pydantic import BaseModel
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _get_caller_org, _require_admin, bearer, require_capability
+from app.api.dependencies import _load_org_or_500, get_kb_with_access, require_capability
 from app.core.config import settings
 from app.core.database import get_db, set_tenant
+from app.core.permissions import ProfileRole, UserPermissions, get_caller, get_caller_at_least
+from app.core.profiles import Capability
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg
 from app.models.retrieval_gaps import PortalRetrievalGap
@@ -38,7 +39,6 @@ class TaxonomyNodeOut(BaseModel):
     name: str
     slug: str
     description: str | None = None
-    doc_count: int
     sort_order: int
     created_at: datetime
     created_by: str
@@ -84,6 +84,21 @@ class CreateProposalRequest(BaseModel):
     confidence_score: float | None = None
 
 
+class ApproveProposalRequest(BaseModel):
+    """SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 5: edit-before-approve.
+
+    Operator may override the proposal's title and/or description before the
+    node is created. Both fields are optional; when omitted, the proposal's
+    own ``title`` and ``payload['description']`` are used as before.
+
+    Overrides are persisted into the proposal record (so re-fetch reflects
+    the operator's edit) AND used for the new ``PortalTaxonomyNode``.
+    """
+
+    title: str | None = None
+    description: str | None = None
+
+
 class RejectRequest(BaseModel):
     reason: str
 
@@ -106,7 +121,6 @@ def _node_out(node: PortalTaxonomyNode) -> TaxonomyNodeOut:
         name=node.name,
         slug=node.slug,
         description=node.description,
-        doc_count=node.doc_count,
         sort_order=node.sort_order,
         created_at=node.created_at,
         created_by=node.created_by,
@@ -183,16 +197,15 @@ async def _check_circular_reference(
 @router.get(
     "/{kb_slug}/taxonomy/nodes",
     response_model=TaxonomyNodesResponse,
-    dependencies=[Depends(require_capability("kb.taxonomy"))],
+    dependencies=[Depends(require_capability(Capability.KB_TAXONOMY)), Depends(get_kb_with_access)],
 )
 async def list_taxonomy_nodes(
     kb_slug: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> TaxonomyNodesResponse:
     """List all taxonomy nodes for a KB (flat list, frontend builds tree)."""
-    _, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
 
     result = await db.execute(
         select(PortalTaxonomyNode)
@@ -207,18 +220,18 @@ async def list_taxonomy_nodes(
     "/{kb_slug}/taxonomy/nodes",
     response_model=TaxonomyNodeOut,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_capability("kb.taxonomy"))],
+    dependencies=[Depends(require_capability(Capability.KB_TAXONOMY)), Depends(get_kb_with_access)],
 )
 async def create_taxonomy_node(
     kb_slug: str,
     body: CreateNodeRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> TaxonomyNodeOut:
     """Create a taxonomy node. Requires contributor role."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_role(kb, caller_id, db, "contributor")
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_role(kb, perms.user_id, db, "contributor")
+    org = await _load_org_or_500(db, perms.org_id)
 
     # Validate parent exists if specified
     if body.parent_id is not None:
@@ -236,7 +249,7 @@ async def create_taxonomy_node(
         parent_id=body.parent_id,
         name=body.name.strip(),
         slug=_slugify(body.name),
-        created_by=caller_id,
+        created_by=perms.user_id,
     )
     db.add(node)
     try:
@@ -250,25 +263,26 @@ async def create_taxonomy_node(
 
     await db.refresh(node)  # Pre-commit refresh to load server_default columns while tenant context is still set.
     await db.commit()
+    _invalidate_coverage_cache(org.zitadel_org_id, kb_slug)
     return _node_out(node)
 
 
 @router.patch(
     "/{kb_slug}/taxonomy/nodes/{node_id}",
     response_model=TaxonomyNodeOut,
-    dependencies=[Depends(require_capability("kb.taxonomy"))],
+    dependencies=[Depends(require_capability(Capability.KB_TAXONOMY)), Depends(get_kb_with_access)],
 )
 async def update_taxonomy_node(
     kb_slug: str,
     node_id: int,
     body: UpdateNodeRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> TaxonomyNodeOut:
     """Rename or reparent a taxonomy node. Requires contributor role."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_role(kb, caller_id, db, "contributor")
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_role(kb, perms.user_id, db, "contributor")
+    org = await _load_org_or_500(db, perms.org_id)
 
     result = await db.execute(
         select(PortalTaxonomyNode).where(
@@ -317,24 +331,27 @@ async def update_taxonomy_node(
         ) from exc
 
     # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
+    # SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 2: invalidate cached coverage so the
+    # next GET reflects the rename / reparent / description change.
+    _invalidate_coverage_cache(org.zitadel_org_id, kb_slug)
     return _node_out(node)
 
 
 @router.delete(
     "/{kb_slug}/taxonomy/nodes/{node_id}",
     status_code=status.HTTP_200_OK,
-    dependencies=[Depends(require_capability("kb.taxonomy"))],
+    dependencies=[Depends(require_capability(Capability.KB_TAXONOMY)), Depends(get_kb_with_access)],
 )
 async def delete_taxonomy_node(
     kb_slug: str,
     node_id: int,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Delete a taxonomy node. Reassigns children and docs to parent. Requires owner role."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_role(kb, caller_id, db, "owner")
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_role(kb, perms.user_id, db, "owner")
+    org = await _load_org_or_500(db, perms.org_id)
 
     result = await db.execute(
         select(PortalTaxonomyNode).where(
@@ -356,17 +373,17 @@ async def delete_taxonomy_node(
         .values(parent_id=node.parent_id)
     )
 
-    # Update parent doc_count if parent exists
-    reassigned_docs = node.doc_count
-    if node.parent_id is not None and reassigned_docs > 0:
-        parent_result = await db.execute(select(PortalTaxonomyNode).where(PortalTaxonomyNode.id == node.parent_id))
-        parent = parent_result.scalar_one_or_none()
-        if parent:
-            parent.doc_count += reassigned_docs
-
+    # Document counts are no longer denormalised on portal_taxonomy_nodes
+    # (column dropped in fd9c4a39d14b). Live counts come from Qdrant via the
+    # coverage dashboard. The endpoint still returns reassigned_docs for
+    # backward compatibility with the UI; we report 0 since we no longer
+    # track it server-side.
     await db.delete(node)
     await db.commit()
-    return {"reassigned_docs": reassigned_docs}
+    # SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 2: invalidate coverage cache so
+    # the deleted node disappears from the next GET response.
+    _invalidate_coverage_cache(org.zitadel_org_id, kb_slug)
+    return {"reassigned_docs": 0}
 
 
 # -- Taxonomy proposals -------------------------------------------------------
@@ -375,22 +392,39 @@ async def delete_taxonomy_node(
 @router.get(
     "/{kb_slug}/taxonomy/proposals",
     response_model=ProposalsResponse,
-    dependencies=[Depends(require_capability("kb.taxonomy"))],
+    dependencies=[Depends(require_capability(Capability.KB_TAXONOMY)), Depends(get_kb_with_access)],
 )
 async def list_taxonomy_proposals(
     kb_slug: str,
     proposal_status: str = "pending",
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> ProposalsResponse:
-    """List taxonomy proposals for a KB, filterable by status."""
-    _, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    """List taxonomy proposals for a KB, filterable by status.
+
+    SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 3: ``proposal_status`` accepts:
+    - ``"pending"`` (default — backward compat, only pending proposals)
+    - ``"all"`` (every proposal regardless of status)
+    - ``"pending,approved,rejected"`` comma-separated list
+
+    Sort order: recently-active first. The unified review-list UI relies
+    on this so a freshly-approved proposal stays visible at the top
+    instead of disappearing into history.
+    """
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
 
     query = select(PortalTaxonomyProposal).where(PortalTaxonomyProposal.kb_id == kb.id)
     if proposal_status != "all":
-        query = query.where(PortalTaxonomyProposal.status == proposal_status)
-    query = query.order_by(PortalTaxonomyProposal.created_at.desc())
+        statuses = [s.strip() for s in proposal_status.split(",") if s.strip()]
+        if len(statuses) == 1:
+            query = query.where(PortalTaxonomyProposal.status == statuses[0])
+        else:
+            query = query.where(PortalTaxonomyProposal.status.in_(statuses))
+    # Sort by most-recent activity (reviewed_at if reviewed, else created_at)
+    # so an approved proposal moves to the top of the list rather than being
+    # buried by older pending ones.
+    activity_ts = func.coalesce(PortalTaxonomyProposal.reviewed_at, PortalTaxonomyProposal.created_at)
+    query = query.order_by(activity_ts.desc())
 
     result = await db.execute(query)
     proposals = result.scalars().all()
@@ -581,7 +615,8 @@ async def _execute_merge(
     await db.execute(
         update(PortalTaxonomyNode).where(PortalTaxonomyNode.parent_id == source_id).values(parent_id=target_id)
     )
-    target_node.doc_count += source_node.doc_count
+    # doc_count column dropped (fd9c4a39d14b); merge no longer aggregates a
+    # denormalised counter. Live counts via Qdrant on the coverage dashboard.
     await db.delete(source_node)
 
 
@@ -634,17 +669,35 @@ async def _execute_rename(
 @router.post(
     "/{kb_slug}/taxonomy/proposals/{proposal_id}/approve",
     response_model=ProposalOut,
+    dependencies=[Depends(get_kb_with_access)],
 )
 async def approve_proposal(
     kb_slug: str,
     proposal_id: int,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    body: ApproveProposalRequest | None = None,
+    auto_categorise: bool = True,
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> ProposalOut:
-    """Approve a pending proposal and execute the corresponding action. Requires contributor role."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_role(kb, caller_id, db, "contributor")
+    """Approve a pending proposal and execute the corresponding action.
+
+    Requires contributor role.
+
+    SPEC-TAXONOMY-REVIEW-FLOW-001:
+    - Issue 5: optional ``body`` lets the operator override title/description
+      before the node is created. Persisted into both the proposal record
+      and the new node so re-fetch is consistent.
+    - Issue 4: optional ``auto_categorise=false`` skips the per-approve
+      classification job. Used by the "Apply to knowledge base" batch flow
+      that runs a single backfill at the end instead of N per-approve jobs.
+    - Issue 1: when payload contains ``child_centroids`` (multi-cluster
+      consolidate parent), enqueues N parallel auto_categorise jobs (one
+      per child centroid) under the same node_id. Restores tagging
+      coverage that the diffuse aggregate centroid otherwise misses.
+    """
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_role(kb, perms.user_id, db, "contributor")
+    org = await _load_org_or_500(db, perms.org_id)
 
     result = await db.execute(
         select(PortalTaxonomyProposal).where(
@@ -658,15 +711,33 @@ async def approve_proposal(
     if proposal.status != "pending":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Proposal is not pending")
 
-    _new_node = await _execute_proposal_action(proposal, kb, caller_id, db)
+    # Issue 5: apply edit-before-approve overrides BEFORE _execute_proposal_action
+    # so the new node picks up the operator's edits (and the proposal record
+    # itself reflects them on re-fetch).
+    if body is not None:
+        new_payload = dict(proposal.payload or {})
+        if body.title is not None and body.title.strip():
+            new_title = body.title.strip()
+            proposal.title = new_title
+            new_payload["suggested_name"] = new_title
+            new_payload["name"] = new_title  # _execute_proposal_action reads this
+        if body.description is not None:
+            new_payload["description"] = body.description.strip()
+        proposal.payload = new_payload  # JSONB needs reassignment for SQLAlchemy to detect change
+
+    _new_node = await _execute_proposal_action(proposal, kb, perms.user_id, db)
 
     proposal.status = "approved"
-    proposal.reviewed_by = caller_id
+    proposal.reviewed_by = perms.user_id
     proposal.reviewed_at = datetime.now(tz=UTC)
 
-    # Capture data for post-commit auto-categorise (SPEC-KB-024 R4)
+    # Capture centroid data for post-commit auto-categorise.
+    # Issue 1: prefer child_centroids (multi-centroid path); fall back to
+    # the legacy single cluster_centroid for non-consolidated proposals.
+    _child_centroids_for_autocategorise: list[list[float]] | None = None
     _cluster_centroid_for_autocategorise: list | None = None
     if _new_node is not None:
+        _child_centroids_for_autocategorise = proposal.payload.get("child_centroids")
         _cluster_centroid_for_autocategorise = proposal.payload.get("cluster_centroid")
 
     try:
@@ -680,17 +751,33 @@ async def approve_proposal(
 
     # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
 
-    # R4: trigger auto-categorise via Procrastinate job (SPEC-KB-026 R5)
-    if _new_node is not None and _cluster_centroid_for_autocategorise:
-        # No post-commit refresh: expire_on_commit=False keeps _new_node.id in memory after commit.
+    # Issue 2: invalidate coverage cache so the new node appears in the next
+    # GET /coverage call without a 5-minute wait.
+    if _new_node is not None:
+        _invalidate_coverage_cache(org.zitadel_org_id, kb_slug)
+
+    # Issue 1+4: trigger auto-categorise. When auto_categorise=false (batch
+    # flow), skip — the caller will run a single backfill at the end. When
+    # child_centroids set: enqueue one job per child centroid under the same
+    # node_id (multi-centroid path). Otherwise: legacy single-centroid path.
+    if auto_categorise and _new_node is not None:
         from app.services.knowledge_ingest_client import enqueue_auto_categorise
 
-        await enqueue_auto_categorise(
-            org_id=str(org.zitadel_org_id),
-            kb_slug=kb_slug,
-            node_id=_new_node.id,
-            cluster_centroid=_cluster_centroid_for_autocategorise,
-        )
+        if _child_centroids_for_autocategorise:
+            for centroid in _child_centroids_for_autocategorise:
+                await enqueue_auto_categorise(
+                    org_id=str(org.zitadel_org_id),
+                    kb_slug=kb_slug,
+                    node_id=_new_node.id,
+                    cluster_centroid=centroid,
+                )
+        elif _cluster_centroid_for_autocategorise:
+            await enqueue_auto_categorise(
+                org_id=str(org.zitadel_org_id),
+                kb_slug=kb_slug,
+                node_id=_new_node.id,
+                cluster_centroid=_cluster_centroid_for_autocategorise,
+            )
 
     return _proposal_out(proposal)
 
@@ -698,18 +785,18 @@ async def approve_proposal(
 @router.post(
     "/{kb_slug}/taxonomy/proposals/{proposal_id}/reject",
     response_model=ProposalOut,
+    dependencies=[Depends(get_kb_with_access)],
 )
 async def reject_proposal(
     kb_slug: str,
     proposal_id: int,
     body: RejectRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> ProposalOut:
     """Reject a pending proposal. Requires contributor role."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_role(kb, caller_id, db, "contributor")
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_role(kb, perms.user_id, db, "contributor")
 
     result = await db.execute(
         select(PortalTaxonomyProposal).where(
@@ -724,7 +811,7 @@ async def reject_proposal(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Proposal is not pending")
 
     proposal.status = "rejected"
-    proposal.reviewed_by = caller_id
+    proposal.reviewed_by = perms.user_id
     proposal.reviewed_at = datetime.now(tz=UTC)
     proposal.rejection_reason = body.reason
 
@@ -736,10 +823,10 @@ async def reject_proposal(
 # -- Bootstrap & backfill triggers -------------------------------------------
 
 
-@router.post("/{kb_slug}/taxonomy/bootstrap")
+@router.post("/{kb_slug}/taxonomy/bootstrap", dependencies=[Depends(get_kb_with_access)])
 async def trigger_bootstrap(
     kb_slug: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Trigger taxonomy bootstrap proposal generation. Requires contributor role.
@@ -747,14 +834,15 @@ async def trigger_bootstrap(
     Calls knowledge-ingest to scan existing chunks and propose categories.
     Proposals appear in the review queue once generated.
     """
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_role(kb, caller_id, db, "contributor")
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_role(kb, perms.user_id, db, "contributor")
+    org = await _load_org_or_500(db, perms.org_id)
 
-    # Resolve Zitadel org_id for the ingest service call
-    org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == org.id))
-    portal_org = org_result.scalar_one_or_none()
-    zitadel_org_id = portal_org.zitadel_org_id if portal_org else str(org.id)
+    # _load_org_or_500 fetches the full PortalOrg row so we can use
+    # ``org.zitadel_org_id`` and avoid the silent ``str(org.id)`` fallback
+    # that would leak portal_orgs.id (small int) as zitadel_org_id (BIG string)
+    # downstream — same bug class as SPEC-MCP-AUTH-001 (2026-05-07).
+    zitadel_org_id = org.zitadel_org_id
 
     from app.services.knowledge_ingest_client import trigger_taxonomy_bootstrap
 
@@ -773,10 +861,10 @@ async def trigger_bootstrap(
     return result
 
 
-@router.post("/{kb_slug}/taxonomy/backfill-trigger")
+@router.post("/{kb_slug}/taxonomy/backfill-trigger", dependencies=[Depends(get_kb_with_access)])
 async def trigger_backfill(
     kb_slug: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Trigger taxonomy backfill to tag all existing chunks. Requires contributor role.
@@ -784,13 +872,13 @@ async def trigger_backfill(
     Enqueues a background job in knowledge-ingest that classifies and tags
     all existing chunks with the approved taxonomy nodes.
     """
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_role(kb, caller_id, db, "contributor")
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_role(kb, perms.user_id, db, "contributor")
 
-    org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == org.id))
-    portal_org = org_result.scalar_one_or_none()
-    zitadel_org_id = portal_org.zitadel_org_id if portal_org else str(org.id)
+    # zitadel_org_id is needed for the downstream ingest call; UserPermissions
+    # only carries the integer org_id, so we load the PortalOrg row here.
+    org = await _load_org_or_500(db, perms.org_id)
+    zitadel_org_id = org.zitadel_org_id
 
     from app.services.knowledge_ingest_client import trigger_taxonomy_backfill
 
@@ -809,17 +897,16 @@ async def trigger_backfill(
     return result
 
 
-@router.get("/{kb_slug}/taxonomy/backfill/{job_id}")
+@router.get("/{kb_slug}/taxonomy/backfill/{job_id}", dependencies=[Depends(get_kb_with_access)])
 async def get_backfill_status(
     kb_slug: str,
     job_id: int,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Proxy backfill job status from knowledge-ingest. Requires contributor role."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_role(kb, caller_id, db, "contributor")
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_role(kb, perms.user_id, db, "contributor")
 
     from app.services.knowledge_ingest_client import get_taxonomy_backfill_status
 
@@ -837,6 +924,23 @@ async def get_backfill_status(
 # 5-minute in-memory cache: key = (org_id_str, kb_slug), value = (monotonic_ts, data_dict)
 _coverage_cache: dict[tuple[str, str], tuple[float, dict]] = {}
 _COVERAGE_CACHE_TTL = 300.0  # 5 minutes
+
+
+def _invalidate_coverage_cache(zitadel_org_id: str, kb_slug: str) -> None:
+    """Drop cached coverage response for a KB so subsequent GETs re-compute.
+
+    SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 2: the 5-minute TTL was the only
+    invalidation, so node-edits / approves were invisible until the cache
+    expired. Every taxonomy mutation that affects coverage payload (node
+    create/update/delete, proposal approve, _execute_premerge) MUST call
+    this after its commit.
+    """
+    _coverage_cache.pop((zitadel_org_id, kb_slug), None)
+    # _top_tags_cache key is (org_id, kb_slug, taxonomy_node_id | None) —
+    # invalidate every node-scoped variant for this KB at once.
+    keys_to_drop = [k for k in _top_tags_cache if k[0] == zitadel_org_id and k[1] == kb_slug]
+    for k in keys_to_drop:
+        _top_tags_cache.pop(k, None)
 
 
 class CoverageNodeOut(BaseModel):
@@ -927,10 +1031,10 @@ def _make_coverage_response(
     )
 
 
-@router.get("/{kb_slug}/taxonomy/coverage", response_model=CoverageResponse)
+@router.get("/{kb_slug}/taxonomy/coverage", response_model=CoverageResponse, dependencies=[Depends(get_kb_with_access)])
 async def taxonomy_coverage(
     kb_slug: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> CoverageResponse:
     """Coverage dashboard: per-node chunk counts, gap counts, health status.
@@ -938,16 +1042,12 @@ async def taxonomy_coverage(
     Combines data from knowledge-ingest (Qdrant chunk counts) with portal DB
     (gap counts per taxonomy node). Results cached for 5 minutes.
     """
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
 
-    # Resolve Zitadel org_id for the ingest service call
-    from app.models.portal import PortalOrg
-
-    org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == org.id))
-    portal_org = org_result.scalar_one_or_none()
-    zitadel_org_id = portal_org.zitadel_org_id if portal_org else str(org.id)
+    # zitadel_org_id is needed for the downstream ingest call and cache key;
+    # UserPermissions only carries the integer org_id, so we load the PortalOrg row.
+    org = await _load_org_or_500(db, perms.org_id)
+    zitadel_org_id = org.zitadel_org_id
 
     # Check cache
     cache_key = (zitadel_org_id, kb_slug)
@@ -972,7 +1072,7 @@ async def taxonomy_coverage(
     cutoff = datetime.now(tz=UTC) - timedelta(days=30)
     gaps_result = await db.execute(
         select(PortalRetrievalGap).where(
-            PortalRetrievalGap.org_id == org.id,
+            PortalRetrievalGap.org_id == perms.org_id,
             PortalRetrievalGap.occurred_at >= cutoff,
             PortalRetrievalGap.resolved_at.is_(None),
             PortalRetrievalGap.taxonomy_node_ids.isnot(None),
@@ -1035,12 +1135,12 @@ async def _fetch_ingest_top_tags(org_id: str, kb_slug: str, limit: int, taxonomy
         return None
 
 
-@router.get("/{kb_slug}/taxonomy/top-tags", response_model=TopTagsResponse)
+@router.get("/{kb_slug}/taxonomy/top-tags", response_model=TopTagsResponse, dependencies=[Depends(get_kb_with_access)])
 async def taxonomy_top_tags(
     kb_slug: str,
     limit: int = 20,
     taxonomy_node_id: int | None = None,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> TopTagsResponse:
     """Top tags by frequency across KB chunks. Cached for 5 minutes.
@@ -1048,14 +1148,12 @@ async def taxonomy_top_tags(
     Optionally filter by taxonomy_node_id to get tags within a category.
     Accessible to all KB members (viewer+).
     """
-    _, org, _ = await _get_caller_org(credentials, db)
-    await _get_kb_or_404(kb_slug, org.id, db)
+    await _get_kb_or_404(kb_slug, perms.org_id, db)
 
-    from app.models.portal import PortalOrg
-
-    org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == org.id))
-    portal_org = org_result.scalar_one_or_none()
-    zitadel_org_id = portal_org.zitadel_org_id if portal_org else str(org.id)
+    # zitadel_org_id is needed for the downstream ingest call and cache key;
+    # UserPermissions only carries the integer org_id, so we load the PortalOrg row.
+    org = await _load_org_or_500(db, perms.org_id)
+    zitadel_org_id = org.zitadel_org_id
 
     cache_key = (zitadel_org_id, kb_slug, taxonomy_node_id)
     cached = _top_tags_cache.get(cache_key)

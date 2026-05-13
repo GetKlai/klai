@@ -7,13 +7,14 @@ from typing import Literal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _get_caller_org, bearer, require_capability
+from app.api.dependencies import _load_org_or_500, get_effective_capabilities, get_kb_with_access, require_capability
 from app.core.database import get_db
+from app.core.permissions import UserPermissions, get_caller
+from app.core.profiles import Capability, ProfileRole, check_connector_allowed
 from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.services import knowledge_ingest_client
@@ -66,7 +67,12 @@ router = APIRouter(
     prefix="/api/app/knowledge-bases/{kb_slug}/connectors",
     tags=["connectors"],
     # R-X2 / AC-3: all connector endpoints require the kb.connectors capability.
-    dependencies=[Depends(require_capability("kb.connectors"))],
+    # SPEC-PORTAL-KB-OWNERSHIP-001 REQ-3: firewall personal-KBs of other users
+    # at the router level — every connector route inherits the gate.
+    dependencies=[
+        Depends(require_capability(Capability.KB_CONNECTORS)),
+        Depends(get_kb_with_access),
+    ],
 )
 
 # -- Webcrawler config schema (SPEC-CRAWL-003) --------------------------------
@@ -310,6 +316,15 @@ class ConnectorOut(BaseModel):
     created_by: str
     content_type: str | None
     allowed_assertion_modes: list[str] | None
+    # SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-7 — UI badge signal.
+    # Approximation in the absence of cross-DB join: a web_crawler whose
+    # latest sync ended 'failed' is flagged. The SPEC's stronger predicate
+    # (error_details.reason == 'boilerplate_or_authwall_dominant') requires
+    # querying connector.sync_runs in the klai-connector schema, which
+    # portal-api cannot reach without an HTTP round-trip per connector.
+    # Existing Redcactus connector (id e7fac358-…) currently has
+    # last_sync_status='failed' and IS surfaced by this approximation.
+    needs_reconfiguration: bool = False
 
 
 # -- Helpers ------------------------------------------------------------------
@@ -320,9 +335,18 @@ async def _get_kb_with_owner_check(
     caller_id: str,
     org_id: int,
     db: AsyncSession,
+    *,
+    is_platform_admin: bool = False,
 ) -> PortalKnowledgeBase:
-    """Look up KB by slug + org_id and verify caller has owner role."""
+    """Look up KB by slug + org_id and verify caller has owner role.
+
+    Platform admins bypass the owner check — they can manage any KB in
+    their tenant. This matches the frontend's ``isAdmin`` gate so the UI
+    surfaces the same affordances the backend will accept.
+    """
     kb = await _get_kb_for_org(kb_slug, org_id, db)
+    if is_platform_admin:
+        return kb
     role = await get_user_role_for_kb(kb.id, caller_id, db, kb_created_by=kb.created_by)
     if role != "owner":
         raise HTTPException(
@@ -353,6 +377,16 @@ async def _get_kb_for_org(
     return kb
 
 
+def _compute_needs_reconfiguration(c: PortalConnector) -> bool:
+    """SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-7 — UI signal predicate.
+
+    See ConnectorOut.needs_reconfiguration docstring for the trade-off
+    rationale. This proxy fires for any web_crawler whose most recent
+    sync ended 'failed' (covers AC-9: existing Redcactus connector).
+    """
+    return c.connector_type == "web_crawler" and c.last_sync_status == "failed"
+
+
 def _connector_out(c: PortalConnector) -> ConnectorOut:
     # Mask sensitive fields so they never appear in public API responses
     masked_config = dict(c.config) if c.config else {}
@@ -374,6 +408,7 @@ def _connector_out(c: PortalConnector) -> ConnectorOut:
         created_by=c.created_by,
         content_type=c.content_type,
         allowed_assertion_modes=c.allowed_assertion_modes,
+        needs_reconfiguration=_compute_needs_reconfiguration(c),
     )
 
 
@@ -383,13 +418,24 @@ def _connector_out(c: PortalConnector) -> ConnectorOut:
 @router.get("/", response_model=list[ConnectorOut])
 async def list_connectors(
     kb_slug: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> list[ConnectorOut]:
-    """List connectors for a KB. Any org member with access to the KB can view."""
-    _, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_for_org(kb_slug, org.id, db)
-    result = await db.execute(select(PortalConnector).where(PortalConnector.kb_id == kb.id))
+    """List connectors for a KB. Any org member with access to the KB can view.
+
+    SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-02: connectors in ``state='deleting'``
+    are owned by the procrastinate purge worker and are hidden from every
+    user-facing read-path. They become user-visible again only on the
+    rare admin force-purge recovery flow (REQ-11), which uses a separate
+    endpoint family.
+    """
+    kb = await _get_kb_for_org(kb_slug, perms.org_id, db)
+    result = await db.execute(
+        select(PortalConnector).where(
+            PortalConnector.kb_id == kb.id,
+            PortalConnector.state == "active",
+        )
+    )
     return [_connector_out(c) for c in result.scalars().all()]
 
 
@@ -397,12 +443,39 @@ async def list_connectors(
 async def create_connector(
     kb_slug: str,
     body: ConnectorCreateRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> ConnectorOut:
     """Create a connector for a KB. Requires contributor access."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_with_owner_check(kb_slug, caller_id, org.id, db)
+    # Resolve KB once — REQ-7 needs ``owner_type`` BEFORE other validation so
+    # a personal caller gets the explicit ``org_kb_write_requires_company``
+    # error_code instead of a downstream message.
+    kb = await _get_kb_with_owner_check(
+        kb_slug, perms.user_id, perms.org_id, db, is_platform_admin=perms.is_platform_admin
+    )
+
+    # REQ-7: personal effective_role MUST NOT create connectors on org-owned KBs.
+    if kb.owner_type == "org" and perms.effective_role == ProfileRole.PERSONAL:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error_code": "org_kb_write_requires_company"},
+        )
+
+    # REQ-3: personal/company roles may only use url/upload connector types
+    check_connector_allowed(perms, body.connector_type)
+    # G1: Plan-ceiling on external connectors. The role-level check above already
+    # blocks personal/company. For roles that pass (kb_manager+), ensure the org
+    # plan also permits external connectors.
+    if body.connector_type not in {"url", "upload"}:
+        caps = await get_effective_capabilities(perms.user_id, db)
+        if "kb.connectors.external" not in caps:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error_code": "external_connectors_require_complete_plan",
+                    "plan": perms.plan,
+                },
+            )
     resolved_content_type = body.content_type or CONTENT_TYPE_DEFAULTS.get(body.connector_type, "unknown")
     if body.allowed_assertion_modes is not None:
         invalid = set(body.allowed_assertion_modes) - VALID_ASSERTION_MODES
@@ -425,14 +498,14 @@ async def create_connector(
     encrypted_blob = None
     if credential_store is not None:
         encrypted_blob, config_to_store = await credential_store.encrypt_credentials(
-            org_id=org.id,
+            org_id=perms.org_id,
             connector_type=body.connector_type,
             config=config_for_save,
             db=db,
         )
     connector = PortalConnector(
         kb_id=kb.id,
-        org_id=org.id,
+        org_id=perms.org_id,
         name=body.name,
         connector_type=body.connector_type,
         config=config_to_store,
@@ -440,7 +513,7 @@ async def create_connector(
         content_type=resolved_content_type,
         allowed_assertion_modes=body.allowed_assertion_modes,
         encrypted_credentials=encrypted_blob,
-        created_by=caller_id,
+        created_by=perms.user_id,
     )
     db.add(connector)
     await db.commit()
@@ -453,16 +526,22 @@ async def update_connector(
     kb_slug: str,
     connector_id: str,
     body: ConnectorUpdateRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> ConnectorOut:
-    """Update a connector. Requires contributor access."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_with_owner_check(kb_slug, caller_id, org.id, db)
+    """Update a connector. Requires contributor access.
+
+    REQ-02: rows in ``state='deleting'`` are not editable (return 404 to
+    avoid leaking lifecycle state).
+    """
+    kb = await _get_kb_with_owner_check(
+        kb_slug, perms.user_id, perms.org_id, db, is_platform_admin=perms.is_platform_admin
+    )
     result = await db.execute(
         select(PortalConnector).where(
             PortalConnector.id == connector_id,
             PortalConnector.kb_id == kb.id,
+            PortalConnector.state == "active",
         )
     )
     connector = result.scalar_one_or_none()
@@ -482,7 +561,7 @@ async def update_connector(
         config_for_save = await _auto_fill_canary_fingerprint(validated_config)
         if credential_store is not None:
             encrypted_blob, stripped_config = await credential_store.encrypt_credentials(
-                org_id=org.id,
+                org_id=perms.org_id,
                 connector_type=connector.connector_type,
                 config=config_for_save,
                 db=db,
@@ -515,16 +594,44 @@ async def update_connector(
 async def delete_connector(
     kb_slug: str,
     connector_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Delete a connector. Requires contributor access."""
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_with_owner_check(kb_slug, caller_id, org.id, db)
+    """Schedule a connector for asynchronous purge. Returns 204 immediately.
+
+    SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-03. Behaviour:
+
+      1. Fetch the connector (must be ``state='active'``; otherwise 404).
+      2. UPDATE state to ``'deleting'`` and commit. From this point on
+         the row is hidden from every read-path (REQ-02). Sync-trigger
+         calls return 409, list/get return 404.
+      3. POST to knowledge-ingest ``/ingest/v1/connector/purge`` which
+         defers a procrastinate task and returns 202.
+      4. Procrastinate worker drives ``connector_cleanup.purge_connector``
+         (cancel-jobs + multi-store delete) and finally calls back to
+         ``POST /api/internal/connectors/{id}/finalize-delete`` to
+         hard-delete the row.
+
+    Returns 204 No Content (preserved from pre-SPEC) — the cascade is
+    asynchronous but to the client the connector is gone immediately
+    (read-paths hide it). Frontend semantics unchanged.
+
+    Idempotent: a second DELETE on a connector already in ``'deleting'``
+    returns 404 (the user-facing semantics — "already gone").
+
+    Failure rollback: if the enqueue HTTPS call to knowledge-ingest fails
+    we revert the state back to ``'active'`` so the user can retry. The
+    procrastinate-task itself has its own retry budget once enqueued.
+    """
+    kb = await _get_kb_with_owner_check(
+        kb_slug, perms.user_id, perms.org_id, db, is_platform_admin=perms.is_platform_admin
+    )
+    # REQ-02: only ``state='active'`` rows are addressable by user routes.
     result = await db.execute(
         select(PortalConnector).where(
             PortalConnector.id == connector_id,
             PortalConnector.kb_id == kb.id,
+            PortalConnector.state == "active",
         )
     )
     connector = result.scalar_one_or_none()
@@ -533,22 +640,52 @@ async def delete_connector(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Connector not found",
         )
-    # Clean up all ingested data before removing the DB record.
-    # Raises on failure — keeps portal and ingest consistent (no orphaned data).
-    await knowledge_ingest_client.delete_connector(
-        org_id=org.zitadel_org_id,
-        kb_slug=kb.slug,
-        connector_id=str(connector.id),
-    )
-    await db.delete(connector)
+
+    # REQ-03.1.2: flip state and commit BEFORE the HTTP enqueue so that
+    # even if the enqueue races with another DELETE click the second one
+    # observes ``state='deleting'`` and short-circuits to 404.
+    connector.state = "deleting"
     await db.commit()
+
+    # Org load defers until we actually need ``zitadel_org_id`` for the
+    # downstream HTTP call — keeps the 404 path cheap and avoids a 500
+    # when the connector lookup short-circuits.
+    org = await _load_org_or_500(db, perms.org_id)
+
+    # REQ-03.1.3: enqueue async purge. On failure: revert state.
+    try:
+        await knowledge_ingest_client.enqueue_connector_purge(
+            org_id=org.zitadel_org_id,
+            kb_slug=kb.slug,
+            connector_id=str(connector.id),
+        )
+    except Exception as exc:
+        # Best-effort rollback so the user can retry.
+        logger.exception(
+            "connector_purge_enqueue_failed; rolling back state",
+            extra={"connector_id": str(connector.id)},
+        )
+        connector.state = "active"
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not schedule connector purge; please retry.",
+        ) from exc
+
+    # 204 No Content — body intentionally absent.
+    return None
+
+
+# Note: the compensating ``POST /api/internal/connectors/{id}/finalize-delete``
+# endpoint that the knowledge-ingest worker calls back to is registered in
+# ``app/api/internal_connectors.py`` (X-Internal-Secret auth, separate router).
 
 
 @router.post("/{connector_id}/sync", response_model=SyncRunData, status_code=status.HTTP_202_ACCEPTED)
 async def trigger_sync(
     kb_slug: str,
     connector_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> SyncRunData:
     """Trigger an on-demand sync for a connector. Requires owner access.
@@ -556,12 +693,19 @@ async def trigger_sync(
     Delegates to klai-connector execution service. Returns 202 with the new
     SyncRun immediately; sync runs in the background.
     """
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_with_owner_check(kb_slug, caller_id, org.id, db)
+    org = await _load_org_or_500(db, perms.org_id)
+    kb = await _get_kb_with_owner_check(
+        kb_slug, perms.user_id, perms.org_id, db, is_platform_admin=perms.is_platform_admin
+    )
+    # REQ-02.3: rows in 'deleting' state are owned by the purge worker.
+    # Trigger-sync would race the cleanup; reject with 404 (do not leak
+    # the lifecycle state via 409 — see "never leak existence" in
+    # portal-security.md).
     result = await db.execute(
         select(PortalConnector).where(
             PortalConnector.id == connector_id,
             PortalConnector.kb_id == kb.id,
+            PortalConnector.state == "active",
         )
     )
     connector = result.scalar_one_or_none()
@@ -573,7 +717,7 @@ async def trigger_sync(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Sync already running")
 
     # R-E2: enforce per-KB item quota before triggering ingest.
-    await assert_can_add_item_to_kb(kb=kb, org=org)
+    await assert_can_add_item_to_kb(kb=kb, org=org, role=perms.role)
 
     try:
         # SPEC-SEC-TENANT-001 REQ-8.2: pass the authenticated session's
@@ -598,8 +742,8 @@ async def trigger_sync(
     await db.commit()
     emit_event(
         "knowledge.uploaded",
-        org_id=org.id,
-        user_id=caller_id,
+        org_id=perms.org_id,
+        user_id=perms.user_id,
         properties={"scope": "org", "file_type": connector.connector_type},
     )
     return sync_run
@@ -610,15 +754,15 @@ async def list_sync_runs(
     kb_slug: str,
     connector_id: str,
     limit: int = 20,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> list[SyncRunData]:
     """List sync history for a connector (most recent first).
 
     Proxies to klai-connector execution service.
     """
-    _, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_for_org(kb_slug, org.id, db)
+    org = await _load_org_or_500(db, perms.org_id)
+    kb = await _get_kb_for_org(kb_slug, perms.org_id, db)
     exists = await db.execute(
         select(PortalConnector.id).where(
             PortalConnector.id == connector_id,

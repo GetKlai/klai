@@ -1,0 +1,26 @@
+suite: _sample
+description: Three-query sample suite for TDD. Used by test_ragas_runner_integration.py.
+queries:
+  - id: sample-bubble-1
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Hoe troubleshoot ik Bubble?"
+    expected_topics:
+      - bubble
+      - browser-plugin
+    expected_chunks:
+      - "Bubble troubleshoot"
+  - id: sample-uitportering-1
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Wat is de procedure voor uitportering?"
+    expected_topics:
+      - uitportering
+      - customer-service
+  - id: sample-voicemail-1
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Hoe stel ik een voicemail in?"
+    expected_topics:
+      - voicemail
+      - telefonie

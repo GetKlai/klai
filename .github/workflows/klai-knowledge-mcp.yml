@@ -28,7 +28,53 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  quality:
+    # Mirrors the portal-api quality job: lint, format-check, type-check,
+    # pip-audit, then tests. Build + image scan only run when this is green.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: klai-knowledge-mcp
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies (incl. dev extras)
+        # `uv sync` resolves the path-deps `klai-identity-assert` and
+        # `klai-log-utils` from ../klai-libs/ — same pattern as the runtime
+        # Dockerfile uses for editable installs.
+        run: uv sync --extra dev
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Format check (ruff)
+        run: uv run ruff format --check .
+
+      - name: Type check (pyright)
+        run: uv run --with pyright pyright
+
+      # Issue #422 follow-up to PR #421: pip-audit wired as a hard gate.
+      # The three CVEs that originally blocked this step (CVE-2026-39892
+      # cryptography, CVE-2026-4539 pygments, CVE-2026-40347 python-multipart)
+      # were all resolved via `uv lock --upgrade-package` — no
+      # `--ignore-vuln` flags needed. Mirrors the portal-api pattern:
+      # pip-audit runs against the locked, fully-resolved dep tree before
+      # pytest, so a regression in any direct or transitive package
+      # surfaces here before tests. If a future CVE has no fix available,
+      # add `--ignore-vuln <id>` with rationale comment, mirroring
+      # portal-api.yml lines 73-74.
+      - name: Dependency vulnerability scan (pip-audit)
+        run: uv run --with pip-audit pip-audit
+
+      - name: Test (pytest)
+        run: uv run pytest -q --tb=short
+
   build-push:
+    needs: quality
     runs-on: ubuntu-latest
 
     steps:
@@ -92,7 +138,8 @@ jobs:
             source /opt/klai/.env
             echo "$GHCR_READ_PAT" | docker login ghcr.io -u mvletter --password-stdin
             docker pull ghcr.io/getklai/klai-knowledge-mcp:latest
-            cd /opt/klai && docker compose up -d klai-knowledge-mcp
+            # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3
+            /opt/klai/scripts/compose-up.sh klai-knowledge-mcp
 
   scan:
     needs: build-push
@@ -102,6 +149,10 @@ jobs:
       security-events: write
       packages: read
     steps:
+      # Checkout is required so trivy-action can find .trivy.yaml + the
+      # service's .trivyignore.yaml (paths are relative to repo root).
+      - uses: actions/checkout@v6
+
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
@@ -109,16 +160,32 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.35.0
+      # STRICT-tier scan per SPEC-CI-TRIVY-POLICY-001 (REQ-2).
+      #
+      # Direct CLI invocation bypasses an aquasecurity/trivy-action
+      # bug (0.35.0/0.36.0): with `format: sarif` the `severity` filter
+      # is honoured for the SARIF body but NOT for the exit-code, so
+      # a MEDIUM/LOW finding triggers exit-code 1 even when we asked
+      # for CRITICAL+HIGH gating. trivy CLI's `--severity` flag is
+      # honoured for both detection AND exit-code. .trivy.yaml stays
+      # in the repo as the canonical policy reference until the
+      # action lands proper config-file precedence.
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@e6c2c5e321ed9123bda567646e2f96565e34abe1  # v0.2.5
         with:
-          image-ref: ghcr.io/getklai/klai-knowledge-mcp:${{ github.sha }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH'
-          ignore-unfixed: true
-          exit-code: '0'
+          version: v0.69.3
+          cache: true
 
+      - name: Run Trivy vulnerability scanner
+        run: |
+          trivy image \
+            --format sarif \
+            --output trivy-results.sarif \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --scanners vuln \
+            --exit-code 1 \
+            ghcr.io/getklai/klai-knowledge-mcp:${{ github.sha }}
       - name: Upload Trivy SARIF to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v4
         if: always()

@@ -55,7 +55,13 @@ export function Sidebar({ navItems }: SidebarProps) {
         collapsed ? 'justify-center' : 'justify-between px-6'
       )}>
         {!collapsed && (
-          <img src="/klai-logo.svg" alt="Klai" className="h-[18px] w-auto block" />
+          <Link
+            to={inAdmin ? '/admin' : '/app'}
+            aria-label={inAdmin ? 'Admin home' : 'App home'}
+            className="inline-flex items-center transition-opacity hover:opacity-70"
+          >
+            <img src="/klai-logo.svg" alt="Klai" className="h-[18px] w-auto block" />
+          </Link>
         )}
         <button
           onClick={toggle}

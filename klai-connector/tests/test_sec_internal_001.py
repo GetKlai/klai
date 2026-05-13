@@ -19,11 +19,18 @@ _VALID_SETTINGS_KWARGS: dict[str, str] = {
     "zitadel_client_secret": "test-zitadel-secret-12345",
     "github_app_id": "12345",
     "github_app_private_key": "-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----",
-    "encryption_key": "0" * 64,
+    # Base64 of 32 zero bytes -- valid AES-256 KEK shape required by the
+    # encryption_key validator added 2026-05-04.
+    "encryption_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
     "knowledge_ingest_url": "http://knowledge-ingest:8000",
     # The two fields under test default to "" and require fail-closed validators.
     "knowledge_ingest_secret": "test-ingest-secret-12345",
     "portal_internal_secret": "test-portal-secret-12345",
+    # SPEC-SEC-AUDIT-2026-04 B2: audience is now mandatory (model_validator).
+    "zitadel_api_audience": "klai-connector-test-audience",
+    # SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-11: portal_caller_secret is now
+    # also fail-closed validated (inbound from portal-api).
+    "portal_caller_secret": "test-caller-secret-12345",
 }
 
 
@@ -134,10 +141,7 @@ class TestErrorDetailsSanitization:
 
         # Mimic an enqueue_err.response with an upstream body that
         # accidentally reflects the connector's outbound secret.
-        leaked_body = (
-            "Internal server error: invalid X-Internal-Secret "
-            "secret-knowledge-ingest-12345 -- denied"
-        )
+        leaked_body = "Internal server error: invalid X-Internal-Secret secret-knowledge-ingest-12345 -- denied"
         fake_response = SimpleNamespace(text=leaked_body)
         fake_exc = SimpleNamespace(response=fake_response)
 

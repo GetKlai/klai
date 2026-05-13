@@ -1,0 +1,55 @@
+# SPEC-INGEST-RECONCILE-001 Fix 4 / AC-12 — block reintroduction of the
+# unbounded ``asyncio.gather`` supplement loop on ``crawl_page`` calls.
+#
+# Why: the old supplement loop in ``crawl4ai_client.crawl_site`` fanned out
+# 167 parallel ``crawl_page`` calls without a Semaphore, overwhelming the
+# crawl4ai Playwright pool and dropping ~80% of pages with mass timeouts —
+# AND with ``return_exceptions=True`` swallowing every individual outcome
+# so the operator saw ``crawl_jobs.pages_total`` shrink silently from 208
+# to 41 (Bug A on help.voys.nl, 2026-05-06).
+#
+# This is the third recurrence of the same anti-pattern at Klai (see
+# SPEC-CRAWLER-005, SPEC-CRAWLER-006). Mechanical guard, not code review,
+# per pitfalls/process-rules.md::adversarial-at-high-confidence.
+#
+# A new place that legitimately needs unbounded gather of ``crawl_page``
+# must add a surrounding ``asyncio.Semaphore`` context (which serialises
+# the gather behind the semaphore acquire) — or explicitly suppress this
+# rule with ``# nosgrep: no-unbounded-gather-crawl-page  # <reason>``.
+
+id: no-unbounded-gather-crawl-page
+language: python
+severity: error
+message: |
+  Unbounded ``asyncio.gather`` over ``crawl_page`` is forbidden
+  (SPEC-INGEST-RECONCILE-001 Fix 4). The supplement loop this guards
+  against silently dropped 80% of pages on help.voys.nl (Bug A).
+
+  Fix: use ``crawl_site``'s bulk-/crawl path, or wrap each ``crawl_page``
+  in an ``asyncio.Semaphore`` (or async-pool primitive) and DO NOT pass
+  ``return_exceptions=True`` without a per-result outcome handler.
+
+  See: rules/no-unbounded-gather-crawl-page.yml
+
+# Pattern matches ``asyncio.gather`` calls whose positional argument is a
+# splatted list/generator-comprehension over ``crawl_page(...)`` calls.
+# The ``$$$REST`` tail allows trailing kwargs like ``return_exceptions=True``
+# (which the legacy supplement loop used to swallow individual outcomes —
+# the worst part of the bug). Without ``$$$REST`` ast-grep matches only
+# the no-extra-args form and misses the historical pattern.
+rule:
+  any:
+    - pattern: asyncio.gather(*[crawl_page($$$ARGS) for $X in $ITER], $$$REST)
+    - pattern: asyncio.gather(*(crawl_page($$$ARGS) for $X in $ITER), $$$REST)
+    - pattern: asyncio.gather(*[crawl_page($$$ARGS) for $X in $ITER])
+    - pattern: asyncio.gather(*(crawl_page($$$ARGS) for $X in $ITER))
+
+# No ``files:`` allow-list. The pattern (``asyncio.gather`` over
+# ``crawl_page(...)``) is unique enough that scoping by path adds nothing —
+# ``crawl_page`` is only imported in ``klai-knowledge-ingest``. Ast-grep
+# 0.42 evaluates ``files:`` against the workspace-relative path, and
+# narrow patterns (single specific file paths) silently exclude rule
+# fixtures under ``rules/tests/fixtures/`` even when scanned directly.
+# Empirically validated:
+# ``rules/tests/test_no_unbounded_gather_crawl_page_lint.py`` passes
+# without ``files:`` and would fail with it.

@@ -1,11 +1,15 @@
 """
-Portal API client for taxonomy operations.
+Portal API client for taxonomy + connector lifecycle operations.
 
 - fetch_taxonomy_nodes: cached (5 min) per (org_id, kb_slug)
 - submit_taxonomy_proposal: POST proposal to portal review queue
+- finalize_connector_delete: SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-04.4 —
+  invoked at the end of ``purge_connector`` so the portal hard-deletes the
+  ``portal_connectors`` row that has been in ``state='deleting'``.
 
 Missing PORTAL_INTERNAL_TOKEN → returns empty list / skips submission with warning.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -33,6 +37,20 @@ class TaxonomyProposal:
     sample_titles: list[str]
     description: str = ""
     cluster_centroid: list[float] | None = None
+    # SPEC-TAXONOMY-MERGE-DETECT-001: when a parent-proposal results from
+    # consolidating multiple base clusters, list the original base cluster
+    # names here for operator transparency. None for non-consolidated
+    # (single-cluster) proposals.
+    child_cluster_names: list[str] | None = None
+    # SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 1: per-child centroids for
+    # multi-cluster parent proposals. The aggregate cluster_centroid
+    # (doc-count-weighted mean) is too diffuse for the 0.82 auto-categorise
+    # threshold — chunks tight against ANY child cluster fail the parent
+    # match. Storing each child's tight centroid lets approve_proposal
+    # enqueue N parallel auto-categorise jobs (one per child centroid)
+    # under the same node_id, restoring full coverage. None for non-
+    # consolidated proposals (legacy single-centroid path).
+    child_centroids: list[list[float]] | None = None
 
 
 async def fetch_taxonomy_nodes(kb_slug: str, org_id: str) -> list[TaxonomyNode]:
@@ -125,6 +143,8 @@ async def submit_taxonomy_proposal(
                         "sample_titles": proposal.sample_titles[:5],
                         "description": proposal.description,
                         "cluster_centroid": proposal.cluster_centroid,
+                        "child_cluster_names": proposal.child_cluster_names,
+                        "child_centroids": proposal.child_centroids,
                     },
                 },
             )
@@ -140,6 +160,78 @@ async def submit_taxonomy_proposal(
             kb_slug=kb_slug,
             error=str(exc),
         )
+
+
+async def fetch_kb_metadata(kb_slug: str, org_id: str) -> dict | None:
+    """Fetch KB metadata (description) from portal-api.
+
+    Best-effort — returns None on any error.
+
+    SPEC-TAXONOMY-V2-001 AC-5: provides kb.description for the LLM naming prompt.
+    Returns None when PORTAL_INTERNAL_TOKEN is missing or portal is unreachable.
+    Bootstrap continues with empty description in that case.
+    """
+    if not settings.portal_internal_token:
+        return None
+
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(
+                f"{settings.portal_url}/internal/knowledge-bases/{kb_slug}/metadata",
+                headers={"Authorization": f"Bearer {settings.portal_internal_token}"},
+                params={"zitadel_org_id": org_id},
+            )
+            if resp.status_code == 404:
+                return None
+            if resp.status_code != 200:
+                logger.warning(
+                    "kb_metadata_fetch_failed",
+                    kb_slug=kb_slug,
+                    status=resp.status_code,
+                )
+                return None
+            return resp.json()
+    except Exception as exc:
+        logger.warning(
+            "kb_metadata_fetch_error",
+            kb_slug=kb_slug,
+            error=str(exc),
+        )
+        return None
+
+
+async def finalize_connector_delete(connector_id: str) -> None:
+    """Tell the portal to hard-delete a connector row that we just purged.
+
+    SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-04.4. Called by the
+    ``connector_purge_task`` after ``purge_connector`` finishes so the
+    portal can drop the row that has been sitting in ``state='deleting'``
+    while we did the cascade.
+
+    Idempotent on the portal side: the endpoint accepts both an existing
+    ``deleting`` row (does the DELETE) and an already-gone row (returns
+    204). That makes worker-task retries safe — re-run after a partial
+    success is harmless.
+
+    Raises on HTTP error so procrastinate retry kicks in.
+    """
+    if not settings.portal_internal_token:
+        logger.error(
+            "finalize_connector_delete_skipped",
+            reason="missing PORTAL_INTERNAL_TOKEN",
+            connector_id=connector_id,
+        )
+        # Raise so the task fails and is retried — the row staying in
+        # ``state='deleting'`` is exactly the recoverable case the admin
+        # endpoint is designed for.
+        raise RuntimeError("PORTAL_INTERNAL_TOKEN missing — cannot finalize")
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(
+            f"{settings.portal_url}/api/internal/connectors/{connector_id}/finalize-delete",
+            headers={"Authorization": f"Bearer {settings.portal_internal_token}"},
+        )
+        resp.raise_for_status()
 
 
 def invalidate_cache(org_id: str, kb_slug: str) -> None:

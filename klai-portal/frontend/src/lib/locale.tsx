@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { setLocale as paraglideSetLocale } from '@/paraglide/runtime'
 import { STORAGE_KEYS } from '@/lib/storage'
 
@@ -39,6 +39,15 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
     void paraglideSetLocale(initial)
     return initial
   })
+
+  // Keep <html lang> in sync with the active UI locale. The static
+  // `lang="en"` in index.html stays put after a switchLocale() unless
+  // we mirror it here — which leaves screen-readers and SEO crawlers
+  // reading English-tagged content while the UI renders Dutch.
+  // Discovered during 2026-05-03 e2e walkthrough on voys.getklai.com.
+  useEffect(() => {
+    document.documentElement.lang = locale
+  }, [locale])
 
   function switchLocale(l: Locale) {
     void paraglideSetLocale(l)

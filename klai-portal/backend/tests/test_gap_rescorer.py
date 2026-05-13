@@ -52,7 +52,8 @@ async def test_rescore_marks_resolved_when_no_longer_gap() -> None:
         patch("app.services.gap_rescorer.httpx.AsyncClient") as mock_client_cls,
     ):
         mock_settings.knowledge_retrieve_url = "http://test-retrieve:8000"
-        mock_settings.internal_secret = "test-secret"
+        mock_settings.internal_secret = "fallback-secret"
+        mock_settings.retrieval_api_internal_secret = "retrieval-test-secret"
         mock_settings.klai_gap_soft_threshold = 0.4
         mock_settings.klai_gap_dense_threshold = 0.35
 
@@ -66,6 +67,29 @@ async def test_rescore_marks_resolved_when_no_longer_gap() -> None:
     assert result == 1
     # Should have committed to persist resolved_at updates
     mock_db.commit.assert_called_once()
+
+    # Regression-guard for SPEC-SEC-IDENTITY-ASSERT-001 silent-degradation:
+    # the /retrieve call MUST send X-Caller-Service or retrieval-api 400s.
+    post_headers = mock_client.post.call_args.kwargs["headers"]
+    assert post_headers.get("X-Caller-Service") == "portal-api", (
+        "X-Caller-Service header missing — would silently 400 in prod. "
+        "See pitfalls/process-rules.md → retrieve-caller-service-header-mismatch."
+    )
+
+    # Regression-guard for F1 (audit retrieval-coupling-2026-05-06):
+    # retrieval-api's AuthMiddleware treats `Authorization: Bearer ...`
+    # strictly as a JWT — non-JWT shared secrets fail with 401
+    # `invalid_jwt_signature`. There is NO fallback to X-Internal-Secret
+    # when Bearer is taken. So gap_rescorer MUST use X-Internal-Secret.
+    assert post_headers.get("X-Internal-Secret") == "retrieval-test-secret", (
+        "X-Internal-Secret header missing or wrong value — would 401 in prod. "
+        "See .moai/audits/retrieval-coupling-2026-05-06/findings/F1-...md."
+    )
+    assert "Authorization" not in post_headers, (
+        "Authorization header MUST NOT be set on retrieval-api calls — the "
+        "Bearer arm of AuthMiddleware tries JWT decode and would 401 a "
+        "shared-secret value. F1 regression guard."
+    )
 
 
 @pytest.mark.asyncio
@@ -216,6 +240,52 @@ async def test_rescore_skips_on_retrieval_error() -> None:
 
     assert result == 0
     mock_db.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_rescore_falls_back_to_internal_secret_when_split_secret_unset() -> None:
+    """When retrieval_api_internal_secret is empty, falls back to internal_secret.
+
+    Backwards compatibility for envs that haven't split the secret yet.
+    """
+    from app.services.gap_rescorer import rescore_open_gaps
+
+    mock_row = MagicMock()
+    mock_row.query_text = "fallback test"
+    mock_row.gap_type = "soft"
+
+    mock_result = MagicMock()
+    mock_result.all.return_value = [mock_row]
+
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(side_effect=[MagicMock(), mock_result, MagicMock()])
+    mock_db.commit = AsyncMock()
+
+    mock_response = MagicMock()
+    mock_response.is_success = True
+    mock_response.json.return_value = {"chunks": [{"reranker_score": 0.8}]}
+
+    with (
+        patch("app.services.gap_rescorer.settings") as mock_settings,
+        patch("app.services.gap_rescorer.httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_settings.knowledge_retrieve_url = "http://test-retrieve:8000"
+        mock_settings.internal_secret = "shared-fallback"
+        mock_settings.retrieval_api_internal_secret = ""  # not yet rotated
+        mock_settings.klai_gap_soft_threshold = 0.4
+        mock_settings.klai_gap_dense_threshold = 0.35
+
+        mock_client = AsyncMock()
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        await rescore_open_gaps(org_id=1, zitadel_org_id="z1", kb_slug="test-kb", db=mock_db)
+
+    post_headers = mock_client.post.call_args.kwargs["headers"]
+    assert post_headers.get("X-Internal-Secret") == "shared-fallback", (
+        "Should fall back to internal_secret when split secret is empty"
+    )
 
 
 @pytest.mark.asyncio

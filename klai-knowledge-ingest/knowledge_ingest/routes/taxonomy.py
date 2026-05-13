@@ -40,7 +40,7 @@ from knowledge_ingest.config import settings  # noqa: E402
 from knowledge_ingest.portal_client import fetch_taxonomy_nodes  # noqa: E402
 from knowledge_ingest.proposal_generator import (  # noqa: E402
     DocumentSummary,
-    generate_bootstrap_proposals,
+    generate_bootstrap_proposals_v2,
 )
 from knowledge_ingest.taxonomy_classifier import classify_document  # noqa: E402
 
@@ -76,20 +76,13 @@ class BootstrapRequest(BaseModel):
 class BootstrapResponse(BaseModel):
     documents_scanned: int
     proposals_submitted: int
-
-
-def _verify_internal_token(request: Request) -> None:
-    """Verify X-Internal-Token header.
-
-    SEC-014: fail-closed. Empty/missing PORTAL_INTERNAL_TOKEN is caught at
-    startup by the pydantic validator in knowledge_ingest.config — here the
-    only failure mode is a wrong or absent header, which always returns 401.
-    """
-    import hmac
-
-    token = request.headers.get("x-internal-token", "")
-    if not token or not hmac.compare_digest(token, settings.portal_internal_token):
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    clusters_found: int | None = None
+    # SPEC-TAXONOMY-MERGE-DETECT-001: when consolidate ran, clusters_found
+    # equals the post-consolidate parent count and base_clusters_found
+    # equals the pre-consolidate base count. When consolidate was skipped
+    # or fell back, base_clusters_found equals clusters_found.
+    base_clusters_found: int | None = None
+    reason: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -228,14 +221,25 @@ async def taxonomy_bootstrap_proposals(
 ) -> BootstrapResponse:
     """Scan existing Qdrant chunks and generate bootstrap taxonomy proposals.
 
-    Reads existing chunks for this KB, groups by document, sends up to 50 document
-    summaries to klai-fast which identifies 3-8 logical top-level categories,
-    then submits one proposal per category to the portal review queue.
+    SPEC-TAXONOMY-V2-001: Clio-style density-driven path that:
+    - Samples ALL documents (not just first 50)
+    - Uses HDBSCAN clustering to determine category count
+    - Names each cluster with a focused LLM call (batched cross-cluster aware,
+      with per-cluster fallback). Naming criteria are shared across the two
+      strategies via ``proposal_generator._NAMING_CRITERIA``.
 
     Use this to bootstrap a KB taxonomy from scratch when no nodes exist yet.
     After accepting proposals in the portal, run /backfill to tag all chunks.
+
+    The V1 single-shot fallback (LLM doing both clustering and naming) was
+    deleted in SPEC-TAXONOMY-V2-CONSOLIDATION-001 — V2 had been the default
+    in production since PR #408 and the fallback path was never re-enabled.
     """
-    client = AsyncQdrantClient(
+    import numpy as np
+
+    from knowledge_ingest.portal_client import fetch_kb_metadata
+
+    qdrant_client = AsyncQdrantClient(
         url=settings.qdrant_url,
         api_key=settings.qdrant_api_key or None,
     )
@@ -247,68 +251,85 @@ async def taxonomy_bootstrap_proposals(
         ]
     )
 
-    # Scroll chunks, one per artifact_id (we only need the first chunk per document)
-    seen_artifacts: set[str] = set()
-    documents: list[DocumentSummary] = []
-    offset = None
+    # Fetch existing taxonomy nodes for dedup
+    existing_nodes = await fetch_taxonomy_nodes(req.kb_slug, req.org_id)
 
-    while len(documents) < 50:
+    # V2 path: scroll ALL docs with vectors, group by artifact_id, average vectors
+    seen_artifacts_v2: set[str] = set()
+    doc_summaries: list[DocumentSummary] = []
+    doc_vecs: list[list[float]] = []
+    offset_v2 = None
+
+    while True:
         points, next_offset = await asyncio.wait_for(
-            client.scroll(
+            qdrant_client.scroll(
                 collection_name=COLLECTION,
                 scroll_filter=scroll_filter,
-                limit=req.batch_size,
-                offset=offset,
+                limit=100,
+                offset=offset_v2,
                 with_payload=True,
-                with_vectors=False,
+                with_vectors=["vector_chunk"],
             ),
-            timeout=30.0,
+            timeout=60.0,
         )
-
         if not points:
             break
 
         for point in points:
             payload = point.payload or {}
             artifact_id = payload.get("artifact_id") or str(point.id)
-            if artifact_id in seen_artifacts:
+            if artifact_id in seen_artifacts_v2:
                 continue
-            seen_artifacts.add(artifact_id)
+            seen_artifacts_v2.add(artifact_id)
+
+            # Extract vector
+            vec = None
+            if hasattr(point, "vector") and point.vector:
+                if isinstance(point.vector, dict):
+                    vec = point.vector.get("vector_chunk")
+                elif isinstance(point.vector, list):
+                    vec = point.vector
+            if vec is None:
+                continue
+
             title = payload.get("title") or payload.get("path") or artifact_id
             preview = payload.get("text", "")[:300]
-            documents.append(DocumentSummary(title=title, content_preview=preview))
-            if len(documents) >= 50:
-                break
+            doc_summaries.append(DocumentSummary(title=title, content_preview=preview))
+            doc_vecs.append(vec)
 
         if next_offset is None:
             break
-        offset = next_offset
+        offset_v2 = next_offset
 
-    if not documents:
+    if not doc_summaries:
         logger.info("bootstrap_proposals_no_documents", kb_slug=req.kb_slug, org_id=req.org_id)
         return BootstrapResponse(documents_scanned=0, proposals_submitted=0)
 
-    # Fetch existing category names so the LLM doesn't propose duplicates.
-    existing_nodes = await fetch_taxonomy_nodes(req.kb_slug, req.org_id)
-    existing_names = [n.name for n in existing_nodes]
+    # Fetch KB description for LLM context (best-effort)
+    kb_meta = await fetch_kb_metadata(req.kb_slug, req.org_id)
+    kb_description = (kb_meta or {}).get("description") or ""
 
-    proposals_submitted = await generate_bootstrap_proposals(
+    embeddings = np.array(doc_vecs, dtype=np.float32)
+    # Normalize each vector (unit norm)
+    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+    norms = np.where(norms == 0, 1.0, norms)
+    embeddings = embeddings / norms
+
+    result = await generate_bootstrap_proposals_v2(
         org_id=req.org_id,
         kb_slug=req.kb_slug,
-        documents=documents,
-        existing_category_names=existing_names,
+        document_summaries=doc_summaries,
+        document_embeddings=embeddings,
+        existing_nodes=existing_nodes,
+        kb_description=kb_description,
     )
 
-    logger.info(
-        "taxonomy_bootstrap_complete",
-        org_id=req.org_id,
-        kb_slug=req.kb_slug,
-        documents_scanned=len(documents),
-        proposals_submitted=proposals_submitted,
-    )
     return BootstrapResponse(
-        documents_scanned=len(documents),
-        proposals_submitted=proposals_submitted,
+        documents_scanned=result.documents_scanned,
+        proposals_submitted=result.proposals_submitted,
+        clusters_found=result.clusters_found,
+        base_clusters_found=result.base_clusters_found,
+        reason=result.reason,
     )
 
 
@@ -656,8 +677,13 @@ async def taxonomy_auto_categorise(
 
     Called when a taxonomy proposal is approved in the portal.
     No LLM calls -- pure cosine similarity against provided centroid (SPEC-KB-024 R4).
+
+    Auth: enforced by InternalSecretMiddleware (X-Internal-Secret) — the
+    legacy per-route X-Internal-Token check was removed in
+    SPEC-CODEBASE-AUDIT-001 cluster G TP-1 to eliminate header drift across
+    ingest routes. portal_internal_token remains the outbound credential
+    used by clustering_tasks/portal_client to call portal-api.
     """
-    _verify_internal_token(request)
     categorised = await _auto_categorise_impl(
         org_id=req.org_id,
         kb_slug=req.kb_slug,

@@ -1,12 +1,27 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Users, FolderKanban, CreditCard, Settings, Key, MessageSquare } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import { Users, FolderKanban, CreditCard, Settings, Key, MessageSquare, Puzzle, ChevronRight } from 'lucide-react'
 import * as m from '@/paraglide/messages'
+import { useAuth } from '@/lib/auth'
+import { fetchMe, type MeResponse } from '@/lib/api-me'
 
 export const Route = createFileRoute('/admin/')({
   component: AdminHome,
 })
 
 function AdminHome() {
+  const auth = useAuth()
+  // SPEC-PORTAL-EXTENSIONS-UNIFY-001 Phase 4: tile-filter per tenant.
+  // Tiles for features behind platform-unlock (api-keys, widgets, mcps) are
+  // hidden when the caller's org does not have the feature unlocked, unless
+  // the caller is a platform-admin (Klai staff sees everything).
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: ({ signal }) => fetchMe(signal),
+    enabled: auth.isAuthenticated,
+  })
+
+  // SPEC-PORTAL-UI-CONSISTENCY-001 REQ-4 / REQ-5: rows, not cards.
   const adminSections = [
     {
       title: m.admin_section_users_title(),
@@ -25,12 +40,21 @@ function AdminHome() {
       description: m.admin_section_api_keys_description(),
       icon: Key,
       href: '/admin/api-keys',
+      requiresFeature: 'partner_api',
     },
     {
       title: m.admin_section_widgets_title(),
       description: m.admin_section_widgets_description(),
       icon: MessageSquare,
       href: '/admin/widgets',
+      requiresFeature: 'widgets',
+    },
+    {
+      title: m.admin_section_mcps_title(),
+      description: m.admin_section_mcps_description(),
+      icon: Puzzle,
+      href: '/admin/mcps',
+      requiresFeature: 'custom_mcps',
     },
     {
       title: m.admin_section_billing_title(),
@@ -44,7 +68,7 @@ function AdminHome() {
       icon: Settings,
       href: '/admin/settings',
     },
-  ]
+  ].filter((section) => sectionIsVisible(section, me))
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-10 space-y-8">
@@ -52,34 +76,47 @@ function AdminHome() {
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.admin_home_heading()}
         </h1>
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           {m.admin_home_subtitle()}
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="divide-y divide-gray-200 border-t border-b border-gray-200">
         {adminSections.map((section) => (
           <a
             key={section.title}
             href={section.href}
-            className="group flex flex-col gap-3 rounded-xl border bg-[var(--color-card)] p-5 transition-shadow hover:shadow-md"
+            className="group flex items-center gap-3 px-2 py-3.5 hover:bg-gray-50 transition-colors"
           >
-            <section.icon
-              size={20}
-              strokeWidth={1.5}
-              className="text-[var(--color-muted-foreground)]"
-            />
-            <div>
-              <p className="text-sm font-medium text-[var(--color-foreground)] group-hover:text-[var(--color-rl-accent)] transition-colors">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-50 text-gray-400">
+              <section.icon className="h-4 w-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <span className="text-[15px] font-display text-gray-900 group-hover:underline">
                 {section.title}
-              </p>
-              <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">
+              </span>
+              <p className="text-xs text-gray-400 mt-0.5">
                 {section.description}
               </p>
             </div>
+            <ChevronRight className="h-4 w-4 text-gray-300 shrink-0" />
           </a>
         ))}
       </div>
     </div>
   )
+}
+
+function sectionIsVisible(
+  section: { requiresFeature?: string },
+  me: MeResponse | undefined,
+): boolean {
+  if (!section.requiresFeature) return true
+  // Show all tiles while /api/me is still loading — avoids a flash of
+  // "no tiles" before the first response lands. Both tenant-admin and
+  // platform-admin see exactly what their own tenant has unlocked
+  // (emulation view). Cross-tenant management uses the tenant-picker on
+  // /admin/settings, not the platform-admin's own sidebar/tegels.
+  if (!me) return true
+  return (me.platform_unlocked_features ?? []).includes(section.requiresFeature)
 }

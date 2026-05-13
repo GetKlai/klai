@@ -73,7 +73,7 @@ function SelectWorkspacePage() {
     return (
       <AuthPageLayout leftContent={leftContent} showLocale>
         <div className="flex items-center justify-center py-8">
-          <span className="text-sm text-[var(--color-muted-foreground)]">…</span>
+          <span className="text-sm text-gray-400">…</span>
         </div>
       </AuthPageLayout>
     )
@@ -104,10 +104,10 @@ function SelectWorkspacePage() {
   return (
     <AuthPageLayout leftContent={leftContent} showLocale>
       <div className="space-y-2">
-        <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
+        <h2 className="text-xl font-semibold text-gray-900">
           {m.select_workspace_heading()}
         </h2>
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           {m.select_workspace_body()}
         </p>
       </div>
@@ -122,13 +122,13 @@ function SelectWorkspacePage() {
               'w-full rounded-xl border p-4 text-left transition-colors',
               selectedOrg === org.id
                 ? 'border-[var(--color-rl-accent)] bg-[var(--color-rl-accent)]/10'
-                : 'border-[var(--color-border)] bg-[var(--color-card)] hover:border-[var(--color-rl-accent)]/50',
+                : 'border-gray-200 bg-[var(--color-card)] hover:border-[var(--color-rl-accent)]/50',
             ].join(' ')}
           >
-            <span className="block font-medium text-[var(--color-foreground)]">
+            <span className="block font-medium text-gray-900">
               {org.name}
             </span>
-            <span className="block text-xs text-[var(--color-muted-foreground)]">
+            <span className="block text-xs text-gray-400">
               {org.slug}
             </span>
           </button>

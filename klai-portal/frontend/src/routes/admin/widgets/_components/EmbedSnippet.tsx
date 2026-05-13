@@ -32,7 +32,7 @@ export function EmbedSnippet({ widgetId, title, welcomeMessage }: EmbedSnippetPr
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-[var(--color-foreground)]">
+        <span className="text-sm font-medium text-gray-900">
           {m.admin_widgets_widget_embed_title()}
         </span>
         <Button
@@ -55,7 +55,7 @@ export function EmbedSnippet({ widgetId, title, welcomeMessage }: EmbedSnippetPr
           )}
         </Button>
       </div>
-      <pre className="rounded-md border border-[var(--color-border)] bg-[var(--color-muted)] px-4 py-3 text-xs font-mono text-[var(--color-foreground)] overflow-x-auto whitespace-pre">
+      <pre className="rounded-md border border-gray-200 bg-[var(--color-muted)] px-4 py-3 text-xs font-mono text-gray-900 overflow-x-auto whitespace-pre">
         {snippet}
       </pre>
     </div>

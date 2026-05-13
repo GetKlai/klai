@@ -46,6 +46,11 @@ logger = logging.getLogger(__name__)
 # Distinct key namespace from other Klai Redis consumers (rate-limit, sessions).
 _KEY_PREFIX = "identity_verify:"
 
+# Separate namespace for tenant-only cache entries — no user_id slot.
+# Kept distinct from _KEY_PREFIX so a tenant entry can never collide with
+# a user-bound entry even when sharing the same (caller_service, org_id).
+_TENANT_KEY_PREFIX = "identity_verify_tenant:"
+
 # REQ-1.5: 60-second TTL. Cap at 60 — caller-side worst case for revocation
 # propagation. Lowering the TTL is allowed (faster revocation), raising is not.
 _TTL_SECONDS = 60
@@ -184,4 +189,91 @@ async def cache_verified_decision(
         await redis.set(key, payload, ex=_TTL_SECONDS)
     except RedisError as exc:
         logger.warning("identity_verify_cache_set_failed", extra={"error": str(exc)})
+        raise CacheUnavailable("redis_set_failed") from exc
+
+
+def _build_tenant_key(*, caller_service: str, claimed_org_id: str) -> str:
+    """Build a Redis key for a tenant-only cache entry.
+
+    No user_id slot — the tenant-only path has no end-user identity.
+    Kept in a separate namespace (``_TENANT_KEY_PREFIX``) so it cannot
+    collide with the user-bound key space even when caller_service and
+    claimed_org_id are identical.
+    """
+    return f"{_TENANT_KEY_PREFIX}{caller_service}:{claimed_org_id}"
+
+
+async def get_cached_tenant_decision(
+    *,
+    redis: Redis,
+    caller_service: str,
+    claimed_org_id: str,
+) -> VerifyDecision | None:
+    """Return a cached tenant-only verified decision, or ``None`` on miss.
+
+    Raises
+    ------
+    CacheUnavailable
+        On any Redis error. The endpoint MUST translate this to HTTP 503.
+    """
+    key = _build_tenant_key(caller_service=caller_service, claimed_org_id=claimed_org_id)
+    try:
+        raw: bytes | str | None = await redis.get(key)
+    except RedisError as exc:
+        logger.warning("identity_verify_tenant_cache_get_failed", extra={"error": str(exc)})
+        raise CacheUnavailable("redis_get_failed") from exc
+
+    if raw is None:
+        return None
+    payload_str = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+    try:
+        payload = json.loads(payload_str)
+    except json.JSONDecodeError:
+        logger.warning("identity_verify_tenant_cache_corrupt", extra={"key": key})
+        return None
+    if not isinstance(payload, dict):
+        return None
+    org_id = payload.get("org_id")
+    org_slug = payload.get("org_slug")
+    evidence = payload.get("evidence")
+    if not isinstance(org_id, str) or not isinstance(org_slug, str):
+        return None
+    if evidence != "tenant_only":
+        return None
+    return VerifyDecision.allow_tenant(org_id=org_id, org_slug=org_slug)
+
+
+async def cache_verified_tenant_decision(
+    *,
+    redis: Redis,
+    caller_service: str,
+    claimed_org_id: str,
+    decision: VerifyDecision,
+) -> None:
+    """Cache a tenant-only verified decision. No-op for denials.
+
+    Raises
+    ------
+    CacheUnavailable
+        On any Redis error. The endpoint MUST translate this to HTTP 503.
+    """
+    if (
+        not decision.verified
+        or decision.evidence != "tenant_only"
+        or decision.org_id is None
+        or decision.org_slug is None
+    ):
+        return
+    key = _build_tenant_key(caller_service=caller_service, claimed_org_id=claimed_org_id)
+    payload = json.dumps(
+        {
+            "org_id": decision.org_id,
+            "org_slug": decision.org_slug,
+            "evidence": decision.evidence,
+        }
+    )
+    try:
+        await redis.set(key, payload, ex=_TTL_SECONDS)
+    except RedisError as exc:
+        logger.warning("identity_verify_tenant_cache_set_failed", extra={"error": str(exc)})
         raise CacheUnavailable("redis_set_failed") from exc

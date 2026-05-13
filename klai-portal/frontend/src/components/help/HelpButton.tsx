@@ -11,23 +11,23 @@ export function HelpButton() {
   return (
     <>
       {showIntro && (
-        <div className="fixed bottom-20 right-6 z-[10003] w-72 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] shadow-lg">
+        <div className="fixed bottom-20 right-6 z-[10003] w-72 rounded-xl border border-gray-200 bg-[var(--color-background)] shadow-lg">
           <div className="flex items-start justify-between p-4 pb-2">
-            <h3 className="font-semibold text-[var(--color-foreground)]">
+            <h3 className="font-semibold text-gray-900">
               {introContent.title()}
             </h3>
             <button
               onClick={dismissIntro}
-              className="ml-2 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+              className="ml-2 text-gray-400 hover:text-gray-900"
               aria-label="Sluiten"
             >
               <X className="h-4 w-4" />
             </button>
           </div>
-          <p className="px-4 pb-3 text-sm text-[var(--color-muted-foreground)]">
+          <p className="px-4 pb-3 text-sm text-gray-400">
             {introContent.description()}
           </p>
-          <div className="border-t border-[var(--color-border)] px-4 py-3">
+          <div className="border-t border-gray-200 px-4 py-3">
             <Button size="sm" onClick={dismissIntro}>
               {m.help_intro_got_it()}
             </Button>

@@ -13,6 +13,8 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
+from tests.conftest import make_perms
+
 
 def _mock_org(
     container: str | None = "librechat-getklai",
@@ -60,9 +62,9 @@ class TestChatHealth:
         from app.api import app_chat
 
         org = _mock_org(container=None)
-        monkeypatch.setattr(app_chat, "_get_caller_org", AsyncMock(return_value=("sub", org, None)))
+        monkeypatch.setattr(app_chat, "_load_org_or_500", AsyncMock(return_value=org))
 
-        out = await app_chat.get_chat_health(credentials=MagicMock(), db=MagicMock())
+        out = await app_chat.get_chat_health(perms=make_perms(role="admin", user_id="sub", org_id=1), db=MagicMock())
 
         assert out.healthy is False
         assert out.reason == "not_provisioned"
@@ -72,9 +74,9 @@ class TestChatHealth:
         from app.api import app_chat
 
         org = _mock_org(status="provisioning")
-        monkeypatch.setattr(app_chat, "_get_caller_org", AsyncMock(return_value=("sub", org, None)))
+        monkeypatch.setattr(app_chat, "_load_org_or_500", AsyncMock(return_value=org))
 
-        out = await app_chat.get_chat_health(credentials=MagicMock(), db=MagicMock())
+        out = await app_chat.get_chat_health(perms=make_perms(role="admin", user_id="sub", org_id=1), db=MagicMock())
 
         assert out.healthy is False
         assert out.reason == "provisioning_in_progress"
@@ -84,13 +86,13 @@ class TestChatHealth:
         from app.api import app_chat
 
         org = _mock_org()
-        monkeypatch.setattr(app_chat, "_get_caller_org", AsyncMock(return_value=("sub", org, None)))
+        monkeypatch.setattr(app_chat, "_load_org_or_500", AsyncMock(return_value=org))
         monkeypatch.setattr(
             "app.api.app_chat.httpx.AsyncClient",
             _mock_httpx_client({"/health": _response(200), "/api/config": _response(200)}),
         )
 
-        out = await app_chat.get_chat_health(credentials=MagicMock(), db=MagicMock())
+        out = await app_chat.get_chat_health(perms=make_perms(role="admin", user_id="sub", org_id=1), db=MagicMock())
 
         assert out.healthy is True
         assert out.reason is None
@@ -115,10 +117,10 @@ class TestChatHealth:
         mock_client.__aexit__ = AsyncMock(return_value=None)
 
         org = _mock_org()
-        monkeypatch.setattr(app_chat, "_get_caller_org", AsyncMock(return_value=("sub", org, None)))
+        monkeypatch.setattr(app_chat, "_load_org_or_500", AsyncMock(return_value=org))
         monkeypatch.setattr("app.api.app_chat.httpx.AsyncClient", MagicMock(return_value=mock_client))
 
-        await app_chat.get_chat_health(credentials=MagicMock(), db=MagicMock())
+        await app_chat.get_chat_health(perms=make_perms(role="admin", user_id="sub", org_id=1), db=MagicMock())
 
         assert not any(url.endswith("/api/endpoints") for url in seen), seen
 
@@ -127,14 +129,14 @@ class TestChatHealth:
         from app.api import app_chat
 
         org = _mock_org()
-        monkeypatch.setattr(app_chat, "_get_caller_org", AsyncMock(return_value=("sub", org, None)))
+        monkeypatch.setattr(app_chat, "_load_org_or_500", AsyncMock(return_value=org))
         monkeypatch.setattr(app_chat, "_emit_failure", MagicMock())
         monkeypatch.setattr(
             "app.api.app_chat.httpx.AsyncClient",
             _mock_httpx_client({"/health": _response(503)}),
         )
 
-        out = await app_chat.get_chat_health(credentials=MagicMock(), db=MagicMock())
+        out = await app_chat.get_chat_health(perms=make_perms(role="admin", user_id="sub", org_id=1), db=MagicMock())
 
         assert out.healthy is False
         assert out.reason == "container_unhealthy"
@@ -144,14 +146,14 @@ class TestChatHealth:
         from app.api import app_chat
 
         org = _mock_org()
-        monkeypatch.setattr(app_chat, "_get_caller_org", AsyncMock(return_value=("sub", org, None)))
+        monkeypatch.setattr(app_chat, "_load_org_or_500", AsyncMock(return_value=org))
         monkeypatch.setattr(app_chat, "_emit_failure", MagicMock())
         monkeypatch.setattr(
             "app.api.app_chat.httpx.AsyncClient",
             _mock_httpx_client({"/health": _response(200), "/api/config": _response(500)}),
         )
 
-        out = await app_chat.get_chat_health(credentials=MagicMock(), db=MagicMock())
+        out = await app_chat.get_chat_health(perms=make_perms(role="admin", user_id="sub", org_id=1), db=MagicMock())
 
         assert out.healthy is False
         assert out.reason == "app_not_ready"
@@ -161,14 +163,14 @@ class TestChatHealth:
         from app.api import app_chat
 
         org = _mock_org()
-        monkeypatch.setattr(app_chat, "_get_caller_org", AsyncMock(return_value=("sub", org, None)))
+        monkeypatch.setattr(app_chat, "_load_org_or_500", AsyncMock(return_value=org))
         monkeypatch.setattr(app_chat, "_emit_failure", MagicMock())
         monkeypatch.setattr(
             "app.api.app_chat.httpx.AsyncClient",
             _mock_httpx_client({"/health": httpx.TimeoutException("slow")}),
         )
 
-        out = await app_chat.get_chat_health(credentials=MagicMock(), db=MagicMock())
+        out = await app_chat.get_chat_health(perms=make_perms(role="admin", user_id="sub", org_id=1), db=MagicMock())
 
         assert out.healthy is False
         assert out.reason == "timeout"
@@ -178,14 +180,14 @@ class TestChatHealth:
         from app.api import app_chat
 
         org = _mock_org()
-        monkeypatch.setattr(app_chat, "_get_caller_org", AsyncMock(return_value=("sub", org, None)))
+        monkeypatch.setattr(app_chat, "_load_org_or_500", AsyncMock(return_value=org))
         monkeypatch.setattr(app_chat, "_emit_failure", MagicMock())
         monkeypatch.setattr(
             "app.api.app_chat.httpx.AsyncClient",
             _mock_httpx_client({"/health": httpx.ConnectError("refused")}),
         )
 
-        out = await app_chat.get_chat_health(credentials=MagicMock(), db=MagicMock())
+        out = await app_chat.get_chat_health(perms=make_perms(role="admin", user_id="sub", org_id=1), db=MagicMock())
 
         assert out.healthy is False
         assert out.reason == "container_unreachable"

@@ -14,7 +14,6 @@ class TestRetrieveRequest:
         assert req.scope == "org"
         assert req.top_k == 8
         assert req.user_id is None
-        assert req.notebook_id is None
         assert req.conversation_history == []
 
     def test_all_fields(self):
@@ -23,7 +22,6 @@ class TestRetrieveRequest:
             org_id="org-1",
             scope="personal",
             user_id="user-1",
-            notebook_id="nb-1",
             top_k=3,
             conversation_history=[{"role": "user", "content": "hi"}],
         )

@@ -211,6 +211,29 @@ services:
       - ./litellm/config.yaml:/app/config.yaml:ro
       - ./litellm/klai_knowledge.py:/app/klai_knowledge.py:ro
       - ./litellm/custom_router.py:/app/custom_router.py:ro
+      # SPEC-SEC-SERVICE-AUTH-001 Phase C-1: vendored single-file copy of
+      # klai-libs/service-auth (kept in sync via deploy/litellm/tests/
+      # test_klai_service_auth_drift.py). Mounting at /app/ puts it on
+      # PYTHONPATH next to klai_knowledge.py so ``import klai_service_auth``
+      # resolves without a custom Dockerfile. Phase D plan: replace with
+      # a proper pip install in a custom litellm image.
+      - ./litellm/klai_service_auth.py:/app/klai_service_auth.py:ro
+      # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): vendored single-file
+      # copy of klai-libs/chat-prompts (kept in sync via deploy/litellm/tests/
+      # test_klai_chat_prompts_drift.py). Same vendoring rationale as
+      # klai_service_auth.py — stock upstream image, no pip-install hook.
+      # Phase D plan: replace both vendored files with a proper pip install
+      # in a custom litellm image.
+      - ./litellm/klai_chat_prompts.py:/app/klai_chat_prompts.py:ro
+      # SPEC-MCP-RETRIEVAL-001 Phase 1: vendored single-file copy of
+      # klai-libs/retrieval-telemetry (kept in sync via deploy/litellm/tests/
+      # test_klai_retrieval_telemetry_drift.py). klai_knowledge.py imports
+      # `from klai_retrieval_telemetry import ...` at module load — without
+      # this mount the litellm container hits ModuleNotFoundError →
+      # ImportError on `klai_knowledge.klai_knowledge_hook` → restart loop
+      # → all chat traffic 500s with "Connection error". Same vendoring
+      # rationale as klai_service_auth.py / klai_chat_prompts.py.
+      - ./litellm/klai_retrieval_telemetry.py:/app/klai_retrieval_telemetry.py:ro
     environment:
       PYTHONPATH: /app
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
@@ -224,7 +247,23 @@ services:
       KNOWLEDGE_RETRIEVE_TIMEOUT: "60.0"
       KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
       PORTAL_API_URL: http://portal-api:8010
+      # Two DIFFERENT secrets — one per receiver. portal-api validates the first
+      # (entitlement check + templates fetch) against PORTAL_API_INTERNAL_SECRET;
+      # retrieval-api validates the second (/retrieve call) against its own
+      # INTERNAL_SECRET env var (sourced from RETRIEVAL_API_INTERNAL_SECRET in
+      # SOPS). Until 2026-05-02 the hook used PORTAL_INTERNAL_SECRET for both,
+      # which 401'd retrieve calls every time the two secrets diverged.
       PORTAL_INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
+      RETRIEVAL_INTERNAL_SECRET: ${RETRIEVAL_API_INTERNAL_SECRET}
+      # SPEC-SEC-SERVICE-AUTH-001 Phase C-1: Zitadel client_credentials env
+      # vars for the LiteLLM hook → retrieval-api JWT path. All three must
+      # be SOPS-encrypted in klai-infra/core-01/.env.sops BEFORE the new
+      # litellm image is deployed (per validator-env-parity rule). When
+      # any are unset, the hook falls back to PORTAL_INTERNAL_SECRET via
+      # _retrieve_auth_headers — REQ-5 safe rollout.
+      KLAI_OAUTH_TOKEN_URL: ${KLAI_OAUTH_TOKEN_URL:-}
+      KLAI_LITELLM_CLIENT_ID: ${KLAI_LITELLM_CLIENT_ID:-}
+      KLAI_LITELLM_CLIENT_SECRET: ${KLAI_LITELLM_CLIENT_SECRET:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -251,6 +290,7 @@ services:
       - ./librechat/getklai/images:/app/client/public/images
       # Persistent patches - survive image updates until fixed upstream
       - ./librechat/patches/format.cjs:/app/node_modules/@librechat/agents/dist/cjs/messages/format.cjs:ro
+      - ./librechat/patches/share.js:/app/api/server/routes/share.js:ro
       - ./librechat/patches/stream.cjs:/app/node_modules/@librechat/agents/dist/cjs/stream.cjs:ro
       - ./librechat/patches/search.cjs:/app/node_modules/@librechat/agents/dist/cjs/tools/search/search.cjs:ro
     depends_on:
@@ -311,19 +351,49 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:8001:8000"
-    env_file: ./klai-mailer/.env
+    # SPEC-SEC-AUDIT-2026-04 B3 / SPEC-SEC-ENVFILE-SCOPE-001 — migrated off
+    # env_file: ./klai-mailer/.env. Explicit environment block below scopes
+    # the mailer's process env to exactly what app/config.py reads.
+    # Reverse-check (2026-04-29): PORTAL_ENV and SMTP_FROM diverged from
+    # code defaults in the service .env — both are now declared explicitly.
     environment:
+      # SMTP — credentials from klai-infra/core-01/klai-mailer/.env.sops
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_FROM: ${SMTP_FROM:-noreply@getklai.com}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Klai}
+      SMTP_TLS: ${SMTP_TLS:-true}
+      SMTP_SSL: ${SMTP_SSL:-false}
+      # Zitadel webhook HMAC secret — from klai-infra/core-01/klai-mailer/.env.sops
+      WEBHOOK_SECRET: ${MAILER_WEBHOOK_SECRET}
+      # Branding — prod overrides code defaults (example.com → getklai.com)
+      # Canonical Klai logo per .claude/rules/klai/design/tokens.md § Logo.
+      # NEVER point this at cdn.getklai.com/klai-logo.png (DNS no-op) or
+      # klai-icon-square.png (old "ai" branding). Wordmark = logo-black.svg.
+      LOGO_URL: ${LOGO_URL:-https://getklai.com/logo-black.svg}
+      LOGO_WIDTH: ${LOGO_WIDTH:-120}
+      BRAND_URL: ${BRAND_URL:-https://www.getklai.com}
+      THEME_DIR: ${THEME_DIR:-theme}
       # Cross-service shared secret — single source of truth in /opt/klai/.env.
       # Portal-api sends `X-Internal-Secret: ${PORTAL_API_INTERNAL_SECRET}` when
       # calling /internal/send; mailer compares via hmac.compare_digest
-      # (SPEC-SEC-MAILER-INJECTION-001 REQ-8). Wiring via `environment:` instead
-      # of duplicating into klai-mailer/.env keeps rotation atomic.
+      # (SPEC-SEC-MAILER-INJECTION-001 REQ-8).
       INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
+      # Portal API — locale lookup for email links
+      PORTAL_API_URL: ${MAILER_PORTAL_API_URL:-http://portal-api:8010}
+      PORTAL_INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
       # Redis nonce store + per-recipient rate limiter
       # (SPEC-SEC-MAILER-INJECTION-001 REQ-4 + REQ-6). Mailer fails closed
       # with HTTP 503 when redis is unreachable, so it MUST share net-redis
       # with the redis service — same pattern as portal-api and litellm.
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      # Deployment environment — drives /debug route gate (SPEC-SEC-MAILER-INJECTION-001 REQ-5).
+      # Code default is "development"; prod MUST be "production" to suppress the debug route.
+      # Reverse-check divergence: service .env had PORTAL_ENV=production.
+      PORTAL_ENV: ${PORTAL_ENV:-production}
+      DEBUG: ${MAILER_DEBUG:-false}
     networks:
       - klai-net
       - net-redis
@@ -380,6 +450,10 @@ services:
       ZITADEL_IDP_MICROSOFT_ID: ${ZITADEL_IDP_MICROSOFT_ID}
       # ─── Auth — session / BFF (SPEC-AUTH-008) ───────────────────
       SSO_COOKIE_KEY: ${PORTAL_API_SSO_COOKIE_KEY}
+      # SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-10: BFF_SESSION_KEY is a
+      # required env var, validated fail-closed at portal-api startup.
+      # Empty default here means an absent SOPS entry crashes the boot
+      # — that is the contract; no silent fallback to SSO_COOKIE_KEY.
       BFF_SESSION_KEY: ${PORTAL_API_BFF_SESSION_KEY:-}
       # ─── Internal service-to-service secrets ────────────────────
       INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
@@ -403,9 +477,25 @@ services:
       # a future admin-api caller picks up the real token, matching the
       # pre-migration env-shape.
       VEXA_ADMIN_TOKEN: ${VEXA_ADMIN_TOKEN}
+      # ─── Garage S3 — KB-image auth-proxy (SPEC-TI-009 + SPEC-PORTAL-DOCS-IMAGE-PASTE-001) ─
+      # portal-api is the auth-proxy for /kb-images/{org_id}/{kb_slug}/{filename}
+      # (read: SPEC-TI-009 GET; write: SPEC-PORTAL-DOCS-IMAGE-PASTE-001 POST).
+      # Without these vars the route 503s with "Image storage not configured".
+      # Missing from compose pre-fix because SPEC-SEC-ENVFILE-SCOPE-001 didn't
+      # include them when portal-api's environment block was made explicit —
+      # the read-route was never browser-fetched until 2026-05-12, so nobody
+      # noticed. Same env shape as klai-connector + klai-knowledge-ingest.
+      GARAGE_S3_ENDPOINT: garage:3900
+      GARAGE_S3_ACCESS_KEY: ${GARAGE_ACCESS_KEY}
+      GARAGE_S3_SECRET_KEY: ${GARAGE_SECRET_KEY}
+      GARAGE_KB_BUCKET: ${GARAGE_BUCKET:-klai-images}
       # ─── Billing — Moneybird ────────────────────────────────────
       # Validator in config.py requires MONEYBIRD_WEBHOOK_TOKEN at boot.
       MONEYBIRD_WEBHOOK_TOKEN: ${MONEYBIRD_WEBHOOK_TOKEN}
+      # ─── MCP OAuth surface (SPEC-MCP-AUTH-001) ──────────────────
+      # Validators in config.py require both URLs at boot (REQ-7 + REQ-14).
+      MCP_OAUTH_ISSUER_BASE_URL: ${MCP_OAUTH_ISSUER_BASE_URL}
+      MCP_OAUTH_RESOURCE_URL: ${MCP_OAUTH_RESOURCE_URL}
       # ─── Meeting ingress — IMAP calendar-invite listener ────────
       IMAP_HOST: mail.getklai.com
       IMAP_PORT: "993"
@@ -688,6 +778,15 @@ services:
     networks:
       - klai-net
       - monitoring
+      # SPEC-PRIVACY-QUERY-SHADOW-001 follow-up (2026-05-08): grafana
+      # needs net-postgres so the PortalPostgres datasource can resolve
+      # `postgres:5432`. Without this, EVERY postgres-backed alert rule
+      # and dashboard panel fails with "could not translate host name
+      # 'postgres' to address: Temporary failure in name resolution".
+      # Pre-existing bug — surfaced by the new privacy_tenant_stuck_in_full
+      # alert + a non-SPEC UI-created alert (UID bfjbxm0h95q0wf) that
+      # had been silently failing in the same way.
+      - net-postgres
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/api/health"]
       interval: 30s
@@ -700,6 +799,12 @@ services:
   docling-serve:
     image: ghcr.io/docling-project/docling-serve:v1.16.1
     restart: unless-stopped
+    environment:
+      # Portal-api may need to retry /v1/result after a transient
+      # knowledge-ingest failure or restart. Docling Serve's defaults are
+      # single-use results, which are too fragile for our async poller.
+      DOCLING_SERVE_SINGLE_USE_RESULTS: "false"
+      DOCLING_SERVE_RESULT_REMOVAL_DELAY: "86400"
     networks:
       - klai-net
     # NOT exposed via Caddy — internal Docker network only
@@ -737,11 +842,11 @@ services:
       FALKORDB_PORT: "6379"
       GRAPHITI_ENABLED: "true"
       GRAPH_SEARCH_TIMEOUT: "60.0"
-      # Graphiti LLM model for knowledge-graph extraction. Prod uses
-      # the heavier pipeline model; config.py defaults to klai-fast
-      # which is not suitable for graph extraction. Overrides the
-      # default to match pre-SPEC-SEC-ENVFILE-SCOPE-001 behaviour.
-      GRAPHITI_LLM_MODEL: ${GRAPHITI_LLM_MODEL:-klai-pipeline}
+      # Graphiti LLM model for knowledge-graph extraction. klai-fast
+      # points at Mistral Small 4 (same model the dropped klai-pipeline
+      # alias used to point at). Override via env if a different tier
+      # is required for graph extraction.
+      GRAPHITI_LLM_MODEL: ${GRAPHITI_LLM_MODEL:-klai-fast}
       RERANKER_ENABLED: "true"
       RERANKER_TIMEOUT: "60.0"
       OPENAI_API_KEY: "dummy"
@@ -852,6 +957,13 @@ services:
       # identity to upstream services (knowledge-ingest, klai-docs).
       PORTAL_API_URL: http://portal-api:8010
       PORTAL_INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
+      # SPEC-MCP-RETRIEVAL-001: retrieval-api endpoint + secret for the
+      # search_knowledge tool. retrieval-api validates against its own
+      # INTERNAL_SECRET (sourced from RETRIEVAL_API_INTERNAL_SECRET in SOPS) —
+      # different from KNOWLEDGE_INGEST_SECRET and PORTAL_INTERNAL_SECRET.
+      # Without this, every search_knowledge call HTTP 401s upstream.
+      KNOWLEDGE_RETRIEVE_URL: http://retrieval-api:8040/retrieve
+      RETRIEVAL_INTERNAL_SECRET: ${RETRIEVAL_API_INTERNAL_SECRET}
     networks:
       - klai-net
     depends_on:
@@ -881,6 +993,13 @@ services:
       # Knowledge-ingest (KB push of transcripts)
       KNOWLEDGE_INGEST_URL: http://knowledge-ingest:8000
       KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
+      # SPEC-SEC-AUDIT-2026-04 B1: portal identity-verify coordinates.
+      # scribe replaces JWT resourceowner trust with portal lookup so a
+      # multi-org user's token can never route their transcript into the
+      # wrong tenant KB. PORTAL_API_INTERNAL_SECRET already in SOPS;
+      # wired here so the startup validator does not trigger a 502 on deploy.
+      PORTAL_API_URL: http://portal-api:8010
+      PORTAL_INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
     volumes:
       - scribe-audio-data:/data/audio
     networks:
@@ -889,17 +1008,18 @@ services:
     depends_on:
       - postgres
 
-  # ─── Vexa stack (SPEC-VEXA-003 — upstream main v0.10.x, commit f0756bf) ──
-  # Source: https://github.com/Vexa-ai/vexa branch klai/main-260419
-  # Build pattern (Phase 6): on core-01 clone fork, run `make build` from
-  # deploy/compose/Makefile; images land as vexaai/<svc>:<version>-YYMMDD-HHMM.
-  # Tags below are placeholders — Phase 6 rewrites them to real build timestamps.
-  # The placeholder form is intentionally rejected by deploy/check-image-tags.sh
-  # so this compose file is NOT deploy-ready until Phase 6 completes.
+  # ─── Vexa stack (SPEC-VEXA-003 — upstream Vexa-ai/vexa v0.10.6) ──────────
+  # Source: https://github.com/Vexa-ai/vexa/releases/tag/v0.10.6
+  # Images pulled directly from Docker Hub (vexaai/*) — no local build needed.
+  # v0.10.6 brings Pack U audio unification (single audio-pipeline.ts module)
+  # and Pack M chunk-leak fix (resolves the v0.10.5.2 24-min recording crash
+  # class). Pack H helm hardening is irrelevant for our compose deploy.
+  # Tag format: plain semver `:0.10.6`. The pre-v0.10.4 timestamped form
+  # `<semver>-YYMMDD-HHMM` is no longer used upstream.
 
   # ─── Vexa admin-api (management) ────────────────────────────────────────
   admin-api:
-    image: vexaai/admin-api:0.10.0-260419-1129
+    image: vexaai/admin-api:0.10.6
     restart: unless-stopped
     environment:
       DB_HOST: postgres
@@ -931,7 +1051,7 @@ services:
 
   # ─── Vexa api-gateway (public entry, rate-limited, CORS) ────────────────
   api-gateway:
-    image: vexaai/api-gateway:0.10.0-260419-1129
+    image: vexaai/api-gateway:0.10.6
     restart: unless-stopped
     environment:
       ADMIN_API_URL: http://admin-api:8001
@@ -969,7 +1089,7 @@ services:
   # Network alias `vexa-meeting-api` retained for portal-api backwards compat
   # (REQ-E-001, REQ-U-001 — no config churn in portal-api during this migration).
   meeting-api:
-    image: vexaai/meeting-api:0.10.0-260419-1129
+    image: vexaai/meeting-api:0.10.6
     restart: unless-stopped
     environment:
       DB_HOST: postgres
@@ -988,7 +1108,7 @@ services:
       RUNTIME_API_URL: http://runtime-api:8090
       RUNTIME_API_TOKEN: ${BOT_API_TOKEN}
       MEETING_API_URL: http://meeting-api:8080
-      BOT_IMAGE_NAME: vexaai/vexa-bot:0.10.0-260419-1129
+      BOT_IMAGE_NAME: vexaai/vexa-bot:0.10.6
       DOCKER_NETWORK: vexa-bots
       TRANSCRIPTION_COLLECTOR_URL: http://meeting-api:8080
       # Storage backend: Garage speaks S3, so minio-* vars point at Garage.
@@ -1066,11 +1186,11 @@ services:
 
   # ─── Vexa runtime-api (Docker-socket bot orchestrator) ──────────────────
   runtime-api:
-    image: vexaai/runtime-api:0.10.0-260419-1129
+    image: vexaai/runtime-api:0.10.6
     restart: unless-stopped
     environment:
       DOCKER_NETWORK: vexa-bots
-      BROWSER_IMAGE: vexaai/vexa-bot:0.10.0-260419-1129
+      BROWSER_IMAGE: vexaai/vexa-bot:0.10.6
       AGENT_IMAGE: ""                              # agent profile not shipped in v1
       REDIS_URL: redis://:${VEXA_REDIS_PASSWORD}@vexa-redis:6379/0
       MINIO_ENDPOINT: garage:3900
@@ -1186,6 +1306,13 @@ services:
   knowledge-ingest:
     image: ghcr.io/getklai/knowledge-ingest:latest
     restart: unless-stopped
+    # SPEC-PROCRASTINATE-ZOMBIE-001: graphiti enrichment tasks call LiteLLM
+    # which can take 30-60s. Docker default 10s SIGTERM-to-SIGKILL window
+    # would interrupt those mid-call and orphan the procrastinate job in
+    # 'doing' state forever. 90s lets nearly all in-flight LLM calls
+    # finish gracefully on deploy. Recovery for the residual cases lives
+    # in knowledge_ingest.zombie_recovery (runs at next worker startup).
+    stop_grace_period: 90s
     environment:
       POSTGRES_DSN: postgresql+asyncpg://klai:${POSTGRES_PASSWORD}@postgres:5432/klai
       QDRANT_URL: http://qdrant:6333
@@ -1206,6 +1333,10 @@ services:
       GRAPHITI_ENABLED: "true"
       PORTAL_URL: http://portal-api:8010
       PORTAL_INTERNAL_TOKEN: ${PORTAL_API_INTERNAL_SECRET}
+      # SPEC-RAG-EVAL-001 — RAGAS evaluation harness calls /retrieve on
+      # klai-retrieval-api. Same secret as the litellm-hook uses for
+      # /retrieve auth (see deploy/litellm/klai_knowledge.py).
+      RETRIEVAL_API_INTERNAL_SECRET: ${RETRIEVAL_API_INTERNAL_SECRET}
       # SPEC-CRAWLER-004 Fase A — shared Garage S3 image pipeline.
       # Empty GARAGE_S3_ENDPOINT disables image extraction silently.
       GARAGE_S3_ENDPOINT: garage:3900
@@ -1217,6 +1348,14 @@ services:
       # via POST /ingest/v1/crawl/sync. Shares portal-api's KEK so every
       # service decrypts the same blobs. Empty disables the endpoint.
       ENCRYPTION_KEY: ${PORTAL_API_ENCRYPTION_KEY}
+      # SPEC-INGEST-LOGIN-WALL-DETECT-001 — anonymous-crawl auth-wall
+      # detection. Production target: enabled=true + mode=reject. Override
+      # KLAI_INGEST_LOGIN_WALL_DETECT_MODE=audit_only in /opt/klai/.env
+      # for the canary window, then remove the override to fall back to
+      # "reject" once FP-rate is verified. The default values in
+      # knowledge_ingest/config.py match the compose defaults below.
+      KLAI_INGEST_LOGIN_WALL_DETECT_ENABLED: ${KLAI_INGEST_LOGIN_WALL_DETECT_ENABLED:-true}
+      KLAI_INGEST_LOGIN_WALL_DETECT_MODE: ${KLAI_INGEST_LOGIN_WALL_DETECT_MODE:-reject}
     networks:
       - klai-net
       - net-postgres
@@ -1258,28 +1397,53 @@ services:
   klai-connector:
     image: ghcr.io/getklai/klai-connector:latest
     restart: unless-stopped
-    env_file: ./klai-connector/.env
+    # SPEC-SEC-AUDIT-2026-04 B3 / SPEC-SEC-ENVFILE-SCOPE-001 — migrated off
+    # env_file: ./klai-connector/.env. Explicit environment block below scopes
+    # the connector's process env to exactly what app/core/config.py reads.
+    # Reverse-check (2026-04-29): PORTAL_API_URL diverged (code default 8100 vs
+    # compose 8010); all other fields were already in the explicit block or have
+    # safe code defaults. No divergences found for vars with in-code defaults.
     environment:
       DATABASE_URL: postgresql+asyncpg://klai:${POSTGRES_PASSWORD}@postgres:5432/klai
       ZITADEL_INTROSPECTION_URL: https://auth.${DOMAIN}/oauth/v2/introspect
-      # SPEC-SEC-008 F-017: defense-in-depth audience check against Zitadel API app
-      ZITADEL_API_AUDIENCE: ${KLAI_CONNECTOR_ZITADEL_AUDIENCE:-}
+      ZITADEL_CLIENT_ID: ${CONNECTOR_ZITADEL_CLIENT_ID}
+      ZITADEL_CLIENT_SECRET: ${CONNECTOR_ZITADEL_CLIENT_SECRET}
+      # SPEC-SEC-AUDIT-2026-04 B2: audience verification is MANDATORY.
+      # KLAI_CONNECTOR_ZITADEL_AUDIENCE must be set in SOPS (verified present).
+      # Empty value causes startup ValidationError (fail-closed).
+      ZITADEL_API_AUDIENCE: ${KLAI_CONNECTOR_ZITADEL_AUDIENCE}
+      # GitHub App credentials for connector adapter
+      GITHUB_APP_ID: ${GITHUB_APP_ID}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY}
+      # Encryption key for connector credential storage (KEK)
+      ENCRYPTION_KEY: ${CONNECTOR_ENCRYPTION_KEY}
       KNOWLEDGE_INGEST_URL: http://knowledge-ingest:8000
       KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
       CRAWL4AI_API_URL: http://crawl4ai:11235
       CRAWL4AI_INTERNAL_KEY: ${CRAWL4AI_INTERNAL_KEY}
+      # PORTAL_API_URL: code default is 8100; prod uses 8010 (portal's public
+      # internal port). Reverse-check divergence: declared explicitly to prevent
+      # regression if code default ever changes.
       PORTAL_API_URL: http://portal-api:8010
       PORTAL_CALLER_SECRET: ${PORTAL_API_KLAI_CONNECTOR_SECRET}
       PORTAL_INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
+      # CORS origins — empty disables CORS (code default); prod .env may set this
+      CORS_ORIGINS: ${CONNECTOR_CORS_ORIGINS:-}
       GARAGE_S3_ENDPOINT: garage:3900
       GARAGE_ACCESS_KEY: ${GARAGE_ACCESS_KEY}
       GARAGE_SECRET_KEY: ${GARAGE_SECRET_KEY}
       GARAGE_BUCKET: ${GARAGE_BUCKET:-klai-images}
       GARAGE_REGION: garage
+      # Google Drive OAuth (SPEC-KB-025) — empty client_id disables the connector
+      GOOGLE_DRIVE_CLIENT_ID: ${GOOGLE_DRIVE_CLIENT_ID:-}
+      GOOGLE_DRIVE_CLIENT_SECRET: ${GOOGLE_DRIVE_CLIENT_SECRET:-}
       # Microsoft 365 OAuth (SPEC-KB-MS-DOCS-001) — empty client_id disables the connector.
       MS_DOCS_CLIENT_ID: ${MS_DOCS_CLIENT_ID:-}
       MS_DOCS_CLIENT_SECRET: ${MS_DOCS_CLIENT_SECRET:-}
       MS_DOCS_TENANT_ID: ${MS_DOCS_TENANT_ID:-common}
+      # Per-org rate limiting (SPEC-SEC-HYGIENE-001 HY-32) — empty disables rate limiting
+      REDIS_URL: ${CONNECTOR_REDIS_URL:-}
+      SYNC_REQUIRE_ORG_ID: ${SYNC_REQUIRE_ORG_ID:-false}
       LOG_LEVEL: INFO
     networks:
       - klai-net
@@ -1378,3 +1542,46 @@ services:
         limits:
           cpus: '2'
           memory: 1G
+
+  # ─── Cal.com (self-hosted scheduling) ────────────────────────────────────
+  # Deployed at https://cal.getklai.com
+  # DB: cal-db on klai-core-postgres-1 (role: cal_user).
+  # Secrets in klai-infra/core-01/.env.sops (CAL_* prefix).
+  # Deviation from SELFHOST_NEW_SERVICE.md (public-01 via Coolify):
+  #   Hetzner DNS API token did not resolve for public-01 A-record addition;
+  #   *.getklai.com → 65.21.174.162 (core-01) wildcard is already live via
+  #   Caddy Hetzner-DNS plugin, so core-01 was the natural landing point.
+  cal-com:
+    image: calcom/cal.com:v6.2.0
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_WEBAPP_URL: https://cal.${DOMAIN}
+      NEXTAUTH_URL: https://cal.${DOMAIN}
+      NEXTAUTH_SECRET: ${CAL_NEXTAUTH_SECRET}
+      CALENDSO_ENCRYPTION_KEY: ${CAL_CALENDSO_ENCRYPTION_KEY}
+      DATABASE_URL: ${CAL_DATABASE_URL}
+      DATABASE_DIRECT_URL: ${CAL_DATABASE_URL}
+      EMAIL_FROM: hello@getklai.com
+      EMAIL_SERVER_HOST: ${SMTP_HOST}
+      EMAIL_SERVER_PORT: ${SMTP_PORT:-587}
+      EMAIL_SERVER_USER: ${SMTP_USERNAME}
+      EMAIL_SERVER_PASSWORD: ${SMTP_PASSWORD}
+    healthcheck:
+      # /api/health returns 404 in Cal.com v6. Use wget which exits 0 for
+      # any 2xx/3xx — a 307 to /auth/setup confirms the server is running.
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/auth/login || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    networks:
+      - klai-net
+      - net-postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 2g

@@ -154,6 +154,12 @@ jobs:
           CREATE TABLE partner_api_key_kb_access (partner_api_key_id UUID NOT NULL, kb_id INTEGER NOT NULL, PRIMARY KEY (partner_api_key_id, kb_id));
           CREATE TABLE widgets (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id INTEGER NOT NULL, widget_id VARCHAR(64) NOT NULL);
           CREATE TABLE widget_kb_access (widget_id UUID NOT NULL, kb_id INTEGER NOT NULL, PRIMARY KEY (widget_id, kb_id));
+          -- SPEC-MCP-AUTH-001 Cat-D: portal_mcp_tokens (referenced by rls-smoke-test Test 8)
+          -- portal_oauth_clients carries NO RLS by design (org-overstijgend) but still
+          -- needs SELECT/INSERT grants to portal_api for the smoke-test to read it.
+          CREATE TABLE portal_oauth_clients (id BIGSERIAL PRIMARY KEY, client_id VARCHAR(64) NOT NULL UNIQUE);
+          CREATE TABLE portal_mcp_tokens (id BIGSERIAL PRIMARY KEY, org_id INTEGER NOT NULL, user_id INTEGER NOT NULL, client_id BIGINT NOT NULL);
+          GRANT SELECT, INSERT, UPDATE, DELETE ON portal_oauth_clients TO portal_api;
 
           -- Enable RLS + grant table access to portal_api (forced so klai
           -- superuser also obeys, mirroring production setup).
@@ -168,7 +174,7 @@ jobs:
                   ('portal_taxonomy_proposals'), ('portal_user_products'),
                   ('portal_connectors'), ('vexa_meetings'),
                   ('partner_api_keys'), ('partner_api_key_kb_access'),
-                  ('widgets'), ('widget_kb_access')
+                  ('widgets'), ('widget_kb_access'), ('portal_mcp_tokens')
               LOOP
                   EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
                   EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
@@ -193,6 +199,7 @@ jobs:
           CREATE POLICY tenant_isolation ON portal_taxonomy_proposals FOR ALL USING (true);
           CREATE POLICY tenant_isolation ON portal_user_products FOR ALL USING (true);
           CREATE POLICY tenant_isolation ON portal_connectors FOR ALL USING (true);
+          CREATE POLICY tenant_isolation ON portal_mcp_tokens FOR ALL USING (true);
           CREATE POLICY tenant_read ON vexa_meetings FOR SELECT USING (true);
           CREATE POLICY tenant_write ON vexa_meetings FOR INSERT WITH CHECK (true);
           CREATE POLICY tenant_update ON vexa_meetings FOR UPDATE USING (true);
@@ -275,9 +282,12 @@ jobs:
           context: .
           file: klai-portal/backend/Dockerfile
           push: true
+          # `:latest` is published ONLY on push to main. PR builds publish
+          # only the SHA tag so `docker pull :latest` cannot accidentally
+          # pull PR-build code. Mirrors klai-connector / klai-mailer.
           tags: |
-            ghcr.io/getklai/portal-api:latest
             ghcr.io/getklai/portal-api:${{ github.sha }}
+            ${{ github.event_name == 'push' && 'ghcr.io/getklai/portal-api:latest' || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -288,6 +298,10 @@ jobs:
       security-events: write
       packages: read
     steps:
+      # Checkout is required so trivy-action can find .trivy.yaml + the
+      # service's .trivyignore.yaml (paths are relative to repo root).
+      - uses: actions/checkout@v6
+
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
@@ -295,28 +309,33 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # scanners: vuln-only — secret scanning is handled separately by
-      # Semgrep and Gitleaks against our SOURCE code. Trivy's secret scanner
-      # runs against the BUILT image and matches strings in third-party
-      # Python libraries shipped under /repo/.../site-packages. yt-dlp's
-      # site-extractor modules embed dozens of public API tokens for
-      # streaming services (NBC, Vice, ESPN, Shahid, …) that consistently
-      # flag as CRITICAL aws-access-key-id / HIGH jwt-token hits — false
-      # positives that clutter the GitHub Security tab and break this job.
-      # Vulnerability scanning (the actual reason this job exists per
-      # .claude/rules/klai/infra/deploy.md) runs unchanged: severity
-      # CRITICAL+HIGH, ignore-unfixed, fail-on-find.
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.35.0
+      # STRICT-tier scan per SPEC-CI-TRIVY-POLICY-001 (REQ-2).
+      #
+      # Direct CLI invocation bypasses an aquasecurity/trivy-action
+      # bug (0.35.0/0.36.0): with `format: sarif` the `severity` filter
+      # is honoured for the SARIF body but NOT for the exit-code, so
+      # a MEDIUM/LOW finding triggers exit-code 1 even when we asked
+      # for CRITICAL+HIGH gating. trivy CLI's `--severity` flag is
+      # honoured for both detection AND exit-code. .trivy.yaml stays
+      # in the repo as the canonical policy reference until the
+      # action lands proper config-file precedence.
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@e6c2c5e321ed9123bda567646e2f96565e34abe1  # v0.2.5
         with:
-          image-ref: ghcr.io/getklai/portal-api:${{ github.sha }}
-          scanners: 'vuln'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH'
-          ignore-unfixed: true
-          exit-code: '1'
+          version: v0.69.3
+          cache: true
 
+      - name: Run Trivy vulnerability scanner
+        run: |
+          trivy image \
+            --format sarif \
+            --output trivy-results.sarif \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --scanners vuln \
+            --exit-code 1 \
+            --ignorefile klai-portal/backend/.trivyignore.yaml \
+            ghcr.io/getklai/portal-api:${{ github.sha }}
       - name: Upload Trivy SARIF to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v4
         if: always()
@@ -324,10 +343,20 @@ jobs:
           sarif_file: 'trivy-results.sarif'
 
   deploy:
-    needs: [build-push]
+    # `needs: scan` ensures Trivy gate from SPEC-CI-TRIVY-POLICY-001 REQ-2
+    # actually blocks production deploy: if scan job exits 1 on a HIGH/CRIT
+    # finding, deploy is skipped. Previously deploy only depended on
+    # build-push, so a failed scan would still let the image roll out.
+    needs: [build-push, scan]
     runs-on: ubuntu-latest
     steps:
+      # Audit 2026-05-05: defence-in-depth gate. The deploy job is gated
+      # via `needs: build-push` (build-push is itself gated), but the
+      # Pre-deploy env check step has no `if:` — if a future change
+      # loosens the build-push gate, this step would SSH into prod from
+      # PR context. Match the Deploy step's gate explicitly.
       - name: Pre-deploy env check
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.CORE01_HOST }}
@@ -352,7 +381,11 @@ jobs:
             fi
             echo "Pre-flight OK — all critical vars present."
 
+      # 2026-05-05 mailer-incident class: this step previously had no `if:`
+      # gate, so PR builds also auto-deployed `:latest` to prod. Same
+      # pattern that bit klai-mailer post PR #319 → hotfix #322.
       - name: Deploy to core-01
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.CORE01_HOST }}
@@ -363,4 +396,5 @@ jobs:
             source /opt/klai/.env
             echo "$GHCR_READ_PAT" | docker login ghcr.io -u mvletter --password-stdin
             docker pull ghcr.io/getklai/portal-api:latest
-            cd /opt/klai && docker compose up -d portal-api
+            # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3
+            /opt/klai/scripts/compose-up.sh portal-api

@@ -13,6 +13,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 from retrieval_api.api.chat import router as chat_router
 from retrieval_api.api.retrieve import router as retrieve_router
+from retrieval_api.api.taxonomy import router as taxonomy_router
 from retrieval_api.config import settings
 from retrieval_api.logging_setup import RequestContextMiddleware, setup_logging
 from retrieval_api.middleware.auth import AuthMiddleware
@@ -37,8 +38,9 @@ async def _warmup_reranker() -> None:
                 },
             )
         logger.info("reranker warmup complete")
-    except Exception as exc:
-        logger.warning("reranker warmup failed (non-fatal): %s", exc)
+    except Exception:
+        # F6 audit cleanup (TRY401): exc_info=True preserves traceback.
+        logger.warning("reranker warmup failed (non-fatal)", exc_info=True)
 
 
 @asynccontextmanager
@@ -90,6 +92,7 @@ app.add_middleware(
 )
 app.include_router(retrieve_router, prefix="")
 app.include_router(chat_router, prefix="")
+app.include_router(taxonomy_router, prefix="")
 
 # Prometheus metrics endpoint — scraped by Grafana Alloy → VictoriaMetrics
 app.mount("/metrics", make_asgi_app())

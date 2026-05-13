@@ -2,13 +2,19 @@
 Personal knowledge item routes:
   GET    /knowledge/v1/personal/items              — list personal artifacts
   DELETE /knowledge/v1/personal/items/{artifact_id} — soft-delete a personal artifact
-"""
-import structlog
-from datetime import datetime, timezone
 
+SPEC-TI-003-FOLLOWUP-001 AC-1: each handler opens a tenant_scoped_connection
+on the caller's org_id and threads the conn into every pg_store call so RLS
+sees the tenant context.
+"""
+
+from datetime import UTC, datetime
+
+import structlog
 from fastapi import APIRouter, HTTPException, Query
 
 from knowledge_ingest import pg_store, qdrant_store
+from knowledge_ingest.db import tenant_scoped_connection
 from knowledge_ingest.models import ArtifactSummary, PersonalItemsResponse
 
 logger = structlog.get_logger()
@@ -17,7 +23,7 @@ router = APIRouter()
 
 def _unix_to_iso(ts: int) -> str:
     """Convert a Unix timestamp (int) to ISO 8601 string."""
-    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+    return datetime.fromtimestamp(ts, tz=UTC).isoformat()
 
 
 @router.get("/knowledge/v1/personal/items", response_model=PersonalItemsResponse)
@@ -31,8 +37,9 @@ async def list_personal_items(
     if not org_id or not user_id:
         raise HTTPException(status_code=400, detail="org_id and user_id are required")
 
-    rows = await pg_store.list_personal_artifacts(org_id, user_id, limit, offset)
-    total = await pg_store.count_personal_artifacts(org_id, user_id)
+    async with tenant_scoped_connection(org_id) as conn:
+        rows = await pg_store.list_personal_artifacts(conn, org_id, user_id, limit, offset)
+        total = await pg_store.count_personal_artifacts(conn, org_id, user_id)
 
     items = [
         ArtifactSummary(
@@ -58,16 +65,22 @@ async def delete_personal_item(
     if not org_id or not user_id:
         raise HTTPException(status_code=400, detail="org_id and user_id are required")
 
-    artifact = await pg_store.get_personal_artifact(artifact_id, org_id, user_id)
-    if artifact is None:
-        raise HTTPException(status_code=404, detail="Artifact not found")
+    async with tenant_scoped_connection(org_id) as conn:
+        artifact = await pg_store.get_personal_artifact(conn, artifact_id, org_id, user_id)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="Artifact not found")
 
-    path = artifact["path"]
-    await pg_store.soft_delete_artifact(org_id, "personal", path)
+        path = artifact["path"]
+        await pg_store.soft_delete_artifact(conn, org_id, "personal", path)
+
+    # Qdrant is outside the tenant_scoped_connection -- it has its own auth.
     await qdrant_store.delete_document(org_id, "personal", path)
 
     logger.info(
         "personal_artifact_deleted",
-        artifact_id=artifact_id, path=path, user_id=user_id, org_id=org_id,
+        artifact_id=artifact_id,
+        path=path,
+        user_id=user_id,
+        org_id=org_id,
     )
     return {"status": "ok"}

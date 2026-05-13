@@ -22,7 +22,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 import redis.asyncio as aioredis
 import structlog
@@ -40,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_effective_capabilities
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, get_db, set_tenant
+from app.core.permissions import resolve_user_permissions
 from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg, PortalUser
@@ -400,6 +401,87 @@ async def get_user_products(
     return UserProductsResponse(products=products, capabilities=sorted(capabilities))
 
 
+# SPEC-PORTAL-RBAC-REFACTOR-001 REQ-19: serialised UserPermissions endpoint.
+# Used by klai-knowledge-mcp (and future MCP-style services) as a fallback
+# when the OAuth-token verify path doesn't yield a fresh effective_role —
+# e.g. immediately after a role change while the caller still holds an
+# old-claim JWT. Auth is the same X-Internal-Secret pattern as every other
+# endpoint in this file.
+
+
+class UserPermissionsResponse(BaseModel):
+    """Serialised ``UserPermissions`` for cross-service consumers.
+
+    Mirrors the dataclass fields 1:1 with primitive-only types so the
+    receiver does not need access to the SQLAlchemy/Pydantic ORM models.
+    Frozensets are serialised as sorted lists for deterministic output.
+    """
+
+    user_id: str
+    org_id: int
+    org_slug: str
+    role: str
+    plan: str
+    # SPEC-PORTAL-EXTENSIONS-UNIFY-001: enabled_addons column dropped 2026-05-12.
+    # platform_unlocked_features is now the single source of truth for
+    # tenant-level extension state. No consumer of /internal/identity/permissions
+    # was reading enabled_addons (audited 2026-05-12 across all klai services).
+    platform_unlocked_features: list[str]
+    effective_role: str
+    effective_capabilities: list[str]
+    effective_products: list[str]
+    is_platform_admin: bool
+    provisioning_status: str
+
+
+@router.get(
+    "/users/{zitadel_user_id}/permissions",
+    response_model=UserPermissionsResponse,
+)
+async def get_user_permissions(
+    zitadel_user_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> UserPermissionsResponse:
+    """Return the full ``UserPermissions`` snapshot for a Zitadel user.
+
+    SPEC-PORTAL-RBAC-REFACTOR-001 REQ-19: fallback for MCP-server when its
+    JWT-claim is missing or stale (e.g. post-role-rotation). Returns the
+    same data ``get_caller`` builds for in-process FastAPI requests, so
+    the MCP server can apply identical role / capability gates without
+    needing access to portal_users / portal_orgs directly.
+
+    404 when the user has no portal_users row — fail-closed so a typo in
+    the URL or a deleted user surfaces as "no permissions" not "empty
+    set" (the latter would silently treat the caller as personal-tier
+    on a deny-by-default policy and be hard to debug).
+    """
+    await _require_internal_token(request)
+
+    perms = await resolve_user_permissions(zitadel_user_id, db)
+    if perms is None:
+        await _audit_internal_call(request, org_id=0)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error_code": "user_not_found", "user_id": zitadel_user_id},
+        )
+
+    await _audit_internal_call(request, org_id=perms.org_id)
+    return UserPermissionsResponse(
+        user_id=perms.user_id,
+        org_id=perms.org_id,
+        org_slug=perms.org_slug,
+        role=perms.role.value,
+        plan=perms.plan,
+        platform_unlocked_features=sorted(perms.platform_unlocked_features),
+        effective_role=perms.effective_role.value,
+        effective_capabilities=sorted(c.value for c in perms.effective_capabilities),
+        effective_products=sorted(perms.effective_products),
+        is_platform_admin=perms.is_platform_admin,
+        provisioning_status=perms.provisioning_status,
+    )
+
+
 class ConnectorConfigResponse(BaseModel):
     connector_id: str
     kb_id: int
@@ -410,6 +492,12 @@ class ConnectorConfigResponse(BaseModel):
     schedule: str | None
     is_enabled: bool
     allowed_assertion_modes: list[str] | None
+    # owner_user_id: Zitadel user_id of the user who created this connector.
+    # Forwarded by klai-connector to knowledge-ingest /ingest/v1/document
+    # as ``req.user_id``. Required for personal-KB ownership check
+    # (knowledge_ingest.routes.ingest::personal_kb_owner_mismatch) — without
+    # it, syncs to ``personal-{user}`` KBs 403 because user_id=None.
+    owner_user_id: str | None = None
 
 
 @router.get("/connectors/{connector_id}", response_model=ConnectorConfigResponse)
@@ -462,6 +550,7 @@ async def get_connector_config(
         schedule=connector.schedule,
         is_enabled=connector.is_enabled,
         allowed_assertion_modes=connector.allowed_assertion_modes,
+        owner_user_id=connector.created_by,
     )
 
 
@@ -600,6 +689,20 @@ class KnowledgeFeatureResponse(BaseModel):
     kb_slugs_filter: list[str] | None = None
     kb_narrow: bool = False
     kb_pref_version: int = 0
+    # SPEC-SEC-IDENTITY-ASSERT-001 follow-up: retrieval-api's identity-verify
+    # check matches against `PortalUser.zitadel_user_id`. The LiteLLM hook only
+    # has the LibreChat MongoDB ObjectId at hand. Returning the resolved
+    # zitadel_user_id here lets the hook send the right identifier on the
+    # /retrieve call, and matches what knowledge-ingest stamps on personal-KB
+    # qdrant chunks (klai-portal/backend/app/api/knowledge.py:172-204), so
+    # the personal-scope filter also works.
+    zitadel_user_id: str | None = None
+    # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-2: per-tenant telemetry mode threaded
+    # through to the LiteLLM hook + knowledge-mcp. Default 'shadow' for
+    # backwards compatibility — when the field is absent in cached responses
+    # from older portal-api builds, downstream callers fail-open to 'shadow'
+    # per REQ-4.
+    telemetry_level: Literal["off", "shadow", "full"] = "shadow"
 
 
 @router.get("/v1/users/{librechat_user_id}/feature/knowledge", response_model=KnowledgeFeatureResponse)
@@ -623,8 +726,14 @@ async def get_knowledge_feature(
 
     # Set tenant context early using the org_id query param (Zitadel org ID).
     # This is needed so subsequent queries on RLS-protected tables work correctly.
-    org_lookup = await db.execute(select(PortalOrg.id).where(PortalOrg.zitadel_org_id == org_id))
-    portal_org_id = org_lookup.scalar_one_or_none()
+    # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-2: also fetch telemetry_level so every
+    # disabled-path return surfaces the org's level (not the default).
+    org_lookup = await db.execute(
+        select(PortalOrg.id, PortalOrg.telemetry_level).where(PortalOrg.zitadel_org_id == org_id)
+    )
+    org_row = org_lookup.one_or_none()
+    portal_org_id = org_row[0] if org_row else None
+    org_telemetry_level: Literal["off", "shadow", "full"] = org_row[1] if org_row else "shadow"
     if portal_org_id is not None:
         await set_tenant(db, portal_org_id)
 
@@ -639,7 +748,7 @@ async def get_knowledge_feature(
         if not settings.librechat_mongo_root_uri:
             logger.warning("KB authz: LIBRECHAT_MONGO_ROOT_URI not set — fail-closed for user %s", librechat_user_id)
             await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False)
+            return KnowledgeFeatureResponse(enabled=False, telemetry_level=org_telemetry_level)
 
         # Look up the org to get its LibreChat container name (= MongoDB database name)
         org_result = await db.execute(select(PortalOrg).where(PortalOrg.zitadel_org_id == org_id))
@@ -647,14 +756,14 @@ async def get_knowledge_feature(
         if org is None or not org.librechat_container:
             logger.warning("KB authz: org %s has no librechat_container — fail-closed", org_id)
             await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False)
+            return KnowledgeFeatureResponse(enabled=False, telemetry_level=org_telemetry_level)
 
         try:
             oid = ObjectId(librechat_user_id)
         except InvalidId:
             logger.warning("KB authz: invalid ObjectId %s — fail-closed", librechat_user_id)
             await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False)
+            return KnowledgeFeatureResponse(enabled=False, telemetry_level=org_telemetry_level)
 
         mongo_client: AsyncIOMotorClient | None = None
         try:
@@ -668,7 +777,7 @@ async def get_knowledge_feature(
                 exc_info=True,
             )
             await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False)
+            return KnowledgeFeatureResponse(enabled=False, telemetry_level=org_telemetry_level)
         finally:
             if mongo_client is not None:
                 mongo_client.close()
@@ -676,13 +785,13 @@ async def get_knowledge_feature(
         if mongo_user is None:
             logger.warning("KB authz: no LibreChat user found for ObjectId %s — fail-closed", librechat_user_id)
             await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False)
+            return KnowledgeFeatureResponse(enabled=False, telemetry_level=org_telemetry_level)
 
         zitadel_user_id = mongo_user.get("openidId") or mongo_user.get("openid_id") or mongo_user.get("sub")
         if not zitadel_user_id:
             logger.warning("KB authz: LibreChat user %s has no openidId/sub — fail-closed", librechat_user_id)
             await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False)
+            return KnowledgeFeatureResponse(enabled=False, telemetry_level=org_telemetry_level)
 
         # Resolve portal user and cache the mapping
         portal_result = await db.execute(select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id))
@@ -690,7 +799,7 @@ async def get_knowledge_feature(
         if user is None:
             logger.warning("KB authz: no portal user for zitadel_user_id %s — fail-closed", zitadel_user_id)
             await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False)
+            return KnowledgeFeatureResponse(enabled=False, telemetry_level=org_telemetry_level)
 
         user.librechat_user_id = librechat_user_id
         await db.commit()
@@ -710,7 +819,77 @@ async def get_knowledge_feature(
         kb_slugs_filter=user.kb_slugs_filter,
         kb_narrow=user.kb_narrow,
         kb_pref_version=user.kb_pref_version,
+        zitadel_user_id=user.zitadel_user_id,
+        telemetry_level=org_telemetry_level,
     )
+
+
+# SPEC-PRIVACY-QUERY-SHADOW-001 REQ-11: internal-admin telemetry-level toggle.
+class TelemetryLevelChange(BaseModel):
+    level: Literal["off", "shadow", "full"]
+    reason: str
+
+
+class TelemetryLevelOut(BaseModel):
+    org_id: int
+    old_level: Literal["off", "shadow", "full"]
+    new_level: Literal["off", "shadow", "full"]
+
+
+@router.post(
+    "/admin/orgs/{org_id}/telemetry-level",
+    response_model=TelemetryLevelOut,
+)
+async def admin_set_telemetry_level(
+    org_id: int,
+    body: TelemetryLevelChange,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> TelemetryLevelOut:
+    """Operator-only endpoint to flip a tenant's telemetry mode (REQ-11).
+
+    Auth: same X-Internal-Secret pattern as the rest of /internal/* — the
+    caller is presumed to be a klai-operator. The audit row records
+    ``operator_kind='operator'`` so it is distinguishable from the
+    tenant-self-service path (REQ-15) in the audit-log UI.
+    """
+    await _require_internal_token(request)
+
+    if not body.reason or not body.reason.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="reason must be non-empty",
+        )
+    if len(body.reason) > 500:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="reason exceeds 500-char limit",
+        )
+
+    from app.services.telemetry_level import set_telemetry_level
+
+    # Internal admin path: operator identity is implicit in the
+    # X-Internal-Secret bearer (no per-user JWT). We record a stable
+    # synthetic actor so the audit-log row is non-empty; klai-operators
+    # can correlate via the request_id in observability logs.
+    operator_user_id = "internal-admin"
+
+    try:
+        old_level, new_level = await set_telemetry_level(
+            db,
+            org_id=org_id,
+            new_level=body.level,
+            operator_kind="operator",
+            operator_user_id=operator_user_id,
+            reason=body.reason,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    await _audit_internal_call(request, org_id=org_id)
+    return TelemetryLevelOut(org_id=org_id, old_level=old_level, new_level=new_level)
 
 
 class PageSavedNotification(BaseModel):
@@ -749,6 +928,10 @@ class RetrievalLogIn(BaseModel):
     query_resolved: str
     embedding_model_version: str
     retrieved_at: datetime
+    # SPEC-MCP-RETRIEVAL-001 REQ-9: optional OAuth client attribution.
+    # ``None`` (the default) = LibreChat traffic; populated = third-party
+    # MCP client (Claude Desktop / Cursor / ChatGPT).
+    caller_client_id: str | None = None
 
 
 @router.post("/v1/retrieval-log", status_code=status.HTTP_201_CREATED)
@@ -761,6 +944,15 @@ async def post_retrieval_log(
 
     Resolves zitadel org_id string to portal int org_id, then writes to Redis.
     Silent discard on any error (REQ-KB-015-03).
+
+    SPEC-PRIVACY-QUERY-SHADOW-001 REQ-9 (reinterpreted): the retrieval-log
+    is Redis-backed (1h TTL JSON blob), NOT a Postgres table. The
+    spec.md REQ-9 referenced ``knowledge.retrieval_logs.query_resolved``
+    which does not exist on prod. The privacy contract here gates the
+    raw ``query_resolved`` field within the Redis blob:
+      - off    → skip the Redis write entirely
+      - shadow → write blob with ``query_resolved=""`` (empty placeholder)
+      - full   → write blob with literal query_resolved (existing behaviour)
     """
     await _require_internal_token(request)
 
@@ -772,6 +964,17 @@ async def post_retrieval_log(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Org not found")
         audit_org_id = org.id
 
+        # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-9: gate the Redis write on
+        # the canonical telemetry_level (never trust the upstream-supplied
+        # value for a privacy decision).
+        if org.telemetry_level == "off":
+            await _audit_internal_call(request, org_id=audit_org_id)
+            return {"ok": True, "skipped": "telemetry_off"}
+
+        # 'shadow' redacts the raw query content; chunk_ids /
+        # reranker_scores / model version still flow (they're aggregates).
+        effective_query_resolved = body.query_resolved if org.telemetry_level == "full" else ""
+
         from app.services.retrieval_log import write_retrieval_log
 
         await write_retrieval_log(
@@ -779,9 +982,10 @@ async def post_retrieval_log(
             user_id=body.user_id,
             chunk_ids=body.chunk_ids,
             reranker_scores=body.reranker_scores,
-            query_resolved=body.query_resolved,
+            query_resolved=effective_query_resolved,
             embedding_model_version=body.embedding_model_version,
             retrieved_at=body.retrieved_at,
+            caller_client_id=body.caller_client_id,
         )
     except HTTPException:
         raise
@@ -910,6 +1114,10 @@ class GapEventIn(BaseModel):
     chunks_retrieved: int = 0
     retrieval_ms: int = 0
     taxonomy_node_ids: list[int] | None = None  # SPEC-KB-022 R6: from LiteLLM hook
+    # SPEC-MCP-RETRIEVAL-001 REQ-9: optional OAuth client attribution.
+    # ``None`` (the default) = LibreChat traffic; populated = third-party
+    # MCP client (Claude Desktop / Cursor / ChatGPT).
+    caller_client_id: str | None = None
 
 
 @router.post("/v1/gap-events", status_code=status.HTTP_201_CREATED)
@@ -918,7 +1126,16 @@ async def create_gap_event(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Record a knowledge gap event from the LiteLLM hook."""
+    """Record a knowledge gap event from the LiteLLM hook.
+
+    SPEC-PRIVACY-QUERY-SHADOW-001 REQ-8: gating by per-tenant
+    telemetry_level — never trust the upstream-supplied value, always
+    re-fetch the canonical level from portal_orgs.
+
+    - off    → 200 OK, no row inserted
+    - shadow → INSERT with query_text='[REDACTED:shadow]'
+    - full   → INSERT with literal query_text (existing behavior)
+    """
     await _require_internal_token(request)
     from app.models.retrieval_gaps import PortalRetrievalGap
 
@@ -928,16 +1145,29 @@ async def create_gap_event(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Org not found")
     await set_tenant(db, org.id)
 
+    # REQ-8: 'off' → skip the INSERT entirely. Tenant accepts the
+    # support-side trade-off; we still respond 200 to keep the
+    # idempotent contract for fire-and-forget callers.
+    if org.telemetry_level == "off":
+        await _audit_internal_call(request, org_id=org.id)
+        return {"ok": True, "skipped": "telemetry_off"}
+
+    # REQ-8: 'shadow' → REDACT the literal query text. The matching
+    # telemetry.query_shadow row (written by retrieval-api in Unit 3)
+    # carries the embedding + features for support-team triage.
+    effective_query_text = payload.query_text if org.telemetry_level == "full" else "[REDACTED:shadow]"
+
     gap = PortalRetrievalGap(
         org_id=org.id,
         user_id=payload.user_id,
-        query_text=payload.query_text,
+        query_text=effective_query_text,
         gap_type=payload.gap_type,
         top_score=payload.top_score,
         nearest_kb_slug=payload.nearest_kb_slug,
         chunks_retrieved=payload.chunks_retrieved,
         retrieval_ms=payload.retrieval_ms,
         taxonomy_node_ids=payload.taxonomy_node_ids,
+        caller_client_id=payload.caller_client_id,
     )
     db.add(gap)
     await db.commit()
@@ -1005,6 +1235,82 @@ async def create_gap_event(
 
     await _audit_internal_call(request, org_id=org.id)
     return {"ok": True}
+
+
+class OnboardingStartRequest(BaseModel):
+    """Body for /internal/onboarding/start.
+
+    Triggered from a Twenty CRM Workflow's manual "Start onboarding"
+    button on a Person record. The Workflow's HTTP-action posts the
+    person's email + name + the Cal.com booking link. portal-api proxies
+    to klai-mailer's /internal/send (template ``onboarding_invite``).
+
+    @MX:NOTE: The mailer binds the recipient to ``variables.email``
+    server-side, so ``email`` here is both the routing address AND the
+    template variable. There is no separate ``to`` field by design.
+    """
+
+    name: str
+    email: str
+    cal_url: str | None = None
+
+
+class OnboardingStartResponse(BaseModel):
+    sent: bool
+    subject: str = ""
+    body_html: str = ""
+    cal_url: str = ""
+    sent_to: str = ""
+
+
+@router.post("/onboarding/start", response_model=OnboardingStartResponse)
+async def start_onboarding_drip(
+    request: Request,
+    body: OnboardingStartRequest,
+) -> OnboardingStartResponse:
+    """Send the onboarding Mail 1 (welcome + Cal booking-CTA) to a waitlister.
+
+    Auth: same ``Authorization: Bearer <INTERNAL_SECRET>`` pattern as
+    every other ``/internal/*`` endpoint. The Twenty Workflow HTTP-action
+    is the canonical caller; cURL with the same Bearer also works for
+    manual triggers.
+
+    Returns 200 with the rendered subject/body_html so the caller (Twenty
+    Workflow run log + downstream CREATE_RECORD Note step) can show the
+    operator exactly what was sent. Returns 502 if the mailer rejected
+    (4xx/5xx) or was unreachable. The downstream rate-limit (per-recipient
+    Redis bucket on the mailer) means duplicate clicks within the cooldown
+    window will surface as 502 here -- that is the safety against the
+    operator double-clicking the workflow button.
+    """
+    await _require_internal_token(request)
+
+    from app.services.notifications import send_onboarding_invite
+
+    cal_url = body.cal_url or "https://cal.getklai.com/klai/onboarding-intake"
+
+    mailer_result = await send_onboarding_invite(
+        name=body.name,
+        email=body.email,
+        cal_url=cal_url,
+    )
+
+    # Cross-tenant operation (the Person may belong to any tenant in Twenty),
+    # so we audit with org_id=0 like /librechat/regenerate.
+    await _audit_internal_call(request, org_id=0)
+
+    if mailer_result is None:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="mailer rejected or unreachable",
+        )
+    return OnboardingStartResponse(
+        sent=True,
+        subject=str(mailer_result.get("subject", "")),
+        body_html=str(mailer_result.get("body_html", "")),
+        cal_url=cal_url,
+        sent_to=body.email,
+    )
 
 
 class RegenerateResponse(BaseModel):
@@ -1277,7 +1583,10 @@ class IdentityVerifySuccess(BaseModel):
     org_id: str
     org_slug: str
     cache_ttl_seconds: int
-    evidence: Literal["jwt", "membership"]
+    # ``partner_key`` (F2 fix-forward, retrieval coupling audit 2026-05-06):
+    # evidence used for synthetic ``partner:<key_id>`` identities verified
+    # against partner_api_keys.
+    evidence: Literal["jwt", "membership", "partner_key"]
 
 
 class IdentityVerifyDeny(BaseModel):
@@ -1358,7 +1667,11 @@ async def verify_identity(
 
     from app.services.identity_verifier import (
         KNOWN_CALLER_SERVICES,
+        UserBoundEvidence,
         verify_identity_claim,
+    )
+    from app.services.identity_verifier import (
+        evidence_path as _evidence_path,
     )
     from app.services.identity_verify_cache import (
         CacheUnavailable,
@@ -1467,6 +1780,7 @@ async def verify_identity(
             claimed_org_id=body.claimed_org_id,
             verified=True,
             evidence=cached.evidence,
+            evidence_path=_evidence_path(cached.evidence),
             cache_hit=True,
         )
         return Response(
@@ -1475,7 +1789,9 @@ async def verify_identity(
                 org_id=cached.org_id,
                 org_slug=cached.org_slug,
                 cache_ttl_seconds=60,
-                evidence=cached.evidence,
+                # cached.evidence is UserBoundEvidence — the user-bound cache
+                # only stores "jwt" / "membership" / "partner_key" values.
+                evidence=cast("UserBoundEvidence", cached.evidence),
             ).model_dump_json(),
             status_code=status.HTTP_200_OK,
             media_type="application/json",
@@ -1553,6 +1869,7 @@ async def verify_identity(
         claimed_org_id=body.claimed_org_id,
         verified=True,
         evidence=decision.evidence,
+        evidence_path=_evidence_path(decision.evidence),
         cache_hit=False,
     )
     return Response(
@@ -1561,7 +1878,444 @@ async def verify_identity(
             org_id=decision.org_id,
             org_slug=decision.org_slug,
             cache_ttl_seconds=60,
-            evidence=decision.evidence,
+            # decision.evidence is UserBoundEvidence here — verify_identity_claim
+            # only produces "jwt", "membership", or "partner_key" for the
+            # user-bound path.
+            evidence=cast("UserBoundEvidence", decision.evidence),
+        ).model_dump_json(),
+        status_code=status.HTTP_200_OK,
+        media_type="application/json",
+    )
+
+
+# ---------------------------------------------------------------------------
+# SPEC-SEC-IDENTITY-ASSERT-001 tenant-only path: /internal/identity/verify-tenant
+# ---------------------------------------------------------------------------
+#
+# Opt-in primitive for service-to-service calls that carry no end-user identity
+# (e.g. portal-api → knowledge-ingest stats endpoints). Separated from
+# /internal/identity/verify so the type system prevents a user-bound endpoint
+# from accidentally receiving a tenant-only result when claimed_user_id=None.
+# See the architecture decision in identity.py and the retro entry for the
+# 2026-05-06 crash.
+
+
+class IdentityVerifyTenantRequest(BaseModel):
+    """Request body for POST /internal/identity/verify-tenant.
+
+    Intentionally has NO ``claimed_user_id`` and NO ``bearer_jwt`` fields.
+    A tenant-only call with a JWT would be a contract violation — the JWT
+    asserts an end-user, which is precisely what this path does not have.
+    """
+
+    caller_service: str
+    claimed_org_id: str
+    claimed_org_slug: str | None = None
+
+
+class IdentityVerifyTenantSuccess(BaseModel):
+    """200 response body for the tenant-only verification endpoint.
+
+    Intentionally has NO ``user_id`` field — there is no end-user on this path.
+    """
+
+    verified: Literal[True] = True
+    org_id: str
+    org_slug: str
+    cache_ttl_seconds: int
+    evidence: Literal["tenant_only"]
+
+
+@router.post(
+    "/identity/verify-tenant",
+    response_model=None,
+)
+async def verify_tenant_identity(
+    request: Request,
+    body: IdentityVerifyTenantRequest,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Verify a tenant-only service-asserted identity claim.
+
+    Implements the tenant-only split from SPEC-SEC-IDENTITY-ASSERT-001. Used
+    by knowledge-ingest stats endpoints (and any future tenant-level endpoints)
+    where there is no end-user. The response body carries no ``user_id`` field.
+
+    Failure modes:
+    - ``unknown_caller_service`` → HTTP 400.
+    - ``tenant_not_found``       → HTTP 403 (org_id has no live portal_orgs row).
+    - ``org_slug_mismatch``      → HTTP 403 (REQ-2.6: slug mismatch).
+    - ``cache_unavailable``      → HTTP 503 (Redis call failed; fails closed).
+    """
+
+    from app.services.identity_verifier import (
+        KNOWN_CALLER_SERVICES,
+        verify_tenant_claim,
+    )
+    from app.services.identity_verify_cache import (
+        CacheUnavailable,
+        cache_verified_tenant_decision,
+        get_cached_tenant_decision,
+    )
+
+    await _require_internal_token(request)
+
+    if body.caller_service not in KNOWN_CALLER_SERVICES:
+        await _audit_internal_call(request, org_id=0)
+        structlog_logger.warning(
+            "identity_verify_tenant_decision",
+            caller_service=body.caller_service,
+            claimed_user_id_hash="<service>",
+            claimed_org_id=body.claimed_org_id,
+            verified=False,
+            reason="unknown_caller_service",
+        )
+        return Response(
+            content=IdentityVerifyDeny(reason="unknown_caller_service").model_dump_json(),
+            status_code=status.HTTP_400_BAD_REQUEST,
+            media_type="application/json",
+        )
+
+    redis_pool = await get_redis_pool()
+
+    if redis_pool is None:
+        await _audit_internal_call(request, org_id=0)
+        structlog_logger.warning(
+            "identity_verify_tenant_decision",
+            caller_service=body.caller_service,
+            claimed_user_id_hash="<service>",
+            claimed_org_id=body.claimed_org_id,
+            verified=False,
+            reason="cache_unavailable",
+        )
+        return Response(
+            content=IdentityVerifyDeny(reason="cache_unavailable").model_dump_json(),
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            media_type="application/json",
+        )
+
+    try:
+        cached = await get_cached_tenant_decision(
+            redis=redis_pool,
+            caller_service=body.caller_service,
+            claimed_org_id=body.claimed_org_id,
+        )
+    except CacheUnavailable:
+        await _audit_internal_call(request, org_id=0)
+        structlog_logger.warning(
+            "identity_verify_tenant_decision",
+            caller_service=body.caller_service,
+            claimed_user_id_hash="<service>",
+            claimed_org_id=body.claimed_org_id,
+            verified=False,
+            reason="cache_unavailable",
+        )
+        return Response(
+            content=IdentityVerifyDeny(reason="cache_unavailable").model_dump_json(),
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            media_type="application/json",
+        )
+
+    if cached is not None and cached.org_id is not None and cached.org_slug is not None:
+        if body.claimed_org_slug is not None and body.claimed_org_slug != cached.org_slug:
+            await _audit_internal_call(request, org_id=0)
+            structlog_logger.warning(
+                "identity_verify_tenant_decision",
+                caller_service=body.caller_service,
+                claimed_user_id_hash="<service>",
+                claimed_org_id=body.claimed_org_id,
+                verified=False,
+                reason="org_slug_mismatch",
+                cache_hit=True,
+            )
+            return Response(
+                content=IdentityVerifyDeny(reason="org_slug_mismatch").model_dump_json(),
+                status_code=status.HTTP_403_FORBIDDEN,
+                media_type="application/json",
+            )
+
+        await _audit_internal_call(request, org_id=0)
+        structlog_logger.info(
+            "identity_verify_tenant_decision",
+            caller_service=body.caller_service,
+            claimed_user_id_hash="<service>",
+            claimed_org_id=body.claimed_org_id,
+            verified=True,
+            evidence="tenant_only",
+            cache_hit=True,
+        )
+        return Response(
+            content=IdentityVerifyTenantSuccess(
+                org_id=cached.org_id,
+                org_slug=cached.org_slug,
+                cache_ttl_seconds=60,
+                evidence="tenant_only",
+            ).model_dump_json(),
+            status_code=status.HTTP_200_OK,
+            media_type="application/json",
+        )
+
+    # Cache miss: run the verifier.
+    decision = await verify_tenant_claim(
+        db=db,
+        caller_service=body.caller_service,
+        claimed_org_id=body.claimed_org_id,
+        claimed_org_slug=body.claimed_org_slug,
+    )
+
+    if not decision.verified:
+        await _audit_internal_call(request, org_id=0)
+        structlog_logger.warning(
+            "identity_verify_tenant_decision",
+            caller_service=body.caller_service,
+            claimed_user_id_hash="<service>",
+            claimed_org_id=body.claimed_org_id,
+            verified=False,
+            reason=decision.reason,
+            cache_hit=False,
+        )
+        return Response(
+            content=IdentityVerifyDeny(reason=decision.reason or "unknown").model_dump_json(),
+            status_code=status.HTTP_403_FORBIDDEN,
+            media_type="application/json",
+        )
+
+    # Verified: cache and return 200.
+    try:
+        await cache_verified_tenant_decision(
+            redis=redis_pool,
+            caller_service=body.caller_service,
+            claimed_org_id=body.claimed_org_id,
+            decision=decision,
+        )
+    except CacheUnavailable:
+        await _audit_internal_call(request, org_id=0)
+        structlog_logger.warning(
+            "identity_verify_tenant_decision",
+            caller_service=body.caller_service,
+            claimed_user_id_hash="<service>",
+            claimed_org_id=body.claimed_org_id,
+            verified=False,
+            reason="cache_unavailable",
+        )
+        return Response(
+            content=IdentityVerifyDeny(reason="cache_unavailable").model_dump_json(),
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            media_type="application/json",
+        )
+
+    await _audit_internal_call(request, org_id=0)
+    assert decision.org_id is not None and decision.org_slug is not None
+    structlog_logger.info(
+        "identity_verify_tenant_decision",
+        caller_service=body.caller_service,
+        claimed_user_id_hash="<service>",
+        claimed_org_id=body.claimed_org_id,
+        verified=True,
+        evidence="tenant_only",
+        cache_hit=False,
+    )
+    return Response(
+        content=IdentityVerifyTenantSuccess(
+            org_id=decision.org_id,
+            org_slug=decision.org_slug,
+            cache_ttl_seconds=60,
+            evidence="tenant_only",
+        ).model_dump_json(),
+        status_code=status.HTTP_200_OK,
+        media_type="application/json",
+    )
+
+
+# ---------------------------------------------------------------------------
+# SPEC-TAXONOMY-V2-001: KB metadata endpoint for knowledge-ingest bootstrap
+# ---------------------------------------------------------------------------
+
+
+class KbMetadataResponse(BaseModel):
+    slug: str
+    description: str | None
+
+
+@router.get(
+    "/knowledge-bases/{kb_slug}/metadata",
+    response_model=KbMetadataResponse,
+)
+async def get_kb_metadata_internal(
+    kb_slug: str,
+    zitadel_org_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> KbMetadataResponse:
+    """Return KB metadata (description) for knowledge-ingest bootstrap.
+
+    SPEC-TAXONOMY-V2-001 AC-5: provides kb.description for the LLM naming prompt.
+    Requires ?zitadel_org_id to scope the RLS tenant.
+    Returns 404 when KB not found — knowledge-ingest treats this as best-effort.
+    """
+    await _require_internal_token(request)
+
+    org_result = await db.execute(select(PortalOrg).where(PortalOrg.zitadel_org_id == zitadel_org_id))
+    org = org_result.scalar_one_or_none()
+    if not org:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Org not found")
+
+    await set_tenant(db, org.id)
+    await _audit_internal_call(request, org_id=org.id)
+
+    kb_result = await db.execute(
+        select(PortalKnowledgeBase).where(
+            PortalKnowledgeBase.slug == kb_slug,
+            PortalKnowledgeBase.org_id == org.id,
+        )
+    )
+    kb = kb_result.scalar_one_or_none()
+    if not kb:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="KB not found")
+
+    return KbMetadataResponse(slug=kb.slug, description=kb.description)
+
+
+# ============================================================================
+# SPEC-MCP-AUTH-001 REQ-9: /internal/mcp-token/verify
+# ============================================================================
+#
+# Source-of-truth for "is this raw bearer token valid?". Called by
+# klai-knowledge-mcp via the McpTokenAsserter shared library on every tool
+# invocation. Mirrors the /internal/identity/verify pattern for shape +
+# Redis-cached fail-closed semantics.
+
+
+class McpTokenVerifyRequest(BaseModel):
+    """Request body for ``POST /internal/mcp-token/verify``.
+
+    The raw token is forwarded so portal-api can hash + lookup. We never
+    expose the hash on the wire — that would let an attacker who can sniff
+    internal traffic enumerate token-rows by pre-computed hash dictionaries.
+    """
+
+    caller_service: str
+    raw_token: str
+
+
+class McpTokenVerifySuccess(BaseModel):
+    """200 response when the token is valid.
+
+    ``user_id`` and ``org_id`` are strings (zitadel_user_id and
+    str(portal_orgs.id) respectively) to mirror the existing
+    /internal/identity/verify wire shape — knowledge-ingest and klai-docs
+    callers expect strings.
+    """
+
+    verified: Literal[True] = True
+    user_id: str
+    org_id: str
+    org_slug: str | None
+    scopes: list[str]
+    resource_uri: str
+    cache_ttl_seconds: int
+
+
+class McpTokenVerifyDeny(BaseModel):
+    """403/503 response body when the token is denied or unverifiable."""
+
+    verified: Literal[False] = False
+    reason: str
+
+
+@router.post(
+    "/mcp-token/verify",
+    response_model=None,
+)
+async def verify_mcp_token(
+    request: Request,
+    body: McpTokenVerifyRequest,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Verify a klai_mcp_<...> bearer token, return verified identity tuple.
+
+    SPEC-MCP-AUTH-001 REQ-9 + REQ-12 + REQ-15-19. Failure modes:
+
+    - ``HTTP 400 unknown_caller_service`` — body.caller_service not in the
+      known-callers list.
+    - ``HTTP 403 invalid_format`` — token missing the klai_mcp_ prefix.
+    - ``HTTP 403 unknown_token`` — hash not in DB.
+    - ``HTTP 403 token_revoked`` / ``token_expired`` / ``audience_mismatch``
+      / ``user_inactive`` / ``org_deprovisioning``.
+    - ``HTTP 503 cache_unavailable`` — Redis down (auth-class fail-closed).
+    """
+    from app.services.mcp_oauth import verify_access_token
+
+    await _require_internal_token(request)
+
+    if body.caller_service not in {"knowledge-mcp", "scribe-api", "retrieval-api"}:
+        await _audit_internal_call(request, org_id=0)
+        return Response(
+            content=McpTokenVerifyDeny(reason="unknown_caller_service").model_dump_json(),
+            status_code=status.HTTP_400_BAD_REQUEST,
+            media_type="application/json",
+        )
+
+    redis_pool = await get_redis_pool()
+    if redis_pool is None:
+        await _audit_internal_call(request, org_id=0)
+        return Response(
+            content=McpTokenVerifyDeny(reason="cache_unavailable").model_dump_json(),
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            media_type="application/json",
+        )
+
+    # The verify lookup needs cross-org access (we don't yet know which org
+    # owns the token). cross_org_session bypasses RLS via the privileged
+    # role; the verifier then narrows the result via WHERE access_token_hash.
+    from app.core.database import cross_org_session
+
+    async with cross_org_session() as priv_db:
+        result = await verify_access_token(
+            priv_db,
+            redis_pool,
+            raw_token=body.raw_token,
+            expected_resource=settings.mcp_oauth_resource_url,
+        )
+
+    if not result.verified:
+        await _audit_internal_call(request, org_id=0)
+        structlog_logger.warning(
+            "mcp_token_verify_decision",
+            caller_service=body.caller_service,
+            verified=False,
+            reason=result.reason,
+        )
+        # cache_unavailable is the only auth-class failure that should be 503;
+        # everything else is a 403 (token-specific deny).
+        status_code = (
+            status.HTTP_503_SERVICE_UNAVAILABLE if result.reason == "cache_unavailable" else status.HTTP_403_FORBIDDEN
+        )
+        return Response(
+            content=McpTokenVerifyDeny(reason=result.reason or "unknown").model_dump_json(),
+            status_code=status_code,
+            media_type="application/json",
+        )
+
+    # Verified: emit audit + return 200.
+    # result.org_id is str (zitadel-id-style); _audit_internal_call expects int.
+    audit_org_id = int(result.org_id) if result.org_id and result.org_id.isdigit() else 0
+    await _audit_internal_call(request, org_id=audit_org_id)
+    structlog_logger.info(
+        "mcp_token_verify_decision",
+        caller_service=body.caller_service,
+        verified=True,
+        user_id=result.user_id,
+        org_id=result.org_id,
+    )
+    return Response(
+        content=McpTokenVerifySuccess(
+            user_id=result.user_id,  # type: ignore[arg-type]
+            org_id=result.org_id,  # type: ignore[arg-type]
+            org_slug=result.org_slug,
+            scopes=list(result.scopes),
+            resource_uri=result.resource_uri or "",
+            cache_ttl_seconds=result.cache_ttl_seconds,
         ).model_dump_json(),
         status_code=status.HTTP_200_OK,
         media_type="application/json",

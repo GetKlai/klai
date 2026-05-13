@@ -36,6 +36,23 @@ dependencies = [
     # SPEC-SEC-HYGIENE-001 REQ-22: zxcvbn password-strength estimator.
     # MIT-licensed pure-Python port of Dropbox's zxcvbn; no native extensions.
     "zxcvbn>=4.5,<5.0",
+    # SPEC-INFRA-TENANT-DELETE-001 Phase 3 step 8: delete tenant points from Qdrant
+    # shared collections (klai_knowledge + klai_focus) by org_id filter during deprovisioning.
+    "qdrant-client>=1.12,<2.0",
+    # SPEC-INFRA-TENANT-DELETE-001 Phase 3 step 10: delete Scribe S3 artifacts from
+    # Garage-compatible S3 (boto3 speaks S3 protocol; Garage implements it).
+    "boto3>=1.35,<2.0",
+    # SPEC-RAG-MULTILINGUAL-CHAT-001 REQ-02: shared chat-prompt constant
+    # used by partner_chat. Single source of truth across portal-api and
+    # retrieval-api; CI lint asserts no other service hardcodes a copy.
+    "klai-chat-prompts",
+    # SPEC-RAG-MULTILINGUAL-CHAT-001 REQ-07: passive language detection
+    # for the chat_synthesis_complete log event in partner_chat.
+    "lingua-language-detector>=2.2.0",
+    # SPEC-MCP-AUTH-001: Jinja2 for the OAuth consent page renderer.
+    # Replaces the str.replace marker-substitution that previously broke
+    # silently on whitespace edits to the template.
+    "jinja2>=3.1",
 ]
 
 [tool.uv.sources]
@@ -43,6 +60,7 @@ klai-connector-credentials = { path = "../../klai-libs/connector-credentials", e
 klai-image-storage = { path = "../../klai-libs/image-storage", editable = true }
 klai-identity-assert = { path = "../../klai-libs/identity-assert", editable = true }
 klai-log-utils = { path = "../../klai-libs/log-utils", editable = true }
+klai-chat-prompts = { path = "../../klai-libs/chat-prompts", editable = true }
 
 [project.optional-dependencies]
 dev = [

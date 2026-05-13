@@ -8,7 +8,7 @@ Automated dependency updates are handled by Dependabot / Renovate. Upgrades foll
 
 **Exception — local builds:** `klai/retrieval-api:local` and `ghcr.io/mendableai/firecrawl:latest` are built on-host from source and not pullable from a registry. Their "versions" are tracked by git SHAs recorded in docker-compose.yml comments.
 
-**Exception — Vexa stack (SPEC-VEXA-003, 2026-04-19):** `vexaai/admin-api`, `vexaai/api-gateway`, `vexaai/meeting-api`, `vexaai/runtime-api`, `vexaai/vexa-bot`, `vexaai/transcription-service` are currently on `0.10.0-260419-1129`. Built locally on core-01 and gpu-01 from `Vexa-ai/vexa` upstream main `f0756bf`. Follow upstream's `<semver>-YYMMDD-HHMM` build convention; `deploy/check-image-tags.sh` enforces this in pre-commit. Rebuild cadence: monthly or when upstream ships a material fix (see deploy-notes in `.moai/specs/SPEC-VEXA-003/`).
+**Exception — Vexa stack (upstream v0.10.6, 2026-05-03):** `vexaai/admin-api`, `vexaai/api-gateway`, `vexaai/meeting-api`, `vexaai/runtime-api`, `vexaai/vexa-bot` are currently on `0.10.6` — pulled directly from Docker Hub (since v0.10.4 upstream publishes pre-built images). `deploy/check-image-tags.sh` enforces plain semver or timestamped-semver tag form (no `:latest` / `:dev` / `:staging`). Upgrade cadence: track upstream stable tags; bump for material fixes (chunk-leak, OOM, security). See `https://github.com/Vexa-ai/vexa/releases` for changelog. **Exception within the exception**: `vexaai/transcription-service` is NOT published to Docker Hub — it stays locally-built on gpu-01 from upstream source (CUDA + faster-whisper). Currently `0.10.6-local-260503-0858` (built from upstream `v0.10.6` tag, 2026-05-03). The `<semver>-local-YYMMDD-HHMM` convention is whitelisted by `deploy/check-image-pullable.sh` (no registry manifest exists). Bumping runbook: `docs/runbooks/transcription-service-bump.md`.
 
 ---
 
@@ -44,7 +44,7 @@ Automated dependency updates are handled by Dependabot / Renovate. Upgrades foll
 |---|---|---|
 | `litellm` | `ghcr.io/berriai/litellm:v1.83.7-stable` | Pinned explicitly (moved from rolling `:main-stable` on 2026-04-19). v1.83.x fixes CVE-2026-35030 (OIDC userinfo cache key collision — auth bypass). Re-assess monthly; LiteLLM ships stable tags ~weekly. |
 | `ollama` | `ollama/ollama:0.21.0` | CPU fallback for LLM inference. |
-| `librechat-getklai` | `ghcr.io/danny-avila/librechat:v0.8.5-rc1` | Multi-tenant chat UI. **Currently on RC1** — rolled in from `:latest` during 2026-04-19 audit. 3 mounted CJS patches (`format.cjs`, `stream.cjs`, `search.cjs`) target internal paths in `@librechat/agents` — any LibreChat upgrade must re-verify those patches against the new bundle. Goal: move to stable v0.8.5 when released. |
+| `librechat-getklai` | `ghcr.io/danny-avila/librechat:v0.8.5-rc1` | Multi-tenant chat UI. **Currently on RC1** — rolled in from `:latest` during 2026-04-19 audit. 4 mounted patches (`format.cjs`, `share.js`, `stream.cjs`, `search.cjs`) target LibreChat internal files — any LibreChat upgrade must re-verify those patches against `deploy/librechat/patch-manifest.txt`. Goal: move to stable v0.8.5 when released. |
 
 ### Document + search
 
@@ -77,7 +77,7 @@ Automated dependency updates are handled by Dependabot / Renovate. Upgrades foll
 |---|---|---|
 | `tei` | `ghcr.io/huggingface/text-embeddings-inference:1.9` | BGE-M3 dense embeddings. **Output-dimension critical** — verify bge-m3 embedding parity (same vector output for same input) before any upgrade, otherwise retrieval scores silently drift. |
 | `infinity` | `michaelf34/infinity:0.0.77` | BGE reranker-v2-m3. Upstream slowing (last release Aug 2025). |
-| `transcription-worker-1`, `transcription-worker-2` | `vexaai/transcription-service:0.10.0-260419-1129` | Vexa transcription-service (SPEC-VEXA-003 §3.4). Replaces the legacy custom `whisper-server` 146-line Python script. `faster-whisper` + Silero VAD + hallucination detection + two-tier admission (realtime/deferred) behind Nginx LB. CUDA 12.3.2 + cuDNN 9. Host port `127.0.0.1:8000` retained so `gpu-tunnel.service` and all consumer URLs stay unchanged. |
+| `transcription-worker-1`, `transcription-worker-2` | `vexaai/transcription-service:0.10.6-local-260503-0858` (locally built on gpu-01 — NOT on Docker Hub) | Vexa transcription-service (SPEC-VEXA-003 §3.4). Replaces the legacy custom `whisper-server` 146-line Python script. `faster-whisper` + Silero VAD + hallucination detection + two-tier admission (realtime/deferred) behind Nginx LB. CUDA 12.3.2 + cuDNN 9. Host port `127.0.0.1:8000` retained so `gpu-tunnel.service` and all consumer URLs stay unchanged. Bump procedure: `docs/runbooks/transcription-service-bump.md`. |
 | `transcription-api` | `nginx:1.27-alpine` | Least-connections load balancer in front of the two CUDA workers. Config at `deploy/vexa-transcription/nginx.conf`. |
 | `bge-m3-sparse` | built from `./bge-m3-sparse` | Local build. Sparse embeddings sidecar for hybrid retrieval. |
 
