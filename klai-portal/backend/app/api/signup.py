@@ -564,7 +564,11 @@ async def signup_social(
     )
 
     # 7. Clear the pending cookie
-    response.delete_cookie(key=_IDP_PENDING_COOKIE, path="/")
+    response.delete_cookie(
+        key=_IDP_PENDING_COOKIE,
+        domain=f".{settings.domain}" if settings.domain else None,
+        path="/",
+    )
 
     return SocialSignupResponse(
         org_id=zitadel_org_id,

@@ -627,7 +627,11 @@ class TestSignupSocial:
         assert result.user_id == _FAKE_USER_ID
         assert mock_portal_org.call_args.kwargs["primary_domain"] == "bedrijf.nl"
         response_mock.set_cookie.assert_called_once()
-        response_mock.delete_cookie.assert_called_once()
+        response_mock.delete_cookie.assert_called_once_with(
+            key="klai_idp_pending",
+            domain=f".{_DOMAIN}",
+            path="/",
+        )
         db.commit.assert_awaited()
 
     @pytest.mark.asyncio
