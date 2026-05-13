@@ -28,14 +28,14 @@ vi.mock('@/lib/logger', () => ({
   taxonomyLogger: { warn: vi.fn(), error: vi.fn() },
 }))
 vi.mock('sonner', () => ({ toast: { error: vi.fn() } }))
-vi.mock('@/paraglide/messages', () => ({
-  knowledge_taxonomy_proposals_conflict: () => 'conflict-msg',
-  knowledge_taxonomy_proposals_approve_error: () => 'generic-msg',
-}))
+// Paraglide is NOT mocked — same approach as the component test files.
+// Assertions below check that *some* string was passed to toast.error,
+// not the specific translation, so this stays robust to copy changes.
 
 import { apiFetch } from '@/lib/apiFetch'
 import { taxonomyLogger } from '@/lib/logger'
 import { toast } from 'sonner'
+import * as m from '@/paraglide/messages'
 
 const apiFetchMock = vi.mocked(apiFetch)
 const toastErrorMock = vi.mocked(toast.error)
@@ -271,7 +271,7 @@ describe('useApproveProposal', () => {
     result.current.mutate({ proposalId: 42 })
     await waitFor(() => expect(result.current.isError).toBe(true))
 
-    expect(toastErrorMock).toHaveBeenCalledWith('conflict-msg')
+    expect(toastErrorMock).toHaveBeenCalledWith(m.knowledge_taxonomy_proposals_conflict())
     expect(loggerWarnMock).toHaveBeenCalledWith(
       'Proposal approve failed',
       expect.objectContaining({ is409: true }),
@@ -292,7 +292,7 @@ describe('useApproveProposal', () => {
     result.current.mutate({ proposalId: 42 })
     await waitFor(() => expect(result.current.isError).toBe(true))
 
-    expect(toastErrorMock).toHaveBeenCalledWith('generic-msg')
+    expect(toastErrorMock).toHaveBeenCalledWith(m.knowledge_taxonomy_proposals_approve_error())
     expect(loggerWarnMock).toHaveBeenCalledWith(
       'Proposal approve failed',
       expect.objectContaining({ is409: false }),

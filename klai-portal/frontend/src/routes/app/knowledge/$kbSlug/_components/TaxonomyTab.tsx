@@ -26,7 +26,7 @@
 import { useParams } from '@tanstack/react-router'
 import { useAuth } from '@/lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState, useEffect } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Plus, Loader2, BarChart2,
   X, Tag, Filter, Sparkles,
@@ -150,19 +150,39 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
   // -- Suggest categories flow --
   const [suggestState, setSuggestState] = useState<SuggestState>('idle')
 
+  const canEdit = isContributor || isAdmin
+  // Stable empty-array fallbacks — TanStack Query returns undefined
+  // until the first response, and a fresh `[]` per render would defeat
+  // the useMemo'd derivations below.
+  const nodes = useMemo(() => nodesQuery.data?.nodes ?? [], [nodesQuery.data?.nodes])
+  const proposals = useMemo(
+    () => proposalsQuery.data?.proposals ?? [],
+    [proposalsQuery.data?.proposals],
+  )
+
+  // One memoised "pending" view used by:
+  //   - the suggestState useEffect below (count > 0 → banner)
+  //   - handleApplyAll (loop body)
+  //   - the Apply All button visibility
+  // Recomputes only when the proposals array changes — query refetches
+  // that return identical content hand back a new ref but the equality
+  // check inside useMemo still sees a new ref, so this is mostly a
+  // readability + DRY win, not a perf one.
+  const pendingProposals = useMemo(
+    () => proposals.filter((p) => p.status === 'pending'),
+    [proposals],
+  )
+
   // Sync suggestState with server data so the banner survives a page
-  // refresh. Depend on the derived pending-count (a primitive) rather
-  // than on proposalsQuery.data — the latter is a new object reference
-  // on every refetch, which would re-fire the effect unnecessarily.
-  const pendingProposalCount = (proposalsQuery.data?.proposals ?? []).filter(
-    (p) => p.status === 'pending',
-  ).length
+  // refresh. Depend on the derived count (a primitive) rather than on
+  // proposalsQuery.data — that object's ref changes on every refetch,
+  // which would re-fire the effect unnecessarily.
   useEffect(() => {
     if (!proposalsQuery.isSuccess) return
-    if (pendingProposalCount > 0) {
+    if (pendingProposals.length > 0) {
       setSuggestState((prev) => (prev === 'idle' ? 'proposals_ready' : prev))
     }
-  }, [proposalsQuery.isSuccess, pendingProposalCount])
+  }, [proposalsQuery.isSuccess, pendingProposals.length])
 
   const bootstrapMutation = useBootstrapTaxonomy(kbSlug, setSuggestState)
 
@@ -170,23 +190,18 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
     proposalsForFallback: () => proposalsQuery.data?.proposals ?? [],
   })
 
-  const canEdit = isContributor || isAdmin
-  const nodes = nodesQuery.data?.nodes ?? []
-  const proposals = proposalsQuery.data?.proposals ?? []
-
   /**
    * Apply-all orchestrator: approve every pending proposal with
    * `auto_categorise=false` (skip per-approve classification), then
    * trigger a single backfill to re-classify everything against the
    * now-complete taxonomy. Calls `apiFetch` directly rather than via
    * `useApproveProposal` — see SPEC Beslissingen § B5.
+   *
+   * SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 4: per-approve auto_categorise
+   * is suppressed so the single backfill at the end does all the
+   * classification work in one pass. Saves N-1 wasted runs.
    */
   async function handleApplyAll() {
-    const pendingProposals = proposals.filter((p) => p.status === 'pending')
-    // SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 4: pass auto_categorise=false on each
-    // approve so the backend skips per-approve classification jobs. The single
-    // backfillMutation.mutate() at the bottom does the full re-classification
-    // once. Saves N-1 wasted classification runs (was: N+1, now: 1).
     for (const proposal of pendingProposals) {
       try {
         await apiFetch(
@@ -200,8 +215,6 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
     void queryClient.invalidateQueries({ queryKey: ['taxonomy-proposals', kbSlug] })
     void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] })
     void queryClient.invalidateQueries({ queryKey: ['taxonomy-coverage', kbSlug] })
-    // Then trigger backfill — this is the single classification pass that
-    // tags all chunks against the now-complete taxonomy.
     backfillMutation.mutate()
   }
 
@@ -211,8 +224,11 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
 
   const isAddingChild = addParentId !== null
 
-  // Resolve active node name for filter chips
-  const activeNode = activeNodeId !== null ? nodes.find((n) => n.id === activeNodeId) : null
+  // Resolve active node name for filter chips.
+  const activeNode = useMemo(
+    () => (activeNodeId !== null ? nodes.find((n) => n.id === activeNodeId) ?? null : null),
+    [activeNodeId, nodes],
+  )
 
   return (
     <div className="space-y-8">
@@ -361,7 +377,7 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
           <div className="flex items-center gap-2 mb-3">
             <BarChart2 className="h-4 w-4 text-gray-900" />
             <h2 className="text-sm font-semibold text-gray-900">{m.knowledge_taxonomy_proposals_heading()}</h2>
-            <Badge variant="accent">{String(proposals.filter((p) => p.status === 'pending').length)}</Badge>
+            <Badge variant="accent">{String(pendingProposals.length)}</Badge>
           </div>
           <div className="space-y-3">
             {proposals.map((proposal) => (
@@ -390,7 +406,7 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
               />
             ))}
             {/* Apply All only shows when there are pending proposals to apply */}
-            {canEdit && suggestState === 'proposals_ready' && proposals.some((p) => p.status === 'pending') && (
+            {canEdit && suggestState === 'proposals_ready' && pendingProposals.length > 0 && (
               <div className="pt-3">
                 <Button
                   size="sm"
