@@ -1046,10 +1046,11 @@ class TestFinalizePostgresDelete:
 
     @pytest.mark.asyncio
     async def test_execute_called_for_each_non_cascading_child_table(self) -> None:
-        """db.execute called exactly 9 times: 8 explicit child DELETEs + 1 portal_orgs DELETE.
+        """db.execute called exactly 11 times: 10 explicit child DELETEs + 1 portal_orgs DELETE.
 
         Order MUST be: portal_knowledge_bases, portal_kb_tombstones, vexa_meetings,
-        portal_groups, portal_products, portal_templates, portal_users,
+        portal_group_products, portal_groups, portal_templates,
+        portal_user_products, portal_user_seat_history, portal_users,
         portal_join_requests, portal_orgs.
 
         This list is the source of truth for the FK audit. If a new non-cascading
@@ -1057,13 +1058,14 @@ class TestFinalizePostgresDelete:
         DELETE list extended — otherwise the production deprovision will fail
         on FK violation.
 
+        SPEC-INFRA-TENANT-DELETE-003 Bug F/G/H/I expanded this list:
+        - Removed `portal_products` (table no longer exists post-RBAC-001)
+        - Added `portal_group_products` (RBAC-001) before portal_groups
+        - Added `portal_user_products` (RBAC-001) before portal_users
+        - Added `portal_user_seat_history` (PRICING-PER-USER-001) before portal_users
+
         SPEC-INFRA-TENANT-DELETE-002 G1 added portal_join_requests just
-        before portal_orgs. Ordering relative to portal_users is independent
-        — verified 2026-05-05: portal_join_requests has exactly ONE FK,
-        `org_id → portal_orgs(id) ON DELETE SET NULL`, and no FK to
-        portal_users. The DELETE must run BEFORE portal_orgs (otherwise
-        SET NULL leaves orphaned PII rows); placement after portal_users
-        is a docstring-readability choice, not a correctness requirement.
+        before portal_orgs.
         """
         state = _make_state(org_id=42, slug="acme")
 
@@ -1079,16 +1081,18 @@ class TestFinalizePostgresDelete:
 
             await _finalize_postgres_delete(state)
 
-        assert state.db.execute.await_count == 9
+        assert state.db.execute.await_count == 11
 
         # Verify the table-name + order of every executed DELETE.
         expected_tables_in_order = [
             "portal_knowledge_bases",
             "portal_kb_tombstones",
             "vexa_meetings",
+            "portal_group_products",
             "portal_groups",
-            "portal_products",
             "portal_templates",
+            "portal_user_products",
+            "portal_user_seat_history",
             "portal_users",
             "portal_join_requests",
             "portal_orgs",
