@@ -107,9 +107,7 @@ async def test_totp_setup_zitadel_5xx(respx_zitadel: respx.MockRouter) -> None:
 @pytest.mark.asyncio
 async def test_totp_confirm_happy(respx_zitadel: respx.MockRouter) -> None:
     """REQ-1.3 — confirm happy path emits audit."""
-    verify_route = respx_zitadel.post("/v2/users/uid-1/totp/verify").mock(
-        return_value=httpx.Response(200, json={})
-    )
+    verify_route = respx_zitadel.post("/v2/users/uid-1/totp/verify").mock(return_value=httpx.Response(200, json={}))
 
     with capture_logs() as captured, _audit_log_patch() as audit_log:
         await totp_confirm(body=TOTPConfirmRequest(code="123456"), user_id="uid-1")
