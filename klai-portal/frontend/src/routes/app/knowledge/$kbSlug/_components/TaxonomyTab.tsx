@@ -1,14 +1,26 @@
 /**
- * TaxonomyTab — extracted from `../taxonomy.tsx` route file by
- * SPEC-PORTAL-TAXONOMY-EXTRACT-001 so that `../insights.tsx` can
- * consume it without violating the `klai/no-cross-route-import`
- * ESLint rule (routes must not import from each other).
+ * TaxonomyTab — orchestrator for the Taxonomy/Insights tab. Composes
+ * `<CoverageWidget>` (with `<CoverageNodeRow>`), `<ProposalCard>`,
+ * `<TagCloud>`, plus the inline filter bar, add-form, and
+ * suggest-flow banners.
  *
- * This file currently contains the entire 720-line TaxonomyTab body
- * + two private helper components (CoverageWidget, TagCloud) + one
- * private constant (MAX_HEALTHY_NODE_COUNT) — all moved verbatim. The
- * internal split into focused sub-components and extracted hooks is
- * tracked under SPEC-PORTAL-TAXONOMY-SPLIT-001.
+ * Lives under `_components/` (TanStack Router ignores the directory)
+ * so both the `/taxonomy` and `/insights` routes can consume it
+ * without violating the `klai/no-cross-route-import` ESLint rule.
+ *
+ * Owns the orchestrator state:
+ *   - filter (activeNodeId, activeTags)
+ *   - suggest-flow state machine (suggestState)
+ *   - inline add-form (showAddRoot, addParentId, newNodeName)
+ *   - singleton ids for proposal edit / reject (per-card input
+ *     buffers live inside ProposalCard)
+ *   - applyAllMutation + handleApplyAll (loops raw apiFetch + fires
+ *     backfill — see SPEC Beslissingen § B5 for why orchestration
+ *     stays here and not in a hook)
+ *
+ * Queries + mutations are extracted to `../-taxonomy-hooks.ts`.
+ * History: SPEC-PORTAL-TAXONOMY-EXTRACT-001 moved this out of the
+ * route file; SPEC-PORTAL-TAXONOMY-SPLIT-001 split the body further.
  */
 
 import { useParams } from '@tanstack/react-router'
@@ -138,14 +150,19 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
   // -- Suggest categories flow --
   const [suggestState, setSuggestState] = useState<SuggestState>('idle')
 
-  // Sync suggestState with server data so the banner survives a page refresh.
+  // Sync suggestState with server data so the banner survives a page
+  // refresh. Depend on the derived pending-count (a primitive) rather
+  // than on proposalsQuery.data — the latter is a new object reference
+  // on every refetch, which would re-fire the effect unnecessarily.
+  const pendingProposalCount = (proposalsQuery.data?.proposals ?? []).filter(
+    (p) => p.status === 'pending',
+  ).length
   useEffect(() => {
     if (!proposalsQuery.isSuccess) return
-    const pending = (proposalsQuery.data?.proposals ?? []).filter((p) => p.status === 'pending').length
-    if (pending > 0) {
+    if (pendingProposalCount > 0) {
       setSuggestState((prev) => (prev === 'idle' ? 'proposals_ready' : prev))
     }
-  }, [proposalsQuery.isSuccess, proposalsQuery.data])
+  }, [proposalsQuery.isSuccess, pendingProposalCount])
 
   const bootstrapMutation = useBootstrapTaxonomy(kbSlug, setSuggestState)
 
@@ -153,6 +170,17 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
     proposalsForFallback: () => proposalsQuery.data?.proposals ?? [],
   })
 
+  const canEdit = isContributor || isAdmin
+  const nodes = nodesQuery.data?.nodes ?? []
+  const proposals = proposalsQuery.data?.proposals ?? []
+
+  /**
+   * Apply-all orchestrator: approve every pending proposal with
+   * `auto_categorise=false` (skip per-approve classification), then
+   * trigger a single backfill to re-classify everything against the
+   * now-complete taxonomy. Calls `apiFetch` directly rather than via
+   * `useApproveProposal` — see SPEC Beslissingen § B5.
+   */
   async function handleApplyAll() {
     const pendingProposals = proposals.filter((p) => p.status === 'pending')
     // SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 4: pass auto_categorise=false on each
@@ -180,10 +208,6 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
   const applyAllMutation = useMutation({
     mutationFn: handleApplyAll,
   })
-
-  const canEdit = isContributor || isAdmin
-  const nodes = nodesQuery.data?.nodes ?? []
-  const proposals = proposalsQuery.data?.proposals ?? []
 
   const isAddingChild = addParentId !== null
 
