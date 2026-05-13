@@ -19,7 +19,6 @@ import {
   Plus, Loader2, BarChart2,
   X, Tag, Filter, Sparkles,
 } from 'lucide-react'
-import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -45,6 +44,7 @@ import {
 } from '../-taxonomy-hooks'
 import { TagCloud } from './TagCloud'
 import { CoverageWidget } from './CoverageWidget'
+import { ProposalCard } from './ProposalCard'
 
 
 // -- Main taxonomy tab --------------------------------------------------------
@@ -104,12 +104,11 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
   const [showAddRoot, setShowAddRoot] = useState(false)
   const [addParentId, setAddParentId] = useState<number | null>(null)
   const [newNodeName, setNewNodeName] = useState('')
-  const [rejectingProposalId, setRejectingProposalId] = useState<number | null>(null)
-  const [rejectReason, setRejectReason] = useState('')
-  // SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 5: edit-before-approve state
+  // Singleton ids — only one proposal may be in edit OR reject mode at
+  // any time. Per-card edit / reject input buffers live inside
+  // ProposalCard. SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 5: edit-before-approve.
   const [editingProposalId, setEditingProposalId] = useState<number | null>(null)
-  const [editingProposalTitle, setEditingProposalTitle] = useState('')
-  const [editingProposalDescription, setEditingProposalDescription] = useState('')
+  const [rejectingProposalId, setRejectingProposalId] = useState<number | null>(null)
 
   const nodesQuery = useTaxonomyNodes(kbSlug, auth.isAuthenticated)
   // SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 3: fetches ALL statuses so approved
@@ -134,10 +133,7 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
   // classification to a single backfill at the end.
   const approveMutation = useApproveProposal(kbSlug)
 
-  const rejectMutation = useRejectProposal(kbSlug, () => {
-    setRejectingProposalId(null)
-    setRejectReason('')
-  })
+  const rejectMutation = useRejectProposal(kbSlug, () => setRejectingProposalId(null))
 
   // -- Suggest categories flow --
   const [suggestState, setSuggestState] = useState<SuggestState>('idle')
@@ -193,13 +189,6 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
 
   // Resolve active node name for filter chips
   const activeNode = activeNodeId !== null ? nodes.find((n) => n.id === activeNodeId) : null
-
-  const proposalTypeBadge: Record<string, { label: () => string; variant: 'accent' | 'success' | 'secondary' | 'destructive' }> = {
-    new_node: { label: m.knowledge_taxonomy_proposals_type_new_node, variant: 'accent' },
-    merge: { label: m.knowledge_taxonomy_proposals_type_merge, variant: 'secondary' },
-    split: { label: m.knowledge_taxonomy_proposals_type_split, variant: 'secondary' },
-    rename: { label: m.knowledge_taxonomy_proposals_type_rename, variant: 'accent' },
-  }
 
   return (
     <div className="space-y-8">
@@ -351,173 +340,31 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
             <Badge variant="accent">{String(proposals.filter((p) => p.status === 'pending').length)}</Badge>
           </div>
           <div className="space-y-3">
-            {proposals.map((proposal) => {
-              const typeInfo = proposalTypeBadge[proposal.proposal_type] ?? { label: () => proposal.proposal_type, variant: 'secondary' as const }
-              const isEditing = editingProposalId === proposal.id
-              const isApproved = proposal.status === 'approved'
-              const isRejected = proposal.status === 'rejected'
-              const isPending = proposal.status === 'pending'
-              // status badge (separate from proposal_type badge): "Nieuw" / "Goedgekeurd" / "Afgewezen"
-              const statusBadge: { label: string; variant: 'accent' | 'success' | 'secondary' | 'destructive' } =
-                isApproved
-                  ? { label: m.knowledge_taxonomy_proposals_status_approved(), variant: 'success' }
-                  : isRejected
-                    ? { label: m.knowledge_taxonomy_proposals_status_rejected(), variant: 'destructive' }
-                    : { label: m.knowledge_taxonomy_proposals_status_pending(), variant: 'accent' }
-              return (
-                <Card
-                  key={proposal.id}
-                  className={isRejected ? 'opacity-60' : isApproved ? 'bg-[var(--color-success)]/5' : undefined}
-                >
-                  <CardContent className="pt-4 pb-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>
-                          <Badge variant={typeInfo.variant}>{typeInfo.label()}</Badge>
-                          {proposal.confidence_score != null && (
-                            <span className="text-xs text-gray-400">
-                              {m.knowledge_taxonomy_proposals_col_confidence()}: {Math.round(proposal.confidence_score * 100)}%
-                            </span>
-                          )}
-                        </div>
-                        {isEditing ? (
-                          <form
-                            className="space-y-2 mt-2"
-                            onSubmit={(e) => {
-                              e.preventDefault()
-                              approveMutation.mutate({
-                                proposalId: proposal.id,
-                                title: editingProposalTitle.trim() || undefined,
-                                description: editingProposalDescription,
-                              })
-                              setEditingProposalId(null)
-                              setEditingProposalTitle('')
-                              setEditingProposalDescription('')
-                            }}
-                          >
-                            <Input
-                              value={editingProposalTitle}
-                              onChange={(e) => setEditingProposalTitle(e.target.value)}
-                              placeholder={m.knowledge_taxonomy_proposals_edit_title_placeholder()}
-                              className="h-7 text-sm font-medium"
-                              autoFocus
-                            />
-                            <textarea
-                              value={editingProposalDescription}
-                              onChange={(e) => setEditingProposalDescription(e.target.value)}
-                              placeholder={m.knowledge_taxonomy_proposals_edit_description_placeholder()}
-                              rows={2}
-                              className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs text-gray-900 resize-y"
-                            />
-                            <div className="flex items-center gap-2">
-                              <Button
-                                type="submit"
-                                size="sm"
-                                className="h-7 text-xs px-2.5 bg-[var(--color-success)] text-white hover:opacity-90"
-                                disabled={approveMutation.isPending}
-                              >
-                                {m.knowledge_taxonomy_proposals_save_and_approve()}
-                              </Button>
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="ghost"
-                                className="h-7 text-xs px-2.5"
-                                onClick={() => {
-                                  setEditingProposalId(null)
-                                  setEditingProposalTitle('')
-                                  setEditingProposalDescription('')
-                                }}
-                              >
-                                {m.knowledge_taxonomy_proposals_cancel()}
-                              </Button>
-                            </div>
-                          </form>
-                        ) : (
-                          <>
-                            <p className="text-sm font-medium text-gray-900">{proposal.title}</p>
-                            {typeof proposal.payload?.description === 'string' && (
-                              <p className="text-xs text-gray-400 mt-0.5">
-                                {proposal.payload.description}
-                              </p>
-                            )}
-                            <p className="text-xs text-gray-400 mt-0.5">
-                              {new Date(proposal.created_at).toLocaleDateString()}
-                              {proposal.rejection_reason && (
-                                <span className="ml-2">— {proposal.rejection_reason}</span>
-                              )}
-                            </p>
-                          </>
-                        )}
-                      </div>
-                      {canEdit && isPending && !isEditing && (
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          {rejectingProposalId === proposal.id ? (
-                            <form
-                              className="flex items-center gap-1.5"
-                              onSubmit={(e) => {
-                                e.preventDefault()
-                                rejectMutation.mutate({ proposalId: proposal.id, reason: rejectReason })
-                              }}
-                            >
-                              <Input
-                                value={rejectReason}
-                                onChange={(e) => setRejectReason(e.target.value)}
-                                placeholder={m.knowledge_taxonomy_proposals_reject_reason_placeholder()}
-                                className="h-7 text-xs w-48"
-                                autoFocus
-                              />
-                              <Button type="submit" size="sm" variant="outline" className="h-7 text-xs px-2" disabled={rejectMutation.isPending}>
-                                {m.knowledge_taxonomy_proposals_reject()}
-                              </Button>
-                              <Button type="button" size="sm" variant="ghost" className="h-7 text-xs px-2" onClick={() => { setRejectingProposalId(null); setRejectReason('') }}>
-                                <X className="h-3 w-3" />
-                              </Button>
-                            </form>
-                          ) : (
-                            <>
-                              <Button
-                                size="sm"
-                                className="h-7 text-xs px-2.5 bg-[var(--color-success)] text-white hover:opacity-90"
-                                onClick={() => approveMutation.mutate({ proposalId: proposal.id })}
-                                disabled={approveMutation.isPending}
-                              >
-                                {m.knowledge_taxonomy_proposals_approve()}
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 text-xs px-2.5"
-                                onClick={() => {
-                                  setEditingProposalId(proposal.id)
-                                  setEditingProposalTitle(proposal.title)
-                                  setEditingProposalDescription(
-                                    typeof proposal.payload?.description === 'string'
-                                      ? proposal.payload.description
-                                      : '',
-                                  )
-                                }}
-                              >
-                                {m.knowledge_taxonomy_proposals_edit()}
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 text-xs px-2.5 text-[var(--color-destructive)] border-[var(--color-destructive)]/30 hover:bg-[var(--color-destructive)]/5"
-                                onClick={() => setRejectingProposalId(proposal.id)}
-                              >
-                                {m.knowledge_taxonomy_proposals_reject()}
-                              </Button>
-                            </>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              )
-            })}
+            {proposals.map((proposal) => (
+              <ProposalCard
+                key={proposal.id}
+                proposal={proposal}
+                canEdit={canEdit}
+                isEditing={editingProposalId === proposal.id}
+                isRejecting={rejectingProposalId === proposal.id}
+                approvePending={approveMutation.isPending}
+                rejectPending={rejectMutation.isPending}
+                onStartEdit={() => setEditingProposalId(proposal.id)}
+                onSubmitEdit={(title, description) => {
+                  approveMutation.mutate({
+                    proposalId: proposal.id,
+                    title: title || undefined,
+                    description,
+                  })
+                  setEditingProposalId(null)
+                }}
+                onCancelEdit={() => setEditingProposalId(null)}
+                onStartReject={() => setRejectingProposalId(proposal.id)}
+                onSubmitReject={(reason) => rejectMutation.mutate({ proposalId: proposal.id, reason })}
+                onCancelReject={() => setRejectingProposalId(null)}
+                onApprove={() => approveMutation.mutate({ proposalId: proposal.id })}
+              />
+            ))}
             {/* Apply All only shows when there are pending proposals to apply */}
             {canEdit && suggestState === 'proposals_ready' && proposals.some((p) => p.status === 'pending') && (
               <div className="pt-3">
