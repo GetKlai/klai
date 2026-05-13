@@ -15,10 +15,24 @@ help: ## Show this help
 
 # ── Setup ────────────────────────────────────────────────────────────────────
 
-setup: ## First-time setup: copy env files, install dependencies
+setup: ## First-time setup: copy env files, generate keys, install dependencies
 	@echo "==> Copying environment files..."
+	@test -f .env.dev.example || { echo "ERROR: .env.dev.example not found. Are you in the repo root?"; exit 1; }
+	@test -f $(BACKEND_DIR)/.env.example || { echo "ERROR: $(BACKEND_DIR)/.env.example not found."; exit 1; }
+	@test -f $(FRONTEND_DIR)/.env.local.example || { echo "ERROR: $(FRONTEND_DIR)/.env.local.example not found."; exit 1; }
 	@test -f .env.dev || cp .env.dev.example .env.dev
-	@test -f $(BACKEND_DIR)/.env || cp $(BACKEND_DIR)/.env.example $(BACKEND_DIR)/.env
+	@test -f $(BACKEND_DIR)/.env || { \
+		cp $(BACKEND_DIR)/.env.example $(BACKEND_DIR)/.env && \
+		echo "  Generating encryption keys..." && \
+		SECRETS_KEY=$$(python3 -c "import secrets; print(secrets.token_hex(32))") && \
+		ENCRYPT_KEY=$$(python3 -c "import secrets; print(secrets.token_hex(32))") && \
+		COOKIE_KEY=$$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())") && \
+		sed -i.bak "s|^PORTAL_SECRETS_KEY=.*|PORTAL_SECRETS_KEY=$$SECRETS_KEY|" $(BACKEND_DIR)/.env && \
+		sed -i.bak "s|^ENCRYPTION_KEY=.*|ENCRYPTION_KEY=$$ENCRYPT_KEY|" $(BACKEND_DIR)/.env && \
+		sed -i.bak "s|^SSO_COOKIE_KEY=.*|SSO_COOKIE_KEY=$$COOKIE_KEY|" $(BACKEND_DIR)/.env && \
+		rm -f $(BACKEND_DIR)/.env.bak && \
+		echo "  Keys generated and written to $(BACKEND_DIR)/.env"; \
+	}
 	@test -f $(FRONTEND_DIR)/.env.local || cp $(FRONTEND_DIR)/.env.local.example $(FRONTEND_DIR)/.env.local
 	@echo ""
 	@echo "==> Installing backend dependencies..."
