@@ -209,6 +209,70 @@ class TestMarkFailed:
             # Must not raise
             await _mark_failed(db, org_id=42, step_name="step_x", error_str="boom")
 
+    @pytest.mark.asyncio
+    async def test_mark_failed_writes_dict_as_jsonb(self) -> None:
+        """SPEC-INFRA-TENANT-DELETE-003 REQ-2 — _mark_failed must serialise the
+        failure dict in a way asyncpg can bind to a jsonb column.
+
+        Regression: prior implementation passed a Python ``dict`` directly as a
+        text() bind value, which asyncpg rejects with
+        ``DataError: 'dict' object has no attribute 'encode'``. The DataError
+        was swallowed by the outer try/except so ``last_failure`` stayed NULL
+        in production. The fix must encode the dict to a JSON string and CAST
+        on the SQL side, so the dict-bind path no longer fires.
+        """
+        captured: dict[str, object] = {}
+
+        async def fake_execute(stmt, params=None):
+            # transition_state is patched out below, so the only db.execute
+            # we see here is the UPDATE portal_orgs SET last_failure = ...
+            # bound to a dict in the buggy code path.
+            if params is None:
+                return MagicMock()
+            captured["params"] = params
+            captured["stmt"] = stmt
+            # Simulate asyncpg's actual behaviour: a raw dict bound to a
+            # jsonb column raises DataError because dicts have no .encode().
+            for key, val in params.items():
+                if isinstance(val, dict):
+                    raise asyncpg.exceptions.DataError(
+                        f"invalid input for query argument ${key}: {val!r} ('dict' object has no attribute 'encode')"
+                    )
+            return MagicMock()
+
+        db = AsyncMock()
+        db.execute.side_effect = fake_execute
+
+        with patch(
+            "app.services.provisioning.state_machine.transition_state",
+            new=AsyncMock(),
+        ):
+            await _mark_failed(
+                db,
+                org_id=10,
+                step_name="_delete_meilisearch_index",
+                error_str="connection refused",
+                attempt=3,
+            )
+
+        # No DataError leaked + commit reached = the bind value is no longer
+        # a dict. Belt+braces assertions: inspect the captured bind shape.
+        db.commit.assert_awaited_once()
+        assert "params" in captured, "db.execute(UPDATE last_failure) never called"
+        params = captured["params"]
+        assert isinstance(params, dict)
+        # No dict-typed bind values remain — anything containing the failure
+        # payload must have been serialised to a string before the call.
+        dict_binds = [k for k, v in params.items() if isinstance(v, dict)]
+        assert dict_binds == [], (
+            f"_mark_failed still passes a dict to asyncpg: {dict_binds}. "
+            "Use CAST(:val AS jsonb) with json.dumps(...) or the ORM path."
+        )
+        # Sanity: the SQL string must CAST the parameter to jsonb so the
+        # JSON-string bind reaches the column as jsonb (REQ-2 AC-2.1).
+        stmt_text = str(captured["stmt"])
+        assert "jsonb" in stmt_text.lower(), f"UPDATE statement must cast bind to jsonb, got: {stmt_text!r}"
+
 
 # ---------------------------------------------------------------------------
 # _resolve_litellm_team_id

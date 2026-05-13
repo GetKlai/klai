@@ -20,6 +20,7 @@ skipped harmlessly.
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -334,18 +335,24 @@ async def _mark_failed(db: AsyncSession, org_id: int, step_name: str, error_str:
             step=step_name,
         )
         # Populate last_failure JSONB. Use raw text() to avoid ORM RLS issues.
+        # @MX:NOTE: SPEC-INFRA-TENANT-DELETE-003 Bug B — asyncpg cannot bind a
+        #   Python dict to a jsonb column via text() prepared statements; it
+        #   tries to call `.encode()` on the dict and raises DataError. Encode
+        #   to a JSON string and CAST on the SQL side so the bind value is a
+        #   str (which asyncpg encodes correctly). See portal-backend.md
+        #   "SQLAlchemy + RLS — ::jsonb casts conflict with :param".
         failed_at = datetime.now(UTC).isoformat()
-        await db.execute(
-            text("UPDATE portal_orgs SET last_failure = :failure WHERE id = :id"),
+        failure_payload = json.dumps(
             {
-                "failure": {
-                    "step": step_name,
-                    "error": error_str[:500],  # truncate to keep JSONB compact
-                    "attempt": attempt,
-                    "failed_at": failed_at,
-                },
-                "id": org_id,
-            },
+                "step": step_name,
+                "error": error_str[:500],  # truncate to keep JSONB compact
+                "attempt": attempt,
+                "failed_at": failed_at,
+            }
+        )
+        await db.execute(
+            text("UPDATE portal_orgs SET last_failure = CAST(:failure AS jsonb) WHERE id = :id"),
+            {"failure": failure_payload, "id": org_id},
         )
         await db.commit()
         logger.info("deprovisioning_failed_state_set", org_id=org_id, step=step_name)
