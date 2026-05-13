@@ -1,13 +1,15 @@
 ---
 id: SPEC-PORTAL-TAXONOMY-SPLIT-001
-version: 0.1.0
-status: draft
+version: 0.2.0
+status: ready
 created: 2026-05-13
+updated: 2026-05-13
 author: Mark Vletter
 priority: medium
-parent: SPEC-PORTAL-TAXONOMY-EXTRACT-001 (prerequisite — TaxonomyTab must already live in _components/)
+parent: SPEC-PORTAL-TAXONOMY-EXTRACT-001 (prerequisite — done; TaxonomyTab lives in `_components/TaxonomyTab.tsx`)
 related:
-  - SPEC-PORTAL-CONNECTOR-WIZARD-EXTRACT-001 (origin of file-organization rule + ESLint guard)
+  - SPEC-PORTAL-CONNECTOR-WIZARD-EXTRACT-001 (origin of file-organization rule + ESLint guard; established the `-feature-*.{ts,tsx}` + `_components/` pattern this SPEC applies)
+  - SPEC-PORTAL-KENNIS-002 (origin of the `-sources-hooks.ts` precedent we mirror)
 rule:
   - .claude/rules/klai/projects/portal-frontend.md § "File organization for shared types and helpers"
 ---
@@ -16,267 +18,498 @@ rule:
 
 ## Goal
 
-Split the 720-line `TaxonomyTab` god-component (extracted to
-`_components/TaxonomyTab.tsx` by the prerequisite SPEC-PORTAL-TAXONOMY-EXTRACT-001)
-into focused sub-components and extracted hooks, **with behavior
-preservation** (DDD methodology). Target end state:
+Split the 1093-line `TaxonomyTab.tsx` god-component (located at
+`klai-portal/frontend/src/routes/app/knowledge/$kbSlug/_components/TaxonomyTab.tsx`)
+into focused sub-components and an extracted hooks file, **with behavior
+preservation** (DDD methodology). Zero user-visible change.
 
-- `TaxonomyTab.tsx`: ≤ 250 lines (state composition + sub-component
-  orchestration only)
-- `_components/ProposalCard.tsx`: ~150-200 lines (currently the
-  166-line inline `proposals.map()` callback)
-- `_components/TaxonomyTree.tsx`: ~100-150 lines (the tree rendering
-  + node selection)
-- `_components/TaxonomyToolbar.tsx`: ~50-80 lines (action bar)
-- `-taxonomy-hooks.ts`: ~150-250 lines (8 mutation hooks)
-- 0 cross-route imports (already enforced by ESLint rule)
-- All existing tests pass (235/235); coverage equal-or-better
+### Target end state
 
-This SPEC is **draft** — needs annotation cycle before pickup. The
-720-line function has 16 useState + 8 inline mutations + 4 inline
-queries; splitting it requires careful behavior-preservation
-(characterization tests, mutation prop drilling vs context, etc.).
+- `_components/TaxonomyTab.tsx`: ≤ 500 lines (orchestrator: state, hook
+  consumption, sub-component composition, the inline filter-bar and
+  suggest-flow banners, the inline add-form, plus `applyAllMutation` +
+  `handleApplyAll` which orchestrate other hooks and so live with the
+  orchestrator).
+
+  *Note*: the original draft target was ≤ 250 lines. After the four
+  extractions the orchestrator settled at ~450 lines because TaxonomyTab
+  still composes 5 sections (filter bar, coverage area with admin-only
+  inline add-form, proposals area with apply-all CTA, tag-cloud, three
+  suggest-flow banners) and owns 8 useState slots, 11 hook calls, the
+  applyAll orchestrator function, and the suggest-state sync useEffect.
+  Hitting 250 would require extracting further (add-form, suggest
+  banner, filter bar) which the SPEC author deferred to a future SPEC.
+- `_components/CoverageWidget.tsx` (new, ~280 lines): coverage rendering
+  + per-node inline edit/delete + add-form invocation. Same callback
+  props as today.
+- `_components/ProposalCard.tsx` (new, ~150 lines): one proposal card
+  with edit-mode + reject-form + status branches. Singleton "which card
+  is editing" lives in TaxonomyTab; per-card edit-state derived from
+  the `isEditing` prop.
+- `_components/TagCloud.tsx` (new, ~40 lines): pure renderer.
+- `-taxonomy-hooks.ts` (new, route-directory level next to
+  `taxonomy.tsx`, ~250 lines): 11 individual hook exports — 7 mutations
+  + 4 queries. `applyAllMutation` is **not** here (see Beslissingen
+  § B5).
+- 0 cross-route imports (already enforced by `klai/no-cross-route-import`
+  ESLint rule).
+- All existing tests pass; characterization tests added in the PRESERVE
+  phase verify the 8 mutation paths + 4 proposal-rendering branches.
 
 ## Motivation
 
-After SPEC-PORTAL-TAXONOMY-EXTRACT-001 lands, TaxonomyTab will live in
-`_components/TaxonomyTab.tsx` but still be 720 lines internally.
-That's the move SPEC's deliberate scope (mechanical relocation only).
+After SPEC-PORTAL-TAXONOMY-EXTRACT-001 landed, TaxonomyTab lives in
+`_components/TaxonomyTab.tsx` but remains 1093 lines internally. That
+SPEC's deliberate scope was mechanical relocation only.
 
 The internal split is where the actual code-quality win happens:
 
 | Today (post-EXTRACT) | Post-SPLIT target |
 |---|---|
-| 1 file, 720 lines | 5 files, 150-250 lines each |
-| 1 god-function holding 16 useState | TaxonomyTab orchestrator + sub-components with focused state |
-| 8 mutations declared inline in function body | 8 hooks in `-taxonomy-hooks.ts`, consumed by sub-components |
-| 4 inline queries | Same hooks pattern |
-| 166-line inline `proposals.map()` JSX | `<ProposalCard>` component with own props |
-| 0 useCallback/useMemo (every render rebuilds every closure) | useCallback on stable callbacks, useMemo on derived data |
+| 1 file, 1093 lines | 5 files, 40-280 lines each |
+| 1 god-function with 11 useState (orchestrator) + 4 useState (CoverageWidget) | TaxonomyTab orchestrator + sub-components with focused state |
+| 8 mutations declared inline | 7 mutations + 4 queries in `-taxonomy-hooks.ts` as individual exports; `applyAllMutation` stays in orchestrator |
+| 4 inline queries | Same hooks file |
+| 166-line inline `proposals.map()` JSX | `<ProposalCard>` with own props |
 
-This is a real refactor — not a relocation. Behavior preservation is
-non-trivial because the 16 useState forms an implicit state machine
-that needs to be either:
-- Distributed correctly across sub-components (each owning its own
-  state)
-- OR consolidated into a `useReducer` (probably the right answer
-  given the cross-coupling)
-- OR kept centrally with prop-drilling (works but verbose)
+This is a behavior-preservation refactor — not a UX improvement.
 
 ## Motivation metrics
 
-| Metric | Value |
+| Metric | Value (current) |
 |---|---|
-| TaxonomyTab function lines | ~720 |
-| useState | 16 |
+| TaxonomyTab.tsx total lines | 1093 |
+| Main TaxonomyTab function useState (parent scope) | 11 |
+| CoverageWidget useState (inline sub-component) | 4 |
 | Inline mutations | 8 (`createNodeMutation`, `deleteNodeMutation`, `renameNodeMutation`, `approveMutation`, `rejectMutation`, `bootstrapMutation`, `backfillMutation`, `applyAllMutation`) |
 | Inline queries | 4 (`coverageQuery`, `nodesQuery`, `proposalsQuery`, `topTagsQuery`) |
-| Inline JSX (proposals.map callback) | 166 lines |
-| useCallback / useMemo | 0 |
-| Git churn last 90 days | 44 commits |
-| Production-critical | Yes (Inzichten + Taxonomie tab) |
+| Inline JSX (proposals.map callback) | ~150 lines (regels 856-1009) |
+| useCallback / useMemo / memo | 0 — and remain 0 after this SPEC (see Beslissingen § B6) |
+| Git churn last 90 days | 44 commits — actively edited |
+| Production-critical | Yes (Inzichten + Taxonomie tab on Voys) |
 
-## Scope (initial draft — needs annotation cycle)
+## Scope
 
-### In (proposed)
+### In
 
 **Frontend** (`klai-portal/frontend/src/routes/app/knowledge/$kbSlug/`):
 
-- New `_components/ProposalCard.tsx`:
-  - Extract the 166-line `proposals.map()` callback into a focused
-    component
-  - Props: `proposal` + per-proposal mutation callbacks
-  - Owns: editing state for that specific proposal
-    (`editingProposalTitle`, `editingProposalDescription`,
-    `rejectingProposalId`, `rejectReason`)
+1. **New `_components/CoverageWidget.tsx`** — verbatim relocation of the
+   `CoverageWidget` function currently defined at regels 47-326 of
+   `_components/TaxonomyTab.tsx`. Same prop signature: `coverage`,
+   `activeNodeId`, `onNodeClick`, `onSuggest`, `isSuggesting`,
+   `isBackfilling`, `canEdit`, `onRename`, `onDelete`. Owns its own
+   per-node edit/delete state (`editingNodeId`, `editingName`,
+   `editingDescription`, `confirmDeleteId`).
 
-- New `_components/TaxonomyTree.tsx`:
-  - Extract tree rendering + node-selection logic
-  - Props: `nodes`, `activeNodeId`, `onNodeClick`, `onNodeAdd`, etc.
-  - Owns: `addParentId`, `newNodeName`, `showAddRoot`,
-    `isAddingChild`
+2. **New `_components/ProposalCard.tsx`** — extraction of the 166-line
+   `proposals.map()` callback (regels 843-1009). Props:
+   - `proposal: TaxonomyProposal`
+   - `canEdit: boolean`
+   - `isEditing: boolean` (singleton from parent — only one card edits
+     at a time)
+   - `isRejecting: boolean` (singleton, idem)
+   - `approvePending: boolean` (in-flight state from parent's mutation)
+   - `rejectPending: boolean` (idem)
+   - `onStartEdit(): void`
+   - `onSubmitEdit(title: string, description: string): void`
+   - `onCancelEdit(): void`
+   - `onStartReject(): void`
+   - `onSubmitReject(reason: string): void`
+   - `onCancelReject(): void`
+   - `onApprove(): void`
+   - Owns its own per-card edit-buffer state
+     (`editingTitle`, `editingDescription`, `rejectReason`),
+     initialised when `isEditing` / `isRejecting` flips to true.
 
-- New `_components/TaxonomyToolbar.tsx`:
-  - Extract action-bar (suggest, bootstrap, backfill, apply-all)
-  - Props: state of in-flight mutations + handlers
+3. **New `_components/TagCloud.tsx`** — verbatim relocation of the
+   `TagCloud` function (regels 330-369). Same prop signature: `tags`,
+   `activeTags`, `onTagClick`. No state.
 
-- New `-taxonomy-hooks.ts`:
-  - 8 mutation hooks: `useCreateNode`, `useDeleteNode`, `useRenameNode`,
-    `useApproveProposal`, `useRejectProposal`, `useBootstrapTaxonomy`,
-    `useBackfillTaxonomy`, `useApplyAllProposals`
-  - 4 query hooks: `useTaxonomyNodes`, `useTaxonomyProposals`,
-    `useTaxonomyCoverage`, `useTopTags`
-  - Each hook contains the same `mutationFn` / `queryFn` body that
-    currently lives inline in TaxonomyTab. Pure relocation per hook.
+4. **New `-taxonomy-hooks.ts`** at route-directory level (alongside
+   `taxonomy.tsx`, **not** in `_components/`). 11 individual exports:
 
-- Modify `_components/TaxonomyTab.tsx` (the orchestrator):
-  - State: 16 → maybe 4-6 (most state moves into sub-components)
-  - Body: ≤ 250 lines (orchestration + composition only)
-  - Optionally introduce `useReducer` if the remaining cross-coupled
-    state benefits from it (annotation cycle decides)
+   **Queries** (4):
+   - `useTaxonomyNodes(kbSlug)` — `nodesQuery` body
+   - `useTaxonomyProposals(kbSlug)` — `proposalsQuery` body
+     (status=all)
+   - `useTaxonomyCoverage(kbSlug, { enabled })` — `coverageQuery` body,
+     5min staleTime, gated on isAdmin via `enabled`
+   - `useTopTags(kbSlug, activeNodeId)` — `topTagsQuery` body
+
+   **Mutations** (7):
+   - `useCreateNode(kbSlug, onSuccess)` — POST nodes; invalidates
+     `taxonomy-nodes`; `onSuccess` resets parent's add-form state
+   - `useRenameNode(kbSlug)` — PATCH nodes; invalidates
+     `taxonomy-nodes` + `taxonomy-coverage`
+   - `useDeleteNode(kbSlug)` — DELETE nodes; invalidates
+     `taxonomy-nodes`
+   - `useApproveProposal(kbSlug)` — POST approve; invalidates
+     `taxonomy-proposals` + `taxonomy-nodes` + `taxonomy-coverage` on
+     success; on error: warn-log + 409-toast / generic toast + invalidate
+     `taxonomy-proposals` + `taxonomy-nodes` (resync)
+   - `useRejectProposal(kbSlug, onSuccess)` — POST reject; invalidates
+     `taxonomy-proposals`; `onSuccess` resets parent's reject-form state
+   - `useBootstrapTaxonomy(kbSlug, onStateChange)` — POST bootstrap;
+     `onMutate` → `onStateChange('generating')`; `onSuccess` →
+     `onStateChange('proposals_ready' | 'idle')` based on
+     `data.proposals_submitted`; invalidates `taxonomy-proposals`;
+     `onError` → error-log + `onStateChange('idle')`
+   - `useBackfillTaxonomy(kbSlug, onStateChange, options)` — POST
+     enqueue + poll loop (max 120 polls × 5s); `onMutate` →
+     `onStateChange('applying')`; `onSuccess` → `onStateChange('done')`
+     + invalidates `taxonomy-nodes` + `taxonomy-proposals` +
+     `taxonomy-coverage` + `taxonomy-top-tags`; `onError` →
+     `onStateChange((prev) => prev === 'applying' ? (anyPending ? 'proposals_ready' : 'idle') : prev)`
+     — must accept `proposalsForFallback` via options to read pending
+     count without coupling to a query.
+
+5. **Modify `_components/TaxonomyTab.tsx`** (the orchestrator) — keep:
+   - 11 useState declarations (filter, suggestState, add-form,
+     singleton editingProposalId, singleton rejectingProposalId)
+   - `useQuery` for `kb` + `members` (auth permissions — not taxonomy
+     mutations/queries, stay inline)
+   - `applyAllMutation = useMutation({ mutationFn: handleApplyAll })`
+     and the `handleApplyAll` async function — both stay here because
+     `handleApplyAll` orchestrates raw apiFetch loops + queryClient
+     invalidations + `backfillMutation.mutate()`. Moving it to a hook
+     would require passing other mutations as deps (rommelige
+     coupling). The orchestrator is the right home for orchestration.
+   - The `useEffect` that syncs `suggestState` with server data —
+     orchestrator-level concern.
+   - JSX composition: filter bar, suggest-flow banners (lines
+     1066-1087), and the three sub-components.
+   - Remove inline `CoverageWidget` + `TagCloud` function definitions.
+   - Remove the 7 hook-eligible mutation declarations + the 4 query
+     declarations. Replace with hook calls.
+
+6. **No changes to `taxonomy.tsx` route file** — it remains the 18-line
+   thin wrapper exporting `TaxonomyTab`. The new
+   `$kbSlug/-taxonomy-hooks.ts` and the three new
+   `$kbSlug/_components/*.tsx` files sit beside it.
 
 ### Out (explicit)
 
-- **Adding new functionality**. This SPEC preserves behavior; it does
-  not improve UX, add features, or change APIs.
-- **Refactoring backend taxonomy endpoints**. They stay as-is.
-- **Changing query patterns** (e.g. moving from React Query to
-  another lib). Out of scope.
-- **Adding new tests beyond characterization tests for the existing
-  behavior**. Coverage delta should be neutral-or-positive but is
-  not the goal.
+- **Adding new functionality.** Behavior preservation only.
+- **Refactoring backend taxonomy endpoints.** Frontend-only.
+- **Changing query keys, invalidation patterns, or API contracts.**
+  The invalidation map (Appendix A) is the behavior-preservation
+  contract.
+- **`useReducer` consolidation.** Distributed `useState` is the
+  established Klai pattern (see sources-tab precedent). Adopting
+  `useReducer` here would diverge from precedent without measured
+  benefit.
+- **`useCallback` / `useMemo` / `memo()` performance pass.** Acceptance
+  criterion 7 below requires "no render regression" — not "faster".
+  No measured perf problem exists. Adding these would introduce new
+  failure modes (stale closures, memo correctness) without observable
+  win. Tracked as a future SPEC only if profiling shows a real
+  bottleneck.
+- **A separate `TaxonomyToolbar` sub-component.** The original v0.1.0
+  draft proposed this. After analysis: action buttons (Add root, Re-tag,
+  Apply All) live in three distinct semantic contexts (coverage section
+  header, proposals section footer). Extracting them into one
+  "toolbar" file would separate buttons from the section they act on,
+  reducing readability instead of improving it. Skipped.
+- **Hook bundle pattern** (`useTaxonomyMutations()` returning all
+  mutations as one object). Klai precedent (`-sources-hooks.ts`) uses
+  individual exports per action, consumed directly by the component
+  that needs them. We follow precedent.
+- **`useCurrentUser` / `useAuth` / `kb` / `members` query relocation.**
+  These are auth-permission concerns of the orchestrator, not
+  taxonomy-state. Stay inline in `TaxonomyTab.tsx`.
 
 ### Backend changes summary
 
 None.
 
+## Beslissingen (resolved during analysis)
+
+The v0.1.0 draft listed 5 open questions for an annotation cycle. All
+have been resolved against the existing Klai precedent (the
+`-sources-*` family in the same directory):
+
+### B1 — `useReducer` vs distributed `useState`?
+
+**Distributed `useState`. No reducer.**
+
+Evidence: `sources.tsx:33` keeps cross-row singleton (`expandedId`) in
+the parent. `-sources-row.tsx:42-44` keeps per-row state in the row.
+Zero `useReducer` usage in `$kbSlug/`. We mirror this:
+
+| State | Lives in |
+|---|---|
+| `activeNodeId`, `activeTags` | TaxonomyTab (filter scope, drives 3 queries + 2 visualisations) |
+| `suggestState` (5-state machine) | TaxonomyTab (banner + buttons consume) |
+| `showAddRoot`, `addParentId`, `newNodeName` | TaxonomyTab (inline add-form is rendered by orchestrator, not CoverageWidget) |
+| `editingNodeId`, `editingName`, `editingDescription`, `confirmDeleteId` | CoverageWidget |
+| `editingProposalId` (singleton id) | TaxonomyTab |
+| `rejectingProposalId` (singleton id) | TaxonomyTab |
+| `editingTitle`, `editingDescription`, `rejectReason` (per-card buffers) | ProposalCard (derived from `isEditing` / `isRejecting` props) |
+
+### B2 — Hook bundle vs individual hooks?
+
+**Individual exports.** Each sub-component imports the hooks it actually
+uses.
+
+Evidence: `-sources-row-actions.tsx:36-40` imports
+`useSourceDelete, useSourceReauth, useSourceSync` directly; no bundle
+helper exists.
+
+### B3 — Hooks file location?
+
+**`$kbSlug/-taxonomy-hooks.ts`** (route-directory level), not in
+`_components/`.
+
+Evidence: `-sources-hooks.ts` lives at `$kbSlug/` next to `sources.tsx`.
+Per the "smallest-shared scope" rule in `portal-frontend.md` §
+File organization, the hooks are shared between TaxonomyTab and any
+future sub-component that needs to mutate taxonomy — that scope is the
+route directory.
+
+### B4 — Cross-invalidation patterns?
+
+**Documented in full in Appendix A.** This is the behavior-preservation
+contract; characterization tests in commit 1 verify each invalidation
+path.
+
+### B5 — Is `applyAllMutation` a special case?
+
+**Yes — it stays in `TaxonomyTab.tsx`, not in `-taxonomy-hooks.ts`.**
+
+`handleApplyAll` is an orchestrator:
+1. Loops over pending proposals; for each, calls
+   `apiFetch(/approve?auto_categorise=false)` directly (NOT via
+   `useApproveProposal` — that would trigger one toast per failure and
+   omit the `auto_categorise=false` flag, both behavior changes).
+2. Invalidates `taxonomy-proposals` + `taxonomy-nodes` +
+   `taxonomy-coverage`.
+3. Calls `backfillMutation.mutate()` — single classification pass over
+   the now-complete taxonomy.
+
+Moving this to a hook would require passing `backfillMutation` (or its
+internal trigger) as a dependency. That's not a self-contained hook —
+it's coupling in disguise. The orchestrator is the right home.
+
+### B6 — Performance optimisations?
+
+**No `useCallback`, `useMemo`, or `memo()` in this SPEC.**
+
+- AC7 requires "no render regression" — there is no measured
+  bottleneck.
+- These tools only have effect in pairs (memo + useCallback); adopting
+  them adds dependency-array correctness and stale-closure surface for
+  zero observable win.
+- React Compiler (if enabled in this project's toolchain in the future)
+  would automate this anyway.
+
 ## Approach (DDD methodology — required)
 
-This is a behavior-preservation refactor on production-critical code.
-Use the DDD ANALYZE-PRESERVE-IMPROVE cycle:
+Behavior preservation on production-critical code. Use the DDD
+ANALYZE-PRESERVE-IMPROVE cycle with **test-per-extraction** —
+characterization tests are added in the same commit as the extraction
+they protect, matching the `-sources-hooks.ts` precedent from
+SPEC-PORTAL-KENNIS-002 (no standalone preceding test commit; tests
+landed with the extracted hooks).
 
-1. **ANALYZE**: Read every line of TaxonomyTab. Document the implicit
-   state machine (which useState combinations are valid, which are
-   invariants). Map data flow: which mutations invalidate which
-   queries, which proposals.map() branches render under which
-   conditions.
+1. **ANALYZE** (complete — see Beslissingen + Appendix A).
 
-2. **PRESERVE**: Add characterization tests BEFORE any refactor:
-   - Each mutation's success / failure path
-   - Each rendering branch (proposal types: rename, create-child,
-     update-prompt, approve, reject)
-   - Edit-mode state transitions
-   - Tree expand/collapse + active node tracking
+2. **PRESERVE + IMPROVE** — each extraction commit lands the
+   characterization tests for the unit it extracts:
+   - **Commit 1**: Extract `-taxonomy-hooks.ts` (11 hooks per Appendix
+     A) + `__tests__/taxonomy-hooks.test.tsx` covering each hook's URL
+     + body + invalidation contract. TaxonomyTab consumes hooks; JSX
+     unchanged. Lowest-risk merge.
+   - **Commit 2**: Extract `_components/TagCloud.tsx` (pure renderer).
+     No test added — no state, no logic.
+   - **Commit 3**: Extract `_components/CoverageWidget.tsx` +
+     `__tests__/CoverageWidget.test.tsx` covering: per-node edit-mode
+     singleton, delete-confirm singleton, suggest-button gating
+     (admin-only, threshold checks).
+   - **Commit 4**: Extract `_components/ProposalCard.tsx` +
+     `__tests__/ProposalCard.test.tsx` covering: edit-mode start/cancel
+     restore, reject-form start/cancel clear, save-and-approve emits
+     title+description, status-branch rendering (pending / approved /
+     rejected). Singleton `isEditing` / `isRejecting` enforced by
+     parent (separately covered by manual Playwright pass).
 
-3. **IMPROVE**: Refactor in small commits, each green:
-   - Commit 1: Extract `-taxonomy-hooks.ts` (queries + mutations).
-     TaxonomyTab consumes the hooks but JSX unchanged.
-   - Commit 2: Extract `<ProposalCard>` from the 166-line
-     `proposals.map()` callback.
-   - Commit 3: Extract `<TaxonomyTree>`.
-   - Commit 4: Extract `<TaxonomyToolbar>`.
-   - Commit 5 (optional): Introduce `useReducer` if remaining state
-     is cross-coupled enough to warrant it.
-   - Commit 6: Add useCallback to handlers passed to memo-able
-     children. Add useMemo to derived data (filtered proposals,
-     active node lookup).
+Each commit: `tsc --noEmit + eslint + vitest` all green.
+Playwright pass on Voys after commit 4 verifies cross-card
+singleton behaviour + the full applyAll orchestrator path (which
+remains inline in TaxonomyTab and is therefore not unit-tested in
+isolation — manual + Playwright is its preservation gate).
 
-Each commit: tsc + eslint + vitest + characterization tests green.
+Four commits total. No commit 5 (`useReducer`). No commit 6
+(`useCallback` / `useMemo` / `memo`). No toolbar.
 
-## Requirements (EARS) — placeholder, expand in annotation cycle
+## Requirements (EARS)
+
+### Functional (behavior-preservation)
 
 - **REQ-1**: When TaxonomyTab is opened on a KB with N proposals, the
-  user shall see exactly the same set of proposals in the same order
-  with the same per-proposal affordances (edit / approve / reject)
-  as pre-SPEC.
+  contributor shall see exactly the same set of proposals, in the same
+  order, with identical per-proposal affordances (edit / approve /
+  reject), badges (status + type), confidence display, and rejection
+  reason rendering as the pre-SPEC implementation.
+
 - **REQ-2**: When a contributor approves a proposal, the system shall
-  invalidate the same query keys and trigger the same UI transitions
-  as pre-SPEC.
-- **REQ-3**: When a contributor edits a proposal's title and saves, the
-  edit-mode state shall behave identically (cancel restores original;
-  enter saves; loading disables).
-- **REQ-4**: TaxonomyTab.tsx shall be ≤ 250 lines after this SPEC.
-- **REQ-5**: All sub-components shall be in the `_components/`
-  directory adjacent to TaxonomyTab.tsx.
-- **REQ-6**: All mutation/query hooks shall be in
-  `-taxonomy-hooks.ts` adjacent to taxonomy.tsx (the route file).
+  invalidate the same three TanStack Query keys
+  (`taxonomy-proposals`, `taxonomy-nodes`, `taxonomy-coverage`) as the
+  pre-SPEC implementation, in the same order, and on error trigger the
+  same 409-toast vs generic-error-toast branch with the same
+  `taxonomyLogger.warn` payload shape.
 
-(More requirements added during annotation cycle.)
+- **REQ-3**: When a contributor enters edit-mode on a proposal, the
+  edit-mode state machine shall behave identically:
+  - Only one proposal may be in edit-mode at any time (singleton).
+  - "Cancel" restores the displayed title + description to the original
+    proposal values.
+  - "Submit" calls approve with `title` + `description` overrides.
+  - The Reject affordance shall be hidden while edit-mode is active for
+    that proposal.
 
-## Acceptance Criteria — placeholder
+- **REQ-4**: When a contributor enters reject-mode on a proposal, the
+  reject-mode state machine shall behave identically (singleton; cancel
+  clears reason; submit invalidates `taxonomy-proposals`).
 
-1. Characterization test suite added in Phase ANALYZE/PRESERVE
-   (pre-refactor) all green at refactor end.
-2. `wc -l TaxonomyTab.tsx` ≤ 250.
-3. 4 new files in `_components/` (`ProposalCard.tsx`,
-   `TaxonomyTree.tsx`, `TaxonomyToolbar.tsx`, plus the existing
-   `KBOverviewSections.tsx` from prior work).
-4. New file `-taxonomy-hooks.ts` containing 8 mutation hooks + 4 query
-   hooks, each consumed by either TaxonomyTab or a sub-component.
-5. tsc + eslint + vitest all green; full vitest pass count maintained
-   or grown.
-6. Playwright on Voys: Taxonomie tab end-to-end flow (view proposals,
-   edit one, approve another, reject a third with reason) renders
-   pixel-identical and exhibits identical behavior pre-vs-post.
-7. Performance check: console-perf marker added shows no render
-   regression on a KB with 50+ proposals.
+- **REQ-5**: When a contributor clicks "Apply all", `handleApplyAll`
+  shall iterate pending proposals with
+  `apiFetch(/approve?auto_categorise=false)` (raw, not via
+  `useApproveProposal`), then trigger `backfillMutation` — same
+  ordering and same single-backfill outcome as the pre-SPEC
+  implementation.
 
-## Risks (high level — annotation cycle expands)
+- **REQ-6**: When `topTagsQuery` is keyed with `activeNodeId`, the
+  cache key shall include `activeNodeId` exactly as today
+  (`['taxonomy-top-tags', kbSlug, activeNodeId]`) so tag-cloud
+  re-fetches correctly when the node-filter changes.
+
+### Structural
+
+- **REQ-7**: `_components/TaxonomyTab.tsx` shall be ≤ 500 lines after
+  this SPEC. (Original target was ≤ 250; revised to ≤ 500 once the
+  four-extraction scope was tallied — see Target end state note.)
+
+- **REQ-8**: The 3 new sub-components shall live in
+  `klai-portal/frontend/src/routes/app/knowledge/$kbSlug/_components/`
+  alongside the existing `KBOverviewSections.tsx` and the modified
+  `TaxonomyTab.tsx`.
+
+- **REQ-9**: The new hooks file shall live at
+  `klai-portal/frontend/src/routes/app/knowledge/$kbSlug/-taxonomy-hooks.ts`
+  (route-directory level), not in `_components/`.
+
+- **REQ-10**: No new file shall introduce a cross-route import; the
+  `klai/no-cross-route-import` ESLint rule shall remain green.
+
+### Quality
+
+- **REQ-11**: `tsc --noEmit` shall pass with zero errors after each
+  commit.
+- **REQ-12**: `eslint` shall pass with zero errors and no new warnings
+  after each commit.
+- **REQ-13**: `vitest` shall pass with all existing tests green plus
+  the new characterization tests, after each commit.
+
+## Acceptance Criteria
+
+1. **AC1**: Characterization test suites land per extraction commit
+   (`taxonomy-hooks.test.tsx` in commit 1; `CoverageWidget.test.tsx`
+   in commit 3; `ProposalCard.test.tsx` in commit 4). All test files
+   green after every subsequent commit. Hook test coverage maps to
+   each row of Appendix A.
+2. **AC2**: `wc -l _components/TaxonomyTab.tsx` ≤ 500 (revised from
+   the original ≤ 250 — see Target end state note for rationale).
+3. **AC3**: 3 new `_components/` files exist (`CoverageWidget.tsx`,
+   `ProposalCard.tsx`, `TagCloud.tsx`) plus the modified
+   `TaxonomyTab.tsx`. The existing `KBOverviewSections.tsx` is
+   unchanged. No new `_components/TaxonomyToolbar.tsx` file (explicit
+   non-goal — see Beslissingen § B6 / Scope > Out).
+4. **AC4**: New file `-taxonomy-hooks.ts` exists at route-directory
+   level with 11 named exports per the Scope > In > § 4 list, each
+   matching the invalidation contract in Appendix A.
+5. **AC5**: `tsc --noEmit + eslint + vitest` all green at HEAD of the
+   branch.
+6. **AC6**: Playwright on Voys: Taxonomie tab end-to-end flow (open
+   tab, view proposals list, enter edit on one proposal and save,
+   approve a second, reject a third with reason, click Apply All)
+   renders pixel-identical to pre-SPEC and exhibits identical behavior
+   (same network calls in the same order, same toast messages, same
+   visible state transitions).
+7. **AC7**: Console-perf marker added during commit 1 confirms no
+   render regression on a KB with 50+ proposals (typical render count
+   per proposal per interaction shall be ≤ pre-SPEC count).
+8. **AC8**: `klai/no-cross-route-import` ESLint rule remains green —
+   no new cross-route imports introduced.
+
+## Risks
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| useState distribution introduces a hidden bug (e.g. state lives in two places, gets out-of-sync) | High — 16 state slots interact in non-obvious ways | High | DDD characterization tests. If a test fails post-refactor, revert and rethink that piece of state. |
-| Mutation prop-drilling becomes verbose / ugly | Medium | Low | Extract `useTaxonomyMutations` hook that returns a stable object containing all 8, pass as one prop. |
-| Performance regression from sub-component re-renders | Low — React 19 + memo + useCallback should handle | Medium | Memo'd sub-components + useCallback on handlers. Phase 6 explicitly. |
-| Coverage decrease (sub-components are harder to test in isolation) | Medium | Medium | Per-sub-component tests added in PRESERVE phase. Coverage report compared pre/post. |
-| Concurrent edits on TaxonomyTab during the SPEC (44 commits / 90 days) | High — actively-edited file | High | Land EXTRACT SPEC first (small target, easy rebase). For SPLIT SPEC: short-lived branch (≤1 week from start to merge), rebase frequently, conflict-resolve in our favor (the refactor is structural). |
-| Notion / Notion-like proposal types behave subtly differently after split | Low — proposals are taxonomy-internal | Low | Characterization tests cover all proposal types. |
+| Hook extraction breaks an invalidation chain (e.g. `approveMutation` forgets `taxonomy-coverage` invalidation) | Medium | High — silent UI desync | Appendix A is the spec; characterization tests in commit 1 lock each path; every hook is asserted against the table |
+| ProposalCard edit-mode singleton breaks (two cards edit at once) | Low — guarded by `isEditing` prop derived from parent's singleton id | Medium | Test in commit 1 asserts "click edit on card B while card A is editing → card A exits edit-mode" |
+| `useApplyAllProposals` accidentally extracted to hooks file, gets coupled to `backfillMutation` indirectly | Low — explicitly scoped out | Medium | Beslissingen § B5 + scope > out lock this. Reviewer checks `applyAllMutation` is still inline in TaxonomyTab. |
+| Concurrent edits on TaxonomyTab during the SPEC (44 commits / 90 days) | High — actively-edited file | High | Short-lived branch (target: ≤ 3 days from start to merge), rebase frequently, conflict-resolve in our favor (the refactor is structural). |
+| Test-mock for TanStack Query queryClient mishandled across new hook files | Medium | Medium | Use the same `QueryClientProvider` test wrapper pattern as `-sources-row-actions.test.tsx`; characterization tests use real `QueryClient` instances. |
 
-## Open Questions
-
-1. **`useReducer` or distributed `useState`?** Annotation cycle
-   decides. Lean toward `useReducer` for the cross-coupled subset
-   (active node, active tags, editing-state) and `useState` for
-   independent flags.
-
-2. **Hook bundle vs individual hook calls?** Pass `useTaxonomyMutations()`
-   returning `{ approve, reject, create, ... }` (one call site, stable
-   object) vs eight individual calls. Lean toward bundle.
-
-3. **Should `-taxonomy-hooks.ts` co-locate with the route file
-   (`$kbSlug/-taxonomy-hooks.ts`) or with the components
-   (`$kbSlug/_components/-taxonomy-hooks.ts`)?** Per file-organization
-   rule, smallest-shared scope = `$kbSlug/` (used by TaxonomyTab and
-   any future sub-component). Place at route-directory level.
-
-4. **Do any of the 8 mutations have non-obvious cross-invalidation
-   patterns?** ANALYZE phase must document. E.g., does
-   `approveMutation` invalidate `taxonomyNodes` AND `coverage` AND
-   `proposals`? The hook extraction must preserve every invalidation.
-
-5. **Is `applyAllMutation` a special case?** It iterates over
-   proposals and approves each. Might warrant its own helper rather
-   than being a single mutation.
-
-## Learnings to apply (from SPEC-PORTAL-CONNECTOR-WIZARD-EXTRACT-001)
-
-This SPEC operates in the same area as the connector-wizard extract.
-Patterns proven there apply directly:
+## Learnings to apply (carried over from SPEC-PORTAL-CONNECTOR-WIZARD-EXTRACT-001)
 
 - **File-organization rule** (`portal-frontend.md` § "File organization
   for shared types and helpers") covers the `-`-prefixed sibling vs
   `_components/` split this SPEC uses.
-- **klai/no-cross-route-import ESLint rule** prevents regression
+- **`klai/no-cross-route-import` ESLint rule** prevents regression
   automatically.
-- **`_components/` precedent**: KBOverviewSections (from #620) +
-  TaxonomyTab (from SPEC-PORTAL-TAXONOMY-EXTRACT-001) are existing
-  inhabitants.
-- **DDD methodology required**: prior SPECs used DDD (ANALYZE-PRESERVE-IMPROVE)
-  for similar behavior-preservation refactors. Required here.
+- **`_components/` precedent**: KBOverviewSections (#620) + TaxonomyTab
+  (SPEC-PORTAL-TAXONOMY-EXTRACT-001) are existing inhabitants.
+- **DDD methodology required**: behavior-preservation refactor on
+  production code.
 - **Phase ordering**: hook extraction first (mechanical, low-risk),
-  then sub-components (medium-risk), then state-machine consolidation
-  (highest risk). Each phase its own commit, each commit green.
-- **Live verification on Voys** is mandatory — this is production-
-  critical UX.
+  then sub-components (medium-risk). Each phase its own commit; each
+  commit green.
+- **Live verification on Voys is mandatory** — production-critical UX.
 - **scale-the-answer**: don't bundle this with other god-component
   splits. Each is its own SPEC.
 - **previous-deploy-failure-blocks-yours**: check main CI before
   pushing.
 - **Worktree-for-long-running-changes**: this SPEC is multi-day work,
   worktree mandatory.
-- **Triplicate elimination**: before extracting hooks, grep for
-  existing canonical `useTaxonomyXxx` hooks in `-kb-helpers.tsx` or
-  similar — re-use, don't duplicate.
+- **Triplicate elimination**: before declaring new hooks, grep
+  `-kb-helpers.tsx` for existing `useTaxonomy*` hooks to re-use. (None
+  exist as of this SPEC.)
+
+## Appendix A — Invalidation map (PRESERVE contract)
+
+This is the canonical behavior-preservation contract for commit 2.
+Each new hook in `-taxonomy-hooks.ts` MUST match its row exactly.
+
+| Hook | onMutate | onSuccess invalidates | onError invalidates + side-effects |
+|---|---|---|---|
+| `useCreateNode(kbSlug, onSuccess)` | — | `taxonomy-nodes`; then call `onSuccess()` to reset add-form state | — |
+| `useRenameNode(kbSlug)` | — | `taxonomy-nodes`, `taxonomy-coverage` | — |
+| `useDeleteNode(kbSlug)` | — | `taxonomy-nodes` | — |
+| `useApproveProposal(kbSlug)` | — | `taxonomy-proposals`, `taxonomy-nodes`, `taxonomy-coverage` | `taxonomyLogger.warn` with `{error, is409}`; `toast.error(...)` with 409-branch vs generic; invalidate `taxonomy-proposals` + `taxonomy-nodes` for resync |
+| `useRejectProposal(kbSlug, onSuccess)` | — | `taxonomy-proposals`; then call `onSuccess()` to reset reject-form state | — |
+| `useBootstrapTaxonomy(kbSlug, onStateChange)` | `onStateChange('generating')` | `taxonomy-proposals`; if `data.proposals_submitted > 0` → `onStateChange('proposals_ready')` else `onStateChange('idle')` | `taxonomyLogger.error` with `{slug, error}`; `onStateChange('idle')` |
+| `useBackfillTaxonomy(kbSlug, onStateChange, opts)` | `onStateChange('applying')` | `taxonomy-nodes`, `taxonomy-proposals`, `taxonomy-coverage`, `taxonomy-top-tags`; `onStateChange('done')` | `taxonomyLogger.error`; `onStateChange((prev) => prev === 'applying' ? (opts.proposalsForFallback().some(p => p.status === 'pending') ? 'proposals_ready' : 'idle') : prev)` |
+
+`applyAllMutation` is **not** in this table — it stays in TaxonomyTab.
+Its contract: iterate pending proposals with
+`apiFetch(/approve?auto_categorise=false)`; then invalidate
+`taxonomy-proposals` + `taxonomy-nodes` + `taxonomy-coverage`; then
+call `backfillMutation.mutate()`. Failures inside the loop are
+logged via `taxonomyLogger.warn` but the loop continues.
 
 ## See Also
 
-- `.moai/specs/SPEC-PORTAL-TAXONOMY-EXTRACT-001/spec.md` —
-  prerequisite (TaxonomyTab must already be in `_components/`).
+- `.moai/specs/SPEC-PORTAL-TAXONOMY-EXTRACT-001/spec.md` — prerequisite
+  (done; TaxonomyTab is already in `_components/`).
 - `.moai/specs/SPEC-PORTAL-CONNECTOR-WIZARD-EXTRACT-001/spec.md` —
   origin of patterns + ESLint rule.
+- `klai-portal/frontend/src/routes/app/knowledge/$kbSlug/-sources-hooks.ts` —
+  hook-extraction precedent.
+- `klai-portal/frontend/src/routes/app/knowledge/$kbSlug/-sources-row.tsx` —
+  sub-component-state pattern precedent.
 - `klai-portal/frontend/src/routes/app/knowledge/$kbSlug/_components/KBOverviewSections.tsx` —
   precedent for `_components/` extraction.
-- `.claude/rules/klai/projects/portal-frontend.md` § "File
-  organization for shared types and helpers" — the rule.
-- `.claude/rules/klai/workflow/process-full.md` — DDD methodology
-  reference (if exists; otherwise see `workflow-modes.md`).
+- `.claude/rules/klai/projects/portal-frontend.md` § "File organization
+  for shared types and helpers" — the rule.
