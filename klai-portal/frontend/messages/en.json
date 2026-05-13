@@ -349,7 +349,7 @@
   "account_saved": "Saved",
   "account_error_save": "Save failed",
   "account_sar_title": "Download my data",
-  "account_sar_description": "Download your personal Klai data as JSON. This lives here because your own data should remain exportable, separate from workspace administration. Uploaded documents and communication from connected systems remain source data in those systems; Klai stores at most a copy and does not include it in this export.",
+  "account_sar_description": "Download your personal Klai data as JSON. Your own data should remain exportable, separate from workspace administration. Uploaded documents and communication from connected systems remain source data there; Klai only keeps a copy for use in Klai. If you delete that source data there, it will not remain in Klai systems.",
   "account_sar_button": "Download my data",
   "account_sar_downloading": "Exporting...",
   "account_sar_rate_limited": "You can download your data up to 5 times per hour. Please try again later.",
