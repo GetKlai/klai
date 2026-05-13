@@ -6,11 +6,9 @@
 // shared types live at the parent route level — NOT in `$kbSlug/-kb-types.ts`
 // (wrong scope: that file is for KB-tab routes inside `$kbSlug/`).
 //
-// Connector-types that are also used by KB-tab routes (e.g. `GitHubConfig`,
-// `WebCrawlerConfig`, `CookieRow`, `ConnectorSummary`) live in
-// `$kbSlug/-kb-types.ts` because they predate this split. A future SPEC
-// (F-C2 in SPEC-PORTAL-CONNECTOR-WIZARD-EXTRACT-001 § Follow-ups) may
-// hoist them to a parent-level shared file too.
+// Types that are genuinely shared between KB-tab routes AND wizard routes
+// (`CookieRow`, `ConnectorSummary`) stay in `$kbSlug/-kb-types.ts` —
+// they have a broader scope than this file.
 
 // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-1: web_crawler wizard step order is
 // Details → AuthQuestion → AuthSetup (only if requires login) → Selector → Settings.
@@ -106,3 +104,22 @@ export interface NotionEditConfig {
 }
 
 export type NotionConfig = NotionAddConfig | NotionEditConfig
+
+// Per-connector form-state shapes for connectors with their own
+// flat-config schemas (no fancy add/edit divergence). github + web_crawler
+// reuse the same shape across both wizards.
+
+export interface GitHubConfig {
+  installation_id: string
+  repo_owner: string
+  repo_name: string
+  branch: string
+  path_filter: string
+}
+
+export interface WebCrawlerConfig {
+  base_url: string
+  path_prefix: string
+  max_pages: string
+  content_selector: string
+}

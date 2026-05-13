@@ -1,14 +1,16 @@
 /**
- * SPEC-CONNECTOR-INPUT-VALIDATION-001 — kb-helpers shared utilities.
+ * SPEC-CONNECTOR-INPUT-VALIDATION-001 — connector wizard shared utilities.
  *
- * Covers ``joinSeedUrl`` (slash normalisation). Cookie parsing was
- * intentionally removed: the wizard now collects cookies as structured
- * {name, value} rows via CookieRowsInput, eliminating the parser-layer
- * bug class entirely.
+ * Covers ``joinSeedUrl`` (slash normalisation), now hosted in
+ * ../-connector-constants.ts (was ../$kbSlug/-kb-helpers.tsx until the
+ * SPEC-PORTAL-CONNECTOR-WIZARD-EXTRACT-001 followups). Cookie parsing was
+ * intentionally removed earlier: the wizard now collects cookies as
+ * structured {name, value} rows via CookieRowsInput, eliminating the
+ * parser-layer bug class entirely.
  */
 
 import { describe, expect, it } from 'vitest'
-import { joinSeedUrl } from '../$kbSlug/-kb-helpers'
+import { joinSeedUrl } from '../-connector-constants'
 
 describe('joinSeedUrl', () => {
   it('combines clean base + path with single slash', () => {

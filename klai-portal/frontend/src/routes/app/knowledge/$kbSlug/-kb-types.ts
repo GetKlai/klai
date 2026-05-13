@@ -137,20 +137,10 @@ export interface TopTagsResponse {
   total_chunks_sampled: number
 }
 
-export interface GitHubConfig {
-  installation_id: string
-  repo_owner: string
-  repo_name: string
-  branch: string
-  path_filter: string
-}
-
-export interface WebCrawlerConfig {
-  base_url: string
-  path_prefix: string
-  max_pages: string
-  content_selector: string
-}
+// `GitHubConfig` and `WebCrawlerConfig` were moved to
+// `klai-portal/frontend/src/routes/app/knowledge/-connector-types.ts`
+// — wizard-only types, smallest-shared scope is the parent route dir.
+// See portal-frontend.md § "File organization for shared types and helpers".
 
 /**
  * Single authentication cookie input row.
