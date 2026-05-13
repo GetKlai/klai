@@ -39,10 +39,15 @@ PasswordChange:
   footerText: "Wachtwoord niet zelf gewijzigd? Mail ons direct via mail@${DOMAIN}."
 
 InviteUser:
-  subject: "Je bent uitgenodigd voor Klai"
-  preHeader: "Jouw toegang staat klaar"
-  title: "Uitnodiging"
+  # The v2 invite_code flow is the canonical Klai admin-invite path since
+  # SPEC-PORTAL-AUTH-EMAIL-LINKS-001. This template uses the original
+  # InitCode brand voice — "Activeer je Klai-account" — because that is
+  # what Klai communicates to its users at account creation, regardless
+  # of which Zitadel event-type technically fires the mail.
+  subject: "Activeer je Klai-account"
+  preHeader: "Nog één klik en je Klai-omgeving is actief"
+  title: "Account activeren"
   greeting: "Hallo {{.FirstName}},"
-  text: "Eén van je collega's nodigt je uit om gebruik te maken van Klai. Klai is dé privacyvriendelijke AI oplossing voor bedrijven. Gevoelige informatie en persoonlijke gegevens blijven zo veilig. Je data blijft van jou."
-  buttonText: "Account instellen"
+  text: "We hebben een Klai-account voor je aangemaakt. Activeer deze via de knop hieronder en kies je wachtwoord. Daarna log je in op my.${DOMAIN}."
+  buttonText: "Account activeren"
   footerText: "Had je deze e-mail niet verwacht? Dan mag je hem gewoon negeren."
