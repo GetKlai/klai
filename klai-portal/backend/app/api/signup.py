@@ -33,6 +33,7 @@ from app.api.auth import invalidate_tenant_slug_cache
 from app.core.config import settings
 from app.core.database import get_db, set_tenant
 from app.models.portal import PortalOrg, PortalUser
+from app.services.auth_links import AuthLinkRoute, build_url_template
 from app.services.bff_session import SessionService
 from app.services.domain_validation import is_free_email_provider
 from app.services.events import emit_event
@@ -218,16 +219,19 @@ async def signup(
     zitadel_org_id: str = org_data["id"]
     logger.info("Org created in Zitadel: name=%s, org_id=%s", body.company_name, zitadel_org_id)
 
-    # 2. Create human user with Zitadel defaults; sendCodes=True fires the
-    # initialization-code event that klai-mailer renders as a Klai-branded mail.
+    # 2. Create human user via Zitadel v2, atomically firing a Klai-branded
+    # email-verification mail. The link lands on /verify, not Zitadel's hosted
+    # init UI.
+    verify_url_template = build_url_template(AuthLinkRoute.VERIFY_EMAIL)
     try:
-        user_data = await zitadel.create_human_user(
+        user_data = await zitadel.create_human_user_v2_with_verify(
             org_id=settings.zitadel_portal_org_id,
             email=body.email,
             first_name=body.first_name,
             last_name=body.last_name,
             password=body.password,
             preferred_language=body.preferred_language,
+            url_template=verify_url_template,
         )
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 409:

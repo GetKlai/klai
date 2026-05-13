@@ -13,12 +13,26 @@ type SearchParams = {
   organization?: string
 }
 
-export const Route = createFileRoute('/verify')({
-  validateSearch: (search: Record<string, unknown>): SearchParams => ({
+export function validateVerifySearch(search: Record<string, unknown>): SearchParams {
+  return {
     code: typeof search.code === 'string' ? search.code : undefined,
-    userId: typeof search.userId === 'string' ? search.userId : undefined,
-    organization: typeof search.organization === 'string' ? search.organization : undefined,
-  }),
+    userId:
+      typeof search.userId === 'string'
+        ? search.userId
+        : typeof search.userID === 'string'
+          ? search.userID
+          : undefined,
+    organization:
+      typeof search.organization === 'string'
+        ? search.organization
+        : typeof search.orgID === 'string'
+          ? search.orgID
+          : undefined,
+  }
+}
+
+export const Route = createFileRoute('/verify')({
+  validateSearch: validateVerifySearch,
   component: VerifyEmailPage,
 })
 
