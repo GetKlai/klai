@@ -462,6 +462,19 @@
         }
     }
 
+    # Cal.com — self-hosted scheduling at cal.${DOMAIN}
+    @cal host cal.{$DOMAIN}
+    handle @cal {
+        reverse_proxy cal-com:3000 {
+            header_up X-Request-ID {http.request.uuid}
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-Org-Slug
+            header_up -X-User-ID
+        }
+    }
+
     # Portal SPA — static files (fallback for all *.${DOMAIN})
     handle {
         root * /srv/portal
