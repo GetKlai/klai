@@ -41,7 +41,7 @@ async def test_emit_product_event_inserts_with_resolved_org_id() -> None:
     with patch("app.core.database.session_maker", session_maker):
         emit_product_event(
             "knowledge.sync_quality_degraded",
-            zitadel_org_id="362757920133283846",
+            zitadel_org_id="100000000000000001",
             properties={"connector_id": "abc", "reason": "boilerplate_cluster"},
         )
         await _drain_pending()

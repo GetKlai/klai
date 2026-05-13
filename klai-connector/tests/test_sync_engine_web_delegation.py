@@ -30,7 +30,7 @@ def _make_portal_config() -> PortalConnectorConfig:
         connector_id=str(uuid.uuid4()),
         kb_id=1,
         kb_slug="support",
-        zitadel_org_id="368884765035593759",
+        zitadel_org_id="100000000000000002",
         connector_type="web_crawler",
         config={
             "base_url": "https://help.voys.nl",
@@ -132,7 +132,7 @@ class TestFireAndForgetDelegation:
         engine._crawl_sync_client.crawl_sync.assert_awaited_once()
         call_kwargs = engine._crawl_sync_client.crawl_sync.await_args.kwargs
         assert call_kwargs["connector_id"] == str(connector_id)
-        assert call_kwargs["org_id"] == "368884765035593759"
+        assert call_kwargs["org_id"] == "100000000000000002"
         assert call_kwargs["kb_slug"] == "support"
 
         # AC-01.1: cursor_state stores remote_job_id; status stays RUNNING.
@@ -233,7 +233,7 @@ class TestCrawlSyncClientContract:
 
         out = await client.crawl_sync(
             connector_id="abc",
-            org_id="368884765035593759",
+            org_id="100000000000000002",
             kb_slug="support",
             config={
                 "base_url": "https://help.voys.nl",
@@ -250,7 +250,7 @@ class TestCrawlSyncClientContract:
         assert out == {"job_id": "new-job", "status": "queued"}
         body = captured["body"]
         assert body["connector_id"] == "abc"
-        assert body["org_id"] == "368884765035593759"
+        assert body["org_id"] == "100000000000000002"
         assert body["kb_slug"] == "support"
         assert body["base_url"] == "https://help.voys.nl"
         assert body["max_pages"] == 20

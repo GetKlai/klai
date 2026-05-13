@@ -16,16 +16,16 @@ from klai_image_storage.kb_image import KbImage
 # ---------------------------------------------------------------------------
 
 # These are actual s3_keys queried from knowledge.artifact_images on
-# 2026-05-12 (Voys org id=8 / zitadel=368884765035593759). The test fixture
+# 2026-05-12 (Voys org id=8 / zitadel=100000000000000002). The test fixture
 # is a stable subset that proves KbImage.from_path + .public_path round-trip
 # byte-for-byte against what the connector pipeline writes.
 _PRODUCTION_PATHS = [
-    "/kb-images/368884765035593759/images/support/dae543ab51b40c9611d14c96e1f72bbd53a1ecdc782c192fbc2ab6d0e6127dd9.png",
-    "/kb-images/368884765035593759/images/support/d4818c6438a7c33935b06fa8c66387cfdb8418ed8f2ecae7c8f47fdf5712a789.png",
-    "/kb-images/368884765035593759/images/support/49a861d9954135083d4b0bb9417565ca92e5ad477f64d6cf0dcba17d20077aa9.png",
-    # Klai-help org (1 / zitadel 362757920133283846) — Mark's docs-editor uploads
-    "/kb-images/362757920133283846/images/klai-help/71e67cdc4b7451885b314b848583f5a66838b1952d753f5d133b5d98dc375f5b.png",
-    "/kb-images/362757920133283846/images/klai-help/ebe2b85db57d52f3470b35cb47b5f0c3e7114821f49d27d35c0e6cb1195ca605.png",
+    "/kb-images/100000000000000002/images/support/dae543ab51b40c9611d14c96e1f72bbd53a1ecdc782c192fbc2ab6d0e6127dd9.png",
+    "/kb-images/100000000000000002/images/support/d4818c6438a7c33935b06fa8c66387cfdb8418ed8f2ecae7c8f47fdf5712a789.png",
+    "/kb-images/100000000000000002/images/support/49a861d9954135083d4b0bb9417565ca92e5ad477f64d6cf0dcba17d20077aa9.png",
+    # Klai-help org (1 / zitadel 100000000000000001) — Mark's docs-editor uploads
+    "/kb-images/100000000000000001/images/klai-help/71e67cdc4b7451885b314b848583f5a66838b1952d753f5d133b5d98dc375f5b.png",
+    "/kb-images/100000000000000001/images/klai-help/ebe2b85db57d52f3470b35cb47b5f0c3e7114821f49d27d35c0e6cb1195ca605.png",
 ]
 
 
@@ -43,13 +43,13 @@ def test_s3_key_shape_unchanged_from_speck_b_image_002() -> None:
     """The S3 key prefix is a wire-level contract. Changing it breaks every
     previously uploaded image's URL. Lock the shape down in a test."""
     img = KbImage(
-        zitadel_org_id="368884765035593759",
+        zitadel_org_id="100000000000000002",
         kb_slug="support",
         sha256="a" * 64,
         ext="png",
     )
-    assert img.s3_key == f"368884765035593759/images/support/{'a' * 64}.png"
-    assert img.public_path == f"/kb-images/368884765035593759/images/support/{'a' * 64}.png"
+    assert img.s3_key == f"100000000000000002/images/support/{'a' * 64}.png"
+    assert img.public_path == f"/kb-images/100000000000000002/images/support/{'a' * 64}.png"
 
 
 # ---------------------------------------------------------------------------
@@ -61,7 +61,7 @@ def test_from_bytes_hashes_with_sha256() -> None:
     """SHA-256 dedup is the storage layer's only invariant; lock it."""
     data = b"hello world"
     img = KbImage.from_bytes(
-        zitadel_org_id="368884765035593759",
+        zitadel_org_id="100000000000000002",
         kb_slug="support",
         data=data,
         mime="image/png",
@@ -74,7 +74,7 @@ def test_from_bytes_rejects_svg() -> None:
     """SPEC-PORTAL-DOCS-IMAGE-PASTE-001 REQ-5: SVG XSS guard for user uploads."""
     with pytest.raises(ValueError, match="unsupported MIME"):
         KbImage.from_bytes(
-            zitadel_org_id="368884765035593759",
+            zitadel_org_id="100000000000000002",
             kb_slug="support",
             data=b"<svg/>",
             mime="image/svg+xml",
@@ -84,7 +84,7 @@ def test_from_bytes_rejects_svg() -> None:
 def test_from_bytes_rejects_arbitrary_mime() -> None:
     with pytest.raises(ValueError, match="unsupported MIME"):
         KbImage.from_bytes(
-            zitadel_org_id="368884765035593759",
+            zitadel_org_id="100000000000000002",
             kb_slug="support",
             data=b"\x00" * 32,
             mime="application/pdf",
@@ -102,7 +102,7 @@ def test_from_bytes_rejects_arbitrary_mime() -> None:
 )
 def test_from_bytes_mime_to_ext_table(mime: str, expected_ext: str) -> None:
     img = KbImage.from_bytes(
-        zitadel_org_id="368884765035593759",
+        zitadel_org_id="100000000000000002",
         kb_slug="support",
         data=b"\x00" * 32,
         mime=mime,
@@ -116,12 +116,12 @@ def test_from_path_rejects_garbage() -> None:
     route-template drift."""
     bad_paths = [
         "/kb-images/foo/bar/baz.png",  # 3 segments
-        "/kb-images/368884765035593759/support/abc.png",  # 4 segments (old shape)
-        "/kb-images/368884765035593759/images/support/abc.png",  # short sha
-        "/kb-images/368884765035593759/imgs/support/" + "a" * 64 + ".png",  # wrong literal
-        "/wrong-prefix/368884765035593759/images/support/" + "a" * 64 + ".png",
-        "/kb-images/368884765035593759/images/Bad-SLUG/" + "a" * 64 + ".png",  # caps in slug
-        "/kb-images/368884765035593759/images/support/" + "a" * 64 + ".svg",  # disallowed ext
+        "/kb-images/100000000000000002/support/abc.png",  # 4 segments (old shape)
+        "/kb-images/100000000000000002/images/support/abc.png",  # short sha
+        "/kb-images/100000000000000002/imgs/support/" + "a" * 64 + ".png",  # wrong literal
+        "/wrong-prefix/100000000000000002/images/support/" + "a" * 64 + ".png",
+        "/kb-images/100000000000000002/images/Bad-SLUG/" + "a" * 64 + ".png",  # caps in slug
+        "/kb-images/100000000000000002/images/support/" + "a" * 64 + ".svg",  # disallowed ext
     ]
     for p in bad_paths:
         assert KbImage.from_path(p) is None, f"from_path should have rejected {p!r}"
@@ -170,7 +170,7 @@ def test_route_template_round_trips_via_concrete_instance() -> None:
     that the boot-time check in main.py reproduces — a drift here means
     portal-api refuses to boot."""
     concrete = KbImage(
-        zitadel_org_id="368884765035593759",
+        zitadel_org_id="100000000000000002",
         kb_slug="support",
         sha256="a" * 64,
         ext="png",
@@ -210,7 +210,7 @@ def test_image_store_build_object_key_matches_kb_image_s3_key() -> None:
         b"\x89PNG\r\n\x1a\n" + b"\x00" * 200,
         b"GIF89a" + b"\x00" * 50,
     ]
-    org_ids = ["368884765035593759", "362757920133283846", "100000000000000001"]
+    org_ids = ["100000000000000002", "100000000000000001", "100000000000000001"]
     kb_slugs = ["support", "klai-help", "my-kb"]
     mimes_and_exts = [("image/jpeg", "jpg"), ("image/png", "png"), ("image/webp", "webp")]
 

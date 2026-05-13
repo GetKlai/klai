@@ -118,7 +118,7 @@ class TestBFSContinuity:
             await run_crawl_job(
                 conn=patched_pool,
                 job_id="job-bfs-1",
-                org_id="368884765035593759",
+                org_id="100000000000000002",
                 kb_slug="support",
                 start_url="https://example.com",
                 login_indicator_selector=None,  # anonymous crawl
@@ -181,7 +181,7 @@ class TestErrorSummaryWritten:
             await run_crawl_job(
                 conn=patched_pool,
                 job_id="job-summary-1",
-                org_id="368884765035593759",
+                org_id="100000000000000002",
                 kb_slug="support",
                 start_url="https://example.com",
                 login_indicator_selector=None,
@@ -239,7 +239,7 @@ class TestFailedPartial:
             await run_crawl_job(
                 conn=patched_pool,
                 job_id="job-fp-1",
-                org_id="368884765035593759",
+                org_id="100000000000000002",
                 kb_slug="support",
                 start_url="https://example.com",
                 login_indicator_selector=None,
@@ -281,7 +281,7 @@ class TestFailedPartial:
             await run_crawl_job(
                 conn=patched_pool,
                 job_id="job-mixed-1",
-                org_id="368884765035593759",
+                org_id="100000000000000002",
                 kb_slug="support",
                 start_url="https://example.com",
                 login_indicator_selector=None,
@@ -327,7 +327,7 @@ class TestAuthenticatedHaltUnchanged:
             await run_crawl_job(
                 conn=patched_pool,
                 job_id="job-authwall-1",
-                org_id="368884765035593759",
+                org_id="100000000000000002",
                 kb_slug="support",
                 start_url="https://example.com",
                 login_indicator_selector="#login-form",  # cookie path

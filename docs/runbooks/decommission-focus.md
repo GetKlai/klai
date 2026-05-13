@@ -108,7 +108,7 @@ async def main():
         json.dumps({
             \\\"point_count\\\": 15,
             \\\"pdf_count\\\": 2,
-            \\\"tenant_id\\\": \\\"362757920133283846\\\",
+            \\\"tenant_id\\\": \\\"100000000000000001\\\",
             \\\"spec\\\": \\\"SPEC-DECOMM-FOCUS-001\\\",
         }),
     )

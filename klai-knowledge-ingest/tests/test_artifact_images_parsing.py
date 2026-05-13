@@ -20,12 +20,12 @@ _SHA_VALID = "1c" * 32
 class TestParseImageRefs:
     def test_handles_canonical_kb_image_url(self) -> None:
         urls = [
-            f"/kb-images/368884765035593759/images/support/{_SHA_A}.png",
+            f"/kb-images/100000000000000002/images/support/{_SHA_A}.png",
         ]
         refs = _parse_image_refs(urls)
         assert refs == [
             (
-                f"368884765035593759/images/support/{_SHA_A}.png",
+                f"100000000000000002/images/support/{_SHA_A}.png",
                 _SHA_A,
             )
         ]

@@ -124,7 +124,7 @@ Baked into the static build at compile time:
 | Variable | Value |
 |----------|-------|
 | `VITE_OIDC_AUTHORITY` | `https://auth.getklai.com` |
-| `VITE_OIDC_CLIENT_ID` | `362901948573220875` |
+| `VITE_OIDC_CLIENT_ID` | `300000000000000002` |
 | `VITE_API_BASE_URL` | `""` (empty — API calls are relative, same origin) |
 
 These are set in the workflow file, not in GitHub Secrets (they are not secret).
@@ -148,7 +148,7 @@ Caddy serves the static files from `/opt/klai/portal-dist/` as the SPA fallback 
 # Build locally
 cd frontend
 VITE_OIDC_AUTHORITY=https://auth.getklai.com \
-VITE_OIDC_CLIENT_ID=362901948573220875 \
+VITE_OIDC_CLIENT_ID=300000000000000002 \
 VITE_API_BASE_URL="" \
 npm run build
 

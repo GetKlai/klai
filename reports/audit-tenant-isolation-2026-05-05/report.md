@@ -248,7 +248,7 @@ Zie `coverage-matrix.md` voor de volledige tabel.
 - **Priority:** MED
 - **Store:** Indirectly Qdrant + `knowledge.domain_selectors`
 - **Location:** Caller [klai-portal/backend/app/api/app_knowledge_bases.py:1228](klai-portal/backend/app/api/app_knowledge_bases.py#L1228) `org_id=str(org.id)`. Receiver [klai-knowledge-ingest/knowledge_ingest/routes/crawl.py:79](klai-knowledge-ingest/knowledge_ingest/routes/crawl.py#L79). Sister-paths op [app_knowledge_sources.py:134](klai-portal/backend/app/api/app_knowledge_sources.py#L134), [knowledge.py:178,203](klai-portal/backend/app/api/knowledge.py#L178), [app_knowledge_bases.py:551,582,678,743,746,1226](klai-portal/backend/app/api/app_knowledge_bases.py#L551) sturen `org.zitadel_org_id`.
-- **Current situation:** Twee distincte namespaces in `knowledge.domain_selectors`: int-as-string (e.g. "42") versus Zitadel string (e.g. "362757920133283846"). Overlappen nooit — geen leak vandaag, maar footgun.
+- **Current situation:** Twee distincte namespaces in `knowledge.domain_selectors`: int-as-string (e.g. "42") versus Zitadel string (e.g. "100000000000000001"). Overlappen nooit — geen leak vandaag, maar footgun.
 - **Attack scenario:** Future refactor die AI-detected selectors in live crawl-pad wired = cross-pollination of fragmentatie. Geen huidige attacker-movement.
 - **Recommendation:** Wijzig [app_knowledge_bases.py:1228](klai-portal/backend/app/api/app_knowledge_bases.py#L1228) van `str(org.id)` naar `org.zitadel_org_id`. Regression test die elke knowledge_ingest_client functie aanroept en assert dat alleen Zitadel form op de wire gaat.
 - **Confidence:** 90
@@ -275,7 +275,7 @@ Zie `coverage-matrix.md` voor de volledige tabel.
 - **Priority:** MED
 - **Store:** Redis (LiteLLM hook cache)
 - **Location:** Writer [deploy/litellm/klai_knowledge.py:791,795,1019](deploy/litellm/klai_knowledge.py#L791) — `templates:{zitadel_str}:{user_id}`, `kb_ver:{zitadel_str}:{user_id}`. Invalidator [klai-portal/backend/app/services/litellm_cache.py:31-36](klai-portal/backend/app/services/litellm_cache.py#L31) — `templates:{int}:{user_id}`. Idem [app_account.py:33,47,203](klai-portal/backend/app/api/app_account.py#L33).
-- **Current situation:** Invalidator's SCAN-pattern `templates:{int}:*` matcht writer-keys `templates:{zitadel_str}:*` niet (Zitadel-strings zijn 18-cijferige numerics zoals "362757920133283846", duidelijk distinct van portal int IDs). Cache-miss-pad enige update-route; expliciete invalidate na portal-write = no-op.
+- **Current situation:** Invalidator's SCAN-pattern `templates:{int}:*` matcht writer-keys `templates:{zitadel_str}:*` niet (Zitadel-strings zijn 18-cijferige numerics zoals "100000000000000001", duidelijk distinct van portal int IDs). Cache-miss-pad enige update-route; expliciete invalidate na portal-write = no-op.
 - **Attack scenario:** Geen tenant-isolation leak. Stale-state bug: user toggle van `kb_retrieval_enabled` of nieuwe template-assignment kost 30s om in chat-UI door te komen. Defense-in-depth: future refactor die deze caches combineert/verplaatst zou tenant-scoping op fragiel type-mismatch leunen.
 - **Recommendation:** Wijzig [litellm_cache.py:31-36](klai-portal/backend/app/services/litellm_cache.py#L31) naar `zitadel_org_id: str`; update 4 call-sites. Idem [app_account.py:33-53,203](klai-portal/backend/app/api/app_account.py#L33). Integration-test cache-invalidation.
 - **Confidence:** 95

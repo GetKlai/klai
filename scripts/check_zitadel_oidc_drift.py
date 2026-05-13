@@ -16,8 +16,8 @@ Inputs
 ------
 ZITADEL_ADMIN_PAT       (required) — IAM_OWNER PAT
 ZITADEL_BASE_URL        (default: https://auth.getklai.com)
-ZITADEL_ORG_ID          (default: 362757920133283846 — klai org)
-ZITADEL_PROJECT_ID      (default: 362771533686374406 — Klai Platform)
+ZITADEL_ORG_ID          (default: 100000000000000001 — klai org)
+ZITADEL_PROJECT_ID      (default: 200000000000000001 — Klai Platform)
 KLAI_DOMAIN             (default: getklai.com)
 EXPECTED_STATIC_SUBDOMAINS  (comma-separated; default mirrors
                               ``_STATIC_SYSTEM_SUBDOMAINS`` in
@@ -157,8 +157,8 @@ def _classify(
 def main() -> int:
     pat = _env("ZITADEL_ADMIN_PAT")
     base_url = _env("ZITADEL_BASE_URL", "https://auth.getklai.com")
-    org_id = _env("ZITADEL_ORG_ID", "362757920133283846")
-    project_id = _env("ZITADEL_PROJECT_ID", "362771533686374406")
+    org_id = _env("ZITADEL_ORG_ID", "100000000000000001")
+    project_id = _env("ZITADEL_PROJECT_ID", "200000000000000001")
     domain = _env("KLAI_DOMAIN", "getklai.com")
     expected_env = os.environ.get("EXPECTED_STATIC_SUBDOMAINS", "")
     expected_static = (

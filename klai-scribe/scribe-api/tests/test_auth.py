@@ -50,12 +50,12 @@ class TestAuthHappyPath:
         result = await get_authenticated_caller(
             x_internal_secret=secret,
             x_klai_verified_user_id="362760545968848902",
-            x_klai_verified_org_id="362757920133283846",
+            x_klai_verified_org_id="100000000000000001",
         )
 
         assert isinstance(result, CallerIdentity)
         assert result.user_id == "362760545968848902"
-        assert result.org_id == "362757920133283846"
+        assert result.org_id == "100000000000000001"
 
 
 # ---------------------------------------------------------------------------

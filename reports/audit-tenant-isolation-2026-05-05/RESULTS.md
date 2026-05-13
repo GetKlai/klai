@@ -133,7 +133,7 @@ Als leeg → voeg toe via SOPS roundtrip (zie `sops-roundtrip-line-count-check` 
 
 Bestaande tests in `klai-portal/backend/tests/test_app_templates.py` mocken `invalidate_templates` met het oude signature `(org_id: int, ...)`. De fix in #381 wijzigde naar `(zitadel_org_id: str, ...)`. Tests moeten worden bijgewerkt.
 
-**Quick fix:** in elk test-file dat `invalidate_templates` of `invalidate_kb_ver_cache` mockt, vervang `org_id=42` door `zitadel_org_id="362757920133283846"` (of equivalent test-fixture).
+**Quick fix:** in elk test-file dat `invalidate_templates` of `invalidate_kb_ver_cache` mockt, vervang `org_id=42` door `zitadel_org_id="100000000000000001"` (of equivalent test-fixture).
 
 #### PR #382 (markers + scribe) — test-failures
 

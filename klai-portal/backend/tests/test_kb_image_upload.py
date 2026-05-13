@@ -73,7 +73,7 @@ def _make_image_store_mock(deduplicated: bool = False) -> MagicMock:
 # what klai-connector and klai-knowledge-ingest write. The route resolves
 # session.org_id (portal int) -> zitadel via _resolve_zitadel_org_id, which
 # we mock to return this value.
-ZITADEL_ORG_ID = "368884765035593759"
+ZITADEL_ORG_ID = "100000000000000002"
 
 
 # Minimal valid PNG bytes (1x1 transparent pixel).

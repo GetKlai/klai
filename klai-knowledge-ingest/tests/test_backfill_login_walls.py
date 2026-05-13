@@ -149,7 +149,7 @@ class TestBackfillCluster:
         set_rows(_walled_cluster(6))
 
         result = await backfill_detect_login_walls(
-            org_id="368884765035593759",
+            org_id="100000000000000002",
             kb_slug="support",
         )
 
@@ -165,7 +165,7 @@ class TestBackfillCluster:
         set_rows(_walled_cluster(5))
 
         result = await backfill_detect_login_walls(
-            org_id="368884765035593759",
+            org_id="100000000000000002",
             kb_slug="support",
         )
 
@@ -181,7 +181,7 @@ class TestBackfillCluster:
         set_rows(rows)
 
         result = await backfill_detect_login_walls(
-            org_id="368884765035593759",
+            org_id="100000000000000002",
             kb_slug="support",
         )
 
@@ -207,7 +207,7 @@ class TestIdempotency:
         set_rows([])
 
         result = await backfill_detect_login_walls(
-            org_id="368884765035593759",
+            org_id="100000000000000002",
             kb_slug="support",
         )
 
@@ -238,7 +238,7 @@ class TestSimhashBackfillPass:
         set_rows(rows)
 
         await backfill_detect_login_walls(
-            org_id="368884765035593759",
+            org_id="100000000000000002",
             kb_slug="support",
         )
 
@@ -267,7 +267,7 @@ class TestSimhashBackfillPass:
         set_rows(rows)
 
         await backfill_detect_login_walls(
-            org_id="368884765035593759",
+            org_id="100000000000000002",
             kb_slug="support",
         )
 
@@ -298,7 +298,7 @@ class TestSimhashBackfillPass:
         )
 
         result = await backfill_detect_login_walls(
-            org_id="368884765035593759",
+            org_id="100000000000000002",
             kb_slug="support",
         )
 
@@ -368,7 +368,7 @@ class TestTenantIsolation:
         set_rows(_walled_cluster(6))
 
         await backfill_detect_login_walls(
-            org_id="368884765035593759",
+            org_id="100000000000000002",
             kb_slug="support",
         )
 
@@ -378,7 +378,7 @@ class TestTenantIsolation:
         s = repr(selector)
         for required in ("org_id", "kb_slug", "path"):
             assert required in s, f"Filter missing {required}"
-        assert "368884765035593759" in s
+        assert "100000000000000002" in s
         assert "support" in s
 
 
@@ -404,7 +404,7 @@ class TestRecovery:
         )
 
         result = await recover_purged_pages(
-            org_id="368884765035593759",
+            org_id="100000000000000002",
             kb_slug="voys-test",
         )
 
@@ -430,7 +430,7 @@ class TestRecovery:
         set_rows(rows)
 
         result = await recover_purged_pages(
-            org_id="368884765035593759",
+            org_id="100000000000000002",
             kb_slug="support",
         )
 
@@ -461,7 +461,7 @@ class TestRecovery:
         set_rows(rows)
 
         result = await recover_purged_pages(
-            org_id="368884765035593759",
+            org_id="100000000000000002",
             kb_slug="support",
         )
 

@@ -29,7 +29,7 @@ from fastapi.testclient import TestClient
 
 def _make_jwt_payload(
     sub: str = "user_a",
-    resourceowner: str = "362757920133283846",
+    resourceowner: str = "100000000000000001",
     role: str | None = None,
     aud: str = "test-audience",
     scope: str = "klai:internal:retrieval:query",
@@ -232,8 +232,8 @@ class TestJwtPath:
         from retrieval_api.main import app
 
         client = TestClient(app)
-        payload = _make_jwt_payload(sub="user_a", resourceowner="362757920133283846")
-        sample_retrieve_request["org_id"] = "362757920133283846"
+        payload = _make_jwt_payload(sub="user_a", resourceowner="100000000000000001")
+        sample_retrieve_request["org_id"] = "100000000000000001"
         with (
             _patch_jwt(payload),
             patch(
@@ -264,7 +264,7 @@ class TestJwtPath:
                 json=sample_retrieve_request,
                 headers={
                     "Authorization": "Bearer faketoken",
-                    "X-Org-Id": "362757920133283846",
+                    "X-Org-Id": "100000000000000001",
                 },
             )
         assert resp.status_code == 200
@@ -277,7 +277,7 @@ class TestJwtPath:
         with _patch_jwt({}, error="invalid_jwt_audience"):
             resp = client.post(
                 "/retrieve",
-                json={"query": "q", "org_id": "362757920133283846"},
+                json={"query": "q", "org_id": "100000000000000001"},
                 headers={"Authorization": "Bearer wrongaudtoken"},
             )
         assert resp.status_code == 401
@@ -290,7 +290,7 @@ class TestJwtPath:
         with _patch_jwt({}, error="expired_jwt"):
             resp = client.post(
                 "/retrieve",
-                json={"query": "q", "org_id": "362757920133283846"},
+                json={"query": "q", "org_id": "100000000000000001"},
                 headers={"Authorization": "Bearer expired"},
             )
         assert resp.status_code == 401
@@ -302,7 +302,7 @@ class TestJwtPath:
         with _patch_jwt({}, error="invalid_jwt_signature"):
             resp = client.post(
                 "/retrieve",
-                json={"query": "q", "org_id": "362757920133283846"},
+                json={"query": "q", "org_id": "100000000000000001"},
                 headers={"Authorization": "Bearer bogus"},
             )
         assert resp.status_code == 401
@@ -725,7 +725,7 @@ class TestSpec003JwtWithoutResourceowner:
             "iss": "https://auth.test.local",
             "scope": "klai:internal:retrieval:query",
         }
-        sample_retrieve_request["org_id"] = "362757920133283846"
+        sample_retrieve_request["org_id"] = "100000000000000001"
         with (
             _patch_jwt(payload),
             patch(
@@ -754,7 +754,7 @@ class TestSpec003JwtWithoutResourceowner:
                 json=sample_retrieve_request,
                 headers={
                     "Authorization": "Bearer faketoken",
-                    "X-Org-Id": "362757920133283846",
+                    "X-Org-Id": "100000000000000001",
                 },
             )
         assert resp.status_code == 200
@@ -771,7 +771,7 @@ class TestSpec003JwtWithoutResourceowner:
                 "/retrieve",
                 json={
                     "query": "q",
-                    "org_id": "362757920133283846",
+                    "org_id": "100000000000000001",
                     "user_id": "user_a",
                 },
                 headers={"Authorization": "Bearer valid"},
@@ -790,7 +790,7 @@ class TestSpec003JwtWithoutResourceowner:
                 "/retrieve",
                 json={
                     "query": "q",
-                    "org_id": "362757920133283846",
+                    "org_id": "100000000000000001",
                     "user_id": "user_a",
                 },
                 headers={"Authorization": "Bearer valid", "X-Org-Id": ""},
@@ -821,12 +821,12 @@ class TestSpec003JwtWithoutResourceowner:
                 "/retrieve",
                 json={
                     "query": "q",
-                    "org_id": "362757920133283846",
+                    "org_id": "100000000000000001",
                     "user_id": "user_a",
                 },
                 headers={
                     "Authorization": "Bearer valid",
-                    "X-Org-Id": "362757920133283846",
+                    "X-Org-Id": "100000000000000001",
                 },
             )
         assert resp.status_code == 403
