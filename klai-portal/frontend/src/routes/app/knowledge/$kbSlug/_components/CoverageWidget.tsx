@@ -1,25 +1,23 @@
 /**
- * Coverage widget — per-node coverage bars + inline rename/delete
- * actions + a contextual "Suggest categories" CTA.
+ * Coverage widget — a list of `<CoverageNodeRow>` plus the untagged
+ * tail section + a contextual "Suggest categories" CTA.
  *
- * Extracted from TaxonomyTab.tsx by SPEC-PORTAL-TAXONOMY-SPLIT-001
- * commit 3. Same prop signature; same internal state machine for
- * editing and delete-confirmation singletons (one node may be in
- * edit-mode OR delete-confirm at any time, never both, never two).
+ * Owns the singleton state for which row is being edited / asked-to-
+ * confirm-delete. Per-row buffers live in the row component itself.
  *
  * The Suggest button has three gates baked in:
- *   1. Empty KB: shown when total chunks >= 10.
+ *   1. Empty KB: shown when total chunks >= SUGGEST_MIN_CHUNKS.
  *   2. Populated KB at IA target: hidden once node count reaches
  *      MAX_HEALTHY_NODE_COUNT (Miller's Law 5-9 — more categories
  *      makes the taxonomy worse).
- *   3. Populated KB below target: shown when untagged_count >= 10
- *      AND untagged percentage > 5%.
+ *   3. Populated KB below target: shown when untagged_count >=
+ *      SUGGEST_MIN_CHUNKS AND untagged percentage > SUGGEST_MIN_PCT.
  */
 import { useState } from 'react'
-import { Loader2, Pencil, Sparkles, Trash2 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { Loader2, Sparkles } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import type { TaxonomyCoverage } from '../-kb-types'
+import { CoverageNodeRow } from './CoverageNodeRow'
 
 // SPEC-TAXONOMY-REVIEW-FLOW-001 follow-up: cap on healthy taxonomy size.
 // Mirrors the backend's ``taxonomy_consolidate_target_max`` (default 9).
@@ -28,6 +26,11 @@ import type { TaxonomyCoverage } from '../-kb-types'
 // counter-productive (see SPEC-TAXONOMY-MERGE-DETECT-001 motivation).
 // If the backend value drifts, revisit this constant.
 const MAX_HEALTHY_NODE_COUNT = 9
+
+/** Minimum chunks before the Suggest CTA is offered at all. */
+const SUGGEST_MIN_CHUNKS = 10
+/** Minimum untagged percentage (exclusive) before the Suggest CTA is offered. */
+const SUGGEST_MIN_PCT = 5
 
 export interface CoverageWidgetProps {
   coverage: TaxonomyCoverage
@@ -59,43 +62,15 @@ export function CoverageWidget({
 }: CoverageWidgetProps) {
   const total = coverage.total_chunks
   const [editingNodeId, setEditingNodeId] = useState<number | null>(null)
-  const [editingName, setEditingName] = useState('')
-  const [editingDescription, setEditingDescription] = useState('')
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
 
-  const barColor = (pct: number) => {
-    if (pct >= 5) return 'bg-[var(--color-success)]'
-    return 'bg-amber-400'
-  }
-
-  function startEdit(nodeId: number, currentName: string, currentDescription: string): void {
-    setEditingNodeId(nodeId)
-    setEditingName(currentName)
-    setEditingDescription(currentDescription)
-    setConfirmDeleteId(null)
-  }
-
-  function submitEdit(): void {
-    if (editingNodeId !== null && editingName.trim() && onRename) {
-      onRename(editingNodeId, editingName.trim(), editingDescription.trim())
-    }
-    setEditingNodeId(null)
-    setEditingName('')
-    setEditingDescription('')
-  }
-
-  function cancelEdit(): void {
-    setEditingNodeId(null)
-    setEditingName('')
-    setEditingDescription('')
-  }
-
   if (coverage.nodes.length === 0) {
-    // Empty-state: KB has no taxonomy nodes yet. When chunks exist (>= 10) we
-    // surface the Suggest CTA here too — without it the user faces a catch-22:
-    // no Suggest button until nodes exist, no nodes until Suggest is clicked.
-    // Threshold mirrors the populated-coverage Suggest gate below (>= 10
-    // untagged chunks); for an empty KB every chunk counts as untagged.
+    // Empty-state: KB has no taxonomy nodes yet. When chunks exist
+    // (>= SUGGEST_MIN_CHUNKS) we surface the Suggest CTA here too —
+    // without it the user faces a catch-22: no Suggest button until
+    // nodes exist, no nodes until Suggest is clicked. Threshold mirrors
+    // the populated-coverage Suggest gate below; for an empty KB every
+    // chunk counts as untagged.
     return (
       <div className="space-y-3">
         <p className="text-sm text-gray-400">
@@ -107,7 +82,7 @@ export function CoverageWidget({
             <span>{m.knowledge_taxonomy_categorising_status()}</span>
           </div>
         ) : (
-          onSuggest && total >= 10 && (
+          onSuggest && total >= SUGGEST_MIN_CHUNKS && (
             <div className="space-y-1.5">
               <button
                 type="button"
@@ -132,131 +107,43 @@ export function CoverageWidget({
     )
   }
 
+  const untaggedPct = total > 0 ? Math.round((coverage.untagged_count / total) * 100) : 0
+  const showSuggestInUntagged =
+    !!onSuggest &&
+    coverage.untagged_count >= SUGGEST_MIN_CHUNKS &&
+    total > 0 &&
+    untaggedPct > SUGGEST_MIN_PCT
+  const atHealthyMax = coverage.nodes.length >= MAX_HEALTHY_NODE_COUNT
+
   return (
     <div className="space-y-2">
-      {coverage.nodes.map((node) => {
-        const pct = total > 0 ? Math.round((node.chunk_count / total) * 100) : 0
-        const isActive = activeNodeId === node.taxonomy_node_id
-        const isEditing = editingNodeId === node.taxonomy_node_id
-        const isConfirmingDelete = confirmDeleteId === node.taxonomy_node_id
-        return (
-          <div
-            key={node.taxonomy_node_id}
-            className={[
-              'group/row w-full text-left rounded-lg border p-3 transition-colors cursor-pointer',
-              isActive
-                ? 'border-gray-200 bg-black/[0.06]'
-                : 'border-gray-200 hover:bg-gray-50',
-            ].join(' ')}
-            onClick={() => { if (!isEditing && !isConfirmingDelete) onNodeClick(node.taxonomy_node_id) }}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !isEditing) onNodeClick(node.taxonomy_node_id) }}
-          >
-            <form
-              onSubmit={(e) => { e.preventDefault(); if (isEditing) submitEdit() }}
-              onClick={(e) => { if (isEditing) e.stopPropagation() }}
-            >
-              <div className="flex items-center justify-between mb-1.5 gap-2">
-                {isEditing ? (
-                  <input
-                    value={editingName}
-                    onChange={(e) => setEditingName(e.target.value)}
-                    className="text-sm font-medium text-gray-900 bg-[var(--color-card)] border border-gray-200 focus:border-gray-200 ring-0 focus:ring-1 focus:ring-[var(--color-accent)] rounded-md py-0.5 px-1.5 flex-1 min-w-0 outline-none"
-                    autoFocus
-                    onKeyDown={(e) => { if (e.key === 'Escape') cancelEdit() }}
-                  />
-                ) : (
-                  <span className="text-sm font-medium text-gray-900 truncate">
-                    {node.taxonomy_node_name}
-                  </span>
-                )}
-                <div className="flex items-center gap-1.5 shrink-0">
-                  {canEdit && !isEditing && !isConfirmingDelete && (
-                    <span className="inline-flex items-center gap-0.5">
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); startEdit(node.taxonomy_node_id, node.taxonomy_node_name, node.description ?? '') }}
-                        className="flex h-5 w-5 items-center justify-center text-[var(--color-warning)] hover:opacity-70 transition-opacity"
-                        aria-label={m.knowledge_taxonomy_node_rename()}
-                      >
-                        <Pencil className="h-3 w-3" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(node.taxonomy_node_id) }}
-                        className="flex h-5 w-5 items-center justify-center text-[var(--color-destructive)] hover:opacity-70 transition-opacity"
-                        aria-label={m.knowledge_taxonomy_node_delete()}
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
-                    </span>
-                  )}
-                  {isConfirmingDelete && (
-                    <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                      <Button
-                        size="sm"
-                        className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5 bg-[var(--color-destructive)] text-white hover:opacity-70"
-                        onClick={() => { onDelete?.(node.taxonomy_node_id); setConfirmDeleteId(null) }}
-                      >
-                        {m.knowledge_taxonomy_node_delete()}
-                      </Button>
-                      <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2" onClick={() => setConfirmDeleteId(null)}>
-                        {m.knowledge_taxonomy_node_add_cancel()}
-                      </Button>
-                    </div>
-                  )}
-                  {isEditing && (
-                    <span className="inline-flex items-center gap-1">
-                      <Button type="submit" size="sm" className="h-6 text-xs px-2" disabled={!editingName.trim()}>
-                        {m.knowledge_taxonomy_node_edit_submit()}
-                      </Button>
-                      <Button type="button" size="sm" variant="ghost" className="h-6 text-xs px-2" onClick={cancelEdit}>
-                        {m.knowledge_taxonomy_node_add_cancel()}
-                      </Button>
-                    </span>
-                  )}
-                  {!isConfirmingDelete && !isEditing && (
-                    <span className="text-xs text-gray-400 tabular-nums">
-                      {pct}%
-                    </span>
-                  )}
-                </div>
-              </div>
-              {isEditing ? (
-                <textarea
-                  value={editingDescription}
-                  onChange={(e) => setEditingDescription(e.target.value)}
-                  className="text-xs text-gray-400 bg-[var(--color-card)] border border-gray-200 focus:border-gray-200 ring-0 focus:ring-1 focus:ring-[var(--color-accent)] rounded-md py-1 px-1.5 mb-1 w-full outline-none resize-none"
-                  rows={2}
-                  placeholder={m.knowledge_taxonomy_node_description_placeholder()}
-                  onKeyDown={(e) => { if (e.key === 'Escape') cancelEdit() }}
-                />
-              ) : node.description ? (
-                <p className="text-xs text-gray-400 mb-1 line-clamp-2">
-                  {node.description}
-                </p>
-              ) : null}
-            </form>
-            <div className="h-1.5 w-full rounded-full bg-gray-200 overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all ${barColor(pct)}`}
-                style={{ width: `${pct}%` }}
-              />
-            </div>
-            <div className="flex items-center gap-3 mt-1.5">
-              <span className="text-xs text-gray-400">
-                {m.knowledge_taxonomy_coverage_chunks({ count: String(node.chunk_count) })}
-              </span>
-              {node.gap_count > 0 && (
-                <span className="text-xs text-amber-600">
-                  {m.knowledge_taxonomy_coverage_gaps({ count: String(node.gap_count) })}
-                </span>
-              )}
-            </div>
-          </div>
-        )
-      })}
+      {coverage.nodes.map((node) => (
+        <CoverageNodeRow
+          key={node.taxonomy_node_id}
+          node={node}
+          totalChunks={total}
+          isActive={activeNodeId === node.taxonomy_node_id}
+          isEditing={editingNodeId === node.taxonomy_node_id}
+          isConfirmingDelete={confirmDeleteId === node.taxonomy_node_id}
+          canEdit={!!canEdit}
+          onNodeClick={() => onNodeClick(node.taxonomy_node_id)}
+          onStartEdit={() => {
+            setEditingNodeId(node.taxonomy_node_id)
+            setConfirmDeleteId(null)
+          }}
+          onSubmitEdit={(name, description) => {
+            onRename?.(node.taxonomy_node_id, name, description)
+            setEditingNodeId(null)
+          }}
+          onCancelEdit={() => setEditingNodeId(null)}
+          onStartDelete={() => setConfirmDeleteId(node.taxonomy_node_id)}
+          onConfirmDelete={() => {
+            onDelete?.(node.taxonomy_node_id)
+            setConfirmDeleteId(null)
+          }}
+          onCancelDelete={() => setConfirmDeleteId(null)}
+        />
+      ))}
 
       {coverage.untagged_count > 0 && (
         <div className="rounded-lg border border-dashed border-gray-200 p-3">
@@ -266,14 +153,14 @@ export function CoverageWidget({
             </span>
             <div className="flex items-center gap-2 shrink-0">
               <span className="text-xs text-gray-400 tabular-nums">
-                {total > 0 ? Math.round((coverage.untagged_count / total) * 100) : 0}%
+                {untaggedPct}%
               </span>
               {isBackfilling ? (
                 <div className="inline-flex items-center gap-1 text-xs text-gray-400">
                   <Loader2 className="h-3 w-3 animate-spin" />
                   <span>{m.knowledge_taxonomy_categorising_status()}</span>
                 </div>
-              ) : coverage.nodes.length >= MAX_HEALTHY_NODE_COUNT ? (
+              ) : atHealthyMax ? (
                 // SPEC-TAXONOMY-REVIEW-FLOW-001 follow-up: with the IA target
                 // already met (Miller's Law 5-9), suggesting more categories
                 // makes the taxonomy worse, not better. Hide the Suggest
@@ -282,10 +169,10 @@ export function CoverageWidget({
                   {m.knowledge_taxonomy_enough_categories_hint()}
                 </span>
               ) : (
-                onSuggest && coverage.untagged_count >= 10 && total > 0 && Math.round((coverage.untagged_count / total) * 100) > 5 && (
+                showSuggestInUntagged && (
                   <button
                     type="button"
-                    onClick={(e) => { e.stopPropagation(); onSuggest() }}
+                    onClick={(e) => { e.stopPropagation(); onSuggest?.() }}
                     disabled={isSuggesting}
                     className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-medium bg-gray-900 text-white hover:opacity-90 transition-opacity disabled:opacity-50"
                   >
@@ -302,7 +189,7 @@ export function CoverageWidget({
           <div className="h-1.5 w-full rounded-full bg-gray-200 overflow-hidden">
             <div
               className="h-full rounded-full bg-gray-200"
-              style={{ width: `${total > 0 ? Math.round((coverage.untagged_count / total) * 100) : 0}%` }}
+              style={{ width: `${untaggedPct}%` }}
             />
           </div>
           <span className="text-xs text-gray-400 mt-1.5 block">
