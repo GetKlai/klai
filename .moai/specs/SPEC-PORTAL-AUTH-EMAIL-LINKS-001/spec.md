@@ -155,14 +155,28 @@ def build_url_template(route: AuthLinkRoute) -> str:
 ### REQ-6: CI lint rule
 
 **WHEN** a PR modifies any Python file under `klai-portal/backend/app/`,
-**THEN** an ast-grep rule `rules/no-zitadel-mail-without-url-template.yml` SHALL fail the build if any of the following patterns appear without a sibling `urlTemplate` key:
+**THEN** `tests/test_zitadel_email_link_lint.py` SHALL fail the build if any
+`<client>.post(<path>, …)` call has a path matching one of the following AND
+the call body does not contain the literal string `urlTemplate`:
 
-- `httpx` POST to a path matching `/v2/users/[^/]+/password_reset`
-- `httpx` POST to a path matching `/v2/users/[^/]+/invite_code(/resend)?`
-- `httpx` POST to a path matching `/v2/users/[^/]+/email(/_resend|/_send_code)?`
-- A hand-rolled URL placeholder string `"{{.UserID}}"` outside `app/services/auth_links.py`
+- `/v2/users/[^/]+/password_reset`
+- `/v2/users/[^/]+/invite_code(/resend)?`
+- `/v2/users/[^/]+/email/(_send_code|_resend)`
 
-**AND** the rule SHALL be added to `.github/workflows/portal-api.yml` `Alerting provisioning checks` job. Existing pattern for ast-grep rules: `rules/no-zitadel-resourceowner-claim.yml` (see `.claude/rules/klai/platform/zitadel.md` § User lookup).
+**AND** the lint SHALL be implemented in pure Python `ast` module against
+`klai-portal/backend/app/**/*.py`. Pivoted from an ast-grep YAML rule
+during implementation (2026-05-13): ast-grep's `not: has: regex:` semantics
+do not reliably express "call without a literal substring in the body" at
+sub-expression granularity, while a 50-line `ast.walk` does so trivially.
+The pytest implementation:
+
+- Runs in the existing `pytest` step of `.github/workflows/portal-api.yml`
+  with zero additional CI wiring (the existing portal-api workflow already
+  runs `pytest tests/`).
+- Includes self-tests with 5 bad fixtures and 5 good fixtures so the
+  lint cannot silently become a no-op if the scanner drifts.
+- Walks the AST so it handles both `f"/v2/users/{uid}/..."` and constant
+  string variants.
 
 ### REQ-7: Boot-time assertion
 
