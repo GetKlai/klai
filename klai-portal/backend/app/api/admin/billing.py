@@ -200,8 +200,13 @@ async def switch_to_per_seat_billing(
     The endpoint exists in Phase 5 light so the FE CTA can hit a real
     URL and surface a deterministic error rather than a 404 — admins
     see "coming soon, no billing change" instead of a broken-link page.
+
+    ``perms`` and ``db`` are taken even though the body never reads
+    them: FastAPI evaluates the ``Depends(get_caller_at_least(ADMIN))``
+    chain on every request, which is exactly the auth gate we want
+    the 501 to sit behind. A non-admin caller gets 403 from the
+    dependency, not 501 from this stub.
     """
-    _ = (perms, db)  # binds the auth + db dependencies; body is a stub
     raise HTTPException(
         status_code=status.HTTP_501_NOT_IMPLEMENTED,
         detail={
