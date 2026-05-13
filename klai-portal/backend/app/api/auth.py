@@ -40,6 +40,7 @@ import json
 import logging
 import secrets
 import time
+import urllib.parse
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote, urlparse
@@ -49,7 +50,7 @@ import redis.exceptions as redis_exc
 import structlog
 from cryptography.fernet import Fernet
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy import select
@@ -62,8 +63,10 @@ from app.core.database import AsyncSessionLocal, get_db
 from app.models.portal import PortalOrg, PortalUser
 from app.services import audit
 from app.services.auth_links import AuthLinkRoute, build_url_template
-from app.services.bff_session import SessionService
+from app.services.bff_oidc import OidcFlowError
+from app.services.bff_session import SessionService, session_service
 from app.services.events import emit_event
+from app.services.oidc_pending import oidc_pending
 from app.services.pending_session import PendingSessionService
 from app.services.redis_client import get_redis_pool
 from app.services.request_ip import resolve_caller_ip_subnet
@@ -935,6 +938,19 @@ class PasswordSetRequest(BaseModel):
     new_password: str
 
 
+class PasswordSetResponse(BaseModel):
+    """Where the frontend should navigate after a successful password set.
+
+    SPEC-PORTAL-AUTH-AUTOLOGIN-001 — the response also carries the BFF session
+    cookies (set on the Response object) so the user is logged in immediately.
+    On the auto-login fallback path, ``auto_login_failed`` is true and the
+    frontend should send the user through the normal ``/`` → /login flow.
+    """
+
+    redirect_to: str
+    auto_login_failed: bool = False
+
+
 class TOTPSetupResponse(BaseModel):
     uri: str
     secret: str
@@ -1052,13 +1068,30 @@ async def password_reset(body: PasswordResetRequest) -> None:
         return  # fail silently
 
 
-@router.post("/auth/password/set", status_code=status.HTTP_204_NO_CONTENT)
-async def password_set(body: PasswordSetRequest) -> None:
-    """Complete a password reset using the code from the reset email.
+@router.post("/auth/password/set", response_model=PasswordSetResponse)
+async def password_set(
+    body: PasswordSetRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Complete a password reset / activation using the code from the email.
 
     SPEC-SEC-AUTH-COVERAGE-001 REQ-3.4..3.6: emit `audit.log_event` on
     success and `password_set_failed` events on every failure leg.
+
+    SPEC-PORTAL-AUTH-AUTOLOGIN-001: after a successful password-set, run
+    Zitadel's "Custom Login UI" auto-login chain (authorize → create_session →
+    finalize → token exchange) and set the BFF session cookies on the response.
+    The frontend then redirects to ``/setup/mfa`` (if no MFA enrolled) or
+    ``/app`` (already enrolled) without asking the user to log in again.
+
+    Auto-login is fail-soft: any error in the chain returns
+    ``{redirect_to: '/', auto_login_failed: true}`` (200 OK) so the frontend
+    falls back to the normal login page with the user's freshly-set password.
+    The password-set itself is always successful at this point — the auth
+    bookkeeping is purely a UX optimisation.
     """
+    # --- Step 1: set the password in Zitadel ---------------------------------
     try:
         await zitadel.set_password_with_code(body.user_id, body.code, body.new_password)
     except httpx.HTTPStatusError as exc:
@@ -1097,6 +1130,145 @@ async def password_set(body: PasswordSetRequest) -> None:
         resource_id=body.user_id,
         details={"reason": "set"},
     )
+
+    # --- Step 2: auto-login (best-effort) ------------------------------------
+    response = JSONResponse({"redirect_to": "/setup/mfa"})
+    try:
+        await _autologin_after_password_set(
+            user_id=body.user_id,
+            password=body.new_password,
+            request=request,
+            response=response,
+            db=db,
+        )
+    except Exception as exc:
+        _slog.warning(
+            "password_set_autologin_failed",
+            actor_user_id=body.user_id,
+            error=str(exc),
+            exc_info=True,
+        )
+        # Return a 200 with auto_login_failed=true; frontend falls back to /login.
+        return JSONResponse(
+            {"redirect_to": "/", "auto_login_failed": True},
+            status_code=status.HTTP_200_OK,
+        )
+
+    return response
+
+
+async def _autologin_after_password_set(
+    *,
+    user_id: str,
+    password: str,
+    request: Request,
+    response: Response,
+    db: AsyncSession,
+) -> None:
+    """Run the Zitadel Custom-Login-UI chain to give the user a live BFF session.
+
+    On success, mutates ``response`` to set ``__Host-klai_session`` + CSRF
+    cookies and adjusts the JSON body to redirect to ``/setup/mfa`` or ``/app``
+    depending on whether the user already has MFA enrolled.
+
+    Raises on any failure — the caller wraps this in a try/except and falls
+    back to a manual-login redirect.
+    """
+    from app.api.auth_bff import (  # local import to avoid auth_bff → auth circular
+        initiate_server_side_authorize,
+        set_session_cookies,
+    )
+    from app.services.bff_oidc import exchange_code_for_tokens
+
+    user_agent_hash = session_service.hash_metadata(request.headers.get("user-agent"))
+
+    # Decide where to send the user BEFORE we burn the OIDC dance — a cheap
+    # has_any_mfa call now saves us a round-trip on success.
+    try:
+        has_mfa = await zitadel.has_any_mfa(user_id)
+    except Exception:
+        # If the MFA lookup itself fails, conservatively assume "no MFA" so the
+        # user lands on /setup/mfa. callback.tsx will redirect to /app if they
+        # actually have MFA.
+        has_mfa = False
+
+    target = "/app" if has_mfa else "/setup/mfa"
+
+    # Step 2a: server-side authorize → authRequestId + pending PKCE record
+    pending = await initiate_server_side_authorize(
+        return_to=target,
+        user_agent_hash=user_agent_hash,
+    )
+
+    # Step 2b: create a Zitadel session with the just-set password
+    session = await zitadel.create_session_with_password(user_id, password)
+    session_id = session["sessionId"]
+    session_token = session["sessionToken"]
+
+    # Step 2c: link the session to the auth-request → callback URL with code
+    callback_url = await zitadel.finalize_auth_request(pending.auth_request_id, session_id, session_token)
+
+    # Extract `code` and `state` from the callback URL Zitadel returns.
+    parsed = urllib.parse.urlparse(callback_url)
+    qs = urllib.parse.parse_qs(parsed.query)
+    code = (qs.get("code") or [""])[0]
+    cb_state = (qs.get("state") or [""])[0]
+    if not code or cb_state != pending.state:
+        raise OidcFlowError(
+            "finalize_callback_invalid",
+            f"missing code or state mismatch in callback_url={callback_url!r}",
+        )
+
+    # Step 2d: exchange the code for OAuth tokens (consumes the pending record)
+    pending_record = await oidc_pending.consume(cb_state)
+    if pending_record is None:
+        raise OidcFlowError("pending_record_missing", "Redis pending record vanished")
+
+    redirect_uri = f"{_origin_for_request(request)}/api/auth/oidc/callback"
+    tokens = await exchange_code_for_tokens(
+        code=code, code_verifier=pending_record.code_verifier, redirect_uri=redirect_uri
+    )
+
+    # Step 2e: resolve the portal org for the new BFF session
+    portal_row = (
+        await db.execute(select(PortalUser).where(PortalUser.zitadel_user_id == user_id))
+    ).scalar_one_or_none()
+    org_id = portal_row.org_id if portal_row is not None else None
+
+    # Step 2f: persist BFF session in Redis and set cookies on the response
+    record = await session_service.create(
+        zitadel_user_id=user_id,
+        org_id=org_id,
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+        access_token_expires_at=int(time.time()) + (tokens.expires_in or 3600),
+        id_token=tokens.id_token,
+        user_agent=request.headers.get("user-agent"),
+        remote_ip=_client_ip_from_request(request),
+    )
+    set_session_cookies(
+        response,
+        sid=record.sid,
+        csrf_token=record.csrf_token,
+        max_age_seconds=settings.bff_session_ttl_seconds,
+    )
+    # Adjust the JSON body to reflect the (already-computed) target.
+    response.body = JSONResponse({"redirect_to": target}).body
+    response.headers["content-length"] = str(len(response.body))
+
+
+def _origin_for_request(request: Request) -> str:
+    """Mirror auth_bff._origin without the circular import."""
+    if settings.frontend_url:
+        return settings.frontend_url.rstrip("/")
+    return f"https://my.{settings.domain}"
+
+
+def _client_ip_from_request(request: Request) -> str | None:
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",", 1)[0].strip()
+    return request.client.host if request.client else None
 
 
 @router.post("/auth/login", response_model=LoginResponse)

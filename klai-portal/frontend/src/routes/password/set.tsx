@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { KeyRound } from 'lucide-react'
@@ -26,7 +26,6 @@ export const Route = createFileRoute('/password/set')({
 
 function PasswordSetPage() {
   const { userID, code } = Route.useSearch()
-  const navigate = useNavigate()
 
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -49,20 +48,37 @@ function PasswordSetPage() {
 
     setLoading(true)
     try {
+      // SPEC-PORTAL-AUTH-AUTOLOGIN-001 — `credentials: 'include'` is required
+      // so the BFF session cookies set by the auto-login chain are accepted
+      // by the browser. Without it, the cookie set by the backend is silently
+      // dropped and the user lands on /setup/mfa without a session.
       const resp = await fetch(`${API_BASE}/api/auth/password/set`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userID, code, new_password: password }),
       })
 
       if (!resp.ok) {
-        const data = await resp.json().catch(() => ({}))
+        const data = (await resp.json().catch(() => ({}))) as { detail?: string }
         setError(data?.detail ?? m.set_error_server())
         return
       }
 
+      // Backend returns { redirect_to, auto_login_failed }. On the happy path
+      // the session cookies are already set on this response — we just
+      // navigate to the indicated route (`/setup/mfa` or `/app`). On the
+      // fail-soft fallback the user is sent to `/` and re-authenticates via
+      // the normal login page with the password they just chose.
+      const data = (await resp.json().catch(() => ({ redirect_to: '/' }))) as {
+        redirect_to?: string
+      }
+      const target = data?.redirect_to ?? '/'
+
       setDone(true)
-      setTimeout(() => void navigate({ to: '/' }), 2500)
+      // Hard navigation so any cross-tab session state is reloaded fresh and
+      // the new BFF session cookie is picked up by every subsequent fetch.
+      window.location.assign(target)
     } catch {
       setError(m.error_connection())
     } finally {
