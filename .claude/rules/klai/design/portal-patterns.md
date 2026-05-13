@@ -1,6 +1,8 @@
 ---
 paths:
   - "klai-portal/frontend/**"
+  - "klai-portal/backend/app/templates/**"
+  - "klai-portal/backend/app/static/**"
 ---
 
 # Portal Patterns (v1 spine)

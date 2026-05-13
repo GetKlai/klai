@@ -39,7 +39,7 @@ function WidgetDetailPage() {
   if (isLoading) {
     return (
       <div className="p-6">
-        <p className="py-8 text-sm text-[var(--color-muted-foreground)]">
+        <p className="py-8 text-sm text-gray-400">
           <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
           {m.admin_widgets_loading()}
         </p>
@@ -84,7 +84,7 @@ function WidgetDetailPage() {
             {widget.name}
           </h1>
           {widget.description && (
-            <p className="text-sm text-[var(--color-muted-foreground)] mt-1">
+            <p className="text-sm text-gray-400 mt-1">
               {widget.description}
             </p>
           )}
@@ -100,7 +100,7 @@ function WidgetDetailPage() {
         </Button>
       </div>
 
-      <div className="border-b border-[var(--color-border)]">
+      <div className="border-b border-gray-200">
         <nav className="-mb-px flex gap-6">
           {tabs.map(({ id: tabId, label, icon: TabIcon }) => {
             const isActive = tabId === activeTab
@@ -112,8 +112,8 @@ function WidgetDetailPage() {
                 className={[
                   'flex items-center gap-1.5 pb-3 text-sm font-medium border-b-2 transition-colors',
                   isActive
-                    ? 'border-[var(--color-accent)] text-[var(--color-foreground)]'
-                    : 'border-transparent text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+                    ? 'border-gray-200 text-gray-900'
+                    : 'border-transparent text-gray-400 hover:text-gray-900',
                 ].join(' ')}
               >
                 <TabIcon className="h-4 w-4" />

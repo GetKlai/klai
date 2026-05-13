@@ -156,3 +156,151 @@ checkpoint via `transition_state()` and registers its compensator on a
 - Never emit `provisioning_status = 'failed'` — that legacy value is out.
   Use `failed_rollback_pending` (rollback failed) or `failed_rollback_complete`
   (rollback succeeded, row soft-deleted).
+
+## Tenant deprovisioning state machine (SPEC-INFRA-TENANT-DELETE-001)
+
+Mirror of provisioning state machine for tenant delete:
+- `deprovisioning` — orchestrator running, auth-flow returns 403 with code `tenant_deleting`
+- `deprovisioned` — pre-hard-delete checkpoint (rarely observed; same-tx as DELETE)
+- `failed_deprovisioning` — terminal failure; `last_failure` jsonb populated; admin retry possible
+
+Files:
+- Orchestrator: `app/services/provisioning/deprovisioning_orchestrator.py`
+- 16 steps: `app/services/provisioning/deprovisioning_steps.py`
+- Audit emit: `app/services/audit/tenant_lifecycle.py::emit_lifecycle_event` (synchronous, NOT fire-and-forget — failure rolls back the deprovision finalize transaction)
+- Endpoints: `app/api/admin/deprovision_org.py`
+- Runbook: `docs/runbooks/tenant-delete.md`
+
+Invariants:
+- Each step is idempotent — al-weg = OK, no exception
+- 3 internal retries with exponential backoff (1s, 2s, 4s) on transient errors
+- All steps critical: definitive failure → `failed_deprovisioning` (no fail-soft)
+- portal_orgs hard-delete is the final step; audit emit happens BEFORE delete in same transaction
+- `tenant_lifecycle_events` has NO FK to portal_orgs — survives the hard-delete by design
+- Auth-flow check: `_get_caller_org` returns 403 with code `tenant_deleting` when org is in `deprovisioning` state. The owner status-polling endpoint passes `allow_during_deprovisioning=True` to bypass.
+- New non-cascading FK to portal_orgs added in the future MUST be added to the explicit DELETE list in `_finalize_postgres_delete` step — otherwise the final hard-delete throws FK violation. Test fixture asserts the full delete-list against a populated test tenant.
+
+## KB resource access — route-level firewall pattern (SPEC-PORTAL-KB-OWNERSHIP-001)
+
+Every route under `/api/app/knowledge-bases/{kb_slug}/...` MUST include
+`Depends(get_kb_with_access)` in its `dependencies=[]` list. The dependency
+lives in `app/api/dependencies.py` and does three things in order:
+
+1. **Magic-slug shortcut**: `personal` → caller's personal-{user_id} KB;
+   `org` → tenant's org KB. Both lazy-create via
+   `app.services.default_knowledge_bases.resolve_personal_kb` /
+   `resolve_org_kb` if provisioning missed them.
+2. **Tenant-scope SELECT** WHERE org_id = caller.org_id AND slug = kb_slug.
+   Cross-tenant slugs return 404. Belt+braces with Cat-D RLS on the table.
+3. **Personal-firewall**: if `is_personal_kb(kb)` (single-source-of-truth
+   helper in `app.services.access`) AND `kb.owner_user_id != caller.user_id`,
+   raise 404 (NOT 403). Existence-non-disclosure: leaking that someone else
+   has a personal KB by name is itself the violation we want to prevent.
+   Admins receive 404 too — no role-bypass.
+
+Authorisation (owner / contributor / viewer) is layered on TOP of this gate
+inside the handler body via `_require_owner` etc. The dependency only
+handles existence + privacy; it does not gate write actions.
+
+**Invariant test**: `tests/test_kb_personal_firewall.py::TestRouteFirewallInvariant::test_every_kb_slug_route_uses_firewall_dependency`
+introspects `app.routes`, finds every path containing `{kb_slug}`, and
+asserts `get_kb_with_access` appears in the flat dep tree. Routes without
+`get_caller` in their deps (X-Internal-Secret-only endpoints) are skipped
+automatically — they cannot use the dep because it requires `perms`.
+
+**Adding a new KB-route**:
+
+```python
+@router.get(
+    "/knowledge-bases/{kb_slug}/my-new-thing",
+    response_model=MyResponse,
+    dependencies=[Depends(get_kb_with_access)],   # <-- mandatory
+)
+async def my_handler(
+    kb_slug: str,
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+):
+    # The dep already raised 404 for personal-KB-of-others before this body runs.
+    # Resolve the kb again locally (or refactor to use the dep's return value).
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    ...
+```
+
+If the route already has `dependencies=[Depends(require_capability(...))]`,
+append the firewall:
+
+```python
+dependencies=[
+    Depends(require_capability(Capability.KB_FOO)),
+    Depends(get_kb_with_access),
+]
+```
+
+The connector router uses the router-level form because every route under
+its prefix is KB-scoped:
+
+```python
+router = APIRouter(
+    prefix="/api/app/knowledge-bases/{kb_slug}/connectors",
+    dependencies=[
+        Depends(require_capability(Capability.KB_CONNECTORS)),
+        Depends(get_kb_with_access),
+    ],
+)
+```
+
+Adding a NEW route to that router gets the firewall for free.
+
+## Typed-string admin-override header pattern (SPEC-PORTAL-KB-OWNERSHIP-001)
+
+For admin actions that escalate beyond the normal authz pad (e.g.
+`delete_app_knowledge_base` letting an admin remove an org-KB they did not
+create), require a typed-string confirmation header rather than a boolean
+query-param or body field. Mirrors the precedent in
+`klai-infra/.github/workflows/sync-env.yml` where `I-CONFIRM-REMOVAL` is
+the typed override for SOPS removals.
+
+Why a typed string, not a boolean:
+- A boolean / checkbox is one accidental click-through away from triggering
+  the destructive path.
+- The typed string forces explicit operator intent and is impossible to set
+  by accidental click-through.
+- The string itself is the documentation: an operator reading the curl
+  command sees `X-Admin-Override-Confirm: I-WAS-NOT-CREATOR` and immediately
+  understands what they're agreeing to.
+
+Pattern (backend):
+
+```python
+ADMIN_OVERRIDE_HEADER = "X-Admin-Override-Confirm"
+ADMIN_OVERRIDE_VALUE = "I-WAS-NOT-CREATOR"
+
+async def my_admin_action(
+    request: Request,
+    perms: UserPermissions = Depends(get_caller),
+):
+    is_admin = perms.effective_role == ProfileRole.ADMIN
+    header_present = request.headers.get(ADMIN_OVERRIDE_HEADER, "") == ADMIN_OVERRIDE_VALUE
+    if not (is_admin and header_present):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Owner access required, or set header "
+                f"'{ADMIN_OVERRIDE_HEADER}: {ADMIN_OVERRIDE_VALUE}' as an admin"
+                " to perform this action"
+            ),
+        )
+    # ... emit audit event with action='X.admin_overridden' BEFORE the destructive write ...
+```
+
+The 403 message is intentionally verbose: it tells the admin EXACTLY which
+header to set. This doubles as a graceful-fallback for the deploy-during-
+active-session case where the frontend may still serve the OLD modal that
+doesn't auto-attach the header — the user gets an actionable 403 instead of
+a confusing one.
+
+Frontend pattern (the modal): only attach the header when the user has gone
+through the typed-confirmation gate. Never attach by default. Test for
+header-absence in `data-test-id` assertions on the owner pad.
+

@@ -91,9 +91,18 @@ export function ChatConfigBar() {
     mutation.mutate({ kb_slugs_filter: next.length === allSlugs.length ? null : next })
   }
 
-  const allActive = (pref?.kb_personal_enabled ?? false) && currentSlugs.length === allSlugs.length
+  // "anything active" — true when ANY collection is on (personal or any
+  // org KB). Drives the dropdown header button:
+  //   * if anythingActive → label "Alles uit", click turns ALL off (incl. personal).
+  //   * else              → label "Alles aan", click turns ALL on.
+  // Previously this was `allActive` (TRUE only when EVERYTHING was on),
+  // which meant a partially-on state always showed "Alles aan" and clicking
+  // it re-enabled everything — exactly the user complaint.
+  const anythingActive =
+    (pref?.kb_personal_enabled ?? false) || currentSlugs.length > 0
+
   function toggleAll() {
-    if (allActive) {
+    if (anythingActive) {
       mutation.mutate({ kb_slugs_filter: [], kb_personal_enabled: false })
     } else {
       mutation.mutate({ kb_slugs_filter: null, kb_personal_enabled: true })
@@ -123,6 +132,12 @@ export function ChatConfigBar() {
     mutation.mutate({ active_template_ids: null })
   }
 
+  function toggleNarrow() {
+    // The early-return guard below ensures `pref` is defined when this is
+    // invoked from the rendered toggle button.
+    mutation.mutate({ kb_narrow: !pref!.kb_narrow })
+  }
+
   return (
     <div className="flex shrink-0 items-center gap-4 bg-[var(--color-sidebar)] border-b border-[var(--color-sidebar-border)] pl-4 pr-4 pt-5 pb-4">
       {collOpen && <div className="fixed inset-0 z-40" onClick={() => setCollOpen(false)} />}
@@ -139,7 +154,7 @@ export function ChatConfigBar() {
             className="flex items-center gap-1.5 text-[14px] font-semibold text-gray-700 hover:text-gray-900 transition-colors truncate"
           >
             <span className="truncate">
-              {activeNames.length > 0 ? activeNames.join(', ') : 'Geen kennis geselecteerd'}
+              {activeNames.length > 0 ? activeNames.join(', ') : m.chatbar_collections_general_ai()}
             </span>
             <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-40" />
           </button>
@@ -153,7 +168,7 @@ export function ChatConfigBar() {
                   onClick={toggleAll}
                   className="text-[10px] font-semibold tracking-wide text-gray-500 hover:text-gray-900 transition-colors"
                 >
-                  {allActive ? 'Alles uit' : 'Alles aan'}
+                  {anythingActive ? 'Alles uit' : 'Alles aan'}
                 </button>
               </div>
               {/* Personal */}
@@ -193,6 +208,58 @@ export function ChatConfigBar() {
                   </span>
                 </button>
               ))}
+
+              {/* Modus: kb_narrow checkbox row, separated from collections
+                  by a divider. When ON, the LiteLLM hook prepends a strict
+                  "answer ONLY from KB" prompt; OFF means KB chunks are
+                  additional context and the model may supplement with
+                  general knowledge. Logically a SCOPE setting (filtering
+                  the answer source), so it lives in the same dropdown as
+                  the collection scope toggles. */}
+              <div className="my-1 border-t border-gray-100" />
+              <div className="flex items-center justify-between px-3 py-1.5">
+                <span className="text-[10px] font-semibold tracking-wide text-gray-400">
+                  {m.chatbar_mode_label()}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={toggleNarrow}
+                title={
+                  pref.kb_narrow
+                    ? m.chatbar_mode_narrow_tooltip_on()
+                    : m.chatbar_mode_narrow_tooltip_off()
+                }
+                aria-checked={pref.kb_narrow}
+                role="checkbox"
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] hover:bg-gray-50 transition-colors text-left"
+              >
+                <span
+                  className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border ${
+                    pref.kb_narrow
+                      ? 'bg-green-500 border-green-500'
+                      : 'border-gray-300 bg-white'
+                  }`}
+                  aria-hidden="true"
+                >
+                  {pref.kb_narrow && (
+                    <svg
+                      viewBox="0 0 12 12"
+                      className="h-2.5 w-2.5 text-white"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                    >
+                      <polyline points="2 6 5 9 10 3" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                </span>
+                <span
+                  className={pref.kb_narrow ? 'text-gray-900 font-medium' : 'text-gray-400'}
+                >
+                  {m.chatbar_mode_narrow_on()}
+                </span>
+              </button>
             </div>
           )}
         </div>

@@ -5,14 +5,20 @@ Visibility values: "public" | "internal" | "private"
 Default: "internal" (org-only, no per-user restriction).
 
 Cache TTL: 60 seconds. NOTIFY evicts specific KB immediately on config change.
+
+SPEC-TI-003-FOLLOWUP-001 AC-1/AC-2: read/write helpers take an
+asyncpg.Connection (from tenant_scoped_connection); the LISTEN/NOTIFY
+``start_listener`` keeps the pool because it does not issue knowledge.*
+SQL -- it pins one connection for the lifetime of the service.
 """
+
 from __future__ import annotations
 
 import asyncio
-import structlog
 
 import asyncpg
 import cachetools
+import structlog
 
 logger = structlog.get_logger()
 
@@ -23,14 +29,14 @@ def _cache_key(org_id: str, kb_slug: str) -> str:
     return f"{org_id}:{kb_slug}"
 
 
-async def get_kb_visibility(org_id: str, kb_slug: str, pool: asyncpg.Pool) -> str:
+async def get_kb_visibility(conn: asyncpg.Connection, org_id: str, kb_slug: str) -> str:
     """Return the visibility for this KB. Defaults to 'internal' when not configured."""
     key = _cache_key(org_id, kb_slug)
     if key in _cache:
         return str(_cache[key])
 
     try:
-        row = await pool.fetchrow(
+        row = await conn.fetchrow(
             "SELECT visibility FROM knowledge.kb_config WHERE org_id = $1 AND kb_slug = $2",
             org_id,
             kb_slug,
@@ -47,9 +53,11 @@ async def get_kb_visibility(org_id: str, kb_slug: str, pool: asyncpg.Pool) -> st
     return visibility
 
 
-async def set_kb_visibility(org_id: str, kb_slug: str, visibility: str, pool: asyncpg.Pool) -> None:
+async def set_kb_visibility(
+    conn: asyncpg.Connection, org_id: str, kb_slug: str, visibility: str
+) -> None:
     """Upsert KB visibility config. Evicts cache immediately."""
-    await pool.execute(
+    await conn.execute(
         """
         INSERT INTO knowledge.kb_config (org_id, kb_slug, visibility, updated_at)
         VALUES ($1, $2, $3, NOW())
@@ -70,6 +78,9 @@ async def start_listener(pool: asyncpg.Pool) -> None:
     Listen on kb_config_changed channel.
     Evicts the specific KB from the TTL cache when its config changes.
     Runs indefinitely as a background task — cancel to stop.
+
+    Pool-acquire is permitted here per SPEC-TI-003-FOLLOWUP-001 AC-2:
+    LISTEN/NOTIFY does not emit SQL against knowledge.* tables.
     """
     conn: asyncpg.Connection = await pool.acquire()  # type: ignore[assignment]
     try:
@@ -81,7 +92,7 @@ async def start_listener(pool: asyncpg.Pool) -> None:
         try:
             await conn.remove_listener("kb_config_changed", _on_kb_config_changed)
         except Exception:
-            pass
+            logger.exception("kb_config_listener_cleanup_failed")
         await pool.release(conn)
 
 

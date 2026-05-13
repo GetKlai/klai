@@ -156,6 +156,7 @@ async def test_search_logs_exception_with_traceback_on_qdrant_failure(monkeypatc
     through the ``except`` block — which must log via ``logger.exception(...)``
     so ``rec.exc_info`` is populated on the captured ``LogRecord``.
     """
+    from retrieval_api.models import RetrieveRequest
     from retrieval_api.services import search
 
     class _RaisingClient:
@@ -167,17 +168,10 @@ async def test_search_logs_exception_with_traceback_on_qdrant_failure(monkeypatc
         lambda: _RaisingClient(),
     )
 
-    class _Req:
-        # Minimal duck-typed request — `_search_notebook` only reads these.
-        # user_id is read by the SPEC-SEC-IDENTITY-ASSERT-001 visibility gate
-        # in `_notebook_filter`; None disables the personal-leg, which is
-        # fine for this exception-path test.
-        notebook_id = "nb-1"
-        org_id = "org-xyz"
-        user_id = None
+    req = RetrieveRequest(query="test", org_id="org-xyz", scope="org")
 
     with pytest.raises(TimeoutError):
-        await search._search_notebook([0.1] * 8, _Req(), candidates=10)
+        await search._search_knowledge([0.1] * 8, req, candidates=10)
 
     # structlog's ``wrap_for_formatter`` processor passes the post-processed
     # event_dict as ``record.msg`` (a dict, not a string). The

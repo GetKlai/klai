@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { KeyRound } from 'lucide-react'
@@ -26,7 +26,6 @@ export const Route = createFileRoute('/password/set')({
 
 function PasswordSetPage() {
   const { userID, code } = Route.useSearch()
-  const navigate = useNavigate()
 
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -56,13 +55,17 @@ function PasswordSetPage() {
       })
 
       if (!resp.ok) {
-        const data = await resp.json().catch(() => ({}))
+        const data = (await resp.json().catch(() => ({}))) as { detail?: string }
         setError(data?.detail ?? m.set_error_server())
         return
       }
 
+      // Password is set. Backend returns 204 — auto-login is intentionally
+      // not attempted here (see #638). Show a success state with an explicit
+      // "Inloggen" button; the user clicks through to the standard OIDC
+      // login flow at `/` and re-authenticates with the password they just
+      // chose. callback.tsx then redirects to /setup/mfa for new users.
       setDone(true)
-      setTimeout(() => void navigate({ to: '/' }), 2500)
     } catch {
       setError(m.error_connection())
     } finally {
@@ -97,31 +100,37 @@ function PasswordSetPage() {
   return (
     <AuthPageLayout leftContent={leftContent} showLocale>
       {done ? (
-        <div className="space-y-3 text-center">
+        <div className="space-y-4 text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-foreground)]">
             <KeyRound size={22} className="text-[var(--color-rl-cream)]" />
           </div>
-          <p className="text-xl font-semibold text-[var(--color-foreground)]">
+          <p className="text-xl font-semibold text-gray-900">
             {m.set_done_heading()}
           </p>
-          <p className="text-sm text-[var(--color-muted-foreground)]">
+          <p className="text-sm text-gray-400">
             {m.set_done_body()}
           </p>
+          {/* Anchor wrapped in Button styling — native browser navigation
+              is immune to React event-handler crashes elsewhere on the page
+              (e.g. the tabPrompt chunk that throws on /password/set). */}
+          <Button asChild size="lg" className="w-full">
+            <a href="/">{m.set_done_continue()}</a>
+          </Button>
         </div>
       ) : (
         <>
           <div className="space-y-2">
-            <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
+            <h2 className="text-xl font-semibold text-gray-900">
               {m.set_heading()}
             </h2>
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {m.set_subheading()}
             </p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1">
-              <label htmlFor="password" className="block text-sm font-medium text-[var(--color-foreground)]">
+              <label htmlFor="password" className="block text-sm font-medium text-gray-900">
                 {m.set_field_password()}
               </label>
               <input
@@ -132,12 +141,12 @@ function PasswordSetPage() {
                 required
                 autoComplete="new-password"
                 autoFocus
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
+                className="w-full rounded-lg border border-gray-200 bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
               />
             </div>
 
             <div className="space-y-1">
-              <label htmlFor="confirm" className="block text-sm font-medium text-[var(--color-foreground)]">
+              <label htmlFor="confirm" className="block text-sm font-medium text-gray-900">
                 {m.set_field_confirm()}
               </label>
               <input
@@ -147,7 +156,7 @@ function PasswordSetPage() {
                 onChange={(e) => setConfirm(e.target.value)}
                 required
                 autoComplete="new-password"
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
+                className="w-full rounded-lg border border-gray-200 bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
               />
             </div>
 
@@ -160,7 +169,7 @@ function PasswordSetPage() {
             </Button>
           </form>
 
-          <p className="text-center text-xs text-[var(--color-muted-foreground)]">
+          <p className="text-center text-xs text-gray-400">
             <a href="/" className="text-[var(--color-rl-accent-dark)] hover:underline">
               {m.set_back()}
             </a>

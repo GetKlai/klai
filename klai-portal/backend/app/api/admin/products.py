@@ -1,282 +1,152 @@
-"""Admin product entitlement endpoints."""
+"""Admin product endpoints.
 
-import logging
-from datetime import datetime
+SPEC-PORTAL-RBAC-001 v0.2.0: per-user/per-group product assignment is removed.
+Products are derived from (profile, plan, platform_unlocked_features) -- see
+`app.core.features.derive_user_products`. The legacy assignment endpoints
+return 410 Gone. Two read-only endpoints remain because the frontend uses
+them for the assignable-products list and the per-user effective view.
+
+SPEC-PORTAL-EXTENSIONS-UNIFY-001 (2026-05-12): the third derivation input
+was renamed from `enabled_addons` to `platform_unlocked_features` after
+the two gating columns were unified.
+"""
+
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.plans import get_plan_products
-from app.models.groups import PortalGroup, PortalGroupMembership, PortalGroupProduct
+from app.core.features import derive_user_products
+from app.core.permissions import ProfileRole, UserPermissions, get_caller_at_least
 from app.models.portal import PortalUser
-from app.models.products import PortalUserProduct
-from app.services.audit import log_event
-
-from . import _get_caller_org, _require_admin, bearer
-
-logger = logging.getLogger(__name__)
+from app.services.entitlements import get_effective_products
 
 router = APIRouter()
 
 
+_GONE_BODY = (
+    "Endpoint removed by SPEC-PORTAL-RBAC-001. Products derive from "
+    "/admin/settings (plan + add-ons) and /admin/users/<id>/edit (profile)."
+)
+
+
 # ---------------------------------------------------------------------------
-# Schemas
+# Schemas (read-only views)
 # ---------------------------------------------------------------------------
-
-
-class MessageResponse(BaseModel):
-    message: str
-
-
-class ProductAssignRequest(BaseModel):
-    product: str
-
-
-class ProductOut(BaseModel):
-    product: str
-    enabled_at: datetime
-    enabled_by: str
 
 
 class ProductsResponse(BaseModel):
     products: list[str]
 
 
-class UserProductsResponse(BaseModel):
-    products: list[ProductOut]
-
-
 class EffectiveProductOut(BaseModel):
     product: str
-    source: Literal["direct", "group"]
-    source_name: str | None = None
+    # Source classification — "plan" for chat/knowledge, "addon" for
+    # scribe/docs (granted via platform_unlocked_features). The wire-name
+    # remains "addon" for frontend backward-compatibility; conceptually
+    # it now means "platform-unlocked product" per SPEC-PORTAL-EXTENSIONS-UNIFY-001.
+    source: Literal["plan", "addon"]
 
 
 class EffectiveProductsResponse(BaseModel):
     products: list[EffectiveProductOut]
 
 
-class ProductSummaryItem(BaseModel):
-    product: str
-    user_count: int
-
-
-class ProductSummaryResponse(BaseModel):
-    items: list[ProductSummaryItem]
-
-
 # ---------------------------------------------------------------------------
-# Endpoints
+# Read-only endpoints (remain)
 # ---------------------------------------------------------------------------
 
 
 @router.get("/products", response_model=ProductsResponse)
 async def list_available_products(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> ProductsResponse:
-    """Return products available under the org's current plan."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-    return ProductsResponse(products=get_plan_products(org.plan))
+    """Return products available to the caller given (profile, plan, platform_unlocked_features).
 
-
-@router.post("/users/{zitadel_user_id}/products", status_code=status.HTTP_201_CREATED)
-async def assign_product(
-    zitadel_user_id: str,
-    body: ProductAssignRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
-    db: AsyncSession = Depends(get_db),
-) -> MessageResponse:
-    """Assign a product to a user within plan ceiling."""
-    admin_user_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
-    # Plan ceiling check
-    if body.product not in get_plan_products(org.plan):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Product '{body.product}' exceeds plan ceiling",
-        )
-
-    # Check user belongs to this org
-    user = await db.scalar(
-        select(PortalUser).where(
-            PortalUser.zitadel_user_id == zitadel_user_id,
-            PortalUser.org_id == org.id,
-        )
-    )
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-
-    # Check for duplicate
-    existing = await db.scalar(
-        select(PortalUserProduct).where(
-            PortalUserProduct.zitadel_user_id == zitadel_user_id,
-            PortalUserProduct.product == body.product,
-        )
-    )
-    if existing:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Product already assigned")
-
-    db.add(
-        PortalUserProduct(
-            zitadel_user_id=zitadel_user_id,
-            org_id=org.id,
-            product=body.product,
-            enabled_by=admin_user_id,
-        )
-    )
-    await db.flush()
-    await log_event(
-        org_id=org.id,
-        actor=admin_user_id,
-        action="product.assigned",
-        resource_type="product",
-        resource_id=f"{zitadel_user_id}:{body.product}",
-        details={"product": body.product, "user_id": zitadel_user_id},
-    )
-    await db.commit()
-    return MessageResponse(message="Product assigned")
-
-
-@router.delete("/users/{zitadel_user_id}/products/{product}", status_code=status.HTTP_204_NO_CONTENT)
-async def revoke_product(
-    zitadel_user_id: str,
-    product: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
-    db: AsyncSession = Depends(get_db),
-) -> None:
-    """Revoke a product from a user."""
-    admin_user_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
-    result = await db.execute(
-        select(PortalUserProduct).where(
-            PortalUserProduct.zitadel_user_id == zitadel_user_id,
-            PortalUserProduct.product == product,
-            PortalUserProduct.org_id == org.id,
-        )
-    )
-    row = result.scalar_one_or_none()
-    if not row:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product assignment not found")
-
-    await db.delete(row)
-    await log_event(
-        org_id=org.id,
-        actor=admin_user_id,
-        action="product.revoked",
-        resource_type="product",
-        resource_id=f"{zitadel_user_id}:{product}",
-        details={"product": product, "user_id": zitadel_user_id},
-    )
-    await db.commit()
-
-
-@router.get("/products/summary", response_model=ProductSummaryResponse)
-async def product_summary(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
-    db: AsyncSession = Depends(get_db),
-) -> ProductSummaryResponse:
-    """Return per-product user counts for the org."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
-    rows = await db.execute(
-        select(PortalUserProduct.product, func.count().label("user_count"))
-        .where(PortalUserProduct.org_id == org.id)
-        .group_by(PortalUserProduct.product)
-    )
-    return ProductSummaryResponse(items=[ProductSummaryItem(product=r.product, user_count=r.user_count) for r in rows])
-
-
-@router.get("/users/{zitadel_user_id}/products", response_model=UserProductsResponse)
-async def get_user_products(
-    zitadel_user_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
-    db: AsyncSession = Depends(get_db),
-) -> UserProductsResponse:
-    """Return products assigned to a specific user."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
-    # Verify user belongs to org
-    user = await db.scalar(
-        select(PortalUser).where(
-            PortalUser.zitadel_user_id == zitadel_user_id,
-            PortalUser.org_id == org.id,
-        )
-    )
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-
-    result = await db.execute(
-        select(PortalUserProduct).where(
-            PortalUserProduct.zitadel_user_id == zitadel_user_id,
-            PortalUserProduct.org_id == org.id,
-        )
-    )
-    products = result.scalars().all()
-    return UserProductsResponse(
-        products=[ProductOut(product=p.product, enabled_at=p.enabled_at, enabled_by=p.enabled_by) for p in products]
-    )
+    UserPermissions already carries `effective_products` derived from the
+    same triple — return that instead of re-deriving. Equivalent to calling
+    `derive_user_products` from this handler in earlier code, just sourced
+    one layer up.
+    """
+    return ProductsResponse(products=sorted(perms.effective_products))
 
 
 @router.get("/users/{zitadel_user_id}/effective-products", response_model=EffectiveProductsResponse)
 async def get_user_effective_products(
     zitadel_user_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> EffectiveProductsResponse:
-    """Return effective products for a user with source attribution (direct or group name)."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
-    # Verify user belongs to org
-    user = await db.scalar(
+    """Return effective products for a user with source attribution (plan vs platform-unlock)."""
+    target = await db.scalar(
         select(PortalUser).where(
             PortalUser.zitadel_user_id == zitadel_user_id,
-            PortalUser.org_id == org.id,
+            PortalUser.org_id == perms.org_id,
         )
     )
-    if not user:
+    if not target:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    products: list[EffectiveProductOut] = []
-    seen: set[str] = set()
-
-    # Direct assignments
-    direct_result = await db.execute(
-        select(PortalUserProduct).where(PortalUserProduct.zitadel_user_id == zitadel_user_id)
+    # Derive products specifically for the TARGET user with the caller's
+    # tenant config — same shape `get_effective_products` would return,
+    # but routed through `derive_user_products` so we can also classify
+    # each product as plan- vs platform-unlock-sourced for the response.
+    effective = sorted(
+        derive_user_products(
+            role=target.role,
+            plan=perms.plan,
+            platform_unlocked_features=list(perms.platform_unlocked_features),
+        )
     )
-    for row in direct_result.scalars().all():
-        if row.product not in seen:
-            products.append(EffectiveProductOut(product=row.product, source="direct"))
-            seen.add(row.product)
-
-    # Group-inherited assignments
-    group_result = await db.execute(
-        select(PortalGroupProduct, PortalGroup.name.label("group_name"))
-        .join(PortalGroupMembership, PortalGroupProduct.group_id == PortalGroupMembership.group_id)
-        .join(PortalGroup, PortalGroupProduct.group_id == PortalGroup.id)
-        .where(PortalGroupMembership.zitadel_user_id == zitadel_user_id)
-    )
-    for row in group_result.all():
-        group_product, group_name = row[0], row[1]
-        if group_product.product not in seen:
-            products.append(
-                EffectiveProductOut(
-                    product=group_product.product,
-                    source="group",
-                    source_name=group_name,
-                )
+    unlocked = set(perms.platform_unlocked_features)
+    # Keep the canonical resolver as a sanity sentinel so any future drift
+    # between derive_user_products and get_effective_products surfaces here
+    # rather than at the user-visible response.
+    canonical = await get_effective_products(zitadel_user_id, db)
+    if set(canonical) != set(effective):
+        # Resolver disagreement is a developer-facing bug, not user input.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="effective products derivation mismatch",
+        )
+    return EffectiveProductsResponse(
+        products=[
+            EffectiveProductOut(
+                product=p,
+                # Wire-name "addon" preserved for frontend back-compat;
+                # semantically: this product came from platform_unlocked_features
+                # rather than from the plan baseline.
+                source="addon" if p in unlocked else "plan",
             )
-            seen.add(group_product.product)
+            for p in effective
+        ]
+    )
 
-    return EffectiveProductsResponse(products=products)
+
+# ---------------------------------------------------------------------------
+# Removed endpoints -- 410 Gone
+# ---------------------------------------------------------------------------
+
+
+@router.post("/users/{zitadel_user_id}/products", status_code=status.HTTP_410_GONE)
+async def assign_product_gone(zitadel_user_id: str) -> dict:
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail=_GONE_BODY)
+
+
+@router.delete("/users/{zitadel_user_id}/products/{product}", status_code=status.HTTP_410_GONE)
+async def revoke_product_gone(zitadel_user_id: str, product: str) -> dict:
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail=_GONE_BODY)
+
+
+@router.get("/users/{zitadel_user_id}/products", status_code=status.HTTP_410_GONE)
+async def get_user_products_gone(zitadel_user_id: str) -> dict:
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail=_GONE_BODY)
+
+
+@router.get("/products/summary", status_code=status.HTTP_410_GONE)
+async def product_summary_gone() -> dict:
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail=_GONE_BODY)

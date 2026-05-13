@@ -2,7 +2,7 @@
 
 import base64
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -17,9 +17,11 @@ class Settings(BaseSettings):
     zitadel_client_id: str
     zitadel_client_secret: str
     # Expected `aud` claim value for introspected tokens (SPEC-SEC-008 F-017).
-    # When empty, audience verification is skipped (warn-only fallback) so that
-    # existing deployments without a configured audience continue to work. SHOULD
-    # be set to the klai-connector Zitadel application audience for defense-in-depth.
+    # SPEC-SEC-AUDIT-2026-04 B2: audience verification is now MANDATORY.
+    # Empty/missing value raises ValidationError at startup (fail-closed).
+    # The env var KLAI_CONNECTOR_ZITADEL_AUDIENCE MUST exist in SOPS before
+    # this validator is deployed — see validator-env-parity pitfall in
+    # .claude/rules/klai/pitfalls/process-rules.md.
     zitadel_api_audience: str = ""
 
     # GitHub App
@@ -53,16 +55,11 @@ class Settings(BaseSettings):
     portal_internal_secret: str = ""
     portal_caller_secret: str = ""  # Secret portal sends TO klai-connector (must match portal's KLAI_CONNECTOR_SECRET)
 
-    # SPEC-SEC-TENANT-001 REQ-7.6 (v0.5.0): transition-period flag for the
-    # X-Org-ID header that portal-side REQ-8.1 starts injecting. When False
-    # (default during deploy), missing headers degrade to a WARN log
-    # ``event="sync_missing_org_id"`` and the route proceeds without org
-    # scoping (backward-compatible). When flipped to True (after the portal
-    # deploy lands and VictoriaLogs shows zero ``sync_missing_org_id`` events
-    # for the agreed dwell time), missing headers return HTTP 400. Set via
-    # SOPS env (``SYNC_REQUIRE_ORG_ID=true``) once the portal-side rollout
-    # has soaked. See SPEC REQ-8.5 for the deploy-order runbook.
-    sync_require_org_id: bool = False
+    # Enforced per SPEC-SEC-TENANT-001 REQ-8.5; flipped from transition default 2026-04-29.
+    # Portal-api has been sending X-Org-ID on every sync call since PR #206 (>2 weeks dwell).
+    # Missing headers now return HTTP 400 (fail-closed). WARN ``event="sync_missing_org_id"``
+    # still fires before the 400 for VictoriaLogs visibility.
+    sync_require_org_id: bool = True
 
     # Google Drive OAuth (SPEC-KB-025)
     google_drive_client_id: str = ""  # empty = connector disabled
@@ -113,6 +110,42 @@ class Settings(BaseSettings):
         return v
 
     # ------------------------------------------------------------------
+    # Fail-closed startup on the AES-256 KEK used by PostgresSecretsStore.
+    # Without this validator, an empty/missing CONNECTOR_ENCRYPTION_KEY
+    # crashes mid-lifespan with `AES-256 requires a 32-byte key, got 0
+    # bytes` and the container restart-loops with a cryptic trace. The
+    # validator surfaces the same misconfiguration at module-load time
+    # with an actionable error.
+    #
+    # VALIDATOR-ENV-PARITY: CONNECTOR_ENCRYPTION_KEY must exist in
+    # klai-infra/core-01/.env.sops before this code is deployed. Deploy
+    # order is env-var-first, validator-second. See validator-env-parity
+    # (HIGH) pitfall in .claude/rules/klai/pitfalls/process-rules.md.
+    # ------------------------------------------------------------------
+    @field_validator("encryption_key", mode="after")
+    @classmethod
+    def _require_valid_encryption_key(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError(
+                "CONNECTOR_ENCRYPTION_KEY must be a non-empty base64-encoded "
+                "32-byte AES-256 key. PostgresSecretsStore uses this as the "
+                "KEK for connector credential storage; an empty value would "
+                "crash the lifespan with a 0-byte cipher key."
+            )
+        try:
+            decoded = base64.b64decode(v, validate=True)
+        except Exception as exc:
+            raise ValueError(f"CONNECTOR_ENCRYPTION_KEY must be valid base64. Decode failed: {exc!s}.") from exc
+        if len(decoded) != 32:
+            raise ValueError(
+                "CONNECTOR_ENCRYPTION_KEY must decode to exactly 32 bytes "
+                f"(AES-256). Got {len(decoded)} bytes after base64 decode. "
+                "Generate a valid key with: python -c 'import secrets, base64; "
+                "print(base64.b64encode(secrets.token_bytes(32)).decode())'"
+            )
+        return v
+
+    # ------------------------------------------------------------------
     # SPEC-SEC-INTERNAL-001 REQ-9.3: fail-closed startup on empty outbound
     # secrets. Mirrors the SPEC-SEC-MAILER-INJECTION-001 mailer validators.
     # An ALLOW_EMPTY_OUTBOUND_SECRETS escape hatch (REQ-9.3 exception) is NOT
@@ -143,3 +176,58 @@ class Settings(BaseSettings):
                 "SPEC-SEC-INTERNAL-001 REQ-9.3."
             )
         return v
+
+    @field_validator("portal_caller_secret", mode="after")
+    @classmethod
+    def _require_portal_caller_secret(cls, v: str) -> str:
+        """SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-11: fail-closed on missing
+        PORTAL_CALLER_SECRET.
+
+        klai-connector verifies portal-api's inbound calls (sync trigger,
+        OAuth callbacks) by comparing the X-Internal-Secret header against
+        this value via hmac.compare_digest. An empty/whitespace value
+        would make every comparison succeed against a literal-empty
+        attacker request — fail-open-auth pitfall.
+
+        Env-parity: PORTAL_CALLER_SECRET (sourced from PORTAL_API_KLAI_CONNECTOR_SECRET
+        in the compose file) must exist in klai-infra/core-01/.env.sops
+        BEFORE merge. Pre-flight verified 2026-05-05: value populated
+        in /opt/klai/.env on core-01.
+        """
+        if not v or not v.strip():
+            raise ValueError(
+                "Missing required: PORTAL_CALLER_SECRET (SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-11). "
+                "klai-connector verifies portal-api's inbound X-Internal-Secret against this; "
+                "an empty value would accept any caller. Set it in SOPS before starting klai-connector."
+            )
+        return v
+
+    # ------------------------------------------------------------------
+    # SPEC-SEC-AUDIT-2026-04 B2: fail-closed startup on empty audience.
+    # Before this fix the middleware had a warn-only fallback that silently
+    # skipped audience verification when zitadel_api_audience was empty,
+    # allowing any valid Zitadel token (even for a different app) to pass
+    # auth (cross-app token reuse).
+    #
+    # VALIDATOR-ENV-PARITY: KLAI_CONNECTOR_ZITADEL_AUDIENCE must exist in
+    # klai-infra/core-01/.env.sops before this code is deployed. Deploy order
+    # is env-var-first, validator-second.  See validator-env-parity (HIGH)
+    # pitfall in .claude/rules/klai/pitfalls/process-rules.md.
+    # ------------------------------------------------------------------
+    @model_validator(mode="after")
+    def _require_zitadel_api_audience(self) -> "Settings":
+        """SPEC-SEC-AUDIT-2026-04 B2: fail-closed on empty/missing ZITADEL_API_AUDIENCE.
+
+        Mirrors SPEC-SEC-012 in research-api. An empty audience allows cross-app
+        token reuse: any Zitadel JWT that introspects as active=true passes auth.
+        Setting the audience ensures only tokens issued for klai-connector's own
+        Zitadel application are accepted.
+        """
+        if not self.zitadel_api_audience or not self.zitadel_api_audience.strip():
+            raise ValueError(
+                "Missing required: KLAI_CONNECTOR_ZITADEL_AUDIENCE (SPEC-SEC-AUDIT-2026-04 B2). "
+                "Must be the Zitadel application audience for klai-connector. "
+                "An empty value would silently skip audience verification, enabling "
+                "cross-app token reuse."
+            )
+        return self

@@ -1,14 +1,27 @@
 """Procrastinate task for async bulk web crawling."""
+
 from __future__ import annotations
 
 from typing import Any
+
+from knowledge_ingest import queues
+from knowledge_ingest.db import tenant_scoped_connection
 
 
 def register_crawl_tasks(procrastinate_app: Any) -> None:
     """Register crawl tasks on the Procrastinate app. Called from enrichment_tasks.init_app()."""
     import procrastinate
 
-    @procrastinate_app.task(queue="enrich-bulk", retry=procrastinate.RetryStrategy(max_attempts=1))
+    # SPEC-INGEST-QUEUE-SEPARATION-001: ``run_crawl`` lives on its own
+    # ``crawl-jobs`` queue. Was previously sharing ``enrich-bulk`` with the
+    # LLM-bound enrichment tasks (Mistral entity/relation extraction takes
+    # 30-60s per call). A bulk Notion sync (120 pages → 120 enrichment jobs)
+    # would block any subsequent crawl request for 20+ minutes. Crawl is
+    # I/O-bound (httpx + crawl4ai), enrichment is LLM-bound — different
+    # workloads belong on different queues.
+    @procrastinate_app.task(
+        queue=queues.CRAWL_JOBS, retry=procrastinate.RetryStrategy(max_attempts=1)
+    )
     async def run_crawl(
         job_id: str,
         org_id: str,
@@ -45,22 +58,32 @@ def register_crawl_tasks(procrastinate_app: Any) -> None:
             )
 
         from knowledge_ingest.adapters.crawler import run_crawl_job
-        await run_crawl_job(
-            job_id=job_id,
-            org_id=org_id,
-            kb_slug=kb_slug,
-            start_url=start_url,
-            max_depth=max_depth,
-            max_pages=max_pages,
-            include_patterns=include_patterns,
-            exclude_patterns=exclude_patterns,
-            rate_limit=rate_limit,
-            content_selector=content_selector,
-            login_indicator_selector=login_indicator_selector,
-            cookies=cookies,
-            canary_url=canary_url,
-            canary_fingerprint=canary_fingerprint,
-            connector_id=connector_id,
-        )
+
+        # SPEC-TI-003-FOLLOWUP-001 AC-1: pass the GUC-pinned connection down
+        # into run_crawl_job so every knowledge.* query inside (crawl_jobs
+        # progress updates, page hash dedup, link graph, ingest) sees the
+        # tenant context. The previous shape (``del _conn``) was the bug
+        # this SPEC-FOLLOWUP fixes -- pg_store.* would grab a different
+        # pool connection without the GUC, leaving RLS silently default-deny
+        # once SPEC-TI-011 lands FORCE.
+        async with tenant_scoped_connection(org_id) as conn:
+            await run_crawl_job(
+                conn,
+                job_id=job_id,
+                org_id=org_id,
+                kb_slug=kb_slug,
+                start_url=start_url,
+                max_depth=max_depth,
+                max_pages=max_pages,
+                include_patterns=include_patterns,
+                exclude_patterns=exclude_patterns,
+                rate_limit=rate_limit,
+                content_selector=content_selector,
+                login_indicator_selector=login_indicator_selector,
+                cookies=cookies,
+                canary_url=canary_url,
+                canary_fingerprint=canary_fingerprint,
+                connector_id=connector_id,
+            )
 
     procrastinate_app.run_crawl = run_crawl  # type: ignore[attr-defined]

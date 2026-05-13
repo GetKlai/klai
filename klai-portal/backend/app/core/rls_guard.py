@@ -56,13 +56,16 @@ RLS_DML_TABLES: frozenset[str] = frozenset(
         "portal_group_memberships",
         "portal_group_products",
         "portal_groups",
+        "portal_join_requests",
         "portal_kb_tombstones",
         "portal_knowledge_bases",
+        "portal_mcp_tokens",  # SPEC-MCP-AUTH-001 Cat-D
         "portal_retrieval_gaps",
         "portal_taxonomy_nodes",
         "portal_taxonomy_proposals",
         "portal_user_kb_access",
         "portal_user_products",
+        "portal_user_seat_history",  # SPEC-PORTAL-PRICING-PER-USER-001 Cat-D
         "vexa_meetings",
         "widget_kb_access",
         "widgets",

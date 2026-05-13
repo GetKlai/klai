@@ -1,15 +1,77 @@
 # SPEC-TAXONOMY-001: Assertion Mode Taxonomy Alignment
 
-> Status: Completed
+> Status: Completed (revised — DD-1 vocabulary reverted)
 > Priority: MEDIUM
 > Created: 2026-03-30
+> Updated: 2026-05-06
 > Research: `docs/research/assertion-modes/assertion-modes-research.md`, `docs/research/assertion-modes/assertion-mode-weights.md`
 > Architecture: `docs/architecture/klai-knowledge-architecture.md`
 > Scope: `deploy/klai-knowledge-mcp/`, `deploy/knowledge-ingest/`, `klai-retrieval-api/`
 
 ---
 
-## Context
+## Realignment Note (2026-05-06)
+
+**TL;DR:** ~80% van deze SPEC is geland in productie. DD-1 (vocabulary rename naar `fact/claim/speculation/...`) is teruggedraaid in commit `e940be55` op 2026-03-31. Deze SPEC was abusievelijk als `Completed` gemarkeerd zonder die revert te documenteren. Status nu bijgewerkt naar de werkelijkheid.
+
+### Wat WEL geland is in productie
+
+| Onderdeel | Status | Oplost pijnpunt |
+|---|---|---|
+| MCP↔ingest mapping-laag (`_ASSERTION_MODE_MIGRATION` in `klai-knowledge-ingest/routes/ingest.py`) | ✓ | Naming inconsistency (Context #1) |
+| `note` verdwenen uit MCP, vervangen door 5 echte epistemische waarden | ✓ | `note` is semantisch fout (Context #1) |
+| `assertion_mode` in Qdrant payload (`_ALLOWED_METADATA_FIELDS` in `qdrant_store.py`) | ✓ | Write-only assertion_mode (Context #2a) |
+| `assertion_mode` in retrieval response (`klai-retrieval-api/services/search.py`) | ✓ | Write-only assertion_mode (Context #2b) |
+| Evidence-tier plumbing (`evidence_tier._assertion_weight`, v1 flat 1.00, wacht op SPEC-EVIDENCE-002) | ✓ | DD-4 scope (geen scoring) |
+| `unknown` als 6e waarde + system default in ingest (`routes/ingest.py:130`) | ✓ | DD-2 (default niet `factual`) |
+| DB constraint uitgebreid van 5 → 6 waarden (oude vocab + `unknown`) | ✓ | DD-2 |
+
+### Wat NIET geland is (DD-1 vocabulary rename)
+
+In commit `e940be55` ("refactor: rename tei_url → infinity_url across all services + fix assertion modes + chunk sizes") is de DD-1-keuze teruggedraaid. De one-liner uit de commit-msg: "Revert assertion mode names to originals: factual/belief/hypothesis/procedural/quoted/unknown". Geen aparte rationale in de commit, geen PR-discussie gevonden.
+
+**Aannemelijke rationale (gereconstrueerd 2026-05-06):**
+- Vermijden van DB-data-migratie op 1000+ rijen voor marginale winst
+- De research (`assertion-modes-research.md` §5) toont dat 5/6-categorie human-agreement fundamenteel laag (~67%) blijft, ongeacht of je `factual` of `fact` gebruikt — de slecht-onderscheidbare grens is `factual↔belief` resp. `fact↔claim`, niet de naamgeving
+- Echte classifiability-winst zou alleen komen uit terug naar 3 waarden, wat een grotere herontwerp-keuze is
+
+**Effect van de revert op DD-1:**
+
+| Spec DD-1 voorstel | Werkelijkheid in productie |
+|---|---|
+| `fact` | `factual` |
+| `claim` | `belief` |
+| `speculation` | `hypothesis` |
+| `procedural` | `procedural` (ongewijzigd) |
+| `quoted` | `quoted` (ongewijzigd) |
+| `unknown` (default) | `unknown` (default) |
+
+### Source-of-truth (live state, gemeten 2026-05-06)
+
+```sql
+-- core-01 / klai DB
+SELECT pg_get_constraintdef(oid) FROM pg_constraint
+ WHERE conname = 'artifacts_assertion_mode_check';
+-- → CHECK (assertion_mode = ANY (ARRAY[
+--      'factual', 'belief', 'hypothesis', 'procedural', 'quoted', 'unknown'
+--    ]))
+
+SELECT assertion_mode, COUNT(*) FROM knowledge.artifacts GROUP BY 1;
+-- unknown=908, belief=103, factual=15  (1026 rijen)
+```
+
+### Bekende drift (out-of-scope voor deze realign)
+
+- **`klai-knowledge-mcp/main.py:82`** — Literal heeft 5 waarden, mist `unknown`. Tests in `klai-knowledge-mcp/tests/test_assertion_mode_taxonomy.py` verwachten echter de NIEUWE 6-vocab. Beide moeten geconvergeerd worden naar `{factual, belief, hypothesis, procedural, quoted, unknown}`. Tracked als follow-up — niet onderdeel van deze realign-commit.
+- **`klai-knowledge-mcp/main.py:408,478`** — MCP default = `factual`, niet `unknown`. In praktijk zelden geraakt (parameter is required in tool-signature) maar inconsistent met DD-2.
+
+### Deleted artifact
+
+`deploy/postgres/migrations/010_assertion_mode_taxonomy.sql` is verwijderd in deze commit — nooit op productie gedraaid, en zou nu actieve schade veroorzaken (UPDATE-stap zou de bestaande `factual/belief/hypothesis` rijen ongewenst hernoemen naar `fact/claim/speculation`, daarna een constraint toevoegen die de oude waarden weert). Het 5→6 waarden constraint-uitbreiding op productie is via een ander pad gegaan (handmatig of via een ander niet-getrackt path); dat is ondertussen vastgelegd in de live DB.
+
+---
+
+## Context (origineel, 2026-03-30)
 
 De assertion mode taxonomy is inconsistent tussen twee componenten:
 

@@ -17,17 +17,14 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from klai_identity_assert import VerifyResult
+
+from tests._helpers import allow_verify_result
 
 
 def _make_ctx(headers: dict | None = None) -> MagicMock:
     ctx = MagicMock()
     ctx.request_context.request.headers = headers or {}
     return ctx
-
-
-def _verified_allow() -> VerifyResult:
-    return VerifyResult.allow(user_id="user1", org_id="org1", org_slug="testorg", evidence="jwt")
 
 
 _VALID_HEADERS = {
@@ -63,7 +60,9 @@ class TestSaveToDocsDoesNotEchoUpstreamBody:
 
         ctx = _make_ctx(_VALID_HEADERS)
         with (
-            patch("main._asserter.verify", new_callable=AsyncMock, return_value=_verified_allow()),
+            patch(
+                "main._asserter.verify", new_callable=AsyncMock, return_value=allow_verify_result()
+            ),
             patch("main.httpx.AsyncClient") as mock_client_cls,
         ):
             list_resp = MagicMock()
@@ -108,7 +107,9 @@ class TestSaveToDocsDoesNotEchoUpstreamBody:
 
         ctx = _make_ctx(_VALID_HEADERS)
         with (
-            patch("main._asserter.verify", new_callable=AsyncMock, return_value=_verified_allow()),
+            patch(
+                "main._asserter.verify", new_callable=AsyncMock, return_value=allow_verify_result()
+            ),
             patch("main.httpx.AsyncClient") as mock_client_cls,
         ):
             list_resp = MagicMock()
@@ -274,7 +275,7 @@ class TestNoSilentOmitGuardsRemain:
         # Any return statement that interpolates resp.text into a user-visible
         # error string would re-introduce the leak.
         forbidden = [
-            "return f\"Error: klai-docs returned HTTP",
+            'return f"Error: klai-docs returned HTTP',
             "return f'Error: klai-docs returned HTTP",
         ]
         for pattern in forbidden:

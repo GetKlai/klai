@@ -20,6 +20,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Validate LibreChat patches
+        run: sh deploy/librechat/check-patch-drift.sh
+
       - name: Sync base config and patches to core-01
         uses: appleboy/ssh-action@v1
         with:

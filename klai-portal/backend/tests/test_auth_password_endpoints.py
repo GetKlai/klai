@@ -145,6 +145,7 @@ async def test_password_reset_send_reset_5xx(respx_zitadel: respx.MockRouter) ->
 
 @pytest.mark.asyncio
 async def test_password_set_happy(respx_zitadel: respx.MockRouter) -> None:
+    """REQ-3.4: password_set happy path returns 204 and emits audit."""
     respx_zitadel.route().mock(return_value=httpx.Response(200, json={}))
 
     body = PasswordSetRequest(user_id="uid-1", code="123456", new_password="NewSecret123!")

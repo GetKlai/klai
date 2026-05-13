@@ -1,0 +1,111 @@
+name: E2E prod-tenant
+
+# Run the production-tenant Playwright suite against e2e.getklai.com
+# (or whatever E2E_BASE_URL secret is set to).
+#
+# Triggers:
+#   - workflow_run: after each successful service deploy (frontend, backend,
+#     compose-sync, RAG-touching services). Skipped if the upstream run
+#     failed.
+#   - schedule:     04:00 UTC nightly, even without a deploy, to catch
+#     drift / cert-expiry / external-dependency regressions.
+#   - workflow_dispatch: manual trigger from the Actions UI.
+#
+# Running specs require these secrets:
+#   E2E_BASE_URL       e.g. https://e2e.getklai.com
+#   E2E_USER_EMAIL     e.g. e2e@getklai.com
+#   E2E_USER_PASSWORD  bot password
+#   E2E_TOTP_SECRET    base32 TOTP secret captured during MFA setup
+#
+# docs/testing/test-suite-plan.md §8.
+
+on:
+  workflow_run:
+    workflows:
+      - 'Build and push portal-api'
+      - 'Build and deploy portal-frontend'
+      - 'Build and push klai-knowledge-mcp'
+      - 'Build and push knowledge-ingest'
+      - 'Build and push retrieval-api'
+      - 'Build and push klai-mailer'
+      - 'Build and push klai-connector'
+      - 'Build and push scribe-api'
+      - 'Build and push caddy-hetzner'
+      - 'Sync docker-compose.yml + config + smoke-test to core-01'
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+# Avoid concurrent runs against the same e2e tenant — they collide on
+# templates / KBs / settings. One in flight, one queued.
+concurrency:
+  group: e2e-prod-tenant
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  e2e:
+    # Skip if the upstream workflow failed; for schedule + manual we run unconditionally.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    name: prod-tenant journeys
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: klai-portal/frontend
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: klai-portal/frontend/package-lock.json
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers (Chromium only)
+        run: npx playwright install chromium --with-deps
+
+      - name: Generate audio fixture (if missing)
+        run: |
+          if [ ! -f e2e/prod-tenant/fixtures/e2e-fixture.wav ]; then
+            sudo apt-get update -y
+            sudo apt-get install -y espeak ffmpeg
+            bash e2e/prod-tenant/fixtures/generate.sh
+          fi
+
+      - name: Run prod-tenant Playwright suite
+        env:
+          E2E_BASE_URL: ${{ secrets.E2E_BASE_URL }}
+          E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+          E2E_TOTP_SECRET: ${{ secrets.E2E_TOTP_SECRET }}
+        run: npm run test:e2e:prod
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-prod-tenant-${{ github.run_id }}
+          path: klai-portal/frontend/playwright-report-prod-tenant/
+          retention-days: 14
+
+      - name: Upload JUnit results (for test-summary tooling)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-prod-tenant-${{ github.run_id }}
+          path: klai-portal/frontend/playwright-report-prod-tenant/junit.xml
+          retention-days: 14

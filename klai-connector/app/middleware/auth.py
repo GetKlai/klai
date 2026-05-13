@@ -1,4 +1,11 @@
-"""Zitadel OIDC token introspection middleware with TTL cache."""
+"""Zitadel OIDC token introspection middleware with TTL cache.
+
+SPEC-SEC-IDENTITY-ASSERT-003 REQ-2: org-resolution flows through
+portal-api ``/internal/identity/verify`` instead of reading the JWT
+``urn:zitadel:iam:user:resourceowner:id`` claim. The introspection
+remains the authentication gate; portal becomes the authorization
+authority for org-membership.
+"""
 
 import hashlib
 import hmac
@@ -7,6 +14,7 @@ from collections import OrderedDict
 from typing import Any
 
 import httpx
+from klai_identity_assert import IdentityAsserter
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -15,6 +23,24 @@ from app.core.config import Settings
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+# SPEC-SEC-IDENTITY-ASSERT-003 REQ-2.8: lazy module-level IdentityAsserter
+# singleton, mirroring the retrieval-api pattern. Constructed on first use
+# so tests that don't exercise the verify path don't pay the cost of an
+# httpx.AsyncClient. Settings are passed at construction time via the
+# AuthMiddleware (which already takes Settings).
+_asserter: IdentityAsserter | None = None
+
+
+def _get_asserter(settings: Settings) -> IdentityAsserter:
+    global _asserter
+    if _asserter is None:
+        _asserter = IdentityAsserter(
+            portal_base_url=settings.portal_api_url,
+            internal_secret=settings.portal_internal_secret,
+        )
+    return _asserter
 
 
 def _audience_matches(claim: Any, expected: str) -> bool:  # noqa: ANN401
@@ -87,15 +113,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
         self._client_id = settings.zitadel_client_id
         self._client_secret = settings.zitadel_client_secret
         self._portal_secret = settings.portal_caller_secret
+        # SPEC-SEC-AUDIT-2026-04 B2: Settings._require_zitadel_api_audience
+        # guarantees this is non-empty at startup (fail-closed). The conditional
+        # warn-only fallback that allowed empty audience has been removed.
         self._expected_audience = settings.zitadel_api_audience
-        if not self._expected_audience:
-            # SPEC-SEC-008 F-017 defense-in-depth: `aud` check falls back to
-            # warn-only when the audience is unconfigured. Surface the gap at
-            # startup so the warning is not lost in per-request noise.
-            logger.warning(
-                "zitadel_api_audience is empty — introspected tokens will NOT be audience-checked. "
-                "Set ZITADEL_API_AUDIENCE for defense-in-depth (SPEC-SEC-008 F-017)."
-            )
+        # SPEC-SEC-IDENTITY-ASSERT-003 REQ-2.8: hold the Settings instance so
+        # _get_asserter can construct the singleton lazily on first verify call.
+        self._settings = settings
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         """Process the request through authentication."""
@@ -128,9 +152,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
             claims = await self._introspect(token)
             if claims is None:
                 return JSONResponse({"error": "unauthorized"}, status_code=401)
-            # SPEC-SEC-008 F-017: verify `aud` BEFORE writing to cache so a
-            # wrong-audience token is never cached as valid.
-            if self._expected_audience and not _audience_matches(claims.get("aud"), self._expected_audience):
+            # SPEC-SEC-008 F-017 / SPEC-SEC-AUDIT-2026-04 B2: verify `aud` BEFORE
+            # writing to cache so a wrong-audience token is never cached as valid.
+            # The audience is always non-empty (guaranteed by Settings validator).
+            if not _audience_matches(claims.get("aud"), self._expected_audience):
                 logger.warning(
                     "Rejecting token with unexpected audience",
                     extra={"expected_aud": self._expected_audience},
@@ -138,13 +163,42 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 return JSONResponse({"error": "unauthorized"}, status_code=401)
             _cache_put(token_hash, claims)
 
-        # Use raw Zitadel resourceowner ID — must match what knowledge-ingest uses
-        zitadel_org_id = claims.get("urn:zitadel:iam:user:resourceowner:id")
-        if zitadel_org_id is None:
-            logger.warning("Token introspection succeeded but resourceowner:id claim is missing")
+        # SPEC-SEC-IDENTITY-ASSERT-003 REQ-2.1 + REQ-2.2: org-resolution
+        # flows through portal /internal/identity/verify. The
+        # urn:zitadel:iam:user:resourceowner:id claim is no longer read.
+        # claimed_org_id sourced from X-Org-Id header (REQ-2.2 — symmetric
+        # with retrieval-api JWT path).
+        sub = claims.get("sub")
+        if not isinstance(sub, str) or not sub:
+            logger.warning("Token introspection succeeded but sub claim is missing")
             return JSONResponse({"error": "unauthorized"}, status_code=401)
 
-        request.state.org_id = str(zitadel_org_id)
+        header_org_id = request.headers.get("x-org-id", "").strip()
+        if not header_org_id:
+            # REQ-2.3: loud config error rather than silent fail-open.
+            logger.warning("Missing X-Org-Id header on JWT path", extra={"path": request.url.path})
+            return JSONResponse({"error": "missing_org_id"}, status_code=400)
+
+        asserter = _get_asserter(self._settings)
+        result = await asserter.verify(
+            caller_service="klai-connector",
+            claimed_user_id=sub,
+            claimed_org_id=header_org_id,
+            bearer_jwt=token,
+            request_headers=dict(request.headers),
+        )
+        if not result.verified:
+            # REQ-2.4: 403 not 401 — the user has a valid Zitadel token but
+            # no membership for the claimed org; that is an authorization
+            # failure, not authentication.
+            logger.warning(
+                "identity_assertion_failed",
+                extra={"reason": result.reason, "path": request.url.path},
+            )
+            return JSONResponse({"error": "identity_assertion_failed"}, status_code=403)
+
+        # REQ-2.5: pin the portal-resolved org_id, NOT the JWT claim.
+        request.state.org_id = str(result.org_id) if result.org_id else header_org_id
         return await call_next(request)
 
     async def _introspect(self, token: str) -> dict[str, Any] | None:

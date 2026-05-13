@@ -1,11 +1,16 @@
-"""Tests for the tenant matcher service."""
+"""Tests for the tenant matcher service.
+
+SPEC-PORTAL-PLAN-RENAME-001: scribe gating moved from a plan-bound
+allowlist (SCRIBE_PLANS = {"professional", "complete"}) to a per-org
+add-on toggle (``portal_orgs.platform_unlocked_features`` contains ``"scribe"``).
+"""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services.tenant_matcher import SCRIBE_PLANS, clear_cache, find_tenant
+from app.services.tenant_matcher import SCRIBE_FEATURE, clear_cache, find_tenant
 
 
 @pytest.fixture(autouse=True)
@@ -14,9 +19,9 @@ def _clear_cache() -> None:
     clear_cache()
 
 
-def _make_org_row(org_id: int = 42, plan: str = "professional") -> SimpleNamespace:
-    """Create a fake DB row with id and plan attributes."""
-    return SimpleNamespace(id=org_id, plan=plan)
+def _make_org_row(org_id: int = 42, platform_unlocked_features: list[str] | None = None) -> SimpleNamespace:
+    """Create a fake DB row with id and platform_unlocked_features attributes."""
+    return SimpleNamespace(id=org_id, platform_unlocked_features=platform_unlocked_features or [])
 
 
 def _mock_session_with_org(org_row: SimpleNamespace | None = None) -> AsyncMock:
@@ -35,12 +40,13 @@ def _mock_session_with_org(org_row: SimpleNamespace | None = None) -> AsyncMock:
 
 
 @pytest.mark.asyncio
-async def test_known_email_returns_user_and_org() -> None:
-    """A registered email on a scribe plan returns (zitadel_user_id, org_id)."""
+async def test_known_email_with_scribe_addon_returns_user_and_org() -> None:
+    """A registered email whose org has the scribe add-on enabled returns
+    (zitadel_user_id, org_id)."""
     mock_zitadel = AsyncMock()
     mock_zitadel.find_user_by_email.return_value = ("user-123", "zorg-456")
 
-    mock_session = _mock_session_with_org(_make_org_row(42, "professional"))
+    mock_session = _mock_session_with_org(_make_org_row(42, platform_unlocked_features=["scribe"]))
 
     with (
         patch("app.services.tenant_matcher.zitadel", mock_zitadel),
@@ -70,7 +76,7 @@ async def test_cache_prevents_second_zitadel_call() -> None:
     mock_zitadel = AsyncMock()
     mock_zitadel.find_user_by_email.return_value = ("user-123", "zorg-456")
 
-    mock_session = _mock_session_with_org(_make_org_row(42, "complete"))
+    mock_session = _mock_session_with_org(_make_org_row(42, platform_unlocked_features=["scribe"]))
 
     with (
         patch("app.services.tenant_matcher.zitadel", mock_zitadel),
@@ -84,73 +90,73 @@ async def test_cache_prevents_second_zitadel_call() -> None:
     mock_zitadel.find_user_by_email.assert_awaited_once()
 
 
-# --- AC-14a: Plan check tests ---
+# --- SPEC-PORTAL-PLAN-RENAME-001: scribe-as-add-on gating ---
 
 
 @pytest.mark.asyncio
-async def test_plan_professional_allowed() -> None:
-    """A user on the 'professional' plan is allowed (AC-14a)."""
+async def test_org_with_scribe_addon_allowed() -> None:
+    """An org with ``scribe`` in platform_unlocked_features is allowed."""
     mock_zitadel = AsyncMock()
     mock_zitadel.find_user_by_email.return_value = ("user-1", "zorg-1")
 
-    mock_session = _mock_session_with_org(_make_org_row(10, "professional"))
+    mock_session = _mock_session_with_org(_make_org_row(10, platform_unlocked_features=["scribe"]))
 
     with (
         patch("app.services.tenant_matcher.zitadel", mock_zitadel),
         patch("app.services.tenant_matcher.AsyncSessionLocal", return_value=mock_session),
     ):
-        result = await find_tenant("pro@example.com")
+        result = await find_tenant("scribe-on@example.com")
 
     assert result == ("user-1", 10)
 
 
 @pytest.mark.asyncio
-async def test_plan_complete_allowed() -> None:
-    """A user on the 'complete' plan is allowed (AC-14a)."""
+async def test_org_with_scribe_and_other_addons_allowed() -> None:
+    """An org with multiple add-ons including scribe is allowed."""
     mock_zitadel = AsyncMock()
     mock_zitadel.find_user_by_email.return_value = ("user-2", "zorg-2")
 
-    mock_session = _mock_session_with_org(_make_org_row(20, "complete"))
+    mock_session = _mock_session_with_org(_make_org_row(20, platform_unlocked_features=["scribe", "docs"]))
 
     with (
         patch("app.services.tenant_matcher.zitadel", mock_zitadel),
         patch("app.services.tenant_matcher.AsyncSessionLocal", return_value=mock_session),
     ):
-        result = await find_tenant("complete@example.com")
+        result = await find_tenant("multi-addon@example.com")
 
     assert result == ("user-2", 20)
 
 
 @pytest.mark.asyncio
-async def test_plan_core_rejected() -> None:
-    """A user on the 'core' plan is rejected -- no scribe feature (AC-14a)."""
+async def test_org_without_scribe_addon_rejected() -> None:
+    """An org whose platform_unlocked_features does not contain ``scribe`` is rejected."""
     mock_zitadel = AsyncMock()
     mock_zitadel.find_user_by_email.return_value = ("user-3", "zorg-3")
 
-    mock_session = _mock_session_with_org(_make_org_row(30, "core"))
+    mock_session = _mock_session_with_org(_make_org_row(30, platform_unlocked_features=["docs"]))
 
     with (
         patch("app.services.tenant_matcher.zitadel", mock_zitadel),
         patch("app.services.tenant_matcher.AsyncSessionLocal", return_value=mock_session),
     ):
-        result = await find_tenant("core@example.com")
+        result = await find_tenant("no-scribe@example.com")
 
     assert result is None
 
 
 @pytest.mark.asyncio
-async def test_plan_free_rejected() -> None:
-    """A user on the 'free' plan is rejected (AC-14a)."""
+async def test_org_with_no_addons_rejected() -> None:
+    """An org with an empty platform_unlocked_features list is rejected."""
     mock_zitadel = AsyncMock()
     mock_zitadel.find_user_by_email.return_value = ("user-4", "zorg-4")
 
-    mock_session = _mock_session_with_org(_make_org_row(40, "free"))
+    mock_session = _mock_session_with_org(_make_org_row(40, platform_unlocked_features=[]))
 
     with (
         patch("app.services.tenant_matcher.zitadel", mock_zitadel),
         patch("app.services.tenant_matcher.AsyncSessionLocal", return_value=mock_session),
     ):
-        result = await find_tenant("free@example.com")
+        result = await find_tenant("no-addons@example.com")
 
     assert result is None
 
@@ -172,6 +178,6 @@ async def test_no_portal_org_returns_none() -> None:
     assert result is None
 
 
-def test_scribe_plans_constant() -> None:
-    """SCRIBE_PLANS contains exactly the expected plans."""
-    assert SCRIBE_PLANS == {"professional", "complete"}
+def test_scribe_addon_constant() -> None:
+    """The exported SCRIBE_FEATURE constant matches the canonical add-on name."""
+    assert SCRIBE_FEATURE == "scribe"

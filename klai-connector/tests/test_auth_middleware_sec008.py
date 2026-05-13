@@ -4,11 +4,12 @@ Coverage:
 - Constant-time portal-secret compare (hmac.compare_digest)
 - Fail-closed behaviour when portal_caller_secret is empty
 - Zitadel audience verification (string + list aud claims)
-- Warn-only fallback when zitadel_api_audience is unset
+- Audience is MANDATORY — empty audience fails (SPEC-SEC-AUDIT-2026-04 B2)
 - Bypass branch does not run audience check
 - Static analysis: the module imports `hmac` and uses `hmac.compare_digest`
 
 The LRU cache itself is covered by test_auth_middleware_cache.py (SPEC-SEC-007).
+Startup validator for empty audience is covered by test_audit_2026_04_b2.py.
 """
 
 from __future__ import annotations
@@ -34,15 +35,27 @@ from app.middleware.auth import AuthMiddleware, _audience_matches
 def _make_settings(
     *,
     portal_secret: str = "",
-    audience: str = "",
+    audience: str = "klai-connector-test",
 ) -> SimpleNamespace:
-    """Build the minimal Settings-shape that AuthMiddleware.__init__ reads."""
+    """Build the minimal Settings-shape that AuthMiddleware.__init__ reads.
+
+    Note: audience defaults to a non-empty value. SPEC-SEC-AUDIT-2026-04 B2
+    makes audience mandatory (Settings validator rejects empty). Middleware
+    tests that explicitly test empty audience use the SimpleNamespace bypass
+    (they test middleware behavior directly, not the Settings validator).
+
+    SPEC-SEC-IDENTITY-ASSERT-003 REQ-2: portal_api_url + portal_internal_secret
+    are now required because the post-introspect path calls portal
+    /internal/identity/verify via IdentityAsserter.
+    """
     return SimpleNamespace(
         zitadel_introspection_url="https://example.test/oauth/v2/introspect",
         zitadel_client_id="cid",
         zitadel_client_secret="csecret",
         portal_caller_secret=portal_secret,
         zitadel_api_audience=audience,
+        portal_api_url="http://portal-api.test:8100",
+        portal_internal_secret="test-internal-secret",
     )
 
 
@@ -70,7 +83,8 @@ def _build_app(
     introspect_return: dict[str, Any] | None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[TestClient, _Recorder]:
-    """Create a FastAPI app with a class-level stub of ``_introspect``."""
+    """Create a FastAPI app with a class-level stub of ``_introspect`` and
+    a stub IdentityAsserter (SPEC-SEC-IDENTITY-ASSERT-003 REQ-2)."""
     app = FastAPI()
 
     @app.get("/ping")
@@ -82,6 +96,29 @@ def _build_app(
     recorder = _Recorder()
     recorder.return_value = introspect_return
     monkeypatch.setattr(AuthMiddleware, "_introspect", recorder)
+
+    # SPEC-003 REQ-2.8: stub IdentityAsserter to allow with the introspect
+    # response's resourceowner if present (back-compat with existing test
+    # fixtures that put it there) or "test-org" otherwise.
+    from klai_identity_assert import VerifyResult
+
+    org_id_default = "test-org"
+    if isinstance(introspect_return, dict):
+        # Best effort: use whatever org id the test put in the introspect
+        # response so its `request.state.org_id` assertion passes.
+        org_id_default = introspect_return.get("urn:zitadel:iam:user:resourceowner:id") or "test-org"
+
+    class _StubAsserter:
+        async def verify(self, **_kwargs: Any) -> VerifyResult:
+            return VerifyResult.allow(
+                user_id="test-user-sub",
+                org_id=str(org_id_default),
+                org_slug="test-slug",
+                evidence="membership",
+            )
+
+    monkeypatch.setattr(auth_module, "_asserter", None)
+    monkeypatch.setattr(auth_module, "_get_asserter", lambda _settings: _StubAsserter())
 
     client = TestClient(app)
     return client, recorder
@@ -160,17 +197,19 @@ class TestPortalBypass:
 
     def test_nonmatching_portal_secret_falls_through_to_introspection(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A different bearer value triggers introspection rather than bypass."""
-        settings = _make_settings(portal_secret="portal-shared-secret")
+        # audience must match settings; _make_settings default is "klai-connector-test"
+        settings = _make_settings(portal_secret="portal-shared-secret", audience="klai-connector")
         client, recorder = _build_app(
             settings,
             introspect_return={
                 "active": True,
                 "aud": "klai-connector",
+                "sub": "test-user-sub",
                 "urn:zitadel:iam:user:resourceowner:id": "org-123",
             },
             monkeypatch=monkeypatch,
         )
-        resp = client.get("/ping", headers={"Authorization": "Bearer some-other-token"})
+        resp = client.get("/ping", headers={"Authorization": "Bearer some-other-token", "X-Org-Id": "org-123"})
         assert resp.status_code == 200
         assert recorder.calls == 1
 
@@ -183,17 +222,21 @@ class TestPortalBypass:
         request goes to introspection, not through the bypass.
         """
         settings = _make_settings(portal_secret="")
-        # introspect_return is a valid claim, so a successful introspection call
-        # is the signal that the bypass did NOT fire.
+        # introspect_return is a valid claim (with correct aud), so a successful
+        # introspection call is the signal that the bypass did NOT fire.
+        # SPEC-SEC-AUDIT-2026-04 B2: audience is now always enforced — aud must
+        # match the configured audience even on the non-bypass path.
         client, recorder = _build_app(
             settings,
             introspect_return={
                 "active": True,
+                "aud": "klai-connector-test",  # matches _make_settings default audience
+                "sub": "test-user-sub",
                 "urn:zitadel:iam:user:resourceowner:id": "org-x",
             },
             monkeypatch=monkeypatch,
         )
-        resp = client.get("/ping", headers={"Authorization": "Bearer anything"})
+        resp = client.get("/ping", headers={"Authorization": "Bearer anything", "X-Org-Id": "org-x"})
         assert resp.status_code == 200
         assert recorder.calls == 1, "empty portal_secret must not short-circuit to bypass"
 
@@ -211,11 +254,12 @@ class TestAudienceVerification:
             introspect_return={
                 "active": True,
                 "aud": "klai-connector",
+                "sub": "test-user-sub",
                 "urn:zitadel:iam:user:resourceowner:id": "org-xyz",
             },
             monkeypatch=monkeypatch,
         )
-        resp = client.get("/ping", headers={"Authorization": "Bearer good-token"})
+        resp = client.get("/ping", headers={"Authorization": "Bearer good-token", "X-Org-Id": "org-xyz"})
         assert resp.status_code == 200
 
     def test_wrong_audience_string_is_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -253,11 +297,12 @@ class TestAudienceVerification:
             introspect_return={
                 "active": True,
                 "aud": ["klai-scribe", "klai-connector"],
+                "sub": "test-user-sub",
                 "urn:zitadel:iam:user:resourceowner:id": "org-xyz",
             },
             monkeypatch=monkeypatch,
         )
-        resp = client.get("/ping", headers={"Authorization": "Bearer ok-list"})
+        resp = client.get("/ping", headers={"Authorization": "Bearer ok-list", "X-Org-Id": "org-xyz"})
         assert resp.status_code == 200
 
     def test_missing_audience_claim_rejected_when_configured(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -291,48 +336,69 @@ class TestAudienceVerification:
         assert len(auth_module._token_cache) == 0
 
 
-class TestAudienceUnconfiguredFallback:
-    def test_no_audience_configured_skips_check(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """When ZITADEL_API_AUDIENCE is empty, claims without aud are still accepted."""
-        settings = _make_settings(audience="")
+class TestAudienceMandatory:
+    """SPEC-SEC-AUDIT-2026-04 B2: audience is now mandatory; warn-only fallback removed.
+
+    The old TestAudienceUnconfiguredFallback tested the warn-only behavior that
+    allowed empty audience to skip verification. That behavior has been replaced
+    by a fail-closed startup validator in Settings._require_zitadel_api_audience.
+
+    These tests verify that the middleware enforces audience on EVERY introspected
+    request (no conditional bypass) and that tokens for other apps are rejected.
+    """
+
+    def test_audience_always_enforced_no_bypass_for_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Tokens without aud claim are rejected (audience is always checked now)."""
+        settings = _make_settings(audience="klai-connector")
         client, _ = _build_app(
             settings,
             introspect_return={
                 "active": True,
-                # no aud at all — should still pass because audience is not configured
+                # no aud claim — must be rejected
                 "urn:zitadel:iam:user:resourceowner:id": "org-xyz",
             },
             monkeypatch=monkeypatch,
         )
-        resp = client.get("/ping", headers={"Authorization": "Bearer warn-only"})
-        assert resp.status_code == 200
+        resp = client.get("/ping", headers={"Authorization": "Bearer no-aud-token"})
+        assert resp.status_code == 401
 
-    def test_no_audience_configured_accepts_any_aud(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Warn-only fallback: any aud value is accepted when unconfigured."""
-        settings = _make_settings(audience="")
+    def test_cross_app_token_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Token issued for a different klai app (cross-app reuse) is rejected.
+
+        This is the core B2 scenario: a JWT issued for klai-scribe (or any
+        other app) passes Zitadel introspection but must be rejected by the
+        audience check because its aud claim does not match klai-connector.
+        """
+        settings = _make_settings(audience="klai-connector")
         client, _ = _build_app(
             settings,
             introspect_return={
                 "active": True,
-                "aud": "something-else-entirely",
+                "aud": "klai-scribe",  # token for a different service
                 "urn:zitadel:iam:user:resourceowner:id": "org-xyz",
             },
             monkeypatch=monkeypatch,
         )
-        resp = client.get("/ping", headers={"Authorization": "Bearer any-aud"})
-        assert resp.status_code == 200
+        resp = client.get("/ping", headers={"Authorization": "Bearer cross-app-token"})
+        assert resp.status_code == 401
 
-    def test_startup_warning_when_audience_empty(self, caplog: pytest.LogCaptureFixture) -> None:
-        """Constructor logs a warning so operators notice the missing audience."""
+    def test_no_startup_warning_when_audience_set(self) -> None:
+        """Constructor does NOT log the old warn-only notice when audience is set."""
         import logging
 
-        caplog.set_level(logging.WARNING, logger="app.middleware.auth")
-        settings = _make_settings(audience="")
-        # Instantiate directly — we just want the constructor log.
-        AuthMiddleware(app=MagicMock(), settings=settings)  # type: ignore[arg-type]
-        assert any("zitadel_api_audience is empty" in rec.getMessage() for rec in caplog.records), (
-            "Expected a warn-only notice when audience is unconfigured"
-        )
+        settings = _make_settings(audience="klai-connector")
+        # The old warn-only warning string must not appear.
+        import io
+
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        logging.getLogger("app.middleware.auth").addHandler(handler)
+        try:
+            AuthMiddleware(app=MagicMock(), settings=settings)  # type: ignore[arg-type]
+            output = stream.getvalue()
+            assert "zitadel_api_audience is empty" not in output
+        finally:
+            logging.getLogger("app.middleware.auth").removeHandler(handler)
 
 
 # ---------------------------------------------------------------------------

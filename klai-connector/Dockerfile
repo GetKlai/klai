@@ -19,6 +19,10 @@ COPY klai-libs/image-storage klai-libs/image-storage
 # SPEC-SEC-INTERNAL-001 B3: klai-log-utils path-dep (sync_engine.error_details
 # sanitiser + portal_client / knowledge_ingest secret guards).
 COPY klai-libs/log-utils klai-libs/log-utils
+# SPEC-SEC-IDENTITY-ASSERT-003 REQ-2: klai-identity-assert path-dep —
+# AuthMiddleware calls portal /internal/identity/verify via this lib
+# instead of reading the JWT resourceowner claim.
+COPY klai-libs/identity-assert klai-libs/identity-assert
 COPY klai-connector/pyproject.toml klai-connector/pyproject.toml
 COPY klai-connector/uv.lock klai-connector/uv.lock
 
@@ -44,8 +48,14 @@ COPY --from=deps /repo/klai-libs /repo/klai-libs
 ENV PATH="/repo/klai-connector/.venv/bin:${PATH}" \
     VIRTUAL_ENV="/repo/klai-connector/.venv"
 
-# Application code (app/, alembic/, tests/ are all under klai-connector/).
+# Application code (app/, alembic/, alembic.ini, entrypoint.sh, tests/ are
+# all under klai-connector/).
 COPY klai-connector/ .
+
+# entrypoint.sh runs `alembic upgrade head` then exec's the CMD. Same
+# pattern as klai-portal/backend/entrypoint.sh — fail-loud on migration
+# error instead of silently serving with a stale schema.
+RUN chmod +x /repo/klai-connector/entrypoint.sh
 
 RUN adduser --disabled-password --gecos "" klai
 
@@ -53,4 +63,5 @@ EXPOSE 8200
 
 USER klai
 
+ENTRYPOINT ["/repo/klai-connector/entrypoint.sh"]
 CMD ["uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8200"]

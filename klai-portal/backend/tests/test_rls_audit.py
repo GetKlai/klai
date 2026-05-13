@@ -63,6 +63,13 @@ _TENANT_MARKERS: tuple[str, ...] = (
     "require_partner_context(",
     "require_admin_api_key(",
     "get_effective_products(",  # self-heals tenant internally
+    # SPEC-PORTAL-RBAC-REFACTOR-001 Phase 1+: declarative dependencies that
+    # resolve through `get_caller`, which calls `set_tenant` for the caller's
+    # org. Any module that imports/uses these has tenant context established.
+    "get_caller_at_least(",
+    "require_platform_admin(",
+    "require_platform_unlocked(",
+    "Depends(get_caller)",  # bare get_caller (no min-role)
 )
 
 # Modules that legitimately query RLS models without a direct tenant marker
@@ -79,6 +86,14 @@ _ALLOWLIST: dict[str, str] = {
     # set_tenant).
     "app/services/kb_quota.py": (
         "service layer — all callers pass a db session with tenant context already set via _get_caller_org"
+    ),
+    # SPEC-PORTAL-KB-OWNERSHIP-001 Phase 3 offboard orchestrator. Every entry
+    # point (compute_offboard_preview, apply_dispositions,
+    # revoke_user_credentials) is called from admin/users.py routes that gate
+    # on Depends(get_caller_at_least(ProfileRole.ADMIN)) — the upstream auth
+    # dep runs set_tenant before any of these execute().
+    "app/services/kb_offboarding.py": (
+        "service layer — orchestrator called from admin/users.py routes after _get_caller_org sets tenant"
     ),
 }
 

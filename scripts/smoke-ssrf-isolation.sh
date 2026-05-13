@@ -31,7 +31,6 @@ ISOLATED_CONTAINERS=(
   "klai-core-crawl4ai-1"
   "klai-core-klai-connector-1"
   "klai-core-scribe-1"
-  "klai-core-research-api-1"
   "klai-core-retrieval-api-1"
 )
 

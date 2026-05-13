@@ -30,7 +30,7 @@ export function SidebarFooter({
   const showRootInput = showNewPage && newPageParent === null
 
   return (
-    <div className="px-2 py-2 border-t border-[var(--color-border)] space-y-1">
+    <div className="px-2 py-2 border-t border-gray-200 space-y-1">
       {showRootInput ? (
         <div className="space-y-1.5 px-1">
           <Input
@@ -54,7 +54,7 @@ export function SidebarFooter({
               {m.docs_kb_create()}
             </button>
             <button
-              className="h-7 px-2 flex items-center justify-center rounded-md text-[var(--color-muted-foreground)] hover:bg-[var(--color-foreground)]/[0.04] transition-colors"
+              className="h-7 px-2 flex items-center justify-center rounded-md text-gray-400 hover:bg-[var(--color-foreground)]/[0.04] transition-colors"
               onClick={onNewPageCancel}
             >
               <X size={11} />
@@ -63,7 +63,7 @@ export function SidebarFooter({
         </div>
       ) : (
         <button
-          className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-[var(--color-muted-foreground)] hover:bg-[var(--color-foreground)]/[0.04] hover:text-[var(--color-foreground)] rounded-md transition-colors"
+          className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-gray-400 hover:bg-[var(--color-foreground)]/[0.04] hover:text-gray-900 rounded-md transition-colors"
           onClick={onShowNewPage}
         >
           <Plus size={14} strokeWidth={1.5} />
@@ -82,7 +82,7 @@ export function SidebarFooter({
         }}
       />
       <button
-        className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-[var(--color-muted-foreground)] hover:bg-[var(--color-foreground)]/[0.04] hover:text-[var(--color-foreground)] rounded-md transition-colors"
+        className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-gray-400 hover:bg-[var(--color-foreground)]/[0.04] hover:text-gray-900 rounded-md transition-colors"
         onClick={() => fileInputRef.current?.click()}
       >
         <Upload size={14} strokeWidth={1.5} />

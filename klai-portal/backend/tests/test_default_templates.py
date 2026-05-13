@@ -89,6 +89,32 @@ def test_defaults_constant_has_non_empty_prompt_text():
         assert len(tpl["prompt_text"]) <= 8000
 
 
+def test_klantenservice_default_is_language_agnostic():
+    """Regression guard for the SPEC-RAG-MULTILINGUAL-CHAT-001 cleanup
+    (commit a0d72cea, 2026-05-07).
+
+    The "Klantenservice" seed template originally pinned the model to
+    Dutch via "Antwoord altijd in het Nederlands". That instruction
+    overrode the multilingual ``GROUNDED_CHAT_SYSTEM_PROMPT`` whenever
+    a tenant had this template active. The cleanup removed that line
+    and replaced it with a language-agnostic phrasing. This test pins
+    both ends of the contract so a future template tweak cannot
+    silently re-introduce the regression.
+    """
+    from app.services.default_templates import DEFAULT_TEMPLATES
+
+    klantenservice = next(t for t in DEFAULT_TEMPLATES if t["slug"] == "klantenservice")
+    prompt = klantenservice["prompt_text"]
+
+    # Negative: the legacy NL-pinning string must NOT appear.
+    assert "Antwoord altijd in het Nederlands" not in prompt, (
+        "Klantenservice default seed must remain language-agnostic. See commit a0d72cea + post_deploy_e44f9da674fe.sql."
+    )
+    # Positive: the new wording explicitly mirrors the user's question
+    # language. This anchor lets a future reviewer trace the rule back.
+    assert "in dezelfde taal als de vraag van de gebruiker" in prompt
+
+
 @pytest.mark.asyncio
 async def test_exception_is_swallowed_and_rolled_back():
     """REQ-TEMPLATES-SEED: non-fatal — exceptions don't propagate."""

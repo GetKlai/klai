@@ -239,17 +239,17 @@ function LoginPage() {
         /* TOTP challenge step */
         <>
           <div className="space-y-1.5">
-            <h2 className="text-2xl font-semibold tracking-tight text-[var(--color-foreground)]">
+            <h2 className="text-2xl font-semibold tracking-tight text-gray-900">
               {m.totp_heading()}
             </h2>
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {m.totp_subheading()}
             </p>
           </div>
 
           <form onSubmit={handleTotpSubmit} className="space-y-4">
             <div className="space-y-1">
-              <label htmlFor="totp-code" className="block text-sm font-medium text-[var(--color-foreground)]">
+              <label htmlFor="totp-code" className="block text-sm font-medium text-gray-900">
                 {m.totp_field_code()}
               </label>
               <input
@@ -263,7 +263,7 @@ function LoginPage() {
                 required
                 autoComplete="one-time-code"
                 autoFocus
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)] tracking-widest text-center text-base font-mono"
+                className="w-full rounded-lg border border-gray-200 bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)] tracking-widest text-center text-base font-mono"
               />
             </div>
 
@@ -277,7 +277,7 @@ function LoginPage() {
             </Button>
           </form>
 
-          <p className="text-center text-xs text-[var(--color-muted-foreground)]">
+          <p className="text-center text-xs text-gray-400">
             <button
               onClick={() => { setTotpStep(false); setTotpCode(''); setError(null) }}
               className="text-[var(--color-rl-accent-dark)] hover:underline"
@@ -290,17 +290,17 @@ function LoginPage() {
         /* Password login step */
         <>
           <div className="space-y-1.5">
-            <h2 className="text-2xl font-semibold tracking-tight text-[var(--color-foreground)]">
+            <h2 className="text-2xl font-semibold tracking-tight text-gray-900">
               {m.login_heading()}
             </h2>
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {m.login_subheading()}
             </p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1">
-              <label htmlFor="email" className="block text-sm font-medium text-[var(--color-foreground)]">
+              <label htmlFor="email" className="block text-sm font-medium text-gray-900">
                 {m.login_field_email()}
               </label>
               <input
@@ -311,12 +311,12 @@ function LoginPage() {
                 required
                 autoComplete="email"
                 autoFocus
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
+                className="w-full rounded-lg border border-gray-200 bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
               />
             </div>
 
             <div className="space-y-1">
-              <label htmlFor="password" className="block text-sm font-medium text-[var(--color-foreground)]">
+              <label htmlFor="password" className="block text-sm font-medium text-gray-900">
                 {m.login_field_password()}
               </label>
               <input
@@ -326,7 +326,7 @@ function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 autoComplete="current-password"
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
+                className="w-full rounded-lg border border-gray-200 bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
               />
             </div>
 
@@ -342,11 +342,11 @@ function LoginPage() {
 
           {/* Social login */}
           <div className="relative flex items-center gap-3 pt-1">
-            <div className="h-px flex-1 bg-[var(--color-border)]" />
+            <div className="h-px flex-1 bg-gray-200" />
             <span className="text-xs tracking-wide text-gray-400">
               {m.login_or_continue_with()}
             </span>
-            <div className="h-px flex-1 bg-[var(--color-border)]" />
+            <div className="h-px flex-1 bg-gray-200" />
           </div>
 
           <div className="flex flex-col gap-2">
@@ -354,7 +354,7 @@ function LoginPage() {
               type="button"
               onClick={() => handleSocialLogin('368810756424073247')}
               disabled={loading}
-              className="flex w-full items-center justify-center gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm font-medium text-[var(--color-foreground)] transition hover:bg-[var(--color-muted)] disabled:opacity-50"
+              className="flex w-full items-center justify-center gap-3 rounded-lg border border-gray-200 bg-[var(--color-background)] px-3 py-2 text-sm font-medium text-gray-900 transition hover:bg-[var(--color-muted)] disabled:opacity-50"
             >
               {/* Google G */}
               <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
@@ -370,7 +370,7 @@ function LoginPage() {
               type="button"
               onClick={() => handleSocialLogin('368809521386094623')}
               disabled={loading}
-              className="flex w-full items-center justify-center gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm font-medium text-[var(--color-foreground)] transition hover:bg-[var(--color-muted)] disabled:opacity-50"
+              className="flex w-full items-center justify-center gap-3 rounded-lg border border-gray-200 bg-[var(--color-background)] px-3 py-2 text-sm font-medium text-gray-900 transition hover:bg-[var(--color-muted)] disabled:opacity-50"
             >
               {/* Microsoft squares */}
               <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
@@ -383,7 +383,7 @@ function LoginPage() {
             </button>
           </div>
 
-          <div className="flex items-center justify-between text-center text-xs text-[var(--color-muted-foreground)]">
+          <div className="flex items-center justify-between text-center text-xs text-gray-400">
             <Link
               to="/$locale/password/forgot"
               params={{ locale }}

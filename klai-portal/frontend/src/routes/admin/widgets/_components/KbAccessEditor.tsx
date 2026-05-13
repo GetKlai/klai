@@ -21,7 +21,7 @@ export function KbAccessEditor({ value, onChange, disabled = false }: Props) {
 
   if (isLoading) {
     return (
-      <p className="py-4 text-sm text-[var(--color-muted-foreground)]">
+      <p className="py-4 text-sm text-gray-400">
         <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
         {m.admin_shared_loading()}
       </p>
@@ -30,7 +30,7 @@ export function KbAccessEditor({ value, onChange, disabled = false }: Props) {
 
   if (kbs.length === 0) {
     return (
-      <p className="py-4 text-sm text-[var(--color-muted-foreground)]">
+      <p className="py-4 text-sm text-gray-400">
         {m.admin_shared_kb_empty()}
       </p>
     )
@@ -45,9 +45,9 @@ export function KbAccessEditor({ value, onChange, disabled = false }: Props) {
   }
 
   return (
-    <table className="w-full text-sm border-t border-b border-[var(--color-border)]">
+    <table className="w-full text-sm border-t border-b border-gray-200">
       <thead>
-        <tr className="border-b border-[var(--color-border)]">
+        <tr className="border-b border-gray-200">
           <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
             {m.admin_shared_kb_name()}
           </th>
@@ -60,9 +60,9 @@ export function KbAccessEditor({ value, onChange, disabled = false }: Props) {
         {kbs.map((kb) => (
           <tr
             key={kb.id}
-            className="border-b border-[var(--color-border)] last:border-b-0"
+            className="border-b border-gray-200 last:border-b-0"
           >
-            <td className="py-3 pr-4 align-middle text-[var(--color-foreground)]">
+            <td className="py-3 pr-4 align-middle text-gray-900">
               {kb.name}
             </td>
             <td className="py-3 text-center align-middle">

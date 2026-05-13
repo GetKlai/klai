@@ -25,8 +25,6 @@ async def chat(req: RetrieveRequest, request: Request) -> EventSourceResponse:
     # --- Validation ---
     if req.scope in ("personal", "both") and not req.user_id:
         raise HTTPException(status_code=400, detail="user_id required for scope=personal/both")
-    if req.scope == "notebook" and not req.notebook_id:
-        raise HTTPException(status_code=400, detail="notebook_id required for scope=notebook")
 
     # SPEC-SEC-010 REQ-3 + SPEC-SEC-IDENTITY-ASSERT-001 REQ-4: cross-user /
     # cross-org guard. JWT callers are matched against their JWT claims;
@@ -60,8 +58,8 @@ async def chat(req: RetrieveRequest, request: Request) -> EventSourceResponse:
         # 4. Search
         raw_results = await search.hybrid_search(query_vector, req, settings.retrieval_candidates)
 
-        # 5. Rerank (skip for notebook scope)
-        if req.scope != "notebook" and raw_results:
+        # 5. Rerank
+        if raw_results:
             reranked = await reranker.rerank(query_resolved, raw_results, req.top_k)
         else:
             reranked = raw_results[: req.top_k]

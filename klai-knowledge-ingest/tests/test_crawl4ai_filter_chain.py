@@ -1,80 +1,161 @@
-"""Test that crawl_site builds a JSON-deserialisable filter_chain payload.
+"""SPEC-INGEST-RECONCILE-001 Fix 1 — include_patterns filtering on candidates.
 
-Crawl4AI v0.8.6's `from_serializable_dict` only instantiates nested strategy
-objects when they are wrapped in `{"type": "<ClassName>", "params": {...}}`.
-A bare list of filter dicts stays a list, and BFSDeepCrawlStrategy then crashes
-with `AttributeError: 'list' object has no attribute 'apply'` the moment
-`self.filter_chain.apply(url)` is called for depth > 0.
+The legacy test (pre-Reconcile-001) asserted that ``filter_chain`` was
+JSON-wrapped correctly inside crawl4ai's ``deep_crawl_strategy`` payload.
+That payload no longer exists: ``crawl_site`` now hands a flat URL list
+to ``POST /crawl`` and applies ``include_patterns`` as a candidate-side
+substring filter. These tests pin the new behaviour:
 
-This test pins the payload structure so any regression surfaces in CI instead
-of a live sync failure (as happened on wiki.redcactus.cloud /nl/).
+- When ``include_patterns`` is set, only matching candidates reach the
+  bulk request body.
+- When ``include_patterns`` is None, every same-domain candidate from
+  sitemap + BFS-union reaches the request body — but ``start_url`` is
+  NOT in the bulk submission (it is fetched separately as the seed; see
+  followup PR §"redundant start_url fetch").
+- The crawler_config payload no longer carries a ``deep_crawl_strategy``
+  key (regression guard against the legacy BFS path being reintroduced
+  alongside the bulk path).
 """
 
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
+import httpx
 import pytest
 
 from knowledge_ingest import crawl4ai_client
+from knowledge_ingest.crawl4ai_client import CrawlResult
+
+
+def _seed_result(url: str, internal_hrefs: list[str]) -> CrawlResult:
+    """Synthesise the start_url's CrawlResult with internal links."""
+    return CrawlResult(
+        url=url,
+        fit_markdown="Seed page",
+        raw_markdown="Seed page",
+        html="<html></html>",
+        word_count=2,
+        success=True,
+        links={"internal": [{"href": h, "text": ""} for h in internal_hrefs]},
+    )
+
+
+def _patch_seed(monkeypatch: pytest.MonkeyPatch, seed_result: CrawlResult) -> None:
+    """Stub ``_fetch_seed_page`` so the seed call doesn't hit httpx.
+
+    The bulk path (the focus of these tests) still goes through the real
+    ``httpx.AsyncClient.post`` so the test can capture its payload.
+    """
+
+    async def _fake_seed(*, start_url: str, **_kwargs: Any) -> CrawlResult:
+        return seed_result
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_seed_page", _fake_seed)
 
 
 @pytest.mark.asyncio
-async def test_crawl_site_wraps_filter_chain_when_include_patterns_set() -> None:
+async def test_crawl_site_applies_include_patterns_to_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """include_patterns acts as a substring filter on the bulk candidate set."""
+    sitemap_urls = [
+        "https://wiki.redcactus.cloud/nl/getting-started",
+        "https://wiki.redcactus.cloud/en/getting-started",
+        "https://wiki.redcactus.cloud/nl/advanced",
+    ]
+    bfs_links = [
+        "https://wiki.redcactus.cloud/nl/blog",
+        "https://wiki.redcactus.cloud/en/blog",
+    ]
+
+    async def _fake_sitemap(_base: str) -> list[str]:
+        return sitemap_urls
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
+    _patch_seed(monkeypatch, _seed_result("https://wiki.redcactus.cloud", bfs_links))
+
     captured: dict[str, Any] = {}
 
-    async def _fake_post(self, url: str, json: dict[str, Any], headers: dict[str, str]):
-        captured["payload"] = json
-        # Surface-level status ok so _DEEP_POLL flow can start; we raise afterwards
-        # so the test does not need to simulate the poll loop.
-        raise RuntimeError("short-circuit after capturing payload")
+    async def _fake_post(self: httpx.AsyncClient, url: str, **kwargs: Any) -> httpx.Response:
+        captured["url"] = url
+        captured["payload"] = kwargs.get("json")
+        request = httpx.Request("POST", url)
+        return httpx.Response(200, json={"results": []}, request=request)
 
     with patch("httpx.AsyncClient.post", new=_fake_post):
-        with pytest.raises(RuntimeError, match="short-circuit"):
-            await crawl4ai_client.crawl_site(
-                start_url="https://wiki.redcactus.cloud",
-                selector="main",
-                max_depth=2,
-                max_pages=50,
-                include_patterns=["/nl/"],
-            )
+        results, outcomes = await crawl4ai_client.crawl_site(
+            start_url="https://wiki.redcactus.cloud",
+            selector="main",
+            max_pages=50,
+            include_patterns=["/nl/"],
+        )
+
+    # Seed (start_url) is included in results because the synthesised seed
+    # is success + has content + same-domain.
+    assert any(r.url == "https://wiki.redcactus.cloud" for r in results)
 
     payload = captured["payload"]
-    deep = payload["crawler_config"]["params"]["deep_crawl_strategy"]
-
-    assert deep["type"] == "BFSDeepCrawlStrategy"
-    filter_chain = deep["params"].get("filter_chain")
-
-    # RED assertion: filter_chain MUST be wrapped in {type:FilterChain, params:{filters:[...]}}
-    # so crawl4ai's from_serializable_dict builds a real FilterChain object.
-    assert isinstance(filter_chain, dict), (
-        f"filter_chain must be a typed object wrapper, got {type(filter_chain).__name__}"
+    urls_submitted = payload["urls"]
+    # include_patterns is a substring filter — start_url with empty path
+    # does not match "/nl/" anyway, but the more important guard is that
+    # it never reaches the bulk request because the seed already covered it.
+    assert "https://wiki.redcactus.cloud" not in urls_submitted, (
+        "start_url must not be in the bulk submission (it is the seed)"
     )
-    assert filter_chain.get("type") == "FilterChain"
-    filters = filter_chain["params"]["filters"]
-    assert isinstance(filters, list) and len(filters) == 1
-    assert filters[0]["type"] == "URLPatternFilter"
-    assert filters[0]["params"]["patterns"] == ["/nl/"]
+    for u in urls_submitted:
+        assert "/nl/" in u, f"include_patterns leaked a non-/nl/ URL: {u}"
+    assert "https://wiki.redcactus.cloud/nl/getting-started" in urls_submitted
+    assert "https://wiki.redcactus.cloud/nl/advanced" in urls_submitted
+    assert "https://wiki.redcactus.cloud/nl/blog" in urls_submitted
+    assert "https://wiki.redcactus.cloud/en/getting-started" not in urls_submitted
+    assert "https://wiki.redcactus.cloud/en/blog" not in urls_submitted
+    assert "deep_crawl_strategy" not in payload["crawler_config"]["params"]
+    # AC-4: every candidate produces an outcome record. Seed + bulk.
+    assert len(outcomes) == 1 + len(urls_submitted)
 
 
 @pytest.mark.asyncio
-async def test_crawl_site_omits_filter_chain_when_no_include_patterns() -> None:
+async def test_crawl_site_no_include_patterns_passes_all_same_domain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without include_patterns, every same-domain non-seed candidate reaches /crawl."""
+    sitemap_urls = [
+        "https://example.com/page-a",
+        "https://example.com/page-b",
+        "https://other.com/skipped",  # cross-domain, must be filtered out
+    ]
+
+    async def _fake_sitemap(_base: str) -> list[str]:
+        return sitemap_urls
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
+    _patch_seed(monkeypatch, _seed_result("https://example.com", ["https://example.com/page-c"]))
+
     captured: dict[str, Any] = {}
 
-    async def _fake_post(self, url: str, json: dict[str, Any], headers: dict[str, str]):
-        captured["payload"] = json
-        raise RuntimeError("short-circuit")
+    async def _fake_post(self: httpx.AsyncClient, url: str, **kwargs: Any) -> httpx.Response:
+        captured["payload"] = kwargs.get("json")
+        request = httpx.Request("POST", url)
+        return httpx.Response(200, json={"results": []}, request=request)
 
     with patch("httpx.AsyncClient.post", new=_fake_post):
-        with pytest.raises(RuntimeError):
-            await crawl4ai_client.crawl_site(
-                start_url="https://example.com",
-                max_depth=1,
-                max_pages=10,
-                include_patterns=None,
-            )
+        await crawl4ai_client.crawl_site(
+            start_url="https://example.com",
+            max_pages=10,
+            include_patterns=None,
+        )
 
-    deep = captured["payload"]["crawler_config"]["params"]["deep_crawl_strategy"]
-    # When no include_patterns, no filter_chain should be emitted at all.
-    assert "filter_chain" not in deep["params"]
+    payload = captured["payload"]
+    urls_submitted = payload["urls"]
+    # start_url is the seed — not in the bulk submission.
+    assert "https://example.com" not in urls_submitted, (
+        "start_url must not be in the bulk submission (it is the seed)"
+    )
+    assert "https://example.com/page-a" in urls_submitted
+    assert "https://example.com/page-b" in urls_submitted
+    assert "https://example.com/page-c" in urls_submitted
+    # Cross-domain entry from sitemap MUST NOT leak through.
+    assert "https://other.com/skipped" not in urls_submitted
+    assert "deep_crawl_strategy" not in payload["crawler_config"]["params"]

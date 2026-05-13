@@ -10,7 +10,6 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://qdrant:6333"
     qdrant_api_key: str = ""
     qdrant_collection: str = "klai_knowledge"
-    qdrant_focus_collection: str = "klai_focus"
 
     tei_url: str = "http://172.18.0.1:7997"
     infinity_reranker_url: str = "http://172.18.0.1:7998"
@@ -52,6 +51,32 @@ class Settings(BaseSettings):
     source_quota_enabled: bool = True
     source_quota_max_per_source: int = 2
 
+    # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-07 — defence-in-depth floor.
+    # Chunks with ``quality_score < retrieval_quality_floor`` are removed
+    # immediately after rerank, before source-aware-select + quality_boost.
+    # Default 0.05 means: only chunks explicitly degraded to 0.0 (e.g.,
+    # ingest-time auth-wall ``degrade`` mode) are filtered. The default
+    # ``quality_score=0.5`` chunks always pass.
+    retrieval_quality_floor: float = 0.05
+
+    # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1 — confidence-band thresholds.
+    # Computed from max(reranker_score) over the served top-K chunks. Drives
+    # the litellm-hook anti-hallucination injection (REQ-2) and Grafana panel
+    # (REQ-8). Defaults derived from the 2026-05-07 Voys-Salesforce incident
+    # (turn 1: 0.18 = low / hallucinated; turn 3 rekeningnummer: 0.96 = high).
+    # Tunable post-deploy without code change.
+    confidence_band_high_threshold: float = 0.60
+    confidence_band_low_threshold: float = 0.30
+
+    # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-3 — link-expand reranker boost.
+    # Multiplicative boost (capped at 1.0) for chunks whose ``_link_expanded``
+    # flag is set, applied AFTER rerank and BEFORE source-aware-select. With
+    # default 1.00 this requirement is no-op until the operator tunes — the
+    # SPEC ships safe and the boost activates per-tenant via env override
+    # once the eval baseline is captured. Range [1.00, 1.30] enforced by the
+    # validator so well-meaning typos can't accidentally suppress chunks.
+    link_expand_score_boost: float = 1.00
+
     # Query router (SPEC-KB-021)
     # Pre-search: identifies relevant sources, passes decision to source_aware_select.
     # Centroids computed from actual chunk vectors (not label strings).
@@ -76,7 +101,7 @@ class Settings(BaseSettings):
     retrieval_events_max_pending: int = 1000
 
     # SPEC-SEC-010 — Authentication and request hardening
-    # Shared secret for internal service-to-service calls (portal-api, research-api, LiteLLM hook).
+    # Shared secret for internal service-to-service calls (portal-api, LiteLLM hook).
     # REQ-1.1 + REQ-5.2: empty / whitespace-only value MUST cause startup failure.
     internal_secret: str = ""
     # Zitadel issuer + audience for JWT validation (REQ-1.2, REQ-5.1).
@@ -99,12 +124,50 @@ class Settings(BaseSettings):
     portal_internal_secret: str = ""
 
     @model_validator(mode="after")
+    def _validate_confidence_band_thresholds(self) -> Settings:
+        """SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1: thresholds must be
+        sane (0 ≤ low < high ≤ 1). Otherwise the band computation produces
+        nonsense (e.g. high < low → every score is "medium"). Catching this
+        at startup beats catching it via "why is every reply abstaining?".
+        """
+        low = self.confidence_band_low_threshold
+        high = self.confidence_band_high_threshold
+        if not (0.0 <= low < high <= 1.0):
+            raise ValueError(
+                "confidence_band thresholds invalid: "
+                f"low={low}, high={high}; require 0 <= low < high <= 1"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_link_expand_boost(self) -> Settings:
+        """SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-3: boost factor must be
+        in [1.00, 1.30] — values < 1 would silently suppress link-expanded
+        chunks (the opposite of intent), values > 1.3 over-distort the
+        ranking distribution.
+        """
+        if not (1.0 <= self.link_expand_score_boost <= 1.3):
+            raise ValueError(
+                "link_expand_score_boost invalid: "
+                f"{self.link_expand_score_boost}; require 1.00 <= boost <= 1.30"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _validate_security_settings(self) -> Settings:
         """REQ-1.1 / REQ-5.2: fail-closed on missing required security config.
 
-        Required (fail-closed): INTERNAL_SECRET — without it, auth is bypassed.
-        Required (fail-closed): REDIS_URL — rate limiter fails open to identity
-            check only, but Redis config is still expected.
+        Required (fail-closed):
+          - INTERNAL_SECRET — without it, inbound auth is bypassed.
+          - REDIS_URL — rate limiter fails open to identity check only, but
+            Redis config is still expected.
+          - PORTAL_INTERNAL_SECRET — SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-14.
+            Outbound retrieval-api → portal-api Bearer for the
+            /internal/identity/verify call (SPEC-SEC-IDENTITY-ASSERT-001).
+            With an empty value, the IdentityAsserter constructor would
+            raise downstream — this validator surfaces the same failure
+            at startup with an actionable message instead of at the first
+            internal-secret request.
 
         Optional (graceful degrade):
           ZITADEL_ISSUER + ZITADEL_API_AUDIENCE — if either is empty, the JWT
@@ -112,14 +175,20 @@ class Settings(BaseSettings):
           valid X-Internal-Secret. Bearer JWTs are rejected with 401.
 
           This is the correct state until SEC-012 lands: retrieval-api is only
-          called by trusted services (portal-api, focus, LiteLLM hook) using
-          the internal-secret path; no end-user JWT flows through it yet.
+          called by trusted services (portal-api, LiteLLM hook) using the
+          internal-secret path; no end-user JWT flows through it yet.
+
+        Pre-flight (validator-env-parity pitfall): all three required env
+        vars verified populated in /opt/klai/.env on core-01 prior to
+        landing this REQ-14 extension (2026-05-05).
         """
         missing: list[str] = []
         if not self.internal_secret or not self.internal_secret.strip():
             missing.append("INTERNAL_SECRET")
         if not self.redis_url or not self.redis_url.strip():
             missing.append("REDIS_URL")
+        if not self.portal_internal_secret or not self.portal_internal_secret.strip():
+            missing.append("PORTAL_INTERNAL_SECRET (SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-14)")
         if missing:
             raise ValueError(
                 "Missing required security configuration (SPEC-SEC-010 REQ-5.2): "

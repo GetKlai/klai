@@ -39,7 +39,7 @@ def _mock_image_store() -> MagicMock:
     async def _upload(*args, **kwargs):
         key = f"org/images/kb/{args[3]}"
         return ImageUploadResult(
-            object_key=key, public_url=f"/kb-images/{key}", deduplicated=False,
+            object_key=key, deduplicated=False,
         )
 
     store.upload_image = _upload
@@ -93,7 +93,7 @@ Some explanation text here.
 
         public_urls = await download_and_upload_images(
             image_urls=resolved,
-            org_id="org-acme",
+            org_id="100000000000000001",
             kb_slug="docs",
             image_store=store,
             http_client=http,
@@ -103,7 +103,7 @@ Some explanation text here.
 
         # 5. Build ingest payload with image_urls
         payload = _build_payload(
-            org_id="org-acme",
+            org_id="100000000000000001",
             kb_slug="docs",
             path="docs/architecture.md",
             content=markdown,
@@ -150,7 +150,7 @@ Follow these steps:
         # Download + upload
         public_urls = await download_and_upload_images(
             image_urls=resolved,
-            org_id="org-ex",
+            org_id="100000000000000001",
             kb_slug="kb",
             image_store=_mock_image_store(),
             http_client=_mock_http_ok(),
@@ -226,7 +226,7 @@ class TestNotionE2E:
 
         public_urls = await download_and_upload_images(
             image_urls=image_urls,
-            org_id="org-notion",
+            org_id="100000000000000001",
             kb_slug="notion-kb",
             image_store=_mock_image_store(),
             http_client=_mock_http_ok(),
@@ -253,7 +253,7 @@ class TestPDFImageE2E:
 
         public_urls = await download_and_upload_images(
             image_urls=[],  # No markdown images in PDF
-            org_id="org-pdf",
+            org_id="100000000000000001",
             kb_slug="reports",
             image_store=_mock_image_store(),
             http_client=_mock_http_ok(),
@@ -276,7 +276,7 @@ class TestMixedE2E:
 
         public_urls = await download_and_upload_images(
             image_urls=[("logo", "https://example.com/logo.png")],
-            org_id="org-mix",
+            org_id="100000000000000001",
             kb_slug="mixed",
             image_store=_mock_image_store(),
             http_client=_mock_http_ok(),
@@ -315,7 +315,7 @@ class TestResilienceE2E:
 
         public_urls = await download_and_upload_images(
             image_urls=[("a", "https://ok.com/1.png"), ("b", "https://fail.com/2.png"), ("c", "https://ok.com/3.png")],
-            org_id="org-r",
+            org_id="100000000000000001",
             kb_slug="kb",
             image_store=store,
             http_client=http,
@@ -335,7 +335,7 @@ class TestResilienceE2E:
 
         public_urls = await download_and_upload_images(
             image_urls=[("missing", "https://example.com/gone.png")],
-            org_id="org-r",
+            org_id="100000000000000001",
             kb_slug="kb",
             image_store=store,
             http_client=http,
@@ -353,7 +353,7 @@ class TestIngestPayloadE2E:
     def test_payload_with_images_and_source_url(self):
         """image_urls and source_url both flow through the extra dict."""
         payload = _build_payload(
-            org_id="org-1",
+            org_id="100000000000000001",
             kb_slug="kb-1",
             path="guide.md",
             content="# Guide\n![img](img.png)",
@@ -372,7 +372,7 @@ class TestIngestPayloadE2E:
     def test_payload_without_images(self):
         """When no images, extra should not contain image_urls."""
         payload = _build_payload(
-            org_id="org-1",
+            org_id="100000000000000001",
             kb_slug="kb-1",
             path="notes.txt",
             content="Plain text",

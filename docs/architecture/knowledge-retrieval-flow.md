@@ -1,10 +1,12 @@
 # Knowledge Retrieval Flow: How Chat with Knowledge Works
 
 > Engineering reference for the full retrieval pipeline — from user preference to LLM context injection.
-> Verified against `klai-portal/`, `klai-retrieval-api/`, and `deploy/litellm/` — April 2026 (updated 2026-04-16).
+> Verified against `klai-portal/`, `klai-retrieval-api/`, and `deploy/litellm/` — April 2026 (updated 2026-05-06 post retrieval-coupling audit).
 >
 > For how knowledge is *stored* (ingestion, chunking, embedding), see
 > [knowledge-ingest-flow.md](knowledge-ingest-flow.md).
+>
+> For the **strategic roadmap** (how this stack will evolve to be production-grade) and the **RAGAS evaluation harness** that measures every change, see [retrieval-improvements-roadmap.md](retrieval-improvements-roadmap.md).
 
 ---
 
@@ -44,16 +46,31 @@ User types a message (LibreChat | Partner API consumer | chat widget on external
         │
         ├──▶ Fetch rules (strict guardrails) + templates (response scaffolds) for org/KB
         │
+        ├──▶ Multi-KB taxonomy lookup (parallel) — trees + binary coverage map
+        │       (Redis-cached at hook layer, single retrieval-api roundtrip,
+        │       SPEC-RAG-TAXONOMY-001 multi-KB)
+        │
+        ├──▶ Combined query rewrite + taxonomy classify (single klai-fast call)
+        │       (resolve pronouns + classify into the merged taxonomy nodes
+        │       across all in-scope KBs, anti-hallucination guard against
+        │       union of valid IDs, SPEC-RAG-QUERY-REWRITE-001 + SPEC-RAG-TAXONOMY-001)
+        │
         ├──▶ POST to retrieval-api → returns ranked knowledge chunks
         │         │
-        │         ├── Coreference resolution (resolve pronouns)
+        │         ├── Coreference resolution (retrieval-api side, internal pronoun pass)
         │         ├── Generate embeddings (dense + sparse, parallel)
         │         ├── Retrieval gate (is KB retrieval even needed?)
         │         ├── Hybrid vector search in Qdrant (3-leg RRF) + parallel graph search (FalkorDB)
+        │         │   (chunks carry document_summary + context_prefix from
+        │         │    SPEC-RAG-CONTEXTUAL-001 — Anthropic-pattern contextual retrieval)
+        │         ├── Apply taxonomy_node_ids filter (when classifier returned IDs
+        │         │   AND in-scope KB has coverage)
         │         ├── Source-aware selection (mentioned / diversify mode, SPEC-KB-021)
         │         ├── Reranking (cross-encoder scores each chunk against the query)
+        │         ├── Parent expansion — expand each top-K child to its parent chunk
+        │         │   text via parent_chunk_id (SPEC-RAG-PARENT-CHILD-001)
         │         ├── Quality score boost (feedback signals from Qdrant payload)
-        │         └── Return top-K chunks
+        │         └── Return top-K chunks (parent text where expansion succeeded)
         │
         ├──▶ Write retrieval log to Redis (fire-and-forget, for feedback correlation)
         │
@@ -66,6 +83,37 @@ User types a message (LibreChat | Partner API consumer | chat widget on external
 
 Everything between "user sends message" and "model starts generating" happens in well
 under a second on a warm cache. The retrieval step itself typically takes 300–500ms.
+
+---
+
+## Identity verification on every `/retrieve` call
+
+retrieval-api authenticates and **verifies the body identity** on every call before
+running any pipeline work. Two trust gates are layered:
+
+1. **Service auth** — either `Authorization: Bearer <jwt>` (Zitadel-issued service
+   JWT with the `klai:internal:retrieval:query` scope) OR `X-Internal-Secret` matching
+   the rotation-bounded shared secret. Every internal-secret caller MUST also send
+   `X-Caller-Service: <known-service>`.
+2. **Body-vs-claim verification** — the `(claimed_user_id, claimed_org_id)` tuple
+   from the request body is verified against portal-api's
+   `/internal/identity/verify`. Three branches:
+
+   | Claim shape | Verification |
+   |---|---|
+   | Real Zitadel user (`claimed_user_id` is a Zitadel sub) | Active membership lookup against `portal_users` |
+   | Bearer JWT forwarded | JWT signature + `sub == claimed_user_id` AND `resourceowner == claimed_org_id` |
+   | **Partner API** synthetic identity (`claimed_user_id="partner:<key_id>"`) | `partner_api_keys` lookup; key's owning `org_id` must map to `claimed_org_id`. **Restricted to `caller_service="portal-api"`.** Other callers presenting the prefix get `partner_key_not_found`. |
+
+The verified tuple is pinned on `request.state.verified_caller`. `emit_event` for
+`knowledge.queried` reads from this pin — never from the body — so a tampered body
+cannot poison `product_events` (SPEC-SEC-IDENTITY-ASSERT-001 REQ-6).
+
+The partner-key branch (F2 fix-forward, audit retrieval-coupling-2026-05-06)
+intentionally lives in portal-api's `identity_verifier`, not in retrieval-api itself.
+An earlier in-process bypass in retrieval-api was removed because it allowed an
+attacker holding `X-Internal-Secret` to pin any `(partner:<key>, victim_org)` tuple
+without portal verification — collapsing the layered defense for partner traffic.
 
 ---
 
@@ -194,7 +242,66 @@ against is no longer the current version.
 
 The retrieval API (`klai-retrieval-api`) is a standalone service that owns the complete
 search pipeline. The LiteLLM hook calls it with a query and gets back a ranked list of
-text chunks. Everything below happens inside that service.
+text chunks.
+
+Before the call to `/retrieve`, the hook itself does two things: it **rewrites the query
+and classifies it into the multi-KB taxonomy in a single LLM round-trip**. After the
+chunks come back, the retrieval API also runs **parent expansion** — replacing each
+matched child chunk with its larger parent for better LLM context. The original
+"coreference resolution" step inside retrieval-api is still there as an internal pass.
+
+---
+
+### Step 0: Hook-side rewrite + taxonomy classify (single klai-fast call)
+
+**Simple:** Two pieces of preparation happen in the LiteLLM hook *before* it calls
+the search engine. First, "What did he say about it?" gets rewritten into a fully
+self-contained question. Second, the question gets categorised into one of the customer's
+knowledge-base topic tags (when the customer has a curated taxonomy). Both happen in a
+single AI call to keep the latency overhead near zero.
+
+**Technical:** The hook fires three small lookups in parallel before retrieval:
+
+1. **Multi-KB taxonomy trees + coverage map.** A single GET to
+   `retrieval-api/internal/v1/taxonomy/trees?kb_slugs=a&kb_slugs=b&...` returns
+   `{kb_slug: [node, ...]}` for every in-scope KB. A second parallel GET to
+   `/internal/v1/taxonomy/coverage` returns `{kb_slug: 0.0|1.0}` — a binary signal
+   marking which KBs have a curated taxonomy. Both are Redis-cached at the hook layer
+   (TTL 300s, deterministic key sorted on `kb_slugs`) so high-traffic chats don't keep
+   re-fetching. Capped at 5 KBs in scope; above that, taxonomy is skipped fail-open.
+   See `SPEC-RAG-TAXONOMY-001`.
+
+2. **Combined rewrite + classify.** The hook makes a single `klai-fast` call (Mistral
+   Small) with both the conversation history (last 4 turns) AND the merged taxonomy
+   trees from KBs that meet the coverage threshold. The model returns:
+
+   ```json
+   { "rewritten_query": "<self-contained question>",
+     "taxonomy_node_ids": [12, 18] }
+   ```
+
+   Anti-hallucination guard: returned IDs are filtered against the *union* of valid IDs
+   across all provided KBs (taxonomy node IDs are globally unique on
+   `portal_taxonomy_nodes`, so cross-KB collisions are impossible). When no KB has
+   coverage, the call falls back to a plain rewrite-only prompt — the classifier path
+   simply isn't invoked. See `SPEC-RAG-QUERY-REWRITE-001` (REQ-5: zero added roundtrip)
+   and `SPEC-RAG-TAXONOMY-001`.
+
+3. **Filter decision.** The hook then decides whether to attach `taxonomy_node_ids` to
+   the `/retrieve` request body. The filter applies iff (a) at least one in-scope KB has
+   coverage above `KLAI_TAXONOMY_COVERAGE_THRESHOLD` (default 0.30, i.e. has at least one
+   taxonomy node), AND (b) the classifier returned at least one valid node ID. Otherwise
+   the filter is skipped fail-open and retrieval runs with the standard org/KB scope
+   filter only.
+
+The whole hook-side rewrite + classify path is fail-open: any LLM timeout, any malformed
+JSON, any retrieval-api error during the taxonomy lookup logs a warning and falls back to
+the raw user query without the taxonomy filter. The chat keeps working — just without the
+narrowing.
+
+Tenants that haven't curated their taxonomy yet (Voys-support, today): every query logs
+`taxonomy_classify ... skip_reason=all_kbs_low_coverage` and the filter is never applied.
+The rewrite path still runs for them.
 
 ---
 
@@ -273,6 +380,17 @@ downstream hooks can observe the decision.
 search it three ways at once: by semantic meaning, by the questions each chunk answers,
 and by exact keywords. The results are merged into a single ranked list.
 
+> Each chunk in Qdrant is *contextually enriched* per the Anthropic-pattern
+> retrieval (`SPEC-RAG-CONTEXTUAL-001`). Two payload fields ride along with the
+> chunk text and improve embedding quality at ingest time:
+> - `document_summary` — one short summary per artifact, generated once at
+>   ingest and shared across every child chunk.
+> - `context_prefix` — a per-chunk one-liner placing the chunk in its document
+>   context. Embedded together with the chunk text.
+>
+> The reranker (Step 5) sees `context_prefix + text` — the same shape stored in
+> Qdrant — so reranker scoring stays calibrated to the embedded representation.
+
 **Technical:** Against the `klai_knowledge` collection, a three-leg prefetch query is
 executed:
 
@@ -311,8 +429,37 @@ KB slug filter (when active):
 FalkorDB/Graphiti runs a graph traversal in parallel with the Qdrant search, resolving
 named entities in the query and traversing relationships to find conceptually connected
 chunks. Results are merged with Qdrant results using the same RRF formula before
-reranking. Timeout: 5 seconds. `GRAPHITI_ENABLED=true` on `retrieval-api` in production;
-disabled for `scope=notebook` (AC-6 in `retrieve.py`).
+reranking. Timeout: 5 seconds. `GRAPHITI_ENABLED=true` on `retrieval-api` in production.
+
+---
+
+### Step 4b: Link expansion + authority boost (SPEC-CRAWLER-003)
+
+**Simple:** When a top-ranked chunk links to other documents, those linked documents
+are pulled in as extra candidates. Documents that many other documents link to get a
+small ranking boost — the same logic that made PageRank work for the early web.
+
+**Technical:** Two separate mechanisms run after the initial Qdrant + graph search,
+before reranking:
+
+1. **1-hop link expansion** — for the top `link_expand_seed_k=10` chunks, the
+   `links_to` payload is mined for outbound URLs (capped at `link_expand_max_urls=30`).
+   `fetch_chunks_by_urls()` then scrolls Qdrant for chunks whose `source_url` matches
+   one of those URLs (`link_expand_candidates=20` cap), tagging each newly-added chunk
+   with an internal `_link_expanded=True` flag. Score starts at 0.0 — they earn their
+   way into the top-K through the authority boost and reranker.
+
+2. **Authority boost** — every chunk (seed or expanded) gets `score +=
+   link_authority_boost * log(1 + incoming_link_count)`. Default
+   `link_authority_boost=0.05`; a chunk with 100 incoming links gets ~+0.23 score
+   uplift.
+
+**Instrumentation (F3 phase 1, audit retrieval-coupling-2026-05-06):** the
+`retrieval_decision_record` log entry carries a `link_expand` block with `seed_k`,
+`candidate_urls`, `expanded_added`, `expanded_in_top_k`, `expanded_top_k_chunk_ids`,
+`seed_in_top_k`, `served_top_k`. This lets us measure how often expanded chunks
+actually survive into the served top-K vs. dying at the reranker cut-off — Phase 2
+(RRF migration vs. recalibrate boost vs. disable) waits on ~7 days of this data.
 
 ---
 
@@ -447,18 +594,95 @@ The final `top_k` chunks (default: 5) are returned to the LiteLLM hook.
 
 ---
 
+### Step 5d: Parent expansion (SPEC-RAG-PARENT-CHILD-001)
+
+**Simple:** When ingest chunks a document it actually creates two layers — small *child*
+chunks (good for matching, bad for context because they cut sentences) and large *parent*
+chunks (good for context, too noisy for matching). The retrieval engine matches on
+children to stay precise, then swaps each match for its parent text before sending the
+result to the LLM. The model sees broader context without the matching step getting
+diluted.
+
+**Technical:** Each Qdrant child chunk carries a `parent_chunk_id` payload field
+referencing a row in PostgreSQL `knowledge.parent_chunks`. After Step 5c, retrieval-api
+runs a single batched lookup:
+
+```sql
+SELECT id, text FROM knowledge.parent_chunks WHERE id = ANY($1::bigint[])
+```
+
+For each top-K child whose `parent_chunk_id` resolves, the chunk's `text` field is
+replaced with the parent's `text` and `is_parent_text` is set to `true` on the
+`ChunkResult`. Children without a `parent_chunk_id` (legacy artifacts ingested before
+SPEC-RAG-PARENT-CHILD-001 landed, or artifacts where rebuild_kb hasn't yet propagated the
+linkage) fall back to their own chunk text — fail-open.
+
+The reranker (Step 5) still scores against the *child* text — that's where matching
+precision lives. Parent expansion only changes what the LLM ultimately reads.
+
+Backfill for legacy artifacts: `rebuild_kb_inline(org_id, kb_slug)` reconstructs document
+text from existing Qdrant chunks (lossy but workable), re-chunks with parent-child
+chunking, and re-upserts to Qdrant with the new `parent_chunk_id` linkage. See the
+operator runbook in `docs/runbooks/rag-quality.md` and `klai-knowledge-ingest/
+knowledge_ingest/rebuild_tasks.py`.
+
+---
+
 ### Step 6: Evidence tier scoring (shadow mode)
 
-**Simple:** This is a work-in-progress layer that will eventually sort results by how
-*confidently* each chunk makes its claims — a direct assertion beats a vague statement.
-For now it runs silently and logs the scores without affecting what gets shown.
+**Simple:** A work-in-progress layer that re-weights results by source quality, recency,
+and graph centrality before optionally reordering for the LLM. It runs silently today —
+the weighted scores are computed and logged, but the flat reranker order is what gets
+served. A nightly RAGAS A/B will decide whether to activate it, recalibrate, or
+decommission.
 
-**Technical:** Each chunk is classified into an evidence tier: `assertion` > `fact` >
-`general`. Scores are attached to `evidence_tier_metadata` on each chunk. The environment
-variable `EVIDENCE_SHADOW_MODE` (default: `"true"`) controls whether these scores
-re-order the results. When shadow mode is disabled, results are served in a U-shape
-pattern (highest-confidence + lowest-confidence chunks first, mid-confidence last) to
-give the model the strongest anchors at the boundaries of its context window.
+**Technical:** Implemented in
+[`evidence_tier.apply()`](../../klai-retrieval-api/retrieval_api/services/evidence_tier.py).
+Each chunk is multiplied by four weights along independent dimensions, gated by
+per-dimension feature flags:
+
+```
+final_score = reranker_score
+            * content_type_weight       # EVIDENCE_CONTENT_TYPE_ENABLED
+            * assertion_mode_weight     # EVIDENCE_ASSERTION_MODE_ENABLED (flat 1.00 in v1)
+            * temporal_decay            # EVIDENCE_TEMPORAL_DECAY_ENABLED
+            * pagerank_weight           # EVIDENCE_PAGERANK_ENABLED
+```
+
+| Weight | Source | Default values |
+|---|---|---|
+| `content_type_weight` | Per-chunk `content_type` payload (set at ingest) | `kb_article=1.00`, `pdf_document=0.90`, `meeting_transcript=0.80`, `1on1_transcript=0.80`, `graph_edge=0.70`, `web_crawl=0.65`, `unknown=0.55` |
+| `assertion_mode_weight` | Per-chunk `assertion_mode` payload | All flat at 1.00 in v1 — plumbing only. SPEC-EVIDENCE-002 governs activation. |
+| `temporal_decay` | Chunk `ingested_at` age | `<30d=1.00`, `30-180d=0.95`, `180-365d=0.90`, `>365d=0.85` |
+| `pagerank_weight` | Per-chunk `entity_pagerank_max` from FalkorDB | `1 + 0.20 * log1p(pagerank * 100)` — capped ~+25% for hub entities |
+
+After scoring, chunks are reordered into a **U-shape** (`_order_for_llm`): strongest
+chunk at position 0, second-strongest at the last position, mid-strength chunks
+clustered in the middle. This mitigates "Lost in the Middle" (Liu et al. 2023,
+[arXiv:2307.03172](https://arxiv.org/abs/2307.03172)) — long-context LLMs historically
+showed >30% performance degradation when the strongest evidence sat in the middle of
+the prompt. Whether this still holds for modern frontier LLMs is part of what the
+RAGAS A/B will measure.
+
+**Shadow-mode contract:** `EVIDENCE_SHADOW_MODE=true` (default) computes the
+weighted/U-shape order, logs both orders side-by-side as `shadow_eval`, and serves the
+**flat reranker order**. The CPU cost (`copy.deepcopy(reranked) + apply()`) is paid on
+every request.
+
+**Activation path (SPEC-EVIDENCE-001-FOLLOWUP-001):** the shadow mode has been the
+default since 2026-03-30. RAGAS infrastructure landed 2026-05-05 (#369). The follow-up
+SPEC sets a 30-day deadline to either:
+
+1. Activate (5%/50%/100% staged rollout with auto-revert on quality regression),
+2. Activate `evidence_tier_temporal_only` (temporal decay isolated; the dimension with
+   the strongest theoretical justification),
+3. Decommission entirely (remove the `evidence_tier.apply()` call + payload fields), or
+4. Retain-flags-off (`EVIDENCE_SHADOW_MODE=disabled` becomes the new default — stops
+   the shadow CPU cost while preserving code for future revival).
+
+The RAGAS A/B uses three `RAG_EVAL_VARIANT` values (`baseline`, `evidence_tier_full`,
+`evidence_tier_temporal_only`) over 7 consecutive days. Decision criteria: ≥+0.02 on
+RAGAS Context Precision AND Faithfulness with Wilcoxon `p<0.05` against baseline.
 
 ---
 
@@ -641,7 +865,15 @@ Trailing punctuation and whitespace are ignored. "Ok!" and "Oké." are both triv
 | `RETRIEVAL_GATE_THRESHOLD` | `0.1` | Cosine margin threshold for gate bypass |
 | `retrieval_candidates` | `60` | Raw candidates fetched from Qdrant |
 | `reranker_candidates` | `20` | Top-N sent to cross-encoder |
-| `EVIDENCE_SHADOW_MODE` | `true` | Log evidence tiers without reordering results |
+| `EVIDENCE_SHADOW_MODE` | `true` | Compute weighted score + U-shape order, log as `shadow_eval`, serve flat reranker order. Activation gated by SPEC-EVIDENCE-001-FOLLOWUP-001 (RAGAS A/B + 30-day deadline). |
+| `EVIDENCE_CONTENT_TYPE_ENABLED` | `true` | Per-dimension flag for content_type weights. |
+| `EVIDENCE_TEMPORAL_DECAY_ENABLED` | `true` | Per-dimension flag for temporal decay. |
+| `EVIDENCE_PAGERANK_ENABLED` | `true` | Per-dimension flag for entity_pagerank_max boost. |
+| `link_expand_enabled` | `true` | 1-hop link expansion + authority boost (SPEC-CRAWLER-003). |
+| `link_expand_seed_k` | `10` | Top-N raw chunks whose `links_to` payload is mined. |
+| `link_expand_max_urls` | `30` | Cap on URLs collected from seed chunks per request. |
+| `link_expand_candidates` | `20` | Cap on Qdrant scroll results when fetching link-expanded chunks. |
+| `link_authority_boost` | `0.05` | Coefficient on `log(1 + incoming_link_count)` authority boost. |
 | `graphiti_enabled` | `true` (both `retrieval-api` and `knowledge-ingest`) | Include FalkorDB graph search (parallel with Qdrant 3-leg RRF). |
 | `graph_search_timeout` | `5.0` | FalkorDB search timeout (seconds) |
 | `coreference_timeout` | `3.0` | Coreference LLM call timeout (seconds) |
@@ -650,6 +882,62 @@ Trailing punctuation and whitespace are ignored. "Ok!" and "Oké." are both triv
 | `synthesis_model` | `klai-primary` | Model tier for answer generation |
 | `WIDGET_JWT_SECRET` | (required) | HS256 signing secret for widget session tokens (portal-api env). Rotating it invalidates all live widget sessions. |
 | `WIDGET_SESSION_TTL_SECONDS` | `3600` | Widget JWT lifetime (1 hour). Widget auto-refreshes on 401. |
+
+---
+
+## Quality measurement (SPEC-RAG-EVAL-001, shipped 2026-05-05)
+
+The retrieval pipeline above is exercised nightly by a RAGAS-based evaluation harness that writes per-query metrics to `knowledge.rag_eval_results`. Every retrieval-improvement SPEC (CONTEXTUAL-001 / QUERY-REWRITE-001 / PARENT-CHILD-001 / TAXONOMY-001) is measured by setting `RAG_EVAL_VARIANT=<experiment>` and comparing the result rows against the `baseline` rows.
+
+```
+                    ┌─────────────────────────────┐
+                    │  evaluate_retrieval_quality │
+                    │  _nightly (Procrastinate)   │
+                    └─────────────┬───────────────┘
+                                  │
+                ┌─────────────────┼─────────────────┐
+                ▼                 ▼                 ▼
+       Load YAML suite     Call /retrieve      klai-fast judge
+       (chat, knowledge_   (X-Internal-       (4 RAGAS metrics:
+       org)               Secret auth)        precision, recall,
+                                              faithfulness,
+                                              answer_relevance)
+                                  │
+                                  ▼
+                  knowledge.rag_eval_results (one row/query)
+                                  │
+                                  ▼
+                  Grafana → "RAG quality (RAGAS metrics)"
+                  Alert  → rag_eval_faithfulness_low (HIGH)
+```
+
+| Component | File / Path |
+|---|---|
+| Procrastinate task | `klai-knowledge-ingest/knowledge_ingest/eval/ragas_runner.py` (`evaluate_retrieval_quality_nightly`) |
+| Suite YAMLs | `klai-knowledge-ingest/knowledge_ingest/eval/suites/{chat,knowledge_org}.yaml` (60 hand-curated Voys queries) |
+| Storage | `knowledge.rag_eval_results` (migration `deploy/postgres/migrations/014_rag_eval_results.sql`) |
+| Ad-hoc CLI | `python -m knowledge_ingest.eval --suite chat --variant <name>` |
+| Grafana dashboard | `deploy/grafana/provisioning/dashboards/rag-quality.json` |
+| Alert rule | `deploy/grafana/provisioning/alerting/rag-eval-rules.yaml` |
+| Triage runbook | [docs/runbooks/rag-quality.md](../runbooks/rag-quality.md) |
+
+**Voys baseline → post-stack measurements (2026-05-05, chat suite, n=30):**
+
+| Metric | `baseline-v4` (pre-stack) | `post_pr_abcdefg_v1` (full Tier 1+2 live) | Δ |
+|---|---|---|---|
+| `context_precision` | 0.231 | **0.372** | +0.141 (+61%) |
+| `context_recall` | 0.253 | **0.642** | +0.389 (+154%) |
+| `faithfulness` | NaN (judge truncation) | **0.812** | first measurable |
+| `answer_relevance` | 0.706 | 0.711 | +0.005 |
+
+The eval-harness calls retrieval-api directly and bypasses the LiteLLM hook, so query
+rewriting and taxonomy classifying (which live in the hook) are NOT measured by the
+numbers above. Their effect shows up only on real chat traffic. The +61% precision /
++154% recall / first-measurable faithfulness come from contextual-retrieval chunks +
+parent-child expansion + the rebuild_kb backfill alone. Detailed roadmap closing
+snapshot: [docs/architecture/retrieval-improvements-roadmap.md](retrieval-improvements-roadmap.md).
+
+**Multi-tenant by design:** every query in a suite YAML carries its own `org_zitadel_id`. v1 ships with Voys-only suites. Adding additional tenants post-launch is a YAML drop-in — no service split, no per-tenant deployment.
 
 ---
 
@@ -666,7 +954,13 @@ Trailing punctuation and whitespace are ignored. "Ok!" and "Oké." are both triv
 | Coreference | `klai-retrieval-api/retrieval_api/services/coreference.py` | Pronoun resolution via `klai-fast` |
 | Embeddings | `klai-retrieval-api/retrieval_api/services/tei.py` | Dense + sparse embedding via BGE-M3 |
 | Qdrant search | `klai-retrieval-api/retrieval_api/services/search.py` | Hybrid three-leg RRF search |
-| Source-aware select | `klai-retrieval-api/retrieval_api/services/source_aware_select.py` | `mentioned` / `diversify` mode; shares `STOP_WORDS` with `diversity.py` |
+| Source-aware select | `klai-retrieval-api/retrieval_api/services/diversity.py` | `source_aware_select()` — `mentioned` / `diversify` mode + `STOP_WORDS`. Called from `retrieve.py` step 5c. |
+| Evidence tier | `klai-retrieval-api/retrieval_api/services/evidence_tier.py` | `apply()` + `_order_for_llm()` U-shape; content_type / temporal / pagerank weights. Shadow-mode default. |
+| Parent text swap | `klai-retrieval-api/retrieval_api/services/parent_lookup.py` | SPEC-RAG-PARENT-CHILD-001 — batch-fetches `knowledge.parent_chunks` rows for chunks with `parent_chunk_id`. |
+| Quality boost | `klai-retrieval-api/retrieval_api/quality_boost.py` | SPEC-KB-015 — `feedback_count >= 3` cold-start gate, ±10% boost. |
+| Identity verify (portal) | `klai-portal/backend/app/services/identity_verifier.py` | `verify_identity_claim()` — JWT / membership / `partner:<key_id>` branches. |
+| Identity asserter (lib) | `klai-libs/identity-assert/klai_identity_assert/` | Consumer-side cache + retry around `/internal/identity/verify`. |
+| F2 audit ref | `.moai/audits/retrieval-coupling-2026-05-06/findings/F2-...md` | Why partner-key verification lives portal-side (not in retrieval-api). |
 | Router (signal) | `klai-retrieval-api/retrieval_api/services/router.py` | Keyword + semantic-centroid signal for source-aware select (SPEC-KB-021) |
 | Graph search | `klai-retrieval-api/retrieval_api/services/graph_search.py` | FalkorDB/Graphiti parallel traversal, RRF-merged with Qdrant results |
 | Reranker | `klai-retrieval-api/retrieval_api/services/reranker.py` | Cross-encoder reranking via BGE-reranker-v2-m3 on gpu-01 (Infinity) |
@@ -678,3 +972,9 @@ Trailing punctuation and whitespace are ignored. "Ok!" and "Oké." are both triv
 | Templates | `klai-portal/backend/app/api/app_templates.py` | CRUD (SPEC-CHAT-TEMPLATES-001); resolved via `/internal/templates/effective` in the LiteLLM hook. |
 | Rules (planned) | klai-pii microservice + `app_rules.py` | SPEC-CHAT-GUARDRAILS-001 — not yet live. |
 | Config | `klai-retrieval-api/retrieval_api/config.py` | All configurable values and defaults |
+| RAGAS eval harness | `klai-knowledge-ingest/knowledge_ingest/eval/ragas_runner.py` | `run_evaluation()` + `evaluate_retrieval_quality_nightly` Procrastinate task |
+| RAGAS suite loader | `klai-knowledge-ingest/knowledge_ingest/eval/suite_loader.py` | YAML schema validator + `Suite` / `SuiteQuery` dataclasses |
+| RAGAS retrieval client | `klai-knowledge-ingest/knowledge_ingest/eval/retrieval_client.py` | Calls `/retrieve` with `X-Internal-Secret`; fail-open on errors (REQ-3) |
+| RAGAS judge client | `klai-knowledge-ingest/knowledge_ingest/eval/judge_client.py` | klai-fast for answer generation + 4 RAGAS metrics |
+| RAGAS storage | `klai-knowledge-ingest/knowledge_ingest/eval/store.py` | asyncpg helper `insert_eval_row()` |
+| RAGAS suite YAMLs | `klai-knowledge-ingest/knowledge_ingest/eval/suites/{chat,knowledge_org}.yaml` | 30 queries each, mix-tagged for SPEC-target stratification |

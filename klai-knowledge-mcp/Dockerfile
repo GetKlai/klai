@@ -17,6 +17,9 @@ COPY --chown=app:app klai-libs/identity-assert klai-libs/identity-assert
 # SPEC-SEC-INTERNAL-001 B2: klai-log-utils path-dep (sanitize_response_body +
 # verify_shared_secret). Same pattern as identity-assert.
 COPY --chown=app:app klai-libs/log-utils klai-libs/log-utils
+# SPEC-MCP-RETRIEVAL-001 Phase 1: klai-retrieval-telemetry path-dep
+# (classify_gap, fire_retrieval_log, fire_gap_event). Used by search_knowledge.
+COPY --chown=app:app klai-libs/retrieval-telemetry klai-libs/retrieval-telemetry
 COPY --chown=app:app klai-knowledge-mcp/pyproject.toml klai-knowledge-mcp/pyproject.toml
 COPY --chown=app:app klai-knowledge-mcp/uv.lock klai-knowledge-mcp/uv.lock
 
@@ -29,6 +32,7 @@ ENV UV_COMPILE_BYTECODE=1 \
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY --chown=app:app klai-knowledge-mcp/logging_setup.py logging_setup.py
+COPY --chown=app:app klai-knowledge-mcp/dispatcher.py dispatcher.py
 COPY --chown=app:app klai-knowledge-mcp/main.py main.py
 
 ENV PATH="/repo/klai-knowledge-mcp/.venv/bin:${PATH}" \

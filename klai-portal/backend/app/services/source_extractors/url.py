@@ -31,13 +31,29 @@ _TITLE_MAX_CHARS = 120
 # First ATX-style H1 in the markdown — greedy match on the heading line only.
 _H1_PATTERN = re.compile(r"^\s*#\s+(.+?)\s*$", re.MULTILINE)
 
+# Keep these in sync with knowledge_ingest.crawl4ai_client's no-selector
+# web-crawl pipeline. Single-page URL sources and website crawls should strip
+# the same page chrome before markdown extraction.
+JS_REMOVE_CHROME = """
+[
+  'nav', 'header', 'footer', 'aside',
+  '[role="navigation"]', '[role="banner"]', '[role="contentinfo"]', '[role="complementary"]',
+  '[role="search"]',
+].forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));
+"""
+
+JS_EXPAND_TOGGLES = """
+document.querySelectorAll('details:not([open])').forEach(d => d.setAttribute('open', ''));
+document.querySelectorAll('.notion-toggle__summary, [data-block-type="toggle"] > *:first-child').forEach(s => s.click());
+await new Promise(r => setTimeout(r, 300));
+"""
+
 
 def _crawl_config() -> dict[str, Any]:
     """Default crawler config for untrusted user-supplied URLs.
 
-    Matches the "full pipeline" from knowledge-ingest's build_crawl_config
-    (no selector) but without login-indicator selectors which are a
-    connector-only feature.
+    Matches the no-selector "full pipeline" from knowledge-ingest's
+    build_crawl_config. Login-indicator selectors remain connector-only.
     """
     return {
         "type": "CrawlerRunConfig",
@@ -45,9 +61,11 @@ def _crawl_config() -> dict[str, Any]:
             "cache_mode": "bypass",
             "word_count_threshold": 10,
             "wait_for": ("js:() => document.body.innerText.trim().split(/\\s+/).length > 50"),
+            "js_code_before_wait": JS_REMOVE_CHROME,
+            "js_code": JS_EXPAND_TOGGLES,
             "remove_consent_popups": True,
             "remove_overlay_elements": True,
-            "page_timeout": 25_000,  # crawl4ai internal page timeout, well under our 30s
+            "page_timeout": 30_000,
             "excluded_tags": ["nav", "footer", "header", "aside", "script", "style"],
             "markdown_generator": {
                 "type": "DefaultMarkdownGenerator",

@@ -1,70 +1,26 @@
-"""System group definitions and creation helper."""
+"""System group registry.
 
-from sqlalchemy import select
+SPEC-PORTAL-RBAC-001 v0.2.0 + SPEC-PORTAL-EXTENSIONS-UNIFY-001: empty
+registry. Role-bind and add-on groups are removed -- profile is the single
+writer of `portal_users.role`, and products are derived from
+`portal_orgs.platform_unlocked_features` + profile rank. The
+`create_system_groups` helper remains as a no-op so the provisioning state
+machine keeps its API surface stable.
+"""
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import set_tenant
-from app.models.groups import PortalGroup, PortalGroupProduct
+# Empty by design -- see SPEC-PORTAL-RBAC-001 v0.2.0.
+SYSTEM_GROUPS: list[dict] = []
 
-# Five system groups every org gets, regardless of plan.
-# system_key identifies purpose; products are granted by the group.
-SYSTEM_GROUPS = [
-    {"name": "Admin", "system_key": "admin", "products": []},
-    {"name": "Group Management", "system_key": "group_management", "products": []},
-    {"name": "Chat", "system_key": "chat", "products": ["chat"]},
-    {"name": "+ Scribe", "system_key": "scribe", "products": ["chat", "scribe"]},
-    {"name": "+ Knowledge + Docs", "system_key": "knowledge", "products": ["chat", "scribe", "knowledge"]},
-]
+# Empty mapping -- preserved name so callers that still import it don't break.
+SYSTEM_GROUP_ROLE_MAP: dict[str, str] = {}
 
 
 async def create_system_groups(org_id: int, db: AsyncSession) -> None:
-    """Create all 5 system groups for an org. Idempotent — skips existing ones.
+    """No-op: system groups are removed by SPEC-PORTAL-RBAC-001.
 
-    Requires a pinned DB connection on the session (caller must have awaited
-    pin_session() or session.connection()); otherwise set_tenant() below may
-    land on a different pooled connection than the subsequent INSERTs and RLS
-    will block them.
+    Kept as a stable contract for `provisioning/state_machine.py` so the
+    provisioning flow continues to call into this module without branching.
     """
-    # Provisioning runs with the admin's org_id in the session; override it so
-    # RLS WITH CHECK (derived from USING) accepts inserts for the new tenant.
-    await set_tenant(db, org_id)
-    # Find which system_keys already exist for this org
-    existing = await db.execute(
-        select(PortalGroup.system_key).where(
-            PortalGroup.org_id == org_id,
-            PortalGroup.is_system.is_(True),
-        )
-    )
-    existing_keys = {row[0] for row in existing.fetchall()}
-
-    groups_to_create: list[tuple[PortalGroup, list[str]]] = []
-    for sg in SYSTEM_GROUPS:
-        if sg["system_key"] in existing_keys:
-            continue
-        group = PortalGroup(
-            org_id=org_id,
-            name=sg["name"],
-            is_system=True,
-            system_key=sg["system_key"],
-            created_by="system",
-        )
-        db.add(group)
-        groups_to_create.append((group, sg["products"]))
-
-    if not groups_to_create:
-        return
-
-    await db.flush()  # get IDs
-
-    for group, products in groups_to_create:
-        for product in products:
-            db.add(
-                PortalGroupProduct(
-                    group_id=group.id,
-                    org_id=org_id,
-                    product=product,
-                    enabled_by="system",
-                )
-            )
-
-    await db.commit()
+    _ = (org_id, db)  # parameters retained for contract stability

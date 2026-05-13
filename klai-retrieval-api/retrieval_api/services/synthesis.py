@@ -1,4 +1,16 @@
-"""Synthesis service: stream an LLM answer grounded in retrieved chunks."""
+"""Synthesis service: stream an LLM answer grounded in retrieved chunks.
+
+System-prompt language: SPEC-RAG-MULTILINGUAL-CHAT-001 moved the
+grounded chat prompt to the shared library ``klai-chat-prompts`` so
+both this service and ``klai-portal/backend/app/services/partner_chat``
+load the same string. Do NOT inline the prompt here — a CI lint
+asserts no service contains a hardcoded copy.
+
+Observability: REQ-07 wires a passive `lingua`-based language detector
+on both the user query and the model's response so VictoriaLogs gets
+``language_correctness`` per ``chat_synthesis_complete`` event. The
+detector is observability-only; it never alters synthesis behaviour.
+"""
 
 from __future__ import annotations
 
@@ -8,29 +20,15 @@ import re
 from collections.abc import AsyncIterator
 
 import httpx
+from klai_chat_prompts import GROUNDED_CHAT_SYSTEM_PROMPT
 
 from retrieval_api.config import settings
+from retrieval_api.util.language_detect import (
+    detect_language,
+    language_correctness,
+)
 
 logger = logging.getLogger(__name__)
-
-_SYSTEM_PROMPT = (
-    "[CRITICAL] Respond in the language of the user's question. "
-    "Als de gebruiker Nederlands schrijft, antwoord je in het Nederlands. "
-    "If the user writes English, respond in English. Never switch mid-conversation.\n\n"
-    "You are Klai AI, a knowledge assistant. You answer questions based on the knowledge base chunks provided.\n\n"
-    "## How to answer\n"
-    "Start with the answer. No warm-up, no rephrasing the question, no 'great question!'\n"
-    "Simple question: 1-3 sentences. Complex question: the core answer first, then the detail.\n"
-    "Be direct. Be honest. If the sources say something unexpected, say it.\n\n"
-    "## How to cite\n"
-    "Every factual claim gets a [n] citation where n is the chunk number. "
-    "If a chunk includes a URL or help page link, include it: [n] (https://...). "
-    "If sources contradict each other, say so — don't pick a side silently.\n\n"
-    "## When the answer isn't there\n"
-    "Say it plainly: 'That's not in the knowledge base.' "
-    "Don't guess. Don't fill the gap with general knowledge. "
-    "If you're partially sure, say that too: 'The knowledge base touches on this, but doesn't fully answer it.'"
-)
 
 # Approximate char budget for context (6000 tokens * ~4 chars/token)
 _MAX_CONTEXT_CHARS = 24_000
@@ -76,6 +74,31 @@ def _build_citations(indices: list[int], chunks: list[dict]) -> list[dict]:
     return citations
 
 
+def _emit_language_correctness_log(query: str, response_text: str) -> None:
+    """Emit chat_synthesis_complete with passive language metrics.
+
+    SPEC-RAG-MULTILINGUAL-CHAT-001 REQ-07. Failure-safe: any exception
+    inside detection MUST NOT block synthesis from returning normally.
+    """
+    try:
+        query_lang = detect_language(query)
+        response_lang = detect_language(response_text)
+        correct = language_correctness(query_lang, response_lang)
+        logger.info(
+            "chat_synthesis_complete",
+            extra={
+                "event": "chat_synthesis_complete",
+                "query_language_detected": query_lang,
+                "response_language_detected": response_lang,
+                "language_correctness": correct,
+                "response_length_chars": len(response_text or ""),
+                "service": "retrieval-api",
+            },
+        )
+    except Exception:
+        logger.warning("chat_synthesis_language_log_failed", exc_info=True)
+
+
 async def synthesize(
     query_resolved: str,
     chunks: list[dict],
@@ -90,13 +113,10 @@ async def synthesize(
     context = _build_context(chunks)
 
     messages = [
-        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "system", "content": GROUNDED_CHAT_SYSTEM_PROMPT},
         {
             "role": "user",
-            "content": (
-                f"Knowledge base chunks:\n{context}\n\n"
-                f"Question: {query_resolved}"
-            ),
+            "content": (f"Knowledge base chunks:\n{context}\n\nQuestion: {query_resolved}"),
         },
     ]
 
@@ -140,6 +160,9 @@ async def synthesize(
                         yield content
                 except (json.JSONDecodeError, KeyError, IndexError):
                     continue
+
+    # Passive language-correctness telemetry (SPEC-RAG-MULTILINGUAL-CHAT-001 REQ-07).
+    _emit_language_correctness_log(query_resolved, full_text)
 
     # Final event with citations
     indices = _extract_citation_indices(full_text)

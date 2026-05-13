@@ -7,9 +7,6 @@ token. Two internal services still expect Bearer JWT:
 - ``scribe-api``   at ``scribe-api:8020``   (Scribe module)
 - ``docs-app``     at ``docs-app:3010``     (klai-docs)
 
-research-api was removed in SPEC-PORTAL-UNIFY-KB-001 (Phase C). Focus is
-decommissioned; Knowledge (knowledge-ingest) is the sole KB surface.
-
 This router exposes each as ``/api/<slug>/*`` under portal-api. The handler
 reads the BFF ``SessionContext`` from ``request.state`` and forwards the
 request to the upstream with ``Authorization: Bearer <session.access_token>``
@@ -19,6 +16,7 @@ injected. Streaming is preserved for SSE chat endpoints.
 from __future__ import annotations
 
 import re
+import time
 from collections.abc import AsyncIterator
 from typing import Final
 from urllib.parse import urlencode
@@ -26,10 +24,14 @@ from urllib.parse import urlencode
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.session_deps import get_session
+from app.core.config import settings
+from app.core.database import get_db
 from app.core.session import SessionContext
+from app.services.identity_verifier import evidence_path, verify_bff_session_identity
 
 logger = structlog.get_logger()
 
@@ -87,8 +89,12 @@ _SECRET_HEADER_BLOCKLIST: Final[frozenset[str]] = frozenset(
 # future secret-bearing header name. Conservatively scoped to names that
 # clearly signal "internal trust boundary" to avoid stripping a
 # legitimate business-domain header that happens to contain ``token``.
+#
+# SPEC-SEC-IDENTITY-ASSERT-002 REQ-2.3: also catches the new
+# ``X-Klai-Verified-*`` family so a client cannot forge an identity
+# assertion. Portal-api re-injects its own values after the strip.
 _SECRET_HEADER_REGEX: Final[re.Pattern[str]] = re.compile(
-    r"(?i)^(x-)?(klai-internal|internal-auth|internal-token)",
+    r"(?i)^(x-)?(klai-internal|internal-auth|internal-token|klai-verified-)",
 )
 
 # Response headers we do NOT pass through to the client. Cookies from upstream
@@ -139,8 +145,11 @@ def _build_upstream_headers(
     session: SessionContext,
     *,
     service: str,
+    verified_user_id: str,
+    verified_org_id: str,
+    verified_org_slug: str,
 ) -> dict[str, str]:
-    """Copy incoming headers minus hop-by-hop + cookies, inject Bearer.
+    """Copy incoming headers minus hop-by-hop + cookies, inject identity.
 
     SPEC-SEC-INTERNAL-001 REQ-3:
     - Hop-by-hop + cookie + authorization (RFC 7230 + portal-injected) dropped.
@@ -150,6 +159,12 @@ def _build_upstream_headers(
       never logged.
     - The strip happens BEFORE the Authorization injection (REQ-3.4), so a
       client cannot influence the Bearer token that portal-api forwards.
+
+    SPEC-SEC-IDENTITY-ASSERT-002 REQ-2.3:
+    - ``X-Klai-Verified-*`` headers from the client are stripped (the
+      regex above catches them) and portal-api re-injects them with values
+      from the BFF-verified decision. Downstream services trust these only
+      when accompanied by ``X-Internal-Secret``.
     """
     headers: dict[str, str] = {}
     for k, v in request.headers.items():
@@ -165,6 +180,13 @@ def _build_upstream_headers(
             continue
         headers[k] = v
     headers["Authorization"] = f"Bearer {session.access_token}"
+    # SPEC-SEC-IDENTITY-ASSERT-002 REQ-2.3: portal-verified identity
+    # assertion. Downstream services validate these against the
+    # accompanying X-Internal-Secret before trusting the values.
+    headers["X-Internal-Secret"] = settings.internal_secret
+    headers["X-Klai-Verified-User-Id"] = verified_user_id
+    headers["X-Klai-Verified-Org-Id"] = verified_org_id
+    headers["X-Klai-Verified-Org-Slug"] = verified_org_slug
     return headers
 
 
@@ -187,8 +209,16 @@ async def _proxy(
     rest: str,
     request: Request,
     session: SessionContext,
-) -> StreamingResponse:
-    """Forward the inbound request to the configured upstream service."""
+    db: AsyncSession,
+) -> StreamingResponse | JSONResponse:
+    """Forward the inbound request to the configured upstream service.
+
+    SPEC-SEC-IDENTITY-ASSERT-002 REQ-2: verify the BFF session's identity
+    (user is still an active member of session.org_id) BEFORE forwarding.
+    On deny return 403 immediately; the request body is never streamed
+    upstream. On allow inject ``X-Klai-Verified-*`` headers so downstream
+    services can act on portal-verified identity without re-verifying.
+    """
     base_url = _UPSTREAMS.get(service)
     if base_url is None:
         # This is a programming error — the route-decorator only permits known
@@ -198,15 +228,75 @@ async def _proxy(
             detail="Unknown upstream service",
         )
 
+    path = f"/{rest}" if rest else "/"
+
+    # SPEC-SEC-IDENTITY-ASSERT-002 REQ-2.1 + REQ-2.6: verify BEFORE the
+    # request body is read or streamed upstream. A denied call must not
+    # consume the upstream's request budget.
+    if session.org_id is None:
+        # The BFF session was created without a resolved org. Treat as a
+        # session in an inconsistent state — never reachable on the happy
+        # path because login flows assign org_id before issuing the cookie.
+        logger.warning(
+            "bff_proxy_session_without_org",
+            service=service,
+            path=path,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content={
+                "detail": "identity_verification_failed",
+                "reason": "no_membership",
+            },
+        )
+
+    verify_started = time.monotonic()
+    decision = await verify_bff_session_identity(
+        db=db,
+        zitadel_user_id=session.zitadel_user_id,
+        portal_org_id=session.org_id,
+    )
+    verify_latency_ms = round((time.monotonic() - verify_started) * 1000.0, 2)
+
+    if not decision.verified:
+        logger.info(
+            "bff_proxy_verified",
+            service=service,
+            method=request.method,
+            path=path,
+            verified=False,
+            reason=decision.reason,
+            verify_latency_ms=verify_latency_ms,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content={
+                "detail": "identity_verification_failed",
+                "reason": decision.reason or "unknown",
+            },
+        )
+
+    # decision.verified is True → user_id, org_id, org_slug all populated
+    # (VerifyDecision.allow factory contract). Use type narrowing via assert.
+    assert decision.user_id is not None
+    assert decision.org_id is not None
+    assert decision.org_slug is not None
+
     # Build upstream URL: base + "/" + tail + original query string.
     # FastAPI strips trailing query params; re-add them from request.url.
-    path = f"/{rest}" if rest else "/"
     query = urlencode(list(request.query_params.multi_items()))
     upstream_url = f"{base_url}{path}"
     if query:
         upstream_url = f"{upstream_url}?{query}"
 
-    headers = _build_upstream_headers(request, session, service=service)
+    headers = _build_upstream_headers(
+        request,
+        session,
+        service=service,
+        verified_user_id=decision.user_id,
+        verified_org_id=decision.org_id,
+        verified_org_slug=decision.org_slug,
+    )
     body = await request.body()
 
     client = _get_client()
@@ -242,6 +332,19 @@ async def _proxy(
             detail="Upstream timeout",
         ) from exc
 
+    # SPEC-SEC-IDENTITY-ASSERT-002 REQ-6.1: surface the same evidence_path
+    # field as identity_verify_decision so a single VictoriaLogs query can
+    # group both log events on the resolution-path dimension.
+    logger.info(
+        "bff_proxy_verified",
+        service=service,
+        method=request.method,
+        path=path,
+        verified=True,
+        evidence=decision.evidence,
+        evidence_path=evidence_path(decision.evidence),
+        verify_latency_ms=verify_latency_ms,
+    )
     logger.info(
         "bff_proxy_forwarded",
         service=service,
@@ -269,24 +372,26 @@ async def _proxy(
 _ALLOWED_METHODS: Final[list[str]] = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
 
 
-@router.api_route("/scribe/{rest:path}", methods=_ALLOWED_METHODS)
+@router.api_route("/scribe/{rest:path}", methods=_ALLOWED_METHODS, response_model=None)
 async def proxy_scribe(
     rest: str,
     request: Request,
     session: SessionContext = Depends(get_session),
-) -> StreamingResponse:
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse | JSONResponse:
     """Forward /api/scribe/* to scribe-api:8020."""
-    return await _proxy("scribe", rest, request, session)
+    return await _proxy("scribe", rest, request, session, db)
 
 
-@router.api_route("/docs/{rest:path}", methods=_ALLOWED_METHODS)
+@router.api_route("/docs/{rest:path}", methods=_ALLOWED_METHODS, response_model=None)
 async def proxy_docs(
     rest: str,
     request: Request,
     session: SessionContext = Depends(get_session),
-) -> StreamingResponse:
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse | JSONResponse:
     """Forward /api/docs/* to docs-app:3010."""
-    return await _proxy("docs", rest, request, session)
+    return await _proxy("docs", rest, request, session, db)
 
 
 # ---------------------------------------------------------------------------

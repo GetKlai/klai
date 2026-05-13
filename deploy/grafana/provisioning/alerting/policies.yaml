@@ -2,15 +2,18 @@
 #
 # Fallback: grafana-default-email (Grafana auto-installed).
 # Routes (evaluated in order, first match with continue:false wins):
-#   - spec=SPEC-SEC-024       → klai-dev-alerts-email (SEC-024-R12/R13)
-#   - spec=SPEC-INFRA-005     → klai-dev-alerts-email (SPEC-INFRA-005 persistence)
-#   - spec=SPEC-OBS-001 + alert_type=heartbeat → heartbeat-kuma (OBS-001-R22)
-#   - spec=SPEC-OBS-001       → klai-ops-alerts-email (OBS-001-R4/R5)
+#   - spec=SPEC-SEC-024                          → klai-dev-alerts-email (SEC-024-R12/R13)
+#   - spec=SPEC-INFRA-005                        → klai-dev-alerts-email (SPEC-INFRA-005 persistence)
+#   - spec=SPEC-OBS-001 + alert_type=heartbeat   → heartbeat-kuma (OBS-001-R22)
+#   - spec=SPEC-OBS-001                          → klai-ops-alerts-email (OBS-001-R4/R5)
+#   - spec=SPEC-INFRA-CONTAINER-HYGIENE-001      → klai-ops-alerts-email (REQ-5 orphan-audit)
 #
 # Grouping + repeat_interval tuning per route:
 #   - SEC/INFRA: repeat 24h — suppress email-floods from a wedged call-path
 #   - OBS heartbeat: repeat 5m — push must arrive every 5 min at Uptime Kuma
 #   - OBS ops: repeat 4h — default Grafana behaviour; per-rule `for:` handles debounce
+#   - HYGIENE orphan-audit: repeat 24h — orphans are weekly-detected and
+#     stable; daily re-page is plenty of urgency, hourly would spam
 
 apiVersion: 1
 
@@ -66,5 +69,37 @@ policies:
           - service
         group_wait: 10s
         group_interval: 1m
+        repeat_interval: 4h
+        continue: false
+
+      # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-5 — orphan-audit alerts.
+      # Audit runs once a week (Sundays 03:00 via systemd timer), so a
+      # daily repeat is the right cadence: enough to keep the on-call
+      # aware of an unresolved orphan, not so much that it spams.
+      - receiver: klai-ops-alerts-email
+        matchers:
+          - spec = SPEC-INFRA-CONTAINER-HYGIENE-001
+        group_by:
+          - alertname
+          - service_group
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 24h
+        continue: false
+
+      # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-08 — login-wall detection
+      # alerts. Burst alert (R1) fires on >50 detections in 10m; config-
+      # invalid alert (R2) fires on any mis-configured mode env. Both are
+      # warning-severity and route to ops with a 4h repeat — long enough to
+      # avoid noise while a tenant's first backfill drains, short enough to
+      # keep on-call aware if the rate doesn't drop.
+      - receiver: klai-ops-alerts-email
+        matchers:
+          - spec = SPEC-INGEST-LOGIN-WALL-DETECT-001
+        group_by:
+          - alertname
+          - service_group
+        group_wait: 30s
+        group_interval: 5m
         repeat_interval: 4h
         continue: false

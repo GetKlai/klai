@@ -1,5 +1,6 @@
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from webhook_replay.redis_url import RedisURLError, parse_redis_url
 
 
 class Settings(BaseSettings):
@@ -12,8 +13,8 @@ class Settings(BaseSettings):
     smtp_password: str
     smtp_from: str = "noreply@example.com"
     smtp_from_name: str = "Klai"
-    smtp_tls: bool = True          # STARTTLS on port 587
-    smtp_ssl: bool = False         # Implicit TLS on port 465
+    smtp_tls: bool = True  # STARTTLS on port 587
+    smtp_ssl: bool = False  # Implicit TLS on port 465
 
     # Security — shared secret between Zitadel and this service.
     # Empty / whitespace-only values are rejected at startup (REQ-9.1).
@@ -73,6 +74,55 @@ class Settings(BaseSettings):
     def _require_internal_secret(cls, v: str) -> str:
         if not v or not v.strip():
             raise ValueError("Missing required: INTERNAL_SECRET")
+        return v
+
+    # SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-13: outbound mailer→portal Bearer.
+    # Mailer calls the portal's /internal/org/{id}/preferred-language endpoint
+    # (see app/portal_client.py) for locale resolution. With an empty
+    # portal_internal_secret, the outbound httpx request would send
+    # `Bearer ` (literal trailing space) and the portal would reject it
+    # OR — worse — historically log the empty bearer as a "valid" auth.
+    # Pre-flight (validator-env-parity): PORTAL_INTERNAL_SECRET sourced
+    # from PORTAL_API_INTERNAL_SECRET in the compose file's mailer env
+    # block; verified populated in /opt/klai/.env on core-01 2026-05-05.
+    @field_validator("portal_internal_secret", mode="after")
+    @classmethod
+    def _require_portal_internal_secret(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError(
+                "Missing required: PORTAL_INTERNAL_SECRET "
+                "(SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-13). "
+                "Mailer authenticates outbound /internal/* calls to portal-api with this Bearer; "
+                "an empty value would send `Bearer ` (literal trailing space) on every call. "
+                "Set it in SOPS before starting klai-mailer."
+            )
+        return v
+
+    # @MX:NOTE: structural URL validator — fail-fast at boot prevents the
+    #   "service starts cleanly, then 5xx every webhook" failure mode that
+    #   the 2026-04-29 outage exposed (broken-redis-URL).
+    # Mirrors the lazy-fail path in `app/nonce.py::get_redis()` (which catches
+    #   `RedisURLError` and translates to a runtime 503), but moves the failure
+    #   forward to deploy time so the operator sees the misconfiguration
+    #   IMMEDIATELY in the deploy logs instead of waiting for the first
+    #   webhook to surface it. Counterpart: SPEC-SEC-MAILER-INJECTION-001
+    #   REQ-6.5.
+    # Boot-fail is safe here because `parse_redis_url` is permissive —
+    #   it accepts ANY structurally-valid URL including passwords with
+    #   reserved characters. The only way this validator raises is if
+    #   the URL is structurally broken (no scheme, no host, non-integer
+    #   port), which means the operator made a typo in SOPS and a
+    #   noisy startup failure is the correct response.
+    @field_validator("redis_url", mode="after")
+    @classmethod
+    def _require_parseable_redis_url(cls, v: str) -> str:
+        # ``parse_redis_url`` is imported at module top — no circular
+        # import because ``webhook_replay.redis_url`` only depends on stdlib
+        # (``dataclasses``), not on ``app.config``.
+        try:
+            parse_redis_url(v)
+        except RedisURLError as exc:
+            raise ValueError(f"Invalid REDIS_URL: {exc}") from exc
         return v
 
 

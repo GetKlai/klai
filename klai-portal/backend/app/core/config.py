@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -81,7 +82,10 @@ class Settings(BaseSettings):
 
     # BFF — Backend-for-Frontend session auth (SPEC-AUTH-008)
     # Fernet key for encrypting BFF session records at rest in Redis.
-    # Falls back to sso_cookie_key when unset — single key during the rollout.
+    # SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-10 removed the historical
+    # ``bff_session_key or sso_cookie_key`` fallback. The key is now a
+    # required, fail-closed setting; the validator at the bottom of this
+    # class refuses to start the app on an empty value.
     bff_session_key: str = ""  # PORTAL_API_BFF_SESSION_KEY
     bff_session_ttl_seconds: int = 30 * 24 * 3600  # 30 days, matches Zitadel refresh-token lifetime
     bff_access_token_skew_seconds: int = 60  # refresh this many seconds before expiry
@@ -103,7 +107,7 @@ class Settings(BaseSettings):
     caddy_tenants_path: str = "/caddy/tenants"  # per-tenant .caddyfile dir (caddy-tenants volume)
     librechat_container_data_path: str = "/librechat"  # base dir for per-tenant librechat files
     librechat_host_data_path: str = "/opt/klai/librechat"  # HOST path for Docker volume mounts
-    librechat_image: str = "ghcr.io/danny-avila/librechat:latest"
+    librechat_image: str = "ghcr.io/danny-avila/librechat:v0.8.5-rc1"
     caddy_container_name: str = "klai-core-caddy-1"  # Docker container name for Caddy reload
     redis_container_name: str = "klai-core-redis-1"  # Docker container name; legacy operational reference
 
@@ -164,6 +168,18 @@ class Settings(BaseSettings):
     ms_docs_client_secret: str = ""
     ms_docs_tenant_id: str = "common"  # multi-tenant default; accepts any M365 tenant
 
+    # SPEC-LAUNCH-SOFTLAUNCH-001 B-2: HMAC key for waitlist invite tokens.
+    # Empty in dev/CI — feature degrades to "no bypass possible" rather than
+    # crashing. Generate with: openssl rand -base64 48
+    waitlist_token_key: str = ""  # PORTAL_API_WAITLIST_TOKEN_KEY
+
+    # SPEC-LAUNCH-SOFTLAUNCH-001 B-2 sub-batch 3: Twenty CRM REST API.
+    # The waitlist endpoint on the website (klai-website/src/pages/api/waitlist.ts)
+    # creates the deal; portal-api polls Twenty for stage transitions and sends
+    # the corresponding mail. Empty URL = poller is disabled.
+    twenty_url: str = ""  # e.g. https://twenty.getklai.com (TWENTY_URL)
+    twenty_api_key: str = ""  # TWENTY_API_KEY
+
     # Mock mode — disables real Moneybird calls for pre-launch testing
     mock_billing: bool = False
     frontend_url: str = ""  # e.g. http://localhost:5174 in dev; empty = same origin as API in prod
@@ -172,9 +188,24 @@ class Settings(BaseSettings):
     knowledge_ingest_url: str = "http://knowledge-ingest:8000"
     knowledge_ingest_secret: str = ""  # PORTAL_API_KNOWLEDGE_INGEST_SECRET
 
+    # klai-knowledge-mcp (internal). Used for the
+    # SPEC-PORTAL-RBAC-REFACTOR-001 REQ-18 role-change notification — when an
+    # admin changes a user's role, portal-api POSTs to
+    # ``{knowledge_mcp_url}/internal/notify-role-change`` so the MCP server
+    # can fan out ``notifications/tools/list_changed`` to that user's active
+    # MCP sessions. Empty = feature disabled (notification is fire-and-forget,
+    # so an empty URL silently no-ops the role-change refresh; the next
+    # tools/list poll picks up the change anyway).
+    knowledge_mcp_url: str = "http://klai-knowledge-mcp:8080"
+
     # crawl4ai HTTP service — used by the URL source extractor (SPEC-KB-SOURCES-001).
     # Same endpoint that klai-knowledge-ingest and klai-connector already target.
     crawl4ai_api_url: str = "http://crawl4ai:11235"
+
+    # docling-serve HTTP service — used by the file-upload binary path
+    # (SPEC-KB-FILE-UPLOAD-001). Internal-only on klai-net; no SSRF risk
+    # because the URL is config-pinned, not user-supplied.
+    docling_url: str = "http://docling-serve:5001"
 
     # Redis (used for retrieval logs and feedback idempotency -- SPEC-KB-015)
     redis_url: str = ""
@@ -196,6 +227,20 @@ class Settings(BaseSettings):
     litellm_base_url: str = "http://litellm:4000"
     extraction_model: str = "klai-fast"
     synthesis_model: str = "klai-primary"
+
+    # SPEC-INFRA-TENANT-DELETE-001: Garage S3 for Scribe artifact deletion.
+    # Feature-flag pattern: empty endpoint = step disabled (no S3 configured).
+    # Generate credentials via: garage key new --name portal-api
+    garage_s3_endpoint: str = ""  # e.g. http://garage:3900 (empty = feature disabled)
+    garage_s3_access_key: str = ""
+    garage_s3_secret_key: str = ""
+    garage_s3_bucket: str = "klai-scribe"  # default bucket name for scribe artifacts
+    garage_kb_bucket: str = "klai-images"  # SPEC-TI-009: bucket for KB images (auth-proxied via portal-api)
+
+    # SPEC-INFRA-TENANT-DELETE-001 R1: platform-org slug guard for admin deprovision endpoint.
+    # The DELETE /api/admin/orgs/{slug}/deprovision endpoint requires the caller to be
+    # a member of the platform org. Override via PORTAL_API_PLATFORM_ORG_SLUG.
+    platform_org_slug: str = "getklai"
 
     # Knowledge gap thresholds (mirror of LiteLLM hook env vars for re-scoring)
     klai_gap_soft_threshold: float = 0.4
@@ -287,6 +332,49 @@ class Settings(BaseSettings):
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",")]
 
+    # ─── SPEC-MCP-AUTH-001: OAuth 2.1 authorization-server config ─────────
+    # Issuer base URL — must equal the canonical portal-login host (currently
+    # https://my.getklai.com per servers.md). Drives /.well-known/oauth-
+    # authorization-server response and `iss` claim shape.
+    mcp_oauth_issuer_base_url: str = ""  # MCP_OAUTH_ISSUER_BASE_URL
+    # Canonical resource URI of the protected MCP server. RFC 8707 audience
+    # binding. Tokens are issued for exactly this resource and validated
+    # case-sensitively by knowledge-mcp.
+    mcp_oauth_resource_url: str = ""  # MCP_OAUTH_RESOURCE_URL
+    # Access-token TTL in days. 30 default — short enough for revoke-bound
+    # safety, long enough to keep refresh frequency low for power-users.
+    mcp_oauth_token_ttl_days: int = 30
+    # Refresh-token TTL in days. 90 default — drives the silent-reconnect
+    # cadence in Claude Desktop & Cursor.
+    mcp_oauth_refresh_ttl_days: int = 90
+    # Per-IP rate-limit on the DCR endpoint (POST /oauth/register).
+    # Claude.ai re-registers a client on every fresh connection (DCR is
+    # spec'd that way), so a single user iterating on connector setup can
+    # easily blow past 10/h. Default 60/h; tunable via env.
+    mcp_oauth_dcr_rate_limit_per_hour: int = 60
+
+    @model_validator(mode="after")
+    def _require_mcp_oauth_urls(self) -> "Settings":
+        """SPEC-MCP-AUTH-001: fail-closed on empty issuer / resource URL.
+
+        Both URLs are functionally required for the OAuth surface to operate.
+        An empty value at boot would cause /.well-known endpoints to return
+        broken JSON and audience-validation to silently succeed for any
+        token. Fail fast at startup — same pattern as the other auth-class
+        secrets (secret-fail-closed-on-empty rule in portal-security-auth.md).
+        """
+        if not self.mcp_oauth_issuer_base_url.strip():
+            raise ValueError("mcp_oauth_issuer_base_url must be non-empty (SPEC-MCP-AUTH-001 REQ-7)")
+        if not self.mcp_oauth_resource_url.strip():
+            raise ValueError("mcp_oauth_resource_url must be non-empty (SPEC-MCP-AUTH-001 REQ-8 / REQ-14)")
+        if self.mcp_oauth_token_ttl_days < 1:
+            raise ValueError("mcp_oauth_token_ttl_days must be >= 1")
+        if self.mcp_oauth_refresh_ttl_days < self.mcp_oauth_token_ttl_days:
+            raise ValueError("mcp_oauth_refresh_ttl_days must be >= mcp_oauth_token_ttl_days")
+        if self.mcp_oauth_dcr_rate_limit_per_hour < 1:
+            raise ValueError("mcp_oauth_dcr_rate_limit_per_hour must be >= 1")
+        return self
+
     @model_validator(mode="after")
     def _require_vexa_webhook_secret(self) -> "Settings":
         """SEC-013 F-033: fail-closed on missing vexa_webhook_secret.
@@ -356,6 +444,70 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def _validate_frontend_url_host(self) -> "Settings":
+        """SPEC-CODEBASE-AUDIT-001 Adversarial Finding 3+4: validate frontend_url
+        hostname against a trusted allowlist.
+
+        Empty frontend_url is allowed (falls back to f"https://portal.{domain}").
+        When set, the URL hostname MUST be one of:
+          - "localhost" / "127.0.0.1" / "::1" (any env, for dev/canary)
+          - The configured `domain` itself (e.g. "getklai.com")
+          - Any subdomain of the configured `domain` (e.g. "my.getklai.com")
+
+        In production (`portal_env == "production"`) the scheme MUST be https.
+
+        Why: `frontend_url` is read by `portal_url` property and used to construct
+        OAuth `redirect_uri` values (oauth.py:163-165) plus post-OAuth browser
+        redirects. SOPS drift to e.g. `https://attacker.example` would silently
+        redirect OAuth codes to an attacker-controlled host. With a Microsoft
+        Graph app-registration that allows wildcard subdomain matches (and some
+        do), this is directly exploitable for token capture.
+
+        Env-parity (see pitfall `validator-env-parity`): `frontend_url` defaults
+        to "" (empty), so this validator NEVER fires on a missing env var — only
+        on a non-empty misconfigured value. No klai-infra/core-01/.env.sops
+        change is required for this validator to land.
+        """
+        # Normalise whitespace-only values to empty string. Without this
+        # the validator would early-return with a "" + "   " → portal_url
+        # property returns the whitespace string (since `or` treats it as
+        # truthy), breaking OAuth redirect_uri construction silently.
+        # Audit 2026-05-05 finding 7. Tests cover both empty and whitespace
+        # cases assert portal_url falls back to https://portal.{domain}.
+        if not self.frontend_url or not self.frontend_url.strip():
+            self.frontend_url = ""
+            return self
+
+        parsed = urlparse(self.frontend_url.strip())
+        if parsed.scheme not in {"http", "https"}:
+            raise ValueError(
+                f"FRONTEND_URL must use scheme http or https; got '{parsed.scheme}' in '{self.frontend_url}'"
+            )
+        host = (parsed.hostname or "").lower()
+        if not host:
+            raise ValueError(f"FRONTEND_URL must contain a hostname; got '{self.frontend_url}'")
+
+        # Allow localhost in any env (dev/test/canary)
+        if host in {"localhost", "127.0.0.1", "::1"}:
+            return self
+
+        # Allow exact domain or any subdomain of self.domain
+        domain = self.domain.lower().lstrip(".")
+        if host == domain or host.endswith(f".{domain}"):
+            if self.portal_env == "production" and parsed.scheme != "https":
+                raise ValueError(
+                    f"FRONTEND_URL must use https in production; got '{parsed.scheme}' in '{self.frontend_url}'"
+                )
+            return self
+
+        raise ValueError(
+            f"FRONTEND_URL hostname '{host}' is not in the trusted allowlist. "
+            f"Must be 'localhost', '{domain}', or a subdomain of '{domain}'. "
+            f"This protects OAuth redirect_uri integrity "
+            f"(SPEC-CODEBASE-AUDIT-001 Adversarial Findings 3+4)."
+        )
+
+    @model_validator(mode="after")
     def _require_imap_authserv_id_when_listener_enabled(self) -> "Settings":
         """SPEC-SEC-IMAP-001: when the IMAP listener is enabled, the upstream
         relay's authserv-id MUST be explicitly set.
@@ -378,6 +530,249 @@ class Settings(BaseSettings):
                 "Set it to the authserv-id stamped by your trusted upstream mail relay; "
                 "inspect Authentication-Results headers in a recent message at "
                 "meet@getklai.com to find the correct value."
+            )
+        return self
+
+    # ------------------------------------------------------------------
+    # SPEC-SEC-VALIDATOR-COVERAGE-001 -- fail-closed validators (REQ-1..10)
+    # All 10 env vars verified present in /opt/klai/.env on 2026-05-05.
+    # ------------------------------------------------------------------
+
+    @model_validator(mode="after")
+    def _require_internal_secret(self) -> "Settings":
+        """SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-1: fail-closed on missing INTERNAL_SECRET.
+
+        Cross-service trust boundary: klai-mailer -> portal-api (and other callers
+        of /internal/*) use this as a shared Bearer token. An empty value causes
+        the HMAC comparison to accept any caller that also sends an empty token.
+
+        Where used: app/api/internal.py -- X-Internal-Secret / Authorization header.
+        Failure mode without validator: any unauthenticated caller reaches internal
+        endpoints (rate-limit bypass, data exfiltration via /internal/v1/users/*).
+
+        Env-parity: INTERNAL_SECRET must exist in klai-infra/core-01/.env.sops BEFORE merge.
+        Pre-flight verified 2026-05-05: value populated in /opt/klai/.env.
+        """
+        if not self.internal_secret or not self.internal_secret.strip():
+            raise ValueError(
+                "Missing required: INTERNAL_SECRET (SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-1). "
+                "Set it in SOPS before starting portal-api."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_klai_connector_secret(self) -> "Settings":
+        """SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-2: fail-closed on missing KLAI_CONNECTOR_SECRET.
+
+        Cross-service trust boundary: portal-api -> klai-connector (sync orchestration).
+        An empty secret silently disables auth on klai-connector/internal/* endpoints,
+        letting any caller trigger or inspect sync runs.
+
+        Where used: app/services/klai_connector_client.py -- Authorization: Bearer header.
+        Failure mode without validator: connector sync endpoints accept unauthenticated
+        requests (empty Bearer = empty expected secret = hmac.compare_digest passes).
+
+        Env-parity: KLAI_CONNECTOR_SECRET must exist in klai-infra/core-01/.env.sops BEFORE merge.
+        Pre-flight verified 2026-05-05: value populated in /opt/klai/.env.
+        """
+        if not self.klai_connector_secret or not self.klai_connector_secret.strip():
+            raise ValueError(
+                "Missing required: KLAI_CONNECTOR_SECRET (SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-2). "
+                "Set it in SOPS before starting portal-api."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_knowledge_ingest_secret(self) -> "Settings":
+        """SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-3: fail-closed on missing KNOWLEDGE_INGEST_SECRET.
+
+        Cross-service trust boundary: portal-api -> knowledge-ingest via X-Internal-Secret.
+        An empty value silently removes auth, allowing any caller to trigger ingestion
+        jobs or list knowledge items on behalf of arbitrary tenants.
+
+        Where used: app/services/knowledge_ingest_client.py -- X-Internal-Secret header.
+        Failure mode without validator: empty-secret fail-open (see pitfall empty-secret-fail-open).
+
+        Env-parity: KNOWLEDGE_INGEST_SECRET must exist in klai-infra/core-01/.env.sops BEFORE merge.
+        Pre-flight verified 2026-05-05: value populated in /opt/klai/.env.
+        """
+        if not self.knowledge_ingest_secret or not self.knowledge_ingest_secret.strip():
+            raise ValueError(
+                "Missing required: KNOWLEDGE_INGEST_SECRET (SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-3). "
+                "Set it in SOPS before starting portal-api."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_retrieval_api_internal_secret(self) -> "Settings":
+        """SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-4: fail-closed on missing RETRIEVAL_API_INTERNAL_SECRET.
+
+        Cross-service trust boundary: portal-api -> retrieval-api, kept separate from
+        internal_secret so both boundaries can be rotated independently (SPEC-SEC-010 REQ-6.1).
+        An empty value allows unauthenticated callers to reach retrieval endpoints.
+
+        Where used: app/api/knowledge_gap.py and related -- X-Internal-Secret header.
+        Failure mode without validator: retrieval-api accepts any caller sending an empty secret.
+
+        Env-parity: RETRIEVAL_API_INTERNAL_SECRET must exist in klai-infra/core-01/.env.sops BEFORE merge.
+        Pre-flight verified 2026-05-05: value populated in /opt/klai/.env.
+        """
+        if not self.retrieval_api_internal_secret or not self.retrieval_api_internal_secret.strip():
+            raise ValueError(
+                "Missing required: RETRIEVAL_API_INTERNAL_SECRET (SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-4). "
+                "Set it in SOPS before starting portal-api."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_docs_internal_secret(self) -> "Settings":
+        """SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-5: fail-closed on missing DOCS_INTERNAL_SECRET.
+
+        Cross-service trust boundary: portal-api -> klai-docs for KB provisioning.
+        An empty value silently disables auth, letting any caller provision or
+        deprovision knowledge-base resources for arbitrary tenants.
+
+        Where used: app/services/docs_client.py (or equivalent) -- X-Internal-Secret header.
+        Failure mode without validator: docs endpoint accepts empty secret, bypassing
+        tenant-scoped access control.
+
+        Env-parity: DOCS_INTERNAL_SECRET must exist in klai-infra/core-01/.env.sops BEFORE merge.
+        Pre-flight verified 2026-05-05: value populated in /opt/klai/.env.
+        """
+        if not self.docs_internal_secret or not self.docs_internal_secret.strip():
+            raise ValueError(
+                "Missing required: DOCS_INTERNAL_SECRET (SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-5). "
+                "Set it in SOPS before starting portal-api."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_zitadel_portal_client_secret(self) -> "Settings":
+        """SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-6: fail-closed on missing ZITADEL_PORTAL_CLIENT_SECRET.
+
+        Cross-service trust boundary: portal-api <-> Zitadel BFF code-exchange (SPEC-AUTH-008).
+        This is the confidential client secret used to exchange an authorization code for
+        tokens. An empty value causes every login to fail at token exchange (auth outage).
+
+        Where used: app/api/auth.py -- /api/auth/oidc/callback BFF code-exchange.
+        Failure mode without validator: portal-api starts but every login fails at token exchange.
+
+        Env-parity: ZITADEL_PORTAL_CLIENT_SECRET must exist in klai-infra/core-01/.env.sops BEFORE merge.
+        Pre-flight verified 2026-05-05: value populated in /opt/klai/.env.
+        """
+        if not self.zitadel_portal_client_secret or not self.zitadel_portal_client_secret.strip():
+            raise ValueError(
+                "Missing required: ZITADEL_PORTAL_CLIENT_SECRET (SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-6). "
+                "Set it in SOPS before starting portal-api."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_portal_secrets_key(self) -> "Settings":
+        """SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-7: fail-closed on missing PORTAL_SECRETS_KEY.
+
+        Encryption at rest: portal_secrets_key is the DEK used to encrypt tenant
+        secrets (e.g. zitadel_librechat_client_secret, litellm_team_key) stored
+        in the database. An empty key causes decryption of all at-rest tenant
+        secrets to fail, breaking every multi-tenant operation.
+
+        Where used: app/utils/crypto.py (or equivalent) -- AES-GCM encrypt/decrypt of tenant secrets.
+        Failure mode without validator: portal-api starts but all tenant-secret reads
+        return decryption errors; or encrypts with a known-weak/empty key.
+
+        Env-parity: PORTAL_SECRETS_KEY must exist in klai-infra/core-01/.env.sops BEFORE merge.
+        Pre-flight verified 2026-05-05: value populated in /opt/klai/.env.
+        """
+        if not self.portal_secrets_key or not self.portal_secrets_key.strip():
+            raise ValueError(
+                "Missing required: PORTAL_SECRETS_KEY (SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-7). "
+                "Set it in SOPS before starting portal-api."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_encryption_key(self) -> "Settings":
+        """SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-8: fail-closed on missing ENCRYPTION_KEY.
+
+        Encryption at rest: encryption_key is the KEK in the two-tier key hierarchy
+        (SPEC-KB-020) used to encrypt connector OAuth credentials (access_token,
+        refresh_token). An empty key causes connector auth to fail for every tenant.
+
+        Where used: app/utils/crypto.py -- connector credential KEK encrypt/decrypt.
+        Failure mode without validator: connector sync fails for all tenants with
+        decryption errors, or credentials are stored/retrieved with a null key.
+
+        Env-parity: ENCRYPTION_KEY must exist in klai-infra/core-01/.env.sops BEFORE merge.
+        Pre-flight verified 2026-05-05: value populated in /opt/klai/.env.
+        """
+        if not self.encryption_key or not self.encryption_key.strip():
+            raise ValueError(
+                "Missing required: ENCRYPTION_KEY (SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-8). "
+                "Set it in SOPS before starting portal-api."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_sso_cookie_key(self) -> "Settings":
+        """SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-9: fail-closed on missing SSO_COOKIE_KEY.
+
+        SSO auth cookie integrity: sso_cookie_key is the Fernet key that encrypts and
+        authenticates the SSO state cookie used in the OIDC login flow. An empty key
+        allows arbitrary cookie forgery, enabling session hijacking for any user.
+
+        Where used: app/api/auth.py::_get_sso_fernet -- SSO cookie encrypt/decrypt.
+        Failure mode without validator: RuntimeError at first login (defensive
+        _get_sso_fernet guard), or, if that guard is removed, unauthenticated cookie
+        acceptance. This validator adds the fail-fast-at-startup layer.
+
+        Env-parity: SSO_COOKIE_KEY must exist in klai-infra/core-01/.env.sops BEFORE merge.
+        Pre-flight verified 2026-05-05: value populated in /opt/klai/.env.
+        """
+        if not self.sso_cookie_key or not self.sso_cookie_key.strip():
+            raise ValueError(
+                "Missing required: SSO_COOKIE_KEY (SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-9). "
+                "Set it in SOPS before starting portal-api."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_bff_session_key(self) -> "Settings":
+        """SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-10: fail-closed on missing BFF_SESSION_KEY.
+
+        BFF session cookie integrity: bff_session_key is the Fernet key used to encrypt
+        BFF session records at rest in Redis (SPEC-AUTH-008). An empty key allows
+        arbitrary session forgery -- any attacker who can write to Redis can issue
+        authenticated sessions for any user.
+
+        Where used: app/api/auth.py -- BFF session encrypt/decrypt in Redis.
+        Failure mode without validator: bff_session_key falls back to sso_cookie_key
+        when unset (field comment). This validator closes that undocumented fallback
+        path in production by making the misconfiguration explicit at startup.
+
+        Env-parity: BFF_SESSION_KEY must exist in klai-infra/core-01/.env.sops BEFORE merge.
+        Pre-flight verified 2026-05-05: value populated in /opt/klai/.env.
+        """
+        if not self.bff_session_key or not self.bff_session_key.strip():
+            raise ValueError(
+                "Missing required: BFF_SESSION_KEY (SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-10). "
+                "Set it in SOPS before starting portal-api."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _refuse_mock_billing_in_prod(self) -> "Settings":
+        """SPEC-LAUNCH-SOFTLAUNCH-001 S-3: refuse mock_billing=True in production.
+
+        billing.py:62 short-circuits the Moneybird flow and stamps every tenant
+        as billing_status="active" when mock_billing is True. If MOCK_BILLING=1
+        accidentally lands in /opt/klai/.env on core-01, every new signup gets
+        unlimited paid access silently. Fail at startup rather than in prod.
+        """
+        if self.mock_billing and self.domain == "getklai.com":
+            raise ValueError(
+                "Refusing to boot: MOCK_BILLING=True is incompatible with domain=getklai.com "
+                "(SPEC-LAUNCH-SOFTLAUNCH-001 S-3). Either unset MOCK_BILLING in /opt/klai/.env "
+                "or use a non-production domain (dev/staging only)."
             )
         return self
 

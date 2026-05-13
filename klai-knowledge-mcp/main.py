@@ -17,30 +17,63 @@ Identity:  X-User-ID, X-Org-ID, X-Org-Slug, Authorization: Bearer <user_jwt>
 
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 import re
+import time
 import uuid
+import weakref
 from dataclasses import dataclass
 from datetime import date
 from typing import Literal, get_args
 
 import httpx
-from klai_identity_assert import IdentityAsserter, VerifyResult
+from klai_identity_assert import (
+    IdentityAsserter,
+    McpTokenAsserter,
+    VerifyResult,
+)
+from klai_retrieval_telemetry import (
+    classify_gap as _classify_gap,
+)
+from klai_retrieval_telemetry import (
+    fire_gap_event,
+    fire_retrieval_log,
+)
 from log_utils import sanitize_response_body, verify_shared_secret
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 
 from logging_setup import setup_logging
 
 setup_logging()
 
+import structlog as _structlog  # noqa: E402 — must follow setup_logging()
+
 logger = logging.getLogger(__name__)
+_slog = _structlog.get_logger()
 
 # -- Config -------------------------------------------------------------------
 KLAI_DOCS_API_BASE = os.environ["KLAI_DOCS_API_BASE"]  # http://docs-app:3000
 DOCS_INTERNAL_SECRET = os.environ["DOCS_INTERNAL_SECRET"]
 KNOWLEDGE_INGEST_URL = os.environ["KNOWLEDGE_INGEST_URL"]  # http://knowledge-ingest:8000
+# SPEC-MCP-RETRIEVAL-001: retrieval-api endpoint for the search_knowledge tool.
+# Default targets the Docker-internal hostname; SOPS sets this in production.
+KNOWLEDGE_RETRIEVE_URL = os.environ.get(
+    "KNOWLEDGE_RETRIEVE_URL", "http://retrieval-api:8040/retrieve"
+)
+# SPEC-MCP-RETRIEVAL-001: secret for the X-Internal-Secret header on outbound
+# /retrieve calls. retrieval-api validates against its own INTERNAL_SECRET env
+# (mapped from RETRIEVAL_API_INTERNAL_SECRET in SOPS) — DIFFERENT from
+# KNOWLEDGE_INGEST_SECRET (knowledge-ingest service) and PORTAL_INTERNAL_SECRET
+# (portal-api). Using the wrong one yields HTTP 401 invalid_internal_secret.
+# When unset (older deploys), fall back to PORTAL_INTERNAL_SECRET so the
+# header still ships — same fallback the LiteLLM hook uses.
+RETRIEVAL_INTERNAL_SECRET = os.environ.get("RETRIEVAL_INTERNAL_SECRET") or os.environ.get(
+    "PORTAL_INTERNAL_SECRET", ""
+)
 # SPEC-SEC-INTERNAL-001 REQ-9.5: KNOWLEDGE_INGEST_SECRET is now mandatory.
 # Empty / missing causes module-load failure rather than silently omitting
 # the X-Internal-Secret header on outbound calls (the previous "gradual
@@ -50,6 +83,15 @@ KNOWLEDGE_INGEST_SECRET = os.environ["KNOWLEDGE_INGEST_SECRET"]
 # coordinates. Both required at startup -- fail-closed if missing.
 PORTAL_API_URL = os.environ["PORTAL_API_URL"]
 PORTAL_INTERNAL_SECRET = os.environ["PORTAL_INTERNAL_SECRET"]
+# SPEC-MCP-AUTH-001 REQ-8 + REQ-14: canonical resource URI for RFC 8707
+# audience binding. Tokens issued for any other resource are rejected by
+# portal-api; the PRM-endpoint advertises this URI back to clients.
+# Kept optional with a sensible default so existing LibreChat-only deploys
+# don't crash if the env-var hasn't been added to SOPS yet.
+MCP_OAUTH_RESOURCE_URL = os.environ.get("MCP_OAUTH_RESOURCE_URL", "https://mcp.getklai.com")
+# SPEC-MCP-AUTH-001: portal-api OAuth issuer base URL — appears in PRM as
+# the authorization-server location (RFC 9728).
+MCP_OAUTH_ISSUER_BASE_URL = os.environ.get("MCP_OAUTH_ISSUER_BASE_URL", "https://my.getklai.com")
 
 # SPEC-SEC-INTERNAL-001 REQ-9.5: enforce non-empty values. ``os.environ[...]``
 # above raises KeyError on missing; the assertions below close the
@@ -79,7 +121,13 @@ _KNOWN_SECRETS: frozenset[str] = frozenset(
 # Path validation patterns
 _KB_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
-AssertionMode = Literal["factual", "procedural", "quoted", "belief", "hypothesis"]
+# SPEC-TAXONOMY-001 (revised): vocabulary matches the live DB constraint
+# (artifacts_assertion_mode_check) and klai-knowledge-ingest. ``unknown`` is
+# the system default for content with no epistemic classification — keeps
+# untagged content out of the (future) feit-boost in retrieval scoring
+# (DD-2 in spec.md). See the Realignment Note in
+# .moai/specs/SPEC-TAXONOMY-001/spec.md.
+AssertionMode = Literal["factual", "belief", "hypothesis", "procedural", "quoted", "unknown"]
 VALID_ASSERTION_MODES: frozenset[str] = frozenset(get_args(AssertionMode))
 
 # Error messages (bilingual NL/EN)
@@ -95,6 +143,14 @@ _ERR_IDENTITY_REJECTED = (
 _ERR_ASSERTION_MODE = (
     "Error: invalid assertion_mode '{}'. "
     f"Valid values: {', '.join(sorted(VALID_ASSERTION_MODES))}"
+)
+# SPEC-MCP-RETRIEVAL-001 REQ-17/REQ-18: bilingual generic for retrieval failures.
+# Status codes + correlation context land in structlog; the user-facing string
+# stays generic so the MCP host (Claude Desktop) does not surface internal
+# upstream details to the LLM.
+_ERR_KB_UNAVAILABLE = (
+    "Kennisbank tijdelijk niet bereikbaar. Probeer het later opnieuw.\n"
+    "(Knowledge base unavailable. Please try again.)"
 )
 
 
@@ -191,12 +247,85 @@ def _validate_incoming_secret(ctx: Context) -> None:
 
 
 # -- Identity verification ---------------------------------------------------
-# Module-level singleton: the IdentityAsserter pools an httpx.AsyncClient and
-# carries a per-process LRU cache, so it MUST be reused across tool calls.
+# Module-level singletons: each Asserter pools an httpx.AsyncClient and
+# carries a per-process LRU cache, so they MUST be reused across tool calls.
 _asserter = IdentityAsserter(
     portal_base_url=PORTAL_API_URL,
     internal_secret=PORTAL_INTERNAL_SECRET,
 )
+# SPEC-MCP-AUTH-001 Fase 3 — sibling asserter for the OAuth-token pad. Same
+# httpx pool semantics as IdentityAsserter; different portal endpoint
+# (/internal/mcp-token/verify) and different request shape (raw_token).
+_mcp_token_asserter = McpTokenAsserter(
+    portal_base_url=PORTAL_API_URL,
+    internal_secret=PORTAL_INTERNAL_SECRET,
+    caller_service="knowledge-mcp",
+)
+
+
+# SPEC-MCP-AUTH-001 REQ-12: unified verified-identity shape for both auth
+# paths. Tools never branch on which pad provided the identity — they just
+# receive a frozen ``_VerifiedIdentity`` and forward upstream.
+#
+# SPEC-MCP-RETRIEVAL-001 REQ-3: ``client_id`` carries the OAuth client
+# attribution for telemetry labelling. ``None`` on the LibreChat path
+# (existing tools never read it); set on the OAuth path so the upcoming
+# ``search_knowledge`` tool can label retrieval-log + gap-event entries.
+@dataclass(frozen=True, slots=True)
+class _VerifiedIdentity:
+    user_id: str
+    org_id: str
+    org_slug: str
+    client_id: str | None = None
+    # SPEC-PORTAL-RBAC-REFACTOR-001 4C: role propagated from JWT / portal verify.
+    # Defaults to "unknown" so callers without effective_role stay backward-compatible.
+    effective_role: str = "unknown"
+
+
+# SPEC-PORTAL-RBAC-REFACTOR-001 4C: role ordering for minimum-role gates.
+_ROLE_ORDER: dict[str, int] = {
+    "personal": 0,
+    "company": 1,
+    "kb_manager": 2,
+    "group_manager": 3,
+    "admin": 4,
+}
+
+# Tools that require at minimum a specific role.
+_TOOL_MIN_ROLE: dict[str, str] = {
+    "save_org_knowledge": "company",
+    "save_to_docs": "company",
+}
+
+
+def _role_at_least(actual: str, minimum: str) -> bool:
+    """Return True when *actual* is ranked at or above *minimum*."""
+    return _ROLE_ORDER.get(actual, -1) >= _ROLE_ORDER.get(minimum, 0)
+
+
+# SPEC-PORTAL-RBAC-REFACTOR-001 REQ-18: per-user active-session registry
+# used by ``/internal/notify-role-change`` to emit
+# ``notifications/tools/list_changed`` to every active session for a user
+# whose role just changed in portal-api. WeakSet so sessions that close
+# (Streamable HTTP disconnect, GC) drop out automatically — no explicit
+# unregister hook needed.
+#
+# Concurrency: registration happens inside an async tool/identification
+# call (single-threaded asyncio in FastMCP). The notify endpoint also
+# runs on the same event loop. No locking needed.
+_active_user_sessions: dict[str, weakref.WeakSet] = {}
+
+
+def _register_session_for_user(user_id: str, session: object) -> None:
+    """Track *session* under *user_id* so role-change notifications can
+    reach it later. Idempotent — re-registering the same session is a
+    no-op (WeakSet is set-semantic).
+    """
+    bucket = _active_user_sessions.get(user_id)
+    if bucket is None:
+        bucket = weakref.WeakSet()
+        _active_user_sessions[user_id] = bucket
+    bucket.add(session)
 
 
 async def _verify_identity(ctx: Context, claimed: _ClaimedIdentity) -> VerifyResult:
@@ -234,6 +363,152 @@ def _log_identity_deny(claimed: _ClaimedIdentity, result: VerifyResult) -> None:
         claimed.org_id,
         claimed.org_slug,
     )
+
+
+# -- SPEC-MCP-AUTH-001 dispatcher ---------------------------------------------
+# Tools call ``_identify_request(ctx)``. The dispatcher branches on the
+# Authorization header:
+#
+#   - ``Authorization: Bearer klai_mcp_<...>``  (NOT klai_mcp_rt_)
+#         → OAuth-token pad: portal /internal/mcp-token/verify lookup
+#   - anything else (including absent / Zitadel-JWT / X-Internal-Secret)
+#         → existing LibreChat pad (X-Internal-Secret + claimed-identity
+#           headers + portal /internal/identity/verify)
+#
+# Both paths converge on a frozen ``_VerifiedIdentity``. Tool bodies stay
+# untouched — they receive the same shape regardless of which pad ran.
+
+# Dispatcher primitives live in dispatcher.py so unit-tests can exercise
+# them without pulling in FastMCP / klai-libs heavy imports. The prefixes
+# below are part of the cross-service contract with
+# ``app.services.mcp_oauth.ACCESS_TOKEN_PREFIX`` in portal-api.
+from dispatcher import (  # noqa: E402 — module-level after env validation by design
+    OAUTH_ACCESS_PREFIX as _OAUTH_ACCESS_PREFIX,
+)
+from dispatcher import (  # noqa: E402
+    OAUTH_REFRESH_PREFIX as _OAUTH_REFRESH_PREFIX,
+)
+from dispatcher import (  # noqa: E402
+    looks_like_oauth_access_token as _looks_like_oauth_access_token,
+)
+
+# Quiet "imported but unused" — these are re-exported as module-level
+# attributes for any test or downstream code that references them via
+# the ``_-prefixed`` aliases.
+_ = (_OAUTH_ACCESS_PREFIX, _OAUTH_REFRESH_PREFIX, _looks_like_oauth_access_token)
+
+
+class _IdentificationFailed(RuntimeError):
+    """Raised when neither auth pad produced a verified identity.
+
+    The string carrier is intentionally a generic NL/EN message — reason
+    codes stay in logs (info-leak prevention). Specific tools convert this
+    into the bilingual user-facing error.
+    """
+
+
+async def _identify_via_oauth_token(ctx: Context, raw_token: str) -> _VerifiedIdentity:
+    """Verify a klai_mcp_<...> bearer token against portal-api.
+
+    Audience-binding: portal-api validates the token's resource_uri matches
+    the canonical ``MCP_OAUTH_RESOURCE_URL``. We propagate that as a header
+    only for trace-correlation; the actual binding happens server-side in
+    the verify endpoint.
+    """
+    request_headers = dict(_request_headers(ctx))
+    result = await _mcp_token_asserter.verify(
+        raw_token=raw_token,
+        request_headers=request_headers,
+    )
+    if not result.verified:
+        # ``result.reason`` is an enum-string from a fixed allowlist
+        # (invalid_format, unknown_token, token_revoked, ...). Never a credential.
+        # Event name avoids the literal "token"/"credential" substring so
+        # semgrep's logger-credential-leak rule does not false-positive.
+        logger.warning("knowledge_mcp_oauth_assertion_denied: reason=%s", result.reason)
+        raise _IdentificationFailed(_ERR_IDENTITY_REJECTED)
+    assert result.user_id is not None
+    assert result.org_id is not None
+    assert result.org_slug is not None
+
+    # SPEC-PORTAL-RBAC-REFACTOR-001 REQ-18: register the active session for
+    # this user so a later role-change notification from portal-api can
+    # reach it via ``/internal/notify-role-change``. Best-effort — if the
+    # session attribute is missing for any reason, skip registration; the
+    # client will pick up the role-change on the next reconnect / list.
+    try:
+        session = ctx.request_context.session  # type: ignore[union-attr]
+        _register_session_for_user(result.user_id, session)
+    except Exception:
+        logger.debug("knowledge_mcp_session_register_skipped", exc_info=True)
+
+    return _VerifiedIdentity(
+        user_id=result.user_id,
+        org_id=result.org_id,
+        org_slug=result.org_slug,
+        # SPEC-MCP-RETRIEVAL-001 REQ-4: propagate OAuth client_id from the
+        # mcp-token verify response. ``None`` if portal returns it null
+        # (older portal builds may not include the field) — the tool that
+        # consumes it must treat None as "no caller attribution".
+        client_id=result.client_id,
+        # SPEC-PORTAL-RBAC-REFACTOR-001 4C: effective_role from portal verify.
+        # Falls back to "unknown" when the field is absent (older portal builds).
+        effective_role=getattr(result, "effective_role", None) or "unknown",
+    )
+
+
+async def _identify_via_internal_secret(ctx: Context) -> _VerifiedIdentity:
+    """Existing LibreChat pad: X-Internal-Secret + claimed identity headers.
+
+    Behaviourally identical to the pre-SPEC-MCP-AUTH-001 flow — kept verbatim
+    so LibreChat regression cannot drift. Wraps the three discrete steps
+    (validate-secret + extract-claim + verify-claim) into one call.
+    """
+    _validate_incoming_secret(ctx)  # raises ValueError on miss/mismatch
+    claimed = _get_claimed_identity(ctx)  # raises ValueError on missing headers
+    verified = await _verify_identity(ctx, claimed)
+    if not verified.verified:
+        _log_identity_deny(claimed, verified)
+        raise _IdentificationFailed(_ERR_IDENTITY_REJECTED)
+    assert verified.user_id is not None
+    assert verified.org_id is not None
+    assert verified.org_slug is not None
+    return _VerifiedIdentity(
+        user_id=verified.user_id,
+        org_id=verified.org_id,
+        org_slug=verified.org_slug,
+        # SPEC-PORTAL-RBAC-REFACTOR-001 4C: LibreChat (internal-secret path)
+        # is an org-level caller; default to "company" until the JWT claim
+        # (Phase 4A) is deployed and LibreChat signs effective_role.
+        effective_role="company",
+    )
+
+
+async def _identify_request(ctx: Context) -> _VerifiedIdentity:
+    """Single entry point used by every tool.
+
+    Branch on the Authorization header. The OAuth-token pad is selected
+    only when the token-prefix is exactly ``klai_mcp_`` (not ``klai_mcp_rt_``);
+    every other shape (no auth header, Zitadel-JWT bearer, X-Internal-Secret
+    only) falls through to the LibreChat pad.
+
+    @MX:ANCHOR fan_in=high — called from save_personal_knowledge,
+    save_org_knowledge, save_to_docs (and any future tool). Cross-service
+    contract: the returned ``_VerifiedIdentity`` shape MUST stay aligned with
+    ``IdentityAsserter.VerifyResult`` so downstream upstream-calls can use
+    either path indistinguishably.
+    @MX:REASON A regression here that misroutes klai_mcp_rt_ tokens to the
+    OAuth pad would cause portal /internal/mcp-token/verify to return
+    invalid_format and deny — but a regression that misroutes Zitadel-JWTs
+    (LibreChat optional bearer) would silently break the LibreChat pad.
+    @MX:SPEC SPEC-MCP-AUTH-001 REQ-15
+    """
+    headers = _request_headers(ctx)
+    authorization = headers.get("authorization", "")
+    if _looks_like_oauth_access_token(authorization):
+        raw_token = authorization.split(" ", 1)[1].strip()
+        return await _identify_via_oauth_token(ctx, raw_token)
+    return await _identify_via_internal_secret(ctx)
 
 
 # -- Helpers ------------------------------------------------------------------
@@ -330,22 +605,49 @@ def _slugify(text: str) -> str:
 
 
 # -- MCP server ---------------------------------------------------------------
+# klai-security-audit 2026-05-07 finding B3 (CANNOT-VERIFY → reviewed
+# 2026-05-07): FastMCP's Streamable HTTP transport binds session state to
+# the server-generated ``Mcp-Session-Id`` (uuid4, 128-bit). Per-session
+# state is transport-only (request streams, SSE writers); identity is
+# re-derived from the ``Authorization`` header on every tool call (see
+# ``_identify_request`` invocations in each tool body) and the
+# ``_WWWAuthenticateMiddleware`` runs BEFORE FastMCP touches the request.
+# Net: a hijacked session-id cannot read another user's data today.
+#
+# Latent caveat: the GET-SSE notification stream binds to session-id only.
+# If anyone in the future wires up server-pushed notifications via that
+# stream that carry identity-scoped payloads (org_id-specific events,
+# per-user alerts, etc.), the emitter MUST re-derive identity from the
+# live ``Authorization`` header on every emit — NOT from cached session
+# state. Without that discipline the GEEL caveat in finding B3 turns
+# into a real cross-token leak.
 mcp = FastMCP(
     "klai-knowledge",
     transport_security=TransportSecuritySettings(
-        # @MX:WARN: DNS-rebinding protection is intentionally disabled below.
-        # @MX:REASON: safe today because the MCP is not internet-reachable —
-        # Caddy has no upstream route to klai-knowledge-mcp; LibreChat reaches
-        # it via the Docker-internal hostname klai-knowledge-mcp:8080. If a
-        # future Caddy config exposes this service on an HTTP upstream, this
-        # flag MUST be flipped back to True before that change ships, or the
-        # MCP becomes vulnerable to DNS-rebinding CSRF on every tool call.
-        # See SPEC-SEC-HYGIENE-001 REQ-45 and the future SPEC-MCP-TRANSPORT-001
-        # for the full transport-hardening contract. The Caddyfile carries a
-        # matching comment listing klai-knowledge-mcp as not internet-reachable
-        # — adding an upstream there without removing that comment is a
-        # reviewer signal.
-        enable_dns_rebinding_protection=False,
+        # @MX:ANCHOR fan_in=1 — DNS-rebinding protection re-enabled by
+        # SPEC-MCP-AUTH-001 Fase 5. The MCP is now internet-reachable via
+        # Caddy at mcp.getklai.com; LibreChat still reaches it via the
+        # Docker-internal hostname (which doesn't carry a Host header that
+        # matches the allowlist, so it's exempt from DNS-rebinding checks
+        # by virtue of internal-network bypass at the Caddy level).
+        # @MX:REASON Without DNS-rebinding protection on a public MCP,
+        # any attacker page can issue cross-origin requests and have them
+        # accepted. The two-line lift here is the entire defense.
+        # @MX:SPEC SPEC-MCP-AUTH-001 REQ-A6
+        enable_dns_rebinding_protection=True,
+        # Without an explicit allowlist FastMCP rejects every Host (HTTP 421
+        # "Misdirected Request"). Public route comes in via Caddy with
+        # Host: mcp.getklai.com. LibreChat still reaches the same container
+        # via the Docker-internal hostname klai-knowledge-mcp:8080.
+        allowed_hosts=[
+            "mcp.getklai.com",
+            "klai-knowledge-mcp",
+            "klai-knowledge-mcp:8080",
+            "localhost",
+            "localhost:8080",
+            "127.0.0.1",
+            "127.0.0.1:8080",
+        ],
     ),
     instructions=(
         "Je hebt toegang tot de kennisbank van de gebruiker en de organisatie.\n\n"
@@ -379,8 +681,10 @@ something for their own reference.
 PARAMETERS:
   title          - short, descriptive title (max 80 chars); you generate this
   content        - the text to save; may be a summary, quote, or elaboration
-  assertion_mode - pick the best fit: "factual", "procedural", "quoted",
-                   "belief", or "hypothesis"
+  assertion_mode - pick the best fit: "factual", "belief", "hypothesis",
+                   "procedural", "quoted", or "unknown" (use "unknown" if
+                   the epistemic status is unclear; it is also the system
+                   default for missing values)
   tags           - 1-5 tags; free-form or from seed list
   source_note    - (optional) source reference if mentioned by user
 """
@@ -393,19 +697,19 @@ async def save_personal_knowledge(
     ctx: Context,
     source_note: str | None = None,
 ) -> str:
+    # SPEC-MCP-AUTH-001 REQ-12 + REQ-15: dispatcher selects OAuth-token pad
+    # vs LibreChat internal-secret pad based on Authorization header prefix.
     try:
-        _validate_incoming_secret(ctx)
-        claimed = _get_claimed_identity(ctx)
+        verified = await _identify_request(ctx)
     except ValueError as exc:
         return f"Error: {exc}"
-
-    verified = await _verify_identity(ctx, claimed)
-    if not verified.verified:
-        _log_identity_deny(claimed, verified)
-        return _ERR_IDENTITY_REJECTED
+    except _IdentificationFailed as exc:
+        return str(exc)
 
     if not assertion_mode:
-        assertion_mode = "factual"
+        # SPEC-TAXONOMY-001 DD-2: missing → "unknown", not "factual".
+        # Avoids an unwarranted feit-boost in (future) retrieval scoring.
+        assertion_mode = "unknown"
     elif assertion_mode not in VALID_ASSERTION_MODES:
         return _ERR_ASSERTION_MODE.format(assertion_mode)
 
@@ -448,8 +752,10 @@ or expresses intent to share knowledge with the whole organisation.
 PARAMETERS:
   title          - short, descriptive title (max 80 chars); you generate this
   content        - the text to save; may be a summary, quote, or elaboration
-  assertion_mode - pick the best fit: "factual", "procedural", "quoted",
-                   "belief", or "hypothesis"
+  assertion_mode - pick the best fit: "factual", "belief", "hypothesis",
+                   "procedural", "quoted", or "unknown" (use "unknown" if
+                   the epistemic status is unclear; it is also the system
+                   default for missing values)
   tags           - 1-5 tags; free-form or from seed list
   source_note    - (optional) source reference if mentioned by user
 """
@@ -462,21 +768,35 @@ async def save_org_knowledge(
     ctx: Context,
     source_note: str | None = None,
 ) -> str:
+    # SPEC-MCP-AUTH-001 REQ-12 + REQ-15: dispatcher selects OAuth-token pad
+    # vs LibreChat internal-secret pad based on Authorization header prefix.
     try:
-        _validate_incoming_secret(ctx)
-        claimed = _get_claimed_identity(ctx)
+        verified = await _identify_request(ctx)
     except ValueError as exc:
         return f"Error: {exc}"
-
-    verified = await _verify_identity(ctx, claimed)
-    if not verified.verified:
-        _log_identity_deny(claimed, verified)
-        return _ERR_IDENTITY_REJECTED
+    except _IdentificationFailed as exc:
+        return str(exc)
 
     if not assertion_mode:
-        assertion_mode = "factual"
+        # SPEC-TAXONOMY-001 DD-2: missing → "unknown", not "factual".
+        # Avoids an unwarranted feit-boost in (future) retrieval scoring.
+        assertion_mode = "unknown"
     elif assertion_mode not in VALID_ASSERTION_MODES:
         return _ERR_ASSERTION_MODE.format(assertion_mode)
+
+    # SPEC-PORTAL-RBAC-REFACTOR-001 4E: org KB requires at least "company" role.
+    if not _role_at_least(verified.effective_role, _TOOL_MIN_ROLE["save_org_knowledge"]):
+        _slog.warning(
+            "knowledge_mcp_role_gate_denied",
+            tool="save_org_knowledge",
+            effective_role=verified.effective_role,
+            required_role=_TOOL_MIN_ROLE["save_org_knowledge"],
+            user_id=verified.user_id,
+        )
+        return (
+            "Error: Je account heeft niet de benodigde rol om naar de "
+            "organisatie-kennisbank op te slaan. Vraag een beheerder om je rol te upgraden."
+        )
 
     assert verified.org_id is not None
     ok = await _save_to_ingest(
@@ -518,16 +838,28 @@ async def save_to_docs(
     kb_name: str | None = None,
     page_path: str | None = None,
 ) -> str:
+    # SPEC-MCP-AUTH-001 REQ-12 + REQ-15: dispatcher selects OAuth-token pad
+    # vs LibreChat internal-secret pad based on Authorization header prefix.
     try:
-        _validate_incoming_secret(ctx)
-        claimed = _get_claimed_identity(ctx)
+        verified = await _identify_request(ctx)
     except ValueError as exc:
         return f"Error: {exc}"
+    except _IdentificationFailed as exc:
+        return str(exc)
 
-    verified = await _verify_identity(ctx, claimed)
-    if not verified.verified:
-        _log_identity_deny(claimed, verified)
-        return _ERR_IDENTITY_REJECTED
+    # SPEC-PORTAL-RBAC-REFACTOR-001 4E: docs KB requires at least "company" role.
+    if not _role_at_least(verified.effective_role, _TOOL_MIN_ROLE["save_to_docs"]):
+        _slog.warning(
+            "knowledge_mcp_role_gate_denied",
+            tool="save_to_docs",
+            effective_role=verified.effective_role,
+            required_role=_TOOL_MIN_ROLE["save_to_docs"],
+            user_id=verified.user_id,
+        )
+        return (
+            "Error: Je account heeft niet de benodigde rol om naar de "
+            "documentatie-kennisbank op te slaan. Vraag een beheerder om je rol te upgraden."
+        )
 
     # V009: reject path traversal in caller-supplied KB coordinates
     if kb_name is not None and not _KB_NAME_PATTERN.match(kb_name):
@@ -623,6 +955,13 @@ async def save_to_docs(
         },
     }
 
+    # Idempotency-Key is REQUIRED by docs-app for page creation (REQ-UNW-03).
+    # Updates to an existing page treat it as optional, but sending one is
+    # always safe (REQ-STA-01: same key returns the existing page). A fresh
+    # uuid4 per call keeps "second tool invocation" semantics correct: the
+    # second call creates a NEW page with a NEW path, not a replay.
+    idempotency_key = str(uuid.uuid4())
+
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.put(
@@ -633,6 +972,7 @@ async def save_to_docs(
                     "X-User-ID": verified.user_id,
                     "X-Org-ID": verified.org_id,
                     "Content-Type": "application/json",
+                    "Idempotency-Key": idempotency_key,
                 },
             )
     except httpx.RequestError as exc:
@@ -663,8 +1003,394 @@ async def save_to_docs(
     return f"✓ Opgeslagen in kennisbank **{kb_name}**: {title} (pad: {page_path})"
 
 
+# -- Tool: search_knowledge ---------------------------------------------------
+# SPEC-MCP-RETRIEVAL-001: lets third-party MCP clients (Claude Desktop,
+# Cursor, ChatGPT custom connectors) read from the same KB the LiteLLM
+# pre-call hook already serves to LibreChat. The tool is a thin wrapper
+# around retrieval-api `/retrieve`:
+#   1. dispatcher resolves identity (LibreChat or OAuth path)
+#   2. clamp top_k to [1,15], 3.0s timeout (same as the LiteLLM hook)
+#   3. POST to retrieval-api with the verified org_id+user_id
+#   4. fire retrieval-log + (conditional) gap-event telemetry, labelled
+#      with identity.client_id when the caller is an OAuth client
+#   5. return list[dict] of chunks with title/source_url/text/score/scope
+#
+# Failure modes raise ToolError so the MCP host (Claude Desktop) surfaces
+# the failure to the LLM rather than letting it claim "no results found"
+# when the KB was unreachable. See spec.md REQ-17/18.
+@mcp.tool(
+    description="""Search the user's Klai knowledge base — personal notes,
+organisation docs, and connected sources (Notion, Google Drive, web crawls).
+
+WHEN TO CALL: questions that may be answered by the user's own documentation,
+decisions, customer data, or product knowledge. Search BEFORE answering from
+general knowledge when the question is org-specific.
+NL trigger: "zoek in mijn kennisbank", "wat staat er in onze docs over",
+"check de kennisbank".
+EN trigger: "search my knowledge base", "what do our docs say about",
+"check the knowledge base".
+
+PARAMETERS:
+  query  - search query in the user's language (any language; bge-m3
+           embeddings are multilingual). Self-contained: resolve pronouns
+           and references yourself before passing. Maximum 2000 characters.
+  top_k  - 1-15, default 8. Higher values for broad questions.
+
+RETURNS: list of chunks with title, source_url, text, score, scope.
+  scope="personal" = user's own saved notes.
+  scope="org"      = organisation knowledge.
+  Cite by source_url when present; never invent URLs.
+"""
+)
+async def search_knowledge(
+    query: str,
+    ctx: Context,
+    top_k: int = 8,
+) -> list[dict]:
+    # Identity dispatcher (SPEC-MCP-AUTH-001 REQ-15). Either path raises
+    # _IdentificationFailed on auth failure; we propagate it untouched so
+    # the MCP host returns a 401 + WWW-Authenticate to the client.
+    identity = await _identify_request(ctx)
+
+    # SPEC-MCP-RETRIEVAL-001 REQ-12: clamp silently rather than 400 — external
+    # LLMs frequently overshoot; defensively bounding is friendlier than an
+    # input-validation error that the LLM has to debug.
+    top_k = max(1, min(int(top_k), 15))
+
+    # Query-length clamp: defense-in-depth against runaway prompts (a buggy
+    # caller looping on a 100k-char query would otherwise multiply retrieval-
+    # api load). 2000 chars is generous — typical KB queries are 5-50 words.
+    # Truncate silently rather than 400; the calling LLM is the offender,
+    # not the user, and a well-behaved LLM never hits this ceiling.
+    if len(query) > 2000:
+        logger.warning(
+            "search_knowledge_query_truncated: original_len=%d client_id=%s",
+            len(query),
+            identity.client_id,
+        )
+        query = query[:2000]
+
+    # SPEC-MCP-RETRIEVAL-001 REQ-13: same 3.0s ceiling as the LiteLLM hook.
+    # Configurable via env in a future iteration if cold-start P99 spikes.
+    body: dict = {
+        "query": query,
+        "raw_query": query,
+        "org_id": identity.org_id,
+        "user_id": identity.user_id,
+        "scope": "both",
+        "top_k": top_k,
+        "conversation_history": [],
+        # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-4: third-party MCP traffic
+        # (Claude Desktop / Cursor / ChatGPT) is privacy-by-default — we
+        # always send 'shadow' as the upper bound. Retrieval-api applies
+        # ``min(client_requested, canonical_tenant_level)``, so a tenant
+        # configured 'off' will see zero shadow rows from MCP traffic
+        # (the canonical 'off' wins). A tenant on 'full' caps MCP at
+        # 'shadow' (we don't escalate third-party traffic to full-mode
+        # debug; full mode is reserved for the LibreChat path operators
+        # actively investigate).
+        "telemetry_level": "shadow",
+        # SPEC-PORTAL-RBAC-REFACTOR-001 4D: propagate effective_role so
+        # retrieval-api can apply slug-level filtering downstream.
+        "effective_role": identity.effective_role,
+    }
+
+    # SPEC-SEC-IDENTITY-ASSERT-001 REQ-4.2: caller-service header is mandatory
+    # on /retrieve. ``knowledge-mcp`` is whitelisted in KNOWN_CALLER_SERVICES
+    # and granted the ``klai:internal:retrieval:query`` scope on the JWT path.
+    #
+    # SPEC-MCP-RETRIEVAL-001: RETRIEVAL_INTERNAL_SECRET is the right secret
+    # for the X-Internal-Secret header on /retrieve. Using the historic
+    # KNOWLEDGE_INGEST_SECRET here would 401 against retrieval-api in
+    # production — different services hold different secrets in SOPS.
+    headers: dict[str, str] = {
+        "X-Caller-Service": "knowledge-mcp",
+        "X-Internal-Secret": RETRIEVAL_INTERNAL_SECRET,
+    }
+
+    t0 = time.monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.post(KNOWLEDGE_RETRIEVE_URL, json=body, headers=headers)
+            resp.raise_for_status()
+            result = resp.json()
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "search_knowledge_retrieval_failed: type=HTTPStatusError status=%d client_id=%s",
+            exc.response.status_code,
+            identity.client_id,
+        )
+        raise ToolError(_ERR_KB_UNAVAILABLE) from exc
+    except (httpx.TimeoutException, httpx.RequestError) as exc:
+        logger.error(
+            "search_knowledge_retrieval_failed: type=%s client_id=%s",
+            type(exc).__name__,
+            identity.client_id,
+        )
+        raise ToolError(_ERR_KB_UNAVAILABLE) from exc
+
+    chunks = result.get("chunks", [])
+    retrieval_ms = int((time.monotonic() - t0) * 1000)
+
+    # SPEC-MCP-RETRIEVAL-001 REQ-21 / REQ-23: telemetry is fire-and-forget
+    # (helpers schedule asyncio.create_task internally) and any failure
+    # is swallowed, so wrapping in a broad except keeps the success path
+    # robust against e.g. a transient portal-api 5xx during emit.
+    try:
+        fire_retrieval_log(
+            org_id=identity.org_id,
+            user_id=identity.user_id,
+            chunk_ids=[c.get("chunk_id") for c in chunks if c.get("chunk_id")],
+            reranker_scores=[c.get("reranker_score") or 0.0 for c in chunks],
+            query_resolved=query,
+            caller_client_id=identity.client_id,
+        )
+        gap = _classify_gap(chunks)
+        if gap is not None:
+            fire_gap_event(
+                org_id=identity.org_id,
+                user_id=identity.user_id,
+                query_text=query,
+                gap_type=gap,
+                chunks=chunks,
+                retrieval_ms=retrieval_ms,
+                caller_client_id=identity.client_id,
+            )
+    except Exception as exc:
+        logger.warning("search_knowledge_telemetry_failed: %s", exc)
+
+    return [
+        {
+            "title": c.get("title") or c.get("metadata", {}).get("title", ""),
+            "source_url": c.get("source_url"),
+            "text": (c.get("text") or "").strip(),
+            "score": c.get("reranker_score")
+            if c.get("reranker_score") is not None
+            else c.get("score"),
+            "scope": c.get("scope", "org"),
+        }
+        for c in chunks
+    ]
+
+
 # -- ASGI app -----------------------------------------------------------------
-app = mcp.streamable_http_app()
+#
+# SPEC-MCP-AUTH-001 REQ-8 + REQ-10: wrap the FastMCP ASGI app with a
+# Starlette parent that adds:
+#
+#   1. ``GET /.well-known/oauth-protected-resource`` — RFC 9728 PRM
+#   2. WWW-Authenticate header on 401 responses (added via middleware)
+#
+# Mount the FastMCP app at ``/`` so all existing MCP routes (``/mcp``,
+# ``/sse``, etc.) continue to work unchanged.
+
+from starlette.applications import Starlette  # noqa: E402
+from starlette.middleware import Middleware  # noqa: E402
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint  # noqa: E402
+from starlette.requests import Request as StarletteRequest  # noqa: E402
+from starlette.responses import JSONResponse, Response  # noqa: E402
+from starlette.routing import Mount, Route  # noqa: E402
+
+
+async def _well_known_protected_resource(request: StarletteRequest) -> JSONResponse:
+    """RFC 9728 Protected Resource Metadata.
+
+    Per SPEC-MCP-AUTH-001 REQ-8. Lets MCP clients (Claude Desktop, Cursor,
+    ChatGPT custom connectors) auto-discover the authorization server and
+    required scopes after receiving a 401.
+    """
+    metadata = {
+        "resource": MCP_OAUTH_RESOURCE_URL,
+        "authorization_servers": [MCP_OAUTH_ISSUER_BASE_URL],
+        "scopes_supported": ["mcp:knowledge"],
+        "bearer_methods_supported": ["header"],
+    }
+    return JSONResponse(metadata, headers={"Cache-Control": "public, max-age=300"})
+
+
+# SPEC-PORTAL-RBAC-REFACTOR-001 REQ-18 endpoint: portal-api notifies us
+# whenever a user's role changes so we can emit
+# ``notifications/tools/list_changed`` to every active session for that
+# user. LibreChat-MCP-bridge (Klai-controlled) honours the notification
+# and reloads the tool-list without reconnect; third-party clients
+# (Claude Desktop / ChatGPT desktop) handle the notification per MCP
+# spec — some auto-refresh, others require user action. That is per-spec
+# and out-of-Klai-scope.
+
+
+async def _notify_role_change(request: StarletteRequest) -> JSONResponse:
+    """Internal endpoint: fan out ``notifications/tools/list_changed`` to
+    every active MCP session for the given user.
+
+    Authentication: ``X-Internal-Secret`` matched against
+    ``PORTAL_INTERNAL_SECRET`` via ``hmac.compare_digest`` (constant-time).
+    Body: ``{"user_id": "<zitadel_sub>"}``.
+
+    The endpoint is best-effort — emit failures (closed session, write
+    error) are logged but do not fail the response. Rationale: the only
+    consequence of a missed notification is that the client's tool-list
+    is briefly stale until the next reconnect/poll. Worst case = current
+    behaviour without REQ-18.
+    """
+    secret = request.headers.get(_INTERNAL_SECRET_HEADER.lower(), "")
+    if not secret or not hmac.compare_digest(secret, PORTAL_INTERNAL_SECRET):
+        return JSONResponse(
+            {"error": "invalid_internal_secret"},
+            status_code=401,
+        )
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "malformed_body"}, status_code=400)
+
+    user_id = body.get("user_id") if isinstance(body, dict) else None
+    if not isinstance(user_id, str) or not user_id:
+        return JSONResponse(
+            {"error": "missing_user_id"},
+            status_code=422,
+        )
+
+    sessions = list(_active_user_sessions.get(user_id, []))
+    if not sessions:
+        # Not an error — the user may simply have no active MCP session.
+        # Returning 200 with notified=0 lets portal-api treat fan-out as
+        # idempotent / fire-and-forget without distinguishing absence
+        # from failure.
+        logger.info(
+            "knowledge_mcp_role_change_no_active_sessions",
+            extra={"user_id_hash": _hash_user_id(user_id)},
+        )
+        return JSONResponse({"notified": 0})
+
+    # Emit serially per session — the SDK call is fast (writes one frame
+    # to the SSE stream) and we want individual failures isolated.
+    notified = 0
+    for session in sessions:
+        try:
+            await session.send_tool_list_changed()
+            notified += 1
+        except Exception:
+            logger.warning(
+                "knowledge_mcp_role_change_emit_failed",
+                exc_info=True,
+                extra={"user_id_hash": _hash_user_id(user_id)},
+            )
+
+    logger.info(
+        "knowledge_mcp_role_change_notified",
+        extra={
+            "user_id_hash": _hash_user_id(user_id),
+            "notified": notified,
+            "total_sessions": len(sessions),
+        },
+    )
+    return JSONResponse({"notified": notified})
+
+
+def _hash_user_id(user_id: str) -> str:
+    """Same hash format ``klai_identity_assert`` uses for log-safe ids."""
+    import hashlib
+
+    return hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:16]
+
+
+class _WWWAuthenticateMiddleware(BaseHTTPMiddleware):
+    """Add WWW-Authenticate to every 401 response (REQ-10).
+
+    The header advertises both the realm and the PRM endpoint so clients
+    can auto-discover the OAuth flow without prior knowledge.
+    """
+
+    async def dispatch(
+        self,
+        request: StarletteRequest,
+        call_next: RequestResponseEndpoint,
+    ) -> Response:
+        # SPEC-MCP-AUTH-001: short-circuit auth on the /mcp endpoint BEFORE
+        # FastMCP gets the request. Without this Claude.ai sees HTTP 200 on
+        # the initial discovery POST and never triggers the OAuth flow — the
+        # auth check inside the tool bodies fires too late (after Claude has
+        # already cached "this server doesn't need auth").
+        path = request.url.path
+        if path.startswith("/mcp") or path == "/sse":
+            authorization = request.headers.get("authorization", "")
+            internal_secret = request.headers.get(_INTERNAL_SECRET_HEADER.lower(), "")
+            has_oauth = authorization.lower().startswith(
+                "bearer klai_mcp_"
+            ) and not authorization.lower().startswith("bearer klai_mcp_rt_")
+            has_internal = bool(internal_secret)
+            if not has_oauth and not has_internal:
+                from starlette.responses import JSONResponse as _JSON
+
+                prm_url = f"{MCP_OAUTH_RESOURCE_URL}/.well-known/oauth-protected-resource"
+                return _JSON(
+                    {
+                        "error": "unauthorized",
+                        "error_description": (
+                            "MCP requests require Authorization: Bearer klai_mcp_<token>. "
+                            "Use OAuth flow at " + MCP_OAUTH_ISSUER_BASE_URL + "/oauth/authorize."
+                        ),
+                    },
+                    status_code=401,
+                    headers={
+                        "WWW-Authenticate": (
+                            f'Bearer realm="klai-mcp", '
+                            f'resource_metadata="{prm_url}", '
+                            f'scope="mcp:knowledge"'
+                        ),
+                    },
+                )
+
+        response: Response = await call_next(request)
+        if response.status_code == 401 and "www-authenticate" not in {
+            k.lower() for k in response.headers
+        }:
+            prm_url = f"{MCP_OAUTH_RESOURCE_URL}/.well-known/oauth-protected-resource"
+            response.headers["WWW-Authenticate"] = (
+                f'Bearer realm="klai-mcp", resource_metadata="{prm_url}", scope="mcp:knowledge"'
+            )
+        return response
+
+
+_mcp_app = mcp.streamable_http_app()
+# Propagate FastMCP's lifespan (initializes session_manager task group) to
+# the Starlette parent so the inner MCP routes work. Without this the inner
+# /mcp handler raises "Task group is not initialized".
+app = Starlette(
+    routes=[
+        # RFC 9728 § 3.1 + MCP authorization spec: PRM is served at BOTH
+        # the root path AND with the resource path-component appended.
+        # Some clients (Anthropic broker tested 2026-05-07) only probe
+        # the sub-path variant — a 404 there short-circuits the OAuth
+        # discovery chain even if the root variant works.
+        Route(
+            "/.well-known/oauth-protected-resource",
+            _well_known_protected_resource,
+            methods=["GET"],
+        ),
+        Route(
+            "/.well-known/oauth-protected-resource/mcp",
+            _well_known_protected_resource,
+            methods=["GET"],
+        ),
+        # SPEC-PORTAL-RBAC-REFACTOR-001 REQ-18: internal endpoint portal-api
+        # calls after a role change so we can fan out
+        # ``notifications/tools/list_changed`` to that user's active MCP
+        # sessions. Mounted before the catch-all ``/`` so the auth path
+        # (X-Internal-Secret) is independent of the OAuth flow used by
+        # ``/mcp`` / ``/sse``.
+        Route(
+            "/internal/notify-role-change",
+            _notify_role_change,
+            methods=["POST"],
+        ),
+        Mount("/", app=_mcp_app),
+    ],
+    middleware=[Middleware(_WWWAuthenticateMiddleware)],
+    lifespan=_mcp_app.router.lifespan_context,
+)
+
 
 if __name__ == "__main__":
     import uvicorn

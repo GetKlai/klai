@@ -56,19 +56,34 @@
 
     # ─── Services that are NOT internet-reachable ────────────────────────────
     # The handlers below cover only services that are intentionally exposed
-    # via Caddy. The following services are Docker-internal only — adding an
-    # HTTP upstream for any of them here is a security-review event, not a
-    # routing tweak. SPEC-SEC-HYGIENE-001 REQ-45 lists them:
+    # via Caddy. Adding an HTTP upstream for a Docker-internal-only service
+    # here is a security-review event, not a routing tweak — SPEC-SEC-
+    # HYGIENE-001 REQ-45.
     #
-    #   - klai-knowledge-mcp  (Docker-internal MCP for LibreChat; FastMCP
-    #     DNS-rebinding protection is currently disabled because the service
-    #     is not public — see klai-knowledge-mcp/main.py @MX:WARN block. If
-    #     you add an upstream for this service, flip that flag back to True
-    #     in the same commit. Otherwise: leave this comment in place.)
-    #
-    # Removing or shortening this block without updating the matching MX:WARN
-    # in the service code is a SPEC-SEC-HYGIENE-001 violation.
+    # NOTE: klai-knowledge-mcp WAS in this list pre-SPEC-MCP-AUTH-001. As of
+    # the OAuth surface rollout it is internet-reachable via mcp.${DOMAIN}
+    # (handler below). DNS-rebinding protection is now enabled in
+    # FastMCP TransportSecuritySettings (see main.py @MX:ANCHOR block).
     # ────────────────────────────────────────────────────────────────────────
+
+    # SPEC-SEC-AUDIT-2026-04 C1: strip internal-trust headers on every inbound
+    # public reverse_proxy. These headers are ONLY valid when set by internal
+    # services — a client spoofing them must never reach an upstream.
+    # header_up with a "-" prefix removes the named request header before
+    # forwarding. This is a no-op if the header is absent, so it is safe on
+    # all routes including those that don't read these headers today.
+    #
+    # Headers stripped:
+    #   X-Internal-Secret  — service-to-service shared secret (klai-mailer,
+    #                         knowledge-ingest, retrieval-api, scribe-api,
+    #                         connector, knowledge-mcp)
+    #   X-Caller-Service   — IDENTITY-ASSERT caller identity claim
+    #   X-Org-ID           — tenant scope injected by portal on internal hops
+    #   X-User-ID          — user identity injected by portal/knowledge-mcp
+    #
+    # DO NOT strip on tenant caddyfiles (imported below) — those route
+    # LibreChat <-> knowledge-mcp on the internal Docker network where
+    # these headers are legitimately set.
 
     # Logs ingest (VictoriaLogs push endpoint for remote Alloy agents)
     @logs-ingest host logs-ingest.{$DOMAIN}
@@ -80,6 +95,11 @@
         # VictoriaLogs requires basic auth — pass credentials upstream
         reverse_proxy victorialogs:9428 {
             header_up Authorization "Basic {$VICTORIALOGS_BASIC_AUTH_B64}"
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-Org-Slug
+            header_up -X-User-ID
         }
     }
 
@@ -89,14 +109,26 @@
         # Allow framing from our own domains for OIDC flow inside portal iframe.
         header Content-Security-Policy "frame-ancestors 'self' *.{$DOMAIN}"
         # Zitadel handles its own rate limiting internally
-        reverse_proxy h2c://zitadel:8080
+        reverse_proxy h2c://zitadel:8080 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-Org-Slug
+            header_up -X-User-ID
+        }
     }
 
     # LiteLLM model proxy — /health only (for uptime monitoring)
     @llm host llm.{$DOMAIN}
     handle @llm {
         handle /health/liveliness {
-            reverse_proxy litellm:4000
+            reverse_proxy litellm:4000 {
+                header_up -X-Internal-Secret
+                header_up -X-Caller-Service
+                header_up -X-Org-ID
+                header_up -X-Org-Slug
+                header_up -X-User-ID
+            }
         }
         respond 403
     }
@@ -115,7 +147,13 @@
                 window 1m
             }
         }
-        reverse_proxy grafana:3000
+        reverse_proxy grafana:3000 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-Org-Slug
+            header_up -X-User-ID
+        }
     }
 
     @grafana host grafana.{$DOMAIN}
@@ -129,7 +167,13 @@
         }
         @grafana-html path / /login /logout /d/* /dashboards* /explore* /alerting* /datasources* /plugins* /admin*
         header @grafana-html Cache-Control "no-cache, no-store, must-revalidate"
-        reverse_proxy grafana:3000
+        reverse_proxy grafana:3000 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-Org-Slug
+            header_up -X-User-ID
+        }
     }
 
     # GlitchTip (frontend error tracking)
@@ -142,7 +186,13 @@
                 window 1m
             }
         }
-        reverse_proxy glitchtip-web:8000
+        reverse_proxy glitchtip-web:8000 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-Org-Slug
+            header_up -X-User-ID
+        }
     }
 
     # Connector API (GitHub + external source sync) — must be before portal /api/* catch-all
@@ -155,7 +205,13 @@
                 window 1m
             }
         }
-        reverse_proxy klai-connector:8200
+        reverse_proxy klai-connector:8200 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-Org-Slug
+            header_up -X-User-ID
+        }
     }
 
     # Portal API — stricter limit on sensitive provisioning endpoints
@@ -170,13 +226,74 @@
                 window 1m
             }
         }
-        reverse_proxy portal-api:8010
+        reverse_proxy portal-api:8010 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-Org-Slug
+            header_up -X-User-ID
+        }
     }
 
-    # Knowledge base images served via Garage S3 website endpoint (anonymous reads)
-    handle_path /kb-images/* {
-        reverse_proxy garage:3902 {
-            header_up Host klai-images.web.garage
+    # MCP OAuth resource server (SPEC-MCP-AUTH-001 Fase 5)
+    # ─────────────────────────────────────────────────────
+    # Public bearer-token endpoint that lets third-party MCP clients
+    # (Claude Desktop, Cursor, ChatGPT custom connectors) talk to
+    # klai-knowledge-mcp. The MCP server itself is the OAuth 2.1
+    # protected resource (RFC 9728); the authorization server is
+    # portal-api at my.${DOMAIN} via /oauth/* routes (handled by the
+    # portal-api block above).
+    #
+    # Header strip is essential here: external traffic must NEVER inject
+    # X-Internal-Secret / X-User-ID / X-Org-ID / X-Org-Slug. Those headers
+    # are LibreChat-pad credentials and would bypass token verification
+    # if accepted. The dispatcher in main.py branches on the
+    # Authorization: Bearer klai_mcp_<...> prefix; without those prefix
+    # tokens incoming traffic falls through to the LibreChat pad which
+    # would then fail X-Internal-Secret check — but defense-in-depth
+    # demands strip-at-edge anyway.
+    #
+    # /.well-known/oauth-protected-resource is cached 5 min by the MCP
+    # itself; no extra Caddy cache directive needed.
+    @mcp host mcp.{$DOMAIN}
+    handle @mcp {
+        rate_limit {
+            zone mcp_per_ip {
+                key {remote_host}
+                events 600
+                window 1m
+            }
+        }
+        reverse_proxy klai-knowledge-mcp:8080 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-Org-Slug
+            header_up -X-User-ID
+            header_up -X-Org-Slug
+        }
+    }
+
+    # Knowledge base images -- auth-proxied via portal-api (SPEC-TI-009 / B-4).
+    # CHANGED: no longer serves directly from Garage website-mode (anonymous reads).
+    # portal-api verifies session.org_id == path[org_id] before streaming from S3.
+    # Operator step: disable Garage website-mode ->
+    #   ssh core-01 "docker exec klai-core-garage-1 garage bucket website --deny klai-images"
+    #
+    # SPEC-TI-009 follow-up (kb-images was silently 502 since 2026-04-22 because
+    # this block had two stacked bugs that no browser-leg traffic ever surfaced):
+    #   1. handle_path strips the /kb-images/ prefix before forwarding upstream,
+    #      so FastAPI never matched its declared route @router.get("/kb-images/...").
+    #      Use `handle` instead — keeps the path intact.
+    #   2. portal-api listens only on :8010 in production (uvicorn entrypoint
+    #      runs `--port 8010`). Routing to :8000 produced "Connection refused".
+    handle /kb-images/* {
+        reverse_proxy portal-api:8010 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-Org-Slug
+            header_up -X-User-ID
         }
     }
 
@@ -189,7 +306,13 @@
                 window 1m
             }
         }
-        reverse_proxy portal-api:8010
+        reverse_proxy portal-api:8010 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-Org-Slug
+            header_up -X-User-ID
+        }
     }
 
     # Dev environment — dev.getklai.com routes to portal-api-dev + /srv/portal-dev
@@ -205,7 +328,13 @@
         }
         route {
             @dev-api path /api/*
-            reverse_proxy @dev-api portal-api-dev:8010
+            reverse_proxy @dev-api portal-api-dev:8010 {
+                header_up -X-Internal-Secret
+                header_up -X-Caller-Service
+                header_up -X-Org-ID
+                header_up -X-Org-Slug
+                header_up -X-User-ID
+            }
 
             root * /srv/portal-dev
 
@@ -220,17 +349,97 @@
         }
     }
 
-    handle /api/* {
-        reverse_proxy portal-api:8010
+    # SPEC-KB-FILE-UPLOAD-001 REQ-2: scoped multipart-body cap on the
+    # KB file-upload endpoint. 200 MB matches the binary path's
+    # ``MAX_BINARY_FILE_BYTES`` in ``app/services/file_upload.py`` —
+    # large enough for textbook PDFs, small enough that one tenant
+    # cannot fill the docling-serve queue with multi-GB submissions.
+    # Place BEFORE the general /api/* handler so `handle` first-match
+    # wins on the narrow path; everything else keeps Caddy's default
+    # request-body limit.
+    @kb-file-upload path_regexp kb_file_upload ^/api/app/knowledge-bases/[^/]+/sources/file$
+    handle @kb-file-upload {
+        request_body {
+            max_size 200MB
+        }
+        reverse_proxy portal-api:8010 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-Org-Slug
+            header_up -X-User-ID
+        }
     }
 
-    # SEC-023 / F-038 — Scribe/Docs are no longer publicly routed.
-    # Frontend calls /api/scribe/*, /api/docs/* which hit the BFF proxy in
-    # portal-api (app/api/proxy.py). That handler pulls the Zitadel
-    # access_token from the BFF session and forwards to the internal service
-    # with Authorization: Bearer injected. The services listen only on the
-    # klai-net Docker network now — no Caddy exposure.
-    # research-api removed in SPEC-PORTAL-UNIFY-KB-001 (Phase C).
+    handle /api/* {
+        reverse_proxy portal-api:8010 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-Org-Slug
+            header_up -X-User-ID
+        }
+    }
+
+    # SPEC-MCP-AUTH-001: OAuth 2.1 authorization-server endpoints live
+    # at root level (not under /api) per RFC 8414 / RFC 6749 conventions.
+    # Routes: /.well-known/oauth-authorization-server, /oauth/authorize,
+    # /oauth/token, /oauth/register. portal-api handles them.
+    @oauth-mcp path /oauth/authorize /oauth/token /oauth/register /.well-known/oauth-authorization-server
+    handle @oauth-mcp {
+        reverse_proxy portal-api:8010 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-Org-Slug
+            header_up -X-User-ID
+        }
+    }
+
+    # ==========================================================================
+    # POSITIONAL: /static/* MUST come BEFORE the catch-all `handle` block at the
+    # bottom of this vhost. Caddy evaluates `handle` blocks top-to-bottom; the
+    # first match wins. Without this block, /static/oauth/consent.css would be
+    # served by the SPA file_server (which returns /srv/portal/index.html for
+    # any unknown path), and the OAuth consent page would render unstyled.
+    #
+    # If you ever reorder this file, the lint test
+    # `klai-portal/backend/tests/test_caddyfile_static_route_position.py`
+    # asserts that /static/* stays positioned before the catch-all `handle`.
+    # ==========================================================================
+    handle /static/* {
+        reverse_proxy portal-api:8010 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-Org-Slug
+            header_up -X-User-ID
+        }
+    }
+
+    # Public Klai Docs reader. The editor/API remains behind portal-api's BFF
+    # at /api/docs/*; do not expose docs-app's /docs/api/* directly.
+    @docs-api path /docs/api/*
+    handle @docs-api {
+        respond 404
+    }
+
+    @docs-reader path /docs /docs/*
+    handle @docs-reader {
+        reverse_proxy docs-app:3010 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-Org-Slug
+            header_up -X-User-ID
+        }
+    }
+
+    # SEC-023 / F-038 — Scribe remains non-publicly routed.
+    # Frontend calls /api/scribe/* and authenticated docs editor calls use
+    # /api/docs/*, which hit the BFF proxy in portal-api (app/api/proxy.py).
+    # That handler pulls the Zitadel access_token from the BFF session and
+    # forwards to the internal service with Authorization: Bearer injected.
 
     # Vexa meeting bot gateway (SEC-013 F-030 — fix dead route from VEXA-003 migration)
     # Route maps /bots/<path> → api-gateway:8000/<path>. The old `vexa-bot-manager`
@@ -244,7 +453,13 @@
             }
         }
         uri strip_prefix /bots
-        reverse_proxy api-gateway:8000
+        reverse_proxy api-gateway:8000 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-Org-Slug
+            header_up -X-User-ID
+        }
     }
 
     # Portal SPA — static files (fallback for all *.${DOMAIN})
@@ -261,6 +476,33 @@
 
         try_files {path} /index.html
         file_server
+    }
+}
+
+# Cal.com — self-hosted scheduling.
+# Separate site block (not under *.{$DOMAIN}) because the wildcard block has
+# a path-specific `handle /api/*` for portal-api that would otherwise capture
+# Cal.com's own /api/auth/* and /api/trpc/* paths (path matcher beats host
+# matcher within one site block, breaking client-side hydration with 500s).
+# More-specific host wins automatically at Caddy site level — order-independent.
+cal.{$DOMAIN} {
+    tls {
+        dns hetzner {$HETZNER_AUTH_API_TOKEN}
+        propagation_delay 120s
+    }
+
+    log {
+        output stdout
+        format json
+    }
+
+    reverse_proxy cal-com:3000 {
+        header_up X-Request-ID {http.request.uuid}
+        header_up -X-Internal-Secret
+        header_up -X-Caller-Service
+        header_up -X-Org-ID
+        header_up -X-Org-Slug
+        header_up -X-User-ID
     }
 }
 

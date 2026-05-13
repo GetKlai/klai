@@ -15,8 +15,13 @@ more templates, this is a no-op. Called from two places:
 
 # @MX:NOTE: Template slugs and prompt_text are product content. Changes
 # here change the default seed for EVERY new org. The 4 starter
-# templates were chosen by the product team — don't edit the Dutch
-# prompts without approval.
+# templates were chosen by the product team. Edits to prompt_text need
+# product approval AND must respect the multilingual contract from
+# SPEC-RAG-MULTILINGUAL-CHAT-001 — never pin a specific user-facing
+# language ("Antwoord altijd in het Nederlands" / "Always reply in
+# English"); use phrasings like "in dezelfde taal als de vraag van de
+# gebruiker" so the seed never overrides ``GROUNDED_CHAT_SYSTEM_PROMPT``
+# language detection.
 """
 
 from __future__ import annotations
@@ -37,7 +42,7 @@ DEFAULT_TEMPLATES: list[dict[str, str]] = [
         "description": "Vriendelijke, behulpzame toon voor klantcontact",
         "prompt_text": (
             "Je bent een behulpzame klantenservicemedewerker. "
-            "Antwoord altijd in het Nederlands. Gebruik een vriendelijke en professionele toon. "
+            "Gebruik een vriendelijke en professionele toon, in dezelfde taal als de vraag van de gebruiker. "
             "Houd antwoorden kort en bondig. Bied proactief oplossingen aan. "
             "Als je het antwoord niet weet, zeg dat eerlijk en verwijs door naar de juiste afdeling."
         ),

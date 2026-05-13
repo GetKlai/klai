@@ -215,3 +215,7 @@ dist-ssr/
 /stock 
 .playwright-mcp/
 klai-portal/frontend/public/widget/klai-chat.js
+
+# CodeIndex source — lives in dedicated repo (sinterqlaas2/codeindex).
+# Do not vendor into this monorepo.
+codeindex-src/

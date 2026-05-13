@@ -18,3 +18,5 @@ Never claim something is deployed before both CI is green AND the new code is co
 - i18n: all UI strings via Paraglide (`import * as m from '@/paraglide/messages'`)
 - Reference implementation: `frontend/src/routes/admin/users/invite.tsx`
 - Tenant provisioning: see [docs/runbooks/provisioning-retry.md](../docs/runbooks/provisioning-retry.md) for the state machine, retry endpoint, and stuck-detector behaviour (SPEC-PROV-001).
+- Tenant deprovisioning: see [docs/runbooks/tenant-delete.md](../docs/runbooks/tenant-delete.md) for the 16-step orchestrator, owner self-service delete, platform-admin endpoints, and manual cleanup (SPEC-INFRA-TENANT-DELETE-001).
+- User offboarding: see [docs/runbooks/user-offboarding.md](../docs/runbooks/user-offboarding.md) for the disposition wizard, KB transfer/delete choice, auto-revoke of API keys + MCP tokens, and suspend-vs-offboard guidance (SPEC-PORTAL-KB-OWNERSHIP-001).

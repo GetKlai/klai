@@ -152,7 +152,7 @@ class TestRouteToSources:
 
     @pytest.mark.asyncio
     async def test_layer2_with_compute_fn(self):
-        async def fake_compute(catalog):
+        async def fake_compute(catalog, org_id):
             return {
                 "help.mitel.nl": [1.0, 0.0, 0.0],
                 "help.voys.nl": [0.0, 1.0, 0.0],
@@ -193,7 +193,7 @@ class TestRouteToSources:
             await asyncio.sleep(2.0)  # exceeds 500ms timeout
             return ["should-not-reach"]
 
-        async def no_centroids(catalog):
+        async def no_centroids(catalog, org_id):
             return {}  # force layer 2 to produce no result
 
         decision = await route_to_sources(
@@ -212,7 +212,7 @@ class TestRouteToSources:
     async def test_centroid_cache_hit(self):
         call_count = 0
 
-        async def counting_compute(catalog):
+        async def counting_compute(catalog, org_id):
             nonlocal call_count
             call_count += 1
             return {"a": [1.0, 0.0], "b": [0.0, 1.0]}
@@ -232,7 +232,7 @@ class TestRouteToSources:
 
     @pytest.mark.asyncio
     async def test_no_route_returns_none(self):
-        async def equal_centroids(catalog):
+        async def equal_centroids(catalog, org_id):
             return {
                 "a": [0.5, 0.5],
                 "b": [0.5, 0.5],

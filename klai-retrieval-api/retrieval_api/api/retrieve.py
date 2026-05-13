@@ -7,29 +7,121 @@ import copy
 import math
 import os
 import time
+import uuid
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from retrieval_api.config import settings
 from retrieval_api.metrics import (
+    quality_floor_filtered_total,
     retrieval_chunks_total,
+    retrieval_confidence_band_total,
+    retrieval_link_expand_top_k_total,
     retrieval_requests_total,
     step_latency_seconds,
+    telemetry_level_decisions_total,
 )
-from retrieval_api.middleware.auth import verify_body_identity
-from retrieval_api.models import ChunkResult, RetrieveMetadata, RetrieveRequest, RetrieveResponse
+from retrieval_api.middleware.auth import AuthContext, require_scope, verify_body_identity
+from retrieval_api.models import (
+    ChunkResult,
+    ConfidenceBand,
+    RetrieveMetadata,
+    RetrieveRequest,
+    RetrieveResponse,
+)
 from retrieval_api.quality_boost import quality_boost
+from retrieval_api.quality_floor import filter_quality_floor
 from retrieval_api.services import coreference, evidence_tier, gate, graph_search, reranker, search
 from retrieval_api.services.diversity import source_aware_select
 from retrieval_api.services.events import emit_event
+from retrieval_api.services.features import extract_features
 from retrieval_api.services.router import fetch_source_catalog, route_to_sources
 from retrieval_api.services.tei import embed_single, embed_sparse
+from retrieval_api.services.telemetry import write_shadow
+from retrieval_api.services.tenant_telemetry import get_canonical_level, resolve_effective_level
 from retrieval_api.util.payload import payload_list
 
 logger = structlog.get_logger(__name__)
 
 router = APIRouter()
+
+# SPEC-SEC-SERVICE-AUTH-001 REQ-3: scope required for the /retrieve endpoint.
+# Internal-secret callers are bypassed during Phase B/C migration; once Phase D
+# removes the legacy auth path, only callers presenting a JWT with this scope
+# will reach this endpoint. Granted to: svc-litellm, svc-knowledge-mcp,
+# svc-portal-api.
+_RETRIEVAL_QUERY_SCOPE = "klai:internal:retrieval:query"
+# Module-level singleton — avoids ruff B008 ("Depends in default arg") and
+# is the FastAPI-recommended pattern for repeated dependencies.
+_REQUIRE_RETRIEVAL_SCOPE = Depends(require_scope(_RETRIEVAL_QUERY_SCOPE))
+
+
+def _compute_confidence_band(
+    chunks: list[dict],
+    *,
+    high_threshold: float,
+    low_threshold: float,
+    reranker_enabled: bool,
+) -> ConfidenceBand:
+    """SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1: bucket the served result by
+    max(reranker_score). Driven by the litellm-hook anti-hallucination
+    injection (REQ-2).
+
+    Returns:
+        - ``unknown`` when reranker is disabled, every chunk's reranker_score
+          is None (fallback path), or the served list is empty
+        - ``high`` when max ≥ high_threshold
+        - ``low`` when max < low_threshold
+        - ``medium`` otherwise
+
+    Operates on the raw served list of dicts (post quality-floor +
+    source-aware-select + quality-boost), NOT on the ChunkResult objects —
+    boosted scores from REQ-3 must be reflected.
+    """
+    if not reranker_enabled or not chunks:
+        return "unknown"
+    scores = [c.get("reranker_score") for c in chunks]
+    valid_scores = [s for s in scores if isinstance(s, (int, float))]
+    if not valid_scores:
+        return "unknown"
+    max_score = max(valid_scores)
+    if max_score >= high_threshold:
+        return "high"
+    if max_score < low_threshold:
+        return "low"
+    return "medium"
+
+
+def _apply_link_expand_boost(
+    chunks: list[dict],
+    *,
+    boost: float,
+    enabled: bool,
+) -> list[dict]:
+    """SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-3: multiplicative reranker-score
+    boost (capped at 1.0) for chunks whose ``_link_expanded`` flag is set.
+
+    Applied AFTER rerank and BEFORE source-aware-select + quality-boost so
+    expanded neighbours get a fair shot at the served top-K. With
+    ``boost=1.0`` (default) this is a no-op; the SPEC ships safe and
+    operators tune via env var once the eval baseline is captured.
+
+    Mutates the input list in place (matches the surrounding pipeline's
+    style) and returns the same list for ergonomic chaining.
+    """
+    if not enabled or boost <= 1.0:
+        return chunks
+    for chunk in chunks:
+        if chunk.get("_link_expanded") and isinstance(chunk.get("reranker_score"), (int, float)):
+            boosted = chunk["reranker_score"] * boost
+            chunk["reranker_score"] = min(boosted, 1.0)
+    # Re-sort by boosted reranker_score so downstream pickers see the new order.
+    chunks.sort(
+        key=lambda c: c.get("reranker_score") or c.get("score") or 0.0,
+        reverse=True,
+    )
+    return chunks
 
 
 def _rrf_merge(qdrant_results: list[dict], graph_results: list[dict], k: int = 60) -> list[dict]:
@@ -55,18 +147,26 @@ def _rrf_merge(qdrant_results: list[dict], graph_results: list[dict], k: int = 6
 
 
 @router.post("/retrieve", response_model=RetrieveResponse)
-async def retrieve(req: RetrieveRequest, request: Request) -> RetrieveResponse:
+async def retrieve(
+    req: RetrieveRequest,
+    request: Request,
+    # SPEC-SEC-SERVICE-AUTH-001 REQ-3: scope check. JWT callers must hold
+    # ``klai:internal:retrieval:query``. Internal-secret callers bypass
+    # during Phase B/C — see ``require_scope`` docstring.
+    _auth: AuthContext = _REQUIRE_RETRIEVAL_SCOPE,
+) -> RetrieveResponse:
     # --- Validation ---
     if req.scope in ("personal", "both") and not req.user_id:
         raise HTTPException(status_code=400, detail="user_id required for scope=personal/both")
-    if req.scope == "notebook" and not req.notebook_id:
-        raise HTTPException(status_code=400, detail="notebook_id required for scope=notebook")
-    # SPEC-SEC-IDENTITY-ASSERT-001 REQ-5.2: notebook scope requires user_id so the
-    # personal-vs-team visibility gate can apply. Without user_id, the personal
-    # leg of _notebook_filter cannot fire and personal chunks would silently
-    # disappear from results — fail loud rather than silent.
-    if req.scope == "notebook" and not req.user_id:
-        raise HTTPException(status_code=400, detail="missing_user_id_for_personal_scope")
+
+    # SPEC-PORTAL-RBAC-REFACTOR-001 REQ-17 / REQ-6: personal-role callers may
+    # only search personal-scope KBs. Force scope to "personal" and strip any
+    # caller-supplied kb_slugs so they cannot reach org KBs via this endpoint.
+    if req.effective_role == "personal":
+        if req.scope != "personal":
+            req = req.model_copy(update={"scope": "personal", "kb_slugs": None})
+        elif req.kb_slugs is not None:
+            req = req.model_copy(update={"kb_slugs": None})
 
     # SPEC-SEC-010 REQ-3 + SPEC-SEC-IDENTITY-ASSERT-001 REQ-4: cross-user /
     # cross-org guard. JWT callers are matched against their JWT claims;
@@ -75,6 +175,24 @@ async def retrieve(req: RetrieveRequest, request: Request) -> RetrieveResponse:
     # On allow this also pins request.state.verified_caller, which is what
     # emit_event below sources for product_events integrity (REQ-6).
     await verify_body_identity(request, req.org_id, req.user_id)
+
+    # SPEC-PRIVACY-QUERY-SHADOW-001 — canonical-level enforcement.
+    # The body's ``telemetry_level`` is treated as a *requested upper
+    # bound*; the effective level is ``min(client_requested, canonical)``
+    # where canonical is portal_orgs.telemetry_level (5-minute cached
+    # lookup). This closes the gap where a buggy / malicious caller
+    # could send 'full' while the tenant has flipped to 'off', AND
+    # makes the knowledge-mcp's hardcoded 'shadow' correct under all
+    # tenant configurations (a tenant on 'off' will never see shadow
+    # rows from MCP traffic).
+    canonical_level = await get_canonical_level(req.org_id)
+    effective_level = resolve_effective_level(req.telemetry_level, canonical_level)
+
+    # REQ-13: bind effective_level on the structlog contextvar so the
+    # shared anti-leakage processor (in klai-libs/log-utils) sees the
+    # right value on EVERY log line in this request — not only the
+    # explicit ``decision_record`` event that passes it as a kwarg.
+    structlog.contextvars.bind_contextvars(telemetry_level=effective_level)
 
     t0 = time.perf_counter()
     # @MX:NOTE: [AUTO] Shadow log for parameter tuning (SPEC-KB-021 Change 4).
@@ -116,6 +234,23 @@ async def retrieve(req: RetrieveRequest, request: Request) -> RetrieveResponse:
     graph_search_ms: float | None = None
     link_expand_ms: float | None = None
     link_expand_count = 0
+    # F3 phase 1 instrumentation (audit retrieval-coupling-2026-05-06):
+    # capture seed/expanded sets across the pipeline so the final
+    # decision_record can measure link-expansion's contribution to
+    # the served top-k. Without this, we cannot tell whether the
+    # expanded chunks ever survive the reranker + source-select +
+    # quality-boost + evidence-tier passes — i.e. whether the
+    # extra Qdrant scroll-call buys anything in practice.
+    link_expand_seed_chunk_ids: set[str] = set()
+    link_expand_candidate_urls = 0
+    # Default-empty serving lists so the bypassed=True path doesn't leave
+    # ``serving`` and ``expanded_in_top_k_ids`` unbound. Pyright cannot
+    # trace the if-bypassed/else-bypassed mutual exclusion across the
+    # two read sites further down (line ~542 + ~555) — initializing
+    # here is cleaner than scattered `# type: ignore` comments and makes
+    # the bypass path's downstream code defensively correct anyway.
+    serving: list[dict] = []
+    expanded_in_top_k_ids: list[str] = []
 
     # 3b. Query router — identifies relevant sources for post-rerank selection
     router_meta: dict = {"router_decision": None, "router_layer_used": "skipped"}
@@ -157,7 +292,7 @@ async def retrieve(req: RetrieveRequest, request: Request) -> RetrieveResponse:
 
         graph_task: asyncio.Task[list[dict]] | None = None
         t_graph: float | None = None
-        if req.scope != "notebook" and settings.graphiti_enabled:  # AC-6: skip notebook
+        if settings.graphiti_enabled:
             t_graph = time.perf_counter()
             graph_task = asyncio.create_task(
                 graph_search.search(query_resolved, req.org_id, top_k=20)
@@ -185,7 +320,7 @@ async def retrieve(req: RetrieveRequest, request: Request) -> RetrieveResponse:
         decision_record["search_candidates_count"] = candidates_retrieved
 
         # 4b. Link expansion (SPEC-CRAWLER-003 R14-R16)
-        if settings.link_expand_enabled and req.scope != "notebook" and raw_results:
+        if settings.link_expand_enabled and raw_results:
             t_expand = time.perf_counter()
             seed_chunks = raw_results[: settings.link_expand_seed_k]
             candidate_urls: list[str] = []
@@ -200,6 +335,12 @@ async def retrieve(req: RetrieveRequest, request: Request) -> RetrieveResponse:
                 if len(candidate_urls) >= settings.link_expand_max_urls:
                     break
 
+            # F3 phase 1: capture seed chunk_ids before expansion so we can
+            # measure later how many of the served top-k were original-seed
+            # vs newly-expanded vs neither.
+            link_expand_seed_chunk_ids = {c["chunk_id"] for c in seed_chunks}
+            link_expand_candidate_urls = len(candidate_urls)
+
             if candidate_urls:
                 expansion_chunks = await search.fetch_chunks_by_urls(
                     candidate_urls, req, settings.link_expand_candidates
@@ -207,6 +348,12 @@ async def retrieve(req: RetrieveRequest, request: Request) -> RetrieveResponse:
                 existing_ids = {r["chunk_id"] for r in raw_results}
                 new_chunks = [c for c in expansion_chunks if c["chunk_id"] not in existing_ids]
                 link_expand_count = len(new_chunks)
+                # F3 phase 1: tag the expansion chunks. Underscore prefix
+                # keeps the field internal — Pydantic ChunkResult ignores
+                # unknown fields by default and the build loop only reads
+                # explicit keys, so this never leaks to the response body.
+                for c in new_chunks:
+                    c["_link_expanded"] = True
                 raw_results = raw_results + new_chunks
 
             link_expand_ms = (time.perf_counter() - t_expand) * 1000
@@ -225,8 +372,8 @@ async def retrieve(req: RetrieveRequest, request: Request) -> RetrieveResponse:
                 if incoming > 0:
                     r["score"] = r["score"] + settings.link_authority_boost * math.log(1 + incoming)
 
-        # 5. Rerank (skip for notebook scope or when reranker disabled)
-        if req.scope != "notebook" and raw_results and settings.reranker_enabled:
+        # 5. Rerank (skip when reranker disabled)
+        if raw_results and settings.reranker_enabled:
             t_rerank = time.perf_counter()
             rerank_input = raw_results[: settings.reranker_candidates]
             reranked = await reranker.rerank(query_resolved, rerank_input, req.top_k)
@@ -240,6 +387,33 @@ async def retrieve(req: RetrieveRequest, request: Request) -> RetrieveResponse:
         else:
             reranked = raw_results[: req.top_k]
             reranked_to = len(reranked)
+
+        # 5a-ter. SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-3 — link-expand
+        # reranker boost. Applied AFTER rerank and BEFORE quality-floor so
+        # expanded chunks get a fair shot at surviving source-aware-select.
+        # Default boost=1.00 is a no-op until operator tunes the env var.
+        reranked = _apply_link_expand_boost(
+            reranked,
+            boost=settings.link_expand_score_boost,
+            enabled=settings.link_expand_enabled,
+        )
+
+        # 5a-bis. Quality-floor filter (SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-07).
+        # Removes chunks explicitly degraded to quality_score=0.0 BEFORE the
+        # source-quota algorithm picks candidates — otherwise a walled chunk
+        # could burn a diversity slot. The default floor (0.05) cannot
+        # accidentally filter neutral 0.5 chunks; an operator must set the
+        # threshold > 0.5 explicitly.
+        reranked, quality_floor_filtered = filter_quality_floor(
+            reranked, floor=settings.retrieval_quality_floor
+        )
+        decision_record["quality_floor_filtered"] = quality_floor_filtered
+        if quality_floor_filtered > 0:
+            # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-08 — labelled by org_id so
+            # per-tenant pollution is visible in Grafana. Only increment on
+            # non-zero to keep metric cardinality predictable for tenants
+            # whose chunks never trip the floor.
+            quality_floor_filtered_total.labels(org_id=req.org_id).inc(quality_floor_filtered)
 
         # 5b. Source-aware selection (SPEC-KB-021)
         # Replaces separate router + quota: uses reranker scores to decide.
@@ -300,49 +474,173 @@ async def retrieve(req: RetrieveRequest, request: Request) -> RetrieveResponse:
         else:
             serving = scored
 
-        # 7. Build ChunkResult objects
-        chunks_out = [
-            ChunkResult(
-                chunk_id=r["chunk_id"],
-                artifact_id=r.get("artifact_id"),
-                content_type=r.get("content_type"),
-                text=r["text"],
-                context_prefix=r.get("context_prefix"),
-                score=r["score"],
-                reranker_score=r.get("reranker_score"),
-                scope=r.get("scope"),
-                valid_at=r.get("valid_at"),
-                invalid_at=r.get("invalid_at"),
-                ingested_at=r.get("ingested_at"),
-                assertion_mode=r.get("assertion_mode"),
-                final_score=r.get("final_score"),
-                evidence_tier_metadata=r.get("evidence_tier_metadata"),
-                source_ref=r.get("source_ref"),
-                source_connector_id=r.get("source_connector_id"),
-                source_url=r.get("source_url"),
-                kb_slug=r.get("kb_slug"),
-                source_label=r.get("source_label"),
-                title=r.get("title"),
-                image_urls=payload_list(r, "image_urls") or None,
-            )
-            for r in serving
+        # F3 phase 1 instrumentation: emit link-expansion contribution to
+        # the served top-k. Lets us answer "did the extra Qdrant scroll
+        # ever produce a chunk that beat the reranker top-k cut-off?"
+        # before deciding on phase 2 (RRF migration vs disable).
+        # Audit ref: .moai/audits/retrieval-coupling-2026-05-06/findings/
+        # F3-link-expansion-dead-weight.md
+        expanded_in_top_k_ids = [r["chunk_id"] for r in serving if r.get("_link_expanded")]
+        seed_in_top_k_ids = [
+            r["chunk_id"] for r in serving if r["chunk_id"] in link_expand_seed_chunk_ids
         ]
+        decision_record["link_expand"] = {
+            "enabled": settings.link_expand_enabled,
+            "seed_k": len(link_expand_seed_chunk_ids),
+            "candidate_urls": link_expand_candidate_urls,
+            "expanded_added": link_expand_count,
+            "expanded_in_top_k": len(expanded_in_top_k_ids),
+            "expanded_top_k_chunk_ids": expanded_in_top_k_ids,
+            "seed_in_top_k": len(seed_in_top_k_ids),
+            "served_top_k": len(serving),
+        }
+
+        # 6b. SPEC-RAG-PARENT-CHILD-001: swap child text for the parent's
+        # broader-context text. Fetched in one batch query against
+        # knowledge.parent_chunks. Children with no parent_chunk_id (legacy
+        # ingests) keep their own text — REQ-3 fall-through.
+        from retrieval_api.services import parent_lookup
+
+        parent_id_per_serving: list[int | None] = [r.get("parent_chunk_id") for r in serving]
+        parent_text_by_id = await parent_lookup.fetch_parents(
+            pid for pid in parent_id_per_serving if pid is not None
+        )
+
+        # 7. Build ChunkResult objects (with parent-text swap when available)
+        chunks_out = []
+        for r in serving:
+            pid = r.get("parent_chunk_id")
+            if pid is not None and pid in parent_text_by_id:
+                display_text = parent_text_by_id[pid]
+                is_parent = True
+            else:
+                display_text = r["text"]
+                is_parent = False
+            chunks_out.append(
+                ChunkResult(
+                    chunk_id=r["chunk_id"],
+                    artifact_id=r.get("artifact_id"),
+                    content_type=r.get("content_type"),
+                    text=display_text,
+                    context_prefix=r.get("context_prefix"),
+                    score=r["score"],
+                    reranker_score=r.get("reranker_score"),
+                    scope=r.get("scope"),
+                    valid_at=r.get("valid_at"),
+                    invalid_at=r.get("invalid_at"),
+                    ingested_at=r.get("ingested_at"),
+                    assertion_mode=r.get("assertion_mode"),
+                    final_score=r.get("final_score"),
+                    evidence_tier_metadata=r.get("evidence_tier_metadata"),
+                    source_ref=r.get("source_ref"),
+                    source_connector_id=r.get("source_connector_id"),
+                    source_url=r.get("source_url"),
+                    kb_slug=r.get("kb_slug"),
+                    source_label=r.get("source_label"),
+                    title=r.get("title"),
+                    image_urls=payload_list(r, "image_urls") or None,
+                    entity_names=payload_list(r, "entity_names") or None,
+                    is_parent_text=is_parent,
+                )
+            )
 
     retrieval_ms = (time.perf_counter() - t0) * 1000
     step_latency_seconds.labels(step="total").observe(retrieval_ms / 1000)
     retrieval_requests_total.labels(scope=req.scope, bypassed=str(bypassed).lower()).inc()
     retrieval_chunks_total.labels(scope=req.scope).observe(len(chunks_out))
 
+    # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1 — confidence band on the
+    # served chunks. Bypass paths (gate) get None; retrieval paths always
+    # report a band so downstream consumers (litellm-hook REQ-2) can decide.
+    if bypassed:
+        confidence_band: ConfidenceBand | None = None
+    else:
+        confidence_band = _compute_confidence_band(
+            serving,
+            high_threshold=settings.confidence_band_high_threshold,
+            low_threshold=settings.confidence_band_low_threshold,
+            reranker_enabled=settings.reranker_enabled,
+        )
+        decision_record["confidence_band"] = confidence_band
+        retrieval_confidence_band_total.labels(band=confidence_band, org_id=req.org_id).inc()
+
+    # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-8 — link-expand survival
+    # outcome counter. Only count when link-expand actually contributed
+    # candidates (link_expand_count > 0). Hit = at least one expanded chunk
+    # survived to the served top-K; miss = none did.
+    if not bypassed and link_expand_count > 0:
+        outcome = "hit" if expanded_in_top_k_ids else "miss"
+        retrieval_link_expand_top_k_total.labels(outcome=outcome, org_id=req.org_id).inc()
+
     decision_record["total_ms"] = round(retrieval_ms, 1)
+
+    # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-5: gate raw-query content on
+    # decision_record. In off + shadow mode, strip the coreference
+    # rewrite text before serialization. The defense-in-depth structlog
+    # processor (REQ-13) catches the same fields if they slip through
+    # via a future code path that bypasses this check, but doing it
+    # here keeps the metric-level gating accurate.
+    #
+    # REQ-10: retention_class is a structured label so Alloy can route
+    # 'content' events to a 7d-retention stream and 'metadata' events
+    # to the existing 30d stream (operator-side VictoriaLogs config —
+    # follow-up runbook in Unit 8).
+    if effective_level != "full" and "coreference_rewrite" in decision_record:
+        decision_record.pop("coreference_rewrite", None)
+        decision_record["retention_class"] = "metadata"
+        telemetry_level_decisions_total.labels(
+            level=effective_level, decision="metadata_only"
+        ).inc()
+    elif effective_level == "full":
+        decision_record["retention_class"] = "content"
+        telemetry_level_decisions_total.labels(level="full", decision="content_emitted").inc()
+    else:
+        # off mode without coreference_rewrite already in the record.
+        decision_record["retention_class"] = "metadata"
+
     try:
         logger.info(
             "retrieval_decision_record",
             org_id=req.org_id,
             scope=req.scope,
+            telemetry_level=effective_level,
             **decision_record,
         )
     except Exception:
         logger.exception("decision_record_emit_failed")
+
+    # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-7: shadow-store INSERT for shadow
+    # + full modes. Fire-and-forget — failures are counted in
+    # telemetry_shadow_drop_total, not propagated. ``request_id`` is
+    # bound by RequestContextMiddleware (logging_setup.py); read back
+    # from structlog contextvars so we don't have to plumb it through
+    # the entire pipeline. If the contextvar is missing (e.g. middleware
+    # didn't run, or upstream dropped a malformed X-Request-ID), generate
+    # a server-side UUID4 so every retrieve call still produces a row —
+    # missing rows would silently degrade observability and bias the
+    # dashboards' decision counters.
+    if effective_level in ("shadow", "full"):
+        request_id_for_shadow = structlog.contextvars.get_contextvars().get("request_id") or str(
+            uuid.uuid4()
+        )
+        chunk_ids_for_shadow = [c.chunk_id for c in chunks_out]
+        reranker_scores = [c.reranker_score for c in chunks_out if c.reranker_score is not None]
+        reranker_top1 = max(reranker_scores) if reranker_scores else None
+        features_dict = extract_features(req.query)
+        write_shadow(
+            request_id=request_id_for_shadow,
+            org_id=req.org_id,
+            embedding=list(query_vector) if query_vector is not None else None,
+            features=features_dict,
+            band=confidence_band,
+            chunk_ids=chunk_ids_for_shadow,
+            reranker_top1=reranker_top1,
+        )
+        telemetry_level_decisions_total.labels(
+            level=effective_level, decision="shadow_inserted"
+        ).inc()
+        if effective_level == "full":
+            telemetry_level_decisions_total.labels(level="full", decision="full_logged").inc()
 
     logger.info(
         "retrieve",
@@ -363,35 +661,35 @@ async def retrieve(req: RetrieveRequest, request: Request) -> RetrieveResponse:
         retrieval_bypassed=bypassed,
     )
 
-    # SPEC-GRAFANA-METRICS: knowledge.queried event (skip notebook scope — Focus has its own).
+    # SPEC-GRAFANA-METRICS: knowledge.queried event.
     # SPEC-SEC-IDENTITY-ASSERT-001 REQ-6: tenant_id / user_id MUST come from
     # the verified-caller pin set by verify_body_identity, never from the
     # request body. Body fields are caller-supplied; product_events is a
     # business-metrics contract whose integrity we cannot let any caller
     # poison.
-    if req.scope != "notebook":
-        verified = getattr(request.state, "verified_caller", None)
-        if verified is not None:
-            emit_event(
-                "knowledge.queried",
-                tenant_id=verified.org_id,
-                user_id=verified.user_id,
-                properties={
-                    "scope": req.scope,
-                    "had_results": len(chunks_out) > 0,
-                    "result_count": len(chunks_out),
-                },
-            )
-        else:
-            # Defense in depth: should be unreachable because verify_body_identity
-            # always pins the verified tuple on the success path. If we see this
-            # log line in production, a new code path is bypassing the guard.
-            logger.warning(
-                "product_event_skipped_no_identity",
-                event_type="knowledge.queried",
-                scope=req.scope,
-                path=request.url.path,
-            )
+    verified = getattr(request.state, "verified_caller", None)
+    if verified is not None:
+        emit_event(
+            "knowledge.queried",
+            tenant_id=verified.org_id,
+            user_id=verified.user_id,
+            properties={
+                "scope": req.scope,
+                "kb_slugs": list(req.kb_slugs) if req.kb_slugs else [],
+                "had_results": len(chunks_out) > 0,
+                "result_count": len(chunks_out),
+            },
+        )
+    else:
+        # Defense in depth: should be unreachable because verify_body_identity
+        # always pins the verified tuple on the success path. If we see this
+        # log line in production, a new code path is bypassing the guard.
+        logger.warning(
+            "product_event_skipped_no_identity",
+            event_type="knowledge.queried",
+            scope=req.scope,
+            path=request.url.path,
+        )
 
     return RetrieveResponse(
         query_resolved=query_resolved,
@@ -406,4 +704,5 @@ async def retrieve(req: RetrieveRequest, request: Request) -> RetrieveResponse:
             graph_results_count=graph_results_count,
             graph_search_ms=round(graph_search_ms, 1) if graph_search_ms is not None else None,
         ),
+        confidence_band=confidence_band,
     )

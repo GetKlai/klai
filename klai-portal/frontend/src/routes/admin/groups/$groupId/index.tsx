@@ -4,10 +4,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { Tooltip } from '@/components/ui/tooltip'
-import { ArrowLeft, Loader2, Pencil, Plus, Trash2, UserPlus } from 'lucide-react'
+import { ArrowLeft, Loader2, Pencil, Trash2, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
@@ -26,7 +25,6 @@ interface Group {
   id: number
   name: string
   description: string | null
-  products: string[]
   is_system: boolean
 }
 
@@ -41,10 +39,6 @@ interface OrgUser {
   email: string
   first_name: string
   last_name: string
-}
-
-interface AvailableProductsResponse {
-  products: string[]
 }
 
 // ---------------------------------------------------------------------------
@@ -81,8 +75,6 @@ function AdminGroupDetail() {
   const navigate = useNavigate()
   const { groupId } = Route.useParams()
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null)
-  const [confirmRemoveProduct, setConfirmRemoveProduct] = useState<string | null>(null)
-  const [selectedProduct, setSelectedProduct] = useState<string>('')
 
   // ---------------------------------------------------------------------------
   // Queries
@@ -107,18 +99,9 @@ function AdminGroupDetail() {
     enabled: auth.isAuthenticated,
   })
 
-  const { data: availableProductsData } = useQuery({
-    queryKey: ['admin-available-products'],
-    queryFn: async () => apiFetch<AvailableProductsResponse>(`/api/admin/products`),
-    enabled: auth.isAuthenticated,
-  })
-
   const members = membersData?.members ?? []
   const orgUsers = usersData?.users ?? []
   const usersMap = new Map(orgUsers.map((u) => [u.zitadel_user_id, u]))
-  const planProducts = availableProductsData?.products ?? []
-  const assignedProducts = groupData?.products ?? []
-  const assignableProducts = planProducts.filter((p) => !assignedProducts.includes(p))
 
   // ---------------------------------------------------------------------------
   // Mutations
@@ -140,37 +123,6 @@ function AdminGroupDetail() {
     },
   })
 
-  const assignProductMutation = useMutation({
-    mutationFn: async (product: string) => {
-      await apiFetch(`/api/admin/groups/${groupId}/products`, {
-        method: 'POST',
-        body: JSON.stringify({ product }),
-      })
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['admin-groups'] })
-      setSelectedProduct('')
-      toast.success(m.admin_groups_products_assign_success())
-    },
-    onError: (err: Error) => {
-      toast.error(err.message)
-    },
-  })
-
-  const revokeProductMutation = useMutation({
-    mutationFn: async (product: string) => {
-      await apiFetch(`/api/admin/groups/${groupId}/products/${product}`, { method: 'DELETE' })
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['admin-groups'] })
-      setConfirmRemoveProduct(null)
-      toast.success(m.admin_groups_products_revoke_success())
-    },
-    onError: (err: Error) => {
-      toast.error(err.message)
-    },
-  })
-
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
@@ -178,7 +130,7 @@ function AdminGroupDetail() {
   if (groupLoading) {
     return (
       <div className="p-6">
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
           Loading...
         </p>
@@ -203,7 +155,7 @@ function AdminGroupDetail() {
             {groupData.name}
           </h1>
           {groupData.description && (
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {groupData.description}
             </p>
           )}
@@ -234,88 +186,6 @@ function AdminGroupDetail() {
         </div>
       </div>
 
-      {/* Products section */}
-      <Card>
-        <CardContent className="pt-6">
-          <div className="flex items-center justify-between mb-4 gap-4">
-            <h2 className="text-base font-medium">
-              {m.admin_groups_products_title()}
-            </h2>
-            <div className="flex items-center gap-2">
-              <select
-                value={selectedProduct}
-                onChange={(e) => setSelectedProduct(e.target.value)}
-                disabled={assignableProducts.length === 0 || assignProductMutation.isPending}
-                className="h-9 rounded-md border border-[var(--color-border)] bg-[var(--color-input)] px-3 text-sm text-[var(--color-foreground)] disabled:opacity-50"
-                aria-label={m.admin_groups_products_assign_placeholder()}
-              >
-                <option value="" disabled>
-                  {assignableProducts.length === 0
-                    ? m.admin_groups_products_none_available()
-                    : m.admin_groups_products_assign_placeholder()}
-                </option>
-                {assignableProducts.map((p) => (
-                  <option key={p} value={p} className="capitalize">
-                    {p}
-                  </option>
-                ))}
-              </select>
-              <Button
-                size="sm"
-                disabled={!selectedProduct || assignProductMutation.isPending}
-                onClick={() => assignProductMutation.mutate(selectedProduct)}
-              >
-                {assignProductMutation.isPending ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Plus className="h-4 w-4 mr-2" />
-                )}
-                {m.admin_groups_products_assign()}
-              </Button>
-            </div>
-          </div>
-
-          {assignedProducts.length === 0 ? (
-            <p className="text-sm text-[var(--color-muted-foreground)] py-4 text-center">
-              {m.admin_groups_products_empty()}
-            </p>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {assignedProducts.map((product) => {
-                const isConfirming = confirmRemoveProduct === product
-                const isRevoking =
-                  revokeProductMutation.isPending &&
-                  revokeProductMutation.variables === product
-                return (
-                  <InlineDeleteConfirm
-                    key={product}
-                    isConfirming={isConfirming}
-                    isPending={isRevoking}
-                    label={m.admin_groups_products_remove_confirm({ product })}
-                    cancelLabel={m.admin_users_cancel()}
-                    onConfirm={() => revokeProductMutation.mutate(product)}
-                    onCancel={() => setConfirmRemoveProduct(null)}
-                  >
-                    <Badge className="capitalize flex items-center gap-1.5">
-                      <span>{product}</span>
-                      <Tooltip label={m.admin_groups_products_remove()}>
-                        <button
-                          onClick={() => setConfirmRemoveProduct(product)}
-                          aria-label={m.admin_groups_products_remove()}
-                          className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      </Tooltip>
-                    </Badge>
-                  </InlineDeleteConfirm>
-                )
-              })}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
       {/* Members section */}
       <Card>
         <CardContent className="pt-6">
@@ -338,18 +208,18 @@ function AdminGroupDetail() {
           </div>
 
           {membersLoading ? (
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
               Loading...
             </p>
           ) : members.length === 0 ? (
-            <p className="text-sm text-[var(--color-muted-foreground)] py-4 text-center">
+            <p className="text-sm text-gray-400 py-4 text-center">
               {m.admin_groups_members_empty()}
             </p>
           ) : (
-            <table className="w-full text-sm table-fixed border-t border-b border-[var(--color-border)]">
+            <table className="w-full text-sm table-fixed border-t border-b border-gray-200">
               <thead>
-                <tr className="border-b border-[var(--color-border)]">
+                <tr className="border-b border-gray-200">
                   <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
                     {m.admin_groups_name()}
                   </th>
@@ -375,15 +245,15 @@ function AdminGroupDetail() {
                   return (
                     <tr
                       key={member.zitadel_user_id}
-                      className="border-b border-[var(--color-border)] last:border-b-0"
+                      className="border-b border-gray-200 last:border-b-0"
                     >
-                      <td className="py-4 pr-4 align-top text-[var(--color-foreground)]">
+                      <td className="py-4 pr-4 align-top text-gray-900">
                         {displayName(user, member)}
                       </td>
-                      <td className="py-4 pr-4 align-top text-[var(--color-muted-foreground)]">
+                      <td className="py-4 pr-4 align-top text-gray-400">
                         {displayEmail(user)}
                       </td>
-                      <td className="py-4 pr-4 align-top text-[var(--color-foreground)] whitespace-nowrap tabular-nums w-28">
+                      <td className="py-4 pr-4 align-top text-gray-900 whitespace-nowrap tabular-nums w-28">
                         {formatDate(member.joined_at)}
                       </td>
                       <td className="py-4 align-top text-right w-16">

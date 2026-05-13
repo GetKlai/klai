@@ -160,7 +160,7 @@ function NewApiKeyPage() {
       <form onSubmit={handleSubmit} className="space-y-6">
         {step === 'details' && (
           <section className="space-y-4">
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {m.admin_shared_wizard_details_intro()}
             </p>
             <div className="space-y-1.5">
@@ -184,7 +184,7 @@ function NewApiKeyPage() {
                 value={form.description}
                 onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
                 rows={3}
-                className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm text-[var(--color-foreground)] outline-none transition-colors placeholder:text-[var(--color-muted-foreground)] focus:ring-2 focus:ring-[var(--color-ring)]"
+                className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)]"
               />
             </div>
           </section>
@@ -193,7 +193,7 @@ function NewApiKeyPage() {
         {step === 'permissions' && (
           <section className="space-y-4">
             <div className="space-y-4">
-              <label className="flex items-start gap-2 text-sm text-[var(--color-foreground)]">
+              <label className="flex items-start gap-2 text-sm text-gray-900">
                 <input
                   type="checkbox"
                   checked={form.chat}
@@ -202,12 +202,12 @@ function NewApiKeyPage() {
                 />
                 <div>
                   <span className="font-medium">{m.admin_api_keys_perm_chat()}</span>
-                  <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+                  <p className="text-xs text-gray-400 mt-0.5">
                     {m.admin_api_keys_perm_chat_description()}
                   </p>
                 </div>
               </label>
-              <label className="flex items-start gap-2 text-sm text-[var(--color-foreground)]">
+              <label className="flex items-start gap-2 text-sm text-gray-900">
                 <input
                   type="checkbox"
                   checked={form.feedback}
@@ -216,12 +216,12 @@ function NewApiKeyPage() {
                 />
                 <div>
                   <span className="font-medium">{m.admin_api_keys_perm_feedback()}</span>
-                  <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+                  <p className="text-xs text-gray-400 mt-0.5">
                     {m.admin_api_keys_perm_feedback_description()}
                   </p>
                 </div>
               </label>
-              <label className="flex items-start gap-2 text-sm text-[var(--color-foreground)]">
+              <label className="flex items-start gap-2 text-sm text-gray-900">
                 <input
                   type="checkbox"
                   checked={form.knowledge_append}
@@ -230,7 +230,7 @@ function NewApiKeyPage() {
                 />
                 <div>
                   <span className="font-medium">{m.admin_api_keys_perm_knowledge_append()}</span>
-                  <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+                  <p className="text-xs text-gray-400 mt-0.5">
                     {m.admin_api_keys_perm_knowledge_append_description()}
                   </p>
                 </div>
@@ -241,7 +241,7 @@ function NewApiKeyPage() {
 
         {step === 'kbs' && (
           <section className="space-y-4">
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {m.admin_api_keys_wizard_kb_access_intro_api()}
             </p>
             <KbAccessEditor
@@ -254,7 +254,7 @@ function NewApiKeyPage() {
 
         {step === 'rate_limit' && (
           <section className="space-y-4">
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {m.admin_api_keys_wizard_rate_limit_intro()}
             </p>
             <div className="space-y-1.5">
@@ -273,7 +273,7 @@ function NewApiKeyPage() {
                   }
                   className="max-w-[8rem]"
                 />
-                <span className="text-sm text-[var(--color-muted-foreground)]">
+                <span className="text-sm text-gray-400">
                   {m.admin_api_keys_rate_limit_unit()}
                 </span>
               </div>

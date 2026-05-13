@@ -69,6 +69,8 @@ class TestCharacterizeGenerateLibrechatEnv:
         assert "DOMAIN_CLIENT=https://chat-acme.getklai.com" in result
         assert "DOMAIN_SERVER=https://chat-acme.getklai.com" in result
         assert "APP_TITLE=Klai Chat" in result
+        assert "ALLOW_SHARED_LINKS=true" in result
+        assert "ALLOW_SHARED_LINKS_PUBLIC=true" in result
 
         # Session secrets (non-deterministic, just check they exist)
         assert "JWT_SECRET=" in result
