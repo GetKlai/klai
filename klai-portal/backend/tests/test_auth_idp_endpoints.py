@@ -285,7 +285,13 @@ async def test_idp_callback_finalize_5xx(respx_zitadel: respx.MockRouter) -> Non
         return_value=httpx.Response(502, json={"error": "bad gw"})
     )
 
-    db = _make_idp_db_mock()
+    # One member user ensures idp_callback reaches the finalize branch
+    # (Case 2: single-member, 0 domain_orgs) rather than Case 1 (total=0
+    # -> /no-account). SPEC-AUTH-009 R3 added the 0-member -> /no-account
+    # redirect; the old test had no member rows and now short-circuits there.
+    mock_user = MagicMock()
+    mock_user.org_id = 1
+    db = _make_idp_db_mock(existing_users=[mock_user])
 
     with (
         capture_logs() as captured,

@@ -35,6 +35,20 @@ class PortalConnectorConfig:
     schedule: str | None
     is_enabled: bool
     allowed_assertion_modes: list[str] | None = None
+    # owner_user_id: Zitadel user_id of the connector creator. Forwarded
+    # to knowledge-ingest /ingest/v1/document as ``req.user_id``.
+    # Required by the personal-KB owner-binding check; absent value causes
+    # 403 personal_kb_owner_mismatch on syncs to ``personal-{user}`` KBs.
+    owner_user_id: str | None = None
+
+    @property
+    def id(self) -> str:
+        """Alias for connector_id. Adapter code (ms_docs, google_drive) reads
+        connector.id; test fixtures historically use SimpleNamespace(id=...).
+        Keeping the dataclass field name connector_id while exposing .id keeps
+        both call sites correct without refactoring all adapters.
+        """
+        return self.connector_id
 
 
 class PortalClient:
@@ -90,6 +104,7 @@ class PortalClient:
                 schedule=data.get("schedule"),
                 is_enabled=data["is_enabled"],
                 allowed_assertion_modes=data.get("allowed_assertion_modes"),
+                owner_user_id=data.get("owner_user_id"),
             )
 
     async def report_sync_status(

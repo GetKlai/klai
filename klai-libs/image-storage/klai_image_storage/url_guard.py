@@ -66,7 +66,6 @@ DOCKER_INTERNAL_HOSTS: frozenset[str] = frozenset(
         "klai-mailer",
         "mailer",
         "retrieval-api",
-        "research-api",
         "klai-knowledge-mcp",
         "scribe",
         "scribe-api",
@@ -77,7 +76,6 @@ DOCKER_INTERNAL_HOSTS: frozenset[str] = frozenset(
         "falkordb",
         "litellm",
         "garage",
-        "klai-focus",
     }
 )
 

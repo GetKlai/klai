@@ -2,8 +2,72 @@
 paths:
   - "klai-knowledge-ingest/**"
   - "klai-connector/**"
+  - "klai-retrieval-api/**"
+  - "klai-portal/backend/app/services/partner_chat.py"
+  - "klai-libs/chat-prompts/**"
 ---
 # Knowledge Domain Patterns
+
+## chat system prompt — three locations, never duplicate (HIGH)
+
+System-prompt content for chat lives in **three** canonical files,
+never two copies of the same content. Modifying one without considering
+the other two has been the recurring failure mode of
+SPEC-RAG-MULTILINGUAL-CHAT-001.
+
+| Location | What lives here | Used by |
+|---|---|---|
+| `klai-libs/chat-prompts/klai_chat_prompts/__init__.py` (`GROUNDED_CHAT_SYSTEM_PROMPT`) | The shared multilingual base prompt: detect substantive language, three guards, no translator disclaimers, [n] citation rules | imported by paths B (`partner_chat.py`) and C (`synthesis.py`); imported by path A as the foundation in v1.2 |
+| `deploy/litellm/klai_knowledge.py` | The LiteLLM pre-call hook prefix builder: Klai Kennisbank header (narrow + broad), ANTWOORDFORMAAT instructions, Klai Templates wrapper, KB-unavailable notice | path A only — LibreChat user-facing chat traffic |
+| `klai-portal/backend/app/services/partner_chat.py::_build_system_prompt` | Adds the chunks-as-context block to the shared base | path B — Widget + Partner API |
+
+**Why three:** chat traffic in Klai takes three concurrent paths. (A)
+LibreChat → LiteLLM hook → Mistral; (B) portal-api
+`/partner/v1/chat/completions` → LiteLLM (no `user` field, hook skips)
+→ Mistral; (C) retrieval-api `POST /chat` (dormant). The hook fires
+only for path A (it filters on `data["user"]`). v1.0/v1.1 of the SPEC
+landed multilingual on B + C only, leaving A still hardcoded NL —
+that mistake cost a full audit cycle to detect.
+
+**Prevention:**
+- Before changing chat behaviour: ask which of the three paths you're
+  touching. If the answer isn't immediately obvious from the file
+  name, you don't yet understand the change — re-read this entry.
+- Never inline a copy of `GROUNDED_CHAT_SYSTEM_PROMPT` content in a
+  new chat surface. Import `from klai_chat_prompts import
+  GROUNDED_CHAT_SYSTEM_PROMPT`.
+- Never duplicate a Klai Kennisbank / ANTWOORDFORMAAT / Klai Templates
+  / KB-unavailable block outside `deploy/litellm/klai_knowledge.py`
+  unless you migrated it into `klai-libs/chat-prompts` and updated
+  every other consumer in the same PR.
+- The CI lint `scripts/lint-no-duplicate-chat-prompt.sh` enforces both
+  rules. It checks two anchor sets — the GROUNDED prompt anchors
+  (canonical: `klai-libs/chat-prompts`) and the LiteLLM-hook NL prefix
+  anchors (canonical: `deploy/litellm/klai_knowledge.py`).
+- Do NOT re-introduce explicit language allow-lists in any of the
+  three locations ("if the user writes Dutch", "if the user writes
+  English"). The base prompt detects any language the LLM
+  understands; the hook prefix and the chunks-context block must
+  remain language-neutral. Hand-curated language lists break every
+  non-listed language.
+- bge-m3 retrieval is already polyglot — never add a query-translation
+  layer ahead of retrieval.
+
+**Detection in production:** `event:chat_synthesis_complete` events in
+VictoriaLogs carry `query_language_detected`,
+`response_language_detected`, and `language_correctness`. The
+`service:` field tells you which path emitted the event (`litellm`
+for path A, `portal-api` for path B, `retrieval-api` for path C). A
+drop in language-correctness rate for one language on one specific
+service is the signal that ONE of the three locations drifted —
+correlate with recent PRs touching that file.
+
+**See:** SPEC-RAG-MULTILINGUAL-CHAT-001 (HISTORY v1.2 has the
+post-merge audit that uncovered the three-paths confusion),
+`docs/architecture/knowledge-ingest-flow.md` § Multilingual chat,
+`docs/runbooks/multilingual-chat-observability.md`,
+`klai-retrieval-api/evaluation/cross_lingual_runner.py` (cross-lingual
+eval).
 
 ## connector_id must thread through the crawl pipeline (HIGH)
 
@@ -31,21 +95,32 @@ Cost: half a day of SPEC-CRAWLER-005 Fase 6 debugging.
   (run_crawl_job + _ingest_crawl_result now accept `connector_id`) and
   `klai-knowledge-ingest/knowledge_ingest/crawl_tasks.py` (passes it through).
 
-## Connector-delete cleanup must cover all four layers (HIGH)
+## Connector-delete cleanup must cover every store (HIGH)
 
-Deleting a connector via the portal UI is a cross-service operation. All four data
-layers must be cleaned or the next re-ingest hits dedup and produces zero new work:
+Deleting a connector via the portal UI is a cross-service operation. Every data
+layer must be cleaned or the next re-ingest hits dedup, produces zero new work,
+and an audit trail of orphan rows lingers forever:
 
 | Layer | Cleaned by |
 |---|---|
 | Qdrant chunks | `qdrant_store.delete_connector` (filters on `source_connector_id`) |
+| FalkorDB Graphiti episodes/entities | `graph_module.delete_kb_episodes` (per-episode UUIDs from `pg_store.get_connector_episode_ids`) |
 | `knowledge.artifacts` | `pg_store.delete_connector_artifacts` (filters on `extra::jsonb->>'source_connector_id'`) |
 | `knowledge.crawled_pages` + `knowledge.page_links` | `pg_store.delete_connector_artifacts` (scoped via artifact URL set — added post-SPEC-CRAWLER-005) |
-| `connector.sync_runs` | Currently NOT cleaned — tracked in SPEC-CONNECTOR-CLEANUP-001 REQ-04 (FK CASCADE) |
+| `knowledge.crawl_jobs` | `pg_store.delete_connector_crawl_jobs` (filters on `config->>'connector_id'` — JSONB, no native column) |
+| `connector.sync_runs` | `klai_connector_client.delete_sync_runs` (interim app-level call until SPEC-CONNECTOR-CLEANUP-001 REQ-04 lands the cross-schema FK with `ON DELETE CASCADE`) |
+| Garage `klai-images/{org}/images/{kb_slug}/...` | **NOT YET CLEANED PER CONNECTOR** — image keys carry no `connector_id`, so per-connector cleanup needs an artifact↔image-key tracking table (separate SPEC). KB-level cleanup wipes the whole `{org}/images/{kb_slug}/` prefix on KB delete, but a partial KB still grows orphan images proportionally to the deleted connector. |
 
 **Prevention:** when adding a new data layer that is connector-scoped, immediately
-wire it into `delete_connector_artifacts` (or the Qdrant equivalent) AND write a
-regression test that does: insert → delete connector → assert rows == 0.
+wire it into `delete_connector_artifacts` (or the Qdrant equivalent), add the call
+to `delete_connector_route` in `klai-knowledge-ingest/knowledge_ingest/routes/ingest.py`
+(or the portal-side delete handler if the data lives in another schema), AND write a
+regression test that does: insert → delete connector → assert rows == 0 across all
+stores.
+
+**Audit (2026-04-30):** verified live on Voys via UI delete. Six of seven stores
+auto-clean on the current code path (after the 2026-04-30 fix). Garage images
+remain a known gap — see SPEC-CONNECTOR-CLEANUP-001 follow-up notes.
 
 ## Connector-delete leaves in-flight enrichment jobs behind (HIGH)
 
@@ -96,6 +171,10 @@ per-page ingest second. Think of graph state as an invariant that must hold befo
 any row that reads from it gets processed. See
 `knowledge_ingest/adapters/crawler.py` and
 `docs/architecture/knowledge-ingest-flow.md` § Part 2.
+
+## HDBSCAN on raw high-dim embeddings fails (HIGH)
+
+Density-based clustering (HDBSCAN) on raw 1024-dim bge-m3 embeddings is unreliable in practice — the curse of dimensionality makes "density" meaningless. Empirical: V2 bootstrap on `voys/support` (501 docs) gave 2 huge clusters + 26.5% outliers instead of an expected 5-15. **Always UMAP-reduce to 5-15 dimensions before HDBSCAN** (defaults: `n_components=10`, `n_neighbors=15`, UMAP metric `cosine`, HDBSCAN metric `euclidean` post-UMAP). Synthetic test fixtures hide this — only real bge-m3 exposes it. See `reports/taxonomy-v2-baseline-2026-05-06/baseline.md` and SPEC-TAXONOMY-V2-001-FOLLOWUP-001.
 
 ## Qdrant empty-list == absent (MED)
 

@@ -6,24 +6,20 @@ Knowledge API routes:
 """
 
 import asyncio
-import base64
-import json
-import logging
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials
+import structlog
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.bearer import bearer
-from app.api.dependencies import _get_caller_org, require_product
+from app.api.dependencies import _load_org_or_500, require_product
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.permissions import UserPermissions, get_caller
 from app.services.access import get_accessible_kb_slugs
-from app.services.zitadel import zitadel
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
 
@@ -35,20 +31,6 @@ class KnowledgeStats(BaseModel):
     personal_count: int
     org_count: int
     group_count: int
-
-
-def _decode_jwt_payload(token: str) -> dict:
-    """Decode JWT payload without signature verification.
-
-    Safe to use after the token has already been validated via get_userinfo.
-    """
-    try:
-        payload_b64 = token.split(".")[1]
-        # Add padding if needed
-        payload_b64 += "=" * (4 - len(payload_b64) % 4)
-        return json.loads(base64.urlsafe_b64decode(payload_b64))
-    except Exception:
-        return {}
 
 
 # @MX:NOTE fan_in=2 -- called for personal, org, and group slug counts
@@ -66,64 +48,41 @@ async def _qdrant_count(filters: dict) -> int:
             # Collection does not exist yet
             return 0
         if not resp.is_success:
-            logger.warning("Qdrant count request failed: HTTP %s", resp.status_code)
+            logger.warning("Qdrant count request failed", status_code=resp.status_code)
             return 0
         return resp.json().get("result", {}).get("count", 0) or 0
-    except Exception as exc:
-        logger.warning("Could not reach Qdrant for knowledge count: %s", exc, exc_info=True)
+    except Exception:
+        logger.exception("Could not reach Qdrant for knowledge count")
         return 0
 
 
 @router.get("/stats", response_model=KnowledgeStats, dependencies=[Depends(require_product("knowledge"))])
 async def get_knowledge_stats(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> KnowledgeStats:
-    try:
-        info = await zitadel.get_userinfo(credentials.credentials)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-        ) from exc
+    org = await _load_org_or_500(db, perms.org_id)
+    zitadel_org_id = org.zitadel_org_id
 
-    # Zitadel does not include resourceowner:id in JWT access tokens or userinfo.
-    # It IS available via introspection, but the portal app has no introspect credentials.
-    # Fallback: Management API get_user_by_id returns details.resourceOwner (PAT-authenticated).
-    jwt_claims = _decode_jwt_payload(credentials.credentials)
-    org_id = jwt_claims.get("urn:zitadel:iam:user:resourceowner:id") or info.get(
-        "urn:zitadel:iam:user:resourceowner:id"
+    # Resolve accessible kb_slugs (personal + org + group:{id} for each membership).
+    # REQ-6: pass effective_role so personal-role callers do not see "org" or
+    # default_org_role KBs in the slug list.
+    user_id = perms.user_id
+    accessible_slugs = (
+        await get_accessible_kb_slugs(user_id, db, user_role=perms.effective_role.value) if user_id else ["org"]
     )
-    if not org_id:
-        user_id = info.get("sub", "")
-        if user_id:
-            try:
-                user_data = await zitadel.get_user_by_id(user_id)
-                org_id = user_data.get("user", {}).get("details", {}).get("resourceOwner")
-            except Exception as mgmt_exc:
-                logger.warning("Could not fetch user org via Management API: %s", mgmt_exc, exc_info=True)
-    if not org_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No organisation found for this user",
-        )
-
-    user_id = info.get("sub", "")
-
-    # Resolve accessible kb_slugs (personal + org + group:{id} for each membership)
-    accessible_slugs = await get_accessible_kb_slugs(user_id, db) if user_id else ["org"]
     group_slugs = [s for s in accessible_slugs if s.startswith("group:")]
 
     org_filter = {
         "must": [
-            {"key": "org_id", "match": {"value": org_id}},
+            {"key": "org_id", "match": {"value": zitadel_org_id}},
             {"key": "kb_slug", "match": {"value": "org"}},
         ],
     }
     personal_filter = (
         {
             "must": [
-                {"key": "org_id", "match": {"value": org_id}},
+                {"key": "org_id", "match": {"value": zitadel_org_id}},
                 {"key": "kb_slug", "match": {"value": f"personal-{user_id}"}},
                 {"key": "user_id", "match": {"value": user_id}},
             ],
@@ -136,7 +95,7 @@ async def get_knowledge_stats(
     group_filters = [
         {
             "must": [
-                {"key": "org_id", "match": {"value": org_id}},
+                {"key": "org_id", "match": {"value": zitadel_org_id}},
                 {"key": "kb_slug", "match": {"value": slug}},
             ],
         }
@@ -165,24 +124,24 @@ async def get_knowledge_stats(
 async def list_personal_items(
     limit: int = 50,
     offset: int = 0,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """List personal knowledge artifacts for the authenticated user."""
-    zitadel_user_id, org, _caller = await _get_caller_org(credentials, db)
+    org = await _load_org_or_500(db, perms.org_id)
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.get(
             f"{settings.knowledge_ingest_url}/knowledge/v1/personal/items",
             headers={"x-internal-secret": settings.knowledge_ingest_secret},
             params={
                 "org_id": org.zitadel_org_id,
-                "user_id": zitadel_user_id,
+                "user_id": perms.user_id,
                 "limit": limit,
                 "offset": offset,
             },
         )
     if not resp.is_success:
-        logger.warning("knowledge-ingest list items failed: HTTP %s", resp.status_code)
+        logger.warning("knowledge-ingest list items failed", status_code=resp.status_code)
         raise HTTPException(status_code=resp.status_code, detail="Failed to list personal items")
     return resp.json()
 
@@ -190,21 +149,21 @@ async def list_personal_items(
 @router.delete("/personal/items/{artifact_id}", dependencies=[Depends(require_product("knowledge"))])
 async def delete_personal_item(
     artifact_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Delete a personal knowledge artifact for the authenticated user."""
-    zitadel_user_id, org, _caller = await _get_caller_org(credentials, db)
+    org = await _load_org_or_500(db, perms.org_id)
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.delete(
             f"{settings.knowledge_ingest_url}/knowledge/v1/personal/items/{artifact_id}",
             headers={"x-internal-secret": settings.knowledge_ingest_secret},
             params={
                 "org_id": org.zitadel_org_id,
-                "user_id": zitadel_user_id,
+                "user_id": perms.user_id,
             },
         )
     if not resp.is_success:
-        logger.warning("knowledge-ingest delete item failed: HTTP %s", resp.status_code)
+        logger.warning("knowledge-ingest delete item failed", status_code=resp.status_code)
         raise HTTPException(status_code=resp.status_code, detail="Failed to delete personal item")
     return resp.json()

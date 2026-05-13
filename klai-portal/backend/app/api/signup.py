@@ -34,10 +34,12 @@ from app.core.config import settings
 from app.core.database import get_db, set_tenant
 from app.models.portal import PortalOrg, PortalUser
 from app.services.bff_session import SessionService
+from app.services.domain_validation import is_free_email_provider
 from app.services.events import emit_event
 from app.services.provisioning import provision_tenant
 from app.services.request_ip import resolve_caller_ip_subnet
 from app.services.signup_email_rl import check_signup_email_rate_limit
+from app.services.waitlist_token import verify_invite_token
 from app.services.zitadel import zitadel
 
 logger = logging.getLogger(__name__)
@@ -74,6 +76,9 @@ class SignupRequest(BaseModel):
     password: str
     company_name: str
     preferred_language: str = "nl"
+    # SPEC-LAUNCH-SOFTLAUNCH-001 B-2: optional waitlist invite token.
+    # When present and valid, bypasses the free-email-provider block (B-3).
+    invite_token: str | None = None
 
     @field_validator("company_name", "first_name", "last_name")
     @classmethod
@@ -156,6 +161,39 @@ async def signup(
             detail="Too many signup attempts for this email. Please try again tomorrow.",
         )
 
+    # SPEC-AUTH-009 R1/R7 C1.3: reject free-email domains before any Zitadel/DB work.
+    # C7.2: NL message instructs the user to use a company email or request an invitation.
+    # SPEC-LAUNCH-SOFTLAUNCH-001 B-3: bypass the free-email block when the
+    # request carries a valid invite_token whose embedded email matches the
+    # submitted email.
+    _email_domain = body.email.split("@")[-1].strip().lower()
+    _submitted_email_norm = body.email.strip().lower()
+    _has_valid_invite = False
+    if body.invite_token:
+        _payload = verify_invite_token(body.invite_token)
+        if _payload is not None and _payload.email == _submitted_email_norm:
+            _has_valid_invite = True
+            _slog.info(
+                "signup_invite_token_accepted",
+                email_domain=_email_domain,
+                company_from_token=_payload.company,
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=("Uitnodigingslink is verlopen of klopt niet bij dit e-mailadres. Vraag een nieuwe link aan."),
+            )
+
+    if not _has_valid_invite and is_free_email_provider(_email_domain):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Klai-werkruimtes kun je alleen aanmaken met een zakelijk mailadres. "
+                "Vraag je beheerder om een uitnodiging als je via een privé-mailadres "
+                "wilt deelnemen."
+            ),
+        )
+
     # 1. Create Zitadel org
     try:
         org_data = await zitadel.create_org(_slugify(body.company_name))
@@ -230,6 +268,8 @@ async def signup(
             zitadel_org_id=zitadel_org_id,
             name=body.company_name,
             slug=_to_slug(body.company_name, zitadel_org_id),
+            primary_domain=_email_domain,
+            auto_accept_same_domain=False,
         )
         db.add(org_row)
         await db.flush()  # get org_row.id without committing yet
@@ -394,6 +434,19 @@ async def signup_social(
             detail="Social signup session expired. Please try again.",
         )
 
+    # SPEC-AUTH-009 R1 C1.3: reject free-email domains in social signup path too.
+    _social_email = pending.get("email", "")
+    _social_domain = _social_email.split("@")[-1].strip().lower() if "@" in _social_email else ""
+    if _social_domain and is_free_email_provider(_social_domain):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Klai-werkruimtes kun je alleen aanmaken met een zakelijk mailadres. "
+                "Vraag je beheerder om een uitnodiging als je via een privé-mailadres "
+                "wilt deelnemen."
+            ),
+        )
+
     # 2. Create Zitadel org
     try:
         org_data = await zitadel.create_org(_slugify(body.company_name))
@@ -453,6 +506,8 @@ async def signup_social(
             zitadel_org_id=zitadel_org_id,
             name=body.company_name,
             slug=_to_slug(body.company_name, zitadel_org_id),
+            primary_domain=_social_domain,
+            auto_accept_same_domain=False,
         )
         db.add(org_row)
         await db.flush()

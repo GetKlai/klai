@@ -62,8 +62,8 @@ app = FastAPI(
 
 # SPEC-SEC-004: defense-in-depth — reject requests without Authorization header
 # before any route handler. Token validity is checked per-route via
-# `Depends(get_current_user_id)`; this guard only checks *presence* and is a
-# safety net if a new route forgets its auth dependency.
+# `Depends(get_authenticated_caller)`; this guard only checks *presence* and
+# is a safety net if a new route forgets its auth dependency.
 app.add_middleware(AuthGuardMiddleware)
 
 app.add_middleware(RequestContextMiddleware)

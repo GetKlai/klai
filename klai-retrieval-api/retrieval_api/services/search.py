@@ -1,8 +1,7 @@
-"""Qdrant search across klai_knowledge and klai_focus.
+"""Qdrant search on klai_knowledge.
 
 klai_knowledge uses named vectors (vector_chunk, vector_questions, vector_sparse)
 with 3-leg RRF fusion. Falls back to 2-leg RRF when sparse vector is unavailable.
-klai_focus uses a single unnamed dense vector.
 """
 
 from __future__ import annotations
@@ -10,9 +9,6 @@ from __future__ import annotations
 import asyncio
 import warnings
 from datetime import UTC, datetime
-
-# Qdrant client warns about API key over HTTP; safe inside Docker network
-warnings.filterwarnings("ignore", message="Api key is used with an insecure connection")
 
 import structlog
 from qdrant_client import AsyncQdrantClient
@@ -30,6 +26,10 @@ from qdrant_client.models import (
 from retrieval_api.config import settings
 from retrieval_api.models import RetrieveRequest
 from retrieval_api.util.payload import payload_list
+
+# Qdrant client warns at call-time when an api_key is used over plain HTTP;
+# safe inside the Docker network, so silence that specific warning.
+warnings.filterwarnings("ignore", message="Api key is used with an insecure connection")
 
 logger = structlog.get_logger()
 
@@ -89,10 +89,12 @@ def _scope_filter(request: RetrieveRequest) -> list[FieldCondition | Filter]:
         visibility_should: list[Filter] = [not_private]
         if request.user_id:
             visibility_should.append(
-                Filter(must=[
-                    FieldCondition(key="visibility", match=MatchValue(value="private")),
-                    FieldCondition(key="user_id", match=MatchValue(value=request.user_id)),
-                ])
+                Filter(
+                    must=[
+                        FieldCondition(key="visibility", match=MatchValue(value="private")),
+                        FieldCondition(key="user_id", match=MatchValue(value=request.user_id)),
+                    ]
+                )
             )
         conditions.append(Filter(should=visibility_should))
     if request.kb_slugs:
@@ -100,121 +102,17 @@ def _scope_filter(request: RetrieveRequest) -> list[FieldCondition | Filter]:
             # kb_slugs is an org-only filter. When scope=both, personal chunks must not be
             # excluded by the slug filter — a chunk passes if it matches a slug OR belongs
             # to the requesting user (personal ownership bypass).
-            conditions.append(Filter(should=[
-                FieldCondition(key="kb_slug", match=MatchAny(any=request.kb_slugs)),
-                FieldCondition(key="user_id", match=MatchValue(value=request.user_id)),
-            ]))
-        else:
             conditions.append(
-                FieldCondition(key="kb_slug", match=MatchAny(any=request.kb_slugs))
+                Filter(
+                    should=[
+                        FieldCondition(key="kb_slug", match=MatchAny(any=request.kb_slugs)),
+                        FieldCondition(key="user_id", match=MatchValue(value=request.user_id)),
+                    ]
+                )
             )
+        else:
+            conditions.append(FieldCondition(key="kb_slug", match=MatchAny(any=request.kb_slugs)))
     return conditions
-
-
-def _notebook_filter(request: RetrieveRequest) -> list[FieldCondition | Filter]:
-    """Build the must_conditions list for ``_search_notebook``.
-
-    SPEC-SEC-IDENTITY-ASSERT-001 REQ-5: extends the previous tenant-only
-    scope with a personal-vs-team visibility gate symmetric to
-    ``_search_knowledge``'s ``visibility=private`` filter. Chunks carry a
-    ``notebook_visibility`` payload field at ingest time (written by
-    klai-focus/research-api's qdrant_store).
-
-    Visibility logic:
-
-    - Team notebooks: the chunk has ``notebook_visibility="org"`` and is
-      readable by every user in the tenant — no owner check. ``"org"``
-      mirrors ``Notebook.scope`` in research-api so no translation layer
-      sits between the DB record and the Qdrant payload.
-    - Personal notebooks: the chunk has ``notebook_visibility="personal"``
-      and is readable only when ``owner_user_id`` matches the requester.
-
-    The ``Filter(should=[...])`` block is the OR of the two branches: a
-    chunk passes when EITHER the team-leg matches OR the personal-leg
-    matches. Chunks with no payload field (legacy, pre-migration) match
-    neither leg and are filtered out — fail-secure default.
-    """
-
-    conditions: list[FieldCondition | Filter] = [
-        FieldCondition(key="tenant_id", match=MatchValue(value=request.org_id)),
-    ]
-    if request.notebook_id:
-        conditions.append(
-            FieldCondition(key="notebook_id", match=MatchValue(value=request.notebook_id))
-        )
-
-    # Visibility gate. user_id is required at the endpoint when notebook scope
-    # is requested (REQ-5.2), so callers reaching this function with no user_id
-    # are programmer errors — the personal-leg simply can't fire without it.
-    visibility_branches: list[FieldCondition | Filter] = [
-        FieldCondition(key="notebook_visibility", match=MatchValue(value="org")),
-    ]
-    if request.user_id:
-        visibility_branches.append(
-            Filter(
-                must=[
-                    FieldCondition(key="notebook_visibility", match=MatchValue(value="personal")),
-                    FieldCondition(key="owner_user_id", match=MatchValue(value=request.user_id)),
-                ]
-            )
-        )
-    conditions.append(Filter(should=visibility_branches))
-
-    conditions.append(_invalid_at_filter())
-    return conditions
-
-
-async def _search_notebook(
-    query_vector: list[float],
-    request: RetrieveRequest,
-    candidates: int,
-) -> list[dict]:
-    """Dense cosine search on klai_focus collection (single unnamed vector).
-
-    Filter logic delegated to :func:`_notebook_filter`. SPEC-SEC-IDENTITY-ASSERT-001
-    REQ-5 enforces a visibility gate (``notebook_visibility`` payload + symmetric
-    ``owner_user_id`` filter) so a user cannot read a peer's personal notebook
-    just because both belong to the same tenant (AC-4).
-    """
-    client = _get_client()
-
-    must_conditions = _notebook_filter(request)
-
-    try:
-        result = await asyncio.wait_for(
-            client.query_points(
-                collection_name=settings.qdrant_focus_collection,
-                query=query_vector,
-                query_filter=Filter(must=must_conditions),
-                limit=candidates,
-                with_payload=True,
-            ),
-            timeout=5.0,
-        )
-    except Exception:
-        # SPEC-SEC-HYGIENE-001 REQ-43: logger.exception preserves the
-        # traceback (TRY400/TRY401); the previous `error=str(exc)` discarded it.
-        logger.exception(
-            "qdrant_search_failed", collection=settings.qdrant_focus_collection
-        )
-        raise
-
-    return [
-        {
-            "chunk_id": str(r.id),
-            "text": r.payload.get("content", r.payload.get("text", "")),
-            "score": r.score,
-            "artifact_id": r.payload.get("artifact_id"),
-            "content_type": r.payload.get("content_type"),
-            "context_prefix": r.payload.get("context_prefix"),
-            "scope": "notebook",
-            "valid_at": r.payload.get("valid_at"),
-            "invalid_at": r.payload.get("invalid_at"),
-            "ingested_at": r.payload.get("ingested_at"),
-            "assertion_mode": r.payload.get("assertion_mode"),
-        }
-        for r in result.points
-    ]
 
 
 async def _search_knowledge(
@@ -309,12 +207,14 @@ async def _search_knowledge(
             "artifact_id": r.payload.get("artifact_id"),
             "content_type": r.payload.get("content_type"),
             "context_prefix": r.payload.get("context_prefix"),
+            "parent_chunk_id": r.payload.get("parent_chunk_id"),
             "scope": r.payload.get("scope"),
             "valid_at": r.payload.get("valid_at"),
             "invalid_at": r.payload.get("invalid_at"),
             "ingested_at": r.payload.get("ingested_at"),
             "assertion_mode": r.payload.get("assertion_mode"),
             "entity_pagerank_max": r.payload.get("entity_pagerank_max"),
+            "entity_names": payload_list(r.payload, "entity_names"),
             "source_url": r.payload.get("source_url"),
             "source_ref": r.payload.get("source_ref"),
             "source_connector_id": r.payload.get("source_connector_id"),
@@ -380,12 +280,14 @@ async def fetch_chunks_by_urls(
             "artifact_id": r.payload.get("artifact_id"),
             "content_type": r.payload.get("content_type"),
             "context_prefix": r.payload.get("context_prefix"),
+            "parent_chunk_id": r.payload.get("parent_chunk_id"),
             "scope": r.payload.get("scope"),
             "valid_at": r.payload.get("valid_at"),
             "invalid_at": r.payload.get("invalid_at"),
             "ingested_at": r.payload.get("ingested_at"),
             "assertion_mode": r.payload.get("assertion_mode"),
             "entity_pagerank_max": r.payload.get("entity_pagerank_max"),
+            "entity_names": payload_list(r.payload, "entity_names"),
             "source_url": r.payload.get("source_url"),
             "source_ref": r.payload.get("source_ref"),
             "source_connector_id": r.payload.get("source_connector_id"),
@@ -411,32 +313,5 @@ async def hybrid_search(
     Returns raw result dicts with text, score, and payload fields.
     sparse_vector is forwarded to _search_knowledge for 3-leg RRF.
     """
-    if request.scope == "notebook":
-        return await _search_notebook(query_vector, request, candidates)
-
-    if request.scope == "broad":
-        # Parallel queries on both collections, merge by score
-        knowledge_task = _search_knowledge(query_vector, request, candidates, sparse_vector)
-        notebook_task = _search_notebook(query_vector, request, candidates)
-
-        knowledge_results, notebook_results = await asyncio.gather(
-            knowledge_task, notebook_task, return_exceptions=True
-        )
-
-        merged: list[dict] = []
-        if not isinstance(knowledge_results, BaseException):
-            merged.extend(knowledge_results)
-        else:
-            logger.warning("qdrant_broad_knowledge_failed", error=str(knowledge_results))
-
-        if not isinstance(notebook_results, BaseException):
-            merged.extend(notebook_results)
-        else:
-            logger.warning("qdrant_broad_notebook_failed", error=str(notebook_results))
-
-        # Sort by score descending, take top candidates
-        merged.sort(key=lambda x: x["score"], reverse=True)
-        return merged[:candidates]
-
     # org, personal, both
     return await _search_knowledge(query_vector, request, candidates, sparse_vector)

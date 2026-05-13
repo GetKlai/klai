@@ -33,6 +33,7 @@ def _build_payload(
     connector_type: str = "",
     sender_email: str = "",
     mentioned_emails: list[str] | None = None,
+    user_id: str | None = None,
 ) -> dict:
     """Build the JSON payload for the knowledge-ingest endpoint."""
     is_crawl = connector_type in _CRAWL_CONNECTOR_TYPES
@@ -48,6 +49,11 @@ def _build_payload(
         "content_type": content_type,
         "source_type": source_type,
     }
+    # user_id: connector owner's Zitadel user_id. Required by knowledge-ingest's
+    # personal-KB owner-binding check (personal_kb_owner_mismatch). Without it,
+    # syncs to a personal-{user} KB return 403.
+    if user_id:
+        payload["user_id"] = user_id
     if connector_type:
         payload["connector_type"] = connector_type
     if is_crawl and source_url:
@@ -105,6 +111,7 @@ class KnowledgeIngestClient:
         allowed_assertion_modes: list[str] | None = None,
         image_urls: list[str] | None = None,
         connector_type: str = "",
+        user_id: str | None = None,
     ) -> None:
         """Send a parsed document to knowledge-ingest for embedding.
 
@@ -119,13 +126,24 @@ class KnowledgeIngestClient:
             allowed_assertion_modes: Optional connector-level hint for which assertion modes
                 this source can produce. Used in knowledge-ingest when content has no frontmatter.
             image_urls: Optional list of presigned S3 URLs for images extracted from the document.
+            user_id: Zitadel user_id of the connector creator. Forwarded as
+                ``req.user_id`` so knowledge-ingest can pass the
+                personal-KB owner-binding check (``personal_kb_owner_mismatch``).
+                Without it, syncs to ``personal-{user}`` KBs return 403.
 
         Raises:
             httpx.HTTPStatusError: If the ingest endpoint returns an error status.
         """
         # SPEC-SEC-INTERNAL-001 REQ-9.3: header is unconditional. The
         # constructor guard above ensures _internal_secret is non-empty.
-        headers: dict[str, str] = {"x-internal-secret": self._internal_secret}
+        # SPEC-TI-003 AC-6: knowledge-ingest /ingest/v1/document calls
+        # ``assert_caller_identity`` which 400s when X-Caller-Service is
+        # missing. klai-connector identifies itself here so the tenant
+        # binding is enforceable.
+        headers: dict[str, str] = {
+            "x-internal-secret": self._internal_secret,
+            "x-caller-service": "connector",
+        }
 
         payload = _build_payload(
             org_id=org_id,
@@ -138,6 +156,7 @@ class KnowledgeIngestClient:
             content_type=content_type,
             image_urls=image_urls,
             connector_type=connector_type,
+            user_id=user_id,
         )
         if allowed_assertion_modes is not None:
             payload["allowed_assertion_modes"] = allowed_assertion_modes
@@ -178,7 +197,15 @@ class CrawlSyncClient:
         self._client = httpx.AsyncClient(base_url=base_url, timeout=timeout)
 
     def _headers(self) -> dict[str, str]:
-        return {"x-internal-secret": self._internal_secret} if self._internal_secret else {}
+        # SPEC-TI-003 AC-6: identity-asserted endpoints in knowledge-ingest
+        # 400 on missing X-Caller-Service. klai-connector self-identifies on
+        # every outbound POST/GET so the tenant binding can be enforced.
+        if not self._internal_secret:
+            return {}
+        return {
+            "x-internal-secret": self._internal_secret,
+            "x-caller-service": "connector",
+        }
 
     async def crawl_sync(
         self,
@@ -233,6 +260,24 @@ class CrawlSyncClient:
         )
         resp.raise_for_status()
         return resp.json()
+
+    async def crawl_sync_cancel(self, job_id: str) -> None:
+        """Cancel an in-flight ``run_crawl`` task on knowledge-ingest.
+
+        SPEC-WORKER-LANES-001 REQ-3. Called by sync_engine on poll timeout
+        so the procrastinate task does not keep writing artifacts behind a
+        sync_run that has already been marked failed. Idempotent and
+        best-effort — knowledge-ingest returns 204 even when the task has
+        already finished.
+
+        Returns:
+            None on success (204 No Content). 404 on unknown job_id.
+        """
+        resp = await self._client.post(
+            f"/ingest/v1/crawl/sync/{job_id}/cancel",
+            headers=self._headers(),
+        )
+        resp.raise_for_status()
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client."""

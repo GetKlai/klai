@@ -77,6 +77,17 @@ async def close_pool() -> None:
         _pool = None
 
 
+def get_pool() -> asyncpg.Pool | None:
+    """Return the shared klai-DB pool for use by other modules.
+
+    SPEC-RAG-PARENT-CHILD-001 reuses this pool for the parent_lookup
+    module instead of standing up a second connection to the same DB.
+    Returns None when init_pool has not run yet (e.g. portal_events_host
+    is unset in dev).
+    """
+    return _pool
+
+
 def emit_event(
     event_type: str,
     tenant_id: str | None = None,

@@ -30,6 +30,11 @@ class SyncRunData(BaseModel):
     documents_failed: int = 0
     bytes_processed: int = 0
     error_details: list[dict] | None = None
+    # SPEC-CRAWLER-006: live progress for delegated web_crawler runs.
+    # Always None / False for terminal rows and non-crawler types.
+    pages_done: int | None = None
+    pages_total: int | None = None
+    live_resolution_failed: bool = False
 
 
 class KlaiConnectorClient:
@@ -109,6 +114,13 @@ class KlaiConnectorClient:
             )
             response.raise_for_status()
             return [SyncRunData(**r) for r in response.json()]
+
+    # delete_sync_runs() removed by SPEC-CONNECTOR-DELETE-LIFECYCLE-001
+    # PR C (REQ-08): the cross-schema FK with ON DELETE CASCADE on
+    # ``connector.sync_runs.connector_id`` -> ``public.portal_connectors.id``
+    # makes the explicit application-level delete redundant. The portal's
+    # finalize-delete endpoint hard-deletes the portal_connectors row;
+    # PostgreSQL cascades to sync_runs automatically.
 
     async def compute_fingerprint(
         self,

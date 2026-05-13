@@ -23,7 +23,7 @@ class TestDownloadAndUploadImages:
         async def fake_upload(*args, **kwargs):
             from klai_image_storage import ImageUploadResult
             return ImageUploadResult(
-                object_key="org/img/hash.png", public_url="/kb-images/org/img/hash.png", deduplicated=False,
+                object_key="org/img/hash.png", deduplicated=False,
             )
 
         mock_store.upload_image = fake_upload
@@ -38,7 +38,7 @@ class TestDownloadAndUploadImages:
 
         result = await download_and_upload_images(
             image_urls=[("logo", "https://example.com/logo.png")],
-            org_id="org-1",
+            org_id="100000000000000001",
             kb_slug="kb-1",
             image_store=mock_store,
             http_client=mock_http,
@@ -56,7 +56,7 @@ class TestDownloadAndUploadImages:
 
         result = await download_and_upload_images(
             image_urls=[("img", "https://broken.com/img.png")],
-            org_id="org-1",
+            org_id="100000000000000001",
             kb_slug="kb-1",
             image_store=mock_store,
             http_client=mock_http,
@@ -77,7 +77,7 @@ class TestDownloadAndUploadImages:
 
         result = await download_and_upload_images(
             image_urls=[("fake", "https://example.com/page.html")],
-            org_id="org-1",
+            org_id="100000000000000001",
             kb_slug="kb-1",
             image_store=mock_store,
             http_client=mock_http,
@@ -98,7 +98,7 @@ class TestDownloadAndUploadImages:
 
         result = await download_and_upload_images(
             image_urls=[("big", "https://example.com/huge.png")],
-            org_id="org-1",
+            org_id="100000000000000001",
             kb_slug="kb-1",
             image_store=mock_store,
             http_client=mock_http,
@@ -114,7 +114,7 @@ class TestDownloadAndUploadImages:
 
         async def fake_upload(*args, **kwargs):
             from klai_image_storage import ImageUploadResult
-            return ImageUploadResult(object_key="key", public_url="/kb-images/key", deduplicated=False)
+            return ImageUploadResult(object_key="key", deduplicated=False)
 
         mock_store.upload_image = fake_upload
 
@@ -130,7 +130,7 @@ class TestDownloadAndUploadImages:
 
         result = await download_and_upload_images(
             image_urls=urls,
-            org_id="org-1",
+            org_id="100000000000000001",
             kb_slug="kb-1",
             image_store=mock_store,
             http_client=mock_http,
@@ -146,7 +146,7 @@ class TestDownloadAndUploadImages:
 
         async def fake_upload(*args, **kwargs):
             from klai_image_storage import ImageUploadResult
-            return ImageUploadResult(object_key="key", public_url="/kb-images/key", deduplicated=False)
+            return ImageUploadResult(object_key="key", deduplicated=False)
 
         mock_store.upload_image = fake_upload
 
@@ -154,7 +154,7 @@ class TestDownloadAndUploadImages:
 
         result = await download_and_upload_images(
             image_urls=[],
-            org_id="org-1",
+            org_id="100000000000000001",
             kb_slug="kb-1",
             image_store=mock_store,
             http_client=AsyncMock(),
@@ -184,7 +184,7 @@ class TestUploadImagesIsConnectorAgnostic:
         async def fake_upload(*args, **kwargs):
             from klai_image_storage import ImageUploadResult
             return ImageUploadResult(
-                object_key="k", public_url="/kb-images/k", deduplicated=False,
+                object_key="k", deduplicated=False,
             )
 
         engine._image_store.upload_image = fake_upload
@@ -209,7 +209,7 @@ class TestUploadImagesIsConnectorAgnostic:
         result = await engine._upload_images(
             parsed_images=[],
             ref=ref,
-            org_id="org-1",
+            org_id="100000000000000001",
             kb_slug="kb-1",
         )
 

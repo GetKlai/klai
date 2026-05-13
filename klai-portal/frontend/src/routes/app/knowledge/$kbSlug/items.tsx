@@ -11,6 +11,7 @@ import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { useKBQuota } from '@/hooks/useKBQuota'
 import type { PersonalItemsResponse } from './-kb-types'
+import { kbQueryKeys } from '@/lib/kb-query-keys'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/items')({
   component: ItemsTab,
@@ -24,7 +25,7 @@ function ItemsTab() {
   const { canAddItem } = useKBQuota(kbSlug)
 
   const { data, isLoading } = useQuery<PersonalItemsResponse>({
-    queryKey: ['personal-knowledge', kbSlug],
+    queryKey: kbQueryKeys.personalKnowledge(kbSlug),
     queryFn: async () => apiFetch<PersonalItemsResponse>('/api/knowledge/personal/items'),
     enabled: auth.isAuthenticated,
   })
@@ -37,20 +38,20 @@ function ItemsTab() {
       })
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['personal-knowledge'] })
+      void queryClient.invalidateQueries({ queryKey: kbQueryKeys.personalKnowledge(kbSlug) })
     },
     onSettled: () => setDeletingId(null),
   })
 
   if (isLoading) {
-    return <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_loading()}</p>
+    return <p className="text-sm text-gray-400">{m.admin_connectors_loading()}</p>
   }
 
   if (!data?.items?.length) {
     return (
-      <div className="rounded-lg border border-dashed border-[var(--color-border)] p-8 text-center">
-        <List className="mx-auto h-8 w-8 text-[var(--color-muted-foreground)] mb-3" />
-        <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_items_empty_state()}</p>
+      <div className="rounded-lg border border-dashed border-gray-200 p-8 text-center">
+        <List className="mx-auto h-8 w-8 text-gray-400 mb-3" />
+        <p className="text-sm text-gray-400">{m.knowledge_items_empty_state()}</p>
       </div>
     )
   }
@@ -83,7 +84,7 @@ function ItemsTab() {
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-[var(--color-border)] text-left text-xs tracking-wide text-gray-400">
+            <tr className="border-b border-gray-200 text-left text-xs tracking-wide text-gray-400">
               <th className="pb-2 pr-4 font-medium">{m.knowledge_items_column_title()}</th>
               <th className="pb-2 pr-4 font-medium">{m.knowledge_items_column_type()}</th>
               <th className="pb-2 pr-4 font-medium">{m.knowledge_items_column_saved_at()}</th>
@@ -92,18 +93,18 @@ function ItemsTab() {
           </thead>
           <tbody>
             {data.items.map((item) => (
-              <tr key={item.id} className="border-b border-[var(--color-border)] last:border-0">
-                <td className="py-2.5 pr-4 text-[var(--color-foreground)]">
+              <tr key={item.id} className="border-b border-gray-200 last:border-0">
+                <td className="py-2.5 pr-4 text-gray-900">
                   {item.path.replace(/\.md$/, '')}
                 </td>
                 <td className="py-2.5 pr-4">
                   {item.assertion_mode ? (
                     <Badge variant="secondary">{item.assertion_mode}</Badge>
                   ) : (
-                    <span className="text-[var(--color-muted-foreground)]">-</span>
+                    <span className="text-gray-400">-</span>
                   )}
                 </td>
-                <td className="py-2.5 pr-4 text-[var(--color-muted-foreground)]">
+                <td className="py-2.5 pr-4 text-gray-400">
                   {new Date(item.created_at).toLocaleDateString()}
                 </td>
                 <td className="py-2.5">

@@ -32,7 +32,7 @@
 ## Core Products
 
 ### Chat
-AI chat interface powered by LibreChat. Each customer gets an isolated subdomain (e.g., `acme.getklai.com`) with their own data store. Model routing via LiteLLM: simple queries routed to fast models, complex queries to large models. Automatic fallback from Mistral API to Ollama CPU on failure. Web search via SearxNG + Firecrawl for full-page content extraction. Reranking via self-hosted Infinity (BGE-reranker-v2-m3).
+AI chat interface powered by LibreChat. Each customer gets an isolated subdomain (e.g., `acme.getklai.com`) with their own data store. Model routing via LiteLLM: simple queries routed to fast models, complex queries to large models. Automatic fallback from Mistral API to Ollama CPU on failure. Web search via SearxNG + Firecrawl for full-page content extraction. Reranking via self-hosted Infinity (BGE-reranker-v2-m3). **Multilingual chat (NL/EN/DE/FR/PT/ES)** — per-message language auto-detection across all three chat surfaces (LibreChat, embeddable widget, partner API): a German colleague querying a Dutch knowledge base receives a German answer with citations to the Dutch source. Three industry-standard guards (≥5-word substantive threshold, single-foreign-word tolerance, substantive-switch persistence) prevent spurious language switches. Pre-merge eval gate enforces ≥95% per-language correctness.
 
 ### Knowledge
 Organization-scoped knowledge bases with document management. Hybrid retrieval pipeline combining vector search (Qdrant) and knowledge graph (FalkorDB/Graphiti) with Reciprocal Rank Fusion. Document ingestion via knowledge-ingest service with dense + sparse embeddings (BGE-M3 via TEI + custom sparse server). External source connectors (klai-connector): GitHub repos, websites via Crawl4AI. Knowledge-augmented chat responses via LiteLLM retrieval hook. MCP server (klai-knowledge-mcp) for LibreChat tool integration. **Knowledge Gaps dashboard** tracks unanswered questions (zero chunks or low-confidence retrieval) so admins can identify and fill content gaps in their knowledge bases. Per-user KB scope control bar lets users enable/disable KB retrieval, toggle personal KB inclusion, and filter which org knowledge bases are searched — preferences persist via portal API and propagate to the LiteLLM hook within 30 seconds via version-based cache invalidation.
@@ -55,15 +55,17 @@ Bot-assisted meeting transcription via Vexa integration. A Vexa bot joins Google
 - Calendar invite parsing via IMAP listener (meet@getklai.com), DKIM/SPF/ARC-verified per SPEC-SEC-IMAP-001 — only invites whose RFC-5322 From identity is cryptographically verified can schedule a bot, preventing spoofed-organizer attacks against a customer's tenant budget
 - Consent notice displayed and recorded before any bot is dispatched
 
-### Product Entitlements & Plans
-Each org has a plan that determines which products are available: `free` (none), `core` (chat), `professional` (chat, scribe), `complete` (chat, scribe, knowledge). Products are assigned per user (direct) or per group (inherited). Effective products are the union of both. Seat limits are enforced at invite time (409 when full). Plan upgrades make new products assignable but don't auto-enable; downgrades revoke over-ceiling assignments. JWT access tokens contain a `klai:products` claim enriched by a Zitadel Action calling the portal's internal API.
+### Product Entitlements & Pricing (per-user accounts)
+Each user has an **account type** (billing axis) and a **role / profile** (permission axis), kept as two orthogonal columns on `portal_users` per SPEC-PORTAL-PRICING-PER-USER-001. Account types match [getklai.com/pricing](https://getklai.com/pricing): **Klai Chat** (€28/user/mo) and **Klai Chat + Knowledge** (€68/user/mo); see `klai-portal/backend/app/core/seats.py::SeatType`. The invite UI shows only the Profile dropdown — the account type is derived from the chosen Profile via `suggest_seat(role)` and displayed as a read-only badge that updates live. Admin-support flow (`PATCH /api/admin/users/{id}`) still accepts an explicit `seat_type` for cases where a role's default doesn't match the customer's billing intent.
+
+Per-org product entitlements layer on top: products are assigned per user (direct) or per group (inherited); effective products are the union. Seat limits are enforced at invite time (409 when full). JWT access tokens carry a `klai:products` claim enriched by a Zitadel Action calling the portal's internal API. Org plan (`portal_orgs.plan`) survives only as a quota/feature-ceiling helper; the per-user account type is the source of truth for billing math. Phase 5b Moneybird per-seat subscription mutation is tracked separately in SPEC-PORTAL-MONEYBIRD-PER-SEAT-001 (`needs-research`).
 
 ---
 
 ## Core Features
 
 **Customer-Facing**
-- Private chat with Klai LLM models (isolated per tenant)
+- Private chat with Klai LLM models (isolated per tenant), multilingual answers in NL/EN/DE/FR/PT/ES against the same knowledge base
 - Knowledge bases: upload documents, connect GitHub/websites, ask questions with cited sources; gap dashboard shows admins which questions the KB can't answer
 - Docs: per-tenant documentation sites with markdown editing
 - Focus: deep research with web search and document analysis

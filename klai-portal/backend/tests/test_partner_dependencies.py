@@ -48,6 +48,13 @@ class FakeOrg:
     # the row. Hard-coded value mirrors the populated allowlist set in
     # conftest.py so any downstream callback validation passes too.
     slug: str = "acme"
+    # SPEC-PORTAL-RBAC-REFACTOR-001 Phase 5C: partner_api must be unlocked
+    # for happy-path tests that exercise the full get_partner_key flow.
+    platform_unlocked_features: list = None  # type: ignore[assignment]
+
+    def __post_init__(self):
+        if self.platform_unlocked_features is None:
+            self.platform_unlocked_features = ["partner_api"]
 
 
 def _make_request(token: str | None = None) -> MagicMock:

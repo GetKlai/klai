@@ -1,0 +1,211 @@
+# SPEC-SEC-IDENTITY-ASSERT-003 REQ-4 — alerts that catch the same
+# regression class for retrieval-api and klai-connector.
+#
+# Routed via spec=SPEC-SEC-IDENTITY-ASSERT-003 → klai-ops-alerts-email
+# (see policies.yaml).
+#
+# UID convention: spec-iam-003-* (per
+# .claude/rules/klai/pitfalls/process-rules.md grafana-uid-40-char-limit).
+#
+# Mirrors SPEC-002's identity-assert-rules.yaml shape — count-based
+# thresholds on deny events, not ratios.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: spec-iam-003-identity-assert
+    folder: Klai
+    interval: 1m
+    rules:
+
+      # ── retrieval-api JWT-path identity-assert failures ────────────
+      # SPEC-003 REQ-1 regression guard. Counts deny events on the
+      # retrieval-api JWT-bound verify_body_identity path. At baseline
+      # this is zero; non-zero means either a tenant is broken (the
+      # SPEC-001/002 latent-bug class) or a legitimate auth attempt is
+      # being rejected. Either way ops needs visibility within minutes.
+      - uid: spec-iam-003-retrieval-verify-fail
+        title: retrieval_api_identity_assert_failures
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:retrieval-api AND event:identity_assertion_failed'
+              queryType: instant
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [3], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        labels:
+          severity: warning
+          spec: SPEC-SEC-IDENTITY-ASSERT-003
+        annotations:
+          summary: |
+            >3 retrieval-api identity_assertion_failed events in 10 min.
+          description: |
+            retrieval-api is rejecting JWT-bound calls at the
+            verify_body_identity gate. After SPEC-003 this fires on:
+              - portal denies (no_membership for the X-Org-Id claim)
+              - body org_id mismatch against portal-resolved org
+
+            Investigation:
+              service:retrieval-api AND event:identity_assertion_failed
+
+      # ── retrieval-api missing X-Org-Id header ──────────────────────
+      # SPEC-003 REQ-1.4 fail-loud guard. Any non-zero count means a
+      # caller is sending a Bearer JWT to /retrieve without the
+      # X-Org-Id header — most likely a deploy-side mismatch where
+      # the caller hasn't been updated for the new contract.
+      - uid: spec-iam-003-retrieval-no-org-id
+        title: retrieval_api_missing_org_id
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:retrieval-api AND event:missing_org_id'
+              queryType: instant
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 2m
+        labels:
+          severity: warning
+          spec: SPEC-SEC-IDENTITY-ASSERT-003
+        annotations:
+          summary: |
+            retrieval-api 400 missing_org_id — caller not sending header.
+          description: |
+            A caller is hitting /retrieve with a Bearer JWT but no
+            X-Org-Id header. Identify the caller via the request_id
+            chain and update its outbound to set the header.
+
+            Investigation:
+              service:retrieval-api AND event:missing_org_id
+
+      # ── klai-connector JWT-path identity-assert failures ───────────
+      # SPEC-003 REQ-2 regression guard. Same shape as the retrieval
+      # alert; klai-connector logs identity_assertion_failed when the
+      # post-introspect portal verify denies.
+      - uid: spec-iam-003-connector-verify-fail
+        title: klai_connector_identity_assert_failures
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:klai-connector AND event:identity_assertion_failed'
+              queryType: instant
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [3], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        labels:
+          severity: warning
+          spec: SPEC-SEC-IDENTITY-ASSERT-003
+        annotations:
+          summary: |
+            >3 klai-connector identity_assertion_failed events in 10 min.
+          description: |
+            klai-connector is rejecting JWT-bound calls at the portal
+            verify gate. Common causes: portal_users membership row
+            missing for the user/org pair (real deny), or a deploy-side
+            X-Org-Id mismatch from the caller.
+
+            Investigation:
+              service:klai-connector AND event:identity_assertion_failed

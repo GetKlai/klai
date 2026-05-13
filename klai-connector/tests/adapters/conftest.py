@@ -108,37 +108,8 @@ def make_page(
     }
 
 
-def make_search_response(
-    pages: list[dict[str, Any]],
-    has_more: bool = False,
-    next_cursor: str | None = None,
-) -> dict[str, Any]:
-    """Build a Notion Search API response envelope."""
-    return {
-        "object": "list",
-        "results": pages,
-        "has_more": has_more,
-        "next_cursor": next_cursor,
-        "type": "page_or_database",
-    }
-
-
-def make_blocks_children_response(blocks: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    """Build a Notion blocks/children/list response."""
-    if blocks is None:
-        blocks = [
-            {
-                "object": "block",
-                "id": "block-001",
-                "type": "paragraph",
-                "paragraph": {
-                    "rich_text": [{"type": "text", "text": {"content": "Hello world"}}]
-                },
-            }
-        ]
-    return {
-        "object": "list",
-        "results": blocks,
-        "has_more": False,
-        "next_cursor": None,
-    }
+# Note: make_search_response / make_blocks_children_response used to live here.
+# They wrapped pages/blocks in the Notion API envelope for the original async-first
+# tests that mocked the adapter's now-removed `_search_pages` / `_get_page_blocks`
+# methods. The refactored adapter returns already-unwrapped lists, so both helpers
+# became dead code and were removed.

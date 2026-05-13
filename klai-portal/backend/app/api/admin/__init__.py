@@ -2,68 +2,52 @@
 Admin API package.
 All endpoints require authentication and resolve the caller's org from their OIDC token.
 Endpoints are split by domain: users, products, settings, audit.
+
+Auth flow uses ``Depends(get_caller)`` /
+``Depends(get_caller_at_least(ProfileRole.ADMIN))`` from
+``app.core.permissions`` — see SPEC-PORTAL-RBAC-REFACTOR-001 for the
+declarative gate pattern that replaced the legacy
+``_get_caller_org`` / ``_require_admin`` helpers previously defined here.
 """
 
 import logging
-from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.bearer import bearer
-from app.core.database import set_tenant
-from app.models.portal import PortalOrg, PortalUser
-from app.services.zitadel import zitadel
-
-if TYPE_CHECKING:
-    pass
+from app.core.config import settings as _app_settings  # avoid shadow by .settings submodule include
+from app.models.portal import PortalOrg
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
-async def _get_caller_org(
-    credentials: HTTPAuthorizationCredentials,
-    db: AsyncSession,
-) -> tuple[str, "PortalOrg", "PortalUser"]:
-    """Validate token, return (zitadel_user_id, PortalOrg, caller PortalUser)."""
-    try:
-        info = await zitadel.get_userinfo(credentials.credentials)
-    except Exception as exc:
-        logger.warning("Admin auth: userinfo fetch failed: %s", exc, exc_info=True)
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
+def _require_platform_admin(caller_org: "PortalOrg") -> None:
+    """Raise 403 unless the caller's org is the platform-admin org.
 
-    zitadel_user_id = info.get("sub")
-    if not zitadel_user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No user found in token")
-
-    result = await db.execute(
-        select(PortalOrg, PortalUser)
-        .join(PortalUser, PortalUser.org_id == PortalOrg.id)
-        .where(PortalUser.zitadel_user_id == zitadel_user_id)
-    )
-    row = result.one_or_none()
-    if not row:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organisation not found")
-
-    org, caller_user = row
-    await set_tenant(db, org.id)
-    return zitadel_user_id, org, caller_user
-
-
-def _require_admin(caller_user: "PortalUser") -> None:
-    """Raise 403 if the caller is not an admin."""
-    if caller_user.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: admin role required")
+    # @MX:NOTE: SPEC-INFRA-TENANT-DELETE-001 R1 — platform-admin guard. Uses
+    #   _app_settings.platform_org_slug (default 'getklai') to identify the
+    #   platform org.
+    # @MX:ANCHOR fan_in=3 — every cross-tenant admin endpoint that operates on
+    #   a `slug` URL-parameter for an org other than the caller's own MUST
+    #   call this guard immediately after `_require_admin`. Failing to do so
+    #   is the audit-tenant-isolation-2026-05-05 finding C-2 class.
+    """
+    if caller_org.slug != _app_settings.platform_org_slug:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: platform admin org required",
+        )
 
 
 # --- Sub-router inclusion (no prefix on sub-routers!) ---
 from .audit import router as audit_router  # noqa: E402
-from .domains import router as domains_router  # noqa: E402
+from .billing import router as billing_router  # noqa: E402
+from .deprovision_org import router as deprovision_org_router  # noqa: E402
+from .extensions import router as extensions_router  # noqa: E402
 from .join_requests import router as join_requests_router  # noqa: E402
+from .platform_unlocks import router as platform_unlocks_router  # noqa: E402
 from .products import router as products_router  # noqa: E402
 from .retry_provisioning import router as retry_provisioning_router  # noqa: E402
 from .settings import router as settings_router  # noqa: E402
@@ -73,13 +57,15 @@ router.include_router(users_router)
 router.include_router(products_router)
 router.include_router(settings_router)
 router.include_router(audit_router)
-router.include_router(domains_router)
 router.include_router(join_requests_router)
 router.include_router(retry_provisioning_router)
+router.include_router(deprovision_org_router)
+router.include_router(platform_unlocks_router)
+router.include_router(extensions_router)
+router.include_router(billing_router)
 
 __all__ = [
-    "_get_caller_org",
-    "_require_admin",
+    "_require_platform_admin",
     "bearer",
     "router",
 ]

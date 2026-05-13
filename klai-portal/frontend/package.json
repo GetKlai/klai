@@ -6,13 +6,18 @@
   "scripts": {
     "i18n:compile": "paraglide-js compile --project ./project.inlang --outdir ./src/paraglide",
     "dev": "npm run i18n:compile && vite",
-    "build": "npm run i18n:compile && tsc -b && vite build",
+    "build": "rm -rf src/paraglide node_modules/.tmp && npm run i18n:compile && tsc -b --force && vite build",
     "preview": "vite preview",
     "lint": "eslint .",
+    "security:audit": "node scripts/audit-ci.mjs",
     "analyze": "npm run i18n:compile && ANALYZE=true vite build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "test:e2e:dev": "playwright test",
+    "test:e2e:prod": "playwright test -c e2e/prod-tenant/_config/playwright.prod.config.ts",
+    "test:e2e:prod:voys": "cross-env E2E_MODE=voys-attached E2E_BASE_URL=https://voys.getklai.com playwright test -c e2e/prod-tenant/_config/playwright.prod.config.ts",
+    "e2e:capture-session": "tsx e2e/prod-tenant/_lib/capture-voys-session.ts"
   },
   "dependencies": {
     "@blocknote/core": "^0.47.1",
@@ -55,6 +60,9 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.56.1",
+    "cross-env": "^7.0.3",
+    "tsx": "^4.20.6",
     "@tailwindcss/vite": "^4.2.2",
     "@tanstack/router-plugin": "^1.167.22",
     "@testing-library/dom": "^10.4.1",
@@ -70,6 +78,7 @@
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.5.0",
     "jsdom": "^29.0.2",
+    "otplib": "^12.0.1",
     "rollup-plugin-visualizer": "^7.0.1",
     "tailwindcss": "^4.2.2",
     "typescript": "~6.0.3",

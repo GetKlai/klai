@@ -12,19 +12,8 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from conftest import make_perms
 from helpers import FakeResult, setup_db
-
-
-@dataclass
-class FakeOrg:
-    id: int = 1
-    zitadel_org_id: str = "zit-org-1"
-
-
-@dataclass
-class FakeUser:
-    role: str = "admin"
-    zitadel_user_id: str = "user-1"
 
 
 @dataclass
@@ -46,16 +35,6 @@ class FakeWidgetRow:
     last_used_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime(2026, 1, 1, tzinfo=UTC))
     created_by: str = "user-1"
-
-
-def _mock_auth():
-    return (
-        patch(
-            "app.api.admin_widgets._get_caller_org",
-            new=AsyncMock(return_value=("user-1", FakeOrg(), FakeUser())),
-        ),
-        patch("app.api.admin_widgets._require_admin"),
-    )
 
 
 @pytest.mark.asyncio
@@ -84,10 +63,10 @@ async def test_create_widget_returns_wgt_id_no_api_key():
         ),
     )
 
-    with _mock_auth()[0], _mock_auth()[1], patch("app.api.admin_widgets.emit_event"):
+    with patch("app.api.admin_widgets.emit_event"):
         result = await create_widget(
             body=body,
-            credentials=MagicMock(credentials="fake-token"),
+            perms=make_perms(role="admin", user_id="user-1", org_id=1),
             db=db,
         )
 
@@ -115,11 +94,10 @@ async def test_list_widgets_returns_org_widgets():
         ],
     )
 
-    with _mock_auth()[0], _mock_auth()[1]:
-        result = await list_widgets(
-            credentials=MagicMock(credentials="fake-token"),
-            db=db,
-        )
+    result = await list_widgets(
+        perms=make_perms(role="admin", user_id="user-1", org_id=1),
+        db=db,
+    )
 
     assert len(result) == 2
     assert result[0].name == "Bot A"
@@ -148,11 +126,11 @@ async def test_update_widget_patches_config():
         ),
     )
 
-    with _mock_auth()[0], _mock_auth()[1], patch("app.api.admin_widgets.emit_event"):
+    with patch("app.api.admin_widgets.emit_event"):
         result = await update_widget(
             widget_id="widget-uuid-1",
             body=body,
-            credentials=MagicMock(credentials="fake-token"),
+            perms=make_perms(role="admin", user_id="user-1", org_id=1),
             db=db,
         )
 
@@ -177,10 +155,10 @@ async def test_delete_widget_calls_db_delete():
         ],
     )
 
-    with _mock_auth()[0], _mock_auth()[1], patch("app.api.admin_widgets.emit_event"):
+    with patch("app.api.admin_widgets.emit_event"):
         await delete_widget(
             widget_id="widget-uuid-1",
-            credentials=MagicMock(credentials="fake-token"),
+            perms=make_perms(role="admin", user_id="user-1", org_id=1),
             db=db,
         )
 

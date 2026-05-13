@@ -4,13 +4,14 @@ Tests for _parse_knowledge_fields() and db._parse_dsn().
 These are pure functions — no mocking needed.
 """
 
-from knowledge_ingest.routes.ingest import _parse_knowledge_fields
 from knowledge_ingest.db import _parse_dsn
+from knowledge_ingest.routes.ingest import _parse_knowledge_fields
 
 _SENTINEL = 253402300800
 
 
 # ── _parse_knowledge_fields ──────────────────────────────────────────────────
+
 
 class TestParseKnowledgeFieldsDefaults:
     def test_no_frontmatter_returns_defaults(self):
@@ -51,14 +52,22 @@ class TestParseKnowledgeFieldsFromFrontmatter:
         assert _parse_knowledge_fields(content, None)["provenance_type"] == "observed"
 
     def test_valid_assertion_mode(self):
-        for mode in ("fact", "claim", "speculation", "procedural", "quoted", "unknown"):
+        # SPEC-TAXONOMY-001 has drifted: spec.md says ``Completed`` and
+        # mandates ``fact/claim/speculation/...`` but production still
+        # uses the DB-flavoured tokens. See test_assertion_mode_taxonomy
+        # for the longer note.
+        for mode in ("factual", "belief", "hypothesis", "procedural", "quoted", "unknown"):
             content = f"---\nassertion_mode: {mode}\n---\n# Doc"
             assert _parse_knowledge_fields(content, None)["assertion_mode"] == mode
 
-    def test_old_assertion_mode_mapped(self):
-        for old, new in [("factual", "fact"), ("belief", "claim"), ("hypothesis", "speculation")]:
-            content = f"---\nassertion_mode: {old}\n---\n# Doc"
-            assert _parse_knowledge_fields(content, None)["assertion_mode"] == new
+    def test_mcp_assertion_mode_mapped(self):
+        for mcp_token, db_token in [
+            ("fact", "factual"),
+            ("claim", "belief"),
+            ("speculation", "hypothesis"),
+        ]:
+            content = f"---\nassertion_mode: {mcp_token}\n---\n# Doc"
+            assert _parse_knowledge_fields(content, None)["assertion_mode"] == db_token
 
     def test_invalid_assertion_mode_falls_back(self):
         content = "---\nassertion_mode: opinion\n---\n# Doc"
@@ -92,6 +101,7 @@ class TestParseKnowledgeFieldsFromFrontmatter:
 
     def test_belief_time_start_invalid_string_falls_back_to_now(self):
         import time
+
         content = "---\nbelief_time_start: 'not-a-date'\n---\n# Doc"
         before = int(time.time()) - 1
         result = _parse_knowledge_fields(content, None)
@@ -108,6 +118,7 @@ class TestParseKnowledgeFieldsFromFrontmatter:
 
 
 # ── db._parse_dsn ────────────────────────────────────────────────────────────
+
 
 class TestParseDsn:
     def test_basic_dsn(self):

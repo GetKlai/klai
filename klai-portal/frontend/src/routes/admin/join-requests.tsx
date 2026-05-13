@@ -63,13 +63,13 @@ function AdminJoinRequestsPage() {
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <p className="text-sm text-[var(--color-muted-foreground)]">...</p>
+            <p className="text-sm text-gray-400">...</p>
           ) : requests.length === 0 ? (
-            <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_join_requests_empty()}</p>
+            <p className="text-sm text-gray-400">{m.admin_join_requests_empty()}</p>
           ) : (
-            <table className="w-full text-sm border-t border-b border-[var(--color-border)]">
+            <table className="w-full text-sm border-t border-b border-gray-200">
               <thead>
-                <tr className="border-b border-[var(--color-border)]">
+                <tr className="border-b border-gray-200">
                   <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
                     Name
                   </th>
@@ -81,7 +81,7 @@ function AdminJoinRequestsPage() {
               </thead>
               <tbody>
                 {requests.map((req) => (
-                  <tr key={req.id} className="border-b border-[var(--color-border)] last:border-b-0">
+                  <tr key={req.id} className="border-b border-gray-200 last:border-b-0">
                     <td className="py-4 pr-4 align-top">{req.display_name || '-'}</td>
                     <td className="py-4 pr-4 align-top">{req.email}</td>
                     <td className="py-4 align-top text-right w-36">

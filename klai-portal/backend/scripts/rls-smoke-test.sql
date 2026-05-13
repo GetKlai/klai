@@ -87,7 +87,27 @@ END $$;
 -- If the table ever gains an org_id column, that is a separate
 -- schema-change SPEC + RLS-upgrade migration.
 
-SELECT '=== Test 8: cleanup ===' AS test;
+SELECT '=== Test 8: portal_mcp_tokens (SPEC-MCP-AUTH-001 Cat-D) ===' AS test;
+-- Strict policy: SELECT/UPDATE/DELETE without tenant context must raise
+-- insufficient_privilege. Mirrors the portal_knowledge_bases test (Test 2).
+SELECT set_config('app.current_org_id', '', false);
+DO $$
+BEGIN
+    BEGIN
+        PERFORM COUNT(*) FROM portal_mcp_tokens;
+        RAISE EXCEPTION 'RLS SMOKE FAILURE: SELECT on portal_mcp_tokens without tenant context did not raise';
+    EXCEPTION WHEN insufficient_privilege THEN
+        RAISE NOTICE 'OK: portal_mcp_tokens raised insufficient_privilege as expected (SPEC-MCP-AUTH-001)';
+    END;
+END $$;
+
+-- portal_oauth_clients carries NO RLS by design (org-overstijgend, see
+-- SPEC-MCP-AUTH-001 § Architecture Decision A4). A bare SELECT without
+-- tenant context MUST succeed — the defense surface is the application
+-- layer (redirect_uri allowlist + per-IP rate-limit on DCR endpoint).
+SELECT COUNT(*) AS oauth_clients_no_tenant FROM portal_oauth_clients;
+
+SELECT '=== Test 9: cleanup ===' AS test;
 SELECT set_config('app.current_org_id', '', false);
 SELECT set_config('app.cross_org_admin', '', false);
 

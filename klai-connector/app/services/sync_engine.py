@@ -1,4 +1,12 @@
-"""Sync orchestrator with global semaphore and per-connector locking."""
+"""Sync orchestrator with global semaphore and per-connector locking.
+
+``documents_ok`` semantics (commit 341f3fdb): counts only artifacts
+actually persisted in ``knowledge.artifacts``. Docs whose parsed text
+falls below the 50-char ingest threshold (Notion containers, empty
+Confluence pages, ms_docs placeholder rows) are tracked separately as
+``documents_short_skipped`` so the counter accurately reflects what is
+in the system after the sync run completes.
+"""
 
 import asyncio
 import base64
@@ -27,6 +35,7 @@ from app.core.enums import SyncStatus
 from app.core.logging import get_logger
 from app.core.sanitize import sanitize_response_body  # SPEC-SEC-INTERNAL-001 REQ-4 + REQ-10
 from app.models.sync_run import SyncRun
+from app.reason_codes import PersistSkipReason  # SPEC-INGEST-RECONCILE-001 AC-9
 from app.services.parser import parse_document_with_images
 from app.services.portal_client import PortalClient
 from app.services.url_guard import (
@@ -71,11 +80,10 @@ class SyncEngine:
         portal_client: Client for the portal control plane API.
     """
 
-    # SPEC-CRAWLER-004 Fase D — poll cadence + total timeout for the
-    # delegation path. 5 s matches the SPEC; 30 min matches klai-connector's
-    # historical webcrawler timeout so behaviour stays unchanged for ops.
-    _WEB_CRAWLER_POLL_INTERVAL_S: float = 5.0
-    _WEB_CRAWLER_POLL_TIMEOUT_S: float = 30 * 60
+    # SPEC-CRAWLER-006: web_crawler delegation is fire-and-forget — the
+    # connector enqueues the job, stores remote_job_id, and returns.
+    # Live status is resolved on read by SyncRunResolver. The historical
+    # poll-loop constants are gone (REQ-CRAWLER-006-02 / REQ-CRAWLER-006-03).
 
     def __init__(
         self,
@@ -139,12 +147,38 @@ class SyncEngine:
         async with lock, self._global_semaphore:
             await self._execute_sync(connector_id, sync_run_id)
 
+    # @MX:NOTE SPEC-INGEST-RECONCILE-001 AC-6/AC-7 — orchestrates the
+    #   per-sync drop-reason accumulation (``skip_reasons``) and the
+    #   corrected ``documents_ok`` arithmetic. New PersistSkipReason
+    #   codes plug in via ``skip_reasons[code] += 1`` from inside the
+    #   adapter loop; the JSONB write at run-end is unchanged.
+    # @MX:SPEC: SPEC-INGEST-RECONCILE-001
     async def _execute_sync(self, connector_id: uuid.UUID, sync_run_id: uuid.UUID) -> None:
         """Internal sync execution with full error handling and metrics."""
         start_time = time.monotonic()
         documents_total = 0
         documents_ok = 0
         documents_failed = 0
+        # SPEC-INGEST-RECONCILE-001 AC-6 — per-sync skip-reason aggregation
+        # ``{PersistSkipReason: count}``. Persisted to
+        # ``connector.sync_runs.skip_reasons`` JSONB at the end of the run
+        # (CHECK-constrained to PersistSkipReason enum values via migration
+        # 009). Replaces the previous ``documents_short_skipped`` counter
+        # that only ever reached structlog and was lost after the 5-day
+        # retention window.
+        #
+        # ``documents_ok`` arithmetic note (SPEC AC-7): the SPEC defines
+        #   documents_ok = documents_total - documents_failed - sum(skip_reasons.values())
+        # In this codebase the per-loop counter already excludes short-skip
+        # (the ``continue`` branch never reaches the ``documents_ok += 1``
+        # line) and excludes failures (separate ``except`` branch), so the
+        # formula is a no-op for the only skip reason emitted today
+        # (content_too_short). It will become a meaningful correction once
+        # adapter-side handlers start incrementing other PersistSkipReason
+        # codes (auth_wall_detected, dedupe_*, ...) — at that point the
+        # counter and the formula stay aligned because every increment is
+        # accompanied by a ``continue`` that skips the success branch.
+        skip_reasons: dict[str, int] = {}
         bytes_processed = 0
         error_details: list[dict[str, str]] = []
 
@@ -295,6 +329,16 @@ class SyncEngine:
                         len(refs),
                     )
 
+                # Docs skipped because their parsed text was below the
+                # 50-char threshold (Notion containers, empty Confluence
+                # pages, ms_docs placeholder rows). Counter is initialised
+                # at function scope above; we track it here for the log
+                # output. They are NOT persisted in knowledge.artifacts,
+                # so they do not belong in ``documents_ok`` — that field
+                # measures "how many docs are now in the system".
+                # Previously rolled into documents_ok, which made the
+                # field ~30-50% higher than the real artifact count for
+                # Notion workspaces (120 vs 79 on Voys e2e, 2026-05-01).
                 for ref in refs_to_sync:
                     ref_key = ref.source_ref or ref.path
 
@@ -312,7 +356,13 @@ class SyncEngine:
                                 ref.path,
                                 len(text.strip()),
                             )
-                            documents_ok += 1
+                            # SPEC-INGEST-RECONCILE-001 AC-6 — replaces the
+                            # legacy ``documents_short_skipped`` int counter.
+                            # Same site (~30+ events on Voys Notion); now
+                            # observable via sync_runs.skip_reasons JSONB.
+                            skip_reasons[PersistSkipReason.CONTENT_TOO_SHORT.value] = (
+                                skip_reasons.get(PersistSkipReason.CONTENT_TOO_SHORT.value, 0) + 1
+                            )
                             resume_ingested_refs.add(ref_key)
                             continue
 
@@ -342,6 +392,7 @@ class SyncEngine:
                             allowed_assertion_modes=portal_config.allowed_assertion_modes,
                             image_urls=image_urls,
                             connector_type=portal_config.connector_type,
+                            user_id=portal_config.owner_user_id,
                         )
                         documents_ok += 1
                         resume_ingested_refs.add(ref_key)
@@ -444,6 +495,11 @@ class SyncEngine:
             sync_run.documents_failed = documents_failed
             sync_run.bytes_processed = bytes_processed
             sync_run.error_details = error_details if error_details else None
+            # SPEC-INGEST-RECONCILE-001 AC-6: persist per-reason skip counts.
+            # Empty dict (no skips) is the default '{}' from the migration —
+            # we still write it explicitly so the operator-visible row is
+            # always JSONB rather than a stale server_default.
+            sync_run.skip_reasons = skip_reasons
             # Store all discovered refs for reconciliation on the next sync.
             # This is the full set from the adapter — new refs appear here, deleted
             # refs disappear. The sync engine compares against this on the next run.
@@ -465,6 +521,13 @@ class SyncEngine:
                     "documents_total": documents_total,
                     "documents_ok": documents_ok,
                     "documents_failed": documents_failed,
+                    # Backwards-compat alias for log consumers (Grafana panels
+                    # still query ``documents_short_skipped``); ``skip_reasons``
+                    # is the structured form added by SPEC-INGEST-RECONCILE-001.
+                    "documents_short_skipped": skip_reasons.get(
+                        PersistSkipReason.CONTENT_TOO_SHORT.value, 0
+                    ),
+                    "skip_reasons": dict(skip_reasons),
                     "bytes_processed": bytes_processed,
                 },
             )
@@ -490,25 +553,27 @@ class SyncEngine:
         sync_run_id: uuid.UUID,
         start_time: float,
     ) -> None:
-        """SPEC-CRAWLER-004 Fase D delegation path.
+        """SPEC-CRAWLER-006 fire-and-forget delegation path.
 
-        klai-connector keeps owning ``sync_runs`` state + product_events but
-        forwards the actual crawl work to knowledge-ingest's
-        ``/ingest/v1/crawl/sync`` endpoint. We store the returned ``job_id``
-        on ``sync_run.cursor_state.remote_job_id`` immediately so a crash
-        leaves a traceable row, then poll the remote ``/status`` every 5 s
-        up to 30 min. On completion we close the sync_run with the remote
-        counts; on timeout or HTTP error we close it as FAILED with
-        ``error.details.service = 'knowledge-ingest'`` (REQ-03.5).
+        klai-connector enqueues the crawl job at knowledge-ingest, stores
+        the returned ``remote_job_id`` on ``sync_run.cursor_state``, and
+        returns. The sync_run stays in ``RUNNING`` state. Live progress and
+        terminal state resolution happen at read time via
+        :class:`SyncRunResolver` (see ``app/services/sync_run_resolver.py``).
+
+        Synchronous failure paths still close the sync_run as ``FAILED``
+        before any RUNNING state is observable:
+
+        - Persisted-URL SSRF rejection (no enqueue ever sent).
+        - Non-2xx HTTP response from ``POST /crawl/sync``.
+        - Network error (ConnectError etc.) during enqueue.
+
+        Replaces the SPEC-CRAWLER-004 poll loop and the
+        SPEC-WORKER-LANES-001 best-effort cancel — both architecturally
+        unable to keep ``sync_runs.status`` and ``crawl_jobs.status``
+        coherent on long-running crawls. See SPEC-CRAWLER-006 § Root cause.
         """
         assert self._crawl_sync_client is not None
-
-        status: str = SyncStatus.COMPLETED
-        documents_total = 0
-        documents_ok = 0
-        documents_failed = 0
-        error_details: list[dict[str, object]] = []
-        remote_job_id: str | None = None
 
         async with self._session_maker() as session:
             sync_run = await session.get(SyncRun, sync_run_id)
@@ -516,21 +581,20 @@ class SyncEngine:
                 logger.error("SyncRun not found: %s", sync_run_id)
                 return
 
+            # Synchronous failure paths share this state; the success
+            # path returns early with sync_run still in RUNNING.
+            failure_status: str | None = None
+            failure_error_details: list[dict[str, object]] = []
+
             try:
                 # SPEC-SEC-SSRF-001 REQ-2.4 / AC-9: re-validate the
-                # persisted web_crawler config BEFORE delegating to
-                # knowledge-ingest. Legacy rows predating the portal
-                # validator (Fase 5) may still hold an SSRF-unsafe
-                # base_url / canary_url. On rejection
-                # ``PersistedUrlRejectedError`` propagates to the
-                # common except handler below, which marks the sync
-                # run failed with ``error="ssrf_blocked_persisted_url"``
-                # — ``crawl_sync`` / ``crawl_site`` are never invoked.
+                # persisted web_crawler config BEFORE delegating. Legacy
+                # rows predating the portal validator (Fase 5) may still
+                # hold an SSRF-unsafe base_url / canary_url.
                 validate_web_crawler_config_strict(
                     portal_config.config,
                     connector_id=str(connector_id),
                 )
-                # REQ-03.1: submit the config (connector_id only — no cookies).
                 enqueue_resp = await self._crawl_sync_client.crawl_sync(
                     connector_id=str(connector_id),
                     org_id=portal_config.zitadel_org_id,
@@ -542,79 +606,30 @@ class SyncEngine:
                     "remote_job_id": remote_job_id,
                     "remote_status": enqueue_resp.get("status", "queued"),
                 }
+                # status stays RUNNING (set by trigger_sync route on
+                # creation). No commit-then-poll, no commit-then-cancel.
                 await session.commit()
                 logger.info(
                     "web_crawler_delegated",
                     extra={
+                        "event": "web_crawler_delegated",
                         "connector_id": str(connector_id),
                         "sync_run_id": str(sync_run_id),
                         "remote_job_id": remote_job_id,
+                        "duration_seconds": round(time.monotonic() - start_time, 3),
                     },
                 )
-
-                # REQ-03.4 + AC-03.4: poll until the remote job terminates
-                # or we hit the timeout.
-                poll_interval = self._WEB_CRAWLER_POLL_INTERVAL_S
-                poll_timeout = self._WEB_CRAWLER_POLL_TIMEOUT_S
-                elapsed = 0.0
-                final_state: dict = {}
-                while elapsed < poll_timeout:
-                    await asyncio.sleep(poll_interval)
-                    elapsed += poll_interval
-                    try:
-                        poll = await self._crawl_sync_client.crawl_sync_status(remote_job_id)
-                    except httpx.HTTPError as poll_err:
-                        logger.warning(
-                            "web_crawler_poll_failed",
-                            extra={
-                                "connector_id": str(connector_id),
-                                "remote_job_id": remote_job_id,
-                                "error": str(poll_err),
-                            },
-                        )
-                        continue
-                    remote_status = poll.get("status")
-                    if remote_status in ("completed", "failed"):
-                        final_state = poll
-                        break
-
-                if not final_state:
-                    # Timeout without a terminal state — SPEC-CRAWLER-004 EC-1.
-                    # Preserve remote_job_id so a later retry can resume polling.
-                    status = SyncStatus.FAILED
-                    error_details = [
-                        {
-                            "error": "web_crawler_poll_timeout",
-                            "service": "knowledge-ingest",
-                            "remote_job_id": remote_job_id,
-                            "timeout_seconds": int(poll_timeout),
-                        },
-                    ]
-                else:
-                    documents_total = int(final_state.get("pages_total") or 0)
-                    documents_ok = int(final_state.get("pages_done") or 0)
-                    if final_state.get("status") == "completed":
-                        status = SyncStatus.COMPLETED
-                    else:
-                        status = SyncStatus.FAILED
-                        documents_failed = max(0, documents_total - documents_ok)
-                        remote_error = final_state.get("error") or "unknown"
-                        error_details = [
-                            {
-                                "error": str(remote_error),
-                                "service": "knowledge-ingest",
-                                "remote_job_id": remote_job_id,
-                            },
-                        ]
+                # Fire-and-forget: terminal state will be written by
+                # SyncRunResolver on the first read after the remote job
+                # finishes. Portal callback also happens there to avoid
+                # double-reports.
+                return
 
             except PersistedUrlRejectedError as ssrf_err:
                 # SPEC-SEC-SSRF-001 REQ-2.4 / AC-9: legacy config failed
-                # the SSRF guard. Do NOT delegate to knowledge-ingest.
-                # The stable error code lets ops dashboards and the
-                # regression suite query persisted-URL rejections
-                # separately from network / validation failures.
-                status = SyncStatus.FAILED
-                error_details = [
+                # the SSRF guard. Do NOT delegate.
+                failure_status = SyncStatus.FAILED
+                failure_error_details = [
                     {
                         "error": ssrf_err.error_code,
                         "hostname": ssrf_err.hostname or "",
@@ -631,15 +646,11 @@ class SyncEngine:
                 )
 
             except httpx.HTTPStatusError as enqueue_err:
-                # REQ-03.5: non-2xx from /crawl/sync → single failed row, no retry.
-                # SPEC-SEC-INTERNAL-001 REQ-10 + AC-10.1: ``error_details`` is
-                # persisted to JSONB AND forwarded to portal for UI rendering.
-                # Sanitize the upstream body BEFORE persistence so a reflected
-                # KNOWLEDGE_INGEST_SECRET / DOCS_INTERNAL_SECRET / etc. cannot
-                # land in connector.sync_runs.error_details or in the portal
-                # connector-management UI.
-                status = SyncStatus.FAILED
-                error_details = [
+                # SPEC-SEC-INTERNAL-001 REQ-10: sanitize upstream body
+                # before persistence — KNOWLEDGE_INGEST_SECRET et al.
+                # MUST NOT land in error_details or the portal UI.
+                failure_status = SyncStatus.FAILED
+                failure_error_details = [
                     {
                         "error": f"http_{enqueue_err.response.status_code}",
                         "service": "knowledge-ingest",
@@ -653,9 +664,10 @@ class SyncEngine:
                         "status_code": enqueue_err.response.status_code,
                     },
                 )
+
             except httpx.HTTPError as enqueue_err:
-                status = SyncStatus.FAILED
-                error_details = [
+                failure_status = SyncStatus.FAILED
+                failure_error_details = [
                     {
                         "error": str(enqueue_err),
                         "service": "knowledge-ingest",
@@ -666,51 +678,39 @@ class SyncEngine:
                     extra={"connector_id": str(connector_id)},
                 )
 
-            duration = time.monotonic() - start_time
+            # Synchronous-failure tail. Only reached when the try block
+            # raised one of the handled exceptions above.
+            assert failure_status is not None
             completed_at = datetime.now(UTC)
-            sync_run.status = status
+            sync_run.status = failure_status
             sync_run.completed_at = completed_at
-            sync_run.quality_status = "healthy" if status == SyncStatus.COMPLETED else None
-            sync_run.documents_total = documents_total
-            sync_run.documents_ok = documents_ok
-            sync_run.documents_failed = documents_failed
-            sync_run.error_details = error_details if error_details else None
-            # Keep the remote_job_id so operators can correlate a failed run
-            # with the knowledge.crawl_jobs row.
-            if remote_job_id is not None:
-                sync_run.cursor_state = {
-                    "remote_job_id": remote_job_id,
-                    "remote_status": (
-                        "completed" if status == SyncStatus.COMPLETED else "failed"
-                    ),
-                }
+            sync_run.quality_status = None
+            sync_run.error_details = failure_error_details or None
             await session.commit()
 
             logger.info(
-                "web_crawler_delegation_complete",
+                "web_crawler_delegation_failed_synchronously",
                 extra={
                     "event": "sync_complete",
                     "connector_id": str(connector_id),
-                    "duration_seconds": round(duration, 1),
-                    "documents_total": documents_total,
-                    "documents_ok": documents_ok,
-                    "documents_failed": documents_failed,
-                    "status": status,
-                    "remote_job_id": remote_job_id,
+                    "duration_seconds": round(time.monotonic() - start_time, 3),
+                    "status": failure_status,
                 },
             )
 
-        # Portal callback (best-effort — errors swallowed in portal_client).
+        # Portal callback only on synchronous failure. Successful enqueues
+        # leave the run in RUNNING and the resolver reports terminal state
+        # back to portal when the remote job finishes.
         await self._portal_client.report_sync_status(
             connector_id=connector_id,
             sync_run_id=sync_run_id,
-            sync_status=status,
+            sync_status=failure_status,
             completed_at=completed_at,
-            documents_total=documents_total,
-            documents_ok=documents_ok,
-            documents_failed=documents_failed,
+            documents_total=0,
+            documents_ok=0,
+            documents_failed=0,
             bytes_processed=0,
-            error_details=error_details if error_details else None,
+            error_details=failure_error_details or None,
         )
 
     async def _upload_images(

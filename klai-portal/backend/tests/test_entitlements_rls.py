@@ -1,85 +1,61 @@
-"""Regression tests for RLS tenant-context handling in get_effective_products.
+"""SPEC-PORTAL-RBAC-001: get_effective_products no longer reads RLS-strict
+tables. It only joins portal_users + portal_orgs (both permissive on the
+zitadel_user_id lookup), so the historic 2026-04 RLS-context regression
+class cannot recur via this code path.
 
-The function queries portal_user_products and portal_group_products — both
-RLS-protected with strict `org_id = app.current_org_id` policies. In April
-2026 every login broke because /api/me called get_effective_products on a
-session that had no app.current_org_id set; PostgreSQL raised
-InsufficientPrivilegeError and the callback page rendered "Login failed
-HTTP 500". The fix is for get_effective_products itself to resolve the
-user's org and call set_tenant before the UNION query, so individual
-call sites (e.g. /api/me, require_product, /internal consumers) do not
-each have to remember to do it.
-
-These tests mock the DB session and assert the set_tenant side-effect
-with a real PostgreSQL-visible semantics: is set_config called with the
-expected org_id BEFORE the UNION query. They do not (and cannot) exercise
-the actual RLS policy — SQLite, which backs the pytest suite, has no RLS
-— but they lock the invariant that a future refactor would otherwise
-silently break in production only.
+This file is kept as a regression sentinel: if a future SPEC reintroduces
+reads on portal_user_products / portal_group_products inside
+get_effective_products, the test below will fail.
 """
-
-from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.services.entitlements import get_effective_products
+from app.services import entitlements
 
 
 @pytest.mark.asyncio
-async def test_sets_tenant_context_before_union_query(monkeypatch: pytest.MonkeyPatch) -> None:
-    """set_tenant must run between the org lookup and the entitlements query."""
-    calls: list[tuple[str, object]] = []
+async def test_no_set_tenant_invocation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RBAC-001: derivation must NOT call set_tenant.
 
-    org_scalar = MagicMock()
-    org_scalar.scalar_one_or_none.return_value = 42
-    products_scalars = MagicMock()
-    products_scalars.all.return_value = ["chat", "scribe"]
-    products_result = MagicMock()
-    products_result.scalars.return_value = products_scalars
-
-    execute_responses: list[object] = [org_scalar, products_result]
-
-    async def tracked_execute(*_args: object, **_kwargs: object) -> object:
-        calls.append(("execute", None))
-        return execute_responses.pop(0)
-
-    async def mock_set_tenant(_session: object, org_id: int) -> None:
-        calls.append(("set_tenant", org_id))
-
-    db = AsyncMock()
-    db.execute = AsyncMock(side_effect=tracked_execute)
-    monkeypatch.setattr("app.services.entitlements.set_tenant", mock_set_tenant)
-
-    result = await get_effective_products("user-42", db)
-
-    assert result == ["chat", "scribe"]
-    assert calls == [
-        ("execute", None),  # 1. org_id lookup (portal_users is permissive → safe)
-        ("set_tenant", 42),  # 2. RLS context set for the UNION query
-        ("execute", None),  # 3. UNION over RLS-protected product tables
-    ], f"Call order broke RLS invariant: {calls}"
-
-
-@pytest.mark.asyncio
-async def test_returns_empty_for_unprovisioned_user_without_setting_tenant(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Users without a portal_users row short-circuit without touching RLS."""
-    org_scalar = MagicMock()
-    org_scalar.scalar_one_or_none.return_value = None
-
-    db = AsyncMock()
-    db.execute = AsyncMock(return_value=org_scalar)
-
+    The old self-healing pattern was a workaround for FastAPI dependency
+    ordering. After RBAC-001 the lookup hits only permissive tables, so
+    set_tenant has no role here.
+    """
     set_tenant_mock = AsyncMock()
-    monkeypatch.setattr("app.services.entitlements.set_tenant", set_tenant_mock)
+    monkeypatch.setattr(entitlements, "set_tenant", set_tenant_mock, raising=False)
 
-    result = await get_effective_products("ghost-user", db)
+    row = MagicMock()
+    row.one_or_none.return_value = ("admin", "chat", ["scribe"])
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=row)
 
-    assert result == []
+    result = await entitlements.get_effective_products("user-1", db)
+    assert "scribe" in result
     set_tenant_mock.assert_not_called()
-    # Only the org_id lookup should run; the UNION query must NOT fire on a
-    # session without tenant context, or RLS would reject it.
-    assert db.execute.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_single_query_no_union() -> None:
+    """RBAC-001: derivation issues exactly ONE SELECT, no UNION over RLS tables."""
+    row = MagicMock()
+    row.one_or_none.return_value = ("admin", "chat", [])
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=row)
+
+    await entitlements.get_effective_products("user-1", db)
+    assert db.execute.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_unprovisioned_user_short_circuits() -> None:
+    """RBAC-001: the no-portal-row case still short-circuits without secondary queries."""
+    row = MagicMock()
+    row.one_or_none.return_value = None
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=row)
+
+    result = await entitlements.get_effective_products("ghost", db)
+    assert result == []
+    assert db.execute.await_count == 1

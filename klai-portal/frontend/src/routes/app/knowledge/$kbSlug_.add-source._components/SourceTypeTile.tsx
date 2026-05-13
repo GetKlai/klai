@@ -15,17 +15,17 @@ export function SourceTypeTile({ meta, kbSlug, onSelectUpload }: SourceTypeTileP
   const tileClasses = [
     'flex flex-col items-start gap-2 rounded-xl border p-4 text-left transition-all',
     available
-      ? 'border-[var(--color-border)] bg-[var(--color-card)] hover:border-[var(--color-accent)]/50 cursor-pointer'
-      : 'border-[var(--color-border)] bg-[var(--color-card)] opacity-50 cursor-default',
+      ? 'border-gray-200 bg-white hover:bg-gray-50 cursor-pointer'
+      : 'border-gray-200 bg-white opacity-50 cursor-default',
   ].join(' ')
 
   const inner = (
     <div className={tileClasses} aria-disabled={!available}>
-      <Icon className="h-4 w-4 text-[var(--color-accent)]" />
-      <span className="text-sm font-medium text-[var(--color-foreground)]">{label()}</span>
-      <span className="text-xs text-[var(--color-muted-foreground)]">{subtitle()}</span>
+      <Icon className="h-4 w-4 text-gray-400" />
+      <span className="text-sm font-medium text-gray-900">{label()}</span>
+      <span className="text-xs text-gray-400">{subtitle()}</span>
       {!available && (
-        <span className="inline-flex items-center rounded-full border border-[var(--color-border)] px-2 py-0.5 text-xs text-[var(--color-muted-foreground)]">
+        <span className="inline-flex items-center rounded-full border border-gray-200 px-2 py-0.5 text-xs text-gray-400">
           {m.knowledge_add_source_coming_soon()}
         </span>
       )}

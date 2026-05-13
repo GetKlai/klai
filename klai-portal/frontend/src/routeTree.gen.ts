@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as VerifyRouteImport } from './routes/verify'
+import { Route as TenantDeletedRouteImport } from './routes/tenant-deleted'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as SelectWorkspaceRouteImport } from './routes/select-workspace'
 import { Route as ProvisioningRouteImport } from './routes/provisioning'
@@ -29,12 +30,14 @@ import { Route as Setup2faRouteImport } from './routes/setup/2fa'
 import { Route as PasswordSetRouteImport } from './routes/password/set'
 import { Route as PasswordForgotRouteImport } from './routes/password/forgot'
 import { Route as AppScribeRouteImport } from './routes/app/scribe'
+import { Route as AppIntegrationsRouteImport } from './routes/app/integrations'
 import { Route as AppFocusRouteImport } from './routes/app/focus'
 import { Route as AppChatRouteImport } from './routes/app/chat'
 import { Route as AppAccountRouteImport } from './routes/app/account'
 import { Route as AdminSettingsRouteImport } from './routes/admin/settings'
 import { Route as AdminJoinRequestsRouteImport } from './routes/admin/join-requests'
-import { Route as AdminDomainsRouteImport } from './routes/admin/domains'
+import { Route as AdminDeprovisioningStatusRouteImport } from './routes/admin/deprovisioning-status'
+import { Route as AdminDangerZoneRouteImport } from './routes/admin/danger-zone'
 import { Route as AdminBillingRouteImport } from './routes/admin/billing'
 import { Route as LocaleSignupRouteImport } from './routes/$locale/signup'
 import { Route as AppTranscribeIndexRouteImport } from './routes/app/transcribe/index'
@@ -45,6 +48,7 @@ import { Route as AppDocsIndexRouteImport } from './routes/app/docs/index'
 import { Route as AdminWidgetsIndexRouteImport } from './routes/admin/widgets/index'
 import { Route as AdminUsersIndexRouteImport } from './routes/admin/users/index'
 import { Route as AdminTemplatesIndexRouteImport } from './routes/admin/templates/index'
+import { Route as AdminProfilesIndexRouteImport } from './routes/admin/profiles/index'
 import { Route as AdminMcpsIndexRouteImport } from './routes/admin/mcps/index'
 import { Route as AdminGroupsIndexRouteImport } from './routes/admin/groups/index'
 import { Route as AdminApiKeysIndexRouteImport } from './routes/admin/api-keys/index'
@@ -72,21 +76,26 @@ import { Route as AppKnowledgeKbSlugRouteRouteImport } from './routes/app/knowle
 import { Route as AppDocsKbSlugRouteRouteImport } from './routes/app/docs/$kbSlug/route'
 import { Route as AppKnowledgeKbSlugIndexRouteImport } from './routes/app/knowledge/$kbSlug/index'
 import { Route as AppDocsKbSlugIndexRouteImport } from './routes/app/docs/$kbSlug/index'
+import { Route as AdminProfilesProfileIndexRouteImport } from './routes/admin/profiles/$profile/index'
 import { Route as AdminGroupsGroupIdIndexRouteImport } from './routes/admin/groups/$groupId/index'
 import { Route as AppTemplatesSlugEditRouteImport } from './routes/app/templates/$slug.edit'
 import { Route as AppKnowledgeKbSlugAddSourceRouteImport } from './routes/app/knowledge/$kbSlug_.add-source'
 import { Route as AppKnowledgeKbSlugAddConnectorRouteImport } from './routes/app/knowledge/$kbSlug_.add-connector'
 import { Route as AppKnowledgeKbSlugTaxonomyRouteImport } from './routes/app/knowledge/$kbSlug/taxonomy'
+import { Route as AppKnowledgeKbSlugSourcesRouteImport } from './routes/app/knowledge/$kbSlug/sources'
 import { Route as AppKnowledgeKbSlugSettingsRouteImport } from './routes/app/knowledge/$kbSlug/settings'
 import { Route as AppKnowledgeKbSlugOverviewRouteImport } from './routes/app/knowledge/$kbSlug/overview'
 import { Route as AppKnowledgeKbSlugMembersRouteImport } from './routes/app/knowledge/$kbSlug/members'
 import { Route as AppKnowledgeKbSlugItemsRouteImport } from './routes/app/knowledge/$kbSlug/items'
+import { Route as AppKnowledgeKbSlugInsightsRouteImport } from './routes/app/knowledge/$kbSlug/insights'
 import { Route as AppKnowledgeKbSlugConnectorsRouteImport } from './routes/app/knowledge/$kbSlug/connectors'
+import { Route as AppKnowledgeKbSlugBronnenRouteImport } from './routes/app/knowledge/$kbSlug/bronnen'
 import { Route as AppKnowledgeKbSlugAdvancedRouteImport } from './routes/app/knowledge/$kbSlug/advanced'
 import { Route as AppDocsKbSlugEditRouteImport } from './routes/app/docs/$kbSlug_.edit'
 import { Route as AppDocsKbSlugPageIdRouteImport } from './routes/app/docs/$kbSlug/$pageId'
 import { Route as AdminUsersUserIdEditRouteImport } from './routes/admin/users/$userId/edit'
 import { Route as AdminTemplatesSlugEditRouteImport } from './routes/admin/templates/$slug.edit'
+import { Route as AdminProfilesProfileAddMemberRouteImport } from './routes/admin/profiles/$profile/add-member'
 import { Route as AdminGroupsGroupIdEditRouteImport } from './routes/admin/groups/$groupId/edit'
 import { Route as AdminGroupsGroupIdAddMemberRouteImport } from './routes/admin/groups/$groupId/add-member'
 import { Route as AppKnowledgeKbSlugEditConnectorConnectorIdRouteImport } from './routes/app/knowledge/$kbSlug_.edit-connector.$connectorId'
@@ -94,6 +103,11 @@ import { Route as AppKnowledgeKbSlugEditConnectorConnectorIdRouteImport } from '
 const VerifyRoute = VerifyRouteImport.update({
   id: '/verify',
   path: '/verify',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TenantDeletedRoute = TenantDeletedRouteImport.update({
+  id: '/tenant-deleted',
+  path: '/tenant-deleted',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SignupRoute = SignupRouteImport.update({
@@ -191,6 +205,11 @@ const AppScribeRoute = AppScribeRouteImport.update({
   path: '/scribe',
   getParentRoute: () => AppRouteRoute,
 } as any)
+const AppIntegrationsRoute = AppIntegrationsRouteImport.update({
+  id: '/integrations',
+  path: '/integrations',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 const AppFocusRoute = AppFocusRouteImport.update({
   id: '/focus',
   path: '/focus',
@@ -216,9 +235,15 @@ const AdminJoinRequestsRoute = AdminJoinRequestsRouteImport.update({
   path: '/join-requests',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const AdminDomainsRoute = AdminDomainsRouteImport.update({
-  id: '/domains',
-  path: '/domains',
+const AdminDeprovisioningStatusRoute =
+  AdminDeprovisioningStatusRouteImport.update({
+    id: '/deprovisioning-status',
+    path: '/deprovisioning-status',
+    getParentRoute: () => AdminRouteRoute,
+  } as any)
+const AdminDangerZoneRoute = AdminDangerZoneRouteImport.update({
+  id: '/danger-zone',
+  path: '/danger-zone',
   getParentRoute: () => AdminRouteRoute,
 } as any)
 const AdminBillingRoute = AdminBillingRouteImport.update({
@@ -269,6 +294,11 @@ const AdminUsersIndexRoute = AdminUsersIndexRouteImport.update({
 const AdminTemplatesIndexRoute = AdminTemplatesIndexRouteImport.update({
   id: '/templates/',
   path: '/templates/',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminProfilesIndexRoute = AdminProfilesIndexRouteImport.update({
+  id: '/profiles/',
+  path: '/profiles/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
 const AdminMcpsIndexRoute = AdminMcpsIndexRouteImport.update({
@@ -407,6 +437,12 @@ const AppDocsKbSlugIndexRoute = AppDocsKbSlugIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppDocsKbSlugRouteRoute,
 } as any)
+const AdminProfilesProfileIndexRoute =
+  AdminProfilesProfileIndexRouteImport.update({
+    id: '/profiles/$profile/',
+    path: '/profiles/$profile/',
+    getParentRoute: () => AdminRouteRoute,
+  } as any)
 const AdminGroupsGroupIdIndexRoute = AdminGroupsGroupIdIndexRouteImport.update({
   id: '/groups/$groupId/',
   path: '/groups/$groupId/',
@@ -435,6 +471,12 @@ const AppKnowledgeKbSlugTaxonomyRoute =
     path: '/taxonomy',
     getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
   } as any)
+const AppKnowledgeKbSlugSourcesRoute =
+  AppKnowledgeKbSlugSourcesRouteImport.update({
+    id: '/sources',
+    path: '/sources',
+    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
+  } as any)
 const AppKnowledgeKbSlugSettingsRoute =
   AppKnowledgeKbSlugSettingsRouteImport.update({
     id: '/settings',
@@ -458,10 +500,22 @@ const AppKnowledgeKbSlugItemsRoute = AppKnowledgeKbSlugItemsRouteImport.update({
   path: '/items',
   getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
 } as any)
+const AppKnowledgeKbSlugInsightsRoute =
+  AppKnowledgeKbSlugInsightsRouteImport.update({
+    id: '/insights',
+    path: '/insights',
+    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
+  } as any)
 const AppKnowledgeKbSlugConnectorsRoute =
   AppKnowledgeKbSlugConnectorsRouteImport.update({
     id: '/connectors',
     path: '/connectors',
+    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
+  } as any)
+const AppKnowledgeKbSlugBronnenRoute =
+  AppKnowledgeKbSlugBronnenRouteImport.update({
+    id: '/bronnen',
+    path: '/bronnen',
     getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
   } as any)
 const AppKnowledgeKbSlugAdvancedRoute =
@@ -492,6 +546,12 @@ const AdminTemplatesSlugEditRoute = AdminTemplatesSlugEditRouteImport.update({
   path: '/templates/$slug/edit',
   getParentRoute: () => AdminRouteRoute,
 } as any)
+const AdminProfilesProfileAddMemberRoute =
+  AdminProfilesProfileAddMemberRouteImport.update({
+    id: '/profiles/$profile/add-member',
+    path: '/profiles/$profile/add-member',
+    getParentRoute: () => AdminRouteRoute,
+  } as any)
 const AdminGroupsGroupIdEditRoute = AdminGroupsGroupIdEditRouteImport.update({
   id: '/groups/$groupId/edit',
   path: '/groups/$groupId/edit',
@@ -523,15 +583,18 @@ export interface FileRoutesByFullPath {
   '/provisioning': typeof ProvisioningRoute
   '/select-workspace': typeof SelectWorkspaceRoute
   '/signup': typeof SignupRoute
+  '/tenant-deleted': typeof TenantDeletedRoute
   '/verify': typeof VerifyRoute
   '/$locale/signup': typeof LocaleSignupRouteWithChildren
   '/admin/billing': typeof AdminBillingRoute
-  '/admin/domains': typeof AdminDomainsRoute
+  '/admin/danger-zone': typeof AdminDangerZoneRoute
+  '/admin/deprovisioning-status': typeof AdminDeprovisioningStatusRoute
   '/admin/join-requests': typeof AdminJoinRequestsRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
   '/app/chat': typeof AppChatRoute
   '/app/focus': typeof AppFocusRouteWithChildren
+  '/app/integrations': typeof AppIntegrationsRoute
   '/app/scribe': typeof AppScribeRoute
   '/password/forgot': typeof PasswordForgotRoute
   '/password/set': typeof PasswordSetRoute
@@ -564,6 +627,7 @@ export interface FileRoutesByFullPath {
   '/admin/api-keys/': typeof AdminApiKeysIndexRoute
   '/admin/groups/': typeof AdminGroupsIndexRoute
   '/admin/mcps/': typeof AdminMcpsIndexRoute
+  '/admin/profiles/': typeof AdminProfilesIndexRoute
   '/admin/templates/': typeof AdminTemplatesIndexRoute
   '/admin/users/': typeof AdminUsersIndexRoute
   '/admin/widgets/': typeof AdminWidgetsIndexRoute
@@ -574,21 +638,26 @@ export interface FileRoutesByFullPath {
   '/app/transcribe/': typeof AppTranscribeIndexRoute
   '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
   '/admin/groups/$groupId/edit': typeof AdminGroupsGroupIdEditRoute
+  '/admin/profiles/$profile/add-member': typeof AdminProfilesProfileAddMemberRoute
   '/admin/templates/$slug/edit': typeof AdminTemplatesSlugEditRoute
   '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
   '/app/docs/$kbSlug/$pageId': typeof AppDocsKbSlugPageIdRoute
   '/app/docs/$kbSlug/edit': typeof AppDocsKbSlugEditRoute
   '/app/knowledge/$kbSlug/advanced': typeof AppKnowledgeKbSlugAdvancedRoute
+  '/app/knowledge/$kbSlug/bronnen': typeof AppKnowledgeKbSlugBronnenRoute
   '/app/knowledge/$kbSlug/connectors': typeof AppKnowledgeKbSlugConnectorsRoute
+  '/app/knowledge/$kbSlug/insights': typeof AppKnowledgeKbSlugInsightsRoute
   '/app/knowledge/$kbSlug/items': typeof AppKnowledgeKbSlugItemsRoute
   '/app/knowledge/$kbSlug/members': typeof AppKnowledgeKbSlugMembersRoute
   '/app/knowledge/$kbSlug/overview': typeof AppKnowledgeKbSlugOverviewRoute
   '/app/knowledge/$kbSlug/settings': typeof AppKnowledgeKbSlugSettingsRoute
+  '/app/knowledge/$kbSlug/sources': typeof AppKnowledgeKbSlugSourcesRoute
   '/app/knowledge/$kbSlug/taxonomy': typeof AppKnowledgeKbSlugTaxonomyRoute
   '/app/knowledge/$kbSlug/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
   '/app/knowledge/$kbSlug/add-source': typeof AppKnowledgeKbSlugAddSourceRoute
   '/app/templates/$slug/edit': typeof AppTemplatesSlugEditRoute
   '/admin/groups/$groupId/': typeof AdminGroupsGroupIdIndexRoute
+  '/admin/profiles/$profile/': typeof AdminProfilesProfileIndexRoute
   '/app/docs/$kbSlug/': typeof AppDocsKbSlugIndexRoute
   '/app/knowledge/$kbSlug/': typeof AppKnowledgeKbSlugIndexRoute
   '/app/knowledge/$kbSlug/edit-connector/$connectorId': typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
@@ -604,14 +673,17 @@ export interface FileRoutesByTo {
   '/provisioning': typeof ProvisioningRoute
   '/select-workspace': typeof SelectWorkspaceRoute
   '/signup': typeof SignupRoute
+  '/tenant-deleted': typeof TenantDeletedRoute
   '/verify': typeof VerifyRoute
   '/admin/billing': typeof AdminBillingRoute
-  '/admin/domains': typeof AdminDomainsRoute
+  '/admin/danger-zone': typeof AdminDangerZoneRoute
+  '/admin/deprovisioning-status': typeof AdminDeprovisioningStatusRoute
   '/admin/join-requests': typeof AdminJoinRequestsRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
   '/app/chat': typeof AppChatRoute
   '/app/focus': typeof AppFocusRouteWithChildren
+  '/app/integrations': typeof AppIntegrationsRoute
   '/app/scribe': typeof AppScribeRoute
   '/password/forgot': typeof PasswordForgotRoute
   '/password/set': typeof PasswordSetRoute
@@ -642,6 +714,7 @@ export interface FileRoutesByTo {
   '/admin/api-keys': typeof AdminApiKeysIndexRoute
   '/admin/groups': typeof AdminGroupsIndexRoute
   '/admin/mcps': typeof AdminMcpsIndexRoute
+  '/admin/profiles': typeof AdminProfilesIndexRoute
   '/admin/templates': typeof AdminTemplatesIndexRoute
   '/admin/users': typeof AdminUsersIndexRoute
   '/admin/widgets': typeof AdminWidgetsIndexRoute
@@ -652,21 +725,26 @@ export interface FileRoutesByTo {
   '/app/transcribe': typeof AppTranscribeIndexRoute
   '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
   '/admin/groups/$groupId/edit': typeof AdminGroupsGroupIdEditRoute
+  '/admin/profiles/$profile/add-member': typeof AdminProfilesProfileAddMemberRoute
   '/admin/templates/$slug/edit': typeof AdminTemplatesSlugEditRoute
   '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
   '/app/docs/$kbSlug/$pageId': typeof AppDocsKbSlugPageIdRoute
   '/app/docs/$kbSlug/edit': typeof AppDocsKbSlugEditRoute
   '/app/knowledge/$kbSlug/advanced': typeof AppKnowledgeKbSlugAdvancedRoute
+  '/app/knowledge/$kbSlug/bronnen': typeof AppKnowledgeKbSlugBronnenRoute
   '/app/knowledge/$kbSlug/connectors': typeof AppKnowledgeKbSlugConnectorsRoute
+  '/app/knowledge/$kbSlug/insights': typeof AppKnowledgeKbSlugInsightsRoute
   '/app/knowledge/$kbSlug/items': typeof AppKnowledgeKbSlugItemsRoute
   '/app/knowledge/$kbSlug/members': typeof AppKnowledgeKbSlugMembersRoute
   '/app/knowledge/$kbSlug/overview': typeof AppKnowledgeKbSlugOverviewRoute
   '/app/knowledge/$kbSlug/settings': typeof AppKnowledgeKbSlugSettingsRoute
+  '/app/knowledge/$kbSlug/sources': typeof AppKnowledgeKbSlugSourcesRoute
   '/app/knowledge/$kbSlug/taxonomy': typeof AppKnowledgeKbSlugTaxonomyRoute
   '/app/knowledge/$kbSlug/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
   '/app/knowledge/$kbSlug/add-source': typeof AppKnowledgeKbSlugAddSourceRoute
   '/app/templates/$slug/edit': typeof AppTemplatesSlugEditRoute
   '/admin/groups/$groupId': typeof AdminGroupsGroupIdIndexRoute
+  '/admin/profiles/$profile': typeof AdminProfilesProfileIndexRoute
   '/app/docs/$kbSlug': typeof AppDocsKbSlugIndexRoute
   '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugIndexRoute
   '/app/knowledge/$kbSlug/edit-connector/$connectorId': typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
@@ -685,15 +763,18 @@ export interface FileRoutesById {
   '/provisioning': typeof ProvisioningRoute
   '/select-workspace': typeof SelectWorkspaceRoute
   '/signup': typeof SignupRoute
+  '/tenant-deleted': typeof TenantDeletedRoute
   '/verify': typeof VerifyRoute
   '/$locale/signup': typeof LocaleSignupRouteWithChildren
   '/admin/billing': typeof AdminBillingRoute
-  '/admin/domains': typeof AdminDomainsRoute
+  '/admin/danger-zone': typeof AdminDangerZoneRoute
+  '/admin/deprovisioning-status': typeof AdminDeprovisioningStatusRoute
   '/admin/join-requests': typeof AdminJoinRequestsRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
   '/app/chat': typeof AppChatRoute
   '/app/focus': typeof AppFocusRouteWithChildren
+  '/app/integrations': typeof AppIntegrationsRoute
   '/app/scribe': typeof AppScribeRoute
   '/password/forgot': typeof PasswordForgotRoute
   '/password/set': typeof PasswordSetRoute
@@ -726,6 +807,7 @@ export interface FileRoutesById {
   '/admin/api-keys/': typeof AdminApiKeysIndexRoute
   '/admin/groups/': typeof AdminGroupsIndexRoute
   '/admin/mcps/': typeof AdminMcpsIndexRoute
+  '/admin/profiles/': typeof AdminProfilesIndexRoute
   '/admin/templates/': typeof AdminTemplatesIndexRoute
   '/admin/users/': typeof AdminUsersIndexRoute
   '/admin/widgets/': typeof AdminWidgetsIndexRoute
@@ -736,21 +818,26 @@ export interface FileRoutesById {
   '/app/transcribe/': typeof AppTranscribeIndexRoute
   '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
   '/admin/groups/$groupId/edit': typeof AdminGroupsGroupIdEditRoute
+  '/admin/profiles/$profile/add-member': typeof AdminProfilesProfileAddMemberRoute
   '/admin/templates/$slug/edit': typeof AdminTemplatesSlugEditRoute
   '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
   '/app/docs/$kbSlug/$pageId': typeof AppDocsKbSlugPageIdRoute
   '/app/docs/$kbSlug_/edit': typeof AppDocsKbSlugEditRoute
   '/app/knowledge/$kbSlug/advanced': typeof AppKnowledgeKbSlugAdvancedRoute
+  '/app/knowledge/$kbSlug/bronnen': typeof AppKnowledgeKbSlugBronnenRoute
   '/app/knowledge/$kbSlug/connectors': typeof AppKnowledgeKbSlugConnectorsRoute
+  '/app/knowledge/$kbSlug/insights': typeof AppKnowledgeKbSlugInsightsRoute
   '/app/knowledge/$kbSlug/items': typeof AppKnowledgeKbSlugItemsRoute
   '/app/knowledge/$kbSlug/members': typeof AppKnowledgeKbSlugMembersRoute
   '/app/knowledge/$kbSlug/overview': typeof AppKnowledgeKbSlugOverviewRoute
   '/app/knowledge/$kbSlug/settings': typeof AppKnowledgeKbSlugSettingsRoute
+  '/app/knowledge/$kbSlug/sources': typeof AppKnowledgeKbSlugSourcesRoute
   '/app/knowledge/$kbSlug/taxonomy': typeof AppKnowledgeKbSlugTaxonomyRoute
   '/app/knowledge/$kbSlug_/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
   '/app/knowledge/$kbSlug_/add-source': typeof AppKnowledgeKbSlugAddSourceRoute
   '/app/templates/$slug/edit': typeof AppTemplatesSlugEditRoute
   '/admin/groups/$groupId/': typeof AdminGroupsGroupIdIndexRoute
+  '/admin/profiles/$profile/': typeof AdminProfilesProfileIndexRoute
   '/app/docs/$kbSlug/': typeof AppDocsKbSlugIndexRoute
   '/app/knowledge/$kbSlug/': typeof AppKnowledgeKbSlugIndexRoute
   '/app/knowledge/$kbSlug_/edit-connector/$connectorId': typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
@@ -770,15 +857,18 @@ export interface FileRouteTypes {
     | '/provisioning'
     | '/select-workspace'
     | '/signup'
+    | '/tenant-deleted'
     | '/verify'
     | '/$locale/signup'
     | '/admin/billing'
-    | '/admin/domains'
+    | '/admin/danger-zone'
+    | '/admin/deprovisioning-status'
     | '/admin/join-requests'
     | '/admin/settings'
     | '/app/account'
     | '/app/chat'
     | '/app/focus'
+    | '/app/integrations'
     | '/app/scribe'
     | '/password/forgot'
     | '/password/set'
@@ -811,6 +901,7 @@ export interface FileRouteTypes {
     | '/admin/api-keys/'
     | '/admin/groups/'
     | '/admin/mcps/'
+    | '/admin/profiles/'
     | '/admin/templates/'
     | '/admin/users/'
     | '/admin/widgets/'
@@ -821,21 +912,26 @@ export interface FileRouteTypes {
     | '/app/transcribe/'
     | '/admin/groups/$groupId/add-member'
     | '/admin/groups/$groupId/edit'
+    | '/admin/profiles/$profile/add-member'
     | '/admin/templates/$slug/edit'
     | '/admin/users/$userId/edit'
     | '/app/docs/$kbSlug/$pageId'
     | '/app/docs/$kbSlug/edit'
     | '/app/knowledge/$kbSlug/advanced'
+    | '/app/knowledge/$kbSlug/bronnen'
     | '/app/knowledge/$kbSlug/connectors'
+    | '/app/knowledge/$kbSlug/insights'
     | '/app/knowledge/$kbSlug/items'
     | '/app/knowledge/$kbSlug/members'
     | '/app/knowledge/$kbSlug/overview'
     | '/app/knowledge/$kbSlug/settings'
+    | '/app/knowledge/$kbSlug/sources'
     | '/app/knowledge/$kbSlug/taxonomy'
     | '/app/knowledge/$kbSlug/add-connector'
     | '/app/knowledge/$kbSlug/add-source'
     | '/app/templates/$slug/edit'
     | '/admin/groups/$groupId/'
+    | '/admin/profiles/$profile/'
     | '/app/docs/$kbSlug/'
     | '/app/knowledge/$kbSlug/'
     | '/app/knowledge/$kbSlug/edit-connector/$connectorId'
@@ -851,14 +947,17 @@ export interface FileRouteTypes {
     | '/provisioning'
     | '/select-workspace'
     | '/signup'
+    | '/tenant-deleted'
     | '/verify'
     | '/admin/billing'
-    | '/admin/domains'
+    | '/admin/danger-zone'
+    | '/admin/deprovisioning-status'
     | '/admin/join-requests'
     | '/admin/settings'
     | '/app/account'
     | '/app/chat'
     | '/app/focus'
+    | '/app/integrations'
     | '/app/scribe'
     | '/password/forgot'
     | '/password/set'
@@ -889,6 +988,7 @@ export interface FileRouteTypes {
     | '/admin/api-keys'
     | '/admin/groups'
     | '/admin/mcps'
+    | '/admin/profiles'
     | '/admin/templates'
     | '/admin/users'
     | '/admin/widgets'
@@ -899,21 +999,26 @@ export interface FileRouteTypes {
     | '/app/transcribe'
     | '/admin/groups/$groupId/add-member'
     | '/admin/groups/$groupId/edit'
+    | '/admin/profiles/$profile/add-member'
     | '/admin/templates/$slug/edit'
     | '/admin/users/$userId/edit'
     | '/app/docs/$kbSlug/$pageId'
     | '/app/docs/$kbSlug/edit'
     | '/app/knowledge/$kbSlug/advanced'
+    | '/app/knowledge/$kbSlug/bronnen'
     | '/app/knowledge/$kbSlug/connectors'
+    | '/app/knowledge/$kbSlug/insights'
     | '/app/knowledge/$kbSlug/items'
     | '/app/knowledge/$kbSlug/members'
     | '/app/knowledge/$kbSlug/overview'
     | '/app/knowledge/$kbSlug/settings'
+    | '/app/knowledge/$kbSlug/sources'
     | '/app/knowledge/$kbSlug/taxonomy'
     | '/app/knowledge/$kbSlug/add-connector'
     | '/app/knowledge/$kbSlug/add-source'
     | '/app/templates/$slug/edit'
     | '/admin/groups/$groupId'
+    | '/admin/profiles/$profile'
     | '/app/docs/$kbSlug'
     | '/app/knowledge/$kbSlug'
     | '/app/knowledge/$kbSlug/edit-connector/$connectorId'
@@ -931,15 +1036,18 @@ export interface FileRouteTypes {
     | '/provisioning'
     | '/select-workspace'
     | '/signup'
+    | '/tenant-deleted'
     | '/verify'
     | '/$locale/signup'
     | '/admin/billing'
-    | '/admin/domains'
+    | '/admin/danger-zone'
+    | '/admin/deprovisioning-status'
     | '/admin/join-requests'
     | '/admin/settings'
     | '/app/account'
     | '/app/chat'
     | '/app/focus'
+    | '/app/integrations'
     | '/app/scribe'
     | '/password/forgot'
     | '/password/set'
@@ -972,6 +1080,7 @@ export interface FileRouteTypes {
     | '/admin/api-keys/'
     | '/admin/groups/'
     | '/admin/mcps/'
+    | '/admin/profiles/'
     | '/admin/templates/'
     | '/admin/users/'
     | '/admin/widgets/'
@@ -982,21 +1091,26 @@ export interface FileRouteTypes {
     | '/app/transcribe/'
     | '/admin/groups/$groupId/add-member'
     | '/admin/groups/$groupId/edit'
+    | '/admin/profiles/$profile/add-member'
     | '/admin/templates/$slug/edit'
     | '/admin/users/$userId/edit'
     | '/app/docs/$kbSlug/$pageId'
     | '/app/docs/$kbSlug_/edit'
     | '/app/knowledge/$kbSlug/advanced'
+    | '/app/knowledge/$kbSlug/bronnen'
     | '/app/knowledge/$kbSlug/connectors'
+    | '/app/knowledge/$kbSlug/insights'
     | '/app/knowledge/$kbSlug/items'
     | '/app/knowledge/$kbSlug/members'
     | '/app/knowledge/$kbSlug/overview'
     | '/app/knowledge/$kbSlug/settings'
+    | '/app/knowledge/$kbSlug/sources'
     | '/app/knowledge/$kbSlug/taxonomy'
     | '/app/knowledge/$kbSlug_/add-connector'
     | '/app/knowledge/$kbSlug_/add-source'
     | '/app/templates/$slug/edit'
     | '/admin/groups/$groupId/'
+    | '/admin/profiles/$profile/'
     | '/app/docs/$kbSlug/'
     | '/app/knowledge/$kbSlug/'
     | '/app/knowledge/$kbSlug_/edit-connector/$connectorId'
@@ -1015,6 +1129,7 @@ export interface RootRouteChildren {
   ProvisioningRoute: typeof ProvisioningRoute
   SelectWorkspaceRoute: typeof SelectWorkspaceRoute
   SignupRoute: typeof SignupRoute
+  TenantDeletedRoute: typeof TenantDeletedRoute
   VerifyRoute: typeof VerifyRoute
   PasswordForgotRoute: typeof PasswordForgotRoute
   PasswordSetRoute: typeof PasswordSetRoute
@@ -1029,6 +1144,13 @@ declare module '@tanstack/react-router' {
       path: '/verify'
       fullPath: '/verify'
       preLoaderRoute: typeof VerifyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/tenant-deleted': {
+      id: '/tenant-deleted'
+      path: '/tenant-deleted'
+      fullPath: '/tenant-deleted'
+      preLoaderRoute: typeof TenantDeletedRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/signup': {
@@ -1164,6 +1286,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppScribeRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/app/integrations': {
+      id: '/app/integrations'
+      path: '/integrations'
+      fullPath: '/app/integrations'
+      preLoaderRoute: typeof AppIntegrationsRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/app/focus': {
       id: '/app/focus'
       path: '/focus'
@@ -1199,11 +1328,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminJoinRequestsRouteImport
       parentRoute: typeof AdminRouteRoute
     }
-    '/admin/domains': {
-      id: '/admin/domains'
-      path: '/domains'
-      fullPath: '/admin/domains'
-      preLoaderRoute: typeof AdminDomainsRouteImport
+    '/admin/deprovisioning-status': {
+      id: '/admin/deprovisioning-status'
+      path: '/deprovisioning-status'
+      fullPath: '/admin/deprovisioning-status'
+      preLoaderRoute: typeof AdminDeprovisioningStatusRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/danger-zone': {
+      id: '/admin/danger-zone'
+      path: '/danger-zone'
+      fullPath: '/admin/danger-zone'
+      preLoaderRoute: typeof AdminDangerZoneRouteImport
       parentRoute: typeof AdminRouteRoute
     }
     '/admin/billing': {
@@ -1274,6 +1410,13 @@ declare module '@tanstack/react-router' {
       path: '/templates'
       fullPath: '/admin/templates/'
       preLoaderRoute: typeof AdminTemplatesIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/profiles/': {
+      id: '/admin/profiles/'
+      path: '/profiles'
+      fullPath: '/admin/profiles/'
+      preLoaderRoute: typeof AdminProfilesIndexRouteImport
       parentRoute: typeof AdminRouteRoute
     }
     '/admin/mcps/': {
@@ -1465,6 +1608,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppDocsKbSlugIndexRouteImport
       parentRoute: typeof AppDocsKbSlugRouteRoute
     }
+    '/admin/profiles/$profile/': {
+      id: '/admin/profiles/$profile/'
+      path: '/profiles/$profile'
+      fullPath: '/admin/profiles/$profile/'
+      preLoaderRoute: typeof AdminProfilesProfileIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
     '/admin/groups/$groupId/': {
       id: '/admin/groups/$groupId/'
       path: '/groups/$groupId'
@@ -1500,6 +1650,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppKnowledgeKbSlugTaxonomyRouteImport
       parentRoute: typeof AppKnowledgeKbSlugRouteRoute
     }
+    '/app/knowledge/$kbSlug/sources': {
+      id: '/app/knowledge/$kbSlug/sources'
+      path: '/sources'
+      fullPath: '/app/knowledge/$kbSlug/sources'
+      preLoaderRoute: typeof AppKnowledgeKbSlugSourcesRouteImport
+      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
+    }
     '/app/knowledge/$kbSlug/settings': {
       id: '/app/knowledge/$kbSlug/settings'
       path: '/settings'
@@ -1528,11 +1685,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppKnowledgeKbSlugItemsRouteImport
       parentRoute: typeof AppKnowledgeKbSlugRouteRoute
     }
+    '/app/knowledge/$kbSlug/insights': {
+      id: '/app/knowledge/$kbSlug/insights'
+      path: '/insights'
+      fullPath: '/app/knowledge/$kbSlug/insights'
+      preLoaderRoute: typeof AppKnowledgeKbSlugInsightsRouteImport
+      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
+    }
     '/app/knowledge/$kbSlug/connectors': {
       id: '/app/knowledge/$kbSlug/connectors'
       path: '/connectors'
       fullPath: '/app/knowledge/$kbSlug/connectors'
       preLoaderRoute: typeof AppKnowledgeKbSlugConnectorsRouteImport
+      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
+    }
+    '/app/knowledge/$kbSlug/bronnen': {
+      id: '/app/knowledge/$kbSlug/bronnen'
+      path: '/bronnen'
+      fullPath: '/app/knowledge/$kbSlug/bronnen'
+      preLoaderRoute: typeof AppKnowledgeKbSlugBronnenRouteImport
       parentRoute: typeof AppKnowledgeKbSlugRouteRoute
     }
     '/app/knowledge/$kbSlug/advanced': {
@@ -1568,6 +1739,13 @@ declare module '@tanstack/react-router' {
       path: '/templates/$slug/edit'
       fullPath: '/admin/templates/$slug/edit'
       preLoaderRoute: typeof AdminTemplatesSlugEditRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/profiles/$profile/add-member': {
+      id: '/admin/profiles/$profile/add-member'
+      path: '/profiles/$profile/add-member'
+      fullPath: '/admin/profiles/$profile/add-member'
+      preLoaderRoute: typeof AdminProfilesProfileAddMemberRouteImport
       parentRoute: typeof AdminRouteRoute
     }
     '/admin/groups/$groupId/edit': {
@@ -1624,7 +1802,8 @@ const LocaleRouteRouteWithChildren = LocaleRouteRoute._addFileChildren(
 
 interface AdminRouteRouteChildren {
   AdminBillingRoute: typeof AdminBillingRoute
-  AdminDomainsRoute: typeof AdminDomainsRoute
+  AdminDangerZoneRoute: typeof AdminDangerZoneRoute
+  AdminDeprovisioningStatusRoute: typeof AdminDeprovisioningStatusRoute
   AdminJoinRequestsRoute: typeof AdminJoinRequestsRoute
   AdminSettingsRoute: typeof AdminSettingsRoute
   AdminIndexRoute: typeof AdminIndexRoute
@@ -1640,19 +1819,23 @@ interface AdminRouteRouteChildren {
   AdminApiKeysIndexRoute: typeof AdminApiKeysIndexRoute
   AdminGroupsIndexRoute: typeof AdminGroupsIndexRoute
   AdminMcpsIndexRoute: typeof AdminMcpsIndexRoute
+  AdminProfilesIndexRoute: typeof AdminProfilesIndexRoute
   AdminTemplatesIndexRoute: typeof AdminTemplatesIndexRoute
   AdminUsersIndexRoute: typeof AdminUsersIndexRoute
   AdminWidgetsIndexRoute: typeof AdminWidgetsIndexRoute
   AdminGroupsGroupIdAddMemberRoute: typeof AdminGroupsGroupIdAddMemberRoute
   AdminGroupsGroupIdEditRoute: typeof AdminGroupsGroupIdEditRoute
+  AdminProfilesProfileAddMemberRoute: typeof AdminProfilesProfileAddMemberRoute
   AdminTemplatesSlugEditRoute: typeof AdminTemplatesSlugEditRoute
   AdminUsersUserIdEditRoute: typeof AdminUsersUserIdEditRoute
   AdminGroupsGroupIdIndexRoute: typeof AdminGroupsGroupIdIndexRoute
+  AdminProfilesProfileIndexRoute: typeof AdminProfilesProfileIndexRoute
 }
 
 const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminBillingRoute: AdminBillingRoute,
-  AdminDomainsRoute: AdminDomainsRoute,
+  AdminDangerZoneRoute: AdminDangerZoneRoute,
+  AdminDeprovisioningStatusRoute: AdminDeprovisioningStatusRoute,
   AdminJoinRequestsRoute: AdminJoinRequestsRoute,
   AdminSettingsRoute: AdminSettingsRoute,
   AdminIndexRoute: AdminIndexRoute,
@@ -1668,14 +1851,17 @@ const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminApiKeysIndexRoute: AdminApiKeysIndexRoute,
   AdminGroupsIndexRoute: AdminGroupsIndexRoute,
   AdminMcpsIndexRoute: AdminMcpsIndexRoute,
+  AdminProfilesIndexRoute: AdminProfilesIndexRoute,
   AdminTemplatesIndexRoute: AdminTemplatesIndexRoute,
   AdminUsersIndexRoute: AdminUsersIndexRoute,
   AdminWidgetsIndexRoute: AdminWidgetsIndexRoute,
   AdminGroupsGroupIdAddMemberRoute: AdminGroupsGroupIdAddMemberRoute,
   AdminGroupsGroupIdEditRoute: AdminGroupsGroupIdEditRoute,
+  AdminProfilesProfileAddMemberRoute: AdminProfilesProfileAddMemberRoute,
   AdminTemplatesSlugEditRoute: AdminTemplatesSlugEditRoute,
   AdminUsersUserIdEditRoute: AdminUsersUserIdEditRoute,
   AdminGroupsGroupIdIndexRoute: AdminGroupsGroupIdIndexRoute,
+  AdminProfilesProfileIndexRoute: AdminProfilesProfileIndexRoute,
 }
 
 const AdminRouteRouteWithChildren = AdminRouteRoute._addFileChildren(
@@ -1709,11 +1895,14 @@ const AppDocsKbSlugRouteRouteWithChildren =
 
 interface AppKnowledgeKbSlugRouteRouteChildren {
   AppKnowledgeKbSlugAdvancedRoute: typeof AppKnowledgeKbSlugAdvancedRoute
+  AppKnowledgeKbSlugBronnenRoute: typeof AppKnowledgeKbSlugBronnenRoute
   AppKnowledgeKbSlugConnectorsRoute: typeof AppKnowledgeKbSlugConnectorsRoute
+  AppKnowledgeKbSlugInsightsRoute: typeof AppKnowledgeKbSlugInsightsRoute
   AppKnowledgeKbSlugItemsRoute: typeof AppKnowledgeKbSlugItemsRoute
   AppKnowledgeKbSlugMembersRoute: typeof AppKnowledgeKbSlugMembersRoute
   AppKnowledgeKbSlugOverviewRoute: typeof AppKnowledgeKbSlugOverviewRoute
   AppKnowledgeKbSlugSettingsRoute: typeof AppKnowledgeKbSlugSettingsRoute
+  AppKnowledgeKbSlugSourcesRoute: typeof AppKnowledgeKbSlugSourcesRoute
   AppKnowledgeKbSlugTaxonomyRoute: typeof AppKnowledgeKbSlugTaxonomyRoute
   AppKnowledgeKbSlugIndexRoute: typeof AppKnowledgeKbSlugIndexRoute
 }
@@ -1721,11 +1910,14 @@ interface AppKnowledgeKbSlugRouteRouteChildren {
 const AppKnowledgeKbSlugRouteRouteChildren: AppKnowledgeKbSlugRouteRouteChildren =
   {
     AppKnowledgeKbSlugAdvancedRoute: AppKnowledgeKbSlugAdvancedRoute,
+    AppKnowledgeKbSlugBronnenRoute: AppKnowledgeKbSlugBronnenRoute,
     AppKnowledgeKbSlugConnectorsRoute: AppKnowledgeKbSlugConnectorsRoute,
+    AppKnowledgeKbSlugInsightsRoute: AppKnowledgeKbSlugInsightsRoute,
     AppKnowledgeKbSlugItemsRoute: AppKnowledgeKbSlugItemsRoute,
     AppKnowledgeKbSlugMembersRoute: AppKnowledgeKbSlugMembersRoute,
     AppKnowledgeKbSlugOverviewRoute: AppKnowledgeKbSlugOverviewRoute,
     AppKnowledgeKbSlugSettingsRoute: AppKnowledgeKbSlugSettingsRoute,
+    AppKnowledgeKbSlugSourcesRoute: AppKnowledgeKbSlugSourcesRoute,
     AppKnowledgeKbSlugTaxonomyRoute: AppKnowledgeKbSlugTaxonomyRoute,
     AppKnowledgeKbSlugIndexRoute: AppKnowledgeKbSlugIndexRoute,
   }
@@ -1739,6 +1931,7 @@ interface AppRouteRouteChildren {
   AppAccountRoute: typeof AppAccountRoute
   AppChatRoute: typeof AppChatRoute
   AppFocusRoute: typeof AppFocusRouteWithChildren
+  AppIntegrationsRoute: typeof AppIntegrationsRoute
   AppScribeRoute: typeof AppScribeRoute
   AppIndexRoute: typeof AppIndexRoute
   AppDocsKbSlugRouteRoute: typeof AppDocsKbSlugRouteRouteWithChildren
@@ -1766,6 +1959,7 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppAccountRoute: AppAccountRoute,
   AppChatRoute: AppChatRoute,
   AppFocusRoute: AppFocusRouteWithChildren,
+  AppIntegrationsRoute: AppIntegrationsRoute,
   AppScribeRoute: AppScribeRoute,
   AppIndexRoute: AppIndexRoute,
   AppDocsKbSlugRouteRoute: AppDocsKbSlugRouteRouteWithChildren,
@@ -1807,6 +2001,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProvisioningRoute: ProvisioningRoute,
   SelectWorkspaceRoute: SelectWorkspaceRoute,
   SignupRoute: SignupRoute,
+  TenantDeletedRoute: TenantDeletedRoute,
   VerifyRoute: VerifyRoute,
   PasswordForgotRoute: PasswordForgotRoute,
   PasswordSetRoute: PasswordSetRoute,

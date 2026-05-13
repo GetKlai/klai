@@ -6,8 +6,35 @@ export const DOCS_BASE = '/api/docs/api'
 export const DEFAULT_ICON = '📄'
 export const INDENT_WIDTH = 24
 
-export function getOrgSlug(): string {
-  return window.location.hostname.split('.')[0]
+/**
+ * Derive the org slug from the user's canonical workspace_url.
+ *
+ * Personal users live on `my.getklai.com` but their actual workspace lives
+ * on their org's subdomain (e.g. `getklai.getklai.com`). Reading from
+ * window.location.hostname yields the WRONG slug for those users (`my`),
+ * which makes the docs editor's `/api/docs/api/orgs/{slug}/...` calls 404
+ * because docs-app routes per org-slug.
+ *
+ * Callers MUST pass `user.workspace_url` from `useCurrentUser`. The
+ * window.location fallback is only there to keep the function callable
+ * during the initial render before useCurrentUser resolves — and even
+ * that fallback returns a placeholder `''` if the hostname is in the
+ * platform-host shortlist, so callers can guard on falsy values.
+ */
+const _PLATFORM_HOSTS = new Set(['my', 'auth', 'llm', 'grafana', 'errors', 'connector', 'logs-ingest', 'dev'])
+
+export function getOrgSlug(workspaceUrl: string | null | undefined): string {
+  if (workspaceUrl) {
+    try {
+      return new URL(workspaceUrl).hostname.split('.')[0]
+    } catch {
+      // fall through
+    }
+  }
+  if (typeof window === 'undefined') return ''
+  const first = window.location.hostname.split('.')[0]
+  if (_PLATFORM_HOSTS.has(first)) return ''
+  return first
 }
 
 export function stripMdExt(path: string): string {

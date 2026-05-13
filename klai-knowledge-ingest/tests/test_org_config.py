@@ -1,4 +1,9 @@
-"""Tests for knowledge_ingest/org_config.py"""
+"""Tests for knowledge_ingest/org_config.py.
+
+SPEC-TI-003-FOLLOWUP-001: ``is_enrichment_enabled`` now takes
+asyncpg.Connection (not Pool).
+"""
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -6,10 +11,10 @@ import pytest
 import knowledge_ingest.org_config as oc
 
 
-def _make_pool(row=None):
-    pool = MagicMock()
-    pool.fetchrow = AsyncMock(return_value=row)
-    return pool
+def _make_conn(row=None):
+    conn = MagicMock()
+    conn.fetchrow = AsyncMock(return_value=row)
+    return conn
 
 
 @pytest.fixture(autouse=True)
@@ -22,49 +27,49 @@ def clear_cache():
 
 @pytest.mark.asyncio
 async def test_global_kill_switch_overrides_db():
-    pool = _make_pool()
+    conn = _make_conn()
     with patch.object(oc.settings, "enrichment_enabled", False):
-        result = await oc.is_enrichment_enabled("org-123", pool)
+        result = await oc.is_enrichment_enabled(conn, "org-123")
     assert result is False
-    pool.fetchrow.assert_not_called()
+    conn.fetchrow.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_default_enabled_when_no_db_row():
-    pool = _make_pool(row=None)
+    conn = _make_conn(row=None)
     with patch.object(oc.settings, "enrichment_enabled", True):
-        result = await oc.is_enrichment_enabled("org-new", pool)
+        result = await oc.is_enrichment_enabled(conn, "org-new")
     assert result is True
 
 
 @pytest.mark.asyncio
 async def test_db_row_false_disables_org():
     row = {"enrichment_enabled": False}
-    pool = _make_pool(row=row)
+    conn = _make_conn(row=row)
     with patch.object(oc.settings, "enrichment_enabled", True):
-        result = await oc.is_enrichment_enabled("org-disabled", pool)
+        result = await oc.is_enrichment_enabled(conn, "org-disabled")
     assert result is False
 
 
 @pytest.mark.asyncio
 async def test_db_row_null_defaults_to_enabled():
     row = {"enrichment_enabled": None}
-    pool = _make_pool(row=row)
+    conn = _make_conn(row=row)
     with patch.object(oc.settings, "enrichment_enabled", True):
-        result = await oc.is_enrichment_enabled("org-null", pool)
+        result = await oc.is_enrichment_enabled(conn, "org-null")
     assert result is True
 
 
 @pytest.mark.asyncio
 async def test_cache_hit_skips_db():
-    pool = _make_pool()
+    conn = _make_conn()
     oc._cache["org-cached"] = True
 
     with patch.object(oc.settings, "enrichment_enabled", True):
-        result = await oc.is_enrichment_enabled("org-cached", pool)
+        result = await oc.is_enrichment_enabled(conn, "org-cached")
 
     assert result is True
-    pool.fetchrow.assert_not_called()
+    conn.fetchrow.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -83,11 +88,11 @@ async def test_cache_eviction_unknown_org_is_noop():
 @pytest.mark.asyncio
 async def test_result_cached_after_db_query():
     row = {"enrichment_enabled": True}
-    pool = _make_pool(row=row)
+    conn = _make_conn(row=row)
 
     with patch.object(oc.settings, "enrichment_enabled", True):
-        await oc.is_enrichment_enabled("org-store", pool)
+        await oc.is_enrichment_enabled(conn, "org-store")
         # Second call should use cache
-        await oc.is_enrichment_enabled("org-store", pool)
+        await oc.is_enrichment_enabled(conn, "org-store")
 
-    assert pool.fetchrow.call_count == 1
+    assert conn.fetchrow.call_count == 1

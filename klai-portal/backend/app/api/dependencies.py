@@ -1,167 +1,139 @@
 """Shared FastAPI dependencies."""
 
-import structlog
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_user_id
 from app.api.bearer import bearer as bearer  # re-export for routes that import from here
-from app.core.database import get_db, set_tenant
+from app.core.database import get_db
+from app.core.permissions import UserPermissions, get_caller
 from app.core.plan_limits import PLAN_LIMITS, get_plan_limits
-from app.models.groups import PortalGroup, PortalGroupMembership
+from app.core.profiles import (
+    PROFILE_CAPABILITIES,
+    Capability,
+)
+from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg, PortalUser
+from app.services.access import is_personal_kb
 from app.services.entitlements import get_effective_products
-from app.services.zitadel import zitadel
+
+
+async def get_kb_with_access(
+    kb_slug: str,
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> PortalKnowledgeBase:
+    """Resolve a KB by slug + enforce the personal-firewall.
+
+    SPEC-PORTAL-KB-OWNERSHIP-001 REQ-3.1 — single source of truth for
+    every ``/api/app/knowledge-bases/{kb_slug}/...`` route.
+
+    Three steps, in order:
+
+    1. **Magic-slug shortcuts**: ``personal`` resolves to the caller's
+       ``personal-{user_id}`` KB; ``org`` resolves to the tenant's org
+       KB. Both are lazy-created if provisioning missed them. These
+       slugs are by definition owned-by-or-visible-to the caller, so
+       the firewall step is a no-op.
+    2. **Tenant-scope**: SELECT WHERE org_id = caller.org_id AND slug = kb_slug.
+       Cross-tenant slugs return 0 rows -> 404. Org-scoping is also
+       enforced at the DB level via Cat-D RLS on
+       ``portal_knowledge_bases``; this is belt+braces.
+    3. **Personal-firewall**: if the resolved KB is personal
+       (``is_personal_kb()``) AND the caller is not the
+       ``owner_user_id``, raise 404. NOT 403 — leaking existence of a
+       personal KB to non-owners is itself a privacy violation. Admins
+       also receive 404 (no role-bypass).
+
+    Authorisation (owner / contributor / viewer) is layered on TOP of
+    this gate via ``_require_owner`` etc. in the KB API module. This
+    dependency only handles existence + privacy; it does not gate
+    write actions.
+    """
+    # Magic-slug shortcuts. Imported here to avoid a top-level circular import
+    # via app.services.default_knowledge_bases -> set_tenant -> ... -> dependencies.
+    if kb_slug == "personal":
+        from app.services.default_knowledge_bases import resolve_personal_kb
+
+        return await resolve_personal_kb(perms.user_id, perms.org_id, db)
+    if kb_slug == "org":
+        from app.services.default_knowledge_bases import resolve_org_kb
+
+        return await resolve_org_kb(perms.user_id, perms.org_id, db)
+
+    result = await db.execute(
+        select(PortalKnowledgeBase).where(
+            PortalKnowledgeBase.org_id == perms.org_id,
+            PortalKnowledgeBase.slug == kb_slug,
+        )
+    )
+    kb = result.scalar_one_or_none()
+    if kb is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base not found")
+    # Personal-firewall: existence-non-disclosure.
+    if is_personal_kb(kb) and kb.owner_user_id != perms.user_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base not found")
+    return kb
 
 
 def require_product(product: str):
     """Return a FastAPI dependency callable that raises 403 if user lacks the product.
 
-    Org admins bypass the check and always have access to all products.
+    SPEC-PORTAL-RBAC-001 v0.2.0: single-layer profile-driven check. The product
+    is granted iff (a) it is in the workspace features (plan + enabled add-ons)
+    AND (b) the user's profile rank meets FEATURE_MIN_PROFILE for that feature.
+    Both conditions are folded into get_effective_products. No admin bypass --
+    admin sits at the top of the rank ladder and passes any FEATURE_MIN_PROFILE
+    structurally.
     """
 
     async def dependency(
         user_id: str = Depends(get_current_user_id),
         db: AsyncSession = Depends(get_db),
     ) -> None:
-        role_result = await db.execute(select(PortalUser.role).where(PortalUser.zitadel_user_id == user_id))
-        if role_result.scalar_one_or_none() == "admin":
-            return
-        products = await get_effective_products(user_id, db)
-        if product not in products:
+        if product not in await get_effective_products(user_id, db):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Product access required: {product}",
+                detail=f"Product not available: {product}",
             )
 
     return dependency
 
 
-# @MX:ANCHOR fan_in=8
-async def _get_caller_org(
-    credentials: HTTPAuthorizationCredentials,
-    db: AsyncSession,
-) -> tuple[str, PortalOrg, PortalUser]:
-    """Validate token, return (zitadel_user_id, PortalOrg, caller PortalUser)."""
-    try:
-        info = await zitadel.get_userinfo(credentials.credentials)
-    except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
+async def _load_org_or_500(db: AsyncSession, org_id: int) -> PortalOrg:
+    """Load the full ``PortalOrg`` row for an org_id from ``perms.org_id``.
 
-    zitadel_user_id = info.get("sub")
-    if not zitadel_user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No user found in token")
+    Endpoints that take ``perms: UserPermissions = Depends(get_caller)`` only
+    receive the org_id, but a handful need the full ORM row for fields not
+    on ``UserPermissions`` (``zitadel_org_id``, ``moneybird_*``,
+    ``librechat_container``, etc.). This helper centralises the load-and-
+    raise-500-if-missing pattern so per-file copies stay in sync.
 
-    result = await db.execute(
-        select(PortalOrg, PortalUser)
-        .join(PortalUser, PortalUser.org_id == PortalOrg.id)
-        .where(PortalUser.zitadel_user_id == zitadel_user_id)
-    )
-    row = result.one_or_none()
-    if not row:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organisation not found")
-
-    org, caller_user = row
-    await set_tenant(db, org.id)
-    structlog.contextvars.bind_contextvars(org_id=str(org.id), user_id=zitadel_user_id)
-    return zitadel_user_id, org, caller_user
-
-
-# @MX:ANCHOR fan_in=8
-def _require_admin(caller_user: PortalUser) -> None:
-    """Raise 403 if the caller is not an admin."""
-    if caller_user.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: admin role required")
-
-
-def _require_admin_or_group_admin_role(caller_user: PortalUser) -> None:
-    """Raise 403 unless caller is org admin or has group-admin role."""
-    if caller_user.role in ("admin", "group-admin"):
-        return
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Access denied: admin or group admin role required",
-    )
-
-
-async def _require_admin_or_group_admin(
-    group_id: int,
-    caller_user: PortalUser,
-    db: AsyncSession,
-) -> None:
-    """Raise 403 unless caller may manage members of this group.
-
-    Rules:
-    - Org admin (role='admin'): may manage any group, including system groups.
-    - group-admin role: may manage any non-system group.
-    - System groups (system_key IS NOT NULL): only org admins may manage members.
+    The 500 is intentional: ``perms`` was just resolved by ``get_caller``,
+    which already implies the org row exists. A miss here means the row
+    disappeared mid-request, which is a server-side invariant violation,
+    not a client-side 404.
     """
-    if caller_user.role == "admin":
-        return
-
-    # Block access to system groups for everyone except org admin
-    group_result = await db.execute(select(PortalGroup.system_key).where(PortalGroup.id == group_id))
-    system_key = group_result.scalar_one_or_none()
-    if system_key is not None:
+    org = await db.get(PortalOrg, org_id)
+    if org is None:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied: system groups can only be managed by org admins",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Organisation not found",
         )
-
-    if caller_user.role != "group-admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied: admin or group admin role required",
-        )
+    return org
 
 
-async def _require_admin_or_group_manager(
-    caller_user: PortalUser,
-    org_id: int,
-    db: AsyncSession,
-) -> None:
-    """Raise 403 unless caller is org admin, group-admin, or member of the Group Management system group."""
-    if caller_user.role in ("admin", "group-admin"):
-        return
-
-    # Check if caller is in the Group Management system group for their org
-    gm_result = await db.execute(
-        select(PortalGroup.id).where(
-            PortalGroup.org_id == org_id,
-            PortalGroup.system_key == "group_management",
-        )
-    )
-    gm_group_id = gm_result.scalar_one_or_none()
-    _no_access = HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Access denied: admin or group admin role required",
-    )
-    if not gm_group_id:
-        raise _no_access
-
-    member_result = await db.execute(
-        select(PortalGroupMembership).where(
-            PortalGroupMembership.group_id == gm_group_id,
-            PortalGroupMembership.zitadel_user_id == caller_user.zitadel_user_id,
-        )
-    )
-    if not member_result.scalar_one_or_none():
-        raise _no_access
-
-
-def require_capability(capability: str):
+def require_capability(capability: Capability):
     """Return a FastAPI dependency callable that raises 403 when the caller lacks a KB capability.
 
     Usage::
 
         @router.get("/some-endpoint", dependencies=[Depends(require_capability("kb.connectors"))])
 
-    Rules (SPEC-PORTAL-UNIFY-KB-001 R-X2, AC-3):
+    Rules (SPEC-PORTAL-PROFILES-001 v0.2.0):
     - Admin users bypass the check (they always have complete-tier capabilities).
-    - complete-plan users have all kb.* capabilities.
-    - core/professional users have no kb.* capabilities.
+    - effective_capabilities = PROFILE_CAPABILITIES[role] & PLAN_LIMITS[plan].capabilities
     - Unknown users or plans are treated as most restrictive (deny).
     """
 
@@ -183,12 +155,17 @@ def require_capability(capability: str):
 
 
 async def get_effective_capabilities(user_id: str, db: AsyncSession) -> set[str]:
-    """Return the set of KB capabilities for a user based on their org's plan.
+    """Return the set of KB capabilities for a user.
 
-    Admin users always receive the complete-tier capabilities (superset of all plans).
+    effective_capabilities = PROFILE_CAPABILITIES[role] & PLAN_LIMITS[plan].capabilities
+
+    Admin bypass: admin role always gets complete-tier capabilities regardless of plan.
+    (Intentional per SPEC-PORTAL-PROFILES-001 v0.2.0: admin must be able to test what
+    a plan upgrade unlocks without upgrading the billing plan first.)
+
     Returns an empty set for unknown users or plans.
 
-    SPEC-PORTAL-UNIFY-KB-001 Phase A — AC-3.
+    SPEC-PORTAL-PROFILES-001 Phase 1.5 -- F3.
     """
     result = await db.execute(
         select(PortalUser, PortalOrg)
@@ -201,8 +178,27 @@ async def get_effective_capabilities(user_id: str, db: AsyncSession) -> set[str]
 
     user, org = row
 
-    # Admin users get the complete-tier capabilities regardless of plan.
+    # @MX:NOTE -- Admin-bypass: an admin role on any plan tier (including "chat")
+    # receives the full "knowledge"-tier capability set. This is INTENTIONAL per
+    # SPEC-PORTAL-PLAN-RENAME-001 (carrying forward the SPEC-PORTAL-PROFILES-001
+    # v0.2.0 / v0.3.0 admin-bypass policy): an admin must be able to preview /
+    # test what a plan upgrade unlocks BEFORE the org commits to the higher
+    # billing tier. Without this, a "chat"-plan admin who wants to evaluate
+    # the connector ecosystem before paying for "knowledge" is blocked.
+    #
+    # Trade-off: this gives admins more capabilities than their plan technically
+    # pays for. Acceptable because (a) admins are the billing-decision-maker
+    # anyway, (b) the per-user capabilities of NON-admin users on the same org
+    # are still constrained by the plan ceiling (so a "chat"-tenant's regular
+    # users still hit the limits).
+    #
+    # To remove the bypass: replace the "if user.role == 'admin'" branch with
+    # the same intersection logic used for other roles. Tests that assert
+    # "test_admin_on_chat_gets_knowledge_tier" would need updating.
     if user.role == "admin":
-        return set(PLAN_LIMITS["complete"].capabilities)
+        return set(PLAN_LIMITS["knowledge"].capabilities)
 
-    return set(get_plan_limits(org.plan).capabilities)
+    # All other roles: intersect role capabilities with plan capabilities.
+    role_caps = PROFILE_CAPABILITIES.get(user.role, frozenset())
+    plan_caps = get_plan_limits(org.plan).capabilities
+    return set(role_caps) & set(plan_caps)

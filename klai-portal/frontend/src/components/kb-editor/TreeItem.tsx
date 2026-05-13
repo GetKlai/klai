@@ -120,7 +120,7 @@ export function TreeItem({
         />
         <button
           type="button"
-          className="shrink-0 text-[var(--color-foreground)] hover:opacity-70 disabled:opacity-30"
+          className="shrink-0 text-gray-900 hover:opacity-70 disabled:opacity-30"
           disabled={!newPageTitle.trim()}
           onClick={() => onNewPageConfirm(nodePath)}
           aria-label={m.docs_kb_create()}
@@ -129,7 +129,7 @@ export function TreeItem({
         </button>
         <button
           type="button"
-          className="shrink-0 text-[var(--color-muted-foreground)] hover:opacity-70"
+          className="shrink-0 text-gray-400 hover:opacity-70"
           onClick={onNewPageCancel}
           aria-label={m.docs_tree_cancel()}
         >
@@ -177,7 +177,7 @@ export function TreeItem({
               <ChevronRight
                 size={12}
                 strokeWidth={1.5}
-                className={`text-[var(--color-muted-foreground)] transition-transform duration-150 ${isCollapsed ? '' : 'rotate-90'}`}
+                className={`text-gray-400 transition-transform duration-150 ${isCollapsed ? '' : 'rotate-90'}`}
               />
             </button>
           ) : (
@@ -187,7 +187,7 @@ export function TreeItem({
 
         {/* Title */}
         <button
-          className="flex flex-1 items-center min-w-0 text-left ml-0.5 text-[var(--color-foreground)]"
+          className="flex flex-1 items-center min-w-0 text-left ml-0.5 text-gray-900"
           onClick={() => { if (!isDir) onSelect(node) }}
           disabled={isDir && !hasChildren}
         >
@@ -202,7 +202,7 @@ export function TreeItem({
             <>
               <button
                 type="button"
-                className="flex items-center justify-center w-5 h-5 rounded hover:bg-[var(--color-foreground)]/[0.06] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
+                className="flex items-center justify-center w-5 h-5 rounded hover:bg-[var(--color-foreground)]/[0.06] text-gray-400 hover:text-gray-900 transition-colors"
                 onClick={() => onAddSubpage(nodePath)}
                 title={m.docs_pages_add_subpage()}
                 aria-label={m.docs_pages_add_subpage()}
@@ -213,7 +213,7 @@ export function TreeItem({
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    className="flex items-center justify-center w-5 h-5 rounded hover:bg-[var(--color-foreground)]/[0.06] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
+                    className="flex items-center justify-center w-5 h-5 rounded hover:bg-[var(--color-foreground)]/[0.06] text-gray-400 hover:text-gray-900 transition-colors"
                     aria-label={m.docs_tree_more_options()}
                   >
                     <MoreHorizontal size={12} strokeWidth={1.5} />
@@ -230,7 +230,7 @@ export function TreeItem({
                       </DropdownMenuItem>
                     </>
                   ) : (
-                    <DropdownMenuItem className="text-xs text-[var(--color-muted-foreground)] italic" disabled>
+                    <DropdownMenuItem className="text-xs text-gray-400 italic" disabled>
                       {m.docs_tree_already_at_root()}
                     </DropdownMenuItem>
                   )}
@@ -251,7 +251,7 @@ export function TreeItem({
           )}
           {(hovered || menuOpen) && !isDraggingActive && (
             <span className="cursor-grab touch-none" {...attributes} {...listeners}>
-              <GripVertical size={12} strokeWidth={1.5} className="text-[var(--color-muted-foreground)] opacity-30" />
+              <GripVertical size={12} strokeWidth={1.5} className="text-gray-400 opacity-30" />
             </span>
           )}
         </div>

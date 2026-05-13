@@ -28,14 +28,6 @@ model_list:
     rpm: 50
     tpm: 200000
 
-  # Pipeline: internal services (bypasses routing in prod)
-  - model_name: klai-pipeline
-    litellm_params:
-      model: anthropic/claude-haiku-4-5-20251001
-      api_key: os.environ/ANTHROPIC_API_KEY
-    rpm: 50
-    tpm: 100000
-
 router_settings:
   routing_strategy: simple-shuffle
 

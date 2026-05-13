@@ -1,0 +1,318 @@
+suite: chat
+description: |
+  Conversational queries against Voys's support KB. Style mirrors how a Voys CS-medewerker
+  would phrase a question to klai's chat. 30 queries with a curated mix:
+    - 9 easy-lookup (regression canaries; expected_chunks populated)
+    - 9 vague-pronoun (query-rewrite targets)
+    - 6 multi-doc synthesis (parent-child targets)
+    - 4 long-tail (recall test)
+    - 2 edge cases (mixed-language + malformed)
+  All queries target tenant Voys (org_zitadel_id 368884765035593759).
+queries:
+  # --- Easy-lookup canaries (9) — should always score ~1.0 ---
+  - id: chat-easy-bubble-troubleshoot
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Hoe troubleshoot ik Bubble?"
+    expected_topics: [bubble, troubleshoot]
+    expected_chunks: ["Bubble troubleshoot"]
+    mix: easy_lookup
+
+  - id: chat-easy-yealink-firmware
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Welke Yealink firmware ondersteunen we?"
+    expected_topics: [yealink, firmware, telefonie]
+    expected_chunks: ["latest Yealink firmware"]
+    mix: easy_lookup
+
+  - id: chat-easy-uitportering-afgehandeld
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Hoe verwerk ik een afgehandelde uitportering zonder verdere nummers?"
+    expected_topics: [uitportering, customer-service, portering]
+    expected_chunks: ["CS | Uitportering afgehandeld - Geen verdere telefoonnummers"]
+    mix: easy_lookup
+
+  - id: chat-easy-inloggegevens-kwijt
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Wat doe ik als een klant zijn inloggegevens kwijt is en geen toegang heeft tot Freedom?"
+    expected_topics: [inloggegevens, freedom, klantaccount]
+    expected_chunks: ["Klant is inloggegevens verloren en heeft geen toegang meer tot Freedom"]
+    mix: easy_lookup
+
+  - id: chat-easy-fraude-bedrijf
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Hoe handel ik fraude af waarbij onze klant zich voordoet als een ander bedrijf?"
+    expected_topics: [fraude, customer-service]
+    expected_chunks: ["Fraude: Onze klant doet zich voor als een ander bedrijf"]
+    mix: easy_lookup
+
+  - id: chat-easy-opzeggingen
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Hoe verwerk ik een opzegging?"
+    expected_topics: [opzeggingen, customer-service]
+    expected_chunks: ["3.011 Opzeggingen verwerken (Cancellations)"]
+    mix: easy_lookup
+
+  - id: chat-easy-buiten-openingstijden
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Wat is de werkwijze buiten openingstijden in de avond en het weekend?"
+    expected_topics: [openingstijden, customer-service, weekend]
+    expected_chunks: ["Werkwijze buiten openingstijden (avonden & weekenden)"]
+    mix: easy_lookup
+
+  - id: chat-easy-pipedrive-integratie
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Hoe werkt de Pipedrive integratie?"
+    expected_topics: [pipedrive, crm, integratie]
+    expected_chunks: ["pipedrive"]
+    mix: easy_lookup
+
+  - id: chat-easy-bubble-mobiele-app
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Wat is Bubble365 mobiele app?"
+    expected_topics: [bubble, mobiele-app]
+    expected_chunks: ["52-bubble365-mobiele-app"]
+    mix: easy_lookup
+
+  # --- Vague-pronoun queries (9) — typical query-rewrite targets ---
+  - id: chat-vague-die-klant-portering
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Hoe verwerk ik die portering verder?"
+    expected_topics: [portering, uitportering, customer-service]
+    expected_chunks: []
+    mix: vague_pronoun
+
+  - id: chat-vague-deze-firmware
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Wat is hier de laatste versie van?"
+    expected_topics: [firmware, yealink]
+    expected_chunks: []
+    mix: vague_pronoun
+
+  - id: chat-vague-bubble-iemand
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Wat doe ik als hij dat niet kan vinden?"
+    expected_topics: [bubble, troubleshoot]
+    expected_chunks: []
+    mix: vague_pronoun
+
+  - id: chat-vague-deze-procedure
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Hoe gaat dat dan precies?"
+    expected_topics: [procedure, customer-service]
+    expected_chunks: []
+    mix: vague_pronoun
+
+  - id: chat-vague-die-klant-inlog
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Die mevrouw kan niet meer inloggen, wat nu?"
+    expected_topics: [inloggegevens, freedom]
+    expected_chunks: []
+    mix: vague_pronoun
+
+  - id: chat-vague-zijn-firma-fraude
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Hij doet alsof hij een ander bedrijf is, wat moet ik doen?"
+    expected_topics: [fraude, customer-service]
+    expected_chunks: []
+    mix: vague_pronoun
+
+  - id: chat-vague-die-trunk
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Hij wil zo'n ding hebben, hoe regel ik dat?"
+    expected_topics: [trunk, telefonie]
+    expected_chunks: []
+    mix: vague_pronoun
+
+  - id: chat-vague-die-customer-bubble
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Wat doe ik met die klant die overstapt?"
+    expected_topics: [bubble, cloudcti, klant]
+    expected_chunks: []
+    mix: vague_pronoun
+
+  - id: chat-vague-deze-vraag-garantie
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Hoe gaat dat met die garantie?"
+    expected_topics: [garantie, info]
+    expected_chunks: []
+    mix: vague_pronoun
+
+  # --- Multi-doc synthesis (6) — needs context across multiple chunks ---
+  - id: chat-synth-bubble-vs-cloudcti
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Welke klanten moeten we van CloudCTI naar Bubble migreren en waarom?"
+    expected_topics: [bubble, cloudcti, migratie]
+    expected_chunks: []
+    mix: multi_doc_synthesis
+
+  - id: chat-synth-portering-volledig-proces
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Wat is het volledige proces van een nummerovername, van aanvraag tot afhandeling?"
+    expected_topics: [portering, nummerovername, customer-service]
+    expected_chunks: []
+    mix: multi_doc_synthesis
+
+  - id: chat-synth-fraude-gevallen
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Wat zijn de verschillende fraude-scenario's en hoe handelen we elk af?"
+    expected_topics: [fraude, customer-service]
+    expected_chunks: []
+    mix: multi_doc_synthesis
+
+  - id: chat-synth-bubble-setup-troubleshoot
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Hoe zet ik Bubble op en wat doe ik als er iets misgaat?"
+    expected_topics: [bubble, setup, troubleshoot]
+    expected_chunks: []
+    mix: multi_doc_synthesis
+
+  - id: chat-synth-account-changes
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Welke account-wijzigingen zijn er en hoe verwerk ik elk type?"
+    expected_topics: [account-changes, klantaccount, customer-service]
+    expected_chunks: []
+    mix: multi_doc_synthesis
+
+  - id: chat-synth-overdracht-naar-voys
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Hoe ziet de complete overdracht naar Voys eruit, inclusief porteringen en setups?"
+    expected_topics: [overdracht, voys, portering, setup]
+    expected_chunks: []
+    mix: multi_doc_synthesis
+
+  # --- Long-tail / obscure (4) — recall test ---
+  - id: chat-longtail-myneva
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Wat moet ik weten over de myneva CRM-integratie?"
+    expected_topics: [myneva, crm, integratie]
+    expected_chunks: []
+    mix: long_tail
+
+  - id: chat-longtail-belgische-klanten
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Wat is anders bij Belgische klanten?"
+    expected_topics: [belgische-klanten, internationaal]
+    expected_chunks: []
+    mix: long_tail
+
+  - id: chat-longtail-voip-landen
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "In welke landen werkt VoIP-telefonie soms niet goed?"
+    expected_topics: [voip, internationaal, troubleshoot]
+    expected_chunks: []
+    mix: long_tail
+
+  - id: chat-longtail-odoo-websocket
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Hoe werkt de Odoo softphone via websocket?"
+    expected_topics: [odoo, softphone, websocket]
+    expected_chunks: []
+    mix: long_tail
+
+  # --- Edge cases (2) ---
+  - id: chat-edge-mixed-lang
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "How do I handle een klant die zijn inloggegevens kwijt is?"
+    expected_topics: [inloggegevens, freedom, klantaccount]
+    expected_chunks: []
+    mix: edge_case
+
+  - id: chat-edge-vague-greeting
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "hoi"
+    expected_topics: []
+    expected_chunks: []
+    mix: edge_case
+
+  # --- Brand-bridging canaries (7) — REQ-7 SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 ---
+  # These queries use third-party brand names that are NOT indexed as KB entities.
+  # The brand-bridging rewrite prompt (REQ-5) must expand them to category terms so
+  # retrieval can surface Bubble / RedCactus / CRM pages. The negative-class entry
+  # (chat-brand-not-in-kb) must NOT produce a fabricated answer — the anti-hallucination
+  # injection (REQ-2) must trigger and the model must ask for clarification instead.
+  - id: chat-brand-salesforce-bridging
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Ik wil Voys Freedom graag koppelen aan Salesforce. Hoe werkt dat?"
+    expected_topics: [bubble, redcactus, salesforce, integratie]
+    expected_chunks: ["Bubble: Koppel je telefooncentrale aan je CRM-ERP"]
+    mix: brand_bridging
+
+  - id: chat-brand-hubspot-bridging
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Hoe koppel ik HubSpot aan Voys?"
+    expected_topics: [bubble, hubspot, crm, integratie]
+    mix: brand_bridging
+
+  - id: chat-brand-msteams-bridging
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Werkt Voys Freedom met Microsoft Teams?"
+    expected_topics: [teams, microsoft, integratie]
+    mix: brand_bridging
+
+  - id: chat-brand-pipedrive-bridging
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Pipedrive integreren met onze telefooncentrale, kan dat?"
+    expected_topics: [pipedrive, crm, bubble, integratie]
+    mix: brand_bridging
+
+  - id: chat-brand-not-in-kb
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Ondersteunen jullie de Acme Foo Connector v3 voor Salesforce Commerce B2B Lightning?"
+    expected_topics: [onbekend]
+    mix: brand_bridging
+    # Negative-class canary: KB has no relevant content for this query.
+    # The anti-hallucination injection (REQ-2) must fire (confidence_band: low)
+    # and the model must respond with a clarifying question, NOT a fabricated answer.
+    # expected_chunks intentionally absent.
+
+  - id: chat-brand-control-explicit
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Hoe werkt de Bubble integratie met Salesforce?"
+    expected_topics: [bubble, salesforce, crm, integratie]
+    expected_chunks: ["Bubble: Koppel je telefooncentrale aan je CRM-ERP"]
+    mix: brand_bridging
+    # Control query: mentions both the Voys-side brand (Bubble) AND the third-party brand.
+    # Should NOT trigger band=low because Bubble is a known KB entity.
+
+  - id: chat-brand-zoom-bridging
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Hoe koppel ik Zoom aan Voys?"
+    expected_topics: [zoom, integratie]
+    mix: brand_bridging

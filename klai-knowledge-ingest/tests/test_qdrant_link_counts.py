@@ -1,4 +1,5 @@
 """Tests for link-count payload indexes and update_link_counts() (SPEC-CRAWLER-003)."""
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -28,7 +29,14 @@ def _mock_collection_entry(collection_name: str):
 @pytest.mark.asyncio
 async def test_ensure_collection_creates_source_url_index_when_missing():
     """source_url keyword index should be created when not yet indexed."""
-    existing_fields = {"org_id", "kb_slug", "artifact_id", "content_type", "user_id", "entity_uuids"}
+    existing_fields = {
+        "org_id",
+        "kb_slug",
+        "artifact_id",
+        "content_type",
+        "user_id",
+        "entity_uuids",
+    }
 
     with patch("knowledge_ingest.qdrant_store.get_client") as mock_get_client:
         mock_client = MagicMock()
@@ -36,9 +44,7 @@ async def test_ensure_collection_creates_source_url_index_when_missing():
         mock_client.get_collections = AsyncMock(
             return_value=MagicMock(collections=[_mock_collection_entry("klai_knowledge")])
         )
-        mock_client.get_collection = AsyncMock(
-            return_value=_mock_collection_info(existing_fields)
-        )
+        mock_client.get_collection = AsyncMock(return_value=_mock_collection_info(existing_fields))
         mock_client.create_payload_index = AsyncMock()
 
         await ensure_collection()
@@ -46,7 +52,8 @@ async def test_ensure_collection_creates_source_url_index_when_missing():
         # Find the call that created the source_url index
         calls = mock_client.create_payload_index.call_args_list
         source_url_calls = [
-            c for c in calls
+            c
+            for c in calls
             if c.kwargs.get("field_name") == "source_url"
             or (len(c.args) >= 2 and c.args[1] == "source_url")
         ]
@@ -58,7 +65,14 @@ async def test_ensure_collection_creates_source_url_index_when_missing():
 @pytest.mark.asyncio
 async def test_ensure_collection_creates_incoming_link_count_index_when_missing():
     """incoming_link_count integer index should be created when not yet indexed."""
-    existing_fields = {"org_id", "kb_slug", "artifact_id", "content_type", "user_id", "entity_uuids"}
+    existing_fields = {
+        "org_id",
+        "kb_slug",
+        "artifact_id",
+        "content_type",
+        "user_id",
+        "entity_uuids",
+    }
 
     with patch("knowledge_ingest.qdrant_store.get_client") as mock_get_client:
         mock_client = MagicMock()
@@ -66,16 +80,15 @@ async def test_ensure_collection_creates_incoming_link_count_index_when_missing(
         mock_client.get_collections = AsyncMock(
             return_value=MagicMock(collections=[_mock_collection_entry("klai_knowledge")])
         )
-        mock_client.get_collection = AsyncMock(
-            return_value=_mock_collection_info(existing_fields)
-        )
+        mock_client.get_collection = AsyncMock(return_value=_mock_collection_info(existing_fields))
         mock_client.create_payload_index = AsyncMock()
 
         await ensure_collection()
 
         calls = mock_client.create_payload_index.call_args_list
         ilc_calls = [
-            c for c in calls
+            c
+            for c in calls
             if c.kwargs.get("field_name") == "incoming_link_count"
             or (len(c.args) >= 2 and c.args[1] == "incoming_link_count")
         ]
@@ -88,9 +101,22 @@ async def test_ensure_collection_creates_incoming_link_count_index_when_missing(
 async def test_ensure_collection_skips_indexes_when_already_present():
     """When source_url and incoming_link_count are already indexed, skip creation."""
     all_fields = {
-        "org_id", "kb_slug", "artifact_id", "content_type", "user_id", "entity_uuids",
-        "source_url", "incoming_link_count", "taxonomy_node_id", "source_connector_id",
-        "taxonomy_node_ids", "tags", "content_label", "source_label", "chunk_type",
+        "org_id",
+        "kb_slug",
+        "artifact_id",
+        "content_type",
+        "user_id",
+        "entity_uuids",
+        "entity_names",
+        "source_url",
+        "incoming_link_count",
+        "taxonomy_node_id",
+        "source_connector_id",
+        "taxonomy_node_ids",
+        "tags",
+        "content_label",
+        "source_label",
+        "chunk_type",
     }
 
     with patch("knowledge_ingest.qdrant_store.get_client") as mock_get_client:
@@ -99,9 +125,7 @@ async def test_ensure_collection_skips_indexes_when_already_present():
         mock_client.get_collections = AsyncMock(
             return_value=MagicMock(collections=[_mock_collection_entry("klai_knowledge")])
         )
-        mock_client.get_collection = AsyncMock(
-            return_value=_mock_collection_info(all_fields)
-        )
+        mock_client.get_collection = AsyncMock(return_value=_mock_collection_info(all_fields))
         mock_client.create_payload_index = AsyncMock()
 
         await ensure_collection()
@@ -156,7 +180,12 @@ async def test_update_link_counts_uses_correct_filter():
             assert call_args[0] == "klai_knowledge"
         else:
             # Verify payload contains incoming_link_count
-            payload = call_kwargs.get("payload", mock_client.set_payload.call_args.args[1] if len(mock_client.set_payload.call_args.args) > 1 else None)
+            payload = call_kwargs.get(
+                "payload",
+                mock_client.set_payload.call_args.args[1]
+                if len(mock_client.set_payload.call_args.args) > 1
+                else None,
+            )
             assert payload == {"incoming_link_count": 7}
 
         # Verify the filter structure by inspecting the points argument

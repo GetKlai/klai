@@ -6,6 +6,7 @@ All calls use the portal-api service account PAT — never exposed to the browse
 import asyncio
 import logging
 import time
+from typing import Literal
 
 import httpx
 
@@ -56,6 +57,31 @@ class ZitadelClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def delete_org(self, org_id: str) -> None:
+        """Delete a Zitadel organisation and cascade-delete all its users + grants.
+
+        Idempotent: 404 means the org is already absent, which is fine for
+        deprovisioning re-runs. All other non-2xx responses are propagated
+        via raise_for_status().
+
+        Requires IAM_OWNER role on the PAT (settings.zitadel_pat). Per A4 in
+        SPEC-INFRA-TENANT-DELETE-001: Zitadel cascades users and grants when
+        the org is deleted — no per-user step is needed.
+
+        # @MX:NOTE: SPEC-INFRA-TENANT-DELETE-001 Phase 5 — called by step 15
+        #   (_delete_zitadel_org) in deprovisioning_orchestrator.
+        """
+        resp = await self._http.delete(
+            "/management/v1/orgs",
+            headers={"x-zitadel-orgid": org_id},
+        )
+        if resp.status_code == 404:
+            # File uses stdlib logging (not structlog) — kwargs would be
+            # treated as `extra` not structured fields. Use %-style instead.
+            logger.info("zitadel_org_already_absent org_id=%s", org_id)
+            return
+        resp.raise_for_status()
+
     # ── User management ───────────────────────────────────────────────────────
 
     async def create_human_user(
@@ -67,12 +93,22 @@ class ZitadelClient:
         password: str,
         preferred_language: str = "nl",
     ) -> dict:
-        """Create a human user inside a specific org."""
+        """Create a human user inside a specific org.
+
+        ``userName`` is lowercased before submission to Zitadel. Email
+        addresses are case-insensitive per RFC 5321 §2.4, but Zitadel
+        stores the userName / loginName byte-for-byte and matches against
+        it case-sensitively in some downstream calls (notably
+        ``/v2/sessions`` user check). Storing only the lowercase form
+        eliminates a class of "user signed up as Steven@... but typed
+        steven@... at login" issues at the source. The display ``email``
+        field keeps its original case for outgoing mail headers.
+        """
         resp = await self._http.post(
             "/management/v1/users/human/_import",
             headers={"x-zitadel-orgid": org_id},
             json={
-                "userName": email,
+                "userName": email.lower(),
                 "profile": {
                     "firstName": first_name,
                     "lastName": last_name,
@@ -127,12 +163,28 @@ class ZitadelClient:
         last_name: str,
         preferred_language: str = "nl",
     ) -> dict:
-        """Create a human user and send initialization email (password-less invite)."""
+        """Create a human user WITHOUT sending the activation email.
+
+        SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-2 — formerly this method passed
+        ``sendCodes: True`` so Zitadel auto-mailed an init-code link to its
+        own hosted UI. The split is now:
+
+          1. This method imports the user with ``sendCodes: False`` — no mail.
+          2. The caller follows up with :meth:`send_invite_code` which uses
+             the v2 ``/v2/users/{id}/invite_code`` endpoint with a Klai
+             ``urlTemplate``, sending the activation mail with a link to
+             ``my.getklai.com/password/set``.
+
+        ``userName`` is lowercased before submission — see
+        ``create_human_user`` for rationale. The display ``email`` field
+        keeps its original case so the invite mail addresses the user
+        the way the inviting admin typed it.
+        """
         resp = await self._http.post(
             "/management/v1/users/human/_import",
             headers={"x-zitadel-orgid": org_id},
             json={
-                "userName": email,
+                "userName": email.lower(),
                 "profile": {
                     "firstName": first_name,
                     "lastName": last_name,
@@ -143,11 +195,54 @@ class ZitadelClient:
                     "email": email,
                     "isEmailVerified": False,
                 },
-                "sendCodes": True,
+                # REQ-2: never let Zitadel mail an init-code with a default
+                # hosted-UI URL. The caller issues a follow-up send_invite_code
+                # call with an explicit Klai urlTemplate.
+                "sendCodes": False,
             },
         )
         resp.raise_for_status()
         return resp.json()
+
+    async def send_invite_code(
+        self,
+        user_id: str,
+        *,
+        url_template: str,
+        application_name: str = "Klai",
+    ) -> None:
+        """Issue (or re-issue) a Zitadel invite code and mail it to the user.
+
+        SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-2 / REQ-3. Used both by the
+        new-user invite flow (right after ``invite_user``) and the
+        resend-invite flow (replaces the legacy ``resend_init_mail``).
+
+        Body shape (per zitadel/user/v2/user.proto::SendInviteCode):
+
+        .. code-block:: json
+
+            {
+              "sendCode": {
+                "urlTemplate": "https://my.getklai.com/password/set?userID=...",
+                "applicationName": "Klai"
+              }
+            }
+
+        REQ-10 — ``url_template`` MUST be set explicitly on every call.
+        Zitadel caches the previous url_template per user; relying on the
+        cache means a stale Zitadel-default URL silently wins on the next
+        resend if the previous call did not pass urlTemplate.
+        """
+        resp = await self._http.post(
+            f"/v2/users/{user_id}/invite_code",
+            json={
+                "sendCode": {
+                    "urlTemplate": url_template,
+                    "applicationName": application_name,
+                },
+            },
+        )
+        resp.raise_for_status()
 
     async def verify_user_email(self, org_id: str, user_id: str, code: str) -> None:
         """Verify a user's email address using the code from the verification email."""
@@ -235,17 +330,31 @@ class ZitadelClient:
 
     # ── Custom Login UI (Session API) ─────────────────────────────────────────
 
-    async def create_session_with_password(self, email: str, password: str) -> dict:
-        """Create a Zitadel session validated by email + password.
+    async def create_session_with_password(self, user_id: str, password: str) -> dict:
+        """Create a Zitadel session for the given Zitadel ``user_id`` with the
+        supplied password.
 
-        Returns the full response dict containing ``sessionId`` and ``sessionToken``.
-        Raises ``httpx.HTTPStatusError`` on invalid credentials (4xx).
+        ``user_id`` MUST be the canonical Zitadel userId resolved from the
+        user-supplied email via ``find_user_by_email`` (which is itself
+        case-insensitive per RFC 5321 §2.4). Passing the raw user-typed
+        email here is wrong: Zitadel's ``/v2/sessions`` user check matches
+        ``loginName`` case-sensitively against the stored value, so a user
+        whose Zitadel ``loginName`` is ``Steven@getklai.com`` cannot log in
+        by typing ``steven@getklai.com`` — Zitadel returns HTTP 400 and the
+        portal returns 401 "Email address or password is incorrect". The
+        IGNORE_CASE fix on ``find_user_by_email`` (commit 7e92e089) closed
+        the lookup half of this gap; this signature closes the session-
+        creation half.
+
+        Returns the full response dict containing ``sessionId`` and
+        ``sessionToken``. Raises ``httpx.HTTPStatusError`` on invalid
+        credentials (4xx) or unknown ``user_id`` (also 4xx).
         """
         resp = await self._http.post(
             "/v2/sessions",
             json={
                 "checks": {
-                    "user": {"loginName": email},
+                    "user": {"userId": user_id},
                     "password": {"password": password},
                 }
             },
@@ -266,16 +375,73 @@ class ZitadelClient:
         resp.raise_for_status()
         return resp.json()["callbackUrl"]
 
-    async def set_password_with_code(self, user_id: str, code: str, new_password: str) -> None:
-        """Set a new password using a verification code from a password-reset email."""
-        resp = await self._http.post(
+    async def set_password_with_code(self, user_id: str, code: str, new_password: str) -> Literal["invite", "reset"]:
+        """Set a new password using a one-time code from email.
+
+        Returns ``"invite"`` if the code was consumed via the invite flow
+        (``invite_code/verify`` + ``password`` without code) and ``"reset"``
+        if it was consumed via the legacy single-call reset flow
+        (``password`` with verificationCode). Callers should record this
+        in their structured logs so operators can split metrics by path.
+
+        Zitadel has TWO distinct code flows that both land on Klai's
+        ``/password/set`` page:
+
+        - **Password reset** (from ``/password/forgot``) — one API call:
+          ``POST /v2/users/{id}/password`` with ``{newPassword, verificationCode}``.
+          Zitadel consumes the password_reset code and sets the password
+          atomically.
+
+        - **Invite** (from admin-invite mail) — two API calls:
+          1. ``POST /v2/users/{id}/invite_code/verify`` with
+             ``{verificationCode: code}`` — verifies the invite code AND
+             marks the user's email as verified.
+          2. ``POST /v2/users/{id}/password`` with ``{newPassword}`` (no
+             code) — sets the password on the now-verified user.
+
+          The invite_code consumer does NOT accept reset-style codes, and
+          the password endpoint does NOT accept invite codes. Without this
+          split the invite-flow returns 400 ``invalid_code``.
+
+        We try the invite-flow first because invite-codes are the more
+        common case (every newly invited user goes through it). If the
+        verify step returns a 4xx we fall back to the reset-flow.
+
+        Raises ``httpx.HTTPStatusError`` (caller maps to 400/502) when
+        both flows fail or Zitadel returns a 5xx during verify.
+        """
+        # ---- Path 1: invite flow ------------------------------------------------
+        verify_resp = await self._http.post(
+            f"/v2/users/{user_id}/invite_code/verify",
+            json={"verificationCode": code},
+        )
+        if verify_resp.is_success:
+            # Invite verified; set the password without a code on the now-verified user.
+            password_resp = await self._http.post(
+                f"/v2/users/{user_id}/password",
+                json={"newPassword": {"password": new_password, "changeRequired": False}},
+            )
+            password_resp.raise_for_status()
+            return "invite"
+
+        # invite_code/verify returned 4xx/5xx. Two reasons it might:
+        #   - 4xx: the code is not an invite code (likely a password-reset code).
+        #          Fall back to the reset-flow below.
+        #   - 5xx: Zitadel itself is unhealthy. Propagate as HTTPStatusError so
+        #          the caller emits zitadel_5xx and returns 502.
+        if verify_resp.status_code >= 500:
+            verify_resp.raise_for_status()
+
+        # ---- Path 2: reset flow (1 call) ---------------------------------------
+        reset_resp = await self._http.post(
             f"/v2/users/{user_id}/password",
             json={
                 "newPassword": {"password": new_password, "changeRequired": False},
                 "verificationCode": code,
             },
         )
-        resp.raise_for_status()
+        reset_resp.raise_for_status()
+        return "reset"
 
     async def find_user_id_by_email(self, email: str) -> str | None:
         """Return the Zitadel userId for the given email, or None if not found.
@@ -350,21 +516,40 @@ class ZitadelClient:
         )
         put_resp.raise_for_status()
 
-    async def resend_init_mail(self, org_id: str, user_id: str) -> None:
-        """Resend the invite email to a user who hasn't completed setup.
+    # resend_init_mail was deleted in SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-3.
+    # Use ``send_invite_code(user_id, url_template=...)`` instead — same API
+    # call, but with an explicit Klai urlTemplate instead of {} (which made
+    # Zitadel default to its own hosted UI).
 
-        Uses the Zitadel v2 invite_code API. The Management v1 resend_init_mail
-        endpoint returns NOT_FOUND once the original init code expires (72h TTL).
+    async def send_password_reset(self, user_id: str, *, url_template: str) -> None:
+        """Trigger Zitadel to send a password reset email to the user.
+
+        SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-1: ``url_template`` is keyword-only
+        and required. Zitadel substitutes ``{{.UserID}}``, ``{{.Code}}`` and
+        ``{{.OrgID}}`` server-side before mailing the link. Callers MUST build
+        the template via :func:`app.services.auth_links.build_url_template` so
+        every Klai mail-link points at the same frontend route.
+
+        Body shape (per zitadel/user/v2/password.proto::SendPasswordResetLink):
+
+        .. code-block:: json
+
+            {
+              "sendLink": {
+                "notificationType": "NOTIFICATION_TYPE_Email",
+                "urlTemplate": "https://my.getklai.com/password/set?userID=..."
+              }
+            }
         """
         resp = await self._http.post(
-            f"/v2/users/{user_id}/invite_code",
-            json={"sendCode": {}},
+            f"/v2/users/{user_id}/password_reset",
+            json={
+                "sendLink": {
+                    "notificationType": "NOTIFICATION_TYPE_Email",
+                    "urlTemplate": url_template,
+                },
+            },
         )
-        resp.raise_for_status()
-
-    async def send_password_reset(self, user_id: str) -> None:
-        """Trigger Zitadel to send a password reset email to the user."""
-        resp = await self._http.post(f"/v2/users/{user_id}/password_reset")
         resp.raise_for_status()
 
     # ── MFA / TOTP ────────────────────────────────────────────────────────────
@@ -574,7 +759,11 @@ class ZitadelClient:
             "/v2/users/human",
             headers={"x-zitadel-orgid": org_id},
             json={
-                "username": email,
+                # username is lowercased to keep all auto-provisioned IDP
+                # users on the same case-insensitive footing as humans
+                # created via ``create_human_user`` and ``invite_user``.
+                # See ``create_human_user`` docstring for rationale.
+                "username": email.lower(),
                 "profile": {
                     "givenName": given_name or email.split("@")[0],
                     "familyName": family_name,

@@ -1,0 +1,240 @@
+# SPEC-LAUNCH-SOFTLAUNCH-001 S-1 — launch-killer observability.
+#
+# Three alerts that catch the "Klai silently broken for new users" class:
+#
+#   R1  signup-fail-rate         — portal-api signup endpoint raising in last 15m
+#   R2  retrieve-fail-rate       — litellm hook reporting retrieval-fail (silent-degrade
+#                                  class from the 2026-04-28 → 2026-05-05 incident)
+#   R3  kb-fallback-notice-fired — user-visible "KB tijdelijk niet bereikbaar" notice
+#                                  appeared in chat (= someone saw a degraded answer)
+#
+# Routed via spec=SPEC-LAUNCH-SOFTLAUNCH-001 → klai-ops-alerts-email (same routing
+# as SPEC-OBS-001 in portal-events-rules.yaml).
+#
+# UID convention (40-char ceiling): `spec-launch-001-<verb>`.
+# Field shape mirrors portal-events-rules.yaml (service:foo AND _msg:bar patterns).
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: spec-launch-001-readiness
+    folder: Klai
+    interval: 60s
+    rules:
+
+      # ── R1: signup-fail-rate ────────────────────────────────────────────
+      # Any portal-api error/exception log that mentions "signup" or "creation
+      # failed" in the last 15 minutes. Catches Zitadel-org-create failures,
+      # Zitadel-user-create failures, role-grant failures, and DB-commit
+      # failures in signup.py — all of which raise 502 and log via
+      # logger.exception().
+      - uid: spec-launch-001-signup-fail-rate
+        title: signup_fail_rate
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 900   # 15 minutes
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:portal-api AND (level:error OR level:exception) AND _msg:"signup"'
+              queryType: instant
+          - refId: count
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: count
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: count
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Alerting
+        for: 0s
+        keepFiringFor: 30m
+        isPaused: false
+        labels:
+          severity: warning
+          spec: SPEC-LAUNCH-SOFTLAUNCH-001
+          service_group: signup
+        annotations:
+          summary: 'Signup endpoint failing — new user(s) blocked from creating account'
+          description: |
+            One or more signup exceptions in the last 15 minutes. During a
+            softlaunch this means a real user who clicked our invite cannot
+            create their account.
+
+            Investigate (Grafana → Explore → VictoriaLogs):
+              service:portal-api AND (level:error OR level:exception) AND _msg:"signup"
+                | sort by(_time) desc | limit 20
+
+            Common causes:
+              - Zitadel rate-limited (org-create or user-create returns 502)
+              - DB rollback in portal_orgs/portal_users INSERT
+              - free-email block firing for warm contacts (then add signup-token
+                bypass, see SPEC-LAUNCH-SOFTLAUNCH-001 B-3)
+
+      # ── R2: retrieve-fail-rate ──────────────────────────────────────────
+      # LiteLLM hook reports KB retrieval failure. Catches the silent-degrade
+      # class: chat keeps working from general knowledge while the KB query
+      # silently fails. Was invisible for 7 days in the 2026-04-28 → 2026-05-05
+      # incident; this alert closes that gap.
+      - uid: spec-launch-001-retrieve-fail-rate
+        title: retrieve_fail_rate
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:litellm AND level:error AND _msg:"retrieval"'
+              queryType: instant
+          - refId: count
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: count
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: count
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Alerting
+        for: 0s
+        keepFiringFor: 30m
+        isPaused: false
+        labels:
+          severity: warning
+          spec: SPEC-LAUNCH-SOFTLAUNCH-001
+          service_group: retrieval
+        annotations:
+          summary: 'LiteLLM retrieve hook failing — chat replies degrade to no-KB'
+          runbook_url: 'docs/retros/2026-05-05-retrieve-caller-service-header-mismatch.md'
+          description: |
+            The LiteLLM hook (klai_knowledge.py) failed to fetch KB context in
+            the last 15 minutes. Users get answers from general knowledge only,
+            without the Klai Kennisbank chunks — see the pitfall
+            `retrieve-caller-service-header-mismatch` in process-rules.md.
+
+            Investigate (Grafana → Explore → VictoriaLogs):
+              service:litellm AND level:error AND _msg:"retrieval"
+                | sort by(_time) desc | limit 20
+
+            If multiple callers are affected, also check:
+              service:retrieval-api AND level:error
+                | sort by(_time) desc | limit 20
+
+      # ── R3: kb-fallback-notice-fired ────────────────────────────────────
+      # The user-visible "Klai Kennisbank — TIJDELIJK NIET BEREIKBAAR" notice
+      # injected into the system prompt when /retrieve returns an error. Its
+      # presence in logs = at least one chat turn rendered with that notice.
+      # Different signal from R2: R2 catches the upstream failure, R3 catches
+      # the user-visible consequence.
+      - uid: spec-launch-001-kb-fallback-fired
+        title: kb_fallback_notice_fired
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:litellm AND _msg:"TIJDELIJK NIET BEREIKBAAR"'
+              queryType: instant
+          - refId: count
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: count
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: count
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Alerting
+        for: 0s
+        keepFiringFor: 30m
+        isPaused: false
+        labels:
+          severity: warning
+          spec: SPEC-LAUNCH-SOFTLAUNCH-001
+          service_group: retrieval
+        annotations:
+          summary: 'User-facing KB-unavailable notice fired — at least one user saw degraded answer'
+          description: |
+            The LiteLLM hook injected the "Klai Kennisbank — TIJDELIJK NIET
+            BEREIKBAAR" notice into the system prompt at least once in the
+            last 15 minutes. That means a real user saw the notice in their
+            chat reply.
+
+            R2 (retrieve-fail-rate) tells you WHY the KB is unreachable;
+            R3 tells you WHO felt it. Treat together.
+
+            Investigate (Grafana → Explore → VictoriaLogs):
+              service:litellm AND _msg:"TIJDELIJK NIET BEREIKBAAR"
+                | sort by(_time) desc | limit 10

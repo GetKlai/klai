@@ -1,4 +1,5 @@
 """Tests for knowledge_ingest/enrichment.py"""
+
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -6,7 +7,6 @@ import httpx
 import pytest
 
 from knowledge_ingest.enrichment import EnrichmentError, enrich_chunk, enrich_chunks
-
 
 SAMPLE_RESULT = {
     "context_prefix": "Dit document beschrijft het retourbeleid van Acme.",
@@ -22,9 +22,7 @@ SAMPLE_RESULT = {
 def _mock_response(data: dict, status_code: int = 200) -> MagicMock:
     response = MagicMock()
     response.status_code = status_code
-    response.json.return_value = {
-        "choices": [{"message": {"content": json.dumps(data)}}]
-    }
+    response.json.return_value = {"choices": [{"message": {"content": json.dumps(data)}}]}
     response.raise_for_status = MagicMock()
     return response
 
@@ -89,7 +87,9 @@ async def test_enrich_chunk_http_error_raises():
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(side_effect=httpx.HTTPStatusError("500", request=MagicMock(), response=MagicMock()))
+        mock_client.post = AsyncMock(
+            side_effect=httpx.HTTPStatusError("500", request=MagicMock(), response=MagicMock())
+        )
         mock_client_cls.return_value = mock_client
 
         with pytest.raises(EnrichmentError):
@@ -227,3 +227,103 @@ async def test_enrich_chunk_backward_compatible_no_source_fields():
 
     assert result is not None
     assert result.chunk_type == "reference"
+
+
+# ---------------------------------------------------------------------------
+# SPEC-RAG-CONTEXTUAL-001 — summary-driven prompt path
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_enrich_chunk_uses_nl_summary_template_when_summary_provided():
+    """When document_summary is non-empty + language=nl, prompt uses the
+    Dutch summary template instead of the legacy full-document template."""
+    captured_prompt: list[str] = []
+
+    def _capture_post(url, json=None, headers=None):
+        captured_prompt.append(json["messages"][0]["content"])
+        return _mock_response(SAMPLE_RESULT)
+
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(side_effect=_capture_post)
+        mock_client_cls.return_value = mock_client
+
+        await enrich_chunk(
+            document_text="Volledige documenttekst die NIET in de prompt mag belanden.",
+            chunk_text="De retourperiode is 30 dagen.",
+            title="Retourbeleid",
+            path="help/retour.md",
+            document_summary="Dit document beschrijft het retourbeleid van Acme.",
+            document_language="nl",
+        )
+
+    prompt = captured_prompt[0]
+    assert "<document_summary>" in prompt
+    assert "Dit document beschrijft het retourbeleid van Acme." in prompt
+    assert "Volledige documenttekst die NIET" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_enrich_chunk_uses_en_summary_template_for_english_doc():
+    """language=en routes to the English summary template."""
+    captured_prompt: list[str] = []
+
+    def _capture_post(url, json=None, headers=None):
+        captured_prompt.append(json["messages"][0]["content"])
+        return _mock_response(SAMPLE_RESULT)
+
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(side_effect=_capture_post)
+        mock_client_cls.return_value = mock_client
+
+        await enrich_chunk(
+            document_text="Full document body — should not appear in prompt.",
+            chunk_text="Returns are accepted within 30 days.",
+            title="Returns policy",
+            path="help/returns.md",
+            document_summary="This document describes Acme's returns policy.",
+            document_language="en",
+        )
+
+    prompt = captured_prompt[0]
+    assert "<document_summary>" in prompt
+    assert "This document describes Acme's returns policy." in prompt
+    assert "Generate a JSON object" in prompt  # English template marker
+    assert "Full document body" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_enrich_chunk_falls_back_to_legacy_when_summary_empty():
+    """Empty/None summary keeps the legacy full-document path (REQ-2 backward compat)."""
+    captured_prompt: list[str] = []
+
+    def _capture_post(url, json=None, headers=None):
+        captured_prompt.append(json["messages"][0]["content"])
+        return _mock_response(SAMPLE_RESULT)
+
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(side_effect=_capture_post)
+        mock_client_cls.return_value = mock_client
+
+        await enrich_chunk(
+            document_text="Het volledige documentlichaam moet hier weer in de prompt komen.",
+            chunk_text="De retourperiode is 30 dagen.",
+            title="Retourbeleid",
+            path="help/retour.md",
+            document_summary="",
+        )
+
+    prompt = captured_prompt[0]
+    # Legacy template uses <document>, not <document_summary>
+    assert "<document>" in prompt
+    assert "<document_summary>" not in prompt
+    assert "Het volledige documentlichaam" in prompt

@@ -1,8 +1,9 @@
 """Integration tests for the three source-ingest routes (SPEC-KB-SOURCES-001 Module 1).
 
-Mirrors the pattern in test_app_knowledge_bases_quota.py: patch
-``_get_caller_org``, mock DB queries, mock extractor + knowledge-ingest
-client. Verifies wiring, error mapping per SPEC D8, and payload shape.
+Mirrors the pattern in test_app_knowledge_bases_quota.py: build a synthetic
+``UserPermissions`` via ``make_perms`` and pass it directly to the endpoints.
+DB queries are mocked, plus extractor + knowledge-ingest client. Verifies
+wiring, error mapping per SPEC D8, and payload shape.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from app.services.source_extractors.exceptions import (
     SourceFetchError,
     SSRFBlockedError,
 )
+from tests.conftest import make_perms
 
 # --- Fixtures ---------------------------------------------------------------
 
@@ -32,7 +34,7 @@ def _make_db_mock(kb: MagicMock | None = None) -> AsyncMock:
     return db
 
 
-def _make_org(plan: str = "complete") -> MagicMock:
+def _make_org(plan: str = "knowledge") -> MagicMock:
     org = MagicMock()
     org.id = 1
     org.plan = plan
@@ -54,8 +56,21 @@ def _make_kb(slug: str = "personal", owner_type: str = "user") -> MagicMock:
     return kb
 
 
+def _make_perms() -> object:
+    """Synthetic UserPermissions matching the historic _get_caller_org tuple
+    (caller_user_id="user-abc", org_id=1).
+    """
+    return make_perms(role="admin", user_id="user-abc", org_id=1)
+
+
 class _CommonPatches:
-    """Apply the common auth / role / quota patches via ExitStack."""
+    """Apply the common role / quota / org-load patches via ExitStack.
+
+    Replaces the old ``_get_caller_org`` patch — caller identity now flows
+    through ``perms`` directly. Org loading is patched here because both
+    ``_get_writable_kb_or_raise`` (quota path) and the endpoint body call
+    ``_load_org_or_500(db, perms.org_id)``.
+    """
 
     def __init__(
         self,
@@ -80,11 +95,10 @@ class _CommonPatches:
 
     def __enter__(self) -> _CommonPatches:
         org = _make_org()
-        caller_id = "user-abc"
         self.stack.enter_context(
             patch(
-                "app.api.app_knowledge_sources._get_caller_org",
-                AsyncMock(return_value=(caller_id, org, MagicMock())),
+                "app.api.app_knowledge_sources._load_org_or_500",
+                AsyncMock(return_value=org),
             )
         )
         self.stack.enter_context(
@@ -152,7 +166,7 @@ class TestTextRoute:
             resp = await add_text_source(
                 kb_slug="personal",
                 body=body,
-                credentials=MagicMock(),
+                perms=_make_perms(),
                 db=db,
             )
 
@@ -184,7 +198,7 @@ class TestTextRoute:
                 resp = await add_text_source(
                     kb_slug="personal",
                     body=TextSourceRequest(title=title, content="same body"),
-                    credentials=MagicMock(),
+                    perms=_make_perms(),
                     db=db,
                 )
                 refs.append(resp.source_ref)
@@ -202,7 +216,7 @@ class TestTextRoute:
             await add_text_source(
                 kb_slug="personal",
                 body=body,
-                credentials=MagicMock(),
+                perms=_make_perms(),
                 db=db,
             )
         assert exc.value.status_code == 400
@@ -217,7 +231,7 @@ class TestTextRoute:
             await add_text_source(
                 kb_slug="nonexistent",
                 body=TextSourceRequest(title="t", content="body"),
-                credentials=MagicMock(),
+                perms=_make_perms(),
                 db=db,
             )
         assert exc.value.status_code == 404
@@ -233,7 +247,7 @@ class TestTextRoute:
             await add_text_source(
                 kb_slug="personal",
                 body=TextSourceRequest(title="t", content="body"),
-                credentials=MagicMock(),
+                perms=_make_perms(),
                 db=db,
             )
         assert exc.value.status_code == 403
@@ -249,7 +263,7 @@ class TestTextRoute:
             await add_text_source(
                 kb_slug="personal",
                 body=TextSourceRequest(title="t", content="body"),
-                credentials=MagicMock(),
+                perms=_make_perms(),
                 db=db,
             )
         assert exc.value.status_code == 403
@@ -279,7 +293,7 @@ class TestUrlRoute:
             resp = await add_url_source(
                 kb_slug="personal",
                 body=UrlSourceRequest(url="https://example.com/"),
-                credentials=MagicMock(),
+                perms=_make_perms(),
                 db=db,
             )
 
@@ -310,7 +324,7 @@ class TestUrlRoute:
             await add_url_source(
                 kb_slug="personal",
                 body=UrlSourceRequest(url="ftp://bad"),
-                credentials=MagicMock(),
+                perms=_make_perms(),
                 db=db,
             )
         assert exc.value.status_code == 400
@@ -332,7 +346,7 @@ class TestUrlRoute:
             await add_url_source(
                 kb_slug="personal",
                 body=UrlSourceRequest(url="http://localhost/"),
-                credentials=MagicMock(),
+                perms=_make_perms(),
                 db=db,
             )
         assert exc.value.status_code == 400
@@ -355,7 +369,7 @@ class TestUrlRoute:
             await add_url_source(
                 kb_slug="personal",
                 body=UrlSourceRequest(url="https://example.com/"),
-                credentials=MagicMock(),
+                perms=_make_perms(),
                 db=db,
             )
         assert exc.value.status_code == 502
@@ -378,7 +392,7 @@ class TestUrlRoute:
             await add_url_source(
                 kb_slug="personal",
                 body=UrlSourceRequest(url="https://example.com/"),
-                credentials=MagicMock(),
+                perms=_make_perms(),
                 db=db,
             )
         assert exc.value.status_code == 502
@@ -408,7 +422,7 @@ class TestYoutubeRouteRemoved:
             await add_youtube_source(
                 kb_slug="personal",
                 request=request,
-                credentials=MagicMock(),
+                perms=_make_perms(),
                 db=db,
             )
 

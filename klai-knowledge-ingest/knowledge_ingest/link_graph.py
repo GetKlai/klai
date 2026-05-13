@@ -1,7 +1,10 @@
 """
 Async query helpers for the page_links link graph (SPEC-CRAWLER-003).
 
-All queries are org- and kb-scoped for tenant isolation.
+All queries are org- and kb-scoped for tenant isolation. Per
+SPEC-TI-003-FOLLOWUP-001 AC-1 every helper takes the GUC-pinned
+``asyncpg.Connection`` as its first argument; callers obtain it via
+``tenant_scoped_connection(org_id)``.
 """
 
 import asyncpg
@@ -11,10 +14,10 @@ logger = structlog.get_logger()
 
 
 async def get_outbound_urls(
-    url: str, org_id: str, kb_slug: str, pool: asyncpg.Pool
+    conn: asyncpg.Connection, url: str, org_id: str, kb_slug: str
 ) -> list[str]:
     """Return all URLs that `url` links to within this org/kb."""
-    rows = await pool.fetch(
+    rows = await conn.fetch(
         "SELECT to_url FROM knowledge.page_links "
         "WHERE org_id = $1 AND kb_slug = $2 AND from_url = $3",
         org_id,
@@ -25,10 +28,10 @@ async def get_outbound_urls(
 
 
 async def get_anchor_texts(
-    url: str, org_id: str, kb_slug: str, pool: asyncpg.Pool
+    conn: asyncpg.Connection, url: str, org_id: str, kb_slug: str
 ) -> list[str]:
     """Return non-empty anchor texts from pages linking TO `url`."""
-    rows = await pool.fetch(
+    rows = await conn.fetch(
         "SELECT link_text FROM knowledge.page_links "
         "WHERE org_id = $1 AND kb_slug = $2 AND to_url = $3",
         org_id,
@@ -38,11 +41,9 @@ async def get_anchor_texts(
     return [r["link_text"] for r in rows if r["link_text"] and r["link_text"].strip()]
 
 
-async def get_incoming_count(
-    url: str, org_id: str, kb_slug: str, pool: asyncpg.Pool
-) -> int:
+async def get_incoming_count(conn: asyncpg.Connection, url: str, org_id: str, kb_slug: str) -> int:
     """Return the number of pages linking TO `url` within this org/kb."""
-    count = await pool.fetchval(
+    count = await conn.fetchval(
         "SELECT COUNT(*) FROM knowledge.page_links "
         "WHERE org_id = $1 AND kb_slug = $2 AND to_url = $3",
         org_id,
@@ -57,7 +58,7 @@ async def get_incoming_count(
 #   with enrichment. The two-phase pipeline (SPEC-CRAWLER-005) makes
 #   incoming_link_count final at first Qdrant write via get_incoming_count() per-page.
 async def compute_incoming_counts(
-    org_id: str, kb_slug: str, pool: asyncpg.Pool
+    conn: asyncpg.Connection, org_id: str, kb_slug: str
 ) -> dict[str, int]:
     """DEPRECATED (SPEC-CRAWLER-005 REQ-05.1): No production caller since the
     two-phase pipeline makes incoming_link_count final at first Qdrant write.
@@ -66,7 +67,7 @@ async def compute_incoming_counts(
 
     Return a dict mapping each to_url to its incoming link count.
     """
-    rows = await pool.fetch(
+    rows = await conn.fetch(
         "SELECT to_url, COUNT(*) AS cnt FROM knowledge.page_links "
         "WHERE org_id = $1 AND kb_slug = $2 "
         "GROUP BY to_url",

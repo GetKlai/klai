@@ -32,7 +32,7 @@ export function DangerTab({ apiKey }: Props) {
         <h2 className="text-sm font-medium text-[var(--color-destructive)] mb-2">
           {m.admin_api_keys_delete_section_title()}
         </h2>
-        <p className="text-sm text-[var(--color-muted-foreground)] mb-4">
+        <p className="text-sm text-gray-400 mb-4">
           {m.admin_api_keys_delete_section_description()}
         </p>
         <InlineDeleteConfirm

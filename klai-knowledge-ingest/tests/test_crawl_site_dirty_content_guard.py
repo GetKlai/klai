@@ -1,0 +1,152 @@
+"""Tests for REQ-4 sync-time dirty-content guard.
+
+SPEC-CONNECTOR-INPUT-VALIDATION-001 / REQ-4 / REQ-6.
+
+The guard is a pure decision function — given the post-fetch counters
+plus the connector configuration (cookies / login_indicator), it returns
+whether the crawl_job should end with ``failed_partial`` plus a
+structured ``error_summary`` payload.
+
+Pure unit tests are sufficient — the integration into ``run_crawl_job``
+is a single call-site that constructs the inputs from existing local
+variables.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from knowledge_ingest.adapters.crawler import (
+    DIRTY_CONTENT_REASON,
+    decide_terminal_status,
+)
+
+
+def test_dirty_content_above_threshold_marks_failed_partial() -> None:
+    """REQ-4: 70% trip-rate, no cookies, no indicator → failed_partial."""
+    status, summary = decide_terminal_status(
+        auth_wall_count=70,
+        total_count=100,
+        has_cookies=False,
+        has_login_indicator=False,
+        threshold=0.30,
+    )
+    assert status == "failed_partial"
+    assert summary is not None
+    assert summary["reason"] == DIRTY_CONTENT_REASON
+    assert summary["reason"] == "boilerplate_or_authwall_dominant"
+    assert summary["trip_rate"] == 0.7
+    assert summary["auth_wall_count"] == 70
+    assert summary["total_count"] == 100
+    assert "Re-run preview" in summary["suggestion"]
+
+
+def test_dirty_content_above_threshold_with_cookies_does_not_trip_guard() -> None:
+    """Operator configured cookies — they EXPECTED auth-walled content. The
+    REQ-4 guard MUST NOT fire. Existing per-page wall handling still applies."""
+    status, summary = decide_terminal_status(
+        auth_wall_count=70,
+        total_count=100,
+        has_cookies=True,
+        has_login_indicator=False,
+        threshold=0.30,
+    )
+    assert status != "failed_partial" or (summary or {}).get("reason") != DIRTY_CONTENT_REASON
+
+
+def test_dirty_content_above_threshold_with_login_indicator_does_not_trip_guard() -> None:
+    status, summary = decide_terminal_status(
+        auth_wall_count=70,
+        total_count=100,
+        has_cookies=False,
+        has_login_indicator=True,
+        threshold=0.30,
+    )
+    assert status != "failed_partial" or (summary or {}).get("reason") != DIRTY_CONTENT_REASON
+
+
+def test_dirty_content_below_threshold_succeeds() -> None:
+    status, summary = decide_terminal_status(
+        auth_wall_count=10,
+        total_count=100,
+        has_cookies=False,
+        has_login_indicator=False,
+        threshold=0.30,
+    )
+    assert status != "failed_partial" or (summary or {}).get("reason") != DIRTY_CONTENT_REASON
+
+
+def test_threshold_inclusive_at_exactly_thirty_percent() -> None:
+    """EC-4: trip_rate exactly 0.30 → guard MUST trip (>= is inclusive)."""
+    status, summary = decide_terminal_status(
+        auth_wall_count=30,
+        total_count=100,
+        has_cookies=False,
+        has_login_indicator=False,
+        threshold=0.30,
+    )
+    assert status == "failed_partial"
+    assert summary is not None
+    assert summary["reason"] == DIRTY_CONTENT_REASON
+
+
+def test_threshold_configurable_at_fifty_percent() -> None:
+    """EC-5: env-var raises threshold to 0.50, 40% trip-rate must NOT trip."""
+    status, summary = decide_terminal_status(
+        auth_wall_count=40,
+        total_count=100,
+        has_cookies=False,
+        has_login_indicator=False,
+        threshold=0.50,
+    )
+    assert status != "failed_partial" or (summary or {}).get("reason") != DIRTY_CONTENT_REASON
+
+
+def test_zero_total_does_not_divide_by_zero() -> None:
+    """Defensive: empty crawl (no candidates) → no guard trip, no exception."""
+    status, summary = decide_terminal_status(
+        auth_wall_count=0,
+        total_count=0,
+        has_cookies=False,
+        has_login_indicator=False,
+        threshold=0.30,
+    )
+    assert status != "failed_partial" or (summary or {}).get("reason") != DIRTY_CONTENT_REASON
+
+
+def test_summary_contains_actionable_suggestion() -> None:
+    """REQ-5 hooks into this exact text — pin the wording."""
+    _, summary = decide_terminal_status(
+        auth_wall_count=70,
+        total_count=100,
+        has_cookies=False,
+        has_login_indicator=False,
+        threshold=0.30,
+    )
+    assert summary is not None
+    suggestion = summary["suggestion"]
+    # Must reference both possible operator actions: re-run preview AND
+    # acknowledge the source may have changed.
+    assert "preview" in suggestion.lower()
+    assert (
+        "authentication" in suggestion.lower()
+        or "content_selector" in suggestion.lower()
+    )
+
+
+@pytest.mark.parametrize("trip_rate_input", [0.31, 0.5, 0.7, 1.0])
+def test_trip_rate_rounded_to_three_decimals(trip_rate_input: float) -> None:
+    auth_wall_count = int(trip_rate_input * 100)
+    _, summary = decide_terminal_status(
+        auth_wall_count=auth_wall_count,
+        total_count=100,
+        has_cookies=False,
+        has_login_indicator=False,
+        threshold=0.30,
+    )
+    assert summary is not None
+    # Must be a finite float, not a Decimal or numpy type.
+    assert isinstance(summary["trip_rate"], float)
+    # Must round to 3 decimals or fewer for clean log output.
+    rounded = round(summary["trip_rate"], 3)
+    assert summary["trip_rate"] == rounded

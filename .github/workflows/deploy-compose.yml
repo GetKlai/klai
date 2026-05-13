@@ -6,7 +6,12 @@ on:
     paths:
       - 'deploy/docker-compose.yml'
       - 'deploy/docker-compose.override.yml'
+      - 'deploy/caddy/Caddyfile'                  # SPEC-INFRA-CADDY-CONFIG-DEPLOY-001 R1 — sync Caddyfile to bind-mount source
+      - 'deploy/alloy/config.alloy'               # SPEC-INFRA-CONFIG-SYNC-001 R3 — alloy log-pipeline config
+      - 'deploy/searxng/settings.yml'             # SPEC-INFRA-CONFIG-SYNC-001 R3 — searxng search config
+      - 'deploy/vexa/profiles.yaml'               # SPEC-INFRA-CONFIG-SYNC-001 R3 — vexa runtime-api meeting-bot profiles
       - 'deploy/grafana/provisioning/**'          # SPEC-SEC-024 M4.2 — alert rule + dashboard
+      - 'deploy/scripts/**'                       # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3 — compose-up wrapper + audit-orphan-snapshot
       - 'scripts/smoke-docker-socket-proxy.sh'    # SPEC-SEC-024 M4.3 — smoke-test
       - '.github/workflows/deploy-compose.yml'
   workflow_dispatch:
@@ -24,6 +29,20 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+
+      # Forcing function — fail loud BEFORE pushing to core-01 if any
+      # vexaai/* image reference points at a tag that is not pullable
+      # from the registry and not a locally-built convention. This is
+      # the CI half of the defense; .githooks/pre-commit is the local
+      # half. PR #269 (broken `:0.10.6` for transcription-service)
+      # would have failed this gate.
+      - name: Validate image tags + pullability
+        run: |
+          set -e
+          chmod +x deploy/check-image-tags.sh deploy/check-image-pullable.sh
+          sh deploy/check-image-tags.sh
+          sh deploy/check-image-pullable.sh
+          sh deploy/librechat/check-patch-drift.sh
 
       - name: Sync docker-compose.yml + config + run smoke-test
         uses: appleboy/ssh-action@v1
@@ -44,10 +63,33 @@ jobs:
             git sparse-checkout set --skip-checks \
               deploy/docker-compose.yml \
               deploy/docker-compose.override.yml \
+              deploy/caddy/Caddyfile \
+              deploy/alloy/config.alloy \
+              deploy/searxng/settings.yml \
+              deploy/vexa/profiles.yaml \
               deploy/grafana/provisioning \
+              deploy/scripts \
+              deploy/systemd \
               scripts
             cp deploy/docker-compose.yml /opt/klai/docker-compose.yml
             cp deploy/docker-compose.override.yml /opt/klai/docker-compose.override.yml
+
+            # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3 + REQ-5: sync
+            # deploy-wrapper + audit scripts to /opt/klai/scripts/ so
+            # service-deploy workflows and systemd timers can use them.
+            mkdir -p /opt/klai/scripts
+            install -m 0755 deploy/scripts/compose-up.sh /opt/klai/scripts/compose-up.sh
+            install -m 0755 deploy/scripts/audit-orphan-snapshot.sh /opt/klai/scripts/audit-orphan-snapshot.sh
+            install -m 0755 deploy/scripts/docker-orphan-audit.sh /opt/klai/scripts/docker-orphan-audit.sh
+
+            # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-5 + REQ-6: sync systemd
+            # units. Activation requires sudo and is one-time per host —
+            # see docs/runbooks/container-hygiene-systemd-install.md.
+            mkdir -p /opt/klai/systemd
+            install -m 0644 deploy/systemd/docker-cleanup.service /opt/klai/systemd/docker-cleanup.service
+            install -m 0644 deploy/systemd/docker-cleanup.timer /opt/klai/systemd/docker-cleanup.timer
+            install -m 0644 deploy/systemd/orphan-audit.service /opt/klai/systemd/orphan-audit.service
+            install -m 0644 deploy/systemd/orphan-audit.timer /opt/klai/systemd/orphan-audit.timer
 
             # SPEC-SEC-024 M4.2 — sync Grafana provisioning. Grafana loads
             # provisioning only at startup, so we need to restart when files
@@ -80,6 +122,81 @@ jobs:
               docker compose --project-directory /opt/klai up -d grafana
             fi
 
+            # SPEC-INFRA-CONFIG-SYNC-001 R1 — bash helper for bind-mount
+            # config sync. Replaces the inline Caddyfile block from
+            # SPEC-INFRA-CADDY-CONFIG-DEPLOY-001 (which is now one of
+            # four call-sites). See infra/deploy.md "Bind-mount config
+            # sync — required pattern" for the canonical reference.
+            #
+            # Args:
+            #   $1 = compose service name (for force-recreate + ps -q)
+            #   $2 = source path in this sparse-checkout
+            #   $3 = destination path on host (will mkdir -p its parent)
+            #
+            # Behaviour:
+            #   - If rsync content diff is non-empty → force-recreate
+            #     the service + run a 5×2s health check loop. Fail the
+            #     workflow if the container does not reach `running`
+            #     within 10s.
+            #   - If rsync content diff is empty → skip (idempotent).
+            #
+            # Caddy has `admin off`, so `caddy reload --config` is not
+            # available — container restart is the canonical reload.
+            # Same applies to alloy/searxng/runtime-api: all four read
+            # their config at startup and need a recreate to pick up
+            # changes.
+            sync_and_recreate() {
+              local svc="$1"
+              local src="$2"
+              local dst="$3"
+              mkdir -p "$(dirname "$dst")"
+              local changes
+              changes=$(rsync -ac --itemize-changes "$src" "$dst" | grep -E '^[<>*]' || true)
+              if [ -z "$changes" ]; then
+                echo "$svc config unchanged; skipping recreate."
+                return 0
+              fi
+              echo "$svc config content changed:"
+              echo "$changes"
+              docker compose --project-directory /opt/klai up -d --force-recreate "$svc"
+
+              echo "::group::$svc post-recreate health check"
+              local healthy=0
+              local i cid status
+              for i in 1 2 3 4 5; do
+                sleep 2
+                cid=$(docker compose --project-directory /opt/klai ps -q "$svc" 2>/dev/null || true)
+                if [ -z "$cid" ]; then
+                  echo "$svc container not found (attempt ${i}/5)"
+                  continue
+                fi
+                status=$(docker inspect --format '{{.State.Status}}' "$cid" 2>/dev/null || echo "missing")
+                if [ "$status" = "running" ]; then
+                  echo "$svc is running (attempt ${i})"
+                  healthy=1
+                  break
+                fi
+                echo "$svc state: $status (attempt ${i}/5)"
+              done
+              if [ "$healthy" -ne 1 ]; then
+                echo "::error::$svc did not reach running state within 10s after recreate"
+                docker compose --project-directory /opt/klai logs --tail 50 "$svc" || true
+                exit 1
+              fi
+              echo "::endgroup::"
+            }
+
+            # SPEC-INFRA-CONFIG-SYNC-001 R2 — apply helper to all four
+            # single-file relative bind-mounts that lack a dedicated
+            # service-deploy workflow. Note vexa's profiles.yaml is
+            # mounted into the runtime-api compose service, NOT a
+            # service named "vexa" — the asymmetry matters for the
+            # force-recreate target.
+            sync_and_recreate caddy       deploy/caddy/Caddyfile        /opt/klai/caddy/Caddyfile
+            sync_and_recreate alloy       deploy/alloy/config.alloy     /opt/klai/alloy/config.alloy
+            sync_and_recreate searxng     deploy/searxng/settings.yml   /opt/klai/searxng/settings.yml
+            sync_and_recreate runtime-api deploy/vexa/profiles.yaml     /opt/klai/vexa/profiles.yaml
+
             # SPEC-SEC-024 M4.3 — sync smoke-test script. `chmod +x` because
             # git clone on a Linux runner usually preserves the execute bit,
             # but this guards against core.filemode quirks.
@@ -89,6 +206,21 @@ jobs:
 
             cd /tmp && rm -rf klai-compose-sync
             echo "docker-compose.yml + grafana provisioning + scripts synced to /opt/klai/"
+
+            # SPEC-MCP-RETRIEVAL-001 follow-up — auto-recreate on env-only changes.
+            #
+            # Without this, an env-var change in docker-compose.yml lands on
+            # disk but never reaches the running container — only discovered
+            # via a 401 in production (PR #493 was exactly this trap).
+            #
+            # ``compose up -d`` (no service argument, no --force-recreate) is
+            # idempotent: Compose recreates only services whose declaration
+            # changed, leaves the rest untouched. Service-specific build-push
+            # workflows use the same compose-up.sh wrapper, so this is safe
+            # against parallel runs — both paths converge on the same yaml.
+            echo "::group::SPEC-MCP-RETRIEVAL-001 follow-up — compose up -d for env-drift recreate"
+            cd /opt/klai && docker compose up -d --remove-orphans 2>&1 | tail -50 || echo "compose up -d returned non-zero; check logs"
+            echo "::endgroup::"
 
             # SPEC-SEC-024 M4.3 — non-blocking post-deploy smoke-test. Prints
             # [OK]/[FAIL] per probe; warns on non-zero exit but does NOT

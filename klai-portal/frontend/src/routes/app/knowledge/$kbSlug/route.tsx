@@ -1,29 +1,50 @@
+/**
+ * SPEC-PORTAL-KENNIS-001 Phase D — KB detail shell with 3 tabs.
+ *
+ * Tabs: Bronnen (default) / Instellingen / Inzichten.
+ *
+ * Active-tab detection works on URL groups so legacy paths still
+ * highlight the right tab while their old content renders:
+ *   Bronnen      ← /bronnen, /overview, /items, /connectors
+ *   Instellingen ← /settings, /members
+ *   Inzichten    ← /insights, /advanced, /taxonomy
+ *
+ * SPEC-PORTAL-KENNIS-002 Track 1: renamed Geavanceerd → Inzichten.
+ * /advanced now redirects to /insights. Gate: isAdmin || kb_manager.
+ */
 import { createFileRoute, Link, Outlet, redirect } from '@tanstack/react-router'
+import { useLocation } from '@tanstack/react-router'
 import { useAuth } from '@/lib/auth'
 import { useQuery } from '@tanstack/react-query'
-import {
-  Globe, Lock, Shield, BarChart2, Zap, List, FolderTree, Settings, SlidersHorizontal, ArrowLeft, Plus
-} from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
+import { ArrowLeft, BookOpen, Settings, SlidersHorizontal } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
-import { ProductCapabilityGuard } from '@/components/layout/ProductCapabilityGuard'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
-import type { KBTab, KnowledgeBase, KBStats, MembersResponse, TaxonomyProposal } from './-kb-types'
+import { meetsMinRole } from '@/lib/profiles'
+import type { KBTab, KnowledgeBase, KBStats, MembersResponse } from './-kb-types'
+import { kbQueryKeys } from '@/lib/kb-query-keys'
 
-const VALID_TABS = new Set<KBTab>(['overview', 'connectors', 'members', 'items', 'taxonomy', 'settings', 'advanced'])
+const VALID_TABS = new Set<KBTab>([
+  'overview',
+  'connectors',
+  'members',
+  'items',
+  'taxonomy',
+  'settings',
+  'advanced',
+  'insights',
+])
 
 const TAB_PATH_MAP: Record<string, string> = {
-  overview: '/app/knowledge/$kbSlug/overview',
-  items: '/app/knowledge/$kbSlug/items',
-  connectors: '/app/knowledge/$kbSlug/connectors',
-  members: '/app/knowledge/$kbSlug/members',
-  taxonomy: '/app/knowledge/$kbSlug/taxonomy',
+  overview: '/app/knowledge/$kbSlug/sources',
+  items: '/app/knowledge/$kbSlug/sources',
+  connectors: '/app/knowledge/$kbSlug/sources',
+  members: '/app/knowledge/$kbSlug/settings',
+  taxonomy: '/app/knowledge/$kbSlug/insights',
   settings: '/app/knowledge/$kbSlug/settings',
-  advanced: '/app/knowledge/$kbSlug/advanced',
+  advanced: '/app/knowledge/$kbSlug/insights',
 }
 
 type KBSearch = {
@@ -38,7 +59,7 @@ export const Route = createFileRoute('/app/knowledge/$kbSlug')({
   }),
   beforeLoad: ({ search, params }) => {
     if (search.tab) {
-      const target = TAB_PATH_MAP[search.tab] ?? TAB_PATH_MAP.overview
+      const target = TAB_PATH_MAP[search.tab] ?? '/app/knowledge/$kbSlug/sources'
       throw redirect({
         to: target,
         params: { kbSlug: params.kbSlug },
@@ -53,20 +74,62 @@ export const Route = createFileRoute('/app/knowledge/$kbSlug')({
   ),
 })
 
-// Capability requirements for KB tabs (SPEC-PORTAL-UNIFY-KB-001).
-const TAB_CAPABILITIES: Partial<Record<KBTab, string>> = {
-  connectors: 'kb.connectors',
-  members: 'kb.members',
-  taxonomy: 'kb.taxonomy',
-  advanced: 'kb.advanced',
+// -- Tab definitions --------------------------------------------------------
+
+type TabId = 'bronnen' | 'instellingen' | 'inzichten'
+
+interface TabDef {
+  id: TabId
+  to: string
+  icon: React.ElementType
+  /** Lazy label so Paraglide resolves the active locale per render. */
+  label: () => string
+  matches: string[]
 }
+
+const TAB_DEFS: TabDef[] = [
+  {
+    id: 'bronnen',
+    to: '/app/knowledge/$kbSlug/sources',
+    icon: BookOpen,
+    label: () => m.kb_tab_sources(),
+    matches: ['/bronnen', '/overview', '/items', '/connectors', '/sources'],
+  },
+  {
+    id: 'instellingen',
+    to: '/app/knowledge/$kbSlug/settings',
+    icon: Settings,
+    label: () => m.kb_tab_settings(),
+    matches: ['/settings', '/members', '/instellingen'],
+  },
+  {
+    id: 'inzichten',
+    to: '/app/knowledge/$kbSlug/insights',
+    icon: SlidersHorizontal,
+    label: () => m.kb_tab_insights(),
+    matches: ['/insights', '/advanced', '/taxonomy', '/inzichten'],
+  },
+]
+
+function activeTabId(pathname: string): TabId {
+  for (const def of TAB_DEFS) {
+    if (def.matches.some((suffix) => pathname.endsWith(suffix))) {
+      return def.id
+    }
+  }
+  return 'bronnen'
+}
+
+// -- Layout -----------------------------------------------------------------
 
 function KbLayout() {
   const { kbSlug } = Route.useParams()
   const auth = useAuth()
-  const { user } = useCurrentUser()
+  const location = useLocation()
+  const { user: currentUser } = useCurrentUser()
+
   const { data: kb, isLoading, isError } = useQuery<KnowledgeBase>({
-    queryKey: ['app-knowledge-base', kbSlug],
+    queryKey: kbQueryKeys.knowledgeBase(kbSlug),
     queryFn: async () => {
       try {
         return await apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`)
@@ -79,148 +142,90 @@ function KbLayout() {
     retry: false,
   })
 
-  // Prefetch KB stats into the TanStack Query cache so child routes
-  // (overview, settings, advanced) render immediately without an extra fetch.
+  // Prefetch stats so child tabs render without an extra spinner.
   useQuery<KBStats>({
     queryKey: ['kb-stats', kbSlug],
     queryFn: async () => apiFetch<KBStats>(`/api/app/knowledge-bases/${kbSlug}/stats`),
     enabled: auth.isAuthenticated && !!kb,
   })
 
-  const { data: members } = useQuery<MembersResponse>({
+  // Members prefetch so child tabs render without an extra spinner.
+  useQuery<MembersResponse>({
     queryKey: ['kb-members', kbSlug],
     queryFn: async () => apiFetch<MembersResponse>(`/api/app/knowledge-bases/${kbSlug}/members`),
     enabled: auth.isAuthenticated && !!kb,
   })
 
-  const myUserId = auth.user?.profile?.sub
-  const isCreator = !!(myUserId && kb?.created_by === myUserId)
-  const isOwner = isCreator || !!(myUserId && members?.users.some((u) => u.user_id === myUserId && u.role === 'owner'))
-  const isPersonal = kb?.owner_type === 'user'
-
-  const pendingProposalsQuery = useQuery<{ proposals: TaxonomyProposal[] }>({
-    queryKey: ['taxonomy-proposals-count', kbSlug],
-    queryFn: async () => {
-      try {
-        return await apiFetch<{ proposals: TaxonomyProposal[] }>(`/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals?status=pending`)
-      } catch {
-        return { proposals: [] }
-      }
-    },
-    enabled: auth.isAuthenticated && !!kb,
-  })
-  const pendingCount = pendingProposalsQuery.data?.proposals.length ?? 0
+  const isAdmin = currentUser?.isAdmin === true
+  // Gate: isAdmin OR has at least kb_manager role → may see Inzichten tab.
+  const canSeeInzichten = isAdmin || meetsMinRole(currentUser?.effective_role, 'kb_manager')
 
   if (isLoading) {
     return (
-      <div className="p-6">
-        <div className="h-8 w-48 rounded bg-[var(--color-secondary)] animate-pulse mb-4" />
-        <div className="h-4 w-96 rounded bg-[var(--color-secondary)] animate-pulse" />
+      <div className="mx-auto max-w-3xl px-6 pb-10">
+        <div className="flex h-[66px] items-center">
+          <div className="h-6 w-48 rounded bg-gray-50 animate-pulse" />
+        </div>
       </div>
     )
   }
 
   if (isError || !kb) {
     return (
-      <div className="p-6 text-[var(--color-muted-foreground)]">
+      <div className="mx-auto max-w-3xl px-6 pb-10 pt-10 text-gray-400">
         {m.knowledge_detail_not_found()}
       </div>
     )
   }
 
-  // Determine active tab from URL path
-  const tabEntries: { id: KBTab; to: string; icon: React.ElementType; label: string; badge?: number }[] = [
-    { id: 'overview', to: '/app/knowledge/$kbSlug/overview', icon: BarChart2, label: m.knowledge_detail_tab_overview() },
-    ...(isPersonal ? [{ id: 'items' as KBTab, to: '/app/knowledge/$kbSlug/items', icon: List, label: m.knowledge_detail_tab_items() }] : []),
-    { id: 'connectors', to: '/app/knowledge/$kbSlug/connectors', icon: Zap, label: m.knowledge_detail_tab_connectors() },
-    { id: 'members', to: '/app/knowledge/$kbSlug/members', icon: Shield, label: m.knowledge_detail_tab_members() },
-    { id: 'taxonomy', to: '/app/knowledge/$kbSlug/taxonomy', icon: FolderTree, label: m.knowledge_detail_tab_taxonomy(), badge: pendingCount > 0 ? pendingCount : undefined },
-    ...(isOwner ? [{ id: 'settings' as KBTab, to: '/app/knowledge/$kbSlug/settings', icon: Settings, label: m.knowledge_detail_tab_settings() }] : []),
-    ...(isOwner ? [{ id: 'advanced' as KBTab, to: '/app/knowledge/$kbSlug/advanced', icon: SlidersHorizontal, label: m.knowledge_detail_tab_advanced() }] : []),
-  ]
+  const visibleTabs = TAB_DEFS.filter((tab) => tab.id !== 'inzichten' || canSeeInzichten)
+  const activeId = activeTabId(location.pathname)
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-10 space-y-8">
-      {/* Header */}
-      <div className="flex items-start gap-3">
-        <div className="flex-1">
-          <h1 className="page-title text-[26px] font-display-bold text-gray-900">{kb.name}</h1>
-          {kb.description && (
-            <p className="text-sm text-[var(--color-muted-foreground)] mt-1">{kb.description}</p>
-          )}
-          <div className="flex items-center gap-1.5 mt-1.5 text-xs text-[var(--color-muted-foreground)]">
-            {kb.visibility === 'public' ? <Globe className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
-            <span>{kb.visibility === 'public' ? m.knowledge_page_kb_visibility_public() : m.knowledge_page_kb_visibility_internal()}</span>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button size="sm" asChild>
-            <Link to="/app/knowledge/$kbSlug/add-source" params={{ kbSlug }}>
-              <Plus className="h-4 w-4 mr-2" />
-              {m.knowledge_detail_add_source()}
-            </Link>
-          </Button>
-          <Button variant="ghost" size="sm" asChild>
-            <Link to="/app/knowledge">
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              {m.knowledge_page_intro_heading()}
-            </Link>
-          </Button>
-        </div>
+    <div className="mx-auto max-w-3xl px-6 pb-10">
+      {/* Title strip — h-[66px] aligns the KB name with the sidebar logo */}
+      <div className="flex h-[66px] items-center justify-between gap-4">
+        <h1 className="page-title text-[26px] font-display-bold text-gray-900 leading-none truncate">
+          {kb.name}
+        </h1>
+        <Link
+          to="/app/knowledge"
+          className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-900 transition-colors shrink-0"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          {m.kb_detail_back()}
+        </Link>
       </div>
 
+      {kb.description && (
+        <p className="text-sm text-gray-400 mb-6">{kb.description}</p>
+      )}
+
       {/* Tab bar */}
-      <div className="border-b border-[var(--color-border)]">
+      <div className="border-b border-gray-200 mb-6">
         <nav className="-mb-px flex gap-6">
-          {tabEntries.map(({ id, to, icon: TabIcon, label, badge }) => {
-            const requiredCap = TAB_CAPABILITIES[id]
-            const hasAccess = !requiredCap || user?.hasCapability(requiredCap) !== false
-
-            if (!hasAccess) {
-              // Grayed tab: visible, not clickable, tooltip on hover (D4).
-              return (
-                <ProductCapabilityGuard
-                  key={id}
-                  capability={requiredCap}
-                  tooltip={m.capability_tooltip_knowledge_only()}
-                >
-                  <span className="flex items-center gap-1.5 pb-3 text-sm font-medium border-b-2 border-transparent text-[var(--color-muted-foreground)]">
-                    <TabIcon className="h-4 w-4" />
-                    {label}
-                  </span>
-                </ProductCapabilityGuard>
-              )
-            }
-
+          {visibleTabs.map(({ id, to, icon: Icon, label }) => {
+            const isActive = activeId === id
             return (
               <Link
                 key={id}
                 to={to}
                 params={{ kbSlug }}
-                activeProps={{
-                  className: 'border-[var(--color-accent)] text-[var(--color-foreground)]',
-                }}
-                inactiveProps={{
-                  className: 'border-transparent text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
-                }}
-                className="flex items-center gap-1.5 pb-3 text-sm font-medium border-b-2 transition-colors"
-                onClick={(e) => {
-                  // Prevent navigation if already on this tab
-                  if (window.location.pathname.endsWith(`/${id}`)) {
-                    e.preventDefault()
-                  }
-                }}
+                className={`flex items-center gap-1.5 pb-3 text-sm font-medium border-b-2 transition-colors ${
+                  isActive
+                    ? 'border-gray-900 text-gray-900'
+                    : 'border-transparent text-gray-400 hover:text-gray-900'
+                }`}
               >
-                <TabIcon className="h-4 w-4" />
-                {label}
-                {badge != null && <Badge variant="accent" className="ml-1 text-xs px-1.5 py-0 min-w-[18px]">{String(badge)}</Badge>}
+                <Icon className="h-4 w-4" />
+                {label()}
               </Link>
             )
           })}
         </nav>
       </div>
 
-      {/* Active tab content rendered by child route */}
+      {/* Active tab content */}
       <Outlet />
     </div>
   )

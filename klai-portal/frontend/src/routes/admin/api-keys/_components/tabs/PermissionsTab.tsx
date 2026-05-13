@@ -42,7 +42,7 @@ export function PermissionsTab({ apiKey }: Props) {
     <form onSubmit={handleSubmit} className="space-y-6">
       <section className="space-y-4">
         <div className="space-y-4">
-          <label className="flex items-start gap-2 text-sm text-[var(--color-foreground)]">
+          <label className="flex items-start gap-2 text-sm text-gray-900">
             <input
               type="checkbox"
               checked={chat}
@@ -51,12 +51,12 @@ export function PermissionsTab({ apiKey }: Props) {
             />
             <div>
               <span className="font-medium">{m.admin_api_keys_perm_chat()}</span>
-              <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+              <p className="text-xs text-gray-400 mt-0.5">
                 {m.admin_api_keys_perm_chat_description()}
               </p>
             </div>
           </label>
-          <label className="flex items-start gap-2 text-sm text-[var(--color-foreground)]">
+          <label className="flex items-start gap-2 text-sm text-gray-900">
             <input
               type="checkbox"
               checked={feedback}
@@ -65,12 +65,12 @@ export function PermissionsTab({ apiKey }: Props) {
             />
             <div>
               <span className="font-medium">{m.admin_api_keys_perm_feedback()}</span>
-              <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+              <p className="text-xs text-gray-400 mt-0.5">
                 {m.admin_api_keys_perm_feedback_description()}
               </p>
             </div>
           </label>
-          <label className="flex items-start gap-2 text-sm text-[var(--color-foreground)]">
+          <label className="flex items-start gap-2 text-sm text-gray-900">
             <input
               type="checkbox"
               checked={knowledgeAppend}
@@ -79,7 +79,7 @@ export function PermissionsTab({ apiKey }: Props) {
             />
             <div>
               <span className="font-medium">{m.admin_api_keys_perm_knowledge_append()}</span>
-              <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+              <p className="text-xs text-gray-400 mt-0.5">
                 {m.admin_api_keys_perm_knowledge_append_description()}
               </p>
             </div>

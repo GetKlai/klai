@@ -32,14 +32,25 @@ def _make_jwt_payload(
     resourceowner: str = "362757920133283846",
     role: str | None = None,
     aud: str = "test-audience",
+    scope: str = "klai:internal:retrieval:query",
 ) -> dict:
-    """Return a fake decoded-JWT payload in the Zitadel shape."""
+    """Return a fake decoded-JWT payload in the Zitadel shape.
+
+    SPEC-SEC-SERVICE-AUTH-001 REQ-3: ``/retrieve`` now requires the
+    ``klai:internal:retrieval:query`` scope. The test helper defaults to
+    including it so pre-existing tests continue to assert auth-middleware
+    behaviour without being blocked by the new scope gate. Tests that want
+    to exercise the scope check itself pass ``scope=""`` or a different
+    scope explicitly.
+    """
     payload: dict = {
         "sub": sub,
         "aud": aud,
         "iss": "https://auth.test.local",
         "urn:zitadel:iam:user:resourceowner:id": resourceowner,
     }
+    if scope:
+        payload["scope"] = scope
     if role is not None:
         payload["urn:zitadel:iam:org:project:roles"] = {role: {}}
     return payload
@@ -246,10 +257,15 @@ class TestJwtPath:
                 return_value=(True, 0.5),
             ),
         ):
+            # SPEC-SEC-IDENTITY-ASSERT-003 REQ-1.3: JWT path now requires
+            # the X-Org-Id header for portal-side membership lookup.
             resp = client.post(
                 "/retrieve",
                 json=sample_retrieve_request,
-                headers={"Authorization": "Bearer faketoken"},
+                headers={
+                    "Authorization": "Bearer faketoken",
+                    "X-Org-Id": "362757920133283846",
+                },
             )
         assert resp.status_code == 200
 
@@ -292,12 +308,21 @@ class TestJwtPath:
         assert resp.status_code == 401
 
     def test_both_credentials_prefers_jwt(self):
-        """Both valid → JWT path taken (cross-user/org guard applies)."""
+        """Both valid → JWT path taken (X-Org-Id-driven portal verify applies).
+
+        SPEC-SEC-IDENTITY-ASSERT-003 REQ-1: JWT-bound calls source
+        claimed_org_id from X-Org-Id and resolve org via portal. Body
+        org_id MUST match the portal-verified org. Mismatch → 403.
+
+        Test scenario: JWT for user_a + X-Org-Id=org_x (portal allows,
+        echoes org_x back) but body claims org_y → 403 org_mismatch.
+        If the internal-secret path were taken instead, the body
+        org_id would have been the claimed value to portal and the
+        check would not fire.
+        """
         from retrieval_api.main import app
 
         client = TestClient(app)
-        # JWT resourceowner='org_x' but body org_id='org_y' — JWT path rejects.
-        # If internal-secret path were taken instead, the request would succeed.
         payload = _make_jwt_payload(sub="user_a", resourceowner="org_x")
         with _patch_jwt(payload):
             resp = client.post(
@@ -306,6 +331,7 @@ class TestJwtPath:
                 headers={
                     "X-Internal-Secret": os.environ["INTERNAL_SECRET"],
                     "Authorization": "Bearer valid",
+                    "X-Org-Id": "org_x",
                 },
             )
         assert resp.status_code == 403
@@ -319,7 +345,8 @@ class TestJwtPath:
 
 class TestCrossUserOrgGuard:
     def test_cross_org_rejected_403(self):
-        """REQ-8.4: JWT resourceowner=org_x, body org_id=org_y → 403."""
+        """REQ-8.4 + SPEC-003 REQ-1.5: X-Org-Id=org_x (portal allows),
+        body org_id=org_y → 403 org_mismatch (defence-in-depth body check)."""
         from retrieval_api.main import app
 
         client = TestClient(app)
@@ -328,7 +355,7 @@ class TestCrossUserOrgGuard:
             resp = client.post(
                 "/retrieve",
                 json={"query": "q", "org_id": "org_y", "user_id": "user_a"},
-                headers={"Authorization": "Bearer valid"},
+                headers={"Authorization": "Bearer valid", "X-Org-Id": "org_x"},
             )
         assert resp.status_code == 403
         assert resp.json()["detail"] == {"error": "org_mismatch"}
@@ -379,9 +406,7 @@ class TestCrossUserOrgGuard:
         from retrieval_api.main import app
 
         client = TestClient(app)
-        payload = _make_jwt_payload(
-            sub="admin_user", resourceowner="org_admin", role="admin"
-        )
+        payload = _make_jwt_payload(sub="admin_user", resourceowner="org_admin", role="admin")
         sample_retrieve_request["org_id"] = "other_org"
         with (
             _patch_jwt(payload),
@@ -431,9 +456,7 @@ class TestCrossUserOrgGuard:
         # role=None ⇒ helper omits the urn:zitadel:iam:org:project:roles key
         # entirely. This matches the production v0.5.0 shape for invitees
         # whose portal_users.role is "group-admin" or "member".
-        payload = _make_jwt_payload(
-            sub="user-member-1", resourceowner="org-a", role=None
-        )
+        payload = _make_jwt_payload(sub="user-member-1", resourceowner="org-a", role=None)
         with _patch_jwt(payload):
             resp = client.post(
                 "/retrieve",
@@ -442,7 +465,10 @@ class TestCrossUserOrgGuard:
                     "org_id": "org-b",
                     "user_id": "user-member-1",
                 },
-                headers={"Authorization": "Bearer valid"},
+                # X-Org-Id=org-a (caller asserts they want to act on org-a;
+                # portal stub allows). Body claims org-b → defence-in-depth
+                # body-vs-verified mismatch fires.
+                headers={"Authorization": "Bearer valid", "X-Org-Id": "org-a"},
             )
         assert resp.status_code == 403
         assert resp.json()["detail"] == {"error": "org_mismatch"}
@@ -465,9 +491,7 @@ class TestCrossUserOrgGuard:
         from retrieval_api.main import app
 
         client = TestClient(app)
-        payload = _make_jwt_payload(
-            sub="user-x", resourceowner="org-a", role="org_admin"
-        )
+        payload = _make_jwt_payload(sub="user-x", resourceowner="org-a", role="org_admin")
         with _patch_jwt(payload):
             resp = client.post(
                 "/retrieve",
@@ -476,7 +500,7 @@ class TestCrossUserOrgGuard:
                     "org_id": "org-b",
                     "user_id": "user-x",
                 },
-                headers={"Authorization": "Bearer valid"},
+                headers={"Authorization": "Bearer valid", "X-Org-Id": "org-a"},
             )
         assert resp.status_code == 403
         assert resp.json()["detail"] == {"error": "org_mismatch"}
@@ -634,9 +658,7 @@ class TestRateLimit:
         async def _deny(*_a, **_kw):
             return False, 42
 
-        with patch(
-            "retrieval_api.middleware.auth.check_and_increment", side_effect=_deny
-        ):
+        with patch("retrieval_api.middleware.auth.check_and_increment", side_effect=_deny):
             resp = client.post("/retrieve", json=sample_retrieve_request)
         assert resp.status_code == 429
         assert resp.json() == {"error": "rate_limit_exceeded"}
@@ -672,3 +694,167 @@ def test_auth_module_uses_hmac_compare_digest():
     # No ``==`` comparison against settings.internal_secret anywhere.
     assert "== settings.internal_secret" not in src
     assert "settings.internal_secret ==" not in src
+
+
+# --------------------------------------------------------------------------- #
+# SPEC-SEC-IDENTITY-ASSERT-003 — JWT-without-resourceowner regression guards
+# --------------------------------------------------------------------------- #
+
+
+class TestSpec003JwtWithoutResourceowner:
+    """SPEC-SEC-IDENTITY-ASSERT-003 acceptance group A.
+
+    The Klai BFF requests scope `openid profile email offline_access`
+    which does NOT emit `urn:zitadel:iam:user:resourceowner:id`. After
+    SPEC-003 the retrieval-api JWT path no longer reads the claim;
+    org-resolution flows through portal /internal/identity/verify
+    keyed on Zitadel sub + portal_users membership.
+    """
+
+    def test_jwt_lacking_resourceowner_claim_works(self, sample_retrieve_request):
+        """A1: JWT without the resourceowner claim → 200 when X-Org-Id
+        names a real membership and the portal stub allows."""
+        from retrieval_api.main import app
+
+        client = TestClient(app)
+        # Build a JWT payload that does NOT include the
+        # urn:zitadel:iam:user:resourceowner:id claim.
+        payload = {
+            "sub": "user_a",
+            "aud": "test-audience",
+            "iss": "https://auth.test.local",
+            "scope": "klai:internal:retrieval:query",
+        }
+        sample_retrieve_request["org_id"] = "362757920133283846"
+        with (
+            _patch_jwt(payload),
+            patch(
+                "retrieval_api.api.retrieve.coreference.resolve",
+                new_callable=AsyncMock,
+                return_value="resolved",
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_single",
+                new_callable=AsyncMock,
+                return_value=[0.0],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_sparse",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "retrieval_api.api.retrieve.gate.should_bypass",
+                new_callable=AsyncMock,
+                return_value=(True, 0.5),
+            ),
+        ):
+            resp = client.post(
+                "/retrieve",
+                json=sample_retrieve_request,
+                headers={
+                    "Authorization": "Bearer faketoken",
+                    "X-Org-Id": "362757920133283846",
+                },
+            )
+        assert resp.status_code == 200
+
+    def test_missing_x_org_id_header_returns_400(self):
+        """REQ-1.4: JWT path without X-Org-Id is a config error, not a
+        silent fail-open. Must be 400 with `missing_org_id`."""
+        from retrieval_api.main import app
+
+        client = TestClient(app)
+        payload = _make_jwt_payload(sub="user_a")
+        with _patch_jwt(payload):
+            resp = client.post(
+                "/retrieve",
+                json={
+                    "query": "q",
+                    "org_id": "362757920133283846",
+                    "user_id": "user_a",
+                },
+                headers={"Authorization": "Bearer valid"},
+            )
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == {"error": "missing_org_id"}
+
+    def test_empty_x_org_id_header_returns_400(self):
+        """Empty-string X-Org-Id treated identically to missing."""
+        from retrieval_api.main import app
+
+        client = TestClient(app)
+        payload = _make_jwt_payload(sub="user_a")
+        with _patch_jwt(payload):
+            resp = client.post(
+                "/retrieve",
+                json={
+                    "query": "q",
+                    "org_id": "362757920133283846",
+                    "user_id": "user_a",
+                },
+                headers={"Authorization": "Bearer valid", "X-Org-Id": ""},
+            )
+        assert resp.status_code == 400
+
+    def test_portal_deny_returns_403_identity_assertion_failed(self):
+        """REQ-1.5: portal returns deny → 403 identity_assertion_failed."""
+        from retrieval_api.main import app
+
+        client = TestClient(app)
+
+        class _DenyAsserter:
+            async def verify(self, **_kwargs):
+                from klai_identity_assert import VerifyResult
+
+                return VerifyResult.deny("no_membership")
+
+        payload = _make_jwt_payload(sub="user_a")
+        with (
+            _patch_jwt(payload),
+            patch(
+                "retrieval_api.middleware.auth._get_asserter",
+                lambda: _DenyAsserter(),
+            ),
+        ):
+            resp = client.post(
+                "/retrieve",
+                json={
+                    "query": "q",
+                    "org_id": "362757920133283846",
+                    "user_id": "user_a",
+                },
+                headers={
+                    "Authorization": "Bearer valid",
+                    "X-Org-Id": "362757920133283846",
+                },
+            )
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == {"error": "identity_assertion_failed"}
+
+    def test_no_resourceowner_constant_in_module(self):
+        """REQ-1.2 + REQ-3 ast-grep guard: the literal claim string MUST
+        NOT appear in the production source. Fixtures and comments in
+        tests are exempt; this test scans the production module only."""
+        import importlib
+
+        mod = importlib.import_module("retrieval_api.middleware.auth")
+        with open(mod.__file__, encoding="utf-8") as f:
+            src = f.read()
+        # Acceptable: comment lines explaining WHY we don't read the
+        # claim. Unacceptable: any actual `claims.get(...)` of the claim
+        # or `_ZITADEL_RESOURCEOWNER_CLAIM` constant assignment.
+        assert "_ZITADEL_RESOURCEOWNER_CLAIM = " not in src
+        assert 'payload.get("urn:zitadel:iam:user:resourceowner:id"' not in src
+        assert 'claims.get("urn:zitadel:iam:user:resourceowner:id"' not in src
+
+    def test_authcontext_has_no_resourceowner_field(self):
+        """REQ-1.1: AuthContext.resourceowner is gone."""
+        from dataclasses import fields
+
+        from retrieval_api.middleware.auth import AuthContext
+
+        names = {f.name for f in fields(AuthContext)}
+        assert "resourceowner" not in names
+        # Sanity: the rest of the contract is intact.
+        assert {"method", "sub", "role", "scopes", "bearer_token"}.issubset(names)

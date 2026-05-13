@@ -56,7 +56,7 @@ async def test_emit_event_inserts_correct_data():
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
     with patch("app.services.events.AsyncSessionLocal", return_value=mock_session):
-        emit_event("signup", org_id=42, user_id="zit-123", properties={"plan": "professional"})
+        emit_event("signup", org_id=42, user_id="zit-123", properties={"plan": "chat"})
         await asyncio.sleep(0.05)
 
     assert mock_session.execute.await_count == 1
@@ -67,5 +67,5 @@ async def test_emit_event_inserts_correct_data():
     assert params["user_id"] == "zit-123"
     import json
 
-    assert json.loads(params["properties"]) == {"plan": "professional"}
+    assert json.loads(params["properties"]) == {"plan": "chat"}
     assert mock_session.commit.await_count == 1

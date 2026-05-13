@@ -42,7 +42,6 @@ class PortalTaxonomyNode(Base):
     )
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     slug: Mapped[str] = mapped_column(String(128), nullable=False)
-    doc_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -7,6 +7,7 @@ LLM client: OpenAIGenericClient pointing at LiteLLM proxy (AC-14).
 Graph DB: FalkorDB via FalkorDriver (AC-11).
 Tenant isolation: every episode uses group_id=org_id (AC-10).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -24,6 +25,7 @@ try:
     from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
     from graphiti_core.nodes import EpisodeType
     from openai import AsyncOpenAI
+
     _GRAPHITI_AVAILABLE = True
 except ImportError:
     _GRAPHITI_AVAILABLE = False  # graphiti-core not installed yet; added in /run SPEC-KB-011
@@ -174,6 +176,7 @@ def _get_semaphore() -> asyncio.Semaphore:
         _episode_semaphore = asyncio.Semaphore(settings.graphiti_max_concurrent)
     return _episode_semaphore
 
+
 _graphiti_client: Graphiti | None = None
 
 
@@ -238,7 +241,6 @@ def _get_graphiti() -> Graphiti:
     return _graphiti_client
 
 
-
 async def _update_edge_weights(
     nodes: list,
     org_id: str,
@@ -269,6 +271,7 @@ async def _update_edge_weights(
             updated = records[0].get("updated", 0)
     return updated
 
+
 async def delete_kb_episodes(org_id: str, episode_ids: list[str]) -> None:
     """Delete FalkorDB nodes for a set of episodes within an org's graph.
 
@@ -291,6 +294,178 @@ async def delete_kb_episodes(org_id: str, episode_ids: list[str]) -> None:
         "MATCH (n:Entity) WHERE NOT ((:Episodic)--(n)) DETACH DELETE n",
     )
     logger.info("graph_kb_episodes_deleted", org_id=org_id, count=len(episode_ids))
+
+
+async def sweep_orphan_episodes_org_wide(org_id: str, alive_episode_uuids: set[str]) -> int:
+    """ORG-WIDE sweep of FalkorDB episodes whose ``uuid`` is no longer
+    referenced by any artifact in postgres.
+
+    Graphiti's Episodic node-schema has ``uuid``, ``name``, ``group_id``,
+    ``source``, ``source_description``, ``valid_at``, ``created_at`` —
+    but NO ``artifact_id`` property. The ingest pipeline links postgres
+    -> FalkorDB by writing the FalkorDB ``Episodic.uuid`` into
+    ``knowledge.artifacts.extra->>'graphiti_episode_id'``.
+
+    Implementation uses the direct ``falkordb`` Python client (the same
+    pattern as ``routes/stats.py::get_graph_stats``). The earlier
+    attempt via ``graphiti.driver.execute_query`` returned an empty
+    result_set silently because the FalkorDB driver and the Neo4j
+    driver have different return shapes — proven on live e2e:
+    ``alive_episode_count: 0`` while FalkorDB clearly held 31 episodes.
+
+    Lists every Episodic uuid in the org graph, intersects with the
+    alive set, DETACH DELETEs the difference, then sweeps Entities
+    that lost all incident episodes.
+
+    Returns count of episodes deleted. No-op when graphiti is disabled.
+    """
+    if not settings.graphiti_enabled:
+        return 0
+    try:
+        from falkordb import FalkorDB as FalkorDBClient
+    except ImportError:
+        logger.warning("falkordb_client_unavailable_for_sweep", org_id=org_id)
+        return 0
+
+    client = FalkorDBClient(host=settings.falkordb_host, port=settings.falkordb_port)
+    graph = client.select_graph(org_id)
+
+    list_res = graph.query("MATCH (e:Episodic) RETURN e.uuid AS uuid")
+    falkor_uuids: set[str] = set()
+    for row in list_res.result_set or []:
+        uid = row[0] if row else None
+        if uid:
+            falkor_uuids.add(str(uid))
+
+    orphan_uuids = falkor_uuids - alive_episode_uuids
+    if not orphan_uuids:
+        logger.info(
+            "graph_orphan_sweep_clean",
+            org_id=org_id,
+            falkor_episodes=len(falkor_uuids),
+            alive=len(alive_episode_uuids),
+        )
+        return 0
+
+    del_res = graph.query(
+        "MATCH (e:Episodic) WHERE e.uuid IN $uuids "
+        "WITH e, e.uuid AS uuid "
+        "DETACH DELETE e "
+        "RETURN count(uuid) AS deleted",
+        params={"uuids": list(orphan_uuids)},
+    )
+    deleted = 0
+    if del_res.result_set:
+        deleted = int(del_res.result_set[0][0] or 0)
+    if deleted:
+        graph.query("MATCH (n:Entity) WHERE NOT ((:Episodic)--(n)) DETACH DELETE n")
+    logger.info(
+        "graph_orphan_episodes_swept",
+        org_id=org_id,
+        scanned=len(falkor_uuids),
+        alive=len(alive_episode_uuids),
+        orphan_uuids=len(orphan_uuids),
+        episodes_deleted=deleted,
+    )
+    return deleted
+
+
+async def delete_orphan_episodes_for_artifact_ids(org_id: str, artifact_ids: list[str]) -> int:
+    """Janitor: drop FalkorDB episodes whose ``artifact_id`` is in the given list.
+
+    SPEC-CONNECTOR-DELETE-LIFECYCLE-001 follow-up. Some Graphiti tasks
+    do synchronous LLM calls that don't honour ``asyncio.CancelledError``
+    — they keep running after the procrastinate cancel and write a fresh
+    episode for an already-deleted artifact. Those episodes never made
+    it into ``knowledge.artifacts.extra->>graphiti_episode_id`` (the row
+    was already gone), so ``delete_kb_episodes`` cannot find them via
+    the normal path.
+
+    The orchestrator runs this AFTER ``delete_connector_artifacts`` with
+    the artifact-id snapshot taken BEFORE the delete: any episode in
+    FalkorDB referring to those artifact-ids is by definition orphan
+    (the artifact does not exist in postgres anymore).
+
+    Also cleans Entity nodes that lose all incident Episodic edges
+    after the delete — same pattern as ``delete_kb_episodes``.
+
+    Returns the count of Episodic nodes deleted. No-op when graphiti is
+    disabled or ``artifact_ids`` is empty.
+    """
+    if not settings.graphiti_enabled or not artifact_ids:
+        return 0
+    graphiti = _get_graphiti()
+    driver = graphiti.driver.clone(org_id)
+    result = await driver.execute_query(
+        "MATCH (e:Episodic) WHERE e.artifact_id IN $artifact_ids "
+        "WITH e, e.uuid AS uuid "
+        "DETACH DELETE e "
+        "RETURN count(uuid) AS deleted",
+        artifact_ids=artifact_ids,
+    )
+    deleted = 0
+    if result is not None:
+        records, _, _ = result
+        if records:
+            deleted = int(records[0].get("deleted", 0) or 0)
+    if deleted:
+        # Entities now potentially orphaned by the episode-delete above.
+        await driver.execute_query(
+            "MATCH (n:Entity) WHERE NOT ((:Episodic)--(n)) DETACH DELETE n",
+        )
+    logger.info(
+        "graph_orphan_episodes_deleted",
+        org_id=org_id,
+        artifact_count=len(artifact_ids),
+        episodes_deleted=deleted,
+    )
+    return deleted
+
+
+def wipe_org_graph(org_id: str) -> int:
+    """Hard-delete ALL nodes in the FalkorDB graph for *org_id*.
+
+    # @MX:ANCHOR: deprovisioning hard-delete — wipes the entire org graph.
+    # @MX:REASON: Called by SPEC-INFRA-TENANT-DELETE-001 Phase 7 endpoint.
+    #   This is irreversible: every node (Episodic, Entity, …) with
+    #   group_id == org_id is DETACH DELETE'd.  Returns the count of nodes
+    #   removed so the API can surface it to the orchestrator.
+
+    Uses the direct ``falkordb`` Python client (same pattern as
+    ``sweep_orphan_episodes_org_wide``) because the async Graphiti driver
+    returns empty result_sets for COUNT queries due to shape mismatch.
+
+    Returns 0 when graphiti is disabled or the graph is already empty.
+    Synchronous — callers wrap in ``asyncio.to_thread`` when called from
+    an async context if needed (but a FastAPI endpoint runs fine blocking
+    on a sync FalkorDB round-trip given the small overhead).
+
+    SPEC-INFRA-TENANT-DELETE-001 Phase 7.
+    """
+    if not settings.graphiti_enabled:
+        logger.info("wipe_org_graph_skipped_graphiti_disabled", org_id=org_id)
+        return 0
+    try:
+        from falkordb import FalkorDB as FalkorDBClient
+    except ImportError:
+        logger.warning("falkordb_client_unavailable_for_wipe", org_id=org_id)
+        return 0
+
+    client = FalkorDBClient(host=settings.falkordb_host, port=settings.falkordb_port)
+    graph = client.select_graph(org_id)
+
+    result = graph.query(
+        "MATCH (n) WHERE n.group_id = $org_id "
+        "WITH n, id(n) AS nid "
+        "DETACH DELETE n "
+        "RETURN count(nid) AS deleted",
+        params={"org_id": org_id},
+    )
+    deleted = 0
+    if result.result_set:
+        deleted = int(result.result_set[0][0] or 0)
+    logger.info("wipe_org_graph_complete", org_id=org_id, nodes_deleted=deleted)
+    return deleted
 
 
 async def compute_entity_pagerank(org_id: str) -> dict[str, float]:
@@ -409,13 +584,20 @@ async def ingest_episode(
                             error=str(wt_exc),
                         )
 
-                # Store entity UUIDs + PageRank scores in Qdrant for retrieval boosting
+                # Store entity UUIDs + names + PageRank scores in Qdrant.
+                # entity_uuids + entity_pagerank_max → document-level (all chunks).
+                # entity_names → chunk-level: each chunk only gets names that
+                # literally appear in its own text (per-chunk substring filter
+                # in qdrant_store).
                 entity_uuids_list = [
-                    str(getattr(n, "uuid", ""))
-                    for n in nodes
-                    if getattr(n, "uuid", None)
+                    str(getattr(n, "uuid", "")) for n in nodes if getattr(n, "uuid", None)
                 ]
-                if entity_uuids_list:
+                entity_names_list = [
+                    str(getattr(n, "name", "")).strip()
+                    for n in nodes
+                    if getattr(n, "name", None) and str(getattr(n, "name", "")).strip()
+                ]
+                if entity_uuids_list or entity_names_list:
                     try:
                         pagerank_scores = await compute_entity_pagerank(org_id)
                         await qdrant_store.set_entity_graph_data(
@@ -423,19 +605,21 @@ async def ingest_episode(
                             org_id=org_id,
                             entity_uuids=entity_uuids_list,
                             pagerank_scores=pagerank_scores,
+                            entity_names=entity_names_list,
                         )
-                    except Exception as eg_exc:
-                        logger.warning(
+                    except Exception:
+                        logger.exception(
                             "entity_graph_data_failed",
                             artifact_id=artifact_id,
-                            error=str(eg_exc),
                         )
 
                 break
 
             except Exception as exc:
                 exc_str = str(exc).lower()
-                is_rate_limit = "rate limit" in exc_str or "429" in exc_str or "ratelimit" in exc_str  # noqa: E501
+                is_rate_limit = (
+                    "rate limit" in exc_str or "429" in exc_str or "ratelimit" in exc_str
+                )
                 if attempt < max_attempts - 1:
                     # Rate limit: back off long enough for Mistral's sliding window to reset.
                     # Other errors: short exponential backoff (1s, 2s).

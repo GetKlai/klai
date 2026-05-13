@@ -52,7 +52,7 @@ function ApiKeysPage() {
               params: { id: String(info.row.original.id) },
             })
           }
-          className="font-medium text-[var(--color-foreground)] hover:text-[var(--color-accent)] transition-colors text-left"
+          className="font-medium text-gray-900 hover:text-gray-900 transition-colors text-left"
         >
           {info.getValue()}
         </button>
@@ -61,7 +61,7 @@ function ApiKeysPage() {
     columnHelper.accessor('key_prefix', {
       header: () => m.admin_api_keys_col_key_prefix(),
       cell: (info) => (
-        <code className="text-xs font-mono text-[var(--color-muted-foreground)]">
+        <code className="text-xs font-mono text-gray-400">
           {info.getValue()}...
         </code>
       ),
@@ -75,7 +75,7 @@ function ApiKeysPage() {
     columnHelper.accessor('last_used_at', {
       header: () => m.admin_api_keys_col_last_used(),
       cell: (info) => (
-        <span className="text-sm text-[var(--color-muted-foreground)] whitespace-nowrap tabular-nums">
+        <span className="text-sm text-gray-400 whitespace-nowrap tabular-nums">
           {formatRelativeTime(info.getValue())}
         </span>
       ),
@@ -132,7 +132,7 @@ function ApiKeysPage() {
   })
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-10 space-y-6">
+    <div className="mx-auto max-w-3xl px-6 py-10 space-y-6">
       <div className="flex items-start justify-between">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.admin_api_keys_title()}
@@ -152,26 +152,26 @@ function ApiKeysPage() {
           onRetry={() => void refetch()}
         />
       ) : isLoading ? (
-        <p className="py-8 text-sm text-[var(--color-muted-foreground)]">
+        <p className="py-8 text-sm text-gray-400">
           <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
           {m.admin_api_keys_loading()}
         </p>
       ) : apiKeys.length === 0 ? (
         <div className="py-12 text-center space-y-3">
-          <p className="text-sm font-medium text-[var(--color-foreground)]">
+          <p className="text-sm font-medium text-gray-900">
             {m.admin_api_keys_empty()}
           </p>
-          <p className="text-sm text-[var(--color-muted-foreground)]">
+          <p className="text-sm text-gray-400">
             {m.admin_api_keys_empty_description()}
           </p>
         </div>
       ) : (
-        <table className="w-full text-sm border-t border-b border-[var(--color-border)]">
+        <table className="w-full text-sm border-t border-b border-gray-200">
           <thead>
             {table.getHeaderGroups().map((headerGroup) => (
               <tr
                 key={headerGroup.id}
-                className="border-b border-[var(--color-border)]"
+                className="border-b border-gray-200"
               >
                 {headerGroup.headers.map((header) => (
                   <th
@@ -191,12 +191,12 @@ function ApiKeysPage() {
             {table.getRowModel().rows.map((row) => (
               <tr
                 key={row.id}
-                className="border-b border-[var(--color-border)] last:border-b-0"
+                className="border-b border-gray-200 last:border-b-0"
               >
                 {row.getVisibleCells().map((cell) => (
                   <td
                     key={cell.id}
-                    className="py-4 pr-4 align-top text-[var(--color-foreground)]"
+                    className="py-4 pr-4 align-top text-gray-900"
                   >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>

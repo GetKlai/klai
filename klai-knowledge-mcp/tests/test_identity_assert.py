@@ -19,7 +19,9 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from klai_identity_assert import VerifyResult
+from klai_identity_assert import VerifyResult  # used for VerifyResult.deny() below
+
+from tests._helpers import allow_verify_result
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
@@ -46,12 +48,6 @@ def _patch_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KNOWLEDGE_INGEST_SECRET", "test-secret")
     monkeypatch.setenv("PORTAL_API_URL", "http://portal-api:8010")
     monkeypatch.setenv("PORTAL_INTERNAL_SECRET", "portal-test-secret")
-
-
-def _allow(
-    *, user_id: str, org_id: str, org_slug: str = "acme", evidence: str = "jwt"
-) -> VerifyResult:
-    return VerifyResult.allow(user_id=user_id, org_id=org_id, org_slug=org_slug, evidence=evidence)  # type: ignore[arg-type]
 
 
 def _spoof_headers(
@@ -183,7 +179,9 @@ class TestVerifiedIdentityForwarded:
 
         # Verifier returns canonical (user_id, org_id) values different from
         # whatever the headers asserted — proves we're sourcing from verified.
-        verified = _allow(user_id="VERIFIED-USER", org_id="VERIFIED-ORG", org_slug="acme")
+        verified = allow_verify_result(
+            user_id="VERIFIED-USER", org_id="VERIFIED-ORG", org_slug="acme"
+        )
 
         with (
             patch("main._asserter.verify", new_callable=AsyncMock, return_value=verified),
@@ -221,7 +219,9 @@ class TestVerifiedIdentityForwarded:
         """REQ-2.3: outgoing klai-docs PUT carries verified X-User-ID / X-Org-ID."""
         from main import save_to_docs
 
-        verified = _allow(user_id="VERIFIED-USER", org_id="VERIFIED-ORG", org_slug="acme")
+        verified = allow_verify_result(
+            user_id="VERIFIED-USER", org_id="VERIFIED-ORG", org_slug="acme"
+        )
 
         # Capture the outgoing headers from httpx PUT.
         captured: dict[str, dict[str, str]] = {}
@@ -372,7 +372,7 @@ class TestHappyPath:
     async def test_save_personal_knowledge_happy_path(self) -> None:
         from main import save_personal_knowledge
 
-        verified = _allow(user_id="u-1", org_id="o-1", org_slug="acme", evidence="jwt")
+        verified = allow_verify_result(user_id="u-1", org_id="o-1", org_slug="acme", evidence="jwt")
         with (
             patch("main._asserter.verify", new_callable=AsyncMock, return_value=verified),
             patch("main._save_to_ingest", new_callable=AsyncMock, return_value=True) as ingest_mock,
@@ -397,7 +397,9 @@ class TestHappyPath:
     async def test_save_org_knowledge_happy_path(self) -> None:
         from main import save_org_knowledge
 
-        verified = _allow(user_id="u-1", org_id="o-1", org_slug="acme", evidence="membership")
+        verified = allow_verify_result(
+            user_id="u-1", org_id="o-1", org_slug="acme", evidence="membership"
+        )
         with (
             patch("main._asserter.verify", new_callable=AsyncMock, return_value=verified),
             patch("main._save_to_ingest", new_callable=AsyncMock, return_value=True) as ingest_mock,

@@ -7,6 +7,11 @@ All query functions enforce org-level scoping. Group-scoped access is layered on
                          meeting queries. Do not bypass with direct select(VexaMeeting).
 @MX:ANCHOR fan_in=3+ -- get_accessible_kb_slugs is the authoritative entry point for
                          KB access checks. Do not bypass.
+@MX:ANCHOR fan_in=3+ -- is_personal_kb is the single-source-of-truth for the
+                         personal-vs-org discriminator (SPEC-PORTAL-KB-OWNERSHIP-001
+                         REQ-3 firewall). Used by every gate that must hide a
+                         personal KB from non-owners. Do not duplicate the
+                         ``owner_type=='user'`` check inline.
 """
 
 from sqlalchemy import func, or_, select
@@ -16,6 +21,23 @@ from app.models.groups import PortalGroupMembership
 from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase, PortalUserKBAccess
 from app.models.meetings import VexaMeeting
 from app.models.portal import PortalUser
+
+
+def is_personal_kb(kb: PortalKnowledgeBase) -> bool:
+    """Return True iff ``kb`` is a personal knowledge base.
+
+    Personal KBs (``owner_type == 'user'``) are user-private: only the
+    ``owner_user_id`` may see, query, or modify them. Admins included — there
+    is NO admin-bypass for personal KBs (SPEC-PORTAL-KB-OWNERSHIP-001 REQ-3).
+
+    @MX:NOTE -- single source of truth. Every personal-firewall check
+    (``get_kb_with_access`` in ``app/api/dependencies.py``, future RLS
+    policies) MUST go through this helper rather than inlining
+    ``kb.owner_type == 'user'``. A future schema migration that introduces
+    a third owner_type value (e.g. ``'group'``) flips behaviour at one
+    central point.
+    """
+    return kb.owner_type == "user"
 
 
 def _accessible_meetings_filter(user_id: str, org_id: int):
@@ -89,22 +111,27 @@ async def can_write_meeting(user_id: str, meeting: VexaMeeting, db: AsyncSession
     return result.scalar_one_or_none() is not None
 
 
-async def get_accessible_kb_slugs(user_id: str, db: AsyncSession) -> list[str]:
+async def get_accessible_kb_slugs(user_id: str, db: AsyncSession, *, user_role: str | None = None) -> list[str]:
     """Return Qdrant kb_slug values the user can query.
 
     Includes:
     - "personal-{user_id}" (always, for personal knowledge)
-    - "org" (always, for org-wide knowledge)
+    - "org" (always, for org-wide knowledge) -- SKIPPED for personal role (REQ-1)
     - "group:{group_id}" for each group the user belongs to
     - Named KB slugs via group-KB access grants
     - Named KB slugs via direct user-KB access grants (portal_user_kb_access)
+
+    When user_role="personal", org slug and default_org_role KBs are excluded (REQ-1).
     """
     result = await db.execute(
         select(PortalGroupMembership.group_id).where(PortalGroupMembership.zitadel_user_id == user_id)
     )
     group_ids = [row[0] for row in result.all()]
 
-    base_slugs = [f"personal-{user_id}", "org"] + [f"group:{gid}" for gid in group_ids]
+    # REQ-1: personal role cannot see org-wide KB slugs
+    is_personal = user_role == "personal"
+    org_slugs = [] if is_personal else ["org"]
+    base_slugs = [f"personal-{user_id}"] + org_slugs + [f"group:{gid}" for gid in group_ids]
 
     # Named KB slugs via group-KB access
     group_kb_slugs: list[str] = []
@@ -127,20 +154,22 @@ async def get_accessible_kb_slugs(user_id: str, db: AsyncSession) -> list[str]:
     user_kb_slugs = [row[0] for row in user_kb_result.all()]
 
     # Named KB slugs via default_org_role (org-wide defaults)
+    # REQ-1: personal role is excluded from org-wide default KBs
     default_kb_slugs: list[str] = []
-    user_result2 = await db.execute(select(PortalUser.org_id).where(PortalUser.zitadel_user_id == user_id))
-    user_org_id = user_result2.scalar_one_or_none()
-    if user_org_id:
-        default_kb_result = await db.execute(
-            select(PortalKnowledgeBase.slug)
-            .where(
-                PortalKnowledgeBase.org_id == user_org_id,
-                PortalKnowledgeBase.default_org_role.isnot(None),
-                PortalKnowledgeBase.owner_type == "org",
+    if not is_personal:
+        user_result2 = await db.execute(select(PortalUser.org_id).where(PortalUser.zitadel_user_id == user_id))
+        user_org_id = user_result2.scalar_one_or_none()
+        if user_org_id:
+            default_kb_result = await db.execute(
+                select(PortalKnowledgeBase.slug)
+                .where(
+                    PortalKnowledgeBase.org_id == user_org_id,
+                    PortalKnowledgeBase.default_org_role.isnot(None),
+                    PortalKnowledgeBase.owner_type == "org",
+                )
+                .distinct()
             )
-            .distinct()
-        )
-        default_kb_slugs = [row[0] for row in default_kb_result.all()]
+            default_kb_slugs = [row[0] for row in default_kb_result.all()]
 
     all_named = list({*group_kb_slugs, *user_kb_slugs, *default_kb_slugs})
     return base_slugs + all_named
