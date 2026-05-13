@@ -1,7 +1,8 @@
 ---
 id: SPEC-PORTAL-KB-MEMBERS-CLEANUP-001
 version: 0.1.0
-status: draft
+status: done
+completed: 2026-05-13
 created: 2026-05-13
 author: Mark Vletter
 priority: medium
@@ -20,9 +21,31 @@ from 497 lines to a route shell + per-row component + extracted
 mutation hooks. **Densest mutation-per-line ratio of any candidate**
 (10 mutations in 497 lines = 1 mutation per ~50 lines).
 
-This SPEC is **draft**. Low churn (15 commits / 90 days) means it's
-not actively painful — but the structural density makes any future
-edit risky.
+This SPEC started as **draft**. Low churn (15 commits / 90 days) meant
+it was not actively painful, but the structural density made future
+membership edits risky enough to justify a narrow split.
+
+## Outcome
+
+Implemented 2026-05-13 after the requested `/moai run
+KB-MEMBERS-CLEANUP` pass. The route remains the TanStack shell and
+data-loading owner, while the mutation endpoints and repeated member
+UI are now feature-local helpers.
+
+Architecture decision:
+- Added `-members-hooks.ts` for the KB visibility, invite-user,
+  invite-group, remove-user, and remove-group mutation contracts.
+- Added `_components/-InviteSection.tsx` for the shared group/person
+  combobox section and `_components/-MemberRow.tsx` for group/user
+  member cards.
+- Kept the existing backend endpoints, query keys, visibility mapping,
+  owner-only controls, and remove confirmation behavior unchanged.
+- Characterized the mutation contracts with focused Vitest coverage in
+  `__tests__/members-hooks.test.tsx`.
+
+Result: `members.tsx` is reduced from 497 lines to 362 lines in this
+workspace baseline. Live Voys tenant smoke was not performed during
+this local run.
 
 ## Motivation metrics
 
