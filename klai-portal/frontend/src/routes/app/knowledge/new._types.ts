@@ -11,17 +11,21 @@ export interface OrgUser {
   email: string
 }
 
+export type MemberRole = 'viewer' | 'contributor' | 'owner'
+export type OwnerType = 'org' | 'user'
+export type VisibilityMode = 'public' | 'org' | 'restricted'
+
 export interface MemberGroup {
   id: number
   name: string
-  role: string
+  role: MemberRole
 }
 
 export interface MemberUser {
   id: string
   name: string
   email: string
-  role: string
+  role: MemberRole
 }
 
 export interface WizardData {
@@ -29,8 +33,8 @@ export interface WizardData {
   slug: string
   slugManuallyEdited: boolean
   description: string
-  ownerType: 'org' | 'user'
-  visibilityMode: 'public' | 'org' | 'restricted'
+  ownerType: OwnerType
+  visibilityMode: VisibilityMode
   allowContribute: boolean
   initialGroups: MemberGroup[]
   initialUsers: MemberUser[]

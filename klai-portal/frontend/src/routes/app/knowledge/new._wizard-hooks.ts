@@ -1,9 +1,34 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { apiFetch, ApiError } from '@/lib/apiFetch'
-import type { OrgGroup, OrgUser, Step, WizardData, WizardErrorKey } from './new._types'
+import { ApiError, apiFetch } from '@/lib/apiFetch'
+import type {
+  MemberRole,
+  OrgGroup,
+  OrgUser,
+  Step,
+  WizardData,
+  WizardErrorKey,
+} from './new._types'
 
-export function buildCreateKnowledgeBasePayload(data: WizardData) {
+interface CreateKnowledgeBasePayload {
+  name: string
+  slug: string
+  description?: string
+  visibility: 'public' | 'internal' | 'private'
+  owner_type: WizardData['ownerType']
+  default_org_role: MemberRole | null
+  initial_members?:
+    | Array<{
+        type: 'group' | 'user'
+        id: string
+        role: MemberRole
+      }>
+    | undefined
+}
+
+export function buildCreateKnowledgeBasePayload(
+  data: WizardData
+): CreateKnowledgeBasePayload {
   const visibility =
     data.visibilityMode === 'public'
       ? 'public'
@@ -27,19 +52,23 @@ export function buildCreateKnowledgeBasePayload(data: WizardData) {
     initial_members:
       data.ownerType === 'org'
         ? [
-            ...data.initialGroups.map((g) => ({
-              type: 'group',
-              id: String(g.id),
-              role: g.role,
+            ...data.initialGroups.map((group) => ({
+              type: 'group' as const,
+              id: String(group.id),
+              role: group.role,
             })),
-            ...data.initialUsers.map((u) => ({
-              type: 'user',
-              id: u.id,
-              role: u.role,
+            ...data.initialUsers.map((user) => ({
+              type: 'user' as const,
+              id: user.id,
+              role: user.role,
             })),
           ]
         : undefined,
   }
+}
+
+export function getCreateKnowledgeBaseErrorKey(error: Error): WizardErrorKey {
+  return error instanceof ApiError && error.status === 409 ? 'conflict' : 'generic'
 }
 
 export function useKnowledgeWizardMembers({
@@ -82,18 +111,17 @@ export function useCreateKnowledgeBaseMutation({
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: async () => {
-      return apiFetch<{ slug: string }>(`/api/app/knowledge-bases`, {
+    mutationFn: () =>
+      apiFetch<{ slug: string }>('/api/app/knowledge-bases', {
         method: 'POST',
         body: JSON.stringify(buildCreateKnowledgeBasePayload(data)),
-      })
-    },
+      }),
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: ['app-knowledge-bases'] })
       void navigate({ to: '/app/knowledge/$kbSlug', params: { kbSlug: result.slug } })
     },
     onError: (err: Error) => {
-      onErrorKey(err instanceof ApiError && err.status === 409 ? 'conflict' : 'generic')
+      onErrorKey(getCreateKnowledgeBaseErrorKey(err))
     },
   })
 }
