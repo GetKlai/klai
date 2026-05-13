@@ -528,6 +528,16 @@ async def _delete_scribe_artifacts(state: _DeprovisionState) -> None:
         )
         return
 
+    # Production `GARAGE_S3_ENDPOINT` is the schemeless form `garage:3900`
+    # because the canonical reader (`app/api/kb_images.py::_make_minio_client`)
+    # uses the Minio SDK which takes a schemeless `host:port` + `secure` flag.
+    # boto3 (this callsite) needs an `http(s)://` URL or it raises
+    # `ValueError: Invalid endpoint`. Prepend `http://` defensively so the same
+    # env var works for both consumers without forcing operators to
+    # double-track variants. SPEC-INFRA-TENANT-DELETE-003 follow-up.
+    if "://" not in s3_endpoint:
+        s3_endpoint = f"http://{s3_endpoint}"
+
     s3_access_key = settings.garage_s3_access_key
     s3_secret_key = settings.garage_s3_secret_key
     s3_bucket = settings.garage_s3_bucket

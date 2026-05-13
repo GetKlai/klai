@@ -733,6 +733,43 @@ class TestDeleteScribeArtifacts:
         assert "acme/file1.txt" in keys
         assert "acme/file2.mp3" in keys
 
+    @pytest.mark.asyncio
+    async def test_schemeless_endpoint_gets_http_scheme_prepended(self) -> None:
+        """Production GARAGE_S3_ENDPOINT is `garage:3900` (schemeless — Minio
+        SDK form used by kb_images.py). boto3 needs `http://garage:3900` or
+        raises `Invalid endpoint`. The step must defensively prepend `http://`
+        so the same env var works for both consumers.
+
+        SPEC-INFRA-TENANT-DELETE-003 follow-up — Bug C surfaced on the first
+        production deprovisioning retry after Bug A + B were fixed.
+        """
+        state = _make_state(slug="acme")
+
+        mock_s3 = MagicMock()
+        mock_s3.get_paginator.return_value.paginate.return_value = []
+
+        captured_kwargs: dict[str, object] = {}
+
+        def _capture(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+            return mock_s3
+
+        with (
+            patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings,
+            patch("boto3.client", side_effect=_capture),
+        ):
+            mock_settings.garage_s3_endpoint = "garage:3900"  # schemeless prod form
+            mock_settings.garage_s3_access_key = "key"
+            mock_settings.garage_s3_secret_key = "secret"
+            mock_settings.garage_s3_bucket = "klai-scribe"
+            from app.services.provisioning.deprovisioning_steps import _delete_scribe_artifacts
+
+            await _delete_scribe_artifacts(state)
+
+        assert captured_kwargs.get("endpoint_url") == "http://garage:3900", (
+            f"boto3 must receive a scheme-prefixed endpoint URL; got {captured_kwargs.get('endpoint_url')!r}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Step 11 — _delete_litellm_team
