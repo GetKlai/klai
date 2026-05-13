@@ -27,12 +27,22 @@ type InlineWikiLink = {
 
 type InlineContent = string | InlineText | InlineLink | InlineWikiLink;
 
+type TableCell = InlineContent[];
+type TableRow = { cells: TableCell[] };
+type TableContent = { type: "tableContent"; rows: TableRow[] };
+
 type BlockNoteBlock = {
   type?: string;
   props?: Record<string, unknown>;
-  content?: InlineContent[] | string;
+  content?: InlineContent[] | string | TableContent;
   children?: BlockNoteBlock[];
 };
+
+function isTableContent(value: unknown): value is TableContent {
+  if (!value || typeof value !== "object") return false;
+  const c = value as { type?: unknown; rows?: unknown };
+  return c.type === "tableContent" && Array.isArray(c.rows);
+}
 
 const LIST_TYPES = new Set(["bulletListItem", "numberedListItem", "checkListItem"]);
 
@@ -99,7 +109,9 @@ function renderBlock(
   kbSlug: string,
   depth: number
 ): string {
-  const text = renderInlineContent(block.content, pageIndex, kbSlug);
+  const text = isTableContent(block.content)
+    ? ""
+    : renderInlineContent(block.content as InlineContent[] | string | undefined, pageIndex, kbSlug);
   const children = block.children?.length
     ? renderBlocks(block.children, pageIndex, kbSlug, depth + 1)
     : "";
@@ -111,7 +123,7 @@ function renderBlock(
     }
     case "codeBlock": {
       const language = typeof block.props?.language === "string" ? block.props.language : "";
-      return joinBlockParts(`\`\`\`${language}\n${extractPlainText(block.content)}\n\`\`\``, children);
+      return joinBlockParts(`\`\`\`${language}\n${extractPlainText(block.content as InlineContent[] | string | undefined)}\n\`\`\``, children);
     }
     case "quote": {
       const quote = text
@@ -130,10 +142,44 @@ function renderBlock(
       const name = text || (typeof block.props?.name === "string" ? block.props.name : "Download");
       return isSafeHref(url) ? joinBlockParts(`[${escapeMarkdown(name)}](${escapeHref(url)})`, children) : children;
     }
+    case "table": {
+      if (!isTableContent(block.content)) return joinBlockParts(text, children);
+      return joinBlockParts(renderTable(block.content, pageIndex, kbSlug), children);
+    }
     case "paragraph":
     default:
       return joinBlockParts(text, children);
   }
+}
+
+function renderTable(
+  table: TableContent,
+  pageIndex: PageIndexEntry[],
+  kbSlug: string
+): string {
+  if (table.rows.length === 0) return "";
+  // First row is treated as the header (BlockNote tables do not formally mark a
+  // header row; convention is row 0). Body rows follow.
+  const widthCols = Math.max(...table.rows.map((r) => r.cells.length), 0);
+  if (widthCols === 0) return "";
+
+  const renderCell = (cell: TableCell | undefined): string => {
+    if (!Array.isArray(cell)) return "";
+    // renderInlineContent runs escapeMarkdown which already escapes `|` to `\|`
+    // so we only need to flatten newlines for the single-line cell format.
+    return renderInlineContent(cell, pageIndex, kbSlug).replace(/\n/g, " ").trim();
+  };
+
+  const rowToLine = (row: TableRow): string => {
+    const cells: string[] = [];
+    for (let i = 0; i < widthCols; i += 1) cells.push(renderCell(row.cells[i]) || " ");
+    return `| ${cells.join(" | ")} |`;
+  };
+
+  const headerLine = rowToLine(table.rows[0]);
+  const separator = `|${" --- |".repeat(widthCols)}`;
+  const bodyLines = table.rows.slice(1).map(rowToLine);
+  return [headerLine, separator, ...bodyLines].join("\n");
 }
 
 function renderListItem(
@@ -144,7 +190,9 @@ function renderListItem(
   number: number
 ): string {
   const indent = "  ".repeat(depth);
-  const text = renderInlineContent(block.content, pageIndex, kbSlug);
+  const text = isTableContent(block.content)
+    ? ""
+    : renderInlineContent(block.content as InlineContent[] | string | undefined, pageIndex, kbSlug);
   const marker =
     block.type === "numberedListItem"
       ? `${number}.`
@@ -222,7 +270,14 @@ function applyStyles(text: string, styles: Record<string, boolean | string>): st
   return `${leading}${value}${trailing}`;
 }
 
-function extractPlainText(content: InlineContent[] | string | undefined): string {
+function extractPlainText(content: InlineContent[] | string | undefined | TableContent): string {
+  if (isTableContent(content)) {
+    return content.rows.map(r => r.cells.map(c => extractPlainText(c)).join(" | ")).join("\n");
+  }
+  return extractPlainTextInner(content);
+}
+
+function extractPlainTextInner(content: InlineContent[] | string | undefined): string {
   if (!content) return "";
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
