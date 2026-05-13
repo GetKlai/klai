@@ -1,7 +1,7 @@
 ---
 id: SPEC-INFRA-TENANT-DELETE-003
-version: "0.1.0"
-status: ready-for-run
+version: "0.6.0"
+status: completed
 created: "2026-05-13"
 updated: "2026-05-13"
 author: Mark Vletter
@@ -11,15 +11,26 @@ related:
   - SPEC-INFRA-TENANT-DELETE-002 (G3 + G6 wipe-via-internal-endpoint siblings — DEPLOYED)
   - SPEC-INFRA-CONFIG-SYNC-001 (bind-mount-config-sync auto-rsync — DEPLOYED)
 discovered_during: SPEC-E2E-PROD-TENANT preparation (this session, 2026-05-13)
+merge_commits:
+  - cfb03d46 (Bug A + B — initial SPEC, jsonb + Meili net)
+  - 8e7f9c71 (Bug C — garage endpoint scheme)
+  - 8b5317fc (Bug D — NoSuchBucket idempotent)
+  - e9a15591 (Bug E — Zitadel RemoveOrg endpoint)
+  - 4a14e1f2 (Bug F/G/H/I — finalize FK list drift)
 ---
 
-# SPEC-INFRA-TENANT-DELETE-003: Fix deprovisioning — Meilisearch network + jsonb encode
+# SPEC-INFRA-TENANT-DELETE-003: Fix deprovisioning — nine never-tested-on-prod bugs
 
 ## HISTORY
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 0.1.0 | 2026-05-13 | Mark Vletter | Initial. Two bugs found while attempting first real-world tenant deprovisioning. Both bugs make `SPEC-INFRA-TENANT-DELETE-001` orchestrator unusable for production tenants when invoked from portal-api. |
+| 0.2.0 | 2026-05-13 | Mark Vletter | Bug C added — `_delete_scribe_artifacts` boto3 client rejected schemeless `garage:3900` from `GARAGE_S3_ENDPOINT`. Surfaced on first retry after Bug A+B shipped. Fix: defensive `http://` prepend in `_delete_scribe_artifacts` so the same env var continues to work for the canonical Minio reader. Merged in `8e7f9c71`. |
+| 0.3.0 | 2026-05-13 | Mark Vletter | Bug D added — `_delete_scribe_artifacts` raised `NoSuchBucket` on tenants whose Scribe bucket was never lazy-created (no audio uploads ever happened). Contradicts SPEC R3 "al-weg = geen exception". Fix: catch `NoSuchBucket` in `_sync_delete`, log `scribe_artifacts_bucket_absent`, return cleanly. Merged in `8b5317fc`. |
+| 0.4.0 | 2026-05-13 | Mark Vletter | Bug E added — `zitadel.delete_org` POSTed to `DELETE /management/v1/orgs` (no `/me`), which is the CreateOrg endpoint and returned 405. Verified the correct path is `DELETE /management/v1/orgs/me` with `x-zitadel-orgid` header. Fix: correct URL + accept 403 as idempotent-skip (matches "no grant on deleted org" semantics). Merged in `e9a15591`. |
+| 0.5.0 | 2026-05-13 | Mark Vletter | Bug F/G/H/I added — `_finalize_postgres_delete` explicit-DELETE list had drifted from the schema. Bug F: obsolete `portal_products` (dropped by `rbac001_drop_legacy_rbac_data`) → UndefinedTableError aborts the whole tx before reaching anything else. Bug G/H/I: missing `portal_group_products`, `portal_user_products` (RBAC-001) and `portal_user_seat_history` (PRICING-PER-USER-001) — non-cascading FKs that would block portal_orgs DELETE if Bug F were the only fix. Audit via `pg_constraint` on prod. Merged in `4a14e1f2`. |
+| 0.6.0 | 2026-05-13 | Mark Vletter | Sync. Status → completed after end-to-end verification on prod: org_id=10 hard-deleted (REQ-3.1+3.2), no `librechat-e2e*` containers (REQ-3.3), original Zitadel `e2e@getklai.com` user gone (REQ-3.4; the current `e2e@getklai.com` user is a fresh signup from 16:47 UTC under a different resourceOwner — exactly the re-signup path of Acceptance 5(a)). |
 
 ## Context
 
@@ -98,12 +109,82 @@ But cleaner: use the ORM (`org.last_failure = failure_dict`) — SQLAlchemy's Po
 **Cascade effect:**
 Bug A is recoverable by an admin if `last_failure` is populated (admin reads it, decides on retry vs manual cleanup). With bug B, `last_failure` is NULL and the operator has to grep VictoriaLogs to find the actual error — slower diagnosis, no audit trail.
 
+### Bug C — `_delete_scribe_artifacts` boto3 client rejects schemeless endpoint (HIGH)
+
+**Symptom (surfaced on first retry after Bug A+B shipped):**
+```
+ValueError: Invalid endpoint: garage:3900
+```
+
+**Root cause:**
+`_delete_scribe_artifacts` constructs a boto3 S3 client with `endpoint_url=settings.garage_s3_endpoint`. The production env value is the schemeless `garage:3900` because the canonical reader (`kb_images.py::_make_minio_client`) uses the Minio SDK which takes `host:port` + `secure=False`. boto3 wants an `http(s)://` URL or it refuses to construct the client.
+
+**Fix:** Defensive `http://` prepend when the endpoint has no scheme, so the same env var works for both consumers without forcing operators to track two variants. Merged in `8e7f9c71`. Regression test `test_schemeless_endpoint_gets_http_scheme_prepended` locks the boto3 bind shape.
+
+### Bug D — `_delete_scribe_artifacts` not idempotent on missing bucket (HIGH)
+
+**Symptom (after Bug C unblocked client construction):**
+```
+botocore.errorfactory.NoSuchBucket: An error occurred (NoSuchBucket)
+when calling the ListObjectsV2 operation: Bucket not found: klai-scribe
+```
+
+**Root cause:**
+The Scribe S3 backend isn't deployed in production, or the bucket hasn't been auto-created yet (Scribe lazily creates it on first audio upload, which this e2e tenant never did). The step treated a missing bucket as a hard failure, contradicting SPEC R3 ("al-weg = geen exception").
+
+**Fix:** Catch `NoSuchBucket` inside `_sync_delete`, log `scribe_artifacts_bucket_absent`, return cleanly. Same semantic as the existing "no objects found" path. Merged in `8b5317fc`. Regression test `test_no_such_bucket_is_idempotent` simulates the boto3 raise and asserts the step does not propagate.
+
+### Bug E — `zitadel.delete_org` POSTs to CreateOrg endpoint, returns 405 (HIGH)
+
+**Symptom (after Bug D unblocked step 8):**
+```
+HTTP 405 Method Not Allowed from DELETE /management/v1/orgs
+```
+
+**Root cause:**
+`zitadel.delete_org` called `DELETE /management/v1/orgs` (no `/me`). That URL is the CreateOrg endpoint, which is POST-only — DELETE returns 405. Verified by hand-curling `DELETE /management/v1/orgs/me` with `x-zitadel-orgid: <org-id>` against production Zitadel — returned 200.
+
+**Fix:**
+- URL becomes `/management/v1/orgs/me`. The `x-zitadel-orgid` header continues to scope which org "me" resolves to.
+- 403 added as idempotent-skip status alongside 404. Zitadel sometimes returns 403 when the calling identity no longer has any grant on a deleted org — exactly the "already gone" semantic SPEC R3 needs.
+
+Merged in `e9a15591`. Tests updated: `_DELETE_PATH` constant + `test_403_is_idempotent_returns_none` (flipped from the prior raise expectation).
+
+### Bug F/G/H/I — `_finalize_postgres_delete` FK list drifted from schema (HIGH)
+
+**Symptom (after Bug E unblocked step 14, on step 16):**
+```
+psycopg.errors.UndefinedTable: relation "portal_products" does not exist
+```
+
+…and would have been followed by FK violations on portal_orgs DELETE if Bug F were the only fix.
+
+**Root cause:**
+The explicit-DELETE list in `_finalize_postgres_delete` was authored when SPEC-INFRA-TENANT-DELETE-001 landed and hadn't been audited against subsequent schema changes. `pg_constraint` audit on prod 2026-05-13:
+
+- **Bug F (obsolete in DELETE list):** `portal_products` — dropped by `rbac001_drop_legacy_rbac_data`. UndefinedTableError aborts the whole transaction before touching anything else.
+- **Bug G/H/I (missing from DELETE list):**
+  - `portal_group_products` (RBAC-001, no-cascade FK)
+  - `portal_user_products` (RBAC-001, no-cascade FK)
+  - `portal_user_seat_history` (PRICING-PER-USER-001, no-cascade FK)
+
+  Each would FK-violate the `portal_orgs` hard-delete if Bug F were resolved alone.
+
+**Fix:** Update the explicit-DELETE list to match production schema. Order: KB tables → vexa_meetings → group_products → groups → templates → user_products → user_seat_history → users → portal_orgs. Merged in `4a14e1f2`. Test `test_execute_called_for_each_non_cascading_child_table` extended from 9 to 11 calls; docstring references the RBAC-001 + PRICING-PER-USER-001 lineage so the next schema change is flagged.
+
+**Class summary (Bugs A-I):**
+Every bug here is the same shape: a deprovisioning orchestrator step that worked in unit tests but had never been exercised end-to-end on a real production tenant. Each fix unblocked the retry to the *next* never-tested step, which then crashed in its own way. The SPEC's "Out-of-band notes" predicted exactly this — *"Each new tenant-lifecycle action surfaces one"*. SPEC-E2E-PROD-TENANT is the structural remediation: every deprovisioning step gets a live production smoke-test that runs on every deploy.
+
 ## Goal
 
-Both bugs fixed so that:
+All nine bugs fixed so that:
 1. Portal-api can DNS-resolve `meilisearch` (Bug A).
 2. When any orchestrator step fails, `portal_orgs.last_failure` is populated with the failure metadata as a queryable jsonb (Bug B).
-3. The e2e-tenant (org_id=10, slug=`e2e-37271947`) is fully deprovisioned via the orchestrator after the fix — verifying end-to-end correctness.
+3. `_delete_scribe_artifacts` constructs a valid boto3 S3 client against the production `GARAGE_S3_ENDPOINT` value (Bug C).
+4. `_delete_scribe_artifacts` treats a missing Scribe bucket as idempotent-skip (Bug D).
+5. `zitadel.delete_org` targets the correct Management API endpoint and treats 403 as idempotent (Bug E).
+6. `_finalize_postgres_delete` explicit-DELETE list matches the current production schema — no obsolete table references, all non-cascading FK children covered (Bug F/G/H/I).
+7. The e2e-tenant (org_id=10, slug=`e2e-37271947`) is fully deprovisioned via the orchestrator after all fixes — verifying end-to-end correctness.
 
 ## Environment
 
@@ -197,28 +278,43 @@ Combined rollback is `git revert <merge-sha>` followed by `deploy-compose.yml` w
 
 | Test | What it covers | New/existing |
 |---|---|---|
-| `test_mark_failed_writes_dict_as_jsonb` | Bug B fix — dict serializes correctly | new |
-| `test_deprovisioning_orchestrator.py` (existing 11 tests) | Regression coverage | existing |
+| `test_mark_failed_writes_dict_as_jsonb` | Bug B fix — dict serializes correctly via CAST(:val AS jsonb) | new |
+| `test_schemeless_endpoint_gets_http_scheme_prepended` | Bug C fix — boto3 client constructed with scheme | new |
+| `test_no_such_bucket_is_idempotent` | Bug D fix — `NoSuchBucket` swallowed, no delete_objects call | new |
+| `test_zitadel_delete_org.py::_DELETE_PATH` | Bug E fix — DELETE hits `/management/v1/orgs/me` | updated |
+| `test_zitadel_delete_org.py::test_403_is_idempotent_returns_none` | Bug E fix — 403 treated as already-gone | flipped |
+| `test_execute_called_for_each_non_cascading_child_table` | Bug F/G/H/I fix — explicit-DELETE list matches schema (11 calls, ordered) | extended |
+| `test_deprovisioning_orchestrator.py` (existing 18 tests) | Regression coverage | existing |
 | `tests/services/provisioning/test_orchestrator.py` (existing 12 tests) | Provisioning still works after fix | existing |
-| Manual `getent hosts meilisearch` post-deploy | Bug A fix verified on prod | manual |
-| Manual deprovisioning of org_id=10 | End-to-end correctness | manual |
+| Manual `getent hosts meilisearch` post-deploy | Bug A fix verified on prod | done — `172.21.0.2` |
+| Manual `python urlopen meilisearch:7700/health` post-deploy | Bug A fix verified on prod | done — `200` |
+| Manual deprovisioning of org_id=10 | End-to-end correctness (all 9 bugs) | done — row gone, container gone, original Zitadel user gone |
 
 No new docker-compose-level test — the only meaningful verification is post-deploy DNS, and that's a one-liner Mark or I run after the merge.
 
 ## Acceptance summary
 
-1. portal-api can reach Meilisearch (`getent hosts meilisearch` returns IP).
-2. `_mark_failed` writes the failure dict to `portal_orgs.last_failure` as jsonb.
-3. e2e tenant (org_id=10) is fully gone after retry: no portal_orgs row, no librechat-e2e container, no Zitadel `e2e@getklai.com` user.
-4. CI green, no regressions in provisioning or deprovisioning test suite.
-5. Mark can re-run signup for `e2e@getklai.com` and either (a) succeeds → tenant ready for testing, or (b) hits the portal_users-INSERT bug from earlier finding → separate SPEC.
+1. ✅ portal-api can reach Meilisearch (`getent hosts meilisearch` → `172.21.0.2`; HTTP `/health` → 200, verified 2026-05-13 17:59 UTC).
+2. ✅ `_mark_failed` writes the failure dict to `portal_orgs.last_failure` as jsonb (regression test + production retry both confirm).
+3. ✅ e2e tenant (org_id=10) fully gone after retry:
+   - `SELECT id FROM portal_orgs WHERE id = 10` → 0 rows.
+   - `docker ps -a --filter name=librechat-e2e` → 0 containers.
+   - Zitadel `e2e@getklai.com` under the deprovisioned org → gone. (A fresh `e2e@getklai.com` exists in a different resourceOwner from the post-cleanup signup attempt at 16:47 UTC — that is the Acceptance 5(a) success-case below, not a leftover.)
+4. ✅ CI green, no regressions in provisioning or deprovisioning test suite (74/74 deprovisioning + orchestrator + zitadel tests).
+5. ✅ (a) Mark re-ran signup for `e2e@getklai.com` — succeeded (USER_STATE_INITIAL, fresh resourceOwner 362757920133283846).
 
 ## Out-of-band notes
 
-This SPEC was authored during a single working session that began as "create the e2e test tenant" and ended up exposing:
-- A templates-seeding RLS bug (fixed in PR #657)
-- The Meilisearch-network bug (this SPEC)
-- The jsonb-encode bug (this SPEC)
-- A portal_users-INSERT-missing bug on org_id=10 (parked, will reproduce on next signup attempt)
+This SPEC was authored during a single working session that began as "create the e2e test tenant" and ended up exposing **nine** never-tested-on-prod bugs in the same orchestrator:
+- A templates-seeding RLS bug (fixed in PR #657 — separate SPEC)
+- Bug A — Meilisearch network (this SPEC, merge `cfb03d46`)
+- Bug B — jsonb encode (this SPEC, merge `cfb03d46`)
+- Bug C — garage endpoint scheme (this SPEC, merge `8e7f9c71`)
+- Bug D — NoSuchBucket idempotent (this SPEC, merge `8b5317fc`)
+- Bug E — Zitadel RemoveOrg endpoint (this SPEC, merge `e9a15591`)
+- Bug F/G/H/I — FK list drift (this SPEC, merge `4a14e1f2`)
+- A portal_users-INSERT-missing bug on org_id=10 (resolved during re-signup at 16:47 UTC — fresh user landed cleanly)
 
-The pattern is identical for all four: a flow that has unit tests covering the happy path, but no production end-to-end verification has ever run successfully. Each new tenant-lifecycle action surfaces one. The e2e test suite (SPEC-E2E-PROD-TENANT, in progress) exists specifically to eliminate this class — every flow gets a live production smoke test that runs on every deploy.
+The pattern is identical: a flow that has unit tests covering the happy path, but no production end-to-end verification has ever run successfully. Each new tenant-lifecycle action surfaces one. The e2e test suite (SPEC-E2E-PROD-TENANT, in progress) exists specifically to eliminate this class — every flow gets a live production smoke test that runs on every deploy.
+
+This SPEC is the canonical worked example of why SPEC-E2E-PROD-TENANT matters: nine bugs that all passed unit tests, all caught by a single end-to-end run, all fixed within hours of being surfaced. A pre-deploy e2e smoke would have caught Bugs A through I in one CI run before any of them shipped to production.
