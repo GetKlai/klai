@@ -349,7 +349,7 @@
   "account_saved": "Opgeslagen",
   "account_error_save": "Opslaan mislukt",
   "account_sar_title": "Mijn gegevens downloaden",
-  "account_sar_description": "Download je persoonlijke Klai-data in JSON. Dit staat hier omdat jouw eigen gegevens exporteerbaar moeten blijven, los van workspace-beheer. Geüploade documenten en communicatie uit gekoppelde systemen blijven brondata van die systemen; Klai bewaart daar hoogstens een kopie van en neemt die niet op in deze export.",
+  "account_sar_description": "Download je persoonlijke Klai-data in JSON. Jouw eigen data moet exporteerbaar blijven, los van workspace-beheer. Geüploade documenten en communicatie uit gekoppelde systemen blijven brondata in die systemen; Klai bewaart alleen een kopie voor gebruik in Klai. Verwijder je die brondata daar, dan blijven ze niet achter in Klai-systemen.",
   "account_sar_button": "Download mijn gegevens",
   "account_sar_downloading": "Exporteren...",
   "account_sar_rate_limited": "Je kunt je gegevens maximaal 5 keer per uur downloaden. Probeer het later opnieuw.",
