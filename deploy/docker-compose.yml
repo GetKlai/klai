@@ -1539,3 +1539,44 @@ services:
         limits:
           cpus: '2'
           memory: 1G
+
+  # ─── Cal.com (self-hosted scheduling) ────────────────────────────────────
+  # Deployed at https://cal.getklai.com
+  # DB: cal-db on klai-core-postgres-1 (role: cal_user).
+  # Secrets in klai-infra/core-01/.env.sops (CAL_* prefix).
+  # Deviation from SELFHOST_NEW_SERVICE.md (public-01 via Coolify):
+  #   Hetzner DNS API token did not resolve for public-01 A-record addition;
+  #   *.getklai.com → 65.21.174.162 (core-01) wildcard is already live via
+  #   Caddy Hetzner-DNS plugin, so core-01 was the natural landing point.
+  cal-com:
+    image: calcom/cal.com:v6.2.0
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_WEBAPP_URL: https://cal.${DOMAIN}
+      NEXTAUTH_URL: https://cal.${DOMAIN}
+      NEXTAUTH_SECRET: ${CAL_NEXTAUTH_SECRET}
+      CALENDSO_ENCRYPTION_KEY: ${CAL_CALENDSO_ENCRYPTION_KEY}
+      DATABASE_URL: ${CAL_DATABASE_URL}
+      DATABASE_DIRECT_URL: ${CAL_DATABASE_URL}
+      EMAIL_FROM: hello@getklai.com
+      EMAIL_SERVER_HOST: ${SMTP_HOST}
+      EMAIL_SERVER_PORT: ${SMTP_PORT:-587}
+      EMAIL_SERVER_USER: ${SMTP_USERNAME}
+      EMAIL_SERVER_PASSWORD: ${SMTP_PASSWORD}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    networks:
+      - klai-net
+      - net-postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 2g
