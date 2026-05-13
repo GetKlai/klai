@@ -551,14 +551,28 @@ async def _delete_scribe_artifacts(state: _DeprovisionState) -> None:
         )
         prefix = f"{state.slug}/"
         deleted_count = 0
-        paginator = s3.get_paginator("list_objects_v2")
-        for page in paginator.paginate(Bucket=s3_bucket, Prefix=prefix):
-            objects = page.get("Contents", [])
-            if not objects:
-                continue
-            delete_payload = {"Objects": [{"Key": obj["Key"]} for obj in objects]}
-            s3.delete_objects(Bucket=s3_bucket, Delete=delete_payload)
-            deleted_count += len(objects)
+        try:
+            paginator = s3.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=s3_bucket, Prefix=prefix):
+                objects = page.get("Contents", [])
+                if not objects:
+                    continue
+                delete_payload = {"Objects": [{"Key": obj["Key"]} for obj in objects]}
+                s3.delete_objects(Bucket=s3_bucket, Delete=delete_payload)
+                deleted_count += len(objects)
+        except s3.exceptions.NoSuchBucket:
+            # SPEC R3 — al-weg = geen exception. Idempotent: if the bucket
+            # itself does not exist, there are no artifacts to delete and the
+            # step has nothing to do. Common on tenants that never used
+            # Scribe (no audio uploaded → bucket never auto-created), and on
+            # deployments where the Scribe S3 backend hasn't been
+            # provisioned yet. SPEC-INFRA-TENANT-DELETE-003 Bug D.
+            logger.info(
+                "scribe_artifacts_bucket_absent",
+                slug=state.slug,
+                bucket=s3_bucket,
+            )
+            return
         logger.info(
             "scribe_artifacts_deleted",
             slug=state.slug,
