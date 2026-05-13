@@ -55,8 +55,10 @@ Bot-assisted meeting transcription via Vexa integration. A Vexa bot joins Google
 - Calendar invite parsing via IMAP listener (meet@getklai.com), DKIM/SPF/ARC-verified per SPEC-SEC-IMAP-001 — only invites whose RFC-5322 From identity is cryptographically verified can schedule a bot, preventing spoofed-organizer attacks against a customer's tenant budget
 - Consent notice displayed and recorded before any bot is dispatched
 
-### Product Entitlements & Plans
-Each org has a plan that determines which products are available: `free` (none), `core` (chat), `professional` (chat, scribe), `complete` (chat, scribe, knowledge). Products are assigned per user (direct) or per group (inherited). Effective products are the union of both. Seat limits are enforced at invite time (409 when full). Plan upgrades make new products assignable but don't auto-enable; downgrades revoke over-ceiling assignments. JWT access tokens contain a `klai:products` claim enriched by a Zitadel Action calling the portal's internal API.
+### Product Entitlements & Pricing (per-user accounts)
+Each user has an **account type** (billing axis) and a **role / profile** (permission axis), kept as two orthogonal columns on `portal_users` per SPEC-PORTAL-PRICING-PER-USER-001. Account types match [getklai.com/pricing](https://getklai.com/pricing): **Klai Chat** (€28/user/mo) and **Klai Chat + Knowledge** (€68/user/mo); see `klai-portal/backend/app/core/seats.py::SeatType`. The invite UI shows only the Profile dropdown — the account type is derived from the chosen Profile via `suggest_seat(role)` and displayed as a read-only badge that updates live. Admin-support flow (`PATCH /api/admin/users/{id}`) still accepts an explicit `seat_type` for cases where a role's default doesn't match the customer's billing intent.
+
+Per-org product entitlements layer on top: products are assigned per user (direct) or per group (inherited); effective products are the union. Seat limits are enforced at invite time (409 when full). JWT access tokens carry a `klai:products` claim enriched by a Zitadel Action calling the portal's internal API. Org plan (`portal_orgs.plan`) survives only as a quota/feature-ceiling helper; the per-user account type is the source of truth for billing math. Phase 5b Moneybird per-seat subscription mutation is tracked separately in SPEC-PORTAL-MONEYBIRD-PER-SEAT-001 (`needs-research`).
 
 ---
 
