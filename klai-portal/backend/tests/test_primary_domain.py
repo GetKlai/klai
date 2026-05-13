@@ -33,9 +33,8 @@ class TestPortalOrgModel:
 
 def _mock_deps(mz, morg):
     mz.create_org = AsyncMock(return_value={"id": "zit-org-001"})
-    mz.create_human_user = AsyncMock(return_value={"userId": "zit-user-001"})
+    mz.create_human_user_v2_with_verify = AsyncMock(return_value={"userId": "zit-user-001"})
     mz.grant_user_role = AsyncMock()
-    mz.send_email_verification_code = AsyncMock()
     inst = MagicMock()
     inst.id = 1
     inst.slug = "bedrijf-bv"
