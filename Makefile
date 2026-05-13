@@ -5,7 +5,7 @@ COMPOSE := docker compose -f docker-compose.dev.yml --env-file .env.dev
 BACKEND_DIR := klai-portal/backend
 FRONTEND_DIR := klai-portal/frontend
 
-.PHONY: help setup dev-up dev-down dev-reset dev-status dev-logs seed backend frontend migrate lint check
+.PHONY: help setup dev-up dev-down dev-reset dev-status dev-logs seed postdeploy backend frontend migrate lint check
 
 # ── Help ─────────────────────────────────────────────────────────────────────
 
@@ -23,10 +23,10 @@ setup: ## First-time setup: copy env files, generate keys, install dependencies
 	@test -f .env.dev || cp .env.dev.example .env.dev
 	@test -f $(BACKEND_DIR)/.env || { \
 		cp $(BACKEND_DIR)/.env.example $(BACKEND_DIR)/.env && \
-		echo "  Generating encryption keys..." && \
+		echo "  Generating encryption keys (stdlib only — no cryptography import)..." && \
 		SECRETS_KEY=$$(python3 -c "import secrets; print(secrets.token_hex(32))") && \
 		ENCRYPT_KEY=$$(python3 -c "import secrets; print(secrets.token_hex(32))") && \
-		COOKIE_KEY=$$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())") && \
+		COOKIE_KEY=$$(python3 -c "import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())") && \
 		sed -i.bak "s|^PORTAL_SECRETS_KEY=.*|PORTAL_SECRETS_KEY=$$SECRETS_KEY|" $(BACKEND_DIR)/.env && \
 		sed -i.bak "s|^ENCRYPTION_KEY=.*|ENCRYPTION_KEY=$$ENCRYPT_KEY|" $(BACKEND_DIR)/.env && \
 		sed -i.bak "s|^SSO_COOKIE_KEY=.*|SSO_COOKIE_KEY=$$COOKIE_KEY|" $(BACKEND_DIR)/.env && \
@@ -76,9 +76,20 @@ dev-logs: ## Tail logs from all Docker services
 
 # ── Data ─────────────────────────────────────────────────────────────────────
 
+# Auto-discover the compose-managed postgres container (works regardless of
+# project name; canonical "klai-postgres-1", workspace "<dir>-postgres-1").
+PG_CONTAINER := $$(docker ps --format '{{.Names}}' | grep -E '^[a-z0-9_-]+-postgres-1$$' | head -1)
+
 seed: ## Seed database with demo data (dev org, users)
-	docker exec -i klai-postgres-1 psql -U klai -d klai < dev/seed.sql
-	@echo "Database seeded with demo data."
+	@CTR="$(PG_CONTAINER)"; \
+	if [ -z "$$CTR" ]; then echo "No postgres container found — run 'make dev-up' first."; exit 1; fi; \
+	docker exec -i "$$CTR" psql -U klai -d klai < dev/seed.sql; \
+	echo "Database seeded with demo data (container=$$CTR)."
+
+postdeploy: ## Apply post-deploy SQL (RLS policies + helper functions) as klai superuser
+	@CTR="$(PG_CONTAINER)"; \
+	if [ -z "$$CTR" ]; then echo "No postgres container found — run 'make dev-up' first."; exit 1; fi; \
+	cd $(BACKEND_DIR) && bash scripts/apply_post_deploy_sql.sh --local --container "$$CTR"
 
 # ── Backend ──────────────────────────────────────────────────────────────────
 

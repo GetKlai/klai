@@ -27,11 +27,20 @@ async def ensure_dev_user_exists(db: AsyncSession, dev_user_id: str) -> None:
 
     # Use raw SQL to avoid RLS complications — this runs at startup before
     # any tenant context is set, on the superuser connection.
+    #
+    # Notes on column values:
+    # - provisioning_status='ready' (NOT 'complete' — 'complete' is not in the
+    #   CHECK constraint defined by ck_portal_orgs_provisioning_status).
+    # - primary_domain='localhost' satisfies the NOT NULL constraint added by
+    #   SPEC-AUTH-009. The value is otherwise unused in dev (no real OAuth
+    #   redirect resolves through it).
     result = await db.execute(
         text(
             """
-            INSERT INTO portal_orgs (zitadel_org_id, name, slug, plan, provisioning_status)
-            VALUES (:org_id, :name, :slug, 'professional', 'complete')
+            INSERT INTO portal_orgs (
+                zitadel_org_id, name, slug, plan, provisioning_status, primary_domain
+            )
+            VALUES (:org_id, :name, :slug, 'professional', 'ready', 'localhost')
             ON CONFLICT (zitadel_org_id) DO NOTHING
             RETURNING id
             """
