@@ -154,8 +154,8 @@ interface SeatBreakdownResponse {
 }
 
 function seatLabel(tier: SeatTier): string {
-  if (tier === 'chat') return m.admin_billing_breakdown_seat_chat()
-  return m.admin_billing_breakdown_seat_knowledge()
+  if (tier === 'chat') return m.admin_billing_breakdown_account_chat()
+  return m.admin_billing_breakdown_account_knowledge()
 }
 
 function formatEur(amount: number): string {
@@ -226,7 +226,7 @@ function SeatBreakdownPanel() {
         {data && (
           <div className="space-y-2">
             <div className="grid grid-cols-[1fr_auto_auto] gap-x-6 text-xs uppercase tracking-wide text-gray-400">
-              <span>{m.admin_billing_breakdown_col_seat()}</span>
+              <span>{m.admin_billing_breakdown_col_account_type()}</span>
               <span className="text-right">{m.admin_billing_breakdown_col_count()}</span>
               <span className="text-right">{m.admin_billing_breakdown_col_monthly()}</span>
             </div>
