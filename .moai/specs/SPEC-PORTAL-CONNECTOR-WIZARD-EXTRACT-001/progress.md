@@ -42,14 +42,58 @@ After v0.2.0 shipped, a self-review identified loose ends. The
 
 ## Outstanding follow-ups (per § Follow-ups)
 
-These remain explicitly out of this SPEC's scope:
+**UPDATE 2026-05-13 (post-sync):** All 9 god-component candidates from
+the F-table have been promoted to their own SPEC documents. The
+`§ Follow-ups` section in `spec.md` has been updated to reference each
+new SPEC-ID with current status. Below is the canonical pointer list:
 
-- **F-1**: `useConnectorWizardState` hook extraction (real win, real risk)
-- **F-2**: Page god-component split (depends on F-1)
-- **F-table row 1**: `TaxonomyTab` god-component split (1 cross-route
-  import marked with `eslint-disable-next-line` references this work)
-- **F-table other rows**: 7 more god-component candidates documented
-  in spec.md § Follow-ups
+### Direct followups to this SPEC (still TODO, no new SPECs created)
+
+- **F-1**: `useConnectorWizardState` hook extraction (real win, real risk).
+  Stays as a follow-up, not promoted to its own SPEC yet — needs a
+  concrete trigger (a feature touching the wizard state) to be worth
+  scheduling.
+- **F-2**: Page god-component split for AddConnectorPage / EditConnectorPage.
+  Depends on F-1. Same logic.
+
+### Repo-wide god-component cleanup SPECs (new, this commit)
+
+| Source area | New SPEC | Initial status |
+|---|---|---|
+| `taxonomy.tsx` (move) | `SPEC-PORTAL-TAXONOMY-EXTRACT-001` | ready (small, pickable now) |
+| `taxonomy.tsx` (interior split) | `SPEC-PORTAL-TAXONOMY-SPLIT-001` | draft (DDD, post-EXTRACT) |
+| `admin/users/index.tsx` | `SPEC-PORTAL-ADMIN-USERS-CLEANUP-001` | draft |
+| `$kbSlug/connectors.tsx` | `SPEC-PORTAL-CONNECTORS-TAB-CLEANUP-001` | draft (borderline) |
+| `knowledge/new.tsx` | `SPEC-PORTAL-KB-NEW-CLEANUP-001` | draft |
+| `admin/settings.tsx` | `SPEC-PORTAL-ADMIN-SETTINGS-CLEANUP-001` | draft |
+| `admin/billing.lazy.tsx` | `SPEC-PORTAL-BILLING-CLEANUP-001` | draft (coordinate with PRICING-PER-USER-001) |
+| `app/transcribe/add.tsx` | `SPEC-PORTAL-TRANSCRIBE-ADD-CLEANUP-001` | draft |
+| `setup/mfa.lazy.tsx` | `SPEC-PORTAL-MFA-SETUP-CLEANUP-001` | draft |
+| `$kbSlug/members.tsx` | `SPEC-PORTAL-KB-MEMBERS-CLEANUP-001` | draft |
+
+Each carved-out SPEC includes:
+- Source SPEC's metrics (lines, useState, churn) verbatim
+- Reference to the file-organization rule + ESLint guard already in place
+- Reference to the proven KBOverviewSections / TaxonomyTab extraction
+  pattern as precedent
+- Explicit "scale-the-answer" caveat: don't bundle multiple cleanups
+  in one SPEC, even if they look similar
+- Required learnings section pointing to this SPEC for context
+
+### Architectural smells (closed in followups commit)
+
+- **F-S1**: `insights.tsx` cross-route imports — PARTIALLY CLOSED
+  (`KBOverviewSections` extracted; `TaxonomyTab` left with explicit
+  marker, will close in `SPEC-PORTAL-TAXONOMY-EXTRACT-001`).
+- **F-S3**: ESLint rule for cross-route imports — DONE (PR #620 +
+  cross-reference doc PR #622).
+
+### Convention adoption
+
+- **F-C2**: Hoist legacy cross-directory imports — DONE in PR #620
+  for the wizard-only subset. Genuinely-shared symbols (CookieRow,
+  ConnectorSummary) correctly stayed in `-kb-types.ts`.
+- **F-C1**: Audit all 5 `-`-prefixed files — still open.
 
 ## Final state
 
