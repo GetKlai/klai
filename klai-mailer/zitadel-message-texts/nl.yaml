@@ -6,14 +6,10 @@
 # These texts are pre-rendered by Zitadel and sent to klai-mailer in templateData.
 # klai-mailer wraps them in the Klai HTML email template.
 
-InitCode:
-  subject: "Activeer je Klai-account"
-  preHeader: "Nog één klik en je Klai-omgeving is actief"
-  title: "Account activeren"
-  greeting: "Hallo {{.FirstName}},"
-  text: "We hebben een Klai-account voor je aangemaakt. Activeer deze via de knop hieronder en kies je wachtwoord. Daarna log je in op my.${DOMAIN}."
-  buttonText: "Account activeren"
-  footerText: "Had je deze e-mail niet verwacht? Dan mag je hem gewoon negeren."
+# InitCode template removed by SPEC-MAILER-DROP-INITCODE-001 — Klai's v2
+# invite_code flow (user.human.invite.code.added with our own urlTemplate)
+# owns the admin-invite mail since SPEC-PORTAL-AUTH-EMAIL-LINKS-001. The
+# InitCode event is now dropped at the klai-mailer /notify handler with a 204.
 
 VerifyEmail:
   subject: "Bevestig je e-mailadres bij Klai"
