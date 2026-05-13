@@ -35,7 +35,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import UploadFile
 
-from app.api.dependencies import _load_org_or_500
+from app.api.dependencies import _load_org_or_500, get_kb_with_access
 from app.core.database import get_db
 from app.core.permissions import UserPermissions, get_caller
 from app.core.profiles import ProfileRole
@@ -240,6 +240,7 @@ def _hostname(raw: str) -> str:
     "/knowledge-bases/{kb_slug}/sources/url",
     response_model=SourceIngestedResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(get_kb_with_access)],
 )
 async def add_url_source(
     kb_slug: str,
@@ -289,6 +290,7 @@ async def add_url_source(
 @router.post(
     "/knowledge-bases/{kb_slug}/sources/youtube",
     status_code=status.HTTP_410_GONE,
+    dependencies=[Depends(get_kb_with_access)],
 )
 async def add_youtube_source(
     kb_slug: str,
@@ -327,6 +329,7 @@ async def add_youtube_source(
     "/knowledge-bases/{kb_slug}/sources/text",
     response_model=SourceIngestedResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(get_kb_with_access)],
 )
 async def add_text_source(
     kb_slug: str,
@@ -614,6 +617,7 @@ async def _dispatch_blob(
     "/knowledge-bases/{kb_slug}/sources/file",
     response_model=FileSourcesIngestedResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(get_kb_with_access)],
 )
 async def add_file_source(
     kb_slug: str,
@@ -785,6 +789,7 @@ class FileUploadStatusResponse(BaseModel):
 @router.get(
     "/knowledge-bases/{kb_slug}/sources/file/{upload_id}/status",
     response_model=FileUploadStatusResponse,
+    dependencies=[Depends(get_kb_with_access)],
 )
 async def get_file_source_status(
     kb_slug: str,

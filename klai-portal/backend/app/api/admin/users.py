@@ -29,6 +29,13 @@ from app.models.groups import PortalGroup, PortalGroupMembership
 from app.models.portal import PortalOrg, PortalUser
 from app.services.audit import log_event
 from app.services.github import remove_github_org_member
+from app.services.kb_offboarding import (
+    KbDisposition,
+    OffboardPreview,
+    apply_dispositions,
+    compute_offboard_preview,
+    revoke_user_credentials,
+)
 from app.services.mcp_role_notifier import fire_role_change_notification
 from app.services.zitadel import zitadel
 
@@ -608,26 +615,129 @@ async def reactivate_user(
     return MessageResponse(message=f"User {zitadel_user_id} reactivated.")
 
 
-@router.post("/users/{zitadel_user_id}/offboard", response_model=MessageResponse)
-async def offboard_user(
+@router.get("/users/{zitadel_user_id}/offboard-preview", response_model=OffboardPreview)
+async def offboard_preview(
     zitadel_user_id: str,
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
-) -> MessageResponse:
-    """Offboard a user: remove memberships + products, deactivate in Zitadel, set status."""
-    result = await db.execute(
+) -> OffboardPreview:
+    """SPEC-PORTAL-KB-OWNERSHIP-001 REQ-2.1 — preview KB-dispositions for offboard.
+
+    Returns the org KBs the user is the sole owner of (admin must choose
+    transfer-to or delete), the personal KBs (always purged on offboard),
+    and the count of API-keys / MCP-tokens that will be auto-revoked.
+    The frontend uses this to render the offboard wizard.
+    """
+    # Verify user belongs to caller's tenant before exposing any data.
+    user_result = await db.execute(
         select(PortalUser).where(
             PortalUser.zitadel_user_id == zitadel_user_id,
             PortalUser.org_id == perms.org_id,
         )
     )
-    user = result.scalar_one_or_none()
+    if user_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return await compute_offboard_preview(zitadel_user_id, perms.org_id, db)
+
+
+class OffboardRequest(BaseModel):
+    """Body for ``POST /api/admin/users/{zitadel_user_id}/offboard``.
+
+    REQ-2.5 — every KB returned by ``offboard-preview`` MUST appear here
+    with an explicit disposition, otherwise we 400 with the missing list.
+    No implicit defaults: silent-orphans are the failure mode this SPEC
+    exists to prevent.
+    """
+
+    kb_dispositions: list[KbDisposition] = []
+
+
+@router.post("/users/{zitadel_user_id}/offboard", response_model=MessageResponse)
+async def offboard_user(
+    zitadel_user_id: str,
+    body: OffboardRequest | None = None,
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """Offboard a user: KB-dispositions + token-revoke + memberships + Zitadel.
+
+    SPEC-PORTAL-KB-OWNERSHIP-001 Phase 3 expanded the surface of this
+    endpoint. The request body is now mandatory whenever the offboard
+    preview lists any KBs — see REQ-2.5. Order of operations inside the
+    DB transaction:
+
+      1. Validate body covers EVERY KB returned by the preview (REQ-2.5).
+      2. Apply KB dispositions via ``apply_dispositions`` (REQ-2.2 .. 2.6 + 2.8).
+      3. Revoke partner API keys + MCP tokens via ``revoke_user_credentials`` (REQ-2.7).
+      4. Delete tenant-scoped group memberships (existing SEC-TENANT-001 logic).
+      5. Flip user.status to 'offboarded' + emit user.offboarded audit.
+      6. Commit DB transaction.
+      7. After-commit: Zitadel deactivate + GitHub remove.
+
+    Failure in steps 1-5 raises and rolls back the entire transaction —
+    the user stays ``active`` and KBs are unchanged. Failure in step 7
+    leaves the user ``offboarded`` in our DB but Zitadel/GitHub
+    out-of-sync; this is the same fail-open behaviour the endpoint had
+    before this SPEC and is fine for now (the cleanup-runbook lists it).
+    """
+    body = body or OffboardRequest()
+
+    user_result = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == zitadel_user_id,
+            PortalUser.org_id == perms.org_id,
+        )
+    )
+    user = user_result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     if user.status == "offboarded":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User has already been offboarded")
 
-    # Cascade: remove group memberships and product assignments.
+    # REQ-2.5 — fetch the preview and verify the body covers every KB it
+    # lists. Missing dispositions return 400 with the explicit slug list
+    # so the frontend can re-render the wizard with the offending entries
+    # highlighted.
+    org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == perms.org_id))
+    org = org_result.scalar_one_or_none()
+    if org is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Organisation not found")
+
+    preview = await compute_offboard_preview(zitadel_user_id, perms.org_id, db)
+    expected_kb_ids = {kb.kb_id for kb in preview.org_kbs_solely_owned} | {kb.kb_id for kb in preview.personal_kbs}
+    provided_kb_ids = {d.kb_id for d in body.kb_dispositions}
+    missing = expected_kb_ids - provided_kb_ids
+    if missing:
+        # Build a stable, human-readable list (slug-based) so the admin
+        # can click straight to the affected KBs in the wizard.
+        kb_lookup: dict[int, str] = {kb.kb_id: kb.slug for kb in (*preview.org_kbs_solely_owned, *preview.personal_kbs)}
+        missing_slugs = sorted(kb_lookup[kb_id] for kb_id in missing)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error_code": "missing_kb_dispositions",
+                "missing": missing_slugs,
+                "message": f"Missing dispositions for: [{', '.join(missing_slugs)}]",
+            },
+        )
+
+    # REQ-2.2 — KB dispositions inside the offboard tx.
+    await apply_dispositions(
+        target_user_id=zitadel_user_id,
+        dispositions=body.kb_dispositions,
+        actor_user_id=perms.user_id,
+        org=org,
+        db=db,
+    )
+
+    # REQ-2.7 — token revoke inside the same tx.
+    api_keys_deleted, mcp_tokens_revoked = await revoke_user_credentials(
+        target_user_id=zitadel_user_id,
+        org_id=perms.org_id,
+        db=db,
+    )
+
+    # Cascade: remove group memberships.
     #
     # SPEC-SEC-TENANT-001 REQ-1: scope the membership delete to the caller's
     # org via PortalGroup.org_id. PortalGroupMembership has no org_id column
@@ -656,6 +766,9 @@ async def offboard_user(
         org_id=perms.org_id,
         zitadel_user_id=zitadel_user_id,
         memberships_removed_count=memberships_removed_count,
+        kb_dispositions_count=len(body.kb_dispositions),
+        api_keys_deleted=api_keys_deleted,
+        mcp_tokens_revoked=mcp_tokens_revoked,
     )
     await log_event(
         org_id=perms.org_id,
@@ -663,13 +776,22 @@ async def offboard_user(
         action="user.offboarded",
         resource_type="user",
         resource_id=zitadel_user_id,
+        details={
+            "kb_dispositions_count": len(body.kb_dispositions),
+            "api_keys_deleted": api_keys_deleted,
+            "mcp_tokens_revoked": mcp_tokens_revoked,
+        },
     )
+    await db.commit()
+
+    # Post-commit external side-effects. Failures here leave us in the
+    # documented "DB-side offboarded, IdP-side still active" state — same
+    # behaviour as before this SPEC.
     await zitadel.deactivate_user(settings.zitadel_portal_org_id, zitadel_user_id)
     if user.github_username:
         await remove_github_org_member(user.github_username)
     else:
         logger.info("GitHub offboarding skipped for %s: no github_username linked", zitadel_user_id)
-    await db.commit()
     return MessageResponse(message=f"User {zitadel_user_id} offboarded.")
 
 

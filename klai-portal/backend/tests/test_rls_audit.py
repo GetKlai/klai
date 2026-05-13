@@ -87,6 +87,14 @@ _ALLOWLIST: dict[str, str] = {
     "app/services/kb_quota.py": (
         "service layer — all callers pass a db session with tenant context already set via _get_caller_org"
     ),
+    # SPEC-PORTAL-KB-OWNERSHIP-001 Phase 3 offboard orchestrator. Every entry
+    # point (compute_offboard_preview, apply_dispositions,
+    # revoke_user_credentials) is called from admin/users.py routes that gate
+    # on Depends(get_caller_at_least(ProfileRole.ADMIN)) — the upstream auth
+    # dep runs set_tenant before any of these execute().
+    "app/services/kb_offboarding.py": (
+        "service layer — orchestrator called from admin/users.py routes after _get_caller_org sets tenant"
+    ),
 }
 
 

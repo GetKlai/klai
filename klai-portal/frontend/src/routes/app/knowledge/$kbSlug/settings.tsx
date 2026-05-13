@@ -43,6 +43,13 @@ function SettingsTab() {
   const isOwnerRole = !!(myUserId && members?.users.some((u) => u.user_id === myUserId && u.role === 'owner'))
   const isAdmin = currentUser?.isAdmin === true
   const isOwner = isCreator || isOwnerRole || isAdmin
+  // SPEC-PORTAL-KB-OWNERSHIP-001 REQ-1.1 — admins who are NOT the creator
+  // get the typed-confirmation override pad. Owners + creators continue to
+  // use the existing slug-typed UX.
+  const isAdminOverride = isAdmin && !isCreator && !isOwnerRole
+  const creatorMember = members?.users.find((u) => u.user_id === kb?.created_by)
+  const creatorDisplayName =
+    creatorMember?.display_name ?? creatorMember?.email ?? kb?.created_by ?? null
 
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
 
@@ -206,6 +213,8 @@ function SettingsTab() {
             connectorCount={stats?.connector_count ?? 0}
             hasGitea={!!kb.gitea_repo_slug}
             hasDocs={kb.docs_enabled}
+            mode={isAdminOverride ? 'admin-override' : 'self'}
+            creatorName={creatorDisplayName}
           />
         </div>
       )}
