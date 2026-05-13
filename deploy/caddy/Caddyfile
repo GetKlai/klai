@@ -381,6 +381,34 @@
         }
     }
 
+    # Onboarding-mail trigger — externally reachable so Twenty CRM on
+    # public-01 can POST when an operator clicks the "Verstuur
+    # onboarding mail" workflow button. Auth is Bearer <INTERNAL_SECRET>;
+    # without the bearer this endpoint 401s. Header-strip mirrors every
+    # other public→portal-api route so external traffic can never inject
+    # internal-trust headers.
+    @onboarding-public {
+        host my.{$DOMAIN}
+        path /internal/onboarding/start
+        method POST
+    }
+    handle @onboarding-public {
+        rate_limit {
+            zone onboarding_per_ip {
+                key {remote_host}
+                events 30
+                window 1m
+            }
+        }
+        reverse_proxy portal-api:8010 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-Org-Slug
+            header_up -X-User-ID
+        }
+    }
+
     # SPEC-MCP-AUTH-001: OAuth 2.1 authorization-server endpoints live
     # at root level (not under /api) per RFC 8414 / RFC 6749 conventions.
     # Routes: /.well-known/oauth-authorization-server, /oauth/authorize,
