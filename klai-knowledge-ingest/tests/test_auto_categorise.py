@@ -157,20 +157,41 @@ async def test_auto_categorise_no_llm_calls(_patch_qdrant):
         mock_httpx_instance.post.assert_not_called()
 
 
-def test_auto_categorise_requires_auth(client):
-    """POST without X-Internal-Token should return 401."""
-    with patch("knowledge_ingest.routes.taxonomy.settings") as mock_settings:
-        mock_settings.portal_internal_token = "secret-token"
-        mock_settings.qdrant_url = "http://localhost:6333"
-        mock_settings.qdrant_api_key = ""
-        mock_settings.taxonomy_auto_categorise_threshold = 0.82
-        resp = client.post(
-            "/ingest/v1/taxonomy/auto-categorise",
-            json={
-                "org_id": "org-1",
-                "kb_slug": "test-kb",
-                "node_id": 42,
-                "cluster_centroid": [1.0, 0.0, 0.0],
-            },
-        )
+def test_auto_categorise_requires_auth():
+    """POST without X-Internal-Secret should return 401.
+
+    Auth is enforced by InternalSecretMiddleware on every non-/health route.
+    SPEC-CODEBASE-AUDIT-001 cluster G TP-1: the legacy per-route
+    X-Internal-Token check was removed; this test now exercises the
+    middleware-level 401 on the auto-categorise endpoint specifically (so a
+    future regression that bypasses the middleware on this route is caught).
+    """
+    mock_pool = MagicMock()
+    mock_pool.close = AsyncMock(return_value=None)
+
+    with (
+        patch("knowledge_ingest.qdrant_store.ensure_collection", new_callable=AsyncMock),
+        patch(
+            "knowledge_ingest.db.get_pool",
+            new_callable=AsyncMock,
+            return_value=mock_pool,
+        ),
+        patch("knowledge_ingest.db.close_pool", new_callable=AsyncMock),
+        patch("knowledge_ingest.config.settings.enrichment_enabled", False),
+    ):
+        from fastapi.testclient import TestClient
+
+        from knowledge_ingest.app import app
+
+        with TestClient(app, raise_server_exceptions=False) as unauthed:
+            resp = unauthed.post(
+                "/ingest/v1/taxonomy/auto-categorise",
+                json={
+                    "org_id": "org-1",
+                    "kb_slug": "test-kb",
+                    "node_id": 42,
+                    "cluster_centroid": [1.0, 0.0, 0.0],
+                },
+            )
         assert resp.status_code == 401
+        assert "X-Internal-Secret" in resp.json()["detail"]

@@ -54,14 +54,17 @@ from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.api.bearer import bearer  # BFF Phase A4 — session-aware bearer shim
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, get_db
-from app.models.portal import PortalOrg, PortalOrgAllowedDomain, PortalUser
+from app.models.portal import PortalOrg, PortalUser
 from app.services import audit
+from app.services.auth_links import AuthLinkRoute, build_url_template
 from app.services.bff_session import SessionService
 from app.services.events import emit_event
+from app.services.pending_session import PendingSessionService
 from app.services.redis_client import get_redis_pool
 from app.services.request_ip import resolve_caller_ip_subnet
 from app.services.zitadel import zitadel
@@ -400,19 +403,85 @@ def invalidate_tenant_slug_cache() -> None:
     _tenant_slug_cache_expiry = 0.0
 
 
+# SPEC-SEC-HYGIENE-001 REQ-20.5: every static system subdomain that has
+# a Zitadel OIDC client registered with `*.{settings.domain}/...` redirect
+# URIs. These hosts are operationally-pinned (created at infra deploy time,
+# not per-tenant) and protected by Zitadel's primary `redirect_uri` exact
+# match. This validator is defense-in-depth.
+#
+# MUST be kept in sync with the registered redirect_uris on every Zitadel
+# OIDC app under the Klai Platform project. Verify quarterly via:
+#
+#   curl -sf "https://auth.getklai.com/management/v1/projects/<klai-platform>/apps/_search" \
+#     -H "Authorization: Bearer $ZITADEL_ADMIN_PAT" \
+#     -H "X-Zitadel-Orgid: <klai-org>" -X POST -d '{}' \
+#   | jq '.result[].oidcConfig.redirectUris[]?' \
+#   | xargs -I{} python -c "from urllib.parse import urlparse; \
+#                            print(urlparse('{}').hostname.split('.')[0])"
+#
+# Any first-label not in the union of (this set + tenant-slug allowlist +
+# `chat-{slug}` derived hosts) is a NEW class — extend the validator AND
+# add a test BEFORE the new OIDC app ships.
+_STATIC_SYSTEM_SUBDOMAINS: frozenset[str] = frozenset(
+    {
+        # Portal — login + dev variant
+        # `my` (frontend_url) is added dynamically below from settings.
+        "dev",
+        # LibreChat
+        "chat",
+        "chat-dev",
+        # Auth provider
+        "auth",
+        # Observability
+        "grafana",
+        "errors",
+    }
+)
+
+# SPEC-SEC-HYGIENE-001 REQ-20.5: per-tenant host prefixes — first label
+# of the form ``<prefix><slug>`` is accepted iff ``<slug>`` is in the
+# active tenant allowlist. The set is hardcoded because each prefix
+# represents a runtime architectural decision (a per-tenant subdomain
+# pattern owned by a specific service) that requires a coordinated
+# review to add. Currently:
+#
+#   chat-     LibreChat per-tenant instance (chat-{slug}.{domain})
+#
+# To add a new prefix: extend this set, extend the audit-test in
+# tests/test_validate_callback_url.py, and verify the corresponding
+# service registers the matching redirect_uri pattern in Zitadel. The
+# nightly drift workflow (.github/workflows/zitadel-oidc-drift.yml)
+# fires if a new host class appears in Zitadel without code update.
+_TENANT_HOST_PREFIXES: frozenset[str] = frozenset({"chat-"})
+
+# Sentinel passed to Zitadel ``/v2/sessions`` when ``find_user_by_email``
+# returned None (user does not exist). Zitadel issues snowflake user
+# IDs of 18 numeric digits; 14 zeros can never collide with a real ID.
+# Using a syntactically-valid but unknown user_id keeps the timing
+# close to the user-found path, preserving the uniform-401
+# anti-enumeration property from SPEC-SEC-MFA-001 finding #12 /
+# REQ-2.3 / REQ-2.5. See ``login`` handler call site for context.
+_NONEXISTENT_USER_ID_SENTINEL: str = "00000000000000"
+
+
 @lru_cache(maxsize=1)
 def _system_callback_hosts() -> frozenset[str]:
-    """SPEC-SEC-HYGIENE-001 REQ-20.4: trusted callback hosts that are NOT
-    tenant subdomains.
+    """SPEC-SEC-HYGIENE-001 REQ-20.4 + REQ-20.5: trusted callback hosts that
+    are NOT tenant subdomains.
 
     The callback-URL allowlist must accept every legitimate hostname class
     that a Zitadel-issued ``callback_url`` can resolve to:
 
     - the bare apex (``settings.domain``) — used by the SPA itself
     - the canonical login domain (``urlparse(settings.frontend_url).hostname``)
-      — Zitadel always redirects through this host first per SPEC-AUTH-008
-      / portal-backend.md ``FRONTEND_URL`` rule
-    - tenant subdomains — handled separately via ``_get_tenant_slug_allowlist``
+      — Zitadel redirects through this host on every OIDC flow per
+      SPEC-AUTH-008 / portal-backend.md ``FRONTEND_URL`` rule (REQ-20.4)
+    - static system service subdomains (REQ-20.5) — see
+      ``_STATIC_SYSTEM_SUBDOMAINS`` for the curated list
+    - tenant subdomains — handled separately via
+      ``_get_tenant_slug_allowlist`` (REQ-20.1)
+    - per-tenant LibreChat subdomains (``chat-{slug}.{domain}``) — handled
+      inline in ``_validate_callback_url`` (REQ-20.5)
 
     Derived from settings, cached for the process lifetime — these settings
     are deploy-immutable. Synchronous so it can be called from anywhere
@@ -423,6 +492,11 @@ def _system_callback_hosts() -> frozenset[str]:
     fe_host = urlparse(str(settings.frontend_url)).hostname
     if fe_host:
         hosts.add(fe_host)
+    # REQ-20.5: each static system subdomain combines with the bare apex
+    # to produce one fully-qualified host. Doing the join once at boot
+    # keeps the hot path on a single set lookup.
+    for subdomain in _STATIC_SYSTEM_SUBDOMAINS:
+        hosts.add(f"{subdomain}.{settings.domain}")
     return frozenset(hosts)
 
 
@@ -463,7 +537,9 @@ async def _validate_callback_url(url: str) -> str:
     # REQ-20.3: localhost short-circuit preserved unchanged.
     if hostname in ("localhost", "127.0.0.1"):
         return url
-    # REQ-20.4: bare apex + FRONTEND_URL host — non-tenant trusted hosts.
+    # REQ-20.4 + REQ-20.5: bare apex, FRONTEND_URL host, and static
+    # system service subdomains (chat, chat-dev, dev, grafana, errors,
+    # auth) — non-tenant trusted hosts.
     if hostname in _system_callback_hosts():
         return url
     trusted = settings.domain  # getklai.com
@@ -474,16 +550,33 @@ async def _validate_callback_url(url: str) -> str:
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Login failed, please try again later",
         )
-    # REQ-20.1: subdomain label MUST be in the active allowlist.
+    # REQ-20.1 + REQ-20.5: subdomain label MUST be in the active allowlist
+    # — either as the bare slug (``voys.getklai.com``) OR as a per-tenant
+    # prefixed host like ``chat-voys.getklai.com``.
     suffix = f".{trusted}"
     subdomain = hostname[: -len(suffix)]
     # Take the first label (e.g. "voys" from "voys.subsection.getklai.com").
     first_label = subdomain.split(".")[0] if subdomain else ""
+    # REQ-20.5: strip a single per-tenant host prefix (``chat-``) before
+    # the slug check. Strict single-level strip — only the FIRST matching
+    # prefix is removed; "chat-chat-foo" still rejects because the result
+    # is "chat-foo" which is itself a chat-prefixed label, not a slug.
+    candidate_slug = first_label
+    for prefix in _TENANT_HOST_PREFIXES:
+        if first_label.startswith(prefix) and len(first_label) > len(prefix):
+            candidate_slug = first_label[len(prefix) :]
+            break
     allowed_slugs = await _get_tenant_slug_allowlist()
-    if first_label not in allowed_slugs:
-        logger.error(
+    if candidate_slug not in allowed_slugs:
+        # SPEC-SEC-HYGIENE-001 REQ-20: structlog kwargs (NOT stdlib
+        # ``extra={...}``) so the hostname survives the wrapper — this
+        # lost the diagnostic field on the 2026-04-29 callback-allowlist
+        # incident, which made the regression class harder to locate.
+        _slog.error(
             "callback_url_subdomain_not_allowlisted",
-            extra={"hostname": hostname},
+            hostname=hostname,
+            first_label=first_label,
+            candidate_slug=candidate_slug,
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -942,7 +1035,10 @@ async def password_reset(body: PasswordResetRequest) -> None:
         return  # unknown email — return 204 silently (REQ-3.2)
 
     try:
-        await zitadel.send_password_reset(user_id)
+        # SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-1: point the reset link at Klai's
+        # /password/set page, not Zitadel's hosted /ui/login/.
+        url_template = build_url_template(AuthLinkRoute.PASSWORD_SET)
+        await zitadel.send_password_reset(user_id, url_template=url_template)
     except httpx.HTTPStatusError as exc:
         _slog.exception("send_password_reset_failed", zitadel_status=exc.response.status_code)
         _emit_auth_event(
@@ -958,13 +1054,28 @@ async def password_reset(body: PasswordResetRequest) -> None:
 
 @router.post("/auth/password/set", status_code=status.HTTP_204_NO_CONTENT)
 async def password_set(body: PasswordSetRequest) -> None:
-    """Complete a password reset using the code from the reset email.
+    """Complete a password reset / activation using the code from the email.
 
-    SPEC-SEC-AUTH-COVERAGE-001 REQ-3.4..3.6: emit `audit.log_event` on
-    success and `password_set_failed` events on every failure leg.
+    SPEC-SEC-AUTH-COVERAGE-001 REQ-3.4..3.6: emit ``audit.log_event`` on
+    success and ``password_set_failed`` events on every failure leg.
+
+    Code-handling is delegated to ``zitadel.set_password_with_code`` which
+    supports BOTH the invite flow (verify → password without code) and the
+    reset flow (password with verificationCode) — see #637.
+
+    Auto-login after password-set was attempted under
+    SPEC-PORTAL-AUTH-AUTOLOGIN-001 (#635) and removed in #638 because Zitadel
+    rejects ``POST /v2/oidc/auth_requests/{id}`` with 403 when the
+    ``authRequest`` was created without a browser session (server-side
+    ``/oauth/v2/authorize`` makes an authRequest, but it is not cookie-bound
+    and Zitadel refuses to finalize it). The frontend redirects to ``/`` after
+    a successful set; the standard OIDC login flow handles auth from there.
+    True auto-login requires a browser-handoff flow (Redis-stored session id
+    passed through ``/api/auth/oidc/start`` so the browser is the one calling
+    ``/authorize``) — tracked as a follow-up.
     """
     try:
-        await zitadel.set_password_with_code(body.user_id, body.code, body.new_password)
+        flow = await zitadel.set_password_with_code(body.user_id, body.code, body.new_password)
     except httpx.HTTPStatusError as exc:
         _slog.exception("set_password_with_code_failed", zitadel_status=exc.response.status_code)
         if exc.response.status_code in (400, 404, 410):
@@ -993,13 +1104,20 @@ async def password_set(body: PasswordSetRequest) -> None:
             detail="Failed to set password, please try again later",
         ) from exc
 
+    # Surface which Zitadel flow consumed the code so operators can split
+    # invite-completion vs reset-completion in VictoriaLogs / Grafana.
+    _slog.info(
+        "password_set",
+        actor_user_id=body.user_id,
+        flow=flow,
+    )
     await audit.log_event(
         org_id=0,
         actor=body.user_id,
         action="auth.password.set",
         resource_type="user",
         resource_id=body.user_id,
-        details={"reason": "set"},
+        details={"reason": "set", "flow": flow},
     )
 
 
@@ -1058,9 +1176,20 @@ async def login(
             _slog.warning("has_totp_check_failed", exc_info=True)
             has_totp = False
 
-    # 2. Create a Zitadel session by checking email + password
+    # 2. Create a Zitadel session — pass the canonical Zitadel user_id
+    # resolved in step 1a, NOT the raw user-typed email. Zitadel matches
+    # `loginName` case-sensitively in /v2/sessions checks, so a user whose
+    # stored loginName is `Steven@getklai.com` cannot sign in by typing
+    # `steven@getklai.com` if we forward the typed value. The IGNORE_CASE
+    # fix on `find_user_by_email` (commit 7e92e089) already gives us the
+    # canonical user_id; we simply need to use it. When find returned None
+    # (user not found), pass a syntactically-valid sentinel so Zitadel
+    # returns 4xx and the handler emits the SAME uniform "Email address or
+    # password is incorrect" 401 — the anti-enumeration pattern from
+    # SPEC-SEC-MFA-001 finding #12 / REQ-2.3 / REQ-2.5.
+    session_user_id = zitadel_user_id or _NONEXISTENT_USER_ID_SENTINEL
     try:
-        session = await zitadel.create_session_with_password(body.email, body.password)
+        session = await zitadel.create_session_with_password(session_user_id, body.password)
     except httpx.HTTPStatusError as exc:
         logger.exception("create_session failed %s: %s", exc.response.status_code, sanitize_response_body(exc))
         if exc.response.status_code in (400, 401, 404, 412):
@@ -1802,17 +1931,71 @@ async def idp_callback(
     zitadel_user_id = details.get("zitadel_user_id", "")
     email = details.get("email", "")
 
-    # Look up existing portal_users rows for this zitadel_user_id
+    # SPEC-AUTH-009 R3: 4-case domain-match decision matrix
+    # member_orgs: orgs where the user already has a portal_users row
+    # domain_orgs: orgs whose primary_domain matches user email domain
+    #              AND user is NOT already a member
     if zitadel_user_id:
-        user_result = await db.execute(select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id))
-        existing_users = user_result.scalars().all()
+        # Eager-load org -- this query feeds the entries[] list below which
+        # accesses u.org.name / u.org.slug. In async SQLAlchemy lazy-load on
+        # a relationship raises MissingGreenlet because the implicit IO is
+        # not on a greenlet-spawned coroutine. selectinload issues one extra
+        # SELECT per batch; cost is negligible vs. the 500-error alternative.
+        user_result = await db.execute(
+            select(PortalUser)
+            .options(selectinload(PortalUser.org))
+            .where(PortalUser.zitadel_user_id == zitadel_user_id)
+        )
+        member_users = list(user_result.scalars().all())
     else:
-        existing_users = []
+        member_users = []
 
-    # C9.3: Multiple orgs → Redis pending-session, redirect to /select-workspace
-    if len(existing_users) > 1:
-        from app.services.pending_session import PendingSessionService
+    # Query orgs with matching primary_domain that user is NOT already a member of.
+    email_domain = email.rsplit("@", 1)[-1].strip().lower() if "@" in email else ""
+    domain_orgs: list[PortalOrg] = []
+    if email_domain and zitadel_user_id:
+        member_org_ids = {u.org_id for u in member_users}
+        domain_query = select(PortalOrg).where(
+            PortalOrg.primary_domain == email_domain,
+            PortalOrg.deleted_at.is_(None),
+        )
+        if member_org_ids:
+            domain_query = domain_query.where(PortalOrg.id.not_in(member_org_ids))
+        domain_result = await db.execute(domain_query)
+        domain_orgs = list(domain_result.scalars().all())
 
+    # Build combined entries list: member entries first, then domain_match.
+    entries = [
+        {
+            "org_id": u.org_id,
+            "name": u.org.name,
+            "slug": u.org.slug,
+            "kind": "member",
+            "auto_accept": False,
+        }
+        for u in member_users
+    ] + [
+        {
+            "org_id": o.id,
+            "name": o.name,
+            "slug": o.slug,
+            "kind": "domain_match",
+            "auto_accept": o.auto_accept_same_domain,
+        }
+        for o in domain_orgs
+    ]
+
+    total = len(entries)
+
+    # Case 1: no member orgs AND no domain_orgs -> redirect to /no-account.
+    if total == 0:
+        return RedirectResponse(url="/no-account", status_code=302)
+
+    # Case 2: exactly 1 member, 0 domain_match -> direct finalize (falls through below).
+    is_case_2 = len(member_users) == 1 and len(domain_orgs) == 0
+
+    # Cases 3+4: anything else with at least one entry -> workspace picker.
+    if not is_case_2:
         try:
             svc = PendingSessionService()
             ref = await svc.store(
@@ -1821,49 +2004,18 @@ async def idp_callback(
                 zitadel_user_id=zitadel_user_id,
                 email=email,
                 auth_request_id=auth_request_id,
-                org_ids=[u.org_id for u in existing_users],
+                entries=entries,
             )
             return RedirectResponse(url=f"/select-workspace?ref={ref}", status_code=302)
         except Exception:
-            _slog.exception("Failed to store pending session — falling through to first org")
+            # Storing the pending session failed (Redis down or similar). Do NOT
+            # silently finalise into the user's first org — they may have multiple
+            # eligible workspaces and picking one without their consent is wrong.
+            # Send them back to login so they can retry.
+            _slog.exception("idp_callback_pending_session_failed")
+            return RedirectResponse(url=failure_url, status_code=302)
 
-    if not existing_users and zitadel_user_id and email:
-        # No portal_users row — check allowed domains for auto-provision
-        email_domain = email.rsplit("@", 1)[-1].lower() if "@" in email else ""
-        if email_domain:
-            domain_result = await db.execute(
-                select(PortalOrgAllowedDomain).where(PortalOrgAllowedDomain.domain == email_domain)
-            )
-            matched_domain = domain_result.scalar_one_or_none()
-
-            if matched_domain:
-                # C4.4: DB error → log + fall through, never 500
-                try:
-                    new_user = PortalUser(
-                        zitadel_user_id=zitadel_user_id,
-                        org_id=matched_domain.org_id,
-                        role="member",
-                        status="active",
-                        display_name=email.split("@")[0],
-                        email=email,
-                    )
-                    db.add(new_user)
-                    await db.commit()
-                    _slog.info(
-                        "Auto-provisioned SSO user",
-                        zitadel_user_id=zitadel_user_id,
-                        org_id=matched_domain.org_id,
-                        domain=email_domain,
-                    )
-                except Exception:
-                    _slog.exception(
-                        "Auto-provision failed — user will see no-account page",
-                        zitadel_user_id=zitadel_user_id,
-                    )
-                    await db.rollback()
-
-    # Finalize the auth request (always, even if no portal_users row)
-    # The callback.tsx will check org_found and redirect to /no-account if needed
+    # Finalize the auth request (Case 2: single member)
     try:
         callback_url = await zitadel.finalize_auth_request(
             auth_request_id=auth_request_id,

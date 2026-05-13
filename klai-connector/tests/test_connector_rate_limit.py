@@ -71,9 +71,7 @@ class _FakeRedis:
         if self._fail_with is not None:
             raise self._fail_with
 
-    async def zremrangebyscore(
-        self, key: str, min_score: float, max_score: float
-    ) -> int:
+    async def zremrangebyscore(self, key: str, min_score: float, max_score: float) -> int:
         self._maybe_fail()
         zset = self._zsets.setdefault(key, {})
         to_remove = [m for m, s in zset.items() if min_score <= s <= max_score]
@@ -106,7 +104,9 @@ class _FakeSession:
     async def get(self, _model: Any, key: uuid.UUID) -> Any:
         return None  # all GETs/PUTs/DELETEs of arbitrary UUIDs miss
 
-    async def execute(self, _stmt: Any) -> Any:
+    async def execute(self, _stmt: Any, *args: Any, **kwargs: Any) -> Any:
+        # SPEC-TI-002: set_tenant() calls session.execute(stmt, params_dict)
+        # with a positional params argument; accept but ignore it.
         return SimpleNamespace(scalars=lambda: SimpleNamespace(all=list))
 
     def add(self, obj: Any) -> None:
@@ -217,9 +217,7 @@ def test_write_limit_blocks_after_10_posts(monkeypatch: pytest.MonkeyPatch) -> N
 
     with _frozen_clock(monkeypatch, t):
         for i in range(_DEFAULT_WRITE_LIMIT):
-            assert _post_connector(client, f"c{i}") == 201, (
-                f"POST #{i + 1} unexpectedly failed within the limit"
-            )
+            assert _post_connector(client, f"c{i}") == 201, f"POST #{i + 1} unexpectedly failed within the limit"
         # The 11th call inside the same window must be rejected.
         assert _post_connector(client, "over") == 429
         body = client.post(

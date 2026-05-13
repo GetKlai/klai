@@ -173,12 +173,19 @@ def layer2_semantic(
         return None, margin
 
 
-async def _default_compute_centroids(catalog: list[KBEntry]) -> dict[str, list[float]]:
+async def _default_compute_centroids(
+    catalog: list[KBEntry],
+    org_id: str,
+) -> dict[str, list[float]]:
     """Compute centroids from actual chunk vectors per source_label in Qdrant.
 
     For each source_label, fetches a small sample of chunks and averages
     their dense vectors.  This produces a content-based centroid that
     represents what a source actually contains — not just what it's called.
+
+    # audit-tenant-isolation-2026-05-05 finding B-1: filter MUST include org_id
+    # to prevent cross-tenant centroid contamination from common source_labels
+    # (Notion, Confluence, GitHub, Slack, Web).
     """
     from qdrant_client.models import FieldCondition, Filter, MatchValue
 
@@ -189,7 +196,10 @@ async def _default_compute_centroids(catalog: list[KBEntry]) -> dict[str, list[f
 
     for entry in catalog:
         try:
-            # Scroll a small sample of chunks for this source_label
+            # Scroll a small sample of chunks for this source_label.
+            # audit-tenant-isolation-2026-05-05 finding B-1: filter MUST include org_id
+            # to prevent cross-tenant centroid contamination from common source_labels
+            # (Notion, Confluence, GitHub, Slack, Web).
             points, _ = await client.scroll(
                 collection_name=settings.qdrant_collection,
                 scroll_filter=Filter(
@@ -197,6 +207,7 @@ async def _default_compute_centroids(catalog: list[KBEntry]) -> dict[str, list[f
                         FieldCondition(
                             key="source_label", match=MatchValue(value=entry.source_label)
                         ),
+                        FieldCondition(key="org_id", match=MatchValue(value=org_id)),
                     ]
                 ),
                 limit=10,
@@ -263,7 +274,7 @@ async def route_to_sources(
 
     if centroids is None:
         fn = compute_centroid_fn or _default_compute_centroids
-        centroids = await fn(source_label_catalog)
+        centroids = await fn(source_label_catalog, org_id)
         _centroid_cache[org_id] = (centroids, time.monotonic())
 
     if centroids:

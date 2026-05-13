@@ -12,6 +12,9 @@ are also what main.py captures on first import. The per-test fixtures stay
 in place for documentation -- they happen to be no-ops once the module-level
 constants are correct, but they also keep the env values visible at test
 read-time.
+
+Shared test helpers (``allow_verify_result`` etc.) live in
+``tests/_helpers.py`` — keeping conftest focused on fixtures + hooks.
 """
 
 from __future__ import annotations

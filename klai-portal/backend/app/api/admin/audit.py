@@ -3,15 +3,13 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends
-from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.permissions import ProfileRole, UserPermissions, get_caller_at_least
 from app.models.audit import PortalAuditLog
-
-from . import _get_caller_org, _require_admin, bearer
 
 router = APIRouter()
 
@@ -47,7 +45,7 @@ class AuditLogResponse(BaseModel):
 
 @router.get("/audit-log", response_model=AuditLogResponse)
 async def get_audit_log(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     page: int = 1,
     size: int = 20,
@@ -60,11 +58,8 @@ async def get_audit_log(
     - action: exact match (e.g. "meeting.created")
     - resource_type: exact match (e.g. "group", "meeting", "product", "user")
     """
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
-    query = select(PortalAuditLog).where(PortalAuditLog.org_id == org.id)
-    count_query = select(func.count(PortalAuditLog.id)).where(PortalAuditLog.org_id == org.id)
+    query = select(PortalAuditLog).where(PortalAuditLog.org_id == perms.org_id)
+    count_query = select(func.count(PortalAuditLog.id)).where(PortalAuditLog.org_id == perms.org_id)
 
     if action:
         query = query.where(PortalAuditLog.action == action)

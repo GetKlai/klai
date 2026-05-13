@@ -1,0 +1,26 @@
+# SPEC-PORTAL-EXTENSIONS-UNIFY-001 — block reintroduction of enabled_addons reads.
+#
+# Why: portal_orgs.enabled_addons was dropped on 2026-05-12. All extension
+# state lives in portal_orgs.platform_unlocked_features. Any new code that
+# touches `.enabled_addons` is either reading a dead attribute (silent
+# wrong-empty-list bug) or trying to re-introduce the dual-track gating
+# concept this SPEC removed. Block both at PR-time.
+#
+# The legacy test helper `make_perms` (tests/conftest.py) keeps an
+# `enabled_addons=` parameter as a back-compat alias — that name lives on
+# the keyword-only param, not as an attribute read, so it does NOT match
+# this rule.
+
+id: no-enabled-addons-read
+language: python
+severity: error
+message: |
+  enabled_addons was retired by SPEC-PORTAL-EXTENSIONS-UNIFY-001 (2026-05-12).
+  Read perms.platform_unlocked_features instead. See
+  .moai/specs/SPEC-PORTAL-EXTENSIONS-UNIFY-001/spec.md.
+
+rule:
+  pattern: $OBJ.enabled_addons
+
+files:
+  - klai-portal/backend/app/**/*.py

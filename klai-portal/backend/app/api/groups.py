@@ -1,35 +1,38 @@
 """
 Group management endpoints.
 All endpoints require authentication and are scoped to the caller's org.
+
+SPEC-PORTAL-RBAC-001 v0.2.0: groups are content-scoping (KB access) only.
+Products are derived from (profile, plan, platform_unlocked_features) and
+not assigned per group. The legacy product-assignment endpoints below
+return 410 Gone.
 """
 
 import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import (
-    _get_caller_org,
-    _require_admin,
-    _require_admin_or_group_admin,
-    _require_admin_or_group_manager,
-    bearer,
-)
 from app.core.database import get_db
-from app.core.plans import get_plan_products
-from app.core.system_groups import SYSTEM_GROUPS
-from app.models.groups import PortalGroup, PortalGroupMembership, PortalGroupProduct
+from app.core.permissions import UserPermissions, get_caller_at_least
+from app.core.profiles import ProfileRole
+from app.models.groups import PortalGroup, PortalGroupMembership
 from app.models.portal import PortalUser
 from app.services.audit import log_event
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin", tags=["groups"])
+
+
+_GONE_BODY = (
+    "Endpoint removed by SPEC-PORTAL-RBAC-001. Products derive from "
+    "/admin/settings (plan + add-ons) and /admin/users/<id>/edit (profile)."
+)
 
 
 async def _get_group_or_404(group_id: int, org_id: int, db: AsyncSession) -> PortalGroup:
@@ -59,7 +62,6 @@ class GroupOut(BaseModel):
     id: int
     name: str
     description: str | None
-    products: list[str]
     is_system: bool
     created_at: datetime
     created_by: str
@@ -72,7 +74,6 @@ class GroupsResponse(BaseModel):
 class UserGroupOut(BaseModel):
     id: int
     name: str
-    products: list[str]
     is_system: bool
 
 
@@ -102,20 +103,6 @@ class MessageResponse(BaseModel):
     message: str
 
 
-class GroupProductAssignRequest(BaseModel):
-    product: str
-
-
-class GroupProductOut(BaseModel):
-    product: str
-    enabled_at: datetime
-    enabled_by: str
-
-
-class GroupProductsResponse(BaseModel):
-    products: list[GroupProductOut]
-
-
 # ---------------------------------------------------------------------------
 # Group CRUD
 # ---------------------------------------------------------------------------
@@ -123,31 +110,20 @@ class GroupProductsResponse(BaseModel):
 
 @router.get("/groups", response_model=GroupsResponse)
 async def list_groups(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> GroupsResponse:
-    """List all groups in the caller's org."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
+    """List all (non-system) groups in the caller's org. Admin only.
 
-    result = await db.execute(select(PortalGroup).where(PortalGroup.org_id == org.id))
-    groups = list(result.scalars().all())
-
-    # System groups in defined order first, then custom groups alphabetically
-    _sys_order = {sg["system_key"]: i for i, sg in enumerate(SYSTEM_GROUPS)}
-    groups.sort(
-        key=lambda g: (0 if g.is_system else 1, _sys_order.get(g.system_key, 99) if g.is_system else g.name.lower())
+    The system_key IS NULL filter is a defence-in-depth net: after the
+    SPEC-PORTAL-RBAC-001 migration there are no system groups in any tenant.
+    """
+    result = await db.execute(
+        select(PortalGroup)
+        .where(PortalGroup.org_id == perms.org_id, PortalGroup.system_key.is_(None))
+        .order_by(PortalGroup.name)
     )
-
-    products_by_group: dict[int, list[str]] = {g.id: [] for g in groups}
-    if groups:
-        prods_result = await db.execute(
-            select(PortalGroupProduct.group_id, PortalGroupProduct.product)
-            .where(PortalGroupProduct.group_id.in_([g.id for g in groups]))
-            .order_by(PortalGroupProduct.product)
-        )
-        for row in prods_result:
-            products_by_group[row.group_id].append(row.product)
+    groups = list(result.scalars().all())
 
     return GroupsResponse(
         groups=[
@@ -155,7 +131,6 @@ async def list_groups(
                 id=g.id,
                 name=g.name,
                 description=g.description,
-                products=products_by_group[g.id],
                 is_system=g.is_system,
                 created_at=g.created_at,
                 created_by=g.created_by,
@@ -168,18 +143,15 @@ async def list_groups(
 @router.post("/groups", response_model=GroupOut, status_code=status.HTTP_201_CREATED)
 async def create_group(
     body: GroupCreateRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.GROUP_MANAGER)),
     db: AsyncSession = Depends(get_db),
 ) -> GroupOut:
-    """Create a new group in the caller's org."""
-    caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
-    await _require_admin_or_group_manager(caller_user, org.id, db)
-
+    """Create a new group in the caller's org. group_manager+ may create."""
     group = PortalGroup(
-        org_id=org.id,
+        org_id=perms.org_id,
         name=body.name,
         description=body.description,
-        created_by=caller_user_id,
+        created_by=perms.user_id,
     )
     db.add(group)
     try:
@@ -194,18 +166,10 @@ async def create_group(
     await db.refresh(group)  # Pre-commit refresh to load server_default columns while tenant context is still set.
     await db.commit()
 
-    prods_result = await db.execute(
-        select(PortalGroupProduct.product)
-        .where(PortalGroupProduct.group_id == group.id)
-        .order_by(PortalGroupProduct.product)
-    )
-    products = [row[0] for row in prods_result]
-
     return GroupOut(
         id=group.id,
         name=group.name,
         description=group.description,
-        products=products,
         is_system=False,
         created_at=group.created_at,
         created_by=group.created_by,
@@ -216,17 +180,14 @@ async def create_group(
 async def update_group(
     group_id: int,
     body: GroupUpdateRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.GROUP_MANAGER)),
     db: AsyncSession = Depends(get_db),
 ) -> GroupOut:
     """Update a group's name or description."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
     result = await db.execute(
         select(PortalGroup).where(
             PortalGroup.id == group_id,
-            PortalGroup.org_id == org.id,
+            PortalGroup.org_id == perms.org_id,
         )
     )
     group = result.scalar_one_or_none()
@@ -253,18 +214,10 @@ async def update_group(
     await db.commit()
     # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
 
-    prods_result = await db.execute(
-        select(PortalGroupProduct.product)
-        .where(PortalGroupProduct.group_id == group.id)
-        .order_by(PortalGroupProduct.product)
-    )
-    products = [row[0] for row in prods_result]
-
     return GroupOut(
         id=group.id,
         name=group.name,
         description=group.description,
-        products=products,
         is_system=group.is_system,
         created_at=group.created_at,
         created_by=group.created_by,
@@ -274,17 +227,14 @@ async def update_group(
 @router.delete("/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_group(
     group_id: int,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.GROUP_MANAGER)),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Delete a group (CASCADE removes memberships)."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
     result = await db.execute(
         select(PortalGroup).where(
             PortalGroup.id == group_id,
-            PortalGroup.org_id == org.id,
+            PortalGroup.org_id == perms.org_id,
         )
     )
     group = result.scalar_one_or_none()
@@ -309,23 +259,19 @@ async def delete_group(
 @router.get("/groups/{group_id}/members", response_model=MembersResponse)
 async def list_members(
     group_id: int,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.GROUP_MANAGER)),
     db: AsyncSession = Depends(get_db),
 ) -> MembersResponse:
-    """List members of a group. Accessible by org admin or group admin."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
-
+    """List members of a group. group_manager+ may view."""
     # Verify group belongs to caller's org
     group_result = await db.execute(
         select(PortalGroup).where(
             PortalGroup.id == group_id,
-            PortalGroup.org_id == org.id,
+            PortalGroup.org_id == perms.org_id,
         )
     )
     if not group_result.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
-
-    await _require_admin_or_group_admin(group_id, caller_user, db)
 
     result = await db.execute(
         select(PortalGroupMembership)
@@ -349,24 +295,20 @@ async def list_members(
 async def add_member(
     group_id: int,
     body: MemberAddRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.GROUP_MANAGER)),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    """Add a member to a group. Admin or group admin. Cross-org validation (R5)."""
-    caller_id, org, caller_user = await _get_caller_org(credentials, db)
-
+    """Add a member to a group. group_manager+ may add. Cross-org validation (R5)."""
     # Verify group belongs to caller's org
     group_result = await db.execute(
         select(PortalGroup).where(
             PortalGroup.id == group_id,
-            PortalGroup.org_id == org.id,
+            PortalGroup.org_id == perms.org_id,
         )
     )
     group = group_result.scalar_one_or_none()
     if not group:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
-
-    await _require_admin_or_group_admin(group_id, caller_user, db)
 
     # R5: Cross-org security -- verify user belongs to same org as group
     user_result = await db.execute(select(PortalUser).where(PortalUser.zitadel_user_id == body.zitadel_user_id))
@@ -396,7 +338,7 @@ async def add_member(
 
     await log_event(
         org_id=group.org_id,
-        actor=caller_id,
+        actor=perms.user_id,
         action="group.member_added",
         resource_type="group",
         resource_id=str(group_id),
@@ -410,23 +352,19 @@ async def add_member(
 async def remove_member(
     group_id: int,
     user_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.GROUP_MANAGER)),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Remove a member from a group. Admin or group admin."""
-    caller_id, org, caller_user = await _get_caller_org(credentials, db)
-
+    """Remove a member from a group. group_manager+ may remove."""
     # Verify group belongs to caller's org
     group_result = await db.execute(
         select(PortalGroup).where(
             PortalGroup.id == group_id,
-            PortalGroup.org_id == org.id,
+            PortalGroup.org_id == perms.org_id,
         )
     )
     if not group_result.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
-
-    await _require_admin_or_group_admin(group_id, caller_user, db)
 
     result = await db.execute(
         select(PortalGroupMembership).where(
@@ -440,8 +378,8 @@ async def remove_member(
 
     await db.delete(membership)
     await log_event(
-        org_id=org.id,
-        actor=caller_id,
+        org_id=perms.org_id,
+        actor=perms.user_id,
         action="group.member_removed",
         resource_type="group",
         resource_id=str(group_id),
@@ -455,18 +393,15 @@ async def toggle_group_admin(
     group_id: int,
     user_id: str,
     body: GroupAdminToggleRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.GROUP_MANAGER)),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    """Toggle is_group_admin for a member. Admin only."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
+    """Toggle is_group_admin for a member. group_manager+ only."""
     # Verify group belongs to caller's org
     group_result = await db.execute(
         select(PortalGroup).where(
             PortalGroup.id == group_id,
-            PortalGroup.org_id == org.id,
+            PortalGroup.org_id == perms.org_id,
         )
     )
     if not group_result.scalar_one_or_none():
@@ -490,112 +425,23 @@ async def toggle_group_admin(
 
 
 # ---------------------------------------------------------------------------
-# Group product entitlements
+# Group product entitlements -- REMOVED by SPEC-PORTAL-RBAC-001
 # ---------------------------------------------------------------------------
 
 
-@router.get("/groups/{group_id}/products", response_model=GroupProductsResponse)
-async def list_group_products(
-    group_id: int,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
-    db: AsyncSession = Depends(get_db),
-) -> GroupProductsResponse:
-    """List products assigned to a group. Org admin only."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-    await _get_group_or_404(group_id, org.id, db)
-
-    result = await db.execute(
-        select(PortalGroupProduct).where(PortalGroupProduct.group_id == group_id).order_by(PortalGroupProduct.product)
-    )
-    products = result.scalars().all()
-    return GroupProductsResponse(
-        products=[
-            GroupProductOut(product=p.product, enabled_at=p.enabled_at, enabled_by=p.enabled_by) for p in products
-        ]
-    )
+@router.get("/groups/{group_id}/products", status_code=status.HTTP_410_GONE)
+async def list_group_products_gone(group_id: int) -> dict:
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail=_GONE_BODY)
 
 
-@router.post("/groups/{group_id}/products", response_model=GroupProductOut, status_code=status.HTTP_201_CREATED)
-async def assign_group_product(
-    group_id: int,
-    body: GroupProductAssignRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
-    db: AsyncSession = Depends(get_db),
-) -> GroupProductOut:
-    """Assign a product to a group. Org admin only, plan ceiling enforced."""
-    caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-    await _get_group_or_404(group_id, org.id, db)
-
-    # Plan ceiling check
-    if body.product not in get_plan_products(org.plan):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Product not included in org plan",
-        )
-
-    record = PortalGroupProduct(
-        group_id=group_id,
-        org_id=org.id,
-        product=body.product,
-        enabled_by=caller_user_id,
-    )
-    db.add(record)
-    try:
-        await db.flush()
-    except IntegrityError as exc:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Product already assigned to group",
-        ) from exc
-
-    await log_event(
-        org_id=org.id,
-        actor=caller_user_id,
-        action="group_product.assigned",
-        resource_type="group_product",
-        resource_id=f"{group_id}:{body.product}",
-        details={"product": body.product, "group_id": group_id},
-    )
-    await db.refresh(record)  # Pre-commit refresh to load server_default columns while tenant context is still set.
-    await db.commit()
-    return GroupProductOut(product=record.product, enabled_at=record.enabled_at, enabled_by=record.enabled_by)
+@router.post("/groups/{group_id}/products", status_code=status.HTTP_410_GONE)
+async def assign_group_product_gone(group_id: int) -> dict:
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail=_GONE_BODY)
 
 
-@router.delete("/groups/{group_id}/products/{product}", status_code=status.HTTP_204_NO_CONTENT)
-async def revoke_group_product(
-    group_id: int,
-    product: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
-    db: AsyncSession = Depends(get_db),
-) -> None:
-    """Revoke a product from a group. Org admin only."""
-    caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-    await _get_group_or_404(group_id, org.id, db)
-
-    result = await db.execute(
-        select(PortalGroupProduct).where(
-            PortalGroupProduct.group_id == group_id,
-            PortalGroupProduct.product == product,
-        )
-    )
-    row = result.scalar_one_or_none()
-    if not row:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product assignment not found")
-
-    await db.delete(row)
-    await log_event(
-        org_id=org.id,
-        actor=caller_user_id,
-        action="group_product.revoked",
-        resource_type="group_product",
-        resource_id=f"{group_id}:{product}",
-        details={"product": product, "group_id": group_id},
-    )
-    await db.commit()
+@router.delete("/groups/{group_id}/products/{product}", status_code=status.HTTP_410_GONE)
+async def revoke_group_product_gone(group_id: int, product: str) -> dict:
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail=_GONE_BODY)
 
 
 # ---------------------------------------------------------------------------
@@ -606,15 +452,12 @@ async def revoke_group_product(
 @router.get("/users/{user_id}/groups", response_model=UserGroupsResponse)
 async def get_user_groups(
     user_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> UserGroupsResponse:
-    """List groups a user belongs to, with product info. Org admin only."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
+    """List (non-system) groups a user belongs to. Org admin only."""
     user_result = await db.execute(
-        select(PortalUser).where(PortalUser.zitadel_user_id == user_id, PortalUser.org_id == org.id)
+        select(PortalUser).where(PortalUser.zitadel_user_id == user_id, PortalUser.org_id == perms.org_id)
     )
     if not user_result.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -629,25 +472,16 @@ async def get_user_groups(
 
     groups_result = await db.execute(
         select(PortalGroup)
-        .where(PortalGroup.id.in_(group_ids), PortalGroup.org_id == org.id)
+        .where(
+            PortalGroup.id.in_(group_ids),
+            PortalGroup.org_id == perms.org_id,
+            PortalGroup.system_key.is_(None),
+        )
         .order_by(PortalGroup.name)
     )
     groups = groups_result.scalars().all()
 
-    products_by_group: dict[int, list[str]] = {g.id: [] for g in groups}
-    prods_result = await db.execute(
-        select(PortalGroupProduct.group_id, PortalGroupProduct.product)
-        .where(PortalGroupProduct.group_id.in_([g.id for g in groups]))
-        .order_by(PortalGroupProduct.product)
-    )
-    for row in prods_result:
-        products_by_group[row.group_id].append(row.product)
-
-    return UserGroupsResponse(
-        groups=[
-            UserGroupOut(id=g.id, name=g.name, products=products_by_group[g.id], is_system=g.is_system) for g in groups
-        ]
-    )
+    return UserGroupsResponse(groups=[UserGroupOut(id=g.id, name=g.name, is_system=g.is_system) for g in groups])
 
 
 # ---------------------------------------------------------------------------
@@ -661,15 +495,14 @@ class UserMembershipsResponse(BaseModel):
 
 @router.get("/group-memberships", response_model=UserMembershipsResponse)
 async def get_all_memberships(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> UserMembershipsResponse:
-    """Return all user-group memberships for the org, keyed by zitadel_user_id. Org admin only."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
-    # Fetch all groups in the org
-    groups_result = await db.execute(select(PortalGroup).where(PortalGroup.org_id == org.id))
+    """Return all (non-system) user-group memberships for the org, keyed by zitadel_user_id."""
+    # Fetch non-system groups in the org
+    groups_result = await db.execute(
+        select(PortalGroup).where(PortalGroup.org_id == perms.org_id, PortalGroup.system_key.is_(None))
+    )
     groups = groups_result.scalars().all()
 
     if not groups:
@@ -683,32 +516,12 @@ async def get_all_memberships(
     )
     memberships = memberships_result.scalars().all()
 
-    # Fetch all products for these groups
-    products_by_group: dict[int, list[str]] = {g.id: [] for g in groups}
-    prods_result = await db.execute(
-        select(PortalGroupProduct.group_id, PortalGroupProduct.product).where(
-            PortalGroupProduct.group_id.in_(list(group_map.keys()))
-        )
-    )
-    for row in prods_result:
-        products_by_group[row.group_id].append(row.product)
-
     # Build map: user_id -> list of UserGroupOut
     result: dict[str, list[UserGroupOut]] = {}
-    for membership in memberships:
-        g = group_map.get(membership.group_id)
-        if not g:
+    for m in memberships:
+        g = group_map.get(m.group_id)
+        if g is None:
             continue
-        user_id = membership.zitadel_user_id
-        if user_id not in result:
-            result[user_id] = []
-        result[user_id].append(
-            UserGroupOut(
-                id=g.id,
-                name=g.name,
-                products=products_by_group[g.id],
-                is_system=g.is_system,
-            )
-        )
+        result.setdefault(m.zitadel_user_id, []).append(UserGroupOut(id=g.id, name=g.name, is_system=g.is_system))
 
     return UserMembershipsResponse(memberships=result)

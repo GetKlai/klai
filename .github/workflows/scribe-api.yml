@@ -67,13 +67,23 @@ jobs:
           context: .
           file: klai-scribe/scribe-api/Dockerfile
           push: true
+          # `:latest` is published ONLY on push to main. PR builds publish
+          # only the SHA tag so `docker pull :latest` cannot accidentally
+          # pull PR-build code. Mirrors klai-connector / klai-mailer
+          # (post hotfix #322).
           tags: |
-            ghcr.io/getklai/scribe-api:latest
             ghcr.io/getklai/scribe-api:${{ github.sha }}
+            ${{ github.event_name == 'push' && 'ghcr.io/getklai/scribe-api:latest' || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # 2026-05-05 mailer-incident class: this step previously had no `if:`
+      # gate, so PR builds also auto-deployed `:latest` to prod. The first
+      # PR build that produced a recreate after a long quiet period could
+      # surface a hidden validator-env-parity regression as a 30+ minute
+      # outage. Same pattern that bit klai-mailer post PR #319 → hotfix #322.
       - name: Deploy to core-01
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.CORE01_HOST }}
@@ -84,7 +94,11 @@ jobs:
             source /opt/klai/.env
             echo "$GHCR_READ_PAT" | docker login ghcr.io -u mvletter --password-stdin
             docker pull ghcr.io/getklai/scribe-api:latest
-            cd /opt/klai && docker compose up -d scribe-api
+            # SPEC-SEC-AUDIT-2026-04 C5: alembic upgrade head runs automatically
+            # via /app/entrypoint.sh at container start (klai-scribe/scribe-api/entrypoint.sh).
+            # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3: compose-up.sh wraps
+            # `docker compose up -d` with image-tag + resource-limit checks.
+            /opt/klai/scripts/compose-up.sh scribe-api
 
   scan:
     needs: build-push
@@ -93,6 +107,10 @@ jobs:
       security-events: write
       packages: read
     steps:
+      # Checkout is required so trivy-action can find .trivy.yaml + the
+      # service's .trivyignore.yaml (paths are relative to repo root).
+      - uses: actions/checkout@v6
+
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
@@ -100,16 +118,32 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.35.0
+      # STRICT-tier scan per SPEC-CI-TRIVY-POLICY-001 (REQ-2).
+      #
+      # Direct CLI invocation bypasses an aquasecurity/trivy-action
+      # bug (0.35.0/0.36.0): with `format: sarif` the `severity` filter
+      # is honoured for the SARIF body but NOT for the exit-code, so
+      # a MEDIUM/LOW finding triggers exit-code 1 even when we asked
+      # for CRITICAL+HIGH gating. trivy CLI's `--severity` flag is
+      # honoured for both detection AND exit-code. .trivy.yaml stays
+      # in the repo as the canonical policy reference until the
+      # action lands proper config-file precedence.
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@e6c2c5e321ed9123bda567646e2f96565e34abe1  # v0.2.5
         with:
-          image-ref: ghcr.io/getklai/scribe-api:${{ github.sha }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH'
-          ignore-unfixed: true
-          exit-code: '0'
+          version: v0.69.3
+          cache: true
 
+      - name: Run Trivy vulnerability scanner
+        run: |
+          trivy image \
+            --format sarif \
+            --output trivy-results.sarif \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --scanners vuln \
+            --exit-code 1 \
+            ghcr.io/getklai/scribe-api:${{ github.sha }}
       - name: Upload Trivy SARIF to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v4
         if: always()

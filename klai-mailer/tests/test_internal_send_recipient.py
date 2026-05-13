@@ -22,11 +22,13 @@ def _load_main(fake_redis):
         sys.modules.pop(mod, None)
     import app.nonce as nonce_mod
     import app.rate_limit as rl_mod
+
     nonce_mod.set_redis_client(fake_redis)
     rl_mod.set_redis_client(fake_redis)
     main = importlib.import_module("app.main")
     import app.nonce as n
     import app.rate_limit as r
+
     n.set_redis_client(fake_redis)
     r.set_redis_client(fake_redis)
     return main
@@ -216,3 +218,89 @@ def test_approved_missing_to_falls_back_to_email(client, stub_smtp):
     )
     assert resp.status_code == 200
     assert stub_smtp.sent[0]["to_address"] == "bob@test.example"
+
+
+# ---------------------------------------------------------------------------
+# onboarding_invite recipient binding — same shape as waitlist templates
+# (recipient = validated_vars.email). REQ-3.2.
+# ---------------------------------------------------------------------------
+
+
+def test_onboarding_invite_recipient_from_variables_email(client, stub_smtp):
+    """recipient is validated_vars.email."""
+    resp = client.post(
+        "/internal/send",
+        headers={"X-Internal-Secret": "internal-test-secret"},
+        json={
+            "template": "onboarding_invite",
+            "to": "alice@test.example",
+            "locale": "nl",
+            "variables": {
+                "name": "Alice",
+                "email": "alice@test.example",
+                "cal_url": "https://cal.getklai.com/klai/onboarding-intake",
+            },
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert stub_smtp.sent[0]["to_address"] == "alice@test.example"
+
+
+def test_onboarding_invite_to_mismatch_rejected(client, stub_smtp):
+    """`to` != variables.email → 400 recipient mismatch."""
+    resp = client.post(
+        "/internal/send",
+        headers={"X-Internal-Secret": "internal-test-secret"},
+        json={
+            "template": "onboarding_invite",
+            "to": "attacker@evil.example",
+            "locale": "nl",
+            "variables": {
+                "name": "Alice",
+                "email": "alice@test.example",
+                "cal_url": "https://cal.getklai.com/klai/onboarding-intake",
+            },
+        },
+    )
+    assert resp.status_code == 400
+    assert stub_smtp.sent == []
+
+
+def test_onboarding_invite_missing_cal_url_rejected(client, stub_smtp):
+    """Schema enforces cal_url presence."""
+    resp = client.post(
+        "/internal/send",
+        headers={"X-Internal-Secret": "internal-test-secret"},
+        json={
+            "template": "onboarding_invite",
+            "to": "alice@test.example",
+            "locale": "nl",
+            "variables": {
+                "name": "Alice",
+                "email": "alice@test.example",
+            },
+        },
+    )
+    assert resp.status_code == 400
+    assert stub_smtp.sent == []
+
+
+def test_onboarding_invite_extra_field_rejected(client, stub_smtp):
+    """extra='forbid' — unknown keys raise 400."""
+    resp = client.post(
+        "/internal/send",
+        headers={"X-Internal-Secret": "internal-test-secret"},
+        json={
+            "template": "onboarding_invite",
+            "to": "alice@test.example",
+            "locale": "nl",
+            "variables": {
+                "name": "Alice",
+                "email": "alice@test.example",
+                "cal_url": "https://cal.getklai.com/klai/onboarding-intake",
+                "is_admin": True,
+            },
+        },
+    )
+    assert resp.status_code == 400
+    assert stub_smtp.sent == []

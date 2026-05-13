@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
@@ -180,7 +181,35 @@ async def chat_completions(
     # 5. Translate kb_ids -> kb_slugs
     kb_slugs = await _resolve_kb_slugs(kb_ids, auth.org_id, db)
 
-    # 6. Retrieve context
+    # 6. Retrieve context.
+    # F2 (audit retrieval-coupling-2026-05-06): pass synthetic partner_user_id
+    # so retrieval-api pins verified_caller and emits the
+    # `knowledge.queried` product_event with the correct (org, partner-key)
+    # tuple. Matches the existing convention used at line ~205 below for
+    # write_retrieval_log.
+    #
+    # 2026-05-12 HOTFIX (chat-widget-launch-day): the F2 claim only resolves
+    # correctly when ``auth.key_id`` is a partner_api_keys UUID. Widget-driven
+    # calls authenticate via the widgets table (separate domain — see
+    # klai-portal/backend/app/models/widgets.py) and ``auth.key_id`` carries a
+    # ``wgt_<hex>`` identifier that is NOT a UUID. Forwarding it as
+    # ``partner:<wgt_id>`` made retrieval-api's identity-assert call portal-api's
+    # ``_resolve_partner_key_org_slug``, which SELECTed against
+    # ``partner_api_keys.id`` (uuid column) and asyncpg raised DataError →
+    # portal-api 5xx → SDK collapsed to ``portal_unreachable`` → 403 on
+    # /retrieve → widget chat showed "Er ging iets mis". Only forward the
+    # claim when it is parseable as a UUID; the widget path falls back to
+    # tenant-only verification at retrieval-api (already correct via the
+    # X-Internal-Secret + caller_service:portal-api contract). Product-event
+    # tagging on widget retrieval reverts to None until a dedicated
+    # ``evidence:"widget_key"`` path exists in identity-assert (follow-up
+    # SPEC). See pitfalls/process-rules.md → retrieve-caller-service-header-mismatch.
+    partner_user_id: str | None
+    try:
+        uuid.UUID(str(auth.key_id))
+        partner_user_id = f"partner:{auth.key_id}"
+    except (ValueError, AttributeError, TypeError):
+        partner_user_id = None
     try:
         chunks, system_prompt = await retrieve_context(
             org_id=auth.org_id,
@@ -188,6 +217,7 @@ async def chat_completions(
             kb_slugs=kb_slugs,
             messages=request.messages,
             settings=settings,
+            partner_user_id=partner_user_id,
         )
     except (httpx.TimeoutException, httpx.ReadTimeout) as exc:
         raise HTTPException(

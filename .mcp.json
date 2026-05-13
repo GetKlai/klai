@@ -16,22 +16,10 @@
       "env": {}
     },
     "playwright": {
-      "$comment": "Browser automation. Uses local .playwright-mcp/config.json (gitignored, per machine). Copy from config.example.json and set storageState path.",
+      "$comment": "Headed Chrome with `--isolated --storage-state ~/.claude/mcp-storageState.json`. Parallel-safe (every session gets its own ephemeral profile) and all sessions start authenticated by preloading the storage-state file. Seed by calling `browser_run_code_unsafe` from a logged-in session with `await page.context().storageState({path: '~/.claude/mcp-storageState.json'})` — verified working 2026-05-07. NOT via external `npx playwright codegen` (flaky on macOS, the PR #354 trap). There is no separate `browser_storage_state` MCP tool. See docs/setup/mcp-servers.md Section 3 for the full flow.",
       "type": "stdio",
-      "command": "npx",
-      "args": ["@playwright/mcp@0.0.70", "--config", ".playwright-mcp/config.json"],
-      "env": {}
-    },
-    "playwright-isolated": {
-      "$comment": "Isolated headless browser for CSS debugging and visual verification. No profile conflicts with open Brave. Ephemeral — all tabs auto-close.",
-      "type": "stdio",
-      "command": "npx",
-      "args": [
-        "@playwright/mcp@0.0.70",
-        "--browser", "chromium",
-        "--isolated",
-        "--headless"
-      ],
+      "command": "node",
+      "args": [".claude/scripts/playwright-launcher.mjs"],
       "env": {}
     },
     "codeindex": {

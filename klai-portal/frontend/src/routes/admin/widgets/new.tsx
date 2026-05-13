@@ -188,7 +188,7 @@ function NewWidgetPage() {
       <form onSubmit={handleSubmit} className="space-y-6">
         {step === 'details' && (
           <section className="space-y-4">
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {m.admin_shared_wizard_details_intro()}
             </p>
             <div className="space-y-1.5">
@@ -212,7 +212,7 @@ function NewWidgetPage() {
                 value={form.description}
                 onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
                 rows={3}
-                className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm text-[var(--color-foreground)] outline-none transition-colors placeholder:text-[var(--color-muted-foreground)] focus:ring-2 focus:ring-[var(--color-ring)]"
+                className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)]"
               />
             </div>
           </section>
@@ -220,7 +220,7 @@ function NewWidgetPage() {
 
         {step === 'kbs' && (
           <section className="space-y-4">
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {m.admin_widgets_wizard_kb_access_intro_widget()}
             </p>
             <KbAccessEditor
@@ -232,12 +232,12 @@ function NewWidgetPage() {
 
         {step === 'appearance' && (
           <section className="space-y-6">
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {m.admin_widgets_wizard_appearance_intro()}
             </p>
             <div className="space-y-1.5">
               <Label htmlFor="widget-title">{m.admin_widgets_widget_title_label()}</Label>
-              <p className="text-xs text-[var(--color-muted-foreground)]">
+              <p className="text-xs text-gray-400">
                 {m.admin_widgets_widget_title_help()}
               </p>
               <Input
@@ -249,7 +249,7 @@ function NewWidgetPage() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="widget-welcome">{m.admin_widgets_widget_welcome_label()}</Label>
-              <p className="text-xs text-[var(--color-muted-foreground)]">
+              <p className="text-xs text-gray-400">
                 {m.admin_widgets_widget_welcome_help()}
               </p>
               <Input
@@ -276,7 +276,7 @@ function NewWidgetPage() {
                           ),
                         }))
                       }
-                      className="flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-xs font-mono text-[var(--color-foreground)] outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
+                      className="flex-1 rounded-md border border-gray-200 bg-[var(--color-input)] px-3 py-2 text-xs font-mono text-gray-900 outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
                     >
                       <option value="">{m.admin_widgets_widget_css_var_placeholder()}</option>
                       {CSS_VAR_KEYS.map((k) => (
@@ -306,7 +306,7 @@ function NewWidgetPage() {
                           css_var_rows: p.css_var_rows.filter((_, i) => i !== index),
                         }))
                       }
-                      className="text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)] transition-colors"
+                      className="text-gray-400 hover:text-[var(--color-destructive)] transition-colors"
                       aria-label={m.admin_widgets_widget_css_var_remove()}
                     >
                       ×
@@ -336,14 +336,14 @@ function NewWidgetPage() {
 
         {step === 'embed' && (
           <section className="space-y-6">
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {m.admin_widgets_wizard_embed_intro()}
             </p>
             <div className="space-y-1.5">
               <Label htmlFor="widget-origins">
                 {m.admin_widgets_widget_origins_label()}
               </Label>
-              <p className="text-xs text-[var(--color-muted-foreground)]">
+              <p className="text-xs text-gray-400">
                 {m.admin_widgets_widget_origins_help()}
               </p>
               <textarea
@@ -352,21 +352,21 @@ function NewWidgetPage() {
                 onChange={(e) => setForm((p) => ({ ...p, allowed_origins_raw: e.target.value }))}
                 rows={4}
                 placeholder={m.admin_widgets_widget_origins_placeholder()}
-                className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm font-mono text-[var(--color-foreground)] outline-none transition-colors placeholder:text-[var(--color-muted-foreground)] focus:ring-2 focus:ring-[var(--color-ring)]"
+                className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm font-mono text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)]"
               />
               {parseOrigins(form.allowed_origins_raw).length === 0 && (
-                <div className="flex items-start gap-1.5 text-xs text-[var(--color-muted-foreground)]">
+                <div className="flex items-start gap-1.5 text-xs text-gray-400">
                   <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px text-[var(--color-destructive)]" />
                   {m.admin_widgets_widget_origins_empty_warning()}
                 </div>
               )}
             </div>
-            <div className="space-y-2 pt-4 border-t border-[var(--color-border)]">
+            <div className="space-y-2 pt-4 border-t border-gray-200">
               <Label>{m.admin_widgets_wizard_embed_preview_label()}</Label>
-              <p className="text-xs text-[var(--color-muted-foreground)]">
+              <p className="text-xs text-gray-400">
                 {m.admin_widgets_wizard_embed_preview_help()}
               </p>
-              <pre className="text-xs font-mono text-[var(--color-foreground)] bg-[var(--color-muted)] border border-[var(--color-border)] rounded-md p-3 overflow-x-auto whitespace-pre-wrap">
+              <pre className="text-xs font-mono text-gray-900 bg-[var(--color-muted)] border border-gray-200 rounded-md p-3 overflow-x-auto whitespace-pre-wrap">
 {`<script
   src="https://my.getklai.com/widget/klai-chat.js"
   data-widget-id="wgt_xxxxxxxxxxxxxxxxxxxx"

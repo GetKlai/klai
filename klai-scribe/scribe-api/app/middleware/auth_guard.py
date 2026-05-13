@@ -1,10 +1,14 @@
 """
-SPEC-SEC-004: Defense-in-depth auth guard middleware for scribe-api.
+SPEC-SEC-004 + SPEC-SEC-IDENTITY-ASSERT-002 REQ-3: Defense-in-depth
+auth guard middleware for scribe-api.
 
-Every request (except explicitly exempt paths) MUST carry an Authorization
-Bearer header. Actual token validation still happens per-route via
-`Depends(get_current_user_id)` — this middleware is a safety net that
-rejects requests with a missing header *before* the route handler runs.
+After SPEC-002 scribe-api is BFF-only: every request (except explicitly
+exempt paths) MUST carry an ``X-Internal-Secret`` header. The full
+identity check lives in ``Depends(get_authenticated_caller)`` — which
+constant-time-compares the secret AND requires the
+``X-Klai-Verified-*`` headers. This middleware is a safety net that
+rejects requests without the secret-header *before* the route handler
+runs.
 """
 
 from __future__ import annotations
@@ -28,10 +32,12 @@ _EXEMPT_PREFIXES: tuple[str, ...] = (
 
 
 class AuthGuardMiddleware(BaseHTTPMiddleware):
-    """Reject any request without an Authorization header early.
+    """Reject any request without ``X-Internal-Secret`` early.
 
-    Token validity is verified downstream by `get_current_user_id`. This
-    guard only checks for *presence* of the header.
+    Secret value validation (constant-time compare) and the
+    ``X-Klai-Verified-*`` header presence check are performed downstream
+    by :func:`app.core.auth.get_authenticated_caller`. This guard only
+    checks for *presence* of ``X-Internal-Secret``.
     """
 
     async def dispatch(
@@ -45,11 +51,10 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
 
-        auth = request.headers.get("authorization", "")
-        if not auth.lower().startswith("bearer "):
+        if not request.headers.get("x-internal-secret"):
             return JSONResponse(
                 status_code=401,
-                content={"detail": "Authorization required"},
+                content={"detail": "unauthenticated"},
             )
 
         return await call_next(request)

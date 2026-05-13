@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import structlog
 
+from klai_image_storage.kb_image import KbImage
 from klai_image_storage.storage import (
     MAX_IMAGE_SIZE,
     MAX_IMAGES_PER_DOCUMENT,
@@ -161,17 +162,39 @@ async def _download_validate_upload(
         logger.warning("image_too_large", url=url, size=len(data))
         return None
 
-    if not image_store.validate_image(data):
+    mime = image_store.validate_image(data)
+    if not mime:
         logger.warning("image_invalid_content", url=url)
         return None
 
+    # SPEC-KB-IMAGES-V2-001 REQ-1: URL-shape comes from KbImage, the single
+    # source of truth. ImageStore writes by s3_key; KbImage produces the
+    # matching public_path. The two cannot drift because they're derived
+    # from the same KbImage instance below.
     try:
-        result = await image_store.upload_image(org_id, kb_slug, data, _ext_from_url(url))
+        kb_image = KbImage.from_bytes(
+            zitadel_org_id=org_id,
+            kb_slug=kb_slug,
+            data=data,
+            mime=mime,
+        )
+    except ValueError as exc:
+        logger.warning("image_kb_image_rejected", url=url, error=str(exc))
+        return None
+
+    try:
+        await image_store.upload_image(org_id, kb_slug, data, kb_image.ext)
     except Exception:
         logger.exception("image_upload_failed", url=url)
         return None
 
-    return result.public_url
+    # SPEC-KB-IMAGES-V2-FOLLOWUPS-001: the runtime drift-check between
+    # ImageStore.build_object_key and KbImage.s3_key is now a unit test in
+    # klai_image_storage/tests/test_kb_image.py
+    # (test_image_store_build_object_key_matches_kb_image_s3_key). One
+    # test proves the invariant for the whole class instead of paying for
+    # a string-compare on every upload.
+    return kb_image.public_path
 
 
 async def _upload_parsed_image(
@@ -191,17 +214,32 @@ async def _upload_parsed_image(
         logger.warning("parsed_image_too_large", source_id=image.source_id, size=len(image.data))
         return None
 
-    if not image_store.validate_image(image.data):
+    mime = image_store.validate_image(image.data)
+    if not mime:
         logger.warning("parsed_image_invalid_content", source_id=image.source_id)
         return None
 
     try:
-        result = await image_store.upload_image(org_id, kb_slug, image.data, image.ext)
+        kb_image = KbImage.from_bytes(
+            zitadel_org_id=org_id,
+            kb_slug=kb_slug,
+            data=image.data,
+            mime=mime,
+        )
+    except ValueError as exc:
+        logger.warning("parsed_image_kb_image_rejected", source_id=image.source_id, error=str(exc))
+        return None
+
+    try:
+        await image_store.upload_image(org_id, kb_slug, image.data, kb_image.ext)
     except Exception:
         logger.exception("parsed_image_upload_failed", source_id=image.source_id)
         return None
 
-    return result.public_url
+    # SPEC-KB-IMAGES-V2-FOLLOWUPS-001: runtime drift-check replaced by the
+    # lib-level unit test that proves ImageStore.build_object_key and
+    # KbImage.s3_key agree for all inputs.
+    return kb_image.public_path
 
 
 # @MX:ANCHOR: download_and_upload_adapter_images — connector sync-engine hot path.

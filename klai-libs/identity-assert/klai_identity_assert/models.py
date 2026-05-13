@@ -12,7 +12,13 @@ from dataclasses import dataclass
 from typing import Literal
 
 # Stable evidence types — mirrors portal-api REQ-1.3 / REQ-1.4 contract.
-Evidence = Literal["jwt", "membership"]
+# ``partner_key`` (F2 fix-forward, retrieval coupling audit 2026-05-06):
+# evidence used for synthetic ``partner:<key_id>`` identities verified
+# against the partner_api_keys table by portal-api.
+# ``tenant_only``: used exclusively for tenant-level service-to-service calls
+# where there is no end-user identity (e.g. portal-api → knowledge-ingest stats
+# endpoints). Only returned by verify_tenant() / verify_tenant_or_raise().
+Evidence = Literal["jwt", "membership", "partner_key", "tenant_only"]
 
 # Stable reject codes — mirrors portal-api REQ-1.7 stable_code list. Plus two
 # consumer-side codes the library raises before ever reaching portal:
@@ -27,6 +33,11 @@ ReasonCode = Literal[
     "cache_unavailable",
     "portal_unreachable",
     "library_misconfigured",
+    # F2 fix-forward (retrieval coupling audit 2026-05-06): partner-key paths.
+    "partner_key_not_found",
+    "partner_key_org_mismatch",
+    # Tenant-only path: org not found in portal_orgs (no live row).
+    "tenant_not_found",
 ]
 
 
@@ -102,10 +113,47 @@ class VerifyResult:
             cached=cached,
         )
 
+    @classmethod
+    def allow_tenant(
+        cls,
+        *,
+        org_id: str,
+        org_slug: str,
+        cached: bool = False,
+    ) -> VerifyResult:
+        """Construct a verified tenant-only result (no end-user identity).
+
+        Used exclusively for service-to-service calls where there is no
+        end-user (e.g. dashboard stats endpoints). The ``user_id`` field is
+        intentionally ``None``; callers MUST NOT use this on user-bound
+        endpoints — use :meth:`allow` instead to keep the type system strict.
+        """
+        return cls(
+            verified=True,
+            user_id=None,
+            org_id=org_id,
+            org_slug=org_slug,
+            reason=None,
+            evidence="tenant_only",
+            cached=cached,
+        )
+
 
 # Recognised caller services. Mirrors portal-api REQ-1.2 reject list. Adding a
 # new caller requires a synchronised change to portal-api's allowlist; consumers
 # fail-closed if they pass an unknown service identifier.
+#
+# `litellm` and `portal-api` were added 2026-05-05 after the caller-service
+# header check (SPEC-SEC-IDENTITY-ASSERT-001 Phase D, landed 2026-04-28)
+# silently broke every internal caller of retrieval-api `/retrieve`. The
+# fail-open in those callers degraded chat to "no KB" without surfacing a
+# single error for 7 days. See pitfalls/process-rules.md →
+# retrieve-caller-service-header-mismatch.
+#
+# `research-api` was removed 2026-05-XX per SPEC-DECOMM-FOCUS-001. The service
+# was decommissioned in SPEC-PORTAL-UNIFY-KB-001 (April 2026); the allowlist
+# entry added on 2026-05-05 was inert defensive code on a service that no
+# longer runs.
 KNOWN_CALLER_SERVICES: frozenset[str] = frozenset(
     {
         "knowledge-mcp",
@@ -113,5 +161,7 @@ KNOWN_CALLER_SERVICES: frozenset[str] = frozenset(
         "retrieval-api",
         "connector",
         "mailer",
+        "litellm",
+        "portal-api",
     }
 )

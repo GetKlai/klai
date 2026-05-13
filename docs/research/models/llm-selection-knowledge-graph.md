@@ -17,27 +17,33 @@ Additionally, the enrichment pipeline (`enrichment.py`) uses an LLM for contextu
 
 Config: `GRAPHITI_LLM_MODEL` in knowledge-ingest settings (`config.py`).
 
-## Model Comparison (March 2026)
+## Model Comparison (March 2026, updated 2026-05-05 with Medium 3.5)
 
-| | Nemo (`2407`) | Small 3.2 (`2506`) | Small 4 (`2603`) | Large 3 (`2512`) |
-|---|---|---|---|---|
-| **Parameters** | 12B dense | 24B dense | 119B MoE (6.5B active) | ~675B MoE (~40B active) |
-| **Context window** | 128K | 128K | 256K | 32K |
-| **MMLU-Pro** | ~40-50 | ~68 | **78** | ~low 80s |
-| **Reasoning mode** | No | No | Yes (configurable per request) | No |
-| **Input price** | $0.02/M | $0.10/M | $0.15/M | $0.425/M |
-| **Output price** | $0.04/M | $0.30/M | $0.60/M | $1.275/M |
-| **Release** | July 2024 | June 2025 | March 2026 | Dec 2025 |
-| **Self-host VRAM** | 1x consumer GPU | 1x consumer GPU | 2-4x H100 (240GB) | Not feasible |
-| **License** | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 |
+| | Nemo (`2407`) | Small 3.2 (`2506`) | Small 4 (`2603`) | **Medium 3.5** | Large 3 (`2512`) |
+|---|---|---|---|---|---|
+| **Parameters** | 12B dense | 24B dense | 119B MoE (6.5B active) | **128B dense** | ~675B MoE (~40B active) |
+| **Context window** | 128K | 128K | 256K | **256K** | 32K |
+| **MMLU-Pro** | ~40-50 | ~68 | 78 | **mid 70s** | ~low 80s |
+| **Reasoning mode** | No | No | Yes (configurable) | No | No |
+| **Input price** | $0.02/M | $0.10/M | $0.15/M | **$1.50/M** | $0.425/M |
+| **Output price** | $0.04/M | $0.30/M | $0.60/M | **$7.50/M** | $1.275/M |
+| **Release** | July 2024 | June 2025 | March 2026 | **April 2026** | Dec 2025 |
+| **Self-host VRAM** | 1x consumer GPU | 1x consumer GPU | 2-4x H100 (240GB) | Not feasible | Not feasible |
+| **License** | Apache 2.0 | Apache 2.0 | Apache 2.0 | Open weights | Apache 2.0 |
+
+Medium 3.5 sits between Small 4 and Large 3 on capability but is **more expensive than Large 3 per token**. Use only when the task structurally needs the larger output budget / more reliable JSON than Small 4 can deliver, AND doesn't need Large 3's reasoning depth. Fits the niche of "RAGAS multi-statement judge" exactly.
 
 ### LiteLLM aliases
 
+Aliases are **tier-/model-named** — they describe what the underlying model IS, never what it does. No role-based names like `klai-eval-judge`, `klai-pipeline` (the historical role-name was retired 2026-05-05 in favour of `klai-fast` since they pointed at the same Mistral Small 4 model). New tiers are added when an existing tier is structurally insufficient. New consumers reuse the smallest tier that fits.
+
 | Alias | Current mapping | Use for |
 |---|---|---|
-| `klai-primary` | Mistral Small (EU) | Default for most tasks |
-| `klai-fast` | Mistral Nemo (EU) | Fast, lightweight tasks |
-| `klai-large` | Mistral Large (EU) | Complex reasoning |
+| `klai-primary` | Mistral Small 4 (EU) | Default for most user-facing tasks. Routed via custom_router (may upgrade to klai-large for tool-calls). |
+| `klai-fast` | Mistral Small 4 (EU) | Lightweight, latency-sensitive, internal background work (Graphiti, enrichment, coreference). Bypasses custom_router. |
+| `klai-medium` | **Mistral Medium 3.5** (EU) | Middle tier — used when klai-fast hits its output-token ceiling but klai-large is overkill. First consumer: SPEC-RAG-EVAL-001 RAGAS faithfulness judge (multi-statement JSON output). Added 2026-05-05. |
+| `klai-large` | Mistral Large 3 (EU) | Complex reasoning, agentic / tool-use flows. |
+| `klai-bge-m3` | **BGE-M3 on TEI/gpu-01** | Embeddings. Distinct model TYPE (not a text-completion tier). First consumer: SPEC-RAG-EVAL-001 RAGAS AnswerRelevancy. Added 2026-05-05. |
 
 ## Analysis per model
 

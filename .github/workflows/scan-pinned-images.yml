@@ -48,17 +48,24 @@ jobs:
           # internal + local builds we scan via per-service workflows.
           #
           # Excluded patterns (with rationale):
-          #   ghcr.io/getklai/*     — our own CI-built images; scanned per service
-          #   */klai                — on-server local builds (vexa-*:klai)
-          #   */local               — on-server local builds (retrieval-api:local)
-          #   mendableai/firecrawl  — built locally from source on the server
+          #   ghcr.io/getklai/*                — our own CI-built images; scanned per service
+          #   */klai                           — legacy on-server local builds (vexa-*:klai)
+          #   */local                          — legacy on-server local builds (retrieval-api:local)
+          #   *:*-local-YYMMDD-HHMM            — current convention for locally-built tags
+          #                                      per .claude/rules/klai/infra/container-hygiene.md
+          #                                      "Verify image pullable before pinning a tag" rule
+          #                                      (e.g. vexaai/transcription-service:0.10.6-local-260503-0858).
+          #                                      SKIP-tier of SPEC-CI-TRIVY-POLICY-001 REQ-4: these
+          #                                      images do not exist on Docker Hub so a `docker
+          #                                      manifest inspect` always 404s.
+          #   mendableai/firecrawl             — built locally from source on the server
           IMAGES=$(yq eval-all '.services[].image' \
             deploy/docker-compose.yml \
             deploy/docker-compose.gpu.yml \
             docker-compose.dev.yml \
             2>/dev/null \
             | sort -u \
-            | grep -vE '^(ghcr\.io/getklai/|ghcr\.io/mendableai/firecrawl|[^:]+:klai$|[^:]+:local$|---)' \
+            | grep -vE '^(ghcr\.io/getklai/|ghcr\.io/mendableai/firecrawl|[^:]+:klai$|[^:]+:local$|[^:]+:.*-local-[0-9]{6}-[0-9]{4}$|---)' \
             | grep -vE '^(null|~)$' \
             | jq -R . | jq -sc .)
 
@@ -75,6 +82,10 @@ jobs:
         image: ${{ fromJSON(needs.enumerate.outputs.images) }}
       fail-fast: false  # One bad image shouldn't skip the rest
     steps:
+      # Checkout is required so trivy-action can find .trivy.yaml
+      # (`trivy-config:` resolves relative to repo root).
+      - uses: actions/checkout@v6
+
       - name: Sanitize image name for artefact
         id: safe
         run: |
@@ -83,15 +94,31 @@ jobs:
           SAFE=$(echo '${{ matrix.image }}' | tr '/:' '__')
           echo "name=$SAFE" >> "$GITHUB_OUTPUT"
 
-      - name: Trivy scan
-        uses: aquasecurity/trivy-action@0.35.0
+      # WARN-tier scan per SPEC-CI-TRIVY-POLICY-001 REQ-3.
+      # `--exit-code 0` keeps this warn-only — Renovate handles upgrade
+      # pressure on the external base-images we pin in compose.
+      #
+      # Direct CLI invocation bypasses an aquasecurity/trivy-action bug
+      # (0.35.0/0.36.0): with `format: sarif` the `severity` filter is
+      # honoured for the SARIF body but NOT for the exit-code. Keeping
+      # the invocation consistent with STRICT-tier scans simplifies
+      # operations.
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@e6c2c5e321ed9123bda567646e2f96565e34abe1  # v0.2.5
         with:
-          image-ref: ${{ matrix.image }}
-          format: 'sarif'
-          output: 'trivy-${{ steps.safe.outputs.name }}.sarif'
-          severity: 'CRITICAL,HIGH'
-          ignore-unfixed: true
-          exit-code: '0'  # Don't fail the job — Security tab is the alert surface
+          version: v0.69.3
+          cache: true
+
+      - name: Trivy scan
+        run: |
+          trivy image \
+            --format sarif \
+            --output trivy-${{ steps.safe.outputs.name }}.sarif \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --scanners vuln \
+            --exit-code 0 \
+            ${{ matrix.image }}
 
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v4

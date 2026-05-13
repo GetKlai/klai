@@ -10,8 +10,7 @@ import {
 } from '@tanstack/react-table'
 import { Button } from '@/components/ui/button'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
-import { Badge } from '@/components/ui/badge'
-import { Loader2, Eye, Lock, Pencil, Plus, Trash2 } from 'lucide-react'
+import { Loader2, Eye, Pencil, Plus, Trash2 } from 'lucide-react'
 
 // Avatar colors: decorative differentiation, not semantic states — raw Tailwind allowed per frontend.md
 const AVATAR_COLORS = [
@@ -38,7 +37,6 @@ export const Route = createFileRoute('/admin/groups/')({
 interface Group {
   id: number
   name: string
-  products: string[]
   is_system: boolean
 }
 
@@ -66,7 +64,7 @@ function MemberAvatars({
   const visible = userIds.slice(0, 4)
   const extra = userIds.length - visible.length
   if (userIds.length === 0) {
-    return <span className="text-xs text-[var(--color-muted-foreground)]">—</span>
+    return <span className="text-xs text-gray-400">—</span>
   }
   return (
     <div className="flex items-center gap-1.5">
@@ -87,7 +85,7 @@ function MemberAvatars({
         )
       })}
       {extra > 0 && (
-        <div className="h-7 w-7 rounded-full flex items-center justify-center text-xs font-medium bg-[var(--color-muted)] text-[var(--color-muted-foreground)]">
+        <div className="h-7 w-7 rounded-full flex items-center justify-center text-xs font-medium bg-[var(--color-muted)] text-gray-400">
           +{extra}
         </div>
       )}
@@ -157,24 +155,9 @@ function AdminGroups() {
     columnHelper.accessor('name', {
       header: () => m.admin_groups_name(),
       cell: (info) => (
-        <span className="font-medium text-[var(--color-foreground)] flex items-center gap-2">
-          {info.row.original.is_system && (
-            <Lock className="h-3 w-3 text-[var(--color-muted-foreground)]" />
-          )}
+        <span className="font-medium text-gray-900">
           {info.getValue()}
         </span>
-      ),
-    }),
-    columnHelper.accessor('products', {
-      header: () => 'Product',
-      cell: (info) => (
-        <div className="flex gap-1">
-          {info.getValue().map((p) => (
-            <Badge key={p} variant="outline" className="text-xs capitalize">
-              {p}
-            </Badge>
-          ))}
-        </div>
       ),
     }),
     columnHelper.display({
@@ -186,7 +169,7 @@ function AdminGroups() {
           <div className="flex items-center gap-2">
             <MemberAvatars userIds={memberIds} usersMap={usersMap} />
             {memberIds.length > 0 && (
-              <span className="text-xs text-[var(--color-muted-foreground)]">
+              <span className="text-xs text-gray-400">
                 {memberIds.length}
               </span>
             )}
@@ -198,7 +181,7 @@ function AdminGroups() {
       id: 'actions',
       header: () => '',
       cell: ({ row }) => {
-        const isConfirming = !row.original.is_system && confirmDeleteId === row.original.id
+        const isConfirming = confirmDeleteId === row.original.id
         return (
           <InlineDeleteConfirm
             isConfirming={isConfirming}
@@ -209,29 +192,25 @@ function AdminGroups() {
             onCancel={() => setConfirmDeleteId(null)}
           >
             <div className="flex items-start justify-end gap-2 mt-px">
-              {!row.original.is_system && (
-                <button
-                  onClick={() => setConfirmDeleteId(row.original.id)}
-                  aria-label={`Delete ${row.original.name}`}
-                  className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              )}
-              {!row.original.is_system && (
-                <button
-                  onClick={() =>
-                    navigate({
-                      to: '/admin/groups/$groupId/edit',
-                      params: { groupId: String(row.original.id) },
-                    })
-                  }
-                  aria-label={`Edit ${row.original.name}`}
-                  className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
-                >
-                  <Pencil className="h-4 w-4" />
-                </button>
-              )}
+              <button
+                onClick={() => setConfirmDeleteId(row.original.id)}
+                aria-label={`Delete ${row.original.name}`}
+                className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() =>
+                  navigate({
+                    to: '/admin/groups/$groupId/edit',
+                    params: { groupId: String(row.original.id) },
+                  })
+                }
+                aria-label={`Edit ${row.original.name}`}
+                className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
+              >
+                <Pencil className="h-4 w-4" />
+              </button>
               <button
                 onClick={() =>
                   navigate({
@@ -259,11 +238,16 @@ function AdminGroups() {
   })
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-10 space-y-6">
+    <div className="mx-auto max-w-3xl px-6 py-10 space-y-6">
       <div className="flex items-start justify-between">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-          {m.admin_groups_title()}
-        </h1>
+        <div className="space-y-1">
+          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+            {m.admin_groups_title()}
+          </h1>
+          <p className="text-sm text-gray-400">
+            {m.admin_groups_subtitle()}
+          </p>
+        </div>
         <Button size="sm" onClick={() => void navigate({ to: '/admin/groups/new' })}>
           <Plus className="h-4 w-4 mr-2" />
           {m.admin_groups_create()}
@@ -273,26 +257,23 @@ function AdminGroups() {
       {error ? (
         <QueryErrorState error={error instanceof Error ? error : new Error(String(error))} onRetry={() => void refetch()} />
       ) : isLoading ? (
-        <p className="py-8 text-sm text-[var(--color-muted-foreground)]">
+        <p className="py-8 text-sm text-gray-400">
           <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
           Loading...
         </p>
       ) : groups.length === 0 ? (
         <div className="py-12 text-center space-y-3">
-          <p className="text-sm font-medium text-[var(--color-foreground)]">
+          <p className="text-sm text-gray-400">
             {m.admin_groups_empty()}
-          </p>
-          <p className="text-sm text-[var(--color-muted-foreground)]">
-            {m.admin_groups_empty_description()}
           </p>
         </div>
       ) : (
-        <table className="w-full text-sm border-t border-b border-[var(--color-border)]">
+        <table className="w-full text-sm border-t border-b border-gray-200">
           <thead>
             {table.getHeaderGroups().map((headerGroup) => (
               <tr
                 key={headerGroup.id}
-                className="border-b border-[var(--color-border)]"
+                className="border-b border-gray-200"
               >
                 {headerGroup.headers.map((header) => (
                   <th
@@ -312,12 +293,12 @@ function AdminGroups() {
             {table.getRowModel().rows.map((row) => (
               <tr
                 key={row.id}
-                className="border-b border-[var(--color-border)] last:border-b-0"
+                className="border-b border-gray-200 last:border-b-0"
               >
                 {row.getVisibleCells().map((cell) => (
                   <td
                     key={cell.id}
-                    className="py-4 pr-4 align-top text-[var(--color-foreground)]"
+                    className="py-4 pr-4 align-top text-gray-900"
                   >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>

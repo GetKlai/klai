@@ -1,12 +1,14 @@
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import structlog
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
+from fastapi.staticfiles import StaticFiles
 
-from app.api import me, signup
+from app.api import me, orgs, signup
 from app.api.admin import router as admin_router
 from app.api.admin_api_keys import router as admin_api_keys_router
 from app.api.admin_widgets import router as admin_widgets_router
@@ -22,9 +24,13 @@ from app.api.billing import router as billing_router
 from app.api.connectors import router as connectors_router
 from app.api.groups import router as groups_router
 from app.api.internal import router as internal_router
+from app.api.internal_connectors import router as internal_connectors_router
+from app.api.kb_images import router as kb_images_router
 from app.api.knowledge import router as knowledge_router
 from app.api.knowledge_bases import router as knowledge_bases_router
+from app.api.mcp_oauth import router as mcp_oauth_router
 from app.api.mcp_servers import router as mcp_servers_router
+from app.api.me_mcp_tokens import router as me_mcp_tokens_router
 from app.api.meetings import router as meetings_router
 from app.api.oauth import router as oauth_router
 from app.api.partner import router as partner_router
@@ -38,9 +44,12 @@ from app.logging_setup import setup_logging
 from app.middleware.klai_cors import KlaiCORSMiddleware
 from app.middleware.logging_context import LoggingContextMiddleware
 from app.middleware.session import SessionMiddleware
+from app.middleware.tenant_host import KlaiTenantHostMiddleware
 from app.services.bot_poller import poll_loop
 from app.services.events import _pending as _event_tasks
+from app.services.kb_upload_poller import run_poll_loop as run_kb_upload_poll_loop
 from app.services.recording_cleanup import recording_cleanup_loop
+from app.services.telemetry_purge import telemetry_purge_loop
 from app.services.vexa import vexa
 from app.services.zitadel import zitadel
 
@@ -67,9 +76,61 @@ async def _run_stuck_detector() -> None:
         logger.warning("Provisioning stuck-detector failed at startup", exc_info=True)
 
 
+def _assert_kb_image_routes_match_value_class(app: FastAPI) -> None:
+    """SPEC-KB-IMAGES-V2-001 REQ-3: fail boot if the FastAPI route paths
+    declared in ``app/api/kb_images.py`` drift from ``KbImage.ROUTE_TEMPLATE``
+    / ``KbImage.UPLOAD_ROUTE_TEMPLATE``.
+
+    Rationale: pre-V2 the route declaration and the URL-shape generator in
+    ``klai_image_storage`` lived in different files. A literal-string drift
+    between the two produced silent 404s on browser fetches that went
+    undetected for 3 weeks (PRs #598/#600/#602/#607). The boot-time check
+    here closes that loop — if the value-class's templates and the actual
+    registered routes don't match, the service refuses to start.
+    """
+    from app.core.kb_image_url import KbImage
+
+    declared_paths = {
+        getattr(route, "path", None)
+        for route in app.routes
+        if getattr(route, "path", "") and "kb-images" in getattr(route, "path", "")
+    }
+    expected = {KbImage.ROUTE_TEMPLATE, KbImage.UPLOAD_ROUTE_TEMPLATE}
+    if declared_paths != expected:
+        raise RuntimeError(
+            "SPEC-KB-IMAGES-V2-001 REQ-3 boot-time check failed: "
+            f"kb-image routes declared={declared_paths!r} but "
+            f"KbImage templates expect={expected!r}. "
+            "A drift here means a future PR re-introduced the v1 silent-404 "
+            "regression. Refuse to boot until kb_images.py is restored to "
+            "use KbImage.ROUTE_TEMPLATE + KbImage.UPLOAD_ROUTE_TEMPLATE."
+        )
+
+    # Round-trip self-check: KbImage(...).public_path must be parseable back
+    # via KbImage.from_path. If we ever break this invariant the boot-time
+    # check above is still active but this gives a clearer error first.
+    probe = KbImage(
+        zitadel_org_id="368884765035593759",
+        kb_slug="support",
+        sha256="0" * 64,
+        ext="png",
+    )
+    if KbImage.from_path(probe.public_path) != probe:
+        raise RuntimeError(
+            "SPEC-KB-IMAGES-V2-001 REQ-3 boot-time check failed: "
+            "KbImage.public_path does not round-trip through KbImage.from_path. "
+            "Either the public_path generator or the _PATH_RE drifted."
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     import asyncio
+
+    # SPEC-KB-IMAGES-V2-001 REQ-3: fail boot if kb-image route declaration
+    # drifts from the KbImage value-class. Runs FIRST so subsequent startup
+    # work doesn't waste time when the contract is already broken.
+    _assert_kb_image_routes_match_value_class(app)
 
     # SPEC-SEC-SESSION-001 REQ-4: validate SSO_COOKIE_KEY in BOTH dev and prod
     # modes, before any other startup work. Empty / unset key aborts the
@@ -150,7 +211,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             raise SystemExit(1)
         logger.info("Zitadel PAT validated successfully")
 
-    from app.core.database import assert_portal_users_rls_ready, engine
+    from app.core.database import (
+        assert_partner_api_keys_rls_ready,
+        assert_portal_users_rls_ready,
+        engine,
+    )
     from app.core.rls_guard import install_rls_guard
 
     install_rls_guard(engine)
@@ -159,16 +224,42 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Fail-loud if a migration ever drops the IS NULL branch from the
     # portal_users policy — without it every authenticated request would
     # 404 after deploy because _get_caller_org runs before set_tenant.
+    # SPEC-TI-005 A-3: Assert partner_api_keys has ENABLE+FORCE RLS at
+    # the engine level BEFORE the portal_users check. Operator who missed
+    # the post-deploy SQL step gets a fail-loud message naming the file.
+    await assert_partner_api_keys_rls_ready()
+    logger.info("partner_api_keys RLS policy checked: ENABLE+FORCE present")
+
     await assert_portal_users_rls_ready()
     logger.info("portal_users RLS policy checked: IS NULL branch present")
+
+    # SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-7: refuse to start if FRONTEND_URL /
+    # DOMAIN are misconfigured. Without a valid portal_url, the Zitadel email-
+    # link flows would silently fall back to Zitadel's hosted UI instead of
+    # Klai's /password/set route.
+    from app.services.auth_links import assert_auth_link_templates_ready
+
+    assert_auth_link_templates_ready()
+    logger.info("auth_links url_template checked: portal_url is valid")
 
     await _run_stuck_detector()
 
     poller_task = asyncio.create_task(poll_loop())
     logger.info("Bot poller started")
 
+    # SPEC-KB-FILE-UPLOAD-001 — drives kb_uploads through to terminal
+    # state by polling docling-serve and forwarding markdown to
+    # knowledge-ingest once the docling task succeeds.
+    kb_upload_poller_task = asyncio.create_task(run_kb_upload_poll_loop())
+    logger.info("KB upload poller started")
+
     cleanup_task = asyncio.create_task(recording_cleanup_loop())
     logger.info("Recording cleanup loop started")
+
+    # SPEC-PRIVACY-QUERY-SHADOW-001 Unit 7: 7-day TTL purge for
+    # telemetry.query_shadow + portal_retrieval_gaps.
+    telemetry_purge_task = asyncio.create_task(telemetry_purge_loop())
+    logger.info("Telemetry purge loop started")
 
     imap_task: asyncio.Task[None] | None = None
     if settings.imap_host and settings.imap_username:
@@ -182,7 +273,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
     poller_task.cancel()
+    kb_upload_poller_task.cancel()
     cleanup_task.cancel()
+    telemetry_purge_task.cancel()
     if imap_task is not None:
         imap_task.cancel()
     if _event_tasks:
@@ -219,10 +312,12 @@ app = FastAPI(
 #   -> no_cache_authenticated (@http decorator)
 #   -> LoggingContextMiddleware (binds request_id, org_id, user_id to structlog)
 #   -> SessionMiddleware (resolves BFF session cookie + CSRF check)
+#   -> KlaiTenantHostMiddleware (validates URL tenant slug == session org slug)
 #   -> route handler
-# So we register in reverse: SessionMiddleware first (inner), CORS last (outer).
+# So we register in reverse: tenant-host first (innermost), CORS last (outer).
 # REQ-6.7 (SPEC-SEC-CORS-001): CORS must be the LAST add_middleware call so that
 # CSRF-reject 403s from SessionMiddleware carry CORS headers to cross-origin browsers.
+app.add_middleware(KlaiTenantHostMiddleware)
 app.add_middleware(SessionMiddleware)
 app.add_middleware(LoggingContextMiddleware)
 
@@ -248,6 +343,9 @@ from app.api.auth_bff import router as auth_bff_router  # noqa: E402
 
 app.include_router(signup.router)
 app.include_router(me.router)
+app.include_router(orgs.router)
+app.include_router(me_mcp_tokens_router)
+app.include_router(mcp_oauth_router)
 app.include_router(auth_router)
 app.include_router(auth_bff_router)
 from app.api.auth_join import router as auth_join_router  # noqa: E402
@@ -264,6 +362,10 @@ app.include_router(webhooks_router)
 # SEC-023 / F-038 — BFF proxy for internal services (research, scribe, docs)
 app.include_router(proxy_router)
 app.include_router(internal_router)
+# SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-04.4: callback endpoint for the
+# knowledge-ingest connector_purge_task to hard-delete a connector row
+# after the cascade-cleanup completes.
+app.include_router(internal_connectors_router)
 app.include_router(knowledge_bases_router)
 app.include_router(app_account_router)
 app.include_router(app_chat_router)
@@ -274,11 +376,21 @@ app.include_router(app_gaps_router)
 app.include_router(connectors_router)
 app.include_router(taxonomy_router)
 app.include_router(vitals_router)
+app.include_router(kb_images_router)
 app.include_router(mcp_servers_router)
 app.include_router(admin_api_keys_router)
 app.include_router(admin_widgets_router)
 app.include_router(partner_router)
 app.include_router(oauth_router)
+
+# Static files for portal-api owned assets (e.g. OAuth consent page CSS).
+# Mounted AFTER all routers so route handlers take priority.
+# Caddy must forward /static/* to portal-api (see deploy/caddy/Caddyfile @oauth-mcp block).
+app.mount(
+    "/static",
+    StaticFiles(directory=Path(__file__).parent / "static"),
+    name="static",
+)
 
 
 @app.get("/health")

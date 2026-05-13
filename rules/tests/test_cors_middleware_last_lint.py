@@ -43,16 +43,40 @@ SERVICE_WORKFLOW_FILES = [
 ]
 
 
+def _is_ast_grep_binary(path: str) -> bool:
+    """Return True iff `path` is actually ast-grep (vs. e.g. Linux's `sg`).
+
+    Ubuntu ships `/usr/bin/sg` (set-group ID command from util-linux), which
+    has nothing to do with ast-grep. `shutil.which("sg")` finds that binary
+    on default GHA runners. Verify by running `<bin> --version` and looking
+    for "ast-grep" in the output. Falls back gracefully on FileNotFoundError
+    or non-zero exit.
+    """
+    try:
+        result = subprocess.run(
+            [path, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+    blob = (result.stdout or "") + (result.stderr or "")
+    return "ast-grep" in blob.lower()
+
+
 def _ast_grep_cli() -> list[str] | None:
     """Resolve the ast-grep CLI invocation.
 
-    Prefers a system-installed `sg` or `ast-grep`; falls back to
+    Prefers a system-installed `sg` or `ast-grep` (verified to actually be
+    ast-grep, not a name-collision with another tool); falls back to
     `uvx --from ast-grep-cli ast-grep` so the test works in CI without an
     explicit install step.
     """
-    if (sg := shutil.which("sg")) is not None:
+    if (sg := shutil.which("sg")) is not None and _is_ast_grep_binary(sg):
         return [sg]
-    if (ag := shutil.which("ast-grep")) is not None:
+    if (ag := shutil.which("ast-grep")) is not None and _is_ast_grep_binary(ag):
         return [ag]
     if (uvx := shutil.which("uvx")) is not None:
         return [uvx, "--from", "ast-grep-cli", "ast-grep"]

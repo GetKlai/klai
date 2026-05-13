@@ -44,6 +44,57 @@ jobs:
           config: sgconfig.yml
           paths: klai-knowledge-ingest/knowledge_ingest/app.py
 
+      # SPEC-INGEST-QUEUE-SEPARATION-001 REQ-1 + REQ-4 — every Procrastinate
+      # task module must use a constant from knowledge_ingest.queues, never
+      # a string literal. Catches the regression class that bit
+      # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 PR #253.
+      # Rule: rules/knowledge_ingest_queue_constants.yml.
+      - name: Guard — Procrastinate task queue must be a queues.* constant
+        uses: ast-grep/action@cf62e780f0c88301228978d593a7784427a097a6  # v1.5.0
+        with:
+          config: sgconfig.yml
+          paths: klai-knowledge-ingest/knowledge_ingest/
+
+      # Pitfall: alembic-multi-pr-head-split (process-rules.md). Two PRs
+      # each adding a migration with the same down_revision both build
+      # green individually but the second-merging one creates two
+      # alembic heads, blocking `alembic upgrade head` at container
+      # start. This offline guard runs on every PR + push and rejects
+      # any state with > 1 head before merge instead of in production.
+      #
+      # The guard runs alembic via ``uv run`` so it uses the version
+      # pinned in ``pyproject.toml`` / ``uv.lock`` — keeps the CI check
+      # in lockstep with the version that runs at container entrypoint
+      # rather than drifting against a hardcoded pin.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Guard — single alembic head (knowledge schema)
+        working-directory: klai-knowledge-ingest
+        env:
+          # Alembic's env.py loads sqlalchemy.url from DATABASE_URL but only
+          # ``alembic heads`` (script-graph walk) is offline and never opens
+          # a connection. Stub URL keeps env.py from crashing on missing var.
+          DATABASE_URL: postgresql://x:x@localhost/x
+        run: |
+          set -euo pipefail
+          uv sync --frozen --quiet
+          heads=$(uv run --frozen alembic heads 2>&1 | grep -E "\(head\)$" | wc -l | tr -d ' ')
+          if [ "$heads" -ne 1 ]; then
+            echo "::error::Multiple alembic heads detected (got $heads, expected 1)"
+            uv run --frozen alembic heads
+            echo
+            echo "Hotfix: rebase the second-merging migration's down_revision"
+            echo "onto the first head, OR add a no-op merge migration with"
+            echo "down_revision = (head_a, head_b). See"
+            echo ".claude/rules/klai/pitfalls/process-rules.md"
+            echo "(alembic-multi-pr-head-split)."
+            exit 1
+          fi
+          echo "OK — single alembic head"
+
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
@@ -62,13 +113,20 @@ jobs:
           context: .
           file: klai-knowledge-ingest/Dockerfile
           push: true
+          # `:latest` is published ONLY on push to main. PR builds publish
+          # only the SHA tag so `docker pull :latest` cannot accidentally
+          # pull PR-build code. Mirrors klai-connector / klai-mailer.
           tags: |
-            ghcr.io/getklai/knowledge-ingest:latest
             ghcr.io/getklai/knowledge-ingest:${{ github.sha }}
+            ${{ github.event_name == 'push' && 'ghcr.io/getklai/knowledge-ingest:latest' || '' }}
           # GHA layer cache disabled: it failed to invalidate on source code changes.
           # Builds are fast enough (~1 min) without caching.
 
+      # 2026-05-05 mailer-incident class: this step previously had no `if:`
+      # gate, so PR builds also auto-deployed `:latest` to prod. Same
+      # pattern that bit klai-mailer post PR #319 → hotfix #322.
       - name: Deploy to core-01
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.CORE01_HOST }}
@@ -79,7 +137,8 @@ jobs:
             source /opt/klai/.env
             echo "$GHCR_READ_PAT" | docker login ghcr.io -u mvletter --password-stdin
             docker pull ghcr.io/getklai/knowledge-ingest:latest
-            cd /opt/klai && docker compose up -d knowledge-ingest
+            # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3
+            /opt/klai/scripts/compose-up.sh knowledge-ingest
 
   scan:
     needs: build-push
@@ -88,6 +147,10 @@ jobs:
       security-events: write
       packages: read
     steps:
+      # Checkout is required so trivy-action can find .trivy.yaml + the
+      # service's .trivyignore.yaml (paths are relative to repo root).
+      - uses: actions/checkout@v6
+
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
@@ -95,16 +158,32 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.35.0
+      # STRICT-tier scan per SPEC-CI-TRIVY-POLICY-001 (REQ-2).
+      #
+      # Direct CLI invocation bypasses an aquasecurity/trivy-action
+      # bug (0.35.0/0.36.0): with `format: sarif` the `severity` filter
+      # is honoured for the SARIF body but NOT for the exit-code, so
+      # a MEDIUM/LOW finding triggers exit-code 1 even when we asked
+      # for CRITICAL+HIGH gating. trivy CLI's `--severity` flag is
+      # honoured for both detection AND exit-code. .trivy.yaml stays
+      # in the repo as the canonical policy reference until the
+      # action lands proper config-file precedence.
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@e6c2c5e321ed9123bda567646e2f96565e34abe1  # v0.2.5
         with:
-          image-ref: ghcr.io/getklai/knowledge-ingest:${{ github.sha }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH'
-          ignore-unfixed: true
-          exit-code: '0'
+          version: v0.69.3
+          cache: true
 
+      - name: Run Trivy vulnerability scanner
+        run: |
+          trivy image \
+            --format sarif \
+            --output trivy-results.sarif \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --scanners vuln \
+            --exit-code 1 \
+            ghcr.io/getklai/knowledge-ingest:${{ github.sha }}
       - name: Upload Trivy SARIF to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v4
         if: always()

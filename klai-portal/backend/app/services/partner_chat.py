@@ -4,6 +4,16 @@ SPEC-API-001 TASK-008/009:
 - Retrieve context from retrieval-api
 - Forward to LiteLLM for non-streaming and streaming completions
 - Build augmented system prompt with retrieved chunks
+
+SPEC-RAG-MULTILINGUAL-CHAT-001 REQ-02: the grounded system prompt is
+imported from the shared library ``klai-chat-prompts``. Do NOT inline
+the prompt here — both this service and ``klai-retrieval-api``'s
+``services/synthesis.py`` MUST load the same constant. A CI lint
+asserts no service contains a hardcoded copy.
+
+REQ-07 wires a passive ``lingua``-based language detector on both the
+user query and the model response so VictoriaLogs gets
+``language_correctness`` per ``chat_synthesis_complete`` event.
 """
 
 from __future__ import annotations
@@ -12,9 +22,14 @@ from collections.abc import AsyncGenerator
 
 import httpx
 import structlog
+from klai_chat_prompts import GROUNDED_CHAT_SYSTEM_PROMPT
 
 from app.core.config import Settings
 from app.trace import get_trace_headers
+from app.utils.language_detect import (
+    detect_language,
+    language_correctness,
+)
 
 logger = structlog.get_logger()
 
@@ -41,29 +56,38 @@ def _build_conversation_history(messages: list[dict]) -> list[dict]:
     return history[-6:]
 
 
-_GROUNDED_SYSTEM_PROMPT = (
-    "[CRITICAL] Respond in the language of the user's question. "
-    "Als de gebruiker Nederlands schrijft, antwoord je in het Nederlands. "
-    "If the user writes English, respond in English. Never switch mid-conversation.\n\n"
-    "You are Klai AI, a knowledge assistant. You answer questions based on the knowledge base chunks provided.\n\n"
-    "## How to answer\n"
-    "Start with the answer. No warm-up, no rephrasing the question, no 'great question!'\n"
-    "Simple question: 1-3 sentences. Complex question: the core answer first, then the detail.\n"
-    "Be direct. Be honest. If the sources say something unexpected, say it.\n\n"
-    "## How to cite\n"
-    "Every factual claim gets a [n] citation where n is the chunk number. "
-    "If a chunk includes a URL or help page link, include it: [n] (https://...). "
-    "If sources contradict each other, say so — don't pick a side silently.\n\n"
-    "## When the answer isn't there\n"
-    "Say it plainly: 'That's not in the knowledge base.' "
-    "Don't guess. Don't fill the gap with general knowledge. "
-    "If you're partially sure, say that too: 'The knowledge base touches on this, but doesn't fully answer it.'"
-)
+def _emit_language_correctness_log(
+    *,
+    org_id: int | str | None,
+    query: str,
+    response_text: str,
+) -> None:
+    """Emit chat_synthesis_complete with passive language metrics.
+
+    SPEC-RAG-MULTILINGUAL-CHAT-001 REQ-07. Failure-safe: any exception
+    inside detection MUST NOT block the chat completion path.
+    """
+    try:
+        query_lang = detect_language(query)
+        response_lang = detect_language(response_text)
+        correct = language_correctness(query_lang, response_lang)
+        logger.info(
+            "chat_synthesis_complete",
+            event="chat_synthesis_complete",
+            org_id=org_id,
+            query_language_detected=query_lang,
+            response_language_detected=response_lang,
+            language_correctness=correct,
+            response_length_chars=len(response_text or ""),
+            service="portal-api",
+        )
+    except Exception:
+        logger.warning("chat_synthesis_language_log_failed", exc_info=True)
 
 
 def _build_system_prompt(chunks: list[dict], original_system: str | None = None) -> str:
     """Build a grounded system prompt augmented with retrieved context chunks."""
-    base = original_system or _GROUNDED_SYSTEM_PROMPT
+    base = original_system or GROUNDED_CHAT_SYSTEM_PROMPT
 
     if not chunks:
         return base
@@ -87,10 +111,22 @@ async def retrieve_context(
     kb_slugs: list[str],
     messages: list[dict],
     settings: Settings,
+    *,
+    partner_user_id: str | None = None,
 ) -> tuple[list[dict], str]:
     """Call retrieval-api and return (chunks, augmented_system_prompt).
 
     Follows the pattern from deploy/litellm/klai_knowledge.py.
+
+    ``partner_user_id`` (F2 audit cleanup, 2026-05-06): when given, attached
+    to the /retrieve body as ``user_id``. retrieval-api recognizes the
+    ``partner:`` prefix and pins ``verified_caller`` for product_events
+    integrity (SPEC-SEC-IDENTITY-ASSERT-001 REQ-6) without a round-trip
+    to portal-api's /internal/identity/verify (which would 403 on the
+    synthetic identity). Without this, ``knowledge.queried`` events for
+    partner traffic are silently dropped via the
+    ``product_event_skipped_no_identity`` warning branch in retrieve.py.
+    Audit ref: .moai/audits/retrieval-coupling-2026-05-06/findings/F2-...md.
     """
     query = _last_user_message(messages)
     if not query:
@@ -114,6 +150,9 @@ async def retrieve_context(
     }
     if kb_slugs:
         retrieve_body["kb_slugs"] = kb_slugs
+    if partner_user_id is not None:
+        # F2: synthetic partner-level identity for product_events tagging.
+        retrieve_body["user_id"] = partner_user_id
 
     retrieval_url = settings.knowledge_retrieve_url
     if not retrieval_url:
@@ -122,6 +161,11 @@ async def retrieve_context(
 
     # SPEC-SEC-010 REQ-6.1: authenticate to retrieval-api with the dedicated
     # retrieval_api_internal_secret (separate from portal-api's mailer secret).
+    # SPEC-SEC-IDENTITY-ASSERT-001 REQ-4.2: X-Caller-Service is REQUIRED;
+    # without it retrieval-api returns 400 missing_caller_service. Phase D
+    # landed 2026-04-28 and silently broke partner chat for 7 days because
+    # the header was never added here. See pitfalls →
+    # retrieve-caller-service-header-mismatch.
     retrieval_secret = settings.retrieval_api_internal_secret or settings.internal_secret
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(
@@ -129,6 +173,7 @@ async def retrieve_context(
             json=retrieve_body,
             headers={
                 "X-Internal-Secret": retrieval_secret,
+                "X-Caller-Service": "portal-api",
                 **get_trace_headers(),
             },
         )
@@ -141,16 +186,34 @@ async def retrieve_context(
     return chunks, system_prompt
 
 
+def _extract_completion_text(body: dict) -> str:
+    """Pull the assistant text out of a LiteLLM /v1/chat/completions
+    response body. Returns "" if the body shape is unexpected — callers
+    use this only for observability, never for user-visible behaviour.
+    """
+    try:
+        choice = body["choices"][0]
+        message = choice.get("message") or {}
+        text = message.get("content")
+        return text if isinstance(text, str) else ""
+    except (KeyError, IndexError, TypeError):
+        return ""
+
+
 async def chat_completion_non_streaming(
     messages: list[dict],
     model: str,
     temperature: float,
     system_prompt: str,
     settings: Settings,
+    *,
+    org_id: int | str | None = None,
 ) -> dict:
     """Forward to LiteLLM and return complete response as dict.
 
-    POST to litellm with stream=false.
+    POST to litellm with stream=false. Emits the
+    ``chat_synthesis_complete`` log event before returning so
+    cross-lingual correctness is observable on every call (REQ-07).
     """
     # Replace/prepend system message
     augmented_messages = [{"role": "system", "content": system_prompt}]
@@ -175,7 +238,17 @@ async def chat_completion_non_streaming(
             },
         )
         resp.raise_for_status()
-        return resp.json()
+        body = resp.json()
+
+    # Passive language-correctness telemetry (SPEC-RAG-MULTILINGUAL-CHAT-001 REQ-07).
+    user_query = _last_user_message(messages) or ""
+    response_text = _extract_completion_text(body)
+    _emit_language_correctness_log(
+        org_id=org_id,
+        query=user_query,
+        response_text=response_text,
+    )
+    return body
 
 
 async def chat_completion_streaming(
@@ -184,17 +257,28 @@ async def chat_completion_streaming(
     temperature: float,
     system_prompt: str,
     settings: Settings,
+    *,
+    org_id: int | str | None = None,
 ) -> AsyncGenerator[bytes]:
     """Stream LiteLLM SSE response byte-for-byte.
 
-    POST to LiteLLM with stream=true, yield each chunk as-is.
+    POST to LiteLLM with stream=true, yield each chunk as-is. Collects
+    the streamed assistant text alongside the byte forwarding so the
+    ``chat_synthesis_complete`` log event (REQ-07) gets the full
+    response text even though we never buffer it for the client.
     """
+    import json as _json
+    import re as _re
+
     augmented_messages = [{"role": "system", "content": system_prompt}]
     for msg in messages:
         if msg.get("role") != "system":
             augmented_messages.append(msg)
 
     litellm_url = settings.litellm_base_url
+    user_query = _last_user_message(messages) or ""
+    collected_text_parts: list[str] = []
+    _SSE_DATA = _re.compile(rb"^data: (.+)$", _re.MULTILINE)
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         async with client.stream(
@@ -213,4 +297,28 @@ async def chat_completion_streaming(
         ) as resp:
             resp.raise_for_status()
             async for chunk in resp.aiter_bytes():
+                # Best-effort SSE parse for the observability log; never
+                # block forwarding on parse failures.
+                try:
+                    for match in _SSE_DATA.finditer(chunk):
+                        payload = match.group(1).decode("utf-8", errors="ignore").strip()
+                        if not payload or payload == "[DONE]":
+                            continue
+                        evt = _json.loads(payload)
+                        delta = (evt.get("choices") or [{}])[0].get("delta") or {}
+                        text = delta.get("content")
+                        if isinstance(text, str) and text:
+                            collected_text_parts.append(text)
+                except Exception:
+                    # Observability is best-effort. SSE chunks can split
+                    # JSON payloads across multiple frames, malformed
+                    # provider responses can yield unexpected shapes —
+                    # we never block forwarding on parse failure.
+                    logger.debug("partner_chat_sse_parse_skipped", exc_info=True)
                 yield chunk
+
+    _emit_language_correctness_log(
+        org_id=org_id,
+        query=user_query,
+        response_text="".join(collected_text_parts),
+    )

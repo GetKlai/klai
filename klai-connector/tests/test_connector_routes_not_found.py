@@ -60,6 +60,11 @@ class _FakeSession:
     async def get(self, _model: type, _key: uuid.UUID) -> Any:
         return self._lookup_result
 
+    async def execute(self, _stmt: Any, *_args: Any, **_kwargs: Any) -> Any:
+        # SPEC-TI-002: set_tenant() calls session.execute with a params dict.
+        # Return a no-op result — this fake session is only used for not-found paths.
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=list, first=lambda: None))
+
     async def commit(self) -> None:  # pragma: no cover — not reached on the not-found path
         return None
 
@@ -104,9 +109,7 @@ def _build_client(
     )
     app.dependency_overrides[get_redis_client] = lambda: None
 
-    monkeypatch.setattr(
-        "app.routes.connectors.get_org_id", lambda _request: org_id
-    )
+    monkeypatch.setattr("app.routes.connectors.get_org_id", lambda _request: org_id)
 
     return TestClient(app, raise_server_exceptions=False)
 
@@ -121,9 +124,7 @@ def test_get_missing_connector_returns_404(monkeypatch: pytest.MonkeyPatch) -> N
 
     response = client.get(f"/api/v1/connectors/{_FAKE_UUID}")
 
-    assert response.status_code == 404, (
-        f"expected 404, got {response.status_code}: {response.text}"
-    )
+    assert response.status_code == 404, f"expected 404, got {response.status_code}: {response.text}"
     assert response.json() == {"detail": "Connector not found"}
 
 
@@ -135,9 +136,7 @@ def test_put_missing_connector_returns_404(monkeypatch: pytest.MonkeyPatch) -> N
         json={"name": "renamed"},
     )
 
-    assert response.status_code == 404, (
-        f"expected 404, got {response.status_code}: {response.text}"
-    )
+    assert response.status_code == 404, f"expected 404, got {response.status_code}: {response.text}"
     assert response.json() == {"detail": "Connector not found"}
 
 
@@ -146,9 +145,7 @@ def test_delete_missing_connector_returns_404(monkeypatch: pytest.MonkeyPatch) -
 
     response = client.delete(f"/api/v1/connectors/{_FAKE_UUID}")
 
-    assert response.status_code == 404, (
-        f"expected 404, got {response.status_code}: {response.text}"
-    )
+    assert response.status_code == 404, f"expected 404, got {response.status_code}: {response.text}"
     assert response.json() == {"detail": "Connector not found"}
 
 

@@ -16,7 +16,7 @@ from typing import Any
 
 import structlog
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from jinja2 import TemplateNotFound, UndefinedError
 from jinja2.exceptions import SecurityError
 from pydantic import ValidationError
@@ -121,12 +121,29 @@ async def health() -> dict:
     return {"status": "ok"}
 
 
+# SPEC-MAILER-DROP-INITCODE-001: Zitadel fires `user.human.initialization.code.added`
+# automatically when a human user is created without a password or IDP-link,
+# regardless of the `sendCodes` flag on the import call. Since Klai migrated
+# admin invites to the v2 invite_code flow (which fires `user.human.invite.code.added`
+# with our own Klai-branded URL template), the InitCode mail is a duplicate
+# pointing at Zitadel's stock hosted UI — a UX regression discovered in
+# E2E verification of SPEC-PORTAL-AUTH-EMAIL-LINKS-001.
+#
+# We accept the event with 204 so Zitadel marks it as delivered (no retry),
+# and emit a structured `event="dropped_legacy_event"` log so the drop is
+# observable in VictoriaLogs. The InitCode message texts in
+# `zitadel-message-texts/{nl,en}.yaml` are removed in the same PR.
+_DROPPED_EVENT_TYPES = frozenset({"user.human.initialization.code.added"})
+
+
 @app.post("/notify")
 async def notify(request: Request) -> JSONResponse:
     """
     Receive a Zitadel notification, render Klai-branded HTML, send via SMTP.
 
     Returns 200 on success (Zitadel marks notification as sent).
+    Returns 204 on legacy event types we intentionally drop (Zitadel marks
+    as sent, no retry — see ``_DROPPED_EVENT_TYPES``).
     Returns 500 on render/SMTP failure (Zitadel will retry).
     """
     raw_body = await request.body()
@@ -137,10 +154,22 @@ async def notify(request: Request) -> JSONResponse:
 
     payload = ZitadelPayload.model_validate_json(raw_body)
     to_address = payload.recipient_email()
-    logger.info("Received notification type=%s to=%s", payload.event_type(), to_address)
+    event_type = payload.event_type()
+    logger.info("Received notification type=%s to=%s", event_type, to_address)
+
+    if event_type in _DROPPED_EVENT_TYPES:
+        # Legacy event — Klai's v2 invite_code flow owns the admin-invite mail.
+        # Accept with 204 so Zitadel does not retry; do NOT render or send SMTP.
+        # Use bare Response (no JSON body) — 204 mandates an empty payload.
+        logger.info(
+            "dropped_legacy_event type=%s to=%s reason=initcode_replaced_by_invite_code",
+            event_type,
+            to_address,
+        )
+        return Response(status_code=204)
 
     if not to_address:
-        logger.error("No recipient email in payload for event_type=%s", payload.event_type())
+        logger.error("No recipient email in payload for event_type=%s", event_type)
         raise HTTPException(status_code=422, detail="No recipient email address in payload")
 
     lang = await get_user_language(to_address)
@@ -230,6 +259,37 @@ async def _resolve_expected_recipient(
             raise HTTPException(status_code=400, detail="recipient mismatch")
         return str(validated_vars.email)
 
+    if template_name == "auto_join_admin_notification":
+        expected = str(validated_vars.admin_email).strip().lower()
+        if supplied_norm and supplied_norm != expected:
+            struct_logger.warning(
+                "mailer_recipient_mismatch",
+                template=template_name,
+                expected_hash=hashlib.sha256(expected.encode()).hexdigest(),
+                supplied_hash=hashlib.sha256(supplied_norm.encode()).hexdigest(),
+            )
+            raise HTTPException(status_code=400, detail="recipient mismatch")
+        return str(validated_vars.admin_email)
+
+    if template_name in (
+        "waitlist_confirmation",
+        "waitlist_invite",
+        "onboarding_invite",
+    ):
+        # SPEC-LAUNCH-SOFTLAUNCH-001 B-2 / onboarding_invite: recipient is the
+        # subscriber's own email (validated as EmailStr by the schema). Same
+        # binding pattern as `join_request_approved` (REQ-3.2).
+        expected = str(validated_vars.email).strip().lower()
+        if supplied_norm and supplied_norm != expected:
+            struct_logger.warning(
+                "mailer_recipient_mismatch",
+                template=template_name,
+                expected_hash=hashlib.sha256(expected.encode()).hexdigest(),
+                supplied_hash=hashlib.sha256(supplied_norm.encode()).hexdigest(),
+            )
+            raise HTTPException(status_code=400, detail="recipient mismatch")
+        return str(validated_vars.email)
+
     # Fallback for any template that somehow bypassed TEMPLATE_SCHEMAS —
     # defensively 400 rather than passing through attacker `to`.
     raise HTTPException(status_code=400, detail=f"Unknown template: {template_name}")
@@ -275,12 +335,14 @@ async def internal_send(request: Request) -> JSONResponse:
     except ValidationError as exc:
         errors = []
         for err in exc.errors():
-            errors.append({
-                "loc": err.get("loc"),
-                "msg": err.get("msg"),
-                "type": err.get("type"),
-                "input": _truncate_error_value(err.get("input")),
-            })
+            errors.append(
+                {
+                    "loc": err.get("loc"),
+                    "msg": err.get("msg"),
+                    "type": err.get("type"),
+                    "input": _truncate_error_value(err.get("input")),
+                }
+            )
         struct_logger.warning(
             "mailer_template_schema_invalid",
             template=template_name,
@@ -293,9 +355,7 @@ async def internal_send(request: Request) -> JSONResponse:
 
     # REQ-3: bind recipient. Any mismatch / lookup failure short-circuits
     # BEFORE the rate-limit increment (REQ-4.5).
-    expected_recipient = await _resolve_expected_recipient(
-        template_name, validated, to_address
-    )
+    expected_recipient = await _resolve_expected_recipient(template_name, validated, to_address)
 
     # REQ-4: per-recipient rate limit (AFTER validation, BEFORE dispatch).
     decision = await check_rate_limit(expected_recipient)
@@ -360,9 +420,20 @@ async def internal_send(request: Request) -> JSONResponse:
         "mailer_internal_email_sent",
         template=template_name,
         recipient_hash=decision.recipient_hash,
+        subject=rendered["subject"],
     )
 
-    return JSONResponse(status_code=200, content={"sent": True})
+    # Echo the rendered subject + HTML back so callers (e.g. Twenty CRM
+    # workflows) can surface a copy of what was actually sent — visible
+    # in workflow-run logs and downstream Note-on-Person steps.
+    return JSONResponse(
+        status_code=200,
+        content={
+            "sent": True,
+            "subject": rendered["subject"],
+            "body_html": html_email,
+        },
+    )
 
 
 def _debug_enabled() -> bool:

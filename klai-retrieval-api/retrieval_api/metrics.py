@@ -74,3 +74,70 @@ retrieval_events_dropped_total = Counter(
     "retrieval_events_dropped_total",
     "Product events dropped because the pending-tasks cap was reached",
 )
+
+# SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-08 — chunks removed by the hard
+# quality-score floor (Phase E). Most increments are zero in steady state;
+# spikes signal either:
+#   - degrade-mode tenants whose backfill is still running (expected),
+#   - or an ingest-time detector miss (regression alert).
+# Labelled by org_id so per-tenant pollution is distinguishable from a
+# system-wide regression. We do NOT label by chunk_id (high-cardinality);
+# the chunk IDs are still emitted at DEBUG level in the per-request logs
+# for forensic lookup.
+quality_floor_filtered_total = Counter(
+    "klai_retrieval_quality_floor_filtered_total",
+    "Chunks removed by the quality-floor filter (SPEC-INGEST-LOGIN-WALL-DETECT-001)",
+    ["org_id"],
+)
+
+# SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1 / REQ-8 — confidence band
+# distribution per tenant. Bands: high (max rerank ≥ high_threshold),
+# medium (between thresholds), low (< low_threshold), unknown (reranker
+# disabled, fallback, or empty result). Unknown should be a small fraction
+# of total in healthy operation; spikes indicate reranker instability.
+retrieval_confidence_band_total = Counter(
+    "retrieval_confidence_band_total",
+    "Retrieval responses bucketed by reranker-score confidence band",
+    ["band", "org_id"],
+)
+
+# SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-3 / REQ-8 — link-expansion
+# survival rate. ``hit`` = at least one expanded chunk made the served
+# top-K. ``miss`` = link-expand ran (added ≥ 1 chunk to candidates) but
+# none survived rerank + source-aware-select + quality-boost. Only
+# incremented when link-expand actually contributed candidates; requests
+# with link_expand_count == 0 are not counted.
+retrieval_link_expand_top_k_total = Counter(
+    "retrieval_link_expand_top_k_total",
+    "Link-expand contribution to served top-K (hit/miss per tenant)",
+    ["outcome", "org_id"],
+)
+
+# SPEC-PRIVACY-QUERY-SHADOW-001 REQ-14 — privacy-layer observability.
+# Counts every gating decision so operators can verify the telemetry
+# layer is behaving correctly across the four decision-types:
+#   metadata_only   — content fields stripped from decision_record
+#   content_emitted — full decision_record (full mode)
+#   shadow_inserted — row written to telemetry.query_shadow
+#   full_logged     — raw query persisted in logs / DB
+telemetry_level_decisions_total = Counter(
+    "telemetry_level_decisions_total",
+    "Privacy-layer gating decisions per tenant level",
+    ["level", "decision"],
+)
+
+# Tracks shadow-store INSERT failures. ``reason`` distinguishes
+# fail-modes (no_pool, db_error, timeout, etc.) for triage.
+telemetry_shadow_drop_total = Counter(
+    "telemetry_shadow_drop_total",
+    "Shadow-store INSERT failures, bucketed by reason",
+    ["reason"],
+)
+
+# Number of rows redacted by the one-time legacy cleanup migration
+# (REQ-12). Incremented at module load by a probe query so dashboards
+# can show "this many legacy rows were closed out on first deploy".
+telemetry_legacy_redaction_total = Counter(
+    "telemetry_legacy_redaction_total",
+    "Legacy rows redacted by the one-time privacy cleanup migration",
+)

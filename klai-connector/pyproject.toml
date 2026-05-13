@@ -24,6 +24,12 @@ dependencies = [
     "filetype>=1.2.0",
     "msal>=1.31",
     "trafilatura>=2.0,<3.0",
+    # lxml is used directly by app/adapters/confluence.py via
+    # BeautifulSoup(..., "lxml"). Was previously transitive-only via
+    # trafilatura > {htmldate, justext} > lxml — making the import an
+    # implicit dependency. Pinned ≥6.1.0 to clear CVE-2026-41066 (XXE in
+    # iterparse / ETCompatXMLParser) per SPEC-CI-TRIVY-POLICY-001 PR #2.
+    "lxml>=6.1.0",
     "klai-connector-credentials",
     "klai-image-storage",
     # SPEC-SEC-INTERNAL-001 REQ-4 + REQ-10: shared secret-scrubbing helpers used
@@ -33,12 +39,18 @@ dependencies = [
     "atlassian-python-api>=4.0.7",
     "html2text>=2025.4.15",
     "redis>=5.0",
+    # SPEC-SEC-IDENTITY-ASSERT-003 REQ-2: replace JWT resourceowner trust
+    # with portal /internal/identity/verify. IdentityAsserter provides
+    # the canonical caller pattern (60s LRU cache, fail-closed,
+    # structlog telemetry).
+    "klai-identity-assert",
 ]
 
 [tool.uv.sources]
 klai-connector-credentials = { path = "../klai-libs/connector-credentials", editable = true }
 klai-image-storage = { path = "../klai-libs/image-storage", editable = true }
 klai-log-utils = { path = "../klai-libs/log-utils", editable = true }
+klai-identity-assert = { path = "../klai-libs/identity-assert", editable = true }
 
 [project.optional-dependencies]
 dev = [

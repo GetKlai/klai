@@ -1,7 +1,7 @@
 # Knowledge Ingestion & Retrieval: How It Works
 
 > Engineering reference for the running system on core-01.
-> Verified against `klai-knowledge-ingest/knowledge_ingest/` and `klai-retrieval-api/` — April 2026 (updated 2026-04-16).
+> Verified against `klai-knowledge-ingest/knowledge_ingest/` and `klai-retrieval-api/` — April 2026 (updated 2026-05-06 for SPEC-INGEST-RECONCILE-001 — discovery/fetch separation, fetch_outcomes JSONB, skip_reasons JSONB).
 >
 > For the research backing these design decisions, see
 > [knowledge-system-fundamentals.md](knowledge-system-fundamentals.md).
@@ -311,13 +311,55 @@ Qdrant payload as `image_urls: ["/kb-images/{org_id}/images/{kb_slug}/{sha256}.{
 The github + notion adapters in klai-connector keep using their own
 `sync_engine._upload_images` path for now — consolidation tracked in SPEC-KB-IMAGE-002.
 
-**Two-phase crawl ordering (SPEC-CRAWLER-005 REQ-01).** `run_crawl_job` splits the bulk
-crawl into two explicit phases so `anchor_texts`, `links_to`, and `incoming_link_count`
-are correct on every Qdrant chunk at first write — no post-crawl `set_payload` band-aid:
+**Discovery + fetch separation (SPEC-INGEST-RECONCILE-001).** Since 2026-05-06
+`crawl_site` decouples URL discovery from page fetching. Discovery enumerates
+candidates from the union of `sitemap.xml` + a one-shot BFS seed of `start_url`'s
+internal links (canonicalised, deduped, capped at `max_pages` with sitemap-priority
+on the cap). The candidate list — minus `start_url` itself, which is already
+fetched as the seed — is submitted in **one** `POST /crawl` bulk call to crawl4ai,
+whose server-side `MemoryAdaptiveDispatcher` handles concurrency. This replaces an
+earlier design that fanned out `crawl_page` calls in an unbounded `asyncio.gather`
+loop and silently dropped ~80% of pages on `help.voys.nl` (Bug A in the SPEC's
+motivation section). A repo-wide CI lint rule
+(`rules/no-unbounded-gather-crawl-page.yml`) now blocks reintroduction of that
+anti-pattern.
+
+`crawl_site` returns `(results, fetch_outcomes)`. `fetch_outcomes` is a JSONB-shaped
+list with one entry per discovered candidate URL:
 
 ```
-crawl_site(...) returns N CrawlResults
-          │
+{"url": str, "reason_code": str, "status_code": int|null, "content_length": int}
+```
+
+`reason_code` is a member of `FetchReasonCode` (success, http_4xx, http_5xx,
+timeout, dns_error, connection_error, auth_error, parse_error, rate_limited,
+unknown_exception). The list is written to `knowledge.crawl_jobs.fetch_outcomes`
+JSONB so operators can answer "where did the missing pages go?" without log
+forensics. A same-domain guard on the post-redirect positional fallback prevents
+crawl4ai response-reordering from silently mislabelling outcomes with cross-site
+content.
+
+**Persist-stage drop visibility (SPEC-INGEST-RECONCILE-001 / klai-connector side).**
+`sync_engine._execute_sync` aggregates per-sync drops in a `skip_reasons: dict[str,
+int]` accumulator (keyed by `PersistSkipReason` — content_too_short,
+auth_wall_detected, dedupe_*, non_text_content, excluded_by_kb_config,
+taxonomy_classify_failed). The JSONB is persisted to
+`connector.sync_runs.skip_reasons` at run completion with a Postgres CHECK
+constraint that rejects keys outside the enum (form: `skip_reasons - allowed[]
+= '{}'::jsonb` — chosen because Postgres rejects scalar subqueries inside CHECK).
+`documents_ok` is now defined as `documents_total - documents_failed -
+sum(skip_reasons.values())`, so portal consumers reading the column see
+"persisted-as-artifact" rather than the historic "submitted-to-ingest" inflation.
+
+**Two-phase crawl ordering (SPEC-CRAWLER-005 REQ-01).** `run_crawl_job` splits the
+ingest of `crawl_site`'s results into two explicit phases so `anchor_texts`,
+`links_to`, and `incoming_link_count` are correct on every Qdrant chunk at first
+write — no post-crawl `set_payload` band-aid:
+
+```
+crawl_site(...) returns (N CrawlResults, M FetchOutcomes)
+          │              ↓
+          │              persisted to crawl_jobs.fetch_outcomes JSONB
           ▼
 ┌─────────────────────────────────────────────────────┐
 │ Phase 1 — _build_link_graph(results, org, kb, pool) │
@@ -345,15 +387,23 @@ payload, not `[]`. Retrieval-api reads list-shaped keys (`anchor_texts`, `links_
 key-absent, `None`, and non-list values all as `[]`, so the two shapes are
 interchangeable at the consumer boundary.
 
-Chunking is done by a custom `chunker.py` inside knowledge-ingest:
+Chunking is done by `chunker.chunk_markdown_with_parents` (SPEC-RAG-PARENT-CHILD-001).
+It produces TWO chunk layers per document — *children* for matching and *parents* for
+LLM context — in a single pass:
+
 1. **Heading split** — the document is first split at H1/H2/H3 headings
    (`^(#{1,3})\s+(.+)$`). Each section keeps its heading prepended so chunks are
-   self-contained.
-2. **Size split** — sections that are still larger than `chunk_size` (default 1500
-   **characters**, roughly 300–400 tokens for BGE-M3) are further split at paragraph
-   boundaries (`\n\n`) or sentence boundaries (`. `).
-3. **Overlap** — consecutive chunks share a 200-character tail/head overlap to prevent
-   answers from falling between chunks.
+   self-contained. Each section becomes one **parent chunk**.
+2. **Size split (children)** — within each parent, the text is further split at
+   paragraph (`\n\n`) or sentence (`. `) boundaries until each *child* fits in
+   `chunk_size` (default 1500 chars, roughly 300–400 tokens for BGE-M3).
+3. **Overlap** — consecutive children share a 200-character tail/head overlap so an
+   answer doesn't fall between two children.
+4. **Parent-child linkage** — every child carries `parent_index` pointing to its
+   parent in the parents list. Parents are persisted to PostgreSQL `knowledge.parent_chunks`
+   AT enrichment time (so the row IDs are then threaded into each child's Qdrant
+   payload as `parent_chunk_id`). Retrieval-api uses that linkage to expand each
+   matched child back to its parent text after reranking.
 
 The content profile defines `chunk_tokens_max` per document type. The chunker converts
 this to characters (`tokens × 4`) and uses it as `chunk_size`. Effective chunk sizes:
@@ -373,14 +423,32 @@ to produce a 1024-dimensional dense vector. These raw embeddings are immediately
 The document is now searchable.
 
 **Step 3 — Enqueue enrichment.** The main request enqueues two async tasks via
-Procrastinate (a PostgreSQL-backed task queue) and returns to the caller. Three queues
-manage priorities:
-- `enrich-interactive` — user-triggered saves (should feel fast)
-- `enrich-bulk` — background connector syncs (can wait)
-- `graphiti-bulk` — knowledge graph ingestion (lowest priority)
+Procrastinate (a PostgreSQL-backed task queue) and returns to the caller. The
+service runs **seven** queues, each backing a distinct workload type. Names live
+in `knowledge_ingest/queues.py` as constants — never as bare string literals
+(SPEC-INGEST-QUEUE-SEPARATION-001, enforced by an ast-grep CI rule):
 
-The worker processes queues in drain order: `ingest-kb → enrich-interactive → enrich-bulk
-→ graphiti-bulk`.
+- `ingest-kb` — debounced Gitea ingest after webhook fires (one task per page)
+- `enrich-interactive` — user-triggered single-doc enrichment (drains first)
+- `enrich-bulk` — bulk LLM enrichment for crawled/imported pages
+- `graphiti-bulk` — LLM relation building → FalkorDB knowledge graph
+- `taxonomy-backfill` — clustering + taxonomy backfill jobs
+- `connector-purge` — connector-delete saga orchestration (SPEC-CONNECTOR-DELETE-LIFECYCLE-001)
+- `crawl-jobs` — web crawl orchestration (`crawl_tasks.run_crawl`); kept off
+  the LLM-bound enrichment lane so a 100-doc Notion sync cannot block a
+  user-triggered crawl behind 30-60s/job Mistral calls
+
+A single procrastinate worker subscribes to all seven via
+`queues.ALL_QUEUES`. Adding a queue is mechanical: define the constant +
+append it to `ALL_QUEUES`, the worker picks it up automatically. The
+`tests/test_queues_constants.py` invariants forbid drift, and the
+ast-grep rule `rules/knowledge_ingest_queue_constants.yml` prevents new
+task modules from regressing back to string literals.
+
+Procrastinate processes queues independently with a per-worker concurrency
+limit; there is no global drain order. Priority is expressed via queue
+choice (interactive enrichment finishes well before bulk because their
+queues run in parallel and interactive jobs are short).
 
 **Step 4 — Feed the knowledge graph (async).** If `settings.graphiti_enabled` is on, a
 Procrastinate task on the `graphiti-bulk` queue defers the document to Graphiti/FalkorDB
@@ -404,9 +472,29 @@ surrounding context from the document and generates:
 - 3–5 *hypothetical questions* the chunk would answer.
 
 The context strategy (from the profile) determines which surrounding text goes into the
-prompt: `first_n` uses the document's opening paragraphs, `rolling_window` uses nearby
-chunks, `front_matter` uses YAML metadata, and `most_recent` uses the most recent chunks
-(useful for email threads where the latest message is most relevant).
+prompt. As of SPEC-RAG-CONTEXTUAL-001 (Anthropic-pattern contextual retrieval), the
+heaviest path is the new **document_summary** strategy:
+
+- **Document summary** — generated **once per artifact** before chunk enrichment starts
+  (`contextual.generate_document_summary`, klai-fast, 1–2 Dutch/English sentences).
+  Persisted on `extra_payload["document_summary"]` so re-ingest of the same content
+  returns it from cache. The per-chunk enrichment prompt then references this short
+  summary instead of the full document body — ~8x reduction in per-chunk input tokens
+  for a 20-chunk document.
+- **Document language** — auto-detected once via `lingua-language-detector` and cached
+  on `document_language` so the prompt picks the right Dutch/English template
+  per-document (a Dutch tenant can have English vendor docs).
+
+Other context strategies still exist for non-summary content types:
+`first_n` uses the document's opening paragraphs, `rolling_window` uses nearby chunks,
+`front_matter` uses YAML metadata, and `most_recent` uses the most recent chunks (useful
+for email threads where the latest message is most relevant).
+
+The summary itself rides along on every Qdrant point — `document_summary` is a payload
+field on the chunk so retrieval-api can surface it for source-label rendering and for
+the LLM at injection time. Combined with the chunk's own `context_prefix`, the LLM gets
+a layered context: artifact-level summary + chunk-level prefix + chunk text + parent
+text (after expansion at retrieval time).
 
 If the LLM call fails, the chunk falls back to its original text — enrichment failure
 never blocks a chunk from being retrievable.
@@ -550,6 +638,213 @@ Graphiti LLM calls with a `_TokenBucketLimiter(rate=settings.graphiti_llm_rps)` 
 (default 1.0 req/s). On rate-limit error: backs off 30s then 60s. On other errors: backs
 off 1s then 2s. Three retries total before the episode is dropped (with a warning log).
 
+### Phase 4: Image extraction and content-addressed storage
+
+Documents that contain inline images (Notion screenshots, Confluence diagrams,
+crawled pages) get a separate object-storage pipeline that runs alongside text
+ingestion. Lives in `klai-libs/image-storage/` (`klai_image_storage` package),
+shared between `klai-connector` (during sync) and `klai-knowledge-ingest`
+(during crawl ingest). Backed by **Garage**, a self-hosted S3-compatible object
+store on core-01.
+
+**Content-addressed keys.** Every image is hashed with SHA-256 before upload.
+The hash becomes the object key:
+
+```
+<bucket>/<org_id>/images/<kb_slug>/<sha256>.<ext>
+```
+
+Identical images uploaded across different pages, different syncs, or even
+different connectors collide on the same key — Garage stores them once. A Voys
+help-center logo that appears on 21 Notion pages results in 21
+`knowledge.artifact_images` rows (one per artifact reference) but a single S3
+object. This is verified end-to-end at every ingest run by comparing
+`count(DISTINCT artifact_images.s3_key)` against the S3 object count under the
+org's prefix — they must match exactly.
+
+**`knowledge.artifact_images` table** (added in SPEC-CONNECTOR-DELETE-LIFECYCLE-001 PR-B):
+
+| Column | Notes |
+|---|---|
+| `artifact_id` | FK to `knowledge.artifacts.id` ON DELETE CASCADE |
+| `s3_key` | The Garage object key (full `<org>/images/<kb>/<sha>.<ext>`) |
+| `content_hash` | SHA-256 of the image content; redundant with key suffix but indexed for orphan-key sweeps |
+
+The CASCADE on `artifact_id` means deleting an artifact automatically removes
+its image references; the connector-purge orchestrator then sweeps any S3 keys
+whose refcount across the org dropped to zero.
+
+**Public URL.** Garage runs in S3-website mode on a separate port (3902); Caddy
+proxies `https://my.getklai.com/kb-images/<key>` to that endpoint, so browsers
+fetch images by their stable content-addressed URL without presigned tokens.
+The frontend reads `s3_key` from chunk payload metadata in retrieval results
+and constructs the public URL itself. This avoids URL expiry issues and works
+with the standard browser cache.
+
+### Phase 5: Worker lanes and reliability
+
+Bootstrap and shutdown live in `knowledge_ingest/worker.py`
+(`WorkerLifecycle` class), called from the FastAPI lifespan. The lifecycle
+starts **two** procrastinate worker instances inside the same container —
+one per workload lane — plus three reliability mechanisms.
+
+**Two-lane architecture (SPEC-WORKER-LANES-001).** The seven queues split
+into two lanes by latency profile:
+
+| Lane | Queues | Concurrency | Per-task latency |
+|---|---|---|---|
+| **I/O** | `ingest-kb`, `connector-purge`, `crawl-jobs` | 8 | sub-second to ~30s |
+| **LLM** | `enrich-interactive`, `enrich-bulk`, `graphiti-bulk`, `taxonomy-backfill` | 4 | 5-60s, rate-limited |
+
+Each lane runs as a dedicated `run_worker_async` task subscribed to its
+queues only. They share the same `proc_app` and connector pool, but each
+registers an independent `procrastinate_workers` row with its own
+heartbeat and concurrency semaphore. This is the only way to give I/O
+work latency guarantees: procrastinate has no per-queue fairness within a
+single worker — it fetches the oldest todo across the worker's full queue
+set, so a backlog of slow LLM jobs would otherwise delay every I/O job
+until the LLM lane drains. Verified against Voys 2026-05-01: a
+50-LLM-job backlog had pushed user-triggered crawls 10+ minutes behind
+schedule under the old single-worker design.
+
+Lane membership lives in `knowledge_ingest/queues.py` (`IO_QUEUES`,
+`LLM_QUEUES`). `ALL_QUEUES = IO_QUEUES + LLM_QUEUES` is the union, used
+only by tests and observability — the two workers never subscribe to it.
+A queue without a lane assignment fails
+`tests/test_queues_constants.py::test_io_and_llm_lanes_partition_all_queues`
+and CI blocks the PR.
+
+**1. DSN normalisation.** Procrastinate uses psycopg3 / libpq, not asyncpg.
+Klai's database password is base64-encoded and contains `=`, `+`, `/` chars
+that break both stdlib urlparse and libpq's key=value parsing. The
+`_build_libpq_dsn` helper rewrites `postgresql+asyncpg://...` URLs to
+`host=... password='...'` form with proper escaping. Pinned by 9 unit tests
+in `tests/test_worker_dsn.py`.
+
+**2. Zombie recovery on startup.** Container restarts during a long-running
+LLM call leave the executing job in `status='doing'` with no live worker.
+Procrastinate v3's built-in `prune_stalled_workers` deletes the dead worker
+row but does NOT reset the orphaned job — the FK CASCADE only nulls
+`worker_id`. Without intervention the job sits in `doing` forever and
+permanently consumes a worker concurrency slot. Over a few weeks of deploys,
+the `enrich-bulk` and `graphiti-bulk` queues silently saturated.
+
+`zombie_recovery.recover_zombie_jobs` runs at every worker startup, ONCE
+before either lane worker starts. It calls `prune_stalled_workers(120s)`
+then retries every job matching `status='doing' AND worker_id IS NULL`.
+Every queue task is idempotent (content-hash dedup for ingest, Episode
+UUID dedup for graphiti, the connector-purge task is idempotent by
+design), so retry is safe across both lanes.
+SPEC-PROCRASTINATE-ZOMBIE-001.
+
+**3. Graceful shutdown grace period.** `deploy/docker-compose.yml` sets
+`stop_grace_period: 90s` on the knowledge-ingest service. Docker's default 10
+seconds is shorter than Mistral's longest entity-extraction calls (30-60s),
+so a deploy mid-call would SIGKILL the worker and produce zombies even with
+the recovery loop. 90 seconds lets nearly all in-flight LLM calls complete
+gracefully on shutdown; recovery only runs on the rare job that genuinely
+exceeded the budget.
+
+**4. Cancel-on-timeout for klai-connector polls.** When
+`sync_engine._run_web_crawler_delegation` hits its 30-min poll timeout,
+the procrastinate `run_crawl` task on knowledge-ingest may still be
+running. Without intervention it would keep writing artifacts behind a
+`sync_run` already marked FAILED, so the data state diverges from the
+user-visible status. SPEC-WORKER-LANES-001 added
+`POST /ingest/v1/crawl/sync/{job_id}/cancel`: klai-connector calls it
+after timeout, knowledge-ingest looks up the matching procrastinate task
+and calls `job_manager.cancel_job_by_id_async(abort=True)`. The endpoint
+is idempotent (204 whether the task was running, finished, or never
+existed) so retries don't matter.
+
+### Phase 6: Connector-delete orchestration
+
+Deleting a connector is a cross-service saga, not a single SQL DELETE.
+SPEC-CONNECTOR-DELETE-LIFECYCLE-001 introduced the orchestrator
+(`connector_cleanup.purge_connector`) and a state machine on
+`portal_connectors.state` (`'active' | 'deleting'`). The portal API flips the
+state and enqueues a procrastinate task on the dedicated `connector-purge`
+queue; the orchestrator runs the steps in order:
+
+1. **Snapshot** the artifact-id set (one SELECT for repeatable cascading).
+2. **Cancel** any pending `enrich_document_bulk` and `ingest_graphiti_episode`
+   jobs scoped to the connector. New work that sneaks in after this step is
+   blocked by an existence guard at the top of the enrichment task that
+   re-checks `portal_connectors.state` before doing real work.
+3. **Snapshot** orphan S3 image keys (refcount across the rest of the org).
+4. **Delete** `knowledge.artifacts` (CASCADE clears `artifact_images`,
+   `artifact_entities`, `derivations`).
+5. **Delete** `knowledge.crawl_jobs` for the connector.
+6. **Delete** FalkorDB `Episodic` nodes for this connector's artifacts (uuid
+   stored in `extra->>'graphiti_episode_id'`); a separate org-wide sweep
+   removes any orphan episodes whose owning artifact is gone.
+7. **Delete** Qdrant chunks filtered on `source_connector_id`.
+8. **Delete** S3 image objects whose orphan refcount reached zero.
+9. **Janitor sweep**: org-wide FalkorDB orphans + S3 orphan-hash check.
+
+Cross-schema FK CASCADE (`connector.sync_runs.connector_id →
+public.portal_connectors.id ON DELETE CASCADE`) handles the sync_runs cleanup
+when the portal finally hard-deletes the row after the worker reports
+completion via the internal `/finalize-delete` endpoint.
+
+The whole saga is idempotent — a retried `connector_purge_task` finds nothing
+to do and returns cleanly. Verified end-to-end against Voys on 2026-04-30
+with 0 cross-store residue across all 9 affected stores (portal_connectors,
+sync_runs, artifacts, crawl_jobs, artifact_images, crawled_pages, Qdrant
+chunks, FalkorDB nodes, Garage S3 objects).
+
+---
+
+### Phase 7: Operator-triggered rebuild (SPEC-RAG-REBUILD-KB-001)
+
+When pipeline-shaping changes ship — new chunking strategy, new chunk metadata, new
+embedding pre-processing — every active artifact needs to be re-run through the
+pipeline. We do this via the operator-triggered `rebuild_kb` task instead of
+re-fetching from source connectors. Source-fetch isn't always possible (deleted Notion
+pages, expired crawl content) and would be 100x more expensive than reusing what's
+already in Qdrant.
+
+**Two source-text paths.** For each artifact, the rebuild reads document text from one
+of two places:
+1. **`extra.document_text`** — persisted at ingest time since SPEC-RAG-CONTEXTUAL-001
+   shipped. Re-ingests after that change rebuild without any reconstruction step.
+2. **Reconstruction from Qdrant** — for *legacy* artifacts ingested before the persist
+   path landed: `_reconstruct_document_text` pulls every existing Qdrant chunk for the
+   artifact's path in `chunk_index` order and concatenates the (non-enriched) text
+   values. Lossy — markdown frontmatter is dropped, chunk overlap leaves duplication —
+   but enough material to feed the new chunker + summary generator.
+
+**What rebuild does per artifact.** Inside a bounded `asyncio.Semaphore(_SEMAPHORE_LIMIT=4)`:
+1. Read `extra.document_text` or reconstruct from Qdrant.
+2. Re-chunk with `chunker.chunk_markdown_with_parents` (children + parents +
+   parent_index_per_child).
+3. Delete stale `parent_chunks` rows for the artifact.
+4. Call `_enrich_document` with `parents` + `parent_index_per_child` — *that* is what
+   threads the generated `parent_chunks.id` into each child's Qdrant payload as
+   `parent_chunk_id`. Calling `_enrich_document` without those kwargs upserts every
+   child with `parent_chunk_id=None` and parent expansion silently degrades
+   (regression that PR #357 fixed; the test
+   `test_rebuild_kb_threads_parents_into_enrich_document` locks the contract).
+5. `_enrich_document` itself runs the same enrichment + embedding + Qdrant
+   delete-then-upsert as fresh ingest.
+
+**Concurrency contract.** Procrastinate `queueing_lock=f"rebuild-kb-{org_id}-{kb_slug}"`
+prevents concurrent rebuilds for the same KB; `AlreadyEnqueued` is raised at defer time
+on duplicate. Inline runbook variant: `rebuild_kb_inline(org_id, kb_slug)` for direct
+operator invocation.
+
+**Operator runbook:**
+```bash
+docker exec klai-core-knowledge-ingest-1 python -c \
+  "import asyncio; from knowledge_ingest.rebuild_tasks import rebuild_kb_inline; \
+   print(asyncio.run(rebuild_kb_inline('<org_zitadel_id>', '<kb_slug>')))"
+```
+
+Used post-deploy whenever a SPEC changes how chunks are produced — recent example: PR
+#357 (parent_chunk_id threading) required Voys to be re-rebuilt to populate
+`parent_chunk_id` on chunks ingested before the fix landed. 515 artifacts processed,
+~5400 chunks regenerated.
+
 ---
 
 ## Part 3: How knowledge reaches the user
@@ -622,11 +917,13 @@ The old code-level fallback URL in the hook that pointed to it has also been rem
 | `org` | All KBs in the org | `org_id` |
 | `personal` | User's personal KB only | `org_id` + `user_id` |
 | `both` | Personal + org | `org_id` + `user_id` |
-| `notebook` | Focus notebook (Qdrant `klai_focus`) | `org_id` + `notebook_id` |
-| `broad` | Focus notebook + org KB | `org_id` + `notebook_id` |
 
 The LiteLLM hook fires a single request with `scope=both`. The retrieval-api handles the
 fan-out to personal and org scopes internally and returns chunks labelled by scope.
+
+> **Removed:** `notebook` and `broad` scopes were the integration with the
+> Focus / research-api service. Both were removed in SPEC-DECOMM-FOCUS-001
+> (May 2026) following the Focus decommission in SPEC-PORTAL-UNIFY-KB-001.
 
 **Multiple knowledge bases and visibility:** An org can have multiple KBs (each with a
 `kb_slug`). Each KB has a `visibility` field (`public` | `internal` | `private`) stored
@@ -667,11 +964,17 @@ link-graph signals are applied before reranking:
   10) chunks are collected, and Qdrant is queried for any chunks whose `source_url` matches
   one of those URLs (`fetch_chunks_by_urls()`). Matching chunks are added as candidates with
   `score=0.0` so they pass through to the reranker, which scores them on actual relevance.
-  Skipped for `notebook` and `broad` scopes (Focus).
 - **Authority boost:** For every candidate chunk, `score += link_authority_boost × log(1 +
   incoming_link_count)`. Pages with many inbound links within the KB are editorially
   important — this boost surfaces them ahead of equally-similar but less-linked pages.
   Default `link_authority_boost = 0.05` (configurable per deployment).
+
+> **Instrumentation (F3 phase 1, audit retrieval-coupling-2026-05-06):** the
+> `retrieval_decision_record` log entry carries a `link_expand` block measuring how
+> many expanded chunks survive the reranker into the served top-K
+> (`expanded_in_top_k`, `seed_in_top_k`, `expanded_top_k_chunk_ids`). Phase 2 (whether
+> to migrate to RRF-merge across dense/authority/expansion ranklists, recalibrate the
+> coefficient, or disable) is gated on ~7 days of this telemetry.
 
 **4b. Rerank.** The top candidates are reranked by `infinity-reranker`
 (bge-reranker-v2-m3 on GPU — gpu-01 via SSH tunnel at 172.18.0.1:7998). The reranker applies a cross-attention model that scores
@@ -682,6 +985,77 @@ different. Dense search finds semantically similar text. Question vectors find c
 that directly answers the query. Sparse search finds keyword matches. The reranker adds
 a final precision pass. Together they reduce retrieval failures significantly compared to
 dense-only search.
+
+**Multilingual chat (SPEC-RAG-MULTILINGUAL-CHAT-001).** May 2026
+multilingual rollout. There are **three concurrent chat paths** in
+Klai, each with its own system-prompt construction. They are listed
+here in order of user impact:
+
+1. **LibreChat → LiteLLM → Mistral (path A).** The user-facing chat
+   embed at `chat-{tenant}.getklai.com` (rendered inside an iframe at
+   `voys.getklai.com/app/chat` and equivalents). LibreChat sends a
+   completion request to the LiteLLM proxy. LiteLLM's pre-call hook
+   `deploy/litellm/klai_knowledge.py` recognises LibreChat traffic by
+   the presence of `data["user"]` (LibreChat MongoDB ObjectId), calls
+   retrieval-api `/retrieve` for chunks, then prepends a system-prompt
+   prefix to the messages list. v1.2 of the SPEC moved that prefix
+   construction over to the shared `GROUNDED_CHAT_SYSTEM_PROMPT` from
+   `klai-libs/chat-prompts` and rewrote the four NL prefix blocks
+   (Klai Kennisbank header narrow + broad, ANTWOORDFORMAAT
+   instructions, Klai Templates wrapper, KB-unavailable notice) to be
+   multilingual.
+2. **portal-api `/partner/v1/chat/completions` → LiteLLM → Mistral
+   (path B).** Both the embeddable Widget (`klai-widget/`) and external
+   Partner API tokens flow through this endpoint.
+   `klai-portal/backend/app/services/partner_chat.py::chat_completion_*`
+   POSTs to LiteLLM **without** the `user` field, so the
+   `klai_knowledge.py` hook hits its early-exit and the prefix it
+   would have prepended is skipped. The system prompt that reaches
+   Mistral here is the one `partner_chat.py::_build_system_prompt`
+   constructs — which since v1.1 imports
+   `GROUNDED_CHAT_SYSTEM_PROMPT` from `klai-libs/chat-prompts`.
+3. **retrieval-api `POST /chat` (path C, dormant).** Registered FastAPI
+   route with auth + tenant-isolation guards + tests, but no current
+   external callers in the codebase. Reserved for SPEC-KNOW-005's
+   feedback feature. Synthesis there uses the same shared
+   `GROUNDED_CHAT_SYSTEM_PROMPT`. Multilingual when activated, no
+   user-visible effect today.
+
+The shared `GROUNDED_CHAT_SYSTEM_PROMPT` instructs the LLM to:
+
+- detect the language of the user's most recent **substantive** message
+  (≥ 5 words; shorter messages inherit the prior language);
+- ignore single foreign-language words inside an otherwise consistent
+  message (no flip on "thanks!", "merci", "ok gracias");
+- switch on a clearly substantive switch and stay switched.
+
+Six target languages: NL, EN, DE, FR, PT, ES. Retrieval itself does
+not change — bge-m3 already embeds 100+ languages into a shared space,
+so a Spanish query retrieves Dutch chunks without query translation.
+The chat layer translates cited content into the user's language; the
+`[n]` citation always links back to the original source URL regardless
+of source language.
+
+A passive `lingua` detector emits `chat_synthesis_complete` log events
+with `query_language_detected`, `response_language_detected`, and
+`language_correctness` (Boolean: did the response language match the
+query language?). The event fires from whichever path emitted it —
+`service: portal-api` for path B, `service: retrieval-api` for path
+C, and `service: litellm` for path A (post-v1.2). The detector never
+alters synthesis behaviour — it exists for VictoriaLogs / Grafana
+monitoring per `docs/runbooks/multilingual-chat-observability.md`.
+
+Cross-lingual eval against the live system runs via
+`klai-retrieval-api/evaluation/cross_lingual_runner.py`. Post-v1.2 the
+runner POSTs to retrieval-api `/chat` (the dormant path C, suitable for
+direct synthesis testing) and emits a per-language correctness
+scorecard. A future iteration may switch the runner default to the
+production-traffic path B or add it as a parallel target.
+
+**Per-tenant model override is explicitly NOT in scope** for V1. All
+tenants use `klai-fast` (Mistral Small) for synthesis. If Phase-2 eval
+shows that `klai-fast` is insufficient for a particular language, the
+escape valve is a future SPEC, not an in-line override.
 
 ### 3.3 Gap detection (SPEC-KB-014)
 
@@ -790,43 +1164,18 @@ services. Duplication cost: an entire SPEC to undo.
 
 ---
 
-## Part 5: Klai Focus
+## Part 5: Klai Focus (decommissioned)
 
-Klai Focus (research-api) is a personal research assistant where users upload documents
-into notebooks. Focus shares the same retrieval-api and Qdrant infrastructure as the org
-knowledge base, but stores its vectors in a **separate Qdrant collection** (`klai_focus`)
-rather than `klai_knowledge`.
+Klai Focus (research-api) was a personal research assistant where users
+uploaded documents into notebooks. Focus was decommissioned in
+SPEC-PORTAL-UNIFY-KB-001 (April 2026) — `/app/focus/*` redirects to
+`/app/knowledge`, and the service was removed from docker-compose.
 
-Focus vectors were previously stored in PostgreSQL with pgvector. The pgvector embedding
-column was dropped on 2026-03-26 (migration `0003_drop_embedding_column`) — vectors now
-live in Qdrant.
-
-**Ingest:**
-```
-User uploads to Focus notebook
-  → docling-serve extracts text (PDF, DOCX, HTML, URLs)
-  → TEI embeds chunks (BGE-M3 dense, 1024-dim)
-  → stored in Qdrant klai_focus collection
-  → PostgreSQL research.chunks tracks metadata (no embedding column)
-```
-
-**Three chat modes** (all live):
-
-| Mode | What it searches | Use case |
-|---|---|---|
-| `narrow` | Notebook only (`scope=notebook` via retrieval-api) | Search your own uploads |
-| `broad` | Notebook + org KB (`scope=broad` via retrieval-api) | Search uploads and company knowledge together |
-| `web` | Notebook + SearXNG live web search | Search uploads and the web |
-
-In `broad` mode, retrieval-api runs parallel Qdrant searches on both `klai_focus` and
-`klai_knowledge`, merges the results by score, and returns combined chunks. The
-research-api then picks the appropriate system prompt based on whether KB results were
-actually found.
-
-**Web mode** uses SearXNG (self-hosted search) to find URLs, fetches and parses them via
-**docling-serve** (`convert_url`), embeds the text on-the-fly, and combines with notebook chunks. Whether web mode works
-well in practice depends on SearXNG's availability and docling's ability to extract clean
-text from the fetched pages.
+The full residual cleanup (klai-focus directory, scope=notebook +
+scope=broad in retrieval-api, klai_focus Qdrant collection,
+research-api allowlist entries, SOPS env vars, server-side data) was
+completed in SPEC-DECOMM-FOCUS-001 (May 2026). See that SPEC for
+the historical architecture details.
 
 ---
 
@@ -834,9 +1183,10 @@ text from the fetched pages.
 
 | Service | Role |
 |---|---|
-| `knowledge-ingest` | Ingest pipeline: chunk, embed, enqueue enrichment, graph ingestion |
+| `knowledge-ingest` | Ingest pipeline: chunk, embed, enqueue enrichment, graph ingestion, image upload, connector-delete orchestrator |
 | `retrieval-api` | Retrieval endpoint (SPEC-KB-008) — replaces deprecated /knowledge/v1/retrieve |
-| `procrastinate-worker` | Async enrichment worker (queues: enrich-interactive, enrich-bulk, graphiti-bulk) |
+| `procrastinate-worker` | Async task worker (in-process, owned by `WorkerLifecycle`); subscribes to all 7 queues in `queues.ALL_QUEUES`. Runs zombie recovery on every startup. |
+| `garage` | S3-compatible object store for content-addressed image storage (SHA-256 keyed); served browser-public via Caddy at `/kb-images/...` |
 | `qdrant` | Vector store — `klai_knowledge` collection, 3 named vectors per chunk |
 | `tei` | TEI (text-embeddings-inference) — BGE-M3 dense embeddings (1024-dim, OpenAI-compatible `/v1/embeddings`) — gpu-01 via SSH tunnel at 172.18.0.1:7997 |
 | `bge-m3-sparse` | BGE-M3 sparse embeddings sidecar (FlagEmbedding) — gpu-01 via SSH tunnel at 172.18.0.1:8001 |
@@ -847,8 +1197,6 @@ text from the fetched pages.
 | `falkordb` | Graph database for Graphiti knowledge graph |
 | `klai-knowledge-mcp` | MCP server for explicit knowledge saves from LibreChat |
 | `klai-connector` | External source sync: GitHub repos, web crawls — uses Unstructured.io for binary parsing |
-| `docling-serve` | Document parsing voor Focus (uploads + URL-fetching in web mode) |
-| `research-api` | Klai Focus backend — Qdrant `klai_focus` collection |
 
 ---
 
@@ -1141,6 +1489,17 @@ The [evidence-weighted knowledge research programme](../research/README.md) inve
 6. **Corroboration scoring: deferred.** Three prerequisites must be met first: near-duplicate detection (SemHash), source-level grouping (`source_document_id`), and entity resolution validation (>90% precision, >85% recall). See [Corroboration Scoring](../research/corroboration/corroboration-scoring.md).
 
 **Evaluation protocol before activating weights:** 150 test queries (50 curated + 100 RAGAS-synthetic), Context Precision + NDCG@10 + Faithfulness metrics, Wilcoxon signed-rank paired tests, shadow scoring before cutover. See [RAG Evaluation Framework](../research/evaluation/rag-evaluation-framework.md).
+
+> **The existing evidence-tier scoring** (content_type / temporal_decay / pagerank
+> weights, U-shape ordering) shipped in shadow mode in March 2026 and is governed by
+> a separate activation track — `SPEC-EVIDENCE-001-FOLLOWUP-001` (audit
+> retrieval-coupling-2026-05-06). That SPEC sets a 30-day deadline to either activate
+> (5%/50%/100% staged rollout), activate `evidence_tier_temporal_only`, decommission,
+> or move to `EVIDENCE_SHADOW_MODE=disabled`. The `RAG_EVAL_VARIANT` mechanism from
+> `SPEC-RAG-EVAL-001` (#369) is what runs the A/B. See
+> [knowledge-retrieval-flow.md § Evidence tier scoring](knowledge-retrieval-flow.md#step-6-evidence-tier-scoring-shadow-mode).
+> The assertion-mode activation discussed in this section is the *next* dimension on
+> top of that — its own gating by `SPEC-EVIDENCE-002` is independent.
 
 ### Remaining open questions
 

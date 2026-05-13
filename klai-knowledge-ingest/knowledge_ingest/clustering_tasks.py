@@ -14,6 +14,7 @@ from typing import Any
 
 import structlog
 
+from knowledge_ingest import queues
 from knowledge_ingest.config import settings
 
 warnings.filterwarnings("ignore", message="Api key is used with an insecure connection")
@@ -29,7 +30,7 @@ def register_clustering_tasks(procrastinate_app: Any) -> None:
     import procrastinate
 
     @procrastinate_app.task(
-        queue="taxonomy-backfill",
+        queue=queues.TAXONOMY_BACKFILL,
         retry=procrastinate.RetryStrategy(max_attempts=1),
     )
     async def run_taxonomy_clustering(
@@ -173,7 +174,10 @@ async def _get_pending_proposals(org_id: str, kb_slug: str) -> list[dict]:
     url = f"{settings.portal_url}/api/v1/{kb_slug}/taxonomy/proposals"
     headers = {}
     if settings.portal_internal_token:
-        headers["x-internal-token"] = settings.portal_internal_token
+        # Authorization: Bearer matches portal_client.py:_fetch_from_portal —
+        # SPEC-CODEBASE-AUDIT-001 cluster G TP-1 unifies outbound auth on the
+        # Bearer pattern instead of the legacy x-internal-token header.
+        headers["Authorization"] = f"Bearer {settings.portal_internal_token}"
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -229,7 +233,7 @@ def register_auto_categorise_task(procrastinate_app: Any) -> None:
                 return None
             return procrastinate.RetryDecision(retry_in={"seconds": self._waits[job.attempts]})
 
-    @procrastinate_app.task(queue="taxonomy-backfill", retry=_StepwiseRetry())
+    @procrastinate_app.task(queue=queues.TAXONOMY_BACKFILL, retry=_StepwiseRetry())
     async def run_auto_categorise(
         org_id: str,
         kb_slug: str,

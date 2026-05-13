@@ -1,9 +1,18 @@
-"""SPEC-PROV-001 M4 — admin retry endpoint unit tests."""
+"""SPEC-PROV-001 M4 — admin retry endpoint unit tests.
+
+SPEC-PORTAL-RBAC-REFACTOR-001 Phase 2a: the gate is now declarative —
+``Depends(require_platform_admin())`` enforces both the admin-role and
+the platform-admin-org check. The role/platform-org rejection branches
+are pinned in `tests/test_permissions.py` (test_require_platform_admin_*),
+so this file only covers the post-gate happy and 4xx paths.
+"""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+
+from tests.conftest import make_perms
 
 
 def _make_failed_org(slug: str = "acme", org_id: int = 42) -> MagicMock:
@@ -13,6 +22,11 @@ def _make_failed_org(slug: str = "acme", org_id: int = 42) -> MagicMock:
     org.provisioning_status = "failed_rollback_complete"
     org.deleted_at = "2026-04-21T12:00:00+00:00"
     return org
+
+
+def _platform_admin_perms() -> object:
+    """Caller is admin in the platform org — passes require_platform_admin()."""
+    return make_perms(role="admin", org_id=1, org_slug="getklai", is_platform_admin=True)
 
 
 def _mock_db_returning(*, failed_org, collision_org=None, existing_org=None):
@@ -52,48 +66,20 @@ def _mock_db_returning(*, failed_org, collision_org=None, existing_org=None):
 
 
 @pytest.mark.asyncio
-async def test_retry_non_admin_returns_403() -> None:
-    from app.api.admin.retry_provisioning import retry_provisioning
-
-    caller_user = MagicMock()
-    caller_user.role = "member"
-
-    async def _fake_caller_resolver(*args, **kwargs):
-        return ("zit-user", MagicMock(), caller_user)
-
-    with (
-        patch("app.api.admin.retry_provisioning._get_caller_org", new=_fake_caller_resolver),
-    ):
-        with pytest.raises(HTTPException) as excinfo:
-            await retry_provisioning(
-                slug="acme",
-                background_tasks=MagicMock(),
-                credentials=MagicMock(),
-                db=AsyncMock(),
-            )
-
-    assert excinfo.value.status_code == 403
-
-
-@pytest.mark.asyncio
 async def test_retry_happy_path_returns_202_and_queues_task() -> None:
     from app.api.admin.retry_provisioning import retry_provisioning
 
-    admin = MagicMock()
-    admin.role = "admin"
-    admin.zitadel_user_id = "zit-admin"
     failed_org = _make_failed_org()
     db = _mock_db_returning(failed_org=failed_org)
     background_tasks = MagicMock()
 
-    async def _fake_caller_resolver(*args, **kwargs):
-        return ("zit-admin", MagicMock(), admin)
-
-    with patch("app.api.admin.retry_provisioning._get_caller_org", new=_fake_caller_resolver):
+    with (
+        patch("app.api.admin.retry_provisioning.log_event", new=AsyncMock()) as mock_log,
+    ):
         response = await retry_provisioning(
             slug="acme",
             background_tasks=background_tasks,
-            credentials=MagicMock(),
+            perms=_platform_admin_perms(),
             db=db,
         )
 
@@ -102,29 +88,30 @@ async def test_retry_happy_path_returns_202_and_queues_task() -> None:
     assert failed_org.provisioning_status == "queued"
     db.commit.assert_awaited_once()
     background_tasks.add_task.assert_called_once()
+    # audit-tenant-isolation-2026-05-05 C-2: platform-admin action is audit-logged.
+    mock_log.assert_awaited_once()
+    log_kwargs = mock_log.await_args.kwargs
+    assert log_kwargs["action"] == "retry_provisioning"
+    assert log_kwargs["resource_type"] == "portal_org"
+    assert log_kwargs["resource_id"] == str(failed_org.id)
+    assert log_kwargs["actor"] == "uid-test"
 
 
 @pytest.mark.asyncio
 async def test_retry_pending_rollback_returns_409_manual_cleanup() -> None:
     from app.api.admin.retry_provisioning import retry_provisioning
 
-    admin = MagicMock()
-    admin.role = "admin"
     pending = MagicMock()
     pending.provisioning_status = "failed_rollback_pending"
     db = _mock_db_returning(failed_org=None, existing_org=pending)
 
-    async def _fake_caller_resolver(*args, **kwargs):
-        return ("zit-admin", MagicMock(), admin)
-
-    with patch("app.api.admin.retry_provisioning._get_caller_org", new=_fake_caller_resolver):
-        with pytest.raises(HTTPException) as excinfo:
-            await retry_provisioning(
-                slug="acme",
-                background_tasks=MagicMock(),
-                credentials=MagicMock(),
-                db=db,
-            )
+    with pytest.raises(HTTPException) as excinfo:
+        await retry_provisioning(
+            slug="acme",
+            background_tasks=MagicMock(),
+            perms=_platform_admin_perms(),
+            db=db,
+        )
 
     assert excinfo.value.status_code == 409
     assert excinfo.value.detail == {
@@ -137,23 +124,17 @@ async def test_retry_pending_rollback_returns_409_manual_cleanup() -> None:
 async def test_retry_ready_org_returns_409_not_in_retryable_state() -> None:
     from app.api.admin.retry_provisioning import retry_provisioning
 
-    admin = MagicMock()
-    admin.role = "admin"
     ready = MagicMock()
     ready.provisioning_status = "ready"
     db = _mock_db_returning(failed_org=None, existing_org=ready)
 
-    async def _fake_caller_resolver(*args, **kwargs):
-        return ("zit-admin", MagicMock(), admin)
-
-    with patch("app.api.admin.retry_provisioning._get_caller_org", new=_fake_caller_resolver):
-        with pytest.raises(HTTPException) as excinfo:
-            await retry_provisioning(
-                slug="acme",
-                background_tasks=MagicMock(),
-                credentials=MagicMock(),
-                db=db,
-            )
+    with pytest.raises(HTTPException) as excinfo:
+        await retry_provisioning(
+            slug="acme",
+            background_tasks=MagicMock(),
+            perms=_platform_admin_perms(),
+            db=db,
+        )
 
     assert excinfo.value.status_code == 409
     assert excinfo.value.detail == {
@@ -166,24 +147,18 @@ async def test_retry_ready_org_returns_409_not_in_retryable_state() -> None:
 async def test_retry_slug_collision_returns_409_slug_in_use() -> None:
     from app.api.admin.retry_provisioning import retry_provisioning
 
-    admin = MagicMock()
-    admin.role = "admin"
     failed_org = _make_failed_org()
     collision = MagicMock()
     collision.id = 99
     db = _mock_db_returning(failed_org=failed_org, collision_org=collision)
 
-    async def _fake_caller_resolver(*args, **kwargs):
-        return ("zit-admin", MagicMock(), admin)
-
-    with patch("app.api.admin.retry_provisioning._get_caller_org", new=_fake_caller_resolver):
-        with pytest.raises(HTTPException) as excinfo:
-            await retry_provisioning(
-                slug="acme",
-                background_tasks=MagicMock(),
-                credentials=MagicMock(),
-                db=db,
-            )
+    with pytest.raises(HTTPException) as excinfo:
+        await retry_provisioning(
+            slug="acme",
+            background_tasks=MagicMock(),
+            perms=_platform_admin_perms(),
+            db=db,
+        )
 
     assert excinfo.value.status_code == 409
     assert excinfo.value.detail == {
@@ -200,20 +175,14 @@ async def test_retry_slug_collision_returns_409_slug_in_use() -> None:
 async def test_retry_unknown_slug_returns_404() -> None:
     from app.api.admin.retry_provisioning import retry_provisioning
 
-    admin = MagicMock()
-    admin.role = "admin"
     db = _mock_db_returning(failed_org=None, existing_org=None)
 
-    async def _fake_caller_resolver(*args, **kwargs):
-        return ("zit-admin", MagicMock(), admin)
-
-    with patch("app.api.admin.retry_provisioning._get_caller_org", new=_fake_caller_resolver):
-        with pytest.raises(HTTPException) as excinfo:
-            await retry_provisioning(
-                slug="nonexistent",
-                background_tasks=MagicMock(),
-                credentials=MagicMock(),
-                db=db,
-            )
+    with pytest.raises(HTTPException) as excinfo:
+        await retry_provisioning(
+            slug="nonexistent",
+            background_tasks=MagicMock(),
+            perms=_platform_admin_perms(),
+            db=db,
+        )
 
     assert excinfo.value.status_code == 404

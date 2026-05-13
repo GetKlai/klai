@@ -9,13 +9,18 @@ authors = [{ name = "Klai" }]
 
 # Runtime dependencies. Each consumer service pins concrete versions of structlog;
 # we express a compatible lower bound and let the embedder resolve.
+# starlette is required by RequestContextMiddleware (BaseHTTPMiddleware) — every
+# consumer service is FastAPI-based so starlette is already on their runtime
+# dependency graph; pinning it here makes the contract explicit.
 dependencies = [
     "structlog>=25.0",
+    "starlette>=0.40",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
+    "pytest-asyncio>=0.24",
     "httpx>=0.28",
     "ruff>=0.8",
     "pyright>=1.1.390",
@@ -24,6 +29,7 @@ dev = [
 [dependency-groups]
 dev = [
     "pytest>=8",
+    "pytest-asyncio>=0.24",
     "httpx>=0.28",
     "ruff>=0.8",
     "pyright>=1.1.390",
@@ -41,6 +47,7 @@ packages = ["log_utils"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 120

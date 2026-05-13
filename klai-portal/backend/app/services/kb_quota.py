@@ -1,6 +1,7 @@
 """KB quota enforcement service.
 
 SPEC-PORTAL-UNIFY-KB-001 Phase A (D3, R-E1, R-E3, R-X3).
+SPEC-PORTAL-PROFILES-001 REQ-5: role-aware KB quota limits.
 
 Provides pure-service functions that raise HTTPException 403 on quota violation.
 Keeping quota logic here (instead of inline in routes) ensures:
@@ -17,7 +18,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.plan_limits import get_plan_limits
+from app.core.profiles import effective_kb_limits
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg
 from app.services import knowledge_ingest_client
@@ -42,13 +43,17 @@ async def assert_can_create_personal_kb(
     user_id: str,
     org: PortalOrg,
     db: AsyncSession,
+    role: str = "company",
 ) -> None:
     """Raise HTTP 403 when the user has reached their personal KB quota.
 
     Checks:
-    - count(personal KBs owned by user_id) >= max_personal_kbs_per_user
+    - count(personal KBs owned by user_id) >= effective max_personal_kbs_per_user
 
-    Skips the DB query entirely when the plan has no limit (None = unlimited).
+    REQ-5: effective limit = min(PROFILE_LIMITS[role], PLAN_LIMITS[org.plan]).
+    Profile wins; plan can only lower.
+
+    Skips the DB query entirely when the effective limit is None (unlimited).
 
     K2 — race condition fix: on PostgreSQL, a pg_advisory_xact_lock is acquired
     before the count query.  This serializes concurrent quota checks for the same
@@ -60,10 +65,10 @@ async def assert_can_create_personal_kb(
     R-X3: callers MUST route through this function to guarantee consistent
     quota enforcement across all create paths.
     """
-    limits = get_plan_limits(org.plan)
+    limits = effective_kb_limits(role, org.plan)
 
     if limits.max_personal_kbs_per_user is None:
-        # Unlimited plan — no quota check needed.
+        # Unlimited for this (role, plan) combination — no quota check needed.
         return
 
     # Serialize concurrent quota checks for this (org, user) pair.
@@ -91,6 +96,7 @@ async def assert_can_create_personal_kb(
             detail={
                 "error_code": "kb_quota_personal_kb_exceeded",
                 "plan": org.plan,
+                "role": role,
                 "limit": limits.max_personal_kbs_per_user,
                 "current": current_count,
             },
@@ -100,14 +106,16 @@ async def assert_can_create_personal_kb(
 async def assert_can_add_item_to_kb(
     kb: PortalKnowledgeBase,
     org: PortalOrg,
+    role: str = "company",
 ) -> None:
-    """Raise HTTP 403 when adding an item would exceed the plan's item-per-KB quota.
+    """Raise HTTP 403 when adding an item would exceed the quota's item-per-KB limit.
 
     Checks:
-    - KB is personal (owner_type="user"): apply max_items_per_kb limit.
-    - KB is org-scoped (owner_type="org"): no limit enforced (core users cannot
-      create org KBs, so only complete-plan users see them — they have None limit).
-    - Plan has None limit (complete): skip entirely.
+    - KB is personal (owner_type="user"): apply effective max_items_per_kb limit.
+    - KB is org-scoped (owner_type="org"): no item limit enforced.
+    - Effective limit is None (unlimited): skip entirely.
+
+    REQ-5: effective limit = min(PROFILE_LIMITS[role], PLAN_LIMITS[org.plan]).
 
     The current item count is fetched from knowledge-ingest (source of truth for
     items). If the count cannot be fetched (None), we fail open (allow the ingest)
@@ -116,13 +124,13 @@ async def assert_can_add_item_to_kb(
     R-E2: callers MUST route through this function before triggering any ingest.
     """
     if kb.owner_type != "user":
-        # Org-scoped KBs are only accessible to complete-plan users.
+        # Org-scoped KBs: no item limit enforced at quota level.
         return
 
-    limits = get_plan_limits(org.plan)
+    limits = effective_kb_limits(role, org.plan)
 
     if limits.max_items_per_kb is None:
-        # Unlimited plan — no quota check needed.
+        # Unlimited for this (role, plan) combination — no quota check needed.
         return
 
     current_count = await knowledge_ingest_client.get_source_count(
@@ -140,6 +148,7 @@ async def assert_can_add_item_to_kb(
             detail={
                 "error_code": "kb_quota_items_exceeded",
                 "plan": org.plan,
+                "role": role,
                 "limit": limits.max_items_per_kb,
                 "current": current_count,
             },
@@ -149,12 +158,15 @@ async def assert_can_add_item_to_kb(
 async def assert_can_create_org_kb(
     org: PortalOrg,
     db: AsyncSession,
+    role: str = "company",
 ) -> None:
-    """Raise HTTP 403 when the org's plan does not allow org-scoped KBs.
+    """Raise HTTP 403 when the (role, plan) combination does not allow org-scoped KBs.
 
-    R-E3: core and professional plans may not create org KBs.
+    REQ-5: can_create_org_kbs = profile_allows AND plan_allows.
+    personal/company roles are never allowed regardless of plan.
+    kb_manager/group_manager/admin require complete plan (or any plan that allows it).
     """
-    limits = get_plan_limits(org.plan)
+    limits = effective_kb_limits(role, org.plan)
 
     if not limits.can_create_org_kbs:
         raise HTTPException(
@@ -162,5 +174,6 @@ async def assert_can_create_org_kb(
             detail={
                 "error_code": "kb_quota_org_kb_not_allowed",
                 "plan": org.plan,
+                "role": role,
             },
         )

@@ -4,7 +4,9 @@ on:
   pull_request:
     paths:
       - 'deploy/grafana/provisioning/alerting/**'
+      - 'deploy/grafana/provisioning/dashboards/**'
       - 'scripts/audit-alert-secrets.sh'
+      - 'scripts/audit-alert-uid-length.sh'
       - 'scripts/verify-alert-runbooks.sh'
       - 'scripts/test-alerting-guards.sh'
       - 'docs/runbooks/platform-recovery.md'
@@ -13,7 +15,9 @@ on:
     branches: [main]
     paths:
       - 'deploy/grafana/provisioning/alerting/**'
+      - 'deploy/grafana/provisioning/dashboards/**'
       - 'scripts/audit-alert-secrets.sh'
+      - 'scripts/audit-alert-uid-length.sh'
       - 'scripts/verify-alert-runbooks.sh'
       - 'scripts/test-alerting-guards.sh'
 
@@ -25,11 +29,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install jq (required by audit-alert-uid-length.sh)
+        run: sudo apt-get update -y && sudo apt-get install -y jq
+
       - name: Audit secrets in alerting provisioning
         run: bash scripts/audit-alert-secrets.sh
 
       - name: Verify runbook_url annotations resolve
         run: bash scripts/verify-alert-runbooks.sh
+
+      # SPEC-INFRA-CONTAINER-HYGIENE-001 v0.4.0 — Grafana enforces a
+      # 40-char hard limit on alert-rule + dashboard UIDs. This guard
+      # fails CI on any oversized UID before it can crash Grafana on
+      # core-01. Added after the 2026-05-04 incident where a 49-char UID
+      # crashed grafana into a restart loop on first provisioning. See
+      # pitfall `grafana-uid-40-char-limit (HIGH)` in process-rules.md.
+      - name: Audit Grafana UID length (40-char limit)
+        run: bash scripts/audit-alert-uid-length.sh
 
       - name: Regression tests — both guards catch the CLASS of bug
         # Deliberately-bad fixtures must fail the audit/verify scripts;

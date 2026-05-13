@@ -28,7 +28,19 @@ async def rerank(
     if not candidates:
         return []
 
-    passages = [c["text"] for c in candidates]
+    # SPEC-RAG-CONTEXTUAL-001 parity: feed the cross-encoder the same
+    # context_prefix + chunk_text combination that the embedding model
+    # saw at index time. Without this the reranker scores chunks on raw
+    # body alone — context-prefix-driven semantics (which document /
+    # which section / which terminology) is lost from ranking.
+    # Falls back to plain text when context_prefix is null (legacy
+    # chunks pre-CONTEXTUAL-001).
+    def _passage(c: dict) -> str:
+        prefix = c.get("context_prefix") or ""
+        text = c.get("text") or ""
+        return f"{prefix}\n\n{text}".strip() if prefix else text
+
+    passages = [_passage(c) for c in candidates]
 
     try:
         async with httpx.AsyncClient(timeout=settings.reranker_timeout) as client:
@@ -43,8 +55,9 @@ async def rerank(
             )
             resp.raise_for_status()
             data = resp.json()
-    except Exception as exc:
-        logger.warning("Reranker call failed, falling back to Qdrant scores: %s", exc)
+    except Exception:
+        # F6 audit cleanup (TRY401): exc_info=True preserves traceback.
+        logger.warning("Reranker call failed, falling back to Qdrant scores", exc_info=True)
         fallback = candidates[:top_k]
         for c in fallback:
             c["reranker_score"] = None

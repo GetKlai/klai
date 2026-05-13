@@ -178,7 +178,6 @@ class TestDockerInternalHostnames:
             "knowledge-ingest",
             "klai-connector",
             "klai-mailer",
-            "research-api",
             "retrieval-api",
             "scribe",
             "garage",

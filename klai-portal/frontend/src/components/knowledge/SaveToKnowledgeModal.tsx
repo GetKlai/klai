@@ -8,8 +8,10 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { DOCS_BASE, getOrgSlug, slugify } from '@/lib/kb-editor/tree-utils'
 import { apiFetch } from '@/lib/apiFetch'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
 import * as m from '@/paraglide/messages'
 import { editorLogger } from '@/lib/logger'
+import { kbQueryKeys } from '@/lib/kb-query-keys'
 
 interface SaveToKnowledgeModalProps {
   initialContent: string
@@ -24,7 +26,8 @@ export function SaveToKnowledgeModal({
   initialContent, initialTitle, onClose, onSuccess,
 }: SaveToKnowledgeModalProps) {
   const auth = useAuth()
-  const orgSlug = getOrgSlug()
+  const { user } = useCurrentUser()
+  const orgSlug = getOrgSlug(user?.workspace_url)
   const userUuid = auth.user?.profile?.sub ?? ''
 
   const [title, setTitle] = useState(initialTitle || (initialContent.split(/[.!?]/)[0]?.slice(0, 80) ?? ''))
@@ -35,7 +38,7 @@ export function SaveToKnowledgeModal({
 
   // Get page index for slug collision avoidance
   const { data: pageIndex = [] } = useQuery<Array<{ slug: string }>>({
-    queryKey: ['docs-page-index', orgSlug, 'personal'],
+    queryKey: kbQueryKeys.docsPageIndex(orgSlug, 'personal'),
     queryFn: async () => {
       try {
         return await apiFetch<Array<{ slug: string }>>(`${DOCS_BASE}/orgs/${orgSlug}/kbs/personal/page-index`)

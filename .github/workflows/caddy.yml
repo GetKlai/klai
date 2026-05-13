@@ -4,7 +4,14 @@ on:
   push:
     branches: [main]
     paths:
-      - 'deploy/caddy/**'
+      # SPEC-INFRA-CADDY-CONFIG-DEPLOY-001 R2 — paths reduced from
+      # `deploy/caddy/**` to image-relevant files only. Caddyfile sync
+      # moved to deploy-compose.yml so config-only edits no longer
+      # trigger a 5-10 min image rebuild. Pre-merge syntax validation
+      # of the Caddyfile is in caddy-validate.yml (R3).
+      - 'deploy/caddy/Dockerfile'
+      - 'deploy/caddy/build.sh'
+      - 'deploy/caddy/.trivyignore.yaml'
       - '.github/workflows/caddy.yml'
   workflow_dispatch:
 
@@ -53,7 +60,8 @@ jobs:
           key: ${{ secrets.CORE01_DEPLOY_KEY }}
           script: |
             docker pull ghcr.io/getklai/caddy-hetzner:latest
-            cd /opt/klai && docker compose up -d caddy
+            # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3
+            /opt/klai/scripts/compose-up.sh caddy
 
   scan:
     needs: build-push
@@ -62,6 +70,10 @@ jobs:
       security-events: write
       packages: read
     steps:
+      # Checkout is required so trivy-action can find .trivy.yaml + the
+      # service's .trivyignore.yaml (paths are relative to repo root).
+      - uses: actions/checkout@v6
+
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
@@ -69,15 +81,39 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.35.0
+      # STRICT-tier scan per SPEC-CI-TRIVY-POLICY-001 (REQ-2).
+      #
+      # We invoke Trivy CLI directly instead of via aquasecurity/trivy-action
+      # because that wrapper has a bug in 0.35.0 / 0.36.0 with `format: sarif`:
+      # the `severity` filter is honoured for the SARIF body but NOT for the
+      # exit-code — meaning a MEDIUM/LOW finding still triggers exit-code 1
+      # even when we asked for CRITICAL+HIGH gating only. Caddy / docs /
+      # whisper-server hit this bug on PR #3's first main run (e2303848)
+      # because they had findings in the SARIF that the wrapper let through
+      # to the exit-code check.
+      #
+      # Direct trivy CLI honours `--severity` for both detection and
+      # exit-code, so the filter actually applies. Same flags map 1:1 to
+      # `.trivy.yaml` keys and per-service `.trivyignore.yaml`. When
+      # trivy-action lands a fix (issue: aquasecurity/trivy-action ?), we
+      # can collapse this back to the wrapper.
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@e6c2c5e321ed9123bda567646e2f96565e34abe1  # v0.2.5
         with:
-          image-ref: ghcr.io/getklai/caddy-hetzner:${{ github.sha }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH'
-          ignore-unfixed: true
-          exit-code: '0'
+          version: v0.69.3
+          cache: true
+
+      - name: Run Trivy vulnerability scanner
+        run: |
+          trivy image \
+            --format sarif \
+            --output trivy-results.sarif \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --scanners vuln \
+            --exit-code 1 \
+            --ignorefile deploy/caddy/.trivyignore.yaml \
+            ghcr.io/getklai/caddy-hetzner:${{ github.sha }}
 
       - name: Upload Trivy SARIF to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v4

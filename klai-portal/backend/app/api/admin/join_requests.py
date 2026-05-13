@@ -15,9 +15,15 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.admin import _get_caller_org, _require_admin, bearer
+from app.api.admin import bearer
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.permissions import (
+    ProfileRole,
+    UserPermissions,
+    _resolve_caller_with_options,
+    get_caller_at_least,
+)
 from app.models.portal import PortalJoinRequest, PortalUser
 from app.services.join_request_token import verify_approval_token
 from app.services.notifications import notify_user_join_approved
@@ -56,17 +62,14 @@ class ApproveResponse(BaseModel):
 
 @router.get("/join-requests", response_model=JoinRequestsResponse)
 async def list_join_requests(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> JoinRequestsResponse:
     """List pending join requests for the caller's org."""
-    _zitadel_user_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
     result = await db.execute(
         select(PortalJoinRequest)
         .where(
-            PortalJoinRequest.org_id == org.id,
+            PortalJoinRequest.org_id == perms.org_id,
             PortalJoinRequest.status == "pending",
         )
         .order_by(PortalJoinRequest.requested_at.desc())
@@ -127,16 +130,23 @@ async def approve_join_request(
                 detail="This request has no organisation assigned. Approve it from the admin panel.",
             )
     else:
-        # Bearer-based approval (admin UI)
+        # Bearer-based approval (admin UI). The endpoint accepts an OPTIONAL
+        # Bearer (the token-based path needs no auth) so we can't use a
+        # `Depends(get_caller_at_least(ADMIN))` on the signature; resolve
+        # caller explicitly via the shared core helper.
         if not credentials:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-        zitadel_user_id, org, caller_user = await _get_caller_org(credentials, db)
-        _require_admin(caller_user)
+        perms = await _resolve_caller_with_options(credentials, db, allow_during_deprovisioning=False)
+        if perms.effective_role != ProfileRole.ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Role {ProfileRole.ADMIN.value!r} or higher required",
+            )
 
         jr_result = await db.execute(
             select(PortalJoinRequest).where(
                 PortalJoinRequest.id == request_id,
-                PortalJoinRequest.org_id == org.id,
+                PortalJoinRequest.org_id == perms.org_id,
                 PortalJoinRequest.status == "pending",
             )
         )
@@ -144,14 +154,15 @@ async def approve_join_request(
         if not jr:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
 
-        reviewer = zitadel_user_id
-        org_id = org.id
+        reviewer = perms.user_id
+        org_id = perms.org_id
 
     # Create portal_users row
+    # SPEC-PORTAL-RBAC-REFACTOR-001 REQ-11: new users join as "personal" (not "member")
     new_user = PortalUser(
         zitadel_user_id=jr.zitadel_user_id,
         org_id=org_id,
-        role="member",
+        role="personal",
         status="active",
         display_name=jr.display_name,
         email=jr.email,
@@ -190,17 +201,14 @@ async def approve_join_request(
 @router.post("/join-requests/{request_id}/deny", status_code=status.HTTP_204_NO_CONTENT)
 async def deny_join_request(
     request_id: int,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Deny a join request."""
-    zitadel_user_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
     jr_result = await db.execute(
         select(PortalJoinRequest).where(
             PortalJoinRequest.id == request_id,
-            PortalJoinRequest.org_id == org.id,
+            PortalJoinRequest.org_id == perms.org_id,
             PortalJoinRequest.status == "pending",
         )
     )
@@ -210,13 +218,13 @@ async def deny_join_request(
 
     jr.status = "denied"
     jr.reviewed_at = datetime.now(tz=UTC)
-    jr.reviewed_by = zitadel_user_id
+    jr.reviewed_by = perms.user_id
     await db.commit()
 
     logger.info(
         "Join request denied",
         request_id=request_id,
         zitadel_user_id=jr.zitadel_user_id,
-        org_id=org.id,
-        reviewer=zitadel_user_id,
+        org_id=perms.org_id,
+        reviewer=perms.user_id,
     )

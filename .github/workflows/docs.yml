@@ -54,6 +54,10 @@ jobs:
       security-events: write
       packages: read
     steps:
+      # Checkout is required so trivy-action can find .trivy.yaml + the
+      # service's .trivyignore.yaml (paths are relative to repo root).
+      - uses: actions/checkout@v6
+
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
@@ -61,16 +65,33 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.35.0
+      # STRICT-tier scan per SPEC-CI-TRIVY-POLICY-001 (REQ-2).
+      #
+      # Direct CLI invocation bypasses an aquasecurity/trivy-action
+      # bug (0.35.0/0.36.0): with `format: sarif` the `severity` filter
+      # is honoured for the SARIF body but NOT for the exit-code, so
+      # a MEDIUM/LOW finding triggers exit-code 1 even when we asked
+      # for CRITICAL+HIGH gating. trivy CLI's `--severity` flag is
+      # honoured for both detection AND exit-code. .trivy.yaml stays
+      # in the repo as the canonical policy reference until the
+      # action lands proper config-file precedence.
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@e6c2c5e321ed9123bda567646e2f96565e34abe1  # v0.2.5
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH'
-          ignore-unfixed: true
-          exit-code: '0'
+          version: v0.69.3
+          cache: true
 
+      - name: Run Trivy vulnerability scanner
+        run: |
+          trivy image \
+            --format sarif \
+            --output trivy-results.sarif \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --scanners vuln \
+            --exit-code 1 \
+            --ignorefile klai-docs/.trivyignore.yaml \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
       - name: Upload Trivy SARIF to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v4
         if: always()
@@ -78,7 +99,10 @@ jobs:
           sarif_file: 'trivy-results.sarif'
 
   deploy:
-    needs: build-and-push
+    # `needs: scan` ensures Trivy gate from SPEC-CI-TRIVY-POLICY-001 REQ-2
+    # actually blocks production deploy: if scan job exits 1 on a HIGH/CRIT
+    # finding, deploy is skipped.
+    needs: [build-and-push, scan]
     runs-on: ubuntu-latest
 
     steps:
@@ -89,5 +113,7 @@ jobs:
           username: klai
           key: ${{ secrets.CORE01_DEPLOY_KEY }}
           script: |
-            docker pull ghcr.io/getklai/klai-docs:latest
-            cd /opt/klai && docker compose up -d --no-deps docs-app
+            # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3: deploy via canonical
+            # wrapper so --remove-orphans and post-deploy snapshot run on
+            # every deploy, mechanically. Pilot workflow for the rollout.
+            /opt/klai/scripts/compose-up.sh --no-deps docs-app

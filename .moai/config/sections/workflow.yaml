@@ -21,7 +21,7 @@ workflow:
             min_files_for_team: 10
         default_model: sonnet
         delegate_mode: true
-        enabled: false
+        enabled: true
         max_teammates: 10
         patterns:
             design_implementation:

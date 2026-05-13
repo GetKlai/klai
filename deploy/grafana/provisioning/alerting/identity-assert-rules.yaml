@@ -1,0 +1,162 @@
+# SPEC-SEC-IDENTITY-ASSERT-002 REQ-6.2 — alerts that catch the SPEC-001
+# regression class (auth/authz check broken for all tenants in
+# production) within minutes instead of weeks.
+#
+# Routed via spec=SPEC-SEC-IDENTITY-ASSERT-002 → klai-ops-alerts-email
+# (see policies.yaml).
+#
+# UID convention: spec-iam-002-* (per
+# .claude/rules/klai/pitfalls/process-rules.md grafana-uid-40-char-limit).
+#
+# Alert philosophy: don't try to detect "no traffic" (false positives
+# at 3am are noise). Detect actual deny events on the BFF-verified
+# path — if the path breaks for any tenant, denies spike immediately.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: spec-iam-002-identity-assert
+    folder: Klai
+    interval: 1m
+    rules:
+
+      # ── bff_proxy_verify_failures ─────────────────────────────────
+      # SPEC-002 Mark-incident regression guard. Counts deny events on
+      # portal-api BFF proxy verify-before-forward (REQ-2.4). At
+      # baseline traffic this is exactly zero — a non-zero count means
+      # either (a) a tenant is broken (the SPEC-001 latent-bug class),
+      # or (b) a real auth attempt is being rejected (legitimate).
+      # Either way, ops needs visibility within minutes, not weeks.
+      - uid: spec-iam-002-bff-verify-fail
+        title: bff_proxy_verify_failures
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:portal-api AND event:bff_proxy_verified AND verified:false'
+              queryType: instant
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [3], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        labels:
+          severity: warning
+          spec: SPEC-SEC-IDENTITY-ASSERT-002
+        annotations:
+          summary: |
+            >3 bff_proxy_verified deny events in the last 10 minutes.
+          description: |
+            portal-api BFF proxy is rejecting identity-verify decisions
+            for /api/scribe/* or /api/docs/*. The SPEC-SEC-IDENTITY-ASSERT-001
+            regression class manifested as silently denied traffic for
+            5+ weeks — this alert ensures any future drift surfaces
+            within minutes.
+
+            Investigation:
+              service:portal-api AND event:bff_proxy_verified AND verified:false
+
+            Common causes:
+              - portal_users membership row was removed for an active session
+                user (real deny — operationally expected, low rate)
+              - identity_verifier helper regression (sustained spike)
+              - Zitadel ↔ portal_orgs sync drift
+
+      # ── scribe_auth_internal_secret_mismatch ──────────────────────
+      # SPEC-002 REQ-3 regression guard. After scribe-api drops its
+      # JWT-decode path, the only auth gate is X-Internal-Secret.
+      # A spike in scribe_auth_internal_secret_mismatch usually
+      # indicates a deploy-side secret rotation that landed asymmetrically
+      # (portal updated, scribe not yet, or vice versa).
+      - uid: spec-iam-002-scribe-secret-mismatch
+        title: scribe_auth_internal_secret_mismatch
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:scribe-api AND event:scribe_auth_internal_secret_mismatch'
+              queryType: instant
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 2m
+        labels:
+          severity: critical
+          spec: SPEC-SEC-IDENTITY-ASSERT-002
+        annotations:
+          summary: |
+            scribe-api rejecting requests on X-Internal-Secret mismatch.
+          description: |
+            Any non-zero count means scribe-api is denying portal-api
+            calls because the secrets don't match. Most likely a
+            rotation that landed asymmetrically.
+
+            Investigate:
+              docker exec klai-core-portal-api-1 printenv INTERNAL_SECRET | head -c 12
+              docker exec klai-core-scribe-api-1 printenv PORTAL_INTERNAL_SECRET | head -c 12
+
+            Both should print the same 12-char prefix.

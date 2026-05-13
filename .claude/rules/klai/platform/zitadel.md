@@ -97,7 +97,23 @@ One Zitadel Organization per customer. Org ID is the primary tenant identifier �
 
 ## User lookup
 - Never use `urn:zitadel:iam:user:resourceowner:id` — not always present.
-- Use `sub` (OIDC subject) → `portal_users` → `portal_orgs` join for reliable org resolution.
+  Klai BFF requests scope `openid profile email offline_access`, which does
+  NOT trigger emission of the resourceowner claim per
+  https://zitadel.com/docs/apis/openidoauth/scopes. The claim is therefore
+  absent from every Klai access token. SPEC-SEC-IDENTITY-ASSERT-002 retired
+  the SPEC-001 dependency on this claim and made portal_users membership the
+  authoritative source. CI rule `rules/no-zitadel-resourceowner-claim.yml`
+  blocks reintroduction in refactored services.
+- Use `sub` (OIDC subject) → `portal_users` → `portal_orgs` join for reliable
+  org resolution. The canonical helper is
+  `app.services.identity_verifier.verify_identity_claim` (HTTP path) or
+  `verify_bff_session_identity` (BFF-proxy path); both resolve org via
+  membership.
+- Two services still read the claim directly via legacy JWT-introspect paths
+  (klai-retrieval-api `retrieval_api/middleware/auth.py`, klai-connector
+  `app/middleware/auth.py`). Cleaning those is a follow-up to
+  SPEC-SEC-IDENTITY-ASSERT-002 and is intentionally out of the ast-grep
+  rule's `files:` scope until refactored.
 
 ## portal_users = mapping only
 No email/name columns. Identity always fetched live from Zitadel. No drift, no sync job needed.

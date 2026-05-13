@@ -4,14 +4,14 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _get_caller_org, _require_admin_or_group_admin_role, bearer
+from app.api.dependencies import _load_org_or_500
 from app.core.database import get_db
+from app.core.permissions import ProfileRole, UserPermissions, get_caller_at_least
 from app.models.groups import PortalGroup
 from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase
 from app.services import docs_client, knowledge_ingest_client
@@ -95,13 +95,11 @@ class MessageResponse(BaseModel):
 
 @router.get("/knowledge-bases", response_model=KBsResponse)
 async def list_knowledge_bases(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> KBsResponse:
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin_or_group_admin_role(caller_user)
     result = await db.execute(
-        select(PortalKnowledgeBase).where(PortalKnowledgeBase.org_id == org.id).order_by(PortalKnowledgeBase.name)
+        select(PortalKnowledgeBase).where(PortalKnowledgeBase.org_id == perms.org_id).order_by(PortalKnowledgeBase.name)
     )
     kbs = result.scalars().all()
     return KBsResponse(
@@ -126,17 +124,15 @@ async def list_knowledge_bases(
 @router.post("/knowledge-bases", response_model=KBOut, status_code=status.HTTP_201_CREATED)
 async def create_knowledge_base(
     body: KBCreateRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> KBOut:
-    caller_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin_or_group_admin_role(caller_user)
     kb = PortalKnowledgeBase(
-        org_id=org.id,
+        org_id=perms.org_id,
         name=body.name,
         slug=body.slug,
         description=body.description,
-        created_by=caller_id,
+        created_by=perms.user_id,
         visibility=body.visibility,
         docs_enabled=body.docs_enabled,
     )
@@ -150,7 +146,9 @@ async def create_knowledge_base(
             detail="Slug already exists in this organisation",
         ) from exc
 
-    kb.gitea_repo_slug = await docs_client.provision_and_store(org.slug, body.name, body.slug, body.visibility, db)
+    kb.gitea_repo_slug = await docs_client.provision_and_store(
+        perms.org_slug, body.name, body.slug, body.visibility, db
+    )
 
     await db.commit()
     return KBOut(
@@ -171,12 +169,10 @@ async def create_knowledge_base(
 async def update_knowledge_base(
     kb_id: int,
     body: KBUpdateRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> KBOut:
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin_or_group_admin_role(caller_user)
-    kb = await _get_kb_or_404(kb_id, org.id, db)
+    kb = await _get_kb_or_404(kb_id, perms.org_id, db)
     if body.name is not None:
         kb.name = body.name
     if body.description is not None:
@@ -186,6 +182,7 @@ async def update_knowledge_base(
         kb.visibility = body.visibility
     await db.commit()
     if visibility_changed:
+        org = await _load_org_or_500(db, perms.org_id)
         await knowledge_ingest_client.update_kb_visibility(org.zitadel_org_id, kb.slug, kb.visibility)
     return KBOut(
         id=kb.id,
@@ -204,16 +201,16 @@ async def update_knowledge_base(
 @router.delete("/knowledge-bases/{kb_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_knowledge_base(
     kb_id: int,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    caller_id, org, caller_user = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_id, org.id, db)
-    if caller_user.role != "admin" and kb.created_by != caller_id:
+    kb = await _get_kb_or_404(kb_id, perms.org_id, db)
+    if perms.role != ProfileRole.ADMIN and kb.created_by != perms.user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the creator or an admin can delete a knowledge base",
         )
+    org = await _load_org_or_500(db, perms.org_id)
     # Clean up all ingest data before committing the portal deletion.
     # Raises on failure so the portal record is not orphaned from its ingest data.
     await knowledge_ingest_client.delete_kb(org.zitadel_org_id, kb.slug)
@@ -227,12 +224,10 @@ async def delete_knowledge_base(
 @router.get("/knowledge-bases/{kb_id}/groups", response_model=KBGroupsResponse)
 async def list_kb_groups(
     kb_id: int,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> KBGroupsResponse:
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin_or_group_admin_role(caller_user)
-    await _get_kb_or_404(kb_id, org.id, db)
+    await _get_kb_or_404(kb_id, perms.org_id, db)
     access_result = await db.execute(
         select(PortalGroupKBAccess, PortalGroup)
         .join(PortalGroup, PortalGroup.id == PortalGroupKBAccess.group_id)
@@ -258,21 +253,19 @@ async def list_kb_groups(
 async def grant_kb_group_access(
     kb_id: int,
     body: KBGroupGrantRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    caller_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin_or_group_admin_role(caller_user)
-    await _get_kb_or_404(kb_id, org.id, db)
+    await _get_kb_or_404(kb_id, perms.org_id, db)
     group_result = await db.execute(
         select(PortalGroup).where(
             PortalGroup.id == body.group_id,
-            PortalGroup.org_id == org.id,
+            PortalGroup.org_id == perms.org_id,
         )
     )
     if not group_result.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
-    access = PortalGroupKBAccess(group_id=body.group_id, kb_id=kb_id, granted_by=caller_id, role=body.role)
+    access = PortalGroupKBAccess(group_id=body.group_id, kb_id=kb_id, granted_by=perms.user_id, role=body.role)
     db.add(access)
     try:
         await db.flush()
@@ -290,12 +283,10 @@ async def grant_kb_group_access(
 async def revoke_kb_group_access(
     kb_id: int,
     group_id: int,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin_or_group_admin_role(caller_user)
-    await _get_kb_or_404(kb_id, org.id, db)  # Verifies KB belongs to caller's org (IDOR guard)
+    await _get_kb_or_404(kb_id, perms.org_id, db)  # Verifies KB belongs to caller's org (IDOR guard)
     result = await db.execute(
         select(PortalGroupKBAccess).where(
             PortalGroupKBAccess.kb_id == kb_id,

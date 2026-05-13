@@ -1,0 +1,24 @@
+## SPEC-PORTAL-ADMIN-USERS-CLEANUP-001 Progress
+
+- Started: 2026-05-13
+- Phase 1 complete: reviewed earlier 2026-05-13 portal cleanup specs and existing route split patterns.
+- Phase 2 complete: added characterization coverage for admin users list filtering and pending-invite delete behavior.
+- Phase 3 complete: split `admin/users/index.tsx` into route orchestration, colocated hooks/types/helpers, and route-owned components.
+- Verification complete:
+  - `npm run i18n:compile`
+  - `npx tsc -b --force`
+  - `npm run lint`
+  - `npm test -- --run src/routes/admin/users`
+  - `npm test`
+- Pushed to `origin/main`: `09f2abba refactor(portal): split admin users route`.
+- CI/deploy complete:
+  - `Build and deploy portal-frontend` succeeded for `09f2abba`.
+  - `SAST — Semgrep` succeeded for `09f2abba`.
+- Production Voys verification complete via Playwright MCP with Google SSO session:
+  - selected `mark.vletter@voys.nl` from Google account chooser.
+  - `/api/me` returned 200.
+  - `/api/admin/users` returned 200 with 11 users.
+  - `/admin/users` rendered heading, invite button, Profile and Account type columns.
+  - search for `mark.vletter@voys.nl` filtered table to 1 row and clearing search restored 11 rows.
+  - no new console errors or Voys 4xx/5xx responses during the admin-users flow.
+- Sync complete: SPEC status moved from `draft` to `done`.

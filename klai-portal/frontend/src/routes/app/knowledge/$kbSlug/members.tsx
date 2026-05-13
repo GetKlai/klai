@@ -1,9 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useAuth } from '@/lib/auth'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useRef, useState } from 'react'
-import { Globe, Lock, Users, Search, X } from 'lucide-react'
-import { Input } from '@/components/ui/input'
+import { useQuery } from '@tanstack/react-query'
+import { useState, type ElementType } from 'react'
+import { Globe, Lock, Users } from 'lucide-react'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,23 +12,29 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import * as m from '@/paraglide/messages'
+import { RoleGuard } from '@/components/layout/RoleGuard'
 import { apiFetch } from '@/lib/apiFetch'
+import { useAuth } from '@/lib/auth'
+import { kbQueryKeys } from '@/lib/kb-query-keys'
+import * as m from '@/paraglide/messages'
+import {
+  kbMembersQueryKey,
+  useInviteGroup,
+  useInviteUser,
+  useKnowledgeBaseUpdate,
+  useRemoveGroup,
+  useRemoveUser,
+} from './-members-hooks'
 import type { KnowledgeBase, MembersResponse } from './-kb-types'
-
-interface OrgGroup {
-  id: number
-  name: string
-}
-
-interface OrgUser {
-  zitadel_user_id: string
-  display_name: string
-  email: string
-}
+import { InviteSection, type OrgGroup, type OrgUser } from './_components/-InviteSection'
+import { MemberRow } from './_components/-MemberRow'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/members')({
-  component: MembersTab,
+  component: () => (
+    <RoleGuard minRole="kb_manager">
+      <MembersTab />
+    </RoleGuard>
+  ),
 })
 
 type VisibilityMode = 'public' | 'org' | 'restricted'
@@ -44,119 +48,74 @@ function deriveVisibilityMode(kb: KnowledgeBase): VisibilityMode {
 function MembersTab() {
   const { kbSlug } = Route.useParams()
   const auth = useAuth()
-  const queryClient = useQueryClient()
 
-  // Combobox state
   const [groupSearch, setGroupSearch] = useState('')
   const [groupFocused, setGroupFocused] = useState(false)
   const [userSearch, setUserSearch] = useState('')
   const [userFocused, setUserFocused] = useState(false)
-  const groupRef = useRef<HTMLDivElement>(null)
-  const userRef = useRef<HTMLDivElement>(null)
-
-  // Remove confirmations
   const [confirmingRemoveUser, setConfirmingRemoveUser] = useState<number | null>(null)
   const [confirmingRemoveGroup, setConfirmingRemoveGroup] = useState<number | null>(null)
 
   const { data: kb } = useQuery<KnowledgeBase>({
-    queryKey: ['app-knowledge-base', kbSlug],
+    queryKey: kbQueryKeys.knowledgeBase(kbSlug),
     queryFn: async () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`),
     enabled: auth.isAuthenticated,
   })
 
   const { data: members, isLoading } = useQuery<MembersResponse>({
-    queryKey: ['kb-members', kbSlug],
+    queryKey: kbMembersQueryKey(kbSlug),
     queryFn: async () => apiFetch<MembersResponse>(`/api/app/knowledge-bases/${kbSlug}/members`),
     enabled: auth.isAuthenticated,
   })
 
-  // Fetch org groups and users for comboboxes
-  const { data: groupsData } = useQuery({
+  const { data: groupsData } = useQuery<{ groups: OrgGroup[] }>({
     queryKey: ['app-groups'],
     queryFn: () => apiFetch<{ groups: OrgGroup[] }>('/api/app/groups'),
     enabled: auth.isAuthenticated && kb?.owner_type === 'org',
   })
 
-  const { data: usersData } = useQuery({
+  const { data: usersData } = useQuery<{ users: OrgUser[] }>({
     queryKey: ['app-users'],
     queryFn: () => apiFetch<{ users: OrgUser[] }>('/api/app/users'),
     enabled: auth.isAuthenticated && kb?.owner_type === 'org',
   })
 
+  const updateKbMutation = useKnowledgeBaseUpdate(kbSlug)
+  const inviteUserMutation = useInviteUser(kbSlug, () => setUserSearch(''))
+  const inviteGroupMutation = useInviteGroup(kbSlug, () => setGroupSearch(''))
+  const removeUserMutation = useRemoveUser(kbSlug)
+  const removeGroupMutation = useRemoveGroup(kbSlug)
+
   const myUserId = auth.user?.profile?.sub
   const isCreator = !!(myUserId && kb?.created_by === myUserId)
-  const isOwner = isCreator || !!(myUserId && members?.users.some((u) => u.user_id === myUserId && u.role === 'owner'))
+  const isOwner = isCreator || !!(myUserId && members?.users.some((user) => user.user_id === myUserId && user.role === 'owner'))
   const isPersonal = kb?.owner_type === 'user'
-
-  // Mutations
-  const updateKbMutation = useMutation({
-    mutationFn: async (body: { visibility?: string; default_org_role?: string }) => {
-      return apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`, {
-        method: 'PATCH',
-        body: JSON.stringify(body),
-      })
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['app-knowledge-base', kbSlug] })
-    },
-  })
-
-  const inviteUserMutation = useMutation({
-    mutationFn: async ({ email, role }: { email: string; role: string }) => {
-      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/members/users`, {
-        method: 'POST',
-        body: JSON.stringify({ email, role }),
-      })
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['kb-members', kbSlug] })
-      setUserSearch('')
-    },
-  })
-
-  const inviteGroupMutation = useMutation({
-    mutationFn: async ({ groupId, role }: { groupId: number; role: string }) => {
-      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/members/groups`, {
-        method: 'POST',
-        body: JSON.stringify({ group_id: groupId, role }),
-      })
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['kb-members', kbSlug] })
-      setGroupSearch('')
-    },
-  })
-
-  const removeUserMutation = useMutation({
-    mutationFn: async (id: number) => {
-      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/members/users/${id}`, {
-        method: 'DELETE',
-      })
-    },
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['kb-members', kbSlug] }),
-  })
-
-  const removeGroupMutation = useMutation({
-    mutationFn: async (id: number) => {
-      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/members/groups/${id}`, {
-        method: 'DELETE',
-      })
-    },
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['kb-members', kbSlug] }),
-  })
 
   if (isPersonal) {
     return (
-      <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_members_personal_kb_hint()}</p>
+      <p className="text-sm text-gray-400">{m.knowledge_members_personal_kb_hint()}</p>
     )
   }
 
   if (isLoading) {
-    return <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_loading()}</p>
+    return <p className="text-sm text-gray-400">{m.admin_connectors_loading()}</p>
   }
 
   const visibilityMode = kb ? deriveVisibilityMode(kb) : 'restricted'
   const allowContribute = kb?.default_org_role === 'contributor'
+  const existingGroupIds = new Set(members?.groups.map((group) => group.group_id) ?? [])
+  const filteredGroups = (groupsData?.groups ?? []).filter(
+    (group) =>
+      !existingGroupIds.has(group.id) &&
+      group.name.toLowerCase().includes(groupSearch.toLowerCase()),
+  )
+  const existingUserIds = new Set(members?.users.map((user) => user.user_id) ?? [])
+  const filteredUsers = (usersData?.users ?? []).filter(
+    (user) =>
+      !existingUserIds.has(user.zitadel_user_id) &&
+      (user.display_name.toLowerCase().includes(userSearch.toLowerCase()) ||
+        user.email.toLowerCase().includes(userSearch.toLowerCase())),
+  )
 
   function handleVisibilityChange(mode: VisibilityMode) {
     if (!kb) return
@@ -178,28 +137,130 @@ function MembersTab() {
 
   function handleContributeToggle() {
     if (!kb) return
-    const newRole = allowContribute ? 'viewer' : 'contributor'
-    updateKbMutation.mutate({ default_org_role: newRole })
+    updateKbMutation.mutate({ default_org_role: allowContribute ? 'viewer' : 'contributor' })
   }
 
-  // Filter groups: exclude system groups and already-added groups
-  const existingGroupIds = new Set(members?.groups.map((g) => g.group_id) ?? [])
-  const filteredGroups = (groupsData?.groups ?? []).filter(
-    (g) =>
-      !existingGroupIds.has(g.id) &&
-      g.name.toLowerCase().includes(groupSearch.toLowerCase())
-  )
+  return (
+    <div className="space-y-6">
+      {kb && kb.owner_type === 'org' && isOwner && (
+        <VisibilitySelector
+          visibilityMode={visibilityMode}
+          onVisibilityChange={handleVisibilityChange}
+        />
+      )}
 
-  // Filter users: exclude already-added users
-  const existingUserIds = new Set(members?.users.map((u) => u.user_id) ?? [])
-  const filteredUsers = (usersData?.users ?? []).filter(
-    (u) =>
-      !existingUserIds.has(u.zitadel_user_id) &&
-      (u.display_name.toLowerCase().includes(userSearch.toLowerCase()) ||
-        u.email.toLowerCase().includes(userSearch.toLowerCase()))
-  )
+      {kb && kb.owner_type === 'org' && isOwner && visibilityMode !== 'restricted' && (
+        <label className="flex items-start gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={allowContribute}
+            onChange={handleContributeToggle}
+            className="mt-1 h-4 w-4 rounded border-gray-200 text-gray-400 focus:ring-[var(--color-ring)]"
+          />
+          <div>
+            <span className="text-sm font-medium text-gray-900">
+              {m.knowledge_sharing_contributor_toggle()}
+            </span>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {m.knowledge_sharing_contributor_toggle_description()}
+            </p>
+          </div>
+        </label>
+      )}
 
-  const visibilityOptions: { mode: VisibilityMode; icon: React.ElementType; label: string; description: string }[] = [
+      {kb && kb.owner_type === 'org' && !isOwner && (
+        <VisibilitySummary visibilityMode={visibilityMode} />
+      )}
+
+      <InviteSection
+        kind="groups"
+        title={visibilityMode !== 'restricted' ? m.knowledge_sharing_groups_extra() : m.knowledge_sharing_groups()}
+        isOwner={isOwner}
+        search={groupSearch}
+        onSearchChange={setGroupSearch}
+        focused={groupFocused}
+        onFocusedChange={setGroupFocused}
+        options={filteredGroups}
+        error={inviteGroupMutation.error}
+        onInviteGroup={(groupId) => inviteGroupMutation.mutate({ groupId, role: 'viewer' })}
+        emptyReadOnlyMessage={m.knowledge_members_empty_groups()}
+        isEmpty={!members?.groups || members.groups.length === 0}
+      >
+        {members?.groups.map((group) => (
+          <MemberRow
+            key={group.id}
+            kind="group"
+            member={group}
+            isOwner={isOwner}
+            onRemove={setConfirmingRemoveGroup}
+          />
+        ))}
+      </InviteSection>
+
+      <InviteSection
+        kind="users"
+        title={visibilityMode !== 'restricted' ? m.knowledge_sharing_persons_extra() : m.knowledge_sharing_persons()}
+        isOwner={isOwner}
+        search={userSearch}
+        onSearchChange={setUserSearch}
+        focused={userFocused}
+        onFocusedChange={setUserFocused}
+        options={filteredUsers}
+        error={inviteUserMutation.error}
+        onInviteUser={(email) => inviteUserMutation.mutate({ email, role: 'viewer' })}
+        emptyReadOnlyMessage={m.knowledge_members_empty_users()}
+        isEmpty={!members?.users || members.users.length === 0}
+      >
+        {members?.users.map((user) => (
+          <MemberRow
+            key={user.id}
+            kind="user"
+            member={user}
+            isOwner={isOwner}
+            myUserId={myUserId}
+            onRemove={setConfirmingRemoveUser}
+          />
+        ))}
+      </InviteSection>
+
+      <p className="text-xs text-gray-400 italic">
+        {m.knowledge_sharing_creator_note({ name: '' })}
+      </p>
+
+      <RemoveMemberDialog
+        open={confirmingRemoveUser !== null}
+        onOpenChange={(open) => {
+          if (!open) setConfirmingRemoveUser(null)
+        }}
+        onConfirm={() => {
+          if (confirmingRemoveUser) removeUserMutation.mutate(confirmingRemoveUser)
+          setConfirmingRemoveUser(null)
+        }}
+      />
+
+      <RemoveMemberDialog
+        open={confirmingRemoveGroup !== null}
+        onOpenChange={(open) => {
+          if (!open) setConfirmingRemoveGroup(null)
+        }}
+        onConfirm={() => {
+          if (confirmingRemoveGroup) removeGroupMutation.mutate(confirmingRemoveGroup)
+          setConfirmingRemoveGroup(null)
+        }}
+      />
+    </div>
+  )
+}
+
+interface VisibilityOption {
+  mode: VisibilityMode
+  icon: ElementType
+  label: string
+  description: string
+}
+
+function getVisibilityOptions(): VisibilityOption[] {
+  return [
     {
       mode: 'public',
       icon: Globe,
@@ -219,274 +280,83 @@ function MembersTab() {
       description: m.knowledge_sharing_visibility_restricted_description(),
     },
   ]
+}
+
+interface VisibilitySelectorProps {
+  visibilityMode: VisibilityMode
+  onVisibilityChange: (mode: VisibilityMode) => void
+}
+
+function VisibilitySelector({ visibilityMode, onVisibilityChange }: VisibilitySelectorProps) {
+  const visibilityOptions = getVisibilityOptions()
 
   return (
-    <div className="space-y-6">
-      {/* Visibility selector — owners only */}
-      {kb && kb.owner_type === 'org' && isOwner && (
-        <div className="space-y-2">
-          <h2 className="text-sm font-semibold text-[var(--color-foreground)]">
-            {m.knowledge_sharing_who_can_access()}
-          </h2>
-          <div className="flex flex-col gap-2">
-            {visibilityOptions.map(({ mode, icon: Icon, label, description }) => (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => handleVisibilityChange(mode)}
-                className={`flex items-start gap-3 rounded-lg border p-3 text-left transition-colors ${
-                  visibilityMode === mode
-                    ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/5'
-                    : 'border-[var(--color-border)] hover:border-[var(--color-accent)]/50'
-                }`}
-              >
-                <Icon className={`h-4 w-4 mt-0.5 shrink-0 ${
-                  visibilityMode === mode ? 'text-[var(--color-accent)]' : 'text-[var(--color-muted-foreground)]'
-                }`} />
-                <div>
-                  <span className="text-sm font-medium text-[var(--color-foreground)]">
-                    {label}
-                  </span>
-                  <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
-                    {description}
-                  </p>
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Contribute toggle — only for public/org, owners only */}
-      {kb && kb.owner_type === 'org' && isOwner && visibilityMode !== 'restricted' && (
-        <label className="flex items-start gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={allowContribute}
-            onChange={handleContributeToggle}
-            className="mt-1 h-4 w-4 rounded border-[var(--color-border)] text-[var(--color-accent)] focus:ring-[var(--color-ring)]"
-          />
-          <div>
-            <span className="text-sm font-medium text-[var(--color-foreground)]">
-              {m.knowledge_sharing_contributor_toggle()}
-            </span>
-            <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
-              {m.knowledge_sharing_contributor_toggle_description()}
-            </p>
-          </div>
-        </label>
-      )}
-
-      {/* Non-owner visibility display */}
-      {kb && kb.owner_type === 'org' && !isOwner && (
-        <div className="flex items-center gap-2 text-sm text-[var(--color-muted-foreground)]">
-          {visibilityMode === 'public' && <Globe className="h-4 w-4" />}
-          {visibilityMode === 'org' && <Users className="h-4 w-4" />}
-          {visibilityMode === 'restricted' && <Lock className="h-4 w-4" />}
-          <span>
-            {visibilityMode === 'public' && m.knowledge_sharing_visibility_public()}
-            {visibilityMode === 'org' && m.knowledge_sharing_visibility_org()}
-            {visibilityMode === 'restricted' && m.knowledge_sharing_visibility_restricted()}
-          </span>
-        </div>
-      )}
-
-      {/* Groups — MemberPicker style */}
-      <div className="space-y-2">
-        <h2 className="text-sm font-semibold text-[var(--color-foreground)]">
-          {visibilityMode !== 'restricted' ? m.knowledge_sharing_groups_extra() : m.knowledge_sharing_groups()}
-        </h2>
-        {/* Group search combobox — owners only */}
-        {isOwner && (
-          <div
-            className="relative"
-            ref={groupRef}
-            onFocusCapture={() => setGroupFocused(true)}
-            onBlurCapture={(e) => {
-              if (!groupRef.current?.contains(e.relatedTarget as Node)) {
-                setGroupFocused(false)
-              }
-            }}
+    <div className="space-y-2">
+      <h2 className="text-sm font-semibold text-gray-900">
+        {m.knowledge_sharing_who_can_access()}
+      </h2>
+      <div className="flex flex-col gap-2">
+        {visibilityOptions.map(({ mode, icon: Icon, label, description }) => (
+          <button
+            key={mode}
+            type="button"
+            onClick={() => onVisibilityChange(mode)}
+            className={`flex items-start gap-3 rounded-lg border p-3 text-left transition-colors ${
+              visibilityMode === mode
+                ? 'border-gray-200 bg-black/[0.06]'
+                : 'border-gray-200 hover:border-gray-300'
+            }`}
           >
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-muted-foreground)]" />
-            <Input
-              value={groupSearch}
-              onChange={(e) => setGroupSearch(e.target.value)}
-              placeholder={m.knowledge_sharing_search_group()}
-              className="pl-9"
-            />
-            {groupFocused && filteredGroups.length > 0 && (
-              <div className="absolute z-10 mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] shadow-md max-h-40 overflow-y-auto">
-                {filteredGroups.map((g) => (
-                  <button
-                    key={g.id}
-                    type="button"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      inviteGroupMutation.mutate({ groupId: g.id, role: 'viewer' })
-                    }}
-                    className="w-full px-3 py-2 text-left text-sm text-[var(--color-foreground)] hover:bg-[var(--color-secondary)] transition-colors"
-                  >
-                    {g.name}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {inviteGroupMutation.error && (
-          <p className="text-sm text-[var(--color-destructive)]">{String(inviteGroupMutation.error)}</p>
-        )}
-
-        {/* Existing group members as cards */}
-        {members?.groups.map((g) => (
-          <div
-            key={g.id}
-            className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2"
-          >
-            <span className="text-sm text-[var(--color-foreground)]">{g.group_name}</span>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-[var(--color-muted-foreground)]">{g.role}</span>
-              {isOwner && (
-                <button
-                  type="button"
-                  onClick={() => setConfirmingRemoveGroup(g.id)}
-                  className="flex h-6 w-6 items-center justify-center text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)] transition-colors"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-          </div>
-        ))}
-
-        {(!members?.groups || members.groups.length === 0) && !isOwner && (
-          <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_members_empty_groups()}</p>
-        )}
-      </div>
-
-      {/* Persons — MemberPicker style */}
-      <div className="space-y-2">
-        <h2 className="text-sm font-semibold text-[var(--color-foreground)]">
-          {visibilityMode !== 'restricted' ? m.knowledge_sharing_persons_extra() : m.knowledge_sharing_persons()}
-        </h2>
-        {/* Person search combobox — owners only */}
-        {isOwner && (
-          <div
-            className="relative"
-            ref={userRef}
-            onFocusCapture={() => setUserFocused(true)}
-            onBlurCapture={(e) => {
-              if (!userRef.current?.contains(e.relatedTarget as Node)) {
-                setUserFocused(false)
-              }
-            }}
-          >
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-muted-foreground)]" />
-            <Input
-              value={userSearch}
-              onChange={(e) => setUserSearch(e.target.value)}
-              placeholder={m.knowledge_sharing_search_person()}
-              className="pl-9"
-            />
-            {userFocused && filteredUsers.length > 0 && (
-              <div className="absolute z-10 mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] shadow-md max-h-40 overflow-y-auto">
-                {filteredUsers.map((u) => (
-                  <button
-                    key={u.zitadel_user_id}
-                    type="button"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      inviteUserMutation.mutate({ email: u.email, role: 'viewer' })
-                    }}
-                    className="w-full px-3 py-2 text-left text-sm hover:bg-[var(--color-secondary)] transition-colors"
-                  >
-                    <span className="text-[var(--color-foreground)]">{u.display_name}</span>
-                    <span className="ml-2 text-xs text-[var(--color-muted-foreground)]">{u.email}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {inviteUserMutation.error && (
-          <p className="text-sm text-[var(--color-destructive)]">{String(inviteUserMutation.error)}</p>
-        )}
-
-        {/* Existing user members as cards */}
-        {members?.users.map((u) => (
-          <div
-            key={u.id}
-            className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2"
-          >
+            <Icon className="h-4 w-4 mt-0.5 shrink-0 text-gray-400" />
             <div>
-              <span className="text-sm text-[var(--color-foreground)]">{u.display_name ?? u.email ?? u.user_id}</span>
-              {u.display_name && u.email && (
-                <span className="ml-2 text-xs text-[var(--color-muted-foreground)]">{u.email}</span>
-              )}
+              <span className="text-sm font-medium text-gray-900">{label}</span>
+              <p className="text-xs text-gray-400 mt-0.5">{description}</p>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-[var(--color-muted-foreground)]">{u.role}</span>
-              {isOwner && u.user_id !== myUserId && (
-                <button
-                  type="button"
-                  onClick={() => setConfirmingRemoveUser(u.id)}
-                  className="flex h-6 w-6 items-center justify-center text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)] transition-colors"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-          </div>
+          </button>
         ))}
-
-        {(!members?.users || members.users.length === 0) && !isOwner && (
-          <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_members_empty_users()}</p>
-        )}
       </div>
-
-      <p className="text-xs text-[var(--color-muted-foreground)] italic">
-        {m.knowledge_sharing_creator_note({ name: '' })}
-      </p>
-
-      {/* Remove confirmations */}
-      <AlertDialog open={confirmingRemoveUser !== null} onOpenChange={(open) => { if (!open) setConfirmingRemoveUser(null) }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{m.knowledge_members_remove_confirm_title()}</AlertDialogTitle>
-            <AlertDialogDescription>{m.knowledge_members_remove_confirm_body()}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{m.knowledge_members_invite_cancel()}</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-[var(--color-destructive)] text-white hover:bg-[var(--color-destructive)]/90"
-              onClick={() => { if (confirmingRemoveUser) removeUserMutation.mutate(confirmingRemoveUser); setConfirmingRemoveUser(null) }}
-            >
-              {m.knowledge_members_remove_button()}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog open={confirmingRemoveGroup !== null} onOpenChange={(open) => { if (!open) setConfirmingRemoveGroup(null) }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{m.knowledge_members_remove_confirm_title()}</AlertDialogTitle>
-            <AlertDialogDescription>{m.knowledge_members_remove_confirm_body()}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{m.knowledge_members_invite_cancel()}</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-[var(--color-destructive)] text-white hover:bg-[var(--color-destructive)]/90"
-              onClick={() => { if (confirmingRemoveGroup) removeGroupMutation.mutate(confirmingRemoveGroup); setConfirmingRemoveGroup(null) }}
-            >
-              {m.knowledge_members_remove_button()}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
+  )
+}
+
+function VisibilitySummary({ visibilityMode }: { visibilityMode: VisibilityMode }) {
+  const Icon = getVisibilityOptions().find((option) => option.mode === visibilityMode)?.icon ?? Lock
+  return (
+    <div className="flex items-center gap-2 text-sm text-gray-400">
+      <Icon className="h-4 w-4" />
+      <span>
+        {visibilityMode === 'public' && m.knowledge_sharing_visibility_public()}
+        {visibilityMode === 'org' && m.knowledge_sharing_visibility_org()}
+        {visibilityMode === 'restricted' && m.knowledge_sharing_visibility_restricted()}
+      </span>
+    </div>
+  )
+}
+
+interface RemoveMemberDialogProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onConfirm: () => void
+}
+
+function RemoveMemberDialog({ open, onOpenChange, onConfirm }: RemoveMemberDialogProps) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{m.knowledge_members_remove_confirm_title()}</AlertDialogTitle>
+          <AlertDialogDescription>{m.knowledge_members_remove_confirm_body()}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{m.knowledge_members_invite_cancel()}</AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-[var(--color-destructive)] text-white hover:bg-[var(--color-destructive)]/90"
+            onClick={onConfirm}
+          >
+            {m.knowledge_members_remove_button()}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }

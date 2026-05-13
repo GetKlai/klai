@@ -1,6 +1,6 @@
 [project]
 name = "klai-identity-assert"
-version = "0.1.0"
+version = "0.2.0"
 description = "Shared identity-assertion helper for Klai services (SPEC-SEC-IDENTITY-ASSERT-001)."
 requires-python = ">=3.12"
 readme = "README.md"

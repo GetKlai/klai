@@ -1,6 +1,6 @@
 // Shared types for knowledge base detail routes
 
-export type KBTab = 'overview' | 'connectors' | 'members' | 'items' | 'taxonomy' | 'settings' | 'advanced'
+export type KBTab = 'overview' | 'connectors' | 'members' | 'items' | 'taxonomy' | 'settings' | 'advanced' | 'insights'
 
 export interface KnowledgeBase {
   id: number
@@ -26,6 +26,8 @@ export interface ConnectorSummary {
   last_sync_at: string | null
   last_sync_documents_ok: number | null
   allowed_assertion_modes: string[] | null
+  // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-7 — backend predicate; UI badge.
+  needs_reconfiguration?: boolean
 }
 
 export interface KBStats {
@@ -34,6 +36,8 @@ export interface KBStats {
   connectors: ConnectorSummary[]
   volume: number | null
   usage_last_30d: number | null
+  unique_users_30d: number | null
+  active_days_30d: number | null
   org_gap_count_7d: number | null
   // Volume breakdown
   source_page_count: number | null
@@ -73,7 +77,6 @@ export interface TaxonomyNode {
   name: string
   slug: string
   description?: string | null
-  doc_count: number
   sort_order: number
   created_at: string
   created_by: string
@@ -134,17 +137,24 @@ export interface TopTagsResponse {
   total_chunks_sampled: number
 }
 
-export interface GitHubConfig {
-  installation_id: string
-  repo_owner: string
-  repo_name: string
-  branch: string
-  path_filter: string
-}
+// `GitHubConfig` and `WebCrawlerConfig` were moved to
+// `klai-portal/frontend/src/routes/app/knowledge/-connector-types.ts`
+// — wizard-only types, smallest-shared scope is the parent route dir.
+// See portal-frontend.md § "File organization for shared types and helpers".
 
-export interface WebCrawlerConfig {
-  base_url: string
-  path_prefix: string
-  max_pages: string
-  content_selector: string
+/**
+ * Single authentication cookie input row.
+ *
+ * Connector wizard step 4 collects cookies as structured rows, NOT as a
+ * free-text textarea that the frontend then parses. This mirrors the shape
+ * stored in `connector.config.cookies` and consumed by the ingest cron-sync
+ * (knowledge_ingest/connector_cookies.py → crawl_page) — no parser layer in
+ * between, no chance of cookie-name guessing.
+ *
+ * `domain` and `path` are derived at submit time from the connector's
+ * `base_url`; only `name` and `value` are operator-supplied per row.
+ */
+export interface CookieRow {
+  name: string
+  value: string
 }

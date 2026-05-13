@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex">
+    <title>Klai — {{ client_name | e }} verbinden</title>
+    <link rel="stylesheet" href="/static/oauth/consent.css">
+</head>
+<body>
+    <main class="card" role="main">
+        <div class="brand">
+            <img src="/klai-logo.svg" alt="Klai" width="92" height="28">
+        </div>
+
+        <h1>
+            {{ client_name | e }} verbinden{% if is_newly_registered %}<span class="badge-new" title="Eerste keer dat we deze app zien">Nieuw</span>{% endif %}
+        </h1>
+        <p class="lead">
+            {{ client_name | e }} kan straks zoeken in je Klai en notities toevoegen, namens jou.
+        </p>
+
+        {% if is_newly_registered %}
+        <div class="warn-callout">
+            We zien deze app voor het eerst. Check of je de naam herkent en of het terugadres hieronder klopt.
+        </div>
+        {% endif %}
+
+        <p class="redirect-line">
+            Stuurt resultaten terug naar <code>{{ redirect_uri | e }}</code>
+        </p>
+
+        <p class="as-user">
+            Je verbindt als <strong>{{ user_email | e }}</strong>{% if user_org_name %} ({{ user_org_name | e }}){% endif %}. Toegang trek je op elk moment weer in via <a href="/app/integrations">Instellingen → Integraties</a>.
+        </p>
+
+        <!-- nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token -->
+        <!-- This is NOT a Django form. CSRF protection is implemented via
+             the csrf_token hidden input below, validated server-side in
+             POST /oauth/authorize via hmac.compare_digest against a Redis-
+             stored token. SPEC-MCP-AUTH-001 REQ-A7. -->
+        <form method="POST" action="/oauth/authorize" novalidate>
+            <input type="hidden" name="request_id" value="{{ request_id | e }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token | e }}">
+            <div class="actions">
+                <button type="submit" name="decision" value="approve" class="btn btn-approve">
+                    Verbinden
+                </button>
+                <button type="submit" name="decision" value="deny" class="btn btn-deny">
+                    Niet nu
+                </button>
+            </div>
+        </form>
+    </main>
+</body>
+</html>

@@ -7,6 +7,7 @@ Single collection: klai_knowledge
   - vector_sparse (sparse): BM25-style lexical matching via BGE-M3
 Tenant isolation via org_id payload filter.
 """
+
 import asyncio
 import time
 import uuid
@@ -79,34 +80,81 @@ async def ensure_collection() -> None:
     collection_info = await client.get_collection(COLLECTION)
     indexed_fields = set((collection_info.payload_schema or {}).keys())
     for field in (
-        "org_id", "kb_slug", "artifact_id", "content_type",
-        "user_id", "entity_uuids", "taxonomy_node_id", "source_connector_id",
-        "taxonomy_node_ids", "tags", "content_label", "source_label",
+        "org_id",
+        "kb_slug",
+        "artifact_id",
+        "content_type",
+        "user_id",
+        "entity_uuids",
+        "entity_names",
+        "taxonomy_node_id",
+        "source_connector_id",
+        "taxonomy_node_ids",
+        "tags",
+        "content_label",
+        "source_label",
         "chunk_type",
     ):
         if field not in indexed_fields:
             await client.create_payload_index(
-                COLLECTION, field_name=field, field_schema="keyword",
+                COLLECTION,
+                field_name=field,
+                field_schema="keyword",
             )
             logger.info("qdrant_payload_index_created", field=field, collection=COLLECTION)
 
     # source_url: keyword index for payload-filter-based chunk lookup (SPEC-CRAWLER-003)
     if "source_url" not in indexed_fields:
         await client.create_payload_index(
-            COLLECTION, field_name="source_url", field_schema="keyword",
+            COLLECTION,
+            field_name="source_url",
+            field_schema="keyword",
         )
         logger.info("qdrant_payload_index_created", field="source_url", collection=COLLECTION)
 
     # incoming_link_count: integer index for authority boost queries (SPEC-CRAWLER-003)
     if "incoming_link_count" not in indexed_fields:
         await client.create_payload_index(
-            COLLECTION, field_name="incoming_link_count", field_schema="integer",
+            COLLECTION,
+            field_name="incoming_link_count",
+            field_schema="integer",
         )
         logger.info(
             "qdrant_payload_index_created",
             field="incoming_link_count",
             collection=COLLECTION,
         )
+
+
+# Audit 2026-05-06 finding 4: deny-list of extra_payload keys that the
+# pipeline carries through Procrastinate task args + PG `artifacts.extra`
+# but that should NOT land in Qdrant per-chunk payload. Each of these is
+# either huge (full document body) or only useful at processing time
+# (cache hits across Phase-2 retries). All are excluded from the
+# read-side filter `_ALLOWED_METADATA_FIELDS` below; storing them in
+# Qdrant is dead weight.
+#
+# - document_text:     ~100 KB raw body x N chunks = MB per document
+# - document_summary:  ~1-2 KB Anthropic contextual-retrieval summary
+# - document_language: 2-3 char ISO code, but lives in extra_payload
+#                      only for Phase-2 cache parity with summary
+#
+# The fields stay in PG (`artifacts.extra->>'document_text'`, used by
+# rebuild_kb) and in the Procrastinate task args (used by
+# `_enrich_document` for cache hits across retries). Stripping them at
+# the Qdrant boundary keeps both consumers working.
+_QDRANT_PAYLOAD_DENY_LIST: frozenset[str] = frozenset(
+    {"document_text", "document_summary", "document_language"}
+)
+
+
+def _extra_payload_for_qdrant(extra_payload: dict | None) -> dict:
+    """Return ``extra_payload`` minus keys that should not be persisted in
+    Qdrant chunk-payload. Returns an empty dict for None input.
+    """
+    if not extra_payload:
+        return {}
+    return {k: v for k, v in extra_payload.items() if k not in _QDRANT_PAYLOAD_DENY_LIST}
 
 
 async def upsert_chunks(
@@ -170,8 +218,7 @@ async def upsert_chunks(
     # Store content_label when not None — includes [] (labeler ran but failed)
     if content_label is not None:
         base_payload["content_label"] = content_label
-    if extra_payload:
-        base_payload.update(extra_payload)
+    base_payload.update(_extra_payload_for_qdrant(extra_payload))
 
     points = [
         PointStruct(
@@ -198,6 +245,7 @@ async def upsert_enriched_chunks(
     content_type: str = "unknown",
     belief_time_start: int | None = None,
     belief_time_end: int | None = None,
+    parent_chunk_ids: list[int | None] | None = None,
 ) -> None:
     """
     Upsert enriched chunks with named + sparse vectors.
@@ -240,8 +288,7 @@ async def upsert_enriched_chunks(
         base_payload["valid_until"] = belief_time_end
     if user_id:
         base_payload["user_id"] = user_id
-    if extra_payload:
-        base_payload.update(extra_payload)
+    base_payload.update(_extra_payload_for_qdrant(extra_payload))
 
     # Default sparse_vectors to all None if not provided
     if sparse_vectors is None:
@@ -274,6 +321,15 @@ async def upsert_enriched_chunks(
         }
         if getattr(ec, "chunk_type", ""):
             chunk_payload["chunk_type"] = ec.chunk_type
+
+        # SPEC-RAG-PARENT-CHILD-001: thread the parent_chunks.id into each
+        # child's payload so retrieval-api can fetch the parent text and
+        # swap it in. None for legacy ingests that didn't run through the
+        # parent-child chunker — retrieval-api falls through to chunk text.
+        if parent_chunk_ids is not None and i < len(parent_chunk_ids):
+            pid = parent_chunk_ids[i]
+            if pid is not None:
+                chunk_payload["parent_chunk_id"] = int(pid)
 
         points.append(
             PointStruct(
@@ -330,7 +386,9 @@ async def delete_connector(org_id: str, kb_slug: str, connector_id: str) -> None
     )
     logger.info(
         "connector_chunks_deleted",
-        org_id=org_id, kb_slug=kb_slug, connector_id=connector_id,
+        org_id=org_id,
+        kb_slug=kb_slug,
+        connector_id=connector_id,
     )
 
 
@@ -350,13 +408,27 @@ async def update_kb_visibility(org_id: str, kb_slug: str, visibility: str) -> No
     logger.info("kb_visibility_updated", org_id=org_id, kb_slug=kb_slug, visibility=visibility)
 
 
-_ALLOWED_METADATA_FIELDS = frozenset({
-    "title", "kb_slug", "chunk_index", "created_at",
-    "source_type", "source_connector_id", "source_ref", "visibility",
-    "tags", "provenance_type", "confidence",
-    "artifact_id", "content_type", "valid_from", "valid_until", "ingested_at",
-    "assertion_mode",
-})
+_ALLOWED_METADATA_FIELDS = frozenset(
+    {
+        "title",
+        "kb_slug",
+        "chunk_index",
+        "created_at",
+        "source_type",
+        "source_connector_id",
+        "source_ref",
+        "visibility",
+        "tags",
+        "provenance_type",
+        "confidence",
+        "artifact_id",
+        "content_type",
+        "valid_from",
+        "valid_until",
+        "ingested_at",
+        "assertion_mode",
+    }
+)
 
 
 async def search(
@@ -433,16 +505,56 @@ async def search(
     return [
         {
             "text": p.payload.get("text", "") if p.payload else "",
-            "source": f"{p.payload.get('kb_slug', '')}/{p.payload.get('path', '')}" if p.payload else "",  # noqa: E501
+            "source": f"{p.payload.get('kb_slug', '')}/{p.payload.get('path', '')}"
+            if p.payload
+            else "",
             "score": p.score,
             "metadata": {
-                k: v
-                for k, v in (p.payload or {}).items()
-                if k in _ALLOWED_METADATA_FIELDS
+                k: v for k, v in (p.payload or {}).items() if k in _ALLOWED_METADATA_FIELDS
             },
         }
         for p in points
     ]
+
+
+# Minimum entity-name length for chunk-level substring matching. Two-character
+# names produce false positives ("AI" inside "fail", "stair") that pollute BM25.
+# Three is the smallest safe threshold for brand/product names while still
+# catching common short ones (CRM, ERP, SSO).
+_ENTITY_NAME_MIN_LEN = 3
+
+
+def filter_entity_names_for_chunk(
+    chunk_text: str,
+    doc_entity_names: list[str],
+) -> list[str]:
+    """Return the subset of doc_entity_names that literally appear in chunk_text.
+
+    Case-insensitive substring match. Names shorter than _ENTITY_NAME_MIN_LEN
+    are skipped to suppress false-positive matches inside unrelated words.
+    Duplicate names (e.g. Graphiti emitted both "Voys" and "voys") collapse to
+    a single canonical form (lowercased preferred when both casings appear).
+
+    Pure function — kept top-level for testability.
+    """
+    if not doc_entity_names or not chunk_text:
+        return []
+    chunk_lower = chunk_text.lower()
+    seen: set[str] = set()
+    result: list[str] = []
+    for name in doc_entity_names:
+        if not name or not isinstance(name, str):
+            continue
+        cleaned = name.strip()
+        if len(cleaned) < _ENTITY_NAME_MIN_LEN:
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        if key in chunk_lower:
+            seen.add(key)
+            result.append(cleaned)
+    return result
 
 
 async def set_entity_graph_data(
@@ -450,40 +562,144 @@ async def set_entity_graph_data(
     org_id: str,
     entity_uuids: list[str],
     pagerank_scores: dict[str, float],
+    entity_names: list[str] | None = None,
 ) -> None:
-    """Set entity UUIDs and max PageRank score on all chunks of an artifact.
+    """Set entity UUIDs, entity names, and max PageRank score on chunks of an artifact.
 
-    Called after Graphiti episode ingestion completes. All chunks of the same
-    artifact get the same entity list (extracted at document level).
-    entity_pagerank_max is the highest PageRank score among this artifact's entities.
+    Called after Graphiti episode ingestion completes.
+
+    entity_uuids + entity_pagerank_max are document-level (set on all chunks of
+    the artifact via a single artifact_id-scoped set_payload).
+
+    entity_names is filtered per-chunk: each chunk only carries the subset of
+    document-level names that literally appear in its own text. This keeps
+    BM25/sparse from being polluted by entity names that belong to a different
+    section of the same long document. When entity_names is None or empty, only
+    the document-level fields are written (back-compat with callers that don't
+    yet provide names).
     """
-    if not entity_uuids:
+    if not entity_uuids and not entity_names:
         return
 
     client = get_client()
-    scores = [pagerank_scores.get(uid, 0.0) for uid in entity_uuids]
+    scores = [pagerank_scores.get(uid, 0.0) for uid in entity_uuids] if entity_uuids else []
     pagerank_max = max(scores) if scores else 0.0
 
-    await client.set_payload(
-        COLLECTION,
-        payload={
-            "entity_uuids": entity_uuids,
-            "entity_pagerank_max": pagerank_max,
-        },
-        points=Filter(
-            must=[
-                FieldCondition(key="artifact_id", match=MatchValue(value=artifact_id)),
-                FieldCondition(key="org_id", match=MatchValue(value=org_id)),
-            ]
-        ),
-    )
+    # Document-level write: same payload across every chunk of the artifact.
+    if entity_uuids:
+        await client.set_payload(
+            COLLECTION,
+            payload={
+                "entity_uuids": entity_uuids,
+                "entity_pagerank_max": pagerank_max,
+            },
+            points=Filter(
+                must=[
+                    FieldCondition(key="artifact_id", match=MatchValue(value=artifact_id)),
+                    FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+                ]
+            ),
+        )
+
+    # Chunk-level write: per-chunk substring filter against chunk text.
+    chunks_with_names = 0
+    chunks_total = 0
+    if entity_names:
+        chunks_with_names, chunks_total = await _set_per_chunk_entity_names(
+            client=client,
+            artifact_id=artifact_id,
+            org_id=org_id,
+            doc_entity_names=entity_names,
+        )
+
+    # chunks_total + chunks_with_names lets Grafana compute the per-tenant
+    # coverage rate from VictoriaLogs: stats by(org_id) sum(chunks_with_names)
+    # / sum(chunks_total) over event:entity_graph_data_set.
     logger.info(
         "entity_graph_data_set",
         artifact_id=artifact_id,
         org_id=org_id,
         entity_count=len(entity_uuids),
+        entity_name_count=len(entity_names) if entity_names else 0,
+        chunks_total=chunks_total,
+        chunks_with_names=chunks_with_names,
         pagerank_max=round(pagerank_max, 6),
     )
+
+
+_ENTITY_NAMES_CHUNK_BATCH = 100
+
+
+async def _set_per_chunk_entity_names(
+    client: AsyncQdrantClient,
+    artifact_id: str,
+    org_id: str,
+    doc_entity_names: list[str],
+) -> tuple[int, int]:
+    """Scroll all chunks of an artifact and write the per-chunk entity_names
+    subset. Returns (chunks_with_names, chunks_total) — the coverage ratio
+    consumer can compute the per-artifact filter-acceptance rate.
+    """
+    artifact_filter = Filter(
+        must=[
+            FieldCondition(key="artifact_id", match=MatchValue(value=artifact_id)),
+            FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+        ]
+    )
+
+    offset = None
+    chunks_with_names = 0
+    chunks_total = 0
+    while True:
+        try:
+            points, next_offset = await client.scroll(
+                collection_name=COLLECTION,
+                scroll_filter=artifact_filter,
+                limit=_ENTITY_NAMES_CHUNK_BATCH,
+                offset=offset,
+                with_payload=["text"],
+                with_vectors=False,
+            )
+        except Exception:
+            logger.exception(
+                "entity_names_scroll_failed",
+                artifact_id=artifact_id,
+                org_id=org_id,
+            )
+            return chunks_with_names, chunks_total
+
+        if not points:
+            break
+
+        for point in points:
+            chunks_total += 1
+            chunk_text = (point.payload or {}).get("text", "")
+            if not isinstance(chunk_text, str):
+                continue
+            names = filter_entity_names_for_chunk(chunk_text, doc_entity_names)
+            if not names:
+                # Qdrant strips empty-list keys on upsert; absent == empty.
+                continue
+            try:
+                await client.set_payload(
+                    COLLECTION,
+                    payload={"entity_names": names},
+                    points=[point.id],
+                )
+                chunks_with_names += 1
+            except Exception:
+                logger.exception(
+                    "entity_names_set_payload_failed",
+                    artifact_id=artifact_id,
+                    org_id=org_id,
+                    chunk_id=str(point.id),
+                )
+
+        if next_offset is None:
+            break
+        offset = next_offset
+
+    return chunks_with_names, chunks_total
 
 
 _LINK_COUNT_CONCURRENCY = 20  # max parallel set_payload calls per bulk crawl
@@ -532,9 +748,7 @@ async def update_link_counts(
                     timeout=5.0,
                 )
             except TimeoutError:
-                logger.warning(
-                    "link_count_update_timeout", url=url, org_id=org_id, kb_slug=kb_slug
-                )
+                logger.warning("link_count_update_timeout", url=url, org_id=org_id, kb_slug=kb_slug)
 
     t0 = time.time()
     await asyncio.gather(*(_update_one(url, count) for url, count in url_to_count.items()))

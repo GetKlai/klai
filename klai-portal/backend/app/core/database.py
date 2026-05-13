@@ -116,6 +116,14 @@ async def _reset_tenant_context(session: AsyncSession) -> None:
         await session.execute(text("SELECT set_config('app.current_org_id', '', false)"))
     with contextlib.suppress(Exception):
         await session.execute(text("SELECT set_config('app.cross_org_admin', '', false)"))
+    # SPEC-PORTAL-PRICING-PER-USER-001 Phase 2: ``klai.changed_by_user_id``
+    # is a per-request actor-id GUC consumed by the
+    # ``portal_users_seat_history_trg`` trigger. Reset on connection
+    # release so the next request never inherits the previous user's
+    # identity — a stale value here would attribute a system-write to
+    # the wrong admin in the audit trail.
+    with contextlib.suppress(Exception):
+        await session.execute(text("SELECT set_config('klai.changed_by_user_id', '', false)"))
 
 
 async def get_db() -> AsyncGenerator[AsyncSession]:
@@ -211,6 +219,60 @@ async def assert_portal_users_rls_ready() -> None:
             "return zero rows (HTTP 404 'Organisation not found' for every "
             f"authenticated request). Current policy expression: {expr}"
         )
+
+
+async def assert_partner_api_keys_rls_ready() -> None:
+    """Fail-loud at startup if partner_api_keys or partner_api_key_kb_access
+    do not have FORCE ROW LEVEL SECURITY enabled at the engine level.
+
+    SPEC-TI-005 / Finding A-3: The original migration b1f2a3c4d5e6 documented
+    ENABLE/FORCE in its docstring as an "operator note" rather than in
+    executable DDL. This means the klai superuser step may have been skipped,
+    leaving partner API keys readable cross-tenant by any portal_api session.
+    Partner API keys are bearer-tokens for all customer-API access -- a missed
+    FORCE means every key of every tenant is visible to any other tenant's
+    session (IF a code path ever queries without an org_id filter).
+
+    Checks pg_class.relrowsecurity (ENABLE) and relforcerowsecurity (FORCE)
+    for both tables. Raises RuntimeError if either flag is false so the
+    missing post-deploy SQL step surfaces at deploy time, not at first use.
+
+    Operator fix:
+        ssh core-01 "docker exec -i klai-core-postgres-1 psql -U klai -d klai" \
+            < klai-portal/backend/alembic/versions/post_deploy_ti005_tenant_isolation_hygiene.sql
+    """
+    tables = ("partner_api_keys", "partner_api_key_kb_access")
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            text(
+                "SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity "
+                "FROM pg_class c "
+                "WHERE c.relname = ANY(:tables) AND c.relkind = 'r'"
+            ),
+            {"tables": list(tables)},
+        )
+        rows = {row.relname: row for row in result.fetchall()}
+
+    for table in tables:
+        row = rows.get(table)
+        if row is None:
+            raise RuntimeError(
+                f"Startup RLS check: table '{table}' not found in pg_class. Was the migration b1f2a3c4d5e6 applied?"
+            )
+        if not row.relrowsecurity:
+            raise RuntimeError(
+                f"Startup RLS check (SPEC-TI-005 A-3): '{table}' has "
+                "ENABLE ROW LEVEL SECURITY = FALSE. "
+                "Run post_deploy_ti005_tenant_isolation_hygiene.sql as klai superuser "
+                "and restart portal-api."
+            )
+        if not row.relforcerowsecurity:
+            raise RuntimeError(
+                f"Startup RLS check (SPEC-TI-005 A-3): '{table}' has "
+                "FORCE ROW LEVEL SECURITY = FALSE. "
+                "Run post_deploy_ti005_tenant_isolation_hygiene.sql as klai superuser "
+                "and restart portal-api."
+            )
 
 
 @contextlib.asynccontextmanager

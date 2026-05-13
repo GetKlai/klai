@@ -3,11 +3,11 @@
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.core.database import get_session
+from app.core.database import get_session, set_tenant
 from app.core.enums import SyncStatus
 from app.core.logging import get_logger
 from app.models.sync_run import SyncRun
@@ -85,6 +85,16 @@ async def trigger_sync(
     _require_portal_call(request)
     org_id = _require_portal_org_id(request, settings)
 
+    # SPEC-TI-002: set tenant context on the session so the Cat-D RLS
+    # policy on connector.sync_runs admits the query. When org_id is None
+    # (transition period, sync_require_org_id=False) we enable the
+    # cross-org bypass so the active-sync guard can still read; that path
+    # is rejected below (the None-org INSERT guard) before any write occurs.
+    if org_id is not None:
+        await set_tenant(session, org_id)
+    else:
+        await session.execute(text("SELECT set_config('app.cross_org_admin', 'true', false)"))
+
     # Active-sync guard. SPEC-SEC-TENANT-001 REQ-7.4: when org_id is
     # asserted, scope the guard so one tenant's running sync cannot block
     # another tenant's trigger attempt for the same connector_id (which
@@ -148,7 +158,7 @@ async def list_sync_runs(
     limit: int = 20,
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
-) -> list[SyncRun]:
+) -> list[SyncRunResponse]:
     """List sync history for a connector (most recent first).
 
     Called by the portal control plane to retrieve sync history for the UI.
@@ -156,9 +166,22 @@ async def list_sync_runs(
     SPEC-SEC-TENANT-001 REQ-7.3: filtered on ``X-Org-ID`` when the header
     is present. During the transition period (REQ-7.6) a missing header
     falls back to legacy connector_id-only filtering with a WARN event.
+
+    SPEC-CRAWLER-006 REQ-04: each row in ``RUNNING`` state with a
+    ``cursor_state.remote_job_id`` has its live progress resolved from
+    knowledge-ingest. Terminal rows are returned from the local DB
+    unchanged. The resolver writes back terminal state on first read so
+    a closed remote job leaves the local row terminal across all
+    subsequent calls.
     """
     _require_portal_call(request)
     org_id = _require_portal_org_id(request, settings)
+
+    # SPEC-TI-002: set tenant context before querying RLS-protected table.
+    if org_id is not None:
+        await set_tenant(session, org_id)
+    else:
+        await session.execute(text("SELECT set_config('app.cross_org_admin', 'true', false)"))
 
     query = (
         select(SyncRun)
@@ -170,7 +193,29 @@ async def list_sync_runs(
         query = query.where(SyncRun.org_id == org_id)
 
     result = await session.execute(query)
-    return list(result.scalars().all())
+    rows = list(result.scalars().all())
+    return await _resolve_runs(request, rows)
+
+
+async def _resolve_runs(request: Request, rows: list[SyncRun]) -> list[SyncRunResponse]:
+    """Apply :class:`SyncRunResolver` to every row before serialising.
+
+    The resolver short-circuits for non-RUNNING rows and rows without a
+    ``cursor_state.remote_job_id``, so the cost on a typical history
+    list is one upstream call per running web_crawler row (cached 30 s).
+    """
+    resolver = getattr(request.app.state, "sync_run_resolver", None)
+    if resolver is None:
+        # Resolver not wired (e.g. minimal test app). Fall back to local
+        # rows — preserves pre-SPEC-006 behaviour for callers that don't
+        # configure the resolver.
+        return [SyncRunResponse.model_validate(r, from_attributes=True) for r in rows]
+
+    resolved = []
+    for row in rows:
+        snapshot = await resolver.resolve(row)
+        resolved.append(SyncRunResponse.model_validate(snapshot, from_attributes=True))
+    return resolved
 
 
 @router.get("/connectors/{connector_id}/syncs/{run_id}", response_model=SyncRunResponse)
@@ -180,7 +225,7 @@ async def get_sync_run(
     request: Request,
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
-) -> SyncRun:
+) -> SyncRunResponse:
     """Get details of a specific sync run.
 
     SPEC-SEC-TENANT-001 REQ-7.3 / REQ-7.5: filters on org_id when
@@ -191,6 +236,12 @@ async def get_sync_run(
     _require_portal_call(request)
     org_id = _require_portal_org_id(request, settings)
 
+    # SPEC-TI-002: set tenant context before querying RLS-protected table.
+    if org_id is not None:
+        await set_tenant(session, org_id)
+    else:
+        await session.execute(text("SELECT set_config('app.cross_org_admin', 'true', false)"))
+
     sync_run = await session.get(SyncRun, run_id)
     if sync_run is None or sync_run.connector_id != connector_id:
         raise HTTPException(status_code=404, detail="Sync run not found")
@@ -199,4 +250,17 @@ async def get_sync_run(
     if org_id is not None and sync_run.org_id != org_id:
         raise HTTPException(status_code=404, detail="Sync run not found")
 
-    return sync_run
+    # SPEC-CRAWLER-006 REQ-04: live-resolve a single row identically to
+    # the list path so the detail view matches the list view.
+    resolved = await _resolve_runs(request, [sync_run])
+    return resolved[0]
+
+
+# DELETE /connectors/{id}/sync-runs removed by
+# SPEC-CONNECTOR-DELETE-LIFECYCLE-001 PR C (REQ-08): the new cross-schema
+# FK with ON DELETE CASCADE in migration 007 makes per-connector
+# sync_runs cleanup automatic. When the portal hard-deletes a row from
+# ``public.portal_connectors`` (via the finalize-delete callback after
+# the purge worker completes) PostgreSQL cascades to
+# ``connector.sync_runs`` for free. The dedicated endpoint is gone but
+# its replacement is the migration itself.

@@ -20,6 +20,9 @@ interface MeResponse {
   // SPEC-PORTAL-UNIFY-KB-001: KB capability strings (e.g. "kb.connectors").
   // Empty array for core/professional; full set for complete.
   capabilities: string[]
+  // SPEC-PORTAL-PROFILES-001 Phase 1: five-rung role ladder and effective capabilities.
+  effective_role?: string
+  effective_capabilities?: string[]
   requires_2fa_setup?: boolean
 }
 
@@ -41,6 +44,7 @@ export function useCurrentUser() {
         ...me,
         // Ensure capabilities is always an array even if older backend omits it
         capabilities: me.capabilities ?? [],
+        effective_capabilities: me.effective_capabilities ?? [],
         isAdmin,
         isGroupAdmin: me.portal_role === 'group-admin',
         hasCapability: (cap: string) => isAdmin || (me.capabilities ?? []).includes(cap),

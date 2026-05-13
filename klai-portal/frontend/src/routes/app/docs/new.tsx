@@ -9,21 +9,18 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
+import { DOCS_BASE, getOrgSlug } from '@/lib/kb-editor/tree-utils'
 
 export const Route = createFileRoute('/app/docs/new')({
   component: NewKBPage,
 })
 
-const DOCS_BASE = '/api/docs/api'
-
-function getOrgSlug(): string {
-  return window.location.hostname.split('.')[0]
-}
-
 function NewKBPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const orgSlug = getOrgSlug()
+  const { user } = useCurrentUser()
+  const orgSlug = getOrgSlug(user?.workspace_url)
 
   const [name, setName] = useState('')
   const [visibility, setVisibility] = useState<'private' | 'public'>('private')

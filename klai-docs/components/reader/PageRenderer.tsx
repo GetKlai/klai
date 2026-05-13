@@ -3,6 +3,9 @@ import remarkGfm from "remark-gfm";
 import rehypeSlug from "rehype-slug";
 import rehypeHighlight from "rehype-highlight";
 import rehypeRaw from "rehype-raw";
+import rehypeSanitize from "rehype-sanitize";
+import { blockNoteJsonToMarkdown } from "@/lib/blocknote-markdown";
+import { sanitizeSchema } from "@/lib/sanitize-schema";
 
 export type PageIndexEntry = {
   id: string;
@@ -40,16 +43,24 @@ function resolveWikilinks(
 }
 
 export function PageRenderer({ content, pageIndex, kbSlug }: Props) {
+  const markdownContent =
+    blockNoteJsonToMarkdown(content, pageIndex ?? [], kbSlug ?? "") ?? content;
+
   const resolvedContent =
     pageIndex && pageIndex.length > 0 && kbSlug
-      ? resolveWikilinks(content, pageIndex, kbSlug)
-      : content;
+      ? resolveWikilinks(markdownContent, pageIndex, kbSlug)
+      : markdownContent;
 
   return (
     <article className="prose max-w-none klai-prose">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeRaw, rehypeSlug, rehypeHighlight]}
+        rehypePlugins={[
+          rehypeRaw,
+          [rehypeSanitize, sanitizeSchema],
+          rehypeSlug,
+          rehypeHighlight,
+        ]}
       >
         {resolvedContent}
       </ReactMarkdown>

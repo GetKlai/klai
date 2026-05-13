@@ -1,0 +1,64 @@
+[project]
+name = "klai-retrieval-telemetry"
+version = "0.1.0"
+description = "Shared retrieval telemetry helpers for Klai services (SPEC-MCP-RETRIEVAL-001)."
+requires-python = ">=3.12"
+readme = "README.md"
+license = { text = "Proprietary" }
+authors = [{ name = "Klai" }]
+
+# Runtime dependencies. httpx for the fire-and-forget POSTs to portal-api.
+# structlog kept compatible with klai-log-utils so callers stay on one
+# logging stack across services.
+dependencies = [
+    "httpx>=0.28",
+    "structlog>=25.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+    "pyright>=1.1.390",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+    "pyright>=1.1.390",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["klai_retrieval_telemetry"]
+
+[tool.hatch.build.targets.wheel.sources]
+"klai_retrieval_telemetry/py.typed" = "klai_retrieval_telemetry/py.typed"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "S", "RUF", "G", "LOG", "TRY"]
+ignore = [
+    "S101",  # asserts are fine in tests
+    "TRY003", # external-exception messages can be longer
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S105", "S106"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"

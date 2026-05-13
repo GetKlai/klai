@@ -22,6 +22,8 @@ import {
   type PageIndexEntry,
 } from '@/lib/kb-editor/KBEditorContext'
 import { apiFetch } from '@/lib/apiFetch'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
+import { kbQueryKeys } from '@/lib/kb-query-keys'
 import { editorLogger, treeLogger } from '@/lib/logger'
 import { SidebarPanel } from '@/components/kb-editor/SidebarPanel'
 import { DeletePageModal } from '@/components/kb-editor/DeletePageModal'
@@ -32,7 +34,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 export const Route = createFileRoute('/app/docs/$kbSlug')({
   component: () => (
-    <ProductGuard product="knowledge">
+    <ProductGuard product="docs">
       <KBEditorLayout />
     </ProductGuard>
   ),
@@ -51,8 +53,9 @@ function KBEditorLayout() {
   const pageId = 'pageId' in allParams ? (allParams as { pageId: string }).pageId : undefined
   const navigate = useNavigate()
   const auth = useAuth()
+  const { user } = useCurrentUser()
   const isAuthenticated = auth.isAuthenticated
-  const orgSlug = getOrgSlug()
+  const orgSlug = getOrgSlug(user?.workspace_url)
 
   // Shared display state — owned here, set by page component via context
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
@@ -66,14 +69,14 @@ function KBEditorLayout() {
 
   // Tree
   const { data: tree = [], refetch: refetchTree } = useQuery<NavNode[]>({
-    queryKey: ['docs-tree', orgSlug, kbSlug],
+    queryKey: kbQueryKeys.docsTree(orgSlug, kbSlug),
     queryFn: async () => apiFetch<NavNode[]>(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/tree`),
     enabled: isAuthenticated,
   })
 
   // PageIndex (id → slug mapping) — also settable synchronously for post-create update
   const { data: fetchedPageIndex = [], refetch: refetchPageIndex } = useQuery<PageIndexEntry[]>({
-    queryKey: ['docs-page-index', orgSlug, kbSlug],
+    queryKey: kbQueryKeys.docsPageIndex(orgSlug, kbSlug),
     queryFn: async () => {
       try {
         return await apiFetch<PageIndexEntry[]>(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/page-index`)
@@ -279,7 +282,7 @@ function KBEditorLayout() {
     setEditTitle,
     navigateToPage,
     setDeletePagePath,
-  }), [orgSlug, kbSlug, isAuthenticated, displayTree, pageIndex, setPageIndex, refetchTree, refetchPageIndex, saveStatus, editTitle, navigateToPage])
+  }), [orgSlug, kbSlug, isAuthenticated, displayTree, pageIndex, setPageIndex, refetchTree, refetchPageIndex, saveStatus, setSaveStatus, editTitle, setEditTitle, navigateToPage, setDeletePagePath])
 
   return (
     <KBEditorContext.Provider value={ctx}>

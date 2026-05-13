@@ -77,12 +77,12 @@ function AccountPage() {
   const email = auth.user?.profile?.email ?? ''
 
   return (
-    <div className="mx-auto max-w-2xl px-6 py-10 space-y-6">
+    <div className="mx-auto max-w-3xl px-6 py-10 space-y-6">
       <div className="space-y-1">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.account_heading()}
         </h1>
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           {m.account_subtitle()}
         </p>
       </div>
@@ -93,14 +93,14 @@ function AccountPage() {
           <dl className="space-y-3">
             {name && (
               <div className="flex gap-4">
-                <dt className="w-32 shrink-0 text-sm text-[var(--color-muted-foreground)]">Naam</dt>
-                <dd className="text-sm font-medium text-[var(--color-foreground)]">{name}</dd>
+                <dt className="w-32 shrink-0 text-sm text-gray-400">Naam</dt>
+                <dd className="text-sm font-medium text-gray-900">{name}</dd>
               </div>
             )}
             {email && (
               <div className="flex gap-4">
-                <dt className="w-32 shrink-0 text-sm text-[var(--color-muted-foreground)]">E-mail</dt>
-                <dd className="text-sm font-medium text-[var(--color-foreground)]">{email}</dd>
+                <dt className="w-32 shrink-0 text-sm text-gray-400">E-mail</dt>
+                <dd className="text-sm font-medium text-gray-900">{email}</dd>
               </div>
             )}
           </dl>
