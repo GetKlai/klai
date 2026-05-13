@@ -1,7 +1,13 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { RoleGuard } from '@/components/layout/RoleGuard'
+// TODO: F-table row 1 of SPEC-PORTAL-CONNECTOR-WIZARD-EXTRACT-001 § Follow-ups
+// will extract TaxonomyTab (currently a 720-line god-component inside
+// ./taxonomy.tsx) to _components/TaxonomyTab.tsx. Splitting that monolith
+// deserves its own SPEC. Until then, this single cross-route import is
+// the deferred-fix marker.
+// eslint-disable-next-line klai/no-cross-route-import
 import { TaxonomyTab } from './taxonomy'
-import { KBOverviewSections } from './overview'
+import { KBOverviewSections } from './_components/KBOverviewSections'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/insights')({
   component: () => (

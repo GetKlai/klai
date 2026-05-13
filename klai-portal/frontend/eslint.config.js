@@ -5,6 +5,7 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 import noDirectKbQuerykey from './eslint-rules/no-direct-kb-querykey.js'
+import noCrossRouteImport from './eslint-rules/no-cross-route-import.js'
 
 export default defineConfig([
   globalIgnores([
@@ -21,6 +22,7 @@ export default defineConfig([
       klai: {
         rules: {
           'no-direct-kb-querykey': noDirectKbQuerykey,
+          'no-cross-route-import': noCrossRouteImport,
         },
       },
     },
@@ -41,6 +43,7 @@ export default defineConfig([
     rules: {
       'no-console': ['error', { allow: ['warn', 'error'] }],
       'klai/no-direct-kb-querykey': 'error',
+      'klai/no-cross-route-import': 'error',
       // TanStack Router uses async functions in route config (beforeLoad, loader)
       '@typescript-eslint/no-misused-promises': [
         'error',
