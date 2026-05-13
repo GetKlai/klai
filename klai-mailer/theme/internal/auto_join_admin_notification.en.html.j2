@@ -1,2 +1,12 @@
-Subject: [Klai] {{ name }} ({{ email }}) automatically joined your workspace
-<p>Hello,</p><p><strong>{{ name }}</strong> ({{ email }}) automatically joined your Klai workspace via domain matching.</p><p>No approval was required because your auto-accept setting is enabled for <strong>@{{ domain }}</strong>.</p><p>Want to change this behaviour? Visit the <a href='{{ brand_url }}/admin/settings'>workspace settings</a>.</p>
+Subject: [Klai] {{ name }} ({{ email }}) joined your workspace
+<p>Hi,</p>
+<p><strong>{{ name }}</strong> ({{ email }}) automatically joined your Klai workspace via domain matching.</p>
+<p>No approval was required because your auto-accept setting is on for <strong>@{{ domain }}</strong>.</p>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0;">
+  <tr>
+    <td style="border-radius:8px;background-color:#fcaa2d;">
+      <a href="{{ brand_url }}/admin/settings" style="display:inline-block;padding:14px 32px;color:#191918;font-weight:600;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;text-decoration:none;border-radius:8px;font-size:16px;">Open workspace settings</a>
+    </td>
+  </tr>
+</table>
+<p style="font-size:12px;color:#666;margin-top:32px;">Want to change this behaviour? Adjust the auto-accept setting from the link above, or reply to this email.</p>
