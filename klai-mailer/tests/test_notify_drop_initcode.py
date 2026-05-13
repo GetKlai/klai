@@ -1,11 +1,18 @@
-"""SPEC-MAILER-DROP-INITCODE-001 — drop legacy InitCode events at /notify.
+"""SPEC-INFRA-TENANT-DELETE-003 Bug 4 — InitCode events MUST be delivered.
 
-Zitadel auto-fires ``user.human.initialization.code.added`` when a user is
-created in ``USER_STATE_INITIAL``, regardless of ``sendCodes`` on the
-import call. Klai migrated admin invites to the v2 invite_code flow with
-its own urlTemplate (SPEC-PORTAL-AUTH-EMAIL-LINKS-001), so the InitCode
-mail became a duplicate pointing at Zitadel's hosted UI. This test fixes
-the contract: InitCode events return 204 with no SMTP send.
+Reverts SPEC-MAILER-DROP-INITCODE-001's blanket drop. The drop was based
+on a wrong assumption that admin-invite fired both `initialization.code.added`
+AND `invite.code.added` (producing duplicate mails). In production Zitadel
+behaviour, admin-invite explicitly sends ``sendCodes: false`` so init-code
+is NOT fired — there was never a duplicate to suppress.
+
+The drop's only effect was killing the verify-mail for every REGULAR
+signup (which uses ``sendCodes: true`` by default), leaving new tenants
+stuck in USER_STATE_INITIAL with no way to activate.
+
+These tests now enforce the correct contract: InitCode events render and
+mail like any other event-type. The legacy tests for InviteUser /
+PasswordChange remain unchanged — they were never affected by the drop.
 """
 
 from __future__ import annotations
@@ -53,8 +60,15 @@ def _signed_post(client: TestClient, body: dict, secret: str):
     )
 
 
-def test_initcode_event_returns_204_and_does_not_send(client, settings_env, stub_smtp):
-    """REQ: InitCode event is accepted with 204 and produces zero SMTP calls."""
+def test_initcode_event_renders_and_sends(client, settings_env, stub_smtp):
+    """SPEC-INFRA-TENANT-DELETE-003 Bug 4 — InitCode events fire on every
+    regular signup (where Zitadel's default ``sendCodes: true`` triggers
+    the activation mail). The mailer must render + send these, not drop
+    them. Without this the entire regular-signup flow is silently broken:
+    user lands in USER_STATE_INITIAL, mailer drops the event, no mail.
+
+    Verified against production incident 2026-05-13 17:30 UTC.
+    """
     body = {
         "contextInfo": {
             "eventType": "user.human.initialization.code.added",
@@ -62,17 +76,21 @@ def test_initcode_event_returns_204_and_does_not_send(client, settings_env, stub
         },
         "templateData": {
             "subject": "Activeer je Klai-account",
+            "greeting": "Hallo Alice,",
             "text": "We hebben een Klai-account voor je aangemaakt.",
             "url": "https://auth.getklai.com/ui/login/user/init?code=ABC&userID=42",
             "buttonText": "Account activeren",
         },
     }
     resp = _signed_post(client, body, settings_env["WEBHOOK_SECRET"])
-    assert resp.status_code == 204, f"expected 204, got {resp.status_code}: {resp.text}"
-    assert resp.content == b"", "204 must have empty body"
-    assert stub_smtp.sent == [], (
-        f"InitCode event MUST NOT trigger an SMTP send. Got: {stub_smtp.sent}"
+    assert resp.status_code == 200, f"expected 200 (rendered), got {resp.status_code}: {resp.text}"
+    assert len(stub_smtp.sent) == 1, (
+        "InitCode event MUST trigger exactly one SMTP send — regression of "
+        "SPEC-MAILER-DROP-INITCODE-001 would re-introduce the silent-mail bug."
     )
+    sent = stub_smtp.sent[0]
+    assert sent["to_address"] == "alice@example.com"
+    assert "Activeer je Klai-account" in sent["subject"]
 
 
 def test_invite_event_still_sends(client, settings_env, stub_smtp):

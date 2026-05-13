@@ -121,19 +121,30 @@ async def health() -> dict:
     return {"status": "ok"}
 
 
-# SPEC-MAILER-DROP-INITCODE-001: Zitadel fires `user.human.initialization.code.added`
-# automatically when a human user is created without a password or IDP-link,
-# regardless of the `sendCodes` flag on the import call. Since Klai migrated
-# admin invites to the v2 invite_code flow (which fires `user.human.invite.code.added`
-# with our own Klai-branded URL template), the InitCode event is a duplicate
-# pointing at Zitadel's stock hosted UI.
+# SPEC-INFRA-TENANT-DELETE-003 Bug 4 — reverted the SPEC-MAILER-DROP-INITCODE-001
+# blanket drop of `user.human.initialization.code.added`.
 #
-# The user-visible "Activeer je Klai-account" brand voice now lives on the
-# InviteUser template in the Zitadel instance message-text config (see
-# README § Notification types). The InitCode event-type is dropped here at
-# /notify with 204 so Zitadel marks it as delivered (no retry); the
-# `event="dropped_legacy_event"` log makes the drop observable in VictoriaLogs.
-_DROPPED_EVENT_TYPES = frozenset({"user.human.initialization.code.added"})
+# Original rationale (SPEC-MAILER-DROP-INITCODE-001): admin-invite flow
+# was assumed to fire BOTH `initialization.code.added` AND `invite.code.added`,
+# producing a duplicate mail; dropping init-code was meant to suppress the
+# duplicate. That assumption was wrong.
+#
+# Actual Zitadel behaviour (verified against prod 2026-05-13):
+#   - Admin invite (`zitadel.invite_user`)  → sends `sendCodes: false` →
+#     Zitadel does NOT fire init-code. Then `zitadel.send_invite_code`
+#     fires `invite.code.added`. ONE event, ONE mail. No duplicate.
+#   - Regular signup (`zitadel.create_human_user`) → default `sendCodes: true`
+#     → Zitadel fires `initialization.code.added`. ONE event.
+#
+# The drop did nothing for admin-invite (which never fires init-code) and
+# silently killed the verify-mail for every regular signup, leaving new
+# tenants in USER_STATE_INITIAL with no way to activate. Production
+# incident 2026-05-13 17:30 UTC: e2e@getklai.com signup left in INITIAL
+# state, no mail received.
+#
+# `_DROPPED_EVENT_TYPES` is now empty. Kept as an extension point: a
+# future event-type that genuinely IS a no-op duplicate can be added here.
+_DROPPED_EVENT_TYPES: frozenset[str] = frozenset()
 
 
 @app.post("/notify")
