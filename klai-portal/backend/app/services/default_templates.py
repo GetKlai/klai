@@ -30,6 +30,7 @@ import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import set_tenant
 from app.models.templates import PortalTemplate
 
 logger = structlog.get_logger()
@@ -94,10 +95,12 @@ async def ensure_default_templates(
     Non-fatal: any exception is logged and swallowed — callers MUST NOT
     depend on this for correctness.
 
-    Call sites MUST have called ``set_tenant(org_id)`` on the session
-    beforehand so RLS admits the COUNT and the inserts.
+    Sets tenant context itself so RLS admits both the COUNT and inserts. This
+    keeps provisioning robust across commits and also protects lazy-seeding
+    callers.
     """
     try:
+        await set_tenant(db, org_id)
         count_result = await db.execute(
             select(func.count()).select_from(PortalTemplate).where(PortalTemplate.org_id == org_id)
         )
