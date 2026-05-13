@@ -27,6 +27,20 @@
 - CodeIndex pre-change `impact({target: "members.tsx", direction: "upstream"})`: LOW risk; direct importer is `routeTree.gen.ts`.
 - CodeIndex post-change `detect_changes`: reported LOW risk / no affected processes, but its changed-symbol listing appears stale relative to `git status`.
 
-## Not Performed
+## Deployment
 
-- Live Voys tenant smoke for KB membership management.
+- PR #642 (`refactor(portal): split KB members route`) merged to `main`.
+- Merge commit: `b587af6c`.
+- `Build and deploy portal-frontend` main workflow run `25798876361`: passed.
+- Deploy dist to core-01: passed.
+
+## Voys Tenant Smoke
+
+- Date: 2026-05-13.
+- Tooling: Playwright MCP against `https://voys.getklai.com` using the active Voys Google social-login session.
+- Verified root `/` redirected to `/app`, proving the social-login session was active.
+- Navigated through the UI to `Knowledge`, opened the `Support` KB, and visited `/app/knowledge/support/members`.
+- Checked that the deployed members route rendered owner-only visibility controls, the contributor toggle, group/person search inputs, and the existing owner member row.
+- Typed in the person search field to verify the extracted combobox path is interactive.
+- No production membership, visibility, contributor, or remove action was mutated.
+- Screenshot captured to `.context/e2e/voys-kb-members-after-main-deploy.png` for local audit evidence.
