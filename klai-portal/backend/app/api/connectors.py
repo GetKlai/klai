@@ -749,6 +749,73 @@ async def trigger_sync(
     return sync_run
 
 
+@router.get("/{connector_id}/ms-docs/folders")
+async def list_ms_docs_folders(
+    kb_slug: str,
+    connector_id: str,
+    parent: str | None = None,
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, list[dict]]:
+    """List child folders for a Microsoft 365 connector's drive.
+
+    Powers the post-OAuth folder picker. Lazy: only returns the children
+    of ``parent`` (the drive root when omitted). Owner-only — viewers
+    have no business inspecting the drive layout.
+
+    Errors:
+        404 — connector not found in this KB (org-scoped lookup).
+        400 — not an ms_docs connector.
+        502 — klai-connector unreachable or returned an unexpected error.
+    """
+    org = await _load_org_or_500(db, perms.org_id)
+    kb = await _get_kb_with_owner_check(
+        kb_slug,
+        perms.user_id,
+        perms.org_id,
+        db,
+        is_platform_admin=perms.is_platform_admin,
+    )
+    result = await db.execute(
+        select(PortalConnector).where(
+            PortalConnector.id == connector_id,
+            PortalConnector.kb_id == kb.id,
+            PortalConnector.state == "active",
+        )
+    )
+    connector = result.scalar_one_or_none()
+    if connector is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+    if connector.connector_type != "ms_docs":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Not an ms_docs connector",
+        )
+
+    try:
+        folders = await klai_connector_client.list_ms_docs_folders(
+            connector_id,
+            org_id=org.zitadel_org_id,
+            parent_id=parent,
+        )
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == status.HTTP_404_NOT_FOUND:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Folder not found") from exc
+        logger.exception("klai-connector ms-docs folders error for %s", connector_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Folder picker service error",
+        ) from exc
+    except httpx.HTTPError as exc:
+        logger.exception("Failed to reach klai-connector for connector %s", connector_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Folder picker service unavailable",
+        ) from exc
+
+    return {"folders": folders}
+
+
 @router.get("/{connector_id}/syncs", response_model=list[SyncRunData])
 async def list_sync_runs(
     kb_slug: str,

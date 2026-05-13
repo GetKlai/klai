@@ -155,3 +155,48 @@ async def delete_connector(
     await session.delete(connector)
     await session.commit()
     logger.info("Connector deleted: %s", connector_id, extra={"org_id": str(org_id)})
+
+
+@router.get(
+    "/{connector_id}/ms-docs/folders",
+    dependencies=[Depends(enforce_org_rate_limit("read"))],
+)
+async def list_ms_docs_folders(
+    connector_id: uuid.UUID,
+    request: Request,
+    parent: str | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, list[dict[str, object]]]:
+    """List child folders of a Microsoft 365 connector's drive.
+
+    Powers the post-OAuth folder picker in the portal. ``parent`` is the
+    Graph driveItem id of the parent folder, or omitted/empty for the
+    drive root. Returns ``{"folders": [{id, name, child_count}, ...]}``.
+
+    Errors:
+        404 — connector not found, or not an ms_docs connector.
+        503 — adapter not registered (MS_DOCS_CLIENT_ID unset on the
+              connector deployment).
+    """
+    org_id = get_org_id(request)
+    await set_tenant(session, org_id)
+    connector = await session.get(Connector, connector_id)
+    if connector is None or connector.org_id != org_id:
+        raise HTTPException(status_code=404, detail="Connector not found")
+    if connector.connector_type != "ms_docs":
+        raise HTTPException(status_code=400, detail="Not an ms_docs connector")
+
+    registry = getattr(request.app.state, "registry", None)
+    if registry is None:
+        raise HTTPException(status_code=503, detail="Adapter registry unavailable")
+    try:
+        adapter = registry.get("ms_docs")
+    except ValueError:
+        raise HTTPException(
+            status_code=503,
+            detail="ms_docs adapter not registered on this deployment",
+        ) from None
+
+    parent_id = parent.strip() if parent else None
+    folders = await adapter.list_folders(connector, parent_id=parent_id)
+    return {"folders": folders}
