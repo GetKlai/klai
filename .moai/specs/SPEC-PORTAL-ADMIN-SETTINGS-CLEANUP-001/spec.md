@@ -1,7 +1,8 @@
 ---
 id: SPEC-PORTAL-ADMIN-SETTINGS-CLEANUP-001
-version: 0.1.0
-status: draft
+version: 0.2.0
+status: implemented
+completed: 2026-05-13
 created: 2026-05-13
 author: Mark Vletter
 priority: medium
@@ -20,8 +21,34 @@ lines to a route shell + per-section components + extracted mutation
 hooks. **Densest mutations of any candidate** (9 inline) — primary
 extraction target is the mutation set.
 
-This SPEC is **draft**. Annotation cycle confirms exact sub-section
-boundaries.
+Implemented on 2026-05-13. `settings.tsx` is now a 35-line route shell
+that composes section components and owns only the page heading plus the
+shared settings query.
+
+## Implementation Summary
+
+- Extracted settings API/query/mutation wiring into
+  `klai-portal/frontend/src/routes/admin/-settings-hooks.ts`.
+- Extracted per-section UI/state into route-local admin components:
+  - `_components/-LanguageSettingsSection.tsx`
+  - `_components/-SecuritySettingsSection.tsx`
+  - `_components/-OrganizationSettingsSection.tsx`
+  - `_components/-TelemetrySettingsSection.tsx`
+  - `_components/-ExtensionsSettingsSection.tsx`
+- Kept behavior-preserving query keys, endpoint URLs, request bodies,
+  save flash timing, cache updates, and extension staged-toggle logic.
+- Used `-` file prefixes for new helper files so TanStack Router ignores
+  them during route generation.
+
+## Validation
+
+- CodeIndex impact check for `AdminSettingsPage`: low risk, no indexed
+  upstream dependents.
+- `npm test`: passed, 37 files / 260 tests.
+- `npm run lint`: passed.
+- `npm run build`: passed. Existing route-generator and bundle-size
+  warnings remain; the new helper files are ignored through the `-`
+  file prefix.
 
 ## Motivation metrics
 
