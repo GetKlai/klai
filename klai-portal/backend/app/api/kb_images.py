@@ -401,19 +401,10 @@ async def upload_kb_image(
     )
     result = await store.upload_image(zitadel_org_id, kb_slug, data, kb_image.ext)
 
-    # Sanity guard: ImageStore must have produced the same s3_key as KbImage.
-    # If this fires, ImageStore.build_object_key drifted from KbImage.s3_key
-    # — a regression of the v1 problem under the v2 design. Fail loud.
-    if result.object_key != kb_image.s3_key:
-        logger.error(
-            "kb_image_store_key_drift",
-            store_key=result.object_key,
-            kb_image_key=kb_image.s3_key,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="image store key mismatch",
-        )
+    # SPEC-KB-IMAGES-V2-FOLLOWUPS-001: the per-upload runtime drift-check
+    # between result.object_key and kb_image.s3_key is now a lib-level
+    # unit test (test_image_store_build_object_key_matches_kb_image_s3_key)
+    # — proves the same invariant once, no per-request cost.
 
     logger.info(
         "kb_image_uploaded",
