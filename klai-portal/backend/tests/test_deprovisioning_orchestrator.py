@@ -14,6 +14,7 @@ All external calls (DB, LiteLLM, Zitadel, step functions) are mocked.
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -272,6 +273,24 @@ class TestMarkFailed:
         # JSON-string bind reaches the column as jsonb (REQ-2 AC-2.1).
         stmt_text = str(captured["stmt"])
         assert "jsonb" in stmt_text.lower(), f"UPDATE statement must cast bind to jsonb, got: {stmt_text!r}"
+
+        # Positive shape-lock on the payload contents — protects against a
+        # future refactor that silently drops a diagnostic field (e.g.
+        # `failed_at`) while still passing the no-dict-bind contract.
+        # SPEC-INFRA-TENANT-DELETE-003 review observation #2.
+        failure_str = params["failure"]
+        assert isinstance(failure_str, str), (
+            f"`failure` bind must be a JSON string after json.dumps(), got {type(failure_str).__name__}"
+        )
+        payload = json.loads(failure_str)
+        assert payload.keys() == {"step", "error", "attempt", "failed_at"}, (
+            f"_mark_failed payload keys drifted from SPEC contract: got {sorted(payload.keys())}"
+        )
+        assert payload["step"] == "_delete_meilisearch_index"
+        assert payload["error"] == "connection refused"
+        assert payload["attempt"] == 3
+        # failed_at is a timestamp string; just assert non-empty and ISO-shape.
+        assert isinstance(payload["failed_at"], str) and "T" in payload["failed_at"]
 
 
 # ---------------------------------------------------------------------------
