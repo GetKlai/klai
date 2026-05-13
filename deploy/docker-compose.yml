@@ -537,6 +537,7 @@ services:
       - net-postgres
       - net-mongodb
       - net-redis
+      - net-meilisearch  # SPEC-INFRA-TENANT-DELETE-003 Bug A — deprovisioning step 6 (_delete_meilisearch_index) needs DNS for meilisearch:7700
       - socket-proxy
 
   # ─── GlitchTip (frontend error tracking) ────────────────────────────────
