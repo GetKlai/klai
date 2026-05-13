@@ -3,21 +3,21 @@ import { X, Search } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
-import type { OrgGroup, OrgUser, MemberGroup, MemberUser } from '../new._types'
+import type { OrgGroup, OrgUser, MemberGroup, MemberRole, MemberUser } from '../new._types'
 
 function RoleSelect({
   value,
   onChange,
   minRole,
 }: {
-  value: string
-  onChange: (role: string) => void
-  minRole: string
+  value: MemberRole
+  onChange: (role: MemberRole) => void
+  minRole: MemberRole
 }) {
   return (
     <Select
       value={value}
-      onChange={(e) => onChange(e.target.value)}
+      onChange={(e) => onChange(e.target.value as MemberRole)}
       className="w-auto px-2 py-1 text-xs"
     >
       {minRole === 'viewer' && (
@@ -45,7 +45,7 @@ export function MemberPicker({
   setInitialUsers: (fn: MemberUser[] | ((prev: MemberUser[]) => MemberUser[])) => void
   availableGroups: OrgGroup[]
   availableUsers: OrgUser[]
-  minRole: string
+  minRole: MemberRole
   isRestrictedEmpty: boolean
 }) {
   const [groupSearch, setGroupSearch] = useState('')
@@ -55,7 +55,7 @@ export function MemberPicker({
   const groupRef = useRef<HTMLDivElement>(null)
   const userRef = useRef<HTMLDivElement>(null)
 
-  const defaultRole = minRole === 'contributor' ? 'contributor' : 'viewer'
+  const defaultRole: MemberRole = minRole === 'contributor' ? 'contributor' : 'viewer'
 
   const filteredGroups = availableGroups.filter(
     (g) =>
