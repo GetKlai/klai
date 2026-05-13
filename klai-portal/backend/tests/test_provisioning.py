@@ -206,10 +206,10 @@ class TestGenerateLibrechatEnvKnowledgeVars:
             client_secret="csec",
             litellm_api_key="key",
             mongo_password="pw",
-            zitadel_org_id="362771533686374406",
+            zitadel_org_id="200000000000000001",
         )
 
-        assert "KLAI_ZITADEL_ORG_ID=362771533686374406" in result
+        assert "KLAI_ZITADEL_ORG_ID=200000000000000001" in result
 
     def test_org_slug_written_to_env(self):
         """KLAI_ORG_SLUG appears in the output matching the slug parameter."""

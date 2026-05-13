@@ -19,7 +19,7 @@ Or against prod (read-only):
 
   ssh core-01 "docker exec klai-core-postgres-1 psql -U klai -d klai -c \\
     \\"SELECT content_type, path FROM knowledge.artifacts \\
-       WHERE org_id = '368884765035593759' \\
+       WHERE org_id = '100000000000000002' \\
          AND belief_time_end > 99999999999 \\
        ORDER BY random() LIMIT 50;\\""
 
@@ -34,7 +34,7 @@ import asyncio
 
 from knowledge_ingest.db import get_pool
 
-VOYS_ORG_ID = "368884765035593759"
+VOYS_ORG_ID = "100000000000000002"
 
 
 async def sample_voys_paths(limit: int = 50) -> list[tuple[str, str]]:

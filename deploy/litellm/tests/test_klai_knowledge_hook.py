@@ -134,7 +134,7 @@ def _make_cache(feature_enabled: bool | None = None, feature: dict | None = None
             "kb_personal_enabled": True,
             "kb_slugs_filter": None,
             "version": 0,
-            "zitadel_user_id": "362901948573220875",
+            "zitadel_user_id": "300000000000000002",
         }
         feat: dict = {**default_feat, **(feature or {})}
 
@@ -461,7 +461,7 @@ class TestKlaiKnowledgeHookIdentityMapping:
                 "kb_slugs_filter": None,
                 "kb_narrow": False,
                 "version": 0,
-                "zitadel_user_id": "362901948573220875",
+                "zitadel_user_id": "300000000000000002",
             }
         )
         librechat_objectid = "aabbcc112233445566778899"
@@ -481,7 +481,7 @@ class TestKlaiKnowledgeHookIdentityMapping:
 
             assert mc.post.call_count == 1
             body = mc.post.call_args.kwargs["json"]
-            assert body["user_id"] == "362901948573220875", (
+            assert body["user_id"] == "300000000000000002", (
                 f"/retrieve user_id should be the Zitadel sub, got {body['user_id']!r}."
             )
             assert body["user_id"] != librechat_objectid
@@ -556,7 +556,7 @@ class TestKlaiKnowledgeHookSlugsTriState:
                 "kb_slugs_filter": [],
                 "kb_narrow": False,
                 "version": 0,
-                "zitadel_user_id": "362901948573220875",
+                "zitadel_user_id": "300000000000000002",
             }
         )
         data = {"user": "u1" * 12, "messages": [
@@ -602,7 +602,7 @@ class TestKlaiKnowledgeHookSlugsTriState:
                 "kb_slugs_filter": [],
                 "kb_narrow": False,
                 "version": 0,
-                "zitadel_user_id": "362901948573220875",
+                "zitadel_user_id": "300000000000000002",
             }
         )
         data = {"user": "u1" * 12, "messages": [
@@ -675,7 +675,7 @@ class TestKlaiKnowledgeHookSlugsTriState:
                 "kb_slugs_filter": [],
                 "kb_narrow": False,
                 "version": 0,
-                "zitadel_user_id": "362901948573220875",
+                "zitadel_user_id": "300000000000000002",
             }
         )
         data = {"user": "u1" * 12, "messages": [
@@ -714,7 +714,7 @@ class TestKlaiKnowledgeHookSlugsTriState:
                 "kb_slugs_filter": None,
                 "kb_narrow": False,
                 "version": 0,
-                "zitadel_user_id": "362901948573220875",
+                "zitadel_user_id": "300000000000000002",
             }
         )
         data = {"user": "u1" * 12, "messages": [
@@ -951,7 +951,7 @@ class TestKlaiKnowledgeHookKB010:
             # /retrieve receives the resolved zitadel_user_id (not the
             # LibreChat ObjectId) since identity-verify shipped 2026-05-05.
             # The default _make_cache feature dict pre-seeds this sub.
-            assert body.get("user_id") == "362901948573220875"
+            assert body.get("user_id") == "300000000000000002"
 
     @pytest.mark.asyncio
     async def test_conversation_history_passed(self, monkeypatch):
@@ -1089,7 +1089,7 @@ class TestKlaiKnowledgeHookKB010:
         assert meta["org_id"] == "org123"
         # user_id on the meta is the zitadel sub (matches the resolved sub
         # that gets sent to /retrieve).
-        assert meta["user_id"] == "362901948573220875"
+        assert meta["user_id"] == "300000000000000002"
         assert meta["chunks_injected"] == 1
         assert meta["gate_bypassed"] is False
 
@@ -1655,7 +1655,7 @@ class TestKlaiKnowledgeHookKB013:
         # zitadel_user_id is mandatory since the 2026-05-05 identity-verify
         # rollout — without it the hook fails-loud with no retrieval call.
         portal_resp = _make_resp(
-            {"enabled": True, "zitadel_user_id": "362901948573220875"}
+            {"enabled": True, "zitadel_user_id": "300000000000000002"}
         )
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:

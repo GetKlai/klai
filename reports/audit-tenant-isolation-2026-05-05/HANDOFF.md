@@ -86,7 +86,7 @@ Branches zijn vervuild. Beste actie: nieuwe branches aanmaken vanuit current mai
 git checkout -b fix/SPEC-TI-010B-redo main
 git cherry-pick 81ae122a  # The SPEC-TI-010B commit from the polluted branch
 # Then fix the test mocks in tests/test_app_templates.py:
-#   Mock signature: invalidate_templates(zitadel_org_id="362757920133283846", ...)
+#   Mock signature: invalidate_templates(zitadel_org_id="100000000000000001", ...)
 #   not invalidate_templates(42, ...)
 ```
 

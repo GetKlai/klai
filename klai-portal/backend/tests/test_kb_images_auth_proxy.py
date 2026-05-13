@@ -23,7 +23,7 @@ OTHER_ORG_ID = 99
 # Zitadel org_id (string) — the canonical S3 key prefix used by connector +
 # crawler + the read-route path param. Resolved from session.org_id via the
 # _resolve_zitadel_org_id helper (mocked in tests).
-ZITADEL_ORG_ID = "368884765035593759"
+ZITADEL_ORG_ID = "100000000000000002"
 OTHER_ZITADEL_ORG_ID = "368884765035000000"
 KB_SLUG = "my-kb"
 FILENAME = "abc123.png"

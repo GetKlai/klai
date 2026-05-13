@@ -110,7 +110,7 @@ def _assert_kb_image_routes_match_value_class(app: FastAPI) -> None:
     # via KbImage.from_path. If we ever break this invariant the boot-time
     # check above is still active but this gives a clearer error first.
     probe = KbImage(
-        zitadel_org_id="368884765035593759",
+        zitadel_org_id="100000000000000002",
         kb_slug="support",
         sha256="0" * 64,
         ext="png",

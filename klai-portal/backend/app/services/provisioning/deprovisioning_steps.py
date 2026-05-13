@@ -235,7 +235,7 @@ async def _delete_qdrant_points(state: _DeprovisionState) -> None:
     """Delete all Qdrant points matching org_id={zitadel_org_id} from klai_knowledge.
 
     klai_knowledge stores the Zitadel resourceowner ID (string like
-    "362757920133283846") in the ``org_id`` payload key, NOT the portal_orgs
+    "100000000000000001") in the ``org_id`` payload key, NOT the portal_orgs
     integer PK.
 
     Pre-fix every deprovisioning since SPEC-INFRA-TENANT-DELETE-001 landed
@@ -382,7 +382,7 @@ async def _wipe_knowledge_postgres(state: _DeprovisionState) -> None:
 
     # CRIT fix (audit 2026-05-05): knowledge.* tables store the Zitadel
     # resourceowner ID in their org_id columns (verified live: values like
-    # "362757920133283846" not portal_orgs.id integer "1"). Pass
+    # "100000000000000001" not portal_orgs.id integer "1"). Pass
     # state.zitadel_org_id so the WHERE clauses match.
     async with httpx.AsyncClient(
         base_url=settings.knowledge_ingest_url,
@@ -461,7 +461,7 @@ async def _wipe_klai_connector_state(state: _DeprovisionState) -> None:
         return
 
     # CRIT fix (audit 2026-05-05): connector.sync_runs.org_id stores the Zitadel
-    # resourceowner ID (VARCHAR(255) like "368884765035593759"), NOT the
+    # resourceowner ID (VARCHAR(255) like "100000000000000002"), NOT the
     # portal_orgs int PK. Same fix-shape as the qdrant + falkordb steps above.
     async with httpx.AsyncClient(
         base_url=settings.klai_connector_url,

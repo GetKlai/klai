@@ -31,7 +31,7 @@ def _configure_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "domain", "getklai.com")
     monkeypatch.setattr(settings, "frontend_url", "https://my.getklai.com")
     monkeypatch.setattr(settings, "zitadel_base_url", "https://auth.getklai.com")
-    monkeypatch.setattr(settings, "zitadel_portal_client_id", "362901948573220875")
+    monkeypatch.setattr(settings, "zitadel_portal_client_id", "300000000000000002")
     monkeypatch.setattr(settings, "zitadel_portal_client_secret", "")
     from app.services import bff_session as svc_module
 
@@ -148,7 +148,7 @@ class TestOidcStart:
         assert location.startswith("https://auth.getklai.com/oauth/v2/authorize?")
         qs = parse_qs(urlparse(location).query)
         assert qs["response_type"] == ["code"]
-        assert qs["client_id"] == ["362901948573220875"]
+        assert qs["client_id"] == ["300000000000000002"]
         assert qs["redirect_uri"] == ["https://my.getklai.com/api/auth/oidc/callback"]
         assert qs["code_challenge_method"] == ["S256"]
         assert qs["state"]

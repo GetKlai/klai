@@ -1911,7 +1911,7 @@ async def crawl_preview(
     await _require_owner(kb, perms.user_id, db)
     # SPEC-CONNECTOR-INPUT-VALIDATION-001 hotfix: knowledge-ingest
     # identity verifier expects the Zitadel resourceowner ID (the
-    # 18-digit numeric string, e.g. "368884765035593759"), NOT the
+    # 18-digit numeric string, e.g. "100000000000000002"), NOT the
     # portal_orgs int PK. The deprovisioning audit on 2026-05-05 flagged
     # this same bug pattern across other internal call paths; this
     # pass-through inherited the bug because it was modeled on the older

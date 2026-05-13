@@ -303,7 +303,7 @@ async def test_meta_query_is_not_triggered_by_content_question(monkeypatch):
         "kb_personal_enabled": True,
         "kb_slugs_filter": None,
         "version": 0,
-        "zitadel_user_id": "362901948573220875",
+        "zitadel_user_id": "300000000000000002",
     }
 
     async def _get(key: str) -> object:

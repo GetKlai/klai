@@ -32,7 +32,7 @@ async def test_create_artifact_returns_uuid():
     conn = _make_conn()
     artifact_id = await pg_store.create_artifact(
         conn,
-        org_id="362757920133283846",
+        org_id="100000000000000001",
         kb_slug="personal-user456",
         path="note.md",
         provenance_type="observed",

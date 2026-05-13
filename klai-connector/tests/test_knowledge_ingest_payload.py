@@ -8,7 +8,7 @@ from app.clients.knowledge_ingest import _build_payload
 
 def _base_kwargs(**overrides) -> dict:
     kw = {
-        "org_id": "368884765035593759",
+        "org_id": "100000000000000002",
         "kb_slug": "support",
         "path": "index.md",
         "content": "hello",
@@ -106,7 +106,7 @@ class TestSenderEmailAndMentionedEmails:
     def test_build_payload_backward_compatible(self):
         """Calling _build_payload without sender_email/mentioned_emails still works."""
         payload = _build_payload(
-            org_id="368884765035593759",
+            org_id="100000000000000002",
             kb_slug="support",
             path="index.md",
             content="hello",

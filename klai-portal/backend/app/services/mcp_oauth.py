@@ -434,7 +434,7 @@ async def verify_access_token(
         # X-Org-ID against portal_orgs.zitadel_org_id; returning the small
         # portal_orgs.id (str(token_row.org_id)) here causes 403 Forbidden
         # because docs-app's check `payload.org_id !== org.zitadel_org_id`
-        # rejects "8" when expecting "368884765035593759".
+        # rejects "8" when expecting "100000000000000002".
         org_id=org_row.zitadel_org_id,
         org_slug=org_row.slug,
         scopes=tuple(token_row.scopes or [DEFAULT_SCOPE]),

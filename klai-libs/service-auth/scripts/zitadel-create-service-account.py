@@ -8,7 +8,7 @@ Usage::
         ssh core-01 "sudo grep '^ZITADEL_ADMIN_PAT=' /opt/klai/.env | cut -d= -f2-"
     )
     export ZITADEL_INSTANCE_URL=https://auth.getklai.com
-    export ZITADEL_PLATFORM_ORG_ID=362757920133283846
+    export ZITADEL_PLATFORM_ORG_ID=100000000000000001
     python zitadel-create-service-account.py --name svc-litellm
 
 Output: writes the freshly minted client_secret to a temp file

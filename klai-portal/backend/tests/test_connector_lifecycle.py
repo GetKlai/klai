@@ -37,7 +37,7 @@ class _FakeKB:
 
 
 class _FakeOrg:
-    def __init__(self, id: int = 8, zitadel_org_id: str = "368884765035593759") -> None:
+    def __init__(self, id: int = 8, zitadel_org_id: str = "100000000000000002") -> None:
         self.id = id
         self.zitadel_org_id = zitadel_org_id
 
@@ -115,7 +115,7 @@ async def test_delete_connector_flips_state_and_enqueues(monkeypatch: pytest.Mon
     enqueue_mock.assert_awaited_once()
     call = enqueue_mock.await_args
     assert call.kwargs == {
-        "org_id": "368884765035593759",
+        "org_id": "100000000000000002",
         "kb_slug": "support",
         "connector_id": "conn-uuid",
     }

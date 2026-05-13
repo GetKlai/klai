@@ -75,14 +75,14 @@ def test_preview_crawl_uses_tenant_only_identity(client: TestClient) -> None:
     ):
         resp = client.post(
             "/ingest/v1/crawl/preview",
-            json={"url": "https://example.com", "org_id": "368884765035593759"},
+            json={"url": "https://example.com", "org_id": "100000000000000002"},
         )
 
     assert resp.status_code == 200, resp.text
     assert strict_mock.await_count == 1, "tenant-only identity assert MUST run"
     # Pin the call shape — no claimed_user_id positional or kwarg.
     call_kwargs = strict_mock.await_args.kwargs
-    assert call_kwargs == {"claimed_org_id": "368884765035593759"}
+    assert call_kwargs == {"claimed_org_id": "100000000000000002"}
 
 
 def test_crawl_url_uses_tenant_only_identity(client: TestClient) -> None:
@@ -138,7 +138,7 @@ def test_crawl_url_uses_tenant_only_identity(client: TestClient) -> None:
         resp = client.post(
             "/ingest/v1/crawl",
             json={
-                "org_id": "368884765035593759",
+                "org_id": "100000000000000002",
                 "kb_slug": "test-kb",
                 "url": "https://example.com",
             },
@@ -147,7 +147,7 @@ def test_crawl_url_uses_tenant_only_identity(client: TestClient) -> None:
     assert resp.status_code == 200, resp.text
     assert strict_mock.await_count == 1
     call_kwargs = strict_mock.await_args.kwargs
-    assert call_kwargs == {"claimed_org_id": "368884765035593759"}
+    assert call_kwargs == {"claimed_org_id": "100000000000000002"}
 
 
 def test_preview_crawl_skips_identity_when_org_id_empty(client: TestClient) -> None:

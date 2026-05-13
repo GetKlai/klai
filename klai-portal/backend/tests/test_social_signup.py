@@ -23,7 +23,7 @@ from helpers import make_request
 # ---------------------------------------------------------------------------
 
 _FERNET_KEY = "R1c1-s96uO9Yz7k1E0kN6qz52gzd9PwNbAeZaks_PIc="  # nosec — test placeholder
-_GOOGLE_IDP_ID = "368810756424073247"
+_GOOGLE_IDP_ID = "400000000000000001"
 _PORTAL_URL = "https://portal.getklai.com"
 _DOMAIN = "getklai.com"
 
@@ -241,7 +241,7 @@ def _configure_settings_mock(mock_settings: MagicMock) -> None:
     mock_settings.portal_url = _PORTAL_URL
     mock_settings.domain = _DOMAIN
     mock_settings.sso_cookie_max_age = 3600
-    mock_settings.zitadel_portal_org_id = "362757920133283846"
+    mock_settings.zitadel_portal_org_id = "100000000000000001"
 
 
 class TestIDPSignupCallback:
