@@ -1064,7 +1064,7 @@ async def password_set(body: PasswordSetRequest) -> None:
     reset flow (password with verificationCode) — see #637.
 
     Auto-login after password-set was attempted under
-    SPEC-PORTAL-AUTH-AUTOLOGIN-001 (#635) and removed in #638 because Zitadel
+    SPEC-PORTAL-AUTH-AUTOLOGIN-001 (#635) and removed in #639 because Zitadel
     rejects ``POST /v2/oidc/auth_requests/{id}`` with 403 when the
     ``authRequest`` was created without a browser session (server-side
     ``/oauth/v2/authorize`` makes an authRequest, but it is not cookie-bound

@@ -42,7 +42,8 @@ COPY --from=deps /repo/klai-libs /repo/klai-libs
 ENV PATH="/repo/klai-mailer/.venv/bin:${PATH}" \
     VIRTUAL_ENV="/repo/klai-mailer/.venv"
 
-# Application code (app/, theme/, zitadel-message-texts/ are under klai-mailer/).
+# Application code. Message text templates live in the Zitadel instance,
+# not in this image — see README "Notification types".
 COPY klai-mailer/app/ ./app/
 COPY klai-mailer/theme/ ./theme/
 
