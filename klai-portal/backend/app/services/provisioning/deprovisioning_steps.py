@@ -780,8 +780,24 @@ async def _finalize_postgres_delete(state: _DeprovisionState) -> None:
 
     # 2. Explicit DELETEs on non-cascading child tables.
     # Order matters: KB tables first (they have child-CASCADE chains), then
-    # group tables, then leaf tables, then portal_users last (other tables
-    # may FK to it).
+    # group tables, then per-user entitlement tables (FK to portal_users),
+    # then portal_users last (other tables may FK to it).
+    #
+    # SPEC-INFRA-TENANT-DELETE-003 Bug F/G/H/I — the original list was
+    # written for the PROFILES-001 era (`portal_products`). RBAC-001
+    # superseded that with `portal_user_products` / `portal_group_products`
+    # and PRICING-PER-USER-001 added `portal_user_seat_history`. All three
+    # new tables have non-cascading FKs to portal_orgs and would block the
+    # final portal_orgs DELETE with FK-violation errors. The legacy
+    # `portal_products` table no longer exists (dropped in
+    # rbac001_drop_legacy_rbac_data) — DELETE on it raises
+    # UndefinedTableError and aborts the transaction.
+    #
+    # Canonical FK audit on production (2026-05-13 via pg_constraint):
+    #   non-cascading: portal_group_products, portal_groups,
+    #     portal_kb_tombstones, portal_knowledge_bases, portal_templates,
+    #     portal_user_products, portal_user_seat_history, portal_users,
+    #     vexa_meetings
     #
     # portal_knowledge_bases — cascades portal_user_kb_access + portal_group_kb_access
     # (both have ondelete=CASCADE on their kb_id FK).
@@ -790,12 +806,22 @@ async def _finalize_postgres_delete(state: _DeprovisionState) -> None:
     await db.execute(text("DELETE FROM portal_kb_tombstones WHERE org_id = :id"), {"id": state.org_id})
     # vexa_meetings — meetings owned by org users; FK has no ondelete so blocks portal_orgs DELETE.
     await db.execute(text("DELETE FROM vexa_meetings WHERE org_id = :id"), {"id": state.org_id})
-    # portal_groups — cascades portal_group_memberships + portal_group_products via group_id CASCADE.
+    # portal_group_products — RBAC-001 per-group entitlement. Has org_id FK
+    # without ondelete; delete BEFORE portal_groups (group_id FK CASCADE
+    # would also clean it up, but we delete by org_id explicitly to keep
+    # the deletion order independent of group-table state).
+    await db.execute(text("DELETE FROM portal_group_products WHERE org_id = :id"), {"id": state.org_id})
+    # portal_groups — cascades portal_group_memberships via group_id CASCADE.
     await db.execute(text("DELETE FROM portal_groups WHERE org_id = :id"), {"id": state.org_id})
-    # portal_products
-    await db.execute(text("DELETE FROM portal_products WHERE org_id = :id"), {"id": state.org_id})
     # portal_templates
     await db.execute(text("DELETE FROM portal_templates WHERE org_id = :id"), {"id": state.org_id})
+    # portal_user_products — RBAC-001 per-user entitlement. FK to both
+    # portal_orgs and portal_users — delete BEFORE portal_users.
+    await db.execute(text("DELETE FROM portal_user_products WHERE org_id = :id"), {"id": state.org_id})
+    # portal_user_seat_history — PRICING-PER-USER-001 audit log of
+    # seat_type changes. FK to portal_orgs (no cascade) and to
+    # portal_users (no cascade) — delete BEFORE portal_users.
+    await db.execute(text("DELETE FROM portal_user_seat_history WHERE org_id = :id"), {"id": state.org_id})
     # portal_users — last of the non-cascading children that other tables may FK to.
     await db.execute(text("DELETE FROM portal_users WHERE org_id = :id"), {"id": state.org_id})
     # SPEC-INFRA-TENANT-DELETE-002 G1 — portal_join_requests has a single FK
