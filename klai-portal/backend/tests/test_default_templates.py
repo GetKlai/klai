@@ -128,3 +128,72 @@ async def test_exception_is_swallowed_and_rolled_back():
     inserted = await default_templates.ensure_default_templates(org_id=42, created_by="sys", db=db)
     assert inserted == 0
     db.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_ensure_sets_tenant_context_before_count_and_insert():
+    """Regression guard for 2026-05-13 incident on org_id=10 (e2e tenant).
+
+    portal_templates uses a Cat-D strict RLS policy:
+    USING (org_id = NULLIF(current_setting('app.current_org_id', true), '')::int).
+    Postgres uses USING as WITH CHECK when no explicit WITH CHECK clause
+    is defined, so every INSERT requires the app.current_org_id GUC to
+    match the row's org_id. If the GUC is empty (NULLIF -> NULL -> int
+    coercion -> NULL; org_id = NULL -> NULL -> fails WITH CHECK) the
+    INSERT raises 'new row violates row-level security policy'.
+
+    The orchestrator calls ensure_default_knowledge_bases (which sets
+    the tenant GUC) just before this seed. In production on 2026-05-13
+    that GUC was not visible to the seed's INSERTs — the e2e tenant
+    ended up with zero default templates and the warning
+    'default_templates_seeding_failed' fired with InsufficientPrivilegeError.
+
+    Defense in depth: ensure_default_templates MUST set the tenant
+    context itself, independent of caller order or upstream commit
+    timing. This test pins that contract via call-order inspection of
+    db.execute — the FIRST statement on the session must be set_config
+    for app.current_org_id, BEFORE any SELECT count or INSERT.
+    """
+    from app.services import default_templates
+
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=_count_result(0))
+    db.add = MagicMock()
+    db.flush = AsyncMock()
+    db.rollback = AsyncMock()
+
+    await default_templates.ensure_default_templates(org_id=99, created_by="sys", db=db)
+
+    assert db.execute.await_count >= 2, (
+        f"expected at least 2 execute() calls (set_config + COUNT); got {db.execute.await_count}"
+    )
+    first_call_sql = str(db.execute.call_args_list[0].args[0])
+    assert "set_config" in first_call_sql and "app.current_org_id" in first_call_sql, (
+        "ensure_default_templates must set app.current_org_id BEFORE any "
+        f"SELECT/INSERT for defense-in-depth against caller-context leaks. "
+        f"First execute() statement was: {first_call_sql!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ensure_set_tenant_passes_correct_org_id():
+    """The defensive set_tenant call must use the helper's org_id parameter,
+    not some other value (no off-by-one regressions where the GUC is set
+    to the caller's org instead of the new tenant's org).
+    """
+    from app.services import default_templates
+
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=_count_result(0))
+    db.add = MagicMock()
+    db.flush = AsyncMock()
+    db.rollback = AsyncMock()
+
+    await default_templates.ensure_default_templates(org_id=777, created_by="sys", db=db)
+
+    first_call = db.execute.call_args_list[0]
+    # set_tenant binds the org_id via :org_id parameter.
+    params = first_call.args[1] if len(first_call.args) > 1 else first_call.kwargs.get("parameters", {})
+    assert params == {"org_id": "777"}, (
+        f"set_tenant should be invoked with the helper's org_id (777), got params={params!r}"
+    )
