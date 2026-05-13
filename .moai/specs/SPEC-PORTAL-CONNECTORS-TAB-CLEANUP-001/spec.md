@@ -1,7 +1,8 @@
 ---
 id: SPEC-PORTAL-CONNECTORS-TAB-CLEANUP-001
 version: 0.1.0
-status: draft
+status: done
+completed: 2026-05-13
 created: 2026-05-13
 author: Mark Vletter
 priority: medium
@@ -25,6 +26,24 @@ commits / 90 days) is the main argument FOR doing it.
 This SPEC is **draft**. Annotation cycle should reconsider whether to
 proceed at all (acceptable to mark as "won't fix" if the file's
 internal structure turns out to be reasonable for its size).
+
+## Outcome
+
+Implemented 2026-05-13 after the requested architecture check against
+today's cleanup specs and nearby code patterns. The file was borderline
+but worth a narrow split: the row render mixed connector type display,
+live progress, owner-only actions, OAuth reconnect UI, and
+reconfiguration entry points. The route itself remains owner of data
+fetching, banners, ownership checks, and dialogs.
+
+Architecture decision:
+- Followed the local `sources.tsx` pattern in the same `$kbSlug`
+  directory: feature-local sibling files, not app-wide helpers.
+- Added `-connectors-row.tsx` for the per-row table JSX and
+  `-connectors-hooks.ts` for delete/sync/reconnect action hooks.
+- Did not introduce a broader `_components/` split or state-machine
+  refactor; this cleanup did not show enough state coupling to justify
+  that.
 
 ## Motivation metrics
 
