@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useAuth } from '@/lib/auth'
 import { useQuery } from '@tanstack/react-query'
-import { Loader2, BookMarked, Globe, Lock, Pencil, ExternalLink } from 'lucide-react'
+import { Loader2, BookMarked, Globe, Lock, Pencil, ExternalLink, ChevronRight } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip } from '@/components/ui/tooltip'
 import { QueryErrorState } from '@/components/ui/query-error-state'
@@ -45,16 +45,14 @@ function DocsPage() {
       : m.docs_kbs_count({ count: String(accessibleKbs.length) })
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-10 space-y-6">
-      <div className="flex items-start justify-between">
-        <div className="space-y-1">
-          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-            {m.docs_kbs_title()}
-          </h1>
-          <p className="text-sm text-gray-400">
-            {!isLoading && countLabel}
-          </p>
-        </div>
+    <div className="mx-auto max-w-3xl px-6 py-10 space-y-8">
+      <div className="space-y-1">
+        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+          {m.docs_kbs_title()}
+        </h1>
+        <p className="text-sm text-gray-400">
+          {!isLoading && countLabel}
+        </p>
       </div>
 
       {error ? (
@@ -76,108 +74,77 @@ function DocsPage() {
           </div>
         </div>
       ) : (
-        <table data-help-id="docs-list" className="w-full text-sm table-fixed border-t border-b border-gray-200">
-          <thead>
-            <tr className="border-b border-gray-200">
-              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
-                {m.docs_kb_name_label()}
-              </th>
-              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide w-32">
-                {m.docs_kb_visibility_label()}
-              </th>
-              <th className="py-3 text-right w-24" />
-            </tr>
-          </thead>
-          <tbody>
-            {/* Accessible KBs */}
-            {accessibleKbs.map((kb) => (
-              <tr
-                key={kb.id}
-                className="border-b border-gray-200 last:border-b-0"
-              >
-                <td
-                  className="py-4 pr-4 align-top text-gray-900 font-medium cursor-pointer hover:underline"
-                  onClick={() =>
-                    navigate({ to: '/app/docs/$kbSlug', params: { kbSlug: kb.slug } })
-                  }
-                >
-                  {kb.name}
-                </td>
-                <td className="py-4 pr-4 align-top w-32">
-                  <span className="inline-flex items-center gap-1.5 text-xs text-gray-400">
-                    {kb.visibility === 'public' ? (
-                      <Globe size={12} />
-                    ) : (
-                      <Lock size={12} />
-                    )}
-                    {kb.visibility === 'public'
-                      ? m.docs_kb_visibility_public()
-                      : m.docs_kb_visibility_private()}
+        <div data-help-id="docs-list" className="divide-y divide-gray-200 border-t border-b border-gray-200">
+          {/* Accessible KBs */}
+          {accessibleKbs.map((kb) => (
+            <div
+              key={kb.id}
+              className="group flex items-center gap-3 px-2 py-3.5 hover:bg-gray-50 transition-colors cursor-pointer"
+              onClick={() => void navigate({ to: '/app/docs/$kbSlug', params: { kbSlug: kb.slug } })}
+            >
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-50 text-gray-400">
+                <BookMarked className="h-4 w-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline gap-2 flex-wrap">
+                  <span className="text-[15px] font-display text-gray-900 group-hover:underline truncate">
+                    {kb.name}
                   </span>
-                </td>
-                <td className="py-4 align-top text-right w-24">
-                  <div className="flex items-start justify-end gap-2 mt-px">
-                    {kb.visibility === 'public' && (
-                      <Tooltip label={m.docs_kb_view_public()}>
-                        <a
-                          href={`/docs/${kb.slug}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          aria-label={m.docs_kb_view_public()}
-                          className="inline-flex items-center justify-center text-gray-400 transition-opacity hover:opacity-70"
-                        >
-                          <ExternalLink className="h-4 w-4" />
-                        </a>
-                      </Tooltip>
-                    )}
-                    <Tooltip label={m.docs_kb_edit_label()}>
-                      <button
-                        onClick={() =>
-                          navigate({ to: '/app/docs/$kbSlug/edit', params: { kbSlug: kb.slug } })
-                        }
-                        aria-label={m.docs_kb_edit_label()}
-                        className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </button>
-                    </Tooltip>
-                  </div>
-                </td>
-              </tr>
-            ))}
-
-            {/* Locked KBs */}
-            {lockedKbs.map((kb) => (
-              <tr
-                key={kb.id}
-                className="border-b border-gray-200 last:border-b-0 opacity-60"
-              >
-                <td className="py-4 pr-4 align-top text-gray-400 font-medium">
-                  <Tooltip label={m.docs_kb_locked_tooltip()}>
-                    <span className="inline-flex items-center gap-2 cursor-default">
-                      <Lock size={12} className="shrink-0" />
-                      {kb.name}
-                    </span>
-                  </Tooltip>
-                </td>
-                <td className="py-4 pr-4 align-top w-32">
-                  <Badge variant="outline" className="text-xs">{m.docs_kb_locked_badge()}</Badge>
-                </td>
-                <td className="py-4 align-top text-right w-24">
-                  <Tooltip label={m.docs_kb_locked_tooltip()}>
-                    <button
-                      disabled
-                      aria-label={m.docs_kb_request_access()}
-                      className="flex items-center gap-1 text-xs text-gray-400 opacity-50 cursor-not-allowed px-2 py-1 rounded border border-gray-200"
+                  <span className="inline-flex items-center gap-1 text-xs text-gray-400">
+                    {kb.visibility === 'public' ? <Globe size={11} /> : <Lock size={11} />}
+                    {kb.visibility === 'public' ? m.docs_kb_visibility_public() : m.docs_kb_visibility_private()}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {kb.visibility === 'public' && (
+                  <Tooltip label={m.docs_kb_view_public()}>
+                    <a
+                      href={`/docs/${kb.slug}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label={m.docs_kb_view_public()}
+                      className="inline-flex items-center justify-center text-gray-400 transition-opacity hover:opacity-70"
                     >
-                      {m.docs_kb_request_access()}
-                    </button>
+                      <ExternalLink className="h-4 w-4" />
+                    </a>
                   </Tooltip>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                )}
+                <Tooltip label={m.docs_kb_edit_label()}>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      void navigate({ to: '/app/docs/$kbSlug/edit', params: { kbSlug: kb.slug } })
+                    }}
+                    aria-label={m.docs_kb_edit_label()}
+                    className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </button>
+                </Tooltip>
+                <ChevronRight className="h-4 w-4 text-gray-300" />
+              </div>
+            </div>
+          ))}
+
+          {/* Locked KBs — same row shape, faded, no actions */}
+          {lockedKbs.map((kb) => (
+            <Tooltip key={kb.id} label={m.docs_kb_locked_tooltip()}>
+              <div className="flex items-center gap-3 px-2 py-3.5 opacity-60 cursor-default">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-50 text-gray-400">
+                  <Lock className="h-4 w-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline gap-2 flex-wrap">
+                    <span className="text-[15px] font-display text-gray-400 truncate">{kb.name}</span>
+                    <Badge variant="outline" className="text-[10px] py-0 px-1.5">{m.docs_kb_locked_badge()}</Badge>
+                  </div>
+                </div>
+              </div>
+            </Tooltip>
+          ))}
+        </div>
       )}
     </div>
   )

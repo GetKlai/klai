@@ -211,24 +211,33 @@ function KnowledgePage() {
       })
     : sortedKbs
 
+  const totalCount = allKbs.length
+  const countLabel =
+    totalCount === 1 ? m.kb_list_count_one() : m.kb_list_count({ count: String(totalCount) })
+
   return (
-    <div className="mx-auto max-w-3xl px-6 pb-10">
-      {/* Header — h-[66px] matches the sidebar logo strip for vertical
-          alignment: title and logo share the same baseline grid. */}
-      <div className="flex h-[66px] items-center justify-between gap-4">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900 leading-none">
-          {m.kb_list_title()}
-        </h1>
+    <div className="mx-auto max-w-3xl px-6 py-10 space-y-8">
+      {/* Header — title + subtitle stacked, primary action top-right.
+          Matches the dashboard pattern (/app/) and Scribe layout. */}
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-1">
+          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+            {m.kb_list_title()}
+          </h1>
+          <p className="text-sm text-gray-400">
+            {kbsLoading ? m.kb_list_subtitle() : countLabel}
+          </p>
+        </div>
         <Link to="/app/knowledge/new">
-          <Button variant="default">
-            <Plus className="h-4 w-4" />
+          <Button size="sm">
+            <Plus className="mr-2 h-4 w-4" />
             {m.kb_list_new_collection()}
           </Button>
         </Link>
       </div>
 
       {/* Search */}
-      <div className="relative mt-6">
+      <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
         <Input
           type="text"
@@ -240,7 +249,7 @@ function KnowledgePage() {
       </div>
 
       {/* List */}
-      <div className="mt-6">
+      <div>
         {kbsLoading ? (
           <div className="border-t border-b border-gray-200 divide-y divide-gray-200">
             {[1, 2, 3].map((i) => (

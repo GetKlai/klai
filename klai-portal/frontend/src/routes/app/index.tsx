@@ -8,17 +8,22 @@ export const Route = createFileRoute('/app/')({
   component: AppHome,
 })
 
-function getGreeting(name: string): string {
+function getGreeting(name: string | null): string {
   const hour = new Date().getHours()
-  if (hour >= 6 && hour < 12) return m.app_home_greeting_morning({ name })
-  if (hour >= 12 && hour < 18) return m.app_home_greeting_afternoon({ name })
-  return m.app_home_greeting_evening({ name })
+  if (name) {
+    if (hour >= 6 && hour < 12) return m.app_home_greeting_morning({ name })
+    if (hour >= 12 && hour < 18) return m.app_home_greeting_afternoon({ name })
+    return m.app_home_greeting_evening({ name })
+  }
+  if (hour >= 6 && hour < 12) return m.app_home_greeting_morning_anon()
+  if (hour >= 12 && hour < 18) return m.app_home_greeting_afternoon_anon()
+  return m.app_home_greeting_evening_anon()
 }
 
 function AppHome() {
   const auth = useAuth()
   const { user } = useCurrentUser()
-  const userName = auth.user?.profile.given_name ?? auth.user?.profile.name ?? m.app_home_user_fallback()
+  const userName = auth.user?.profile.given_name ?? auth.user?.profile.name ?? null
 
   // SPEC-PORTAL-PROFILES-001 P3.1 follow-up: tools-grid mirrors sidebar gating.
   // Tiles for products the user does not have are HIDDEN (not greyed-out).
