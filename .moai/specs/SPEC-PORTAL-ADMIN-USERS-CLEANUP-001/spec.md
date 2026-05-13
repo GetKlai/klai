@@ -1,8 +1,9 @@
 ---
 id: SPEC-PORTAL-ADMIN-USERS-CLEANUP-001
-version: 0.1.0
-status: draft
+version: 0.1.1
+status: done
 created: 2026-05-13
+completed: 2026-05-13
 author: Mark Vletter
 priority: medium-high
 parent: SPEC-PORTAL-CONNECTOR-WIZARD-EXTRACT-001 (god-component § Follow-ups, carved out)
@@ -21,8 +22,9 @@ lines to a route-shell + sub-components + extracted mutation hooks.
 Pattern: same as TaxonomyTab (SPEC-PORTAL-TAXONOMY-EXTRACT-001 +
 SPEC-PORTAL-TAXONOMY-SPLIT-001).
 
-This SPEC is **draft**. Annotation cycle required to identify exact
-sub-component boundaries.
+This SPEC is complete. The implementation followed the existing portal
+cleanup pattern: colocated `-users-*` route helpers/hooks/types plus
+route-owned `_components/`, with no backend behavior changes.
 
 ## Motivation metrics
 
@@ -45,13 +47,20 @@ suggest natural extraction targets (`useInviteUser`, `useUpdateRole`,
 
 ### In
 
-- New `admin/users/_components/UserRow.tsx`: per-row affordances
-  (edit, delete, role-change) currently inlined in the table render
-- New `admin/users/_components/InviteUserForm.tsx`: invite form (if
-  inlined; verify)
-- New `admin/users/-users-hooks.ts`: 6 mutation hooks + relevant
-  query hooks
-- Modify `index.tsx`: route shell + table orchestration only
+- New `admin/users/_components/UserActions.tsx`: per-row affordances
+  (edit, delete, role-change, suspend/reactivate, offboard, leave
+  workspace) extracted from the inline table render.
+- New `admin/users/_components/UserBadges.tsx`: profile, account-type,
+  and status badges extracted from the route file.
+- New `admin/users/_components/UsersTable.tsx`: TanStack table render
+  extracted from the route file.
+- New `admin/users/-users-hooks.ts`: admin-users query plus resend
+  invite, delete user, change profile, and leave-workspace mutations.
+- New `admin/users/-users-types.ts` and `-users-helpers.ts`: route-owned
+  user types, labels, date formatting, display-name, count-label, and
+  search filtering helpers.
+- Modified `index.tsx`: reduced to route orchestration, search state,
+  column definitions, and dialog orchestration.
 
 ### Out
 
