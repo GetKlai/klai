@@ -1133,9 +1133,16 @@ async def list_kb_sources(
 
     org = await _load_org_or_500(db, perms.org_id)
 
-    # Portal-side connectors (display name + sync status)
+    # Portal-side connectors (display name + sync status).
+    # Fetch ALL states so we can distinguish active rows (show in list)
+    # from rows in ``'deleting'`` (hide entirely — the async purge owns
+    # them, SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-02). Without this
+    # distinction the sources list keeps showing the row until purge
+    # completes, which the user reads as "delete didn't work".
     conn_result = await db.execute(select(PortalConnector).where(PortalConnector.kb_id == kb.id))
-    portal_connectors = list(conn_result.scalars().all())
+    all_portal_connectors = list(conn_result.scalars().all())
+    portal_connectors = [c for c in all_portal_connectors if c.state == "active"]
+    deleting_ids = {str(c.id) for c in all_portal_connectors if c.state == "deleting"}
     connector_by_id: dict[str, PortalConnector] = {str(c.id): c for c in portal_connectors}
 
     # Knowledge-ingest aggregates (per connector_id and direct uploads)
@@ -1150,6 +1157,12 @@ async def list_kb_sources(
     for agg in aggregates.get("connectors", []):
         cid = str(agg.get("connector_id") or "")
         if not cid:
+            continue
+        # Hide aggregates for connectors mid-purge — the row would
+        # otherwise reappear in the orphan branch below for the duration
+        # of the async cleanup, which reads as "delete failed".
+        if cid in deleting_ids:
+            seen_connector_ids.add(cid)
             continue
         seen_connector_ids.add(cid)
         portal_conn = connector_by_id.get(cid)
