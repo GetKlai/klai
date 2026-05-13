@@ -7,8 +7,8 @@ paths:
 
 ## Critical rules
 
-**core-01 (CRIT):**
-- NEVER use direct IP — firewall blocks it. Always `ssh core-01` alias.
+**Production server (CRIT):**
+- NEVER use direct IP — firewall blocks it. Always use the SSH alias.
 - NEVER retry with different key/user — fail2ban bans after failed attempts.
 
 **iptables / DOCKER-USER (CRIT):**
@@ -24,27 +24,22 @@ Never use versions from AI training data. Always `WebSearch` current stable.
 Never `:latest` in production — pin explicit versions. Exception: PostgreSQL pinned to `pg17`.
 
 ## Server inventory
-| Server | IP | Type | Purpose | Cost |
-|--------|-----|------|---------|------|
-| core-01 | `65.21.174.162` | Hetzner EX44 (dedicated) | AI stack, portal, main services | €47/mo |
-| public-01 | `65.109.237.64` | Hetzner CX42 (cloud) | Coolify, Uptime Kuma, Umami | €17/mo |
-| gpu-01 | `5.9.10.215` | Hetzner GEX44 (RTX 4000 Ada 20GB) | GPU inference (TEI, whisper, reranker) | ~€100/mo |
 
-IPs also stored encrypted in `klai-infra/config.sops.env`. All Helsinki HEL1.
+Server IPs and access details are stored in the private `klai-infra` repository.
+See `klai-infra/SERVERS.md` for the full inventory (core-01, public-01, gpu-01).
 
 ## SSH access
-| Server | Command | Notes |
-|--------|---------|-------|
-| core-01 | `ssh core-01` | ALWAYS alias, NEVER direct IP (firewall) |
-| public-01 | `ssh -i ~/.ssh/klai_ed25519 root@65.109.237.64` | Root + klai_ed25519 |
-| gpu-01 | Via core-01 only: `ssh -i /opt/klai/gpu-tunnel-key root@5.9.10.215` | No direct MacBook access |
 
-## GPU tunnels (gpu-01 → core-01)
-All GPU services tunneled via autossh. core-01 reaches gpu-01 at `172.18.0.1:{port}`.
-Check: `pgrep -a autossh` on core-01. Key: `/opt/klai/gpu-tunnel-key`.
+Always use the configured SSH alias (`ssh core-01`, etc.) — never direct IP.
+SSH keys and jump-host configuration are documented in `klai-infra/SERVERS.md`.
+
+## GPU tunnels
+
+All GPU services tunneled via autossh from core-01. Check: `pgrep -a autossh` on core-01.
+Connection details in `klai-infra/SERVERS.md`.
 
 ## DNS
-Provider: Hetzner DNS (migrated from Cloud86, March 2026). Registrar: Registrar.eu.
+Provider: Hetzner DNS. Registrar: Registrar.eu.
 Propagation: up to 24h. Check: `dig getklai.com` or dnschecker.org.
 
 ## Coolify (public-01)
@@ -66,9 +61,8 @@ Some gpu-01 services (`bge-m3-sparse`, possibly others) do NOT have a GitHub Act
 
 **Services without CI:** `bge-m3-sparse` (`deploy/bge-m3-sparse/`).
 
-**Manual rebuild sequence:**
+**Manual rebuild sequence (from core-01 via jump):**
 ```bash
-ssh -i /opt/klai/gpu-tunnel-key root@5.9.10.215   # via core-01 jump
 cd /opt/klai
 docker compose build bge-m3-sparse
 docker compose up -d bge-m3-sparse

@@ -10,64 +10,49 @@ paths:
 
 Two machine users carry Zitadel authority; keep them separate.
 
-| SA | ID | Role | SOPS key | Used by |
-|---|---|---|---|---|
-| `portal-api` | `362780577813757958` | IAM_OWNER + IAM_LOGIN_CLIENT | `PORTAL_API_ZITADEL_PAT` | portal-api runtime: tenant provisioning, login session finalize |
-| `klai-admin-sa` | `369320953139691537` | IAM_OWNER | `ZITADEL_ADMIN_PAT` | Runbooks/scripts: instance features, OIDC app lifecycle, IAM |
+| SA | Role | SOPS key | Used by |
+|---|---|---|---|
+| `portal-api` | IAM_OWNER + IAM_LOGIN_CLIENT | `PORTAL_API_ZITADEL_PAT` | portal-api runtime: tenant provisioning, login session finalize |
+| `klai-admin-sa` | IAM_OWNER | `ZITADEL_ADMIN_PAT` | Runbooks/scripts: instance features, OIDC app lifecycle, IAM |
 
 **Never** use `PORTAL_API_ZITADEL_PAT` for admin-only operations (features,
 app lifecycle). That breaks scope separation — a compromised portal-api
-container would yield instance-admin control. Use `ZITADEL_ADMIN_PAT` via
-`sudo grep '^ZITADEL_ADMIN_PAT=' /opt/klai/.env` on core-01.
+container would yield instance-admin control.
 
 **Rotation (both PATs, via API — no console clicking):**
 ```bash
 # Use klai-admin-sa to rotate any PAT, including its own.
-ADMIN_PAT=$(ssh core-01 "sudo grep '^ZITADEL_ADMIN_PAT=' /opt/klai/.env | cut -d= -f2-")
-SA_ID="362780577813757958"   # portal-api, or 369320953139691537 for klai-admin-sa
 # 1. Generate new PAT (1-year expiry)
-curl -s -X POST "https://auth.getklai.com/management/v1/users/$SA_ID/pats" \
+curl -s -X POST "https://auth.getklai.com/management/v1/users/<sa-id>/pats" \
   -H "Authorization: Bearer $ADMIN_PAT" \
-  -H "X-Zitadel-Orgid: 362757920133283846" \
+  -H "X-Zitadel-Orgid: <zitadel-org-id>" \
   -H "Content-Type: application/json" \
-  -d '{"expirationDate": "2027-04-19T00:00:00Z"}'
+  -d '{"expirationDate": "2028-01-01T00:00:00Z"}'
 # 2. Update SOPS, push — GitHub Action auto-syncs
 # 3. Recreate container: docker compose up -d portal-api  (for portal-api only)
-# 4. Revoke old token: DELETE /management/v1/users/$SA_ID/pats/$OLD_TOKEN_ID
+# 4. Revoke old token: DELETE /management/v1/users/<sa-id>/pats/<old-token-id>
 ```
 
-Full runbook: `runbooks/platform-recovery.md#zitadel-pat-rotation`.
+Full runbook: `klai-infra/docs/runbooks/platform-recovery.md#zitadel-pat-rotation`.
+IDs available from team or Zitadel console: `https://auth.getklai.com/ui/console`.
 
 PAT invalidation symptom (triggers rotation): `Errors.Token.Invalid (AUTH-7fs1e)`.
-
-Current PAT expiry: both PATs expire **2027-04-19**. Rotate at least quarterly
-regardless, per `runbooks/credential-rotation.md`.
 
 ## Login V2 deadlock (CRIT)
 - Login V2 routes ALL OIDC flows (including admin console) through portal login.
 - If portal login is broken: delete Login V2 row from PostgreSQL.
-- Full procedure: `runbooks/platform-recovery.md#zitadel-login-v2-recovery`.
+- Full procedure: `klai-infra/docs/runbooks/platform-recovery.md#zitadel-login-v2-recovery`.
 
 ## Login V2 base_uri must be my.getklai.com, NOT tenant subdomain (CRIT)
 
-The instance-level Login V2 feature flag (`projections.instance_features5 WHERE key='login_v2'`) has a `value.base_uri.Host` field. This controls WHERE Zitadel sends users BEFORE authentication on every OIDC flow — regardless of which OIDC app initiated the flow.
+The instance-level Login V2 feature flag has a `value.base_uri.Host` field. This controls WHERE Zitadel sends users BEFORE authentication on every OIDC flow.
 
-**Must be:** `my.getklai.com` (the portal login per SPEC-AUTH-008 / SERVERS.md).
+**Must be:** `my.getklai.com` (the portal login per SPEC-AUTH-008).
 **Never:** `getklai.getklai.com` (a tenant subdomain) or any `{tenant}.getklai.com`.
 
-**Why:** Even when the portal OIDC app has perfect `redirect_uris` and `post_logout_redirect_uris` set to `my.getklai.com`, Login V2 sits BEFORE the OIDC app in the flow. A wrong `base_uri.Host` short-circuits every login to the tenant subdomain and confuses users ("why am I on getklai.getklai.com before I even logged in?").
-
-**Verification:**
+**Fix (via Zitadel v2 Feature API):**
 ```bash
-curl -s -o /dev/null -w "%{redirect_url}\n" \
-  "https://auth.getklai.com/oauth/v2/authorize?response_type=code&client_id=369262708920483857&redirect_uri=https%3A%2F%2Fmy.getklai.com%2Fapi%2Fauth%2Foidc%2Fcallback&scope=openid&state=x&code_challenge=x&code_challenge_method=S256"
-# Expected: https://my.getklai.com/login?authRequest=V2_...
-# NOT:      https://getklai.getklai.com/login?authRequest=V2_...
-```
-
-**Fix (via Zitadel v2 Feature API — writes event + updates projection atomically):**
-```bash
-PAT=$(ssh core-01 "sudo grep '^ZITADEL_ADMIN_PAT=' /opt/klai/.env | cut -d= -f2-")
+PAT=$(ssh <production-server> "sudo grep '^ZITADEL_ADMIN_PAT=' /opt/klai/.env | cut -d= -f2-")
 curl -sf -X PUT "https://auth.getklai.com/v2/features/instance" \
   -H "Authorization: Bearer $PAT" \
   -H "Content-Type: application/json" \
@@ -79,13 +64,11 @@ curl -sf -X PUT "https://auth.getklai.com/v2/features/instance" \
 original wrong event in `eventstore.events2`. On the next projection rebuild
 (upgrade, `projection truncate`, disaster recovery) the bug returns.
 The Feature API writes a new `feature.instance.login_v2.set` event so the
-fix survives rebuilds. Payload format is `{"Value": {"base_uri": {...}}}`
-in Zitadel v4.12+ (not the older `baseURI` string).
+fix survives rebuilds.
 
 **Prevention:** Never write projection tables directly for config that is
 event-sourced. Always use the Zitadel API for features, OIDC apps, users,
-and policies. See `runbooks/platform-recovery.md` § zitadel-login-v2-recovery
-Step 3 for the full procedure including verification.
+and policies.
 
 ## Org per tenant
 One Zitadel Organization per customer. Org ID is the primary tenant identifier — stored in PostgreSQL alongside LibreChat container name and MongoDB database name.
@@ -129,13 +112,13 @@ The read endpoint is `/oidc`; the write endpoint is `/oidc_config`.
 
 **Why:** Zitadel splits GET (read) and PUT (update) onto different path suffixes. Easy to confuse when scripting redirect URI changes.
 
-**Prevention:** Always use `/oidc_config` for Management API PUT calls that update OIDC app settings. Reference script: `klai-infra/scripts/zitadel-add-signup-redirect.py`.
+**Prevention:** Always use `/oidc_config` for Management API PUT calls that update OIDC app settings.
 
 ## Management API: X-Zitadel-Orgid required for org-scoped calls (HIGH)
 
 Management API calls without `X-Zitadel-Orgid` succeed but target the service account's default org (portal org), not the intended org.
 
-**Why:** The Zitadel Management API uses `X-Zitadel-Orgid` header to scope operations to a specific org. Without it, the service account's own org (`362757920133283846`) is used as context.
+**Why:** The Zitadel Management API uses `X-Zitadel-Orgid` header to scope operations to a specific org.
 
 **Prevention:** Always include `X-Zitadel-Orgid: {target_org_id}` in any Management API call that must operate on a specific org.
 
@@ -178,19 +161,15 @@ diverge.
    roles would create a sync surface with no functional payoff (no
    downstream service today branches on group-admin or member
    role-strings).
-2. **Zitadel project-state minimisation.** The Klai Platform Zitadel
-   project today has only the `org:owner` role configured. Adding
+2. **Zitadel project-state minimisation.** Only the `org:owner` role is
+   configured in the Klai Platform Zitadel project. Adding
    `org:group-admin` and `org:member` would require a setup script,
    IAM-admin operational dependency, and ongoing drift-prevention
-   between portal Literal and Zitadel project state. None of that
-   buys the platform anything today.
+   between portal Literal and Zitadel project state.
 3. **Finding #10 surface reduction.** Pre-v0.5.0, every invited user
-   received `org:owner` regardless of `body.role`. Adding
-   `"org:owner"` to retrieval-api's `_extract_role` admin-equivalent
-   set would have silently granted admin to every invited user. By
-   making the admin Zitadel grant mean *exactly* "portal admin", the
-   role-string is no longer ambiguous; the time-bomb scenario
-   disappears at its root.
+   received `org:owner` regardless of `body.role`. By making the admin
+   Zitadel grant mean *exactly* "portal admin", the role-string is no
+   longer ambiguous.
 
 ### Admin equivalence in retrieval-api (current state + tech debt)
 
@@ -206,33 +185,21 @@ REQ-3.1):
   SPEC-SEC-TENANT-001 REQ-4.
 
 `org:owner` is **intentionally NOT** in the admin-equivalent set.
-Under the v0.5.0 mapping `portal_role="admin" -> org:owner`, adding
-`"org:owner"` here would re-introduce finding #10 in a more direct
-form (every signup-created or admin-invited user becomes admin in
-retrieval-api). Do not add it without first re-architecting downstream
-admin-bypass to use a portal-signed assertion (see Tech debt below).
 
 ### Tech debt: replace JWT-claim admin-bypass with portal-signed assertion
 
 The `_extract_role` text-match against `urn:zitadel:iam:org:project:roles`
 for cross-tenant decisions is the anti-pattern that finding #10
-exemplifies — a coarse role-string in an IDP claim drives a
-fine-grained tenant-boundary check. The industry-standard fix is to
-have the portal sign an explicit "this user is admin" assertion when
-calling downstream services, removing the JWT-claim coupling
-altogether. Tracked under SPEC-SEC-IDENTITY-ASSERT-001 (γ direction).
-Until that lands, the v0.5.0 mapping is the smaller-blast-radius
-holding pattern.
+exemplifies. The industry-standard fix is to have the portal sign an
+explicit "this user is admin" assertion when calling downstream services,
+removing the JWT-claim coupling altogether. Tracked under
+SPEC-SEC-IDENTITY-ASSERT-001 (γ direction).
 
 ### How to verify the JWT claim shape end-to-end
 
-1. Invite a test user via the portal admin UI for each portal role
-   (or via `POST /api/admin/users/invite` against a dev environment).
-2. Have the user complete the invite flow and obtain an access token
-   (sign in to the portal and capture the access_token cookie, or
-   exchange via OIDC code).
-3. Decode the access token's payload (no signature verification
-   needed for a read-only inspection):
+1. Invite a test user via the portal admin UI for each portal role.
+2. Have the user complete the invite flow and obtain an access token.
+3. Decode the access token's payload:
    ```bash
    echo '<jwt>' | cut -d. -f2 | base64 -d 2>/dev/null \
      | jq '."urn:zitadel:iam:org:project:roles"'
@@ -241,10 +208,3 @@ holding pattern.
    - `admin`       -> `{"org:owner": {...}}`
    - `group-admin` -> `null` or `{}` (claim absent)
    - `member`      -> `null` or `{}` (claim absent)
-
-If the admin JWT carries a key other than `org:owner`, the Zitadel
-project state has drifted from the mapping. Update the mapping AND
-this section in the same commit. If a non-admin JWT carries any
-project-roles content, an unintended `grant_user_role` call has
-occurred — grep the portal codebase for `grant_user_role(` and
-audit the call sites.
