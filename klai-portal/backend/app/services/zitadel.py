@@ -71,14 +71,22 @@ class ZitadelClient:
         # @MX:NOTE: SPEC-INFRA-TENANT-DELETE-001 Phase 5 — called by step 15
         #   (_delete_zitadel_org) in deprovisioning_orchestrator.
         """
+        # Zitadel Management API `RemoveOrg` lives at `/management/v1/orgs/me`;
+        # the `x-zitadel-orgid` header selects which org "me" resolves to.
+        # `/management/v1/orgs` (without `/me`) is the create endpoint — POST
+        # only — so DELETE on it returns 405 Method Not Allowed.
+        # SPEC-INFRA-TENANT-DELETE-003 Bug E.
         resp = await self._http.delete(
-            "/management/v1/orgs",
+            "/management/v1/orgs/me",
             headers={"x-zitadel-orgid": org_id},
         )
-        if resp.status_code == 404:
+        # Idempotent: 404 (gone) and 403 (Zitadel sometimes returns this when
+        # the calling identity no longer has any grant on a deleted org) both
+        # mean "already absent — fine".
+        if resp.status_code in (403, 404):
             # File uses stdlib logging (not structlog) — kwargs would be
             # treated as `extra` not structured fields. Use %-style instead.
-            logger.info("zitadel_org_already_absent org_id=%s", org_id)
+            logger.info("zitadel_org_already_absent org_id=%s status=%d", org_id, resp.status_code)
             return
         resp.raise_for_status()
 
