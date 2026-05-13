@@ -14,7 +14,7 @@
  *   `rejectReason`) lives here. It is initialised when `isEditing` /
  *   `isRejecting` transitions to true.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { X } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -73,18 +73,35 @@ export function ProposalCard({
   const [editingDescription, setEditingDescription] = useState(payloadDescription(proposal.payload))
   const [rejectReason, setRejectReason] = useState('')
 
-  // Initialise edit buffers when the parent flips this card into edit
-  // mode. Mirrors the pre-SPEC inline behaviour where clicking "Edit"
-  // set parent state including `setEditingProposalTitle(proposal.title)`.
+  // Initialise edit buffers ONLY when the parent flips this card from
+  // not-editing to editing — not on every re-render while editing is
+  // active. Without the prevIsEditing ref the effect's `proposal.payload`
+  // dep (an object) re-fires on every TanStack Query refetch (window
+  // focus, mutation invalidation), wiping the user's typed input.
+  // Mirrors the pre-SPEC inline behaviour where clicking "Edit" set
+  // parent state including `setEditingProposalTitle(proposal.title)`
+  // and then left the buffer alone until Save/Cancel.
+  const prevIsEditing = useRef(false)
   useEffect(() => {
-    if (isEditing) {
+    if (isEditing && !prevIsEditing.current) {
       setEditingTitle(proposal.title)
       setEditingDescription(payloadDescription(proposal.payload))
     }
-  }, [isEditing, proposal.title, proposal.payload])
+    prevIsEditing.current = isEditing
+    // We intentionally do NOT depend on `proposal.title` /
+    // `proposal.payload` — they are read for initial-value purposes
+    // only and would re-fire this effect on every query refetch,
+    // overwriting the user's typed input.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEditing])
 
+  // Reject reason: same transition guard. The buffer should clear only
+  // when the card transitions into reject-mode, not on every render
+  // while it stays in reject-mode.
+  const prevIsRejecting = useRef(false)
   useEffect(() => {
-    if (isRejecting) setRejectReason('')
+    if (isRejecting && !prevIsRejecting.current) setRejectReason('')
+    prevIsRejecting.current = isRejecting
   }, [isRejecting])
 
   const typeInfo =
