@@ -3,8 +3,10 @@
  *
  * Tests cover the pure render helpers ``AuthProbeFeedback`` (REQ-2)
  * and ``PreviewClassificationFeedback`` (REQ-3). These components are
- * exported from the add-connector route so they can be unit-tested in
- * isolation (no router/query-client setup needed).
+ * shared between add-connector and edit-connector and live in
+ * `-connector-feedback.tsx` (per the file-organization rule in
+ * portal-frontend.md). Unit-testable in isolation — no router or
+ * query-client setup needed.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -12,7 +14,7 @@ import { render, screen } from '@testing-library/react'
 import {
   AuthProbeFeedback,
   PreviewClassificationFeedback,
-} from '../$kbSlug_.add-connector'
+} from '../-connector-feedback'
 
 describe('AuthProbeFeedback', () => {
   it('renders success state for auth_ok', () => {

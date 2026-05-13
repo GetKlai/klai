@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { PreviewClassificationFeedback } from '../$kbSlug_.add-connector'
+import { PreviewClassificationFeedback } from '../-connector-feedback'
 
 // ---------------------------------------------------------------------------
 // Step-to-WcStep mapping logic (mirrors the module-level helper in

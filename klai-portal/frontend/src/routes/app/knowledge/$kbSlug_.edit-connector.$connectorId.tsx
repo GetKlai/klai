@@ -21,16 +21,25 @@ import { CookieRowsInput } from '@/components/knowledge/CookieRowsInput'
 import {
   AuthProbeFeedback,
   PreviewClassificationFeedback,
-} from './$kbSlug_.add-connector'
+} from './-connector-feedback'
 import { kbQueryKeys } from '@/lib/kb-query-keys'
+import type {
+  AirtableConfig,
+  AuthGuardSuggestion,
+  AuthProbeResult,
+  ConfluenceConfig,
+  NotionEditConfig,
+  PreviewResult,
+  StepDeepLink,
+  WcStep,
+} from './-connector-types'
+import { MARKDOWN_PROSE_CLASSES, VALID_STEPS } from './-connector-constants'
 
 // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-1 / REQ-5: edit wizard uses the same
 // 5-step flow as add-connector. ?step=auth|selector deep-link into the wizard.
 // SPEC D-1: always require re-verify on edit entry (no pre-pass from last_sync_status).
-type WcStep = 'details' | 'auth-question' | 'auth-setup' | 'selector' | 'settings'
-
-type StepDeepLink = 'auth' | 'selector'
-const VALID_STEPS = new Set<StepDeepLink>(['auth', 'selector'])
+// `WcStep` and `StepDeepLink` types live in ./-connector-types (shared with add).
+// `VALID_STEPS` constant lives in ./-connector-constants (shared too).
 
 function _stepToWcStep(step: StepDeepLink | undefined): WcStep | undefined {
   if (step === 'auth') return 'auth-setup'
@@ -48,69 +57,6 @@ export const Route = createFileRoute('/app/knowledge/$kbSlug_/edit-connector/$co
   }),
   component: EditConnectorPage,
 })
-
-interface NotionEditConfig {
-  database_ids: string
-  max_pages: string
-  new_access_token: string
-}
-
-interface AirtableEditConfig {
-  api_key: string
-  base_id: string
-  table_names: string
-  view_name: string
-}
-
-interface ConfluenceEditConfig {
-  base_url: string
-  email: string
-  api_token: string
-  space_keys: string
-}
-
-type PreviewClassification =
-  | 'success'
-  | 'selector_required'
-  | 'selector_returns_empty'
-  | 'requires_javascript'
-  | 'auth_wall_detected'
-  | 'unknown'
-
-interface AuthGuardSuggestion {
-  canary_url: string | null
-  canary_fingerprint: string | null
-  login_indicator_selector: string | null
-  login_indicator_description: string | null
-}
-
-type AuthProbeClassification =
-  | 'auth_ok'
-  | 'auth_failed_no_cookies'
-  | 'auth_failed_still_walled'
-  | 'auth_failed_credentials_invalid'
-  | 'auth_failed_unreachable'
-
-interface AuthProbeResult {
-  classification: AuthProbeClassification
-  match_reasons: string[]
-  word_count: number
-  auth_guard: AuthGuardSuggestion | null
-}
-
-type PreviewResult = {
-  fit_markdown: string
-  word_count: number
-  warnings: string[]
-  content_selector: string | null
-  selector_source: string | null
-  auth_guard: AuthGuardSuggestion | null
-  classification: PreviewClassification
-  classification_reason: string | null
-}
-
-const MARKDOWN_PROSE_CLASSES = 'overflow-y-auto max-h-64 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-gray-900 [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-gray-900 [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-gray-900 [&_h3]:mb-1 [&_p]:text-gray-400 [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-gray-400 [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-gray-400 [&_ol]:mb-1.5 [&_strong]:font-semibold [&_strong]:text-gray-900 [&_hr]:border-gray-200 [&_hr]:my-2'
-
 
 function EditConnectorPage() {
   const { kbSlug, connectorId } = Route.useParams()
@@ -149,11 +95,11 @@ function EditConnectorPage() {
   const [msDriveId, setMsDriveId] = useState('')
   const [msSiteUrlError, setMsSiteUrlError] = useState<string | null>(null)
   // airtable (SPEC-KB-CONNECTORS-001 R3)
-  const [airtableConfig, setAirtableConfig] = useState<AirtableEditConfig>({
+  const [airtableConfig, setAirtableConfig] = useState<AirtableConfig>({
     api_key: '', base_id: '', table_names: '', view_name: '',
   })
   // confluence (SPEC-KB-CONNECTORS-001 R4)
-  const [confluenceConfig, setConfluenceConfig] = useState<ConfluenceEditConfig>({
+  const [confluenceConfig, setConfluenceConfig] = useState<ConfluenceConfig>({
     base_url: '', email: '', api_token: '', space_keys: '',
   })
 
