@@ -33,6 +33,7 @@ from app.api.auth import invalidate_tenant_slug_cache
 from app.core.config import settings
 from app.core.database import get_db, set_tenant
 from app.models.portal import PortalOrg, PortalUser
+from app.services.auth_links import AuthLinkRoute, build_url_template
 from app.services.bff_session import SessionService
 from app.services.domain_validation import is_free_email_provider
 from app.services.events import emit_event
@@ -218,15 +219,33 @@ async def signup(
     zitadel_org_id: str = org_data["id"]
     logger.info("Org created in Zitadel: name=%s, org_id=%s", body.company_name, zitadel_org_id)
 
-    # 2. Create human user in the portal org (all users live here for OIDC compatibility)
+    # 2. Create human user via v2 AddHumanUser, atomically firing a
+    # Klai-branded email-verification mail with our urlTemplate.
+    #
+    # Why v2 (not the legacy _import path that admin-invite still uses):
+    #   - _import + isEmailVerified=false → user lands in USER_STATE_INITIAL,
+    #     which blocks every standalone email API call with COMMAND-uz0Uu
+    #     ("User is not yet initialized"). Verified live 2026-05-13.
+    #   - v2 /v2/users/human accepts email.verification.sendCode.urlTemplate
+    #     in the SAME request as user-create, AND lands the user directly
+    #     in USER_STATE_ACTIVE when a password is supplied. Mail fires
+    #     atomically without the INITIAL-state circular dependency.
+    #
+    # The fired event is `user.human.email.code.added` — klai-mailer's
+    # /notify webhook renders it through the Klai email wrapper (no drop;
+    # different event class than the InitCode that admin-invite suppresses).
+    # Click on the button lands on my.getklai.com/verify which calls
+    # /api/auth/verify-email → marks email-verified in Zitadel.
+    verify_url_template = build_url_template(AuthLinkRoute.VERIFY_EMAIL)
     try:
-        user_data = await zitadel.create_human_user(
+        user_data = await zitadel.create_human_user_v2_with_verify(
             org_id=settings.zitadel_portal_org_id,
             email=body.email,
             first_name=body.first_name,
             last_name=body.last_name,
             password=body.password,
             preferred_language=body.preferred_language,
+            url_template=verify_url_template,
         )
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 409:
