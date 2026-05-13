@@ -160,6 +160,34 @@ describe('ProposalCard — edit-mode', () => {
     expect(screen.getByDisplayValue('Original description')).toBeDefined()
   })
 
+  it('preserves typed buffer when proposal prop re-arrives mid-edit (regression: bug fixed in v0.2.1)', () => {
+    // Simulates a TanStack Query refetch landing while the user is in
+    // edit-mode: new `proposal` object reference with identical content.
+    // Pre-fix the useEffect re-fired on the object-ref change and
+    // overwrote the user's typed input. Post-fix the prevIsEditing ref
+    // suppresses re-init unless the card transitions into edit-mode.
+    const props = defaultProps()
+    const p1 = proposal({
+      title: 'Original',
+      payload: { description: 'Initial' },
+    })
+    const { rerender } = render(
+      <ProposalCard proposal={p1} {...props} isEditing />,
+    )
+
+    // User types
+    const titleInput = screen.getByDisplayValue('Original')
+    fireEvent.change(titleInput, { target: { value: 'User typed' } })
+    expect((titleInput as HTMLInputElement).value).toBe('User typed')
+
+    // New `proposal` object with same content (simulates query refetch)
+    const p2 = { ...p1, payload: { ...p1.payload } }
+    rerender(<ProposalCard proposal={p2} {...props} isEditing />)
+
+    // Buffer NOT overwritten
+    expect((titleInput as HTMLInputElement).value).toBe('User typed')
+  })
+
   it('calls onSubmitEdit with trimmed title and current description', () => {
     const props = defaultProps()
     const p = proposal({
@@ -217,13 +245,9 @@ describe('ProposalCard — reject-mode', () => {
     render(<ProposalCard proposal={proposal()} {...props} isRejecting />)
     const reasonInput = screen.getByPlaceholderText(/rejected/i)
     fireEvent.change(reasonInput, { target: { value: 'duplicate' } })
-    // Two buttons say 'Reject' in reject-mode: the submit and (now-absent)
-    // initial trigger. The form's submit Button is the one that triggers
-    // onSubmitReject — grab it by its type='submit'.
-    const submitButton = screen.getAllByRole('button').find(
-      (b) => b.getAttribute('type') === 'submit' && b.textContent === 'Reject',
-    )!
-    fireEvent.click(submitButton)
+    // In reject-mode the initial 'Reject' trigger is hidden; only the
+    // submit Button labelled 'Reject' remains, so getByText is enough.
+    fireEvent.click(screen.getByText('Reject'))
     expect(props.onSubmitReject).toHaveBeenCalledTimes(1)
     expect(props.onSubmitReject).toHaveBeenCalledWith('duplicate')
   })
