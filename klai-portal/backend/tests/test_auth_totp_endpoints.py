@@ -107,11 +107,15 @@ async def test_totp_setup_zitadel_5xx(respx_zitadel: respx.MockRouter) -> None:
 @pytest.mark.asyncio
 async def test_totp_confirm_happy(respx_zitadel: respx.MockRouter) -> None:
     """REQ-1.3 — confirm happy path emits audit."""
-    respx_zitadel.route().mock(return_value=httpx.Response(200, json={}))
+    verify_route = respx_zitadel.post("/v2/users/uid-1/totp/verify").mock(
+        return_value=httpx.Response(200, json={})
+    )
 
     with capture_logs() as captured, _audit_log_patch() as audit_log:
         await totp_confirm(body=TOTPConfirmRequest(code="123456"), user_id="uid-1")
 
+    assert verify_route.called
+    assert verify_route.calls.last.request.url.path == "/v2/users/uid-1/totp/verify"
     audit_log.assert_called_once()
     assert audit_log.call_args.kwargs["action"] == "auth.totp.confirmed"
     assert _capture_events(captured, "totp_confirm_failed") == []
@@ -120,12 +124,15 @@ async def test_totp_confirm_happy(respx_zitadel: respx.MockRouter) -> None:
 @pytest.mark.asyncio
 async def test_totp_confirm_invalid_code(respx_zitadel: respx.MockRouter) -> None:
     """REQ-1.4 — confirm 4xx → 400 + event."""
-    respx_zitadel.route().mock(return_value=httpx.Response(400, json={"error": "bad"}))
+    verify_route = respx_zitadel.post("/v2/users/uid-1/totp/verify").mock(
+        return_value=httpx.Response(400, json={"error": "bad"})
+    )
 
     with capture_logs() as captured, _audit_log_patch() as audit_log:
         with pytest.raises(HTTPException) as exc:
             await totp_confirm(body=TOTPConfirmRequest(code="000000"), user_id="uid-1")
 
+    assert verify_route.called
     assert exc.value.status_code == 400
     audit_log.assert_not_called()
     events = _capture_events(captured, "totp_confirm_failed")
@@ -139,12 +146,15 @@ async def test_totp_confirm_invalid_code(respx_zitadel: respx.MockRouter) -> Non
 @pytest.mark.asyncio
 async def test_totp_confirm_zitadel_5xx(respx_zitadel: respx.MockRouter) -> None:
     """REQ-1.5 — confirm 5xx → 502 + event."""
-    respx_zitadel.route().mock(return_value=httpx.Response(502, json={"error": "bad gw"}))
+    verify_route = respx_zitadel.post("/v2/users/uid-1/totp/verify").mock(
+        return_value=httpx.Response(502, json={"error": "bad gw"})
+    )
 
     with capture_logs() as captured, _audit_log_patch() as audit_log:
         with pytest.raises(HTTPException) as exc:
             await totp_confirm(body=TOTPConfirmRequest(code="123456"), user_id="uid-1")
 
+    assert verify_route.called
     assert exc.value.status_code == 502
     audit_log.assert_not_called()
     events = _capture_events(captured, "totp_confirm_failed")

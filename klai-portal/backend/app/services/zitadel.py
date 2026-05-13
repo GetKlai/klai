@@ -718,7 +718,7 @@ class ZitadelClient:
     async def verify_user_totp(self, user_id: str, code: str) -> None:
         """Verify and activate a TOTP registration."""
         resp = await self._http.post(
-            f"/v2/users/{user_id}/totp/_verify",
+            f"/v2/users/{user_id}/totp/verify",
             json={"code": code},
         )
         resp.raise_for_status()
