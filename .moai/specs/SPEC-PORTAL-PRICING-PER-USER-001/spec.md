@@ -1,9 +1,9 @@
 ---
 id: SPEC-PORTAL-PRICING-PER-USER-001
-version: "0.4.0"
-status: ready-for-run
+version: "0.5.0"
+status: shipped
 created: 2026-05-12
-updated: 2026-05-12
+updated: 2026-05-13
 author: Mark Vletter
 priority: high
 supersedes:
@@ -12,9 +12,10 @@ supersedes:
 related:
   - SPEC-PORTAL-PROFILES-001 (5-rung profile ladder + PROFILE_CAPABILITIES — KEPT, becomes the permission axis only)
   - SPEC-BILLING-UPGRADE-001 (Moneybird subscription wiring — TOUCHED, line-items become per-seat-type)
+  - SPEC-PORTAL-MONEYBIRD-PER-SEAT-001 (Phase 5b follow-up — Moneybird mutation portion of per-seat billing)
 ---
 
-# SPEC-PORTAL-PRICING-PER-USER-001: Per-user seats, decoupled from role
+# SPEC-PORTAL-PRICING-PER-USER-001: Per-user accounts, profile-derived account type
 
 ## HISTORY
 
@@ -24,6 +25,7 @@ related:
 | 2026-05-12 | 0.2.0 | **Architecture rewrite.** Profile-derives-tier was an anti-pattern (conflates billing with permissions). Replaced with industry-standard seat+role decoupled model. |
 | 2026-05-12 | 0.3.0 | **Sparring resolved + gap-fixes.** S-1 through S-8 answered (see decisions below). Add explicit `CAPABILITY_TO_SEAT_FEATURE` mapping table. Replace workspace-`enabled_addons` model with seat-included scribe/docs (gated by `FEATURE_MIN_PROFILE` company-floor). Add `portal_user_seat_history` for prorated billing audit. Write actual ast-grep rule body for AC-13. Reframed "industry-standard" claim (decoupled is right *for Klai* because the website promises per-user pricing — Linear/Notion's workspace-uniform is also valid for that audience). Status flipped to `ready-for-run`. |
 | 2026-05-12 | 0.4.0 | **Adversarial pre-run review.** 8 findings addressed before Phase 1 implementation. (1) Viewer-seat capability semantics made explicit — viewer is billing-only; read-only access is enforced by `effective_features` rendering on the FE + absence of write capabilities on the BE; no `chat_readonly` / `knowledge_readonly` capability layer added in Phase 1 because backfill produces zero viewer-users (Phase 2 adds explicit `chat.send` / `kb.write` capabilities). (2) AC-13 ast-grep rule rewritten — dict-literal pattern dropped (ast-grep's order-dependent dict-key match is brittle); replaced with assignment + mapping-call patterns + a required `rules/tests/` positive/negative fixture set that CI runs alongside the rule; `alembic/**` added to `files.exclude`. (3) History append moved from SQLAlchemy event-listener to a Postgres `BEFORE UPDATE OR INSERT` trigger PLUS a partial `UNIQUE INDEX (user_id) WHERE valid_to IS NULL` — immune to `session.execute(update(...))` ORM-bypass and to concurrent-update race. (4) RLS policy added on `portal_user_seat_history` (Cat-D pattern, schema-qualified `billing._rls_current_org_id()` helper per `postgres-no-return-type-overload` pitfall). (5) `status TEXT NOT NULL` snapshot column added to the history table so the Phase 5 prorate query can scope to billable periods (a `deactivated` row closes the user's billable window cleanly). (6) Phase 1 migration step "DROP COLUMN enabled_addons" removed — the column was already dropped by SPEC-PORTAL-EXTENSIONS-UNIFY-001 (`e0ad7c2b1e80`, merged 2026-05-12); the Phase 1 alembic migration would have crashed on `column does not exist`. (7) `effective_features` uses `.get(role, -1)` for unknown-role safety, mirroring the FEATURE_MIN_PROFILE lookup pattern. (8) AC-7 endpoint contract makes `require_at_least("admin")` RBAC explicit on `GET /api/admin/billing/breakdown`. Status stays `ready-for-run`. |
+| 2026-05-13 | 0.5.0 | **Live-UI pivot after Phase 1-6 ship.** Three intertwined corrections, made after Mark saw the invite UI on prod (Voys tenant, Google social login). (a) **Viewer tier dropped.** [getklai.com/pricing](https://getklai.com/pricing) lists Klai Chat (€28) and Klai Chat + Knowledge (€68) only — no viewer/free tier exists on the website. Keeping a code-only "Viewer" seat introduced a third option in the invite UI that does not appear on the marketing page, confusing admins. `SeatType` is now `{CHAT, KNOWLEDGE}`. Migration `f1ff304b7b0a` narrows both CHECK constraints (`portal_users.ck_portal_users_seat_type`, `portal_user_seat_history.ck_pu_seat_hist_seat_type`) to `IN ('chat', 'knowledge')` — pre-flight verified zero viewer rows on prod 2026-05-13. (b) **Account type is derived from Profile on the invite form.** Mark's framing: "wil je de pricing destileren uit het profile wat geseleceerrd wordt. Dan een admin gelijk kan zien 'een knowledgemanager heeft chat + knowledge nodig'". The orthogonal axes survive in the data model (still `seat_type` + `role` columns; the BE still calls `suggest_seat(role)` to derive); but the invite UI exposes only the Profile dropdown and renders the resulting account type as a **read-only badge** that updates live as the Profile changes. The invite request payload no longer carries a `seat_type` field — the server runs `suggest_seat(role)` unconditionally to prevent client tamper. (c) **UX rename: "Seat" → "Account type".** "Seat" reads as jargon to admins and doesn't match the website wording. All FE labels switch to "Account type" / "Accounttype"; i18n keys move from `admin_users_seat_*` / `admin_users_field_seat` / `admin_users_col_seat` to `admin_users_account_*` / `admin_users_field_account_type` / `admin_users_col_account_type`. The billing breakdown column header switches from "Seat tier" to "Account type". <br><br>**Architectural note.** This pivot LOOKS like the v0.1.0 `PROFILE_TIER` shape (profile derives tier) that v0.2.0 labelled an anti-pattern. The distinction: v0.1.0 collapsed the axes in the **data model** (single `profile_tier` column, no `seat_type`). v0.5.0 keeps the columns orthogonal (admin support can still move a user to a non-default account type via the existing `PATCH /api/admin/users/{id}` endpoint without changing their role); only the **invite UI** simplifies to a single Profile dropdown. The BE seat-derivation rule `suggest_seat(role)` mirrors the FE's `accountTypeForRole(role)` — one source of truth, no client-supplied override at invite time. The 0.2.0 reasoning about Klai's marketing-page promise still holds (a knowledge manager's bill is €68/mo, not whatever-the-org-tier-is/mo) — the per-user pricing axis is preserved.<br><br>**Status flipped to `shipped`** (Phases 1-6 merged via PRs #599 / #608 / #609 / #611 / #612 / #614 / #616). v0.5.0 viewer-drop ships as its own PR layered on top. Phase 5b (Moneybird mutation) is tracked in [SPEC-PORTAL-MONEYBIRD-PER-SEAT-001](../SPEC-PORTAL-MONEYBIRD-PER-SEAT-001/spec.md) (`needs-research`). |
 
 ### Sparring resolved (v0.3.0)
 
@@ -37,6 +39,29 @@ related:
 | 6 | Naming | `seat_type` internal, "Klai Chat seat" / "Knowledge seat" / "Viewer seat" in UI. |
 | 7 | Phase ordering | Confirmed. Customer pain resolved at Phase 3, billing accuracy at Phase 5 opt-in. |
 | 8 | User-history tracking | Today: `created_at` + current `status` only — no from-to dates per seat assignment. Add `portal_user_seat_history` table in Phase 1 so Phase 5 can prorate accurately. |
+
+---
+
+## ⚠ AS-OF v0.5.0 — read this before reading the body
+
+The body below documents the **as-shipped-at-v0.4.0** architecture (3 seat types: `viewer / chat / knowledge`, admin-selectable seat at invite time, "Seat" UX label). That is what Phases 1-6 implemented and what landed in PRs #599 / #608 / #609 / #611 / #612 / #614 / #616.
+
+After Phases 1-6 went live on prod, Mark inspected the invite UI on the Voys tenant and pivoted three things in v0.5.0 (full prose in HISTORY row 2026-05-13). Quick diff between body and live:
+
+| Concept | Body (v0.4.0 as-shipped) | Live (v0.5.0) |
+|---|---|---|
+| `SeatType` values | `{VIEWER, CHAT, KNOWLEDGE}` | `{CHAT, KNOWLEDGE}` |
+| Invite-form account-type selector | 3 radio cards (viewer/chat/knowledge) with admin override | Read-only badge derived from Profile dropdown |
+| Invite POST payload | Carries `seat_type` field | NO `seat_type` field; server derives via `suggest_seat(role)` |
+| UX label | "Seat" / "Seat tier" | "Account type" |
+| i18n key prefix | `admin_users_seat_*`, `admin_users_field_seat`, `admin_users_col_seat` | `admin_users_account_*`, `admin_users_field_account_type`, `admin_users_col_account_type` |
+| Billing breakdown column header | "Seat tier" | "Account type" |
+| Migration that closes the gap | n/a (v0.4.0 baseline) | `f1ff304b7b0a` — narrows both CHECK constraints to `IN ('chat', 'knowledge')` |
+| Phase 5 split | Phase 5 single | Phase 5 (light) shipped + Phase 5b in [SPEC-PORTAL-MONEYBIRD-PER-SEAT-001](../SPEC-PORTAL-MONEYBIRD-PER-SEAT-001/spec.md) |
+
+The orthogonal-axes architecture (separate `seat_type` and `role` columns + `effective_features` + `PROFILE_CAPABILITIES`) is **unchanged**; only the viewer tier is gone and the invite UI no longer exposes a seat selector. Admin-support flows (`PATCH /api/admin/users/{id}` to set a non-default account type without changing role) remain available; the BE accepts `seat_type` on that endpoint. Only the invite endpoint now ignores any client-supplied `seat_type`.
+
+The body below is preserved as the historical reasoning record. When the body and the table above disagree, the table above is the source of truth.
 
 ---
 

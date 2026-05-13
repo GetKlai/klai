@@ -1,6 +1,6 @@
 import type { JSX } from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 
@@ -63,9 +63,8 @@ describe('InviteUserPage', () => {
     })
 
     // Profile is a Select dropdown (rolled back from PR #317 ProfilePicker).
-    // The seat selector below it DOES use role="radio" buttons
-    // (SPEC-PORTAL-PRICING-PER-USER-001 Phase 2) — so the radio-count
-    // is scoped to the profile-select region rather than the full form.
+    // v0.5.0 removed the per-user seat selector entirely; account type is
+    // derived from the Profile and shown as a read-only badge below.
     const select = screen.getByLabelText('Profile')
     expect(select.tagName.toLowerCase()).toBe('select')
 
@@ -96,5 +95,112 @@ describe('InviteUserPage', () => {
 
     const select = screen.getByLabelText('Profile')
     expect((select as HTMLSelectElement).value).toBe('personal')
+  })
+
+  // SPEC-PORTAL-PRICING-PER-USER-001 v0.5.0 — account type is derived from
+  // the chosen Profile and shown as a display-only badge. There is no admin
+  // override; the server runs the same suggest_seat(role) derivation
+  // regardless of what the FE sends.
+  it('renders the derived account-type badge with chat tier for the default profile', async () => {
+    apiFetchMock.mockResolvedValue({ name: 'Org', default_language: 'nl' })
+
+    const Cfg = RouteCfg as unknown as { component: () => JSX.Element }
+    render(
+      <Wrapper>
+        <Cfg.component />
+      </Wrapper>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Profile')).toBeTruthy()
+    })
+
+    // 'personal' role derives chat (€28/mo).
+    const badge = screen.getByTestId('account-type-display')
+    expect(badge.textContent).toContain('Klai Chat')
+    expect(badge.textContent).toContain('€28/mo')
+    // Hint copy is part of the read-only badge.
+    expect(badge.textContent).toContain('Derived from the chosen Profile.')
+    // No radio buttons in the badge container — it is display-only.
+    expect(badge.querySelectorAll('input[type="radio"]')).toHaveLength(0)
+  })
+
+  it('updates the account-type badge to knowledge (€68/mo) when role flips to kb_manager', async () => {
+    apiFetchMock.mockResolvedValue({ name: 'Org', default_language: 'nl' })
+
+    const Cfg = RouteCfg as unknown as { component: () => JSX.Element }
+    render(
+      <Wrapper>
+        <Cfg.component />
+      </Wrapper>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Profile')).toBeTruthy()
+    })
+
+    // Initial state: personal -> chat.
+    const badge = screen.getByTestId('account-type-display')
+    expect(badge.textContent).toContain('Klai Chat')
+    expect(badge.textContent).not.toContain('Klai Chat + Knowledge')
+    expect(badge.textContent).toContain('€28/mo')
+
+    // Flip Profile -> kb_manager (knowledge tier).
+    const select = screen.getByLabelText('Profile')
+    fireEvent.change(select, { target: { value: 'kb_manager' } })
+
+    // Badge re-derives to knowledge (€68/mo) on the same render frame.
+    expect(badge.textContent).toContain('Klai Chat + Knowledge')
+    expect(badge.textContent).toContain('€68/mo')
+  })
+
+  it('does NOT send a seat_type field in the invite payload (server derives it)', async () => {
+    apiFetchMock.mockResolvedValueOnce({ name: 'Org', default_language: 'nl' })
+    apiFetchMock.mockResolvedValueOnce(undefined) // POST /api/admin/users/invite
+
+    const Cfg = RouteCfg as unknown as { component: () => JSX.Element }
+    render(
+      <Wrapper>
+        <Cfg.component />
+      </Wrapper>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Profile')).toBeTruthy()
+    })
+
+    // Fill the minimum required fields.
+    fireEvent.change(screen.getByLabelText('First name'), {
+      target: { value: 'Test' },
+    })
+    fireEvent.change(screen.getByLabelText('Last name'), {
+      target: { value: 'User' },
+    })
+    fireEvent.change(screen.getByLabelText('Email'), {
+      target: { value: 'test@example.com' },
+    })
+
+    // Submit.
+    const submit = screen.getByText('Send')
+    fireEvent.click(submit)
+
+    await waitFor(() => {
+      expect(apiFetchMock).toHaveBeenCalledTimes(2)
+    })
+
+    // Inspect the second call (the POST).
+    const lastCall = apiFetchMock.mock.calls[1]
+    expect(lastCall?.[0]).toBe('/api/admin/users/invite')
+    const body = JSON.parse(lastCall?.[1]?.body ?? '{}')
+    // v0.5.0 contract: the FE does NOT send seat_type. Server derives it
+    // from role via suggest_seat() in seats.py — preventing client tamper.
+    expect(body).not.toHaveProperty('seat_type')
+    // Required fields ARE present.
+    expect(body).toMatchObject({
+      first_name: 'Test',
+      last_name: 'User',
+      email: 'test@example.com',
+      role: 'personal',
+    })
   })
 })

@@ -139,10 +139,16 @@ class PortalUser(Base):
     __table_args__ = (
         CheckConstraint("status IN ('active', 'suspended', 'offboarded')", name="ck_portal_users_status"),
         UniqueConstraint("zitadel_user_id", "org_id", name="uq_portal_users_zitadel_user_org"),
-        # SPEC-PORTAL-PRICING-PER-USER-001 Phase 1 — seat_type is the billing
-        # axis; role is the permissions axis. Composition lives in
-        # app/core/seats.py::effective_features / effective_capabilities.
-        CheckConstraint("seat_type IN ('viewer', 'chat', 'knowledge')", name="ck_portal_users_seat_type"),
+        # SPEC-PORTAL-PRICING-PER-USER-001 v0.5.0 — ``seat_type`` is the
+        # per-user account-type (billing tier) DERIVED from ``role`` via
+        # ``app.core.seats.suggest_seat``. Phase 1 (v0.1.0-v0.4.0)
+        # treated it as decoupled from role with an admin-facing
+        # selector; v0.5.0 collapses to role-derives-tier. The DB
+        # column + CHECK + migration f66c546c12eb stay; only the UX +
+        # invite-side handler changes. Migration f1ff304b7b0a drops the
+        # ``'viewer'`` value from the CHECK; viewer tier is gone in
+        # v0.5.0.
+        CheckConstraint("seat_type IN ('chat', 'knowledge')", name="ck_portal_users_seat_type"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -162,13 +168,13 @@ class PortalUser(Base):
         default="company",
         server_default="company::portal_user_role",
     )
-    # SPEC-PORTAL-PRICING-PER-USER-001 Phase 1: per-user billing tier.
-    # Backfilled from role at migration time (personal/company -> chat,
-    # kb_manager/group_manager/admin -> knowledge). Admin edits the value
-    # independently of role via Phase 2's seat-selector. Validation lives
-    # in the ``ck_portal_users_seat_type`` CHECK constraint above plus the
-    # Phase-1 alembic migration that backfills + sets NOT NULL.
-    seat_type: Mapped[Literal["viewer", "chat", "knowledge"]] = mapped_column(
+    # SPEC-PORTAL-PRICING-PER-USER-001 v0.5.0: per-user account type,
+    # DERIVED from ``role`` via ``app.core.seats.suggest_seat`` (no
+    # admin UI override). Personal/company -> chat, KMs/admins ->
+    # knowledge. PATCH /seat endpoint stays callable for admin-tooling
+    # escape-hatch but is no longer surfaced in the FE. CHECK
+    # constraint enforces the two-value domain at the DB layer.
+    seat_type: Mapped[Literal["chat", "knowledge"]] = mapped_column(
         String(16),
         nullable=False,
         default="chat",

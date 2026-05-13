@@ -84,10 +84,10 @@ class UserOut(BaseModel):
     first_name: str
     last_name: str
     role: Literal["personal", "company", "kb_manager", "group_manager", "admin"]
-    # SPEC-PORTAL-PRICING-PER-USER-001 Phase 2: per-user billing tier alongside
-    # the existing role (permissions axis). Surfaced so /admin/users can render
-    # the seat column without an extra round-trip.
-    seat_type: Literal["viewer", "chat", "knowledge"]
+    # SPEC-PORTAL-PRICING-PER-USER-001 v0.5.0: account-type derived from
+    # ``role`` via ``suggest_seat``. Surfaced here so /admin/users can
+    # render the account-type column without an extra round-trip.
+    seat_type: Literal["chat", "knowledge"]
     preferred_language: Literal["nl", "en"]
     status: str
     created_at: datetime
@@ -104,11 +104,14 @@ class InviteRequest(BaseModel):
     last_name: str
     role: Literal["personal", "company", "kb_manager", "group_manager", "admin"] = "company"
     preferred_language: Literal["nl", "en"] = "nl"
-    # SPEC-PORTAL-PRICING-PER-USER-001 Phase 2: admin can override the
-    # smart-default seat-tier at invite-time. None means "use
-    # ``suggest_seat(role)``" — the personal/company -> chat,
-    # kb_manager+/admin -> knowledge mapping in ``app.core.seats``.
-    seat_type: Literal["viewer", "chat", "knowledge"] | None = None
+    # SPEC-PORTAL-PRICING-PER-USER-001 v0.5.0: account-type is derived
+    # from ``role`` server-side via ``suggest_seat(role)``. The Phase 2
+    # ``seat_type`` body field (decoupled-axes admin override) is gone
+    # — the FE no longer surfaces a tier selector. PATCH /seat remains
+    # callable for admin-tooling escape-hatch but is no longer in the
+    # invite path. Old clients that still send ``seat_type`` get a
+    # pydantic ``extra='ignore'`` (default) silent drop; the server
+    # derives the canonical value regardless.
 
 
 class InviteResponse(BaseModel):
@@ -129,12 +132,15 @@ class RoleUpdateRequest(BaseModel):
 class SeatUpdateRequest(BaseModel):
     """Body for ``PATCH /api/admin/users/{zitadel_user_id}/seat``.
 
-    SPEC-PORTAL-PRICING-PER-USER-001 Phase 2. Admin changes only the
-    billing tier; role stays put. Use ``PATCH .../role`` for the
+    SPEC-PORTAL-PRICING-PER-USER-001 Phase 2 (introduced) / v0.5.0
+    (still callable, no FE surface). Admin-tooling escape-hatch for
+    force-overriding the role-derived account type. The FE no longer
+    exposes this — invite + role-change both go through
+    ``suggest_seat`` server-side. Use ``PATCH .../role`` for the
     other axis.
     """
 
-    seat_type: Literal["viewer", "chat", "knowledge"]
+    seat_type: Literal["chat", "knowledge"]
 
 
 class MessageResponse(BaseModel):
@@ -280,11 +286,15 @@ async def invite_user(
                 detail=f"Failed to assign project role: {exc}",
             ) from exc
 
-    # SPEC-PORTAL-PRICING-PER-USER-001 Phase 2: seat_type is admin-overridable
-    # at invite-time; falls back to the smart-default for the chosen role.
+    # SPEC-PORTAL-PRICING-PER-USER-001 v0.5.0: account-type is DERIVED
+    # from role server-side. The Phase 2 ``body.seat_type`` override
+    # path is gone — InviteRequest no longer carries that field, and
+    # even if a legacy client sends it pydantic drops it silently. The
+    # FE displays the derived tier as a read-only badge that updates
+    # when the Profile dropdown changes.
     from app.core.seats import suggest_seat
 
-    seat_type_value = body.seat_type if body.seat_type is not None else str(suggest_seat(body.role))
+    seat_type_value = str(suggest_seat(body.role))
 
     user_row = PortalUser(
         zitadel_user_id=zitadel_user_id,

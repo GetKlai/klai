@@ -37,19 +37,20 @@ router = APIRouter()
 
 
 class SeatBreakdownRow(BaseModel):
-    """Per-seat-type aggregation row for one billing tier."""
+    """Per-account-type aggregation row for one billing tier."""
 
-    seat_type: Literal["viewer", "chat", "knowledge"]
-    count: int = Field(..., ge=0, description="Active users on this seat tier")
+    seat_type: Literal["chat", "knowledge"]
+    count: int = Field(..., ge=0, description="Active users on this account tier")
     monthly_eur: int = Field(..., ge=0, description="count * SEAT_PRICE_MONTHLY")
 
 
 class SeatBreakdownResponse(BaseModel):
-    """Snapshot of the org's per-seat-type billing breakdown.
+    """Snapshot of the org's per-account-type billing breakdown.
 
     Always returns one row per ``SeatType`` member in stable order
-    (viewer, chat, knowledge). Rows with zero users are still returned
-    so the FE renders the full ladder without conditional logic.
+    (chat, knowledge). Rows with zero users are still returned so the
+    FE renders the full ladder without conditional logic. v0.5.0 drops
+    the viewer tier — see SPEC v0.5.0 HISTORY.
     """
 
     rows: list[SeatBreakdownRow]
@@ -62,10 +63,9 @@ class SeatBreakdownResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-# Stable ordering — viewer first, then ascending price. Keeps the panel
-# layout consistent across orgs regardless of which tiers are populated.
+# Stable ordering — ascending price. Keeps the panel layout consistent
+# across orgs regardless of which tiers are populated.
 _SEAT_ORDER: tuple[SeatType, ...] = (
-    SeatType.VIEWER,
     SeatType.CHAT,
     SeatType.KNOWLEDGE,
 )
@@ -86,11 +86,11 @@ async def billing_breakdown(
     instead, where ``valid_to IS NULL`` + ``status='active'`` carries
     the same intent.
     """
-    # Pre-seed with all three known tiers at zero so the response always
+    # Pre-seed with both known tiers at zero so the response always
     # contains a row per ``_SEAT_ORDER`` member, even when the org has no
     # users on a given tier. An unknown seat_type value cannot reach this
     # dict — the ``ck_portal_users_seat_type`` CHECK constraint enforces
-    # the three-value domain at the DB layer.
+    # the two-value domain at the DB layer (v0.5.0 dropped 'viewer').
     rows_by_seat: dict[str, int] = {seat.value: 0 for seat in _SEAT_ORDER}
 
     result = await db.execute(
@@ -194,7 +194,7 @@ async def switch_to_per_seat_billing(
     Returns HTTP 501 with a structured detail explaining the staged
     rollout. Phase 5b (a follow-up SPEC) replaces this body with the
     real mutation: cancel the current single-tier subscription, create
-    per-seat-type line-items (chat / knowledge / viewer), flip
+    per-seat-type line-items (chat / knowledge), flip
     ``portal_orgs.billing_per_seat_enabled`` to true.
 
     The endpoint exists in Phase 5 light so the FE CTA can hit a real

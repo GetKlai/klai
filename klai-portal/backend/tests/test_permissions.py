@@ -210,24 +210,6 @@ async def test_resolve_personal_on_complete_gets_kb_connectors_only() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resolve_personal_on_viewer_seat_gets_no_capabilities() -> None:
-    """SPEC-PORTAL-PRICING-PER-USER-001 Phase 4 (2026-05-12) — replaces
-    the pre-Phase-4 ``test_resolve_personal_on_free_gets_no_capabilities``.
-
-    Capability intersection moved from plan-axis to seat-axis. Free-plan
-    tenants are gone as a billing-tier signal; the equivalent "user has
-    no caps" combination is now ``personal`` role on a ``viewer`` seat —
-    viewer-seat unlocks ``chat_readonly`` / ``knowledge_readonly`` but no
-    capability in ``CAPABILITY_TO_SEAT_FEATURE`` maps to either, so the
-    intersection is empty.
-    """
-    db = _db_with_row(_row(role="personal", plan="free", seat_type="viewer"))
-    perms = await resolve_user_permissions("uid-test", db)
-    assert perms is not None
-    assert perms.effective_capabilities == frozenset()
-
-
-@pytest.mark.asyncio
 async def test_resolve_kb_manager_on_chat_seat_keeps_only_basic_connector() -> None:
     """SPEC-PORTAL-PRICING-PER-USER-001 Phase 4 — the canonical decoupled
     case from the SPEC's example matrix.
