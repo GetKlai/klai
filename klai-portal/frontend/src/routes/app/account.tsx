@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { useLocale } from '@/lib/locale'
 import * as m from '@/paraglide/messages'
-import { apiFetch } from '@/lib/apiFetch'
+import { ApiError, apiFetch } from '@/lib/apiFetch'
 
 export const Route = createFileRoute('/app/account')({
   component: AccountPage,
@@ -156,7 +156,11 @@ function AccountPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           {sarMutation.error && (
-            <p className="text-sm text-[var(--color-destructive)]">{m.account_sar_error()}</p>
+            <p className="text-sm text-[var(--color-destructive)]">
+              {sarMutation.error instanceof ApiError && sarMutation.error.status === 429
+                ? m.account_sar_rate_limited()
+                : m.account_sar_error()}
+            </p>
           )}
           <Button
             onClick={() => sarMutation.mutate()}

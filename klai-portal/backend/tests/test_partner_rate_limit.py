@@ -34,12 +34,23 @@ def mock_redis():
             store[key].append((score, member))
         return 1
 
+    async def zrange(key, start, end, withscores=False):
+        items = sorted(store.get(key, []), key=lambda item: item[0])
+        if end == -1:
+            selected = items[start:]
+        else:
+            selected = items[start : end + 1]
+        if withscores:
+            return [(member, score) for score, member in selected]
+        return [member for _, member in selected]
+
     async def expire(key, seconds):
         return True
 
     redis.zremrangebyscore = AsyncMock(side_effect=zremrangebyscore)
     redis.zcard = AsyncMock(side_effect=zcard)
     redis.zadd = AsyncMock(side_effect=zadd)
+    redis.zrange = AsyncMock(side_effect=zrange)
     redis.expire = AsyncMock(side_effect=expire)
     redis._store = store  # expose for test manipulation
 
