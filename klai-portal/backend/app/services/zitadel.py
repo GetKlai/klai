@@ -302,10 +302,13 @@ class ZitadelClient:
         resp.raise_for_status()
 
     async def verify_user_email(self, org_id: str, user_id: str, code: str) -> None:
-        """Verify a user's email address using the code from the verification email."""
+        """Verify a user's email address using a v2 email verification code.
+
+        ``org_id`` is kept for the public method contract and legacy callers,
+        but v2 ``VerifyEmail`` is user-scoped and does not need an org header.
+        """
         resp = await self._http.post(
-            f"/management/v1/users/{user_id}/email/_verify",
-            headers={"x-zitadel-orgid": org_id},
+            f"/v2/users/{user_id}/email/verify",
             json={"verificationCode": code},
         )
         resp.raise_for_status()
