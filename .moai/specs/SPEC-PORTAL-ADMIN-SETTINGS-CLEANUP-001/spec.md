@@ -1,7 +1,7 @@
 ---
 id: SPEC-PORTAL-ADMIN-SETTINGS-CLEANUP-001
 version: 0.2.0
-status: implemented
+status: done
 completed: 2026-05-13
 created: 2026-05-13
 author: Mark Vletter

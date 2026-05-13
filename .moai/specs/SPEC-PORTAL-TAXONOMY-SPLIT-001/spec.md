@@ -1,9 +1,10 @@
 ---
 id: SPEC-PORTAL-TAXONOMY-SPLIT-001
 version: 0.2.0
-status: ready
+status: done
 created: 2026-05-13
 updated: 2026-05-13
+completed: 2026-05-13
 author: Mark Vletter
 priority: medium
 parent: SPEC-PORTAL-TAXONOMY-EXTRACT-001 (prerequisite — done; TaxonomyTab lives in `_components/TaxonomyTab.tsx`)
