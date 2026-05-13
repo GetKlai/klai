@@ -9,15 +9,18 @@ import logging
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+from bson import ObjectId
+from bson.errors import InvalidId
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
+from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.bearer import bearer
 from app.core.config import settings
-from app.core.database import get_db, set_tenant
+from app.core.database import AsyncSessionLocal, get_db, set_tenant
 from app.core.permissions import resolve_user_permissions
 from app.models.audit import PortalAuditLog
 from app.models.events import ProductEvent
@@ -25,11 +28,18 @@ from app.models.groups import PortalGroup, PortalGroupMembership
 from app.models.knowledge_bases import PortalKnowledgeBase, PortalUserKBAccess
 from app.models.meetings import VexaMeeting
 from app.models.portal import PortalOrg, PortalUser
+from app.services import twenty as twenty_service
+from app.services.partner_rate_limit import check_rate_limit
+from app.services.redis_client import get_redis_pool
 from app.services.zitadel import zitadel
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["auth"])
+
+_SAR_EXPORT_LIMIT_PER_HOUR = 5
+_SAR_EXPORT_WINDOW_SECONDS = 3600
+_SAR_EXPORT_RL_KEY_PREFIX = "sar_export:"
 
 
 class LanguageUpdate(BaseModel):
@@ -249,6 +259,19 @@ class SarMeeting(BaseModel):
     summary_json: dict[str, Any] | None
 
 
+class SarLibreChatMessage(BaseModel):
+    role: str
+    text: str | None
+    created_at: datetime | None
+
+
+class SarLibreChatConversation(BaseModel):
+    title: str | None
+    created_at: datetime | None
+    updated_at: datetime | None
+    messages: list[SarLibreChatMessage]
+
+
 class SarKlaiPortal(BaseModel):
     identity: SarIdentity
     account: SarAccount
@@ -257,6 +280,7 @@ class SarKlaiPortal(BaseModel):
     audit_events: list[SarAuditEvent]
     usage_events: list[SarUsageEvent]
     meetings: list[SarMeeting]
+    librechat_conversations: list[SarLibreChatConversation] | None
 
 
 class SarMoneybird(BaseModel):
@@ -269,8 +293,16 @@ class SarLibreChat(BaseModel):
     librechat_user_id: str | None
 
 
+class SarTwentyCRMRecord(BaseModel):
+    first_name: str | None
+    last_name: str | None
+    email: str | None
+    company_name: str | None
+
+
 class SarTwentyCRM(BaseModel):
     note: str
+    records: list[SarTwentyCRMRecord] | None
 
 
 class SarExternalSystems(BaseModel):
@@ -284,6 +316,161 @@ class SarExportResponse(BaseModel):
     request_user_id: str
     klai_portal: SarKlaiPortal
     external_systems: SarExternalSystems
+
+
+def _coerce_mongo_datetime(value: Any) -> datetime | None:
+    return value if isinstance(value, datetime) else None
+
+
+def _message_role(message: dict[str, Any]) -> str:
+    raw_role = message.get("role")
+    if isinstance(raw_role, str) and raw_role:
+        return raw_role
+    if message.get("isCreatedByUser") is True:
+        return "user"
+    sender = message.get("sender")
+    return sender if isinstance(sender, str) and sender else "assistant"
+
+
+def _message_text(message: dict[str, Any]) -> str | None:
+    text = message.get("text")
+    if isinstance(text, str):
+        return text
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    return None
+
+
+async def _load_librechat_conversations(
+    org: PortalOrg,
+    portal_user: PortalUser,
+) -> list[SarLibreChatConversation] | None:
+    librechat_user_id = portal_user.librechat_user_id
+    if not librechat_user_id:
+        return []
+    if not settings.librechat_mongo_root_uri or not org.librechat_container:
+        logger.warning(
+            "SAR: LibreChat export unavailable for user %s; missing Mongo URI or container",
+            portal_user.zitadel_user_id,
+        )
+        return None
+
+    try:
+        user_oid = ObjectId(librechat_user_id)
+    except InvalidId:
+        logger.warning("SAR: invalid LibreChat user id %s for user %s", librechat_user_id, portal_user.zitadel_user_id)
+        return None
+
+    mongo_client: AsyncIOMotorClient | None = None
+    try:
+        mongo_client = AsyncIOMotorClient(settings.librechat_mongo_root_uri)
+        database = mongo_client[org.librechat_container]
+        conversation_rows = await (
+            database["conversations"].find({"user": user_oid}).sort("updatedAt", -1).to_list(length=None)
+        )
+
+        conversations: list[SarLibreChatConversation] = []
+        for conversation in conversation_rows:
+            conversation_id = conversation.get("conversationId")
+            message_filter: dict[str, Any] = {"user": user_oid}
+            if conversation_id is not None:
+                message_filter["conversationId"] = conversation_id
+            message_rows = await database["messages"].find(message_filter).sort("createdAt", 1).to_list(length=None)
+
+            conversations.append(
+                SarLibreChatConversation(
+                    title=conversation.get("title") if isinstance(conversation.get("title"), str) else None,
+                    created_at=_coerce_mongo_datetime(conversation.get("createdAt")),
+                    updated_at=_coerce_mongo_datetime(conversation.get("updatedAt")),
+                    messages=[
+                        SarLibreChatMessage(
+                            role=_message_role(message),
+                            text=_message_text(message),
+                            created_at=_coerce_mongo_datetime(message.get("createdAt")),
+                        )
+                        for message in message_rows
+                        if isinstance(message, dict)
+                    ],
+                )
+            )
+        return conversations
+    except Exception as exc:
+        logger.warning(
+            "SAR: LibreChat conversation export failed for user %s: %s",
+            portal_user.zitadel_user_id,
+            exc,
+            exc_info=True,
+        )
+        return None
+    finally:
+        if mongo_client is not None:
+            mongo_client.close()
+
+
+async def _load_twenty_records(email: str | None) -> list[SarTwentyCRMRecord] | None:
+    if not email:
+        return []
+    try:
+        records = await twenty_service.list_people_by_email(email)
+    except Exception as exc:
+        logger.warning("SAR: Twenty CRM lookup failed for %s: %s", email, exc, exc_info=True)
+        return None
+    return [
+        SarTwentyCRMRecord(
+            first_name=record.first_name,
+            last_name=record.last_name,
+            email=record.email,
+            company_name=record.company_name,
+        )
+        for record in records
+    ]
+
+
+async def _write_sar_audit(org_id: int, user_id: str, action: Literal["sar.exported", "sar.rate_limited"]) -> None:
+    try:
+        async with AsyncSessionLocal() as session:
+            session.add(
+                PortalAuditLog(
+                    org_id=org_id,
+                    actor_user_id=user_id,
+                    action=action,
+                    resource_type="self",
+                    resource_id=user_id,
+                )
+            )
+            await session.commit()
+    except Exception:
+        logger.exception("SAR: audit write failed for action %s user %s", action, user_id)
+
+
+async def _enforce_sar_rate_limit(user_id: str, org_id: int) -> None:
+    try:
+        redis_pool = await get_redis_pool()
+        if redis_pool is None:
+            raise RuntimeError("redis_pool_none")
+        allowed, retry_after = await check_rate_limit(
+            redis_pool,
+            f"{_SAR_EXPORT_RL_KEY_PREFIX}{user_id}",
+            _SAR_EXPORT_LIMIT_PER_HOUR,
+            window_seconds=_SAR_EXPORT_WINDOW_SECONDS,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("SAR: rate limit backend unavailable for user %s: %s", user_id, exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="SAR export rate limit backend unavailable",
+        ) from exc
+
+    if not allowed:
+        await _write_sar_audit(org_id, user_id, "sar.rate_limited")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="SAR export rate limit exceeded",
+            headers={"Retry-After": str(retry_after)},
+        )
 
 
 @router.patch("/me/language", response_model=MessageResponse)
@@ -358,6 +545,8 @@ async def sar_export(
     # product_events, vexa_meetings). Set tenant context once here so the
     # PostgreSQL fail-loud policy lets them through.
     await set_tenant(db, org.id)
+
+    await _enforce_sar_rate_limit(user_id, org.id)
 
     # 2. Zitadel identity (live fetch - source of truth for name/email)
     zitadel_user_data: dict[str, Any] = {}
@@ -491,7 +680,19 @@ async def sar_export(
         for mtg in meeting_rows
     ]
 
-    # 9. External systems - data not held in the portal DB
+    # 9. External systems - graceful degradation mirrors the Zitadel fallback above.
+    librechat_conversations = await _load_librechat_conversations(org, portal_user)
+    twenty_records = await _load_twenty_records(portal_user.email)
+
+    librechat_note = (
+        "AI-gesprekken staan nu in de klai_portal.librechat_conversations sectie. "
+        "Het LibreChat user-ID blijft opgenomen voor traceability."
+    )
+    twenty_note = (
+        "Matchende CRM-records op basis van uw bevestigde portal e-mailadres staan in records."
+        if twenty_records is not None
+        else "Twenty CRM kon niet worden bevraagd; neem contact op met privacy@getklai.com voor de handmatige route."
+    )
     external_systems = SarExternalSystems(
         moneybird=SarMoneybird(
             note=(
@@ -502,21 +703,16 @@ async def sar_export(
             contact_id=org.moneybird_contact_id,
         ),
         librechat=SarLibreChat(
-            note=(
-                "AI-gespreksgeschiedenis wordt bewaard in de LibreChat omgeving van uw organisatie. "
-                "Neem contact op met uw organisatiebeheerder of stuur een verzoek naar privacy@getklai.com."
-            ),
+            note=librechat_note,
             librechat_user_id=portal_user.librechat_user_id,
         ),
         twenty_crm=SarTwentyCRM(
-            note=(
-                "Klai verwerkt mogelijk de volgende persoonsgegevens in haar interne CRM: "
-                "voornaam, achternaam, e-mailadres en bedrijfsnaam. "
-                "Deze gegevens vallen buiten de self-service export. "
-                "Neem contact op met privacy@getklai.com voor een volledig overzicht."
-            ),
+            note=twenty_note,
+            records=twenty_records,
         ),
     )
+
+    await _write_sar_audit(org.id, user_id, "sar.exported")
 
     return SarExportResponse(
         generated_at=datetime.now(tz=UTC),
@@ -529,6 +725,7 @@ async def sar_export(
             audit_events=audit_events,
             usage_events=usage_events,
             meetings=meetings,
+            librechat_conversations=librechat_conversations,
         ),
         external_systems=external_systems,
     )

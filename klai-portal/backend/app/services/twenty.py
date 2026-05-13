@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 import structlog
@@ -62,6 +63,16 @@ class WaitlistDeal:
     name: str  # the recipient's first name (best-effort)
     email: str
     company: str
+
+
+@dataclass(frozen=True)
+class TwentyPersonRecord:
+    """Privacy-safe subset of a Twenty person record for SAR exports."""
+
+    first_name: str | None
+    last_name: str | None
+    email: str | None
+    company_name: str | None
 
 
 def is_configured() -> bool:
@@ -152,6 +163,79 @@ async def get_company(client: httpx.AsyncClient, company_id: str) -> dict[str, A
     if isinstance(body, dict):
         return body.get("company") if isinstance(body.get("company"), dict) else body
     return None
+
+
+def _extract_person_email(person: dict[str, Any]) -> str | None:
+    emails = person.get("emails")
+    if isinstance(emails, dict):
+        email = emails.get("primaryEmail") or emails.get("primary")
+        if isinstance(email, str) and email.strip():
+            return email.strip()
+    email = person.get("email")
+    if isinstance(email, str) and email.strip():
+        return email.strip()
+    return None
+
+
+async def list_people_by_email(email: str) -> list[TwentyPersonRecord]:
+    """Return SAR-safe Twenty person records matching the confirmed portal email."""
+    email = email.strip()
+    if not email:
+        return []
+
+    async with _client() as client:
+        path = f"/rest/people?filter=emails.primaryEmail[eq]:{quote(email)}&limit=100"
+        data = await _get_json(client, path)
+        if not isinstance(data, dict):
+            return []
+
+        body = data.get("data")
+        if isinstance(body, dict):
+            items = body.get("people", [])
+        elif isinstance(body, list):
+            items = body
+        else:
+            items = []
+
+        records: list[TwentyPersonRecord] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+
+            matched_email = _extract_person_email(item)
+            if matched_email is None or matched_email.casefold() != email.casefold():
+                continue
+
+            raw_name = item.get("name")
+            name_obj: dict[str, Any] = raw_name if isinstance(raw_name, dict) else {}
+            first_name = name_obj.get("firstName") or item.get("firstName")
+            last_name = name_obj.get("lastName") or item.get("lastName")
+
+            company_name: str | None = None
+            company = item.get("company")
+            if isinstance(company, dict):
+                raw_company_name = company.get("name")
+                if isinstance(raw_company_name, str) and raw_company_name.strip():
+                    company_name = raw_company_name.strip()
+            if company_name is None:
+                company_id = item.get("companyId")
+                if isinstance(company_id, str) and company_id:
+                    company_row = await get_company(client, company_id)
+                    if isinstance(company_row, dict):
+                        raw_company_name = company_row.get("name")
+                        if isinstance(raw_company_name, str) and raw_company_name.strip():
+                            company_name = raw_company_name.strip()
+
+            records.append(
+                TwentyPersonRecord(
+                    first_name=first_name.strip() if isinstance(first_name, str) and first_name.strip() else None,
+                    last_name=last_name.strip() if isinstance(last_name, str) and last_name.strip() else None,
+                    email=matched_email,
+                    company_name=company_name,
+                )
+            )
+
+        return records
 
 
 async def resolve_deal(opportunity: dict[str, Any]) -> WaitlistDeal | None:
