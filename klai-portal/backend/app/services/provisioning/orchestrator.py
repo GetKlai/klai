@@ -34,7 +34,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal, pin_session
 from app.core.system_groups import create_system_groups
 from app.models.portal import PortalOrg, PortalUser
-from app.services.provisioning.generators import _generate_librechat_env, _slugify_unique
+from app.services.provisioning.generators import _generate_librechat_env
 from app.services.provisioning.infrastructure import (
     _caddy_lock,
     _create_mongodb_tenant_user,
@@ -254,12 +254,22 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
         )
         return
 
-    # Generate a slug, filtering out soft-deleted orgs so a retry after
-    # `failed_rollback_complete` can reclaim the original slug (SPEC-PROV-001
-    # M1 partial unique index `ix_portal_orgs_slug_active`).
-    slugs_result = await db.execute(select(PortalOrg.slug).where(PortalOrg.deleted_at.is_(None)))
-    existing_slugs = {row[0] for row in slugs_result.fetchall() if row[0]}
-    slug = _slugify_unique(org.name, existing_slugs)
+    # SPEC-INFRA-TENANT-DELETE-003 Bug 2 — slug is the DB-committed value
+    # written by signup.py:_to_slug(name, zitadel_org_id), NOT regenerated
+    # here. Previously this re-ran `_slugify_unique(org.name, existing_slugs)`
+    # which produced a DIFFERENT slug for the same tenant: signup committed
+    # e.g. `e2e-37271947` (with zitadel-id suffix for uniqueness), then
+    # the orchestrator regenerated `e2e` (no suffix needed, since the
+    # signup-committed `e2e-37271947` did not collide). Resource locators
+    # (Zitadel OIDC app name, LibreChat container, Caddy file, MongoDB,
+    # Meilisearch index, LiteLLM team alias) all use this orchestrator slug
+    # → they get `e2e` namespaces. But deprovisioning reads `org.slug` from
+    # the DB (`e2e-37271947`) and queries different namespaces, leaving the
+    # actual provisioned resources orphaned. Re-signup with the same
+    # company-name then collides on the orchestrator's regenerated `e2e`.
+    # Single source of truth: `org.slug`. signup.py already enforces
+    # uniqueness via the zitadel-id suffix.
+    slug = org.slug
 
     # Capture mcp_servers now — ensure_default_knowledge_bases commits the
     # session, which expires all ORM attributes. Accessing org.mcp_servers
