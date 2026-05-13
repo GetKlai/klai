@@ -210,7 +210,7 @@ export async function generateMetadata({
     if (raw) {
       const { frontmatter } = parsePage(raw);
       return {
-        title: `${frontmatter.title ?? kbSlug} — ${kb.name}`,
+        title: `${frontmatter.title ?? kbSlug} · ${kb.name}`,
         description: frontmatter.description,
       };
     }
