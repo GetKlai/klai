@@ -134,15 +134,28 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
     def _extract_config(connector: Any) -> dict[str, Any]:
         """Normalise config dict with safe defaults.
 
-        ``folder_id`` is optional and scopes the sync to a single OneDrive /
-        SharePoint folder (set via the post-OAuth folder picker in the
-        portal). When unset, the adapter syncs the whole drive root.
+        Scoping options, in priority order (first match wins):
+
+        1. ``item_ids: list[str]`` — pinned-item mode. Sync ONLY those
+           specific driveItems by id, no delta endpoint involved. Used
+           when the user multi-selects files in the picker.
+        2. ``folder_id: str`` — subtree mode. Sync everything under that
+           folder via ``/items/{id}/delta``.
+        3. Neither set — whole-drive mode via ``/root/delta``.
+
+        ``drive_id`` / ``site_url`` only resolve WHICH drive to act on;
+        they compose with any of the three scoping modes above.
         """
         config: dict[str, Any] = connector.config or {}
+        raw_item_ids = config.get("item_ids") or []
+        if not isinstance(raw_item_ids, list):
+            raw_item_ids = []
+        item_ids: list[str] = [str(i).strip() for i in raw_item_ids if isinstance(i, (str, int)) and str(i).strip()]
         return {
             "drive_id": (config.get("drive_id") or "").strip() or None,
             "site_url": (config.get("site_url") or "").strip() or None,
             "folder_id": (config.get("folder_id") or "").strip() or None,
+            "item_ids": item_ids,
         }
 
     # -- OAuth refresh (SPEC-KB-MS-DOCS-001 R2.1) -----------------------------
@@ -225,8 +238,17 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
             (sender_email, mentioned_emails) is stored in ``_ref_metadata``.
         """
         connector_id = str(connector.id)
-        delta_link = (cursor_context or {}).get("delta_link")
+        cfg = self._extract_config(connector)
 
+        # Pinned-item mode: skip delta entirely, fetch each id directly.
+        # Trades off incremental efficiency for absolute precision —
+        # appropriate when the user multi-selected specific files.
+        if cfg["item_ids"]:
+            refs = await self._list_pinned_items(connector, cfg["item_ids"])
+            logger.info("Listed %d MS pinned items (connector=%s)", len(refs), connector_id)
+            return refs
+
+        delta_link = (cursor_context or {}).get("delta_link")
         if delta_link:
             start_url: str = delta_link
             logger.info(
@@ -260,6 +282,43 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
             connector_id,
             delta_link is not None,
         )
+        return refs
+
+    async def _list_pinned_items(self, connector: Any, item_ids: list[str]) -> list[DocumentRef]:
+        """Fetch a set of specific driveItems by id, ignore delta.
+
+        Used when ``config.item_ids`` is set (the user multi-selected
+        individual files in the picker). Each sync re-fetches all pinned
+        items — there is no incremental cursor in this mode. Items that
+        404 (file deleted) are silently skipped.
+        """
+        cfg = self._extract_config(connector)
+        # Resolve the drive-prefix once; the actual item resolution by id
+        # mirrors ``fetch_document``.
+        if cfg["drive_id"]:
+            drive_prefix = f"{_GRAPH_BASE}/drives/{quote(cfg['drive_id'], safe='!')}"
+        elif cfg["site_url"]:
+            site_id = await self._resolve_site_id(connector, cfg["site_url"])
+            drive_prefix = f"{_GRAPH_BASE}/sites/{site_id}/drive"
+        else:
+            drive_prefix = f"{_GRAPH_BASE}/me/drive"
+
+        refs: list[DocumentRef] = []
+        for raw_id in item_ids:
+            item_id = quote(raw_id, safe="")
+            url = f"{drive_prefix}/items/{item_id}"
+            try:
+                item = await self._graph_get_json(url, connector=connector)
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 404:
+                    logger.warning("Pinned MS item not found, skipping (id=%s)", raw_id)
+                    continue
+                raise
+            ref = self._item_to_document_ref(item)
+            if ref is None:
+                continue
+            self._ref_metadata[ref.ref] = self._extract_metadata(item)
+            refs.append(ref)
         return refs
 
     async def fetch_document(self, ref: DocumentRef, connector: Any) -> bytes:
@@ -300,7 +359,15 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
         ``/root/delta`` endpoint once to obtain one. This mirrors
         ``GoogleDriveAdapter.get_cursor_state`` which bootstraps via
         ``startPageToken``.
+
+        Pinned-item mode (``config.item_ids`` set) has no delta cursor —
+        each sync fetches the same N items unconditionally. Return ``{}``
+        so the sync engine doesn't persist a stale deltaLink.
         """
+        cfg = self._extract_config(connector)
+        if cfg["item_ids"]:
+            return {}
+
         connector_id = str(connector.id)
         cached = self._latest_delta_link.get(connector_id)
         if cached:

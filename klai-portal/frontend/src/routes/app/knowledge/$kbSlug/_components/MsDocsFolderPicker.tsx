@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, File, Folder, FolderOpen, Loader2 } from 'lucide-react'
 import { apiFetch } from '@/lib/apiFetch'
@@ -13,8 +13,23 @@ interface MsItem {
 
 interface FoldersResponse {
   // Endpoint name kept as ``folders`` for backwards-compat; payload
-  // includes files too (kind: 'file', not selectable in v1).
+  // includes files too (kind: 'file').
   folders: MsItem[]
+}
+
+/**
+ * Picker can return ONE of three scope shapes:
+ *   1. ``{ folderId: '', fileIds: [] }`` — whole drive
+ *   2. ``{ folderId: <id>, fileIds: [] }`` — single folder subtree
+ *   3. ``{ folderId: '', fileIds: [...] }`` — specific files
+ *
+ * Folder + files are mutually exclusive: clicking a folder clears file
+ * selection, clicking a file clears folder selection.
+ */
+export interface MsDocsPickerResult {
+  folderId: string
+  folderName: string
+  fileIds: string[]
 }
 
 interface NodeProps {
@@ -22,15 +37,28 @@ interface NodeProps {
   connectorId: string
   item: MsItem
   depth: number
-  selectedId: string
-  onSelect: (id: string) => void
+  selectedFolderId: string
+  selectedFileIds: Set<string>
+  onSelectFolder: (id: string) => void
+  onToggleFile: (id: string) => void
   onSeeName: (id: string, name: string) => void
 }
 
-function ItemNode({ kbSlug, connectorId, item, depth, selectedId, onSelect, onSeeName }: NodeProps) {
+function ItemNode({
+  kbSlug,
+  connectorId,
+  item,
+  depth,
+  selectedFolderId,
+  selectedFileIds,
+  onSelectFolder,
+  onToggleFile,
+  onSeeName,
+}: NodeProps) {
   const isFolder = item.kind === 'folder'
   const [expanded, setExpanded] = useState(false)
-  const isSelected = isFolder && selectedId === item.id
+  const isFolderSelected = isFolder && selectedFolderId === item.id
+  const isFileSelected = !isFolder && selectedFileIds.has(item.id)
 
   // Lazy load children only after the user expands this folder.
   // We always allow expansion — Graph's ``childCount`` is unreliable for
@@ -62,12 +90,11 @@ function ItemNode({ kbSlug, connectorId, item, depth, selectedId, onSelect, onSe
     <div>
       <div
         className={[
-          'group flex items-center gap-1 rounded-md px-1 py-1 transition-colors',
-          isFolder ? 'cursor-pointer' : 'cursor-default',
-          isSelected ? 'bg-gray-100' : isFolder ? 'hover:bg-gray-50' : '',
+          'group flex items-center gap-1 rounded-md px-1 py-1 transition-colors cursor-pointer',
+          isFolderSelected || isFileSelected ? 'bg-gray-100' : 'hover:bg-gray-50',
         ].join(' ')}
         style={{ paddingLeft: `${depth * 16 + 4}px` }}
-        onClick={() => isFolder && onSelect(item.id)}
+        onClick={() => (isFolder ? onSelectFolder(item.id) : onToggleFile(item.id))}
       >
         {/* Chevron: folders only, always enabled (lazy fetch verifies). */}
         {isFolder ? (
@@ -83,7 +110,17 @@ function ItemNode({ kbSlug, connectorId, item, depth, selectedId, onSelect, onSe
             {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
           </button>
         ) : (
-          <span className="inline-flex h-5 w-5" />
+          // Checkbox for files. Native input so keyboard / accessibility
+          // are free — visual state mirrors selectedFileIds.
+          <input
+            type="checkbox"
+            checked={isFileSelected}
+            readOnly
+            tabIndex={-1}
+            aria-label={`Selecteer ${item.name}`}
+            className="h-3.5 w-3.5 accent-gray-900 ml-1 mr-1"
+            onClick={(e) => e.stopPropagation()}
+          />
         )}
         {isFolder ? (
           expanded ? (
@@ -92,12 +129,12 @@ function ItemNode({ kbSlug, connectorId, item, depth, selectedId, onSelect, onSe
             <Folder className="h-3.5 w-3.5 text-gray-400 shrink-0" />
           )
         ) : (
-          <File className="h-3.5 w-3.5 text-gray-300 shrink-0" />
+          <File className="h-3.5 w-3.5 text-gray-400 shrink-0" />
         )}
         <span
           className={[
             'text-sm truncate flex-1',
-            isFolder ? 'text-gray-900' : 'text-gray-400',
+            isFolder ? 'text-gray-900' : isFileSelected ? 'text-gray-900' : 'text-gray-700',
           ].join(' ')}
         >
           {item.name}
@@ -109,13 +146,19 @@ function ItemNode({ kbSlug, connectorId, item, depth, selectedId, onSelect, onSe
       {expanded && isFolder && (
         <div>
           {isLoading && (
-            <div className="flex items-center gap-2 text-xs text-gray-400 py-1" style={{ paddingLeft: `${(depth + 1) * 16 + 4}px` }}>
+            <div
+              className="flex items-center gap-2 text-xs text-gray-400 py-1"
+              style={{ paddingLeft: `${(depth + 1) * 16 + 4}px` }}
+            >
               <Loader2 className="h-3 w-3 animate-spin" />
               Laden…
             </div>
           )}
           {data && data.folders.length === 0 && !isLoading && (
-            <div className="text-xs text-gray-400 italic py-1" style={{ paddingLeft: `${(depth + 1) * 16 + 4}px` }}>
+            <div
+              className="text-xs text-gray-400 italic py-1"
+              style={{ paddingLeft: `${(depth + 1) * 16 + 4}px` }}
+            >
               Leeg
             </div>
           )}
@@ -126,8 +169,10 @@ function ItemNode({ kbSlug, connectorId, item, depth, selectedId, onSelect, onSe
               connectorId={connectorId}
               item={child}
               depth={depth + 1}
-              selectedId={selectedId}
-              onSelect={onSelect}
+              selectedFolderId={selectedFolderId}
+              selectedFileIds={selectedFileIds}
+              onSelectFolder={onSelectFolder}
+              onToggleFile={onToggleFile}
               onSeeName={onSeeName}
             />
           ))}
@@ -141,34 +186,59 @@ interface PickerProps {
   kbSlug: string
   connectorId: string
   initialFolderId: string
-  /**
-   * Called with the chosen folder id + name. Empty id (and empty name)
-   * means "whole drive — clear the filter".
-   */
-  onConfirm: (folderId: string, folderName: string) => void
+  initialFileIds: string[]
+  onConfirm: (result: MsDocsPickerResult) => void
   onCancel: () => void
 }
 
 /**
- * Lazy folder-tree picker for Microsoft 365 connectors.
+ * Picker for Microsoft 365 connectors — pick a folder OR specific files.
  *
- * Hits `/api/app/knowledge-bases/{kb}/connectors/{id}/ms-docs/folders` —
- * top-level on mount, deeper levels per-expand. The user can select any
- * folder (including a nested one) or pick "Whole drive" to clear the
- * filter and sync the entire OneDrive / SharePoint library root.
+ * The two modes are mutually exclusive: clicking a folder clears any
+ * checked files, ticking a file clears the folder selection. "Hele drive"
+ * means neither — sync everything.
  */
-export function MsDocsFolderPicker({ kbSlug, connectorId, initialFolderId, onConfirm, onCancel }: PickerProps) {
-  const [selectedId, setSelectedId] = useState<string>(initialFolderId)
-  // Track the name of every folder we've rendered so the parent can show
-  // the chosen folder name without an extra Graph call. Keyed by id.
+export function MsDocsFolderPicker({
+  kbSlug,
+  connectorId,
+  initialFolderId,
+  initialFileIds,
+  onConfirm,
+  onCancel,
+}: PickerProps) {
+  const [selectedFolderId, setSelectedFolderId] = useState<string>(initialFolderId)
+  const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(
+    () => new Set(initialFileIds),
+  )
   const [nameById, setNameById] = useState<Record<string, string>>({})
 
   useEffect(() => {
-    setSelectedId(initialFolderId)
-  }, [initialFolderId])
+    setSelectedFolderId(initialFolderId)
+    setSelectedFileIds(new Set(initialFileIds))
+  }, [initialFolderId, initialFileIds])
 
   function rememberName(id: string, name: string) {
     setNameById((prev) => (prev[id] === name ? prev : { ...prev, [id]: name }))
+  }
+
+  function selectFolder(id: string) {
+    setSelectedFolderId(id)
+    setSelectedFileIds(new Set()) // mutually exclusive
+  }
+
+  function toggleFile(id: string) {
+    setSelectedFolderId('') // mutually exclusive
+    setSelectedFileIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function selectWholeDrive() {
+    setSelectedFolderId('')
+    setSelectedFileIds(new Set())
   }
 
   const { data, isLoading, error } = useQuery<FoldersResponse>({
@@ -179,13 +249,22 @@ export function MsDocsFolderPicker({ kbSlug, connectorId, initialFolderId, onCon
       ),
   })
 
+  const fileCount = selectedFileIds.size
+  const summary = useMemo(() => {
+    if (selectedFolderId) return `Map: ${nameById[selectedFolderId] ?? 'geselecteerd'}`
+    if (fileCount > 0) return `${fileCount} bestand${fileCount === 1 ? '' : 'en'} geselecteerd`
+    return 'Hele drive (alles)'
+  }, [selectedFolderId, fileCount, nameById])
+
+  const isWholeDriveSelected = selectedFolderId === '' && fileCount === 0
+
   return (
     <div className="rounded-lg border border-gray-200 bg-white">
       <div className="border-b border-gray-200 px-3 py-2">
-        <p className="text-sm font-medium text-gray-900">Kies een map om te syncen</p>
+        <p className="text-sm font-medium text-gray-900">Kies wat je wilt syncen</p>
         <p className="text-xs text-gray-400 mt-0.5">
-          Klik op &#9656; om uit te klappen. Bestanden zie je grijs — die worden meegenomen
-          als je de bovenliggende map kiest. Alleen mappen zijn selecteerbaar.
+          Klik op &#9656; om een map uit te klappen. Klik op een map om de hele map
+          te syncen, of vink losse bestanden aan voor alleen die bestanden.
         </p>
       </div>
 
@@ -193,9 +272,9 @@ export function MsDocsFolderPicker({ kbSlug, connectorId, initialFolderId, onCon
         <div
           className={[
             'flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer',
-            selectedId === '' ? 'bg-gray-100' : 'hover:bg-gray-50',
+            isWholeDriveSelected ? 'bg-gray-100' : 'hover:bg-gray-50',
           ].join(' ')}
-          onClick={() => setSelectedId('')}
+          onClick={selectWholeDrive}
         >
           <Folder className="h-3.5 w-3.5 text-gray-400" />
           <span className="text-sm text-gray-900">Hele drive (alles)</span>
@@ -222,24 +301,35 @@ export function MsDocsFolderPicker({ kbSlug, connectorId, initialFolderId, onCon
             connectorId={connectorId}
             item={item}
             depth={0}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
+            selectedFolderId={selectedFolderId}
+            selectedFileIds={selectedFileIds}
+            onSelectFolder={selectFolder}
+            onToggleFile={toggleFile}
             onSeeName={rememberName}
           />
         ))}
       </div>
 
-      <div className="flex items-center justify-end gap-2 border-t border-gray-200 px-3 py-2">
-        <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
-          Annuleren
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          onClick={() => onConfirm(selectedId, selectedId ? (nameById[selectedId] ?? '') : '')}
-        >
-          Gebruik deze keuze
-        </Button>
+      <div className="flex items-center justify-between gap-2 border-t border-gray-200 px-3 py-2">
+        <p className="text-xs text-gray-400 truncate">{summary}</p>
+        <div className="flex items-center gap-2 shrink-0">
+          <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
+            Annuleren
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            onClick={() =>
+              onConfirm({
+                folderId: selectedFolderId,
+                folderName: selectedFolderId ? (nameById[selectedFolderId] ?? '') : '',
+                fileIds: Array.from(selectedFileIds),
+              })
+            }
+          >
+            Gebruik deze keuze
+          </Button>
+        </div>
       </div>
     </div>
   )
