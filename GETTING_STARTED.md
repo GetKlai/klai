@@ -66,13 +66,15 @@ For core developers with access to the production Zitadel instance, two addition
 
 **Port 5434 in use**: Another PostgreSQL is running. Check with `lsof -nP -iTCP:5434 -sTCP:LISTEN`.
 
-**Backend crashes with AES-256 error**: The encryption keys in `.env` are placeholders. Generate real ones:
+**Backend crashes with AES-256 error**: The encryption keys weren't generated. Re-run setup:
 ```bash
-cd klai-portal/backend
-# Replace PORTAL_SECRETS_KEY and ENCRYPTION_KEY in .env:
-python -c "import secrets; print(secrets.token_hex(32))"
-# Replace SSO_COOKIE_KEY in .env:
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+rm klai-portal/backend/.env
+make setup
+```
+This regenerates `.env` with fresh encryption keys. If you need to generate keys manually:
+```bash
+python3 -c "import secrets; print(secrets.token_hex(32))"          # PORTAL_SECRETS_KEY, ENCRYPTION_KEY
+python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"  # SSO_COOKIE_KEY
 ```
 
 **Database migration fails**: Reset everything: `make dev-reset && make dev-up && make migrate`.
