@@ -2319,6 +2319,7 @@ async def idp_signup_callback(
             "session_id": session_id,
             "session_token": session_token,
             "zitadel_user_id": zitadel_user_id,
+            "email": email,
             "ua_hash": pending_ua_hash,
             "ip_subnet": pending_ip_subnet,
         }
