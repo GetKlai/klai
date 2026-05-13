@@ -18,6 +18,13 @@ from unittest.mock import AsyncMock
 import pytest
 
 
+_MAILER_OK = {
+    "sent": True,
+    "subject": "Welcome to Klai - book your onboarding intake",
+    "body_html": "<html><body>Hi Alice, ...</body></html>",
+}
+
+
 @pytest.mark.asyncio
 async def test_onboarding_start_returns_200_when_mailer_accepts(monkeypatch):
     from app.api import internal
@@ -25,7 +32,7 @@ async def test_onboarding_start_returns_200_when_mailer_accepts(monkeypatch):
     monkeypatch.setattr(internal, "_require_internal_token", AsyncMock())
     monkeypatch.setattr(internal, "_audit_internal_call", AsyncMock())
 
-    send_mock = AsyncMock(return_value=True)
+    send_mock = AsyncMock(return_value=_MAILER_OK)
     monkeypatch.setattr("app.services.notifications.send_onboarding_invite", send_mock)
 
     body = internal.OnboardingStartRequest(
@@ -37,6 +44,10 @@ async def test_onboarding_start_returns_200_when_mailer_accepts(monkeypatch):
     resp = await internal.start_onboarding_drip(req, body)
 
     assert resp.sent is True
+    assert resp.subject == _MAILER_OK["subject"]
+    assert resp.body_html == _MAILER_OK["body_html"]
+    assert resp.cal_url == "https://cal.getklai.com/klai/onboarding-intake"
+    assert resp.sent_to == "alice@example.com"
     send_mock.assert_awaited_once_with(
         name="Alice",
         email="alice@example.com",
@@ -51,15 +62,16 @@ async def test_onboarding_start_defaults_cal_url_when_omitted(monkeypatch):
     monkeypatch.setattr(internal, "_require_internal_token", AsyncMock())
     monkeypatch.setattr(internal, "_audit_internal_call", AsyncMock())
 
-    send_mock = AsyncMock(return_value=True)
+    send_mock = AsyncMock(return_value=_MAILER_OK)
     monkeypatch.setattr("app.services.notifications.send_onboarding_invite", send_mock)
 
     body = internal.OnboardingStartRequest(name="Bob", email="bob@example.com")
     req = AsyncMock()
-    await internal.start_onboarding_drip(req, body)
+    resp = await internal.start_onboarding_drip(req, body)
 
     args = send_mock.call_args.kwargs
     assert args["cal_url"] == "https://cal.getklai.com/klai/onboarding-intake"
+    assert resp.cal_url == "https://cal.getklai.com/klai/onboarding-intake"
 
 
 @pytest.mark.asyncio
@@ -71,7 +83,7 @@ async def test_onboarding_start_returns_502_when_mailer_rejects(monkeypatch):
     monkeypatch.setattr(internal, "_require_internal_token", AsyncMock())
     monkeypatch.setattr(internal, "_audit_internal_call", AsyncMock())
 
-    send_mock = AsyncMock(return_value=False)
+    send_mock = AsyncMock(return_value=None)
     monkeypatch.setattr("app.services.notifications.send_onboarding_invite", send_mock)
 
     body = internal.OnboardingStartRequest(name="Charlie", email="charlie@example.com")
