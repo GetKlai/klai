@@ -47,15 +47,22 @@ openssl rand -hex 32
 
 ## Notification types
 
-Five event types are handled (configured in Zitadel console under Instance > Settings > Message Texts):
+Four event types are handled (configured in Zitadel console under Instance > Settings > Message Texts):
 
 | Type | Trigger |
 |------|---------|
-| `InitCode` | Account created — activation email |
 | `VerifyEmail` | Email address verification |
 | `PasswordReset` | Password reset request |
 | `PasswordChange` | Password changed notification |
 | `InviteUser` | Admin invites a user to the organisation |
+
+A fifth Zitadel event-type — `user.human.initialization.code.added` (legacy
+"InitCode") — is **dropped** by the `/notify` handler with a 204. It fired
+automatically for every newly-created user in `USER_STATE_INITIAL`, producing
+a duplicate of the InviteUser mail with a link to Zitadel's stock hosted UI.
+The v2 invite_code flow (SPEC-PORTAL-AUTH-EMAIL-LINKS-001) owns admin-invites
+since 2026-05-13; the InitCode event no longer represents a user-visible
+flow we want to mail. See `_DROPPED_EVENT_TYPES` in `app/main.py`.
 
 Message text templates (subject, greeting, body, button text, footer) live in `zitadel-message-texts/en.yaml` and `nl.yaml`. These are applied in the Zitadel console; klai-mailer receives the already-rendered content.
 
