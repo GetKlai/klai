@@ -62,11 +62,11 @@ function PasswordSetPage() {
       }
 
       // Password is set. Backend returns 204 — auto-login is intentionally
-      // not attempted here (see #638). Send the user through the normal
-      // OIDC login flow at `/`; they'll re-authenticate with the password
-      // they just chose and continue to /setup/mfa via callback.tsx.
+      // not attempted here (see #638). Show a success state with an explicit
+      // "Inloggen" button; the user clicks through to the standard OIDC
+      // login flow at `/` and re-authenticates with the password they just
+      // chose. callback.tsx then redirects to /setup/mfa for new users.
       setDone(true)
-      setTimeout(() => void navigate({ to: '/' }), 2500)
     } catch {
       setError(m.error_connection())
     } finally {
@@ -101,7 +101,7 @@ function PasswordSetPage() {
   return (
     <AuthPageLayout leftContent={leftContent} showLocale>
       {done ? (
-        <div className="space-y-3 text-center">
+        <div className="space-y-4 text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-foreground)]">
             <KeyRound size={22} className="text-[var(--color-rl-cream)]" />
           </div>
@@ -111,6 +111,15 @@ function PasswordSetPage() {
           <p className="text-sm text-gray-400">
             {m.set_done_body()}
           </p>
+          <Button
+            type="button"
+            size="lg"
+            className="w-full"
+            onClick={() => void navigate({ to: '/' })}
+            autoFocus
+          >
+            {m.set_done_continue()}
+          </Button>
         </div>
       ) : (
         <>
