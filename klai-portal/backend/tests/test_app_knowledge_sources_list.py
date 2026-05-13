@@ -98,7 +98,13 @@ def _make_kb(slug: str = "kb-a") -> MagicMock:
     return kb
 
 
-def _make_connector(cid: str, ctype: str = "notion", name: str | None = "My Notion", status: str = "ok") -> MagicMock:
+def _make_connector(
+    cid: str,
+    ctype: str = "notion",
+    name: str | None = "My Notion",
+    status: str = "ok",
+    state: str = "active",
+) -> MagicMock:
     c = MagicMock()
     c.id = cid
     c.kb_id = 42
@@ -107,6 +113,12 @@ def _make_connector(cid: str, ctype: str = "notion", name: str | None = "My Noti
     c.name = name
     c.last_sync_status = status
     c.last_sync_at = datetime(2026, 1, 1, tzinfo=UTC)
+    # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-02: list_kb_sources filters
+    # by state == "active". MagicMock's default attribute is a MagicMock
+    # instance (truthy but != "active"), so without an explicit assignment
+    # every fixture connector silently lands in the "deleting" bucket and
+    # disappears from the response.
+    c.state = state
     return c
 
 
