@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import {
-  ArrowLeft, ChevronRight, Settings, ChevronDown, AlertTriangle, CheckCircle2, Loader2, Sparkles, Globe, FileText, Shield,
+  ArrowLeft, ChevronRight, Settings, ChevronDown, CheckCircle2, Loader2, Sparkles, Globe, FileText, Shield,
 } from 'lucide-react'
 import { SiGithub, SiNotion, SiGoogledrive, SiAirtable, SiConfluence, SiGoogledocs, SiGooglesheets, SiGoogleslides } from '@icons-pack/react-simple-icons'
 import { Button } from '@/components/ui/button'
@@ -11,99 +11,27 @@ import { StepIndicator, type StepItem } from '@/components/ui/step-indicator'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { MultiSelect, type MultiSelectOption } from '@/components/ui/multi-select'
+import { MultiSelect } from '@/components/ui/multi-select'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { MS_SITE_URL_PATTERN } from '@/lib/ms-docs'
-import { joinSeedUrl } from './$kbSlug/-kb-helpers'
-import type { CookieRow } from './$kbSlug/-kb-types'
+import { joinSeedUrl, ASSERTION_MODE_OPTIONS } from './$kbSlug/-kb-helpers'
+import type { CookieRow, GitHubConfig, WebCrawlerConfig } from './$kbSlug/-kb-types'
+import type {
+  AirtableConfig,
+  AuthGuardSuggestion,
+  AuthProbeResult,
+  ConfluenceConfig,
+  ConnectorType,
+  NotionAddConfig,
+  PreviewClassification,
+  PreviewResult,
+  WcStep,
+} from './-connector-types'
+import { MARKDOWN_PROSE_CLASSES, VALID_PRESELECT_TYPES } from './-connector-constants'
+import { AuthProbeFeedback, PreviewClassificationFeedback } from './-connector-feedback'
 import { CookieRowsInput } from '@/components/knowledge/CookieRowsInput'
 import { kbQueryKeys } from '@/lib/kb-query-keys'
-
-// -- Types -------------------------------------------------------------------
-
-type ConnectorType =
-  | 'github' | 'web_crawler' | 'google_drive' | 'notion' | 'ms_docs'
-  | 'airtable' | 'confluence'
-  | 'google_docs' | 'google_sheets' | 'google_slides'
-// SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-1: web_crawler wizard step order is
-// Details → AuthQuestion → AuthSetup (only if requires login) → Selector → Settings.
-// AuthSetup runs the REQ-2 auth-probe; Selector gates on the REQ-3 success
-// classification. Other connector types (github/notion/...) are unaffected.
-type WcStep = 'details' | 'auth-question' | 'auth-setup' | 'selector' | 'settings'
-
-type AuthProbeClassification =
-  | 'auth_ok'
-  | 'auth_failed_no_cookies'
-  | 'auth_failed_still_walled'
-  | 'auth_failed_credentials_invalid'
-  | 'auth_failed_unreachable'
-
-interface AuthProbeResult {
-  classification: AuthProbeClassification
-  match_reasons: string[]
-  word_count: number
-  auth_guard: AuthGuardSuggestion | null
-}
-
-type PreviewClassification =
-  | 'success'
-  | 'selector_required'
-  | 'selector_returns_empty'
-  | 'requires_javascript'
-  | 'auth_wall_detected'
-  | 'unknown'
-
-interface GitHubConfig {
-  installation_id: string
-  repo_owner: string
-  repo_name: string
-  branch: string
-  path_filter: string
-}
-
-interface WebCrawlerConfig {
-  base_url: string
-  path_prefix: string
-  max_pages: string
-  content_selector: string
-}
-
-interface AuthGuardSuggestion {
-  canary_url: string | null
-  canary_fingerprint: string | null
-  login_indicator_selector: string | null
-  login_indicator_description: string | null
-}
-
-interface NotionConfig {
-  access_token: string
-  database_ids: string
-  max_pages: string
-}
-
-interface AirtableConfig {
-  api_key: string
-  base_id: string
-  table_names: string
-  view_name: string
-}
-
-interface ConfluenceConfig {
-  base_url: string
-  email: string
-  api_token: string
-  space_keys: string
-}
-
-const ASSERTION_MODE_OPTIONS: MultiSelectOption[] = [
-  { value: 'factual',     label: 'Fact',        description: 'Established fact, documentation, specs' },
-  { value: 'procedural',  label: 'Procedure',   description: "Step-by-step instructions, how-to's" },
-  { value: 'belief',      label: 'Claim',       description: 'Not conclusively proven claim' },
-  { value: 'quoted',      label: 'Quote',       description: 'Literal source material' },
-  { value: 'hypothesis',  label: 'Speculation', description: 'Hypotheses, brainstorm' },
-  { value: 'unknown',     label: 'Unknown',     description: 'Type not specified' },
-]
 
 const CONNECTOR_TYPES: {
   type: ConnectorType
@@ -123,14 +51,8 @@ const CONNECTOR_TYPES: {
   { type: 'google_slides', label: m.admin_connectors_type_google_slides, available: true, Icon: SiGoogleslides },
 ]
 
-const MARKDOWN_PROSE_CLASSES = 'overflow-y-auto max-h-64 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-gray-900 [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-gray-900 [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-gray-900 [&_h3]:mb-1 [&_p]:text-gray-400 [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-gray-400 [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-gray-400 [&_ol]:mb-1.5 [&_strong]:font-semibold [&_strong]:text-gray-900 [&_hr]:border-gray-200 [&_hr]:my-2'
-
 // -- Route -------------------------------------------------------------------
 
-const VALID_PRESELECT_TYPES = new Set<ConnectorType>([
-  'github', 'notion', 'google_drive', 'google_docs', 'google_sheets', 'google_slides',
-  'airtable', 'confluence', 'ms_docs', 'web_crawler',
-])
 type AddConnectorSearch = { type?: ConnectorType }
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug_/add-connector')({
@@ -163,7 +85,7 @@ function AddConnectorPage() {
   // wizard collects them directly in the shape the backend persists and the
   // cron-sync consumes — no string-to-array parsing layer.
   const [wcCookieRows, setWcCookieRows] = useState<CookieRow[]>([])
-  const [notionConfig, setNotionConfig] = useState<NotionConfig>({
+  const [notionConfig, setNotionConfig] = useState<NotionAddConfig>({
     access_token: '', database_ids: '', max_pages: '500',
   })
   const [notionStep, setNotionStep] = useState<'credentials' | 'settings'>('credentials')
@@ -184,14 +106,10 @@ function AddConnectorPage() {
   const [showAdvancedSelector, setShowAdvancedSelector] = useState(false)
   const [requiresLogin, setRequiresLogin] = useState<boolean | null>(null)
   const [wcPreviewUrl, setWcPreviewUrl] = useState('')
-  const [previewResult, setPreviewResult] = useState<{
-    fit_markdown: string; word_count: number; warnings: string[]
-    content_selector: string | null; selector_source: string | null
-    auth_guard: AuthGuardSuggestion | null
-    // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3
-    classification: PreviewClassification
-    classification_reason: string | null
-  } | null>(null)
+  // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3: classification + classification_reason
+  // surface the preview-pipeline judgement to the operator. Type lives in
+  // ./-connector-types so add and edit share one shape.
+  const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null)
   const [showAdvancedAuthGuard, setShowAdvancedAuthGuard] = useState(false)
   // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2: auth-probe state.
   const [authProbeResult, setAuthProbeResult] = useState<AuthProbeResult | null>(null)
@@ -1308,109 +1226,6 @@ function AddConnectorPage() {
   )
 }
 
-// -- Helper components -------------------------------------------------------
-
-/**
- * SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2 — render auth-probe outcome.
- * Shared by add-connector and edit-connector flows.
- */
-export function AuthProbeFeedback({ result }: { result: AuthProbeResult }) {
-  if (result.classification === 'auth_ok') {
-    return (
-      <div className="flex gap-2 items-center rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 p-3 text-xs text-[var(--color-success)]">
-        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-        <span>You&apos;re in. Continue to Selector.</span>
-      </div>
-    )
-  }
-  const reasons = result.match_reasons.length > 0
-    ? ` Detected: ${result.match_reasons.join(', ')}`
-    : ''
-  let message: string
-  switch (result.classification) {
-    case 'auth_failed_no_cookies':
-      message = 'This page requires authentication. Go back to step 3 and answer Yes.'
-      break
-    case 'auth_failed_still_walled':
-      message = `Cookies didn't unlock the content. Re-paste a fresh session cookie.${reasons}`
-      break
-    case 'auth_failed_credentials_invalid':
-      message = '401/403 — credentials rejected.'
-      break
-    case 'auth_failed_unreachable':
-      message = 'Could not reach the page. Check the Base URL.'
-      break
-    default:
-      message = `Authentication check failed.${reasons}`
-  }
-  return (
-    <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-      <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-      <span>{message}</span>
-    </div>
-  )
-}
-
-/**
- * SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3 — render preview classification outcome.
- * Single source of truth for all classification-driven feedback.
- * Supporting affordances (markdown body, AI selector, auth-guard) compose alongside
- * via the parent — this component only renders the primary message.
- */
-export function PreviewClassificationFeedback({
-  classification,
-  reason,
-  onRetry,
-}: {
-  classification: PreviewClassification
-  reason: string | null
-  onRetry?: () => void
-}) {
-  if (classification === 'success') {
-    return (
-      <div className="flex gap-2 items-center rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 p-3 text-xs text-[var(--color-success)]">
-        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-        <span>Selector matches real article content. You can save the connector.</span>
-      </div>
-    )
-  }
-  let message: string
-  switch (classification) {
-    case 'selector_required':
-      message =
-        reason ?? 'The output looks like a navigation menu. Configure a Content Selector.'
-      break
-    case 'selector_returns_empty':
-      message = "Selector matched no content. Try a different selector or click 'Let AI find'."
-      break
-    case 'requires_javascript':
-      message =
-        'Page renders via JavaScript. Configure a wait_for condition or selector for the post-render DOM.'
-      break
-    case 'auth_wall_detected':
-      message = 'This page requires authentication. Go back to step 4.'
-      break
-    case 'unknown':
-      message = reason ?? 'Preview service did not respond. Try again.'
-      break
-    default:
-      message = reason ?? 'Selector check failed.'
-  }
-  return (
-    <div className="space-y-2">
-      <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-        <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-        <span>{message}</span>
-      </div>
-      {classification === 'unknown' && onRetry && (
-        <button
-          type="button"
-          className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-900 transition-colors"
-          onClick={onRetry}
-        >
-          Retry
-        </button>
-      )}
-    </div>
-  )
-}
+// AuthProbeFeedback + PreviewClassificationFeedback live in
+// ./-connector-feedback (shared with edit-connector + tested in
+// __tests__/wizard-feedback.test.tsx).
