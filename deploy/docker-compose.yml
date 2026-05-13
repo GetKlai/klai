@@ -1565,7 +1565,9 @@ services:
       EMAIL_SERVER_USER: ${SMTP_USERNAME}
       EMAIL_SERVER_PASSWORD: ${SMTP_PASSWORD}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      # /api/health returns 404 in Cal.com v6. Use wget which exits 0 for
+      # any 2xx/3xx — a 307 to /auth/setup confirms the server is running.
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/auth/login || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
