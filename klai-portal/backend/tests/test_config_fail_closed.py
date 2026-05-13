@@ -247,3 +247,59 @@ def test_settings_allows_mock_billing_in_dev(monkeypatch: pytest.MonkeyPatch) ->
     cfg = importlib.import_module("app.core.config")
     assert cfg.settings.mock_billing is True
     assert cfg.settings.domain == "localhost"
+
+
+# ---------------------------------------------------------------------------
+# SPEC-REPO-SANITIZE-001 followup: Zitadel identity IDs
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", ["", "   "], ids=["empty", "whitespace"])
+def test_settings_startup_fails_without_zitadel_project_id(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    """Empty / whitespace ZITADEL_PROJECT_ID raises ValidationError at startup.
+
+    Regression for the production incident on 2026-05-13 16:03 UTC where
+    SANITIZE-001 cleared the hardcoded fallback and no env-injection
+    path existed → empty default → signup → grant_user_role POSTed an
+    empty ProjectId → Zitadel 500 → silent signup breakage.
+    """
+    monkeypatch.setenv("ZITADEL_PROJECT_ID", value)
+    sys.modules.pop("app.core.config", None)
+    with pytest.raises(ValidationError, match="ZITADEL_PROJECT_ID"):
+        importlib.import_module("app.core.config")
+
+
+@pytest.mark.parametrize("value", ["", "   "], ids=["empty", "whitespace"])
+def test_settings_startup_fails_without_zitadel_portal_org_id(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    """Empty / whitespace ZITADEL_PORTAL_ORG_ID raises ValidationError at startup."""
+    monkeypatch.setenv("ZITADEL_PORTAL_ORG_ID", value)
+    sys.modules.pop("app.core.config", None)
+    with pytest.raises(ValidationError, match="ZITADEL_PORTAL_ORG_ID"):
+        importlib.import_module("app.core.config")
+
+
+@pytest.mark.parametrize("value", ["", "   "], ids=["empty", "whitespace"])
+def test_settings_startup_fails_without_zitadel_portal_client_id(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    """Empty / whitespace ZITADEL_PORTAL_CLIENT_ID raises ValidationError at startup."""
+    monkeypatch.setenv("ZITADEL_PORTAL_CLIENT_ID", value)
+    sys.modules.pop("app.core.config", None)
+    with pytest.raises(ValidationError, match="ZITADEL_PORTAL_CLIENT_ID"):
+        importlib.import_module("app.core.config")
+
+
+def test_settings_zitadel_validator_lists_all_missing_at_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When multiple Zitadel IDs are empty, the error message lists them all.
+
+    This helps operators fix everything in one SOPS edit instead of
+    rediscovering the next missing var after each restart.
+    """
+    monkeypatch.setenv("ZITADEL_PROJECT_ID", "")
+    monkeypatch.setenv("ZITADEL_PORTAL_ORG_ID", "")
+    monkeypatch.setenv("ZITADEL_PORTAL_CLIENT_ID", "")
+    sys.modules.pop("app.core.config", None)
+    with pytest.raises(ValidationError) as exc_info:
+        importlib.import_module("app.core.config")
+    msg = str(exc_info.value)
+    assert "ZITADEL_PROJECT_ID" in msg
+    assert "ZITADEL_PORTAL_ORG_ID" in msg
+    assert "ZITADEL_PORTAL_CLIENT_ID" in msg

@@ -48,6 +48,13 @@ os.environ.setdefault("MCP_OAUTH_ISSUER_BASE_URL", "https://my.test.local")  # S
 os.environ.setdefault("MCP_OAUTH_RESOURCE_URL", "https://mcp.test.local")  # SPEC-MCP-AUTH-001 REQ-8
 os.environ.setdefault("ZITADEL_IDP_GOOGLE_ID", "test-google-idp-id")  # SPEC-SEC-AUTH-COVERAGE-001 REQ-2.6
 os.environ.setdefault("ZITADEL_IDP_MICROSOFT_ID", "test-microsoft-idp-id")  # SPEC-SEC-AUTH-COVERAGE-001 REQ-2.6
+# SPEC-REPO-SANITIZE-001 followup — ce31a119 cleared the hardcoded fallbacks,
+# `_require_zitadel_identity_ids` validator now refuses to boot if these are
+# empty. Provide test placeholders so the unit-test process can construct
+# Settings(); individual tests override via monkeypatch to assert fail-loud.
+os.environ.setdefault("ZITADEL_PROJECT_ID", "test-zitadel-project-id")
+os.environ.setdefault("ZITADEL_PORTAL_ORG_ID", "test-zitadel-portal-org-id")
+os.environ.setdefault("ZITADEL_PORTAL_CLIENT_ID", "test-zitadel-portal-client-id")
 os.environ.setdefault("INTERNAL_SECRET", "test-internal-secret-x" * 2)  # SPEC-SEC-VALIDATOR-COVERAGE-001 REQ-1
 os.environ.setdefault(
     "KLAI_CONNECTOR_SECRET", "test-klai-connector-secret" * 2
