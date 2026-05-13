@@ -92,6 +92,62 @@ class ZitadelClient:
 
     # ── User management ───────────────────────────────────────────────────────
 
+    async def create_human_user_v2_with_verify(
+        self,
+        org_id: str,
+        email: str,
+        first_name: str,
+        last_name: str,
+        password: str,
+        *,
+        url_template: str,
+        preferred_language: str = "nl",
+    ) -> dict:
+        """Create a human user via the v2 AddHumanUser endpoint and fire the
+        email-verification mail atomically.
+
+        Unlike :meth:`create_human_user` (which uses ``_import`` and leaves
+        the user in ``USER_STATE_INITIAL`` blocking every email-related
+        follow-up call with "User is not yet initialized (COMMAND-uz0Uu)"),
+        the v2 endpoint puts the user in ``USER_STATE_ACTIVE`` immediately
+        once a password is supplied, AND accepts an inline
+        ``email.verification.sendCode.urlTemplate`` block that triggers the
+        ``user.human.email.code.added`` notification in the same request.
+
+        klai-mailer renders that event through the Klai wrapper (no drop,
+        unlike the InitCode event used by ``_import``), so the user
+        receives a Klai-branded "Confirm your email" mail with a button
+        landing on ``{url_template}`` (typically ``my.getklai.com/verify``).
+
+        Body shape verified against zitadel/user/v2/user_service.proto on
+        upstream main (2026-05-13) and a live POST test against production
+        Zitadel. Returns the AddHumanUserResponse JSON dict containing
+        ``userId``.
+        """
+        resp = await self._http.post(
+            "/v2/users/human",
+            json={
+                "username": email.lower(),
+                "organization": {"orgId": org_id},
+                "profile": {
+                    "givenName": first_name,
+                    "familyName": last_name,
+                    "displayName": f"{first_name} {last_name}",
+                    "preferredLanguage": preferred_language,
+                },
+                "email": {
+                    "email": email,
+                    "verification": {"sendCode": {"urlTemplate": url_template}},
+                },
+                "password": {
+                    "password": password,
+                    "changeRequired": False,
+                },
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     async def create_human_user(
         self,
         org_id: str,

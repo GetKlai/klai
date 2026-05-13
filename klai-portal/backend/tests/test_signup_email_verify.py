@@ -1,17 +1,20 @@
-"""Self-service signup must create users in ACTIVE state, not INITIAL.
+"""Self-service signup fires a Klai-branded email-verification mail.
 
-Background: original plan was to send a Klai-branded verification mail
-after signup via Zitadel /v2/users/.../email/send + a custom urlTemplate.
-That endpoint rejects USER_STATE_INITIAL users (which is exactly the
-state ``_import + isEmailVerified=False`` leaves them in) with error
-"User is not yet initialized (COMMAND-uz0Uu)" — verified live against
-prod Zitadel during the 2026-05-13 signup-mail incident.
+Implementation: signup uses Zitadel v2 AddHumanUser
+(``zitadel.create_human_user_v2_with_verify``) which posts to
+``/v2/users/human`` with ``email.verification.sendCode.urlTemplate``.
+Zitadel creates the user in USER_STATE_ACTIVE AND fires
+``user.human.email.code.added`` atomically. klai-mailer renders that
+event through the Klai wrapper (subject "Confirm your email address
+with Klai"). The button URL substitutes Zitadel's
+``{{.UserID}}/{{.Code}}/{{.OrgID}}`` placeholders and lands on
+``my.getklai.com/verify`` which POSTs to ``/api/auth/verify-email``.
 
-Workaround: treat the signup form itself as the verification step. The
-user proved control of the email AND set their own password, so the
-account is created with ``isEmailVerified=True`` and transitions
-straight to ACTIVE. No mail flow needed for signup; admin-invite still
-uses send_invite_code (different lifecycle).
+Why NOT the legacy ``_import`` path (admin-invite still uses it): every
+standalone Zitadel email API call ``/v2/users/{id}/email/send|resend|...``
+rejects USER_STATE_INITIAL users with COMMAND-uz0Uu — the state ``_import``
+leaves the user in when ``isEmailVerified=false``. The v2 endpoint
+sidesteps that lifecycle gotcha entirely.
 """
 
 from __future__ import annotations
@@ -32,7 +35,7 @@ _BASE = {
 
 def _mock_zitadel(mz: MagicMock) -> None:
     mz.create_org = AsyncMock(return_value={"id": "zit-org-001"})
-    mz.create_human_user = AsyncMock(return_value={"userId": "zit-user-001"})
+    mz.create_human_user_v2_with_verify = AsyncMock(return_value={"userId": "zit-user-001"})
     mz.grant_user_role = AsyncMock()
 
 
@@ -45,14 +48,15 @@ def _mock_portal_org(morg: MagicMock) -> MagicMock:
     return inst
 
 
-class TestSignupCreatesActiveUser:
+class TestSignupFiresVerifyMail:
     @pytest.mark.asyncio
-    async def test_create_human_user_is_email_verified_true(self) -> None:
-        """is_email_verified=True is the contract — without it Zitadel parks
-        the user in USER_STATE_INITIAL and ANY subsequent login/email API
-        call fails with COMMAND-uz0Uu.
+    async def test_signup_calls_v2_with_verify_url_template(self) -> None:
+        """Signup MUST use the v2 verify-aware create. The legacy
+        ``create_human_user`` (_import) parks users in INITIAL state
+        and the mail flow falls apart later.
         """
         from app.api.signup import SignupRequest, signup
+        from app.core.config import settings
 
         body = SignupRequest(**_BASE)
         with (
@@ -69,18 +73,20 @@ class TestSignupCreatesActiveUser:
             _mock_portal_org(morg)
             await signup(body=body, background_tasks=MagicMock(), db=AsyncMock())
 
-        kw = mz.create_human_user.call_args.kwargs
-        assert kw.get("is_email_verified") is True, (
-            "signup MUST pass is_email_verified=True — Zitadel /v2/users/.../email/send "
-            "rejects INITIAL users, so without immediate-verify the account is unusable."
+        mz.create_human_user_v2_with_verify.assert_called_once()
+        kw = mz.create_human_user_v2_with_verify.call_args.kwargs
+        # url_template lands on /verify with Zitadel placeholders
+        url_template = kw.get("url_template")
+        assert url_template is not None, "url_template kwarg missing"
+        assert url_template.startswith(settings.portal_url.rstrip("/") + "/verify"), (
+            f"url_template MUST land on /verify, got: {url_template}"
         )
+        for placeholder in ("{{.UserID}}", "{{.Code}}", "{{.OrgID}}"):
+            assert placeholder in url_template, f"missing placeholder {placeholder!r}"
 
     @pytest.mark.asyncio
-    async def test_create_human_user_send_codes_false(self) -> None:
-        """send_codes=False keeps Zitadel from firing the stock InitCode
-        event (which klai-mailer drops per SPEC-MAILER-DROP-INITCODE-001).
-        Pure log-noise reduction — but pinned to prevent future regressions.
-        """
+    async def test_signup_does_not_call_legacy_create_human_user(self) -> None:
+        """Defensive: ensure no one quietly puts the _import path back."""
         from app.api.signup import SignupRequest, signup
 
         body = SignupRequest(**_BASE)
@@ -98,5 +104,8 @@ class TestSignupCreatesActiveUser:
             _mock_portal_org(morg)
             await signup(body=body, background_tasks=MagicMock(), db=AsyncMock())
 
-        kw = mz.create_human_user.call_args.kwargs
-        assert kw.get("send_codes") is False
+        # Whatever else changes, the legacy method must not be the one used.
+        assert not mz.create_human_user.called, (
+            "Signup must use create_human_user_v2_with_verify, NOT create_human_user — "
+            "the _import path leaves users in USER_STATE_INITIAL and breaks the mail flow."
+        )
