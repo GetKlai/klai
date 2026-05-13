@@ -492,6 +492,12 @@ class ConnectorConfigResponse(BaseModel):
     schedule: str | None
     is_enabled: bool
     allowed_assertion_modes: list[str] | None
+    # owner_user_id: Zitadel user_id of the user who created this connector.
+    # Forwarded by klai-connector to knowledge-ingest /ingest/v1/document
+    # as ``req.user_id``. Required for personal-KB ownership check
+    # (knowledge_ingest.routes.ingest::personal_kb_owner_mismatch) — without
+    # it, syncs to ``personal-{user}`` KBs 403 because user_id=None.
+    owner_user_id: str | None = None
 
 
 @router.get("/connectors/{connector_id}", response_model=ConnectorConfigResponse)
@@ -544,6 +550,7 @@ async def get_connector_config(
         schedule=connector.schedule,
         is_enabled=connector.is_enabled,
         allowed_assertion_modes=connector.allowed_assertion_modes,
+        owner_user_id=connector.created_by,
     )
 
 

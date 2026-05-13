@@ -33,6 +33,7 @@ def _build_payload(
     connector_type: str = "",
     sender_email: str = "",
     mentioned_emails: list[str] | None = None,
+    user_id: str | None = None,
 ) -> dict:
     """Build the JSON payload for the knowledge-ingest endpoint."""
     is_crawl = connector_type in _CRAWL_CONNECTOR_TYPES
@@ -48,6 +49,11 @@ def _build_payload(
         "content_type": content_type,
         "source_type": source_type,
     }
+    # user_id: connector owner's Zitadel user_id. Required by knowledge-ingest's
+    # personal-KB owner-binding check (personal_kb_owner_mismatch). Without it,
+    # syncs to a personal-{user} KB return 403.
+    if user_id:
+        payload["user_id"] = user_id
     if connector_type:
         payload["connector_type"] = connector_type
     if is_crawl and source_url:
@@ -105,6 +111,7 @@ class KnowledgeIngestClient:
         allowed_assertion_modes: list[str] | None = None,
         image_urls: list[str] | None = None,
         connector_type: str = "",
+        user_id: str | None = None,
     ) -> None:
         """Send a parsed document to knowledge-ingest for embedding.
 
@@ -119,6 +126,10 @@ class KnowledgeIngestClient:
             allowed_assertion_modes: Optional connector-level hint for which assertion modes
                 this source can produce. Used in knowledge-ingest when content has no frontmatter.
             image_urls: Optional list of presigned S3 URLs for images extracted from the document.
+            user_id: Zitadel user_id of the connector creator. Forwarded as
+                ``req.user_id`` so knowledge-ingest can pass the
+                personal-KB owner-binding check (``personal_kb_owner_mismatch``).
+                Without it, syncs to ``personal-{user}`` KBs return 403.
 
         Raises:
             httpx.HTTPStatusError: If the ingest endpoint returns an error status.
@@ -145,6 +156,7 @@ class KnowledgeIngestClient:
             content_type=content_type,
             image_urls=image_urls,
             connector_type=connector_type,
+            user_id=user_id,
         )
         if allowed_assertion_modes is not None:
             payload["allowed_assertion_modes"] = allowed_assertion_modes
