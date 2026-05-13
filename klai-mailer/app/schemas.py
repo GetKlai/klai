@@ -97,6 +97,19 @@ class WaitlistInviteVars(_BaseVars):
     expires_in_hours: int
 
 
+class OnboardingInviteVars(_BaseVars):
+    """Variables for the `onboarding_invite` email.
+
+    Sent when a Twenty CRM Person record has its "Start onboarding"
+    manual workflow triggered. The email confirms the waitlist signup
+    and provides a Cal.com booking link for the intake call.
+    """
+
+    name: str
+    email: EmailStr
+    cal_url: HttpUrl
+
+
 # REQ-2.2: registry keyed on template_name. Handler resolves schema via
 # TEMPLATE_SCHEMAS[template_name]; unknown key -> HTTP 400.
 TEMPLATE_SCHEMAS: dict[str, type[_BaseVars]] = {
@@ -104,4 +117,5 @@ TEMPLATE_SCHEMAS: dict[str, type[_BaseVars]] = {
     "join_request_approved": JoinRequestApprovedVars,
     "waitlist_confirmation": WaitlistConfirmationVars,
     "waitlist_invite": WaitlistInviteVars,
+    "onboarding_invite": OnboardingInviteVars,
 }

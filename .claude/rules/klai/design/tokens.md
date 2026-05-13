@@ -58,13 +58,53 @@ first-paint never blocks on a font fetch.
 - Buttons + cards default to `--radius-md`.
 - Body baseline line-height: `1.6`. Headings: `1.25–1.3`.
 
-## Logo
+## Logo — canonical sources (CRIT)
 
-- Black-on-light: `/klai-logo.svg` (316×98 viewBox, fill="black").
-- White-on-dark: `/klai-logo-white.svg`.
-- Both are served by the SPA static handler. Cross-domain requests from
-  backend-rendered pages on `my.getklai.com` resolve correctly via the
-  Caddy fallthrough — no separate copy needed.
+[HARD] When you need a Klai logo for any rendered output (HTML email,
+external preview image, embed, social card, third-party config), use
+ONLY one of these URLs:
+
+| Use case | URL | Format |
+|---|---|---|
+| **Email, external preview, embed (light bg)** | `https://getklai.com/logo-black.svg` | SVG, 316×98 viewBox, fill="black" |
+| **Email, external preview, embed (dark bg)** | `https://my.getklai.com/klai-logo-white.svg` | SVG, white wordmark |
+| Portal SPA in-app (light bg) | `/klai-logo.svg` (served by portal SPA) | SVG, identical content to website's `logo-black.svg` |
+| Portal SPA in-app (dark bg) | `/klai-logo-white.svg` (served by portal SPA) | SVG |
+| Browser favicon | `/favicon.svg` | SVG |
+
+Recommended LOGO_WIDTH for email templates: `120` (renders ~120×37 with
+the 316×98 aspect ratio — readable on mobile, not overwhelming).
+
+### NEVER use these (old branding / deprecated)
+
+[HARD] These files exist in some repos for legacy reasons but are the
+OLD "ai" branding (dark blue lowercase "a" with green dot) — using them
+in any user-facing surface ships the wrong brand:
+
+| Path | Why forbidden |
+|---|---|
+| `klai-website/public/klai-icon-square.png` | Old "ai" mark, pre-rebrand |
+| `klai-website/public/klay-icon.png` | Old "ai" mark, typo'd filename |
+| `cdn.getklai.com/klai-logo.png` | DNS no-op, returns HTML 404 (not a real PNG) |
+| `getklai.com/klai-logo.png` | 404, file doesn't exist on the website |
+| `getklai.com/klai-logo.svg` | 404 — the file is named `logo-black.svg`, NOT `klai-logo.svg` |
+
+### Quick verification before shipping
+
+When configuring `LOGO_URL` for a service, the production envs, or any
+external image reference, validate the URL serves a real image:
+
+```bash
+curl -sI <url> | grep -iE "^HTTP|content-type"
+# MUST show: HTTP/2 200 + content-type: image/svg+xml (or image/png)
+# If content-type is text/html → wrong URL, you got an HTML error page back
+```
+
+### Founders photo
+
+| URL | Use |
+|---|---|
+| `https://getklai.com/founders.jpg` | Founders group photo (Jantine, Mark, Steven) — for email footers, about-us embeds |
 
 ## Where these tokens MUST be honored
 

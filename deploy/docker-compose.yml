@@ -369,8 +369,11 @@ services:
       # Zitadel webhook HMAC secret — from klai-infra/core-01/klai-mailer/.env.sops
       WEBHOOK_SECRET: ${MAILER_WEBHOOK_SECRET}
       # Branding — prod overrides code defaults (example.com → getklai.com)
-      LOGO_URL: ${LOGO_URL:-https://cdn.getklai.com/klai-logo.png}
-      LOGO_WIDTH: ${LOGO_WIDTH:-61}
+      # Canonical Klai logo per .claude/rules/klai/design/tokens.md § Logo.
+      # NEVER point this at cdn.getklai.com/klai-logo.png (DNS no-op) or
+      # klai-icon-square.png (old "ai" branding). Wordmark = logo-black.svg.
+      LOGO_URL: ${LOGO_URL:-https://getklai.com/logo-black.svg}
+      LOGO_WIDTH: ${LOGO_WIDTH:-120}
       BRAND_URL: ${BRAND_URL:-https://www.getklai.com}
       THEME_DIR: ${THEME_DIR:-theme}
       # Cross-service shared secret — single source of truth in /opt/klai/.env.
