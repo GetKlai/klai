@@ -21,9 +21,10 @@ paths:
 - ~1s TLS interruption. Acceptable at current scale (<50 tenants).
 
 ## Wildcard TLS
-- Requires custom Caddy build with `github.com/caddy-dns/hetzner` plugin.
-- Env var: `HETZNER_AUTH_API_TOKEN` (Hetzner DNS, not Cloud86).
-- TLS block: `tls { dns hetzner {$HETZNER_AUTH_API_TOKEN} propagation_delay 120s }`.
+- Requires a custom Caddy build with a DNS provider plugin (e.g. `github.com/caddy-dns/hetzner`).
+- Pass the DNS API token via environment variable — never hardcode in Caddyfile.
+- TLS block: `tls { dns <provider> {$DNS_AUTH_TOKEN} propagation_delay 120s }`.
+- Provider-specific setup documented in `klai-infra`.
 
 ## basic_auth + monitoring
 - `basic_auth` blocks Uptime Kuma health checks.

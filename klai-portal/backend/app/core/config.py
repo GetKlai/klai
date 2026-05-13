@@ -21,10 +21,10 @@ class Settings(BaseSettings):
     # Zitadel
     zitadel_base_url: str = "https://auth.getklai.com"
     zitadel_pat: str = ""  # PORTAL_API_ZITADEL_PAT — never exposed to frontend
-    zitadel_project_id: str = "362771533686374406"
+    zitadel_project_id: str = ""
     zitadel_org_id: str = ""
-    zitadel_portal_org_id: str = "362757920133283846"  # Org where all portal users live
-    zitadel_portal_client_id: str = "369262708920483857"  # OIDC client_id for BFF code exchange (confidential WEB app)
+    zitadel_portal_org_id: str = ""  # Org where all portal users live (ZITADEL_PORTAL_ORG_ID)
+    zitadel_portal_client_id: str = ""  # OIDC client_id for BFF code exchange (ZITADEL_PORTAL_CLIENT_ID)
     zitadel_portal_client_secret: str = ""  # PORTAL_API_ZITADEL_PORTAL_CLIENT_SECRET (SPEC-AUTH-008)
     zitadel_idp_google_id: str = ""  # ZITADEL_IDP_GOOGLE_ID — instance-level Google IDP
     zitadel_idp_microsoft_id: str = ""  # ZITADEL_IDP_MICROSOFT_ID — instance-level Microsoft IDP

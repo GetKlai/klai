@@ -20,7 +20,7 @@ Putting `${VAR}` in `garage.toml` is treated as a literal string — Garage does
 
 **Why:** Garage's TOML parser reads values as-is. Unlike Docker Compose or shell scripts, there is no interpolation layer.
 
-**Prevention:** Use the `GARAGE_RPC_SECRET` env var (supported since Garage v0.8.2) instead of trying to template `rpc_secret` into the TOML. For other secrets, mount a pre-rendered config or use Docker entrypoint scripts to generate the file.
+**Prevention:** Use supported env vars (e.g. `GARAGE_RPC_SECRET` since Garage v0.8.2) instead of trying to template secrets into the TOML. For other secrets, mount a pre-rendered config or use Docker entrypoint scripts to generate the file.
 
 ## Website mode + Caddy proxy instead of presigned URLs
 
@@ -51,7 +51,7 @@ The MinIO OSS repository was archived in December 2025 with no further security 
 
 **When:** Configuring Garage in Docker Compose with secrets (RPC secret, admin tokens).
 
-Never put secrets in `garage.toml` (no env var substitution, and CI compose-sync would overwrite them). Use the `GARAGE_RPC_SECRET` environment variable and pass admin tokens via env vars in the compose file.
+Never put secrets in `garage.toml` (no env var substitution, and CI compose-sync would overwrite them). Pass all secrets via environment variables in the compose file.
 
 ```yaml
 garage:

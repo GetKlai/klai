@@ -6,9 +6,41 @@ Stap-voor-stap handleiding om de Klai portal lokaal te draaien voor development.
 
 ## Architectuuroverzicht
 
-Er zijn twee modi voor lokale development:
+Er zijn drie modi voor lokale development:
 
-### Modus A: Frontend-only (aanbevolen)
+### Modus C: Standalone (aanbevolen)
+
+Frontend + backend lokaal, databases in Docker, **geen Zitadel nodig**. Auth wordt volledig gemockt. De backend maakt automatisch een dev user aan bij eerste start.
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Lokaal (native, hot reload)                        │
+│                                                     │
+│  ┌──────────────┐     ┌──────────────┐              │
+│  │  Frontend     │────▶│  Backend     │              │
+│  │  Vite :5174   │     │  FastAPI     │              │
+│  │  AUTH_DEV_MODE│     │  :8010       │              │
+│  └──────────────┘     └──────┬───────┘              │
+│                              │                      │
+│   Geen OIDC redirect        │  DB, Redis, etc.     │
+│   Geen Zitadel              ▼                      │
+│                       ┌──────────────────────────┐  │
+│                       │  Docker Compose (dev)    │  │
+│                       │                          │  │
+│                       │  PostgreSQL  :5434       │  │
+│                       │  Redis       :6379       │  │
+│                       │  MongoDB     :27017      │  │
+│                       │  Meilisearch :7700       │  │
+│                       │  LiteLLM     :4000       │  │
+│                       └──────────────────────────┘  │
+└─────────────────────────────────────────────────────┘
+```
+
+**Start:** `make setup && make dev-up && make migrate && make backend` + `make frontend`
+
+Zie [GETTING_STARTED.md](../../GETTING_STARTED.md) voor de volledige quick start (Engels).
+
+### Modus A: Frontend-only
 
 Alleen de frontend draait lokaal. API calls gaan via Vite proxy naar productie. Echte data, echte auth, geen lokale backend/Docker nodig.
 
@@ -79,9 +111,38 @@ Frontend + backend lokaal, databases in Docker.
 
 ---
 
-## Snelle start (frontend-only)
+## Welke modus kiezen?
 
-De snelste manier om te beginnen — geen Docker, geen backend setup:
+| Situatie | Modus | Nodig |
+|----------|-------|-------|
+| Je wilt snel starten zonder externe accounts | **C: Standalone** | Docker + Python + Node |
+| Je wilt alleen frontend werken met echte data | **A: Frontend-only** | Node + Zitadel account |
+| Je wilt backend testen met echte Zitadel auth | **B: Full-stack** | Docker + Python + Node + Zitadel account |
+
+---
+
+## Snelle start (standalone — Modus C)
+
+De aanbevolen manier om te beginnen — geen Zitadel, geen externe accounts:
+
+```bash
+git clone https://github.com/GetKlai/klai.git && cd klai
+make setup
+make dev-up          # Docker services
+make migrate         # Database migraties
+make backend         # Backend (terminal 1) — maakt automatisch dev user aan
+make frontend        # Frontend (terminal 2)
+```
+
+Open [http://localhost:5174](http://localhost:5174) — je bent direct ingelogd als dev user. Geen OIDC redirect, geen Zitadel.
+
+> **AI features:** Voeg `ANTHROPIC_API_KEY=sk-ant-...` toe aan `.env.dev` en herstart Docker: `make dev-down && make dev-up`.
+
+---
+
+## Snelle start (frontend-only — Modus A)
+
+De snelste manier als je Zitadel toegang hebt — geen Docker, geen backend setup:
 
 ```bash
 # 1. Clone de repo (als je dat nog niet hebt)
@@ -92,7 +153,7 @@ make setup
 
 # 3. Vul frontend/.env.local in:
 #    VITE_OIDC_AUTHORITY=https://auth.getklai.com
-#    VITE_OIDC_CLIENT_ID=362901948573220875
+#    VITE_OIDC_CLIENT_ID=<oidc-client-id>
 
 # 4. Start de frontend
 make frontend
@@ -100,9 +161,9 @@ make frontend
 
 Open [http://localhost:5174](http://localhost:5174) — je wordt doorgestuurd naar Zitadel login. Na inloggen werk je met echte productie data via de Vite proxy.
 
-## Snelle start (full-stack)
+## Snelle start (full-stack — Modus B)
 
-Als je ook aan de backend werkt:
+Als je aan de backend werkt met echte Zitadel authenticatie:
 
 ```bash
 make setup
@@ -186,7 +247,7 @@ Open `klai-portal/frontend/.env.local` en vul in:
 ```bash
 # Echte Zitadel authenticatie
 VITE_OIDC_AUTHORITY=https://auth.getklai.com
-VITE_OIDC_CLIENT_ID=362901948573220875
+VITE_OIDC_CLIENT_ID=<oidc-client-id>
 ```
 
 De Vite proxy stuurt `/api` calls standaard door naar productie (`getklai.getklai.com`). Om tegen de lokale backend te ontwikkelen (Modus B), voeg toe:
@@ -196,43 +257,27 @@ De Vite proxy stuurt `/api` calls standaard door naar productie (`getklai.getkla
 VITE_API_PROXY_TARGET=http://localhost:8010
 ```
 
-> **Let op:** De `VITE_OIDC_CLIENT_ID` is `362901948573220875` (OIDC Client ID), **niet** `362901948573155339` (dat is de App ID). Deze staan apart in Zitadel.
+> **Let op:** De `VITE_OIDC_CLIENT_ID` is `<oidc-client-id>` (OIDC Client ID), **niet** `<zitadel-app-id>` (dat is de App ID). Deze staan apart in Zitadel.
 
 > **Vite herstart vereist bij env-wijzigingen:** In tegenstelling tot de backend pikt Vite `.env.local` wijzigingen pas op na een volledige herstart (`Ctrl+C` → `npm run dev`). Hot reload werkt niet voor env vars.
 
 ---
 
-## Auth Dev Mode (aanbevolen voor lokale dev)
+## Auth Dev Mode
 
-Als je geen Zitadel login flow wil doorlopen bij elke sessie, zet **Auth Dev Mode** aan. Dit bypast OIDC volledig — je bent direct ingelogd zonder browser redirect.
+Auth Dev Mode bypast Zitadel OIDC volledig — je bent direct ingelogd zonder browser redirect. Dit is de standaard in Modus C.
 
-### 1. Voeg je user toe aan de lokale DB
+### Hoe het werkt
 
-Zoek je Zitadel user ID op via de Zitadel management API (of vraag een teamlid):
+Bij Modus C (standalone) hoef je **niets te doen** — `make setup` configureert Auth Dev Mode automatisch:
 
-```bash
-# Jouw Zitadel user ID ophalen (vereist ZITADEL_PAT in .env)
-curl -s -H "Authorization: Bearer $ZITADEL_PAT" \
-  "https://auth.getklai.com/management/v1/users/_search" \
-  -d '{"query":{"limit":20}}' | grep -o '"id":"[^"]*"\|"displayName":"[^"]*"'
-```
+- Backend: `AUTH_DEV_MODE=true` + `DEBUG=true` + `AUTH_DEV_USER_ID=dev-user-1`
+- Frontend: `VITE_AUTH_DEV_MODE=true`
+- De backend maakt automatisch een dev org ("Dev Organization", slug: `dev`) en dev user (`dev-user-1`) aan bij eerste start
 
-Zet daarna je user + org in de lokale DB:
+### Eigen user ID gebruiken (optioneel, voor core developers)
 
-```bash
-docker exec -i klai-postgres-1 psql -U klai -d klai << 'EOF'
-INSERT INTO portal_orgs (zitadel_org_id, name, slug, plan, provisioning_status)
-VALUES ('<jouw_zitadel_org_id>', 'Dev Org', 'dev', 'professional', 'complete')
-ON CONFLICT (zitadel_org_id) DO NOTHING;
-
-INSERT INTO portal_users (zitadel_user_id, org_id, role, display_name, email, status)
-SELECT '<jouw_zitadel_user_id>', id, 'admin', 'Jouw Naam', 'jij@example.com', 'active'
-FROM portal_orgs WHERE zitadel_org_id = '<jouw_zitadel_org_id>'
-ON CONFLICT (zitadel_user_id) DO NOTHING;
-EOF
-```
-
-### 2. Activeer Auth Dev Mode
+Als je liever je eigen Zitadel user ID gebruikt (bijv. om met productie Zitadel te kunnen wisselen):
 
 In `klai-portal/backend/.env`:
 ```bash
@@ -240,12 +285,7 @@ AUTH_DEV_MODE=true
 AUTH_DEV_USER_ID=<jouw_zitadel_user_id>
 ```
 
-In `klai-portal/frontend/.env.local`:
-```bash
-VITE_AUTH_DEV_MODE=true
-```
-
-Herstart backend én Vite. Je bent direct ingelogd als de opgegeven user.
+Je moet dan zelf een user met dat ID in de lokale DB aanmaken, of `make seed` aanpassen.
 
 > **Vereiste:** Backend vereist `AUTH_DEV_MODE=true` én `DEBUG=true` tegelijk. Zonder `DEBUG=true` werkt de bypass niet.
 
@@ -279,7 +319,7 @@ SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt \
 
 ### Redirect URIs en Dev Mode (al geconfigureerd)
 
-De OIDC app "Klai Portal" (app ID `362901948573155339`) is al geconfigureerd voor lokale development:
+De OIDC app "Klai Portal" (app ID `<zitadel-app-id>`) is al geconfigureerd voor lokale development:
 
 - **Redirect URI:** `http://localhost:5174/callback`
 - **Post Logout URI:** `http://localhost:5174/logged-out`
@@ -350,12 +390,12 @@ cd klai-portal/backend && uv run python -c "import secrets; print(secrets.token_
 
 **Oorzaak:** `VITE_OIDC_CLIENT_ID` bevat de App ID in plaats van de OIDC Client ID. Beide zijn 18-cijferige nummers maar zijn **niet** hetzelfde.
 
-**Fix:** Gebruik `362901948573220875` (OIDC Client ID), niet `362901948573155339` (App ID).
+**Fix:** Gebruik `<oidc-client-id>` (OIDC Client ID), niet `<zitadel-app-id>` (App ID).
 
 Verifieer via Zitadel API:
 ```bash
 curl -s -H "Authorization: Bearer $ZITADEL_PAT" \
-  "https://auth.getklai.com/management/v1/projects/362771533686374406/apps/_search" \
+  "https://auth.getklai.com/management/v1/projects/<zitadel-project-id>/apps/_search" \
   -d '{}' | grep -o '"clientId":"[^"]*"\|"name":"[^"]*"'
 ```
 
@@ -372,7 +412,7 @@ curl -s -H "Authorization: Bearer $ZITADEL_PAT" \
 ```bash
 # VITE_AUTH_DEV_MODE=true    ← uitgecommentarieerd
 VITE_OIDC_AUTHORITY=https://auth.getklai.com
-VITE_OIDC_CLIENT_ID=362901948573220875
+VITE_OIDC_CLIENT_ID=<oidc-client-id>
 ```
 
 ### LiteLLM start niet op
