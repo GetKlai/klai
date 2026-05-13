@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { KeyRound } from 'lucide-react'
@@ -26,7 +26,6 @@ export const Route = createFileRoute('/password/set')({
 
 function PasswordSetPage() {
   const { userID, code } = Route.useSearch()
-  const navigate = useNavigate()
 
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -111,14 +110,11 @@ function PasswordSetPage() {
           <p className="text-sm text-gray-400">
             {m.set_done_body()}
           </p>
-          <Button
-            type="button"
-            size="lg"
-            className="w-full"
-            onClick={() => void navigate({ to: '/' })}
-            autoFocus
-          >
-            {m.set_done_continue()}
+          {/* Anchor wrapped in Button styling — native browser navigation
+              is immune to React event-handler crashes elsewhere on the page
+              (e.g. the tabPrompt chunk that throws on /password/set). */}
+          <Button asChild size="lg" className="w-full">
+            <a href="/">{m.set_done_continue()}</a>
           </Button>
         </div>
       ) : (
