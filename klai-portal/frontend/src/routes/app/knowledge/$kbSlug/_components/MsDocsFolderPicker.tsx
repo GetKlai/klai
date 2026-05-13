@@ -111,15 +111,16 @@ function ItemNode({
           </button>
         ) : (
           // Checkbox for files. Native input so keyboard / accessibility
-          // are free — visual state mirrors selectedFileIds.
+          // are free. Click bubbles up to the parent row, which calls
+          // onToggleFile — no stopPropagation here or the toggle never
+          // fires when the user clicks the checkbox itself.
           <input
             type="checkbox"
             checked={isFileSelected}
             readOnly
             tabIndex={-1}
             aria-label={`Selecteer ${item.name}`}
-            className="h-3.5 w-3.5 accent-gray-900 ml-1 mr-1"
-            onClick={(e) => e.stopPropagation()}
+            className="h-3.5 w-3.5 accent-gray-900 ml-1 mr-1 cursor-pointer"
           />
         )}
         {isFolder ? (
