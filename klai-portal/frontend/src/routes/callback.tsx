@@ -7,7 +7,7 @@ import { useLocale } from '@/lib/locale'
 import { API_BASE } from '@/lib/api'
 import { authLogger } from '@/lib/logger'
 import { Button } from '@/components/ui/button'
-import { fetchMe, type MeResponse } from '@/lib/api-me'
+import { fetchMe, isInFlightProvisioningStatus, type MeResponse } from '@/lib/api-me'
 import {
   UnauthorizedError,
   delay,
@@ -94,7 +94,11 @@ async function resolveDestination(
 
   if (me.org_found === false) return { kind: 'navigate', url: '/no-account' }
 
-  if (me.provisioning_status === 'pending' || me.provisioning_status === 'failed') {
+  // SPEC-INFRA-TENANT-DELETE-003 Bug 3 — route to /provisioning for any
+  // in-flight or terminal-failure state. The poll loop on that page
+  // surfaces the actionable error; the literal `"failed"` value is never
+  // emitted by the backend (only `failed_rollback_*` / `failed_deprovisioning`).
+  if (isInFlightProvisioningStatus(me.provisioning_status)) {
     return { kind: 'navigate', url: '/provisioning' }
   }
 
