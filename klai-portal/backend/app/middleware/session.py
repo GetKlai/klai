@@ -66,6 +66,17 @@ _CSRF_EXEMPT_PREFIXES: tuple[str, ...] = (
     # would otherwise cause the CSRF check to reject the password finish.
     # REQ-4.3 / AC-2
     "/api/auth/login",
+    # pre-session: password-reset request comes from /password/forgot before
+    # any login. Authenticated only by the user's typed email (anti-enumeration
+    # 204 contract). A stale BFF cookie would otherwise demand a CSRF token
+    # that the un-authenticated page does not have.
+    # REQ-4.3 / AC-2
+    "/api/auth/password/reset",
+    # pre-session: activation / reset-completion endpoint. Caller arrives from
+    # a one-time mail-link with userID + code; that IS the authentication.
+    # The auto-login chain mints a fresh BFF session as part of the response.
+    # REQ-4.3 / AC-2
+    "/api/auth/password/set",
     # Zitadel Login V2 TOTP finisher — same pre-session rationale as
     # /api/auth/login.
     # REQ-4.3 / AC-2
