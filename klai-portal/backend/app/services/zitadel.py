@@ -162,7 +162,17 @@ class ZitadelClient:
         last_name: str,
         preferred_language: str = "nl",
     ) -> dict:
-        """Create a human user and send initialization email (password-less invite).
+        """Create a human user WITHOUT sending the activation email.
+
+        SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-2 — formerly this method passed
+        ``sendCodes: True`` so Zitadel auto-mailed an init-code link to its
+        own hosted UI. The split is now:
+
+          1. This method imports the user with ``sendCodes: False`` — no mail.
+          2. The caller follows up with :meth:`send_invite_code` which uses
+             the v2 ``/v2/users/{id}/invite_code`` endpoint with a Klai
+             ``urlTemplate``, sending the activation mail with a link to
+             ``my.getklai.com/password/set``.
 
         ``userName`` is lowercased before submission — see
         ``create_human_user`` for rationale. The display ``email`` field
@@ -184,11 +194,54 @@ class ZitadelClient:
                     "email": email,
                     "isEmailVerified": False,
                 },
-                "sendCodes": True,
+                # REQ-2: never let Zitadel mail an init-code with a default
+                # hosted-UI URL. The caller issues a follow-up send_invite_code
+                # call with an explicit Klai urlTemplate.
+                "sendCodes": False,
             },
         )
         resp.raise_for_status()
         return resp.json()
+
+    async def send_invite_code(
+        self,
+        user_id: str,
+        *,
+        url_template: str,
+        application_name: str = "Klai",
+    ) -> None:
+        """Issue (or re-issue) a Zitadel invite code and mail it to the user.
+
+        SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-2 / REQ-3. Used both by the
+        new-user invite flow (right after ``invite_user``) and the
+        resend-invite flow (replaces the legacy ``resend_init_mail``).
+
+        Body shape (per zitadel/user/v2/user.proto::SendInviteCode):
+
+        .. code-block:: json
+
+            {
+              "sendCode": {
+                "urlTemplate": "https://my.getklai.com/password/set?userID=...",
+                "applicationName": "Klai"
+              }
+            }
+
+        REQ-10 — ``url_template`` MUST be set explicitly on every call.
+        Zitadel caches the previous url_template per user; relying on the
+        cache means a stale Zitadel-default URL silently wins on the next
+        resend if the previous call did not pass urlTemplate.
+        """
+        resp = await self._http.post(
+            f"/v2/users/{user_id}/invite_code",
+            json={
+                "sendCode": {
+                    "urlTemplate": url_template,
+                    "applicationName": application_name,
+                },
+            },
+        )
+        resp.raise_for_status()
 
     async def verify_user_email(self, org_id: str, user_id: str, code: str) -> None:
         """Verify a user's email address using the code from the verification email."""
@@ -405,21 +458,40 @@ class ZitadelClient:
         )
         put_resp.raise_for_status()
 
-    async def resend_init_mail(self, org_id: str, user_id: str) -> None:
-        """Resend the invite email to a user who hasn't completed setup.
+    # resend_init_mail was deleted in SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-3.
+    # Use ``send_invite_code(user_id, url_template=...)`` instead — same API
+    # call, but with an explicit Klai urlTemplate instead of {} (which made
+    # Zitadel default to its own hosted UI).
 
-        Uses the Zitadel v2 invite_code API. The Management v1 resend_init_mail
-        endpoint returns NOT_FOUND once the original init code expires (72h TTL).
+    async def send_password_reset(self, user_id: str, *, url_template: str) -> None:
+        """Trigger Zitadel to send a password reset email to the user.
+
+        SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-1: ``url_template`` is keyword-only
+        and required. Zitadel substitutes ``{{.UserID}}``, ``{{.Code}}`` and
+        ``{{.OrgID}}`` server-side before mailing the link. Callers MUST build
+        the template via :func:`app.services.auth_links.build_url_template` so
+        every Klai mail-link points at the same frontend route.
+
+        Body shape (per zitadel/user/v2/password.proto::SendPasswordResetLink):
+
+        .. code-block:: json
+
+            {
+              "sendLink": {
+                "notificationType": "NOTIFICATION_TYPE_Email",
+                "urlTemplate": "https://my.getklai.com/password/set?userID=..."
+              }
+            }
         """
         resp = await self._http.post(
-            f"/v2/users/{user_id}/invite_code",
-            json={"sendCode": {}},
+            f"/v2/users/{user_id}/password_reset",
+            json={
+                "sendLink": {
+                    "notificationType": "NOTIFICATION_TYPE_Email",
+                    "urlTemplate": url_template,
+                },
+            },
         )
-        resp.raise_for_status()
-
-    async def send_password_reset(self, user_id: str) -> None:
-        """Trigger Zitadel to send a password reset email to the user."""
-        resp = await self._http.post(f"/v2/users/{user_id}/password_reset")
         resp.raise_for_status()
 
     # ── MFA / TOTP ────────────────────────────────────────────────────────────

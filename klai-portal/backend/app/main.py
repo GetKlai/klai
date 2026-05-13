@@ -228,6 +228,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await assert_portal_users_rls_ready()
     logger.info("portal_users RLS policy checked: IS NULL branch present")
 
+    # SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-7: refuse to start if FRONTEND_URL /
+    # DOMAIN are misconfigured. Without a valid portal_url, the Zitadel email-
+    # link flows would silently fall back to Zitadel's hosted UI instead of
+    # Klai's /password/set route.
+    from app.services.auth_links import assert_auth_link_templates_ready
+
+    assert_auth_link_templates_ready()
+    logger.info("auth_links url_template checked: portal_url is valid")
+
     await _run_stuck_detector()
 
     poller_task = asyncio.create_task(poll_loop())
