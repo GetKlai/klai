@@ -182,7 +182,7 @@ that branch.
 portal + frontend + docs), doing it on whatever feature branch happens to
 be checked out is a recipe for the work getting swept into an unrelated
 commit. SPEC-KB-MS-DOCS-001 suffered exactly this: 17 files of MS-365
-connector work landed in commit `726d81a2` titled "fix(knowledge-ingest):
+connector work landed in commit `<commit>` titled "fix(knowledge-ingest):
 seed BFS start_url inside path_prefix subtree" because the implementation
 assistant never created a dedicated worktree. Recovering clean history
 after the fact requires rewriting pushed commits, which is rarely worth
@@ -210,9 +210,9 @@ and returns HTTP 502 until reverted.
 **Why this happened:** SPEC-SEC-WEBHOOK-001 REQ-3 added
 `_require_moneybird_webhook_token` to `klai-portal/backend/app/core/config.py`.
 Tests passed (conftest sets the var), CI green, PR merged → auto-deploy to
-core-01 → portal-api startup raised `ValidationError: Missing required:
+production server → portal-api startup raised `ValidationError: Missing required:
 MONEYBIRD_WEBHOOK_TOKEN` because the var was never in
-`klai-infra/core-01/.env.sops`. Prod 502 for ~4 minutes until the merge was
+`klai-infra/<server>/.env.sops`. Prod 502 for ~4 minutes until the merge was
 reverted. The Moneybird finding (Cornelis #3) was the CAUSE: the token had
 never been configured, so webhooks ran fail-open. The validator correctly
 closed that bypass but required the env var to ship in the same deploy
@@ -222,7 +222,7 @@ window.
 
 1. Before committing any `_require_<X>_secret` validator, run:
    ```bash
-   grep -c "^ *<X>_SECRET\|^ *<X>_TOKEN" klai-infra/core-01/.env.sops
+   grep -c "^ *<X>_SECRET\|^ *<X>_TOKEN" klai-infra/<server>/.env.sops
    grep -c "<X>_SECRET\|<X>_TOKEN" deploy/docker-compose.yml
    ```
    If either returns `0`, add the env var to SOPS first (and to the compose
@@ -235,7 +235,7 @@ window.
    loop and 502 cascade.
 
 3. For audit-finding fixes that make a previously-optional config
-   mandatory, list "env var pre-flight in klai-infra/core-01/.env.sops"
+   mandatory, list "env var pre-flight in klai-infra/<server>/.env.sops"
    as an explicit checkbox in the SPEC's Success Criteria AND in the PR
    body — not only in the forcing-function prose.
 
@@ -244,7 +244,7 @@ window.
    add a comment on the pydantic validator linking to this pitfall so
    reviewers stop and think about prod env parity.
 
-See `klai-infra/core-01/.env.sops` for the canonical prod env inventory.
+See `klai-infra/<server>/.env.sops` for the canonical prod env inventory.
 
 ## env-file-migration-reverse-check (HIGH)
 When replacing `env_file: .env` on a service with an explicit
@@ -406,7 +406,7 @@ unrelated commits would compound the loss.
 
 Two real incidents in the audit-response sprint:
 
-1. The **first MONEYBIRD_WEBHOOK_TOKEN add** (klai-infra `6d73cb98`) —
+1. The **first MONEYBIRD_WEBHOOK_TOKEN add** (klai-infra `<commit>`) —
    author appended one line, but decrypt-encrypt roundtrip dropped
    `KUMA_TOKEN_RESEARCH_API` and `RESEARCH_API_ZITADEL_AUDIENCE`.
    GitHub sync workflow refused to deploy with `keys would be REMOVED`
@@ -420,14 +420,14 @@ Two real incidents in the audit-response sprint:
    the SOPS edit workflow. Modify the standard sequence:
 
    ```bash
-   ssh core-01 "
+   ssh <production-server> "
      cd /tmp/klai-sops &&
-     SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --decrypt --input-type dotenv --output-type dotenv core-01/.env.sops > core-01/.new.env
-     OLD=\$(wc -l < core-01/.new.env)
+     SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --decrypt --input-type dotenv --output-type dotenv <server>/.env.sops > <server>/.new.env
+     OLD=\$(wc -l < <server>/.new.env)
      # ... your sed/append modification here ...
      EXPECTED_DELTA=1   # +1 if adding a single var, 0 if rotating
-     SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --encrypt --input-type dotenv --output-type dotenv core-01/.new.env > core-01/.env.sops
-     ROUNDTRIP=\$(SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --decrypt --input-type dotenv --output-type dotenv core-01/.env.sops | wc -l)
+     SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --encrypt --input-type dotenv --output-type dotenv <server>/.new.env > <server>/.env.sops
+     ROUNDTRIP=\$(SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --decrypt --input-type dotenv --output-type dotenv <server>/.env.sops | wc -l)
      # Compare against /opt/klai/.env (the live, authoritative file) PLUS expected delta:
      LIVE=\$(wc -l < /opt/klai/.env)
      EXPECTED=\$((LIVE + EXPECTED_DELTA))
@@ -668,7 +668,7 @@ Reference: SPEC-SEC-HYGIENE-001 REQ-20 (callback URL subdomain allowlist) shippe
 2. Each enumerated class MUST appear either explicitly in the allowlist OR with a documented bypass (a comment on the bypass line + a test asserting the bypass).
 3. The validator MUST have a dedicated test file in `klai-portal/backend/tests/` (or the equivalent service) covering at least one accept-case per enumerated class AND at least two reject-cases (random unknown, lookalike-substring). No "we'll add tests later" merges on auth surfaces — the v0.7.1 hotfix exists because of this exact decision.
 4. Configurable values (`settings.domain`, `settings.frontend_url`, etc.) MUST be derived from settings — never hardcoded strings — so dev / staging / prod work without code changes.
-5. PR description MUST include the rollback command. For validator-style hardening: `git revert <sha> && gh run watch && verify on core-01`. So when the regression hits prod, recovery is one command, not a panic.
+5. PR description MUST include the rollback command. For validator-style hardening: `git revert <sha> && gh run watch && verify on the production server`. So when the regression hits prod, recovery is one command, not a panic.
 
 ## redis-url-password-must-be-parsed-manually (HIGH)
 `redis_asyncio.from_url(url)` (and `redis.Redis.from_url`) delegate to `urllib.parse.urlparse`. urlparse rejects URLs whose userinfo password contains characters it treats as URL-reserved — most commonly `:`, `/`, `+`, `@`, `#`, `?`, `%` — by raising `ValueError("Port could not be cast to integer value as '<garbled>'")` on the first property access. Operators routinely paste a generated password into SOPS without percent-encoding it, the service starts cleanly because `from_url` is called lazily, and every subsequent Redis operation crashes with an opaque error.

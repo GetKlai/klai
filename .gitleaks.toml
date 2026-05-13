@@ -22,8 +22,5 @@ paths = [
     '''.claude/worktrees''',
 ]
 
-# The following committed secrets HAVE been addressed:
-# - sk-bNLQ61Qs533P7GOzfXdyxA: LiteLLM team key in docs/specs/klai-knowledge-implementation.md
-#   commit f275476f — KEY ROTATED 2026-04-19 (see runbooks/secret-rotation.md)
-# - eea93826eed5f725daa3d27383f090d116c6f6e3: test_webhook.py default — legacy test script,
-#   not production webhook secret (verify WEBHOOK_SECRET in prod SOPS)
+# Rotated tokens have been removed from this allowlist (SPEC-REPO-SANITIZE-001 REQ-4).
+# Historic secrets were scrubbed from git history via BFG Repo-Cleaner before public release.

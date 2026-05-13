@@ -15,31 +15,19 @@ One `request_id:<uuid>` query in VictoriaLogs shows the full chain.
 
 ## VictoriaLogs MCP (preferred for production debugging)
 Configured in `.mcp.json` as `victorialogs` server (read-only, v1.8.0).
-Requires SSH tunnel: `./scripts/victorialogs-tunnel.sh` (resolves container IP dynamically).
+Requires SSH tunnel to the production server (VictoriaLogs is only on Docker's internal `monitoring` network).
+Tunnel setup and auth credentials are documented in `klai-infra/docs/rules/observability.md` (private).
 
 Uses LogsQL — NOT LogQL (Loki). Key tools: `query`, `hits`, `field_names`, `facets`, `streams`.
 
 ### Authentication
-VictoriaLogs requires basic auth (`-httpAuth.username` / `-httpAuth.password` flags).
-Credentials in SOPS: `VICTORIALOGS_AUTH_USER`, `VICTORIALOGS_AUTH_PASSWORD`, `VICTORIALOGS_BASIC_AUTH_B64`.
+VictoriaLogs requires basic auth. Credentials are stored in SOPS (klai-infra).
 
-| Consumer | Auth method | Config location |
-|---|---|---|
-| Core-01 Alloy (internal) | `basic_auth` in `loki.write` endpoint | `deploy/alloy/config.alloy` |
-| Public-01 Alloy (external) | Bearer token via Caddy, Caddy passes basic auth upstream | `deploy/caddy/Caddyfile` |
-| MCP (local Mac) | `VL_INSTANCE_HEADERS` env var with Basic auth | `.mcp.json` + `~/.zshrc` |
-
-### SSH tunnel
-The MCP connects via SSH tunnel (VictoriaLogs is only on Docker's internal `monitoring` network).
-
-```bash
-./scripts/victorialogs-tunnel.sh          # start (auto-reconnect, health check)
-./scripts/victorialogs-tunnel.sh --check  # verify tunnel is up
-./scripts/victorialogs-tunnel.sh --stop   # stop tunnel
-```
-
-Resolves container IP dynamically — IPs change on restart.
-`VICTORIALOGS_BASIC_AUTH_B64` must be set in `~/.zshrc` for the MCP to authenticate.
+| Consumer | Auth method |
+|---|---|
+| core-01 Alloy (internal) | `basic_auth` in `loki.write` endpoint — `deploy/alloy/config.alloy` |
+| public-01 Alloy (external) | Bearer token via Caddy, Caddy passes basic auth upstream |
+| MCP (local Mac) | `VL_INSTANCE_HEADERS` env var with Basic auth in `.mcp.json` |
 
 Common LogsQL queries:
 - Trace a request: `request_id:<uuid>`
@@ -71,7 +59,7 @@ Alloy captures real-time — rotation only affects local Docker cache.
 
 ## Product events (SPEC-GRAFANA-METRICS)
 All user-facing actions emit to the `product_events` table in the `klai` database.
-Query via Grafana PostgreSQL datasource or direct SQL on core-01.
+Query via Grafana PostgreSQL datasource or direct SQL on the production server.
 
 | Event | Service | Emitted from |
 |---|---|---|
