@@ -224,7 +224,7 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
                 connector_id,
             )
 
-        items, latest_delta = await self._drain_delta(start_url)
+        items, latest_delta = await self._drain_delta(start_url, connector=connector)
         if latest_delta:
             self._latest_delta_link[connector_id] = latest_delta
 
@@ -270,7 +270,7 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
             return {"delta_link": cached}
 
         start_url = await self._build_delta_root_url(connector)
-        _items, latest_delta = await self._drain_delta(start_url)
+        _items, latest_delta = await self._drain_delta(start_url, connector=connector)
         if latest_delta:
             self._latest_delta_link[connector_id] = latest_delta
             return {"delta_link": latest_delta}
@@ -338,19 +338,28 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
         return site_id
 
     async def _drain_delta(
-        self, start_url: str,
+        self, start_url: str, connector: ConnectorLike | None = None,
     ) -> tuple[list[dict[str, Any]], str | None]:
         """Follow ``@odata.nextLink`` pages until ``@odata.deltaLink`` appears.
 
+        Args:
+            start_url: First Graph delta URL to fetch.
+            connector: Required on the first call after process start so
+                ``ensure_token`` can refresh and populate the token cache.
+                Without it, the first Graph call emits ``Authorization: Bearer ``
+                (empty token) and httpx rejects it locally with
+                ``LocalProtocolError: Illegal header value`` -- same fail-mode
+                tracked in pitfalls/process-rules.md as ``empty-secret-fail-open``.
+
         Returns:
-            (items, final_delta_link) — items from all pages concatenated,
+            (items, final_delta_link) -- items from all pages concatenated,
             delta_link from the final page (or None if the response lacked one).
         """
         items: list[dict[str, Any]] = []
         delta_link: str | None = None
         url: str | None = start_url
         while url:
-            page = await self._graph_get_json(url)
+            page = await self._graph_get_json(url, connector=connector)
             items.extend(page.get("value", []))
             delta_link = page.get("@odata.deltaLink") or delta_link
             next_link = page.get("@odata.nextLink")
