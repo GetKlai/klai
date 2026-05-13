@@ -15,7 +15,12 @@ from app.core.config import settings
 from app.services.zitadel import zitadel
 
 _ORG_ID = "org-abc-123"
-_DELETE_PATH = "/management/v1/orgs"
+# SPEC-INFRA-TENANT-DELETE-003 Bug E — Zitadel's RemoveOrg endpoint is
+# /management/v1/orgs/me (the /me suffix is what makes it the RemoveOrg
+# operation; the x-zitadel-orgid header scopes which org "me" resolves to).
+# /management/v1/orgs without /me is POST-only (CreateOrg) and DELETE on it
+# returns 405 Method Not Allowed in production.
+_DELETE_PATH = "/management/v1/orgs/me"
 
 
 @pytest.fixture
@@ -58,8 +63,11 @@ class TestDeleteOrg:
             await zitadel.delete_org(_ORG_ID)
 
     @pytest.mark.asyncio
-    async def test_403_raises_http_status_error(self, respx_zitadel_local) -> None:
-        """403 Forbidden must propagate — likely a PAT permissions issue."""
+    async def test_403_is_idempotent_returns_none(self, respx_zitadel_local) -> None:
+        """403 means the calling identity no longer has any grant on the org —
+        in deprovisioning retry context that means the org is gone. SPEC R3
+        idempotency.
+        """
         respx_zitadel_local.delete(_DELETE_PATH).mock(return_value=httpx.Response(403))
-        with pytest.raises(httpx.HTTPStatusError):
-            await zitadel.delete_org(_ORG_ID)
+        result = await zitadel.delete_org(_ORG_ID)
+        assert result is None
