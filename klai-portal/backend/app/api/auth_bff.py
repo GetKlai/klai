@@ -15,9 +15,7 @@ from __future__ import annotations
 
 import time
 import urllib.parse
-from dataclasses import dataclass
 
-import httpx
 import structlog
 from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import RedirectResponse
@@ -440,91 +438,6 @@ def _safe_return_to(value: str | None) -> str:
 def _access_token_expiry(expires_in: int) -> int:
     now = int(time.time())
     return now + (expires_in if expires_in > 0 else 3600)
-
-
-# ---------------------------------------------------------------------------
-# Auto-login helpers — SPEC-PORTAL-AUTH-AUTOLOGIN-001
-#
-# After a successful /api/auth/password/set, we want the user to land on
-# /setup/mfa (or /app if they already have MFA) without re-typing the password
-# they just chose. The mechanism is Zitadel's canonical "Custom Login UI"
-# flow: portal-api owns every step of the OIDC dance.
-#
-# Three steps that previously only happened browser-side are folded into one
-# server-side helper here:
-#   1. Initiate authorize  → get authRequestId          ( _server_side_authorize )
-#   2. Create Zitadel session with the new password     ( zitadel.create_session_with_password )
-#   3. Finalize auth-request with session               ( zitadel.finalize_auth_request )
-#   4. Exchange the resulting code for tokens           ( exchange_code_for_tokens )
-#   5. Persist a BFF session record + set cookies       ( session_service.create + set_session_cookies )
-#
-# All five are existing primitives; only step 1 needed a new entry point
-# because Klai's `/api/auth/oidc/start` redirects the BROWSER to Zitadel,
-# while here we need an HTTP client that follows the redirect and parses
-# `authRequest=V2_…` out of the resulting Location header.
-# ---------------------------------------------------------------------------
-
-
-@dataclass(slots=True)
-class _PendingAuthorize:
-    """The state we need to keep around between authorize and token-exchange."""
-
-    auth_request_id: str
-    code_verifier: str
-    state: str
-
-
-async def initiate_server_side_authorize(
-    *,
-    return_to: str,
-    user_agent_hash: str,
-    ui_locales: str | None = None,
-) -> _PendingAuthorize:
-    """Server-side equivalent of `/api/auth/oidc/start` redirect.
-
-    Performs the same PKCE/state/pending-record bookkeeping as the browser
-    path, then issues `GET /oauth/v2/authorize` (without following redirects)
-    so we can pluck the `authRequest=V2_…` parameter out of the Location
-    header. The returned bundle is passed to ``finalize_auth_request``.
-
-    Raises ``OidcFlowError`` on any non-redirect response or a missing
-    ``authRequest`` query param — the caller decides whether to fall back.
-    """
-    code_verifier = generate_code_verifier()
-    code_challenge = s256_challenge(code_verifier)
-    state = generate_state()
-
-    await oidc_pending.put(
-        state=state,
-        code_verifier=code_verifier,
-        return_to=_safe_return_to(return_to),
-        user_agent_hash=user_agent_hash,
-    )
-
-    authorize_url = build_authorize_url(
-        state=state,
-        code_challenge=code_challenge,
-        redirect_uri=_callback_url(),
-        ui_locales=ui_locales,
-    )
-
-    async with httpx.AsyncClient(timeout=5.0, follow_redirects=False) as client:
-        resp = await client.get(authorize_url)
-    if resp.status_code != 302:
-        raise OidcFlowError(
-            "authorize_unexpected_status",
-            f"expected 302 from /oauth/v2/authorize, got {resp.status_code}",
-        )
-    location = resp.headers.get("location", "")
-    parsed = urllib.parse.urlparse(location)
-    qs = urllib.parse.parse_qs(parsed.query)
-    auth_request_id = (qs.get("authRequest") or [""])[0]
-    if not auth_request_id:
-        raise OidcFlowError(
-            "authorize_no_request_id",
-            f"no authRequest in redirect Location: {location!r}",
-        )
-    return _PendingAuthorize(auth_request_id=auth_request_id, code_verifier=code_verifier, state=state)
 
 
 def _client_ip(request: Request) -> str | None:

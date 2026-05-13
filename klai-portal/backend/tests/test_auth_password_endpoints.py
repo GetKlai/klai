@@ -13,15 +13,11 @@ Zitadel HTTP mocked via respx against the real ``ZitadelClient`` (REQ-5.7).
 
 from __future__ import annotations
 
-import json
-from unittest.mock import AsyncMock
-
 import httpx
 import pytest
 import respx
 from auth_test_helpers import _audit_log_patch, _capture_events, _expected_email_hash
 from fastapi import HTTPException
-from starlette.requests import Request
 from structlog.testing import capture_logs
 
 from app.api.auth import (
@@ -32,21 +28,6 @@ from app.api.auth import (
     password_set,
     verify_email,
 )
-
-
-def _mock_request() -> Request:
-    """Bare Starlette Request for handlers that need `request` but not its body."""
-    return Request(
-        scope={
-            "type": "http",
-            "method": "POST",
-            "path": "/api/auth/password/set",
-            "headers": [(b"user-agent", b"pytest")],
-            "client": ("127.0.0.1", 12345),
-            "query_string": b"",
-        }
-    )
-
 
 # ---------------------------------------------------------------------------
 # Scenario P1 — password_reset known email → 204 + audit (REQ-3.1)
@@ -163,21 +144,14 @@ async def test_password_reset_send_reset_5xx(respx_zitadel: respx.MockRouter) ->
 
 
 @pytest.mark.asyncio
-async def test_password_set_happy_audit_emitted(respx_zitadel: respx.MockRouter) -> None:
-    """REQ-3.4: audit fires on successful password-set.
-
-    SPEC-PORTAL-AUTH-AUTOLOGIN-001 makes the endpoint return JSON
-    ``{redirect_to, auto_login_failed}`` instead of 204. The auto-login chain
-    is fail-soft — with the catch-all respx mock the OIDC dance cannot complete,
-    so the response carries ``auto_login_failed=true``. The audit event MUST
-    still be emitted regardless of auto-login outcome.
-    """
+async def test_password_set_happy(respx_zitadel: respx.MockRouter) -> None:
+    """REQ-3.4: password_set happy path returns 204 and emits audit."""
     respx_zitadel.route().mock(return_value=httpx.Response(200, json={}))
 
     body = PasswordSetRequest(user_id="uid-1", code="123456", new_password="NewSecret123!")
 
     with capture_logs() as captured, _audit_log_patch() as audit_log:
-        response = await password_set(body=body, request=_mock_request(), db=AsyncMock())
+        await password_set(body=body)
 
     audit_log.assert_called_once()
     call_kwargs = audit_log.call_args.kwargs
@@ -185,11 +159,6 @@ async def test_password_set_happy_audit_emitted(respx_zitadel: respx.MockRouter)
     assert call_kwargs["actor"] == "uid-1"
     assert call_kwargs["details"]["reason"] == "set"
     assert _capture_events(captured, "password_set_failed") == []
-
-    # The handler always returns a JSON body now — verify its shape.
-    payload = json.loads(response.body)
-    assert payload["redirect_to"] in ("/setup/mfa", "/app", "/")
-    assert "auto_login_failed" in payload
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +174,7 @@ async def test_password_set_expired_link(respx_zitadel: respx.MockRouter) -> Non
 
     with capture_logs() as captured, _audit_log_patch() as audit_log:
         with pytest.raises(HTTPException) as exc:
-            await password_set(body=body, request=_mock_request(), db=AsyncMock())
+            await password_set(body=body)
 
     assert exc.value.status_code == 400
     assert "expired or is invalid" in exc.value.detail
@@ -232,7 +201,7 @@ async def test_password_set_invalid_code(respx_zitadel: respx.MockRouter) -> Non
 
     with capture_logs() as captured, _audit_log_patch() as audit_log:
         with pytest.raises(HTTPException) as exc:
-            await password_set(body=body, request=_mock_request(), db=AsyncMock())
+            await password_set(body=body)
 
     assert exc.value.status_code == 400
     audit_log.assert_not_called()
@@ -256,7 +225,7 @@ async def test_password_set_zitadel_5xx(respx_zitadel: respx.MockRouter) -> None
 
     with capture_logs() as captured, _audit_log_patch() as audit_log:
         with pytest.raises(HTTPException) as exc:
-            await password_set(body=body, request=_mock_request(), db=AsyncMock())
+            await password_set(body=body)
 
     assert exc.value.status_code == 502
     assert "Failed to set password" in exc.value.detail
