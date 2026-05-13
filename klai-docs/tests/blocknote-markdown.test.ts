@@ -107,6 +107,34 @@ describe("blockNoteJsonToMarkdown", () => {
     expect(markdown).not.toContain("** Trailing space");
   });
 
+  it("renders BlockNote table blocks as markdown pipe-tables (treating row 0 as header)", () => {
+    const cell = (text: string, bold = false) => [{ type: "text", text, styles: bold ? { bold: true } : {} }];
+    const content = JSON.stringify([
+      {
+        type: "table",
+        props: { textColor: "default", backgroundColor: "default" },
+        content: {
+          type: "tableContent",
+          rows: [
+            { cells: [cell("Action"), cell("Personal"), cell("Admin")] },
+            { cells: [cell("Read"), cell("yes"), cell("yes")] },
+            { cells: [cell("Delete the | workspace"), cell("no"), cell("yes")] },
+          ],
+        },
+        children: [],
+      },
+    ]);
+
+    const markdown = blockNoteJsonToMarkdown(content);
+
+    // Header row + separator + body rows
+    expect(markdown).toContain("| Action | Personal | Admin |");
+    expect(markdown).toContain("| --- | --- | --- |");
+    expect(markdown).toContain("| Read | yes | yes |");
+    // Pipes inside cell content must be escaped so they don't break the table syntax
+    expect(markdown).toContain("Delete the \\| workspace");
+  });
+
   it("leaves all-whitespace styled runs as plain text (no empty emphasis markers)", () => {
     const content = JSON.stringify([
       {
