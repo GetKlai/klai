@@ -94,10 +94,13 @@ async def test_invite_user_default_seat_from_role(role: str, expected_default_se
 
 
 @pytest.mark.asyncio
-async def test_invite_user_explicit_seat_overrides_default() -> None:
-    """AC-5 path: admin explicitly invites a kb_manager onto a chat seat.
-    The handler MUST respect the override (the SPEC's "decoupled axes"
-    invariant — billing is admin-chosen, not role-derived).
+async def test_invite_user_ignores_client_supplied_seat_override() -> None:
+    """SPEC v0.5.0: the FE no longer surfaces a seat-selector and
+    ``InviteRequest`` no longer carries the ``seat_type`` field. Even
+    if a legacy client POSTs ``{"role": "kb_manager", "seat_type":
+    "chat"}``, pydantic drops the extra field (default ``extra='ignore'``)
+    and the server derives the account type via ``suggest_seat(role)``
+    — producing ``knowledge``, not the legacy override.
     """
     from app.api.admin.users import InviteRequest, invite_user
 
@@ -111,13 +114,17 @@ async def test_invite_user_explicit_seat_overrides_default() -> None:
     mock_db.execute.return_value = locked
     mock_db.scalar.return_value = 0
 
-    body = InviteRequest(
-        email="km-on-chat@example.com",
-        first_name="K",
-        last_name="M",
-        role="kb_manager",
-        preferred_language="nl",
-        seat_type="chat",  # explicit override — would default to knowledge
+    # Build the request via raw dict so we can inject a legacy
+    # ``seat_type`` field. pydantic drops it silently with extra='ignore'.
+    body = InviteRequest.model_validate(
+        {
+            "email": "km-on-chat@example.com",
+            "first_name": "K",
+            "last_name": "M",
+            "role": "kb_manager",
+            "preferred_language": "nl",
+            "seat_type": "chat",  # legacy override — server now ignores
+        }
     )
     perms = make_perms(role="admin", user_id="admin-1", org_id=101, plan="knowledge")
 
@@ -135,11 +142,12 @@ async def test_invite_user_explicit_seat_overrides_default() -> None:
         mock_zitadel.grant_user_role = AsyncMock()
         await invite_user(body=body, perms=perms, db=mock_db)
 
-    assert captured["seat_type"] == "chat", (
-        "Explicit seat_type='chat' on a kb_manager invite must beat the "
-        "suggest_seat(kb_manager)='knowledge' default — admin override is the "
-        "decoupled-axes invariant."
+    assert captured["seat_type"] == "knowledge", (
+        "Server derives account type from role via suggest_seat — a "
+        "client-supplied seat_type MUST be ignored after v0.5.0."
     )
+    # And confirm the legacy field is not part of the pydantic schema.
+    assert "seat_type" not in InviteRequest.model_fields
 
 
 # ---------------------------------------------------------------------------
@@ -294,25 +302,14 @@ class TestUpdateUserSeatEndpoint:
 
         assert mock_log.await_args.kwargs["details"]["cost_delta_eur"] == 28 - 68
 
-    @pytest.mark.asyncio
-    async def test_viewer_downgrade_emits_full_savings(self) -> None:
-        """Knowledge -> viewer = -€68 savings (full tier drop)."""
-        from app.api.admin.users import SeatUpdateRequest, update_user_seat
+    def test_seat_update_request_rejects_viewer_value(self) -> None:
+        """SPEC v0.5.0 invariant: a PATCH /seat request body with
+        ``seat_type='viewer'`` is rejected by pydantic before the
+        handler runs. The Literal narrows the accepted set to the two
+        live tiers."""
+        from pydantic import ValidationError
 
-        target = MagicMock()
-        target.seat_type = "knowledge"
-        target.org_id = 101
-        target.zitadel_user_id = "user-V"
+        from app.api.admin.users import SeatUpdateRequest
 
-        mock_db = AsyncMock()
-        result = MagicMock()
-        result.scalar_one_or_none.return_value = target
-        mock_db.execute.return_value = result
-
-        perms = make_perms(role="admin", user_id="admin-1", org_id=101)
-        body = SeatUpdateRequest(seat_type="viewer")
-
-        with patch("app.api.admin.users.log_event", new=AsyncMock()) as mock_log:
-            await update_user_seat(zitadel_user_id="user-V", body=body, perms=perms, db=mock_db)
-
-        assert mock_log.await_args.kwargs["details"]["cost_delta_eur"] == -68
+        with pytest.raises(ValidationError):
+            SeatUpdateRequest(seat_type="viewer")  # type: ignore[arg-type]

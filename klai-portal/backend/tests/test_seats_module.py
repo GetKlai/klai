@@ -43,19 +43,21 @@ from app.core.seats import (
 
 
 class TestSeatTypeEnum:
-    def test_three_members(self) -> None:
-        assert {s.value for s in SeatType} == {"viewer", "chat", "knowledge"}
+    def test_two_members(self) -> None:
+        # v0.5.0: VIEWER dropped — getklai.com/pricing has only Klai
+        # Chat (€28) and Klai Chat + Knowledge (€68).
+        assert {s.value for s in SeatType} == {"chat", "knowledge"}
 
     def test_str_value_equals_name_lower(self) -> None:
         # StrEnum: SeatType.CHAT == "chat" at runtime.
         assert SeatType.CHAT == "chat"
         assert SeatType.KNOWLEDGE == "knowledge"
-        assert SeatType.VIEWER == "viewer"
 
 
 class TestSeatFeaturesContents:
-    def test_viewer_is_readonly_hints_only(self) -> None:
-        assert SEAT_FEATURES[SeatType.VIEWER] == frozenset({"chat_readonly", "knowledge_readonly"})
+    def test_only_two_tiers_defined(self) -> None:
+        # v0.5.0: SEAT_FEATURES has exactly CHAT and KNOWLEDGE keys.
+        assert set(SEAT_FEATURES.keys()) == {SeatType.CHAT, SeatType.KNOWLEDGE}
 
     def test_chat_seat_unlocks_basic_kb_and_scribe_docs(self) -> None:
         feats = SEAT_FEATURES[SeatType.CHAT]
@@ -128,16 +130,20 @@ class TestCapabilityToSeatFeature:
 
 class TestPricing:
     def test_monthly_prices_match_marketing_site(self) -> None:
-        # getklai.com/pricing: Chat €28/mo, Chat+Knowledge €68/mo, Viewer €0.
-        assert SEAT_PRICE_MONTHLY[SeatType.VIEWER] == 0
+        # getklai.com/pricing: Chat €28/mo, Chat+Knowledge €68/mo. v0.5.0
+        # dropped viewer.
         assert SEAT_PRICE_MONTHLY[SeatType.CHAT] == 28
         assert SEAT_PRICE_MONTHLY[SeatType.KNOWLEDGE] == 68
 
     def test_yearly_month_equivalent_matches_marketing_site(self) -> None:
         # Annual contract: €20/mo Chat, €48/mo Chat+Knowledge.
-        assert SEAT_PRICE_YEARLY_MONTH_EQUIV[SeatType.VIEWER] == 0
         assert SEAT_PRICE_YEARLY_MONTH_EQUIV[SeatType.CHAT] == 20
         assert SEAT_PRICE_YEARLY_MONTH_EQUIV[SeatType.KNOWLEDGE] == 48
+
+    def test_pricing_dicts_have_exactly_two_keys(self) -> None:
+        # v0.5.0 invariant — guard against accidental viewer reintroduction.
+        assert set(SEAT_PRICE_MONTHLY.keys()) == {SeatType.CHAT, SeatType.KNOWLEDGE}
+        assert set(SEAT_PRICE_YEARLY_MONTH_EQUIV.keys()) == {SeatType.CHAT, SeatType.KNOWLEDGE}
 
     def test_monthly_seat_cost_helper_matches_table(self) -> None:
         for seat in SeatType:
@@ -205,13 +211,6 @@ class TestEffectiveFeatures:
         assert "kb.create_org" not in feats
         assert "scribe" in feats
 
-    def test_admin_on_viewer_seat_sees_only_read_hints(self) -> None:
-        feats = effective_features(SeatType.VIEWER, "admin")
-        # Viewer is a billing-only seat. The FE-rendering hints survive
-        # the role-floor (no floor entry for chat_readonly /
-        # knowledge_readonly -> defaults to "personal" floor).
-        assert feats == frozenset({"chat_readonly", "knowledge_readonly"})
-
     def test_unknown_role_fail_closed(self) -> None:
         # v0.4.0 hardening: an unknown role must not 500 the function.
         # PROFILE_RANK.get(role, -1) -> caller_rank = -1 -> nothing
@@ -253,12 +252,6 @@ class TestEffectiveCapabilities:
         caps = effective_capabilities("personal", SeatType.KNOWLEDGE)
         assert caps == {Capability.KB_CONNECTORS}
 
-    def test_admin_plus_viewer_seat_returns_empty_set(self) -> None:
-        # Admin retains role-rank powers via _require_at_least; capability
-        # gating is independent and returns empty for viewer-seat.
-        caps = effective_capabilities("admin", SeatType.VIEWER)
-        assert caps == frozenset()
-
     def test_unknown_role_fail_closed(self) -> None:
         # PROFILE_CAPABILITIES.get(role, frozenset()) -> empty role caps
         # -> empty result. No KeyError.
@@ -273,14 +266,14 @@ class TestEffectiveCapabilities:
 
 class TestBreakdownToMonthlyBill:
     def test_mixed_breakdown_sums_correctly(self) -> None:
-        # 4 chat + 1 knowledge + 2 viewer = 4*28 + 1*68 + 2*0 = 180.
-        result = breakdown_to_monthly_bill({SeatType.CHAT: 4, SeatType.KNOWLEDGE: 1, SeatType.VIEWER: 2})
+        # 4 chat + 1 knowledge = 4*28 + 1*68 = 180.
+        result = breakdown_to_monthly_bill({SeatType.CHAT: 4, SeatType.KNOWLEDGE: 1})
         assert result == 4 * 28 + 1 * 68
 
     def test_yearly_contract_applies_discounted_rates(self) -> None:
-        # Same headcount on yearly: 4*20 + 1*48 + 2*0 = 128.
+        # Same headcount on yearly: 4*20 + 1*48 = 128.
         result = breakdown_to_monthly_bill(
-            {SeatType.CHAT: 4, SeatType.KNOWLEDGE: 1, SeatType.VIEWER: 2},
+            {SeatType.CHAT: 4, SeatType.KNOWLEDGE: 1},
             yearly_contract=True,
         )
         assert result == 4 * 20 + 1 * 48
@@ -299,5 +292,9 @@ class TestBreakdownToMonthlyBill:
     def test_empty_breakdown_is_zero(self) -> None:
         assert breakdown_to_monthly_bill({}) == 0
 
-    def test_all_viewer_returns_zero(self) -> None:
-        assert breakdown_to_monthly_bill({SeatType.VIEWER: 10}) == 0
+    def test_dropped_viewer_silently_zeroes(self) -> None:
+        # v0.5.0 invariant: a 'viewer' string from a legacy JSON caller
+        # is no longer a known SeatType. The helper's silent-drop branch
+        # ignores it, so an all-viewer breakdown returns 0 — same shape
+        # as before, different reason (was tier-cost=0; now tier-unknown).
+        assert breakdown_to_monthly_bill({"viewer": 10}) == 0

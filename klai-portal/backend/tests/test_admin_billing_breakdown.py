@@ -42,8 +42,8 @@ def _mock_db_returning(rows: list[tuple[str, int]]) -> AsyncMock:
 class TestBillingBreakdownAggregation:
     @pytest.mark.asyncio
     async def test_mixed_tier_breakdown_sums_correctly(self) -> None:
-        # 4 chat + 2 knowledge + 1 viewer = 4*28 + 2*68 + 1*0 = 248
-        db = _mock_db_returning([("chat", 4), ("knowledge", 2), ("viewer", 1)])
+        # 4 chat + 2 knowledge = 4*28 + 2*68 = 248. v0.5.0: viewer gone.
+        db = _mock_db_returning([("chat", 4), ("knowledge", 2)])
         perms = make_perms(role="admin", org_id=101)
 
         result = await billing_breakdown(perms=perms, db=db)
@@ -54,22 +54,20 @@ class TestBillingBreakdownAggregation:
         assert rows_by_type["chat"].monthly_eur == 4 * SEAT_PRICE_MONTHLY[SeatType.CHAT]
         assert rows_by_type["knowledge"].count == 2
         assert rows_by_type["knowledge"].monthly_eur == 2 * SEAT_PRICE_MONTHLY[SeatType.KNOWLEDGE]
-        assert rows_by_type["viewer"].count == 1
-        assert rows_by_type["viewer"].monthly_eur == 0
-        assert result.total_users == 7
+        assert result.total_users == 6
         assert result.total_monthly_eur == 4 * 28 + 2 * 68
 
     @pytest.mark.asyncio
     async def test_zero_count_tiers_still_appear_in_response(self) -> None:
-        # Only chat users — viewer / knowledge rows must still appear so
-        # the FE renders the full ladder without conditional logic.
+        # Only chat users — knowledge row must still appear so the FE
+        # renders the full ladder without conditional logic.
         db = _mock_db_returning([("chat", 3)])
         perms = make_perms(role="admin", org_id=101)
 
         result = await billing_breakdown(perms=perms, db=db)
 
         seat_types_returned = [row.seat_type for row in result.rows]
-        assert seat_types_returned == ["viewer", "chat", "knowledge"]
+        assert seat_types_returned == ["chat", "knowledge"]
         assert result.total_users == 3
         assert result.total_monthly_eur == 3 * 28
 
@@ -89,15 +87,13 @@ class TestBillingBreakdownAggregation:
     @pytest.mark.asyncio
     async def test_stable_seat_ordering(self) -> None:
         # Even if the DB returns rows in a different order (e.g. asyncpg
-        # streaming order), the response always lists viewer, then chat,
-        # then knowledge.
-        db = _mock_db_returning([("knowledge", 2), ("viewer", 1), ("chat", 4)])
+        # streaming order), the response always lists chat, then knowledge.
+        db = _mock_db_returning([("knowledge", 2), ("chat", 4)])
         perms = make_perms(role="admin", org_id=101)
 
         result = await billing_breakdown(perms=perms, db=db)
 
         assert [row.seat_type for row in result.rows] == [
-            "viewer",
             "chat",
             "knowledge",
         ]
