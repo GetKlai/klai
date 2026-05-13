@@ -324,12 +324,12 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
         return self._ref_metadata.get(ref.ref, {"sender_email": "", "mentioned_emails": []})
 
     async def list_folders(self, connector: Any, parent_id: str | None = None) -> list[dict[str, Any]]:
-        """List child folders under ``parent_id`` (root when None).
+        """List children under ``parent_id`` (root when None).
 
-        Powers the post-OAuth folder picker in the portal. Returns folders
-        only — ``file`` items are filtered out. Each result is a flat dict
-        with ``id``, ``name``, ``child_count`` (folder.childCount from
-        Graph, ``0`` when absent).
+        Powers the post-OAuth picker in the portal. Returns BOTH folders
+        and files so the user can see what's inside each subtree before
+        picking a folder. Only folders are selectable in v1 — files come
+        along automatically when their parent folder is chosen.
 
         Args:
             connector: Connector model (for token + drive resolution).
@@ -337,8 +337,9 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
                 / empty string for the drive root.
 
         Returns:
-            ``[{"id": str, "name": str, "child_count": int}, ...]``,
-            ordered by Graph's default (createdDateTime desc, typically).
+            ``[{"id", "name", "kind": "folder"|"file", "child_count": int}, ...]``.
+            ``child_count`` is 0 for files. Sort: folders first by name,
+            then files by name (mirrors OneDrive's default).
 
         Raises:
             httpx.HTTPStatusError: Graph error propagated for the caller to
@@ -356,33 +357,48 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
             base = f"{_GRAPH_BASE}/me/drive/{anchor}"
 
         # ``$select`` keeps the payload small; ``$top=200`` is the page cap
-        # the picker UX supports without pagination (most users have far
-        # fewer top-level folders). Add nextLink-following if that turns
-        # out wrong in the field.
+        # the picker UX supports without pagination. If a folder turns out
+        # to have >200 children in practice, add nextLink-following.
         url = f"{base}/children?$select=id,name,folder,file&$top=200"
         data = await self._graph_get_json(url, connector=connector)
         items = data.get("value", []) if isinstance(data, dict) else []
 
         folders: list[dict[str, Any]] = []
+        files: list[dict[str, Any]] = []
         for item in items:
             if not isinstance(item, dict):
                 continue
-            if "folder" not in item:
-                continue  # files filtered out — picker is folder-only
-            folder_facet = item.get("folder") or {}
-            child_count_raw = folder_facet.get("childCount", 0) if isinstance(folder_facet, dict) else 0
-            try:
-                child_count = int(child_count_raw) if child_count_raw is not None else 0
-            except (TypeError, ValueError):
-                child_count = 0
-            folders.append(
-                {
-                    "id": str(item.get("id", "")),
-                    "name": str(item.get("name", "")),
-                    "child_count": child_count,
-                }
-            )
-        return folders
+            name = str(item.get("name", ""))
+            item_id = str(item.get("id", ""))
+            if "folder" in item:
+                folder_facet = item.get("folder") or {}
+                child_count_raw = folder_facet.get("childCount", 0) if isinstance(folder_facet, dict) else 0
+                try:
+                    child_count = int(child_count_raw) if child_count_raw is not None else 0
+                except (TypeError, ValueError):
+                    child_count = 0
+                folders.append(
+                    {
+                        "id": item_id,
+                        "name": name,
+                        "kind": "folder",
+                        "child_count": child_count,
+                    }
+                )
+            elif "file" in item:
+                files.append(
+                    {
+                        "id": item_id,
+                        "name": name,
+                        "kind": "file",
+                        "child_count": 0,
+                    }
+                )
+            # Items without folder or file facet (packages, etc.) are skipped.
+
+        folders.sort(key=lambda x: x["name"].lower())
+        files.sort(key=lambda x: x["name"].lower())
+        return folders + files
 
     # -- Delta URL construction + pagination ---------------------------------
 
