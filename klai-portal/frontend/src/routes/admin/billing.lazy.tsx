@@ -180,7 +180,7 @@ function SeatBreakdownPanel() {
     // per-seat-billing opt-in status. Failing the status fetch falls
     // back to "Phase 5 light not available" semantics — the breakdown
     // stays visible and the CTA banner shows the coming-soon copy.
-    Promise.allSettled([
+    void Promise.allSettled([
       apiFetch<SeatBreakdownResponse>(`/api/admin/billing/breakdown`),
       apiFetch<PerSeatStatusResponse>(`/api/admin/billing/per-seat-status`),
     ])
