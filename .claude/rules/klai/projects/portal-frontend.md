@@ -372,6 +372,26 @@ Each was a reasonable choice in isolation; together they make "where
 does this type belong" an open question every time. The decision tree
 above is the answer — apply it before adding a new shared file.
 
+### Mechanical enforcement
+
+The "cross-route imports" anti-pattern is enforced by the
+`klai/no-cross-route-import` ESLint rule, defined in
+`klai-portal/frontend/eslint-rules/no-cross-route-import.js` and wired
+into `klai-portal/frontend/eslint.config.js`. It fires on any route
+file (under `src/routes/`, basename without `-`/`_`/`._` markers) that
+relatively imports from another route file. Allowed targets:
+`-`-prefixed siblings, `_components/` directories,
+`<route>._<feature>` colocation, `routeTree.gen`, and `__tests__/`.
+
+The rule has a `vitest run eslint-rules/__tests__/no-cross-route-import.test.js`
+suite covering 4 valid + 4 invalid + 5 edge cases. Re-run when extending
+the heuristic.
+
+The other anti-patterns above (cross-directory `-` imports, feature
+types in `@/lib/`, duplicate definitions) are NOT yet mechanically
+enforced — reviewers are the only gate. Future work could codify them
+in additional ESLint rules or via the `klai-tenant-review` agent.
+
 ---
 
 ## Multi-step wizard password fields (MED)
