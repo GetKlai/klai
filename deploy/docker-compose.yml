@@ -461,6 +461,11 @@ services:
       DOCS_INTERNAL_SECRET: ${DOCS_INTERNAL_SECRET}
       KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
       RETRIEVAL_API_INTERNAL_SECRET: ${RETRIEVAL_API_INTERNAL_SECRET}
+      # ─── Mailer (notifications, onboarding drip) ────────────────
+      # Internal Docker-network URL for klai-mailer's /internal/send.
+      # Auth is X-Internal-Secret: ${PORTAL_API_INTERNAL_SECRET}; mailer
+      # validates via hmac.compare_digest.
+      MAILER_URL: ${MAILER_URL:-http://klai-mailer:8300}
       # ─── Application-level encryption (secrets at rest) ─────────
       PORTAL_SECRETS_KEY: ${PORTAL_API_PORTAL_SECRETS_KEY}
       ENCRYPTION_KEY: ${PORTAL_API_ENCRYPTION_KEY}
