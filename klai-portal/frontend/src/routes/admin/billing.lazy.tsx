@@ -137,7 +137,9 @@ function Field({
 // this panel as a "what your bill would look like under per-user pricing"
 // preview.
 
-type SeatTier = 'viewer' | 'chat' | 'knowledge'
+// v0.5.0: viewer dropped — getklai.com/pricing has only Klai Chat
+// and Klai Chat + Knowledge.
+type SeatTier = 'chat' | 'knowledge'
 
 interface SeatBreakdownRow {
   seat_type: SeatTier
@@ -152,7 +154,6 @@ interface SeatBreakdownResponse {
 }
 
 function seatLabel(tier: SeatTier): string {
-  if (tier === 'viewer') return m.admin_billing_breakdown_seat_viewer()
   if (tier === 'chat') return m.admin_billing_breakdown_seat_chat()
   return m.admin_billing_breakdown_seat_knowledge()
 }

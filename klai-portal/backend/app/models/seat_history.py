@@ -71,7 +71,7 @@ class PortalUserSeatHistory(Base):
     __tablename__ = "portal_user_seat_history"
     __table_args__ = (
         CheckConstraint(
-            "seat_type IN ('viewer', 'chat', 'knowledge')",
+            "seat_type IN ('chat', 'knowledge')",
             name="ck_pu_seat_hist_seat_type",
         ),
         Index("idx_pu_seat_hist_user_validto", "user_id", "valid_to"),

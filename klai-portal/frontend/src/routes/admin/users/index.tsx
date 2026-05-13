@@ -51,7 +51,7 @@ export const Route = createFileRoute('/admin/users/')({
 
 type UserStatus = 'active' | 'suspended' | 'offboarded'
 
-type SeatType = 'viewer' | 'chat' | 'knowledge'
+type SeatType = 'chat' | 'knowledge'
 
 interface User {
   zitadel_user_id: string
@@ -59,9 +59,10 @@ interface User {
   first_name: string
   last_name: string
   role: ProfileRole
-  // SPEC-PORTAL-PRICING-PER-USER-001 Phase 2: per-user billing tier,
-  // orthogonal to role. Surfaced as its own column on /admin/users so
-  // admins see who's on which seat without drilling into the user page.
+  // SPEC-PORTAL-PRICING-PER-USER-001 v0.5.0: per-user account type
+  // (billing tier), derived server-side from ``role`` via
+  // ``suggest_seat``. Surfaced as its own column on /admin/users for
+  // audit; admin doesn't change it directly anymore.
   seat_type: SeatType
   status: UserStatus
   preferred_language: 'nl' | 'en'
@@ -91,18 +92,17 @@ function ProfileBadge({ role, pending }: { role: ProfileRole; pending?: boolean 
   return <Badge variant={variant}>{profileLabel(role)}</Badge>
 }
 
-// SPEC-PORTAL-PRICING-PER-USER-001 Phase 2: render seat tier alongside
-// role. Same shape as ProfileBadge so the table layout stays uniform.
-function seatLabel(seat: SeatType): string {
-  const msgs = m as unknown as Record<string, (() => string) | undefined>
-  const labelFn = msgs[`admin_users_seat_${seat}_label`]
-  return labelFn ? labelFn() : seat
+// SPEC-PORTAL-PRICING-PER-USER-001 v0.5.0: render account type
+// alongside role. Two-value enum (chat / knowledge); the viewer
+// tier was dropped in v0.5.0.
+function accountTypeLabel(seat: SeatType): string {
+  if (seat === 'knowledge') return m.admin_users_account_knowledge_label()
+  return m.admin_users_account_chat_label()
 }
 
-function SeatBadge({ seat }: { seat: SeatType }) {
-  const variant: 'secondary' | 'accent' | 'warning' =
-    seat === 'knowledge' ? 'accent' : seat === 'chat' ? 'secondary' : 'warning'
-  return <Badge variant={variant}>{seatLabel(seat)}</Badge>
+function AccountTypeBadge({ seat }: { seat: SeatType }) {
+  const variant: 'secondary' | 'accent' = seat === 'knowledge' ? 'accent' : 'secondary'
+  return <Badge variant={variant}>{accountTypeLabel(seat)}</Badge>
 }
 
 function StatusBadge({ status }: { status: UserStatus }) {
@@ -228,8 +228,8 @@ function UsersPage() {
     // here — seat-change UI lives at the user-detail page (PATCH
     // /api/admin/users/{id}/seat handles the mutation).
     columnHelper.accessor('seat_type', {
-      header: () => m.admin_users_col_seat(),
-      cell: (info) => <SeatBadge seat={info.getValue()} />,
+      header: () => m.admin_users_col_account_type(),
+      cell: (info) => <AccountTypeBadge seat={info.getValue()} />,
     }),
     columnHelper.accessor('status', {
       header: () => m.admin_users_col_status(),
