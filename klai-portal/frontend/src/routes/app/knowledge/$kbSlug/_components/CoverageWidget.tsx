@@ -56,7 +56,7 @@ export function CoverageWidget({
   onSuggest,
   isSuggesting,
   isBackfilling,
-  canEdit,
+  canEdit = false,
   onRename,
   onDelete,
 }: CoverageWidgetProps) {
@@ -125,7 +125,7 @@ export function CoverageWidget({
           isActive={activeNodeId === node.taxonomy_node_id}
           isEditing={editingNodeId === node.taxonomy_node_id}
           isConfirmingDelete={confirmDeleteId === node.taxonomy_node_id}
-          canEdit={!!canEdit}
+          canEdit={canEdit}
           onNodeClick={() => onNodeClick(node.taxonomy_node_id)}
           onStartEdit={() => {
             setEditingNodeId(node.taxonomy_node_id)
@@ -172,7 +172,7 @@ export function CoverageWidget({
                 showSuggestInUntagged && (
                   <button
                     type="button"
-                    onClick={(e) => { e.stopPropagation(); onSuggest?.() }}
+                    onClick={() => onSuggest?.()}
                     disabled={isSuggesting}
                     className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-medium bg-gray-900 text-white hover:opacity-90 transition-opacity disabled:opacity-50"
                   >
