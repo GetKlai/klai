@@ -238,6 +238,59 @@ async def send_waitlist_invite(
         logger.warning("mailer_notify_waitlist_invite_failed", exc_info=True)
 
 
+async def send_onboarding_invite(
+    *,
+    name: str,
+    email: str,
+    cal_url: str,
+    locale: str | None = None,
+) -> bool:
+    """Send Mail 1 of the onboarding drip to a waitlist subscriber.
+
+    Triggered by a CRM-side button (Twenty Workflow → portal-api
+    /internal/onboarding/start). Calls klai-mailer's `/internal/send`
+    with the `onboarding_invite` template — recipient is bound to
+    `variables.email` server-side, so the body's `to` and `email` MUST
+    match (mailer returns 400 otherwise).
+
+    Returns True on a 2xx mailer response, False on every other path
+    (misconfigured, 4xx/5xx, network error). The caller decides whether
+    to surface failure to the user.
+    """
+    if not settings.mailer_url:
+        logger.warning("mailer_url_not_configured_onboarding_invite")
+        return False
+
+    effective_locale = locale or _locale_from_email(email)
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"{settings.mailer_url}/internal/send",
+                headers={"X-Internal-Secret": settings.internal_secret},
+                json={
+                    "template": "onboarding_invite",
+                    "to": email,
+                    "locale": effective_locale,
+                    "variables": {
+                        "name": name,
+                        "email": email,
+                        "cal_url": cal_url,
+                    },
+                },
+            )
+            if resp.status_code >= 400:
+                logger.warning(
+                    "mailer_notify_onboarding_invite_4xx5xx",
+                    status=resp.status_code,
+                    body=resp.text[:300],
+                )
+                return False
+            return True
+    except Exception:
+        logger.warning("mailer_notify_onboarding_invite_failed", exc_info=True)
+        return False
+
+
 async def issue_waitlist_invite(
     *,
     name: str,
