@@ -44,8 +44,10 @@ Architecture decision:
   `__tests__/members-hooks.test.tsx`.
 
 Result: `members.tsx` is reduced from 497 lines to 362 lines in this
-workspace baseline. Live Voys tenant smoke was not performed during
-this local run.
+workspace baseline. PR #642 was merged to `main` and deployed to
+core-01 on 2026-05-13. A post-deploy Playwright MCP smoke verified the
+Voys Google-SSO session and the live KB members route on
+`https://voys.getklai.com/app/knowledge/support/members`.
 
 ## Motivation metrics
 
