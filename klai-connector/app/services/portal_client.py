@@ -36,6 +36,15 @@ class PortalConnectorConfig:
     is_enabled: bool
     allowed_assertion_modes: list[str] | None = None
 
+    @property
+    def id(self) -> str:
+        """Alias for connector_id. Adapter code (ms_docs, google_drive) reads
+        connector.id; test fixtures historically use SimpleNamespace(id=...).
+        Keeping the dataclass field name connector_id while exposing .id keeps
+        both call sites correct without refactoring all adapters.
+        """
+        return self.connector_id
+
 
 class PortalClient:
     """Calls portal's internal API for config and status callbacks.
