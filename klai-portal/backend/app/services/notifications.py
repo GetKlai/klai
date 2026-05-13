@@ -244,7 +244,7 @@ async def send_onboarding_invite(
     email: str,
     cal_url: str,
     locale: str | None = None,
-) -> bool:
+) -> dict[str, str | bool] | None:
     """Send Mail 1 of the onboarding drip to a waitlist subscriber.
 
     Triggered by a CRM-side button (Twenty Workflow → portal-api
@@ -253,13 +253,15 @@ async def send_onboarding_invite(
     `variables.email` server-side, so the body's `to` and `email` MUST
     match (mailer returns 400 otherwise).
 
-    Returns True on a 2xx mailer response, False on every other path
-    (misconfigured, 4xx/5xx, network error). The caller decides whether
-    to surface failure to the user.
+    Returns the mailer response dict (`{sent, subject, body_html}`) on
+    success so callers can echo the rendered mail back to the user
+    (Twenty workflow run log + Note-on-Person step).
+    Returns None on every failure path (misconfigured, 4xx/5xx, network
+    error). The caller decides whether to surface failure to the user.
     """
     if not settings.mailer_url:
         logger.warning("mailer_url_not_configured_onboarding_invite")
-        return False
+        return None
 
     effective_locale = locale or _locale_from_email(email)
     try:
@@ -284,11 +286,15 @@ async def send_onboarding_invite(
                     status=resp.status_code,
                     body=resp.text[:300],
                 )
-                return False
-            return True
+                return None
+            try:
+                return resp.json()
+            except ValueError:
+                logger.warning("mailer_notify_onboarding_invite_bad_json", body=resp.text[:300])
+                return {"sent": True, "subject": "", "body_html": ""}
     except Exception:
         logger.warning("mailer_notify_onboarding_invite_failed", exc_info=True)
-        return False
+        return None
 
 
 async def issue_waitlist_invite(

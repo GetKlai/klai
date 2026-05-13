@@ -420,9 +420,20 @@ async def internal_send(request: Request) -> JSONResponse:
         "mailer_internal_email_sent",
         template=template_name,
         recipient_hash=decision.recipient_hash,
+        subject=rendered["subject"],
     )
 
-    return JSONResponse(status_code=200, content={"sent": True})
+    # Echo the rendered subject + HTML back so callers (e.g. Twenty CRM
+    # workflows) can surface a copy of what was actually sent — visible
+    # in workflow-run logs and downstream Note-on-Person steps.
+    return JSONResponse(
+        status_code=200,
+        content={
+            "sent": True,
+            "subject": rendered["subject"],
+            "body_html": html_email,
+        },
+    )
 
 
 def _debug_enabled() -> bool:

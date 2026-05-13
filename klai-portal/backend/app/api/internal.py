@@ -1250,6 +1250,10 @@ class OnboardingStartRequest(BaseModel):
 
 class OnboardingStartResponse(BaseModel):
     sent: bool
+    subject: str = ""
+    body_html: str = ""
+    cal_url: str = ""
+    sent_to: str = ""
 
 
 @router.post("/onboarding/start", response_model=OnboardingStartResponse)
@@ -1264,11 +1268,13 @@ async def start_onboarding_drip(
     is the canonical caller; cURL with the same Bearer also works for
     manual triggers.
 
-    Returns 200 ``{"sent": true}`` on mailer-accepted, 502 if the mailer
-    rejected (4xx/5xx) or was unreachable. The downstream rate-limit
-    (per-recipient Redis bucket on the mailer) means duplicate clicks
-    within the cooldown window will surface as 502 here -- that is the
-    safety against the operator double-clicking the workflow button.
+    Returns 200 with the rendered subject/body_html so the caller (Twenty
+    Workflow run log + downstream CREATE_RECORD Note step) can show the
+    operator exactly what was sent. Returns 502 if the mailer rejected
+    (4xx/5xx) or was unreachable. The downstream rate-limit (per-recipient
+    Redis bucket on the mailer) means duplicate clicks within the cooldown
+    window will surface as 502 here -- that is the safety against the
+    operator double-clicking the workflow button.
     """
     await _require_internal_token(request)
 
@@ -1276,7 +1282,7 @@ async def start_onboarding_drip(
 
     cal_url = body.cal_url or "https://cal.getklai.com/klai/onboarding-intake"
 
-    sent = await send_onboarding_invite(
+    mailer_result = await send_onboarding_invite(
         name=body.name,
         email=body.email,
         cal_url=cal_url,
@@ -1286,12 +1292,18 @@ async def start_onboarding_drip(
     # so we audit with org_id=0 like /librechat/regenerate.
     await _audit_internal_call(request, org_id=0)
 
-    if not sent:
+    if mailer_result is None:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="mailer rejected or unreachable",
         )
-    return OnboardingStartResponse(sent=True)
+    return OnboardingStartResponse(
+        sent=True,
+        subject=str(mailer_result.get("subject", "")),
+        body_html=str(mailer_result.get("body_html", "")),
+        cal_url=cal_url,
+        sent_to=body.email,
+    )
 
 
 class RegenerateResponse(BaseModel):
