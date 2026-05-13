@@ -26,7 +26,6 @@ from app.models.audit import PortalAuditLog
 from app.models.events import ProductEvent
 from app.models.groups import PortalGroup, PortalGroupMembership
 from app.models.knowledge_bases import PortalKnowledgeBase, PortalUserKBAccess
-from app.models.meetings import VexaMeeting
 from app.models.portal import PortalOrg, PortalUser
 from app.services import twenty as twenty_service
 from app.services.partner_rate_limit import check_rate_limit
@@ -245,20 +244,6 @@ class SarUsageEvent(BaseModel):
     created_at: datetime
 
 
-class SarMeeting(BaseModel):
-    meeting_title: str | None
-    platform: str
-    meeting_url: str
-    status: str
-    language: str | None
-    duration_seconds: int | None
-    started_at: datetime | None
-    ended_at: datetime | None
-    created_at: datetime
-    transcript_text: str | None
-    summary_json: dict[str, Any] | None
-
-
 class SarLibreChatMessage(BaseModel):
     role: str
     text: str | None
@@ -279,7 +264,6 @@ class SarKlaiPortal(BaseModel):
     knowledge_base_access: list[SarKBAccess]
     audit_events: list[SarAuditEvent]
     usage_events: list[SarUsageEvent]
-    meetings: list[SarMeeting]
     librechat_conversations: list[SarLibreChatConversation] | None
 
 
@@ -542,7 +526,7 @@ async def sar_export(
 
     # All subsequent queries hit RLS-strict tables (portal_groups,
     # portal_knowledge_bases, portal_user_kb_access, portal_audit_log,
-    # product_events, vexa_meetings). Set tenant context once here so the
+    # product_events). Set tenant context once here so the
     # PostgreSQL fail-loud policy lets them through.
     await set_tenant(db, org.id)
 
@@ -651,36 +635,7 @@ async def sar_export(
     ).all()
     usage_events = [SarUsageEvent(event_type=r.event_type, created_at=r.created_at) for r in event_rows]
 
-    # 8. Meetings - includes transcript and summary (most sensitive personal data)
-    meeting_rows = (
-        (
-            await db.execute(
-                select(VexaMeeting)
-                .where(VexaMeeting.zitadel_user_id == user_id)
-                .order_by(VexaMeeting.created_at.desc())
-            )
-        )
-        .scalars()
-        .all()
-    )
-    meetings = [
-        SarMeeting(
-            meeting_title=mtg.meeting_title,
-            platform=mtg.platform,
-            meeting_url=mtg.meeting_url,
-            status=mtg.status,
-            language=mtg.language,
-            duration_seconds=mtg.duration_seconds,
-            started_at=mtg.started_at,
-            ended_at=mtg.ended_at,
-            created_at=mtg.created_at,
-            transcript_text=mtg.transcript_text,
-            summary_json=mtg.summary_json,
-        )
-        for mtg in meeting_rows
-    ]
-
-    # 9. External systems - graceful degradation mirrors the Zitadel fallback above.
+    # 8. External systems - graceful degradation mirrors the Zitadel fallback above.
     librechat_conversations = await _load_librechat_conversations(org, portal_user)
     twenty_records = await _load_twenty_records(portal_user.email)
 
@@ -724,7 +679,6 @@ async def sar_export(
             knowledge_base_access=knowledge_base_access,
             audit_events=audit_events,
             usage_events=usage_events,
-            meetings=meetings,
             librechat_conversations=librechat_conversations,
         ),
         external_systems=external_systems,

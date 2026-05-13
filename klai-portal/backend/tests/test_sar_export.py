@@ -79,7 +79,7 @@ class TestSarExport:
     async def test_sets_tenant_before_rls_queries(self, _stub_set_tenant: AsyncMock) -> None:
         """Regression: without set_tenant the RLS-strict tables queried below
         (portal_groups, portal_knowledge_bases, portal_user_kb_access,
-        vexa_meetings) raise InsufficientPrivilegeError on production
+        product_events) raise InsufficientPrivilegeError on production
         PostgreSQL. This test asserts that set_tenant(db, org.id) fires
         once — before any RLS-protected query.
         """
@@ -93,8 +93,6 @@ class TestSarExport:
         mock_org_user.one_or_none.return_value = (org, portal_user)
         mock_empty = MagicMock()
         mock_empty.all.return_value = []
-        mock_meetings = MagicMock()
-        mock_meetings.scalars.return_value.all.return_value = []
 
         db = AsyncMock()
         db.execute.side_effect = [
@@ -103,7 +101,6 @@ class TestSarExport:
             mock_empty,  # KB access
             mock_empty,  # audit events
             mock_empty,  # usage events
-            mock_meetings,  # meetings
         ]
 
         with patch("app.api.me.zitadel") as mock_zitadel:
@@ -132,10 +129,6 @@ class TestSarExport:
         mock_result_empty = MagicMock()
         mock_result_empty.all.return_value = []
 
-        # Call 6: meetings — .scalars().all()
-        mock_result_meetings = MagicMock()
-        mock_result_meetings.scalars.return_value.all.return_value = []
-
         db = AsyncMock()
         db.execute.side_effect = [
             mock_result_org_user,
@@ -143,7 +136,6 @@ class TestSarExport:
             mock_result_empty,  # KB access
             mock_result_empty,  # audit events
             mock_result_empty,  # usage events
-            mock_result_meetings,  # meetings
         ]
 
         mock_credentials = MagicMock()
@@ -167,8 +159,9 @@ class TestSarExport:
         assert "knowledge_base_access" in portal
         assert "audit_events" in portal
         assert "usage_events" in portal
-        assert "meetings" in portal
+        assert "meetings" not in portal
         assert "librechat_conversations" in portal
+        assert db.execute.await_count == 5
 
         ext = result_dict["external_systems"]
         assert "moneybird" in ext
@@ -187,8 +180,6 @@ class TestSarExport:
         mock_result_org_user.one_or_none.return_value = (org, portal_user)
         mock_result_empty = MagicMock()
         mock_result_empty.all.return_value = []
-        mock_result_meetings = MagicMock()
-        mock_result_meetings.scalars.return_value.all.return_value = []
 
         db = AsyncMock()
         db.execute.side_effect = [
@@ -197,7 +188,6 @@ class TestSarExport:
             mock_result_empty,  # KB access
             mock_result_empty,  # audit events
             mock_result_empty,  # usage events
-            mock_result_meetings,  # meetings
         ]
 
         mock_credentials = MagicMock()
@@ -222,8 +212,6 @@ class TestSarExport:
         mock_result_org_user.one_or_none.return_value = (org, portal_user)
         mock_result_empty = MagicMock()
         mock_result_empty.all.return_value = []
-        mock_result_meetings = MagicMock()
-        mock_result_meetings.scalars.return_value.all.return_value = []
 
         db = AsyncMock()
         db.execute.side_effect = [
@@ -232,7 +220,6 @@ class TestSarExport:
             mock_result_empty,  # KB access
             mock_result_empty,  # audit events
             mock_result_empty,  # usage events
-            mock_result_meetings,  # meetings
         ]
 
         mock_credentials = MagicMock()
@@ -279,8 +266,6 @@ class TestSarExport:
         mock_result_org_user.one_or_none.return_value = (org, portal_user)
         mock_result_empty = MagicMock()
         mock_result_empty.all.return_value = []
-        mock_result_meetings = MagicMock()
-        mock_result_meetings.scalars.return_value.all.return_value = []
 
         db = AsyncMock()
         db.execute.side_effect = [
@@ -289,7 +274,6 @@ class TestSarExport:
             mock_result_empty,  # KB access
             mock_result_empty,  # audit events
             mock_result_empty,  # usage events
-            mock_result_meetings,  # meetings
         ]
 
         mock_credentials = MagicMock()
@@ -312,7 +296,7 @@ class TestSarExport:
         assert result.klai_portal.account.role == "member"
         assert result.klai_portal.account.preferred_language == "nl"
         assert result.klai_portal.group_memberships == []
-        assert result.klai_portal.meetings == []
+        assert "meetings" not in result.klai_portal.model_dump()
 
     @pytest.mark.asyncio
     async def test_rate_limit_exceeded_returns_429_and_audits(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -352,8 +336,6 @@ class TestSarExport:
         mock_result_org_user.one_or_none.return_value = (org, portal_user)
         mock_result_empty = MagicMock()
         mock_result_empty.all.return_value = []
-        mock_result_meetings = MagicMock()
-        mock_result_meetings.scalars.return_value.all.return_value = []
 
         db = AsyncMock()
         db.execute.side_effect = [
@@ -362,7 +344,6 @@ class TestSarExport:
             mock_result_empty,
             mock_result_empty,
             mock_result_empty,
-            mock_result_meetings,
         ]
 
         audit_stub = AsyncMock()
@@ -388,8 +369,6 @@ class TestSarExport:
         mock_result_org_user.one_or_none.return_value = (org, portal_user)
         mock_result_empty = MagicMock()
         mock_result_empty.all.return_value = []
-        mock_result_meetings = MagicMock()
-        mock_result_meetings.scalars.return_value.all.return_value = []
 
         db = AsyncMock()
         db.execute.side_effect = [
@@ -398,7 +377,6 @@ class TestSarExport:
             mock_result_empty,
             mock_result_empty,
             mock_result_empty,
-            mock_result_meetings,
         ]
 
         monkeypatch.setattr(

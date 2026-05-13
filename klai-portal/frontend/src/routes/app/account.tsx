@@ -2,18 +2,17 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/lib/auth'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { AlertTriangle, Download, Settings, Trash2 } from 'lucide-react'
+import { Download, Settings, SlidersHorizontal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
-import { DeleteOrgModal } from '@/components/ui/delete-org-modal'
 import { useLocale } from '@/lib/locale'
 import * as m from '@/paraglide/messages'
 import { ApiError, apiFetch } from '@/lib/apiFetch'
 
-type TabId = 'settings' | 'danger'
+type TabId = 'settings' | 'advanced'
 
-const VALID_TABS = new Set<TabId>(['settings', 'danger'])
+const VALID_TABS = new Set<TabId>(['settings', 'advanced'])
 
 type AccountSearch = {
   tab?: TabId
@@ -30,13 +29,6 @@ export const Route = createFileRoute('/app/account')({
 
 interface MeAccount {
   preferred_language?: 'nl' | 'en'
-  effective_role?: string
-  portal_role?: string
-}
-
-interface OrgMe {
-  slug: string
-  name: string
 }
 
 function AccountPage() {
@@ -47,7 +39,6 @@ function AccountPage() {
 
   const [saved, setSaved] = useState(false)
   const [selectedLang, setSelectedLang] = useState<'nl' | 'en'>(locale)
-  const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const activeTab: TabId = search.tab ?? 'settings'
 
   // Fetch current user's preferred language from the portal DB
@@ -84,14 +75,6 @@ function AccountPage() {
     },
   })
 
-  const canDeleteWorkspace = meData?.effective_role === 'admin' || meData?.portal_role === 'admin'
-
-  const orgQuery = useQuery({
-    queryKey: ['admin-org-me'],
-    queryFn: async () => apiFetch<OrgMe>('/api/admin/org/me'),
-    enabled: Boolean(auth.isAuthenticated && canDeleteWorkspace),
-  })
-
   const sarMutation = useMutation({
     mutationFn: async () => {
       return apiFetch(`/api/me/sar-export`, { method: 'POST' })
@@ -116,7 +99,7 @@ function AccountPage() {
 
   const tabs: { id: TabId; label: string; icon: React.ElementType }[] = [
     { id: 'settings', label: m.account_tab_settings(), icon: Settings },
-    { id: 'danger', label: m.admin_shared_tab_danger(), icon: AlertTriangle },
+    { id: 'advanced', label: m.account_tab_advanced(), icon: SlidersHorizontal },
   ]
 
   function setTab(tab: TabId) {
@@ -223,36 +206,8 @@ function AccountPage() {
         </div>
       )}
 
-      {activeTab === 'danger' && (
+      {activeTab === 'advanced' && (
         <div className="space-y-6">
-          <div>
-            <h2 className="text-sm font-medium text-[var(--color-destructive)] mb-2">
-              {m.account_close_title()}
-            </h2>
-            <p className="text-sm text-gray-400 mb-4">
-              {m.account_close_description()}
-            </p>
-            <p className="text-sm leading-5 text-gray-500 mb-4">
-              {canDeleteWorkspace
-                ? m.account_close_admin_hint()
-                : m.account_close_member_hint()}
-            </p>
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={() => setDeleteModalOpen(true)}
-              disabled={!canDeleteWorkspace || orgQuery.isLoading || !orgQuery.data}
-            >
-              <Trash2 className="h-4 w-4 mr-2" />
-              {m.account_close_button()}
-            </Button>
-            {orgQuery.isError && (
-              <p className="mt-3 text-sm text-[var(--color-destructive)]">
-                {m.account_close_error_org()}
-              </p>
-            )}
-          </div>
-
           <div>
             <h2 className="text-sm font-medium text-gray-900 mb-2">{m.account_sar_title()}</h2>
             <p className="text-sm text-gray-400 mb-4">
@@ -276,15 +231,6 @@ function AccountPage() {
             )}
           </div>
         </div>
-      )}
-
-      {orgQuery.data && (
-        <DeleteOrgModal
-          open={deleteModalOpen}
-          onOpenChange={setDeleteModalOpen}
-          orgSlug={orgQuery.data.slug}
-          orgName={orgQuery.data.name}
-        />
       )}
     </div>
   )
