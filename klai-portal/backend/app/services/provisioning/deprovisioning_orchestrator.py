@@ -175,7 +175,10 @@ async def _load_state(org_id: int, actor_id: str, actor_type: str, db: AsyncSess
     result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id))
     org = result.scalar_one()
 
-    zitadel_oidc_app_id = await _resolve_zitadel_oidc_app_id(org.zitadel_librechat_client_id)
+    zitadel_oidc_app_id = await _resolve_zitadel_oidc_app_id(
+        slug=org.slug,
+        client_id=org.zitadel_librechat_client_id,
+    )
     litellm_team_id = await _resolve_litellm_team_id(org.slug)
 
     return _DeprovisionState(
@@ -193,19 +196,36 @@ async def _load_state(org_id: int, actor_id: str, actor_type: str, db: AsyncSess
     )
 
 
-async def _resolve_zitadel_oidc_app_id(client_id: str | None) -> str:
-    """Look up the Zitadel OIDC app_id from the client_id stored in portal_orgs.
+async def _resolve_zitadel_oidc_app_id(slug: str | None, client_id: str | None = None) -> str:
+    """Look up the Zitadel OIDC app_id by the tenant slug.
 
-    Returns "" when client_id is empty or the lookup fails — step 14 skips
+    Returns "" when slug is empty or the lookup fails — step 14 skips
     gracefully when app_id is empty.
+
+    SPEC-INFRA-TENANT-DELETE-003 Bug 1 fix: the previous version searched on
+    ``nameQuery.name = client_id``, but the Zitadel app name is
+    ``librechat-{slug}`` (not the numeric clientId). The query always
+    returned zero hits, step 14 skipped silently, and the OIDC app
+    was orphaned in Zitadel for every deprovisioned tenant. Confirmed
+    against prod 2026-05-13 17:42:
+      nameQuery name="372719472328310801" → 0 hits
+      nameQuery name="librechat-e2e"      → 1 hit (the orphan)
+
+    The optional ``client_id`` is kept as a belt+braces verification —
+    if both slug and client_id are present and Zitadel returns multiple
+    apps, we match on clientId. In practice the name is unique within
+    a project so the verification is a no-op, but it costs nothing and
+    catches a future Zitadel API surprise.
 
     # @MX:NOTE: app_id is NOT stored in portal_orgs (only client_id is). We must
     #   query Zitadel's app list. If the list endpoint is unavailable, we proceed
     #   without it — worst case the OIDC app is orphaned in Zitadel.
     """
-    if not client_id:
-        logger.info("zitadel_oidc_app_id_lookup_skipped_no_client_id")
+    if not slug:
+        logger.info("zitadel_oidc_app_id_lookup_skipped_no_slug")
         return ""
+
+    expected_name = f"librechat-{slug}"
 
     try:
         async with httpx.AsyncClient(
@@ -215,13 +235,18 @@ async def _resolve_zitadel_oidc_app_id(client_id: str | None) -> str:
         ) as http:
             resp = await http.post(
                 f"/management/v1/projects/{settings.zitadel_project_id}/apps/_search",
-                json={"queries": [{"nameQuery": {"name": client_id, "method": "APP_QUERY_METHOD_EQUALS"}}]},
+                json={"queries": [{"nameQuery": {"name": expected_name, "method": "APP_QUERY_METHOD_EQUALS"}}]},
             )
             resp.raise_for_status()
             apps = resp.json().get("result", [])
             for app in apps:
-                if app.get("oidcConfig", {}).get("clientId") == client_id:
-                    return app.get("id", "")
+                # Belt+braces verification — if both clientId and slug match,
+                # we are sure this is the right app. If only slug matches
+                # (client_id is empty / never stored), trust the slug match.
+                app_client_id = app.get("oidcConfig", {}).get("clientId", "")
+                if client_id and app_client_id and app_client_id != client_id:
+                    continue
+                return app.get("id", "")
     except (httpx.HTTPError, KeyError, ValueError, TypeError) as exc:
         # HTTPError: Zitadel down/4xx/5xx. KeyError/ValueError/TypeError: malformed
         # JSON response shape. We deliberately NARROW the catch — bare `except`
