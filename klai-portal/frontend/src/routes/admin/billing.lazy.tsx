@@ -11,6 +11,7 @@ import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
 import { number } from '@/paraglide/registry'
 import { apiFetch } from '@/lib/apiFetch'
+import { adminLogger } from '@/lib/logger'
 
 export const Route = createLazyFileRoute('/admin/billing')({
   component: BillingPage,
@@ -188,11 +189,20 @@ function SeatBreakdownPanel() {
         if (breakdown.status === 'fulfilled') {
           setData(breakdown.value)
         } else {
+          // Per portal-logging-ts.md: log API errors to Sentry (level=error)
+          // alongside the user-facing setError. Without the logger call the
+          // server-side reason is invisible in production.
+          adminLogger.error('Billing breakdown fetch failed', { reason: breakdown.reason })
           setError(m.admin_billing_breakdown_error())
         }
         if (perSeat.status === 'fulfilled') {
           setStatus(perSeat.value)
         } else {
+          // Soft fallback — UI degrades to "Phase 5 light not available".
+          // Use warn (not error) since we have a defined fallback path.
+          adminLogger.warn('Per-seat status fetch failed; falling back to disabled', {
+            reason: perSeat.reason,
+          })
           setStatus({ enabled: false, available: false })
         }
       })
