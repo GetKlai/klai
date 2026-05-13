@@ -48,7 +48,11 @@ export function InlineDeleteConfirm({
         {children}
       </div>
       {isConfirming && (
-        <div className="absolute inset-y-0 right-0 z-10 flex items-center gap-1 whitespace-nowrap">
+        // Opaque overlay covers any meta text that would otherwise show
+        // through the gaps between the buttons. Matches the row's
+        // hover bg (gray-50) so it blends with the row's confirming
+        // state (see sources-row.tsx ``confirmingDelete`` branch).
+        <div className="absolute inset-y-0 right-0 z-10 flex items-center gap-1 whitespace-nowrap bg-gray-50 pl-4">
           <Button
             size="sm"
             className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5 bg-[var(--color-destructive)] text-white hover:opacity-70"

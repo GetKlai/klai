@@ -72,7 +72,15 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
 
   return (
     <div>
-      <div className="group flex items-center gap-2 pr-2 hover:bg-gray-50 transition-colors">
+      <div
+        className={[
+          'group flex items-center gap-2 pr-2 transition-colors',
+          // Keep the row in its hovered state while the delete-confirm
+          // pill is open — otherwise the pill (bg-gray-50) would float
+          // on a white row and the contrast looks like a bug.
+          confirmingDelete ? 'bg-gray-50' : 'hover:bg-gray-50',
+        ].join(' ')}
+      >
         <div className="flex flex-1 min-w-0 items-center gap-3 px-2 py-3.5">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-50 text-gray-400">
             <SourceIcon source={source} />
