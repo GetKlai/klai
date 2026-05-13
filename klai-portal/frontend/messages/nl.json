@@ -39,6 +39,7 @@
   "set_back": "Terug naar inloggen",
   "set_done_heading": "Wachtwoord ingesteld",
   "set_done_body": "Je kunt nu inloggen.",
+  "set_done_continue": "Inloggen",
   "set_error_min_length": "Wachtwoord moet minimaal 8 tekens bevatten",
   "set_error_mismatch": "Wachtwoorden komen niet overeen",
   "set_error_invalid_link": "Link is verlopen of ongeldig, vraag een nieuwe reset-link aan",
