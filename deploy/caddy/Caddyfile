@@ -479,6 +479,33 @@
     }
 }
 
+# Cal.com — self-hosted scheduling.
+# Separate site block (not under *.{$DOMAIN}) because the wildcard block has
+# a path-specific `handle /api/*` for portal-api that would otherwise capture
+# Cal.com's own /api/auth/* and /api/trpc/* paths (path matcher beats host
+# matcher within one site block, breaking client-side hydration with 500s).
+# More-specific host wins automatically at Caddy site level — order-independent.
+cal.{$DOMAIN} {
+    tls {
+        dns hetzner {$HETZNER_AUTH_API_TOKEN}
+        propagation_delay 120s
+    }
+
+    log {
+        output stdout
+        format json
+    }
+
+    reverse_proxy cal-com:3000 {
+        header_up X-Request-ID {http.request.uuid}
+        header_up -X-Internal-Secret
+        header_up -X-Caller-Service
+        header_up -X-Org-ID
+        header_up -X-Org-Slug
+        header_up -X-User-ID
+    }
+}
+
 # Dynamically provisioned tenant LibreChat instances.
 # Written to /etc/caddy/tenants/ by portal-api at provisioning time.
 # Files survive redeploys via the caddy-tenants Docker volume.

@@ -83,6 +83,7 @@ async def test_invite_user_default_seat_from_role(role: str, expected_default_se
         ),
     ):
         mock_zitadel.invite_user = AsyncMock(return_value={"userId": f"new-user-{role}"})
+        mock_zitadel.send_invite_code = AsyncMock()  # SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-2
         mock_zitadel.grant_user_role = AsyncMock()
         await invite_user(body=body, perms=perms, db=mock_db)
 
@@ -139,6 +140,7 @@ async def test_invite_user_ignores_client_supplied_seat_override() -> None:
         ),
     ):
         mock_zitadel.invite_user = AsyncMock(return_value={"userId": "u-km"})
+        mock_zitadel.send_invite_code = AsyncMock()  # SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-2
         mock_zitadel.grant_user_role = AsyncMock()
         await invite_user(body=body, perms=perms, db=mock_db)
 

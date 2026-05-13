@@ -4,6 +4,7 @@ import logging
 from collections.abc import Mapping
 from datetime import datetime
 from typing import Final, Literal
+from urllib.parse import urlparse
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -28,6 +29,7 @@ from app.core.permissions import (
 from app.models.groups import PortalGroup, PortalGroupMembership
 from app.models.portal import PortalOrg, PortalUser
 from app.services.audit import log_event
+from app.services.auth_links import AuthLinkRoute, build_url_template
 from app.services.github import remove_github_org_member
 from app.services.kb_offboarding import (
     KbDisposition,
@@ -241,6 +243,31 @@ async def invite_user(
 
     zitadel_user_id: str = user_data["userId"]
 
+    # SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-2: the user now exists in Zitadel
+    # but no invite mail was sent (invite_user used sendCodes=False). Issue
+    # the invite code with an explicit Klai urlTemplate so the activation
+    # link in the mail lands on my.getklai.com/password/set, not on
+    # auth.getklai.com/ui/login/. If this second call fails after the first
+    # succeeded, we return 502 with the orphan userId so an admin can recover
+    # via the resend-invite endpoint (which re-issues only call 2).
+    invite_url_template = build_url_template(AuthLinkRoute.PASSWORD_SET)
+    try:
+        await zitadel.send_invite_code(zitadel_user_id, url_template=invite_url_template)
+    except Exception as exc:
+        _slog.exception(
+            "invite_partial_user_created",
+            zitadel_user_id=zitadel_user_id,
+            email=body.email,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={
+                "code": "invite_partial_failure",
+                "user_id": zitadel_user_id,
+                "message": "User created but invite mail failed — retry via resend-invite",
+            },
+        ) from exc
+
     # SPEC-SEC-TENANT-001 REQ-2 (v0.5.0 / β): only portal_role="admin" gets a
     # Zitadel grant; group-admin and member rely on portal_users.role for
     # authorization. v0.1 hardcoded role="org:owner" for every invite — the
@@ -324,7 +351,16 @@ async def invite_user(
 
     await create_default_personal_kb(zitadel_user_id, org.id, db)
     await db.commit()
-    logger.info("User invited: email=%s, role=%s, org_id=%d", body.email, body.role, org.id)
+    # SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-8: emit url_template_host so a
+    # VictoriaLogs query can prove the link host across all invites.
+    _slog.info(
+        "invite_user",
+        email=body.email,
+        role=body.role,
+        org_id=org.id,
+        zitadel_user_id=zitadel_user_id,
+        url_template_host=urlparse(invite_url_template).netloc,
+    )
 
     return InviteResponse(
         user_id=zitadel_user_id,
@@ -519,16 +555,26 @@ async def resend_invite(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     try:
-        await zitadel.resend_init_mail(
-            org_id=settings.zitadel_portal_org_id,
-            user_id=zitadel_user_id,
-        )
+        # SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-3: replaces the legacy
+        # resend_init_mail. Same v2 endpoint, but with an explicit Klai
+        # urlTemplate. REQ-10 — always pass urlTemplate to defeat Zitadel's
+        # per-user url_template cache (a previous Zitadel-default URL would
+        # otherwise persist).
+        invite_url_template = build_url_template(AuthLinkRoute.PASSWORD_SET)
+        await zitadel.send_invite_code(zitadel_user_id, url_template=invite_url_template)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to resend invitation: {exc}",
         ) from exc
 
+    # SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-8: same observability field on resend.
+    _slog.info(
+        "resend_invite",
+        zitadel_user_id=zitadel_user_id,
+        org_id=perms.org_id,
+        url_template_host=urlparse(invite_url_template).netloc,
+    )
     return MessageResponse(message="Invitation resent.")
 
 

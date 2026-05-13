@@ -168,6 +168,7 @@ async def test_invite_user_grants_portal_role_to_zitadel(
         ),
     ):
         mock_zitadel.invite_user = AsyncMock(return_value={"userId": f"new-user-{portal_role}"})
+        mock_zitadel.send_invite_code = AsyncMock()  # SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-2
         mock_zitadel.grant_user_role = AsyncMock()
         await invite_user(body=body, perms=perms, db=mock_db)
 
@@ -255,6 +256,7 @@ async def test_invite_user_creates_personal_kb_before_commit() -> None:
         ),
     ):
         mock_zitadel.invite_user = AsyncMock(return_value={"userId": "new-user-id"})
+        mock_zitadel.send_invite_code = AsyncMock()  # SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-2
         mock_zitadel.grant_user_role = AsyncMock()
         await invite_user(body=body, perms=perms, db=mock_db)
 
