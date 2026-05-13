@@ -9,7 +9,7 @@ import { LocaleSwitcher } from '@/components/ui/LocaleSwitcher'
 import { Button } from '@/components/ui/button'
 import { useLocale } from '@/lib/locale'
 import { authLogger } from '@/lib/logger'
-import { fetchMe, type MeResponse } from '@/lib/api-me'
+import { fetchMe, isFailedProvisioningStatus, type MeResponse } from '@/lib/api-me'
 import {
   UnauthorizedError,
   delay,
@@ -95,7 +95,16 @@ function ProvisioningPage() {
  *   - non-retryable HTTP response  → "failed"
  *   - transient errors beyond N    → "error" (retry button)
  *   - still pending after 5 min    → "timeout"
- *   - provisioning_status=failed   → "failed"
+ *   - provisioning_status starts   → "failed"
+ *     with "failed" (e.g.
+ *     failed_rollback_complete,
+ *     failed_rollback_pending,
+ *     failed_deprovisioning)
+ *
+ * SPEC-INFRA-TENANT-DELETE-003 Bug 3 — the state machine emits
+ * `failed_*` variants, never the literal `"failed"`. Old code that
+ * compared against `"failed"` silently timed out after 5 minutes
+ * instead of surfacing the failure to the user.
  */
 async function pollProvisioning(
   auth: AuthContextValue,
@@ -161,7 +170,10 @@ async function pollProvisioning(
       return
     }
 
-    if (me.provisioning_status === 'failed') {
+    if (isFailedProvisioningStatus(me.provisioning_status)) {
+      authLogger.error('Provisioning ended in terminal failure state', {
+        provisioning_status: me.provisioning_status,
+      })
       setStatus('failed')
       return
     }
