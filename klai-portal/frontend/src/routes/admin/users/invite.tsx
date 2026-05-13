@@ -202,11 +202,25 @@ function InviteUserPage() {
           Updates automatically when the Profile dropdown changes. No
           admin override; the server runs the same ``suggest_seat(role)``
           derivation regardless.
+
+          A11y note: this is a display-only badge (no interactive form
+          control), so we use a plain heading <div> + aria-labelledby on
+          the readout region — NOT a <Label htmlFor=>, which assumes a
+          focusable form control as its target. The readout has
+          role="status" so SR users hear updates when the Profile
+          dropdown re-derives the badge.
         */}
         <div className="space-y-1.5">
-          <Label htmlFor="account-type">{m.admin_users_field_account_type()}</Label>
           <div
-            id="account-type"
+            id="account-type-label"
+            className="font-display-bold text-sm text-gray-900"
+          >
+            {m.admin_users_field_account_type()}
+          </div>
+          <div
+            role="status"
+            aria-labelledby="account-type-label"
+            aria-live="polite"
             data-testid="account-type-display"
             className="flex items-center justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-rl-cream)] px-4 py-3 text-sm"
           >
