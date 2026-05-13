@@ -228,6 +228,11 @@ export function useApproveProposal(kbSlug: string) {
       void queryClient.invalidateQueries({ queryKey: ['taxonomy-coverage', kbSlug] })
     },
     onError: (err) => {
+      // TODO(klai): string-matching on err.message is brittle — if
+      // apiFetch ever rewords its error string the user sees the wrong
+      // toast. Better: have apiFetch throw a typed error class with
+      // `.status: number` and check that. Out of scope for this hook,
+      // tracked as a future cross-cutting cleanup.
       const is409 = err instanceof Error && err.message.includes('409')
       taxonomyLogger.warn('Proposal approve failed', { error: String(err), is409 })
       if (is409) {
