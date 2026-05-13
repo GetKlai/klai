@@ -46,8 +46,8 @@ def _append_lang_to_url(url: str, lang: str | None) -> str:
 # Inline styles injected on plain-text-to-HTML converted elements.
 # Applied via regex so they survive Outlook's CSS stripping.
 _ELEMENT_STYLES: list[tuple[str, str]] = [
-    (r"<p>", '<p style="margin:0 0 1em 0;font-size:16px;line-height:1.625;color:#1a0f40;">'),
-    (r"<a ", '<a style="color:#7c6aff;text-decoration:underline;" '),
+    (r"<p>", '<p style="margin:0 0 1em 0;font-size:16px;line-height:1.625;color:#191918;">'),
+    (r"<a ", '<a style="color:#a36404;text-decoration:underline;" '),
     (r"<strong>", '<strong style="font-weight:600;">'),
 ]
 
