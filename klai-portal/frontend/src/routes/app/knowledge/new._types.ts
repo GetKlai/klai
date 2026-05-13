@@ -1,3 +1,5 @@
+import type { Dispatch, SetStateAction } from 'react'
+
 export interface OrgGroup {
   id: number
   name: string
@@ -35,3 +37,5 @@ export interface WizardData {
 }
 
 export type Step = 1 | 2 | 3 | 4
+export type WizardErrorKey = 'conflict' | 'generic' | null
+export type WizardDataSetter = Dispatch<SetStateAction<WizardData>>
