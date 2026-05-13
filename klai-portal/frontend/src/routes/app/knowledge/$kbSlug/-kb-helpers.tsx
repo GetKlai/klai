@@ -71,7 +71,10 @@ export function SyncStatusBadge({
       const exact = new Date(lastSyncAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
       return (
         <Tooltip label={exact}>
-          <Badge variant="success">{m.admin_connectors_status_completed()} · {formatRelativeTime(lastSyncAt)}</Badge>
+          <div className="inline-flex flex-col items-start gap-1">
+            <Badge variant="success" className="whitespace-nowrap">{m.admin_connectors_status_completed()}</Badge>
+            <span className="text-[11px] text-gray-400 whitespace-nowrap">{formatRelativeTime(lastSyncAt)}</span>
+          </div>
         </Tooltip>
       )
     }

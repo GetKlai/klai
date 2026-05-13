@@ -247,13 +247,34 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
         return refs
 
     async def fetch_document(self, ref: DocumentRef, connector: Any) -> bytes:
-        """Download a single drive item as bytes via ``/drive/items/{id}/content``.
+        """Download a single drive item as bytes.
+
+        Resolution order mirrors ``_build_delta_root_url`` (D4):
+          1. ``config.drive_id`` → ``/drives/{drive_id}/items/{id}/content``
+          2. ``config.site_url`` → resolve to site-id, then
+             ``/sites/{site_id}/drive/items/{id}/content``
+          3. default → ``/me/drive/items/{id}/content``
+
+        The bare ``/drive/items/{id}/content`` (no ``/me/`` prefix) is NOT a
+        valid Graph endpoint and returns 404. Bug shipped in initial
+        SPEC-KB-MS-DOCS-001 implementation; fixed on first end-to-end
+        production test 2026-05-13.
 
         Args:
             ref: DocumentRef returned by ``list_documents``.
             connector: Connector model (for token refresh context).
         """
-        url = f"{_GRAPH_BASE}/drive/items/{quote(ref.ref, safe='')}/content"
+        item_id = quote(ref.ref, safe="")
+        cfg = self._extract_config(connector)
+
+        if cfg["drive_id"]:
+            url = f"{_GRAPH_BASE}/drives/{quote(cfg['drive_id'], safe='!')}/items/{item_id}/content"
+        elif cfg["site_url"]:
+            site_id = await self._resolve_site_id(connector, cfg["site_url"])
+            url = f"{_GRAPH_BASE}/sites/{site_id}/drive/items/{item_id}/content"
+        else:
+            url = f"{_GRAPH_BASE}/me/drive/items/{item_id}/content"
+
         return await self._graph_get_bytes(url, connector=connector)
 
     async def get_cursor_state(self, connector: Any) -> dict[str, Any]:
