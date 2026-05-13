@@ -51,8 +51,12 @@ def _wire_full_chain(
     auth_request_id: str = "V2_xyz",
     has_mfa: bool = False,
 ) -> None:
-    # 1. set_password_with_code → 200
-    router.post(url__regex=rf"/v2/users/{user_id}/password").mock(return_value=httpx.Response(200, json={}))
+    # 1a. set_password_with_code tries invite_code/verify first → 200
+    router.post(url__regex=rf"/v2/users/{user_id}/invite_code/verify").mock(
+        return_value=httpx.Response(200, json={"details": {"sequence": "11"}}),
+    )
+    # 1b. then password (without verificationCode) → 200
+    router.post(url__regex=rf"/v2/users/{user_id}/password$").mock(return_value=httpx.Response(200, json={}))
     # 2. has_any_mfa → list with one method (true) or empty (false)
     methods = [{"type": "AUTHENTICATION_METHOD_TYPE_TOTP"}] if has_mfa else []
     router.get(url__regex=rf"/v2/users/{user_id}/authentication_methods").mock(
@@ -223,8 +227,11 @@ async def test_autologin_fallback_when_authorize_fails(respx_zitadel: respx.Mock
     """If server-side /authorize doesn't return a Location, fallback fires."""
     from app.api.auth import PasswordSetRequest, password_set
 
-    # set_password_with_code succeeds; everything else falls through to failure
-    respx_zitadel.post(url__regex=r"/v2/users/uid-1/password").mock(
+    # set_password_with_code succeeds via invite-flow; everything else falls through.
+    respx_zitadel.post(url__regex=r"/v2/users/uid-1/invite_code/verify").mock(
+        return_value=httpx.Response(200, json={"details": {"sequence": "11"}}),
+    )
+    respx_zitadel.post(url__regex=r"/v2/users/uid-1/password$").mock(
         return_value=httpx.Response(200, json={}),
     )
     respx_zitadel.get(url__regex=r"/v2/users/uid-1/authentication_methods").mock(
