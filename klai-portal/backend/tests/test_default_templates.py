@@ -35,6 +35,22 @@ async def test_first_call_inserts_exactly_four_defaults():
 
     assert inserted == 4
     assert db.add.call_count == 4
+    assert db.execute.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_sets_tenant_context_before_counting_templates():
+    from app.services import default_templates
+
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=_count_result(4))
+    db.add = MagicMock()
+    db.flush = AsyncMock()
+
+    await default_templates.ensure_default_templates(org_id=42, created_by="sys", db=db)
+
+    first_statement = str(db.execute.await_args_list[0].args[0])
+    assert "set_config('app.current_org_id'" in first_statement
 
 
 @pytest.mark.asyncio
