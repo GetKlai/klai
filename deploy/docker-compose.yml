@@ -465,7 +465,7 @@ services:
       # Internal Docker-network URL for klai-mailer's /internal/send.
       # Auth is X-Internal-Secret: ${PORTAL_API_INTERNAL_SECRET}; mailer
       # validates via hmac.compare_digest.
-      MAILER_URL: ${MAILER_URL:-http://klai-mailer:8300}
+      MAILER_URL: ${MAILER_URL:-http://klai-mailer:8000}
       # ─── Application-level encryption (secrets at rest) ─────────
       PORTAL_SECRETS_KEY: ${PORTAL_API_PORTAL_SECRETS_KEY}
       ENCRYPTION_KEY: ${PORTAL_API_ENCRYPTION_KEY}
