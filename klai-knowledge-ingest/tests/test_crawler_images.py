@@ -51,6 +51,20 @@ def _mock_http_client(
     return client  # type: ignore[return-value]
 
 
+async def _fake_upload(org_id: str, kb_slug: str, data: bytes, ext: str) -> ImageUploadResult:
+    """Mock ImageStore.upload_image side-effect that returns an object_key
+    matching what KbImage.s3_key would compute for the same bytes.
+
+    Shared by the crawler-pipeline tests — keeping all four call-sites
+    in sync prevents the kind of fixture-vs-production drift that the
+    drift-check used to catch at runtime.
+    """
+    return ImageUploadResult(
+        object_key=f"{org_id}/images/{kb_slug}/{hashlib.sha256(data).hexdigest()}.{ext}",
+        deduplicated=False,
+    )
+
+
 @pytest.mark.asyncio()
 async def test_srcset_debris_is_filtered() -> None:
     """AC-02.1: quality=90 / fit=scale-down fragments must never hit the network."""
@@ -66,12 +80,6 @@ async def test_srcset_debris_is_filtered() -> None:
     # SPEC-KB-IMAGES-V2-001: upload_image's object_key MUST match what
     # KbImage.s3_key would compute for the same bytes. Use a side_effect
     # that hashes the bytes the same way ImageStore.build_object_key does.
-    async def _fake_upload(o: str, k: str, d: bytes, e: str) -> ImageUploadResult:
-        return ImageUploadResult(
-            object_key=f"{o}/images/{k}/{hashlib.sha256(d).hexdigest()}.{e}",
-            deduplicated=False,
-        )
-
     store._object_exists = AsyncMock(return_value=False)  # type: ignore[attr-defined]
     store.upload_image = AsyncMock(side_effect=_fake_upload)  # type: ignore[attr-defined]
 
@@ -83,14 +91,14 @@ async def test_srcset_debris_is_filtered() -> None:
             {"src": "https://help.voys.nl/real.png"},
         ],
         base_url="https://help.voys.nl/index",
-        org_id="org",
+        org_id="100000000000000001",
         kb_slug="support",
         image_store=store,
         http_client=client,
     )
 
     expected_hash = hashlib.sha256(_png_bytes()).hexdigest()
-    assert result == [f"/kb-images/org/images/support/{expected_hash}.png"]
+    assert result == [f"/kb-images/100000000000000001/images/support/{expected_hash}.png"]
     # Confirm the filtered fragments never triggered a GET.
     called_urls = [c.args[0] for c in client.get.call_args_list]  # type: ignore[union-attr]
     assert called_urls == ["https://help.voys.nl/real.png"]
@@ -106,12 +114,6 @@ async def test_dedups_identical_urls_across_srcset() -> None:
         }
     )
 
-    async def _fake_upload(o: str, k: str, d: bytes, e: str) -> ImageUploadResult:
-        return ImageUploadResult(
-            object_key=f"{o}/images/{k}/{hashlib.sha256(d).hexdigest()}.{e}",
-            deduplicated=False,
-        )
-
     store._object_exists = AsyncMock(return_value=False)  # type: ignore[attr-defined]
     store.upload_image = AsyncMock(side_effect=_fake_upload)  # type: ignore[attr-defined]
 
@@ -122,14 +124,14 @@ async def test_dedups_identical_urls_across_srcset() -> None:
             {"src": "https://help.voys.nl/img.png"},
         ],
         base_url="https://help.voys.nl/index",
-        org_id="org",
+        org_id="100000000000000001",
         kb_slug="support",
         image_store=store,
         http_client=client,
     )
 
     expected_hash = hashlib.sha256(_png_bytes()).hexdigest()
-    assert result == [f"/kb-images/org/images/support/{expected_hash}.png"]
+    assert result == [f"/kb-images/100000000000000001/images/support/{expected_hash}.png"]
     assert client.get.call_count == 1  # type: ignore[union-attr]
 
 
@@ -145,12 +147,8 @@ async def test_partial_http_failure_does_not_abort_page() -> None:
         }
     )
 
-    async def fake_upload(org_id: str, kb_slug: str, data: bytes, ext: str) -> ImageUploadResult:
-        key = f"{org_id}/images/{kb_slug}/{hashlib.sha256(data).hexdigest()}.{ext}"
-        return ImageUploadResult(object_key=key, deduplicated=False)
-
     store._object_exists = AsyncMock(return_value=False)  # type: ignore[attr-defined]
-    store.upload_image = AsyncMock(side_effect=fake_upload)  # type: ignore[attr-defined]
+    store.upload_image = AsyncMock(side_effect=_fake_upload)  # type: ignore[attr-defined]
 
     result = await download_and_upload_crawl_images(
         media_images=[
@@ -158,14 +156,14 @@ async def test_partial_http_failure_does_not_abort_page() -> None:
             {"src": "https://help.voys.nl/ok.png"},
         ],
         base_url="https://help.voys.nl/index",
-        org_id="org",
+        org_id="100000000000000001",
         kb_slug="support",
         image_store=store,
         http_client=client,
     )
 
     expected_hash = hashlib.sha256(good_bytes).hexdigest()
-    assert result == [f"/kb-images/org/images/support/{expected_hash}.png"]
+    assert result == [f"/kb-images/100000000000000001/images/support/{expected_hash}.png"]
 
 
 @pytest.mark.asyncio()
@@ -178,26 +176,20 @@ async def test_relative_urls_resolved_against_base() -> None:
         }
     )
 
-    async def _fake_upload(o: str, k: str, d: bytes, e: str) -> ImageUploadResult:
-        return ImageUploadResult(
-            object_key=f"{o}/images/{k}/{hashlib.sha256(d).hexdigest()}.{e}",
-            deduplicated=False,
-        )
-
     store._object_exists = AsyncMock(return_value=False)  # type: ignore[attr-defined]
     store.upload_image = AsyncMock(side_effect=_fake_upload)  # type: ignore[attr-defined]
 
     result = await download_and_upload_crawl_images(
         media_images=[{"src": "/assets/img.png"}],
         base_url="https://help.voys.nl/pages/intro",
-        org_id="org",
+        org_id="100000000000000001",
         kb_slug="support",
         image_store=store,
         http_client=client,
     )
 
     expected_hash = hashlib.sha256(_png_bytes()).hexdigest()
-    assert result == [f"/kb-images/org/images/support/{expected_hash}.png"]
+    assert result == [f"/kb-images/100000000000000001/images/support/{expected_hash}.png"]
     called_urls = [c.args[0] for c in client.get.call_args_list]  # type: ignore[union-attr]
     assert called_urls == ["https://help.voys.nl/assets/img.png"]
 
@@ -209,7 +201,7 @@ async def test_empty_media_returns_empty_list() -> None:
     result = await download_and_upload_crawl_images(
         media_images=[],
         base_url="https://help.voys.nl",
-        org_id="org",
+        org_id="100000000000000001",
         kb_slug="support",
         image_store=store,
         http_client=client,
@@ -230,7 +222,7 @@ async def test_non_image_content_rejected() -> None:
     result = await download_and_upload_crawl_images(
         media_images=[{"src": "https://help.voys.nl/fake.png"}],
         base_url="https://help.voys.nl/",
-        org_id="org",
+        org_id="100000000000000001",
         kb_slug="support",
         image_store=store,
         http_client=client,

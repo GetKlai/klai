@@ -32,42 +32,42 @@ class TestParseImageRefs:
 
     def test_handles_multiple_urls(self) -> None:
         urls = [
-            f"/kb-images/o1/images/kb1/{_SHA_A}.png",
-            f"/kb-images/o1/images/kb1/{_SHA_B}.webp",
+            f"/kb-images/100000000000000001/images/kb1/{_SHA_A}.png",
+            f"/kb-images/100000000000000001/images/kb1/{_SHA_B}.webp",
         ]
         refs = _parse_image_refs(urls)
         assert len(refs) == 2
-        assert refs[0] == (f"o1/images/kb1/{_SHA_A}.png", _SHA_A)
-        assert refs[1] == (f"o1/images/kb1/{_SHA_B}.webp", _SHA_B)
+        assert refs[0] == (f"100000000000000001/images/kb1/{_SHA_A}.png", _SHA_A)
+        assert refs[1] == (f"100000000000000001/images/kb1/{_SHA_B}.webp", _SHA_B)
 
     def test_skips_non_kb_image_urls(self) -> None:
         """Manual uploads pointing at external CDNs are not tracked."""
         urls = [
             "https://cdn.example.com/foo.png",
             "/some-other-prefix/bar.jpg",
-            f"/kb-images/o1/images/kb1/{_SHA_VALID}.png",
+            f"/kb-images/100000000000000001/images/kb1/{_SHA_VALID}.png",
         ]
         refs = _parse_image_refs(urls)
-        assert refs == [(f"o1/images/kb1/{_SHA_VALID}.png", _SHA_VALID)]
+        assert refs == [(f"100000000000000001/images/kb1/{_SHA_VALID}.png", _SHA_VALID)]
 
     def test_skips_non_string_entries(self) -> None:
         urls: list = [
-            f"/kb-images/o1/images/kb1/{_SHA_A}.png",
+            f"/kb-images/100000000000000001/images/kb1/{_SHA_A}.png",
             None,
             42,
             {"url": "x"},
         ]
         refs = _parse_image_refs(urls)
-        assert refs == [(f"o1/images/kb1/{_SHA_A}.png", _SHA_A)]
+        assert refs == [(f"100000000000000001/images/kb1/{_SHA_A}.png", _SHA_A)]
 
     def test_skips_url_without_canonical_shape(self) -> None:
         """SPEC-KB-IMAGES-V2-001 REQ-1: only canonical shape (5 segments + 64-hex
         sha + supported ext) is accepted. Anything else is silently skipped —
         same fail-safe as before, stricter shape."""
         urls = [
-            "/kb-images/o1/images/kb1/abc",  # no ext, short basename
-            "/kb-images/o1/images/kb1/short.png",  # wrong sha length
-            f"/kb-images/o1/images/kb1/{_SHA_A}.svg",  # disallowed ext
+            "/kb-images/100000000000000001/images/kb1/abc",  # no ext, short basename
+            "/kb-images/100000000000000001/images/kb1/short.png",  # wrong sha length
+            f"/kb-images/100000000000000001/images/kb1/{_SHA_A}.svg",  # disallowed ext
             "/kb-images/.png",  # missing org/kb/file segments
         ]
         refs = _parse_image_refs(urls)

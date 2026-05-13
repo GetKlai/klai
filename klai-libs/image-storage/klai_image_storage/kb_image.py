@@ -55,10 +55,17 @@ _MIME_EXT: dict[str, str] = {
 
 _VALID_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _VALID_KB_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
-# Zitadel org IDs are snowflake-style 18-digit numbers, but the wire-format
-# accepts any 1..20 digit string so that older test fixtures (small ints)
-# also parse.
-_VALID_ZITADEL_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$|^[0-9]{1,20}$")
+# Zitadel org IDs are snowflake-style 18-digit numbers. Production always
+# emits 18-digit ids; we accept 1..20 digits so test fixtures using
+# smaller-but-still-numeric ids (e.g. "42") work.
+#
+# SPEC-KB-IMAGES-V2-FOLLOWUPS-001: the previous (more lenient) regex also
+# accepted dev-style alpha-num-dash strings like ``"org-1"``. That made
+# the validator pass on tenant ids that production would never produce —
+# defense-in-depth verzwakking. Strict-snowflake here; tests that need
+# arbitrary identifiers use the ``KbImage._test_construct`` factory which
+# bypasses validation.
+_VALID_ZITADEL_RE = re.compile(r"^[0-9]{1,20}$")
 _VALID_EXT_RE = re.compile(r"^(jpg|png|gif|webp)$")
 
 
@@ -91,12 +98,11 @@ class KbImage:
     # Regex that parses a path produced by :py:meth:`public_path` back into
     # its components. Used by :py:meth:`from_path` AND by the boot-time
     # assertion to verify that ``KbImage(...).public_path`` round-trips.
+    # Zitadel org segment is strict-snowflake (numeric only) — matches
+    # ``_VALID_ZITADEL_RE`` exactly so the parser cannot accept a path
+    # that the validator would reject.
     _PATH_RE: ClassVar[re.Pattern[str]] = re.compile(
-        # Zitadel org segment matches either dev-style alpha-num-dash
-        # ("org-1") OR a numeric snowflake. Same alphabet as kb_slug for
-        # symmetry; the production tenant boundary is enforced at the auth
-        # layer, not by URL parsing.
-        r"^/kb-images/(?P<zitadel_org_id>[a-z0-9][a-z0-9-]{0,63}|[0-9]{1,20})"
+        r"^/kb-images/(?P<zitadel_org_id>[0-9]{1,20})"
         r"/images/(?P<kb_slug>[a-z0-9][a-z0-9-]{0,63})"
         r"/(?P<sha256>[0-9a-f]{64})\.(?P<ext>jpg|png|gif|webp)$"
     )
@@ -139,6 +145,37 @@ class KbImage:
             sha256=hashlib.sha256(data).hexdigest(),
             ext=ext,
         )
+
+    @classmethod
+    def _test_construct(
+        cls,
+        *,
+        zitadel_org_id: str,
+        kb_slug: str,
+        sha256: str,
+        ext: str,
+    ) -> KbImage:
+        """Test-only constructor that **bypasses** field validation.
+
+        SPEC-KB-IMAGES-V2-FOLLOWUPS-001: tests sometimes need to inject
+        non-production identifiers (e.g. ``"org-1"`` instead of an
+        18-digit snowflake) to keep fixtures readable. Going through
+        ``__init__`` would now raise because ``_VALID_ZITADEL_RE`` is
+        strict-snowflake. This factory side-steps validation by
+        constructing the dataclass via ``object.__new__`` + ``__setattr__``
+        on the frozen slots.
+
+        DO NOT use this anywhere outside tests. The validator is the
+        defense-in-depth guard between callers and the storage layer —
+        bypassing it in production hides bugs.
+        """
+        # Build a frozen-slots instance without going through __init__.
+        obj = object.__new__(cls)
+        object.__setattr__(obj, "zitadel_org_id", zitadel_org_id)
+        object.__setattr__(obj, "kb_slug", kb_slug)
+        object.__setattr__(obj, "sha256", sha256)
+        object.__setattr__(obj, "ext", ext)
+        return obj
 
     @classmethod
     def from_path(cls, path: str) -> KbImage | None:

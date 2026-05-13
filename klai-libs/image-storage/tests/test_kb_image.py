@@ -183,3 +183,50 @@ def test_route_template_round_trips_via_concrete_instance() -> None:
         filename=f"{concrete.sha256}.{concrete.ext}",
     )
     assert rendered == concrete.public_path
+
+
+# ---------------------------------------------------------------------------
+# Cross-class drift: ImageStore.build_object_key must agree with KbImage.s3_key
+# ---------------------------------------------------------------------------
+
+# SPEC-KB-IMAGES-V2-FOLLOWUPS-001: the runtime drift-check that compared
+# ``result.object_key`` against ``KbImage(...).s3_key`` in the route + pipeline
+# is replaced by this unit test. As long as this test passes, ImageStore and
+# KbImage produce byte-identical S3 keys for the same inputs and the runtime
+# tautology can stay deleted.
+
+
+def test_image_store_build_object_key_matches_kb_image_s3_key() -> None:
+    """Lock the wire-level invariant: ImageStore.build_object_key and
+    KbImage.s3_key produce byte-identical S3 keys for the same inputs.
+
+    Replaces the per-upload runtime tautology check in the POST route +
+    pipeline.py. If this test ever fails, restore the runtime guards.
+    """
+    from klai_image_storage.storage import ImageStore
+
+    payloads = [
+        b"hello world",
+        b"\x89PNG\r\n\x1a\n" + b"\x00" * 200,
+        b"GIF89a" + b"\x00" * 50,
+    ]
+    org_ids = ["368884765035593759", "362757920133283846", "100000000000000001"]
+    kb_slugs = ["support", "klai-help", "my-kb"]
+    mimes_and_exts = [("image/jpeg", "jpg"), ("image/png", "png"), ("image/webp", "webp")]
+
+    for data in payloads:
+        for org in org_ids:
+            for kb in kb_slugs:
+                for mime, ext in mimes_and_exts:
+                    kb_image = KbImage.from_bytes(
+                        zitadel_org_id=org,
+                        kb_slug=kb,
+                        data=data,
+                        mime=mime,
+                    )
+                    store_key = ImageStore.build_object_key(org, kb, data, ext)
+                    assert store_key == kb_image.s3_key, (
+                        f"drift: ImageStore.build_object_key={store_key!r} "
+                        f"vs KbImage.s3_key={kb_image.s3_key!r} "
+                        f"(org={org}, kb={kb}, mime={mime})"
+                    )
