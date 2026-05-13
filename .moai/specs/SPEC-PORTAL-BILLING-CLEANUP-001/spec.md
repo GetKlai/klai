@@ -1,8 +1,9 @@
 ---
 id: SPEC-PORTAL-BILLING-CLEANUP-001
-version: 0.1.0
-status: draft
+version: 0.1.1
+status: implemented
 created: 2026-05-13
+updated: 2026-05-13
 author: Mark Vletter
 priority: medium
 parent: SPEC-PORTAL-CONNECTOR-WIZARD-EXTRACT-001 (god-component § Follow-ups, carved out)
@@ -13,6 +14,13 @@ rule:
 ---
 
 # SPEC-PORTAL-BILLING-CLEANUP-001 — Split admin/billing.lazy.tsx (673 lines, 11 useState, no mutations)
+
+## HISTORY
+
+| Date | Version | Change |
+|------|---------|--------|
+| 2026-05-13 | 0.1.0 | Initial draft carved out from connector wizard cleanup follow-ups. |
+| 2026-05-13 | 0.1.1 | Implemented: split `billing.lazy.tsx` into billing-specific section components and reducer-backed state modules; frontend build/lint/Vitest green. |
 
 ## Goal
 

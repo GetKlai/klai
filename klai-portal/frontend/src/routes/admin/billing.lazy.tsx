@@ -1,303 +1,63 @@
 import { createLazyFileRoute } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
+import { useEffect, useReducer } from 'react'
+import { AlertCircle } from 'lucide-react'
 import { useAuth } from '@/lib/auth'
-import { AlertCircle, CheckCircle, CreditCard, ExternalLink, XCircle } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import * as m from '@/paraglide/messages'
-import { getLocale } from '@/paraglide/runtime'
-import { number } from '@/paraglide/registry'
 import { apiFetch } from '@/lib/apiFetch'
-import { adminLogger } from '@/lib/logger'
+import * as m from '@/paraglide/messages'
+import type { BillingStatusResponse } from './-_billing-types'
+import { BillingActiveSection } from './_components/-BillingActiveSection'
+import { BillingMandateSection } from './_components/-BillingMandateSection'
+import {
+  BillingCancelledCard,
+  BillingFreeCard,
+  BillingMandateRequestedCard,
+  BillingPaymentFailedCard,
+} from './_components/-BillingStatusCards'
 
 export const Route = createLazyFileRoute('/admin/billing')({
   component: BillingPage,
 })
 
-// --- Types ---
-
-type Plan = 'chat' | 'knowledge' | 'free'
-type BillingCycle = 'monthly' | 'yearly'
-type BillingStatus = 'pending' | 'mandate_requested' | 'active' | 'payment_failed' | 'cancelled'
-
-interface BillingStatusResponse {
-  billing_status: BillingStatus
-  plan: Plan
-  billing_cycle: BillingCycle
-  seats: number
-  moneybird_contact_id: string | null
+interface BillingPageState {
+  billingStatus: BillingStatusResponse | null
+  loadingStatus: boolean
+  fetchError: string | null
 }
 
-interface MandateForm {
-  plan: Plan
-  billing_cycle: BillingCycle
-  seats: number
-  address: string
-  zipcode: string
-  city: string
-  country: string
-  tax_number: string
-  chamber_of_commerce: string
-  billing_email: string
-  internal_reference: string
+type BillingPageAction =
+  | { type: 'loaded'; status: BillingStatusResponse }
+  | { type: 'load_failed' }
+  | { type: 'set_status'; status: BillingStatusResponse }
+
+const initialBillingPageState: BillingPageState = {
+  billingStatus: null,
+  loadingStatus: true,
+  fetchError: null,
 }
 
-// --- Plan definitions ---
-// SPEC-PORTAL-PLAN-RENAME-001: 2-tier ladder. Prices match the live
-// pricing page on getklai.com/pricing.
-const PLANS: { id: Plan; name: string; monthly: number; yearly: number }[] = [
-  { id: 'chat', name: 'Klai Chat', monthly: 28, yearly: 20 },
-  { id: 'knowledge', name: 'Klai Chat + Knowledge', monthly: 68, yearly: 48 },
-]
-
-function getPlanDescription(id: Plan): string {
-  if (id === 'chat') return m.admin_billing_plan_chat_description()
-  return m.admin_billing_plan_knowledge_description()
+function billingPageReducer(state: BillingPageState, action: BillingPageAction): BillingPageState {
+  switch (action.type) {
+    case 'loaded':
+      return { billingStatus: action.status, loadingStatus: false, fetchError: null }
+    case 'load_failed':
+      return { ...state, loadingStatus: false, fetchError: m.admin_billing_error_fetch() }
+    case 'set_status':
+      return { ...state, billingStatus: action.status }
+  }
 }
-
-function getPlanLabel(plan: Plan): string {
-  if (plan === 'free') return m.admin_billing_free_title()
-  const p = PLANS.find((p) => p.id === plan)
-  return p ? p.name : plan
-}
-
-function getCycleLabel(cycle: BillingCycle): string {
-  return cycle === 'monthly' ? m.admin_billing_cycle_monthly() : m.admin_billing_cycle_yearly()
-}
-
-// --- Helpers ---
-
-function planPrice(plan: Plan, cycle: BillingCycle): number {
-  const p = PLANS.find((p) => p.id === plan)!
-  return cycle === 'yearly' ? p.yearly : p.monthly
-}
-
-function totalPrice(plan: Plan, cycle: BillingCycle, seats: number): string {
-  const price = planPrice(plan, cycle) * seats
-  return cycle === 'yearly'
-    ? `\u20ac${number(getLocale(), price * 12)} ${m.admin_billing_per_year()}`
-    : `\u20ac${number(getLocale(), price)} ${m.admin_billing_per_month()}`
-}
-
-// --- Field component ---
-
-function Field({
-  label,
-  name,
-  type = 'text',
-  value,
-  onChange,
-  hint,
-  required,
-  placeholder,
-}: {
-  label: string
-  name: string
-  type?: string
-  value: string
-  onChange: (v: string) => void
-  hint?: string
-  required?: boolean
-  placeholder?: string
-}) {
-  return (
-    <div className="space-y-1.5">
-      <Label htmlFor={name}>
-        {label}
-        {!required && (
-          <span className="ml-1 text-xs text-gray-400 font-normal">{m.admin_billing_field_optional()}</span>
-        )}
-      </Label>
-      <Input
-        id={name}
-        name={name}
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        required={required}
-        placeholder={placeholder}
-      />
-      {hint && <p className="text-xs text-gray-400">{hint}</p>}
-    </div>
-  )
-}
-
-// --- Per-seat breakdown panel (SPEC-PORTAL-PRICING-PER-USER-001 Phase 1) ---
-//
-// Display-only panel that shows the org's current per-seat-type user
-// count and corresponding monthly cost. Phase 1 reads the source of
-// truth from `portal_users.seat_type` (not from `portal_user_seat_history`
-// — that table is reserved for Phase 5 prorate billing).
-//
-// The actual subscription line-items still bill flat (plan x seats) until
-// Phase 5 ships the per-tenant per-seat Moneybird migration. Admins see
-// this panel as a "what your bill would look like under per-user pricing"
-// preview.
-
-// v0.5.0: viewer dropped — getklai.com/pricing has only Klai Chat
-// and Klai Chat + Knowledge.
-type SeatTier = 'chat' | 'knowledge'
-
-interface SeatBreakdownRow {
-  seat_type: SeatTier
-  count: number
-  monthly_eur: number
-}
-
-interface SeatBreakdownResponse {
-  rows: SeatBreakdownRow[]
-  total_users: number
-  total_monthly_eur: number
-}
-
-function seatLabel(tier: SeatTier): string {
-  if (tier === 'chat') return m.admin_billing_breakdown_account_chat()
-  return m.admin_billing_breakdown_account_knowledge()
-}
-
-function formatEur(amount: number): string {
-  return new Intl.NumberFormat(getLocale(), {
-    style: 'currency',
-    currency: 'EUR',
-    maximumFractionDigits: 0,
-  }).format(amount)
-}
-
-interface PerSeatStatusResponse {
-  enabled: boolean
-  available: boolean
-}
-
-function SeatBreakdownPanel() {
-  const [data, setData] = useState<SeatBreakdownResponse | null>(null)
-  const [status, setStatus] = useState<PerSeatStatusResponse | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    // Two parallel fetches: the seat counts + the per-tenant
-    // per-seat-billing opt-in status. Failing the status fetch falls
-    // back to "Phase 5 light not available" semantics — the breakdown
-    // stays visible and the CTA banner shows the coming-soon copy.
-    void Promise.allSettled([
-      apiFetch<SeatBreakdownResponse>(`/api/admin/billing/breakdown`),
-      apiFetch<PerSeatStatusResponse>(`/api/admin/billing/per-seat-status`),
-    ])
-      .then(([breakdown, perSeat]) => {
-        if (breakdown.status === 'fulfilled') {
-          setData(breakdown.value)
-        } else {
-          // Per portal-logging-ts.md: log API errors to Sentry (level=error)
-          // alongside the user-facing setError. Without the logger call the
-          // server-side reason is invisible in production.
-          adminLogger.error('Billing breakdown fetch failed', { reason: breakdown.reason })
-          setError(m.admin_billing_breakdown_error())
-        }
-        if (perSeat.status === 'fulfilled') {
-          setStatus(perSeat.value)
-        } else {
-          // Soft fallback — UI degrades to "Phase 5 light not available".
-          // Use warn (not error) since we have a defined fallback path.
-          adminLogger.warn('Per-seat status fetch failed; falling back to disabled', {
-            reason: perSeat.reason,
-          })
-          setStatus({ enabled: false, available: false })
-        }
-      })
-      .finally(() => setLoading(false))
-  }, [])
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{m.admin_billing_breakdown_title()}</CardTitle>
-        <CardDescription>{m.admin_billing_breakdown_description()}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        {loading && (
-          <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--color-rl-accent)] border-t-transparent" />
-        )}
-        {error && (
-          <p className="text-sm text-[var(--color-destructive-text)]">{error}</p>
-        )}
-        {data && (
-          <div className="space-y-2">
-            <div className="grid grid-cols-[1fr_auto_auto] gap-x-6 text-xs uppercase tracking-wide text-gray-400">
-              <span>{m.admin_billing_breakdown_col_account_type()}</span>
-              <span className="text-right">{m.admin_billing_breakdown_col_count()}</span>
-              <span className="text-right">{m.admin_billing_breakdown_col_monthly()}</span>
-            </div>
-            {data.rows.map((row) => (
-              <div
-                key={row.seat_type}
-                className="grid grid-cols-[1fr_auto_auto] gap-x-6 text-sm"
-              >
-                <span className="font-medium">{seatLabel(row.seat_type)}</span>
-                <span className="text-right tabular-nums">{row.count}</span>
-                <span className="text-right tabular-nums">{formatEur(row.monthly_eur)}</span>
-              </div>
-            ))}
-            <div className="grid grid-cols-[1fr_auto_auto] gap-x-6 border-t border-gray-200 pt-2 text-sm font-semibold">
-              <span>{m.admin_billing_breakdown_total()}</span>
-              <span className="text-right tabular-nums">{data.total_users}</span>
-              <span className="text-right tabular-nums">{formatEur(data.total_monthly_eur)}</span>
-            </div>
-          </div>
-        )}
-
-        {/*
-          SPEC-PORTAL-PRICING-PER-USER-001 Phase 5 (light) — per-tenant
-          opt-in banner. The CTA is intentionally disabled during the
-          Phase 5 light window: the Moneybird mutation path lands in
-          Phase 5b (follow-up SPEC) with sandbox testing + per-tenant
-          consent. Until then, the banner surfaces visibility on the
-          eventual transition without enabling a button that would 501.
-        */}
-        {status && !status.enabled && (
-          <div className="mt-4 rounded-md border border-[var(--color-border)] bg-[var(--color-rl-cream)] px-4 py-3 text-sm">
-            <p className="font-medium text-gray-900">
-              {m.admin_billing_per_seat_cta_title()}
-            </p>
-            <p className="mt-1 text-xs text-gray-500">
-              {m.admin_billing_per_seat_cta_description()}
-            </p>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled
-              className="mt-3 cursor-not-allowed opacity-60"
-              title={m.admin_billing_per_seat_cta_unavailable_tooltip()}
-            >
-              {m.admin_billing_per_seat_cta_button()}
-            </Button>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  )
-}
-
-// --- Main page ---
 
 function BillingPage() {
   const auth = useAuth()
-
-  const [billingStatus, setBillingStatus] = useState<BillingStatusResponse | null>(null)
-  const [loadingStatus, setLoadingStatus] = useState(true)
-  const [fetchError, setFetchError] = useState<string | null>(null)
+  const [state, dispatch] = useReducer(billingPageReducer, initialBillingPageState)
 
   useEffect(() => {
     if (!auth.isAuthenticated) return
     apiFetch<BillingStatusResponse>(`/api/billing/status`)
-      .then(setBillingStatus)
-      .catch(() => setFetchError(m.admin_billing_error_fetch()))
-      .finally(() => setLoadingStatus(false))
+      .then((status) => dispatch({ type: 'loaded', status }))
+      .catch(() => dispatch({ type: 'load_failed' }))
   }, [auth.isAuthenticated])
 
-  if (loadingStatus) {
+  if (state.loadingStatus) {
     return (
       <div className="p-6">
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-[var(--color-rl-accent)] border-t-transparent" />
@@ -305,527 +65,59 @@ function BillingPage() {
     )
   }
 
+  const billingStatus = state.billingStatus
+
   return (
     <div className="mx-auto max-w-3xl px-6 py-10 space-y-6" data-help-id="admin-billing-overview">
       <div className="space-y-1">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">{m.admin_billing_heading()}</h1>
-        <p className="text-sm text-gray-400">
-          {m.admin_billing_subtitle()}
-        </p>
+        <p className="text-sm text-gray-400">{m.admin_billing_subtitle()}</p>
       </div>
 
-      {fetchError && (
+      {state.fetchError && (
         <div className="flex items-center gap-2 rounded-lg bg-[var(--color-destructive-bg)] px-4 py-3 text-sm text-[var(--color-destructive-text)]">
           <AlertCircle size={16} className="shrink-0" />
-          {fetchError}
+          {state.fetchError}
         </div>
       )}
 
       {billingStatus && (
         <>
-          {billingStatus.plan === 'free' && <FreeView />}
+          {billingStatus.plan === 'free' && <BillingFreeCard />}
           {billingStatus.plan !== 'free' && billingStatus.billing_status === 'pending' && (
-            <SetupView onComplete={setBillingStatus} />
+            <BillingMandateSection onComplete={(status) => dispatch({ type: 'set_status', status })} />
           )}
-          {billingStatus.plan !== 'free' && billingStatus.billing_status === 'mandate_requested' && <MandateRequestedView />}
+          {billingStatus.plan !== 'free' && billingStatus.billing_status === 'mandate_requested' && (
+            <BillingMandateRequestedCard />
+          )}
           {billingStatus.plan !== 'free' && billingStatus.billing_status === 'active' && (
-            <ActiveView status={billingStatus} onCancel={setBillingStatus} />
+            <BillingActiveSection
+              status={billingStatus}
+              onCancel={(status) => dispatch({ type: 'set_status', status })}
+            />
           )}
           {billingStatus.plan !== 'free' && billingStatus.billing_status === 'payment_failed' && (
-            <PaymentFailedView
-              onRetry={() => setBillingStatus({ ...billingStatus, billing_status: 'pending' })}
+            <BillingPaymentFailedCard
+              onRetry={() =>
+                dispatch({
+                  type: 'set_status',
+                  status: { ...billingStatus, billing_status: 'pending' },
+                })
+              }
             />
           )}
           {billingStatus.plan !== 'free' && billingStatus.billing_status === 'cancelled' && (
-            <CancelledView
-              onReactivate={() => setBillingStatus({ ...billingStatus, billing_status: 'pending' })}
+            <BillingCancelledCard
+              onReactivate={() =>
+                dispatch({
+                  type: 'set_status',
+                  status: { ...billingStatus, billing_status: 'pending' },
+                })
+              }
             />
           )}
         </>
       )}
     </div>
-  )
-}
-
-// --- State: pending ---
-
-function SetupView({
-  onComplete,
-}: {
-  onComplete: (s: BillingStatusResponse) => void
-}) {
-  const [form, setForm] = useState<MandateForm>({
-    plan: 'knowledge',
-    billing_cycle: 'monthly',
-    seats: 1,
-    address: '',
-    zipcode: '',
-    city: '',
-    country: 'NL',
-    tax_number: '',
-    chamber_of_commerce: '',
-    billing_email: '',
-    internal_reference: '',
-  })
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const set = <K extends keyof MandateForm>(key: K, val: MandateForm[K]) =>
-    setForm((f) => ({ ...f, [key]: val }))
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setError(null)
-    setLoading(true)
-
-    try {
-      const body: Record<string, unknown> = {
-        plan: form.plan,
-        billing_cycle: form.billing_cycle,
-        seats: form.seats,
-        address: form.address,
-        zipcode: form.zipcode,
-        city: form.city,
-        country: form.country,
-      }
-      if (form.tax_number) body.tax_number = form.tax_number
-      if (form.chamber_of_commerce) body.chamber_of_commerce = form.chamber_of_commerce
-      if (form.billing_email) body.billing_email = form.billing_email
-      if (form.internal_reference) body.internal_reference = form.internal_reference
-
-      const data = await apiFetch<{ mandate_url?: string }>(`/api/billing/mandate`, {
-        method: 'POST',
-        body: JSON.stringify(body),
-      })
-
-      if (data.mandate_url) {
-        window.location.href = data.mandate_url
-      } else {
-        onComplete({
-          billing_status: 'mandate_requested',
-          plan: form.plan,
-          billing_cycle: form.billing_cycle,
-          seats: form.seats,
-          moneybird_contact_id: null,
-        })
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : m.admin_billing_error_connection())
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-6">
-      {/* Plan + cycle selection */}
-      <Card>
-        <CardHeader>
-          <CardTitle>{m.admin_billing_setup_plan_title()}</CardTitle>
-          <CardDescription>{m.admin_billing_setup_plan_description()}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Cycle toggle */}
-          <div className="flex gap-2" role="radiogroup" aria-label={m.admin_billing_active_cycle_label()}>
-            {(['monthly', 'yearly'] as BillingCycle[]).map((cycle) => (
-              <button
-                key={cycle}
-                type="button"
-                role="radio"
-                aria-checked={form.billing_cycle === cycle}
-                onClick={() => set('billing_cycle', cycle)}
-                className={[
-                  'flex-1 rounded-lg border px-4 py-2 text-sm font-medium transition',
-                  form.billing_cycle === cycle
-                    ? 'border-[var(--color-rl-accent)] bg-[var(--color-rl-accent)]/10 text-gray-900'
-                    : 'border-gray-200 text-gray-400 hover:border-[var(--color-rl-accent-dark)]',
-                ].join(' ')}
-              >
-                {getCycleLabel(cycle)}
-                {cycle === 'yearly' && (
-                  <span className="ml-2 text-xs text-[var(--color-rl-accent)]">{m.admin_billing_yearly_discount()}</span>
-                )}
-              </button>
-            ))}
-          </div>
-
-          {/* Plan tiles */}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            {PLANS.map((plan) => (
-              <button
-                key={plan.id}
-                type="button"
-                onClick={() => set('plan', plan.id)}
-                className={[
-                  'flex flex-col items-start rounded-xl border p-4 text-left transition',
-                  form.plan === plan.id
-                    ? 'border-[var(--color-rl-accent)] bg-[var(--color-rl-accent)]/10'
-                    : 'border-gray-200 hover:border-[var(--color-rl-accent-dark)]',
-                ].join(' ')}
-              >
-                <span className="text-sm font-semibold text-gray-900">
-                  {plan.name}
-                </span>
-                <span className="mt-0.5 text-xs text-gray-400">
-                  {getPlanDescription(plan.id)}
-                </span>
-                <span className="mt-3 text-xl font-semibold text-gray-900">
-                  &euro;{form.billing_cycle === 'yearly' ? plan.yearly : plan.monthly}
-                  <span className="text-xs font-normal text-gray-400">
-                    {' '}
-                    {m.admin_billing_per_user_month()}
-                  </span>
-                </span>
-              </button>
-            ))}
-          </div>
-
-          {/* Seats + total */}
-          <div className="flex items-end gap-4 pt-1 border-t border-gray-200">
-            <div className="space-y-1">
-              <label
-                htmlFor="seats"
-                className="block text-sm font-medium text-gray-900"
-              >
-                {m.admin_billing_seats_label()}
-              </label>
-              <input
-                id="seats"
-                type="number"
-                min={1}
-                max={500}
-                value={form.seats}
-                onChange={(e) => set('seats', Math.max(1, parseInt(e.target.value) || 1))}
-                className="w-24 rounded-lg border border-gray-200 bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
-              />
-            </div>
-            <div className="ml-auto text-right">
-              <p className="text-xs text-gray-400">{m.admin_billing_total_excl_vat()}</p>
-              <p className="text-xl font-semibold text-gray-900">
-                {totalPrice(form.plan, form.billing_cycle, form.seats)}
-              </p>
-              {form.billing_cycle === 'yearly' && (
-                <p className="text-xs text-gray-400">
-                  &euro;{planPrice(form.plan, form.billing_cycle) * form.seats} {m.admin_billing_monthly_equivalent()}
-                </p>
-              )}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Billing details */}
-      <Card>
-        <CardHeader>
-          <CardTitle>{m.admin_billing_details_title()}</CardTitle>
-          <CardDescription>
-            {m.admin_billing_details_description()}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <Field
-            label={m.admin_billing_field_address()}
-            name="address"
-            value={form.address}
-            onChange={(v) => set('address', v)}
-            required
-            placeholder={m.admin_billing_placeholder_street()}
-          />
-          <div className="grid grid-cols-2 gap-3">
-            <Field
-              label={m.admin_billing_field_zipcode()}
-              name="zipcode"
-              value={form.zipcode}
-              onChange={(v) => set('zipcode', v)}
-              required
-              placeholder={m.admin_billing_placeholder_zipcode()}
-            />
-            <Field
-              label={m.admin_billing_field_city()}
-              name="city"
-              value={form.city}
-              onChange={(v) => set('city', v)}
-              required
-              placeholder={m.admin_billing_placeholder_city()}
-            />
-          </div>
-          <Field
-            label={m.admin_billing_field_country()}
-            name="country"
-            value={form.country}
-            onChange={(v) => set('country', v)}
-            required
-          />
-          <Field
-            label={m.admin_billing_field_tax_number()}
-            name="tax_number"
-            value={form.tax_number}
-            onChange={(v) => set('tax_number', v)}
-            placeholder={m.admin_billing_placeholder_tax_number()}
-          />
-          <Field
-            label={m.admin_billing_field_coc()}
-            name="chamber_of_commerce"
-            value={form.chamber_of_commerce}
-            onChange={(v) => set('chamber_of_commerce', v)}
-          />
-          <Field
-            label={m.admin_billing_field_billing_email()}
-            name="billing_email"
-            type="email"
-            value={form.billing_email}
-            onChange={(v) => set('billing_email', v)}
-            hint={m.admin_billing_field_billing_email_hint()}
-          />
-          <Field
-            label={m.admin_billing_field_internal_ref()}
-            name="internal_reference"
-            value={form.internal_reference}
-            onChange={(v) => set('internal_reference', v)}
-            hint={m.admin_billing_field_internal_ref_hint()}
-          />
-        </CardContent>
-      </Card>
-
-      {error && (
-        <div className="flex items-center gap-2 rounded-lg bg-[var(--color-destructive-bg)] px-4 py-3 text-sm text-[var(--color-destructive-text)]">
-          <AlertCircle size={16} className="shrink-0" />
-          {error}
-        </div>
-      )}
-
-      <div className="flex items-center justify-between gap-4">
-        <p className="text-xs text-gray-400">
-          {m.admin_billing_sepa_note()}
-        </p>
-        <Button type="submit" disabled={loading} className="shrink-0 gap-2">
-          <CreditCard size={16} />
-          {loading ? m.admin_billing_submit_loading() : m.admin_billing_submit()}
-        </Button>
-      </div>
-    </form>
-  )
-}
-
-// --- Plan: free ---
-
-function FreeView() {
-  return (
-    <Card>
-      <CardContent className="py-12 flex flex-col items-center text-center gap-4">
-        <div className="rounded-full bg-[var(--color-rl-accent)]/10 p-4">
-          <CheckCircle size={24} className="text-[var(--color-rl-accent)]" strokeWidth={1.5} />
-        </div>
-        <div className="space-y-2">
-          <p className="font-semibold text-gray-900">{m.admin_billing_free_title()}</p>
-          <p className="text-sm text-gray-400 max-w-sm">
-            {m.admin_billing_free_description()}
-          </p>
-        </div>
-        <Badge variant="secondary">{m.admin_billing_free_badge()}</Badge>
-      </CardContent>
-    </Card>
-  )
-}
-
-// --- State: mandate_requested ---
-
-function MandateRequestedView() {
-  return (
-    <Card>
-      <CardContent className="py-12 flex flex-col items-center text-center gap-4">
-        <div className="rounded-full bg-[var(--color-rl-accent)]/10 p-4">
-          <CreditCard size={24} className="text-[var(--color-rl-accent)]" strokeWidth={1.5} />
-        </div>
-        <div className="space-y-2">
-          <p className="font-semibold text-gray-900">{m.admin_billing_mandate_title()}</p>
-          <p className="text-sm text-gray-400 max-w-sm">
-            {m.admin_billing_mandate_description()}
-          </p>
-        </div>
-        <Badge variant="secondary">{m.admin_billing_mandate_badge()}</Badge>
-      </CardContent>
-    </Card>
-  )
-}
-
-// --- State: active ---
-
-function ActiveView({
-  status,
-  onCancel,
-}: {
-  status: BillingStatusResponse
-  onCancel: (s: BillingStatusResponse) => void
-}) {
-  const [loadingInvoices, setLoadingInvoices] = useState(false)
-  const [cancelConfirm, setCancelConfirm] = useState(false)
-  const [cancelling, setCancelling] = useState(false)
-  const [actionError, setActionError] = useState<string | null>(null)
-
-  async function openInvoicePortal() {
-    setLoadingInvoices(true)
-    setActionError(null)
-    try {
-      const data = await apiFetch<{ portal_url: string }>(`/api/billing/invoices`)
-      window.open(data.portal_url, '_blank')
-    } catch {
-      setActionError(m.admin_billing_error_invoices())
-    } finally {
-      setLoadingInvoices(false)
-    }
-  }
-
-  async function handleCancel() {
-    setCancelling(true)
-    setActionError(null)
-    try {
-      await apiFetch(`/api/billing/cancel`, { method: 'POST' })
-      onCancel({ ...status, billing_status: 'cancelled' })
-    } catch {
-      setActionError(m.admin_billing_error_cancel())
-      setCancelConfirm(false)
-    } finally {
-      setCancelling(false)
-    }
-  }
-
-  return (
-    <div className="space-y-4">
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle>{m.admin_billing_active_title()}</CardTitle>
-            <Badge variant="success">{m.admin_billing_active_badge()}</Badge>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-3 gap-4 text-sm">
-            <div>
-              <p className="text-gray-400">{m.admin_billing_active_plan_label()}</p>
-              <p className="font-medium">{getPlanLabel(status.plan)}</p>
-            </div>
-            <div>
-              <p className="text-gray-400">{m.admin_billing_active_cycle_label()}</p>
-              <p className="font-medium">{getCycleLabel(status.billing_cycle)}</p>
-            </div>
-            <div>
-              <p className="text-gray-400">{m.admin_billing_active_seats_label()}</p>
-              <p className="font-medium">{status.seats}</p>
-            </div>
-          </div>
-          <div className="pt-3 border-t border-gray-200">
-            <p className="text-xs text-gray-400">{m.admin_billing_total_excl_vat()}</p>
-            <p className="text-xl font-semibold text-gray-900">
-              {totalPrice(status.plan, status.billing_cycle, status.seats)}
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      <SeatBreakdownPanel />
-
-      <Card>
-        <CardHeader>
-          <CardTitle>{m.admin_billing_invoices_title()}</CardTitle>
-          <CardDescription>{m.admin_billing_invoices_description()}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button
-            variant="outline"
-            onClick={openInvoicePortal}
-            disabled={loadingInvoices}
-            className="gap-2"
-          >
-            <ExternalLink size={16} />
-            {loadingInvoices ? m.admin_billing_invoices_loading() : m.admin_billing_invoices_button()}
-          </Button>
-        </CardContent>
-      </Card>
-
-      {actionError && (
-        <div className="flex items-center gap-2 rounded-lg bg-[var(--color-destructive-bg)] px-4 py-3 text-sm text-[var(--color-destructive-text)]">
-          <AlertCircle size={16} className="shrink-0" />
-          {actionError}
-        </div>
-      )}
-
-      <div className="border-t border-gray-200 pt-4">
-        {!cancelConfirm ? (
-          <button
-            type="button"
-            onClick={() => setCancelConfirm(true)}
-            className="text-sm text-gray-400 hover:text-[var(--color-destructive)] transition-colors"
-          >
-            {m.admin_billing_cancel_link()}
-          </button>
-        ) : (
-          <div className="flex items-center gap-3">
-            <p className="text-sm">{m.admin_billing_cancel_confirm()}</p>
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={handleCancel}
-              disabled={cancelling}
-            >
-              {cancelling ? m.admin_billing_cancel_loading() : m.admin_billing_cancel_confirm_button()}
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => setCancelConfirm(false)}>
-              {m.admin_billing_cancel_abort()}
-            </Button>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// --- State: payment_failed ---
-
-function PaymentFailedView({ onRetry }: { onRetry: () => void }) {
-  return (
-    <Card>
-      <CardContent className="py-12 flex flex-col items-center text-center gap-4">
-        <div className="rounded-full bg-[var(--color-destructive-bg)] p-4">
-          <AlertCircle size={24} className="text-[var(--color-destructive)]" strokeWidth={1.5} />
-        </div>
-        <div className="space-y-2">
-          <p className="font-semibold text-gray-900">{m.admin_billing_payment_failed_title()}</p>
-          <p className="text-sm text-gray-400 max-w-sm">
-            {m.admin_billing_payment_failed_description()}
-          </p>
-        </div>
-        <Badge variant="destructive">{m.admin_billing_payment_failed_badge()}</Badge>
-        <Button onClick={onRetry} className="gap-2">
-          <CreditCard size={16} />
-          {m.admin_billing_payment_failed_retry()}
-        </Button>
-      </CardContent>
-    </Card>
-  )
-}
-
-// --- State: cancelled ---
-
-function CancelledView({ onReactivate }: { onReactivate: () => void }) {
-  return (
-    <Card>
-      <CardContent className="py-12 flex flex-col items-center text-center gap-4">
-        <div className="rounded-full bg-[var(--color-rl-cream)] p-4">
-          <XCircle size={24} className="text-gray-400" strokeWidth={1.5} />
-        </div>
-        <div className="space-y-2">
-          <p className="font-semibold text-gray-900">{m.admin_billing_cancelled_title()}</p>
-          <p className="text-sm text-gray-400 max-w-sm">
-            {m.admin_billing_cancelled_description()}
-          </p>
-        </div>
-        <Badge variant="secondary">{m.admin_billing_cancelled_badge()}</Badge>
-        <Button variant="outline" onClick={onReactivate} className="gap-2">
-          <CheckCircle size={16} />
-          {m.admin_billing_cancelled_reactivate()}
-        </Button>
-      </CardContent>
-    </Card>
   )
 }
