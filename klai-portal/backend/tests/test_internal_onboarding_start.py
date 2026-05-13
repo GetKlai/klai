@@ -17,7 +17,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-
 _MAILER_OK = {
     "sent": True,
     "subject": "Welcome to Klai - book your onboarding intake",
