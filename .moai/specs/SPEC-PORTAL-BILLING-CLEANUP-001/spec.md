@@ -20,7 +20,7 @@ rule:
 | Date | Version | Change |
 |------|---------|--------|
 | 2026-05-13 | 0.1.0 | Initial draft carved out from connector wizard cleanup follow-ups. |
-| 2026-05-13 | 0.1.1 | Implemented: split `billing.lazy.tsx` into billing-specific section components and reducer-backed state modules; frontend build/lint/Vitest green. |
+| 2026-05-13 | 0.1.1 | Implemented: split `billing.lazy.tsx` into billing-specific section components and reducer-backed state modules; frontend build/lint/Vitest green; deployed to main and smoke-tested on Voys with Google SSO. |
 
 ## Goal
 
@@ -30,23 +30,23 @@ or `useReducer` for the 11-useState complexity. Notable: zero
 mutations (all data is via fetches, billing actions go through Moneybird
 external flows).
 
-This SPEC is **draft**. Annotation cycle should coordinate with the
-active SPEC-PORTAL-PRICING-PER-USER-001 work to avoid concurrent
-edits.
+This SPEC is **implemented**. The original concurrency guard was cleared
+before implementation: `SPEC-PORTAL-PRICING-PER-USER-001` was already
+`shipped`, so no active pricing work overlapped this cleanup.
 
 ## Motivation metrics
 
 | Metric | Value |
 |---|---|
-| File line count | 673 |
-| useState | 11 |
+| File line count | 123 |
+| useState | 0 |
 | useEffect | 2 |
 | Inline mutations | 0 |
 | Inline queries | (TBD — likely fetched via apiFetch in useEffect) |
 | Git churn last 90 days | 22 commits |
 | Last touched | 3 hours ago at SPEC creation |
 | Production-critical | Yes (admin billing — revenue-impact) |
-| Active concurrent work | YES (SPEC-PORTAL-PRICING-PER-USER-001 phases ongoing) |
+| Active concurrent work | No — SPEC-PORTAL-PRICING-PER-USER-001 was shipped before implementation |
 
 11 useState with no mutations means it's a complex local state machine.
 The `useEffect`s likely orchestrate sequential fetches + state

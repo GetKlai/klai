@@ -13,4 +13,6 @@
   - `klai-portal/frontend/src/routes/admin/_components/-BillingMandateSection.tsx`
   - `klai-portal/frontend/src/routes/admin/_components/-BillingStatusCards.tsx`
 - Preserved: `Promise.allSettled` breakdown/status fetch path and `adminLogger.error` / `adminLogger.warn` behavior from the prior hotfix.
-- Verified: `npm run build`, `npm run lint`, `npm run test`.
+- Verified locally: `npm run build`, `npm run lint`, `npm run test`.
+- Deployed: PR #640 merged to `main` at `82ea28c9`; `Build and deploy portal-frontend` succeeded.
+- Verified on Voys: Playwright against `https://voys.getklai.com/admin/billing` using Google-SSO storage state passed a non-mutating billing smoke (page load, billing details visible, yearly toggle, total update).
