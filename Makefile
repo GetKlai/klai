@@ -5,7 +5,7 @@ COMPOSE := docker compose -f docker-compose.dev.yml --env-file .env.dev
 BACKEND_DIR := klai-portal/backend
 FRONTEND_DIR := klai-portal/frontend
 
-.PHONY: help setup dev-up dev-down dev-reset dev-status dev-logs backend frontend migrate lint check
+.PHONY: help setup dev-up dev-down dev-reset dev-status dev-logs seed backend frontend migrate lint check
 
 # ── Help ─────────────────────────────────────────────────────────────────────
 
@@ -15,10 +15,24 @@ help: ## Show this help
 
 # ── Setup ────────────────────────────────────────────────────────────────────
 
-setup: ## First-time setup: copy env files, install dependencies
+setup: ## First-time setup: copy env files, generate keys, install dependencies
 	@echo "==> Copying environment files..."
+	@test -f .env.dev.example || { echo "ERROR: .env.dev.example not found. Are you in the repo root?"; exit 1; }
+	@test -f $(BACKEND_DIR)/.env.example || { echo "ERROR: $(BACKEND_DIR)/.env.example not found."; exit 1; }
+	@test -f $(FRONTEND_DIR)/.env.local.example || { echo "ERROR: $(FRONTEND_DIR)/.env.local.example not found."; exit 1; }
 	@test -f .env.dev || cp .env.dev.example .env.dev
-	@test -f $(BACKEND_DIR)/.env || cp $(BACKEND_DIR)/.env.example $(BACKEND_DIR)/.env
+	@test -f $(BACKEND_DIR)/.env || { \
+		cp $(BACKEND_DIR)/.env.example $(BACKEND_DIR)/.env && \
+		echo "  Generating encryption keys..." && \
+		SECRETS_KEY=$$(python3 -c "import secrets; print(secrets.token_hex(32))") && \
+		ENCRYPT_KEY=$$(python3 -c "import secrets; print(secrets.token_hex(32))") && \
+		COOKIE_KEY=$$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())") && \
+		sed -i.bak "s|^PORTAL_SECRETS_KEY=.*|PORTAL_SECRETS_KEY=$$SECRETS_KEY|" $(BACKEND_DIR)/.env && \
+		sed -i.bak "s|^ENCRYPTION_KEY=.*|ENCRYPTION_KEY=$$ENCRYPT_KEY|" $(BACKEND_DIR)/.env && \
+		sed -i.bak "s|^SSO_COOKIE_KEY=.*|SSO_COOKIE_KEY=$$COOKIE_KEY|" $(BACKEND_DIR)/.env && \
+		rm -f $(BACKEND_DIR)/.env.bak && \
+		echo "  Keys generated and written to $(BACKEND_DIR)/.env"; \
+	}
 	@test -f $(FRONTEND_DIR)/.env.local || cp $(FRONTEND_DIR)/.env.local.example $(FRONTEND_DIR)/.env.local
 	@echo ""
 	@echo "==> Installing backend dependencies..."
@@ -30,15 +44,14 @@ setup: ## First-time setup: copy env files, install dependencies
 	@echo "============================================"
 	@echo "  Setup complete! Next steps:"
 	@echo ""
-	@echo "  1. Edit .env.dev             (add ANTHROPIC_API_KEY)"
-	@echo "  2. Edit $(BACKEND_DIR)/.env  (add ZITADEL_PAT, generate keys)"
-	@echo "  3. Edit $(FRONTEND_DIR)/.env.local (add VITE_OIDC_CLIENT_ID)"
-	@echo "  4. make dev-up               (start Docker services)"
-	@echo "  5. make migrate              (run database migrations)"
-	@echo "  6. make backend              (start API server)"
-	@echo "  7. make frontend             (start Vite dev server)"
+	@echo "  1. make dev-up               (start Docker services)"
+	@echo "  2. make migrate              (run database migrations)"
+	@echo "  3. make backend              (start API — auto-creates dev user)"
+	@echo "  4. make frontend             (start Vite dev server)"
 	@echo ""
-	@echo "  Full guide: docs/runbooks/local-dev.md"
+	@echo "  That's it! No env editing needed for standalone mode."
+	@echo "  For AI features: add ANTHROPIC_API_KEY to .env.dev"
+	@echo "  For production Zitadel: see docs/runbooks/local-dev.md"
 	@echo "============================================"
 
 # ── Docker Services ──────────────────────────────────────────────────────────
@@ -60,6 +73,12 @@ dev-status: ## Show status of Docker services
 
 dev-logs: ## Tail logs from all Docker services
 	$(COMPOSE) logs -f
+
+# ── Data ─────────────────────────────────────────────────────────────────────
+
+seed: ## Seed database with demo data (dev org, users)
+	docker exec -i klai-postgres-1 psql -U klai -d klai < dev/seed.sql
+	@echo "Database seeded with demo data."
 
 # ── Backend ──────────────────────────────────────────────────────────────────
 

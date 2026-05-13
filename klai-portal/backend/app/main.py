@@ -149,20 +149,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         raise
 
     if settings.is_auth_dev_mode:
-        # ── Dev mode: skip Zitadel, loud warnings ────────────────────────
+        # ── Dev mode: skip Zitadel, auto-seed dev user ──────────────────
+        if not settings.auth_dev_user_id:
+            settings.auth_dev_user_id = "dev-user-1"
+
         logger.critical(
             "╔══════════════════════════════════════════════════════════╗\n"
             "║  AUTH DEV MODE ACTIVE — authentication is BYPASSED      ║\n"
             "║  All requests authenticate as user: %s  ║\n"
             "║  NEVER enable this in production!                        ║\n"
             "╚══════════════════════════════════════════════════════════╝",
-            settings.auth_dev_user_id or "(not configured)",
+            settings.auth_dev_user_id,
         )
-        if not settings.auth_dev_user_id:
-            logger.critical(
-                "AUTH_DEV_USER_ID is not set. Set it to a zitadel_user_id that exists in the portal_users table."
-            )
-            raise SystemExit(1)
+
+        # Auto-create dev org + user if they don't exist (SPEC-LOCAL-DEV-001 REQ-1)
+        from app.core.database import AsyncSessionLocal
+        from app.core.dev_seed import ensure_dev_user_exists
+
+        async with AsyncSessionLocal() as seed_db:
+            await ensure_dev_user_exists(seed_db, settings.auth_dev_user_id)
     else:
         # ── Production mode: validate remaining secrets exist ────────────
         # SSO_COOKIE_KEY is handled above by _get_sso_fernet(); listing it
