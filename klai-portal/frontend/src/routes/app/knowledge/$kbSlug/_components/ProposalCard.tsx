@@ -180,9 +180,9 @@ export function ProposalCard({
             ) : (
               <>
                 <p className="text-sm font-medium text-gray-900">{proposal.title}</p>
-                {typeof proposal.payload?.description === 'string' && (
+                {payloadDescription(proposal.payload) && (
                   <p className="text-xs text-gray-400 mt-0.5">
-                    {proposal.payload.description}
+                    {payloadDescription(proposal.payload)}
                   </p>
                 )}
                 <p className="text-xs text-gray-400 mt-0.5">
