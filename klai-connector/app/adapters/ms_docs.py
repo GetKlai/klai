@@ -68,6 +68,12 @@ _MS_SCOPES = "offline_access User.Read Files.Read.All Sites.Read.All"
 # 429/503 retry cap — never block a sync run longer than this on throttle backoff.
 _RETRY_AFTER_CAP_SECONDS = 30.0
 
+# Per-file upper bound. Mirrors GitHubAdapter's _MAX_FILE_SIZE pattern.
+# Files larger than this are skipped during list_documents and never
+# downloaded; ingest-side parsing of very large Office binaries blows
+# memory and rarely produces useful chunks for retrieval.
+_MAX_FILE_SIZE = 200 * 1024 * 1024  # 200 MB
+
 # MIME → content_type mapping (R2.6).
 _MIME_CONTENT_TYPES: dict[str, str] = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "word_document",
@@ -126,17 +132,25 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
 
     @staticmethod
     def _extract_config(connector: Any) -> dict[str, Any]:
-        """Normalise config dict with safe defaults."""
+        """Normalise config dict with safe defaults.
+
+        ``folder_id`` is optional and scopes the sync to a single OneDrive /
+        SharePoint folder (set via the post-OAuth folder picker in the
+        portal). When unset, the adapter syncs the whole drive root.
+        """
         config: dict[str, Any] = connector.config or {}
         return {
             "drive_id": (config.get("drive_id") or "").strip() or None,
             "site_url": (config.get("site_url") or "").strip() or None,
+            "folder_id": (config.get("folder_id") or "").strip() or None,
         }
 
     # -- OAuth refresh (SPEC-KB-MS-DOCS-001 R2.1) -----------------------------
 
     async def _refresh_oauth_token(
-        self, connector: ConnectorLike, refresh_token: str,
+        self,
+        connector: ConnectorLike,
+        refresh_token: str,
     ) -> dict[str, Any]:
         """Exchange a refresh_token for a new access_token against Microsoft.
 
@@ -173,7 +187,9 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
             # OAuthReconnectRequiredError; other 400s fall through to
             # raise_for_status (generic HTTPStatusError).
             check_invalid_grant_and_raise(
-                response, provider="Microsoft", connector_id=connector.id,
+                response,
+                provider="Microsoft",
+                connector_id=connector.id,
             )
             response.raise_for_status()
             data = response.json()
@@ -307,6 +323,67 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
         """
         return self._ref_metadata.get(ref.ref, {"sender_email": "", "mentioned_emails": []})
 
+    async def list_folders(self, connector: Any, parent_id: str | None = None) -> list[dict[str, Any]]:
+        """List child folders under ``parent_id`` (root when None).
+
+        Powers the post-OAuth folder picker in the portal. Returns folders
+        only — ``file`` items are filtered out. Each result is a flat dict
+        with ``id``, ``name``, ``child_count`` (folder.childCount from
+        Graph, ``0`` when absent).
+
+        Args:
+            connector: Connector model (for token + drive resolution).
+            parent_id: Graph driveItem id of the parent folder, or ``None``
+                / empty string for the drive root.
+
+        Returns:
+            ``[{"id": str, "name": str, "child_count": int}, ...]``,
+            ordered by Graph's default (createdDateTime desc, typically).
+
+        Raises:
+            httpx.HTTPStatusError: Graph error propagated for the caller to
+                map to a 4xx/5xx HTTP response.
+        """
+        cfg = self._extract_config(connector)
+        anchor = f"items/{quote(parent_id, safe='')}" if parent_id else "root"
+
+        if cfg["drive_id"]:
+            base = f"{_GRAPH_BASE}/drives/{quote(cfg['drive_id'], safe='!')}/{anchor}"
+        elif cfg["site_url"]:
+            site_id = await self._resolve_site_id(connector, cfg["site_url"])
+            base = f"{_GRAPH_BASE}/sites/{site_id}/drive/{anchor}"
+        else:
+            base = f"{_GRAPH_BASE}/me/drive/{anchor}"
+
+        # ``$select`` keeps the payload small; ``$top=200`` is the page cap
+        # the picker UX supports without pagination (most users have far
+        # fewer top-level folders). Add nextLink-following if that turns
+        # out wrong in the field.
+        url = f"{base}/children?$select=id,name,folder,file&$top=200"
+        data = await self._graph_get_json(url, connector=connector)
+        items = data.get("value", []) if isinstance(data, dict) else []
+
+        folders: list[dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if "folder" not in item:
+                continue  # files filtered out — picker is folder-only
+            folder_facet = item.get("folder") or {}
+            child_count_raw = folder_facet.get("childCount", 0) if isinstance(folder_facet, dict) else 0
+            try:
+                child_count = int(child_count_raw) if child_count_raw is not None else 0
+            except (TypeError, ValueError):
+                child_count = 0
+            folders.append(
+                {
+                    "id": str(item.get("id", "")),
+                    "name": str(item.get("name", "")),
+                    "child_count": child_count,
+                }
+            )
+        return folders
+
     # -- Delta URL construction + pagination ---------------------------------
 
     async def _build_delta_root_url(self, connector: Any) -> str:
@@ -316,17 +393,25 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
           1. ``config.drive_id`` → ``/drives/{drive_id}/root/delta``
           2. ``config.site_url`` → resolve to site-id, then ``/sites/{id}/drive/root/delta``
           3. default → ``/me/drive/root/delta``
+
+        When ``config.folder_id`` is set, the ``/root`` segment is replaced
+        by ``/items/{folder_id}`` so the delta is scoped to that subtree.
+        Graph supports this on every drive variant (personal, SharePoint,
+        drive-id).
         """
         cfg = self._extract_config(connector)
+        folder_id = cfg["folder_id"]
+        # Anchor segment: ``/root`` for whole drive, ``/items/{id}`` when scoped.
+        anchor = f"items/{quote(folder_id, safe='')}" if folder_id else "root"
 
         if cfg["drive_id"]:
-            return f"{_GRAPH_BASE}/drives/{quote(cfg['drive_id'], safe='!')}/root/delta"
+            return f"{_GRAPH_BASE}/drives/{quote(cfg['drive_id'], safe='!')}/{anchor}/delta"
 
         if cfg["site_url"]:
             site_id = await self._resolve_site_id(connector, cfg["site_url"])
-            return f"{_GRAPH_BASE}/sites/{site_id}/drive/root/delta"
+            return f"{_GRAPH_BASE}/sites/{site_id}/drive/{anchor}/delta"
 
-        return _ME_DRIVE_DELTA
+        return f"{_GRAPH_BASE}/me/drive/{anchor}/delta"
 
     async def _resolve_site_id(self, connector: Any, site_url: str) -> str:
         """Resolve a SharePoint site URL to a Graph site-id; cache per connector.
@@ -359,7 +444,9 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
         return site_id
 
     async def _drain_delta(
-        self, start_url: str, connector: ConnectorLike | None = None,
+        self,
+        start_url: str,
+        connector: ConnectorLike | None = None,
     ) -> tuple[list[dict[str, Any]], str | None]:
         """Follow ``@odata.nextLink`` pages until ``@odata.deltaLink`` appears.
 
@@ -395,6 +482,11 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
 
         Skips items without a ``file`` facet (folders, packages) since we only
         ingest leaf documents. Returns None for those.
+
+        Also skips files larger than ``_MAX_FILE_SIZE`` (200 MB) — downloading
+        and parsing them blows ingest memory and rarely produces useful
+        retrieval chunks. The skipped item is logged so operators can spot
+        it without having to read the database.
         """
         if "file" not in item:
             return None
@@ -405,6 +497,16 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
             size = int(size_raw) if size_raw is not None else 0
         except (TypeError, ValueError):
             size = 0
+
+        if size > _MAX_FILE_SIZE:
+            logger.warning(
+                "Skipping oversized MS drive item (id=%s, name=%s, size=%d bytes, limit=%d bytes)",
+                item.get("id"),
+                item.get("name"),
+                size,
+                _MAX_FILE_SIZE,
+            )
+            return None
 
         return DocumentRef(
             path=str(item.get("name", "") or item.get("id", "")),
@@ -423,12 +525,8 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
         sender_email = lastModifiedBy.user.email (fallback to createdBy.user.email).
         mentioned_emails = deduped [createdBy.email, lastModifiedBy.email], empties filtered.
         """
-        created_email = (
-            item.get("createdBy", {}).get("user", {}).get("email", "") or ""
-        )
-        modified_email = (
-            item.get("lastModifiedBy", {}).get("user", {}).get("email", "") or ""
-        )
+        created_email = item.get("createdBy", {}).get("user", {}).get("email", "") or ""
+        modified_email = item.get("lastModifiedBy", {}).get("user", {}).get("email", "") or ""
         sender = modified_email or created_email
         mentioned = [e for e in {created_email, modified_email} if e]
         return {"sender_email": sender, "mentioned_emails": mentioned}
@@ -468,14 +566,17 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
         """
         headers = await self._auth_headers(connector)
         async with httpx.AsyncClient(
-            timeout=timeout, follow_redirects=follow_redirects,
+            timeout=timeout,
+            follow_redirects=follow_redirects,
         ) as client:
             response = await client.get(url, headers=headers)
             if response.status_code in (429, 503):
                 retry_after = self._parse_retry_after(response)
                 logger.warning(
                     "Graph throttled (status=%s, retry_after=%.1fs, url=%s)",
-                    response.status_code, retry_after, url,
+                    response.status_code,
+                    retry_after,
+                    url,
                 )
                 await asyncio.sleep(retry_after)
                 response = await client.get(url, headers=headers)
@@ -483,7 +584,9 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
             return response
 
     async def _graph_get_json(
-        self, url: str, connector: ConnectorLike | None = None,
+        self,
+        url: str,
+        connector: ConnectorLike | None = None,
     ) -> dict[str, Any]:
         """Thin wrapper over ``_graph_request`` returning a JSON dict."""
         response = await self._graph_request(url, connector=connector)
@@ -495,7 +598,9 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
         return result
 
     async def _graph_get_bytes(
-        self, url: str, connector: ConnectorLike | None = None,
+        self,
+        url: str,
+        connector: ConnectorLike | None = None,
     ) -> bytes:
         """Thin wrapper over ``_graph_request`` returning raw bytes.
 
@@ -503,7 +608,10 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
         downloads to preauthenticated blob URLs for large files.
         """
         response = await self._graph_request(
-            url, connector=connector, timeout=60.0, follow_redirects=True,
+            url,
+            connector=connector,
+            timeout=60.0,
+            follow_redirects=True,
         )
         return response.content
 
