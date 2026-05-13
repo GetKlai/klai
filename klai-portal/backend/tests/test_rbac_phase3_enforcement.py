@@ -237,6 +237,7 @@ class TestPlanCeilingGoneOnRoleAssignment:
             ),
         ):
             mock_zitadel.invite_user = AsyncMock(return_value={"userId": "new-km"})
+            mock_zitadel.send_invite_code = AsyncMock()  # SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-2
             mock_zitadel.grant_user_role = AsyncMock()
             # Must not raise — plan ceiling is gone.
             await invite_user(body=body, perms=perms, db=mock_db)
@@ -283,6 +284,7 @@ class TestPlanCeilingGoneOnRoleAssignment:
             ),
         ):
             mock_zitadel.invite_user = AsyncMock(return_value={"userId": "new-over"})
+            mock_zitadel.send_invite_code = AsyncMock()  # SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-2
             mock_zitadel.grant_user_role = AsyncMock()
             # Must not raise. Pre-Phase-3 raised
             # HTTPException(409, "Seat limit reached").

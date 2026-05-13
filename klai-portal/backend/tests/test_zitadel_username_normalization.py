@@ -128,9 +128,11 @@ class TestInviteUserUsernameLowercased:
         assert kwargs["json"]["email"]["email"] == "NewHire@Acme.IO"
 
     @pytest.mark.asyncio
-    async def test_send_codes_flag_unchanged(self) -> None:
-        """Regression: the lowercase rename must not break the invite-mail
-        send-codes flag."""
+    async def test_send_codes_disabled_per_split_invite_flow(self) -> None:
+        """SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-2: invite_user MUST NOT trigger
+        a Zitadel-default invite mail. The flow is split — invite_user creates
+        the user with sendCodes=False, then send_invite_code mails the link
+        with an explicit Klai urlTemplate."""
         client, mock_http = _zitadel_client_with_mocked_http()
 
         await client.invite_user(
@@ -141,7 +143,7 @@ class TestInviteUserUsernameLowercased:
         )
 
         _args, kwargs = mock_http.post.call_args
-        assert kwargs["json"]["sendCodes"] is True
+        assert kwargs["json"]["sendCodes"] is False
 
 
 class TestCreateZitadelUserFromIdpUsernameLowercased:

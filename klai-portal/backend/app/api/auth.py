@@ -61,6 +61,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal, get_db
 from app.models.portal import PortalOrg, PortalUser
 from app.services import audit
+from app.services.auth_links import AuthLinkRoute, build_url_template
 from app.services.bff_session import SessionService
 from app.services.events import emit_event
 from app.services.pending_session import PendingSessionService
@@ -1034,7 +1035,10 @@ async def password_reset(body: PasswordResetRequest) -> None:
         return  # unknown email — return 204 silently (REQ-3.2)
 
     try:
-        await zitadel.send_password_reset(user_id)
+        # SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-1: point the reset link at Klai's
+        # /password/set page, not Zitadel's hosted /ui/login/.
+        url_template = build_url_template(AuthLinkRoute.PASSWORD_SET)
+        await zitadel.send_password_reset(user_id, url_template=url_template)
     except httpx.HTTPStatusError as exc:
         _slog.exception("send_password_reset_failed", zitadel_status=exc.response.status_code)
         _emit_auth_event(
