@@ -65,7 +65,7 @@ new SPEC-ID with current status. Below is the canonical pointer list:
 | `admin/users/index.tsx` | `SPEC-PORTAL-ADMIN-USERS-CLEANUP-001` | draft |
 | `$kbSlug/connectors.tsx` | `SPEC-PORTAL-CONNECTORS-TAB-CLEANUP-001` | draft (borderline) |
 | `knowledge/new.tsx` | `SPEC-PORTAL-KB-NEW-CLEANUP-001` | draft |
-| `admin/settings.tsx` | `SPEC-PORTAL-ADMIN-SETTINGS-CLEANUP-001` | draft |
+| `admin/settings.tsx` | `SPEC-PORTAL-ADMIN-SETTINGS-CLEANUP-001` | implemented |
 | `admin/billing.lazy.tsx` | `SPEC-PORTAL-BILLING-CLEANUP-001` | draft (coordinate with PRICING-PER-USER-001) |
 | `app/transcribe/add.tsx` | `SPEC-PORTAL-TRANSCRIBE-ADD-CLEANUP-001` | draft |
 | `setup/mfa.lazy.tsx` | `SPEC-PORTAL-MFA-SETUP-CLEANUP-001` | draft |

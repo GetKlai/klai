@@ -498,7 +498,7 @@ SPECs. Order below matches the 90-day churn ranking (most-touched first):
 | `admin/users/index.tsx` (517 lines, 33 commits/90d) | `SPEC-PORTAL-ADMIN-USERS-CLEANUP-001` | draft |
 | `$kbSlug/connectors.tsx` (425 lines, 29 commits/90d) | `SPEC-PORTAL-CONNECTORS-TAB-CLEANUP-001` | draft (borderline — annotation cycle may close as won't-fix) |
 | `knowledge/new.tsx` (713 lines, 28 commits/90d) | `SPEC-PORTAL-KB-NEW-CLEANUP-001` | draft |
-| `admin/settings.tsx` (524 lines, 26 commits/90d, 9 mutations) | `SPEC-PORTAL-ADMIN-SETTINGS-CLEANUP-001` | draft |
+| `admin/settings.tsx` (524 lines, 26 commits/90d, 9 mutations) | `SPEC-PORTAL-ADMIN-SETTINGS-CLEANUP-001` | implemented |
 | `admin/billing.lazy.tsx` (673 lines, 22 commits/90d, 11 useState) | `SPEC-PORTAL-BILLING-CLEANUP-001` | draft (coordinate with active PRICING-PER-USER-001) |
 | `app/transcribe/add.tsx` (530 lines, 22 commits/90d) | `SPEC-PORTAL-TRANSCRIBE-ADD-CLEANUP-001` | draft |
 | `setup/mfa.lazy.tsx` (668 lines, 16 commits/90d, **19 useState**) | `SPEC-PORTAL-MFA-SETUP-CLEANUP-001` | draft (worst structure in repo, low churn = stable pain) |
