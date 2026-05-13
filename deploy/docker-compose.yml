@@ -443,7 +443,18 @@ services:
       # ─── Database (portal schema) ───────────────────────────────
       DATABASE_URL: postgresql+asyncpg://portal_api:${PORTAL_API_DB_PASSWORD}@postgres:5432/klai
       # ─── Auth — Zitadel ─────────────────────────────────────────
+      # SPEC-REPO-SANITIZE-001 (ce31a119, 2026-05-13 16:03 UTC) cleared
+      # hardcoded fallbacks in config.py for the three non-secret Zitadel
+      # IDs below (PROJECT_ID, PORTAL_ORG_ID, PORTAL_CLIENT_ID). These are
+      # PUBLIC identifiers, not secrets — they belong in compose with
+      # inline defaults so the runtime contract survives a fresh deploy
+      # without requiring a SOPS update. Compose injection wins over the
+      # (now-empty) config.py default. Without these entries, regular
+      # email+password signup breaks silently on `grant_user_role` →
+      # Zitadel 500 (empty ProjectId). Verified on prod 2026-05-13 17:00.
       ZITADEL_PAT: ${PORTAL_API_ZITADEL_PAT}
+      ZITADEL_PROJECT_ID: ${ZITADEL_PROJECT_ID:-362771533686374406}
+      ZITADEL_PORTAL_ORG_ID: ${ZITADEL_PORTAL_ORG_ID:-362757920133283846}
       ZITADEL_PORTAL_CLIENT_ID: ${ZITADEL_PORTAL_CLIENT_ID:-369262708920483857}
       ZITADEL_PORTAL_CLIENT_SECRET: ${PORTAL_API_ZITADEL_PORTAL_CLIENT_SECRET:-}
       ZITADEL_IDP_GOOGLE_ID: ${ZITADEL_IDP_GOOGLE_ID}
