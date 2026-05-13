@@ -26,13 +26,25 @@ import { Input } from '@/components/ui/input'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { taxonomyLogger } from '@/lib/logger'
-import { toast } from 'sonner'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import type {
-  KnowledgeBase, MembersResponse, TaxonomyNode, TaxonomyProposal,
-  TaxonomyCoverage, TopTagsResponse,
+  KnowledgeBase, MembersResponse, TaxonomyCoverage,
 } from '../-kb-types'
 import { kbQueryKeys } from '@/lib/kb-query-keys'
+import {
+  useApproveProposal,
+  useBackfillTaxonomy,
+  useBootstrapTaxonomy,
+  useCreateNode,
+  useDeleteNode,
+  useRejectProposal,
+  useRenameNode,
+  useTaxonomyCoverage,
+  useTaxonomyNodes,
+  useTaxonomyProposals,
+  useTopTags,
+  type SuggestState,
+} from '../-taxonomy-hooks'
 
 // SPEC-TAXONOMY-REVIEW-FLOW-001 follow-up: cap on healthy taxonomy size.
 // Mirrors the backend's ``taxonomy_consolidate_target_max`` (default 9).
@@ -432,154 +444,36 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
   const [editingProposalTitle, setEditingProposalTitle] = useState('')
   const [editingProposalDescription, setEditingProposalDescription] = useState('')
 
-  const nodesQuery = useQuery<{ nodes: TaxonomyNode[] }>({
-    queryKey: ['taxonomy-nodes', kbSlug],
-    queryFn: async () => {
-      try {
-        return await apiFetch<{ nodes: TaxonomyNode[] }>(`/api/app/knowledge-bases/${kbSlug}/taxonomy/nodes`)
-      } catch (err) {
-        taxonomyLogger.warn('Taxonomy nodes fetch failed', { slug: kbSlug, error: err })
-        throw err
-      }
-    },
-    enabled: auth.isAuthenticated,
+  const nodesQuery = useTaxonomyNodes(kbSlug, auth.isAuthenticated)
+  // SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 3: fetches ALL statuses so approved
+  // proposals stay visible after the approve click. Backend sorts by
+  // most-recent activity so a freshly-approved proposal moves to the top.
+  const proposalsQuery = useTaxonomyProposals(kbSlug, auth.isAuthenticated)
+  const coverageQuery = useTaxonomyCoverage(kbSlug, auth.isAuthenticated && isAdmin)
+  const topTagsQuery = useTopTags(kbSlug, activeNodeId, auth.isAuthenticated)
+
+  const createNodeMutation = useCreateNode(kbSlug, () => {
+    setNewNodeName('')
+    setShowAddRoot(false)
+    setAddParentId(null)
   })
 
-  // SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 3: fetch ALL statuses so approved
-  // proposals stay visible after the approve click instead of disappearing.
-  // The unified review-list renders pending/approved/rejected with status
-  // badges. Backend sorts by most-recent activity so a freshly-approved
-  // proposal moves to the top.
-  const proposalsQuery = useQuery<{ proposals: TaxonomyProposal[] }>({
-    queryKey: ['taxonomy-proposals', kbSlug],
-    queryFn: async () => {
-      try {
-        return await apiFetch<{ proposals: TaxonomyProposal[] }>(`/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals?status=all`)
-      } catch (err) {
-        taxonomyLogger.warn('Taxonomy proposals fetch failed', { slug: kbSlug, error: err })
-        throw err
-      }
-    },
-    enabled: auth.isAuthenticated,
-  })
-
-  const coverageQuery = useQuery<TaxonomyCoverage>({
-    queryKey: ['taxonomy-coverage', kbSlug],
-    queryFn: async () => {
-      try {
-        return await apiFetch<TaxonomyCoverage>(`/api/app/knowledge-bases/${kbSlug}/taxonomy/coverage`)
-      } catch (err) {
-        taxonomyLogger.warn('Taxonomy coverage fetch failed', { slug: kbSlug, error: err })
-        throw err
-      }
-    },
-    enabled: auth.isAuthenticated && isAdmin,
-    staleTime: 5 * 60 * 1000,
-  })
-
-  const topTagsQuery = useQuery<TopTagsResponse>({
-    queryKey: ['taxonomy-top-tags', kbSlug, activeNodeId],
-    queryFn: async () => {
-      const params = new URLSearchParams({ limit: '20' })
-      if (activeNodeId !== null) params.set('taxonomy_node_id', String(activeNodeId))
-      return apiFetch<TopTagsResponse>(`/api/app/knowledge-bases/${kbSlug}/taxonomy/top-tags?${params.toString()}`)
-    },
-    enabled: auth.isAuthenticated,
-    staleTime: 5 * 60 * 1000,
-  })
-
-  const createNodeMutation = useMutation({
-    mutationFn: async ({ name, parentId }: { name: string; parentId: number | null }) => {
-      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/taxonomy/nodes`, {
-        method: 'POST',
-        body: JSON.stringify({ name, parent_id: parentId }),
-      })
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] })
-      setNewNodeName('')
-      setShowAddRoot(false)
-      setAddParentId(null)
-    },
-  })
-
-  const renameNodeMutation = useMutation({
-    mutationFn: async ({ nodeId, name, description }: { nodeId: number; name: string; description?: string }) => {
-      const body: Record<string, string> = { name }
-      if (description !== undefined) body.description = description
-      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/taxonomy/nodes/${nodeId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(body),
-      })
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] })
-      void queryClient.invalidateQueries({ queryKey: ['taxonomy-coverage', kbSlug] })
-    },
-  })
-
-  const deleteNodeMutation = useMutation({
-    mutationFn: async (nodeId: number) => {
-      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/taxonomy/nodes/${nodeId}`, { method: 'DELETE' })
-    },
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] }),
-  })
+  const renameNodeMutation = useRenameNode(kbSlug)
+  const deleteNodeMutation = useDeleteNode(kbSlug)
 
   // SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 5: approve accepts optional title +
   // description overrides (edit-before-approve). Issue 4: approve accepts
   // ?auto_categorise=false so the batch "Apply to KB" flow can defer
   // classification to a single backfill at the end.
-  const approveMutation = useMutation({
-    mutationFn: async (vars: {
-      proposalId: number
-      title?: string
-      description?: string
-      autoCategorise?: boolean
-    }) => {
-      const params = new URLSearchParams()
-      if (vars.autoCategorise === false) params.set('auto_categorise', 'false')
-      const qs = params.toString() ? `?${params.toString()}` : ''
-      const body: Record<string, string> = {}
-      if (vars.title !== undefined) body.title = vars.title
-      if (vars.description !== undefined) body.description = vars.description
-      const init: { method: string; body?: string } = { method: 'POST' }
-      if (Object.keys(body).length > 0) init.body = JSON.stringify(body)
-      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals/${vars.proposalId}/approve${qs}`, init)
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['taxonomy-proposals', kbSlug] })
-      void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] })
-      void queryClient.invalidateQueries({ queryKey: ['taxonomy-coverage', kbSlug] })
-    },
-    onError: (err) => {
-      const is409 = err instanceof Error && err.message.includes('409')
-      taxonomyLogger.warn('Proposal approve failed', { error: String(err), is409 })
-      if (is409) {
-        toast.error(m.knowledge_taxonomy_proposals_conflict())
-      } else {
-        toast.error(m.knowledge_taxonomy_proposals_approve_error())
-      }
-      void queryClient.invalidateQueries({ queryKey: ['taxonomy-proposals', kbSlug] })
-      void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] })
-    },
-  })
+  const approveMutation = useApproveProposal(kbSlug)
 
-  const rejectMutation = useMutation({
-    mutationFn: async ({ proposalId, reason }: { proposalId: number; reason: string }) => {
-      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals/${proposalId}/reject`, {
-        method: 'POST',
-        body: JSON.stringify({ reason }),
-      })
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['taxonomy-proposals', kbSlug] })
-      setRejectingProposalId(null)
-      setRejectReason('')
-    },
+  const rejectMutation = useRejectProposal(kbSlug, () => {
+    setRejectingProposalId(null)
+    setRejectReason('')
   })
 
   // -- Suggest categories flow --
-  const [suggestState, setSuggestState] = useState<'idle' | 'generating' | 'proposals_ready' | 'applying' | 'done'>('idle')
+  const [suggestState, setSuggestState] = useState<SuggestState>('idle')
 
   // Sync suggestState with server data so the banner survives a page refresh.
   useEffect(() => {
@@ -590,60 +484,10 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
     }
   }, [proposalsQuery.isSuccess, proposalsQuery.data])
 
-  const bootstrapMutation = useMutation({
-    mutationFn: async () => {
-      return await apiFetch<{ documents_scanned: number; proposals_submitted: number }>(`/api/app/knowledge-bases/${kbSlug}/taxonomy/bootstrap`, { method: 'POST' }, )
-    },
-    onMutate: () => setSuggestState('generating'),
-    onSuccess: (data) => {
-      void queryClient.invalidateQueries({ queryKey: ['taxonomy-proposals', kbSlug] })
-      if (data.proposals_submitted > 0) {
-        setSuggestState('proposals_ready')
-      } else {
-        setSuggestState('idle')
-      }
-    },
-    onError: (err) => {
-      taxonomyLogger.error('Bootstrap failed', { slug: kbSlug, error: err })
-      setSuggestState('idle')
-    },
-  })
+  const bootstrapMutation = useBootstrapTaxonomy(kbSlug, setSuggestState)
 
-  const backfillMutation = useMutation({
-    mutationFn: async () => {
-      // 1. Enqueue the job
-      const enqueue = await apiFetch<{ job_id: number; status: string }>(`/api/app/knowledge-bases/${kbSlug}/taxonomy/backfill-trigger`, { method: 'POST' }, )
-      const jobId = enqueue.job_id
-
-      // 2. Poll until done (max 10 min, every 5 s)
-      const MAX_POLLS = 120
-      for (let i = 0; i < MAX_POLLS; i++) {
-        await new Promise((r) => setTimeout(r, 5000))
-        const s = await apiFetch<{ job_id: number; status: string }>(`/api/app/knowledge-bases/${kbSlug}/taxonomy/backfill/${jobId}`, )
-        if (s.status === 'succeeded') return s
-        if (s.status === 'failed') throw new Error('Backfill job failed')
-      }
-      throw new Error('Backfill timed out')
-    },
-    onMutate: () => setSuggestState('applying'),
-    onSuccess: () => {
-      setSuggestState('done')
-      void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] })
-      void queryClient.invalidateQueries({ queryKey: ['taxonomy-proposals', kbSlug] })
-      void queryClient.invalidateQueries({ queryKey: ['taxonomy-coverage', kbSlug] })
-      void queryClient.invalidateQueries({ queryKey: ['taxonomy-top-tags', kbSlug] })
-    },
-    onError: (err) => {
-      taxonomyLogger.error('Backfill failed', { slug: kbSlug, error: err })
-      // If there are still pending proposals, go back to proposals_ready; otherwise idle
-      setSuggestState((prev) => {
-        if (prev === 'applying') {
-          const pending = (proposalsQuery.data?.proposals ?? []).filter((p) => p.status === 'pending').length
-          return pending > 0 ? 'proposals_ready' : 'idle'
-        }
-        return prev
-      })
-    },
+  const backfillMutation = useBackfillTaxonomy(kbSlug, setSuggestState, {
+    proposalsForFallback: () => proposalsQuery.data?.proposals ?? [],
   })
 
   async function handleApplyAll() {
