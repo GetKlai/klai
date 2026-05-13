@@ -271,10 +271,14 @@ async def _resolve_expected_recipient(
             raise HTTPException(status_code=400, detail="recipient mismatch")
         return str(validated_vars.admin_email)
 
-    if template_name in ("waitlist_confirmation", "waitlist_invite"):
-        # SPEC-LAUNCH-SOFTLAUNCH-001 B-2: recipient is the subscriber's own
-        # email (validated as EmailStr by the schema). Same binding pattern
-        # as `join_request_approved` (REQ-3.2).
+    if template_name in (
+        "waitlist_confirmation",
+        "waitlist_invite",
+        "onboarding_invite",
+    ):
+        # SPEC-LAUNCH-SOFTLAUNCH-001 B-2 / onboarding_invite: recipient is the
+        # subscriber's own email (validated as EmailStr by the schema). Same
+        # binding pattern as `join_request_approved` (REQ-3.2).
         expected = str(validated_vars.email).strip().lower()
         if supplied_norm and supplied_norm != expected:
             struct_logger.warning(
