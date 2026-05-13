@@ -296,35 +296,41 @@ it's coupling in disguise. The orchestrator is the right home.
 ## Approach (DDD methodology — required)
 
 Behavior preservation on production-critical code. Use the DDD
-ANALYZE-PRESERVE-IMPROVE cycle:
+ANALYZE-PRESERVE-IMPROVE cycle with **test-per-extraction** —
+characterization tests are added in the same commit as the extraction
+they protect, matching the `-sources-hooks.ts` precedent from
+SPEC-PORTAL-KENNIS-002 (no standalone preceding test commit; tests
+landed with the extracted hooks).
 
 1. **ANALYZE** (complete — see Beslissingen + Appendix A).
 
-2. **PRESERVE** (commit 1): Add characterization tests covering:
-   - Each of the 8 mutation success/failure paths (Appendix A)
-   - The 4 proposal rendering branches (pending / approved / rejected /
-     edit-mode)
-   - Edit-mode state transitions (start → submit / cancel; only one
-     card may edit at a time; cancel restores original)
-   - Reject-mode state transitions
-   - Coverage-widget per-node edit/delete transitions
-   - Tree active-node toggling + filter-clearing
-   - Tag-cloud toggling
-
-3. **IMPROVE** — relocations in small green commits:
-   - **Commit 2**: Extract `-taxonomy-hooks.ts`. TaxonomyTab consumes
-     hooks; JSX unchanged. Lowest-risk merge.
-   - **Commit 3**: Extract `_components/TagCloud.tsx`. Pure renderer.
-   - **Commit 4**: Extract `_components/CoverageWidget.tsx`. Same
-     callback prop signature.
-   - **Commit 5**: Extract `_components/ProposalCard.tsx`. Singleton
-     `isEditing` / `isRejecting` from parent; per-card buffers
-     internal.
+2. **PRESERVE + IMPROVE** — each extraction commit lands the
+   characterization tests for the unit it extracts:
+   - **Commit 1**: Extract `-taxonomy-hooks.ts` (11 hooks per Appendix
+     A) + `__tests__/taxonomy-hooks.test.tsx` covering each hook's URL
+     + body + invalidation contract. TaxonomyTab consumes hooks; JSX
+     unchanged. Lowest-risk merge.
+   - **Commit 2**: Extract `_components/TagCloud.tsx` (pure renderer).
+     No test added — no state, no logic.
+   - **Commit 3**: Extract `_components/CoverageWidget.tsx` +
+     `__tests__/CoverageWidget.test.tsx` covering: per-node edit-mode
+     singleton, delete-confirm singleton, suggest-button gating
+     (admin-only, threshold checks).
+   - **Commit 4**: Extract `_components/ProposalCard.tsx` +
+     `__tests__/ProposalCard.test.tsx` covering: edit-mode start/cancel
+     restore, reject-form start/cancel clear, save-and-approve emits
+     title+description, status-branch rendering (pending / approved /
+     rejected). Singleton `isEditing` / `isRejecting` enforced by
+     parent (separately covered by manual Playwright pass).
 
 Each commit: `tsc --noEmit + eslint + vitest` all green.
-Playwright pass on Voys after commit 5.
+Playwright pass on Voys after commit 4 verifies cross-card
+singleton behaviour + the full applyAll orchestrator path (which
+remains inline in TaxonomyTab and is therefore not unit-tested in
+isolation — manual + Playwright is its preservation gate).
 
-No commit 6. No `useReducer`. No toolbar.
+Four commits total. No commit 5 (`useReducer`). No commit 6
+(`useCallback` / `useMemo` / `memo`). No toolbar.
 
 ## Requirements (EARS)
 
@@ -396,9 +402,11 @@ No commit 6. No `useReducer`. No toolbar.
 
 ## Acceptance Criteria
 
-1. **AC1**: Characterization test suite added in commit 1 (PRESERVE
-   phase) is green after every subsequent commit. Coverage map includes
-   each of the 8 mutation paths in Appendix A.
+1. **AC1**: Characterization test suites land per extraction commit
+   (`taxonomy-hooks.test.tsx` in commit 1; `CoverageWidget.test.tsx`
+   in commit 3; `ProposalCard.test.tsx` in commit 4). All test files
+   green after every subsequent commit. Hook test coverage maps to
+   each row of Appendix A.
 2. **AC2**: `wc -l _components/TaxonomyTab.tsx` ≤ 250.
 3. **AC3**: 3 new `_components/` files exist (`CoverageWidget.tsx`,
    `ProposalCard.tsx`, `TagCloud.tsx`) plus the modified
