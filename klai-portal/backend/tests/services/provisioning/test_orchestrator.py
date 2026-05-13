@@ -6,6 +6,7 @@ and rollback logic.
 """
 
 import asyncio
+import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -186,3 +187,97 @@ class TestSeedDefaultTemplatesNonFatal:
         ):
             # Must not raise.
             await _seed_default_templates_non_fatal(org_id=42, db=db)
+
+
+class TestProvisionUsesDBSlug:
+    """SPEC-INFRA-TENANT-DELETE-003 Bug 2 — orchestrator must use the slug
+    committed by signup.py (org.slug), not regenerate via _slugify_unique.
+
+    Bug history: prior code ran
+        slug = _slugify_unique(org.name, existing_slugs)
+    which produced a DIFFERENT slug than the one signup.py wrote to
+    portal_orgs.slug (e.g. "e2e" vs "e2e-37271947" — the difference is
+    that signup uses _to_slug() with a zitadel-id suffix for uniqueness,
+    while _slugify_unique drops the suffix when no active collision exists).
+    Provisioned resources used the orchestrator slug; the DB held a
+    different slug; deprovisioning queried by DB slug → missed the
+    actual resources → orphans.
+    """
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_uses_org_slug_not_regenerated(self) -> None:
+        """`_provision` must read slug directly from org.slug — verified by
+        injecting a sentinel org with name='Different Name' and
+        slug='committed-slug', running the entry-state branch, and asserting
+        the `provisioning_tenant_start` log carries `committed-slug`.
+        """
+        from app.services.provisioning.orchestrator import _provision
+
+        captured_log_slug: dict[str, object] = {}
+
+        def _capture_logger():
+            real_logger = __import__("structlog").get_logger()
+            orig_info = real_logger.info
+
+            def _capture(event, **kwargs):
+                if event == "provisioning_tenant_start":
+                    captured_log_slug["slug"] = kwargs.get("slug")
+                return orig_info(event, **kwargs)
+
+            real_logger.info = _capture
+            return real_logger
+
+        # Build a SimpleNamespace-style org that returns the sentinel slug
+        # but a different name (so a regenerator would produce a different slug).
+        org = MagicMock()
+        org.id = 99
+        org.name = "Different Name"
+        org.slug = "committed-slug-x42"
+        org.provisioning_status = "pending"
+        org.deleted_at = None
+        org.zitadel_org_id = "zit-org-99"
+        org.mcp_servers = None
+        org.litellm_team_key = None
+
+        # Result-stubs for two SELECT calls before the slug-line:
+        #   1) SELECT PortalOrg WHERE id=org_id → scalar_one() → org
+        #   2) SELECT slug FROM portal_orgs WHERE deleted_at IS NULL — no longer
+        #      called after the Bug 2 fix; we still mock it harmlessly.
+        org_result = MagicMock()
+        org_result.scalar_one = MagicMock(return_value=org)
+        slugs_result = MagicMock()
+        slugs_result.fetchall = MagicMock(return_value=[("other-slug",), ("committed-slug-x42",)])
+
+        # Fail early at the first orchestrator step that needs network so we
+        # can isolate the slug-read assertion without mocking 16 steps.
+        with (
+            patch(
+                "app.services.provisioning.orchestrator.zitadel.create_librechat_oidc_app",
+                new=AsyncMock(side_effect=RuntimeError("STOP — fail after slug read")),
+            ),
+            patch("app.services.provisioning.orchestrator.transition_state", new=AsyncMock()),
+            patch("app.services.provisioning.orchestrator.pin_session", new=AsyncMock()),
+            patch("app.services.provisioning.orchestrator.logger") as mock_logger,
+        ):
+            db = AsyncMock()
+            db.execute = AsyncMock(side_effect=[org_result, slugs_result])
+
+            mock_logger.info = MagicMock()
+            mock_logger.warning = MagicMock()
+            mock_logger.exception = MagicMock()
+            mock_logger.error = MagicMock()
+
+            with contextlib.suppress(Exception):
+                # Expect STOP after slug-read (mocked downstream step raises).
+                await _provision(99, db)
+
+            # Find the provisioning_tenant_start log call
+            start_calls = [
+                c for c in mock_logger.info.call_args_list if c.args and c.args[0] == "provisioning_tenant_start"
+            ]
+            assert start_calls, "provisioning_tenant_start was not logged"
+            kwargs = start_calls[0].kwargs
+            assert kwargs.get("slug") == "committed-slug-x42", (
+                f"orchestrator must use org.slug='committed-slug-x42'; "
+                f"got slug={kwargs.get('slug')!r} (likely from _slugify_unique regenerator)"
+            )
