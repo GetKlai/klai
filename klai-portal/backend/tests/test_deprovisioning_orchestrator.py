@@ -344,8 +344,8 @@ class TestResolveLitellmTeamId:
 
 class TestResolveZitadelOidcAppId:
     @pytest.mark.asyncio
-    async def test_returns_empty_when_no_client_id(self) -> None:
-        """Empty client_id returns empty string without network call."""
+    async def test_returns_empty_when_no_slug(self) -> None:
+        """Empty slug returns empty string without network call."""
         result = await _resolve_zitadel_oidc_app_id(None)
         assert result == ""
 
@@ -353,12 +353,64 @@ class TestResolveZitadelOidcAppId:
         assert result == ""
 
     @pytest.mark.asyncio
-    async def test_returns_app_id_when_found(self) -> None:
-        """Correct app_id returned when the matching app is in Zitadel response."""
+    async def test_queries_zitadel_by_app_name_not_client_id(self) -> None:
+        """SPEC-INFRA-TENANT-DELETE-003 Bug 1 regression — the lookup must
+        query Zitadel apps with ``name=librechat-{slug}``, NOT ``name=client_id``.
+
+        Previous version searched ``nameQuery.name=<client_id>`` which always
+        returned 0 hits because Zitadel app names are ``librechat-<slug>``,
+        not numeric client_ids. Result: every deprovisioned tenant left an
+        orphan OIDC app in the Klai Platform project, blocking re-signup
+        with the same slug (409 Conflict on the next create).
+        """
         apps_payload = {
             "result": [
-                {"id": "app-999", "oidcConfig": {"clientId": "client-abc"}},
-                {"id": "app-000", "oidcConfig": {"clientId": "client-other"}},
+                {"id": "app-999", "name": "librechat-acme", "oidcConfig": {"clientId": "client-abc"}},
+            ]
+        }
+        captured_body: dict[str, object] = {}
+
+        async def _fake_post(url: str, json: dict) -> MagicMock:
+            captured_body["url"] = url
+            captured_body["body"] = json
+            resp = MagicMock()
+            resp.json = MagicMock(return_value=apps_payload)
+            resp.raise_for_status = MagicMock()
+            return resp
+
+        with patch("app.services.provisioning.deprovisioning_orchestrator.settings") as mock_settings:
+            mock_settings.zitadel_base_url = "https://auth.example.com"
+            mock_settings.zitadel_pat = "pat-token"
+            mock_settings.zitadel_project_id = "project-1"
+            with patch("httpx.AsyncClient") as mock_client_class:
+                mock_http = AsyncMock()
+                mock_http.post = _fake_post
+                mock_client_class.return_value.__aenter__ = AsyncMock(return_value=mock_http)
+                mock_client_class.return_value.__aexit__ = AsyncMock(return_value=False)
+
+                result = await _resolve_zitadel_oidc_app_id(slug="acme", client_id="client-abc")
+
+        assert result == "app-999"
+        # Critical regression assertion: the query body must filter on the
+        # constructed name `librechat-{slug}`, NEVER on the client_id.
+        body = captured_body["body"]
+        assert isinstance(body, dict)
+        query_name = body["queries"][0]["nameQuery"]["name"]
+        assert query_name == "librechat-acme", (
+            f"Query must search by librechat-{{slug}}, got name={query_name!r}. "
+            "This is the Bug 1 regression — see SPEC-INFRA-TENANT-DELETE-003."
+        )
+
+    @pytest.mark.asyncio
+    async def test_returns_app_id_without_client_id_verification(self) -> None:
+        """client_id is optional (belt+braces). When omitted, slug-match alone
+        is sufficient. This is the recovery path for tenants whose
+        zitadel_librechat_client_id was never written to portal_orgs (early
+        provisioning failure before step 1 commits the column).
+        """
+        apps_payload = {
+            "result": [
+                {"id": "app-from-slug", "name": "librechat-acme", "oidcConfig": {"clientId": "client-xyz"}},
             ]
         }
         with patch("app.services.provisioning.deprovisioning_orchestrator.settings") as mock_settings:
@@ -374,9 +426,9 @@ class TestResolveZitadelOidcAppId:
                 mock_client_class.return_value.__aenter__ = AsyncMock(return_value=mock_http)
                 mock_client_class.return_value.__aexit__ = AsyncMock(return_value=False)
 
-                result = await _resolve_zitadel_oidc_app_id("client-abc")
-
-        assert result == "app-999"
+                # client_id omitted entirely
+                result = await _resolve_zitadel_oidc_app_id(slug="acme")
+        assert result == "app-from-slug"
 
     @pytest.mark.asyncio
     async def test_returns_empty_on_http_error(self) -> None:
@@ -389,7 +441,7 @@ class TestResolveZitadelOidcAppId:
                 mock_client_class.return_value.__aenter__ = AsyncMock(side_effect=httpx.ConnectError("down"))
                 mock_client_class.return_value.__aexit__ = AsyncMock(return_value=False)
 
-                result = await _resolve_zitadel_oidc_app_id("client-abc")
+                result = await _resolve_zitadel_oidc_app_id(slug="acme", client_id="client-abc")
 
         assert result == ""
 
