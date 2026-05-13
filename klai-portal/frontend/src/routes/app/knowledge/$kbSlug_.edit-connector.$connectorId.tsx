@@ -16,7 +16,7 @@ import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { MS_SITE_URL_PATTERN } from '@/lib/ms-docs'
 import { ASSERTION_MODE_OPTIONS, joinSeedUrl } from './$kbSlug/-kb-helpers'
-import type { ConnectorSummary, CookieRow, GitHubConfig, WebCrawlerConfig } from './$kbSlug/-kb-types'
+import type { ConnectorSummary, CookieRow } from './$kbSlug/-kb-types'
 import { CookieRowsInput } from '@/components/knowledge/CookieRowsInput'
 import {
   AuthProbeFeedback,
@@ -28,10 +28,12 @@ import type {
   AuthGuardSuggestion,
   AuthProbeResult,
   ConfluenceConfig,
+  GitHubConfig,
   NotionEditConfig,
   PreviewResult,
   StepDeepLink,
   WcStep,
+  WebCrawlerConfig,
 } from './-connector-types'
 import { MARKDOWN_PROSE_CLASSES, VALID_STEPS } from './-connector-constants'
 
