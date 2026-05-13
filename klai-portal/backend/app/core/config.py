@@ -776,5 +776,58 @@ class Settings(BaseSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def _require_zitadel_identity_ids(self) -> "Settings":
+        """SPEC-REPO-SANITIZE-001 followup — fail-closed on missing Zitadel IDs.
+
+        ce31a119 cleared the hardcoded fallback values for three identifiers:
+        ``zitadel_project_id``, ``zitadel_portal_org_id`` and
+        ``zitadel_portal_client_id``. These are public-but-leak-identifying
+        IDs (not credentials, but they reveal production Zitadel structure).
+        Sanitize's intent was "force explicit configuration" — i.e. they
+        must be set via env var, never silently default to empty.
+
+        Production incident 2026-05-13 16:03 UTC: signup broke for every
+        new tenant because ``ZITADEL_PROJECT_ID`` and ``ZITADEL_PORTAL_ORG_ID``
+        had no env injection path (no compose entry) → empty default
+        reached runtime → ``zitadel.grant_user_role`` POSTed an empty
+        ProjectId → Zitadel 500 → portal-api signup 502. The grant-user
+        call sits BEFORE the portal_users INSERT, so the user was created
+        in Zitadel but never landed in portal_users — three orphans
+        accumulated in Zitadel before the root cause was identified.
+
+        Fail-loud at startup means the next regression in this class
+        (someone clears a SOPS entry, someone renames an env var, someone
+        drops a compose injection line) surfaces in the deploy log instead
+        of silently breaking signup hours later.
+
+        Where used: app/services/zitadel.py — grant_user_role (PROJECT_ID),
+        delete_org / list_org_users (PORTAL_ORG_ID), BFF auth.py
+        (PORTAL_CLIENT_ID). None of these have non-empty fallbacks.
+
+        Env parity: all three live in klai-infra/core-01/.env.sops as of
+        the SOPS bump committed alongside this validator (commit f1b6249
+        on klai-infra).
+        """
+        missing: list[str] = []
+        if not self.zitadel_project_id.strip():
+            missing.append("ZITADEL_PROJECT_ID")
+        if not self.zitadel_portal_org_id.strip():
+            missing.append("ZITADEL_PORTAL_ORG_ID")
+        if not self.zitadel_portal_client_id.strip():
+            missing.append("ZITADEL_PORTAL_CLIENT_ID")
+        if missing:
+            raise ValueError(
+                "Missing required Zitadel identifiers in env: "
+                + ", ".join(missing)
+                + ". These were cleared from config.py defaults by "
+                + "SPEC-REPO-SANITIZE-001 (ce31a119); they must come from "
+                + "klai-infra SOPS. Without them, signup → grant_user_role "
+                + "POSTs empty values and Zitadel returns 500. Update SOPS "
+                + "(klai-infra/core-01/.env.sops) and re-run the sync-env "
+                + "workflow before retrying the deploy."
+            )
+        return self
+
 
 settings = Settings()  # type: ignore[call-arg]  # pydantic-settings reads required fields from env
