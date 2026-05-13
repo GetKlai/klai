@@ -5,7 +5,7 @@ COMPOSE := docker compose -f docker-compose.dev.yml --env-file .env.dev
 BACKEND_DIR := klai-portal/backend
 FRONTEND_DIR := klai-portal/frontend
 
-.PHONY: help setup dev-up dev-down dev-reset dev-status dev-logs backend frontend migrate lint check
+.PHONY: help setup dev-up dev-down dev-reset dev-status dev-logs seed backend frontend migrate lint check
 
 # ── Help ─────────────────────────────────────────────────────────────────────
 
@@ -30,15 +30,14 @@ setup: ## First-time setup: copy env files, install dependencies
 	@echo "============================================"
 	@echo "  Setup complete! Next steps:"
 	@echo ""
-	@echo "  1. Edit .env.dev             (add ANTHROPIC_API_KEY)"
-	@echo "  2. Edit $(BACKEND_DIR)/.env  (add ZITADEL_PAT, generate keys)"
-	@echo "  3. Edit $(FRONTEND_DIR)/.env.local (add VITE_OIDC_CLIENT_ID)"
-	@echo "  4. make dev-up               (start Docker services)"
-	@echo "  5. make migrate              (run database migrations)"
-	@echo "  6. make backend              (start API server)"
-	@echo "  7. make frontend             (start Vite dev server)"
+	@echo "  1. make dev-up               (start Docker services)"
+	@echo "  2. make migrate              (run database migrations)"
+	@echo "  3. make backend              (start API — auto-creates dev user)"
+	@echo "  4. make frontend             (start Vite dev server)"
 	@echo ""
-	@echo "  Full guide: docs/runbooks/local-dev.md"
+	@echo "  That's it! No env editing needed for standalone mode."
+	@echo "  For AI features: add ANTHROPIC_API_KEY to .env.dev"
+	@echo "  For production Zitadel: see docs/runbooks/local-dev.md"
 	@echo "============================================"
 
 # ── Docker Services ──────────────────────────────────────────────────────────
@@ -60,6 +59,12 @@ dev-status: ## Show status of Docker services
 
 dev-logs: ## Tail logs from all Docker services
 	$(COMPOSE) logs -f
+
+# ── Data ─────────────────────────────────────────────────────────────────────
+
+seed: ## Seed database with demo data (dev org, users)
+	docker exec -i klai-postgres-1 psql -U klai -d klai < dev/seed.sql
+	@echo "Database seeded with demo data."
 
 # ── Backend ──────────────────────────────────────────────────────────────────
 
